@@ -48,7 +48,7 @@ void cellcorrections_final_operations_and_cleanup(void)
         if(GasGrad_isactive(i, P, CellP)) /* only cells eligible for gradients and hydro */
         {
             if(CellP[i].Volume_1 > 0) {CellP[i].Density = P[i].Mass / CellP[i].Volume_1;} else {CellP[i].Volume_1 = CellP[i].Volume_0;} // set the updated density. other variables that need volumes will all scale off this, so we can rely on it to inform everything else [if bad value here, revert to the 0th-order volume quadrature]
-            set_eos_pressure(i, P, CellP);
+            refresh_eos_and_project(i, STATE_COPY_PREDICTED);
         }}
 }
 

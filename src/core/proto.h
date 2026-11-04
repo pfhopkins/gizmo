@@ -380,6 +380,11 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #endif
 
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell);
+/* the copies of the evolved state an accepted equation-of-state refresh stands for: the deviatoric stress of a material whose strength
+   depends on the refreshed state is then projected onto that strength (refresh_eos_and_project, eos/eos.cc) */
+#define STATE_COPY_COMMITTED 1
+#define STATE_COPY_PREDICTED 2
+void refresh_eos_and_project(int i, int state_copies);
 #ifdef HYDRO_GENERATE_TARGET_MESH
 /* Declared under the same flag the definitions in eos/eos_functions.h carry: they
    used to be defined unconditionally in eos.cc, so an unguarded declaration would
@@ -712,6 +717,9 @@ GIZMO_GPU_FUNCTION double return_CRbin_kinetic_energy_in_GeV_binvalsNRR(int k_CR
 #ifdef EOS_ELASTIC
 void elastic_body_update_driftkick(int i, double dt_entr, int mode);
 void elastic_stress_rate(int i, const double velocity_gradient[3][3]);
+#endif
+#if defined(EOS_ELASTIC) && defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+void elastic_project_after_eos(int i, int state_copies);
 #endif
 #if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
 GIZMO_GPU_FUNCTION double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j);

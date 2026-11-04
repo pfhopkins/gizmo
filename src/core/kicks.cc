@@ -562,7 +562,7 @@ void set_predicted_quantities_for_extra_physics(int i)
         CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor;
 #endif
         
-        set_eos_pressure(i, P, CellP);
+        refresh_eos_and_project(i, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED);
     }
 }
 

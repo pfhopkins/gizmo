@@ -111,6 +111,21 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     set_eos_pressure_impl(i, pp, cell, &eos_tables);
 }
 
+/* refresh_eos_and_project -- the host entry for every ACCEPTED state change (kick, density pass and its final operations, cooling, star
+   formation, merge/split, grain promotion): the equation of state, then the projection of the deviatoric stress copies that state
+   stands for onto the material's strength at the refreshed state (solids/elastic_physics_functions.h), so the stress the forces read is
+   consistent with the pressure they read. Trial evaluations (root finding, tables) use the equation of state alone. The device paths
+   (drift, cooling) do the same two calls in their own kernels. */
+void refresh_eos_and_project(int i, int state_copies)
+{
+    set_eos_pressure(i, P, CellP);
+#if defined(EOS_ELASTIC) && defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+    elastic_project_after_eos(i, state_copies);
+#else
+    (void)state_copies;
+#endif
+}
+
 
 /* subroutine to calculate the conductivities and assign the various non-ideal MHD coefficients (Ohmic, Hall, Ambipolar). can modify or expand chemistry or assumptions about grains herein. */
 void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data *pp, struct gas_cell_data *cell)

@@ -642,7 +642,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
             CellP[i].Volume_1 = CellP[i].Volume_0 = (MyFloat)Volume_0;
 #endif
 
-            set_eos_pressure(i, P, CellP);
+            refresh_eos_and_project(i, STATE_COPY_PREDICTED);
         } // P[i].Type == 0 && P[i].Mass > 0
 
 #if defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION)

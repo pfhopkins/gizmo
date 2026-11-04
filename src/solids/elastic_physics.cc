@@ -23,15 +23,23 @@
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
 /* The named solid materials (rows 1-6; row 0 is the custom material), in cgs.
    Columns 0-9: Tillotson EOS a, b, u_0, rho_0, A, B, u_s, u_s', alpha, beta.
-   Columns 10-17: shear modulus mu, yield strength Y_0, Weibull k [1/cm^3], Weibull m, Drucker-Prager mu_DP,
-   initial distention alpha_0, P-alpha crush pressures P_e (elastic limit) and P_s (full compaction). */
-static const double solid_material_presets[6][18] = {
-    {0.5,1.3,1.60e11,2.700,1.80e11,1.80e11,3.50e10,1.80e11,5.0,5.0,2.17e11,3.8e10, 4.0e29, 9.5, 1.0, 1.0, 3.0e8, 1.5e10},  // granite
-    {0.5,1.5,4.87e12,2.700,2.67e11,2.67e11,4.72e10,1.82e11,5.0,5.0,2.27e11,3.5e10, 4.0e29, 9.5, 1.0, 1.0, 1.0e8, 7.0e10},  // basalt
-    {0.5,1.5,9.50e10,7.860,1.28e12,1.05e12,1.42e10,8.45e10,5.0,5.0,7.75e11,8.5e10, 1.0e25, 9.0, 1.0, 1.0, 1.0e10,1.0e12},  // iron
-    {0.3,0.1,1.00e11,0.917,9.47e10,9.47e10,7.730e9,3.04e10,10.,5.0,2.80e10,1.0e10, 1.4e32, 9.1, 1.0, 1.0, 1.0e7, 1.5e9 },  // ice
-    {0.5,1.4,5.50e12,3.500,1.31e12,4.90e11,4.50e10,1.50e11,5.0,5.0,8.13e11,9.0e10, 4.0e29, 9.5, 1.0, 1.0, 2.0e8, 1.0e10},  // olivine/dunite
-    {0.5,0.9,2.00e10,1.000,2.00e11,1.00e11,4.000e9,2.00e10,5.0,5.0,1.000e0,1.00e0, 0.0,    1.0, 0.0, 1.0, 0.0,   1.0e10}}; // water
+   Columns 10-19: shear modulus mu, constant von Mises yield strength Y, Weibull k [1/cm^3], Weibull m, internal friction mu_i,
+   initial distention alpha_0, P-alpha crush pressures P_e (elastic limit) and P_s (full compaction), cohesion Y_c, limit Y_M.
+   Y (the constant law; radial return to sqrt(NUMDIMS J2) = Y): granite 3.1e10 = Swegle 1989 (SAND89-1443, Table 3: fitted to the
+   Hugoniot elastic limit 4.6 GPa with nu 0.25); basalt 3.5e10 = Benz & Asphaug 1999 (Icarus 142, 5, Table 1); iron 5.3e9 and ice 3.1e9 from measured
+   Hugoniot elastic limits, Y = HEL (1 - 2 nu)/(1 - nu): pure iron 0.90 GPa, nu 0.292 (Thomas et al. 2018, J. Appl. Phys. 123, 175902,
+   Tables V-VI), ice Ih at 100 K 0.62 GPa (Stewart & Ahrens 2005, J. Geophys. Res. 110, E03005; warmer ice is weaker, down to 0.05 GPa), nu 0.33; olivine 5.0e10 from the 7.44 GPa elastic limit
+   of single-crystal forsteritic olivine (Obata et al. 2023, Phys. Earth Planet. Inter. 338, 107009), nu 0.25: the least well constrained.
+   mu_i, Y_c, Y_M (the pressure-dependent law of EOS_DAMAGE_POROSITY model 2, in the published convention sqrt(J2) <= Y): granite
+   Collins et al. 2004 (Meteorit. Planet. Sci. 39, 217, Table A1); basalt and olivine/dunite Miljkovic et al. 2013 (Science 342, 724,
+   Table S2); ice Bray et al. 2014 (Icarus 231, 394; as tabulated by Silber et al. 2021, arXiv:2104.07909, Table 1). Iron is a metal, not a frictional material, and water has no strength: mu_i = 0, the constant law. */
+static const double solid_material_presets[6][20] = {
+    {0.5,1.3,1.60e11,2.700,1.80e11,1.80e11,3.50e10,1.80e11,5.0,5.0,2.17e11,3.1e10, 4.0e29, 9.5, 2.0, 1.0, 3.0e8, 1.5e10, 9.0e8, 1.5e10},  // granite
+    {0.5,1.5,4.87e12,2.700,2.67e11,2.67e11,4.72e10,1.82e11,5.0,5.0,2.27e11,3.5e10, 4.0e29, 9.5, 1.4, 1.0, 1.0e8, 7.0e10, 2.0e8, 2.5e10},  // basalt
+    {0.5,1.5,9.50e10,7.860,1.28e12,1.05e12,1.42e10,8.45e10,5.0,5.0,7.75e11,5.3e9,  1.0e25, 9.0, 0.0, 1.0, 1.0e10,1.0e12, 0.0,   0.0   },  // iron
+    {0.3,0.1,1.00e11,0.917,9.47e10,9.47e10,7.730e9,3.04e10,10.,5.0,2.80e10,3.1e9,  1.4e32, 9.1, 2.0, 1.0, 1.0e7, 1.5e9,  1.0e8, 1.1e9 },  // ice
+    {0.5,1.4,5.50e12,3.500,1.31e12,4.90e11,4.50e10,1.50e11,5.0,5.0,8.13e11,5.0e10, 4.0e29, 9.5, 1.5, 1.0, 2.0e8, 1.0e10, 5.0e8, 3.5e10},  // olivine/dunite
+    {0.5,0.9,2.00e10,1.000,2.00e11,1.00e11,4.000e9,2.00e10,5.0,5.0,1.000e0,1.00e0, 0.0,    1.0, 0.0, 1.0, 0.0,   1.0e10, 0.0,   0.0   }}; // water
 #endif
 
 #ifdef EOS_TILLOTSON
@@ -63,12 +71,14 @@ static struct solid_material solid_material_preset(int row)
     m.YieldStrength        = q[11] / UNIT_PRESSURE_IN_CGS;
     m.WeibullK             = q[12] * (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS);
     m.WeibullM             = q[13];
-    m.DruckerPragerMu      = q[14];
+    m.InternalFriction     = q[14];
     m.InitialDistention    = q[15];
     m.CrushPressureElastic = q[16] / UNIT_PRESSURE_IN_CGS;
     m.CrushPressureSolid   = q[17] / UNIT_PRESSURE_IN_CGS;
     m.ReferenceDensity     = q[3] / UNIT_DENSITY_IN_CGS;
     m.FractureActivation   = FRACTURE_ACTIVATION_TENSILE_FLAWS;
+    m.Cohesion             = q[18] / UNIT_PRESSURE_IN_CGS;
+    m.YieldStrengthMax     = q[19] / UNIT_PRESSURE_IN_CGS;
     return m;
 }
 
@@ -91,7 +101,12 @@ static const char *solid_material_problem(const struct solid_material *m, int is
     }
 #endif
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
-    if(!(isfinite(m->DruckerPragerMu) && m->DruckerPragerMu >= 0)) {return "DruckerPragerMu (finite, >= 0)";}
+    if(!(isfinite(m->InternalFriction) && m->InternalFriction >= 0)) {return "InternalFriction (finite, >= 0; 0 = the constant von Mises YieldStrength; it replaces DruckerPragerMu, and is given in the published convention sqrt(J2) <= Y with Cohesion and YieldStrengthMax)";}
+    if(m->InternalFriction > 0)
+    {
+        if(!(isfinite(m->Cohesion) && m->Cohesion >= 0)) {return "Cohesion (finite, >= 0: the pressure-dependent strength at zero pressure)";}
+        if(!(isfinite(m->YieldStrengthMax) && (m->YieldStrengthMax == 0 || m->YieldStrengthMax > m->Cohesion))) {return "YieldStrengthMax (0 = no limit, or > Cohesion)";}
+    }
 #endif
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 4)
     if(!is_aneos)
@@ -126,7 +141,7 @@ void solid_material_resolve(void)
 #ifdef EOS_ANEOS
     static_assert(N_TILLOTSON_MATERIALS + ANEOS_MAX_MATERIALS + 1 <= N_SOLID_MATERIAL_IDS, "N_SOLID_MATERIAL_IDS must cover every CompositionType layout");
 #endif
-    struct solid_material none = {0, 0, 0, 1, 0, 1, 0, 0, 0, FRACTURE_ACTIVATION_TENSILE_FLAWS}; /* no strength, never damaged, compact */
+    struct solid_material none = {0, 0, 0, 1, 0, 1, 0, 0, 0, FRACTURE_ACTIVATION_TENSILE_FLAWS, 0, 0}; /* no strength, never damaged, compact */
     for(int id = 0; id < N_SOLID_MATERIAL_IDS; id++)
     {
         struct solid_material m = none;
@@ -171,12 +186,14 @@ void solid_material_resolve(void)
         }
         else {All.SolidMaterial[id] = none; continue;}
         if(isnan(m.FractureActivation)) {m.FractureActivation = FRACTURE_ACTIVATION_TENSILE_FLAWS;} /* not given: the default law */
+        if(isnan(m.YieldStrengthMax)) {m.YieldStrengthMax = 0;} /* not given: no high-pressure limit */
+        if(!(m.InternalFriction > 0) && isnan(m.Cohesion)) {m.Cohesion = 0;} /* the constant law: no cohesion needed */
         All.SolidMaterial[id] = m;
         if(ThisTask == 0 && solid_material_is_elastic(id))
         {
             const char *problem = solid_material_problem(&m, solid_material_id_is_aneos(id));
-            printf("SOLID MATERIAL CompositionType %2d: %-40s mu=%g Y0=%g k=%g m=%g mu_DP=%g alpha_0=%g P_e=%g P_s=%g rho_0=%g fracture=%s%s%s\n", id, name,
-                   m.ShearModulus, m.YieldStrength, m.WeibullK, m.WeibullM, m.DruckerPragerMu, m.InitialDistention, m.CrushPressureElastic, m.CrushPressureSolid,
+            printf("SOLID MATERIAL CompositionType %2d: %-40s mu=%g Y=%g k=%g m=%g mu_i=%g Y_c=%g Y_M=%g alpha_0=%g P_e=%g P_s=%g rho_0=%g fracture=%s%s%s\n", id, name,
+                   m.ShearModulus, m.YieldStrength, m.WeibullK, m.WeibullM, m.InternalFriction, m.Cohesion, m.YieldStrengthMax, m.InitialDistention, m.CrushPressureElastic, m.CrushPressureSolid,
                    m.ReferenceDensity, (m.FractureActivation == FRACTURE_ACTIVATION_SHEAR) ? "shear-activated" : "tensile flaws",
                    problem ? "  [no valid " : "", problem ? problem : "");
             if(problem) {printf(": the run stops only if cells carry this CompositionType]\n");}
@@ -272,5 +289,11 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode)
 void elastic_stress_rate(int i, const double velocity_gradient[3][3])
 {
     elastic_stress_rate_P(i, velocity_gradient, CellP);
+}
+#endif
+#if defined(EOS_ELASTIC) && defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+void elastic_project_after_eos(int i, int state_copies)
+{
+    elastic_project_after_eos_P(i, CellP, state_copies);
 }
 #endif

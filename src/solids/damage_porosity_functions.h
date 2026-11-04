@@ -1,9 +1,9 @@
 /* damage_porosity_functions.h -- the damage rate equation and the yield-criterion
- * modifier. Body guarded by EOS_DAMAGE_POROSITY (bit 0 fracture damage, bit 1
- * Drucker-Prager). The P-alpha porosity update (bit 2) lives with the Tillotson
+ * modifier. Body guarded by EOS_DAMAGE_POROSITY (bit 0 = value 1 fracture damage, bit 1 = value 2
+ * pressure-dependent strength). The P-alpha porosity update (bit 2 = value 4) lives with the Tillotson
  * pressure it modifies (declarations/cell_data.h; crush curve in jutzi_crush_curve.h).
  *
- * The per-material parameters (Weibull k and m, Drucker-Prager mu) come
+ * The per-material parameters (Weibull k and m, internal friction, cohesion, strength limit) come
  * from solid_material_of(CompositionType) (declarations/allvars.h, eos/composition_registry.h).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -37,27 +37,31 @@ int damage_porosity_bit_active(int bit_index)
 }
 
 /* ---------------------------------------------------------------------------
- * bit 1: Drucker-Prager pressure-dependent yield extension
- *
- * Returns the modified yield strength Y_DP = max(0, Y_0 + mu_DP * P_hydro),
- * where mu_DP is the per-material friction coefficient (DruckerPragerMu). Reduces
- * to von Mises (Y_0) for mu_DP = 0. P_hydro is the cell hydrostatic
- * pressure (positive in compression). Tensile failure (Y_DP -> 0) handled
- * naturally by the clamp.
+ * bit 1 (value 2): pressure-dependent strength of intact rock (Lundborg 1968; Collins,
+ * Melosh & Ivanov 2004 eq. A2), for a material with InternalFriction mu_i > 0:
+ *   Y = Y_c + mu_i P / (1 + mu_i P / (Y_M - Y_c))   for P > 0 (saturating at Y_M),
+ *   Y = max(0, Y_c + mu_i P)                          for P <= 0, and for Y_M = 0,
+ * with the cohesion Y_c and limit Y_M per material and P the hydrostatic pressure
+ * (positive in compression). Its parameters are the published ones, in the
+ * convention sqrt(J2) <= Y; the radial return compares sqrt(NUMDIMS J2), so the
+ * value returned is sqrt(NUMDIMS) Y. A material with mu_i = 0 keeps its constant
+ * von Mises YieldStrength (never used as the cohesion here).
  * ---------------------------------------------------------------------------*/
 KOKKOS_INLINE_FUNCTION
-double apply_drucker_prager(double Y0, double P_hydro, int composition_type)
+double pressure_dependent_yield_strength(const struct solid_material &material, double P_hydro)
 {
-    double mu_DP = solid_material_of(composition_type).DruckerPragerMu;
-    double Y_eff = Y0 + mu_DP * P_hydro;
-    return (Y_eff > 0.0) ? Y_eff : 0.0;
+    double Y_c = material.Cohesion, mu_i = material.InternalFriction, Y_max = material.YieldStrengthMax;
+    double Y_eff = Y_c + mu_i * P_hydro;
+    if(Y_max > 0 && P_hydro > 0) {Y_eff = Y_c + mu_i * P_hydro / (1. + mu_i * P_hydro / (Y_max - Y_c));} /* saturates at Y_max (Y_max > Y_c is checked at startup) */
+    if(!(Y_eff > 0.0)) {return 0.0;}
+    return sqrt((double)NUMDIMS) * Y_eff; /* published in the sqrt(J2) convention; the return compares sqrt(NUMDIMS J2) */
 }
 
-/* Convenience: is bit 1 (Drucker-Prager) requested? */
+/* Convenience: is bit 1 (value 2, the pressure-dependent strength) requested? */
 #if ((EOS_DAMAGE_POROSITY) & 2)
-#define DAMAGE_POROSITY_BIT_DRUCKER_PRAGER 1
+#define DAMAGE_POROSITY_BIT_PRESSURE_STRENGTH 1
 #else
-#define DAMAGE_POROSITY_BIT_DRUCKER_PRAGER 0
+#define DAMAGE_POROSITY_BIT_PRESSURE_STRENGTH 0
 #endif
 
 /* ---------------------------------------------------------------------------

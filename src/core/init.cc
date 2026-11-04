@@ -1041,6 +1041,9 @@ void init(void)
         CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
         /* the recent-yield memory is evolved history in the same way (a file without the block reads as zero) */
         if((RestartFlag == 0 && All.ICFormat != 3) || !solid_material_is_elastic(CellP[i].CompositionType) || !(isfinite(CellP[i].RecentYieldMemory) && CellP[i].RecentYieldMemory > 0)) {CellP[i].RecentYieldMemory = 0;} /* a non-finite value read in would switch the correction off for good */
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+        elastic_project_after_eos(i, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED); /* a stress the file supplies, onto the strength at the pressure the density pass above set */
+#endif
 #endif
         CellP[i].DtInternalEnergy = 0;
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)

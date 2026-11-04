@@ -16,14 +16,14 @@ Defaults below match published planet-IC convention; user may override per-zone.
 import numpy as np
 
 # Material parameter table — exact CGS values from
-# solids/elastic_physics.cc::tillotson_eos_init (j_t=1..6).
-# Columns: a, b, u_0, rho_0, A, B, u_s, u_s_prime, alpha, beta, mu_shear, Y_0
+# src/solids/elastic_physics.cc::solid_material_presets (rows 1-6; sources for the strengths there).
+# Columns: a, b, u_0, rho_0, A, B, u_s, u_s_prime, alpha, beta, mu_shear, Y_0 (the constant von Mises yield strength)
 _TILLOTSON_PARAMS = {
-    "granite": [0.5, 1.3, 1.60e11, 2.700, 1.80e11, 1.80e11, 3.50e10, 1.80e11, 5.0, 5.0, 2.17e11, 3.8e10],
+    "granite": [0.5, 1.3, 1.60e11, 2.700, 1.80e11, 1.80e11, 3.50e10, 1.80e11, 5.0, 5.0, 2.17e11, 3.1e10],
     "basalt":  [0.5, 1.5, 4.87e12, 2.700, 2.67e11, 2.67e11, 4.72e10, 1.82e11, 5.0, 5.0, 2.27e11, 3.5e10],
-    "iron":    [0.5, 1.5, 9.50e10, 7.860, 1.28e12, 1.05e12, 1.42e10, 8.45e10, 5.0, 5.0, 7.75e11, 8.5e10],
-    "ice":     [0.3, 0.1, 1.00e11, 0.917, 9.47e10, 9.47e10, 7.730e9, 3.04e10, 10., 5.0, 2.80e10, 1.0e10],
-    "olivine": [0.5, 1.4, 5.50e12, 3.500, 1.31e12, 4.90e11, 4.50e10, 1.50e11, 5.0, 5.0, 8.13e11, 9.0e10],
+    "iron":    [0.5, 1.5, 9.50e10, 7.860, 1.28e12, 1.05e12, 1.42e10, 8.45e10, 5.0, 5.0, 7.75e11, 5.3e9],
+    "ice":     [0.3, 0.1, 1.00e11, 0.917, 9.47e10, 9.47e10, 7.730e9, 3.04e10, 10., 5.0, 2.80e10, 3.1e9],
+    "olivine": [0.5, 1.4, 5.50e12, 3.500, 1.31e12, 4.90e11, 4.50e10, 1.50e11, 5.0, 5.0, 8.13e11, 5.0e10],
     "water":   [0.5, 0.9, 2.00e10, 1.000, 2.00e11, 1.00e11, 4.000e9, 2.00e10, 5.0, 5.0, 1.000e0, 1.00e0],
 }
 

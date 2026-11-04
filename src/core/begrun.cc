@@ -2637,10 +2637,11 @@ void read_parameter_file(char *fname)
         id[nt++] = REAL;
 #ifdef EOS_DAMAGE_POROSITY
         {
-            const char *names[6] = {"WeibullK", "WeibullM", "DruckerPragerMu", "InitialDistention", "CrushPressureElastic", "CrushPressureSolid"};
-            double *fields[6] = {&All.SolidMaterialCustom.WeibullK, &All.SolidMaterialCustom.WeibullM, &All.SolidMaterialCustom.DruckerPragerMu,
+            const char *names[8] = {"WeibullK", "WeibullM", "InternalFriction", "Cohesion", "YieldStrengthMax", "InitialDistention", "CrushPressureElastic", "CrushPressureSolid"};
+            double *fields[8] = {&All.SolidMaterialCustom.WeibullK, &All.SolidMaterialCustom.WeibullM, &All.SolidMaterialCustom.InternalFriction,
+                                 &All.SolidMaterialCustom.Cohesion, &All.SolidMaterialCustom.YieldStrengthMax,
                                  &All.SolidMaterialCustom.InitialDistention, &All.SolidMaterialCustom.CrushPressureElastic, &All.SolidMaterialCustom.CrushPressureSolid};
-            for(int k_f = 0; k_f < 6; k_f++) {snprintf(tag[nt], sizeof(tag[nt]), "SolidMaterial_%s", names[k_f]); addr[nt] = fields[k_f]; id[nt++] = REAL;}
+            for(int k_f = 0; k_f < 8; k_f++) {snprintf(tag[nt], sizeof(tag[nt]), "SolidMaterial_%s", names[k_f]); addr[nt] = fields[k_f]; id[nt++] = REAL;}
             strcpy(tag[nt], "SolidMaterial_FractureActivation"); addr[nt] = &All.SolidMaterialCustom.FractureActivation; id[nt++] = REAL;
 #if (NUMDIMS < 3)
             strcpy(tag[nt], "FractureOutOfPlaneExtent"); addr[nt] = &All.FractureOutOfPlaneExtent; id[nt++] = REAL;
@@ -2658,7 +2659,9 @@ void read_parameter_file(char *fname)
 #ifdef EOS_DAMAGE_POROSITY
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_WeibullK", aneos_k); addr[nt] = &custom->WeibullK; id[nt++] = REAL;
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_WeibullM", aneos_k); addr[nt] = &custom->WeibullM; id[nt++] = REAL;
-            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_DruckerPragerMu", aneos_k); addr[nt] = &custom->DruckerPragerMu; id[nt++] = REAL;
+            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_InternalFriction", aneos_k); addr[nt] = &custom->InternalFriction; id[nt++] = REAL;
+            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_Cohesion", aneos_k); addr[nt] = &custom->Cohesion; id[nt++] = REAL;
+            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_YieldStrengthMax", aneos_k); addr[nt] = &custom->YieldStrengthMax; id[nt++] = REAL;
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_ReferenceDensity", aneos_k); addr[nt] = &custom->ReferenceDensity; id[nt++] = REAL;
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_FractureActivation", aneos_k); addr[nt] = &custom->FractureActivation; id[nt++] = REAL;
 #endif

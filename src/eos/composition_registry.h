@@ -65,17 +65,19 @@ enum {
    consumer reads it through solid_material_of(). Code units, except where noted. */
 struct solid_material {
     double ShearModulus;          /* mu */
-    double YieldStrength;         /* Y_0, von Mises */
+    double YieldStrength;         /* Y, the constant von Mises yield strength (radial return to sqrt(NUMDIMS J2) = Y); also the strength scale of the recent-yield memory */
     double WeibullK;              /* Weibull flaw density coefficient k [1/code length^3] */
     double WeibullM;              /* Weibull exponent m */
-    double DruckerPragerMu;       /* Drucker-Prager friction coefficient */
+    double InternalFriction;      /* mu_i of the pressure-dependent intact strength (EOS_DAMAGE_POROSITY model 2; 0 = the constant von Mises YieldStrength) */
     double InitialDistention;     /* alpha_0 of the P-alpha porosity model (1 = compact) */
     double CrushPressureElastic;  /* P_e of the P-alpha model */
     double CrushPressureSolid;    /* P_s of the P-alpha model */
     double ReferenceDensity;      /* compact reference density rho_0 (Tillotson rho_0, or an ANEOS table's own value): an element's flaw volume is its mass x InitialDistention / rho_0 */
     double FractureActivation;    /* fracture law: 0 = tensile flaws (Benz & Asphaug), 1 = the shear-activated law */
+    double Cohesion;              /* Y_c: the pressure-dependent strength at zero pressure (with InternalFriction > 0) */
+    double YieldStrengthMax;      /* Y_M: its limit at high pressure (Collins et al. 2004); 0 = no limit (linear in pressure) */
 };
-#define N_SOLID_MATERIAL_PROPERTIES 10  /* the doubles above, in order (written as one row per id to the snapshot header) */
+#define N_SOLID_MATERIAL_PROPERTIES 12  /* the doubles above, in order (written as one row per id to the snapshot header) */
 #define FRACTURE_ACTIVATION_TENSILE_FLAWS 0
 #define FRACTURE_ACTIVATION_SHEAR         1
 static_assert(sizeof(struct solid_material) == N_SOLID_MATERIAL_PROPERTIES * sizeof(double), "struct solid_material must stay N_SOLID_MATERIAL_PROPERTIES doubles");

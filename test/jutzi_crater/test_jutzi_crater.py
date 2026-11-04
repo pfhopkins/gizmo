@@ -1,4 +1,4 @@
-"""smoke test: Grady-Kipp damage + Drucker-Prager yield with the P-alpha model
+"""smoke test: Grady-Kipp damage + the pressure-dependent strength of intact rock with the P-alpha model
 compiled in (EOS_DAMAGE_POROSITY=7) on a small basalt-on-basalt cratering impact.
 
 Validates:

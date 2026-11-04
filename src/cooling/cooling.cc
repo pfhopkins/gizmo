@@ -53,10 +53,9 @@ GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho,
 #if defined(EOS_TRUELOVE_PRESSURE) || defined(TRUELOVE_CRITERION_PRESSURE)
 /* mesh/kernel.h needed BEFORE eos_functions.h: KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER
  * macro is used inside eos_functions.h's set_eos_pressure_impl Truelove
- * pressure branch. Cannot be included from inside eos_functions.h itself —
- * kernel.h has no header guards and would trigger same-TU
- * redefinition/reinclude errors if pulled in by both eos_functions.h and
- * any other consumer in the same TU. */
+ * pressure branch. It is included here rather than from inside
+ * eos_functions.h, whose other includers do not all need it (kernel.h
+ * carries #pragma once, so a second inclusion below is harmless). */
 #include "../mesh/kernel.h"
 #endif
 /* Outside the conditional above: the shutdown release is needed in every build,
@@ -84,6 +83,10 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
 #endif
 /* Simple steady-state chemistry — single source in simple_chemistry.h */
 #include "./simple_chemistry.h"
+#if defined(EOS_ELASTIC) && defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+#include "../mesh/kernel.h"                        /* kernel_main, for the tensile-instability factor elastic_physics_functions.h defines */
+#include "../solids/elastic_physics_functions.h" /* elastic_project_after_eos_P, in the post-cooling tail */
+#endif
 /* NOTE: set_eos_pressure and finish_cooling_host_deferred_dust_updates are
  * intentionally NOT called inside do_the_cooling_for_particle (host or device).
  * Their bodies call ThermalProperties (which calls convert_u_to_temp ->
@@ -483,6 +486,9 @@ void cooling_parent_routine(void)
             struct EosTableView eos_tables = eos_tables_view();
             gizmo_gpu_kernel_launch("post_cooling_tail", batch.count, KOKKOS_LAMBDA(int j) {
                 set_eos_pressure_impl(j, kp, kc, &eos_tables);
+#if defined(EOS_ELASTIC) && defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+                elastic_project_after_eos_P(j, kc, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED); /* the accepted state: as refresh_eos_and_project on the host */
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
                 if((kdt[j] > 0) && (kc[j].Mass > 0) && (kp[j].Type == 0)) {
                     update_dust_processes(j, kdt[j] * UNIT_TIME_IN_MYR * 0.001, kp, kc);
@@ -536,7 +542,7 @@ void cooling_parent_routine(void)
     for(int j = 0; j < N_active; j++)
     {
         int i = cool_indices[j];
-        set_eos_pressure(i, P, CellP);
+        refresh_eos_and_project(i, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED);
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
         double dtime = get_particle_timestep_in_physical(i, P);
 #ifdef TRANSPORT_SUBCYCLE_COOLING

@@ -212,6 +212,9 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             drift_extra_physics_P(i, time0, time1, dt_entr, pp, cell);
 
             set_eos_pressure_impl(i, pp, cell, eos_tables);
+#if defined(EOS_ELASTIC) && defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+            elastic_project_after_eos_P(i, cell, STATE_COPY_PREDICTED); /* the accepted predicted state: as refresh_eos_and_project on the host */
+#endif
         }
     
     /* check for reflecting or outflow or otherwise special boundaries: if so, do the reflection/boundary! */

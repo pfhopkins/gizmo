@@ -44,7 +44,7 @@ void grain_promotion_parent_routine(void)
         grain_promotion_init_cellp(i);
 
         P[i].Type = 0;
-        set_eos_pressure(i, P, CellP); /* pressure and sound speed (with the deviatoric stiffness) of the promoted material */
+        refresh_eos_and_project(i, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED); /* pressure and sound speed (with the deviatoric stiffness) of the promoted material */
         {   /* its first timestep is chosen before its first hydro force sets this: bound the pair timestep signal speed (2 max(c_i,c_j),
                plus three times the approach speed) against the surrounding gas it carries (which includes its own material at rest) */
             double c_promoted = CellP[i].effective_soundspeed(), c_gas = sqrt(gas_soundspeed2_around_grain(P[i].Gas_Temperature, P[i].Gas_fion));

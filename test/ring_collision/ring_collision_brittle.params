@@ -39,5 +39,5 @@ UnitLength_in_cm                   1
 UnitMass_in_g                      1
 SolidMaterial_WeibullK             1e12
 SolidMaterial_WeibullM             9
-SolidMaterial_DruckerPragerMu      0
+SolidMaterial_InternalFriction     0
 FractureOutOfPlaneExtent           1
