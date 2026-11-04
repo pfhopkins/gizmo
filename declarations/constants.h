@@ -255,7 +255,7 @@
 #define CPU_IMPROVDIFFWAIT    44
 #define CPU_IMPROVDIFFCOMM    45
 #define CPU_RTNONFLUXOPS  46
-#define CPU_DUMMY00       47
+#define CPU_GRADCOMPUTE   47  /* gradient-loop compute (cpu.txt folds it into density compute) */
 #define CPU_DUMMY01       48
 #define CPU_DUMMY02       49
 #define CPU_DUMMY03       50
