@@ -359,9 +359,7 @@ void gravity_tree(void)
 #endif
                     gravity_secondary_loop(&mainthreadid);
                 }
-                tend = my_second(); timetree2 += timediff(tstart, tend); tstart = my_second();
-                MPI_Barrier(MPI_COMM_WORLD); /* insert MPI Barrier here - will be forced by comms below anyways but this allows for clean timing measurements */
-                tend = my_second(); timewait2 += timediff(tstart, tend);
+                tend = my_second(); timetree2 += timediff(tstart, tend); /* no barrier: the results exchange below waits only for actual partners */
 
                 tstart = my_second(); Nimport = 0;
                 for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* send the results for imported elements back to their host tasks */
