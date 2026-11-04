@@ -2544,6 +2544,36 @@ int domain_check_for_local_refine(int i, double countlimit, double costlimit)
 }
 
 
+/*! Broadcast an imported top tree from rank `root` to ranks root..root+n-1 along a binomial tree. On the root, `buf`
+ *  holds *count nodes; elsewhere it is NULL and is allocated here (sized for the larger of the import and the local
+ *  tree, as the merge below needs). Called in the same order on every member, so tags never cross. */
+static struct local_topnode_data *domain_bcast_topnodes_in_range(struct local_topnode_data *buf, int *count, int root, int n)
+{
+  int rel = ThisTask - root, mask = 1;
+  while(mask < n)
+    {
+      if(rel & mask)
+        {
+          int src = ThisTask - mask;
+          MPI_Recv(count, 1, MPI_INT, src, TAG_GRAV_A, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+          buf = (struct local_topnode_data *) mymalloc("topNodes_import", IMAX(*count, NTopnodes) * sizeof(struct local_topnode_data));
+          MPI_Recv(buf, *count * sizeof(struct local_topnode_data), MPI_BYTE, src, TAG_GRAV_B, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+          break;
+        }
+      mask <<= 1;
+    }
+  for(mask >>= 1; mask > 0; mask >>= 1)
+    {
+      if(rel + mask < n)
+        {
+          MPI_Send(count, 1, MPI_INT, ThisTask + mask, TAG_GRAV_A, MPI_COMM_WORLD);
+          MPI_Send(buf, *count * sizeof(struct local_topnode_data), MPI_BYTE, ThisTask + mask, TAG_GRAV_B, MPI_COMM_WORLD);
+        }
+    }
+  return buf;
+}
+
+
 int domain_recursively_combine_topTree(int start, int ncpu)
 {
   int i, nleft, nright, errflag = 0;
@@ -2591,58 +2621,12 @@ int domain_recursively_combine_topTree(int start, int ncpu)
 		       recvTask, TAG_GRAV_B, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 	}
 
-      if(ThisTask == domainkey_top_left)
-	{
-	  for(recvTask = domainkey_top_left + 1; recvTask < domainkey_top_left + nleft; recvTask++)
-	    {
-	      MPI_Send(&ntopnodes_import, 1, MPI_INT, recvTask, TAG_GRAV_A, MPI_COMM_WORLD);
-	      MPI_Send(topNodes_import,
-		       ntopnodes_import * sizeof(struct local_topnode_data), MPI_BYTE,
-		       recvTask, TAG_GRAV_B, MPI_COMM_WORLD);
-	    }
-	}
-
-      if(ThisTask == domainkey_top_right)
-	{
-	  for(recvTask = domainkey_top_right + 1; recvTask < domainkey_top_right + nright; recvTask++)
-	    {
-	      MPI_Send(&ntopnodes_import, 1, MPI_INT, recvTask, TAG_GRAV_A, MPI_COMM_WORLD);
-	      MPI_Send(topNodes_import,
-		       ntopnodes_import * sizeof(struct local_topnode_data), MPI_BYTE,
-		       recvTask, TAG_GRAV_B, MPI_COMM_WORLD);
-	    }
-	}
-
-      if(ThisTask > domainkey_top_left && ThisTask < domainkey_top_left + nleft)
-	{
-	  MPI_Recv(&ntopnodes_import, 1, MPI_INT, domainkey_top_left, TAG_GRAV_A, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-	  topNodes_import =
-	    (struct local_topnode_data *) mymalloc("topNodes_import",
-						   IMAX(ntopnodes_import,
-							NTopnodes) * sizeof(struct local_topnode_data));
-
-	  MPI_Recv(topNodes_import,
-		   ntopnodes_import * sizeof(struct local_topnode_data), MPI_BYTE,
-		   domainkey_top_left, TAG_GRAV_B, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-	}
-
-
-      if(ThisTask > domainkey_top_right && ThisTask < domainkey_top_right + nright)
-	{
-	  MPI_Recv(&ntopnodes_import, 1, MPI_INT, domainkey_top_right, TAG_GRAV_A, MPI_COMM_WORLD,
-		   MPI_STATUS_IGNORE);
-
-	  topNodes_import =
-	    (struct local_topnode_data *) mymalloc("topNodes_import",
-						   IMAX(ntopnodes_import,
-							NTopnodes) * sizeof(struct local_topnode_data));
-
-	  MPI_Recv(topNodes_import,
-		   ntopnodes_import * sizeof(struct local_topnode_data), MPI_BYTE,
-		   domainkey_top_right, TAG_GRAV_B, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-	}
+      /* hand each leader's import to the rest of its half: a binomial tree, so the fan-out takes log2(n) message
+         times instead of n-1 sends from the leader (the data each rank receives is unchanged) */
+      if(ThisTask >= domainkey_top_left && ThisTask < domainkey_top_left + nleft)
+        {topNodes_import = domain_bcast_topnodes_in_range(topNodes_import, &ntopnodes_import, domainkey_top_left, nleft);}
+      if(ThisTask >= domainkey_top_right && ThisTask < domainkey_top_right + nright)
+        {topNodes_import = domain_bcast_topnodes_in_range(topNodes_import, &ntopnodes_import, domainkey_top_right, nright);}
 
       if(ThisTask >= domainkey_top_left && ThisTask < domainkey_top_left + nleft)
 	{
