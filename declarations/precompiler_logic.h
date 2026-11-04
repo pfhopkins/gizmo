@@ -401,6 +401,11 @@
                               96 ranks -> 31 on M2e4. */
 #endif
 #endif
+#if !defined(DOMAIN_KEEP_OWNERS) && !defined(DOMAIN_KEEP_OWNERS_OFF)
+#define DOMAIN_KEEP_OWNERS /* owner-preserving segment assignment (domain.cc); M2e5 at 384 ranks: 99.7% -> 32-57% of particles
+                              exchanged per decomposition, domain time 0.41x; M2e4 at 48 ranks on one node: 0.98x wall. Opt out with
+                              DOMAIN_KEEP_OWNERS_OFF. */
+#endif
 #define INPUT_POSITIONS_IN_DOUBLE
 #define OUTPUT_POTENTIAL
 #if !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL) && !defined(IO_NO_GRADUAL_SNAPSHOT_RESTART) /* opt-out: restart from a snapshot at physical timesteps, no ramp */
