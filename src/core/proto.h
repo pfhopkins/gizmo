@@ -1002,6 +1002,9 @@ double single_star_max_timestep(int p);
 void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
 void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+void single_star_event_logs_write(void);
+#endif
 #endif
 double mechanical_fb_calculate_eventrates(int i, double dt);
 double Z_for_stellar_evol(int i);

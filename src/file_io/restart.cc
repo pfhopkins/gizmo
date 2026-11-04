@@ -108,6 +108,9 @@ void restart(int modus)
     int partIndex, abunIndex; 
 #endif 
     
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+    if(modus == 0) {single_star_event_logs_write();}
+#endif
     if(ThisTask == 0 && modus == 0) // writing re-start files: move old files to .bak
     {
         snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/restartfiles", All.OutputDir);

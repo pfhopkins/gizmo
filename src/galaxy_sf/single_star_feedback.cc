@@ -266,6 +266,28 @@ static void single_star_events_flush(void)
     fflush(FdSingleStarEvents);
 }
 
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+/* the log row of star i's event; removed = mass the loop took [Msun]; status as in SNinfo.txt */
+static void single_star_log(int i, int s, const struct single_star_event *ev, double removed, int status)
+{
+    struct single_star_log_row r; memset(&r, 0, sizeof(r));
+    double logM, logZ, z = 0; single_star_logMZ(s, &logM, &logZ);
+    for(int k = ELEM_C; k < STBL_NELEM; k++) {z += ev->y[k];}
+    r.t = All.Time; for(int k = 0; k < 3; k++) {r.x[k] = P[i].Pos[k];}
+    r.u = SingleStars.u_ambient[s]; r.rho = P[i].DensityAroundParticle; r.mstar = SingleStars.M_drawn[s]; r.id = P[i].ID; r.timebin = P[i].TimeBin; r.status = status;
+    if(ev->kind == SSE_WIND) { /* a delivery: dM, its momentum and metals */
+        r.file = 2; r.mej = removed; r.E = removed * SOLAR_MASS_CGS * ev->v_kms * 1.e5; r.zej = (ev->Mej > 0) ? z * removed / ev->Mej : 0;
+        single_star_event_log_push(&r);
+        return;
+    }
+    if(status != 2) {r.mej = ev->Mej; r.zej = z; r.C = ev->y[ELEM_C]; r.O = ev->y[ELEM_O]; r.Si = ev->y[ELEM_Si]; r.Fe = ev->y[ELEM_Fe]; r.E = ev->E;}
+    r.age = single_star_age_yr(i); r.file = (ev->kind == SSE_AGB) ? 1 : 0;
+    r.remnant = (ev->kind == SSE_IA) ? 7 : ev->remnant_type;
+    r.life = (ev->kind == SSE_IA) ? 0 : single_star_death_age_yr(logM, logZ);
+    single_star_event_log_push(&r);
+}
+#endif
+
 /* before the feedback loop: the masses of the sources */
 void single_star_feedback_prepare(const int *list, int n)
 {
@@ -286,6 +308,9 @@ void single_star_feedback_finalize(const int *list, int n)
         struct single_star_event ev; single_star_event_of(i, kind, &ev);
         double removed = (ssfb_mass_before[a] - P[i].Mass) * UNIT_MASS_IN_SOLAR;
         if(ev.Mej > 0 && removed <= 0) { /* nothing coupled: try again next step */
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+            if(kind != SSE_WIND) {single_star_log(i, s, &ev, 0, 2);}
+#endif
             if(++SingleStars.no_deposit_count[s] > SINGLE_STAR_NO_DEPOSIT_MAX) {
                 gizmo_request_controlled_stop(7831, "single-star feedback event found no gas to couple to for too many steps", __FILE__, __LINE__, __FUNCTION__);
             }
@@ -297,6 +322,9 @@ void single_star_feedback_finalize(const int *list, int n)
                                      (kind == SSE_WIND) ? ssfb_mass_before[a] * UNIT_MASS_IN_SOLAR : ev.M_trigger, ev.Mej, (kind == SSE_WIND) ? P[i].Mass * UNIT_MASS_IN_SOLAR : ev.M_rem,
                                      (ev.Mej > 0) ? ev.E : 0., z, residual, (double)SingleStars.no_deposit_count[s]};
         SingleStars.no_deposit_count[s] = 0;
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+        single_star_log(i, s, &ev, removed, (kind == SSE_SN && ev.E <= 0) ? 1 : 0);
+#endif
         if(kind == SSE_WIND) {
             SingleStars.last_wind_log_age[s] = ev.log_age_to;
             continue; /* winds are frequent: not logged per step */

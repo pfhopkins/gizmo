@@ -139,6 +139,9 @@ struct DensityAccumData {
 #ifdef HYDRO_PRESSURE_SPH
     MyDouble                   EgyRho;
 #endif
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+    MyDouble                   UAround;
+#endif
 
 #if defined(SPHAV_CD10_VISCOSITY_SWITCH)
     MyFloat                    NV_D[3][3];
@@ -403,6 +406,9 @@ struct DensitySpec {
         /* Core (always ADD) */
         local.Ngb              += peer.Ngb;
         local.Rho              += peer.Rho;
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+        local.UAround          += peer.UAround;
+#endif
         local.DrkernNgb        += peer.DrkernNgb;
         local.Particle_DivVel  += peer.Particle_DivVel;
         local.NV_T             += peer.NV_T;
@@ -978,6 +984,9 @@ struct DensitySpec {
     static void zero_accum(AccumData& accum) {
         accum.Ngb              = 0;
         accum.Rho              = 0;
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+        accum.UAround          = 0;
+#endif
         accum.DrkernNgb        = 0;
         accum.Particle_DivVel  = 0;
         for(int a = 0; a < 6; ++a) accum.NV_T.data[a] = 0;
@@ -1231,6 +1240,9 @@ struct DensitySpec {
         /* Always-on accumulators (legacy line 206-217). */
         accum.Ngb += wk;
         accum.Rho += mj_wk;
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+        accum.UAround += mj_wk * (double)CellPj->InternalEnergyPred;
+#endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
         if (i_active.Type == 0 && r == 0) {
             accum.ParticleVel[0] += mj_wk * (double)CellPj->VelPred[0];
