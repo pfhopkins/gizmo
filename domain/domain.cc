@@ -136,6 +136,16 @@ static int LightRepartitionCount = 0; /*!< number of consecutive lightweight rep
 static std::vector<int> KeepOwnerRank, KeepOwnerCount;
 static void domain_keep_owner_census(int nseg);
 #endif
+#ifdef DOMAIN_KEEP_BOUNDARIES
+#ifndef DOMAIN_KEEP_OWNERS
+#error "DOMAIN_KEEP_BOUNDARIES aligns the split with the standing ownership for DOMAIN_KEEP_OWNERS to keep; it needs DOMAIN_KEEP_OWNERS"
+#endif
+/* Peano keys at which the standing layout changes owner, ascending, taken just before the top tree is discarded */
+static std::vector<peanokey> KeepBoundaryKeys;
+static std::vector<char> KeepBoundaryCand; /* per leaf of the new top tree: a segment may start here */
+static void domain_record_ownership_boundaries(void);
+static void domain_mark_boundary_candidates(void);
+#endif
 
 /*! Raise the particle capacity to what the coming epoch is expected to need, at the one point in a step
  *  where it may move: the tree has just been freed and will be rebuilt from the new value, and the active
@@ -400,6 +410,9 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 
     t_tmp = my_second();
     force_treefree();
+#ifdef DOMAIN_KEEP_BOUNDARIES
+    domain_record_ownership_boundaries();
+#endif
     domain_free();
     t_treefree = timediff(t_tmp, my_second());
 
@@ -1052,7 +1065,13 @@ int domain_decompose(void)
     myfree(particle_costfactor); myfree(particle_total_cost);
 
     /* find the split of the domain grid */
+#ifdef DOMAIN_KEEP_BOUNDARIES
+    domain_mark_boundary_candidates();
+#endif
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
+#ifdef DOMAIN_KEEP_BOUNDARIES
+    KeepBoundaryCand.clear(); /* only the main split snaps; the memory-bound fallback below is the plain load split */
+#endif
 #ifdef DOMAIN_KEEP_OWNERS
     domain_keep_owner_census(multipledomains * NTask);
 #endif
@@ -1549,6 +1568,24 @@ void domain_exchange(void)
 
 
 
+#ifdef DOMAIN_KEEP_BOUNDARIES
+static void domain_record_ownership_boundaries(void)
+{
+    KeepBoundaryKeys.clear();
+    if(!domain_allocated_flag || NTopleaves <= 1) {return;}
+    std::vector<peanokey> leaf_key(NTopleaves);
+    for(int i = 0; i < NTopnodes; i++) {if(TopNodes[i].Daughter < 0) {leaf_key[TopNodes[i].Leaf] = TopNodes[i].StartKey;}}
+    for(int l = 1; l < NTopleaves; l++) {if(DomainTask[l] != DomainTask[l - 1]) {KeepBoundaryKeys.push_back(leaf_key[l]);}}
+}
+
+/*! A segment of the new split may start at the new leaf that contains an owner change of the standing layout. */
+static void domain_mark_boundary_candidates(void)
+{
+    KeepBoundaryCand.assign(NTopleaves, 0);
+    for(peanokey k : KeepBoundaryKeys) {KeepBoundaryCand[domain_toptree_leaf(k, topNodes)] = 1;}
+}
+#endif
+
 void domain_findSplit_work_balanced(int ncpu, int ndomain)
 {
   int i, start, end;
@@ -1579,6 +1616,40 @@ void domain_findSplit_work_balanced(int ncpu, int ndomain)
       }
 
   workavg = 1.0 / ncpu;
+
+#ifdef DOMAIN_KEEP_BOUNDARIES
+  if((int) KeepBoundaryCand.size() == ndomain && !KeepBoundaryKeys.empty() && ncpu > 1)
+    {
+      /* Same cumulative rule as below (segment i ends at the first leaf where the running sum reaches (i+1)/ncpu),
+         but an end is moved to the nearest place where the standing layout changes owner, if that lies within
+         DOMAIN_KEEP_BOUNDARIES mean segments of the rule's end. Otherwise every cost change shifts the phase of
+         all later boundaries, and the census below finds most segments straddling two holders. */
+      std::vector<double> cum(ndomain + 1, 0.0);
+      for(i = 0; i < ndomain; i++) {cum[i + 1] = cum[i] + fac_work * domainWork[i] + fac_load * domainCount[i] + fac_workgas * domainWorkGas[i];}
+      const double tol = DOMAIN_KEEP_BOUNDARIES * workavg;
+      int n_snapped = 0;
+      for(i = 0, start = 0; i < ncpu; i++)
+        {
+          const int emax = (i == ncpu - 1) ? ndomain - 1 : ndomain - (ncpu - i); /* leave a leaf for each later segment */
+          const double target = (i + 1) * workavg;
+          if(i == ncpu - 1) {end = ndomain - 1;}
+          else
+            {
+              end = start;
+              while(end < emax && cum[end + 1] < target) {end++;}
+              int best = -1; double best_d = tol;
+              for(int e = end; e >= start && target - cum[e + 1] <= tol; e--) {if(KeepBoundaryCand[e + 1]) {double d = fabs(cum[e + 1] - target); if(d <= best_d) {best = e; best_d = d;} break;}}
+              for(int e = end + 1; e <= emax && cum[e + 1] - target <= tol; e++) {if(KeepBoundaryCand[e + 1]) {double d = fabs(cum[e + 1] - target); if(d < best_d) {best = e; best_d = d;} break;}}
+              if(best >= 0) {end = best; n_snapped++;}
+            }
+          DomainStartList[i] = start;
+          DomainEndList[i] = end;
+          start = end + 1;
+        }
+      if(ThisTask == 0) {printf("Domain keep-boundaries: %d of %d segment ends on a standing owner change (%d known)\n", n_snapped, ncpu - 1, (int) KeepBoundaryKeys.size()); fflush(stdout);}
+      return;
+    }
+#endif
 
   work_before = workavg_before = 0;
 
