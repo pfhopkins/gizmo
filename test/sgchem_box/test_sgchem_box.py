@@ -4,6 +4,7 @@ test_sgchem_startup: the installed chemistry tables are checked at start-up; wit
 TimeMax, with a changed table it stops with a message naming the install script.
 """
 
+import re
 import shutil
 import subprocess
 import sys
@@ -43,6 +44,10 @@ def test_sgchem_startup(tables):
     build_and_run_test(NAME, 2, default_omp_threads(), param_overrides={"SGChemTablesPath": tables})
     log = open(path.join(HERE, f"test_{NAME}.out")).read()
     assert "SGCHEM: chemistry tables built" in log
+    # the energy floor of MinGasTemp = 2.73 K: atomic gas with X_H = 0.7065 (ABHE = 0.1), 3/2 k T per particle
+    xh, floor = re.search(r"SGCHEM: hydrogen mass fraction (\S+), MinEgySpec (\S+)", log).groups()
+    mu = 4.0 / (1.0 + 3.0 * 0.7065)
+    assert float(xh) == 0.7065 and float(floor) == pytest.approx(1.5 * 1.3806e-16 * 2.73 / (mu * 1.6726e-24) / 1.0e10, rel=1e-3)
 
     bad = path.join(HERE, "output_tables_changed")
     makedirs(bad, exist_ok=True)

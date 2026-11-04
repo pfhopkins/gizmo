@@ -78,6 +78,7 @@ void sgchem_init(void)
     p.dust_to_gas_ratio = All.SGChemDustToGasRatio;
     chem_cxx_tables_init(&p);
     if(ThisTask == 0) {printf("SGCHEM: chemistry tables built\n"); fflush(stdout);}
+    if(ThisTask == 0) {printf("SGCHEM: hydrogen mass fraction %g, MinEgySpec %.8g\n", (double) HYDROGEN_MASSFRAC, All.MinEgySpec); fflush(stdout);}
 }
 
 #endif /* SGCHEM */
