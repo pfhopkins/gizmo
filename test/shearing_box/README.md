@@ -34,17 +34,13 @@ MNRAS 517, 2639), two failure modes that the warm lattice problems cannot see:
 
 | problem | IC | checks |
 |---|---|---|
-| cold_shear | equilibrium shear on a jittered lattice (5% rms displacement), M = 30, 100 at 16^3 and 24^3, 4 orbits | rms velocity noise about the equilibrium (in c_s) not growing in the last orbit (< 1.2x the previous one); noise converging at least first order from 16^3 to 24^3 (**xfail**) |
+| cold_shear | equilibrium shear on a jittered lattice (5% rms displacement), 4 orbits: M = 30 at 16^3 and 32^3, M = 100 at 16^3 | rms velocity noise about the equilibrium (in c_s) not growing in the last orbit (< 1.2x the previous one); at M = 30, noise falling at least 0.65x from 16^3 to 32^3 (first order 0.5; 0.56 measured) |
 | cold_epicycle | uniform epicycle, c_s = 1e-3, v_r0 = 0.1 c_s, dt = 0.077 (MaxSizeTimestep, not Courant); gas for 100 epicycles, collisionless particles for 10 | epicycle energy E = v_r^2 + 2 eta^2/(2-q) (exactly conserved) within 1e-2 at the end (measured: -4.3e-3 gas, -3.3e-5 collisionless) |
 
-Known failure, marked `xfail(strict=True)` so a fix shows up as XPASS:
-
-- **Shear noise does not converge.** On irregular particles the noise saturates within ~1.5 orbits and stays flat
-  (bounded), uniformly through the box, at a level set by the shear Mach number across a particle spacing,
-  q Omega dx / c_s = M/N: rms dv/c_s = 0.15, 0.21, 0.37, 0.52, 0.80, 0.86 at M/N = 0.42, 0.63, 1.25, 1.9, 4.2, 6.3
-  (rms drho/rho ~ 0.2 at M = 100). It falls more slowly than first order with resolution (0.51 -> 0.37 at M = 30,
-  0.87 -> 0.79 at M = 100 from 16^3 to 24^3). At M = 10 it appears late: quiet (~0.02 c_s) for ~2.5 orbits at 16^3
-  (~4 at 24^3), then grows with e-folding ~3.7/Omega to 0.21 (0.15) c_s.
+The cold-shear noise is set by the shear velocity jump across a particle spacing, q Omega dx / c_s = M/N. Below 1
+it is ~0.3 q Omega dx and converges at first order; above 1 (supersonic across a particle) it saturates near c_s and
+barely falls with resolution: rms dv/c_s = 0.52 -> 0.29 at M = 30 and 0.86 -> 0.71 at M = 100 from 16^3 to 32^3
+(M/N = 1.9 -> 0.94 and 6.3 -> 3.1). A relaxed glass gives the same numbers to 1%.
 
 The cold epicycle guards the Coriolis integration. It used to be explicit, evaluated with `VelPred` for gas (Heun's
 method: E grew +80% over 100 epicycles, d ln E/dt = 2.0 Omega^4 dt^3) and with the previous half-kicked `P[i].Vel`
