@@ -1,0 +1,81 @@
+%---- Adiabatic supernova energy-conservation test: a 1e3 Msun FIRE-3 stellar population in a
+%     uniform periodic box (n_H = 1 cm^-3, T = 1e4 K), no cooling, no gravity, no radiation, no
+%     stellar mass loss. The only gas energy source is the supernovae. Run with restart flag 2.
+%     Units: pc, Msun, km/s (time unit 0.9778 Myr).
+
+InitCondFile  sn_cluster_adiabatic_ics_000
+OutputDir     output
+
+ICFormat    3
+SnapFormat  3
+
+RestartFile                 restart
+SnapshotFileBase            snapshot
+OutputListOn                0
+OutputListFilename          output_times.txt
+NumFilesPerSnapshot         1
+NumFilesWrittenInParallel   1
+
+TimeOfFirstSnapshot     0.0
+TimeBetSnapshot         2.5
+
+TimeLimitCPU            172800
+CpuTimeBetRestartFile   36000
+
+%---- 10 Myr. TimeMax also fixes the integer timestep ladder, (TimeMax-TimeBegin)*2^-k
+TimeBegin   0.0
+TimeMax     10.24
+
+MaxSizeTimestep         10.24
+MinSizeTimestep         1.0e-12
+
+UnitLength_in_cm            3.085678e+18
+UnitMass_in_g               1.989e+33
+UnitVelocity_in_cm_per_s    1.00e+05
+GravityConstantInternal     0
+
+ComovingIntegrationOn   0
+BoxSize                 141.50111967916317
+Omega0                  0.
+OmegaLambda             0.
+OmegaBaryon             0.
+HubbleParam             1.
+
+MaxMemSize          4000
+PartAllocFactor     4.0
+BufferSize          200
+
+TreeDomainUpdateFrequency   0.005
+
+InitGasTemp     0
+MinGasTemp      0
+
+DesNumNgb               32
+MaxKernelRadius         1.0e10
+MinGasKernelRadiusFractional    0
+
+SofteningGas    0.1
+SofteningHalo   0.1
+SofteningDisk   0.1
+SofteningBulge  0.1
+SofteningStars  0.1
+SofteningBndry  0.1
+SofteningGasMaxPhys     0.1
+SofteningHaloMaxPhys    0.1
+SofteningDiskMaxPhys    0.1
+SofteningBulgeMaxPhys   0.1
+SofteningStarsMaxPhys   0.1
+SofteningBndryMaxPhys   0.1
+
+TurbDiffusionCoefficient 1.0
+
+%---- no star formation
+CritPhysDensity     1.0e10
+SfEffPerFreeFall    1.0
+
+%---- FIRE stellar feedback: supernovae only
+InitMetallicity             1.0
+InitStellarAge              0.0
+SNeIIEnergyFrac             1.0
+GasReturnFraction           0.0
+GasReturnEnergy             0.0
