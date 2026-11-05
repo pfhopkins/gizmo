@@ -250,6 +250,9 @@ void init(void)
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         P[i].time_since_last_treeforce = 0;
         P[i].tdyn_step_for_treeforce = 0;
+#endif
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+        P[i].GravAccel_Retained = {};
 #endif        
         
 

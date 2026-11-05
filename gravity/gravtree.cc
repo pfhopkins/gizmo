@@ -557,8 +557,8 @@ void gravity_tree(void)
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         double dt = get_particle_timestep_in_physical(i);
         if(treeforce_skip_flag[ii]) { // use cached decision from BEFORE tree walk to avoid mismatch if tree walk modified quantities that needs_new_treeforce depends on
-#ifdef BOX_SHEARING
-            P[i].GravAccel -= P[i].ShearCoriolisAccel; /* velocity-dependent: recomputed every step, never extrapolated */
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+            P[i].GravAccel = P[i].GravAccel_Retained; /* the kept gravity, without the forces added after the last gravity call */
 #endif
             P[i].GravAccel += P[i].GravJerk * (dt * All.cf_a2inv); // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
             P[i].time_since_last_treeforce += dt;
@@ -712,15 +712,29 @@ void gravity_tree(void)
 #endif /* end tree walk (guarded by SELFGRAVITY_OFF unless non-gravity tree features are active) */
 
 
-#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
-    /* a skipped element's GravAccel, extrapolated from its last walk, already holds the analytic terms added then:
-       keep it, rather than stack another copy on every skipped step */
-    std::vector<Vec3<MyDouble>> skipped_accel;
-    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {if(treeforce_skip_flag[ii]) {skipped_accel.push_back(P[ActiveParticleList[ii]].GravAccel);}}
+    /* The analytic terms go only onto accelerations this call rebuilt. Kept as they are: a non-Hermite particle in a Hermite pass
+       (not re-evaluated, so its GravAccel still holds them and the forces added after gravity) and a skipped walk's extrapolated
+       GravAccel, which holds the terms from its last walk (unless the tree part is retained apart and they are re-added fresh). */
+#if defined(HERMITE_INTEGRATION) || (defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF))
+    std::vector<int> kept_ii; std::vector<Vec3<MyDouble>> kept_accel;
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++)
+    {
+        int i = ActiveParticleList[ii], keep = 0;
+#ifdef HERMITE_INTEGRATION
+        if(HermiteOnlyFlag && !eligible_for_hermite(i)) {keep = 1;}
+#endif
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF) && !defined(GRAVACCEL_RETAINED_ON_SKIPPED_WALK)
+        if(treeforce_skip_flag[ii]) {keep = 1;}
+#endif
+        if(keep) {kept_ii.push_back(ii); kept_accel.push_back(P[i].GravAccel);}
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+        else {P[i].GravAccel_Retained = P[i].GravAccel;} /* the tree part, walked or extrapolated: what a skipped walk advances next */
+#endif
+    }
 #endif
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
-#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
-    {size_t k = 0; for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {if(treeforce_skip_flag[ii]) {P[ActiveParticleList[ii]].GravAccel = skipped_accel[k++];}}}
+#if defined(HERMITE_INTEGRATION) || (defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF))
+    for(size_t k = 0; k < kept_ii.size(); k++) {P[ActiveParticleList[kept_ii[k]]].GravAccel = kept_accel[k];}
 #endif
 
 

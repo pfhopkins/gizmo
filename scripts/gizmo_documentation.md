@@ -794,6 +794,7 @@ For almost any problem, you need to specify things like boundary conditions and 
 #BOX_BND_PARTICLES          # particles with ID=0 are forced in place (their accelerations are set =0): use for special boundary conditions where these particles represent fixed "walls"
 #BOX_SHEARING=1             # shearing box boundaries: 1=r-z sheet (r,z,phi coordinates), 2=r-phi sheet (r,phi,z), 3=r-phi-z box, 4=as 3, with vertical gravity
 #BOX_SHEARING_Q=(3./2.)     # shearing box q=-dlnOmega/dlnr; will default to 3/2 (Keplerian) if not set
+#BOX_SHEARING_OMEGA_BOX_CENTER=1 # Omega at the box center in code units; defaults to 1 (time in units of 1/Omega)
 #BOX_LONG_X=140             # modify box dimensions (non-square finite box): multiply X (not compatible with periodic gravity: if BOX_PERIODIC or PMGRID is active, make sure SELFGRAVITY_OFF or GRAVITY_NOT_PERIODIC is on)
 #BOX_LONG_Y=1               # modify box dimensions (non-square finite box): multiply Y
 #BOX_LONG_Z=1               # modify box dimensions (non-square finite box): multiply Z
@@ -4500,7 +4501,9 @@ The following test problems are available in the `test/` directory of the source
 <a name="tests-additional-other"></a>
 ### Other Tests
 
-**3D Shearing Box** (`test/shearing_box`): Checks the shear-periodic boundaries of the 3D shearing box (`BOX_SHEARING=3`) for q = 3/2 and q = 1: the equilibrium shear flow on a lattice (exact to round-off), a uniform epicyclic oscillation carried across the radial boundary (frequency kappa^2 = 2(2-q) Omega^2), and a linear swing-amplified vortical shearing wave (Johnson & Gammie 2005) against the integrated linear equations, including conservation of its potential vorticity. For q = 3/2 it also runs cold gas (shear Mach 30-100, after Zier & Springel 2022): shear noise on irregular particles (bounded, but not converging: xfail) and the epicycle energy over 100 epicycles (grows exponentially with the current Coriolis time integration: xfail). Uses `HYDRO_MESHLESS_FINITE_MASS`, `BOX_SHEARING=3`, `SELFGRAVITY_OFF`.
+**3D Shearing Box** (`test/shearing_box`): The 3D shearing box (`BOX_SHEARING=3`, `HYDRO_MESHLESS_FINITE_MASS`, `SELFGRAVITY_OFF`; ICs written by `make_shearing_box_ics.py`), hydro and MHD, against exact or linear-theory solutions. Hydro, for q = 3/2 and q = 1: the equilibrium shear flow and a uniform epicycle across the radial boundary on a lattice (exact to round-off), and a swing-amplified vortical shearing wave (Johnson & Gammie 2005) against the integrated linear equations, including conservation of its potential vorticity; for q = 3/2, the exactly conserved epicycle energy of cold gas over 100 epicycles and of collisionless particles over 10 (the Coriolis time integration). With `MAGNETIC` added (`shearing_box_mhd.params`): the exact wind-up of a uniform field and the linear MRI growth rate at 16^3 and 32^3.
+
+**Shearing Box N-body** (`test/shearing_box_nbody`): Test particles of negligible mass on a cold epicycle in the 3D shearing box (`BOX_SHEARING=3`) with self-gravity on, against the exact solution over 2 epicycles: Hermite-integrated particles (`HERMITE_INTEGRATION=32`; the Coriolis and tidal terms in the Hermite force evaluations) and kick-drift-kick collisionless particles (the analytic terms not re-added by the Hermite passes). Built as is and with `ADAPTIVE_TREEFORCE_UPDATE`, where the collisionless particles skip their tree walks and the tidal term must still be re-evaluated every step.
 
 **Ring Collision** (`test/ring_collision`): Collision of two elastic/solid rings using the Tillotson EOS and elastic stress tensor. Tests `EOS_TILLOTSON`, `EOS_ELASTIC`.
 

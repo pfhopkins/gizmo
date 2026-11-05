@@ -1,0 +1,40 @@
+% Test particles on a cold epicycle in the 3D shearing box (BOX_SHEARING=3), Omega = 1, L = 1, q = 3/2, for 2 epicycles.
+% The test overrides InitCondFile and OutputDir. Masses are negligible (1e-12, G = 1): self-gravity is
+% switched on only for the tree walk, the jerk and the Hermite machinery it feeds.
+InitCondFile                       shearing_box_nbody_ics
+OutputDir                          output
+TimeMax                            12.566370614359172
+TimeBetSnapshot                    0.5
+TimeOfFirstSnapshot                0
+TimeBegin                          0
+TimeBetStatistics                  0.5
+BoxSize                            1
+GravityConstantInternal            1
+MaxSizeTimestep                    0.025
+MinSizeTimestep                    1e-10
+ErrTolIntAccuracy                  0.005
+ErrTolTheta                        0.5
+ErrTolForceAcc                     0.0025
+CourantFac                         0.4
+MaxRMSDisplacementFac              0.125
+TreeDomainUpdateFrequency          0.1
+DesNumNgb                          32
+MaxNumNgbDeviation                 1
+MaxMemSize                         1000
+PartAllocFactor                    2.5
+BufferSize                         100
+ResubmitOn                         0
+ResubmitCommand                    none
+CpuTimeBetRestartFile              1e9
+Softening_Type0                    1e-3
+Softening_Type1                    1e-3
+Softening_Type2                    1e-3
+Softening_Type3                    1e-3
+Softening_Type4                    1e-3
+Softening_Type5                    1e-3
+Softening_Type0_MaxPhysLimit       1e-3
+Softening_Type1_MaxPhysLimit       1e-3
+Softening_Type2_MaxPhysLimit       1e-3
+Softening_Type3_MaxPhysLimit       1e-3
+Softening_Type4_MaxPhysLimit       1e-3
+Softening_Type5_MaxPhysLimit       1e-3

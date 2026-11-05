@@ -1,4 +1,5 @@
-"""shearing_box_mhd: ideal MHD in the 3D shear-periodic box (BOX_SHEARING=3), q = 3/2.
+"""shearing_box, MAGNETIC variant: ideal MHD in the 3D shear-periodic box (BOX_SHEARING=3), q = 3/2.
+Built from this directory's Config.sh with MAGNETIC added; run with shearing_box_mhd.params.
 
 Units: Omega = 1, L = 1, c_s = 1, density 1, code B with v_A = B / sqrt(rho). The magnetic field is shear-periodic,
 B(x + L, y - q Omega L t, z) = B(x, y, z), so the boundary remaps positions and v_phi but leaves B unchanged.
@@ -27,11 +28,11 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, str(Path(__file__).parent.parent / "shearing_box"))
 from gizmo.test import build_gizmo_for_test, run_test, default_mpi_ranks
 from make_shearing_box_ics import make_shearing_box_ics
 
-TEST_NAME = "shearing_box_mhd"
+TEST_NAME = "shearing_box"
+PARAMS_NAME = "shearing_box_mhd"
 TEST_DIR = Path(__file__).parent
 NUM_MPI_RANKS = default_mpi_ranks(max_ranks=4)
 Q = 1.5
@@ -90,17 +91,17 @@ def cases():
 
 @pytest.fixture(scope="module")
 def runs():
-    build_gizmo_for_test(TEST_NAME, 0, (f"BOX_SHEARING_Q=({Q!r})",))
+    build_gizmo_for_test(TEST_NAME, 0, (f"BOX_SHEARING_Q=({Q!r})", "MAGNETIC"))
     out = {}
     cwd = os.getcwd()
     os.chdir(TEST_DIR)
     try:
         for tag, N, B, dv, t_max, dt_snap in cases():
             write_case(tag, N, B, dv)
-            outdir = f"output_{tag}"
+            outdir = f"output_mhd_{tag}"
             if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
                 shutil.rmtree(outdir, ignore_errors=True)
-            run_test(TEST_NAME, NUM_MPI_RANKS, 0, param_overrides={
+            run_test(TEST_NAME, NUM_MPI_RANKS, 0, params_name=PARAMS_NAME, param_overrides={
                 "InitCondFile": f"{tag}_ics", "OutputDir": outdir, "TimeMax": f"{t_max:.12g}",
                 "TimeBetSnapshot": f"{dt_snap:.12g}"})
             out[tag] = (str(TEST_DIR / outdir), t_max)
