@@ -87,6 +87,11 @@ def test_adaptive_treeforce():
     assert abs(a - 1) < 1e-6 and abs(e - 0.9) < 1e-6
 
 
+def test_kepler_pair():
+    log = _run(1, params={"KetjuKeplerPairs": 1})
+    a, e = _elements()
+    assert abs(a - 1) < 1e-8 and abs(e - 0.9) < 1e-8
+    assert re.findall(r"region-integrations=(\d+) MSTAR accepted=(\d+)", log)[-1][0] == re.findall(r"MSTAR accepted=(\d+)", log)[-1]  # one exact drift per region, no GBS steps
 
 
 
