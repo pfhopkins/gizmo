@@ -323,3 +323,25 @@ def test_compile(flags):
         f"Return code: {result.returncode}\n"
         f"Errors:\n" + "\n".join(errors[:20])
     )
+
+
+# Removed modes must stop the build, not silently compile to something else.
+REMOVED_FLAG_CONFIGS = [
+    ("SINGLE_STAR_SINK_DYNAMICS SINGLE_STAR_TIMESTEPPING=1", "SINGLE_STAR_TIMESTEPPING > 0"),
+    ("SINGLE_STAR_SINK_DYNAMICS SINGLE_STAR_TIMESTEPPING=2", "SINGLE_STAR_TIMESTEPPING > 0"),
+    ("SINGLE_STAR_SINK_DYNAMICS SINGLE_STAR_FIND_BINARIES", "SINGLE_STAR_FIND_BINARIES has been removed"),
+]
+
+
+@pytest.mark.parametrize("flags,message", REMOVED_FLAG_CONFIGS,
+                         ids=[c[0].split()[-1] for c in REMOVED_FLAG_CONFIGS])
+def test_removed_flag_errors(flags, message):
+    """A removed compile-time mode must fail the build with its #error message."""
+    gizmo_root = _gizmo_root()
+    _write_config(flags, gizmo_root / "Config.sh")
+    _make_clean(gizmo_root)
+    result = _make_build(gizmo_root)
+    _make_clean(gizmo_root)
+    assert result.returncode != 0, f"build unexpectedly succeeded for: {flags}"
+    assert message in (result.stderr or ""), (
+        f"build failed without the expected #error for: {flags}\n" + (result.stderr or "")[-2000:])
