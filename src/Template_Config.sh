@@ -549,6 +549,7 @@
 # --------------------------------------- Input/Output options
 ####################################################################################################
 #OUTPUT_MASS_METAL_ENERGY_LEDGER # ledger.txt, one row per snapshot: cumulative budget rows (SGChem heating and cooling energy; stars formed and their metals; single-star ejecta and metals taken from the stars, delivered to the gas by the feedback loop, remnant reset; ejecta energy 1/2 dm v_ej^2 booked from the tables, heat (now and through the deferred DtInternalEnergy branch) and kinetic energy the feedback loop gives the gas) and state rows (gas and star mass and metal mass at output), exact per-thread sums reduced only at snapshot output (star rows need METALS)
+#OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS # with the ledger: mass_balance_steps.txt, baryon mass and gas/star/ledger-corrected metal mass at checkpoints inside the step (around the hydro and feedback solve, around star formation), a line where one changes by more than 1e-14, to find the operation that leaks. One MPI_Allreduce per checkpoint; nothing when off
 #OUTPUT_ADDITIONAL_RUNINFO      # enables extended simulation output data (can slow down machines significantly in massively-parallel runs)
 #OUTPUT_IN_DOUBLEPRECISION      # snapshot files will be written in double precision
 #INPUT_IN_DOUBLEPRECISION       # input files assumed to be in double precision (otherwise float is assumed)
