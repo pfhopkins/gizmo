@@ -89,6 +89,12 @@ int single_star_rt_band_luminosities(int i, int mode, double *lum, struct partic
     if(mode < 0) {return 1;}
     lum[RT_FREQ_BIN_PHOTOELECTRIC] = L[SINGLE_STAR_BAND_PE] / UNIT_LUM_IN_CGS;
     lum[RT_FREQ_BIN_LYMAN_WERNER] = L[SINGLE_STAR_BAND_LW] / UNIT_LUM_IN_CGS;
+#ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS
+    lum[RT_FREQ_BIN_NUV] = DMAX(0., L[SINGLE_STAR_BAND_68]) / UNIT_LUM_IN_CGS; /* 6-8 eV */
+#ifdef RT_OPTICAL_NIR
+    lum[RT_FREQ_BIN_OPTICAL_NIR] = L[SINGLE_STAR_BAND_OPT] / UNIT_LUM_IN_CGS;
+#endif
+#else
     lum[RT_FREQ_BIN_GENERIC_USER_FREQ] = L[SINGLE_STAR_BAND_68] / UNIT_LUM_IN_CGS;
     lum[RT_FREQ_BIN_NUV] = L[SINGLE_STAR_BAND_NUV] / UNIT_LUM_IN_CGS;
     lum[RT_FREQ_BIN_OPTICAL_NIR] = L[SINGLE_STAR_BAND_OPT] / UNIT_LUM_IN_CGS;
@@ -101,8 +107,8 @@ int single_star_rt_band_luminosities(int i, int mode, double *lum, struct partic
     lum[RT_FREQ_BIN_ION_HE_PHOTONS] = Q_he * 13.6 * ELECTRONVOLT_IN_ERGS / UNIT_LUM_IN_CGS;
 #endif
 #endif
+#endif
 #ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS
-    lum[RT_FREQ_BIN_PHOTOELECTRIC] = DMAX(0., L[SINGLE_STAR_BAND_PE] - L[SINGLE_STAR_BAND_LW]) / UNIT_LUM_IN_CGS; /* disjoint bins: 8-11.2 eV */
 #ifdef RT_CHEM_PHOTOION
 #ifdef RT_PHOTOION_MULTIFREQUENCY
     lum[RT_FREQ_BIN_H0] = L[SINGLE_STAR_BAND_ION_H0] / UNIT_LUM_IN_CGS;

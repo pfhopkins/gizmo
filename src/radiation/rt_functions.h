@@ -619,8 +619,8 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
     if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return (10.) * fac * (0.1 + Zfac);}
 #endif
 #if defined(SGCHEM) && defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) /* the chemistry's dust cross sections per H (MW dust) with its dust-to-gas ratio; tree radiation pressure uses the same */
-    if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC || k_freq==RT_FREQ_BIN_GENERIC_USER_FREQ || k_freq==RT_FREQ_BIN_LYMAN_WERNER || k_freq==RT_FREQ_BIN_NUV || k_freq==RT_FREQ_BIN_OPTICAL_NIR) {
-        double sig_H = (k_freq==RT_FREQ_BIN_LYMAN_WERNER) ? 2.0e-21 : ((k_freq==RT_FREQ_BIN_NUV) ? 1.3e-21 : ((k_freq==RT_FREQ_BIN_OPTICAL_NIR) ? 0.5e-21 : 1.337e-21));
+    if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC || k_freq==RT_FREQ_BIN_LYMAN_WERNER || k_freq==RT_FREQ_BIN_NUV) {
+        double sig_H = (k_freq==RT_FREQ_BIN_LYMAN_WERNER) ? 2.0e-21 : 1.337e-21;
         double dgr = (i>=0) ? sgchem_dust_to_gas_ratio(pp[i].Metallicity[0]) : All.SGChemDustToGasRatio;
         return DMAX(kappa_HHe, sig_H * dgr * HYDROGEN_MASSFRAC / PROTONMASS_CGS) * fac;
     }
@@ -673,7 +673,7 @@ KOKKOS_INLINE_FUNCTION
 double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(SGCHEM) && defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) /* the chemistry's attenuation laws are extinction: no separate scattering */
-    if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC || k_freq==RT_FREQ_BIN_GENERIC_USER_FREQ || k_freq==RT_FREQ_BIN_LYMAN_WERNER || k_freq==RT_FREQ_BIN_NUV || k_freq==RT_FREQ_BIN_OPTICAL_NIR) {return 1.-1.e-6;}
+    if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC || k_freq==RT_FREQ_BIN_LYMAN_WERNER || k_freq==RT_FREQ_BIN_NUV) {return 1.-1.e-6;}
 #endif
 #if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS) && defined(RT_GENERIC_USER_FREQ)
     if(k_freq==RT_FREQ_BIN_GENERIC_USER_FREQ) {return DMAX(1.e-6, DMIN(1.0 - 1.e-6, All.Grain_Absorbed_Fraction_vs_Total_Extinction));}

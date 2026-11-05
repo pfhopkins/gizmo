@@ -2,8 +2,8 @@
 (GALSF_SINGLE_STARS_RT_TABLE_BANDS; reports/design/design_m1_coupling.md). Two 40 Msun main-sequence stars at opposite
 corners of a periodic box of very thin gas (2 ranks, so each rank holds a star), and one dead star. Periodic and thin, so
 every photon stays in the bins.
-  test_band_energy: energy per bin over the box = sum over stars of L_table(band) x t x c_red / c (2 %). Bins PE 8-11.2,
-    LW, 6-8, NUV 3.444-6, OPT, H0, He0, He1, He2. The bins are disjoint: their sum stays below L_bol.
+  test_band_energy: energy per bin over the box = sum over stars of L_table(band) x t x c_red / c (2 %). Bins PE 8-13.6,
+    LW 11.2-13.6 (inside PE, as stella_dev), 6-8, H0, He0, He1, He2. Their sum stays below L_bol.
   test_single_ionising_bin: one ionising bin holds the table's photon rate at the bin's mean photon energy (2 %).
   test_excluded_channels: the star-side radiation pressure and photoionisation channels do not build with the moment forces.
 The rates are taken between two snapshots: the first injection arrives two steps after t = 0.
@@ -95,11 +95,10 @@ def nu_eff(lo, hi, T=4e4):
 def test_band_energy(tables):
     E, t, age, tab = run(build("multi", ("RT_CHEM_PHOTOION=2", "RT_DISABLE_RAD_PRESSURE")), "multi", tables)
     assert abs(t - T_END) < 1e-9
-    assert len(E) == 9  # H0 He0 He1 He2 PE LW NUV OPT 6-8
-    xp = expected(tab, age, ("log_L_ion_H0", "log_L_ion_He0", "log_L_ion_He1", "log_L_ion_He2", "log_L_FUV_total", "log_L_FUV_M1", "log_L_LW", "log_L_NUV", "log_L_OPT_NIR", "log_L_bol"))
+    assert len(E) == 7  # H0 He0 He1 He2 PE LW 6-8
+    xp = expected(tab, age, ("log_L_ion_H0", "log_L_ion_He0", "log_L_ion_He1", "log_L_ion_He2", "log_L_FUV_total", "log_L_FUV_M1", "log_L_LW", "log_L_bol"))
     l68 = xp["log_L_FUV_total"] - xp["log_L_FUV_M1"]
-    want = [xp["log_L_ion_H0"], xp["log_L_ion_He0"], xp["log_L_ion_He1"], xp["log_L_ion_He2"], xp["log_L_FUV_M1"] - xp["log_L_LW"], xp["log_L_LW"],
-            xp["log_L_NUV"] - l68, xp["log_L_OPT_NIR"], l68]
+    want = [xp["log_L_ion_H0"], xp["log_L_ion_He0"], xp["log_L_ion_He1"], xp["log_L_ion_He2"], xp["log_L_FUV_M1"], xp["log_L_LW"], l68]
     print("bins / table:", E / np.array(want))
     np.testing.assert_allclose(E, want, rtol=2e-2)
     assert E.sum() < xp["log_L_bol"]
@@ -112,7 +111,7 @@ def test_band_energy(tables):
 
 def test_single_ionising_bin(tables):
     E, t, age, tab = run(build("single", ("RT_CHEM_PHOTOION=1", "RT_DISABLE_RAD_PRESSURE")), "single", tables)
-    assert len(E) == 6
+    assert len(E) == 4
     Q = expected(tab, age, ("log_Q_ion",))["log_Q_ion"]
     assert abs(E[0] / Q / EV / nu_eff(13.6, 500.0) - 1) < 2e-2, E[0] / Q / EV
 

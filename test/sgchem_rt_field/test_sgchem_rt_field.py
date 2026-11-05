@@ -1,6 +1,6 @@
 """sgchem_rt_field: SGChem reads G0, G0_LW and G0_dust from the moment solver's bins (reports/design/design_m1_coupling.md).
 A uniform molecular box at n_H = 100 cm^-3, no stars shining. The M1 build has its bins seeded in the initial snapshot with
-the band energies of a Draine field of G0 Habing (6-8, 8-11.2, 11.2-13.6, 3.444-6, 0.4133-3.444 eV); the reference is the
+the band energies of a Draine field of G0 Habing (8-13.6, 11.2-13.6, 6-8, 0.4133-3.444 eV); the reference is the
 same box without radiation transport, with the same G0 through SGChemG0. Dust-free, so the half-cell dust column and the
 absorption leave the field as seeded. H2 fraction and temperature agree within 1 %.
   test_habing_gate: G0 = 10.
@@ -26,8 +26,8 @@ MSUN, PC, MP = 1.989e33, 3.085678e18, 1.6726e-24
 RHO = N_H * 1.4 * MP * PC ** 3 / MSUN  # Msun / pc^3
 L = N * (1.0 / RHO) ** (1.0 / 3.0)
 UNIT_P = MSUN * 1e10 / PC ** 3  # erg / cm^3 per code pressure
-U = dict(u68=1.877e-14, u8132=3.380e-14 - 7.799e-15, ulw=7.799e-15, unuv=4.696e-14, uopt=5.141e-13)  # per Habing (chem_interface.h)
-RT = ("GALSF_SINGLE_STARS_RT_TABLE_BANDS", "RT_M1", "RT_SPEEDOFLIGHT_REDUCTION=1.0e-5", "RT_DISABLE_RAD_PRESSURE")
+U = dict(u68=1.877e-14, upe=3.380e-14, ulw=7.799e-15, uopt=5.141e-13)  # per Habing (chem_interface.h)
+RT = ("GALSF_SINGLE_STARS_RT_TABLE_BANDS", "RT_M1", "RT_OPTICAL_NIR", "RT_SPEEDOFLIGHT_REDUCTION=1.0e-5", "RT_DISABLE_RAD_PRESSURE")
 BUILDS = {}
 
 
@@ -58,7 +58,7 @@ def run(exe, tag, tables, G0_bins, over):
     make_treecol_pixels_ics(str(ic), L, lattice(N, L), [(1.0, 1e12, np.array([0.5, 0.5, 0.5]) * L)], hsml=1.0, tracabund=ab)
     if G0_bins is not None:
         V = 1.0 / RHO
-        e = np.array([U["u8132"], U["ulw"], U["unuv"], U["uopt"], U["u68"]]) * G0_bins / UNIT_P * V
+        e = np.array([U["upe"], U["ulw"], U["u68"], U["uopt"]]) * G0_bins / UNIT_P * V
         with h5py.File(ic, "a") as F:
             F["PartType0/PhotonEnergy"] = np.tile(e, (N ** 3, 1))
     for f in ("TREECOOL", "spcool_tables"):

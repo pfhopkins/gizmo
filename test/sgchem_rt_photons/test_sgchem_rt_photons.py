@@ -94,7 +94,7 @@ def ledger(rows, Q):
     return (nion[-1] - nion[1], nh2[1] - nh2[-1], n_rec, Q * (t[-1] - t[1]))
 
 
-THIN = ("RT_SPEEDOFLIGHT_REDUCTION=0.1", "RT_DISABLE_RAD_PRESSURE")
+THIN = ("RT_SPEEDOFLIGHT_REDUCTION=0.1", "RT_DISABLE_RAD_PRESSURE", "SGCHEM_RT_ABSORBERS_FOLLOW_THE_NETWORK")
 
 
 def test_atomic(tables):

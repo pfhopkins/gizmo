@@ -1261,22 +1261,13 @@
 #error "GALSF_SINGLE_STARS_RT_TABLE_BANDS replaces GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES (the field comes from the bins)"
 #endif
 #ifndef RT_PHOTOELECTRIC
-#define RT_PHOTOELECTRIC      /* 8-11.2 eV here */
+#define RT_PHOTOELECTRIC      /* 8-13.6 eV */
 #endif
 #ifndef RT_LYMAN_WERNER
-#define RT_LYMAN_WERNER       /* 11.2-13.6 eV */
+#define RT_LYMAN_WERNER       /* 11.2-13.6 eV, inside the photoelectric bin as stella_dev */
 #endif
 #ifndef RT_NUV
-#define RT_NUV                /* 3.444-6 eV with the split below */
-#endif
-#ifndef RT_OPTICAL_NIR
-#define RT_OPTICAL_NIR        /* 0.4133-3.444 eV */
-#endif
-#ifndef RT_GENERIC_USER_FREQ
-#define RT_GENERIC_USER_FREQ  /* 6-8 eV with the split below */
-#endif
-#ifndef RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND
-#define RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND
+#define RT_NUV                /* carries 6-8 eV here: with the photoelectric bin it spans the 6-13.6 eV of G0, as stella_dev */
 #endif
 #ifndef RT_SOURCES
 #define RT_SOURCES 16

@@ -20,9 +20,9 @@ static inline double sgchem_rt_band_u_cgs(int i, int k) {return CellP[i].Rad_E_g
    only floor pixels take the dust column (pix_att) */
 struct ChemFUVField sgchem_rt_field(int i, double *fac_uv, double *pix_att)
 {
-    const int k_uv[3] = {RT_FREQ_BIN_GENERIC_USER_FREQ, RT_FREQ_BIN_PHOTOELECTRIC, RT_FREQ_BIN_LYMAN_WERNER}; /* disjoint 6-8, 8-11.2, 11.2-13.6 eV */
+    const int k_uv[2] = {RT_FREQ_BIN_NUV, RT_FREQ_BIN_PHOTOELECTRIC}; /* 6-8 and 8-13.6 eV; the Lyman-Werner bin lies inside the second */
     double u_uv = 0, E_uv = 0, f_beam = 0; int pix_src = 0; Vec3<double> F = {};
-    for(int k = 0; k < 3; k++) {u_uv += sgchem_rt_band_u_cgs(i, k_uv[k]); E_uv += CellP[i].Rad_E_gamma[k_uv[k]]; F += CellP[i].Rad_Flux[k_uv[k]];}
+    for(int k = 0; k < 2; k++) {u_uv += sgchem_rt_band_u_cgs(i, k_uv[k]); E_uv += CellP[i].Rad_E_gamma[k_uv[k]]; F += CellP[i].Rad_Flux[k_uv[k]];}
     double F_mag = sqrt(F.norm_sq());
     if(F_mag > 0 && E_uv > 0) {
         f_beam = DMIN(1., F_mag / (C_LIGHT_CODE_REDUCED * E_uv));
@@ -39,7 +39,11 @@ struct ChemFUVField sgchem_rt_field(int i, double *fac_uv, double *pix_att)
     }
     for(int k = 0; k < NPIX; k++) {fac_uv[k] = (g0_tot > 0) ? g_pix[k] / g0_tot : 1. / NPIX;}
     struct ChemFUVField f = {g0_tot, g0_lw_tot, 0};
-    f.G0_dust = chem_grain_heating_g0(g0_tot, sgchem_rt_band_u_cgs(i, RT_FREQ_BIN_NUV), sgchem_rt_band_u_cgs(i, RT_FREQ_BIN_OPTICAL_NIR), 1, 1, bg);
+#ifdef RT_OPTICAL_NIR
+    f.G0_dust = chem_grain_heating_g0(g0_tot, 0, sgchem_rt_band_u_cgs(i, RT_FREQ_BIN_OPTICAL_NIR), 0, 1, bg); /* 3.4-6 eV ISRF-shaped */
+#else
+    f.G0_dust = g0_tot; /* ISRF-shaped */
+#endif
     return f;
 }
 
@@ -58,11 +62,11 @@ static double sgchem_rt_sigma_h2(double e)
     return 9.75e-18 * pow(18.1 / e, 3);
 }
 
-/* r over the ionising photons of his 4e4 K blackbody (rt_get_sigma); serial, once */
+/* r over the H0 bin's photons of his 4e4 K blackbody (rt_get_sigma); serial, once */
 void sgchem_rt_init(void)
 {
 #if CHEMISTRYNETWORK == 5
-    double s1 = 0, s2 = 0, kT = 4.0e4 * BOLTZMANN_CGS / ELECTRONVOLT_IN_ERGS, de = (500. - 13.6) / 19999.;
+    double s1 = 0, s2 = 0, kT = 4.0e4 * BOLTZMANN_CGS / ELECTRONVOLT_IN_ERGS, de = (All.RHD_bins_nu_max_ev[RT_FREQ_BIN_H0] - 13.6) / 19999.;
     for(int j = 1; j < 20000; j++) {
         double e = 13.6 + j * de, x = e / kT, w = (x < 500.) ? e * e / expm1(x) : 0, f = sqrt(e / 13.6 - 1.);
         s1 += w * 6.3e-18 * pow(13.6 / e, 4) * exp(4. - 4. * atan(f) / f) / (1. - exp(-2. * M_PI / f));
@@ -73,38 +77,55 @@ void sgchem_rt_init(void)
 #endif
 }
 
-/* rates per atom [1/s] and heating [erg/s per atom] over all ionising bins, as CoolingRate; H2 by the ratio used in the absorbers below */
+/* rates per atom [1/s] and heating [erg/s per atom], as stella_dev: H and H2 from the H0 bin, HeI from He0, HeII from He1, heat = rate x
+   (mean photon energy - threshold). With SGCHEM_RT_ABSORBERS_FOLLOW_THE_NETWORK every ionising bin counts, as CoolingRate */
+static inline double sgchem_rt_gamma(int i, int k, double sigma) {return C_LIGHT_CGS / UNIT_LENGTH_IN_CGS * rt_ionizing_band_photon_number_density(i, k, CellP) * sigma;}
 void sgchem_rt_ionising_rates(int i, struct ChemInputs *in)
 {
+#ifdef SGCHEM_RT_ABSORBERS_FOLLOW_THE_NETWORK
     for(int k = 0; k < N_RT_FREQ_BINS; k++) {
         if(!RT_BAND_IS_IONIZING(k)) {continue;}
-        double f = C_LIGHT_CGS / UNIT_LENGTH_IN_CGS * rt_ionizing_band_photon_number_density(i, k, CellP), g = f * All.rt_ion_sigma_HI[k];
+        double g = sgchem_rt_gamma(i, k, All.rt_ion_sigma_HI[k]);
         in->rt_phot_HI += g; in->rt_heat_HI += g * All.rt_ion_G_HI[k] * UNIT_ENERGY_IN_CGS;
 #if CHEMISTRYNETWORK == 5
         in->rt_phot_H2 += sgchem_rt_r_h2 * g;
         in->rt_heat_H2 += sgchem_rt_r_h2 * g * DMAX(All.rt_nu_eff_eV[k] - 15.2, 0.) * ELECTRONVOLT_IN_ERGS;
 #endif
 #ifdef RT_CHEM_PHOTOION_HE
-        in->rt_phot_HeI += f * All.rt_ion_sigma_HeI[k]; in->rt_heat_HeI += f * All.rt_ion_sigma_HeI[k] * All.rt_ion_G_HeI[k] * UNIT_ENERGY_IN_CGS;
-        in->rt_phot_HeII += f * All.rt_ion_sigma_HeII[k]; in->rt_heat_HeII += f * All.rt_ion_sigma_HeII[k] * All.rt_ion_G_HeII[k] * UNIT_ENERGY_IN_CGS;
+        double ge = sgchem_rt_gamma(i, k, All.rt_ion_sigma_HeI[k]), gi = sgchem_rt_gamma(i, k, All.rt_ion_sigma_HeII[k]);
+        in->rt_phot_HeI += ge; in->rt_heat_HeI += ge * All.rt_ion_G_HeI[k] * UNIT_ENERGY_IN_CGS;
+        in->rt_phot_HeII += gi; in->rt_heat_HeII += gi * All.rt_ion_G_HeII[k] * UNIT_ENERGY_IN_CGS;
 #endif
     }
+#else
+    double g = sgchem_rt_gamma(i, RT_FREQ_BIN_H0, All.rt_ion_sigma_HI[RT_FREQ_BIN_H0]), nu = All.rt_nu_eff_eV[RT_FREQ_BIN_H0];
+    in->rt_phot_HI = g; in->rt_heat_HI = g * (nu - 13.6) * ELECTRONVOLT_IN_ERGS;
+#if CHEMISTRYNETWORK == 5
+    in->rt_phot_H2 = sgchem_rt_r_h2 * g; in->rt_heat_H2 = sgchem_rt_r_h2 * g * DMAX(nu - 15.2, 0.) * ELECTRONVOLT_IN_ERGS;
+#endif
+#ifdef RT_PHOTOION_MULTIFREQUENCY
+    in->rt_phot_HeI = sgchem_rt_gamma(i, RT_FREQ_BIN_He0, All.rt_ion_sigma_HeI[RT_FREQ_BIN_He0]);
+    in->rt_heat_HeI = in->rt_phot_HeI * (All.rt_nu_eff_eV[RT_FREQ_BIN_He0] - 24.6) * ELECTRONVOLT_IN_ERGS;
+    in->rt_phot_HeII = sgchem_rt_gamma(i, RT_FREQ_BIN_He1, All.rt_ion_sigma_HeII[RT_FREQ_BIN_He1]);
+    in->rt_heat_HeII = in->rt_phot_HeII * (All.rt_nu_eff_eV[RT_FREQ_BIN_He1] - 54.4) * ELECTRONVOLT_IN_ERGS;
+#endif
+#endif
 }
 
-/* the absorbers rt_kappa reads: what the network consumes photons on. Net 5: atomic H plus H2 by the same ratio as its rate,
-   no He species, so the He fields stay empty and helium bins act on H. Net 17: atomic H, its He. */
+/* what rt_kappa reads, as stella_dev: atomic H. With SGCHEM_RT_ABSORBERS_FOLLOW_THE_NETWORK what the network consumes photons on:
+   net 5 atomic H plus H2 by the same ratio as its rate and no He, net 17 its He */
 void sgchem_rt_absorbers(int i, const double *ab)
 {
     double xHI = DMAX(0, 1. - 2. * ab[IH2] - ab[IHP]);
     CellP[i].HII = ab[IHP];
+    CellP[i].HI = xHI;
+#ifdef SGCHEM_RT_ABSORBERS_FOLLOW_THE_NETWORK
 #if CHEMISTRYNETWORK == 5
     CellP[i].HI = xHI + sgchem_rt_r_h2 * ab[IH2];
 #ifdef RT_CHEM_PHOTOION_HE
     CellP[i].HeI = CellP[i].HeII = CellP[i].HeIII = 0;
 #endif
-#else
-    CellP[i].HI = xHI;
-#ifdef RT_CHEM_PHOTOION_HE
+#elif defined(RT_CHEM_PHOTOION_HE)
     CellP[i].HeII = ab[IHEP]; CellP[i].HeIII = ab[IHEPP]; CellP[i].HeI = DMAX(0, ABHE - ab[IHEP] - ab[IHEPP]);
 #endif
 #endif

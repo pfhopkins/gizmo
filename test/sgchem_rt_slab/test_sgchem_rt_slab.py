@@ -70,7 +70,7 @@ def axis(r):
 def field_over_analytic(r):
     """6-13.6 eV energy density on the axis, per slice, over L / (4 pi r^2 c) exp(-tau) of the chemistry's law"""
     a = axis(r); z = r["x"][a, 2]
-    u = (r["E"][a, 0] + r["E"][a, 1] + r["E"][a, 4]) * r["rho"][a] / r["m"][a] * MSUN * 1e10 / PC ** 3  # 8-11.2, 11.2-13.6, 6-8 eV
+    u = (r["E"][a, 0] + r["E"][a, 2]) * r["rho"][a] / r["m"][a] * MSUN * 1e10 / PC ** 3  # 8-13.6, 6-8 eV
     n = r["rho"][a].mean() * MSUN / PC ** 3 / (1.4 * MP)
     edges = np.linspace(Z0, L, 10); mid = 0.5 * (edges[1:] + edges[:-1])
     ub = np.array([u[(z >= lo) & (z < hi)].mean() for lo, hi in zip(edges[:-1], edges[1:])])
