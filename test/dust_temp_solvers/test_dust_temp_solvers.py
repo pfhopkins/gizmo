@@ -59,8 +59,6 @@ def _rel(x, y):
     return abs(x - y) / abs(y)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "fixed by pr/rt-cooling: dust-temperature solvers pin at the ceiling and miss the lowest root"))
 def test_dust_temp_solvers():
     if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         pytest.skip("builds GIZMO; nothing to validate from external snapshots")

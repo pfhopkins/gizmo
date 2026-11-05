@@ -67,8 +67,6 @@ def plot(t, r):
     plt.close()
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "fixed by pr/rt-cooling: RT source-term defects, I-front r_I/analytic 1.45-1.97"))
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_iliev_test1(num_mpi_ranks, num_omp_threads):

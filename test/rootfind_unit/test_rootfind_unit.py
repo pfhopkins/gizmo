@@ -16,8 +16,6 @@ import pytest
 FLAGSETS = {"O2": ["-O2"], "production": ["-O3", "-ffast-math", "-funroll-loops"]}
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "fixed by pr/rt-cooling: brent_rootfind returns unevaluated or off-root points (3 defects)"))
 @pytest.mark.parametrize("flagset", sorted(FLAGSETS))
 def test_rootfind_unit(flagset):
     test_dir = dirname(abspath(__file__))
