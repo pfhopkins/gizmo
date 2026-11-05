@@ -974,8 +974,8 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                        datasets simply carry the ordinary Pos/Vel via the fallback below. */
                     int _herm = 0;
 #ifdef HERMITE_INTEGRATION
-                    /* the full eligibility predicate, not the type bitmask alone: a star being
-                       super-timestepped or in its born-yesterday settling window is advanced by
+                    /* the full eligibility predicate, not the type bitmask alone: a star in its
+                       born-yesterday settling window is advanced by
                        KDK, so its retained base does not describe where it goes and the plain
                        drifted values are the right ones for it. NB the reference snapshot of
                        an energy diagnostic must come from ELIGIBLE stars -- IC-read sinks carry

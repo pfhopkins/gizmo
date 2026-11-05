@@ -1613,9 +1613,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #endif
 #endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-    double Min_Sink_OrbitalTime=MAX_REAL_NUMBER, comp_Mass; Vec3<double> comp_dx, comp_dv;
-#endif
 #ifdef SINGLE_STAR_TIMESTEPPING
     double Min_Sink_Approach_Time = MAX_REAL_NUMBER, Min_Sink_Freefall_time = MAX_REAL_NUMBER;
 #endif
@@ -1851,27 +1848,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         
                         if(tSqr < Min_Sink_Approach_Time) {Min_Sink_Approach_Time = tSqr;}
                         if(tff4 < Min_Sink_Freefall_time) {Min_Sink_Freefall_time = tff4;}
-#ifdef SINGLE_STAR_FIND_BINARIES
-                        if(ptype == 5) // only for BH particles and for non center of mass calculation
-                        {
-                            double r_p5=sqrt(r2), specific_energy = 0.5*vSqr - All.G*M_total/r_p5;
-                            if(r2 < SinkParticle_GravityKernelRadius*SinkParticle_GravityKernelRadius)
-                            {
-                                double hinv_p5 = 1. / SinkParticle_GravityKernelRadius;
-                                specific_energy = 0.5*vSqr + All.G*M_total*kernel_gravity(r_p5*hinv_p5, hinv_p5, hinv_p5*hinv_p5*hinv_p5, -1);
-                            }
-                            if (specific_energy < 0)
-                            {
-                                double semimajor_axis= -All.G*M_total/(2.*specific_energy);
-                                double t_orbital = 2.*M_PI*sqrt( semimajor_axis*semimajor_axis*semimajor_axis / (All.G*M_total) );
-                                if(t_orbital < Min_Sink_OrbitalTime) /* Save parameters of companion */
-                                {
-                                    Min_Sink_OrbitalTime=t_orbital; comp_Mass=P[no].Mass;
-                                    comp_dx=dr; comp_dv=sink_dv;
-                                }
-                            } /* specific_energy < 0 */
-                        } /* ptype == 5 */
-#endif //#ifdef SINGLE_STAR_FIND_BINARIES
 #endif //#ifdef SINGLE_STAR_TIMESTEPPING
                     }
 #endif // SINK_CALC_DISTANCES
@@ -2109,7 +2085,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                                 }
                             }
                         }
-#if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
                         if(ptype == 5) {
                             if((nop->N_SINK > 0) && (r2 < pow(SINGLE_STAR_DIRECT_GRAVITY_RADIUS/UNIT_LENGTH_IN_AU + 0.6*nop->len,2))) // we are a star looking at another star within the specified radius, open cell to get direct force summation
                             {
@@ -2208,22 +2184,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                     if(tSqr < Min_Sink_Approach_Time) {Min_Sink_Approach_Time = tSqr;}
                     if(tff4 < Min_Sink_Freefall_time) {Min_Sink_Freefall_time = tff4;}
-#ifdef SINGLE_STAR_FIND_BINARIES
-                    if(ptype == 5 && nop->N_SINK == 1) // only do it if we're looking at a single star in the node
-                    {
-                        double specific_energy = 0.5*vSqr - All.G*M_total/sqrt(r2);
-                        if (specific_energy<0)
-                        {
-                            double semimajor_axis= -All.G*M_total/(2.*specific_energy);
-                            double t_orbital = 2.*M_PI*sqrt( semimajor_axis*semimajor_axis*semimajor_axis / (All.G*M_total) );
-                            if(t_orbital < Min_Sink_OrbitalTime) /* Save parameters of companion */
-                            {
-                                Min_Sink_OrbitalTime=t_orbital; comp_Mass=nop->sink_mass;
-                                comp_dx = sink_dr; comp_dv = sink_dv;
-                            }
-                        } /* specific_energy < 0 */
-                    } /* ptype == 5 */
-#endif //#ifdef SINGLE_STAR_FIND_BINARIES
 #endif //#ifdef SINGLE_STAR_TIMESTEPPING
                 }
 #endif // SINK_CALC_DISTANCES
@@ -2685,14 +2645,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
         }
 #endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-        P[target].is_in_a_binary=0; P[target].Min_Sink_OrbitalTime=Min_Sink_OrbitalTime; //orbital time for binary
-        if (Min_Sink_OrbitalTime<MAX_REAL_NUMBER)
-        {
-            P[target].is_in_a_binary=1; P[target].comp_Mass=comp_Mass; //mass of binary companion
-            P[target].comp_dx = comp_dx; P[target].comp_dv = comp_dv;
-        }
-#endif
 #ifdef SINGLE_STAR_TIMESTEPPING
         P[target].Min_Sink_Approach_Time = sqrt(Min_Sink_Approach_Time);
         P[target].Min_Sink_Freefall_time = sqrt(sqrt(Min_Sink_Freefall_time)/All.G);
@@ -2758,14 +2710,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
             GravDataResult[target].weight_sum_for_special_point_smoothing = weight_sum_for_special_point_smoothing; /* weighted sum needed */
 #endif
-        }
-#endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-        GravDataResult[target].is_in_a_binary=0; GravDataResult[target].Min_Sink_OrbitalTime=Min_Sink_OrbitalTime; // orbital time for binary
-        if (Min_Sink_OrbitalTime<MAX_REAL_NUMBER)
-        {
-            GravDataResult[target].is_in_a_binary = 1; GravDataResult[target].comp_Mass=comp_Mass; //mass of binary companion
-            GravDataResult[target].comp_dx = comp_dx; GravDataResult[target].comp_dv = comp_dv;
         }
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING

@@ -514,9 +514,6 @@ void init(void)
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
 	    P[i].Min_Sink_Approach_Time = P[i].Min_Sink_Freefall_time = MAX_REAL_NUMBER;
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-	    P[i].SuperTimestepFlag = 0;
-#endif
 #endif
         if(P[i].Type == 5)
         {

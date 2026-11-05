@@ -620,12 +620,6 @@ void star_formation_parent_routine(void)
 #endif
                             P[i_star].SinkRadius = DMAX(0.79 * P[i_star].Mass * All.G / (cs * cs), ForceSoftening_KernelRadius(i)); // volume-equivalent particle radius R= (3V/(4PI))^(1/3) at the density where cell length = Jeans length/2
 #endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-                            P[i_star].Min_Sink_OrbitalTime=MAX_REAL_NUMBER; P[i_star].comp_dx = {}; P[i_star].comp_dv = {}; P[i_star].is_in_a_binary = 0;
-#endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-                            P[i_star].SuperTimestepFlag=0; P[i_star].COM_GravAccel = {}; P[i_star].comp_Mass=P[i_star].COM_dt_tidal=0;
-#endif
 #ifdef SINK_ALPHADISK_ACCRETION
                             P[i_star].Sink_Mass_Reservoir = DMAX(DMAX(0, P[i_star].Mass-P[i_star].Sink_Mass), All.SeedReservoirMass);
 #endif
