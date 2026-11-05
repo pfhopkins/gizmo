@@ -142,6 +142,10 @@ test/single_stars_supernovae/spcool_tables
 test/single_stars_winds_agb_ia/run_*/
 test/treecol_pixels/run_*/
 test/treecol_pixels/GIZMO_*
+test/treecol_shells_helium/run_*/
+test/treecol_shells_helium/GIZMO*
+test/treecol_shells_helium/TREECOOL
+test/treecol_shells_helium/spcool_tables
 test/single_stars_radiation_pressure/run_*/
 test/single_stars_radiation_pressure/GIZMO_*
 test/single_stars_merge_split/run/

@@ -13,7 +13,7 @@ class Tables:
             self.lZ, self.lM, self.la = F["log_Z"][()], F["log_M_init"][()], F["log_age_yr"][()]
             self.t_pms, self.life = F["t_PMS"][()], F["lifetime_yr"][()]
             self.t3 = {k: F[k][()].astype(np.float32).astype(np.float64)
-                       for k in ("log_L_FUV_total", "log_L_FUV_M1", "log_L_LW", "log_L_NUV", "log_L_OPT_NIR", "log_L_ion_tot", "log_Q_ion")}
+                       for k in ("log_L_FUV_total", "log_L_FUV_M1", "log_L_LW", "log_L_NUV", "log_L_OPT_NIR", "log_L_ion_tot", "log_Q_ion", "log_L_ion_He0", "log_Q_ion_H0")}
 
     @staticmethod
     def _idx(g, v):
@@ -56,3 +56,12 @@ class Tables:
         lM, lZ = np.log10(M), np.log10(max(Z, 1e-10))
         la = np.log10(max(age_yr - self._i2(self.t_pms, lM, lZ), 100.0))
         return 10.0 ** self._i3(self.t3["log_L_ion_tot"], lM, lZ, la), 10.0 ** self._i3(self.t3["log_Q_ion"], lM, lZ, la)
+
+    def ionising_above_he(self, M, Z, age_yr):
+        """energy [erg/s] and photon rate [1/s] above 24.6 eV: photons = total - below 24.6 eV, kept between L / 54.4 eV and L / 24.6 eV"""
+        lM, lZ = np.log10(M), np.log10(max(Z, 1e-10))
+        la = np.log10(max(age_yr - self._i2(self.t_pms, lM, lZ), 100.0))
+        L1 = 10.0 ** self._i3(self.t3["log_L_ion_He0"], lM, lZ, la)
+        q = 10.0 ** self._i3(self.t3["log_Q_ion"], lM, lZ, la) - 10.0 ** self._i3(self.t3["log_Q_ion_H0"], lM, lZ, la)
+        ev = 1.60217733e-12
+        return L1, np.clip(q, L1 / (54.4 * ev), L1 / (24.6 * ev))
