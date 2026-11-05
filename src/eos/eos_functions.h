@@ -978,7 +978,8 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
             press      = aneos_P / UNIT_PRESSURE_IN_CGS;
             soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
 #ifdef EOS_ELASTIC
-            soundspeed = sqrt(soundspeed*soundspeed + elastic_longitudinal_soundspeed2_excess(cell[i].CompositionType, cell[i].Density)); /* longitudinal: bulk plus the deviatoric stiffness */
+            soundspeed = sqrt(soundspeed*soundspeed + elastic_longitudinal_soundspeed2_excess(cell[i].CompositionType, cell[i].Density,
+                              solid_strength_fraction(cell[i].CompositionType, cell[i].InternalEnergyPred, aneos_T_guess, press))); /* longitudinal: bulk plus the deviatoric stiffness */
 #endif
             cell[i].Temperature = aneos_T_guess;
             cell[i].PhaseID = aneos_phase;
@@ -991,6 +992,15 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
     /* fractured material carries (1-D) of its tension; compression is unchanged (Benz & Asphaug 1994) */
     if(press < 0) {double D_t = cell[i].Damage; if(D_t < 0) {D_t = 0;} if(D_t > 1) {D_t = 1;} press *= (1.0 - D_t);}
+#endif
+#ifdef EOS_ELASTIC_MELT
+    /* fully molten material (strength fraction 0) holds at most its cavitation strength in tension (0 by default: a liquid without cohesion);
+       a state-only limit, like the damage cut above. Solid material keeps its tension (its fracture model limits it) */
+    if(press < 0 && solid_material_is_elastic(cell[i].CompositionType))
+    {
+        double P_cavitation = All.SolidStrengthModel[cell[i].CompositionType].CavitationStrength;
+        if(press < -P_cavitation && solid_strength_fraction(cell[i].CompositionType, cell[i].InternalEnergyPred, cell[i].Temperature, press) == 0) {press = -P_cavitation;}
+    }
 #endif
 #endif
 
@@ -1084,7 +1094,8 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #if defined(EOS_ELASTIC)
     /* a solid with no tabulated or Tillotson EOS (those branches add it themselves): the signal speed includes its deviatoric stiffness */
     if(eos_branch_of(cell[i].CompositionType) == EOS_BRANCH_NONE && solid_material_is_elastic(cell[i].CompositionType))
-        {cell[i].SoundSpeed = sqrt(cell[i].SoundSpeed*cell[i].SoundSpeed + elastic_longitudinal_soundspeed2_excess(cell[i].CompositionType, cell[i].Density));}
+        {cell[i].SoundSpeed = sqrt(cell[i].SoundSpeed*cell[i].SoundSpeed + elastic_longitudinal_soundspeed2_excess(cell[i].CompositionType, cell[i].Density,
+                                   solid_strength_fraction(cell[i].CompositionType, cell[i].InternalEnergyPred, cell[i].Temperature, press)));}
 #endif
 #endif
 

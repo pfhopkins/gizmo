@@ -119,7 +119,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 void refresh_eos_and_project(int i, int state_copies)
 {
     set_eos_pressure(i, P, CellP);
-#if defined(EOS_ELASTIC) && defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+#ifdef ELASTIC_STATE_DEPENDENT_STRENGTH
     elastic_project_after_eos(i, state_copies);
 #else
     (void)state_copies;

@@ -450,12 +450,34 @@ extern struct global_data_all_processes All;
 #ifdef EOS_ELASTIC
 /* the strength/damage/porosity properties of a cell's material (resolved at startup; see eos/composition_registry.h) */
 GIZMO_GPU_FUNCTION static inline const struct solid_material& solid_material_of(int composition_type) {return All.SolidMaterial[composition_type];}
+/* the fraction f of its cold shear modulus and yield strength a solid keeps at this thermal state (1 = no softening, 0 = molten),
+   from its specific internal energy u, or its temperature T [K] and pressure P (code units), by the form its material resolved to */
+GIZMO_GPU_FUNCTION static inline double solid_strength_fraction(int composition_type, double u, double T, double P)
+{
+#ifdef EOS_ELASTIC_MELT
+    if(!solid_material_is_elastic(composition_type)) {return 1;}
+    const struct solid_strength_model &model = All.SolidStrengthModel[composition_type];
+    double f = 1;
+    if(model.MeltForm == MELT_FORM_SPECIFIC_ENERGY) {f = 1. - u / model.MeltSpecificEnergy;}
+    else if(model.MeltForm == MELT_FORM_TEMPERATURE)
+    {
+        if(!(T > 0)) {return 1;} /* no temperature yet (before the first equation-of-state evaluation) */
+        double T_melt = model.MeltTemperature0 * pow(1. + DMAX(P, 0.) / model.MeltSimonA, 1. / model.MeltSimonC);
+        f = tanh(model.MeltOhnakaXi * (T_melt / T - 1.));
+    }
+    return (f > 0) ? ((f < 1) ? f : 1.) : 0.;
+#else
+    (void)composition_type; (void)u; (void)T; (void)P;
+    return 1;
+#endif
+}
 /* deviatoric stiffness added to the bulk modulus for uniaxial (longitudinal) strain under the stress law
-   dS/dt = 2 mu (strain rate - trace/NUMDIMS): c_L^2 = c_bulk^2 + 2 (1 - 1/NUMDIMS) mu / rho  (4/3 mu in 3D, mu in 2D) */
-GIZMO_GPU_FUNCTION static inline double elastic_longitudinal_soundspeed2_excess(int composition_type, double rho)
+   dS/dt = 2 mu (strain rate - trace/NUMDIMS): c_L^2 = c_bulk^2 + 2 (1 - 1/NUMDIMS) mu / rho  (4/3 mu in 3D, mu in 2D),
+   with mu the material's shear modulus times its strength fraction */
+GIZMO_GPU_FUNCTION static inline double elastic_longitudinal_soundspeed2_excess(int composition_type, double rho, double strength_fraction)
 {
     if(!solid_material_is_elastic(composition_type) || !(rho > 0)) {return 0;}
-    return (2.0 * (1.0 - 1.0/NUMDIMS)) * solid_material_of(composition_type).ShearModulus / rho;
+    return (2.0 * (1.0 - 1.0/NUMDIMS)) * solid_material_of(composition_type).ShearModulus * strength_fraction / rho;
 }
 #endif
 
@@ -686,6 +708,7 @@ enum iofields
   IO_EOSCS,
   IO_EOS_STRESS_TENSOR,
   IO_EOS_RECENT_YIELD_MEMORY,
+  IO_EOS_STRENGTH_FRACTION,
   IO_CBE_MOMENTS,
   IO_EOSCOMP,
   IO_EOSPHASE,

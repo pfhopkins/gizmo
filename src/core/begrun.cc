@@ -2649,6 +2649,14 @@ void read_parameter_file(char *fname)
             for(int k_p = 1; k_p < N_TILLOTSON_MATERIALS; k_p++) {snprintf(tag[nt], sizeof(tag[nt]), "SolidMaterialPreset%d_FractureActivation", k_p); addr[nt] = &All.SolidMaterialPresetFractureActivation[k_p]; id[nt++] = REAL;}
         }
 #endif
+#ifdef EOS_ELASTIC_MELT
+        /* thermal softening (melt) and molten cavitation: the custom material and each preset (not given: resolved in solid_material_resolve) */
+    static const char *solid_strength_model_names[N_SOLID_STRENGTH_MODEL_INPUTS] = {"MeltModel", "MeltSpecificEnergy", "MeltTemperature0", "MeltSimonA", "MeltSimonC",
+                                                                                 "MeltOhnakaXi", "CavitationStrength"};
+        for(int k_f = 0; k_f < N_SOLID_STRENGTH_MODEL_INPUTS; k_f++) {snprintf(tag[nt], sizeof(tag[nt]), "SolidMaterial_%s", solid_strength_model_names[k_f]); addr[nt] = &((double *)&All.SolidStrengthModelCustom)[k_f]; id[nt++] = REAL;}
+        for(int k_p = 1; k_p < N_TILLOTSON_MATERIALS; k_p++) {for(int k_f = 0; k_f < N_SOLID_STRENGTH_MODEL_INPUTS; k_f++) {
+            snprintf(tag[nt], sizeof(tag[nt]), "SolidMaterialPreset%d_%s", k_p, solid_strength_model_names[k_f]); addr[nt] = &((double *)&All.SolidStrengthModelPreset[k_p])[k_f]; id[nt++] = REAL;}}
+#endif
 #ifdef EOS_ANEOS
         /* per ANEOS table: the solid material it names (preset 1-6, or 0 = its own values below) */
         for(int aneos_k = 0; aneos_k < ANEOS_MAX_MATERIALS; aneos_k++) {
@@ -2664,6 +2672,9 @@ void read_parameter_file(char *fname)
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_YieldStrengthMax", aneos_k); addr[nt] = &custom->YieldStrengthMax; id[nt++] = REAL;
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_ReferenceDensity", aneos_k); addr[nt] = &custom->ReferenceDensity; id[nt++] = REAL;
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_FractureActivation", aneos_k); addr[nt] = &custom->FractureActivation; id[nt++] = REAL;
+#endif
+#ifdef EOS_ELASTIC_MELT
+            for(int k_f = 0; k_f < N_SOLID_STRENGTH_MODEL_INPUTS; k_f++) {snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_%s", aneos_k, solid_strength_model_names[k_f]); addr[nt] = &((double *)&All.AneosSolidStrengthModel[aneos_k])[k_f]; id[nt++] = REAL;}
 #endif
         }
 #endif

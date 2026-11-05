@@ -50,8 +50,13 @@ int elastic_stress_tensor_force_compute_pair(
 
     double wt_r = rho_i*local.SoundSpeed * rho_j*CPj.SoundSpeed
                 / (rho_i*local.SoundSpeed + rho_j*CPj.SoundSpeed) * FNormT;
-    double cT_i = sqrt(solid_material_of(local.CompositionType).ShearModulus / rho_i);
-    double cT_j = sqrt(solid_material_of(CPj.CompositionType).ShearModulus / rho_j);
+#ifdef EOS_ELASTIC_MELT
+    double strength_fraction_i = local.StrengthFraction; /* thermal softening: the shear wave speed falls with the modulus (molten: none) */
+#else
+    double strength_fraction_i = 1;
+#endif
+    double cT_i = sqrt(solid_material_of(local.CompositionType).ShearModulus * strength_fraction_i / rho_i);
+    double cT_j = sqrt(solid_material_of(CPj.CompositionType).ShearModulus * CPj.strength_fraction() / rho_j);
     double wt_t = (rho_i*cT_i + rho_j*cT_j > 0) ? rho_i*cT_i * rho_j*cT_j / (rho_i*cT_i + rho_j*cT_j) * FNormT : 0; /* shear impedance; zero if neither side has strength */
     double wt_rt = (wt_r - wt_t) * kernel.vdotr2 * rinv*rinv * All.cf_atime*All.cf_atime;
 

@@ -404,6 +404,9 @@ struct HydroForceSpec
 #ifdef EOS_ELASTIC
         for(int k = 0; k < 3; k++) { for(int k2 = 0; k2 < 3; k2++) { local.Elastic_Stress_Tensor[k][k2] = kc[i].Elastic_Stress_Tensor_Pred[k][k2]; } }
         local.RecentYieldMemory = kc[i].RecentYieldMemory;
+#ifdef EOS_ELASTIC_MELT
+        local.StrengthFraction = kc[i].StrengthFractionPred;
+#endif
 #endif
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
         local.Damage = kc[i].Damage;

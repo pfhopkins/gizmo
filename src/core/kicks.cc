@@ -560,6 +560,9 @@ void set_predicted_quantities_for_extra_physics(int i)
 
 #ifdef EOS_ELASTIC
         CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor;
+#ifdef EOS_ELASTIC_MELT
+        CellP[i].StrengthFractionPred = CellP[i].StrengthFraction;
+#endif
 #endif
         
         refresh_eos_and_project(i, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED);

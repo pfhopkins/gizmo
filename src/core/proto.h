@@ -718,7 +718,7 @@ GIZMO_GPU_FUNCTION double return_CRbin_kinetic_energy_in_GeV_binvalsNRR(int k_CR
 void elastic_body_update_driftkick(int i, double dt_entr, int mode);
 void elastic_stress_rate(int i, const double velocity_gradient[3][3]);
 #endif
-#if defined(EOS_ELASTIC) && defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+#ifdef ELASTIC_STATE_DEPENDENT_STRENGTH
 void elastic_project_after_eos(int i, int state_copies);
 #endif
 #if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON) || defined(EOS_ANEOS)

@@ -694,6 +694,11 @@ struct global_data_all_processes
   double FractureOutOfPlaneExtent; /*!< 1D/2D tensile flaws: thickness (2D) or cross-sectional area (1D) that turns an element's NDIM-volume into a volume */
   double SolidMaterialPresetFractureActivation[N_TILLOTSON_MATERIALS]; /*!< per preset row 1-6: its fracture law (SolidMaterialPreset<N>_FractureActivation; not given = tensile flaws) */
 #endif
+#ifdef EOS_ELASTIC_MELT
+  struct solid_strength_model SolidStrengthModel[N_SOLID_MATERIAL_IDS]; /*!< melt and cavitation per CompositionType, resolved at startup */
+  struct solid_strength_model_input SolidStrengthModelCustom; /*!< the custom material's SolidMaterial_Melt* / _CavitationStrength parameters */
+  struct solid_strength_model_input SolidStrengthModelPreset[N_TILLOTSON_MATERIALS]; /*!< per preset row 1-6: SolidMaterialPreset<N>_* overrides */
+#endif
 #endif
 
 #ifdef EOS_TABULATED
@@ -709,6 +714,9 @@ struct global_data_all_processes
 #ifdef EOS_ELASTIC
     int  AneosSolidMaterialChoice[ANEOS_MAX_MATERIALS];                   /* per table: 1-6 = preset, 0 = the table's own values (AneosTable<N>_SolidMaterial) */
     struct solid_material AneosSolidMaterialCustom[ANEOS_MAX_MATERIALS];  /* per table custom values (AneosTable<N>_ShearModulus etc.) */
+#ifdef EOS_ELASTIC_MELT
+    struct solid_strength_model_input AneosSolidStrengthModel[ANEOS_MAX_MATERIALS]; /* per table AneosTable<N>_Melt* / _CavitationStrength parameters */
+#endif
 #endif
 #endif
 

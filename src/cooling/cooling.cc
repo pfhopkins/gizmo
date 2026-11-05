@@ -83,7 +83,7 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
 #endif
 /* Simple steady-state chemistry — single source in simple_chemistry.h */
 #include "./simple_chemistry.h"
-#if defined(EOS_ELASTIC) && defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+#ifdef ELASTIC_STATE_DEPENDENT_STRENGTH
 #include "../mesh/kernel.h"                        /* kernel_main, for the tensile-instability factor elastic_physics_functions.h defines */
 #include "../solids/elastic_physics_functions.h" /* elastic_project_after_eos_P, in the post-cooling tail */
 #endif
@@ -486,7 +486,7 @@ void cooling_parent_routine(void)
             struct EosTableView eos_tables = eos_tables_view();
             gizmo_gpu_kernel_launch("post_cooling_tail", batch.count, KOKKOS_LAMBDA(int j) {
                 set_eos_pressure_impl(j, kp, kc, &eos_tables);
-#if defined(EOS_ELASTIC) && defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+#ifdef ELASTIC_STATE_DEPENDENT_STRENGTH
                 elastic_project_after_eos_P(j, kc, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED); /* the accepted state: as refresh_eos_and_project on the host */
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)

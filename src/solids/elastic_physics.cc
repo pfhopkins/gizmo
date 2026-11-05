@@ -131,6 +131,80 @@ static int solid_material_id_is_aneos(int id)
 #endif
 }
 
+#ifdef EOS_ELASTIC_MELT
+/* Thermal-softening defaults of the presets (rows 1-6; cgs, temperatures in K); NaN = no cited value, so a material relying on it is
+   refused. Column 0: the preset carries strength (water: 0; its mu = Y = 1 are placeholders, so it is never softened).
+   Specific-energy form (Tillotson materials), u_melt: basalt 3.4e10 and ice 7.0e9 erg/g (Benz & Asphaug 1999, Icarus 142, 5, Table 1).
+   Temperature form (an ANEOS table naming the preset), T_m0, Simon a and c, Ohnaka xi: olivine 2163 K, 8.8456e10, 3.9533 and iron 1809 K,
+   1.0418e11, 3.0633 = Simon fits to the melt curves of the Stewart M-ANEOS forsterite (2019) and iron (2020) tables (from their strength
+   notebooks), so the strength melts where those equations of state do; granite 1673 K, 6.0e10, 3 (Silber et al. 2021, arXiv:2104.07909,
+   Table 1); basalt 1360 K, 4.5e10, 3.0 and xi 0.7 (Miljkovic et al. 2013, Science 342, 724, Table S2); xi 1.2 otherwise (Collins et al. 2004,
+   Meteorit. Planet. Sci. 39, 217, Table A1). Ice Ih melts at a LOWER temperature under pressure, which this curve cannot describe: no
+   temperature-form default for ice. */
+static const double solid_material_preset_melt[6][6] = {
+    {1, NAN,    1673., 6.0e10,    3.0,    1.2},   // granite
+    {1, 3.4e10, 1360., 4.5e10,    3.0,    0.7},   // basalt
+    {1, NAN,    1809., 1.0418e11, 3.0633, 1.2},   // iron
+    {1, 7.0e9,  NAN,   NAN,       NAN,    NAN},   // ice
+    {1, NAN,    2163., 8.8456e10, 3.9533, 1.2},   // olivine/dunite
+    {0, NAN,    NAN,   NAN,       NAN,    NAN}};  // water
+static char solid_strength_model_problem[N_SOLID_MATERIAL_IDS][160]; /* empty = complete (or off) */
+
+/* one value: given on the material's own channel > given on the channel of the preset it names > its default (the preset's cited value, or the model's) > missing */
+static double solid_strength_model_pick(double own, const struct solid_strength_model_input *preset_channel, int k_field, double preset_default, const char *default_label, const char **source)
+{
+    if(!isnan(own)) {*source = "parameterfile"; return own;}
+    if(preset_channel && !isnan(((const double *)preset_channel)[k_field])) {*source = "SolidMaterialPreset parameter"; return ((const double *)preset_channel)[k_field];}
+    if(!isnan(preset_default)) {*source = default_label; return preset_default;}
+    *source = "MISSING"; return NAN;
+}
+
+/* resolve and report the thermal softening of one material: own = its own parameter channel, preset_row = the preset it is or names (0: none) */
+static void solid_strength_model_resolve(int id, const char *name, int is_aneos, const struct solid_strength_model_input *own, int preset_row, const struct solid_material *m)
+{
+    struct solid_strength_model model = {MELT_FORM_NONE, 0, 0, 0, 0, 0, 0};
+    const struct solid_strength_model_input *preset_channel = (preset_row > 0 && own != &All.SolidStrengthModelPreset[preset_row]) ? &All.SolidStrengthModelPreset[preset_row] : NULL;
+    const double *defaults = (preset_row > 0) ? solid_material_preset_melt[preset_row-1] : NULL;
+    char *problem = solid_strength_model_problem[id]; problem[0] = 0;
+    double on = own->MeltModel; if(isnan(on) && preset_channel) {on = preset_channel->MeltModel;}
+    const char *s_u = "", *s_T = "", *s_a = "", *s_c = "", *s_x = "", *s_p = "";
+    if(on > 0)
+    {
+        int no_strength = (defaults && !(defaults[0] > 0)) || (!(m->ShearModulus > 0) && !(m->YieldStrength > 0));
+        if(no_strength) {if(ThisTask == 0) {printf("MELT MODEL   CompositionType %2d: %-40s off (the material has no strength to soften)\n", id, name);} All.SolidStrengthModel[id] = model; return;}
+        model.CavitationStrength = solid_strength_model_pick(own->CavitationStrength, preset_channel, 6, 0, "default", &s_p);
+        if(!is_aneos)
+        {
+            model.MeltForm = MELT_FORM_SPECIFIC_ENERGY;
+            model.MeltSpecificEnergy = solid_strength_model_pick(own->MeltSpecificEnergy, preset_channel, 1, defaults ? defaults[1] / UNIT_SPECEGY_IN_CGS : NAN, "preset default", &s_u);
+            if(!(isfinite(model.MeltSpecificEnergy) && model.MeltSpecificEnergy > 0)) {snprintf(problem, 160, "MeltSpecificEnergy (finite, > 0; %s)", s_u);}
+        } else {
+            model.MeltForm = MELT_FORM_TEMPERATURE;
+            model.MeltTemperature0 = solid_strength_model_pick(own->MeltTemperature0, preset_channel, 2, defaults ? defaults[2] : NAN, "preset default", &s_T);
+            model.MeltSimonA = solid_strength_model_pick(own->MeltSimonA, preset_channel, 3, defaults ? defaults[3] / UNIT_PRESSURE_IN_CGS : NAN, "preset default", &s_a);
+            model.MeltSimonC = solid_strength_model_pick(own->MeltSimonC, preset_channel, 4, defaults ? defaults[4] : NAN, "preset default", &s_c);
+            model.MeltOhnakaXi = solid_strength_model_pick(own->MeltOhnakaXi, preset_channel, 5, defaults ? defaults[5] : NAN, "preset default", &s_x);
+            if(!(isfinite(model.MeltTemperature0) && model.MeltTemperature0 > 0)) {snprintf(problem, 160, "MeltTemperature0 (finite, > 0 [K]; %s)", s_T);}
+            else if(!(isfinite(model.MeltSimonA) && model.MeltSimonA > 0)) {snprintf(problem, 160, "MeltSimonA (finite, > 0; %s)", s_a);}
+            else if(!(isfinite(model.MeltSimonC) && model.MeltSimonC > 0)) {snprintf(problem, 160, "MeltSimonC (finite, > 0; %s)", s_c);}
+            else if(!(isfinite(model.MeltOhnakaXi) && model.MeltOhnakaXi > 0)) {snprintf(problem, 160, "MeltOhnakaXi (finite, > 0; %s)", s_x);}
+        }
+        if(!problem[0] && !(isfinite(model.CavitationStrength) && model.CavitationStrength >= 0)) {snprintf(problem, 160, "CavitationStrength (finite, >= 0; %s)", s_p);}
+    }
+    if(ThisTask == 0)
+    {
+        if(model.MeltForm == MELT_FORM_SPECIFIC_ENERGY) {printf("MELT MODEL   CompositionType %2d: %-40s specific-energy form: u_melt=%g [%s] P_cav=%g [%s]", id, name, model.MeltSpecificEnergy, s_u, model.CavitationStrength, s_p);}
+        else if(model.MeltForm == MELT_FORM_TEMPERATURE) {printf("MELT MODEL   CompositionType %2d: %-40s temperature form: T_m0=%g K [%s] a=%g [%s] c=%g [%s] xi=%g [%s] P_cav=%g [%s]", id, name,
+            model.MeltTemperature0, s_T, model.MeltSimonA, s_a, model.MeltSimonC, s_c, model.MeltOhnakaXi, s_x, model.CavitationStrength, s_p);}
+        else {printf("MELT MODEL   CompositionType %2d: %-40s off", id, name);}
+        if(problem[0]) {printf("  [no valid %s: the run stops only if cells carry this CompositionType]", problem);}
+        printf("\n");
+    }
+    if(problem[0]) {model.MeltForm = MELT_FORM_NONE;} /* refused in init() if cells carry it; never half-resolved */
+    All.SolidStrengthModel[id] = model;
+}
+#endif
+
 /* Fill All.SolidMaterial[] for every CompositionType from the presets and the parameterfile, once at startup.
    A Tillotson row (or, without a tabulated EOS, the id itself) 1-6 is that preset and 0 is the custom
    material (SolidMaterial_* parameters); an ANEOS table takes the preset or its own values named by
@@ -146,6 +220,10 @@ void solid_material_resolve(void)
     {
         struct solid_material m = none;
         char name[96] = "unused id";
+#ifdef EOS_ELASTIC_MELT
+        const struct solid_strength_model_input *melt_own = NULL; int melt_preset = 0; /* its thermal-softening channel and preset */
+        struct solid_strength_model melt_off = {MELT_FORM_NONE, 0, 0, 0, 0, 0, 0}; All.SolidStrengthModel[id] = melt_off; solid_strength_model_problem[id][0] = 0;
+#endif
         if(!solid_material_is_elastic(id)) {strcpy(name, "gas (no strength)");}
 #ifdef EOS_ANEOS
         else if(solid_material_id_is_aneos(id))
@@ -153,6 +231,9 @@ void solid_material_resolve(void)
             int table = aneos_subindex(id);
             if(table < 0 || table >= All.AneosNumMaterials) {All.SolidMaterial[id] = none; continue;}
             int choice = All.AneosSolidMaterialChoice[table];
+#ifdef EOS_ELASTIC_MELT
+            melt_own = &All.AneosSolidStrengthModel[table]; melt_preset = (choice >= 1 && choice < N_TILLOTSON_MATERIALS) ? choice : 0;
+#endif
             if(choice >= 1 && choice < N_TILLOTSON_MATERIALS)
             {
                 m = solid_material_preset(choice); snprintf(name, sizeof(name), "ANEOS table %d: %s", table, solid_material_preset_names[choice]);
@@ -172,6 +253,9 @@ void solid_material_resolve(void)
             if(id == 0)
             {
                 m = All.SolidMaterialCustom; strcpy(name, "custom (SolidMaterial_*)");
+#ifdef EOS_ELASTIC_MELT
+                melt_own = &All.SolidStrengthModelCustom;
+#endif
 #ifdef EOS_TILLOTSON
                 m.ReferenceDensity = All.Tillotson_EOS_params[0][3]; /* the custom Tillotson material's own rho_0 */
 #endif
@@ -179,6 +263,9 @@ void solid_material_resolve(void)
             else
             {
                 m = solid_material_preset(id); strcpy(name, solid_material_preset_names[id]);
+#ifdef EOS_ELASTIC_MELT
+                melt_own = &All.SolidStrengthModelPreset[id]; melt_preset = id;
+#endif
 #ifdef EOS_DAMAGE_POROSITY
                 m.FractureActivation = All.SolidMaterialPresetFractureActivation[id]; /* SolidMaterialPreset<N>_FractureActivation (not given: the default) */
 #endif
@@ -198,6 +285,9 @@ void solid_material_resolve(void)
                    problem ? "  [no valid " : "", problem ? problem : "");
             if(problem) {printf(": the run stops only if cells carry this CompositionType]\n");}
         }
+#ifdef EOS_ELASTIC_MELT
+        if(melt_own && solid_material_is_elastic(id)) {solid_strength_model_resolve(id, name, solid_material_id_is_aneos(id), melt_own, melt_preset, &m);}
+#endif
     }
 }
 
@@ -207,11 +297,25 @@ void solid_material_check_cells(void)
 {
     int used_local[N_SOLID_MATERIAL_IDS] = {0}, used[N_SOLID_MATERIAL_IDS] = {0}, bad = 0;
     for(int i = 0; i < N_gas; i++) {int ct = CellP[i].CompositionType; if(ct >= 0 && ct < N_SOLID_MATERIAL_IDS) {used_local[ct] = 1;}}
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+    /* grain promotion creates cells of these materials during the run (solids/grain_promotion.h): check them now as well */
+    used_local[MATERIAL_TILLOTSON_OLIVINE] = 1;
+#ifdef GRAIN_EVOLUTION
+    used_local[MATERIAL_TILLOTSON_BASALT] = used_local[MATERIAL_TILLOTSON_IRON] = used_local[MATERIAL_TILLOTSON_ICE] = 1;
+#endif
+#endif
     MPI_Allreduce(used_local, used, N_SOLID_MATERIAL_IDS, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     for(int id = 0; id < N_SOLID_MATERIAL_IDS; id++)
     {
         if(!used[id] || !solid_material_is_elastic(id)) {continue;}
         const char *problem = solid_material_problem(&All.SolidMaterial[id], solid_material_id_is_aneos(id));
+#ifdef EOS_ELASTIC_MELT
+        if(!problem && solid_strength_model_problem[id][0])
+        {
+            bad = 1;
+            if(ThisTask == 0) {printf("ERROR: cells carry CompositionType %d, whose thermal softening (MeltModel 1) has no valid %s; give it in the parameterfile (SolidMaterial_*, SolidMaterialPreset<N>_* or AneosTable<N>_*), or set MeltModel 0.\n", id, solid_strength_model_problem[id]);}
+        }
+#endif
         if(problem)
         {
             bad = 1;
@@ -291,7 +395,7 @@ void elastic_stress_rate(int i, const double velocity_gradient[3][3])
     elastic_stress_rate_P(i, velocity_gradient, CellP);
 }
 #endif
-#if defined(EOS_ELASTIC) && defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
+#ifdef ELASTIC_STATE_DEPENDENT_STRENGTH
 void elastic_project_after_eos(int i, int state_copies)
 {
     elastic_project_after_eos_P(i, CellP, state_copies);

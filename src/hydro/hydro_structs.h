@@ -214,6 +214,9 @@ struct hydro_data_in
 #ifdef EOS_ELASTIC
     MyFloat Elastic_Stress_Tensor[3][3];
     MyFloat RecentYieldMemory;
+#ifdef EOS_ELASTIC_MELT
+    MyFloat StrengthFraction; /* the predicted state's strength fraction (thermal softening) */
+#endif
 #endif
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
     MyFloat Damage; /* fracture damage D in [0,1] for i-particle */

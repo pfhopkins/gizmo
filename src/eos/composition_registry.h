@@ -83,6 +83,35 @@ struct solid_material {
 static_assert(sizeof(struct solid_material) == N_SOLID_MATERIAL_PROPERTIES * sizeof(double), "struct solid_material must stay N_SOLID_MATERIAL_PROPERTIES doubles");
 #define N_SOLID_MATERIAL_IDS 16   /* >= every CompositionType layout: Tillotson rows + ANEOS tables (+1 for the gas slot) */
 
+#ifdef EOS_ELASTIC_MELT
+/* Thermal softening (melt) and molten cavitation of a solid material, resolved once at
+   startup (solid_material_resolve) per CompositionType. A material keeps the fraction f of its cold shear modulus and yield strength:
+   f = 1 - u/u_melt (specific-energy form), or f = tanh(xi (T_m/T - 1)) with the Simon melt curve T_m = T_m0 (1 + max(P,0)/a)^(1/c)
+   (temperature form, Ohnaka 1995 as in Collins et al. 2004), clipped to [0,1]. Code units, except the temperatures [K]. */
+struct solid_strength_model {
+    double MeltForm;              /* 0 = no thermal softening, 1 = specific-energy form, 2 = temperature form */
+    double MeltSpecificEnergy;    /* u_melt (energy form) */
+    double MeltTemperature0;      /* T_m0 [K] (temperature form) */
+    double MeltSimonA;            /* a [pressure] (temperature form) */
+    double MeltSimonC;            /* c (temperature form) */
+    double MeltOhnakaXi;          /* xi (temperature form) */
+    double CavitationStrength;    /* P_cav >= 0: the tension fully molten material holds */
+};
+#define N_SOLID_STRENGTH_MODEL_PROPERTIES 7  /* the doubles above, in order (written as one row per id to the snapshot header) */
+static_assert(sizeof(struct solid_strength_model) == N_SOLID_STRENGTH_MODEL_PROPERTIES * sizeof(double), "struct solid_strength_model must stay N_SOLID_STRENGTH_MODEL_PROPERTIES doubles");
+#define MELT_FORM_NONE            0
+#define MELT_FORM_SPECIFIC_ENERGY 1
+#define MELT_FORM_TEMPERATURE     2
+
+/* What the parameterfile gives for one material channel (SolidMaterial_*, SolidMaterialPreset<N>_*, AneosTable<N>_*); NaN = not given */
+struct solid_strength_model_input {
+    double MeltModel;             /* 0 = off (not given), 1 = on */
+    double MeltSpecificEnergy, MeltTemperature0, MeltSimonA, MeltSimonC, MeltOhnakaXi, CavitationStrength;
+};
+#define N_SOLID_STRENGTH_MODEL_INPUTS 7
+static_assert(sizeof(struct solid_strength_model_input) == N_SOLID_STRENGTH_MODEL_INPUTS * sizeof(double), "struct solid_strength_model_input must stay N_SOLID_STRENGTH_MODEL_INPUTS doubles");
+#endif
+
 /* Is this composition an elastic solid? Under EOS_TYPES_DEFAULTGAS_AND_SOLIDS composition 0 is the
    ordinary gas fluid, which carries no deviatoric stress; every other id is a solid. */
 GIZMO_GPU_FUNCTION static inline int solid_material_is_elastic(int composition_type)

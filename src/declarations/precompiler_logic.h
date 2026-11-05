@@ -70,6 +70,15 @@
 #endif
 #endif
 
+#if defined(EOS_ELASTIC_MELT) && !defined(EOS_ELASTIC)
+#define EOS_ELASTIC /* thermal softening (melt) is a property of the elastic solids */
+#endif
+/* a solid strength that depends on the evolving state (pressure-dependent rock strength, EOS_DAMAGE_POROSITY model 2; thermal softening,
+   EOS_ELASTIC_MELT): the deviatoric stress is projected onto it after every accepted equation-of-state refresh (refresh_eos_and_project) */
+#if defined(EOS_ELASTIC) && ((defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)) || defined(EOS_ELASTIC_MELT))
+#define ELASTIC_STATE_DEPENDENT_STRENGTH
+#endif
+
 #if defined(PLANET_HEATING)
 /* radiogenic + accretional heating; solid material required */
 #ifndef EOS_TILLOTSON

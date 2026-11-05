@@ -44,7 +44,7 @@ void elastic_stress_rate_P(int i, const double dv0[3][3], struct gas_cell_data *
     int j,k,l,NDim=NUMDIMS;
     double R[3][3], S[3][3], dS=0;
     if(!solid_material_is_elastic(cell[i].CompositionType)) {return;} /* the gas of a gas+solid build carries no deviatoric stress */
-    double mu = solid_material_of(cell[i].CompositionType).ShearModulus;
+    double mu = solid_material_of(cell[i].CompositionType).ShearModulus * cell[i].strength_fraction(); /* thermally softened (molten: no stress rate) */
     for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S[j][k] = cell[i].Elastic_Stress_Tensor_Pred[j][k];}}
     for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {R[j][k] = 0.5*(dv0[j][k] - dv0[k][j]);}}
     double trace_vel=0; for(j=0;j<NDim;j++) {trace_vel += dv0[j][j];}
@@ -72,6 +72,19 @@ int elastic_radial_return(double S[3][3], double J2, double Y_yield)
     return 1;
 }
 
+/* thermal softening of a stored stress: while the material stays partly solid the stress follows the strength fraction both ways,
+   S *= f_now / f_last (the elastic strain is kept; the yield return that follows removes what exceeds the new strength); once it has
+   melted (f_last = 0) the stress is gone and only new strain builds it again. No energy moves: the stress work already sits in the
+   internal energy. f_last becomes f_now. Returns the factor applied. */
+KOKKOS_INLINE_FUNCTION
+double elastic_strength_rescale(double S[3][3], double *f_last, double f_now)
+{
+    double rescale = 1;
+    if(*f_last > 0 && f_now != *f_last) {rescale = f_now / *f_last; for(int j=0;j<NUMDIMS;j++) {for(int k=0;k<NUMDIMS;k++) {S[j][k] *= rescale;}}}
+    *f_last = f_now;
+    return rescale;
+}
+
 /* routine to update the deviatoric stress tensor */
 KOKKOS_INLINE_FUNCTION
 void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
@@ -85,6 +98,14 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
 
     if(mode < 2) // drift or kick operation
     {
+#ifdef EOS_ELASTIC_MELT
+        /* thermal softening at the state this copy is updated with (the committed energy at the kick, the predicted one at the drift;
+           temperature and pressure from the last equation-of-state evaluation, projected again after the next one) */
+        double f_strength = solid_strength_fraction(cell[i].CompositionType, (mode == 0) ? cell[i].InternalEnergy : cell[i].InternalEnergyPred, cell[i].Temperature, cell[i].Pressure);
+        double f_last = (mode == 0) ? cell[i].StrengthFraction : cell[i].StrengthFractionPred;
+#else
+        double f_strength = 1, f_last = 1;
+#endif
         for(j=0;j<NDim;j++) {
             for(k=0;k<NDim;k++) {
                 // determine which variable we are updating (mode=0/1 is kick/drift)
@@ -99,6 +120,12 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
 #if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_PRESSURE_STRENGTH
         if(material.InternalFriction > 0) {Y_eff = pressure_dependent_yield_strength(material, cell[i].Pressure);}
 #endif
+        double rescale = elastic_strength_rescale(S_new, &f_last, f_strength); /* first follow the softened modulus, then return */
+        J2 *= rescale * rescale;
+#ifdef EOS_ELASTIC_MELT
+        if(mode == 0) {cell[i].StrengthFraction = f_last;} else {cell[i].StrengthFractionPred = f_last;}
+#endif
+        Y_eff *= f_strength; /* thermally softened (molten: the return anneals the stress to zero) */
         volatile int yield_return_applied = elastic_radial_return(S_new, J2, Y_eff);
         /* recent-yield memory, at the kick only: decay it over RECENT_YIELD_MEMORY_SOUND_CROSSINGS sound-crossing times of the
            (physical) kernel radius, then add the overstress the return just removed, in units of the material's yield strength
@@ -109,9 +136,10 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
         {
             double h_phys = pp[i].KernelRadius * All.cf_atime, c_s = cell[i].SoundSpeed;
             if(h_phys > 0 && c_s > 0 && dt_entr > 0) {cell[i].RecentYieldMemory *= exp(-dt_entr * c_s / (RECENT_YIELD_MEMORY_SOUND_CROSSINGS * h_phys));}
-            if(yield_return_applied)
+            if(!(f_strength > 0)) {cell[i].RecentYieldMemory = DMAX(cell[i].RecentYieldMemory, 2.*TENSILE_CORRECTION_YIELD_MEMORY_ONSET);} /* molten: no strength, so the correction stays fully off (its stress is zero, so no return acts to say so) */
+            else if(yield_return_applied)
             {
-                double Y_norm = (Y0 > 0) ? Y0 : Y_eff; /* a fixed strength scale (the constant von Mises Y, also for a pressure-dependent material, whose current strength can vanish in tension); without one, the current strength */
+                double Y_norm = (Y0 > 0) ? f_strength * Y0 : Y_eff; /* a fixed strength scale (the constant von Mises Y, also for a pressure-dependent material, whose current strength can vanish in tension); without one, the current strength */
                 if(Y_norm > 0) {
                     double overstress = (sqrt(NDim*J2) - Y_eff) / Y_norm;
                     if(isfinite(overstress) && overstress > 0) {cell[i].RecentYieldMemory += overstress;}
@@ -119,8 +147,10 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
             }
         }
 #if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_FRACTURE
-        /* bit 0: fracture damage, updated at the kick (mode==0) only, by the law the material names */
-        if(mode == 0)
+        /* bit 0: fracture damage, updated at the kick (mode==0) only, by the law the material names; both laws take the cold shear
+           modulus mu their flaw thresholds were calibrated with, not the thermally softened one. Fully molten material (f = 0) has no
+           flaws to grow or activate: its damage and active-flaw count are kept unchanged until it re-solidifies. */
+        if(mode == 0 && f_strength > 0)
         {
             double D_new, A_new;
             int composition = cell[i].CompositionType;
@@ -137,7 +167,7 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
                 for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {stress[j][k] = (1. - D_now) * S_new[j][k];} stress[j][j] -= cell[i].Pressure;}
                 double rho_i = cell[i].Density;
                 /* the material bulk modulus: Tillotson's A; a tabulated material has no constant, so its local rho c_bulk^2 */
-                double bulk_modulus = rho_i * (cell[i].SoundSpeed*cell[i].SoundSpeed - elastic_longitudinal_soundspeed2_excess(composition, rho_i));
+                double bulk_modulus = rho_i * (cell[i].SoundSpeed*cell[i].SoundSpeed - elastic_longitudinal_soundspeed2_excess(composition, rho_i, cell[i].strength_fraction()));
 #ifdef EOS_TILLOTSON
                 if(eos_branch_of(composition) == EOS_BRANCH_TILLOTSON) {bulk_modulus = All.Tillotson_EOS_params[tillotson_subindex(composition)][4];}
 #endif
@@ -180,27 +210,48 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
     return; // all done here
 }
 
-#if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_PRESSURE_STRENGTH
-/* after an accepted equation-of-state refresh (refresh_eos_and_project, and the device drift and cooling tails): a material whose
-   strength depends on pressure returns the stress copies that state stands for (STATE_COPY_* in core/proto.h) onto the strength at
-   the refreshed pressure, so every stress the forces read satisfies the yield condition at the pressure they read (the stress update
-   itself saw the pressure of the previous refresh). Downward only: a rise in pressure never restores stress. */
+#ifdef ELASTIC_STATE_DEPENDENT_STRENGTH
+/* after an accepted equation-of-state refresh (refresh_eos_and_project, and the device drift and cooling tails): a material whose strength
+   depends on the evolving state -- on pressure (EOS_DAMAGE_POROSITY model 2) or on temperature or energy (thermal softening,
+   EOS_ELASTIC_MELT) -- projects the stress copies that state stands for (STATE_COPY_* in core/proto.h) onto its strength at the refreshed
+   state: the stored stress first follows the strength fraction (elastic_strength_rescale), then the radial return. Every stress the forces
+   read then satisfies the yield condition at the state they read (the stress update itself saw the previous refresh). The return only
+   removes stress: a rise in pressure or strength never restores what a return took. */
 KOKKOS_INLINE_FUNCTION
 void elastic_project_after_eos_P(int i, struct gas_cell_data *cell, int state_copies)
 {
-    if(!solid_material_is_elastic(cell[i].CompositionType)) {return;}
-    const struct solid_material &material = solid_material_of(cell[i].CompositionType);
-    if(!(material.InternalFriction > 0)) {return;} /* the constant law: nothing depends on the refreshed state */
-    double Y_eff = pressure_dependent_yield_strength(material, cell[i].Pressure), S[3][3];
+    int composition = cell[i].CompositionType;
+    if(!solid_material_is_elastic(composition)) {return;}
+    const struct solid_material &material = solid_material_of(composition);
+    double Y_strength = material.YieldStrength; int state_dependent = 0;
+#if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_PRESSURE_STRENGTH
+    if(material.InternalFriction > 0) {Y_strength = pressure_dependent_yield_strength(material, cell[i].Pressure); state_dependent = 1;}
+#endif
+#ifdef EOS_ELASTIC_MELT
+    if(All.SolidStrengthModel[composition].MeltForm != MELT_FORM_NONE) {state_dependent = 1;}
+#endif
+    if(!state_dependent) {return;} /* the constant law: nothing depends on the refreshed state */
+    double S[3][3];
     for(int copy = 0; copy < 2; copy++)
     {
         int committed = (copy == 0);
         if(!(state_copies & (committed ? STATE_COPY_COMMITTED : STATE_COPY_PREDICTED))) {continue;}
         Mat3<MyDouble> &stress = committed ? cell[i].Elastic_Stress_Tensor : cell[i].Elastic_Stress_Tensor_Pred;
-        double J2 = 0;
         for(int j=0;j<3;j++) {for(int k=0;k<3;k++) {S[j][k] = stress[j][k];}}
+        double f_now = 1, f_last = 1;
+#ifdef EOS_ELASTIC_MELT
+        f_now = solid_strength_fraction(composition, committed ? cell[i].InternalEnergy : cell[i].InternalEnergyPred, cell[i].Temperature, cell[i].Pressure);
+        f_last = committed ? cell[i].StrengthFraction : cell[i].StrengthFractionPred;
+#endif
+        int changed = (elastic_strength_rescale(S, &f_last, f_now) != 1);
+#ifdef EOS_ELASTIC_MELT
+        if(committed) {cell[i].StrengthFraction = f_last;} else {cell[i].StrengthFractionPred = f_last;}
+        if(committed && !(f_now > 0)) {cell[i].RecentYieldMemory = DMAX(cell[i].RecentYieldMemory, 2.*TENSILE_CORRECTION_YIELD_MEMORY_ONSET);} /* molten: the tensile correction stays off (the memory is committed history) */
+#endif
+        double J2 = 0;
         for(int j=0;j<NUMDIMS;j++) {for(int k=0;k<NUMDIMS;k++) {J2 += 0.5 * S[j][k]*S[j][k];}}
-        if(elastic_radial_return(S, J2, Y_eff)) {for(int j=0;j<3;j++) {for(int k=0;k<3;k++) {stress[j][k] = S[j][k];}}}
+        if(elastic_radial_return(S, J2, f_now * Y_strength)) {changed = 1;}
+        if(changed) {for(int j=0;j<3;j++) {for(int k=0;k<3;k++) {stress[j][k] = S[j][k];}}}
     }
 }
 #endif

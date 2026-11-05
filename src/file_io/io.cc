@@ -1710,6 +1710,17 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_EOS_STRENGTH_FRACTION:
+#ifdef EOS_ELASTIC_MELT
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].StrengthFraction;
+                    n++;
+                }
+#endif
+            break;
+
             case IO_EOSPHASE:
 #ifdef EOS_ANEOS
             for(n = 0; n < pc; pindex++)
@@ -2145,6 +2156,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
         case IO_EOS_RECENT_YIELD_MEMORY:
+        case IO_EOS_STRENGTH_FRACTION:
             if(mode)
                 bytes_per_blockelement = sizeof(MyInputFloat);
             else
@@ -2497,6 +2509,7 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
         case IO_EOS_RECENT_YIELD_MEMORY:
+        case IO_EOS_STRENGTH_FRACTION:
             typekey = 1;		/* native MyOutputFloat */
             break;
             
@@ -2638,6 +2651,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
         case IO_EOS_RECENT_YIELD_MEMORY:
+        case IO_EOS_STRENGTH_FRACTION:
             values = 1;
             break;
 
@@ -2957,6 +2971,7 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
         case IO_EOS_RECENT_YIELD_MEMORY:
+        case IO_EOS_STRENGTH_FRACTION:
             for(i = 1; i < 6; i++) {typelist[i] = 0;}
             return ngas;
             break;
@@ -3269,6 +3284,12 @@ int blockpresent(enum iofields blocknr)
 
         case IO_EOS_RECENT_YIELD_MEMORY:
 #ifdef EOS_ELASTIC
+            return 1;
+#endif
+            break;
+
+        case IO_EOS_STRENGTH_FRACTION:
+#ifdef EOS_ELASTIC_MELT
             return 1;
 #endif
             break;
@@ -3884,6 +3905,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_EOS_RECENT_YIELD_MEMORY:
             strncpy(label, "RYMM", 4);
             break;
+        case IO_EOS_STRENGTH_FRACTION:
+            strncpy(label, "STRF", 4);
+            break;
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strncpy(label, "DBNU", 4);
             break;
@@ -4356,6 +4380,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_EOS_RECENT_YIELD_MEMORY:
             strcpy(buf, "RecentYieldMemory");
+            break;
+        case IO_EOS_STRENGTH_FRACTION:
+            strcpy(buf, "StrengthFraction");
             break;
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strcpy(buf, "DustBinNumbers");
@@ -5657,6 +5684,12 @@ void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_f
     {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={N_SOLID_MATERIAL_IDS, N_SOLID_MATERIAL_PROPERTIES}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
     hdf5_attribute = H5Acreate(handle, "Solid_material_properties_by_composition", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.SolidMaterial); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+#endif
+#ifdef EOS_ELASTIC_MELT
+    /* per CompositionType: thermal-softening form (0 none, 1 specific energy, 2 temperature), u_melt, T_m0 [K], Simon a, Simon c, Ohnaka xi, cavitation strength (code units) */
+    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={N_SOLID_MATERIAL_IDS, N_SOLID_STRENGTH_MODEL_PROPERTIES}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
+    hdf5_attribute = H5Acreate(handle, "Solid_melt_model_by_composition", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.SolidStrengthModel); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
 #endif
 
 #ifdef SINK_PARTICLES

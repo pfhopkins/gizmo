@@ -492,6 +492,10 @@ extern struct gas_cell_data
     Mat3<MyDouble> Elastic_Stress_Tensor_Pred;
     Mat3<MyDouble> Dt_Elastic_Stress_Tensor;
     MyFloat RecentYieldMemory;            /* recent plastic flow: the overstress removed by the yield returns, in units of the yield strength, decaying over ten sound-crossing times of the kernel radius; switches the tensile-instability correction off in material that is flowing plastically (not an accumulated plastic strain) */
+#ifdef EOS_ELASTIC_MELT
+    MyFloat StrengthFraction;             /* the strength fraction f (thermal softening) the committed stress was last projected with: the stored stress follows f both ways while partly solid, and once molten (0) only new strain rebuilds it */
+    MyFloat StrengthFractionPred;         /* the same for the predicted stress, which the forces read: f of the state at the last equation-of-state refresh */
+#endif
 #endif
 #ifdef EOS_DAMAGE_POROSITY
     MyFloat Damage;        /* scalar fracture damage D in [0,1] */
@@ -559,6 +563,15 @@ extern struct gas_cell_data
 
     /* ---- member functions for derived quantities ---- */
     GIZMO_GPU_FUNCTION inline double nHcgs() const {return HYDROGEN_MASSFRAC * Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;} /*!< hydrogen number density in cgs */
+#ifdef EOS_ELASTIC
+    GIZMO_GPU_FUNCTION inline double strength_fraction() const { /*!< the strength fraction of the predicted state, as the forces see it (1 without thermal softening) */
+#ifdef EOS_ELASTIC_MELT
+        return StrengthFractionPred;
+#else
+        return 1;
+#endif
+    }
+#endif
 
     GIZMO_GPU_FUNCTION inline double density_for_energy() const { /*!< density used in energy equations (accounts for SPH pressure formulation) */
 #ifdef HYDRO_PRESSURE_SPH
@@ -815,7 +828,7 @@ extern struct gas_cell_data
 #endif
         SoundSpeed = cs2;
 #ifdef EOS_ELASTIC
-        SoundSpeed += elastic_longitudinal_soundspeed2_excess(CompositionType, Density); /* the stress acts on the bulk density, porous or not */
+        SoundSpeed += elastic_longitudinal_soundspeed2_excess(CompositionType, Density, solid_strength_fraction(CompositionType, u, 0, 0)); /* the stress acts on the bulk density, porous or not */
 #endif
         SoundSpeed = sqrt(SoundSpeed);
         return press;
