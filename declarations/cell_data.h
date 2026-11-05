@@ -122,45 +122,45 @@ extern struct gas_cell_data
 #endif
     
 #if (SINGLE_STAR_SINK_FORMATION & 4)
-    MyFloat Density_Relative_Maximum_in_Kernel; /*!< hold density_max-density_i, for particle i, so we know if its a local maximum */
+    MyScratchFloat Density_Relative_Maximum_in_Kernel; /*!< hold density_max-density_i, for particle i, so we know if its a local maximum */
 #endif
     
     /* matrix of the primitive variable gradients: rho, P, vx, vy, vz, B, phi */
     struct
     {
-        Vec3<MyDouble> Density;
-        Vec3<MyDouble> Pressure;
-        Mat3<MyDouble> Velocity;
+        Vec3<MyScratchFloat> Density;
+        Vec3<MyScratchFloat> Pressure;
+        Mat3<MyScratchFloat> Velocity;
 #ifdef MAGNETIC
-        Mat3<MyDouble> B;
+        Mat3<MyScratchFloat> B;
 #ifdef DIVBCLEANING_DEDNER
-        Vec3<MyDouble> Phi;
+        Vec3<MyScratchFloat> Phi;
 #endif
 #endif
 #ifdef DOGRAD_SOUNDSPEED
-        Vec3<MyDouble> SoundSpeed;
+        Vec3<MyScratchFloat> SoundSpeed;
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
-        Vec3<MyDouble> InternalEnergy;
+        Vec3<MyScratchFloat> InternalEnergy;
 #endif
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-        Vec3<MyDouble> Metallicity[NUM_METAL_SPECIES];
+        Vec3<MyScratchFloat> Metallicity[NUM_METAL_SPECIES];
 #endif
 #ifdef COSMIC_RAY_FLUID
-        Vec3<MyDouble> CosmicRayPressure[N_CR_PARTICLE_BINS];
+        Vec3<MyScratchFloat> CosmicRayPressure[N_CR_PARTICLE_BINS];
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
-        Vec3<MyDouble> Rad_E_gamma_ET[N_RT_FREQ_BINS];
+        Vec3<MyScratchFloat> Rad_E_gamma_ET[N_RT_FREQ_BINS];
 #endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
-        MyFloat Rad_E_gamma_Grad[N_RT_FREQ_BINS][3];
-        MyFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
+        MyScratchFloat Rad_E_gamma_Grad[N_RT_FREQ_BINS][3];
+        MyScratchFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
 #endif
     } Gradients;
     SymmetricTensor2<MyDouble> NV_T; /*!< holds the tensor used for gradient estimation */
     Vec3<MyDouble> NV_T_face_weights; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
-    MyDouble ConditionNumber;   /*!< condition number of the gradient matrix: needed to ensure stability */
-    MyDouble FaceClosureError;      /*!< dimensionless measure of face closure */
+    MyScratchFloat ConditionNumber;   /*!< condition number of the gradient matrix: needed to ensure stability */
+    MyScratchFloat FaceClosureError;      /*!< dimensionless measure of face closure */
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     MyDouble MaxKineticEnergyNgb;   /*!< maximum kinetic energy (with respect to neighbors): use for entropy 'switch' */
 #endif
@@ -227,7 +227,7 @@ extern struct gas_cell_data
 #endif
 #endif
 #ifdef GALSF
-    MyFloat Sfr;                      /*!< particle star formation rate */
+    MyScratchFloat Sfr;                      /*!< particle star formation rate */
 #if defined(GALSF_SFR_VIRIAL_CRITERION_TIMEAVERAGED)
     MyFloat AlphaVirial_SF_TimeSmoothed;  /*!< dimensionless number > 0.5 if self-gravitating for smoothed virial criterion */
 #endif
@@ -263,7 +263,7 @@ extern struct gas_cell_data
 #endif
     
 #ifdef TURB_DIFFUSION
-    MyFloat TD_DiffCoeff;             /*!< effective diffusion coefficient for sub-grid turbulent diffusion */
+    MyScratchFloat TD_DiffCoeff;             /*!< effective diffusion coefficient for sub-grid turbulent diffusion */
 #ifdef TURB_DIFF_DYNAMIC
     MyDouble h_turb;
     MyDouble MagShear;
@@ -285,7 +285,7 @@ extern struct gas_cell_data
 #endif
     
 #ifdef CONDUCTION
-    MyFloat Kappa_Conduction;                   /*!< conduction coefficient */
+    MyScratchFloat Kappa_Conduction;                   /*!< conduction coefficient */
 #endif
     
 #if defined(OUTPUT_MOLECULAR_FRACTION) || defined(COOL_MOLECFRAC_NONEQM)
@@ -303,18 +303,18 @@ extern struct gas_cell_data
     
     
 #if defined(VISCOSITY)
-    MyFloat Eta_ShearViscosity;         /*!< shear viscosity coefficient */
-    MyFloat Zeta_BulkViscosity;         /*!< bulk viscosity coefficient */
+    MyScratchFloat Eta_ShearViscosity;         /*!< shear viscosity coefficient */
+    MyScratchFloat Zeta_BulkViscosity;         /*!< bulk viscosity coefficient */
 #endif
     
     
 #if defined(RADTRANSFER)
-    SymmetricTensor2<MyFloat> ET[N_RT_FREQ_BINS]; /*!< eddington tensor - symmetric -> only 6 elements needed: this is dimensionless by our definition */
-    MyFloat Rad_Je[N_RT_FREQ_BINS];         /*!< emissivity (includes sources like stars, as well as gas): units=Rad_E_gamma/time  */
+    SymmetricTensor2<MyScratchFloat> ET[N_RT_FREQ_BINS]; /*!< eddington tensor - symmetric -> only 6 elements needed: this is dimensionless by our definition */
+    MyScratchFloat Rad_Je[N_RT_FREQ_BINS];         /*!< emissivity (includes sources like stars, as well as gas): units=Rad_E_gamma/time  */
     MyFloat Rad_E_gamma[N_RT_FREQ_BINS];    /*!< photon energy (integral of dRad_E_gamma/dvol*dVol) associated with particle [for simple frequency bins, equivalent to photon number] */
-    MyFloat Rad_Kappa[N_RT_FREQ_BINS];      /*!< opacity [physical units ~ length^2 / mass]  */
+    MyScratchFloat Rad_Kappa[N_RT_FREQ_BINS];      /*!< opacity [physical units ~ length^2 / mass]  */
 #if defined(COOLING) || defined(RT_INFRARED)
-    MyFloat Lambda_RadiativeCooling_toRHDBins[N_RT_FREQ_BINS]; /* cooling rate to the various RHD bins here which is not entirely accounted for elsewhere */
+    MyScratchFloat Lambda_RadiativeCooling_toRHDBins[N_RT_FREQ_BINS]; /* cooling rate to the various RHD bins here which is not entirely accounted for elsewhere */
 #endif
 #ifdef RT_FLUXLIMITER
     MyFloat Rad_Flux_Limiter[N_RT_FREQ_BINS]; /*!< dimensionless flux-limiter (0<lambda<1) */

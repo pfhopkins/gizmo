@@ -471,6 +471,7 @@
 #DOMAIN_MULTIBIN                # Domain: balance every timebin level up to the decomposition step at once (per-level tallies per segment, top-leaf refinement by level, multi-row assignment weighted by each level's estimated wall until the next decomposition; counts capped at DOMAIN_MULTIBIN_LOADCAP=1.15 x mean). Use with DOMAIN_FREQ_WEIGHT=9. Changes the layout.
 #DOMAIN_FREQ_WEIGHT_SPLIT_ONLY  # with DOMAIN_FREQ_WEIGHT: the weight enters the split and the assignment only; the top tree is refined on the unweighted cost (keeps the top tree from doubling where deep-bin populations are dense, e.g. disks around sinks). Changes the layout.
 #STARFORGE_OPTIMIZATIONS        # performance bundle: TREE_REFRESH_INCREMENTAL + DOMAIN_MULTIBIN + DOMAIN_FREQ_WEIGHT=9 + DOMAIN_FREQ_WEIGHT_SPLIT_ONLY (each with its own <NAME>_OFF opt-out). Default under SINGLE_STAR_STARFORGE_DEFAULTS; opt out with STARFORGE_OPTIMIZATIONS_OFF. Changes results at the level of a rank-count change; see declarations/precompiler_logic.h for the measured gains.
+#PRECISION_DIET=1              # store derived quantities in float where double buys nothing (arithmetic stays double): =1 hydro/gradient exchange buffers; =2 also gradients, Eddington tensors, opacities and other derived per-cell fields of P/CellP (smaller structs and decomposition exchange; restartfiles change layout). Changes results at the float-roundoff level. Needs a value
 ####################################################################################################
 
 

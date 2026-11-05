@@ -20,6 +20,22 @@ typedef unsigned long long MyIDType;
 typedef double   MyFloat;
 typedef double  MyDouble;
 
+/* PRECISION_DIET: storage-only narrowing to float of fields that do not need double (arithmetic stays in
+   double locals). =1: neighbour-loop exchange buffers (hydro and gradient import/export structs).
+   =2: also derived per-cell fields of P/CellP (gradients, Eddington tensors, opacities, transport
+   coefficients, kernel-sum diagnostics); changes the restartfile layout. Never positions, masses,
+   conserved/evolved state, accumulators, or anything feeding the timestep or tree geometry. */
+#if defined(PRECISION_DIET)
+typedef float MyCommFloat;
+#else
+typedef double MyCommFloat;
+#endif
+#if defined(PRECISION_DIET) && (PRECISION_DIET >= 2)
+typedef float MyScratchFloat;
+#else
+typedef double MyScratchFloat;
+#endif
+
 #ifdef OUTPUT_IN_DOUBLEPRECISION
 typedef double MyOutputFloat;
 #else
