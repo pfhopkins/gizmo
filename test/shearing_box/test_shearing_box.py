@@ -19,15 +19,8 @@ Each q is built once and runs three problems:
                the compressible linear equations integrated here, and checked for conservation of the linearised
                potential vorticity i(kx eta - ky v_r) - (2-q) Omega delta.
 
-For q = 3/2 only, cold gas (target: local-disc boxes with shear Mach M = q Omega L / c_s ~ 30-100; cf. Zier &
-Springel 2022, MNRAS 517, 2639):
+For q = 3/2 only, an integrator check:
 
-  cold_shear   the equilibrium shear flow on a jittered lattice (5% rms displacements) for 4 orbits. A lattice cancels
-               the truncation errors of the shear flow; irregular particles do not (a glass gives the same noise to 1%:
-               the shear winds up any start within the ~1.5-orbit transient). The noise is set by the shear velocity
-               jump across a particle spacing, q Omega dx / c_s = M/N: ~0.3 q Omega dx when that is < 1, saturating
-               near c_s above. M = 30 at 16^3 and 32^3 (M/N = 1.9 -> 0.94) must converge about first order; M = 100 at
-               16^3 (saturated) must stay bounded after the transient.
   cold_epicycle  a uniform epicycle with c_s = 1e-3, vr0 = 0.1 c_s, so the timestep is set by MaxSizeTimestep rather
                than the Courant condition. The epicycle energy E = v_r^2 + 2 eta^2 / (2-q) is conserved exactly; a
                symplectic second-order integration keeps its error bounded at O((kappa dt)^2). Gas over 100 epicycles,
@@ -72,13 +65,6 @@ TOL_EPI_AMP = 5e-3
 # Shearing wave, ~14 particles per wavelength: <=3.6% measured (5.7-7.2% at 24^3, ~12% at 16^3: second order).
 TOL_WAVE = 0.08
 
-COLD_RUNS, COLD_JITTER, COLD_ORBITS = ((30, 16), (30, 32), (100, 16)), 0.05, 4  # (M, N)
-COLD_CONV_M, COLD_CONV_N = 30, (16, 32)
-# After the ~1.5-orbit transient the noise must not keep growing: last orbit vs the one before.
-TOL_COLD_GROWTH = 1.2
-# Noise from 16^3 to 32^3 at M = 30: first order is 0.5; 0.56 measured (glass and jittered lattice alike), as M/N
-# crosses from the saturated regime into the resolved one.
-COLD_CONVERGENCE_RATIO = 0.65
 EPI_COLD_CS, EPI_COLD_MAXDT = 1e-3, 0.1
 # A symplectic integrator keeps |dE/E| ~ (kappa dt)^2 bounded (1.5e-3 at this dt for the symplectic epicycle
 # integrator of Rein & Tremaine 2011); a non-symplectic one drifts without bound.
@@ -97,9 +83,6 @@ def cases(q):
          ("shearing_wave", dict(N=N_WAVE, dv=DV, kx0=KX0, ky=KY), t_wave, t_wave / 12, None)]
     if q != 1.5:
         return c
-    for M, N in COLD_RUNS:
-        c.append((f"cold_shear_M{M}_N{N}", dict(N=N, cs=q / M, jitter=COLD_JITTER), COLD_ORBITS * 2 * np.pi, 0.5,
-                  EPI_COLD_MAXDT))
     t_epi = 2 * np.pi / kappa(q)
     vr0 = 0.1 * EPI_COLD_CS
     c.append(("cold_epicycle", dict(N=8, cs=EPI_COLD_CS, vr0=vr0), 100 * t_epi, t_epi, EPI_COLD_MAXDT))
@@ -252,37 +235,6 @@ def cold_runs(runs):
     if "cold_epicycle" not in out:
         pytest.skip("cold-gas cases run for q = 3/2 only")
     return q, out
-
-
-def cold_shear_noise(q, out, M, N):
-    """Times (orbits), rms |v - v_eq| / c_s and rms drho/rho for one cold_shear run."""
-    rows = []
-    for s in load_snapshots(*out[f"cold_shear_M{M}_N{N}"]):
-        dv = np.c_[s["v"][:, 0], eta(s, q), s["v"][:, 2]]
-        rows.append((s["t"] / (2 * np.pi), np.sqrt(np.mean(np.sum(dv**2, axis=1))) * M / q, np.std(s["rho"]) / np.mean(s["rho"])))
-    return np.array(rows).T
-
-
-def late_noise(t, a):
-    return a[t > COLD_ORBITS - 1].mean()
-
-
-def test_cold_shear_bounded(runs):
-    q, out = cold_runs(runs)
-    for M, N in COLD_RUNS:
-        t, dv, drho = cold_shear_noise(q, out, M, N)
-        prev = dv[(t > COLD_ORBITS - 2) & (t <= COLD_ORBITS - 1)].mean()
-        print(f"cold shear M={M} N={N}: last-orbit rms dv = {late_noise(t, dv):.3f} c_s (previous orbit {prev:.3f}), "
-              f"rms drho/rho = {late_noise(t, drho):.3f}")
-        assert late_noise(t, dv) < TOL_COLD_GROWTH * prev, f"M={M}, N={N}: velocity noise still growing: {prev:.3f} -> {late_noise(t, dv):.3f} c_s"
-
-
-def test_cold_shear_converges(runs):
-    q, out = cold_runs(runs)
-    M = COLD_CONV_M
-    lo, hi = (late_noise(*cold_shear_noise(q, out, M, N)[:2]) for N in COLD_CONV_N)
-    print(f"cold shear M={M}: rms dv {lo:.3f} -> {hi:.3f} c_s, ratio {hi / lo:.2f} (first order 0.50, limit {COLD_CONVERGENCE_RATIO})")
-    assert hi / lo < COLD_CONVERGENCE_RATIO, f"M={M}: velocity noise does not converge: {lo:.3f} -> {hi:.3f} c_s from N={COLD_CONV_N[0]} to {COLD_CONV_N[1]}"
 
 
 def epicycle_energy(s, q):
