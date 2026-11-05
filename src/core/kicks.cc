@@ -251,6 +251,9 @@ void apply_long_range_kick(integertime tstart, integertime tend)
 #endif
     for(i = 0; i < NumPart; i++)
     {
+#ifdef KETJU_REGULARIZATION
+        if(P[i].KetjuIntegrated) {continue;} /* MSTAR integrates it */
+#endif
         if(P[i].Mass > 0)
         {
             Vec3<double> dvel = P[i].GravPM * dt_gravkick; /* do the kick, only collisionless particles */

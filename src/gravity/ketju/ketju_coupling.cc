@@ -37,6 +37,7 @@
 #include "../../mesh/kernel.h"
 #include "ketju_coupling.h"
 #include "../../galaxy_sf/single_star_record.h"
+#include "../../mesh/gpu_neighbor_list.h"   /* gizmo_motion_bound_raise */
 #include "../../system/gpu_particles_arena.h"
 #include "ketju_mstar_kokkos.h"
 
@@ -56,6 +57,22 @@
 
 
 struct ketju_member_state &ketju_member(int i) {return SingleStars.ketju[single_star_slot(P[i].StarIdx)];}
+/* a star's compact record, made at its first chain step; without IMF sampling it lives as long as the chain step */
+static struct ketju_member_state &ketju_member_open(int i)
+{
+    if(P[i].StarIdx <= 0) {struct single_star_record r; memset(&r, 0, sizeof(r)); P[i].StarIdx = single_star_record_new(&r);}
+    return ketju_member(i);
+}
+static void ketju_member_close(int i)
+{
+    if(P[i].StarIdx <= 0) {return;}
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    memset(&ketju_member(i), 0, sizeof(struct ketju_member_state));
+#else
+    single_star_record_free(P[i].StarIdx); P[i].StarIdx = 0;
+#endif
+}
+
 
 /* start-up state of the KETJU fields */
 void ketju_init_particle(int i)
@@ -610,6 +627,34 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 
 
 
+/* Run the full integration step for one region.
+ * Uses proper cosmological kick factors for comoving integration
+ * (based on public GADGET4-KETJU, Mannerkoski+ 2023). */
+static void integrate_region(KetjuRegion &reg, double dt_physical)
+{
+    if(dt_physical <= 0) return;
+
+
+
+
+    /* run MSTAR integrator (all compute tasks participate via compute_tasks.comm) */
+    if(reg.compute_tasks.is_member() && reg.integrator) {
+        kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 1);
+        kj_mstar_run_integrator(reg.integrator, dt_physical * KJ_TIME_TO_NAT);
+        kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 0);
+        int n_steps = reg.integrator->perf->successful_steps + reg.integrator->perf->failed_steps;
+        double dE = reg.integrator->perf->relative_energy_error;
+        if(All.KetjuMaxStepCount > 0 && n_steps >= All.KetjuMaxStepCount) {
+            printf("KETJU WARNING: integration hit max step count (%d) — results may be inaccurate!\n",
+                   All.KetjuMaxStepCount);
+        }
+        if(fabs(dE) > 1e-4) {
+            printf("KETJU WARNING: large energy error dE/E=%g in region with %d particles\n",
+                   dE, reg.total_particle_count);
+        }
+    }
+
+}
 
 /* ============================================================
  *  PHASE 5a: Merger handling
@@ -642,6 +687,137 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
  *  is swapped in after the drift by ketju_set_final_velocities().
  * ============================================================ */
 
+/* Per-particle data packed for MPI_Scatterv (one struct per particle) */
+struct ketju_scatter_particle {
+    MyIDType ID;
+    MyIDType Child;
+    int Task;
+    int Index;
+    int Type;
+    double Mass;
+    double Pos[3];       /* absolute comoving position */
+    double Vel[3];       /* CoM-relative peculiar velocity */
+};
+
+/* comparison for sorting scatter particles by Task (for MPI_Scatterv) */
+static int scatter_particle_task_cmp(const void *a, const void *b)
+{
+    const ketju_scatter_particle *pa = (const ketju_scatter_particle *)a;
+    const ketju_scatter_particle *pb = (const ketju_scatter_particle *)b;
+    return (pa->Task > pb->Task) - (pa->Task < pb->Task);
+}
+
+static void scatter_results(KetjuRegion &reg)
+{
+    int n = reg.total_particle_count;
+    bool is_affected     = reg.affected_tasks.is_member();
+    bool is_compute_root = (ThisTask == reg.compute_tasks.root_sim);
+    bool needs_forward   = (reg.compute_tasks.root_sim != reg.affected_tasks.root_sim);
+
+    /* compute_root must participate to pack and Send the result to affected_root,
+     * even if it is not itself a member of the affected_tasks group. */
+    if(!is_affected && !(is_compute_root && needs_forward)) return;
+
+    if(is_affected) {
+        MPI_Bcast(&n, 1, MPI_INT, reg.affected_tasks.root, reg.affected_tasks.comm);
+    }
+    if(n < 2) return;
+
+    int n_aff = reg.affected_tasks.size;
+    std::vector<ketju_scatter_particle> scatter_buf;
+
+    /* ---- Phase 1: compute root packs results into scatter_buf ---- */
+    /* compute end-of-step scale factor for position/velocity back-conversion */
+    double a_end = All.cf_atime; /* 1 for non-cosmo */
+    double hubble_end = 0; /* H(a_end); 0 for non-cosmo */
+    if(All.ComovingIntegrationOn) {
+        a_end = All.cf_atime * exp(reg.ti_step * All.Timebase_interval);
+        hubble_end = hubble_function(a_end);
+    }
+
+    if(reg.compute_tasks.is_root() && reg.integrator) {
+        struct ketju_system_physical_state *ps = reg.integrator->physical_state;
+        scatter_buf.resize(n);
+
+        for(int i = 0; i < n; i++) {
+            ketju_scatter_particle &sp = scatter_buf[i];
+            sp.ID    = reg.extra_data[i].ID;
+            sp.Child = reg.extra_data[i].Child;
+            sp.Task  = reg.extra_data[i].Task;
+            sp.Index = reg.extra_data[i].Index;
+            sp.Type  = reg.extra_data[i].Type;
+            sp.Mass  = ps->mass[i];
+            for(int j = 0; j < 3; j++) {
+                /* physical -> comoving: use a_end since positions are at end of step */
+                sp.Pos[j] = reg.com_pos[j] + ps->pos[i][j] / a_end;
+                /* physical velocity -> canonical momentum: remove Hubble flow, multiply by a_end.
+                 * sp.Vel stores CoM-relative canonical momentum (com_vel added later in velocity trick).
+                 * In non-cosmo: a_end=1, hubble_end=0, so sp.Vel = ps->vel (unchanged). */
+                sp.Vel[j] = (ps->vel[i][j] - hubble_end * ps->pos[i][j]) * a_end;
+            }
+        }
+
+    }
+    int my_count = n; std::vector<ketju_scatter_particle> &my_particles = scatter_buf;
+    /* ---- Phase 4: each task applies velocity trick to its particles ---- */
+    for(int i = 0; i < my_count; i++) {
+        ketju_scatter_particle &sp = my_particles[i];
+        int idx = sp.Index;
+
+        /* sanity check */
+        if(P[idx].ID != sp.ID || P[idx].ID_child_number != sp.Child) {
+            printf("KETJU ERROR: particle index mismatch! ID %llu vs %llu on task %d\n",
+                   (unsigned long long)P[idx].ID, (unsigned long long)sp.ID, ThisTask);
+            endrun(667);
+        }
+
+        /* update mass */
+        if(P[idx].Mass != sp.Mass) {TreeMomentsStaleFlag = 1;} /* node masses and centres follow a merger at the next gravity call */
+        P[idx].Mass = sp.Mass;
+        struct ketju_member_state &km = ketju_member_open(idx);
+
+        /* skip velocity trick for merged particles (mass=0, will be removed) */
+        if(sp.Mass <= 0) {
+            P[idx].KetjuIntegrated = 1;
+            continue;
+        }
+
+        /* compute per-particle drift factor: what drift_particle() will use */
+        double dt_drift = get_drift_factor(P[idx].Ti_current, P[idx].Ti_current + reg.ti_step, idx, 0);
+
+        if(dt_drift > 0) {
+            for(int j = 0; j < 3; j++) {
+                /* desired final position = final_abs_pos + CoM displacement during drift */
+                double desired_pos = sp.Pos[j] + reg.com_vel[j] * dt_drift;
+                km.target_pos[j] = desired_pos;
+                double delta_pos = desired_pos - P[idx].Pos[j];
+#ifdef BOX_PERIODIC
+                double box = (j == 0) ? boxSize_X : (j == 1) ? boxSize_Y : boxSize_Z;
+                if(box > 0) { while(delta_pos > 0.5 * box) delta_pos -= box; while(delta_pos < -0.5 * box) delta_pos += box; }
+#endif
+                P[idx].dp[j] += P[idx].Mass * (delta_pos / dt_drift - P[idx].Vel[j]); /* the nodes' bulk velocity follows this write as it does a kick */
+                P[idx].Vel[j] = delta_pos / dt_drift;
+                km.final_vel[j] = sp.Vel[j] + reg.com_vel[j];
+            }
+        } else {
+            /* no drift — set position and velocity directly */
+            for(int j = 0; j < 3; j++) {
+                P[idx].Pos[j] = sp.Pos[j];
+                km.target_pos[j] = sp.Pos[j];
+                P[idx].dp[j] += P[idx].Mass * (sp.Vel[j] + reg.com_vel[j] - P[idx].Vel[j]);
+                P[idx].Vel[j] = sp.Vel[j] + reg.com_vel[j];
+                km.final_vel[j] = P[idx].Vel[j];
+            }
+        }
+        gizmo_motion_bound_raise(&idx, 1); /* velocity set outside the kick: nodes must cover this drift */
+
+        P[idx].KetjuIntegrated = 1;
+    }
+
+
+    /* handle mergers (integrator mergers + stellar collisions) — merger decisions
+     * are made on affected root then broadcast to all affected tasks for execution */
+}
 
 /* ============================================================
  *  PUBLIC INTERFACE FUNCTIONS
@@ -667,6 +843,7 @@ void ketju_find_regions(void)
      * in finish_step, so it also survives to the guard checks of the step that follows. */
     for(int i : ActiveParticleList) {
         if(!is_synchronized(i)) continue;
+        if(P[i].KetjuIntegrated) {ketju_member_close(i);}
         P[i].KetjuIntegrated = 0; P[i].KetjuChainID = 0; P[i].KetjuOpenRadius = 0;
     }
     ActiveRegions.clear();
@@ -753,10 +930,144 @@ void ketju_find_regions(void)
     }
 }
 
+/* Cumulative MSTAR statistics: counted per step, reduced and printed every 1024 region steps and at the end of the run
+   (integer sums and maxima: deferring the reduction is exact). */
+static long long StatCalls = 0, StatLoc[8] = {0, 0, 0, 0, 0, 0, 0, 0}; static double StatMax[2] = {0, 0};
+static void ketju_collect_stats(void)
+{
+    StatCalls++;
+    for(size_t r = 0; r < ActiveRegions.size(); r++) {
+        KetjuRegion &reg = ActiveRegions[r];
+        if(!reg.compute_tasks.is_root() || !reg.integrator) continue;
+        long long n = (long long)reg.integrator->perf->successful_steps + reg.integrator->perf->failed_steps;
+        if(n <= 0) continue;
+        double dE = fabs(reg.integrator->perf->relative_energy_error);
+        StatLoc[0]++; StatLoc[1] += reg.integrator->perf->successful_steps; StatLoc[2] += reg.integrator->perf->failed_steps;
+        if(dE > 1e-4) StatLoc[3]++;
+        if((double)n > StatMax[0]) StatMax[0] = (double)n;
+        if(dE > StatMax[1]) StatMax[1] = dE;
+    }
+}
+void ketju_report_stats(int final)
+{
+    if(final) {ActiveRegions.clear();} /* integrators go before Kokkos does */
+    if(StatCalls == 0) {return;} /* rank-uniform: no region ever */
+    if(!final && (StatCalls % 1024) != 0) {return;}
+    static long long cum[8] = {0, 0, 0, 0, 0, 0, 0, 0}; static double cum_max[2] = {0, 0};
+    long long glob[8]; double glob_max[2];
+    MPI_Reduce(StatLoc, glob, 8, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(StatMax, glob_max, 2, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    for(int k = 0; k < 8; k++) {StatLoc[k] = 0;}
+    StatMax[0] = StatMax[1] = 0;
+    if(ThisTask != 0) {return;}
+    for(int k = 0; k < 8; k++) {cum[k] += glob[k];}
+    cum_max[0] = DMAX(cum_max[0], glob_max[0]); cum_max[1] = DMAX(cum_max[1], glob_max[1]);
+    printf("KETJU STATS: t=%g steps=%lld region-integrations=%lld MSTAR accepted=%lld failed=%lld "
+           "max-per-region=%lld |dE/E|>1e-4: %lld max|dE/E|=%g limited-moves down=%lld up=%lld "
+           "timestep-regions=%lld set-by-limiting=%lld\n", All.Time, StatCalls, cum[0], cum[1], cum[2], (long long)cum_max[0], cum[3], cum_max[1], cum[4], cum[5], cum[6], cum[7]);
+}
 
 
+void ketju_run_integration(void)
+{
+    KjClock clk(CPU_KETJUFIND);
+    if(KetjuNumMultiRegions == 0) {
+        return; /* rank-uniform: nothing to integrate */
+    }
+    /* Outer loop over sequential rounds. Within a round, regions run in
+     * parallel on disjoint task ranges; rounds run back-to-back so that
+     * expensive regions can use all tasks first before smaller regions. */
+    /* Members are synchronised and share one bin (ketju_limit_timesteps), and MSTAR substeps
+     * internally, so the region step is that bin's. Check the sharing: a member on another bin
+     * would be drifted over a different interval than the one the velocity trick was set for.
+     * One reduction for all regions, so no world collective separates the regions' integrations. */
+    const int n_act = (int)ActiveRegions.size();
+    std::vector<long long> ti_range(2 * n_act); /* {-min, max} over members, per region */
+    for(int r = 0; r < n_act; r++) {
+        ti_range[2*r] = -(long long)TIMEBASE; ti_range[2*r+1] = 0;
+        for(int idx : ActiveRegions[r].local_member_indices) {
+            long long ti_i = P[idx].dt_step;
+            if(-ti_i > ti_range[2*r]) ti_range[2*r] = -ti_i;
+            if(ti_i > ti_range[2*r+1]) ti_range[2*r+1] = ti_i;
+        }
+    }
+    MPI_Allreduce(MPI_IN_PLACE, ti_range.data(), 2 * n_act, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+
+    int n_rounds = 1;
+    for(int seq = 0; seq < n_rounds; seq++) {
+    for(size_t r = 0; r < ActiveRegions.size(); r++) {
+        KetjuRegion &reg = ActiveRegions[r];
+        if(reg.compute_info.compute_sequence_position != seq) continue;
+        if(reg.total_particle_count < 2) continue;
+
+        integertime global_max_ti = ti_range[2*r+1];
+        if(global_max_ti <= 0 || global_max_ti > TIMEBASE) continue;
+        if(-ti_range[2*r] != ti_range[2*r+1] && ThisTask == 0) {
+            PRINT_WARNING("KETJU: region of %d particles has members on steps %lld..%lld; integrating over the longest",
+                          reg.total_particle_count, -ti_range[2*r], ti_range[2*r+1]);
+        }
+
+        reg.ti_step = global_max_ti;
+
+        /* convert to physical time for MSTAR integrator */
+        double dt_physical;
+        if(All.ComovingIntegrationOn) {
+            integertime t0 = All.Ti_Current;
+            integertime t1 = t0 + reg.ti_step;
+            double a_mid = All.cf_atime * exp(0.5 * reg.ti_step * All.Timebase_interval);
+            dt_physical = get_gravkick_factor(t0, t1, -1, 0) * a_mid;
+        } else {
+            dt_physical = reg.ti_step * All.Timebase_interval;
+        }
+
+        if(dt_physical <= 0 || !isfinite(dt_physical)) continue;
+
+        /* integrate and scatter results */
+        clk.lap(CPU_KETJUFIND);
+        integrate_region(reg, dt_physical);
+        clk.lap(CPU_KETJUMSTAR);
+        scatter_results(reg);
+        gpu_particles_arena_invalidate(); /* host P[] changed */
+        clk.lap(CPU_KETJUSCATTER);
+    }
+    } /* end for(seq) */
 
 
+    ketju_collect_stats();
+    ketju_report_stats(0);
+
+}
+
+
+void ketju_set_final_velocities(void)
+{
+    KjClock clk(CPU_KETJUFINISH);
+    /* called after drift: swap in true physical velocities and correct dp[] momentum.
+     * The velocity trick set Vel = delta_pos/dt_drift for the drift.
+     * Now we replace it with the true MSTAR velocity and correct dp[].
+     * Only for members whose step ends at this sync point (their bin is active and they were just
+     * drifted to it): a region on a longer bin is still drifting along its chord. */
+    std::vector<int> raised;
+    for(int n = 0; n < TIMEBINS; n++) {if(!TimeBinActive[n]) {continue;}
+    for(int i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {
+        if(P[i].KetjuIntegrated) {
+            { /* land exactly on the MSTAR end position the negative half-kick used (the drift only reaches it to roundoff) */
+                const struct ketju_member_state &km = ketju_member(i); double d2 = 0; for(int j = 0; j < 3; j++) {double d = P[i].Pos[j] - km.target_pos[j]; d2 += d * d;}
+                if(d2 < 1e-12 * All.KetjuRegionRadius * All.KetjuRegionRadius) {for(int j = 0; j < 3; j++) {P[i].Pos[j] = km.target_pos[j];}}
+            }
+            for(int j = 0; j < 3; j++) {
+                /* dp correction: the difference between true velocity and trick velocity,
+                 * converted to momentum. This ensures the kick integrator is consistent. */
+                double dv = ketju_member(i).final_vel[j] - P[i].Vel[j];
+                P[i].dp[j] += P[i].Mass * dv;
+                P[i].Vel[j] = ketju_member(i).final_vel[j];
+            }
+            raised.push_back(i);
+        }
+    }
+    }
+    if(!raised.empty()) {gizmo_motion_bound_raise(raised.data(), (int)raised.size()); gpu_particles_arena_invalidate();}
+}
 
 
 

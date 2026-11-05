@@ -212,6 +212,9 @@ void run(void)
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
             rearrange_particle_sequence(); /* fold the last step's promoted grains into the gas block, so the restart carries their cells */
 #endif
+#ifdef KETJU_REGULARIZATION
+            ketju_report_stats(1);
+#endif
             restart(0); /* write a restart file to allow continuation of the run for a larger value of TimeMax */
             if(All.Ti_lastoutput != All.Ti_Current) {savepositions(All.SnapshotFileCount++);} /* make a snapshot at the final time in case none has produced at this time; this will be overwritten if All.TimeMax is increased and the run is continued */
             break;
@@ -271,6 +274,7 @@ void run(void)
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
 #ifdef KETJU_REGULARIZATION
         ketju_find_regions();    /* chain regions around massive stars/BHs */
+        ketju_run_integration(); /* subtract tree pair force, run MSTAR, velocity trick; raises motion bounds */
 #endif
         /* The kept neighbour index follows the kicked velocities before anything drifts on them. Every
            velocity change since the last kick -- the second half-kick and the end-of-step writers (winds,
@@ -970,6 +974,9 @@ void find_next_sync_point_and_drift(void)
   if(!_drift_marked.empty()) {
       gizmo_mark_kernel_radius_dirty_indices(_drift_marked.data(), (int)_drift_marked.size());
   }
+#ifdef KETJU_REGULARIZATION
+  ketju_set_final_velocities(); /* MSTAR velocities after the drift (velocity trick) */
+#endif
 
 }
 

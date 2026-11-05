@@ -8,6 +8,9 @@ void ketju_init_particle(int i);
 #ifdef TEST_KETJU_MSTAR_PAIR
 void ketju_test_mstar_pair(void);
 #endif
+void ketju_report_stats(int final);
 void ketju_find_regions(void);
+void ketju_run_integration(void);
+void ketju_set_final_velocities(void);
 struct ketju_member_state &ketju_member(int i);
 #endif /* KETJU_PROTO_H */
