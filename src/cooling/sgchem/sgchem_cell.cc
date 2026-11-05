@@ -211,6 +211,8 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
     for(int k = 0; k < NPIX; k++) {in.pix_att[k] = (TREECOL_PIXELS_EGY_UV(CellP[i], k) < 0.324e-2 * All.SGChemBackgroundG0 / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS) ? 1. : 0.;}
 #endif
+#elif defined(RADTRANSFER)
+    struct ChemFUVField fuv = sgchem_rt_field(i, in.fac_uv, in.pix_att); /* the stars' field from the moment bins */
 #elif defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
     struct ChemFUVField fuv; fuv.G0 = fuv.G0_LW = fuv.G0_dust = sgchem_recent_sfr_g0(); /* uniform, scaled with the recent SFR */
 #else

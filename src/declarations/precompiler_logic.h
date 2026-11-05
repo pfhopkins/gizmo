@@ -2023,8 +2023,8 @@
 #if !defined(COOLING) || !defined(METALS) || defined(COOL_GRACKLE)
 #error "SGCHEM needs COOLING and METALS, and excludes COOL_GRACKLE"
 #endif
-#if defined(RADTRANSFER)
-#error "SGCHEM: the coupling to RADTRANSFER is not in this tree yet"
+#if defined(RADTRANSFER) && (!defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS))
+#error "SGCHEM with RT_M1 reads the field from the bins of GALSF_SINGLE_STARS_RT_TABLE_BANDS and takes its H2, CO and floor-pixel shielding from GALSF_RESOLVEDISM_TREECOL_PIXELS"
 #endif
 #if defined(COSMIC_RAY_FLUID) && (defined(CR_SCALE_WITH_G0) || defined(CR_BACKGROUND_IONRATE_ATTENUATED))
 #error "CR_SCALE_WITH_G0 and CR_BACKGROUND_IONRATE_ATTENUATED set the SGChem cosmic-ray rate without the CR fluid; with COSMIC_RAY_FLUID it comes from the fluid"

@@ -143,6 +143,8 @@ KOKKOS_INLINE_FUNCTION int grav_target_valid_gas_for_rt(int ptype, double soft, 
 {
     return (ptype==0 && soft>0 && pmass>0) ? 1 : 0;
 }
+#endif
+#ifdef RT_USE_GRAVTREE
 #if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
 /* RT_LEBRON on-the-spot radiation-pressure coupling factor, once per target. kappa_eff[kf] is
  * rt_kappa(-1,kf,...) evaluated caller-side (rt_kappa needs the walk's particle pointers). */
