@@ -8,7 +8,7 @@ TimeMax                            307          % 300 Myr
 TimeBetSnapshot                    25           % ~24 Myr
 TimeOfFirstSnapshot                0
 TimeBetStatistics                  1
-MaxSizeTimestep                    0.5          % ~0.5 Myr
+MaxSizeTimestep                    5            % ~5 Myr: loose, so gas steps are set by the adaptive criteria
 MinSizeTimestep                    0
 UnitLength_in_cm                   3.085678e18
 UnitMass_in_g                      1.989e33
