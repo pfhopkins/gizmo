@@ -143,7 +143,12 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
 #ifdef GALSF_FB_MECHANICAL
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+#define AREA_WEIGHTED_SUM_PIXELS 12 /* slot of the first of the 12 pixel cell counts */
+#define AREA_WEIGHTED_SUM_ELEMENTS 24 /* the 12 weights below plus the cell counts */
+#else
 #define AREA_WEIGHTED_SUM_ELEMENTS 12 /* number of weights needed for full momentum-and-energy conserving system */
+#endif
     MyFloat Area_weighted_sum[AREA_WEIGHTED_SUM_ELEMENTS]; /* normalized weights for particles in kernel weighted by area, not mass */
 #endif
 #ifdef GALSF_FB_FIRE_RT_LOCALRP

@@ -269,6 +269,36 @@ static int mechanical_fb_star_active_check(int i, int fb_loop_iteration,
     return 0;
 }
 
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+/* HEALPix RING pixel at NSIDE 1 of the direction (x,y,z) */
+KOKKOS_INLINE_FUNCTION int mechfb_hpx_nside1_pixel(double x, double y, double z)
+{
+    z /= sqrt(x * x + y * y + z * z);
+    double tt = atan2(y, x) / (0.5 * M_PI); if(tt < 0) {tt += 4.0;}
+    if(fabs(z) <= 2.0 / 3.0)
+    {
+        int jp = (int)(0.5 + tt - 0.75 * z), jm = (int)(0.5 + tt + 0.75 * z), ir = 2 + jp - jm;
+        return (ir - 1) * 4 + ((jp + jm + 1 - (ir & 1)) / 2) % 4;
+    }
+    double tp = tt - floor(tt), tmp = sqrt(3.0 * (1.0 - fabs(z)));
+    int ir = (int)(tp * tmp) + (int)((1.0 - tp) * tmp) + 1, ip = ((int)(tt * ir)) % (4 * ir);
+    return (z > 0) ? 2 * ir * (ir - 1) + ip : 12 - 2 * ir * (ir + 1) + ip;
+}
+
+/* share wk of the cell along its direction less the weighted mean direction, so the shares balance exactly */
+KOKKOS_INLINE_FUNCTION void mechfb_healpix_balanced_vector(const struct MechFBLocalIn& local, double wk_norm, double wk, const Vec3<double>& dp, double r, double* pvec, double* pnorm)
+{
+    *pnorm = 0;
+    for(int k = 0; k < 3; k++)
+    {
+        double mean_dir = -wk_norm * ((double)local.Area_weighted_sum[2 * k + 1] + (double)local.Area_weighted_sum[2 * k + 2]);
+        pvec[k] = wk * (-dp[k] / r - mean_dir);
+        *pnorm += pvec[k] * pvec[k];
+    }
+    *pnorm = sqrt(*pnorm);
+}
+#endif
+
 /* MechFBCallScalars is defined above (after the #ifdef GALSF_FB_MECHANICAL gate).
  * Helpers below are self-contained: include this header directly. */
 
@@ -421,6 +451,15 @@ static void mechanical_fb_pair_kernel(
     double face_area = fabs(V_i * V_i * dwk_self + V_j * V_j * dwk_j);
     double wk = 0.5 * (1 - 1 / sqrt(1 + face_area / (M_PI * r * r)));
     if(wk <= 0 || wk != wk) return;
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+    if(r2 > m.h2) return; /* the star's own kernel only */
+    {
+        int ipix = mechfb_hpx_nside1_pixel(-dp[0], -dp[1], -dp[2]), n_occupied = 0;
+        if(loop_iteration == -3) {myout.Area_weighted_sum[AREA_WEIGHTED_SUM_PIXELS + ipix] += 1; return;}
+        for(int k = 0; k < 12; k++) {if(local.Area_weighted_sum[AREA_WEIGHTED_SUM_PIXELS + k] > 0) {n_occupied++;}}
+        wk = 1.0 / (n_occupied * (double)local.Area_weighted_sum[AREA_WEIGHTED_SUM_PIXELS + ipix]); /* each occupied pixel the same share, its cells equal */
+    }
+#endif
 
     double wk_vec[AREA_WEIGHTED_SUM_ELEMENTS] = {0};
     wk_vec[0] = wk;
@@ -462,6 +501,9 @@ static void mechanical_fb_pair_kernel(
             pnorm += pvec[k] * pvec[k];
         }
         pnorm = sqrt(pnorm);
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+        mechfb_healpix_balanced_vector(local, m.wk_norm, wk * m.wk_norm, dp, r, pvec, &pnorm);
+#endif
         for(int k = 0; k < 3; k++)
         {
             double v_ba = (Vel_j[k] - (double)local.Vel[k]) / scalars.common.cf_atime;
@@ -509,8 +551,20 @@ static void mechanical_fb_pair_kernel(
         pnorm += pvec[k] * pvec[k];
     }
     pnorm = sqrt(pnorm);
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+    mechfb_healpix_balanced_vector(local, m.wk_norm, wk_local_norm, dp, r, pvec, &pnorm);
+#endif
     pnorm *= m.pnorm_sum;
     for(int k = 0; k < 3; k++) pvec[k] *= m.pnorm_sum;
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+    if((double)local.Area_weighted_sum[10] < 1.0e-6) { /* all gas along one ray: radial */
+        pnorm = wk_local_norm;
+        for(int k = 0; k < 3; k++) {pvec[k] = -wk_local_norm * dp[k] / r;}
+    }
+#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
+    if(m.feedback_type_is_SNe) {pnorm = wk_local_norm;} /* heat needs no balance: the plain share */
+#endif
+#endif
     double dM_ejecta_in = pnorm * (double)local.Msne;
     double mj_preshock = Mass_j;
     double massratio_ejecta = dM_ejecta_in / (dM_ejecta_in + Mass_j);

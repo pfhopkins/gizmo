@@ -193,7 +193,11 @@ struct MechFBSpec {
      * + refills host_locals_scratch). */
     struct Aux {
         int                          num_modes;                 /* 3..6 per FIRE flags */
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+        int                          modes[7];                  /* {-3, -2, -1, 0, 1, 2, 3}: -3 counts the cells per pixel */
+#else
         int                          modes[6];                  /* {-2, -1, 0, 1, 2, 3} */
+#endif
         int                          mode_idx;                  /* 0..num_modes-1 */
         std::vector<MechFBLocalIn>   host_locals_scratch;       /* [num_active]; repacked each iter */
         struct MechFBGasDelta       *LocalGasMechFBInfoTemp;    /* SharedSpace ptr; owned by toplevel */

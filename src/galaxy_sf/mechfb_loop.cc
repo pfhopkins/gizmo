@@ -50,6 +50,9 @@ int mechfb_compute_num_modes(void) {
     num_modes = 6;
 #endif
 #endif
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+    num_modes += 1; /* the pixel counts */
+#endif
     return num_modes;
 }
 
@@ -62,8 +65,13 @@ void mechfb_populate_aux_initial(MechFBSpec::Aux& aux,
                                  struct MechFBGasDelta *LocalGasMechFBInfoTemp,
                                  int num_local_gas) {
     aux.num_modes = mechfb_compute_num_modes();
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+    const int modes_canonical[7] = {-3, -2, -1, 0, 1, 2, 3};
+    for (int k = 0; k < 7; ++k) aux.modes[k] = modes_canonical[k];
+#else
     const int modes_canonical[6] = {-2, -1, 0, 1, 2, 3};
     for (int k = 0; k < 6; ++k) aux.modes[k] = modes_canonical[k];
+#endif
     aux.mode_idx = 0;
     aux.host_locals_scratch.assign(num_active > 0 ? num_active : 0, MechFBLocalIn{});
     aux.LocalGasMechFBInfoTemp = LocalGasMechFBInfoTemp;
@@ -132,7 +140,12 @@ void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
 void mech_fb_apply_aws_out(const struct MechFBOut *out, int i, int loop_iteration) {
     if (P[i].Mass <= 0) return;
     int kmin = 0, kmax = 7;
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+    if (loop_iteration == -1) { kmin = 7; kmax = AREA_WEIGHTED_SUM_PIXELS; }
+    if (loop_iteration == -3) { kmin = AREA_WEIGHTED_SUM_PIXELS; kmax = AREA_WEIGHTED_SUM_ELEMENTS; }
+#else
     if (loop_iteration == -1) { kmin = 7; kmax = AREA_WEIGHTED_SUM_ELEMENTS; }
+#endif
     for (int k = kmin; k < kmax; ++k) P[i].Area_weighted_sum[k] = out->Area_weighted_sum[k];
 }
 
