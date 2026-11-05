@@ -364,7 +364,7 @@ double convert_temp_to_u_impl(double temp, double rho, int target, double *cv, d
 #ifdef METALS
     if (target >= 0) {
         Z = DMIN(0.25, pp[target].Metallicity[0]);
-        if (NUM_METAL_SPECIES >= 10) {
+        if (NUM_METAL_SPECIES_BASE >= 10) {
             Y = DMIN(0.35, pp[target].Metallicity[1]);
         }
         X = 1. - (Y + Z);
