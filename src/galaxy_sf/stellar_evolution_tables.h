@@ -42,9 +42,9 @@ struct StellarEvolutionTables {
     int    remnant_type[STBL_NZ * STBL_NM];
     double t_PMS[STBL_NZ * STBL_NM];   /* pre-main-sequence duration (feedback delay) [yr] */
     /* [NZ * NM * NAGE], node-shared */
-    float *v_wind, *log_L_LW, *log_L_FUV_total, *log_L_FUV_M1, *log_L_NUV, *log_L_OPT_NIR, *log_L_bol, *log_Q_ion, *log_L_ion_tot;
+    float *v_wind, *log_L_LW, *log_L_FUV_total, *log_L_FUV_M1, *log_L_NUV, *log_L_OPT_NIR, *log_L_bol, *log_Q_ion, *log_L_ion_tot, *log_L_ion_H0, *log_L_ion_He0, *log_L_ion_He1, *log_L_ion_He2;
 #ifdef TREECOL_SHELLS_ION_HELIUM
-    float *log_L_ion_He0, *log_Q_ion_H0; /* 24.6-54.4 eV energy, 13.6-24.6 eV photons */
+    float *log_Q_ion_H0; /* 13.6-24.6 eV photons */
 #endif
     /* [NZ * NM * NAGE * NELEM], node-shared */
     float *surface_abundances, *elem_ej_wind_cumulative; /* mass fraction; cumulative wind ejecta [Msun] */
@@ -75,8 +75,11 @@ double stellar_log_L_OPT_NIR(double logM, double logZ, double log_age);
 double stellar_log_L_bol(double logM, double logZ, double log_age);
 double stellar_log_Q_ion(double logM, double logZ, double log_age);
 double stellar_log_L_ion_tot(double logM, double logZ, double log_age);
-#ifdef TREECOL_SHELLS_ION_HELIUM
+double stellar_log_L_ion_H0(double logM, double logZ, double log_age);
 double stellar_log_L_ion_He0(double logM, double logZ, double log_age);
+double stellar_log_L_ion_He1(double logM, double logZ, double log_age);
+double stellar_log_L_ion_He2(double logM, double logZ, double log_age);
+#ifdef TREECOL_SHELLS_ION_HELIUM
 double stellar_log_Q_ion_H0(double logM, double logZ, double log_age);
 #endif
 double stellar_surface_abundance(double logM, double logZ, double log_age, int elem);

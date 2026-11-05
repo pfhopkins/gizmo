@@ -14,7 +14,7 @@
 #include "../cooling/sgchem/sgchem_dust_to_gas.h"
 #endif
 
-#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
 
 static inline double single_star_band_lum_cgs(double log_l) {double l = pow(10., log_l); return (isfinite(l) && l > 0) ? l : 0;}
 
@@ -38,6 +38,13 @@ int single_star_band_luminosities_cgs(int i, double *L, double *L_bol)
     L[SINGLE_STAR_BAND_NUV] = DMAX(0., single_star_band_lum_cgs(stellar_log_L_NUV(logM, logZ, la)) - L[SINGLE_STAR_BAND_68]); /* 3.444-6 eV */
     L[SINGLE_STAR_BAND_OPT] = single_star_band_lum_cgs(stellar_log_L_OPT_NIR(logM, logZ, la));
     *L_bol = single_star_band_lum_cgs(stellar_log_L_bol(logM, logZ, la));
+#ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS
+    L[SINGLE_STAR_BAND_ION_H0] = single_star_band_lum_cgs(stellar_log_L_ion_H0(logM, logZ, la));
+    L[SINGLE_STAR_BAND_ION_HE0] = single_star_band_lum_cgs(stellar_log_L_ion_He0(logM, logZ, la));
+    L[SINGLE_STAR_BAND_ION_HE1] = single_star_band_lum_cgs(stellar_log_L_ion_He1(logM, logZ, la));
+    L[SINGLE_STAR_BAND_ION_HE2] = single_star_band_lum_cgs(stellar_log_L_ion_He2(logM, logZ, la));
+    L[SINGLE_STAR_BAND_Q] = single_star_band_lum_cgs(stellar_log_Q_ion(logM, logZ, la));
+#endif
     return 1;
 }
 #endif
@@ -69,7 +76,7 @@ static void single_star_ionizing_rates(int i, double *L_ion, double *Q, double *
 }
 #endif
 
-#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
 /* as rt_get_source_luminosity: fills lum[] [code units], returns 1 for a shining star (pp is P here) */
 int single_star_rt_band_luminosities(int i, int mode, double *lum, struct particle_data *pp)
 {
@@ -89,6 +96,20 @@ int single_star_rt_band_luminosities(int i, int mode, double *lum, struct partic
     lum[RT_FREQ_BIN_ION_HE_ENERGY] = L_he / UNIT_LUM_IN_CGS;
     lum[RT_FREQ_BIN_ION_HE_PHOTONS] = Q_he * 13.6 * ELECTRONVOLT_IN_ERGS / UNIT_LUM_IN_CGS;
 #endif
+#endif
+#ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS
+    lum[RT_FREQ_BIN_PHOTOELECTRIC] = DMAX(0., L[SINGLE_STAR_BAND_PE] - L[SINGLE_STAR_BAND_LW]) / UNIT_LUM_IN_CGS; /* disjoint bins: 8-11.2 eV */
+#ifdef RT_CHEM_PHOTOION
+#ifdef RT_PHOTOION_MULTIFREQUENCY
+    lum[RT_FREQ_BIN_H0] = L[SINGLE_STAR_BAND_ION_H0] / UNIT_LUM_IN_CGS;
+    lum[RT_FREQ_BIN_He0] = L[SINGLE_STAR_BAND_ION_HE0] / UNIT_LUM_IN_CGS;
+    lum[RT_FREQ_BIN_He1] = L[SINGLE_STAR_BAND_ION_HE1] / UNIT_LUM_IN_CGS;
+    lum[RT_FREQ_BIN_He2] = L[SINGLE_STAR_BAND_ION_HE2] / UNIT_LUM_IN_CGS;
+#else
+    lum[RT_FREQ_BIN_H0] = L[SINGLE_STAR_BAND_Q] * All.rt_nu_eff_eV[RT_FREQ_BIN_H0] * ELECTRONVOLT_IN_ERGS / UNIT_LUM_IN_CGS; /* the table's photons at the bin's photon energy */
+#endif
+#endif
+    for(int k = 0; k < N_RT_FREQ_BINS; k++) {lum[k] *= (C_LIGHT_CODE_REDUCED / C_LIGHT_CODE);} /* as rt_get_source_luminosity */
 #endif
     return 1;
 }

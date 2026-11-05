@@ -2500,7 +2500,7 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.SingleStarsRNGRealisation;
       id[nt++] = INT;
 #endif
-#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
       strcpy(tag[nt], "IMFSampleStellarMassCut");
       addr[nt] = &All.IMFSampleStellarMassCut;
       id[nt++] = REAL;
@@ -3358,7 +3358,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("SingleStarsRNGRealisation",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set in parameter file: defaulting to realisation 0\n",tag[i]); continue;}
                 if(strcmp("IMFSampleMinMass",tag[i])==0) {*((double *)addr[i])=0.08; printf("Tag %s not set in parameter file: defaulting to the full IMF (0.08 Msun)\n",tag[i]); continue;}
 #endif
-#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
                 if(strcmp("IMFSampleStellarMassCut",tag[i])==0) {*((double *)addr[i])=0.5; printf("Tag %s not set in parameter file: defaulting to 0.5 Msun (stars at or below emit no radiation)\n",tag[i]); continue;}
 #endif
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED)

@@ -15,7 +15,7 @@
 #if (defined(GALSF_FB_MECHANICAL) && !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)) || defined(GALSF_FB_THERMAL) || defined(GALSF_FB_FIRE_STELLAREVOLUTION)
 #error "GALSF_SINGLE_STARS_FROM_IMF: single stars drive only the mechanical feedback loop, and only with GALSF_SINGLE_STARS_EVOLUTION_TABLES; other feedback would give sampled stars stellar-population rates"
 #endif
-#if (defined(GALSF_FB_FIRE_RT_LOCALRP) && !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)) || (defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RADTRANSFER) || (defined(RT_USE_GRAVTREE) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES))
+#if (defined(GALSF_FB_FIRE_RT_LOCALRP) && !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)) || (defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || (defined(RADTRANSFER) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)) || (defined(RT_USE_GRAVTREE) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES))
 #error "GALSF_SINGLE_STARS_FROM_IMF: single stars are radiation sources only of the band-resolved radiation pressure, the TreeCol band fluxes and the HII-region loop (with GALSF_SINGLE_STARS_EVOLUTION_TABLES); other radiation sources would give them stellar-population luminosities"
 #endif
 #if defined(GALSF_SFR_IMF_SAMPLING) || defined(GALSF_SFR_IMF_VARIATION) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)

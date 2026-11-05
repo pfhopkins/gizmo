@@ -127,6 +127,9 @@ void rt_define_effective_frequencies_in_bands(void)
     k=RT_FREQ_BIN_NUV; rhd_bins_nu_max_ev[k]=6.; /* disjoint bands: 6-8 eV is carried by the generic bin */
     k=RT_FREQ_BIN_GENERIC_USER_FREQ; rhd_bins_nu_min_ev[k]=6.; rhd_bins_nu_max_ev[k]=8.;
 #endif
+#ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS
+    k=RT_FREQ_BIN_PHOTOELECTRIC; rhd_bins_nu_max_ev[k]=11.2; /* disjoint bins: the Lyman-Werner bin carries 11.2-13.6 eV */
+#endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     k=RT_FREQ_BIN_FIRE_UV; rhd_bins_nu_min_ev[k]=3.444; rhd_bins_nu_max_ev[k]=13.6;
     k=RT_FREQ_BIN_FIRE_OPT; rhd_bins_nu_min_ev[k]=0.365; rhd_bins_nu_max_ev[k]=3.444;

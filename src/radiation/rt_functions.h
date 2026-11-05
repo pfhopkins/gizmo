@@ -1477,6 +1477,9 @@ KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     if(pp[i].Type == 4) {return single_star_rt_band_luminosities(i, mode, lum, pp);} /* single stars: table bands only */
 #endif
+#ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS
+    if(pp[i].Type == 4) {return single_star_rt_band_luminosities(i, mode, lum, pp);} /* single stars: table bands in the transported bins */
+#endif
 
 #if defined(GALSF)
 #if defined(SINGLE_STAR_SINK_DYNAMICS)

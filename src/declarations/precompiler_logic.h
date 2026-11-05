@@ -1247,6 +1247,39 @@
 #endif
 #endif
 
+#ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS /* single stars source the moment solver's bins from the tables (disjoint bins, radiation-pressure and band energy counted once) */
+#if !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_SINGLE_STARS_RT_TABLE_BANDS needs GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#if !defined(RT_M1)
+#error "GALSF_SINGLE_STARS_RT_TABLE_BANDS is for the moment solver: set RT_M1"
+#endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES)
+#error "GALSF_SINGLE_STARS_RT_TABLE_BANDS replaces GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES (the field comes from the bins)"
+#endif
+#ifndef RT_PHOTOELECTRIC
+#define RT_PHOTOELECTRIC      /* 8-11.2 eV here */
+#endif
+#ifndef RT_LYMAN_WERNER
+#define RT_LYMAN_WERNER       /* 11.2-13.6 eV */
+#endif
+#ifndef RT_NUV
+#define RT_NUV                /* 3.444-6 eV with the split below */
+#endif
+#ifndef RT_OPTICAL_NIR
+#define RT_OPTICAL_NIR        /* 0.4133-3.444 eV */
+#endif
+#ifndef RT_GENERIC_USER_FREQ
+#define RT_GENERIC_USER_FREQ  /* 6-8 eV with the split below */
+#endif
+#ifndef RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND
+#define RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND
+#endif
+#ifndef RT_SOURCES
+#define RT_SOURCES 16
+#endif
+#endif
+
 
 
 #if defined(CHIMES_HII_REGIONS) && !defined(GALSF_FB_FIRE_RT_HIIHEATING)
@@ -2136,7 +2169,7 @@
  * runtime is made by a separate structural (num_active) threshold. */
 #if !defined(GR_TABULATED_COSMOLOGY) && !defined(GR_TABULATED_COSMOLOGY_W) \
  && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H) \
- && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) /* single-star bands: host-only table lookups */
+ && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) /* single-star bands: host-only table lookups */
 #define GRAVTREE_SOURCE_LAZY_SUPPORTED
 #endif
 

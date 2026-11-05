@@ -208,18 +208,18 @@ void stellar_evolution_tables_load(void)
 {
     const size_t n2d = (size_t)STBL_NZ * STBL_NM, n3d = n2d * STBL_NAGE, n4d = n3d * STBL_NELEM;
 #ifdef TREECOL_SHELLS_ION_HELIUM
-    enum {N3 = 11};
+    enum {N3 = 14};
 #else
-    enum {N3 = 9};
+    enum {N3 = 13};
 #endif
-    float **f3[N3] = {&StellarTbl.v_wind, &StellarTbl.log_L_LW, &StellarTbl.log_L_FUV_total, &StellarTbl.log_L_FUV_M1, &StellarTbl.log_L_NUV, &StellarTbl.log_L_OPT_NIR, &StellarTbl.log_L_bol, &StellarTbl.log_Q_ion, &StellarTbl.log_L_ion_tot
+    float **f3[N3] = {&StellarTbl.v_wind, &StellarTbl.log_L_LW, &StellarTbl.log_L_FUV_total, &StellarTbl.log_L_FUV_M1, &StellarTbl.log_L_NUV, &StellarTbl.log_L_OPT_NIR, &StellarTbl.log_L_bol, &StellarTbl.log_Q_ion, &StellarTbl.log_L_ion_tot, &StellarTbl.log_L_ion_H0, &StellarTbl.log_L_ion_He0, &StellarTbl.log_L_ion_He1, &StellarTbl.log_L_ion_He2
 #ifdef TREECOL_SHELLS_ION_HELIUM
-        , &StellarTbl.log_L_ion_He0, &StellarTbl.log_Q_ion_H0
+        , &StellarTbl.log_Q_ion_H0
 #endif
     };
-    const char *n3[N3] = {"v_wind", "log_L_LW", "log_L_FUV_total", "log_L_FUV_M1", "log_L_NUV", "log_L_OPT_NIR", "log_L_bol", "log_Q_ion", "log_L_ion_tot"
+    const char *n3[N3] = {"v_wind", "log_L_LW", "log_L_FUV_total", "log_L_FUV_M1", "log_L_NUV", "log_L_OPT_NIR", "log_L_bol", "log_Q_ion", "log_L_ion_tot", "log_L_ion_H0", "log_L_ion_He0", "log_L_ion_He1", "log_L_ion_He2"
 #ifdef TREECOL_SHELLS_ION_HELIUM
-        , "log_L_ion_He0", "log_Q_ion_H0"
+        , "log_Q_ion_H0"
 #endif
     };
     const size_t nfloat = N3 * n3d + 2 * n4d;
@@ -360,12 +360,27 @@ double stellar_log_L_ion_tot(double logM, double logZ, double log_age)
     return interp3d(StellarTbl.log_L_ion_tot, logM, logZ, log_age);
 }
 
-#ifdef TREECOL_SHELLS_ION_HELIUM
+double stellar_log_L_ion_H0(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_ion_H0, logM, logZ, log_age);
+}
+
 double stellar_log_L_ion_He0(double logM, double logZ, double log_age)
 {
     return interp3d(StellarTbl.log_L_ion_He0, logM, logZ, log_age);
 }
 
+double stellar_log_L_ion_He1(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_ion_He1, logM, logZ, log_age);
+}
+
+double stellar_log_L_ion_He2(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_ion_He2, logM, logZ, log_age);
+}
+
+#ifdef TREECOL_SHELLS_ION_HELIUM
 double stellar_log_Q_ion_H0(double logM, double logZ, double log_age)
 {
     return interp3d(StellarTbl.log_Q_ion_H0, logM, logZ, log_age);
