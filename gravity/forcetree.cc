@@ -84,6 +84,16 @@ double ForceSoftening_KernelRadius(int p)
     return All.ForceSoftening[P[p].Type]; // this is the default if nothing was active above
 }
 
+/* a member's softening as a node's maxsoft takes it: a sink's kernel radius counts as well */
+double force_member_softening(int p)
+{
+    double soft = ForceSoftening_KernelRadius(p);
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    if(P[p].Type == 5 && P[p].KernelRadius > soft) {soft = P[p].KernelRadius;}
+#endif
+    return soft;
+}
+
 
 
 /*! auxiliary variable used to set-up non-recursive walk */
@@ -4202,6 +4212,9 @@ static void refresh_normalize(int no)
         Extnodes[no].vs = {};
     }
     if(Nodes[no].N_part > 1) {Nodes[no].u.d.bitflags |= (1 << BITFLAG_MULTIPLEPARTICLES);} else {Nodes[no].u.d.bitflags &= ~(1 << BITFLAG_MULTIPLEPARTICLES);}
+#ifdef TREE_MAXSOFT_COVERS_HMAX
+    force_node_cover_soft(no); /* maxsoft was taken from the members' kernels as stored, hmax from them predicted to now */
+#endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     {double l_tot=0; for(k=0;k<N_RT_FREQ_BINS;k++) {l_tot += Nodes[no].stellar_lum[k];}
     if(l_tot > 0) {Nodes[no].rt_source_lum_s /= l_tot; Extnodes[no].rt_source_lum_vs /= l_tot;}

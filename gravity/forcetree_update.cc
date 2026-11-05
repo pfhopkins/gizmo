@@ -23,6 +23,32 @@ static inline void atomic_max_double(double* addr, double val) {
 static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64-bit for atomic CAS");
 #endif
 
+#ifdef TREE_MAXSOFT_COVERS_HMAX
+/* The largest gas softening that kernel bound hmax admits. Gas softening is the kernel radius, so a node whose
+   maxsoft holds this covers every gas member's softening, at its last drift and predicted to now, without
+   re-deriving: the incremental refresh carries nodes between builds while their members' kernels change. */
+static inline double gas_softening_bound(double hmax)
+{
+#ifdef ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT
+    return DMIN(hmax, ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT/All.cf_atime);
+#else
+    return hmax;
+#endif
+}
+#endif
+
+/*! Raise node no's maxsoft to cover its kernel bound (TREE_MAXSOFT_COVERS_HMAX; else nothing). Called wherever
+ *  hmax can grow past it: drift, a chain raise, a re-derivation from predicted kernels. */
+void force_node_cover_soft(int no)
+{
+#ifdef TREE_MAXSOFT_COVERS_HMAX
+    double s = gas_softening_bound(Extnodes[no].hmax);
+    if(Nodes[no].maxsoft < s) {Nodes[no].maxsoft = s;}
+#else
+    (void) no;
+#endif
+}
+
 
 
 /*!
@@ -338,6 +364,9 @@ static void force_raise_chain_bounds(int no, MyFloat vmax, MyFloat hmax, int lis
         if(Extnodes[no].vmax >= vmax && Extnodes[no].hmax >= hmax) {break;}
         if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
         if(Extnodes[no].hmax < hmax) {Extnodes[no].hmax = hmax;}
+#ifdef TREE_MAXSOFT_COVERS_HMAX
+        force_node_cover_soft(no);
+#endif
         if(list_toplevel && (Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)))
         {
             int t = no - All.MaxPart;
@@ -505,6 +534,9 @@ void force_drift_node(int no, integertime time1)
 #endif
 
     Extnodes[no].hmax = force_node_hmax_drift(no, dt_widen);
+#ifdef TREE_MAXSOFT_COVERS_HMAX
+    force_node_cover_soft(no); /* the walk reads maxsoft right after drifting the node, and a drifted leaf member's grown kernel as its softening */
+#endif
     Nodes[no].Ti_current = time1;
 }
 
@@ -539,12 +571,23 @@ void force_node_predict(int no, integertime time1, struct node_prediction *np)
     np->sink_pos += np->sink_vel * dt_drift;
 #endif
     np->hmax = force_node_hmax_drift(no, dt_widen);
+#ifdef TREE_MAXSOFT_COVERS_HMAX
+    np->maxsoft = DMAX(np->maxsoft, gas_softening_bound(np->hmax));
+#endif
 }
 #endif
 
 
 
 
+
+/* members whose kernel or softening force_update_hmax carries up the tree: under TREE_REFRESH_INCREMENTAL every
+   member with mass, since carried nodes keep maxsoft between builds and a sink's kernel is part of its softening */
+#if defined(TREE_REFRESH_INCREMENTAL) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+#define HMAX_UPDATE_MEMBER(i) (P[i].Mass > 0)
+#else
+#define HMAX_UPDATE_MEMBER(i) (P[i].Type == 0 && P[i].Mass > 0)
+#endif
 
 /*! This function updates the hmax-values in tree nodes that hold gas cells. These values are needed to find all neighbors in the
  *  hydro-force computation.  Since the KernelRadius-values are potentially changed in the fluid-density computation, force_update_hmax() should be carried
@@ -564,11 +607,7 @@ void force_update_hmax(void)
   /* Phase 1: drift all ancestor nodes (serial — force_drift_node is not thread-safe) */
   for (int i : ActiveParticleList)
   {
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    if(P[i].Mass > 0)
-#else
-    if(P[i].Type == 0 && P[i].Mass > 0)
-#endif
+    if(HMAX_UPDATE_MEMBER(i))
       {
         no = Father[i];
         while(no >= 0)
@@ -584,14 +623,16 @@ void force_update_hmax(void)
   for (int idx = 0; idx < (int)ActiveParticleList.size(); idx++)
   {
     int i = ActiveParticleList[idx];
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    if(P[i].Mass > 0)
-#else
-    if(P[i].Type == 0 && P[i].Mass > 0)
-#endif
+    if(HMAX_UPDATE_MEMBER(i))
       {
         int no = Father[i];
         double divVel = P[i].Particle_DivVel;
+#ifdef TREE_REFRESH_INCREMENTAL
+        double soft_i = force_member_softening(i);
+#if !defined(ADAPTIVE_GRAVSOFT_FORALL)
+        if(P[i].Type != 0) {divVel = 0;}
+#endif
+#endif
 
         while(no >= 0)
         {
@@ -600,10 +641,20 @@ void force_update_hmax(void)
 #else
             double htmp = DMIN(P[i].KernelRadius, All.MaxKernelRadius);
 #endif
+#ifdef TREE_REFRESH_INCREMENTAL
+#if !defined(ADAPTIVE_GRAVSOFT_FORALL)
+            if(P[i].Type != 0) {htmp = 0;}
+#endif
+            if(htmp > Extnodes[no].hmax || divVel > Extnodes[no].divVmax || soft_i > Nodes[no].maxsoft)
+#else
             if(htmp > Extnodes[no].hmax || divVel > Extnodes[no].divVmax)
+#endif
             {
                 atomic_max_double(&Extnodes[no].hmax, htmp);
                 atomic_max_double(&Extnodes[no].divVmax, divVel);
+#ifdef TREE_REFRESH_INCREMENTAL
+                atomic_max_double(&Nodes[no].maxsoft, soft_i); /* covers the raised hmax too: a gas member's softening is its kernel */
+#endif
 
                 if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
                 {
@@ -628,14 +679,16 @@ void force_update_hmax(void)
 #else
   for (int i : ActiveParticleList)
   {
-#if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    if(P[i].Mass > 0)
-#else
-    if(P[i].Type == 0 && P[i].Mass > 0)
-#endif
+    if(HMAX_UPDATE_MEMBER(i))
       {
         no = Father[i];
         divVel = P[i].Particle_DivVel;
+#ifdef TREE_REFRESH_INCREMENTAL
+        double soft_i = force_member_softening(i);
+#if !defined(ADAPTIVE_GRAVSOFT_FORALL)
+        if(P[i].Type != 0) {divVel = 0;}
+#endif
+#endif
 
         while(no >= 0)
         {
@@ -645,10 +698,20 @@ void force_update_hmax(void)
 #else
             double htmp = DMIN(P[i].KernelRadius, All.MaxKernelRadius);
 #endif
+#ifdef TREE_REFRESH_INCREMENTAL
+#if !defined(ADAPTIVE_GRAVSOFT_FORALL)
+            if(P[i].Type != 0) {htmp = 0;}
+#endif
+            if(htmp > Extnodes[no].hmax || divVel > Extnodes[no].divVmax || soft_i > Nodes[no].maxsoft)
+#else
             if(htmp > Extnodes[no].hmax || divVel > Extnodes[no].divVmax)
+#endif
             {
                 if(htmp > Extnodes[no].hmax) {Extnodes[no].hmax = htmp;}
                 if(divVel > Extnodes[no].divVmax) {Extnodes[no].divVmax = divVel;}
+#ifdef TREE_REFRESH_INCREMENTAL
+                if(soft_i > Nodes[no].maxsoft) {Nodes[no].maxsoft = soft_i;} /* covers the raised hmax too: a gas member's softening is its kernel */
+#endif
 
                 if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
                 {
@@ -670,12 +733,19 @@ void force_update_hmax(void)
 #endif
 
   /* share the hmax-data of the pseudo-particles accross CPUs: node index and both bounds in one Allgatherv */
+#ifdef TREE_REFRESH_INCREMENTAL
+  struct hmax_rec {MyFloat hmax, divVmax, maxsoft; int no;};
+#else
   struct hmax_rec {MyFloat hmax, divVmax; int no;};
+#endif
   counts = (int *) mymalloc("counts", sizeof(int) * NTask);
   offsets = (int *) mymalloc("offsets", sizeof(int) * NTask);
   struct hmax_rec *loc = (struct hmax_rec *) mymalloc("hmax_loc", DomainNumChanged * sizeof(struct hmax_rec));
   memset(loc, 0, DomainNumChanged * sizeof(struct hmax_rec));
   for(i = 0; i < DomainNumChanged; i++) {loc[i].no = DomainList[i]; loc[i].hmax = Extnodes[DomainList[i]].hmax; loc[i].divVmax = Extnodes[DomainList[i]].divVmax;}
+#ifdef TREE_REFRESH_INCREMENTAL
+  for(i = 0; i < DomainNumChanged; i++) {loc[i].maxsoft = Nodes[DomainList[i]].maxsoft;}
+#endif
 
   MPI_Allgather(&DomainNumChanged, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
   for(ta = 0, totDomainNumChanged = 0; ta < NTask; ta++)
@@ -698,10 +768,17 @@ void force_update_hmax(void)
         {
             force_drift_node(no, All.Ti_Current);
             
+#ifdef TREE_REFRESH_INCREMENTAL
+            if(all[i].hmax > Extnodes[no].hmax || all[i].divVmax > Extnodes[no].divVmax || all[i].maxsoft > Nodes[no].maxsoft)
+#else
             if(all[i].hmax > Extnodes[no].hmax || all[i].divVmax > Extnodes[no].divVmax)
+#endif
             {
                 if(all[i].hmax > Extnodes[no].hmax) {Extnodes[no].hmax = all[i].hmax;}
                 if(all[i].divVmax > Extnodes[no].divVmax) {Extnodes[no].divVmax = all[i].divVmax;}
+#ifdef TREE_REFRESH_INCREMENTAL
+                if(all[i].maxsoft > Nodes[no].maxsoft) {Nodes[no].maxsoft = all[i].maxsoft;} /* the owner's leaf covers its raised hmax, so this covers the copy's */
+#endif
             }
             else
             {break;}

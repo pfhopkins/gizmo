@@ -34,7 +34,12 @@ void force_refresh_node_moments(void);
 void force_refresh_moments_if_stale(void);
 #ifdef TREE_REFRESH_INCREMENTAL
 void force_mark_moments_dirty(int i);
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) && !defined(ADAPTIVE_GRAVSOFT_FORALL)
+#define TREE_MAXSOFT_COVERS_HMAX /* gas softening is the kernel, which hmax bounds: every node keeps maxsoft at or above its hmax (force_node_cover_soft) */
 #endif
+#endif
+double force_member_softening(int p);       /* a member's softening as node maxsoft takes it */
+void force_node_cover_soft(int no);
 void force_validate_tree_links(const char *tag);
 #ifdef TREE_INTEGRITY_AUDITS
 void force_tree_full_audit(int audit_moments, const char *tag);
