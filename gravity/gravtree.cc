@@ -557,8 +557,8 @@ void gravity_tree(void)
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         double dt = get_particle_timestep_in_physical(i);
         if(treeforce_skip_flag[ii]) { // use cached decision from BEFORE tree walk to avoid mismatch if tree walk modified quantities that needs_new_treeforce depends on
-#ifdef BOX_SHEARING
-            P[i].GravAccel -= P[i].ShearCoriolisAccel; /* velocity-dependent: recomputed every step, never extrapolated */
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+            P[i].GravAccel = P[i].GravAccel_Retained; /* the kept gravity, without the forces added after the last gravity call */
 #endif
             P[i].GravAccel += P[i].GravJerk * (dt * All.cf_a2inv); // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
             P[i].time_since_last_treeforce += dt;
@@ -721,6 +721,14 @@ void gravity_tree(void)
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
 #if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
     {size_t k = 0; for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {if(treeforce_skip_flag[ii]) {P[ActiveParticleList[ii]].GravAccel = skipped_accel[k++];}}}
+#endif
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+    /* the gravity call's acceleration is now final: keep it for the skipped walks that follow (not in a Hermite pass, which leaves
+       the non-Hermite particles' GravAccel, with the forces added after gravity, untouched) */
+#ifdef HERMITE_INTEGRATION
+    if(!HermiteOnlyFlag)
+#endif
+    {for(int i : ActiveParticleList) {P[i].GravAccel_Retained = P[i].GravAccel;}}
 #endif
 
 

@@ -130,42 +130,50 @@ void compute_hydro_densities_and_forces(void)
 
 
 #ifdef BOX_SHEARING
-/* Shearing-sheet Coriolis force. Evaluated explicitly, a velocity-dependent force makes KDK epicycles grow secularly; instead,
-   as for the grain Lorentz force, take a Boris step over the particle's timestep: half kick from all other accelerations,
-   norm-preserving rotation, half kick. The rotation's velocity change, divided by dt, is added to GravAccel as an effective
-   acceleration that the regular half-kicks apply. Boris is only stable if every other acceleration enters it, so this must
-   run after all of them are final. Not comoving: velocities and accelerations are physical. */
+/* Shearing-sheet Coriolis force, as a Boris step over each particle's timestep (as for the grain Lorentz force): half a kick from
+   every other acceleration, a rotation at 2 Omega that keeps the speed, half a kick. The rotation's velocity change over dt enters
+   GravAccel as an effective acceleration, which the kicks apply as usual. Evaluated explicitly, a velocity-dependent force makes the
+   epicycles of the kick-drift-kick integration grow; every other acceleration has to be final for the step, so this runs last.
+   GravAccel holds it for this step only (GRAVACCEL_RETAINED_ON_SKIPPED_WALK keeps it out of a skipped walk's kept gravity).
+   Not comoving: velocities and accelerations are physical. */
 static void shearing_sheet_coriolis_boris(void)
 {
     const int ph = BOX_SHEARING_PHI_COORDINATE;
-    for(int i : ActiveParticleList)
+    const double omega = BOX_SHEARING_OMEGA_BOX_CENTER;
+    const int n_active = (int) ActiveParticleList.size();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int ii = 0; ii < n_active; ii++)
     {
-        double dt = get_particle_timestep_in_physical(i);
-        if(dt <= 0) /* no timestep assigned yet (initial force evaluation): the dt -> 0 limit, explicit Coriolis */
+        const int i = ActiveParticleList[ii];
+        const double dt = get_particle_timestep_in_physical(i);
+        double coriolis_x, coriolis_ph;
+        if(dt <= 0) /* no timestep yet (the first force evaluation): the dt -> 0 limit, the explicit force on the predicted velocity */
         {
-            P[i].ShearCoriolisAccel = {};
-            P[i].ShearCoriolisAccel[0] = 2.*BOX_SHEARING_OMEGA_BOX_CENTER * P[i].Vel[ph];
-            P[i].ShearCoriolisAccel[ph] = -2.*BOX_SHEARING_OMEGA_BOX_CENTER * P[i].Vel[0];
-            P[i].GravAccel += P[i].ShearCoriolisAccel;
-            continue;
-        }
-        Vec3<double> acc = P[i].GravAccel;
-        if(P[i].Type == 0)
-        {
-            acc += CellP[i].HydroAccel;
+            const double v_x = (P[i].Type == 0) ? CellP[i].VelPred[0] : P[i].Vel[0], v_ph = (P[i].Type == 0) ? CellP[i].VelPred[ph] : P[i].Vel[ph];
+            coriolis_x = 2. * omega * v_ph;
+            coriolis_ph = -2. * omega * v_x;
+        } else {
+            double acc_x = P[i].GravAccel[0], acc_ph = P[i].GravAccel[ph];
+            if(P[i].Type == 0)
+            {
+                acc_x += CellP[i].HydroAccel[0]; acc_ph += CellP[i].HydroAccel[ph];
 #ifdef TURB_DRIVING
-            acc += CellP[i].TurbAccel;
+                acc_x += CellP[i].TurbAccel[0]; acc_ph += CellP[i].TurbAccel[ph];
 #endif
 #ifdef RT_RAD_PRESSURE_OUTPUT
-            acc += CellP[i].Rad_Accel;
+                acc_x += CellP[i].Rad_Accel[0]; acc_ph += CellP[i].Rad_Accel[ph];
 #endif
+            }
+            const double vm_x = P[i].Vel[0] + 0.5 * dt * acc_x, vm_ph = P[i].Vel[ph] + 0.5 * dt * acc_ph;
+            const double t = omega * dt, s = 2. * t / (1. + t * t);   /* rotation by 2 Omega dt: its half-angle tangent is Omega dt */
+            const double vt_x = vm_x + t * vm_ph, vt_ph = vm_ph - t * vm_x;
+            coriolis_x = s * vt_ph / dt;
+            coriolis_ph = -s * vt_x / dt;
         }
-        Vec3<double> vm = P[i].Vel + acc * (0.5*dt), vp = vm;
-        double t = BOX_SHEARING_OMEGA_BOX_CENTER * dt, s = 2.*t / (1. + t*t); /* rotation rate 2*Omega: half-angle tangent Omega*dt */
-        double vt_x = vm[0] + t*vm[ph], vt_ph = vm[ph] - t*vm[0];
-        vp[0] += s*vt_ph; vp[ph] -= s*vt_x;
-        P[i].ShearCoriolisAccel = (vp - vm) * (1./dt);
-        P[i].GravAccel += P[i].ShearCoriolisAccel;
+        P[i].GravAccel[0] += coriolis_x;
+        P[i].GravAccel[ph] += coriolis_ph;
     }
 }
 #endif
@@ -183,7 +191,7 @@ void compute_additional_forces_for_all_particles(void)
     apply_grain_dragforce(); /* if we are solving a coupled set of grains via aerodynamic drag, this is where their acceleration should be calculated */
 #endif
 #ifdef BOX_SHEARING
-    shearing_sheet_coriolis_boris(); /* last: needs every other acceleration */
+    shearing_sheet_coriolis_boris(); /* last: it needs every other acceleration */
 #endif
 }
 
