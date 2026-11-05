@@ -24,6 +24,8 @@ void ketju_tree_audit_report(void);
 #endif
 struct ketju_member_state &ketju_member(int i);
 void tree_pair_softening(int p, double *soft, double *zeta);
+void ketju_let_gather_spheres(void);
+int ketju_let_sphere_opens(int rank, double cx, double cy, double cz, double len);
 /* chain member whose MSTAR step just ended, with its chain-external field set: its host step follows only that field */
 #define KETJU_DT_MEMBER(p) (P[(p)].KetjuIntegrated && (P[(p)].KetjuChainID != 0) && (ketju_member(p).com_dt_tidal > 0))
 #endif /* KETJU_PROTO_H */

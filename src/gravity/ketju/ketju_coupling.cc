@@ -58,6 +58,39 @@
 #endif
 
 
+/* every rank's chain spheres, for the LET sender: a node overlapping a receiver's sphere is shipped with its children,
+   so that receiver's chain members see their partners as leaves (as the local walk's sphere opening does).
+   KjLetSpheres holds {rank, centre x, y, z, radius} per chain. */
+static std::vector<double> KjLetSpheres;
+static void ketju_member_step_end_init(void);
+static inline int ketju_no_live_chains(void);
+void ketju_let_gather_spheres(void)
+{
+    ketju_member_step_end_init();
+    if(ketju_no_live_chains()) {KjLetSpheres.clear(); return;}
+    std::vector<double> loc; std::set<MyIDType> seen;
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].KetjuChainID == 0 || !(P[i].KetjuOpenRadius > 0) || !seen.insert(P[i].KetjuChainID).second) {continue;}
+        const double *sph = ketju_member(i).chain_sphere;
+        loc.push_back((double)ThisTask); for(int k = 0; k < 3; k++) {loc.push_back(sph[k]);}
+        loc.push_back(3.0 * sph[3]); /* the walk opens around each member, reach twice the sphere radius */
+    }
+    int n = (int)loc.size(); std::vector<int> cnt(NTask), off(NTask + 1, 0);
+    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    for(int t = 0; t < NTask; t++) {off[t + 1] = off[t] + cnt[t];}
+    KjLetSpheres.assign(off[NTask], 0.0);
+    MPI_Allgatherv(loc.data(), n, MPI_DOUBLE, KjLetSpheres.data(), cnt.data(), off.data(), MPI_DOUBLE, MPI_COMM_WORLD);
+}
+int ketju_let_sphere_opens(int rank, double cx, double cy, double cz, double len)
+{
+    for(size_t k = 0; k + 5 <= KjLetSpheres.size(); k += 5) {
+        if((int)KjLetSpheres[k] != rank) {continue;}
+        double dx = cx - KjLetSpheres[k + 1], dy = cy - KjLetSpheres[k + 2], dz = cz - KjLetSpheres[k + 3];
+        gravity_box_nearest_image(dx, dy, dz, -1);
+        if(ketju_node_overlaps_chain_sphere(dx, dy, dz, KjLetSpheres[k + 4], len)) {return 1;}
+    }
+    return 0;
+}
 
 struct ketju_member_state &ketju_member(int i) {return SingleStars.ketju[single_star_slot(P[i].StarIdx)];}
 /* a star's compact record, made at its first chain step; without IMF sampling it lives as long as the chain step */
@@ -596,6 +629,7 @@ static double particle_distance(double *pos1, double *pos2)
  *  PHASE 2: Find chain centers and build regions
  * ============================================================ */
 
+static std::vector<ketju_mpi_particle> KjFoundCenters; /* this step's chain centers on every task */
 
 /* carried by the reduction gravity_tree does anyway, so a step with no candidate anywhere adds no collective */
 int ketju_active_candidates(void)
@@ -1275,7 +1309,9 @@ static void scatter_results(KetjuRegion &reg)
         if(P[idx].Mass != sp.Mass) {TreeMomentsStaleFlag = 1;} /* node masses and centres follow a merger at the next gravity call */
         P[idx].Mass = sp.Mass;
         struct ketju_member_state &km = ketju_member_open(idx);
+        for(int k = 0; k < 4; k++) {km.chain_sphere[k] = sp.Sphere[k];}
         P[idx].KetjuOpenRadius = (float)(((reg.affected_sim_indices.size() > 1) ? 2.0 : -2.0) * sp.Sphere[3]); /* any partner lies within the sphere's diameter of this member; < 0: on this rank */
+        for(int k = 0; k < 3; k++) {km.chain_vel[k] = reg.com_vel[k];}
 
         /* skip velocity trick for merged particles (mass=0, will be removed) */
         if(sp.Mass <= 0) {
@@ -1508,6 +1544,7 @@ void ketju_find_regions(void)
     } else {
         centers = gather_chain_centers();
     }
+    KjFoundCenters = centers;
     if(centers.empty()) return;
 
     /* merge overlapping regions */
@@ -1629,12 +1666,52 @@ void ketju_report_stats(int final)
            "timestep-regions=%lld set-by-limiting=%lld\n", All.Time, StatCalls, cum[0], cum[1], cum[2], (long long)cum_max[0], cum[3], cum_max[1], cum[4], cum[5], cum[6], cum[7]);
 }
 
+/* chains alive this step: a reused import keeps the orbital phase of the last build. The tree is rebuilt at a sync point while a chain
+   has members on several ranks, or an active star of another rank within KETJU_NEIGHBOUR_RANK_FACTOR chain sizes */
+#define KETJU_NEIGHBOUR_RANK_FACTOR 10.
+struct KjLiveChain {double c[3], size; long long end; int spans;};
+static std::vector<KjLiveChain> KjLiveChains;
+static integertime KjRebuildCheckTi = -1;
+
+static void ketju_note_live_chains(void)
+{
+    for(const KetjuRegion &reg : ActiveRegions) {
+        if(reg.total_particle_count < 2 || reg.local_member_indices.empty()) {continue;}
+        KjLiveChain l = {{0, 0, 0}, 0, 0, (reg.affected_sim_indices.size() > 1) ? 1 : 0};
+        double M = 0; for(const ketju_mpi_particle &c : reg.centers) {M += c.Mass; for(int k = 0; k < 3; k++) {l.c[k] += c.Mass * c.Pos[k];}}
+        for(int k = 0; k < 3; k++) {l.c[k] /= M;}
+        for(const ketju_mpi_particle &c : reg.centers) {double d2 = 0; for(int k = 0; k < 3; k++) {double d = c.Pos[k] - l.c[k]; d2 += d * d;} l.size = fmax(l.size, sqrt(d2));}
+        for(int idx : reg.local_member_indices) {l.end = fmax(l.end, (long long)(P[idx].Ti_begstep + P[idx].dt_step));}
+        KjLiveChains.push_back(l);
+    }
+}
+/* collective, while chains are alive: called on steps with centres gathered, every task */
+static void ketju_tree_rebuild_rule(void)
+{
+    int need = 0; size_t w = 0;
+    for(const KjLiveChain &l : KjLiveChains) {
+        if(l.end <= (long long)All.Ti_Current) {continue;}
+        KjLiveChains[w++] = l;
+        if(l.spans) {need = 1; continue;}
+        const double rn = KETJU_NEIGHBOUR_RANK_FACTOR * l.size;
+        for(const ketju_mpi_particle &c : KjFoundCenters) {
+            if(c.Task == ThisTask) {continue;}
+            double dx = c.Pos[0] - l.c[0], dy = c.Pos[1] - l.c[1], dz = c.Pos[2] - l.c[2];
+            gravity_box_nearest_image(dx, dy, dz, -1);
+            if(dx*dx + dy*dy + dz*dz < rn*rn) {need = 1; break;}
+        }
+    }
+    KjLiveChains.resize(w);
+    int glob = 0; MPI_Allreduce(&need, &glob, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(glob) {TreeReconstructFlag = 1;}
+}
 
 void ketju_run_integration(void)
 {
     KjClock clk(CPU_KETJUFIND);
     ketju_member_step_end_init(); /* before this step's regions raise it */
     if(KetjuNumMultiRegions == 0) {
+        if(!ketju_no_live_chains()) {ketju_tree_rebuild_rule();}
         return; /* rank-uniform: nothing to integrate */
     }
     /* Outer loop over sequential rounds. Within a round, regions run in
@@ -1701,6 +1778,8 @@ void ketju_run_integration(void)
     update_region_costs();
 
     ketju_collect_stats();
+    ketju_note_live_chains();
+    ketju_tree_rebuild_rule();
     ketju_report_stats(0);
 
 }
