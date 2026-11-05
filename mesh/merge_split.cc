@@ -947,6 +947,9 @@ int merge_particles_ij(int i, int j)
         P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
         P[j].dp += P[j].Vel * P[j].Mass - p_old_j;
         force_raise_motion_bound(j);
+#ifdef TREE_REFRESH_INCREMENTAL
+        if(!TreeDiscardImminent && force_tree_is_allocated()) {force_mark_moments_dirty(j);} /* j's ancestors gain i's mass (i's are marked when it is eliminated) */
+#endif
         return 1;
     } // closes merger of non-gas particles, only gas particles will see the blocks below //
 
@@ -1197,6 +1200,9 @@ int merge_particles_ij(int i, int j)
     P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
     P[j].dp += P[j].Vel * P[j].Mass - p_old_j;
     force_raise_motion_bound(j);
+#ifdef TREE_REFRESH_INCREMENTAL
+    if(!TreeDiscardImminent && force_tree_is_allocated()) {force_mark_moments_dirty(j);} /* j's ancestors gain i's mass (i's are marked when it is eliminated) */
+#endif
     /* call the pressure routine to re-calculate pressure (and sound speeds) as needed */
     set_eos_pressure(j, P, CellP);
 #if defined(MHD_CONSERVE_B_ON_REFINEMENT)
