@@ -1147,18 +1147,8 @@ extern struct gravdata_in
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
     MyFloat AGS_zeta;
 #endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-    MyFloat Min_Sink_OrbitalTime;   /*!<orbital time for binary */
-    Vec3<MyDouble> comp_dx;        /*!< position of binary companion */
-    Vec3<MyDouble> comp_dv;        /*!< velocity of binary companion */
-    MyDouble comp_Mass;         /*!< mass of binary companion */
-    int is_in_a_binary;
-#endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
     SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;
-#endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    int SuperTimestepFlag;  /*!< 2 if allowed to super-timestep, 1 if a candidate for super-timestepping, 0 otherwise */
 #endif
     MyFloat OldAcc;
     int NodeList[NODELISTLENGTH];
@@ -1224,22 +1214,9 @@ extern struct gravdata_out
     MyFloat weight_sum_for_special_point_smoothing;
 #endif
 #endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-    MyFloat Min_Sink_OrbitalTime; //orbital time for binary
-    Vec3<MyDouble> comp_dx; //position of binary companion
-    Vec3<MyDouble> comp_dv; //velocity of binary companion
-    MyDouble comp_Mass; //mass of binary companion
-    int is_in_a_binary; // 1 if star is in a binary, 0 otherwise
-#endif
 #ifdef SINGLE_STAR_TIMESTEPPING
     MyFloat Min_Sink_Freefall_time;    // minimum value of sqrt(R^3 / G(M_SINK + M_particle)) as calculated from the tree-walk
     MyFloat Min_Sink_Approach_Time; // smallest approach time t_a = |v_radial|/r
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    SymmetricTensor2<MyFloat> COM_tidal_tensorps; //tidal tensor evaluated at the center of mass without contribution from the companion
-    MyDouble COM_GravAccel[3]; //gravitational acceleration evaluated at the center of mass without contribution from the companion
-    int COM_calc_flag; //flag that tells whether this was only a rerun to get the acceleration ad the tidal tenor at the center of mass of a binary
-    int SuperTimestepFlag; // 2 if allowed to super-timestep, 1 if a candidate for super-timestepping, 0 otherwise
-#endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
     MyFloat Min_Sink_FeedbackTime; // minimum time for feedback to arrive from a star
 #endif    

@@ -52,7 +52,7 @@ extern ALIGN(32) struct particle_data
     MyFloat PM_Potential;
 #endif
 #endif
-#if defined(GALSF_SFR_TIDAL_HILL_CRITERION) || defined(TIDAL_TIMESTEP_CRITERION) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(OUTPUT_TIDAL_TENSOR) || (defined(SINGLE_STAR_TIMESTEPPING) && (SINGLE_STAR_TIMESTEPPING > 0)) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
+#if defined(GALSF_SFR_TIDAL_HILL_CRITERION) || defined(TIDAL_TIMESTEP_CRITERION) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(OUTPUT_TIDAL_TENSOR) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
 #define COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
     SymmetricTensor2<MyFloat> tidal_tensorps;            /*!< tidal tensor (=second derivatives of grav. potential) */
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
@@ -230,21 +230,9 @@ extern ALIGN(32) struct particle_data
     MyFloat weight_sum_for_special_point_smoothing;
 #endif
 #endif
-#if defined(SINGLE_STAR_FIND_BINARIES) || (SINGLE_STAR_TIMESTEPPING > 0)
-    MyDouble Min_Sink_OrbitalTime; //orbital time for binary
-    Vec3<MyDouble> comp_dx; //position offset of binary companion - this will be evolved in the Kepler solution while we use the Pos attribute to track the binary COM
-    Vec3<MyDouble> comp_dv; //velocity offset of binary companion - this will be evolved in the Kepler solution while we use the Vel attribute to track the binary COM velocity
-    MyDouble comp_Mass; //mass of binary companion
-    int is_in_a_binary; // flag whether star is in a binary or not
-#endif
 #ifdef SINGLE_STAR_TIMESTEPPING
     MyFloat Min_Sink_Freefall_time;
     MyFloat Min_Sink_Approach_Time;
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    int SuperTimestepFlag; // >=2 if allowed to super-timestep (increases with each drift/kick), 1 if a candidate for super-timestepping, 0 otherwise
-    MyDouble COM_dt_tidal; //timescale from tidal tensor evaluated at the center of mass without contribution from the companion
-    Vec3<MyDouble> COM_GravAccel; //gravitational acceleration evaluated at the center of mass without contribution from the companion
-#endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
     MyFloat MaxFeedbackVel; // maximum signal velocity of any feedback mechanism emanating from the star
     MyFloat Min_Sink_FeedbackTime;  // minimum time for feedback to arrive from a star

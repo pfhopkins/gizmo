@@ -416,7 +416,7 @@
 #define ADAPTIVE_GRAVSOFT_FORGAS
 #define GRAVITY_ACCURATE_FEWBODY_INTEGRATION
 #ifndef SINGLE_STAR_TIMESTEPPING
-#define SINGLE_STAR_TIMESTEPPING 0 /* a run may set 1 or 2 in Config.sh to super-timestep hard binaries */
+#define SINGLE_STAR_TIMESTEPPING 0
 #endif
 #define SINGLE_STAR_ACCRETION 12
 #define SINGLE_STAR_SINK_FORMATION (0+1+2+4+8+16+32+64+2048) // 0=density threshold, 1=virial criterion, 2=convergent flow, 4=local extremum, 8=no sink in kernel, 16=not falling into sink, 32=hill (tidal) criterion, 64=Jeans criterion, 128=converging flow along all principle axes, 256=self-shielding/molecular, 512=multi-free-fall (smooth dependence on virial), 1024=numerical escape if too dense, 2048=virial is time-averaged
@@ -691,22 +691,17 @@
 #endif
 
 
-#if (SINGLE_STAR_TIMESTEPPING > 0) /* if single-star timestepping is on, need to make sure the binary-identification flag is active */
-#ifndef SINGLE_STAR_FIND_BINARIES
-#define SINGLE_STAR_FIND_BINARIES
+#if defined(SINGLE_STAR_TIMESTEPPING) && (SINGLE_STAR_TIMESTEPPING > 0)
+#error "SINGLE_STAR_TIMESTEPPING > 0 (super-timestepping of sink binaries) has been removed. Use SINGLE_STAR_TIMESTEPPING=0; for regularized few-body integration of tight sink systems, use KETJU_REGULARIZATION (branch starforge_dev+ketju)."
 #endif
+#ifdef SINGLE_STAR_FIND_BINARIES
+#error "SINGLE_STAR_FIND_BINARIES has been removed: its only consumer was SINGLE_STAR_TIMESTEPPING > 0 (super-timestepping). Remove it from Config.sh."
 #endif
 
 
 #ifdef SINGLE_STAR_DIRECT_GRAVITY /* exact O(N_star^2) star-star gravity, replacing the tree for those pairs */
 #if !defined(SINK_CALC_DISTANCES)
 #define SINK_CALC_DISTANCES /* the tree's node-level sink_mass is what tells the walk which nodes to drop for star targets */
-#endif
-#if defined(SINGLE_STAR_FIND_BINARIES)
-/* SINGLE_STAR_FIND_BINARIES identifies a binary companion during the tree walk, from the very
-   star-star node interactions this flag removes, and the direct sum does not reconstruct it.
-   Silently losing binary detection would change the integration, so refuse the combination. */
-#error "SINGLE_STAR_DIRECT_GRAVITY does not yet supply the companion search that SINGLE_STAR_FIND_BINARIES (and hence SINGLE_STAR_TIMESTEPPING > 0) needs; use one or the other."
 #endif
 #endif
 
@@ -755,7 +750,7 @@
    subtracts the sink monopole from mixed nodes and so needs sink_pos on the same clock as u.d.s; it can
    be set without SINGLE_STAR_TIMESTEPPING, and where it is, the sink_vel declaration and the moment sums
    that fill it widen to match this macro. */
-#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
 #define SINK_NODE_MOTION_TRACKED
 #endif
 

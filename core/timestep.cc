@@ -362,21 +362,6 @@ integertime get_timestep(int p,		/*!< particle index */
         return (ti_floor > 2) ? ti_floor : 2;
     }
 #endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    P[p].SuperTimestepFlag = 0;
-    if( (P[p].Type == 5) && P[p].is_in_a_binary ) // candidate: need to decide whether to use super timestepping for binaries
-    {
-#if (SINGLE_STAR_TIMESTEPPING == 1) // to be conservative, use the semimajor axis, ie. the internal timescale is the orbital period
-	    double dt_bin = P[p].Min_Sink_OrbitalTime / (2.*M_PI); // sqrt(a^3/GM) for binary
-	    if(0.03*P[p].COM_dt_tidal>dt_bin) {P[p].SuperTimestepFlag=2;
-	    } // external timestep is appropriately larger than 'internal' timestep, so use super-timestepping routine
-#else // to be more aggressive, use the instantaneous orbital timescale, ie. freefall time from the CURRENT orbital separation. This lets us super step an orbit on the close passages, even when it is affected by tides at apopase
-	    double dr = P[p].comp_dx.norm();
-	    double dt_bin = sqrt(dr*dr*dr / (All.G * (P[p].Mass + P[p].comp_Mass)));
-        if(0.005*P[p].COM_dt_tidal>dt_bin) {P[p].SuperTimestepFlag=2;} // external timestep is appropriately larger than 'internal' timestep, so use super-timestepping routine [constant here stricter for more aggressive routine]
-#endif
-    }
-#endif
 
     
     
@@ -518,10 +503,6 @@ integertime get_timestep(int p,		/*!< particle index */
      * tdyn_step_for_treeforce, so the tree-update cadence keeps the unscaled value. */
     if(eligible_for_hermite(p)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;}
 #endif
-    
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    if(P[p].SuperTimestepFlag>=2) {dt_tidal = sqrt(2*All.ErrTolIntAccuracy) * P[p].COM_dt_tidal;}
-#endif
     dt=DMIN(dt,dt_tidal);
 #endif
 
@@ -531,23 +512,6 @@ integertime get_timestep(int p,		/*!< particle index */
         double dt_2body = sqrt(2*All.ErrTolIntAccuracy) * SINK_TIMESTEP_SAFETY_FACTOR / (1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
 #ifdef HERMITE_INTEGRATION
         if(eligible_for_hermite(p)) dt_2body /= SINK_TIMESTEP_SAFETY_FACTOR;
-#endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    	if(P[p].is_in_a_binary && (P[p].SuperTimestepFlag >= 2)) //binary candidate or a confirmed binary
-	    {    // First we need to construct the same 2-body timescale as above, but from the binary parameters. If this is longer than the above, there is another star that is requiring us to
-	         // take a short timestep, so we better not super-timestep otherwise we risk messing up that star's integration. But if it is consistent with the above, then we can safely super-timestep
-	        double Mtot=P[p].comp_Mass+P[p].Mass, dr=P[p].comp_dx.norm_sq(), dv=P[p].comp_dv.norm_sq(), dv_dot_dx=dot(P[p].comp_dx,P[p].comp_dv), binary_dt_2body=0;
-            double r_effective = KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER * ForceSoftening_KernelRadius(p); // plummer-equivalent softening
-	        dr += r_effective*r_effective; // add in quadrature for simple softening estimate
-            dr=sqrt(dr); if(dv>0) {dv=sqrt(dv);} else {dv=0;}
-            double dt_2body_base = 1/(1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
-	        binary_dt_2body = 1. / (dv / dr + sqrt(All.G * Mtot / (dr*dr*dr)));
-	        if(fabs(binary_dt_2body - dt_2body_base)/dt_2body_base < 1e-2)
-	        { // If consistent with the binary parameters, we choose a super-timestep that gives ~constant number of timesteps per orbit
-                double SUPERTIMESTEPPING_NUM_STEPS_PER_ORBIT = 50;
-                dt_2body = 2.*M_PI / SUPERTIMESTEPPING_NUM_STEPS_PER_ORBIT * (binary_dt_2body*2); // orbital frequency is |dr x dv| / r^2, so timestep will be inverse to this
-	        } else {P[p].SuperTimestepFlag = 0;}  // we still have to take a proper short N-body integration timestep due to a third body whose approach requires careful integration, so no super timestepping is possible
-	    }
 #endif
         dt = DMIN(dt, dt_2body);
 #ifdef HERMITE_INTEGRATION

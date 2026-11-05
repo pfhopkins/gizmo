@@ -199,9 +199,6 @@ inline int ngb_treefind_pairs_threads_targeted(const Vec3<MyDouble>& searchcente
 void do_distortion_tensor_kick(int i, double dt_gravkick);
 void set_predicted_quantities_for_extra_physics(int i);
 void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, double dt_entr);
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-void do_fewbody_kick(int i, double fewbody_kick_dv[3], double dt);
-#endif
 
 void set_eos_pressure(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
 #if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
@@ -1121,9 +1118,6 @@ void advect_mesh_point(int i, double dt);
 double calculate_face_area_for_cartesian_mesh(const Vec3<double>& dp, double rinv, double l_side, Vec3<double>& Face_Area_Vec);
 #endif
 
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-void subtract_companion_gravity(int i);
-#endif
 
 
 void hydro_gradient_calc(void);
@@ -1200,15 +1194,6 @@ void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_
 #endif
 
 
-#ifdef SINGLE_STAR_TIMESTEPPING
-void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
-void odeint_super_timestep(int i, double dt_super, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
-double binary_relative_speed_bound(int i);
-double gravfac(double r, double mass);
-double gravfac2(double r, double mass);
-void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk);
-double eccentric_anomaly(double mean_anomaly, double ecc);
-#endif
 
 #ifdef ENERGY_BUDGET_DIAGNOSTIC
 /* Total gas energy at full synchronization; see energy_budget_sync_report() in run.cc. The

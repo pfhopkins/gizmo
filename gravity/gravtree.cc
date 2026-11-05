@@ -295,16 +295,6 @@ void gravity_tree(void)
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 GravDataIn[j].Vel = P[place].Vel;
 #endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-                if(P[place].Type == 5)
-                {
-                    GravDataIn[j].Min_Sink_OrbitalTime = P[place].Min_Sink_OrbitalTime; //orbital time for binary
-                    GravDataIn[j].comp_Mass = P[place].comp_Mass; //mass of binary companion
-                    GravDataIn[j].is_in_a_binary = P[place].is_in_a_binary; // 1 if we're in a binary, 0 if not
-                    GravDataIn[j].comp_dx = P[place].comp_dx; GravDataIn[j].comp_dv = P[place].comp_dv;
-                }
-                else {P[place].is_in_a_binary=0; /* setting values to zero just to be sure */}
-#endif
 #ifdef ADAPTIVE_GRAVSOFT_FORGAS
                 if(P[place].Type == 0) {GravDataIn[j].AGS_zeta = P[place].AGS_zeta;} else {GravDataIn[j].AGS_zeta = 0;} /* same zeta as the source side, also at the softening floor */
 #endif
@@ -436,15 +426,6 @@ void gravity_tree(void)
 #ifdef SINGLE_STAR_TIMESTEPPING
                 if(GravDataOut[j].Min_Sink_Approach_Time < P[place].Min_Sink_Approach_Time) {P[place].Min_Sink_Approach_Time = GravDataOut[j].Min_Sink_Approach_Time;}
                 if(GravDataOut[j].Min_Sink_Freefall_time < P[place].Min_Sink_Freefall_time) {P[place].Min_Sink_Freefall_time = GravDataOut[j].Min_Sink_Freefall_time;}
-#ifdef SINGLE_STAR_FIND_BINARIES
-                if((P[place].Type == 5) && (GravDataOut[j].Min_Sink_OrbitalTime < P[place].Min_Sink_OrbitalTime))
-                {
-                    P[place].Min_Sink_OrbitalTime = GravDataOut[j].Min_Sink_OrbitalTime;
-                    P[place].comp_Mass = GravDataOut[j].comp_Mass;
-                    P[place].is_in_a_binary = GravDataOut[j].is_in_a_binary;
-                    P[place].comp_dx=GravDataOut[j].comp_dx; P[place].comp_dv=GravDataOut[j].comp_dv;
-                }
-#endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
                 if(GravDataOut[j].Min_Sink_FeedbackTime < P[place].Min_Sink_FeedbackTime) {P[place].Min_Sink_FeedbackTime = GravDataOut[j].Min_Sink_FeedbackTime;}
 #endif                
@@ -569,9 +550,6 @@ void gravity_tree(void)
 #endif
         /* before anything: multiply by G for correct units [be sure operations above/below are aware of this!] */
         P[i].GravAccel *= All.G;
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-        P[i].COM_GravAccel *= All.G;
-#endif
 
 #ifdef EVALPOTENTIAL
         P[i].Potential *= All.G;
@@ -611,9 +589,6 @@ void gravity_tree(void)
                 P[i].OldAcc = accel.norm() / All.G; /* convert back to the non-G units for convenience to match units in loops assumed */
             }
 
-#if (SINGLE_STAR_TIMESTEPPING > 0) /* Subtract component of force from companion if in binary, because we will operator-split this */
-        if((P[i].Type == 5) && (P[i].is_in_a_binary == 1)) {subtract_companion_gravity(i);}
-#endif
 
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* final operations to compute the tidal tensor and related quantities */
         P[i].tidal_tensorps *= All.G; /* give this the proper units */
@@ -982,32 +957,6 @@ void mysort_dataindex(void *b, size_t n, size_t s, int (*cmp) (const void *, con
     myfree(tmp);
 }
 
-
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-void subtract_companion_gravity(int i)
-{
-    /* Remove contribution to gravitational field and tidal tensor from the stars in the binary to the center of mass */
-    double u, dr, fac, fac2, h, h_inv, h3_inv, u2; SymmetricTensor2<MyFloat> tidal_tensorps; int i1, i2;
-    dr = P[i].comp_dx.norm();
-    h = SinkParticle_GravityKernelRadius;  h_inv = 1.0 / h; h3_inv = h_inv*h_inv*h_inv; u = dr*h_inv; u2=u*u;
-    fac = P[i].comp_Mass / (dr*dr*dr); fac2 = 3.0 * P[i].comp_Mass / (dr*dr*dr*dr*dr); /* no softening nonsense */
-    if(dr < h) /* second derivatives needed -> calculate them from softened potential */
-    {
-	    fac = P[i].comp_Mass * kernel_gravity(u, h_inv, h3_inv, 1);
-        fac2 = P[i].comp_Mass * kernel_gravity(u, h_inv, h3_inv, 2);
-    }
-    P[i].COM_GravAccel = P[i].GravAccel - P[i].comp_dx * (fac * All.G); /* this assumes the 'G' has been put into the units for the grav accel */
-
-    /* Adjusting tidal tensor according to terms above */
-    tidal_tensorps = P[i].tidal_tensorps - fac2 * outer_product(P[i].comp_dx);
-    tidal_tensorps[0][0] += fac; tidal_tensorps[1][1] += fac; tidal_tensorps[2][2] += fac;
-
-#ifdef SINK_OUTPUT_MOREINFO
-    printf("Corrected center of mass acceleration %g %g %g tidal tensor diagonal elements %g %g %g \n", P[i].COM_GravAccel[0], P[i].COM_GravAccel[1], P[i].COM_GravAccel[2], tidal_tensorps[0][0],tidal_tensorps[1][1],tidal_tensorps[2][2]);
-#endif
-    P[i].COM_dt_tidal = sqrt(1.0 / (All.G * tidal_tensorps.frobenius_norm()));
-}
-#endif
 
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int n){
