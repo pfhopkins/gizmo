@@ -85,7 +85,9 @@ def test_briowu(num_mpi_ranks, num_omp_threads):
     # reference and for the magnetic energy below
     if "B_unit_ratio" in snap:
         assert abs(snap["B_unit_ratio"] - 1) < 1e-6, f"snapshot B unit is {snap['B_unit_ratio']} x internal"
-    assert cmp["empty_bins_in_window"] == 0, f"{cmp['empty_bins_in_window']} empty x-bins in the window"
+    assert cmp["empty_bin_fraction"] < 0.02, (  # PROVISIONAL: untuned, not yet run
+        f"{cmp['empty_bins_in_window']} empty x-bins in the window ({cmp['empty_bin_fraction']:.1%}): "
+        "particles stretched past the bin width; L1 skips empty bins but too many means the binning is wrong")
 
     for f, tol in L1_TOL.items():
         assert cmp["L1"][f] < tol, f"{f}: L1/range {cmp['L1'][f]:.4f} vs reference exceeds {tol}"

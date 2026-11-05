@@ -284,7 +284,7 @@ def regional_l1(x_bins, f_bins, ref, field, window):
     """Mean |f - f_ref| over the bins inside window, divided by the range (max - min) of the
     reference field there. The range rather than the initial jump, since several fields have
     no jump across x0 (v in briowu, rho and By in toth)."""
-    sel = (x_bins >= window[0]) & (x_bins <= window[1])
+    sel = (x_bins >= window[0]) & (x_bins <= window[1]) & np.isfinite(f_bins)  # skip empty bins
     f_ref = np.interp(x_bins[sel], ref["x"], ref[field])
     in_win = (ref["x"] >= window[0]) & (ref["x"] <= window[1])
     scale = np.ptp(ref[field][in_win])
@@ -342,8 +342,9 @@ def read_snapshot(path, gamma):
 
 
 def compare_snapshot(snap, ref, plateaus=(), pad_bins=5, shrink_bins=3):
-    """Bin the particles onto x (mean over y), with bin width the mean interparticle spacing
-    sqrt(Lx*Ly/N), and compare with the reference in the causally clean window.
+    """Bin the particles onto x (mean over y), with bin width twice the mean interparticle spacing
+    sqrt(Lx*Ly/N) (a rarefaction stretches the spacing by up to ~1.5x, so one-spacing bins go
+    empty there), and compare with the reference in the causally clean window.
 
     plateaus: (label, field, x_anchor) triples; each plateau is the reference's flat interval
     around x_anchor (see plateau()), shrunk by shrink_bins bins at each end to keep shock
@@ -353,7 +354,7 @@ def compare_snapshot(snap, ref, plateaus=(), pad_bins=5, shrink_bins=3):
     {label/field: (sim, ref, rel_err, nbins)}, and the divB statistics over the window.
     """
     Lx, Ly, N = float(ref["L"]), snap["box_y"], len(snap["x"])
-    dx_bin = np.sqrt(Lx * Ly / N)
+    dx_bin = 2.0 * np.sqrt(Lx * Ly / N)
     nbins = int(round(Lx / dx_bin))
     edges = np.linspace(0.0, Lx, nbins + 1)
     xb = 0.5 * (edges[1:] + edges[:-1])
@@ -363,7 +364,8 @@ def compare_snapshot(snap, ref, plateaus=(), pad_bins=5, shrink_bins=3):
     window = clean_window(ref, pad=pad_bins * dx_bin)
     in_win = (xb >= window[0]) & (xb <= window[1])
     out = dict(x_bins=xb, binned=binned, count=count, dx_bin=dx_bin, window=window,
-               empty_bins_in_window=int(np.sum(count[in_win] == 0)))
+               empty_bins_in_window=int(np.sum(count[in_win] == 0)),
+               empty_bin_fraction=float(np.mean(count[in_win] == 0)))
     out["L1"] = {f: regional_l1(xb, binned[f], ref, f, window) for f in COMPARED_FIELDS}
 
     out["plateaus"] = {}

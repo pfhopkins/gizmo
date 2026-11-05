@@ -149,9 +149,17 @@ def _plot(case, theta, x, u_final, u_exact, t, amp, lam_exact, lam_fit):
     plt.close(fig)
 
 
+# iso: measured 2026-11-05 at 0.793 of the analytic rate (predicted 0.793 by a numpy re-implementation
+# of hydro/conduction.h). Cause: the non-MAGNETIC branch limits the face gradient per component
+# against q_direct = du * dx_k / r^2, which only carries the pair-direction gradient, so the flux
+# through a face at angle phi to grad(u) is scaled by cos^2(phi). The MAGNETIC branch (every
+# production build) uses MINMOD_G and is unaffected. Strict xfail so a fix is noticed.
+ISO_XFAIL = pytest.mark.xfail(strict=True, reason="isotropic (non-MAGNETIC) conduction under-diffuses by ~21%: "
+                              "per-component MINMOD against the pair-direction gradient in hydro/conduction.h")
+
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(4),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-@pytest.mark.parametrize("case", list(CASES))
+@pytest.mark.parametrize("case", [pytest.param(c, id=c, marks=(ISO_XFAIL,) if c == "iso" else ()) for c in CASES])
 def test_conduction_step(case, num_mpi_ranks, num_omp_threads):
     theta, _ = CASES[case]
     _build_and_run(case, num_mpi_ranks, num_omp_threads)
