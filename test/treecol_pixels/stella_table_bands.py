@@ -9,6 +9,7 @@ YR_PER_TIME_UNIT = 3.085678e13 / 3.155e7  # pc / (km/s) in the code's years (con
 
 class Tables:
     def __init__(self, fname):
+        self.fname = fname
         with h5py.File(fname, "r") as F:
             self.lZ, self.lM, self.la = F["log_Z"][()], F["log_M_init"][()], F["log_age_yr"][()]
             self.t_pms, self.life = F["t_PMS"][()], F["lifetime_yr"][()]
