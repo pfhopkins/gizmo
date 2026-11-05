@@ -898,12 +898,19 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
         struct gas_cell_data *send_CellP = (struct gas_cell_data *) mymalloc("gx_fwd_sC",
             staging_slots * sizeof(struct gas_cell_data));
 
+        /* Each slot is an independent copy into its own staging row, so every peer's run is shared out over the threads. */
+#ifdef _OPENMP
+#pragma omp parallel if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, staged))
+#endif
         for(int t = 0; t < NTask; t++)
         {
             /* Only step into the list for a peer this round still has slots for:
                a run that finished in an earlier round would address past its end. */
             if(round_send_count[t] <= 0) {continue;}
             const int *home = send_home_idx + send_disp[t] + taken;
+#ifdef _OPENMP
+#pragma omp for schedule(static) nowait
+#endif
             for(int k = 0; k < round_send_count[t]; k++)
             {
                 const int j = home[k];
@@ -952,11 +959,24 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
                                           recv_CellP, round_recv_count, staged_disp,
                                           sizeof(struct gas_cell_data), MPI_COMM_WORLD);
             }
-            for(int t = 0; t < NTask; t++) {
-                if(round_recv_count[t] <= 0) {continue;}
-                memcpy(&dst_P[round_recv_disp[t]], &recv_P[staged_disp[t]], (size_t) round_recv_count[t] * sizeof(struct particle_data));
-                if(recv_cellp) {
-                    memcpy(&dst_CellP[round_recv_disp[t]], &recv_CellP[staged_disp[t]], (size_t) round_recv_count[t] * sizeof(struct gas_cell_data));
+            /* Each thread copies its own contiguous share of every peer's run. */
+#ifdef _OPENMP
+#pragma omp parallel if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, staged_total))
+#endif
+            {
+#ifdef _OPENMP
+                const long n_shares = omp_get_num_threads(), share = omp_get_thread_num();
+#else
+                const long n_shares = 1, share = 0;
+#endif
+                for(int t = 0; t < NTask; t++) {
+                    if(round_recv_count[t] <= 0) {continue;}
+                    const long first = (round_recv_count[t] * share) / n_shares, last = (round_recv_count[t] * (share + 1)) / n_shares;
+                    if(last <= first) {continue;}
+                    memcpy(&dst_P[round_recv_disp[t] + first], &recv_P[staged_disp[t] + first], (size_t) (last - first) * sizeof(struct particle_data));
+                    if(recv_cellp) {
+                        memcpy(&dst_CellP[round_recv_disp[t] + first], &recv_CellP[staged_disp[t] + first], (size_t) (last - first) * sizeof(struct gas_cell_data));
+                    }
                 }
             }
             if(recv_CellP) {myfree(recv_CellP);}
