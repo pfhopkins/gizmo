@@ -779,7 +779,9 @@ void init(void)
 #endif
 #endif
 #ifdef COSMIC_RAY_FLUID
+#ifndef INPUT_READ_COSMICRAYENERGY /* with it, fresh starts keep the CosmicRayEnergy of the ICs */
         if(RestartFlag == 0) {for(j=0;j<N_CR_PARTICLE_BINS;j++) {CellP[i].CosmicRayEnergy[j] = 0;}}
+#endif
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
         if(RestartFlag != 1) {CellP[i].DtCREgyNewInjectionFromShocks = 0;}
 #endif
