@@ -1,0 +1,51 @@
+InitCondFile                       merger_ics
+OutputDir                          output
+
+% See test_merger.py. The pair merges in the first step; the run follows the three survivors for
+% 200 steps. MaxSizeTimestep keeps every sink in one timebin, so the outer sinks are active in the
+% step of the merger and walk the tree in the Hermite pass that follows it.
+TimeMax                            2e-5
+TimeBetSnapshot                    5e-6
+TimeOfFirstSnapshot                0
+TimeBegin                          0
+TimeBetStatistics                  5e-6
+BoxSize                            1
+
+MaxSizeTimestep                    1e-7
+MinSizeTimestep                    1e-14
+ErrTolIntAccuracy                  0.005
+ErrTolTheta                        0.5
+ErrTolForceAcc                     0.0025
+CourantFac                         0.4
+MaxRMSDisplacementFac              0.125
+TreeDomainUpdateFrequency          0.1
+DesNumNgb                          32
+MaxNumNgbDeviation                 1
+PartAllocFactor                    2.5
+ResubmitOn                         0
+ResubmitCommand                    none
+UnitLength_in_cm                   3.085678e+18
+UnitMass_in_g                      1.989e+33
+UnitVelocity_in_cm_per_s           100000
+
+% Softening (the sink radius) and the accretion search radius are 5x the pair's separation, so the
+% pair passes every merger criterion at t = 0, and 7x below the outer sinks' distance, so those
+% never merge.
+Softening_Type0                    1e-4
+Softening_Type1                    1e-4
+Softening_Type2                    1e-4
+Softening_Type3                    1e-4
+Softening_Type4                    1e-4
+Softening_Type5                    1e-4
+Softening_Type0_MaxPhysLimit       1e-4
+Softening_Type1_MaxPhysLimit       1e-4
+Softening_Type2_MaxPhysLimit       1e-4
+Softening_Type3_MaxPhysLimit       1e-4
+Softening_Type4_MaxPhysLimit       1e-4
+Softening_Type5_MaxPhysLimit       1e-4
+CritPhysDensity                    1e13
+CpuTimeBetRestartFile              30
+SinkMaxAccretionRadius             1e-4
+
+% Host gravity walk for every step: the device walk keeps the tree-build snapshot on a miss.
+GravityHostWalkBelowActive         1000000000
