@@ -76,6 +76,9 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(hydro_force)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     GHOST_WRITEBACK_GAS_ADD(dMass)
 #endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+    GHOST_WRITEBACK_GAS_ADD_ARRAY(Dyield_pending, NUM_METAL_SPECIES)
+#endif
 GHOST_WRITEBACK_BUNDLE_END(hydro_force)
 
 /* ============================================================================
@@ -196,6 +199,9 @@ void HydroForceSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
             int j = num_local + g;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[j].dMass = 0;
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+            for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP[j].Dyield_pending[k] = 0;} /* the delta sent home is then the exact sum */
 #endif
             P[j].wakeup = 0;
         }

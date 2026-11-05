@@ -1456,6 +1456,9 @@
 #undef MHD_CONSTRAINED_GRADIENT_MIDPOINT
 #endif
 
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
+#error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
+#endif
 #if defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(TURB_DIFF_MASS) || defined(TURB_DIFF_METALS)
 #define TURB_DIFFUSION /* top-level switch to calculate properties needed for scalar turbulent diffusion/mixing: must enable with any specific version */
 #if defined(TURB_DIFF_VELOCITY) && !defined(VISCOSITY)

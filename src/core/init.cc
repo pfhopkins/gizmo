@@ -857,6 +857,9 @@ void init(void)
 #if defined(SINK_THERMALFEEDBACK)
         CellP[i].Injected_Sink_Energy = 0;
 #endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        for(j=0;j<NUM_METAL_SPECIES;j++) {CellP[i].Dyield_pending[j] = 0;}
+#endif
     }
 #ifdef EOS_ELASTIC
     solid_material_check_cells(); /* every CompositionType is final above: refuse a material the cells carry but that is incomplete */

@@ -5,8 +5,9 @@
  * the flag is off the function compiles to a no-op.
  *
  * Writes out.Dyield[k] (i-side, per-thread accumulator, no atomic needed).
- * j-side writes have been removed — they were gated on the legacy
- * j_is_active_for_fluxes flag which is always 0 in modern GIZMO.
+ * With TURB_DIFF_METALS_EXACT_CONSERVATION, each side moves half the exchange and
+ * books the opposite half into pending_j (CellP[j].Dyield_pending, atomic),
+ * which j applies at its next active step; pending_j exists only with the flag.
  * Each side applies the exchange for its own step: the limiters bound the amount
  * over the pair step dt_pair = max(dt_i, dt_j), and cell i receives the fraction
  * dt_i/dt_pair of it.
@@ -35,7 +36,11 @@ void turb_diff_metals_compute_pair(
     double dt_pair,
     double dt_i,
     double mdot_estimated,
-    struct hydro_data_out &out)
+    struct hydro_data_out &out
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+    , MyDouble *pending_j
+#endif
+    )
 {
 #ifdef TURB_DIFF_METALS
     if(!((local.Mass>0) && (Pj.Mass>0) && ((local.TD_DiffCoeff>MIN_REAL_NUMBER) || (CPj.TD_DiffCoeff>MIN_REAL_NUMBER)))) { return; }
@@ -93,7 +98,14 @@ void turb_diff_metals_compute_pair(
             double dmet = (Z_j - local.Metallicity[k_species]) * fabs(mdot_estimated) * dt_pair;
             cmag = MINMOD(dmet, cmag);
 #endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+            /* each side moves half the exchange over its own step; j's share waits in its pending buffer */
+            cmag *= 0.5 * dt_fraction_i;
+            out.Dyield[k_species] += cmag;
+            Kokkos::atomic_add(&pending_j[k_species], (MyDouble)(-cmag));
+#else
             out.Dyield[k_species] += cmag * dt_fraction_i;
+#endif
         }
     }
 #endif /* TURB_DIFF_METALS */
