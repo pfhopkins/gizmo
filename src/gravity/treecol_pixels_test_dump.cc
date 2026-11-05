@@ -48,6 +48,9 @@ void test_dump_treecol_pixels_and_exit(void)
 #ifdef RT_FREQ_BIN_ION_ENERGY
         fprintf(fd, " %d %d", RT_FREQ_BIN_ION_ENERGY, RT_FREQ_BIN_ION_PHOTONS);
 #endif
+#ifdef RT_FREQ_BIN_ION_HE_ENERGY
+        fprintf(fd, " %d %d", RT_FREQ_BIN_ION_HE_ENERGY, RT_FREQ_BIN_ION_HE_PHOTONS);
+#endif
         fprintf(fd, "\n");
         fclose(fd);
     }

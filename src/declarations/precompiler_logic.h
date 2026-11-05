@@ -1089,7 +1089,12 @@
 #endif
 #define TREECOL_PIXELS_NCOLUMNS 3 /* per-pixel columns: dust-weighted gas, H2, CO */
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
+#if CHEMISTRYNETWORK == 17
+#define TREECOL_SHELLS_ION_HELIUM /* two ionising bands split at 24.6 eV, absorbers HI and HeI (net 17 tracks He) */
+#define TREECOL_PIXELS_NSPECIES 5 /* node masses: + HI, HeI */
+#else
 #define TREECOL_PIXELS_NSPECIES 4 /* node masses: + H-ionising absorbers */
+#endif
 #else
 #define TREECOL_PIXELS_NSPECIES TREECOL_PIXELS_NCOLUMNS
 #endif
@@ -1452,13 +1457,19 @@
 #define RT_FREQ_BIN_ION_ENERGY (RT_FREQ_BIN_NU_X+1)
 #define RT_FREQ_BIN_ION_PHOTONS (RT_FREQ_BIN_NU_X+2)
 #endif
+#ifndef TREECOL_SHELLS_ION_HELIUM
+#define RT_FREQ_BIN_ION_HE_PHOTONS (RT_FREQ_BIN_ION_PHOTONS+0)
+#else
+#define RT_FREQ_BIN_ION_HE_ENERGY (RT_FREQ_BIN_ION_PHOTONS+1)
+#define RT_FREQ_BIN_ION_HE_PHOTONS (RT_FREQ_BIN_ION_PHOTONS+2)
+#endif
 
 /* be sure to add all new wavebands to these lists, or else we will run into problems */
 /* ALSO, the IR bin here should be the last bin: add additional bins ABOVE this line */
 #ifndef RT_INFRARED
-#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_ION_PHOTONS+0)
+#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_ION_HE_PHOTONS+0)
 #else
-#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_ION_PHOTONS+1)
+#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_ION_HE_PHOTONS+1)
 #endif
 
 #define N_RT_FREQ_BINS (RT_FREQ_BIN_INFRARED+1)

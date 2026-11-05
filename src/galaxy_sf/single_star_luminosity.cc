@@ -43,15 +43,28 @@ int single_star_band_luminosities_cgs(int i, double *L, double *L_bol)
 #endif
 
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
-/* ionising energy [erg/s] and photon rate [1/s] of a shining star from the tables at its current age */
-static void single_star_ionizing_rates(int i, double *L_ion, double *Q)
+/* ionising energy [erg/s] and photon rate [1/s] of a shining star from the tables at its current age; with helium also
+   above 24.6 eV: photons as the difference of two log tables, kept inside the band where that difference is rounding */
+static void single_star_ionizing_rates(int i, double *L_ion, double *Q, double *L_he, double *Q_he)
 {
     int s = single_star_slot(P[i].StarIdx);
     double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
     double la = log10(DMAX(evaluate_stellar_age_Gyr(i) * 1.e9 - stellar_t_PMS(logM, logZ), 100.));
     *L_ion = single_star_band_lum_cgs(stellar_log_L_ion_tot(logM, logZ, la)); *Q = single_star_band_lum_cgs(stellar_log_Q_ion(logM, logZ, la));
+    *L_he = *Q_he = 0;
+#ifdef TREECOL_SHELLS_ION_HELIUM
+    *L_he = single_star_band_lum_cgs(stellar_log_L_ion_He0(logM, logZ, la));
+    *Q_he = DMIN(DMAX(*Q - single_star_band_lum_cgs(stellar_log_Q_ion_H0(logM, logZ, la)), *L_he / (54.4 * ELECTRONVOLT_IN_ERGS)), *L_he / (24.6 * ELECTRONVOLT_IN_ERGS));
+#endif
 #ifdef TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS
-    if(All.TestTreeRayFixedRate > 0) {*Q = All.TestTreeRayFixedRate; *L_ion = *Q * 27.2 * ELECTRONVOLT_IN_ERGS;}
+    if(All.TestTreeRayFixedRate > 0)
+    {
+#ifdef TREECOL_SHELLS_ION_HELIUM
+        double f = All.TestTreeRayFixedRate / *Q; *L_ion *= f; *L_he *= f; *Q_he *= f; *Q = All.TestTreeRayFixedRate; /* the star's spectrum */
+#else
+        *Q = All.TestTreeRayFixedRate; *L_ion = *Q * 27.2 * ELECTRONVOLT_IN_ERGS;
+#endif
+    }
 #endif
 }
 #endif
@@ -69,9 +82,13 @@ int single_star_rt_band_luminosities(int i, int mode, double *lum, struct partic
     lum[RT_FREQ_BIN_NUV] = L[SINGLE_STAR_BAND_NUV] / UNIT_LUM_IN_CGS;
     lum[RT_FREQ_BIN_OPTICAL_NIR] = L[SINGLE_STAR_BAND_OPT] / UNIT_LUM_IN_CGS;
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
-    double L_ion, Q; single_star_ionizing_rates(i, &L_ion, &Q);
-    lum[RT_FREQ_BIN_ION_ENERGY] = L_ion / UNIT_LUM_IN_CGS;
-    lum[RT_FREQ_BIN_ION_PHOTONS] = Q * 13.6 * ELECTRONVOLT_IN_ERGS / UNIT_LUM_IN_CGS;
+    double L_ion, Q, L_he, Q_he; single_star_ionizing_rates(i, &L_ion, &Q, &L_he, &Q_he);
+    lum[RT_FREQ_BIN_ION_ENERGY] = (L_ion - L_he) / UNIT_LUM_IN_CGS;
+    lum[RT_FREQ_BIN_ION_PHOTONS] = (Q - Q_he) * 13.6 * ELECTRONVOLT_IN_ERGS / UNIT_LUM_IN_CGS;
+#ifdef TREECOL_SHELLS_ION_HELIUM
+    lum[RT_FREQ_BIN_ION_HE_ENERGY] = L_he / UNIT_LUM_IN_CGS;
+    lum[RT_FREQ_BIN_ION_HE_PHOTONS] = Q_he * 13.6 * ELECTRONVOLT_IN_ERGS / UNIT_LUM_IN_CGS;
+#endif
 #endif
     return 1;
 }
