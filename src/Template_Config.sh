@@ -168,6 +168,7 @@
 ## -----------------------------------------------------------------------------------------------------
 #SELFGRAVITY_OFF                # turn off self-gravity (compatible with GRAVITY_ANALYTIC)
 #GRAVITY_NOT_PERIODIC           # self-gravity is not periodic, even though the rest of the box is periodic
+#GRAVITY_PERIODIC_XY_IMAGES     # self-gravity periodic in x and y by explicit image sums (parameter GravityPeriodicXYImages = N: (2N+1)^2-1 images per interaction), open in z; for tall boxes (BOX_LONG_Z) with BOX_PERIODIC and BOX_OUTFLOW_Z or BOX_REFLECT_Z; implies GRAVITY_NOT_PERIODIC (no Ewald, no PM)
 ## -----------------------------------------------------------------------------------------------------
 #GRAVITY_ANALYTIC               # specific analytic gravitational force to use instead of or with self-gravity. If set to a numerical value
                                 #  > 0 (e.g. =1), then SINK_CALC_DISTANCES will be enabled, and it will use the nearest BH particle as the center for analytic gravity computations
