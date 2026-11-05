@@ -21,6 +21,8 @@
 #if defined(GALSF_SFR_IMF_SAMPLING) || defined(GALSF_SFR_IMF_VARIATION) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
 #error "GALSF_SINGLE_STARS_FROM_IMF: another stellar-mass model is switched on (GALSF_SFR_IMF_SAMPLING, GALSF_SFR_IMF_VARIATION, SINGLE_STAR_SINK_DYNAMICS or GALSF_MERGER_STARCLUSTER_PARTICLES)"
 #endif
+#endif
+#ifdef SINGLE_STAR_RECORDS
 
 struct single_star_records SingleStars;
 static int *single_star_free_slots = NULL, single_star_n_free = 0; /* stack of unused slots */

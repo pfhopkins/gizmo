@@ -236,6 +236,9 @@ void init(void)
         P[i].Grain_CoagClaim = 0;   /* no claim is open outside a force pass, so every start begins with none */
 #endif
 
+#ifdef KETJU_REGULARIZATION
+        ketju_init_particle(i);
+#endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* init tidal tensor for first output (not used for calculation) */
         for(j=0;j<3;j++) {int kt; for(kt=0;kt<3;kt++) {P[i].tidal_tensorps[j][kt]=0;}}
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION

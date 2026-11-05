@@ -1,5 +1,7 @@
 # KETJU (MSTAR chain regularisation) build additions; included by src/Makefile when KETJU_REGULARIZATION is set
 KETJU_DIR = gravity/ketju
+OBJS += $(KETJU_DIR)/ketju_coupling.o $(KETJU_DIR)/ketju_params.o
+INCL += $(KETJU_DIR)/ketju_coupling.h $(KETJU_DIR)/ketju_proto.h $(KETJU_DIR)/ketju_particle_fields.h $(KETJU_DIR)/ketju_global_fields.h $(KETJU_DIR)/ketju_member_state.h
 INCL += $(KETJU_DIR)/ketju_precompiler_logic.h
 $(if $(wildcard $(KETJU_DIR)/ketju-integrator-c/include/ketju_integrator/ketju_integrator.h),,$(error KETJU: run git submodule update --init src/gravity/ketju/ketju-integrator-c))
 $(if $(wildcard $(KETJU_DIR)/ketju-integrator/include/mstar/mstar.hpp),,$(error KETJU: run git submodule update --init src/gravity/ketju/ketju-integrator))

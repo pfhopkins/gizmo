@@ -445,7 +445,7 @@ void restart(int modus)
 #endif
 	    }
 
-#ifdef GALSF_SINGLE_STARS_FROM_IMF
+#ifdef SINGLE_STAR_RECORDS
 	  { /* single-star records, slot by slot (P[].StarIdx above points into them) */
 	      int cap = SingleStars.capacity;
 	      in(&cap, modus);

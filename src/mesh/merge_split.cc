@@ -1650,7 +1650,7 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
     for(i = 0; i < numpart_local; i++)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
-#ifdef GALSF_SINGLE_STARS_FROM_IMF
+#ifdef SINGLE_STAR_RECORDS
             if(P[i].StarIdx > 0) {single_star_record_free(P[i].StarIdx); P[i].StarIdx = 0;}
 #endif
             P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}

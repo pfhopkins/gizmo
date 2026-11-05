@@ -17,7 +17,7 @@ extern ALIGN(32) struct particle_data
 #else
     MyIDType ID_generation;
 #endif
-#ifdef GALSF_SINGLE_STARS_FROM_IMF
+#ifdef SINGLE_STAR_RECORDS
     int StarIdx;                    /*!< single-star record slot + 1, 0 = none (galaxy_sf/single_star_record.h); in the padding after ID_generation */
 #endif
     
@@ -456,6 +456,9 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
 
+#ifdef KETJU_REGULARIZATION
+#include "../gravity/ketju/ketju_particle_fields.h"
+#endif
     /* member functions */
     GIZMO_GPU_FUNCTION inline integertime integertime_step() const { /*!< integer timestep for this particle */
         return dt_step;

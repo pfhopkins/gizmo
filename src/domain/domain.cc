@@ -1981,7 +1981,7 @@ void domain_exchange(void)
   tempAbundanceArray = (ChimesFloat *) malloc(ChimesGlobalVars.totalNumberOfSpecies * sizeof(ChimesFloat));
 #endif
   keyBuf = (peanokey *) mymalloc("keyBuf", count_togo * sizeof(peanokey));
-#ifdef GALSF_SINGLE_STARS_FROM_IMF
+#ifdef SINGLE_STAR_RECORDS
   std::vector<std::vector<struct single_star_record>> ssr_send(NTask), ssr_recv(NTask); /* records travel with their stars, in send order */
 #endif
 
@@ -2018,7 +2018,7 @@ void domain_exchange(void)
 	    {
 	      partBuf[offset[target] + count[target]] = P[n];
 	      keyBuf[offset[target] + count[target]] = Key[n];
-#ifdef GALSF_SINGLE_STARS_FROM_IMF
+#ifdef SINGLE_STAR_RECORDS
 	      if(P[n].StarIdx > 0) {struct single_star_record r; single_star_record_get(P[n].StarIdx, &r); single_star_record_free(P[n].StarIdx); ssr_send[target].push_back(r);}
 #endif
 	      count[target]++;
@@ -2159,7 +2159,7 @@ void domain_exchange(void)
 			   MPI_BYTE, target, TAG_KEY,
 			   Key + offset_recv[target], count_recv[target] * sizeof(peanokey),
 			   MPI_BYTE, target, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-#ifdef GALSF_SINGLE_STARS_FROM_IMF
+#ifdef SINGLE_STAR_RECORDS
 	      {
 	        int n_send = (int) ssr_send[target].size(), n_recv = 0; /* the receiver counts the stars with records it just received */
 	        for(int q = 0; q < count_recv[target]; q++) {if(P[offset_recv[target] + q].StarIdx > 0) {n_recv++;}}
@@ -2188,7 +2188,7 @@ void domain_exchange(void)
     }
 #endif 
 
-#ifdef GALSF_SINGLE_STARS_FROM_IMF
+#ifdef SINGLE_STAR_RECORDS
   /* received stars take new local slots, in the order their records were sent */
   for(target = 0; target < NTask; target++)
     {

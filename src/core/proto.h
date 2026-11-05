@@ -471,7 +471,7 @@ enum {
   GIZMO_MEM_PARTICLE_SOA = 0,   /* P / CellP / WakeupDirty persistent particle storage (UVM) */
   GIZMO_MEM_TREE_NODES,         /* local + foreign tree-node arrays (UVM) */
   GIZMO_MEM_STL_TIMEBIN,        /* ActiveParticleList / Next- / PrevInTimeBin (host STL) */
-#if defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#if defined(SINGLE_STAR_RECORDS) || defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
   GIZMO_MEM_SINGLE_STARS,       /* single-star records, gas-collection sums, stellar-evolution tables (galaxy_sf/) */
 #endif
   GIZMO_MEM_NFAMILY
@@ -1730,3 +1730,6 @@ void gizmo_kokkos_finalize(void);
 void gizmo_kokkos_fence(void);   /* best-effort device drain for normal (non-fatal) sync points */
 int  gizmo_gpu_device_memory(size_t *free_bytes, size_t *total_bytes);   /* advisory free/total device memory; 0 = unknown */
 void gizmo_gpu_sync_all(void);
+#ifdef KETJU_REGULARIZATION
+#include "../gravity/ketju/ketju_proto.h"
+#endif

@@ -6,14 +6,25 @@
 #ifndef SINGLE_STAR_RECORD_H
 #define SINGLE_STAR_RECORD_H
 #include <stdint.h>
-#ifdef GALSF_SINGLE_STARS_FROM_IMF
+#ifdef SINGLE_STAR_RECORDS
+#ifdef KETJU_REGULARIZATION
+#include "../gravity/ketju/ketju_member_state.h"
+#ifdef KETJU_PN_REMNANT_TAG
+#define SINGLE_STAR_RECORD_KETJU_FIELDS(X) X(struct ketju_member_state, ketju, "chain member state") X(int8_t, remnant_tag, "remnant type + 1; 0 = live star")
+#else
+#define SINGLE_STAR_RECORD_KETJU_FIELDS(X) X(struct ketju_member_state, ketju, "chain member state")
+#endif
+#else
+#define SINGLE_STAR_RECORD_KETJU_FIELDS(X)
+#endif
 
 /* the fields: X(type, name, comment); a field is added together with its first user */
 #define SINGLE_STAR_RECORD_FIELDS(X) \
     X(double, M_drawn, "drawn IMF mass [Msun]: the evolution mass for the tables") \
     X(double, Z_birth, "total metallicity at birth (mass fraction)") \
     SINGLE_STAR_RECORD_TABLE_FIELDS(X) \
-    SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X)
+    SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X) \
+    SINGLE_STAR_RECORD_KETJU_FIELDS(X)
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
 #define SINGLE_STAR_RECORD_TABLE_FIELDS(X) \
     X(float, rho_birth, "physical gas density of the parent cell at birth [code]; 0 = unknown")

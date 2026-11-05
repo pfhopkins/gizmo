@@ -3105,6 +3105,10 @@ void read_parameter_file(char *fname)
 #endif
 #endif  // CHIMES
 
+#ifdef KETJU_REGULARIZATION
+      nt = ketju_register_params(tag, addr, id, nt, MAXTAGS, REAL, STRING, INT);
+#endif
+
         if((fd = fopen(fname, "r")))
         {
             snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", fname, "-usedvalues");
@@ -3520,6 +3524,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("NuclearBurningFloor_T",tag[i])==0) {*((double *)addr[i])=1.0e8; continue;} /* default: 10^8 K */
                 if(strcmp("NuclearBurningFloor_rho",tag[i])==0) {*((double *)addr[i])=0; continue;} /* default: no density floor */
                 if(strcmp("NuclearNSE_T_threshold",tag[i])==0) {*((double *)addr[i])=6.0e9; continue;} /* default: 6 GK */
+#endif
+#ifdef KETJU_REGULARIZATION
+                if(ketju_param_default(tag[i], addr[i])) {continue;}
 #endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;
