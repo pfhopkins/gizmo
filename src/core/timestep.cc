@@ -1243,6 +1243,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
     if(dt >= dt_displacement) {dt = dt_displacement;}
 
+    if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* before the integer conversion below: dt/Timebase_interval must not overflow */
     if((dt < All.MinSizeTimestep)||(((integertime) (dt / All.Timebase_interval)) <= 1))
     {
         PRINT_WARNING("Timestep wants to be below the limit `MinSizeTimestep'");
@@ -1292,7 +1293,6 @@ integertime get_timestep(int p,		/*!< particle index */
         dt = All.MinSizeTimestep;
     }
 
-    if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* prevent integer timeline overflow */
     ti_step = (integertime) (dt / All.Timebase_interval);
     /* Floor the step on the integer timeline. This is not the MinSizeTimestep policy: a run that
        has asked for a controlled stop still has to reach the next phase boundary to take it, and a
