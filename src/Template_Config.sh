@@ -520,6 +520,7 @@
 #CRFLUID_EVOLVE_SCATTERINGWAVES   #  follows Zweibel+13,17 and Thomas+Pfrommer 18 to explicitly evolve gyro-resonant wave packets which define the (gyro-averaged) CR scattering rates; requires MAGNETIC and COOLING for detailed MHD and ionization+thermal states. cite Hopkins et al. arXiv:2002.06211 for numerical implementation into various solvers here
 #CRFLUID_SPEEDOFLIGHT_REDUCTION=1 #  reduce the speed of light for CRs specifically (can be done separately from e.g. radiation), following the self-consistent formulation in Hopkins et al. arXiv:2103.10443, which should be cited for these methods
 #CRFLUID_EXCHANGE_PDV_ONLY # CR-gas exchange: the CRs take only their own P dV work, no share of shock heating (on by default with GALSF_SINGLE_STARS_FROM_IMF)
+#  with COSMIC_RAY_FLUID a fresh start (start flag 0) begins with no CRs; parameters CosmicRayInitialAmbient_eVcm3, CosmicRayInitialCloud_eVcm3 (default 0) and CosmicRayInitialCloudThreshold_nH (default 10) give an initial CR energy density by gas density
 ## -----
 #COSMIC_RAY_SUBGRID_LEBRON        #  uses a simplified sub-grid LEBRON-type model for CR transport for cheap approximation in galaxy simulations. Cite Hopkins et al. arXiv:2211.05811 for any use (see there for methods details)
 ## -----
