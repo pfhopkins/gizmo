@@ -87,11 +87,19 @@ be copy-pasted and can be generically optimized in a single place */
            rank's import from the reduced words, so there is no ndone Allreduce and the import-memory Allreduce runs
            only when that bound fails. */
         if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;}
-        long long xch_in[3] = {ndone_flag, Nexport, (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct INPUT_STRUCT_NAME) + sizeof(struct OUTPUT_STRUCT_NAME)) - 1048576}, xch_out[3]; /* free bytes after the export buffers below; 1 MB slack covers mymalloc's alignment rounding */
+#ifdef XCHANGE_PASS_WORK_LOCAL
+        long long xch_work = XCHANGE_PASS_WORK_LOCAL; /* summed over ranks alongside, for the caller's own iteration test */
+#else
+        long long xch_work = 0;
+#endif
+        long long xch_in[4] = {ndone_flag, Nexport, (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct INPUT_STRUCT_NAME) + sizeof(struct OUTPUT_STRUCT_NAME)) - 1048576, xch_work}, xch_out[4]; /* free bytes after the export buffers below; 1 MB slack covers mymalloc's alignment rounding */
         tstart = my_second();
         mpi_sparse_counts(Send_count, Recv_count, xch_in, xch_out); /* import counts, plus done flags, export total and free bytes reduced */
         tend = my_second(); timewait += timediff(tstart, tend);
         ndone = (int) xch_out[0]; long long xch_export_total = xch_out[1], xch_free_min = xch_out[2];
+#ifdef XCHANGE_PASS_WORK_GLOBAL
+        XCHANGE_PASS_WORK_GLOBAL = xch_out[3];
+#endif
         int xch_import_fits_everywhere = (xch_export_total * (long long) (sizeof(struct INPUT_STRUCT_NAME) + sizeof(struct OUTPUT_STRUCT_NAME)) + 16384 <= xch_free_min); /* every rank's Nimport <= the global export total: identical inputs on every rank, identical answer */
 
         for(j = 0, Send_offset[0] = 0; j < NTask; j++) {if(j > 0) {Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1];}} /* calculate export table offsets */

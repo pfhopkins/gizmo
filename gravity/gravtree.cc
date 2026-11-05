@@ -257,7 +257,7 @@ void gravity_tree(void)
                same bound on every rank's import, so there is no ndone Allreduce and the import-memory Allreduce
                runs only when that bound fails. */
             if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;}
-            long long xch_in[3] = {ndone_flag, Nexport, (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct gravdata_in) + sizeof(struct gravdata_out)) - 1048576}, xch_out[3]; /* 1 MB slack covers mymalloc's alignment rounding */
+            long long xch_in[4] = {ndone_flag, Nexport, (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct gravdata_in) + sizeof(struct gravdata_out)) - 1048576, 0}, xch_out[4]; /* 1 MB slack covers mymalloc's alignment rounding */
             tstart = my_second();
             mpi_sparse_counts(Send_count, Recv_count, xch_in, xch_out); /* import counts, plus done flags, export total and free bytes reduced */
             tend = my_second(); timewait1 += timediff(tstart, tend);

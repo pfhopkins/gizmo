@@ -743,10 +743,10 @@ void hydro_gradient_calc(void)
                ndone and the same import-memory verdict, so the ndone Allreduce is gone and the memory Allreduce runs
                only when the bound fails. NextParticle is final here. */
             if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;}
-            long long xch_in[3], xch_out[3];
+            long long xch_in[4], xch_out[4];
             {
                 size_t out_size = DMAX(sizeof(struct GasGraddata_out), sizeof(struct GasGraddata_out_iter));
-                xch_in[0] = ndone_flag; xch_in[1] = Nexport; xch_in[2] = (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct GasGraddata_in) + out_size) - 1048576; /* 1 MB slack covers mymalloc's alignment rounding */
+                xch_in[0] = ndone_flag; xch_in[1] = Nexport; xch_in[2] = (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct GasGraddata_in) + out_size) - 1048576; xch_in[3] = 0; /* 1 MB slack covers mymalloc's alignment rounding */
             }
             tstart = my_second();
             mpi_sparse_counts(Send_count, Recv_count, xch_in, xch_out); /* import counts, plus done flags, export total and free bytes reduced */

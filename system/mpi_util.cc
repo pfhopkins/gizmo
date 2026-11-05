@@ -192,24 +192,24 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
 static void mpi_sparse_counts_op(void *in, void *inout, int *len, MPI_Datatype *dt)
 {
     long long *a = (long long *) in, *b = (long long *) inout;
-    for(int k = 0; k + 2 < *len; k += 3) {b[k] += a[k]; b[k+1] += a[k+1]; if(a[k+2] < b[k+2]) {b[k+2] = a[k+2];}}
+    for(int k = 0; k + 3 < *len; k += 4) {b[k] += a[k]; b[k+1] += a[k+1]; if(a[k+2] < b[k+2]) {b[k+2] = a[k+2];} b[k+3] += a[k+3];}
 }
 
 /*! The neighbour loops' per-pass handshake without an Alltoall. Each rank learns recv_count[r] = what rank r
- *  sends it (send_count[] on r), and flags_out = {sum, sum, min} over ranks of flags_in. The counts travel only
+ *  sends it (send_count[] on r), and flags_out = {sum, sum, min, sum} over ranks of flags_in. The counts travel only
  *  between ranks that exchange something: synchronous sends to the nonzero destinations, then a nonblocking
  *  barrier entered once they are matched, receiving whatever arrives until the barrier completes (the NBX
  *  pattern; Hoefler, Siebert & Lumsdaine 2010). The reduction runs alongside. Results are identical to an
  *  Alltoall of the counts plus an Allreduce of the flags; the cost is one barrier rather than an all-pairs exchange
  *  when few ranks export. Consecutive calls alternate tags: a rank can only start call k+1 after every rank has
  *  entered call k's barrier, so a message of call k+1 is never taken for one of call k. */
-void mpi_sparse_counts(const int *send_count, int *recv_count, const long long flags_in[3], long long flags_out[3])
+void mpi_sparse_counts(const int *send_count, int *recv_count, const long long flags_in[4], long long flags_out[4])
 {
     static MPI_Op op = MPI_OP_NULL; static int parity = 0;
     if(op == MPI_OP_NULL) {MPI_Op_create(mpi_sparse_counts_op, 1, &op);}
     int tag = parity ? TAG_SPARSE_COUNTS_B : TAG_SPARSE_COUNTS_A; parity ^= 1;
-    MPI_Request red; long long fin[3] = {flags_in[0], flags_in[1], flags_in[2]};
-    MPI_Iallreduce(fin, flags_out, 3, MPI_LONG_LONG, op, MPI_COMM_WORLD, &red);
+    MPI_Request red; long long fin[4] = {flags_in[0], flags_in[1], flags_in[2], flags_in[3]};
+    MPI_Iallreduce(fin, flags_out, 4, MPI_LONG_LONG, op, MPI_COMM_WORLD, &red);
     for(int r = 0; r < NTask; r++) {recv_count[r] = 0;}
     recv_count[ThisTask] = send_count[ThisTask];
     std::vector<MPI_Request> sreq;
