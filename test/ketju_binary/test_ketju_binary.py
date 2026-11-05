@@ -60,6 +60,11 @@ def test_region_frame():
     assert d and float(d[1]) < 1e-12 and float(d[2]) < 1e-12
 
 
+def test_soft_binary():
+    """softening far above the orbit: the tree's pair force is negligible, MSTAR alone holds the orbit"""
+    _run(1, params={"Softening_Type4": 1e-3, "Softening_Type4_MaxPhysLimit": 1e-3, "TimeBetSnapshot": 1})
+    a, e = _elements()
+    assert abs(a - 1) < 1e-3 and abs(e - 0.9) < 1e-3
 
 
 
