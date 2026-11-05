@@ -19,6 +19,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "nuclear.h"
+#include "nuclear_physics_functions.h"
 
 #ifdef NUCLEAR_NETWORK
 #if defined(NUCLEAR_NETWORK_SOLVER) && (NUCLEAR_NETWORK_SOLVER == 1)
