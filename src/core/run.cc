@@ -221,6 +221,9 @@ void run(void)
         }
 
         find_timesteps();		/* find-timesteps */
+#ifdef KETJU_REGULARIZATION
+        ketju_limit_timesteps(); /* chain particles to a shared timebin */
+#endif
 
         /* Controlled-stop check (Wave-CBE 2026-05-28). find_timesteps()
          * just ran gizmo_collect_controlled_stop() on every rank; if any
@@ -485,6 +488,9 @@ void run(void)
         HermiteOnlyFlag = 0;
         do_hermite_correction();
         CPU_Step[CPU_KICKS] += measure_time();
+#endif
+#ifdef KETJU_REGULARIZATION
+        ketju_finish_step(); /* chain-external field for the next find_timesteps */
 #endif
         /* Check whether we need to interrupt the run */
         int stopflag = 0;

@@ -324,7 +324,16 @@ struct KjClock {
     ~KjClock() {lap(rest);}
 };
 
+/* Cache for gather_chain_centers result — shared between ketju_limit_timesteps
+ * and ketju_find_regions to avoid a redundant MPI_Allgatherv on COMM_WORLD */
+static std::vector<ketju_mpi_particle> CachedChainCenters;
+static int CachedChainCentersValid = 0;
+static std::vector<std::vector<ketju_mpi_particle>> CachedCenterGroups; /* the limiter's orbit grouping of the same centres */
 
+/* ketju_limit_timesteps tallies since the last KETJU STATS reduction: limited particles moved to a
+ * shorter / longer bin, timestep regions set, and those whose bin a limiting particle set (the
+ * last two counted on task 0 only, since every task computes the same bins) */
+static long long LimitTally[4] = {0, 0, 0, 0};
 
 /* ============================================================
 
@@ -532,6 +541,26 @@ static std::set<int> local_members_from_group(const std::vector<ketju_mpi_partic
     return members;
 }
 
+/* Find synchronised local particles within `radius` of any center of a region, with no
+ * chain-eligibility filter. Used to gather "limiting particles" — non-chain
+ * perturbers whose individual timesteps constrain the chain's macro step.
+ * Pass `exclude` to skip members that are already in the chain itself. */
+__attribute__((unused)) static std::set<int> find_local_particles_in_radius(const std::vector<ketju_mpi_particle> &centers,
+                                                    double radius,
+                                                    const std::set<int> &exclude)
+{
+    std::set<int> hits;
+    for(int i = 0; i < NumPart; i++) {
+        if(exclude.count(i)) continue;
+        if(!is_synchronized(i)) continue;
+        if((P[i].Type != 4 && P[i].Type != 5) || is_chain_center(i)) continue; /* only stars outside chains limit a chain; gas and other chains do not */
+        for(size_t c = 0; c < centers.size(); c++) {
+            double dist = particle_distance(P[i].Pos.data_ptr(), const_cast<double*>(centers[c].Pos));
+            if(dist < radius) { hits.insert(i); break; }
+        }
+    }
+    return hits;
+}
 
 
 /* counts[t] = members of this region on task t (gathered for all regions at once in ketju_find_regions) */
@@ -959,12 +988,156 @@ static void scatter_results(KetjuRegion &reg)
  *  PUBLIC INTERFACE FUNCTIONS
  * ============================================================ */
 
+/* ============================================================
+ *  Helper: move a particle between timebin linked lists
+ * ============================================================ */
+static void move_particle_timebin(int i, int old_bin, int new_bin)
+{
+    if(old_bin == new_bin) return;
+
+    TimeBinCount[old_bin]--;
+    if(PrevInTimeBin[i] >= 0)
+        NextInTimeBin[PrevInTimeBin[i]] = NextInTimeBin[i];
+    else
+        FirstInTimeBin[old_bin] = NextInTimeBin[i];
+    if(NextInTimeBin[i] >= 0)
+        PrevInTimeBin[NextInTimeBin[i]] = PrevInTimeBin[i];
+    else
+        LastInTimeBin[old_bin] = PrevInTimeBin[i];
+
+    if(FirstInTimeBin[new_bin] >= 0)
+        PrevInTimeBin[FirstInTimeBin[new_bin]] = i;
+    NextInTimeBin[i] = FirstInTimeBin[new_bin];
+    PrevInTimeBin[i] = -1;
+    FirstInTimeBin[new_bin] = i;
+    if(LastInTimeBin[new_bin] < 0)
+        LastInTimeBin[new_bin] = i;
+    TimeBinCount[new_bin]++;
+
+    P[i].TimeBin = new_bin;
+}
 
 
 
+/* PHASE 6: put every chain region on one timebin, changing only particles synchronised this step.
+ *
+ * The velocity trick needs every member of a region to start and end its step with the region: the
+ * first half-kick, the MSTAR interval and the drift all have to cover [Ti_Current, Ti_Current +
+ * ti_step]. A particle part-way through its step cannot be retimed -- it has had no first half-kick
+ * for this interval, and its step marker would be left pointing at the old one. So, as in
+ * GADGET4-KETJU (RegionManager::find_timestep_regions / set_region_timebins), only synchronised
+ * particles are considered at all: regions are built around synchronised centres from synchronised
+ * members (gather_chain_centers, find_local_members), and a star still in mid-step inside R joins
+ * at its own next step boundary, integrated by the host until then.
+ *
+ * What keeps members co-binned is the "limited" set: every chain-eligible synchronised particle
+ * within 2R of a centre is put on the region's bin, so anything that drifts inside R is already
+ * on it. Centres whose 2R spheres overlap share one "timestep region", so the limited sets are
+ * disjoint and each chain region (merge radius 2R) lies inside exactly one of them. The shared
+ * bin is the MIN over
+ *   (a) the limited particles' own steps from find_timesteps, and
+ *   (b) the steps of the "limiting" particles: synchronised particles of any type within
+ *       KetjuTimestepLimitingFactor * R, so the region resolves perturbers approaching it.
+ * Every such step was assigned at this sync point and obeys the grow-only-when-synchronised rule,
+ * so their minimum does too; moving a synchronised particle to it is always legal. A particle
+ * that is not synchronised has a longer step than any bin chosen now, so leaving it out of (b)
+ * cannot change the minimum. All bins are found before any particle is moved, so the result does
+ * not depend on region order. */
 /* host writes to P (bins, chain flags): the device copy is re-uploaded before its next use */
 struct KjArenaInvalidate {~KjArenaInvalidate() {gpu_particles_arena_invalidate();}};
 
+void ketju_limit_timesteps(void)
+{
+    KjArenaInvalidate arena_guard;
+    KjClock clk(CPU_KETJULIMIT);
+    CachedChainCentersValid = 0;
+
+    if(All.KetjuRegionRadius <= 0) return;
+    if(All.KetjuMinStarMass <= 0) return;
+
+    /* gather synchronised chain centres (cached for ketju_find_regions) */
+    std::vector<ketju_mpi_particle> centers = gather_chain_centers();
+    CachedChainCenters = centers;
+    CachedChainCentersValid = 1;
+    if(centers.empty()) return;
+
+    const double limited_radius = 2.0 * All.KetjuRegionRadius;
+    const double limiting_radius = All.KetjuTimestepLimitingFactor * All.KetjuRegionRadius; /* GADGET-4 KETJU default 100 */
+    std::vector<std::vector<ketju_mpi_particle>> tsr_centers = build_orbit_regions(centers); (void)limited_radius;
+    tsr_centers.erase(std::remove_if(tsr_centers.begin(), tsr_centers.end(), [](const std::vector<ketju_mpi_particle> &g) {return g.size() < 2;}), tsr_centers.end()); /* a lone star forms no chain */
+    CachedCenterGroups = tsr_centers;
+    if(tsr_centers.empty()) {return;}
+    const int n_tsr = (int)tsr_centers.size();
+
+    std::vector<std::set<int>> limited(n_tsr);
+    std::vector<long long> min_ti(2 * n_tsr, (long long)TIMEBASE); /* [2r] over limited+limiting, [2r+1] limited only */
+    for(int r = 0; r < n_tsr; r++) {
+        limited[r] = local_members_from_group(tsr_centers[r]);
+        for(int idx : limited[r]) {
+            long long ti = GET_INTEGERTIME_FROM_TIMEBIN(P[idx].TimeBin);
+            if(ti > 0 && ti < min_ti[2*r]) min_ti[2*r] = ti;
+            if(ti > 0 && ti < min_ti[2*r+1]) min_ti[2*r+1] = ti;
+        }
+#if !defined(BOX_PERIODIC)
+    }
+    { /* limiting particles: one pass over the local particles, each tested only against centres in neighbouring cells of
+       * size limiting_radius (was: a full particle scan per timestep region) */
+        std::unordered_map<long long, std::vector<std::pair<int, int>>> grid; /* cell -> (group, centre in group) */
+        auto key = [](long long x, long long y, long long z) {return (x & 0x1fffff) | ((y & 0x1fffff) << 21) | ((z & 0x1fffff) << 42);};
+        for(int r = 0; r < n_tsr; r++)
+            for(int c = 0; c < (int)tsr_centers[r].size(); c++) {
+                const double *x = tsr_centers[r][c].Pos;
+                grid[key((long long)floor(x[0] / limiting_radius), (long long)floor(x[1] / limiting_radius), (long long)floor(x[2] / limiting_radius))].push_back({r, c});
+            }
+        std::vector<int> last_group(n_tsr, -1); /* each particle counts once per group */
+        for(int i : ActiveParticleList) {
+            if(!is_synchronized(i)) continue;
+            if((P[i].Type != 4 && P[i].Type != 5) || is_chain_center(i)) continue; /* only stars outside chains limit a chain; gas and other chains do not */
+            long long ti = GET_INTEGERTIME_FROM_TIMEBIN(P[i].TimeBin);
+            long long cx = (long long)floor(P[i].Pos[0] / limiting_radius), cy = (long long)floor(P[i].Pos[1] / limiting_radius), cz = (long long)floor(P[i].Pos[2] / limiting_radius);
+            for(int dx = -1; dx <= 1; dx++) for(int dy = -1; dy <= 1; dy++) for(int dz = -1; dz <= 1; dz++) {
+                auto it = grid.find(key(cx + dx, cy + dy, cz + dz));
+                if(it == grid.end()) continue;
+                for(const std::pair<int, int> &gc : it->second) {
+                    int r = gc.first;
+                    if(last_group[r] == i || limited[r].count(i)) continue;
+                    if(particle_distance(P[i].Pos.data_ptr(), const_cast<double*>(tsr_centers[r][gc.second].Pos)) >= limiting_radius) continue;
+                    last_group[r] = i;
+                    if(ti > 0 && ti < min_ti[2*r]) min_ti[2*r] = ti;
+                }
+            }
+        }
+    }
+#else
+        std::set<int> limiting = find_local_particles_in_radius(tsr_centers[r], limiting_radius, limited[r]);
+        for(int idx : limiting) {
+            long long ti = GET_INTEGERTIME_FROM_TIMEBIN(P[idx].TimeBin);
+            if(ti > 0 && ti < min_ti[2*r]) min_ti[2*r] = ti;
+        }
+    }
+#endif
+    MPI_Allreduce(MPI_IN_PLACE, min_ti.data(), 2 * n_tsr, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+
+    long long counts[4] = {0, 0, 0, 0}; /* limited particles moved (down, up), timestep regions set by limiting particles, unsynchronised target bins */
+    for(int r = 0; r < n_tsr; r++) {
+        if(min_ti[2*r] <= 0 || min_ti[2*r] >= TIMEBASE) continue;
+        int bin = get_timestep_bin((integertime)min_ti[2*r]);
+        if(bin <= 0) continue;
+        if(!TimeBinActive[bin]) {counts[3]++; while(bin > 0 && !TimeBinActive[bin]) {bin--;}} /* cannot happen for a minimum of legal steps */
+        if(min_ti[2*r] < min_ti[2*r+1]) counts[2]++;
+        integertime ti_bin = GET_INTEGERTIME_FROM_TIMEBIN(bin);
+        for(int idx : limited[r]) {
+            if(P[idx].TimeBin == bin) continue;
+            counts[(bin < P[idx].TimeBin) ? 0 : 1]++;
+            move_particle_timebin(idx, P[idx].TimeBin, bin);
+            P[idx].dt_step = ti_bin; /* find_timesteps set it from the bin just replaced; integertime_step() reads it */
+        }
+    }
+
+    LimitTally[0] += counts[0]; LimitTally[1] += counts[1];
+    if(ThisTask == 0) {LimitTally[2] += n_tsr; LimitTally[3] += counts[2];}
+    if(counts[3]) {PRINT_WARNING("KETJU: %lld timestep-region bins were not synchronised and were lowered", counts[3]);}
+}
 
 void ketju_find_regions(void)
 {
@@ -990,12 +1163,20 @@ void ketju_find_regions(void)
     if(All.KetjuRegionRadius <= 0) return;
     if(All.KetjuMinStarMass <= 0) return;
 
-    std::vector<ketju_mpi_particle> centers = gather_chain_centers();
+    /* reuse chain centers from ketju_limit_timesteps if available, else gather fresh */
+    std::vector<ketju_mpi_particle> centers;
+    const int reuse_groups = CachedChainCentersValid; /* same centres as the limiter, so the same orbit groups */
+    if(CachedChainCentersValid) {
+        centers = std::move(CachedChainCenters);
+        CachedChainCentersValid = 0;
+    } else {
+        centers = gather_chain_centers();
+    }
     if(centers.empty()) return;
 
     /* merge overlapping regions */
     double merge_radius = 2.0 * All.KetjuRegionRadius;
-    std::vector<std::vector<ketju_mpi_particle>> region_centers = build_orbit_regions(centers); (void)merge_radius;
+    std::vector<std::vector<ketju_mpi_particle>> region_centers = reuse_groups ? std::move(CachedCenterGroups) : build_orbit_regions(centers); (void)merge_radius;
     region_centers.erase(std::remove_if(region_centers.begin(), region_centers.end(), [](const std::vector<ketju_mpi_particle> &g) {return g.size() < 2;}), region_centers.end());
     if(region_centers.empty()) {return;}
 
@@ -1072,6 +1253,7 @@ static long long StatCalls = 0, StatLoc[8] = {0, 0, 0, 0, 0, 0, 0, 0}; static do
 static void ketju_collect_stats(void)
 {
     StatCalls++;
+    for(int k = 0; k < 4; k++) {StatLoc[4 + k] += LimitTally[k]; LimitTally[k] = 0;} /* regions integrated, accepted, failed, |dE/E| > 1e-4, then LimitTally */
     for(size_t r = 0; r < ActiveRegions.size(); r++) {
         KetjuRegion &reg = ActiveRegions[r];
         if(!reg.compute_tasks.is_root() || !reg.integrator) continue;
@@ -1205,6 +1387,131 @@ void ketju_set_final_velocities(void)
     if(!raised.empty()) {gizmo_motion_bound_raise(raised.data(), (int)raised.size()); gpu_particles_arena_invalidate();}
 }
 
+/* Chain-external gravity and tidal timescale for chain members whose step ends at this sync point.
+ *
+ * The host tree's GravAccel and tidal_tensorps include the chain members' pull on each other, so
+ * the standard criteria would step a member at its internal orbital cadence -- the dynamics MSTAR
+ * integrates -- rather than at the cadence of the field external to the chain. This subtracts the
+ * other members' pair field as the tree computed it, softened with the Type-5 pair softening
+ * (ForceSoftening[5]; an unsoftened term diverges inside the kernel, where the tree's does not),
+ * leaving COM_GravAccel and COM_dt_tidal = |T_external|_F^(-1/2) for find_timesteps (timestep.cc).
+ * Only members within KetjuRegionRadius are subtracted: those stay in the chain for the next step.
+ * Runs in finish_step, after compute_grav_accelerations has refreshed GravAccel/tidal_tensorps (which
+ * are already multiplied by G there, gravity/gravtree.cc) at the members' end-of-step positions.
+ * Every member of a chain shares its bin, so all of them end together and are found here; the
+ * chain is identified by KetjuChainID, which persists over the member's step, not by ActiveRegions,
+ * which only holds the regions started this step. */
 
+void ketju_compute_com_quantities(void)
+{
+    struct ChainMemberData {
+        MyIDType chain;
+        double mass;
+        double pos[3], vel[3]; /* vel: peculiar, after the second half-kick */
+        int type;
+        double soft[2], zeta[2]; /* tree softening/zeta */
+    };
+
+    std::vector<ChainMemberData> local_data;
+    std::vector<int> local_index;
+    for(int i : ActiveParticleList) {
+        if(!P[i].KetjuIntegrated || P[i].KetjuChainID == 0 || P[i].Mass <= 0) continue;
+        ChainMemberData d;
+        d.chain = P[i].KetjuChainID; d.mass = P[i].Mass;
+        for(int j = 0; j < 3; j++) {d.pos[j] = P[i].Pos[j]; d.vel[j] = P[i].Vel[j] / All.cf_atime;}
+        d.type = P[i].Type; tree_pair_softening(i, d.soft, d.zeta);
+        local_data.push_back(d); local_index.push_back(i);
+    }
+    int n_local = local_data.size();
+    std::vector<int> counts(NTask), byte_counts(NTask), byte_displs(NTask);
+    MPI_Allgather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    int n_total = 0;
+    for(int t = 0; t < NTask; t++) {
+        byte_counts[t] = counts[t] * sizeof(ChainMemberData);
+        byte_displs[t] = n_total * sizeof(ChainMemberData);
+        n_total += counts[t];
+    }
+    if(n_total == 0) return;
+    std::vector<ChainMemberData> all_data(n_total);
+    MPI_Allgatherv(local_data.data(), n_local * sizeof(ChainMemberData), MPI_BYTE,
+                   all_data.data(), byte_counts.data(), byte_displs.data(), MPI_BYTE, MPI_COMM_WORLD);
+    std::sort(all_data.begin(), all_data.end(), [](const ChainMemberData &a, const ChainMemberData &b) {return a.chain < b.chain;});
+
+    double h = All.ForceSoftening[5]; /* comoving, like P[].Pos and the tree's pair softening */
+    for(int n = 0; n < n_local; n++) {
+        int idx = local_index[n];
+        auto lo = std::lower_bound(all_data.begin(), all_data.end(), local_data[n],
+                                   [](const ChainMemberData &a, const ChainMemberData &b) {return a.chain < b.chain;});
+        Vec3<double> chain_grav = {0, 0, 0}, chain_grav_all = {0, 0, 0}; /* members within the region radius; all members */
+        SymmetricTensor2<MyFloat> chain_tidal = {0,0,0,0,0,0};
+        for(auto it = lo; it != all_data.end() && it->chain == local_data[n].chain; ++it) {
+            double dr[3];
+            for(int j = 0; j < 3; j++) dr[j] = it->pos[j] - P[idx].Pos[j];
+#ifdef BOX_PERIODIC
+            NEAREST_XYZ(dr[0], dr[1], dr[2], -1);
+#endif
+            double r2 = dr[0]*dr[0] + dr[1]*dr[1] + dr[2]*dr[2];
+            if(r2 <= 0) continue; /* self */
+            double r = sqrt(r2), r3 = r * r2, r5 = r3 * r2, fac, fac2;
+            { /* the tree's own pair force/tidal factors with the softening it just used (tidal terms carry no zeta, as in the tree) */
+                const ChainMemberData &me = local_data[n];
+                double fa, fp, ft, ft2;
+                tree_pair_gravity_factors(r, r2, it->mass, me.soft[0], it->soft[1], me.type, it->type, me.zeta[0], it->zeta[1], me.mass, ags_gravity_kernel_shared_BITFLAG(me.type), fa, fp, ft, ft2);
+                for(int j = 0; j < 3; j++) chain_grav_all[j] += All.G * fa * dr[j];
+                if(r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius) continue; /* may leave the chain next step: keep it, as the tree walk does for dt_2body */
+                double ftid = ft, ftid2 = ft2;
+#ifndef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+                ftid = fa; ftid2 = 3.0 * it->mass / r5;
+#endif
+                for(int j = 0; j < 3; j++) chain_grav[j] += All.G * fa * dr[j];
+                chain_tidal.data[0] += All.G * (ftid2 * dr[0]*dr[0] - ftid);
+                chain_tidal.data[1] += All.G * (ftid2 * dr[1]*dr[1] - ftid);
+                chain_tidal.data[2] += All.G * (ftid2 * dr[2]*dr[2] - ftid);
+                chain_tidal.data[3] += All.G * ftid2 * dr[0]*dr[1];
+                chain_tidal.data[4] += All.G * ftid2 * dr[1]*dr[2];
+                chain_tidal.data[5] += All.G * ftid2 * dr[0]*dr[2];
+                (void)fp; (void)fac; (void)fac2; (void)h;
+                continue;
+            }
+            if(r >= h) {
+                fac  = All.G * it->mass / r3;
+                fac2 = 3.0 * All.G * it->mass / r5;
+            } else { /* inside the kernel: the tree's kernel_gravity() force and tidal factors */
+                double h_inv = 1.0 / h, h3_inv = h_inv * h_inv * h_inv, u = r * h_inv;
+                fac  = All.G * it->mass * kernel_gravity(u, h_inv, h3_inv, 1);
+                fac2 = All.G * it->mass * kernel_gravity(u, h_inv, h3_inv, 2);
+            }
+            for(int j = 0; j < 3; j++) chain_grav[j] += fac * dr[j];
+            chain_tidal.data[0] += fac2 * dr[0]*dr[0] - fac;  /* xx */
+            chain_tidal.data[1] += fac2 * dr[1]*dr[1] - fac;  /* yy */
+            chain_tidal.data[2] += fac2 * dr[2]*dr[2] - fac;  /* zz */
+            chain_tidal.data[3] += fac2 * dr[0]*dr[1];        /* xy */
+            chain_tidal.data[4] += fac2 * dr[1]*dr[2];        /* yz */
+            chain_tidal.data[5] += fac2 * dr[0]*dr[2];        /* xz */
+        }
+        for(int j = 0; j < 3; j++) ketju_member(idx).com_accel[j] = P[idx].GravAccel[j] - chain_grav[j];
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+        SymmetricTensor2<MyFloat> external_tidal = P[idx].tidal_tensorps - chain_tidal;
+        double tidal_norm = external_tidal.frobenius_norm();
+        ketju_member(idx).com_dt_tidal = (tidal_norm > 0) ? sqrt(1.0 / tidal_norm) : MAX_REAL_NUMBER;
+#else
+        ketju_member(idx).com_dt_tidal = MAX_REAL_NUMBER; (void)chain_tidal; /* no tree tidal tensor: no tidal limit, but marks the external values as set */
+#endif
+    }
+}
+
+void ketju_finish_step(void)
+{
+    KjClock clk(CPU_KETJUFINISH);
+    /* chain-external field for members ending their step here, read by the next find_timesteps */
+    ketju_compute_com_quantities();
+
+    /* NOTE: KetjuIntegrated flags are NOT cleared here — they persist until
+     * ketju_find_regions() at the start of the next step, so that guard checks
+     * in kicks.cc/predict.cc/gravtree.cc can see which particles were KETJU-integrated */
+
+    /* free region data (integrators, particle arrays, communicators) */
+    ActiveRegions.clear();
+}
 
 #endif /* KETJU_REGULARIZATION */

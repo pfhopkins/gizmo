@@ -373,6 +373,9 @@ integertime get_timestep(int p,		/*!< particle index */
         ax = All.cf_a2inv * P[p].GravAccel[0];
         ay = All.cf_a2inv * P[p].GravAccel[1];
         az = All.cf_a2inv * P[p].GravAccel[2];
+#ifdef KETJU_REGULARIZATION
+        if(KETJU_DT_MEMBER(p)) {ax = All.cf_a2inv * ketju_member(p).com_accel[0]; ay = All.cf_a2inv * ketju_member(p).com_accel[1]; az = All.cf_a2inv * ketju_member(p).com_accel[2];} /* chain member: the field external to its chain */
+#endif
 #ifdef PMGRID
         ax += All.cf_a2inv * P[p].GravPM[0];
         ay += All.cf_a2inv * P[p].GravPM[1];
@@ -474,6 +477,9 @@ integertime get_timestep(int p,		/*!< particle index */
 
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion
     double tidal_mag_dt = P[p].tidal_tensorps.frobenius_norm_sq();
+#ifdef KETJU_REGULARIZATION
+    if(KETJU_DT_MEMBER(p)) {double t2 = ketju_member(p).com_dt_tidal * ketju_member(p).com_dt_tidal; tidal_mag_dt = 1. / (t2 * t2);} /* |T_external|_F^2 */
+#endif
     double dt_tidal = sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
     if(P[p].Type == 0) {dt_tidal = DMIN(sqrt(All.ErrTolIntAccuracy/(All.G*CellP[p].Density*All.cf_a3inv)), dt_tidal);} // gas self-gravity timescale as a bare minimum
     if(All.ComovingIntegrationOn){ // floor to the dynamical time of the universe
