@@ -1,0 +1,45 @@
+% n=1 polytrope (gamma=2, P = K rho^2) hydrostatic-equilibrium test.
+% Code units G = M = R = 1: rho_c = pi/4, K = 2/pi, central sound speed c_s = 1.
+% Dynamical time sqrt(R^3/GM) = 1; centre-to-surface sound crossing int dr/c_s = 1.88;
+% fundamental radial pulsation period ~3.2 (LAWE, Gamma_1=2). TimeMax = 10 covers ~3 pulsation
+% periods and ~5 sound crossings: long enough for an IC-relaxation transient to ring and for a
+% secular drift (e.g. from skipped tree walks) to separate from it.
+% N = 2^15 equal-mass cells; mean spacing at the half-mass radius (r_h = 0.607, rho = 0.389)
+% is (m/rho)^(1/3) = 0.043. SofteningGas = 0.021 (Plummer-equivalent, ~0.5x that spacing; kernel
+% support 2.8x = 0.06, comparable to the hydro kernel radius 0.07-0.08 inside r_h).
+% Non-periodic, centred on the origin; BoxSize is not needed.
+%
+InitCondFile                       polytrope_n1_ics
+OutputDir                          output
+TimeBegin                          0
+TimeMax                            10
+TimeBetSnapshot                    0.5
+TimeOfFirstSnapshot                0
+TimeBetStatistics                  0.5
+MaxSizeTimestep                    0.02
+MinSizeTimestep                    1e-7
+PartAllocFactor                    4
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+MaxMemSize                         3000
+GravityConstantInternal            1
+UnitLength_in_cm                   1
+UnitMass_in_g                      1
+UnitVelocity_in_cm_per_s           1
+% under ADAPTIVE_GRAVSOFT_FORGAS the default (1) floors the gas kernel at the SofteningGas support;
+% 0 makes the ags variant's softening the hydro kernel everywhere
+MinGasKernelRadiusFractional       0
+SofteningGas                       0.021
+SofteningHalo                      0.021
+Softening_Type2                    0.021
+Softening_Type3                    0.021
+Softening_Type4                    0.021
+Softening_Type5                    0.021
+CourantFac                         0.2
+ErrTolTheta                        0.5
+ErrTolForceAcc                     0.0025
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.1
+TreeDomainUpdateFrequency          0.05
+ResubmitOn                         0
+ResubmitCommand                    none

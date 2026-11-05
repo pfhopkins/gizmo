@@ -1,16 +1,62 @@
-"""Toth MHD shock tube test (Hopkins & Raives 2016)
+"""Toth MHD shock tube test (Toth 2000; Hopkins & Raives 2016)
 
-MHD shock tube problem from Toth (2000). Since there is no provided exact
-solution file, this test verifies that the simulation runs to completion and
-produces physically reasonable output.
+Colliding supersonic flows in an oblique field: two fast shocks, two slow shocks and a contact.
+The 2D run is binned onto x and compared with an independent 1D HLLD finite-volume solution
+(test/mhd_1d_reference.py), computed once per machine and cached in
+test/toth/toth_reference_4096.npz. See README.md for the setup, the comparison window and what
+each assertion is sensitive to.
 """
 
-import pytest
-import numpy as np
-from matplotlib import pyplot as plt
-import h5py
+import sys
+from pathlib import Path
 
-from gizmo.test import build_and_run_test, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot
+import numpy as np
+import pytest
+
+from gizmo.test import (build_and_run_test, assert_final_time, assert_energy_conserved,
+                        default_mpi_ranks, default_omp_threads, get_final_snapshot)
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+import mhd_1d_reference as ref1d  # noqa: E402
+
+TEST_DIR = Path(__file__).resolve().parent
+
+# Regional L1 over the comparison window, normalised by the reference field's range there.
+# A 2nd-order grid code (the reference solver at the run's 896 cells across x) scores
+# rho 0.006, vx 0.002, vy 0.011, By 0.006. vx is small because its range (20) is dominated by
+# the two fast shocks; vy carries the weak slow-shock / rotational structure.
+L1_TOL = {  # PROVISIONAL: untuned, not yet run
+    "rho": 0.03,
+    "vx": 0.02,
+    "vy": 0.05,
+    "By": 0.03,
+}
+
+# Constant states between waves: (label, field, x inside the plateau). Reference values
+# (4096 cells): 2.680, 3.839, 0.357, 4.038, 3.748, -0.388, 5.427. The plateau between the two
+# slow shocks is narrow (~0.1, ~20 bins) and straddles the contact, across which vy and By are
+# continuous; the density sub-plateaus either side of the contact are too narrow to test.
+PLATEAUS = (
+    ("left-post-fast-shock", "rho", 1.80),
+    ("left-post-fast-shock", "By", 1.80),
+    ("between-slow-shocks", "vy", 2.025),
+    ("between-slow-shocks", "By", 2.025),
+    ("right-post-fast-shock", "rho", 2.25),
+    ("right-post-fast-shock", "vy", 2.25),
+    ("right-post-fast-shock", "By", 2.25),
+)
+# Relative error of the binned plateau mean. The 896-cell grid solution is within 0.3% of the
+# reference on every plateau (worst: between-slow-shocks vy).
+PLATEAU_TOL = 0.02  # PROVISIONAL: untuned, not yet run
+
+# |divB| h/|B| over the comparison window, h = (m/rho)^(1/2). OpenGadget3 asserts rms < 0.05 on
+# Brio-Wu; same bounds here.
+DIVB_RMS_TOL = 0.05  # PROVISIONAL: untuned, not yet run
+DIVB_P99_TOL = 0.25  # PROVISIONAL: untuned, not yet run
+
+# Closed periodic box: total (thermal + kinetic + magnetic) energy is conserved up to the
+# non-conservative divB source terms and Dedner damping.
+ENERGY_TOL = 0.01  # PROVISIONAL: untuned, not yet run
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
@@ -22,28 +68,36 @@ def test_toth(num_mpi_ranks, num_omp_threads):
     final_snap = get_final_snapshot(test_name)
     assert_final_time(final_snap, test_name)
 
-    # Load simulation data
-    with h5py.File(final_snap, "r") as F:
-        x_sim = F["PartType0/Coordinates"][:, 0]
-        rho_sim = F["PartType0/Density"][:]
-        vel_sim = F["PartType0/Velocities"][:, 0]
-        B_sim = F["PartType0/MagneticField"][:]
+    problem = ref1d.PROBLEMS[test_name]
+    ref = ref1d.load_or_solve(test_name, TEST_DIR)
+    snap = ref1d.read_snapshot(final_snap, problem["gamma"])
+    cmp = ref1d.compare_snapshot(snap, ref, plateaus=PLATEAUS)
+    ref1d.plot_comparison(snap, ref, cmp, f"test/{test_name}")
 
-    # Plot profiles
-    order = x_sim.argsort()
-    for label, data in [
-        ("Density", rho_sim),
-        ("Velocity", vel_sim),
-        ("By", B_sim[:, 1]),
-    ]:
-        plt.figure()
-        plt.plot(x_sim[order], data[order], ".", markersize=1)
-        plt.xlabel("x")
-        plt.ylabel(label)
-        plt.savefig(f"test/{test_name}/{label}.png")
-        plt.close()
+    print(f"[{test_name}] window x in [{cmp['window'][0]:.3f}, {cmp['window'][1]:.3f}], bin {cmp['dx_bin']:.4g}")
+    print(f"[{test_name}] L1/range: " + " ".join(f"{f}={v:.4f}" for f, v in cmp["L1"].items()))
+    for key, (sim, val, err, n) in cmp["plateaus"].items():
+        print(f"[{test_name}] plateau {key}: GIZMO {sim:.5g} reference {val:.5g} rel err {err:.3g} ({n} bins)")
+    if "divB_rms" in cmp:
+        print(f"[{test_name}] |divB| h/|B|: rms {cmp['divB_rms']:.4g} p99 {cmp['divB_p99']:.4g} "
+              f"(whole box rms {cmp['divB_rms_global']:.4g})")
 
-    # Basic sanity checks
-    assert np.all(np.isfinite(rho_sim)), "Non-finite density values found"
-    assert np.all(rho_sim > 0), "Negative density values found"
-    assert np.all(np.isfinite(B_sim)), "Non-finite magnetic field values found"
+    for f in ref1d.COMPARED_FIELDS:
+        assert np.all(np.isfinite(snap[f])), f"non-finite {f}"
+    assert np.all(snap["rho"] > 0), "non-positive density"
+    # MagneticField must be in the internal units (magnetic pressure B^2/2) to compare with the
+    # reference and for the magnetic energy below
+    if "B_unit_ratio" in snap:
+        assert abs(snap["B_unit_ratio"] - 1) < 1e-6, f"snapshot B unit is {snap['B_unit_ratio']} x internal"
+    assert cmp["empty_bins_in_window"] == 0, f"{cmp['empty_bins_in_window']} empty x-bins in the window"
+
+    for f, tol in L1_TOL.items():
+        assert cmp["L1"][f] < tol, f"{f}: L1/range {cmp['L1'][f]:.4f} vs reference exceeds {tol}"
+    for key, (sim, val, err, n) in cmp["plateaus"].items():
+        assert n >= 4, f"plateau {key} spans only {n} bins after trimming; move its anchor"
+        assert err < PLATEAU_TOL, f"plateau {key}: GIZMO {sim:.5g} vs reference {val:.5g} (rel err {err:.3g})"
+    assert "divB_rms" in cmp, "DivergenceOfMagneticField missing; OUTPUT_BFIELD_DIVCLEAN_INFO not in Config.sh?"
+    assert cmp["divB_rms"] < DIVB_RMS_TOL, f"rms |divB| h/|B| = {cmp['divB_rms']:.4g}"
+    assert cmp["divB_p99"] < DIVB_P99_TOL, f"99th percentile |divB| h/|B| = {cmp['divB_p99']:.4g}"
+
+    assert_energy_conserved(test_name, tol=ENERGY_TOL, include_magnetic=True)
