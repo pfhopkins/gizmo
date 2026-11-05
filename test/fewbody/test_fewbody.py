@@ -452,19 +452,13 @@ def _plot_pairwise():
 # rare moments the hierarchy happens to line up.
 # Marked slow (not upstream): 48 problems x 4 variants is ~192 GIZMO runs, too much for a routine
 # full sweep. Run it directly, or exclude it from a sweep with -m 'not slow'.
-# Trunk: 150+ defects per tree variant at 2 ranks (LET-finalize stops, mergers); no variant can log the
-# sink-loop skip. pr/dry-nbody removes this marker.
-_UNTIL_DRY_NBODY = pytest.mark.xfail(strict=True, reason=(
-    "fixed by pr/dry-nbody: 2-rank LET stops and gas-free mergers (tree); no sink-loop skip (all)"))
-
-
 @pytest.mark.slow
 @pytest.mark.parametrize("extra_config_flags", [
-    pytest.param((), id="tree", marks=_UNTIL_DRY_NBODY),
-    pytest.param(("FORCE_EQUAL_TIMESTEPS",), id="tree_equaldt", marks=_UNTIL_DRY_NBODY),
-    pytest.param(FRESH_TREE, id="freshtree", marks=_UNTIL_DRY_NBODY),
-    pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity", marks=_UNTIL_DRY_NBODY),
-    pytest.param(("SINGLE_STAR_DIRECT_GRAVITY", "FORCE_EQUAL_TIMESTEPS"), id="direct_equaldt", marks=_UNTIL_DRY_NBODY),
+    pytest.param((), id="tree"),
+    pytest.param(("FORCE_EQUAL_TIMESTEPS",), id="tree_equaldt"),
+    pytest.param(FRESH_TREE, id="freshtree"),
+    pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity"),
+    pytest.param(("SINGLE_STAR_DIRECT_GRAVITY", "FORCE_EQUAL_TIMESTEPS"), id="direct_equaldt"),
     # The KDK rows are DIAGNOSTIC comparators (2nd-order leapfrog isolates integrator error from
     # force error when read against their Hermite twins), not accuracy gates: the 10% bar was
     # calibrated on 4th-order Hermite, and a 2nd-order integrator over 20 free-fall times of

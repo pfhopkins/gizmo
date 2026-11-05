@@ -421,17 +421,10 @@ def _plot_variant_density_evolution(variant_id, snaps):
     plt.close()
 
 
-# The trunk's plummer_binaries.params lacks CritPhysDensity (required since dc7d286b), so GIZMO stops at
-# startup. pr/dry-nbody restores it and removes this marker. run=False: a full run is ~2.5 h
-# at 2 ranks x 4 threads on Genoa.
-_UNTIL_DRY_NBODY = pytest.mark.xfail(strict=True, run=False, reason=(
-    "fixed by pr/dry-nbody: params lack CritPhysDensity, GIZMO stops at startup"))
-
-
 @pytest.mark.parametrize("num_mpi_ranks", (PB_NUM_MPI_RANKS,))
 @pytest.mark.parametrize("num_omp_threads", (PB_NUM_OMP_THREADS,))
 @pytest.mark.parametrize("extra_config_flags", [
-    pytest.param((), id="starforge_defaults", marks=_UNTIL_DRY_NBODY),
+    pytest.param((), id="starforge_defaults"),
     # Every particle here is a star, so this variant routes 100% of the gravity through the
     # brute-force pass and none through the tree -- the tree's opening error is removed entirely
     # rather than reduced. That makes it the sharpest available check on SINGLE_STAR_DIRECT_GRAVITY,
@@ -439,7 +432,7 @@ _UNTIL_DRY_NBODY = pytest.mark.xfail(strict=True, run=False, reason=(
     # hard binaries. Compatible only because SINGLE_STAR_STARFORGE_DEFAULTS sets
     # SINGLE_STAR_TIMESTEPPING=0, which leaves SINGLE_STAR_FIND_BINARIES off; the two are a
     # rejected together at compile time (see precompiler_logic.h).
-    pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity", marks=_UNTIL_DRY_NBODY),
+    pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity"),
 ])
 def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     extra_config_flags = BINARY_FLAGS + tuple(extra_config_flags)
