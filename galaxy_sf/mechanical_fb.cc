@@ -15,6 +15,10 @@
 #ifdef GALSF_FB_MECHANICAL
 
 int N_Gas_Couplings_ThisTask; // define variable to use below to record if and how many times a coupling to a cell occurs in a timestep per MPI task
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+static double EnergyBudget_MechFB_dE = 0; /* this rank's cumulative change in gas thermal+kinetic energy applied by mechanical feedback */
+double energy_budget_mechfb_injected_local(void) {return EnergyBudget_MechFB_dE;}
+#endif
 
 int addFB_evaluate_active_check(int i, int fb_loop_iteration);
 int addFB_evaluate_active_check(int i, int fb_loop_iteration)
@@ -826,6 +830,9 @@ void verify_and_assign_local_mechfb_integrals(void)
         if(LocalGasMechFBInfoTemp[j].N_injected <= 0) {continue;} /* all mechanisms deposit non-zero mass, so skip if this is not >0*/
         if(P[j].Type==0 && P[j].Mass>0)
         {
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+            double eb_e0 = P[j].Mass * (CellP[j].InternalEnergy + 0.5*P[j].Vel.norm_sq()*All.cf_a2inv);
+#endif
             double m0=P[j].Mass, dm=LocalGasMechFBInfoTemp[j].m_injected; P[j].Mass += dm; /* update mass */ if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             m0=CellP[j].MassTrue; CellP[j].MassTrue += dm; /* update conserved mass */
@@ -842,7 +849,12 @@ void verify_and_assign_local_mechfb_integrals(void)
                 double TE_0=m0*CellP[j].InternalEnergy; dTE=DMAX(-TE_0,dTE); /* ensure against non-negative values */
                 double dU = (-dm/mf)*CellP[j].InternalEnergy + (1./mf)*dTE; /* using new mass get updated internal energy */
                 double dt = get_particle_timestep_in_physical(j), implied_heating_cgs=(dU*UNIT_SPECEGY_IN_CGS*PROTONMASS_CGS)/(dt*UNIT_TIME_IN_CGS), typical_cooling_cgs=1.e-23*(CellP[j].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS);
-                if((implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)))) {CellP[j].DtInternalEnergy += dU/dt;} else {CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;}
+                if((implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)))) {
+                    CellP[j].DtInternalEnergy += dU/dt;
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+                    EnergyBudget_MechFB_dE += mf*dU; /* deferred to the kicks; tallied as intended, not as delivered */
+#endif
+                } else {CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;}
                 //CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU; /* update internal energy; simpler (old) way to do it - less accurate phase diagrams at high density, however */
             }
             double dKE=LocalGasMechFBInfoTemp[j].KE_injected, dp[3];
@@ -862,6 +874,9 @@ void verify_and_assign_local_mechfb_integrals(void)
                 }
                 force_raise_motion_bound(j);
             }
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+            EnergyBudget_MechFB_dE += P[j].Mass * (CellP[j].InternalEnergy + 0.5*P[j].Vel.norm_sq()*All.cf_a2inv) - eb_e0;
+#endif
             ndone++; /* note another cell accounted for */
             if(ndone >= N_Gas_Couplings_ThisTask) {break;} /* we have done all cells (note is possible if the same cell is hit many times, N_Gas_Couplings_ThisTask can be much larger than ndone after the full loop. but if its smaller, then we -must- be done with this loop */
         }

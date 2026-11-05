@@ -1205,6 +1205,9 @@ void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_
    per-phase breakdown this once accompanied lives on branch diag/energy-budget-phases. */
 void energy_budget_sync_report(void);
 #define EB_SYNC_REPORT() energy_budget_sync_report()
+#if defined(GALSF_FB_MECHANICAL) && !defined(GALSF_USE_SNE_ONELOOP_SCHEME)
+double energy_budget_mechfb_injected_local(void); /* gas energy deposited by mechanical feedback on this rank, cumulative */
+#endif
 #ifdef EVALPOTENTIAL
 /* Kinetic+gravitational energy over all types at full synchronization -- the conserved quantity
    for a collisionless self-gravitating run, which the gas-only report above cannot see. */
