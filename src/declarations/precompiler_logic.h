@@ -435,6 +435,9 @@
 
 /* set default modules for different cosmic ray transport settings/packages */
 #ifdef COSMIC_RAY_FLUID
+#if !defined(CRFLUID_SPEEDOFLIGHT_REDUCTION) && (defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS))
+#define CRFLUID_SPEEDOFLIGHT_REDUCTION (3.e7/C_LIGHT_CGS) /* single stars: 300 km/s CR transport speed */
+#endif
 #if !defined(CRFLUID_SPEEDOFLIGHT_REDUCTION)
 #define CRFLUID_SPEEDOFLIGHT_REDUCTION (1.0)
 #endif
