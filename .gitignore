@@ -186,3 +186,4 @@ test/sgchem_rt_field/run_*/
 test/single_stars_rt_bands/run_*/
 test/sgchem_rt_photons/run_*/
 test/sgchem_rt_slab/run_*/
+test/sgchem_rt_infrared/run_*/
