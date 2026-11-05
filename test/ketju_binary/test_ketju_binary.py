@@ -81,6 +81,10 @@ def test_hard_binary(ranks):
 
 
 
+def test_adaptive_treeforce():
+    _run(1, ("ADAPTIVE_TREEFORCE_UPDATE=0.1",), params={"TimeBetSnapshot": 1})
+    a, e = _elements(("ADAPTIVE_TREEFORCE_UPDATE=0.1",))
+    assert abs(a - 1) < 1e-6 and abs(e - 0.9) < 1e-6
 
 
 
