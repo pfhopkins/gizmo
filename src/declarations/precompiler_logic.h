@@ -12,7 +12,7 @@
 
 /* the usual Stella set; each flag still works alone (scripts/stella holds the production configs). the flags the chemistry sources read stay in Config.sh, they see no other header */
 #ifdef STELLA_DEFAULTS
-#if !defined(SGCHEM) || !defined(METALS) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES)
+#if !defined(SGCHEM) || !defined(METALS) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS) || (!defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS))
 #error "STELLA_DEFAULTS: set SGCHEM, CHEMISTRYNETWORK, METALS, GALSF_RESOLVEDISM_TREECOL_PIXELS=12 and GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES in Config.sh"
 #endif
 #ifndef COOLING
@@ -48,7 +48,7 @@
 #if !defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS) && !defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS) && !defined(GALSF_FB_MECHANICAL_FACE_AREA_WEIGHTS)
 #define GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
 #endif
-#ifndef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
+#if !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) /* with the moment solver its bins push */
 #define GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
 #endif
 #ifndef TIDAL_TIMESTEP_CRITERION
@@ -1253,6 +1253,9 @@
 #endif
 #if !defined(RT_M1)
 #error "GALSF_SINGLE_STARS_RT_TABLE_BANDS is for the moment solver: set RT_M1"
+#endif
+#if defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_FB_FIRE_RT_LOCALRP) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
+#error "GALSF_SINGLE_STARS_RT_TABLE_BANDS: radiation pressure and photoionisation are counted once, in the moment bins: no star-side channels"
 #endif
 #if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES)
 #error "GALSF_SINGLE_STARS_RT_TABLE_BANDS replaces GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES (the field comes from the bins)"
