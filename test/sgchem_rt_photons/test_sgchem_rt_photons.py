@@ -6,8 +6,9 @@ last snapshots, plus recombinations (alpha_B n_e n_p), against the table's photo
   test_molecular: all H in H2: H+ forms at more than half the photon rate and the front stays inside the box. The star's
     Lyman-Werner light also dissociates H2 here.
   test_radiation_pressure_once: thick gas, production opacities: outward gas momentum 0.7-1.1 of absorbed energy / c.
-  test_h0_only_atomic_control: open, as below on atomic gas.
-  test_h2_ledger: open, at production RSOL 3e-4, 1e49 photons/s in the H0 bin alone (RT_STARBENCH_TEST) on pure H2: (new H+ + H2 lost + recombinations) / (Q dt) within 0.8-1.2.
+  test_h0_only_atomic, test_h2_ledger: production RSOL 3e-4, 1e49 photons/s in the H0 bin alone (RT_STARBENCH_TEST), no background G0:
+    (new H+ + H2 lost + recombinations + photons added to the bins) / (Q dt) within 0.8-1.2. H2 with SGCHEM_RT_ABSORBERS_FOLLOW_THE_NETWORK.
+  test_h2_as_stella_dev_reported: the same on H2 with production opacity, reported.
 """
 import os
 import shutil
@@ -31,6 +32,7 @@ T_UNIT = PC / 1e5
 RHO = N_H * 1.4 * MP * PC ** 3 / MSUN
 L = N * (M_CELL / RHO) ** (1.0 / 3.0)
 ALPHA_B = 2.6e-13
+E_H0 = 17.3845  # mean photon energy of the H0 bin with He bins [eV]
 BUILD = []
 
 
@@ -119,25 +121,44 @@ H0_ONLY = ("RT_SPEEDOFLIGHT_REDUCTION=3.0e-4", "RT_DISABLE_RAD_PRESSURE", "RT_ST
 H0_OVER = {"TimeMax": 3.6e-3, "TimeBetSnapshot": 0.9e-3, "MaxSizeTimestep": 1e-4}
 
 
-STIFF = "open: with one ionising bin and neutral gas the kick empties the bin before the chemistry reads it; softer bins seed the front"
+H0_ONLY_NET = H0_ONLY + ("SGCHEM_RT_ABSORBERS_FOLLOW_THE_NETWORK",)
+RSOL_H0 = 3e-4
 
 
-@pytest.mark.xfail(strict=False, reason=STIFF)
-def test_h0_only_atomic_control(tables):
+def bins_photons(tag, snap, e_ev):
+    """photons still in the bins, in the source's count: at reduced speed most light of a young source is in flight"""
+    with h5py.File(TEST_DIR / f"run_{tag}" / "output" / f"snapshot_00{snap}.hdf5", "r") as F:
+        return F["PartType0/PhotonEnergy"][:, 0].sum() * (MSUN * 1e10 / 1.602176634e-12) / e_ev / RSOL_H0
+
+
+def ledger_h0(tag, rows, Q, h2_counts):
+    a, h2, r, q = ledger(rows, Q)
+    in_flight = bins_photons(tag, 4, E_H0) - bins_photons(tag, 2, E_H0)
+    return (a + (h2 if h2_counts else 0) + r + in_flight) / q
+
+
+def test_h0_only_atomic(tables):
+    """no background G0 and no FUV: the ionising rates still reach the network"""
     build(*H0_ONLY)
     rows, Q = run("h0_atomic", tables, 0.0, fixed_q=1e49, over=H0_OVER)
-    a, h2, r, q = ledger(rows, Q)
-    print("H0 only atomic new H+, recombined, photons:", a, r, q, (a + r) / q)
-    assert 0.8 < (a + r) / q < 1.2
+    x = ledger_h0("h0_atomic", rows, Q, False)
+    print("H0 only atomic ledger with photons in flight:", x)
+    assert 0.8 < x < 1.2
 
 
-@pytest.mark.xfail(strict=False, reason=STIFF)
 def test_h2_ledger(tables):
-    build(*H0_ONLY)
+    build(*H0_ONLY_NET)
     rows, Q = run("h2_ledger", tables, 0.5, fixed_q=1e49, over=H0_OVER)
-    a, h2, r, q = ledger(rows, Q)
-    print("H2 ledger new H+, H2 lost, recombined, photons:", a, h2, r, q, (a + h2 + r) / q)
-    assert 0.8 < (a + h2 + r) / q < 1.2
+    x = ledger_h0("h2_ledger", rows, Q, True)
+    print("H2 ledger with photons in flight:", x)
+    assert 0.8 < x < 1.2
+
+
+def test_h2_as_stella_dev_reported(tables):
+    """production: rt_kappa does not see H2, the chemistry still takes rt_phot_H2. Reported for the decision on the opt-in"""
+    build(*H0_ONLY)
+    rows, Q = run("h2_sd", tables, 0.5, fixed_q=1e49, over=H0_OVER)
+    print("H2 as stella_dev, ledger with photons in flight:", ledger_h0("h2_sd", rows, Q, True), "front", rows[-1, 4])
 
 
 def radial_momentum(tag, box):
@@ -147,7 +168,6 @@ def radial_momentum(tag, box):
         return (g["Masses"][()] * (g["Velocities"][()] * r).sum(axis=1) / np.linalg.norm(r, axis=1)).sum(), g["PhotonEnergy"][()].sum(), F["Header"].attrs["Time"]
 
 
-@pytest.mark.xfail(strict=False, reason="open: 1.46; the solver adds direct momentum at injection for local extinction as well as absorbing the bin")
 def test_radiation_pressure_once(tables):
     """no infrared bin (re-absorbed IR adds momentum by design). Star in gas thick in every dust bin (pure absorption): the outward momentum the moment forces add, force build minus
     the same run without them (gas pressure of the heated cells cancels), over absorbed energy / c, 0.7-1.1;

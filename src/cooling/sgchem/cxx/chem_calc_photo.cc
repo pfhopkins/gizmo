@@ -240,7 +240,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
     const ChemTables& T = *c.tab;
     const int npr = CHEM_NPHTAB;
 
-    if (c.G0 == 0) {
+    if (c.G0 == 0 && c.rt_phot_HI == 0 && c.rt_phot_H2 == 0 && c.rt_phot_HeI == 0 && c.rt_phot_HeII == 0) { // ionising light can arrive without FUV
         for (int i = 0; i < npr; i++) c.phrates[i] = 0.0;
         c.G_dust = 0.0;
         return;
