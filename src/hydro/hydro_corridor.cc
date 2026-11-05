@@ -49,12 +49,19 @@ static bool g_mg_needs_all_gas = false;
 static void
 global_active_gas_counts(long long *out_sum, int *out_max, long long *out_sum_all_gas)
 {
-    long long local_sums[2] = {0, 0};   /* active gas with mass, all active gas */
-    for(int ii : ActiveParticleList) {
+    long long n_gas_with_mass = 0, n_gas = 0;
+    const long n_act = (long) ActiveParticleList.size();
+    const int *act = ActiveParticleList.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(+:n_gas_with_mass,n_gas) if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, n_act))
+#endif
+    for(long k = 0; k < n_act; k++) {
+        const int ii = act[k];
         if(P[ii].Type != 0) continue;
-        local_sums[1]++;
-        if(P[ii].Mass > 0) local_sums[0]++;
+        n_gas++;
+        if(P[ii].Mass > 0) n_gas_with_mass++;
     }
+    long long local_sums[2] = {n_gas_with_mass, n_gas};   /* active gas with mass, all active gas */
     int local_max = (int) local_sums[0];
     long long sums[2] = {local_sums[0], local_sums[1]};
     if(NTask > 1) {

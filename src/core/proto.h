@@ -1,6 +1,8 @@
 #ifndef ALLVARS_H
 #include "../declarations/allvars.h"
 #endif
+#include <stdint.h>
+#include <string.h>
 #include "../gravity/forcetree.h"
 #include "../domain/domain.h"
 #ifdef COOLING
@@ -511,6 +513,21 @@ enum GizmoHostThreadSite
 };
 int gizmo_host_threads_take(enum GizmoHostThreadSite site, long long count);   /* 1 if a loop over `count` items should run on all OpenMP threads */
 int gizmo_host_thread_count(void);   /* the OpenMP threads a host loop would run on (1 without OpenMP) */
+/* Atomic max of a double shared by host threads: an atomic load and compare-and-swap on its bits (clang has no __atomic on floating
+ * types).  Returns 1 if this call raised the value.  While threads share the address, every access to it goes through here: a plain
+ * read beside these atomic writes is a data race.  A maximum does not depend on the order its terms arrive in, so any number of
+ * threads give the one-thread result. */
+static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64-bit for atomic CAS");
+static inline int atomic_max_double(double* addr, double val) {
+    uint64_t val_bits; memcpy(&val_bits, &val, sizeof(double));
+    uint64_t old_bits = __atomic_load_n((uint64_t*)addr, __ATOMIC_RELAXED);
+    double old_val; memcpy(&old_val, &old_bits, sizeof(double));
+    while(val > old_val) {
+        if(__atomic_compare_exchange_n((uint64_t*)addr, &old_bits, val_bits, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {return 1;}
+        memcpy(&old_val, &old_bits, sizeof(double));
+    }
+    return 0;
+}
 /* The items k = 0..n-1 that pass keep(k), in increasing k, numbered 0, 1, ... -- the serial selection on any number of threads.
  * count() counts them; fill() hands each to put(k, slot) and returns the first slot whose put() returned nonzero, -1 if none.
  * From the site's count on, both passes run on all threads over contiguous blocks, each block numbered after the ones before

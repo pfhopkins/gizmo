@@ -124,10 +124,24 @@ void find_timesteps(void)
 #endif
 
 
+    /* This step's work, before any timebin below changes.  Each record reads and writes only its own particle,
+       and nothing in the loop below writes a field a record reads, so when there are enough of them they all
+       come first, on all threads; otherwise each is made in the loop. */
+    const int records_threaded = gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, (long long) ActiveParticleList.size());
+    if(records_threaded)
+    {
+        const long n_act = (long) ActiveParticleList.size();
+        const int *act = ActiveParticleList.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+        for(long k = 0; k < n_act; k++) {domain_record_step_work(act[k]);}
+    }
+
     /* Now assign new timesteps  */
     for (int i : ActiveParticleList)
     {
-        domain_record_step_work(i);   /* this step's work, before the timebin below changes */
+        if(!records_threaded) {domain_record_step_work(i);}   /* this step's work, before the timebin below changes */
 #ifdef FORCE_EQUAL_TIMESTEPS
         ti_step = ti_min_glob;  /* note that the dilation factor is already applied to ti_min_glob above - re-applying here would double-count it */
 #else

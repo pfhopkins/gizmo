@@ -17,18 +17,6 @@
 /* GPU replacement for force_update_tree. */
 extern "C" void gpu_force_update_tree(void);
 
-/* Atomic max for doubles using integer CAS (clang doesn't support __atomic on floats) */
-static inline void atomic_max_double(double* addr, double val) {
-    uint64_t val_bits; memcpy(&val_bits, &val, sizeof(double));
-    uint64_t old_bits; memcpy(&old_bits, addr, sizeof(double));
-    double old_val; memcpy(&old_val, &old_bits, sizeof(double));
-    while(val > old_val) {
-        if(__atomic_compare_exchange_n((uint64_t*)addr, &old_bits, val_bits, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {break;}
-        memcpy(&old_val, &old_bits, sizeof(double));
-    }
-}
-static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64-bit for atomic CAS");
-
 
 
 /*!
@@ -790,20 +778,12 @@ void force_update_hmax(void)
 #else
             double htmp = (P[i].Type == 0) ? DMIN(P[i].KernelRadius, All.MaxKernelRadius) : 0.0;
 #endif
-            int per_type_grew = 0;
-            if(per_type_htmp > Extnodes[no].hmax_per_type[per_type_band]) {
-                atomic_max_double(&Extnodes[no].hmax_per_type[per_type_band], per_type_htmp);
-                per_type_grew = 1;
-            }
-            int scalar_grew = 0;
-            if(scalar_eligible && htmp > Extnodes[no].hmax)
+            /* A walk climbs only while it raises something; one that stops here found a value at least its own,
+               and the thread that put it there carries it up the same chain. */
+            const int per_type_grew = atomic_max_double(&Extnodes[no].hmax_per_type[per_type_band], per_type_htmp);
+            int scalar_grew = scalar_eligible ? atomic_max_double(&Extnodes[no].hmax, htmp) : 0;
+            if(divv_eligible && atomic_max_double(&Extnodes[no].divVmax, divVel))
             {
-                atomic_max_double(&Extnodes[no].hmax, htmp);
-                scalar_grew = 1;
-            }
-            if(divv_eligible && divVel > Extnodes[no].divVmax)
-            {
-                atomic_max_double(&Extnodes[no].divVmax, divVel);
                 scalar_grew = 1;   /* a divVmax rise alone joins the cross-rank exchange like any other */
             }
             if(scalar_grew || per_type_grew)

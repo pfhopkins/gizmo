@@ -822,7 +822,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
 {
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition_light")) {return;}
     gpu_step_sidx_invalidate_full();   /* as in domain_Decomposition: released before any allocation here */
-    int i, no; size_t bytes; double t0, t1;
+    int i; size_t bytes; double t0, t1;
 
     /* fall back to full decomposition if persistent state is not available, or if
        too many consecutive lightweight repartitions have occurred (top tree may be stale) */
@@ -932,12 +932,15 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
 
     /* recompute keys for particles that may have drifted across cell boundaries */
     Key = PersistentKey; /* reuse persistent key storage directly */
-    for(i = 0; i < NumPart; i++)
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, NumPart))
+#endif
+    for(int k = 0; k < NumPart; k++)
     {
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+        peano1D xb = domain_double_to_int(((P[k].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
+        peano1D yb = domain_double_to_int(((P[k].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
+        peano1D zb = domain_double_to_int(((P[k].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
+        Key[k] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
     }
 
     /* temporarily reconstruct the local topNodes from the persistent TopNodes for domain_sumCost.
@@ -1048,11 +1051,12 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     }
 
     /* flag particles that need to move */
-    for(i = 0; i < NumPart; i++)
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, NumPart))
+#endif
+    for(int k = 0; k < NumPart; k++)
     {
-        no = domain_toptree_leaf(Key[i], topNodes);
-        int task = DomainTask[no];
-        if(task != ThisTask) {P[i].Type |= 32;}
+        if(DomainTask[domain_toptree_leaf(Key[k], topNodes)] != ThisTask) {P[k].Type |= 32;}
     }
 
     /* exchange particles */
@@ -1095,12 +1099,15 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     CPU_Step[CPU_DOMAIN] += measure_time();
 
     /* update persistent keys for moved particles */
-    for(i = 0; i < NumPart; i++)
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, NumPart))
+#endif
+    for(int k = 0; k < NumPart; k++)
     {
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        PersistentKey[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+        peano1D xb = domain_double_to_int(((P[k].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
+        peano1D yb = domain_double_to_int(((P[k].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
+        peano1D zb = domain_double_to_int(((P[k].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
+        PersistentKey[k] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
     }
     Key = NULL; /* no longer valid as a mymalloc pointer */
 

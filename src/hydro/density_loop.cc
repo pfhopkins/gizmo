@@ -152,15 +152,30 @@ DensitySpec::CallScalars DensitySpec::populate_call_scalars(
 /* ====================================================================
  * density_build_active_list — host-side active particle list.
  *
- * Walks ActiveParticleList, filters with density_isactive, and returns
- * a contiguous std::vector<int> for the runner. ======================== */
+ * Walks ActiveParticleList, filters with density_isactive (which reads
+ * only its own particle), and returns a contiguous std::vector<int> for
+ * the runner, in ActiveParticleList order. ============================ */
 std::vector<int> density_build_active_list(void)
 {
+    const long n_act = (long) ActiveParticleList.size();
     std::vector<int> active_list_concat;
-    active_list_concat.reserve(NumPart);
-    for (int i : ActiveParticleList) {
-        if (density_isactive(i)) active_list_concat.push_back(i);
+    if(!gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, n_act)) {
+        active_list_concat.reserve(NumPart);
+        for (int i : ActiveParticleList) {
+            if (density_isactive(i)) active_list_concat.push_back(i);
+        }
+        return active_list_concat;
     }
+    /* Each predicate evaluated once, on all threads; then an ordered selection over the results. */
+    std::vector<unsigned char> is_active((size_t) n_act);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for (long k = 0; k < n_act; k++) {is_active[(size_t) k] = density_isactive(ActiveParticleList[k]) ? 1 : 0;}
+    auto active = [&](long k) {return is_active[(size_t) k] != 0;};
+    GizmoOrderedSelection selection;
+    active_list_concat.resize((size_t) selection.count(n_act, HOST_THREAD_BOOKKEEPING, active));
+    selection.fill(active, [&](long k, long slot) {active_list_concat[(size_t) slot] = ActiveParticleList[k]; return 0;});
     return active_list_concat;
 }
 

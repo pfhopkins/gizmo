@@ -294,6 +294,10 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
      * particles, are skipped by the test just below instead: every slot the tree does not contain
      * carries -1, which is what a ghost's slot holds. */
     const int nseed = (NumPart < All.TreeParticleSlots) ? NumPart : All.TreeParticleSlots;
+    const int seed_threaded = gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, nseed);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(seed_threaded)
+#endif
     for(int i = 0; i < nseed; i++) {
         int no = Father[i];
         if(no < 0) continue;
@@ -301,7 +305,8 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
         if(pa->Mass <= 0) continue;
         double htmp = force_hmax_per_type_particle_radius(i);
         int t = (int)pa->Type;
-        if(htmp > Extnodes[no].hmax_per_type[t]) Extnodes[no].hmax_per_type[t] = (MyFloat)htmp;
+        if(seed_threaded) {atomic_max_double(&Extnodes[no].hmax_per_type[t], htmp);}   /* particles of one node may sit on different threads */
+        else if(htmp > Extnodes[no].hmax_per_type[t]) {Extnodes[no].hmax_per_type[t] = (MyFloat)htmp;}
     }
     /* Step 3: bottom-up max-over-children via father chain. Children always
      * allocated at higher indices than parents, so reverse iteration gives
