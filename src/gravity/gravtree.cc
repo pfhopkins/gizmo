@@ -235,7 +235,13 @@ void gravity_tree(void)
        stale moments produce wrong forces. Much cheaper than a full treebuild. */
     {
         int TreeMomentsStaleFlag_global;
+#ifdef KETJU_REGULARIZATION
+        int ketju_loc[2] = {TreeMomentsStaleFlag, ketju_active_candidates()}, ketju_glob[2]; /* no collective of its own on steps without a chain candidate */
+        MPI_Allreduce(ketju_loc, ketju_glob, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        TreeMomentsStaleFlag_global = ketju_glob[0]; ketju_note_candidates(ketju_glob[1]);
+#else
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+#endif
         if(TreeMomentsStaleFlag_global)
         {
             CPU_Step[CPU_MISC] += measure_time();

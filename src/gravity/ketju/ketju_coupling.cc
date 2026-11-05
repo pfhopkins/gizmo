@@ -149,6 +149,8 @@ void ketju_test_mstar_pair(void)
 }
 #endif
 
+/* Cost tracking for load balancing (keyed by first center ID per region) */
+static std::unordered_map<MyIDType, double> region_previous_cost;
 
 /* ============================================================
  *  Lightweight particle data for MPI communication
@@ -314,6 +316,17 @@ static int loop_scheduling_block_edge(int Nloop, int num_proc, int edge_index)
  * ============================================================ */
 static std::vector<KetjuRegion> ActiveRegions;
 static int KetjuNumMultiRegions = 0; /* regions with >= 2 members this step (rank-uniform) */
+static long long KetjuMemberStepEnd = -1; /* latest step end of any integrated chain member (rank-uniform); -1 = not yet known */
+static int KetjuCandidateFlag = 1; static integertime KetjuCandidateTi = -1; /* any active chain candidate at this time, from the gravity call's reduction */
+static void ketju_member_step_end_init(void) /* first call, also after a restart: from the flagged members */
+{
+    if(KetjuMemberStepEnd >= 0) {return;}
+    if(RestartFlag != 1) {KetjuMemberStepEnd = 0; return;} /* no chain before the first step */
+    long long e = 0;
+    for(int i = 0; i < NumPart; i++) {if(P[i].KetjuIntegrated && P[i].KetjuChainID != 0) {e = std::max(e, (long long)P[i].Ti_begstep + (long long)P[i].dt_step);}}
+    MPI_Allreduce(&e, &KetjuMemberStepEnd, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+}
+static inline int ketju_no_live_chains(void) {return KetjuMemberStepEnd == 0 || (long long)All.Ti_Current > KetjuMemberStepEnd;}
 
 /* Wall-clock laps into the KETJU cpu.txt categories; WallclockTime is advanced by the same amount so the
  * enclosing GIZMO timer (gravity, drift) does not count it again. The destructor laps into `rest`. */
@@ -336,6 +349,203 @@ static std::vector<std::vector<ketju_mpi_particle>> CachedCenterGroups; /* the l
 static long long LimitTally[4] = {0, 0, 0, 0};
 
 /* ============================================================
+ *  Cost-based scheduling (Phase B)
+ *  Based on public GADGET4-KETJU (Mannerkoski+ 2023).
+ *  Estimates per-region cost and distributes compute tasks.
+ * ============================================================ */
+static double region_cost_estimate(int region_index)
+{
+    if(ActiveRegions[region_index].centers.empty()) return 1.0;
+    MyIDType key = ActiveRegions[region_index].centers[0].ID;
+    auto it = region_previous_cost.find(key);
+    if(it != region_previous_cost.end()) return it->second;
+    /* no previous cost — estimate from N² */
+    double N = ActiveRegions[region_index].total_particle_count;
+    return 20.0 * N * N;
+}
+
+/* Number of sequential rounds chosen by allocate_compute_tasks_for_regions.
+ * Each region is assigned a round index (compute_sequence_position) and
+ * ketju_run_integration iterates over rounds in outer loop, so regions in
+ * the same round run in parallel while tasks move to the next round only
+ * after all regions in the current round finish. Matches the multi-round
+ * scheduler used by GADGET4-KETJU / gadget_tnt_new for better load balance. */
+static int g_ketju_num_sequential_runs = 0;
+
+/* Bucket regions into `num_runs` rounds using a longest-processing-time (LPT)
+ * heuristic: repeatedly place the most-expensive unassigned region into the
+ * least-loaded bucket. Each bucket is capped at NTask regions so every
+ * region gets at least one task. */
+static std::vector<std::vector<int>> lpt_bucket_regions(int num_runs)
+{
+    int n_regions = (int)ActiveRegions.size();
+    typedef std::pair<double, int> cost_pair;   /* (cost, index) */
+
+    /* max-heap over regions by cost */
+    std::priority_queue<cost_pair> region_pq;
+    for(int r = 0; r < n_regions; r++) region_pq.push({region_cost_estimate(r), r});
+
+    /* min-heap over buckets by accumulated cost */
+    std::priority_queue<cost_pair, std::vector<cost_pair>, std::greater<cost_pair>> bucket_pq;
+    for(int b = 0; b < num_runs; b++) bucket_pq.push({0.0, b});
+
+    std::vector<std::vector<int>> buckets(num_runs);
+    while(!region_pq.empty() && !bucket_pq.empty()) {
+        double rc = region_pq.top().first;
+        int    r  = region_pq.top().second;
+        region_pq.pop();
+        double bc = bucket_pq.top().first;
+        int    b  = bucket_pq.top().second;
+        bucket_pq.pop();
+        buckets[b].push_back(r);
+        /* only push this bucket back if it can still fit more regions */
+        if((int)buckets[b].size() < NTask)
+            bucket_pq.push({bc + rc, b});
+    }
+    return buckets;
+}
+
+/* Estimate wall-time for a given bucketing: sum over buckets of the
+ * max (region_cost / tasks_allocated_to_region). Scaling is cut off at
+ * N_particles / particles_per_task_scaling_limit because the integrator
+ * stops getting faster past that point. */
+static double estimate_total_time_for(const std::vector<std::vector<int>>& buckets)
+{
+    const int ppts_limit = 7; /* see Mannerkoski+2022 scaling data */
+    double total = 0;
+    for(const auto& bucket : buckets) {
+        if(bucket.empty()) continue;
+        double bucket_cost = 0;
+        for(int r : bucket) bucket_cost += region_cost_estimate(r);
+        if(bucket_cost <= 0) bucket_cost = 1.0;
+
+        double bucket_max = 0;
+        for(int r : bucket) {
+            double frac = region_cost_estimate(r) / bucket_cost;
+            int n_tasks = DMAX(1, (int)(frac * NTask + 0.5));
+            int npart = ActiveRegions[r].total_particle_count;
+            int max_useful = DMAX(1, npart / ppts_limit);
+            if(n_tasks > max_useful) n_tasks = max_useful;
+            double t_reg = region_cost_estimate(r) / (double)n_tasks;
+            if(t_reg > bucket_max) bucket_max = t_reg;
+        }
+        total += bucket_max;
+    }
+    return total;
+}
+
+/* Assign MPI task ranges to the regions in one bucket, proportional to cost. */
+static void assign_tasks_for_bucket(const std::vector<int>& bucket_regions, int seq_pos)
+{
+    if(bucket_regions.empty()) return;
+    double bucket_cost = 0;
+    for(int r : bucket_regions) bucket_cost += region_cost_estimate(r);
+    if(bucket_cost <= 0) bucket_cost = 1.0;
+
+    int min_per_task = (int)DMAX(All.KetjuMinParticlesPerTask, 2);
+    int tasks_used = 0;
+    for(size_t i = 0; i < bucket_regions.size(); i++) {
+        int r = bucket_regions[i];
+        double frac = region_cost_estimate(r) / bucket_cost;
+        int n_tasks = DMAX(1, (int)(frac * NTask + 0.5));
+
+        /* respect minimum particles per task */
+        if(ActiveRegions[r].total_particle_count > 0) {
+            int max_tasks = ActiveRegions[r].total_particle_count / min_per_task;
+            if(max_tasks < 1) max_tasks = 1;
+            if(n_tasks > max_tasks) n_tasks = max_tasks;
+        }
+
+        /* don't exceed available tasks in this bucket. If the bucket is
+         * already full (tasks_used >= NTask) we still need to assign this
+         * region somewhere valid — co-locate it on the last task. Without
+         * this clamp the indices go out of bounds (e.g. range=[4,4] on
+         * NTask=4) and MPI_Group_incl/MPI_Comm_create_group return a
+         * corrupt group → segfault in MPI_Group_intersection later. */
+        if(tasks_used >= NTask) {
+            ActiveRegions[r].compute_info.first_task_index          = NTask - 1;
+            ActiveRegions[r].compute_info.final_task_index          = NTask - 1;
+            ActiveRegions[r].compute_info.compute_sequence_position = seq_pos;
+            continue;
+        }
+        if(tasks_used + n_tasks > NTask) n_tasks = NTask - tasks_used;
+        if(n_tasks < 1) n_tasks = 1;
+
+        ActiveRegions[r].compute_info.first_task_index          = tasks_used;
+        ActiveRegions[r].compute_info.final_task_index          = tasks_used + n_tasks - 1;
+        ActiveRegions[r].compute_info.compute_sequence_position = seq_pos;
+        tasks_used += n_tasks;
+    }
+}
+
+static void allocate_compute_tasks_for_regions(void)
+{
+    int n_regions = (int)ActiveRegions.size();
+    if(n_regions == 0) { g_ketju_num_sequential_runs = 0; return; }
+
+    /* Sweep num_runs from the minimum (limited by NTask per bucket) upward
+     * and pick the one with the smallest estimated total wall-time. We
+     * exit early when adding another round stops improving the estimate
+     * (the cost surface is empirically monotone past the optimum). */
+    int min_runs = (n_regions + NTask - 1) / NTask;
+    if(min_runs < 1) min_runs = 1;
+
+    double best_time = DBL_MAX;
+    std::vector<std::vector<int>> best_buckets;
+    for(int num_runs = min_runs; num_runs <= n_regions; num_runs++) {
+        auto buckets = lpt_bucket_regions(num_runs);
+        double t = estimate_total_time_for(buckets);
+        if(t < best_time) {
+            best_time   = t;
+            best_buckets = std::move(buckets);
+        } else {
+            break;
+        }
+    }
+
+    for(size_t s = 0; s < best_buckets.size(); s++) {
+        assign_tasks_for_bucket(best_buckets[s], (int)s);
+    }
+    g_ketju_num_sequential_runs = (int)best_buckets.size();
+}
+
+static void update_region_costs(void)
+{
+    /* After integration, store actual cost for next step. The cost is only
+     * known on each region's compute_root (it has the integrator), but the
+     * map MUST be globally consistent — otherwise next step's
+     * region_cost_estimate / allocate_compute_tasks_for_regions returns
+     * different compute_info.first/final_task_index on different tasks,
+     * which then produces different compute groups and deadlocks
+     * MPI_Comm_create_group inside compute_tasks.init.
+     *
+     * Pack one cost per region into a dense array indexed by region, then
+     * MPI_Allreduce(MAX). Non-roots contribute 0 → the compute_root's value
+     * wins. */
+    int n_regions = (int)ActiveRegions.size();
+    if(n_regions == 0) return;
+
+    std::vector<double> local_costs(n_regions, 0.0);
+    for(int r = 0; r < n_regions; r++) {
+        if(!ActiveRegions[r].compute_tasks.is_root()) continue;
+        if(!ActiveRegions[r].integrator) continue;
+        if(ActiveRegions[r].centers.empty()) continue;
+
+        local_costs[r] = (double)(ActiveRegions[r].integrator->perf->successful_steps +
+                                  ActiveRegions[r].integrator->perf->failed_steps) *
+                         ActiveRegions[r].total_particle_count * ActiveRegions[r].total_particle_count;
+    }
+
+    std::vector<double> global_costs(n_regions, 0.0);
+    MPI_Allreduce(local_costs.data(), global_costs.data(), n_regions, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+
+    for(int r = 0; r < n_regions; r++) {
+        if(ActiveRegions[r].centers.empty()) continue;
+        if(global_costs[r] <= 0) continue;
+        MyIDType key = ActiveRegions[r].centers[0].ID;
+        region_previous_cost[key] = global_costs[r];
+    }
+}
 
 /* ============================================================
  *  Helper: is this particle a valid chain center?
@@ -387,10 +597,19 @@ static double particle_distance(double *pos1, double *pos2)
  * ============================================================ */
 
 
+/* carried by the reduction gravity_tree does anyway, so a step with no candidate anywhere adds no collective */
+int ketju_active_candidates(void)
+{
+    if(All.KetjuRegionRadius <= 0) {return 0;}
+    for(int i : ActiveParticleList) {if(is_chain_center(i) && is_synchronized(i)) {return 1;}}
+    return 0;
+}
+void ketju_note_candidates(int any) {KetjuCandidateFlag = any; KetjuCandidateTi = All.Ti_Current;}
 
 /* Gather all synchronised chain centers across MPI tasks */
 static std::vector<ketju_mpi_particle> gather_chain_centers(void)
 {
+    if(KetjuCandidateTi == All.Ti_Current && !KetjuCandidateFlag) {return {};}
     /* count local centers */
     int n_local = 0;
     for(int i : ActiveParticleList) {
@@ -1205,6 +1424,8 @@ void ketju_find_regions(void)
     std::vector<int> task_counts((size_t)NTask * n_multi); /* [t * n_multi + k] */
     for(int k = 0; k < n_multi; k++) {for(const ketju_mpi_particle &c : region_centers[multi[k]]) {task_counts[(size_t)c.Task * n_multi + k]++;}}
 
+    /* allocate compute tasks across regions based on cost estimates */
+    allocate_compute_tasks_for_regions();
     /* A region given one compute task is integrated where its members live (its affected root, the lowest task holding
      * members): no forwarding to and from a remote task, which would make the affected root wait idle on the remote MSTAR run. */
     for(int k = 0; k < n_multi; k++) {
@@ -1289,6 +1510,7 @@ void ketju_report_stats(int final)
 void ketju_run_integration(void)
 {
     KjClock clk(CPU_KETJUFIND);
+    ketju_member_step_end_init(); /* before this step's regions raise it */
     if(KetjuNumMultiRegions == 0) {
         return; /* rank-uniform: nothing to integrate */
     }
@@ -1310,8 +1532,9 @@ void ketju_run_integration(void)
         }
     }
     MPI_Allreduce(MPI_IN_PLACE, ti_range.data(), 2 * n_act, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+    for(int r = 0; r < n_act; r++) {if(ActiveRegions[r].total_particle_count >= 2 && ti_range[2*r+1] > 0) {KetjuMemberStepEnd = std::max(KetjuMemberStepEnd, (long long)All.Ti_Current + ti_range[2*r+1]);}}
 
-    int n_rounds = 1;
+    int n_rounds = g_ketju_num_sequential_runs > 0 ? g_ketju_num_sequential_runs : 1;
     for(int seq = 0; seq < n_rounds; seq++) {
     for(size_t r = 0; r < ActiveRegions.size(); r++) {
         KetjuRegion &reg = ActiveRegions[r];
@@ -1350,6 +1573,9 @@ void ketju_run_integration(void)
     }
     } /* end for(seq) */
 
+    /* update cost estimates for next step's load balancing */
+    clk.rest = CPU_KETJUFINISH;
+    update_region_costs();
 
     ketju_collect_stats();
     ketju_report_stats(0);
@@ -1365,6 +1591,8 @@ void ketju_set_final_velocities(void)
      * Now we replace it with the true MSTAR velocity and correct dp[].
      * Only for members whose step ends at this sync point (their bin is active and they were just
      * drifted to it): a region on a longer bin is still drifting along its chord. */
+    ketju_member_step_end_init();
+    if(ketju_no_live_chains()) {return;}
     std::vector<int> raised;
     for(int n = 0; n < TIMEBINS; n++) {if(!TimeBinActive[n]) {continue;}
     for(int i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {
@@ -1412,6 +1640,8 @@ void ketju_compute_com_quantities(void)
         double soft[2], zeta[2]; /* tree softening/zeta */
     };
 
+    ketju_member_step_end_init();
+    if(ketju_no_live_chains()) {return;} /* rank-uniform: no member can end its step here */
     std::vector<ChainMemberData> local_data;
     std::vector<int> local_index;
     for(int i : ActiveParticleList) {

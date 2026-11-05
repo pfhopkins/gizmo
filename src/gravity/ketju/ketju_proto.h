@@ -8,6 +8,8 @@ void ketju_init_particle(int i);
 #ifdef TEST_KETJU_MSTAR_PAIR
 void ketju_test_mstar_pair(void);
 #endif
+int ketju_active_candidates(void);
+void ketju_note_candidates(int any);
 void ketju_report_stats(int final);
 void ketju_limit_timesteps(void);
 void ketju_find_regions(void);
