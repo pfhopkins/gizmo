@@ -314,6 +314,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     temp = chem_cxx_calc_temp(ab[IH2], in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + ab[IHP]) * yn));
 #endif
     if(temp < All.MinGasTemp && temp > 0) {energy *= All.MinGasTemp / temp; temp = All.MinGasTemp;}
+#ifdef TEST_RT_STARBENCH_SGCHEM_TEMPERATURE_FROM_IONISED_FRACTION
+    {double x = DMIN(DMAX(ab[IHP], 0.), 1.); temp = All.InitGasTemp + (1.e4 - All.InitGasTemp) * x; energy = temp * 1.5 * BOLTZMANN_CGS * yn * (1. + ABHE + x);} /* StarBench two-temperature gas */
+#endif
     for(int k = 0; k < TRAC_NUM; k++) {CellP[i].TracAbund[k] = ab[k];}
     CellP[i].Temp = temp;
     CellP[i].DustTemp = out.tdust;

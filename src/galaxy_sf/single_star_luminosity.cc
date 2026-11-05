@@ -81,6 +81,10 @@ static void single_star_ionizing_rates(int i, double *L_ion, double *Q, double *
 int single_star_rt_band_luminosities(int i, int mode, double *lum, struct particle_data *pp)
 {
     double L[SINGLE_STAR_NBANDS], L_bol; (void) pp;
+#ifdef RT_STARBENCH_TEST
+    if(mode >= 0) {lum[RT_FREQ_BIN_H0] = 1e49 * All.rt_nu_eff_eV[RT_FREQ_BIN_H0] * ELECTRONVOLT_IN_ERGS / UNIT_LUM_IN_CGS * (C_LIGHT_CODE_REDUCED / C_LIGHT_CODE);}
+    return 1;
+#endif
     if(!single_star_band_luminosities_cgs(i, L, &L_bol)) {return 0;}
     if(mode < 0) {return 1;}
     lum[RT_FREQ_BIN_PHOTOELECTRIC] = L[SINGLE_STAR_BAND_PE] / UNIT_LUM_IN_CGS;
