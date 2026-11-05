@@ -54,6 +54,23 @@ def clean_test_outputs(test_name: str, extra_config_flags=()):
         remove(f)
 
 
+SINK_LOOPS_SKIPPED_MSG = "skipping the sink neighbour loops"
+
+
+def assert_dry_sink_run(log_path: str, snapshots):
+    """For a gas-free sink run built with DISABLE_SINK_MERGERS: the sink count must not change between the first and
+    last snapshot, and the run log must show that the sink neighbour loops were skipped. The log check is dropped when
+    the log is absent (GIZMO_TEST_SKIP_BUILD_RUN validates snapshots produced elsewhere)."""
+    with h5py.File(snapshots[0], "r") as f0, h5py.File(snapshots[-1], "r") as f1:
+        n0, n1 = int(f0["Header"].attrs["NumPart_Total"][5]), int(f1["Header"].attrs["NumPart_Total"][5])
+    assert n1 == n0, f"{n0} sinks at the start, {n1} at the end: a merger happened with DISABLE_SINK_MERGERS set"
+    if path.isfile(log_path):
+        with open(log_path, errors="replace") as fh:
+            assert SINK_LOOPS_SKIPPED_MSG in fh.read(), (
+                f"{log_path} lacks '{SINK_LOOPS_SKIPPED_MSG}': a gas-free DISABLE_SINK_MERGERS run entered the "
+                f"sink neighbour loops")
+
+
 def physical_cores():
     """Number of physical cores, which is what core binding allocates -- not cpu_count(),
     which counts hardware threads and so doubles the answer wherever SMT is on."""
