@@ -1199,6 +1199,18 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #endif
 
 
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+enum ledger_rows {LEDGER_CHEM_HEATING, LEDGER_CHEM_COOLING, LEDGER_NROWS}; /* energy rows [code units]; names in system/ledger.cc */
+void ledger_init(void);
+void ledger_add(int row, double x);
+void ledger_output(void);
+void ledger_restart_io(void (*io)(void *, size_t, int), int modus);
+#endif
+#ifdef SGCHEM
+void sgchem_init(void);
+void sgchem_init_cell_state(int i);
+double sgchem_docooling(int i, double u_old, double dt, double *ne_eval);
+#endif
 #ifdef CHIMES
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cell_data *cell);

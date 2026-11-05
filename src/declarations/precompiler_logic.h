@@ -1698,6 +1698,33 @@
 #endif
 
 
+#ifdef SGCHEM /* SGChem chemistry (cooling/sgchem/) */
+#if defined(CHIMES)
+#error "SGCHEM and CHIMES are exclusive (one SUNDIALS per build)"
+#endif
+#if !defined(COOLING) || !defined(METALS) || defined(COOL_GRACKLE)
+#error "SGCHEM needs COOLING and METALS, and excludes COOL_GRACKLE"
+#endif
+#if defined(RADTRANSFER) || defined(COSMIC_RAY_FLUID)
+#error "SGCHEM: the coupling to RADTRANSFER and COSMIC_RAY_FLUID is not in this tree yet"
+#endif
+#if !defined(COOL_METAL_LINES_BY_SPECIES)
+#error "SGCHEM reads the element slots: set COOL_METAL_LINES_BY_SPECIES"
+#endif
+#if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 20 /* tracked species per cell (= TRAC_NUM of cooling/sgchem/sgchem_consts.h) */
+#define SGCHEM_NUM_TRACKED_SPECIES 3
+#elif CHEMISTRYNETWORK == 17
+#define SGCHEM_NUM_TRACKED_SPECIES 7
+#elif CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
+#define SGCHEM_NUM_TRACKED_SPECIES 9
+#elif CHEMISTRYNETWORK == 3
+#define SGCHEM_NUM_TRACKED_SPECIES 19
+#elif CHEMISTRYNETWORK == 18
+#define SGCHEM_NUM_TRACKED_SPECIES 113
+#else
+#error "SGCHEM: set CHEMISTRYNETWORK to 3, 5, 15, 16, 17, 18 or 20"
+#endif
+#endif
 #ifdef CHIMES_STELLAR_FLUXES /* The following defines the stellar age bins that we will use to define the UV spectra from stars used in CHIMES. */
 #define CHIMES_LOCAL_UV_NBINS 8
 #define CHIMES_LOCAL_UV_AGE_LOW 0.0

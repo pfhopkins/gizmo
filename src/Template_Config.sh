@@ -391,6 +391,9 @@
 ####################################################################################################
 ## ----------------------------------------------------------------------------------------------------
 #COOLING                        # top-level switch to enable radiative cooling and heating. if nothing else enabled, uses Hopkins et al. arXiv:1702.06148 cooling physics. if GALSF, also external UV background read from file "TREECOOL" (included in the cooling folder; be sure to cite its source as well, given in the TREECOOL file)
+#SGCHEM                         # SGChem non-equilibrium chemistry and cooling (cooling/sgchem/, C++ on SUNDIALS CVODE 6.x/7.x: set SUNDIALS_DIR). Needs METALS and COOL_METAL_LINES_BY_SPECIES; excludes CHIMES; cools on the host loop. Tables installed with scripts/get_stella_tables.sh (parameter SGChemTablesPath), hash-checked at start-up
+#CHEMISTRYNETWORK=5             # SGChem network: 5 (H2, H+, CO; default), 3, 15, 16, 17, 18 (metal ions) or 20 (Kim+23)
+#SGCHEM_KEEP_IC_ABUNDANCES      # fresh starts keep SGChemTracAbund from the IC file (default: H2 and CO zero, x(H+) = 1e-4); the IC needs the dataset
 #METALS                         # top-level switch to enable tracking metallicities / different heavy elements (with multiple species optional) for gas and stars [must be included in ICs or injected via dynamical feedback; needed for some routines]
 #DISK_BETA_COOL                 # simple 'beta-cooling' for protoplanetary-disk problems: relax gas internal energy to a constant irradiation floor on t_cool=beta/Omega (params BetaCool_Beta, BetaCool_Tirr). mutually exclusive with COOLING
 ## ----------------------------------------------------------------------------------------------------
@@ -532,6 +535,7 @@
 ####################################################################################################
 # --------------------------------------- Input/Output options
 ####################################################################################################
+#OUTPUT_MASS_METAL_ENERGY_LEDGER # ledger.txt: cumulative budget rows (now: SGChem heating and cooling energy), exact per-thread sums reduced only at snapshot output
 #OUTPUT_ADDITIONAL_RUNINFO      # enables extended simulation output data (can slow down machines significantly in massively-parallel runs)
 #OUTPUT_IN_DOUBLEPRECISION      # snapshot files will be written in double precision
 #INPUT_IN_DOUBLEPRECISION       # input files assumed to be in double precision (otherwise float is assumed)
@@ -550,6 +554,8 @@
 #AGS_OUTPUTZETA                 # outputs the adaptive-softening correction term zeta for each adaptively-softened particle
 #OUTPUT_COOLRATE                # outputs the net cooling rate (negative where gas is net heating), and conduction rate if enabled
 #OUTPUT_COOLRATE_DETAIL         # outputs cooling rate term by term [saves all individually to snapshot]
+#OUTPUT_INDIVIDUAL_COOLRATES       # SGCHEM: snapshots hold SGChemCoolRates (28) and SGChemChemCoolRates (6) of the last solve, per n_H^2. 136 bytes per cell
+#OUTPUT_CHEM_PHOTORATES            # SGCHEM: snapshots hold ChemPhotoRates (6) of the last solve. 24 bytes per cell
 #OUTPUT_POWERSPEC               # compute and output cosmological power spectra. requires BOX_PERIODIC and PMGRID.
 #OUTPUT_RECOMPUTE_POTENTIAL     # update potential every output even it EVALPOTENTIAL is set
 #OUTPUT_DENS_AROUND_NONGAS      # output gas density in neighborhood of stars [collisionless particle types], not just gas

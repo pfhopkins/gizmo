@@ -930,6 +930,25 @@ OBJS    += cooling/chimes/chimes.o cooling/chimes/chimes_cooling.o cooling/chime
 INCL    += cooling/chimes/chimes_interpol.h cooling/chimes/chimes_proto.h cooling/chimes/chimes_vars.h 
 endif
 
+# SGChem chemistry (cooling/sgchem/, C++ on SUNDIALS CVODE 6.x or 7.x): SUNDIALS_DIR from the system file or the environment
+SGCHEMINCL = # default to empty, will only be used below if called
+SGCHEMLIBS = # default to empty, will only be used below if called
+ifneq (,$(filter SGCHEM,$(CONFIGVARS)))
+ifeq (,$(strip $(SUNDIALS_DIR)))
+$(error SGCHEM needs SUNDIALS_DIR, a SUNDIALS 6.x or 7.x install)
+endif
+SGCHEM_SUNLIB = $(firstword $(wildcard $(SUNDIALS_DIR)/lib64 $(SUNDIALS_DIR)/lib))
+SGCHEMINCL = -I$(SUNDIALS_DIR)/include -I.
+SGCHEMLIBS = -L$(SGCHEM_SUNLIB) -Wl,-rpath,$(SGCHEM_SUNLIB) -lsundials_cvode -lsundials_nvecserial -lsundials_sunmatrixdense \
+             -lsundials_sunlinsoldense -lsundials_sunnonlinsolnewton $(if $(wildcard $(SGCHEM_SUNLIB)/libsundials_core.*),-lsundials_core,-lsundials_generic)
+OBJS    += cooling/sgchem/sgchem.o cooling/sgchem/sgchem_cell.o $(patsubst %.cc,%.o,$(wildcard cooling/sgchem/cxx/*.cc))
+INCL    += $(wildcard cooling/sgchem/*.h cooling/sgchem/cxx/*.h)
+endif
+
+ifneq (,$(filter OUTPUT_MASS_METAL_ENERGY_LEDGER,$(CONFIGVARS)))
+OBJS    += system/ledger.o
+endif
+
 comma := ,
 # Grackle (>= 3), built with Grackle's CMake build, which installs a grackle.pc file: pkg-config then gives the compile and link
 #   flags, including the Fortran/HDF5 dependencies of a static libgrackle.a. grackle.pc is looked up as
@@ -956,7 +975,7 @@ endif
 
 # linking libraries (includes machine-dependent options above)
 CFLAGS = $(OPTIONS) $(FFTW_INCL) $(HDF5INCL) \
-         $(GRACKLEINCL) $(CHIMESINCL) $(HYPRE_INCL) $(MKL_INCL) $(KOKKOS_CPPFLAGS)
+         $(GRACKLEINCL) $(CHIMESINCL) $(SGCHEMINCL) $(HYPRE_INCL) $(MKL_INCL) $(KOKKOS_CPPFLAGS)
 
 
 
@@ -982,7 +1001,7 @@ endif
 
 
 LIBS = $(HDF5LIB) -g $(MPICHLIB) \
-	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(SKYNETLIBS) $(TORCHLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
+	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(SGCHEMLIBS) $(SKYNETLIBS) $(TORCHLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
 
 
 $(EXEC): $(OBJS) $(GPU_OBJS)
