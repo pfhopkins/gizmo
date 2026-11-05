@@ -43,6 +43,7 @@
 #include "../../mesh/gpu_neighbor_list.h"   /* gizmo_motion_bound_raise */
 #include "../../system/gpu_particles_arena.h"
 #include "ketju_mstar_kokkos.h"
+#include "ketju_star_mergers.h"
 
 #ifdef KETJU_REGULARIZATION
 
@@ -141,6 +142,9 @@ void tree_pair_softening(int p, double *soft, double *zeta)
 #endif
 }
 
+#if defined(KETJU_MERGE_STARS)
+#define KJ_STAR_COLLISIONS /* Type-4 stars merge on contact (R1 + R2) inside MSTAR */
+#endif
 
 /* MSTAR is integrated in natural N-body units (pc, Msun, km/s) whatever the host units: its GBS convergence degrades
  * badly for e.g. kpc / 1e10 Msun states. Converted in place around ketju_run_integrator only; identity for pc/Msun/km/s hosts. */
@@ -202,6 +206,10 @@ struct ketju_mpi_particle {
     double Pos[3];
     double Vel[3];
     double Soft[2], Zeta[2]; /* softening/zeta as the tree uses them ([0] target, [1] secondary); fixed for stars under KETJU */
+#ifdef KJ_STAR_COLLISIONS
+    double CollRadius; /* contact radius, physical code length (0: never collides) */
+    double BirthTime, FormDens; /* StellarAge and physical formation density, for the collision log */
+#endif
 };
 
 /* ============================================================
@@ -213,6 +221,9 @@ struct ketju_extra_data {
     int Task;
     int Index;
     int Type;
+#ifdef KJ_STAR_COLLISIONS
+    double BirthTime, FormDens;
+#endif
 };
 
 /* ============================================================
@@ -309,6 +320,7 @@ struct KetjuRegion {
     /* integrator state (only allocated on compute root) */
     struct ketju_system *integrator;
     std::vector<ketju_extra_data> extra_data;
+    std::vector<double> coll_radius; /* MSTAR contact radii in its natural units (compute tasks) */
 
     /* CoM frame data (stored at setup, used in scatter) */
     double com_pos[3];
@@ -369,6 +381,7 @@ struct KjClock {
     void lap(int cat) {double n = my_second(), dt = n - t; cpu_charge_child(cat, dt); t = n;}
     ~KjClock() {lap(rest);}
 };
+static double KetjuCollisionEnergy = 0; /* energy change by star collisions since the last KETJU STATS line (compute roots) */
 
 /* Cache for gather_chain_centers result — shared between ketju_limit_timesteps
  * and ketju_find_regions to avoid a redundant MPI_Allgatherv on COMM_WORLD */
@@ -828,6 +841,21 @@ static void forward_com_to_affected_root(KetjuRegion &reg)
     }
 }
 
+#ifdef KJ_STAR_COLLISIONS
+/* Contact radius of a live Type-4 star, physical code length; 0 for remnants and dead or unsampled stars.
+ * Main-sequence R/Rsun = M^0.8 (M < 1 Msun), M^0.57 above (Demircan & Kahraman 1991). */
+static double ketju_star_contact_radius(int i)
+{
+    if(P[i].Type != 4 || P[i].Mass <= 0) return 0;
+    double R_cm;
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+    if(P[i].StarIdx > 0 && SingleStars.event_bits[single_star_slot(P[i].StarIdx)] != 0) {return 0;} /* a remnant */
+#endif
+    double M = P[i].Mass * UNIT_MASS_IN_SOLAR;
+    R_cm = 6.957e10 * ((M < 1) ? pow(M, 0.8) : pow(M, 0.57));
+    return R_cm / UNIT_LENGTH_IN_CGS; /* physical */
+}
+#endif
 
 /* counts[t] = members of this region on task t (gathered for all regions at once in ketju_find_regions) */
 static void setup_integrator(KetjuRegion &reg, const int *counts)
@@ -879,6 +907,15 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
             mp.Vel[j] = P[idx].Vel[j];
         }
         tree_pair_softening(idx, mp.Soft, mp.Zeta);
+#ifdef KJ_STAR_COLLISIONS
+        mp.CollRadius = ketju_star_contact_radius(idx);
+#ifdef GALSF
+        mp.BirthTime = (P[idx].Type == 4) ? P[idx].StellarAge : 0;
+#else
+        mp.BirthTime = 0;
+#endif
+        mp.FormDens = 0;
+#endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
 #endif
         k++;
@@ -976,6 +1013,9 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
             reg.extra_data[i].Task = reg.all_particles[i].Task;
             reg.extra_data[i].Index = reg.all_particles[i].Index;
             reg.extra_data[i].Type = reg.all_particles[i].Type;
+#ifdef KJ_STAR_COLLISIONS
+            reg.extra_data[i].BirthTime = reg.all_particles[i].BirthTime; reg.extra_data[i].FormDens = reg.all_particles[i].FormDens;
+#endif
         }
 #ifdef TEST_KETJU_REGION_LOG
         {
@@ -987,6 +1027,15 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 #endif
         reg.integrator->particle_extra_data = reg.extra_data.data();
         reg.integrator->particle_extra_data_elem_size = sizeof(ketju_extra_data);
+#ifdef KJ_STAR_COLLISIONS
+        {
+            int any = 0; reg.coll_radius.assign(reg.total_particle_count, 0.0);
+            for(int i = reg.num_pn_particles; i < reg.total_particle_count; i++) {
+                reg.coll_radius[i] = reg.all_particles[i].CollRadius * KJ_LEN_TO_NAT; if(reg.coll_radius[i] > 0) any = 1;
+            }
+            if(any) reg.integrator->collision_radius = reg.coll_radius.data();
+        }
+#endif
 
     }
 
@@ -1117,6 +1166,18 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 1);
         kj_mstar_run_integrator(reg.integrator, dt_physical * KJ_TIME_TO_NAT);
         kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 0);
+        if(reg.integrator->num_particles < reg.total_particle_count) {
+            /* MSTAR removed merged particles by shifting the arrays: the tail slots hold stale copies in its natural units.
+             * Zero them, and put all_particles in the order of extra_data, which MSTAR permuted the same way. */
+            struct ketju_system_physical_state *ps = reg.integrator->physical_state;
+            for(int i = reg.integrator->num_particles; i < reg.total_particle_count; i++) {
+                ps->mass[i] = 0; for(int j = 0; j < 3; j++) {ps->pos[i][j] = 0; ps->vel[i][j] = 0;}
+            }
+            std::unordered_map<KetjuUID, ketju_mpi_particle, KetjuUIDHash> by_id;
+            for(const ketju_mpi_particle &q : reg.all_particles) by_id[{q.ID, q.Child}] = q;
+            for(int i = 0; i < reg.total_particle_count; i++) reg.all_particles[i] = by_id[{reg.extra_data[i].ID, reg.extra_data[i].Child}];
+        }
+
         int n_steps = reg.integrator->perf->successful_steps + reg.integrator->perf->failed_steps;
         double dE = reg.integrator->perf->relative_energy_error;
         if(All.KetjuMaxStepCount > 0 && n_steps >= All.KetjuMaxStepCount) {
@@ -1143,7 +1204,101 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
  *  KETJU_MERGE_BH (Type 5+5, Type 5+4).
  * ============================================================ */
 
+/* Merger action descriptor (ketju_star_mergers.h) -- determined on affected root, broadcast to all affected tasks */
 
+#if defined(KETJU_MERGE_STARS)
+typedef star_merger_action ketju_merger_action;
+/* Survivor of each merged particle (final_mass 0): the particle MSTAR merged it into (merged_into, followed to a particle
+ * still alive), else the nearest survivor (sink coalescences found after the integration). Each survivor receives the
+ * metal mass of all its victims at once, so several mergers into one survivor conserve metals. */
+static void handle_mergers(KetjuRegion &reg,
+                           const std::vector<double> &final_abs_pos,
+                           const std::vector<double> &final_mass,
+                           const std::vector<double> &original_mass,
+                           const std::vector<KetjuUID> &merged_into)
+{
+    if(!reg.affected_tasks.is_member()) return;
+
+    /* ---- Phase 1: affected root determines merger pairs ---- */
+    int n_mergers = 0;
+    std::vector<ketju_merger_action> actions;
+
+    if(reg.affected_tasks.is_root()) {
+        int n = reg.total_particle_count;
+        std::unordered_map<KetjuUID, int, KetjuUIDHash> slot;
+        for(int i = 0; i < n; i++) slot[{reg.extra_data[i].ID, reg.extra_data[i].Child}] = i;
+        for(int i = 0; i < n; i++) {
+            if(final_mass[i] > 0) continue;
+
+            int type_merged = reg.extra_data[i].Type;
+            int survivor = -1;
+            if(merged_into[i].id) {
+                int j = i;
+                for(int hop = 0; hop < n && merged_into[j].id && final_mass[j] <= 0; hop++) {
+                    auto it = slot.find(merged_into[j]); if(it == slot.end()) break; j = it->second;
+                }
+                if(final_mass[j] > 0) survivor = j;
+            } else {
+                double min_dist2 = 1e60;
+                for(int j = 0; j < n; j++) {
+                    if(j == i || final_mass[j] <= 0) continue;
+                    double d2 = 0;
+                    for(int k = 0; k < 3; k++) {
+                        double dx = final_abs_pos[3*i + k] - final_abs_pos[3*j + k];
+                        d2 += dx * dx;
+                    }
+                    if(d2 < min_dist2) { min_dist2 = d2; survivor = j; }
+                }
+            }
+            if(survivor < 0) continue;
+
+            int type_survivor = reg.extra_data[survivor].Type;
+
+            int merge_allowed = 0;
+#ifdef KETJU_MERGE_STARS
+            if(type_merged == 4 && type_survivor == 4) merge_allowed = 1;
+#endif
+            if(!merge_allowed) continue;
+
+            double M_merged = original_mass[i];
+            double M_survivor_old = original_mass[survivor];
+            double M_survivor_new = final_mass[survivor];
+            if(M_survivor_new <= 0 || M_merged <= 0) continue;
+
+            ketju_merger_action act;
+            act.id_merged      = reg.extra_data[i].ID;
+            act.id_survivor    = reg.extra_data[survivor].ID;
+            act.type_merged    = type_merged;
+            act.type_survivor  = type_survivor;
+            act.task_merged    = reg.extra_data[i].Task;
+            act.task_survivor  = reg.extra_data[survivor].Task;
+            act.idx_merged     = reg.extra_data[i].Index;
+            act.idx_survivor   = reg.extra_data[survivor].Index;
+            act.M_merged       = M_merged;
+            act.M_survivor_old = M_survivor_old;
+            act.M_survivor_new = M_survivor_new;
+            actions.push_back(act);
+
+            printf("KETJU MERGER: ID %llu (Type %d, M=%g) merged into ID %llu (Type %d, M=%g->%g)\n",
+                   (unsigned long long)act.id_merged, type_merged, M_merged,
+                   (unsigned long long)act.id_survivor, type_survivor,
+                   M_survivor_old, M_survivor_new);
+        }
+        n_mergers = actions.size();
+    }
+
+    /* ---- Phase 2: broadcast merger list to all affected tasks ---- */
+    MPI_Bcast(&n_mergers, 1, MPI_INT, reg.affected_tasks.root, reg.affected_tasks.comm);
+    if(n_mergers == 0) return;
+
+    if(!reg.affected_tasks.is_root()) actions.resize(n_mergers);
+    MPI_Bcast(actions.data(), n_mergers * sizeof(ketju_merger_action), MPI_BYTE,
+              reg.affected_tasks.root, reg.affected_tasks.comm);
+
+    /* ---- Phases 3-4: victims' data to the survivors, merger products (ketju_star_mergers.cc) ---- */
+    star_mergers_apply(actions, "KETJU");
+}
+#endif /* KETJU_MERGE_STARS || KETJU_MERGE_BH */
 
 /* ============================================================
  *  PHASE 5b: Scatter results and apply velocity trick
@@ -1174,6 +1329,10 @@ struct ketju_scatter_particle {
     double Mass;
     double Pos[3];       /* absolute comoving position */
     double Vel[3];       /* CoM-relative peculiar velocity */
+#if defined(KETJU_MERGE_STARS)
+    double OriginalMass;
+    KetjuUID MergedInto; /* ID and child number of the particle MSTAR merged this one into (ID 0: none) */
+#endif
     double Sphere[4];    /* chain bounding sphere at end of step (comoving center, radius) */
 };
 
@@ -1225,6 +1384,10 @@ static void scatter_results(KetjuRegion &reg)
             sp.Index = reg.extra_data[i].Index;
             sp.Type  = reg.extra_data[i].Type;
             sp.Mass  = ps->mass[i];
+#if defined(KETJU_MERGE_STARS)
+            sp.OriginalMass = reg.all_particles[i].Mass;
+            sp.MergedInto = {0, 0};
+#endif
             for(int j = 0; j < 3; j++) {
                 /* physical -> comoving: use a_end since positions are at end of step */
                 sp.Pos[j] = reg.com_pos[j] + ps->pos[i][j] / a_end;
@@ -1239,6 +1402,33 @@ static void scatter_results(KetjuRegion &reg)
             for(int i = 0; i < n_live; i++) for(int j = 0; j < 3; j++) c[j] += ps->pos[i][j] / (a_end * n_live);
             for(int i = 0; i < n_live; i++) {double d2 = 0; for(int j = 0; j < 3; j++) {double d = ps->pos[i][j] / a_end - c[j]; d2 += d * d;} if(d2 > rmax2) rmax2 = d2;}
             for(int i = 0; i < n; i++) {for(int j = 0; j < 3; j++) {scatter_buf[i].Sphere[j] = reg.com_pos[j] + c[j];} scatter_buf[i].Sphere[3] = 1.01 * sqrt(rmax2) + MIN_REAL_NUMBER;}
+        }
+
+        /* log merger info from integrator */
+        if(reg.integrator->num_mergers > 0) {
+            for(int m = 0; m < reg.integrator->num_mergers; m++) {
+                struct ketju_bh_merger_info *info = &reg.integrator->merger_infos[m];
+#if defined(KETJU_MERGE_STARS)
+                scatter_buf[info->extra_index2].MergedInto = {reg.extra_data[info->extra_index1].ID, reg.extra_data[info->extra_index1].Child};
+#endif
+                if(info->is_collision) {
+                    double mu = KJ_MASS_TO_NAT, eu = mu * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT; /* MSTAR natural -> host units */
+                    KetjuCollisionEnergy += info->dE_collision / eu;
+#ifdef KJ_STAR_COLLISIONS
+                    const ketju_extra_data &x1 = reg.extra_data[info->extra_index1], &x2 = reg.extra_data[info->extra_index2];
+                    double age1 = evaluate_time_since_t_initial_in_Gyr(x1.BirthTime) * 1e9, age2 = evaluate_time_since_t_initial_in_Gyr(x2.BirthTime) * 1e9;
+                    double rho_y = (age1 < age2) ? x1.FormDens : x2.FormDens; /* younger star's formation density */
+                    double tff_yr = (rho_y > 0) ? sqrt(3. * M_PI / (32. * All.G * rho_y)) * UNIT_TIME_IN_YR : 0;
+                    printf("KETJU STAR COLLISION: ID %llu (M=%g) + ID %llu (M=%g) at t=%g, dE=%g sibling=%d dt_birth=%g yr (%g t_ff) age_younger=%g yr\n",
+                           (unsigned long long)x1.ID, info->m1 / mu, (unsigned long long)x2.ID, info->m2 / mu, All.Time, info->dE_collision / eu,
+                           (int)(x1.ID == x2.ID), fabs(age1 - age2), (tff_yr > 0) ? fabs(age1 - age2) / tff_yr : -1., DMIN(age1, age2));
+#endif
+                    continue;
+                }
+                printf("KETJU BH MERGER [region]: m1=%g m2=%g -> m_rem=%g, chi1=%g chi2=%g -> chi_rem=%g, v_kick=%g\n",
+                       info->m1, info->m2, info->m_remnant,
+                       info->chi1, info->chi2, info->chi_remnant, info->v_kick);
+            }
         }
 
     }
@@ -1294,6 +1484,44 @@ static void scatter_results(KetjuRegion &reg)
                  reg.affected_tasks.root, reg.affected_tasks.comm);
 
     /* ---- Phase 4: each task applies velocity trick to its particles ---- */
+    /* also collect full particle data on affected root for stellar collision check + mergers */
+    std::vector<double> final_abs_pos, final_rel_vel, final_mass;
+#if defined(KETJU_MERGE_STARS)
+    std::vector<double> original_mass;
+    std::vector<KetjuUID> merged_into;
+#endif
+
+    /* affected root keeps the sorted scatter_buf for collision/merger checks */
+    if(reg.affected_tasks.is_root()) {
+        final_abs_pos.resize(3 * n);
+        final_rel_vel.resize(3 * n);
+        final_mass.resize(n);
+#if defined(KETJU_MERGE_STARS)
+        original_mass.resize(n); merged_into.resize(n);
+#endif
+        /* also rebuild extra_data and all_particles on root from scatter_buf for collision/merger code */
+        reg.extra_data.resize(n);
+        reg.all_particles.resize(n);
+        for(int i = 0; i < n; i++) {
+            final_abs_pos[3*i]   = scatter_buf[i].Pos[0];
+            final_abs_pos[3*i+1] = scatter_buf[i].Pos[1];
+            final_abs_pos[3*i+2] = scatter_buf[i].Pos[2];
+            final_rel_vel[3*i]   = scatter_buf[i].Vel[0];
+            final_rel_vel[3*i+1] = scatter_buf[i].Vel[1];
+            final_rel_vel[3*i+2] = scatter_buf[i].Vel[2];
+            final_mass[i] = scatter_buf[i].Mass;
+#if defined(KETJU_MERGE_STARS)
+            original_mass[i] = scatter_buf[i].OriginalMass; merged_into[i] = scatter_buf[i].MergedInto;
+#endif
+            reg.extra_data[i].ID    = scatter_buf[i].ID;
+            reg.extra_data[i].Child = scatter_buf[i].Child;
+            reg.extra_data[i].Task  = scatter_buf[i].Task;
+            reg.extra_data[i].Index = scatter_buf[i].Index;
+            reg.extra_data[i].Type  = scatter_buf[i].Type;
+            reg.all_particles[i].Mass = scatter_buf[i].Mass;
+        }
+    }
+
     for(int i = 0; i < my_count; i++) {
         ketju_scatter_particle &sp = my_particles[i];
         int idx = sp.Index;
@@ -1354,6 +1582,9 @@ static void scatter_results(KetjuRegion &reg)
 
     /* handle mergers (integrator mergers + stellar collisions) — merger decisions
      * are made on affected root then broadcast to all affected tasks for execution */
+#if defined(KETJU_MERGE_STARS)
+    handle_mergers(reg, final_abs_pos, final_mass, original_mass, merged_into);
+#endif
 }
 
 /* ============================================================
@@ -1782,6 +2013,15 @@ void ketju_run_integration(void)
     ketju_tree_rebuild_rule();
     ketju_report_stats(0);
 
+    if(ThisTask == 0) {
+        int total_mergers = 0;
+        for(size_t r = 0; r < ActiveRegions.size(); r++) {
+            if(ActiveRegions[r].integrator && ActiveRegions[r].integrator->num_mergers > 0)
+                total_mergers += ActiveRegions[r].integrator->num_mergers;
+        }
+        if(total_mergers > 0)
+            printf("KETJU: %d merger(s) this step\n", total_mergers);
+    }
 }
 
 
