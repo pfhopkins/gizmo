@@ -110,6 +110,7 @@ def compute_profiles(snap_file):
         star_pos = F["PartType5/Coordinates"][0]
         r = np.linalg.norm(pos - star_pos, axis=1)
         xe = F["PartType0/ElectronAbundance"][:]
+        hii = F["PartType0/HII"][:] if "PartType0/HII" in F else np.full(xe.shape, np.nan)
         T_gas = F["PartType0/Temperature"][:]
         rho = F["PartType0/Density"][:]
         mass = F["PartType0/Masses"][:]
@@ -137,6 +138,8 @@ def compute_profiles(snap_file):
     }
     profiles["_r"] = r
     profiles["_xe"] = xe
+    profiles["_hii"] = hii
+    profiles["_vol"] = mass / rho
     profiles["_urad_NUV"] = urad_NUV
     profiles["_urad_ONIR"] = urad_ONIR
     profiles["_T"] = T_gas
@@ -154,31 +157,25 @@ def assert_hii_temperature(profiles, lo=T_HII_MIN, hi=T_HII_MAX):
     return T_hii_peak
 
 
-def assert_subcycle_matches_baseline(base, var, base_rif, var_rif, rel=0.1, rif_rel=0.1, min_bins=3):
+def assert_subcycle_matches_baseline(base, var, rel=0.1, rif_rel=0.1):
     """A subcycled variant must reproduce the non-subcycled baseline.
 
-    Compares xe only on radial bins that are finite AND ionized (xe > 0.5) in BOTH runs,
-    and checks the ionization-front position separately via its radius. This is robust to
-    two features of the (30 Msun) setup that a naive per-bin comparison chokes on:
-      - the evacuated interior leaves the innermost bins empty -> binned_statistic returns
-        NaN there, which is neither a match nor a meaningful mismatch;
-      - the single ionization-front bin has xe swinging 1->0, so a sub-bin difference in
-        front position blows up the per-bin relative diff even when the front *position*
-        (r_IF) agrees to a few percent.
-    The interior xe and r_IF together pin down "does subcycling change the answer?" without
-    the binning artifacts. (Cross-variant urad/T are still shown in the comparison plots.)"""
-    interior = (np.isfinite(base["xe"]) & (base["xe"] > 0.5)
-                & np.isfinite(var["xe"]) & (var["xe"] > 0.5))
-    n = int(interior.sum())
-    assert n >= min_bins, \
-        f"only {n} ionized-interior bins common to baseline & variant (need >= {min_bins})"
-    b, v = base["xe"][interior], var["xe"][interior]
-    assert np.allclose(v, b, rtol=rel), \
-        f"interior xe max rel diff = {np.max(np.abs(v - b) / np.abs(b)):.3f} > {rel}"
-    assert np.isfinite(base_rif) and np.isfinite(var_rif), \
-        f"ionization-front radius not found (baseline={base_rif}, variant={var_rif})"
-    assert abs(var_rif - base_rif) <= rif_rel * base_rif, \
-        f"ionization-front radius {var_rif:.2f} pc vs baseline {base_rif:.2f} pc (> {rif_rel:.0%} apart)"
+    Fits xe(r) = x_in / (1 + exp((r - r_if)/w)) to each run's unbinned cells
+    (fit_ionization_profile) and compares the interior ionization x_in and the front radius
+    r_if. A fit sees the front as a position and a width, so a front that moves by a fraction
+    of a bin cannot swing a per-bin value the way a binned comparison does. The fit is
+    weighted by cell volume: the dense front shell holds most of the cells, and an unweighted
+    fit lets its partly ionized cells set x_in. The width w is printed, not asserted."""
+    (b_rif, b_w, b_x), b_err = fit_ionization_profile(base["_r"], base["_xe"], base["_hii"], base["_vol"])
+    (v_rif, v_w, v_x), v_err = fit_ionization_profile(var["_r"], var["_xe"], var["_hii"], var["_vol"])
+    print(f"xe fit baseline: x_in={b_x:.4f}+-{b_err[2]:.1e} r_if={b_rif:.3f}+-{b_err[0]:.1e} pc "
+          f"w={b_w:.4f}+-{b_err[1]:.1e} pc")
+    print(f"xe fit variant:  x_in={v_x:.4f}+-{v_err[2]:.1e} r_if={v_rif:.3f}+-{v_err[0]:.1e} pc "
+          f"w={v_w:.4f}+-{v_err[1]:.1e} pc")
+    assert abs(v_x - b_x) <= rel * b_x, \
+        f"interior xe {v_x:.3f} vs baseline {b_x:.3f} (> {rel:.0%} apart)"
+    assert abs(v_rif - b_rif) <= rif_rel * b_rif, \
+        f"ionization-front radius {v_rif:.2f} pc vs baseline {b_rif:.2f} pc (> {rif_rel:.0%} apart)"
 
 
 # --------------------------------------------------------------------------------------
@@ -256,11 +253,11 @@ def make_comparison_plots(all_profiles, test_dir):
         plt.close()
 
 
-def _ionization_sigmoid(r, r_if, w):
-    """Ionization fraction vs radius: ~1 (ionized) inside, ~0 (neutral) outside, crossing
-    0.5 at the I-front radius r_if with transition width w. The argument is clipped so the
+def _ionization_sigmoid(r, r_if, w, x_in=1.0):
+    """Ionization fraction vs radius: x_in (ionized) inside, ~0 (neutral) outside, crossing
+    x_in/2 at the I-front radius r_if with transition width w. The argument is clipped so the
     exp can't overflow on cells far from the front."""
-    return 1.0 / (1.0 + np.exp(np.clip((r - r_if) / w, -50.0, 50.0)))
+    return x_in / (1.0 + np.exp(np.clip((r - r_if) / w, -50.0, 50.0)))
 
 
 def _ifront_bin_guess(r, hii):
@@ -282,6 +279,28 @@ def _ifront_bin_guess(r, hii):
     x0, x1 = np.log(cc[i]), np.log(cc[i + 1])
     y0, y1 = mh[i], mh[i + 1]
     return np.exp(x0 + (0.5 - y0) * (x1 - x0) / (y1 - y0))
+
+
+def fit_ionization_profile(r, xe, hii, vol):
+    """Fit _ionization_sigmoid (r_if, w, x_in) to the unbinned electron abundance xe vs radius,
+    each cell weighted by its volume vol (so the fit follows the radial profile, not the cell
+    count). Seeded at the HII 50% crossing, w = 0.1 r_if and the median xe of cells with
+    HII > 0.9. Returns (popt, perr), perr = sqrt(diag(pcov)). A missing front or a failed fit
+    fails the test."""
+    guess = _ifront_bin_guess(r, hii)
+    assert np.isfinite(guess), "no ionization front to fit: HII has no clean 50% crossing"
+    ionized = hii > 0.9
+    assert ionized.any(), "no ionized cells (HII > 0.9) to seed the interior xe"
+    try:
+        popt, pcov = curve_fit(
+            _ionization_sigmoid, r, xe,
+            p0=[guess, 0.1 * guess, float(np.median(xe[ionized]))], sigma=1.0 / np.sqrt(vol),
+            bounds=([R_BINS[0], 1e-3, 1e-6], [R_BINS[-1], R_BINS[-1], 2.0]),
+            maxfev=10000,
+        )
+    except (RuntimeError, ValueError) as err:
+        raise AssertionError(f"xe(r) sigmoid fit failed: {err}") from None
+    return popt, np.sqrt(np.diag(pcov))
 
 
 def compute_ifront_radius(snap_file):

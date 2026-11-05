@@ -45,18 +45,15 @@ def test_HII_region_subcycle(num_mpi_ranks, num_omp_threads, extra_config_flags)
 
     _all_profiles[label] = profiles
     _all_ifront[label] = evo
-    rif = evo[1][-1]  # final-snapshot I-front radius (last point of the evolution)
-
     if not extra_config_flags:
         _baseline["profiles"] = profiles
-        _baseline["rif"] = rif
     else:
         base = _baseline.get("profiles")
         if base is None:
             pytest.skip("baseline must run first")
-        # Subcycling must reproduce the baseline: interior ionization state + front
-        # position (robust to the evacuated interior and the single fuzzy front bin).
-        hii.assert_subcycle_matches_baseline(base, profiles, _baseline["rif"], rif)
+        # Subcycling must reproduce the baseline: interior ionization and front radius of a
+        # sigmoid fit to xe(r).
+        hii.assert_subcycle_matches_baseline(base, profiles)
 
     # After the last variant, generate the cross-variant comparison plots
     if len(_all_profiles) == 3:
