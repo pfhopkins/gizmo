@@ -2195,6 +2195,9 @@
 #endif
 #define EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
 #endif
+#ifdef KETJU_REGULARIZATION
+#include "../gravity/ketju/ketju_precompiler_logic.h"
+#endif
 
 /* last, after every block that can switch on an equation of state (GRAIN_FLUID_PROMOTION turns on EOS_TILLOTSON above) */
 #if defined(HYDRO_KERNEL_SURFACE_VOLCORR) && (defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS))
