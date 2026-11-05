@@ -9,33 +9,56 @@ import numpy as np
 from scipy.interpolate import interp1d
 from matplotlib import pyplot as plt
 import h5py
-from os import chdir
+from os import chdir, getcwd
 from os.path import isfile
 from urllib.request import urlretrieve
-from gizmo.test import build_gizmo_for_test, run_test, clean_test_outputs, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot
+from gizmo.test import build_gizmo_for_test, run_test, stash_baseline_output, finalize_variant_output, clean_test_outputs, assert_final_time, assert_energy_conserved, default_mpi_ranks, default_omp_threads, get_final_snapshot, variant_suffix
 
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
+# Both solvers conserve thermal+kinetic energy to 1.3e-6 here (measured 2026-11-05); 1e-4 leaves margin. A NaN
+# CD10 viscosity limiter for gas at rest once wiped out the SPH thermal energy at the first kick (E: 118 -> 0.5).
+ENERGY_TOL = 1e-4
+# SPH L1 errors measured 2026-11-05: rho 0.0071, vel 0.060, u 0.0051 (MFM: 0.0057, 0.042, 0.0038); ~2x margin
+SPH_L1_TOL = (0.015, 0.12, 0.012)
+# artificial viscosity/conductivity parameters, read only by SPH builds
+SPH_PARAMS = {"ArtBulkViscConst": 1.0, "ArtCondConstant": 0.25, "ViscosityAMin": 0.05, "ViscosityAMax": 2.0}
+
+# per variant: extra Config flags, params overrides, L1 tolerances (rho, vel, u), energy-conservation tolerance
+VARIANTS = [
+    pytest.param((), None, (0.05, 0.1, 0.1), ENERGY_TOL, id="mfm"),
+    pytest.param(("HYDRO_DENSITY_SPH",), SPH_PARAMS, SPH_L1_TOL, ENERGY_TOL, id="sph"),
+]
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=4),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-def test_shocktube(num_mpi_ranks, num_omp_threads):
+@pytest.mark.parametrize("extra_config_flags,param_overrides,l1_tol,energy_tol", VARIANTS)
+def test_shocktube(num_mpi_ranks, num_omp_threads, extra_config_flags, param_overrides, l1_tol, energy_tol):
     test_name = "shocktube"
-    clean_test_outputs(test_name)
-    build_gizmo_for_test(test_name, num_omp_threads)
-    chdir(f"test/{test_name}/")
+    clean_test_outputs(test_name, extra_config_flags)
 
-    # Download ICs (non-standard name) and exact solution
-    for f in ("shocktube_ics_emass.hdf5", "shocktube_exact.txt"):
-        if not isfile(f):
-            urlretrieve(WEBSITE + f, f)
+    build_gizmo_for_test(test_name, num_omp_threads, extra_config_flags)
+    stash_baseline_output(test_name, extra_config_flags)
+    cwd = getcwd()
+    try:
+        chdir(f"test/{test_name}/")
+        try:
+            # Download ICs (non-standard name, so not via download_test_files) and exact solution
+            for f in ("shocktube_ics_emass.hdf5", "shocktube_exact.txt"):
+                if not isfile(f):
+                    urlretrieve(WEBSITE + f, f)
+            run_test(test_name, num_mpi_ranks, num_omp_threads, param_overrides=param_overrides)
+        finally:
+            chdir(cwd)
+    finally:
+        finalize_variant_output(test_name, extra_config_flags)
 
-    run_test(test_name, num_mpi_ranks, num_omp_threads)
-    chdir("../../")
-
-    final_snap = get_final_snapshot(test_name)
+    final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
+    # closed periodic box without gravity: thermal + kinetic is the whole budget
+    e_ratio = assert_energy_conserved(test_name, extra_config_flags, tol=energy_tol)
+    print(f"shocktube[{extra_config_flags}]: E_final/E_initial - 1 = {e_ratio - 1:.3e}")
 
     # Load simulation data
     with h5py.File(final_snap, "r") as F:
@@ -77,9 +100,11 @@ def test_shocktube(num_mpi_ranks, num_omp_threads):
         plt.xlabel("x")
         plt.ylabel(label)
         plt.legend()
-        plt.savefig(f"test/{test_name}/{label}.png")
+        plt.savefig(f"test/{test_name}/{label}{variant_suffix(extra_config_flags)}.png")
         plt.close()
 
-    assert L1_rho < 0.05, f"Density L1 error {L1_rho:.4f} exceeds tolerance"
-    assert L1_vel < 0.1, f"Velocity L1 error {L1_vel:.4f} exceeds tolerance"
-    assert L1_u < 0.1, f"Internal energy L1 error {L1_u:.4f} exceeds tolerance"
+    print(f"shocktube[{extra_config_flags}]: L1 rho={L1_rho:.4f} vel={L1_vel:.4f} u={L1_u:.4f}")
+    tol_rho, tol_vel, tol_u = l1_tol
+    assert L1_rho < tol_rho, f"Density L1 error {L1_rho:.4f} exceeds tolerance {tol_rho}"
+    assert L1_vel < tol_vel, f"Velocity L1 error {L1_vel:.4f} exceeds tolerance {tol_vel}"
+    assert L1_u < tol_u, f"Internal energy L1 error {L1_u:.4f} exceeds tolerance {tol_u}"

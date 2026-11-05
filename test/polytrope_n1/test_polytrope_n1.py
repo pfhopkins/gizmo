@@ -110,9 +110,7 @@ VARIANTS = [
                                          "a density gradient as a free surface and inflates the "
                                          "kernel density of the outer 40% of the mass")),
     pytest.param(("KERNEL_CRK_FACES",), id="crk_faces"),
-    # No density-SPH variant here: HYDRO_DENSITY_SPH currently zeroes the internal energy at the
-    # first kick (artificial conductivity x CD10 switch), which makes the star free-fall at a
-    # collapsing timestep. The cheap place to guard SPH is the shocktube test's sph variant.
+    # No density-SPH variant here: SPH is guarded cheaply by the shocktube test's sph variant.
 ]
 
 
