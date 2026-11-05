@@ -920,7 +920,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         int k_CRegy; for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++) /* initialize CR energy and other related terms to nil */
         {
             CellP[j].CosmicRayEnergyPred[k_CRegy]=CellP[j].CosmicRayEnergy[k_CRegy]=CellP[j].DtCosmicRayEnergy[k_CRegy]=0;
-#if defined(TRANSPORT_SUBCYCLE) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) && !defined(CRFLUID_EVOLVE_SPECTRUM)
+#if (defined(TRANSPORT_SUBCYCLE) || defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) && !defined(CRFLUID_EVOLVE_SPECTRUM)
             CellP[j].DtCosmicRayEnergy_StreamingLoss[k_CRegy]=0;
 #endif
 #ifdef CRFLUID_EVOLVE_SPECTRUM

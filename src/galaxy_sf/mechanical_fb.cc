@@ -232,6 +232,9 @@ void verify_and_assign_local_mechfb_integrals(void)
                 double cr_tot = 0;
                 for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) cr_tot += LocalGasMechFBInfoTemp[j].CR_energy_injected[kb];
                 if(cr_tot > 0) {
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+                    ledger_add(LEDGER_E_CR_INJECTED_SN, LocalGasMechFBInfoTemp[j].CR_energy_from_sn); ledger_add(LEDGER_E_CR_INJECTED_WIND, cr_tot - LocalGasMechFBInfoTemp[j].CR_energy_from_sn);
+#endif
                     /* compute unit injection direction from weighted sum */
                     double dmag_sq = 0;
                     for(int c = 0; c < 3; c++) dmag_sq += LocalGasMechFBInfoTemp[j].CR_dir_weighted[c] * LocalGasMechFBInfoTemp[j].CR_dir_weighted[c];

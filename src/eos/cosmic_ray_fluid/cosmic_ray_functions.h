@@ -959,6 +959,14 @@ KOKKOS_INLINE_FUNCTION void cosmic_ray_inject_from_resolved_shocks(int i, double
 #endif
 }
 
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
+#define CR_LEDGER_ON_HOST(...) __VA_ARGS__
+void ledger_cr_kick(int i, int k, double dt, double eCR_new); /* ledger.cc: this header comes before the row names */
+void ledger_cr_exchange(double dCR_div);
+void ledger_cr_shock(double dE);
+#else
+#define CR_LEDGER_ON_HOST(...)
+#endif
 /* routine to do the drift/kick operations for CRs: mode=0 is kick, mode=1 is drift */
 #if !defined(CRFLUID_EVOLVE_SCATTERINGWAVES)
 KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell)
@@ -1057,6 +1065,9 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         if(dCR > dCRmax) {dCR=dCRmax;} // don't allow excessively large values
         if(dCR < -eCR_tmp) {dCR=-eCR_tmp;} // don't allow it to go negative
         double eCR_0, eCR_00; eCR_00 = eCR_tmp; eCR_tmp += dCR; if((eCR_tmp<0)||(isnan(eCR_tmp))) {eCR_tmp=0;} // check against energy going negative or nan
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+        CR_LEDGER_ON_HOST(if(mode==0) {ledger_cr_kick(i, k_CRegy, dt_entr, eCR_tmp);})
+#endif
         if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy]=eCR_tmp;} else {cell[i].CosmicRayEnergyPred[k_CRegy]=eCR_tmp;} // updated energy
         eCR_0 = eCR_tmp; // save this value for below
 
@@ -1081,12 +1092,21 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         if(mode==0) {cell[i].InternalEnergy = uf;} else {cell[i].InternalEnergyPred = uf;} // update gas
 #if !defined(CRFLUID_EVOLVE_SPECTRUM)
         if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy] += dCR_div;} else {cell[i].CosmicRayEnergyPred[k_CRegy] += dCR_div;} // update CRs: note if explicitly evolving spectrum, this is done separately below //
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+        CR_LEDGER_ON_HOST(if(mode==0) {ledger_cr_exchange(dCR_div);})
+#endif
 #endif
 #endif
 
     } // loop over CR bins complete
 
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(CRFLUID_INJECTION_AT_SHOCKS)
+    double e_cr_before_shock = 0; for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) {e_cr_before_shock += cell[i].CosmicRayEnergy[kb];}
+#endif
     cosmic_ray_inject_from_resolved_shocks(i, dt_entr, mode, pp, cell);
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(CRFLUID_INJECTION_AT_SHOCKS)
+    CR_LEDGER_ON_HOST(if(mode==0) {double e1 = -e_cr_before_shock; for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) {e1 += cell[i].CosmicRayEnergy[kb];} ledger_cr_shock(e1);})
+#endif
 #if defined(SINK_CR_INJECTION_AT_TERMINATION)
     if(cell[i].Sink_CR_Energy_Available_For_Injection > 0) {
         /* need to determine whether or not sufficient deceleration has occurred in order to inject CRs from our 'reservoir */

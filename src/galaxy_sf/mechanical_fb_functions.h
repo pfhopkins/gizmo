@@ -215,6 +215,9 @@ static void inject_cosmic_rays_into_delta(
     }
     if(sum_dEcr > 0) {
         for(int c = 0; c < 3; c++) Kokkos::atomic_add(&gd->CR_dir_weighted[c], sum_dEcr * dir[c]);
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+        if(source_type == 0) {Kokkos::atomic_add(&gd->CR_energy_from_sn, sum_dEcr);}
+#endif
     }
 }
 #endif /* COSMIC_RAY_FLUID && GALSF_FB_FIRE_STELLAREVOLUTION */

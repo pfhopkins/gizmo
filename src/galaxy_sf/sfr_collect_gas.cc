@@ -73,6 +73,9 @@ static SscDonorSums *ssc_donor_sums(int n_gas)
 /* ---- Spec hooks ---- */
 
 static int ssc_is_pending_star(int i) {return (P[i].Type == 4 && P[i].Mass == 0);}
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(COSMIC_RAY_FLUID)
+static double ssc_local_cr_energy(void) {double e = 0; for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0) {for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {e += CellP[i].CosmicRayEnergy[k];}}} return e;}
+#endif
 bool SscSpecBase::is_active(int i) {return ssc_is_pending_star(i);}
 
 double SscSpecBase::search_radius(const neighbor_loop_args& args, int active_slot, int)
@@ -240,7 +243,13 @@ double single_stars_collect_gas(long long tot_spawned)
             x.R = t.R; list.push_back(t.i); in.push_back(x);
         }
         SscSpecBase::Aux aux = {nullptr, nullptr, counters, nullptr, counters + 1, 0};
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(COSMIC_RAY_FLUID)
+        double e_cr_0 = ssc_local_cr_energy();
+#endif
         ssc_run<SscApplySpec>(list, in, aux);
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(COSMIC_RAY_FLUID)
+        ledger_add(LEDGER_E_CR_COLLECTED, e_cr_0 - ssc_local_cr_energy());
+#endif
     }
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(counters);
 

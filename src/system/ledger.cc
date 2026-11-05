@@ -82,10 +82,25 @@ void ledger_add(int row, double x) /* from inside a module's (threaded) loop; no
     ledger_add_exact(&ledger_thread[(size_t) t * LEDGER_NROWS + row], x);
 }
 
+#ifdef COSMIC_RAY_FLUID
+/* the kick of CR bin k of cell i, before the new energy eCR_new is stored: fluxes, streaming, and what the cap and the zero floor change */
+void ledger_cr_kick(int i, int k, double dt, double eCR_new)
+{
+    double loss = 0, d = CellP[i].DtCosmicRayEnergy[k] * dt;
+#if !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) && !defined(CRFLUID_EVOLVE_SPECTRUM)
+    loss = -CellP[i].DtCosmicRayEnergy_StreamingLoss[k] * dt;
+#endif
+    ledger_add(LEDGER_E_CR_STREAMING, loss); ledger_add(LEDGER_E_CR_TRANSPORT, d + loss);
+    ledger_add(LEDGER_E_CR_CLIP, eCR_new - (CellP[i].CosmicRayEnergy[k] + d));
+}
+void ledger_cr_exchange(double dCR_div) {ledger_add(LEDGER_E_CR_EXCHANGE, dCR_div);}
+void ledger_cr_shock(double dE) {ledger_add(LEDGER_E_CR_SHOCK, dE);}
+#endif
+
 static void ledger_state_rows(void) /* the state rows: sums over this rank's particles now */
 {
     for(int r = 0; r < LEDGER_NROWS; r++) {if(ledger_row_is_state[r]) {memset(&ledger_total[r], 0, sizeof(ledger_total[r]));}}
-#if defined(SGCHEM) && defined(COSMIC_RAY_FLUID)
+#ifdef COSMIC_RAY_FLUID
     for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0) {for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {ledger_add_exact(&ledger_total[LEDGER_E_CR], CellP[i].CosmicRayEnergy[k]);}}}
 #endif
 #ifdef GALSF

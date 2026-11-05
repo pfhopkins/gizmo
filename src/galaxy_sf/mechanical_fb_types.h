@@ -42,6 +42,9 @@ struct MechFBGasDelta
     double CR_number_injected[N_CR_PARTICLE_BINS];
 #endif
     double CR_dir_weighted[3];
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    double CR_energy_from_sn; /* the supernova part of the sum over CR_energy_injected, for the ledger */
+#endif
 #endif
 };
 

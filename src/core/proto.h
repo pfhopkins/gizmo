@@ -1253,8 +1253,18 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #define LEDGER_ROWS_SINGLE_STARS(X)
 #endif
 #if defined(SGCHEM) && defined(COSMIC_RAY_FLUID)
-#define LEDGER_ROWS_CR(X) X(LEDGER_E_CR, "E_CR_erg", UNIT_ENERGY_IN_CGS, 1) X(LEDGER_E_CR_LOSSES, "E_cr_losses_erg", UNIT_ENERGY_IN_CGS, 0) \
+#define LEDGER_ROWS_CR_SGCHEM(X) X(LEDGER_E_CR_LOSSES, "E_cr_losses_erg", UNIT_ENERGY_IN_CGS, 0) \
     X(LEDGER_E_CR_IONISATION_FROM_FLUID, "E_cr_ionisation_from_fluid_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CHEM_CR_IONISATION, "E_chem_cr_ionisation_heating_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_CR_SGCHEM(X)
+#endif
+#ifdef COSMIC_RAY_FLUID /* every change of the CR energy has its row: E_CR - E_CR(0) = injected_sn + injected_wind + shock + clip + exchange + transport - streaming - collected - losses - ionisation_from_fluid */
+#define LEDGER_ROWS_CR(X) X(LEDGER_E_CR, "E_CR_erg", UNIT_ENERGY_IN_CGS, 1) LEDGER_ROWS_CR_SGCHEM(X) \
+    X(LEDGER_E_CR_OFFERED, "E_cr_offered_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_INJECTED_SN, "E_cr_injected_sn_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_INJECTED_WIND, "E_cr_injected_wind_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_SHOCK, "E_cr_shock_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_CLIP, "E_cr_clip_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_EXCHANGE, "E_cr_exchange_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_TRANSPORT, "E_cr_transport_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_STREAMING, "E_cr_streaming_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_COLLECTED, "E_cr_collected_erg", UNIT_ENERGY_IN_CGS, 0)
 #else
 #define LEDGER_ROWS_CR(X)
 #endif
