@@ -359,7 +359,8 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
 @pytest.mark.parametrize("num_mpi_ranks", (2,))
 @pytest.mark.parametrize("num_omp_threads", (1,))
 @pytest.mark.parametrize("extra_config_flags", [
-    pytest.param((), id="starforge_defaults", marks=pytest.mark.xfail(strict=True, reason=(
+    # run=False: ~40 min at 2 ranks x 1 thread on Genoa (trunk 2190 s, PR 2525 s).
+    pytest.param((), id="starforge_defaults", marks=pytest.mark.xfail(strict=True, run=False, reason=(
         "fixed by pr/fewbody-multirank: at 2 ranks Hermite passes see foreign leaves at their tree-build "
         "state, |dE/E| 0.793"))),
     # On request only: this records how far KDK drifts, which is the comparison Hermite
