@@ -233,7 +233,11 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
      in.abundc *= 1 - (1 - n18_depl[2]) * yd; in.abundN *= 1 - (1 - n18_depl[3]) * yd; in.abundo *= 1 - (1 - n18_depl[4]) * yd; in.abundNe *= 1 - (1 - n18_depl[5]) * yd;
      in.abundMg *= 1 - (1 - n18_depl[6]) * yd; in.abundsi *= 1 - (1 - n18_depl[7]) * yd; in.abundS *= 1 - (1 - n18_depl[8]) * yd; in.abundFe *= 1 - (1 - n18_depl[9]) * yd;}
 #endif
+#if defined(RADTRANSFER) && defined(RT_INFRARED)
+    in.tdust = CellP[i].Dust_Temperature; /* the solver owns it */
+#else
     in.tdust = CellP[i].DustTemp;
+#endif
     double energy = rho * u_code; /* energy density */
     if(energy < rho * All.MinEgySpec) {energy = rho * All.MinEgySpec;}
     rho *= UNIT_DENSITY_IN_CGS;
@@ -324,6 +328,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     CellP[i].ShieldFacDust = (float) out.fac_shield_dust;
 #endif
     CellP[i].Ne = sgchem_electrons(ab, &in);
+#if defined(RADTRANSFER) && defined(RT_INFRARED)
+    sgchem_rt_cooling_to_infrared(i, out.lambda, temp);
+#endif
     return energy * pow(UNIT_LENGTH_IN_CGS, 3) / UNIT_ENERGY_IN_CGS / (rho / UNIT_DENSITY_IN_CGS);
 }
 

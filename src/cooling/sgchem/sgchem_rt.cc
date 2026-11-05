@@ -111,4 +111,17 @@ void sgchem_rt_absorbers(int i, const double *ab)
 }
 #endif /* RT_CHEM_PHOTOION */
 
+#ifdef RT_INFRARED
+/* the gas's radiative losses of this step go to the infrared bin; the solver's balance sets the dust temperature. Gas-dust exchange
+   (0) is in rt_ir_lambdadust, CR and photoelectric heating (10, 11) are no cooling */
+void sgchem_rt_cooling_to_infrared(int i, const double *lambda, double temp)
+{
+    double nH = CellP[i].nHcgs(), L = 0;
+    for(int k = 0; k < 28; k++) {if(k != 0 && k != 10 && k != 11 && isfinite(lambda[k])) {L += lambda[k];}}
+    CellP[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] = L / (nH * nH);
+    rt_ir_lambdadust(i, temp, P, CellP);
+    CellP[i].DustTemp = CellP[i].Dust_Temperature;
+}
+#endif
+
 #endif /* SGCHEM && RADTRANSFER */
