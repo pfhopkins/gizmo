@@ -24,6 +24,7 @@ void GravAccel_GrowingDiskPotential(void);
 void GravAccel_StaticNFW(void);
 void GravAccel_RayleighTaylorTest(void);
 void GravAccel_ShearingSheet(void);
+void GravAccel_StratifiedDisk(void);
 void GravAccel_PaczynskiWiita(void);
 void GravAccel_RDITestProblem(void);
 void GravAccel_SpecialCustomNuclearZoomBoundaryConditions(void);
@@ -63,8 +64,27 @@ void add_analytic_gravitational_forces()
 #ifdef BOX_SHEARING
     GravAccel_ShearingSheet();            // adds the tidal term for the shearing-sheet approximation
 #endif
+#ifdef GRAVITY_ANALYTIC_STRATIFIED_DISK
+    GravAccel_StratifiedDisk();           // vertical stellar-disk + dark-matter gravity for a local patch of a galactic disk
+#endif
 #ifdef GRAIN_RDI_TESTPROBLEM
     GravAccel_RDITestProblem();           // vertical gravity+external acceleration for grain-RDI-wind tests
+#endif
+}
+
+
+
+/* vertical gravity of the stellar disk and dark-matter halo at galactocentric radius R0, in the form of Kim & Ostriker (2017, TIGRESS):
+   Phi_* = 2 pi G Sigma_* (sqrt(z^2 + z_*^2) - z_*),  Phi_DM = 2 pi G rho_DM R0^2 ln(1 + z^2/R0^2),  z from the box mid-plane. non-comoving only. */
+void GravAccel_StratifiedDisk()
+{
+#ifdef GRAVITY_ANALYTIC_STRATIFIED_DISK
+    const double gstar = 2.*M_PI*All.G*All.StratDisk_SigmaStar, gdm = 4.*M_PI*All.G*All.StratDisk_RhoDM, zs2 = All.StratDisk_ZStar*All.StratDisk_ZStar, iR02 = 1./(All.StratDisk_R0*All.StratDisk_R0);
+    for(int i : ActiveParticleList)
+    {
+        double z = P[i].Pos[2] - boxHalf_Z;
+        P[i].GravAccel[2] -= gstar * z / sqrt(z*z + zs2) + gdm * z / (1. + z*z*iR02);
+    }
 #endif
 }
 

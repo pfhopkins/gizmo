@@ -1159,6 +1159,12 @@ void read_parameter_file(char *fname)
 #endif // closes DEVELOPER_MODE check
 
 
+#ifdef GRAVITY_ANALYTIC_STRATIFIED_DISK
+        strcpy(tag[nt],"StratDisk_SigmaStar"); addr[nt] = &All.StratDisk_SigmaStar; id[nt++] = REAL;
+        strcpy(tag[nt],"StratDisk_ZStar"); addr[nt] = &All.StratDisk_ZStar; id[nt++] = REAL;
+        strcpy(tag[nt],"StratDisk_RhoDM"); addr[nt] = &All.StratDisk_RhoDM; id[nt++] = REAL;
+        strcpy(tag[nt],"StratDisk_R0"); addr[nt] = &All.StratDisk_R0; id[nt++] = REAL;
+#endif
 #ifdef GRAIN_FLUID
 #ifdef GRAIN_RDI_TESTPROBLEM
         strcpy(tag[nt],"Grain_Charge_Parameter");
@@ -2903,7 +2909,7 @@ void read_parameter_file(char *fname)
     }
 
 #if defined(BOX_LONG_X) ||  defined(BOX_LONG_Y) || defined(BOX_LONG_Z)
-#if !defined(SELFGRAVITY_OFF) && !defined(GRAVITY_NOT_PERIODIC) && (defined(BOX_PERIODIC) || defined(PMGRID))
+#if !defined(SELFGRAVITY_OFF) && !defined(GRAVITY_NOT_PERIODIC) && !defined(GRAVITY_PERIODIC_XY) && (defined(BOX_PERIODIC) || defined(PMGRID))
     if(ThisTask == 0)
     {
         printf("Code was compiled with BOX_LONG_X/Y/Z and either BOX_PERIODIC or PMGRID, but not with SELFGRAVITY_OFF or GRAVITY_NOT_PERIODIC.\n");

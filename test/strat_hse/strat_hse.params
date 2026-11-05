@@ -1,0 +1,46 @@
+% Isothermal slab in hydrostatic equilibrium in a stratified shearing box (solar-neighbourhood parameters).
+% Units pc, Msun, km/s. Gas surface density 10 Msun/pc^2, c_s = 10 km/s, 300 Msun cells.
+InitCondFile                       strat_hse_ics
+OutputDir                          output
+BoxSize                            1000
+TimeBegin                          0
+TimeMax                            60          % ~59 Myr ~ 3.5 vertical sound-crossing times of the rms height
+TimeBetSnapshot                    20
+TimeOfFirstSnapshot                0
+TimeBetStatistics                  10
+MaxSizeTimestep                    1
+MinSizeTimestep                    0
+UnitLength_in_cm                   3.085678e18
+UnitMass_in_g                      1.989e33
+UnitVelocity_in_cm_per_s           1e5
+StratDisk_SigmaStar                42
+StratDisk_ZStar                    245
+StratDisk_RhoDM                    0.0064
+StratDisk_R0                       8000
+InitGasTemp                        0
+MinGasTemp                         0
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+Softening_Type0                    2
+Softening_Type1                    2
+Softening_Type2                    2
+Softening_Type3                    2
+Softening_Type4                    2
+Softening_Type5                    2
+Softening_Type0_MaxPhysLimit       2
+Softening_Type1_MaxPhysLimit       2
+Softening_Type2_MaxPhysLimit       2
+Softening_Type3_MaxPhysLimit       2
+Softening_Type4_MaxPhysLimit       2
+Softening_Type5_MaxPhysLimit       2
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+TreeDomainUpdateFrequency          0.05
+MaxMemSize                         2000
+PartAllocFactor                    2.5
+BufferSize                         100
+ResubmitOn                         0
+ResubmitCommand                    none
