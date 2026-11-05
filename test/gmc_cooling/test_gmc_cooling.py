@@ -5,7 +5,7 @@ from gizmo.test import (build_and_run_test, build_gizmo_for_test, download_test_
                         write_params_with_overrides)
 
 from matplotlib import pyplot as plt
-from os import chdir, environ, getcwd
+from os import chdir, environ, getcwd, path
 from pathlib import Path
 import re
 import shutil
@@ -15,6 +15,24 @@ from astropy import units as u, constants as c
 from scipy.stats import binned_statistic
 import numpy as np
 import pytest
+from urllib.error import HTTPError, URLError
+from urllib.request import urlretrieve
+
+
+# Reference solution for this branch, published next to the ICs. gmc_cooling_exact.hdf5 was made while the shipped
+# TREECOOL's comment header silently disabled the UV background (and with it the tabulated metal-line cooling); this
+# one has both. A starforge_dev reference of the same physics is gmc_cooling_exact_uvb.hdf5; the two codes differ.
+BENCHMARK = "gmc_cooling_exact_uvb_kokkos.hdf5"
+BENCHMARK_URL = f"https://users.flatironinstitute.org/~mgrudic/gizmo_tests/gmc_cooling/{BENCHMARK}"
+
+
+def fetch_benchmark():
+    dest = f"test/gmc_cooling/{BENCHMARK}"
+    if not path.isfile(dest):
+        try:
+            urlretrieve(BENCHMARK_URL, dest)
+        except (HTTPError, URLError) as err:
+            pytest.fail(f"could not fetch the reference {BENCHMARK_URL}: {err}")
 
 
 def compute_test_statistic(f, save_reference_solution=False, plot=False):
@@ -31,13 +49,13 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
 
     if save_reference_solution:
         # this option will save the current test solution as the reference solution
-        with h5py.File("test/gmc_cooling/gmc_cooling_exact.hdf5", "w") as F:
+        with h5py.File(f"test/gmc_cooling/{BENCHMARK}", "w") as F:
             F.create_dataset("PartType0/Metallicity", data=Z)
             F.create_dataset("PartType0/Density", data=rho)
             F.create_dataset("PartType0/Temperature", data=T)
 
     if plot:  # generate a plot of n_H vs T for the test and benchmark solutions
-        with h5py.File("test/gmc_cooling/gmc_cooling_exact.hdf5", "r") as F:
+        with h5py.File(f"test/gmc_cooling/{BENCHMARK}", "r") as F:
             nH_ref = F["PartType0/Density"][:] * rho_to_nH
             T_ref = F["PartType0/Temperature"][:]
         plt.loglog(nH_ref, T_ref, ".", markersize=0.3, color="red", label="Benchmark")
@@ -67,6 +85,7 @@ def test_gmc_cooling(num_mpi_ranks, num_omp_threads):
 
     # build GIZMO and run the test
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
+    fetch_benchmark()
 
     # Check that the simulation produced output and the final time is correct
     final_snap = get_final_snapshot(test_name)
@@ -76,7 +95,7 @@ def test_gmc_cooling(num_mpi_ranks, num_omp_threads):
     test_stats = compute_test_statistic("test/gmc_cooling/output/snapshot_010.hdf5", plot=True)
 
     # compute that same test statistic from a benchmark snapshot
-    benchmark_stats = compute_test_statistic("test/gmc_cooling/gmc_cooling_exact.hdf5")
+    benchmark_stats = compute_test_statistic(f"test/gmc_cooling/{BENCHMARK}")
 
     # check that the test and benchmark agree within 10%
     assert test_stats == pytest.approx(benchmark_stats, rel=0.1)
