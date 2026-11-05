@@ -163,6 +163,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
     TreeWalkValidatePending = 0; /* fresh tree: nothing pending from pre-build rearranges */
     force_motion_bounds_reset(1); /* every bound is freshly derived here, and the node numbering has changed */
     if(mp == NULL && npart == NumPart) {TreeOpsCount[TREEOPS_BUILD]++; ForceAddElementToTree_CallsSinceBuild = 0; All.NumForcesSinceLastDomainDecomp = 0;} /* whole-tree builds only; subset builds are fof-internal. Both cadence counters measure tree age, so they reset HERE, not at decomposition (every decomposition is followed by a build anyway) */
+    if(mp == NULL && npart == NumPart) {for(int i = 0; i < NumPart; i++) {if(P[i].dp[0] != 0 || P[i].dp[1] != 0 || P[i].dp[2] != 0) {P[i].dp = {};}}} /* the nodes hold the current velocities, so the kicks still pending in dp are counted already: flushed later by force_update_tree, they would be counted twice. Conditional: most dp are zero, and an unconditional store dirties a cache line per particle */
 #ifdef TREE_INTEGRITY_AUDITS
     {
         /* whole-tree builds only: subset builds legitimately leave particles unreached. The moments audit is
@@ -4015,6 +4016,7 @@ void force_refresh_node_moments(void)
         if(no < 0) {continue;}
         struct particle_data *pa = &P[i];
         Vec3<MyDouble> pos; double kernel_now = force_predict_to_current(i, pos); /* lagging members are read at now, not where they were last drifted */
+        if(pa->dp[0] != 0 || pa->dp[1] != 0 || pa->dp[2] != 0) {pa->dp = {};} /* its current velocity enters the node here, so the kicks still pending in dp are counted: flushed later by force_update_tree, they would be counted twice (conditional, as in the build) */
 
         Nodes[no].u.d.mass += pa->Mass;
         Nodes[no].u.d.s += pa->Mass * pos;

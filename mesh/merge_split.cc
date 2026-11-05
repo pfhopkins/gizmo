@@ -645,6 +645,7 @@ int split_particle_i(int i, int n_particles_split, double r_near)
     double mass_before_split = 0, density_before_split = 0, volume_before_split = 0; mass_before_split = P[i].Mass; // save for use below
     if(P[i].Type==0) {density_before_split = CellP[i].Density; volume_before_split = mass_before_split/density_before_split;} // save for use below
     P[j].Mass = mass_of_new_particle * P[i].Mass;
+    P[j].dp = mass_of_new_particle * P[i].dp; P[i].dp -= P[j].dp; /* the copy took the parent's pending kick: share it, or the tree gets it twice */
     P[i].Mass -= P[j].Mass;
     if(P[i].Type==0) {CellP[j].Mass = P[j].Mass; CellP[i].Mass = P[i].Mass;} // CellP[] is sized All.MaxPartGas; only gas splits get CellP writes
 #ifdef BOX_BND_PARTICLES
