@@ -581,6 +581,16 @@ static void mechanical_fb_pair_kernel(
             KE_final   *= 0.5 * Mass_j     * scalars.common.cf_a2inv;
         }
         double d_Egy_internal = pnorm * m.U_thermal_residual_tocouple;
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+        { /* the cell closes its own share in the star's frame: its share of the ejecta energy less the kinetic energy it gained */
+            double dKE_star_frame = 0;
+            for(int k = 0; k < 3; k++) {
+                double v0 = (Vel_j_0[k] - (double)local.Vel[k]) / scalars.common.cf_atime, vf = (Vel_j[k] - (double)local.Vel[k]) / scalars.common.cf_atime;
+                dKE_star_frame += 0.5 * (Mass_j * vf * vf - mj_preshock * v0 * v0);
+            }
+            d_Egy_internal = pnorm * 0.5 * (double)local.Msne * (double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta - dKE_star_frame;
+        }
+#endif
         if(m.retain_thermal_flag == 0) d_Egy_internal = 0;
         d_Egy_internal /= Mass_j;
         if(d_Egy_internal > 0) InternalEnergy_j += d_Egy_internal;
