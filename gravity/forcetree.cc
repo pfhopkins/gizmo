@@ -4385,7 +4385,9 @@ void force_tree_full_audit(int audit_moments, const char *tag)
  *      it (N_part exactly; mass within the rounding of eight terms, since -ffast-math may reassociate).
  *  (b) Drifted quantities, fatal: every node is current, with its centre of mass, mass-weighted velocity,
  *      and sink position and velocity at the members' values to rounding; hmax covers every member's
- *      predicted kernel. vmax and maxsoft shortfalls are counted only (cpu.txt).
+ *      predicted kernel. Velocities are compared net of the members' kicks still pending in dp: the next
+ *      force_update_tree adds those to the nodes, so a node that already holds them would count them
+ *      twice. vmax and maxsoft shortfalls are counted only (cpu.txt).
  *  Box containment is force_tree_geometry_audit's. */
 long long TreeMomAuditCount = 0, TreeMomAuditVmaxShort = 0, TreeMomAuditSoftShort = 0;
 double TreeMomAuditWorstVmaxShort = 0, TreeMomAuditWorstSoftShort = 0;
@@ -4445,8 +4447,8 @@ static void force_tree_moments_audit(const char *tag)
             NEAREST_XYZ(r0, r1, r2, -1);
             double r[3] = {r0, r1, r2};
             d[MA_M] += m; d[MA_GASM] += gm;
-            for(k = 0; k < 3; k++) {d[MA_MX + k] += m * r[k]; d[MA_MV + k] += m * P[i].Vel[k];}
-            if(is_sink) {d[MA_SINKM] += m; ii[MA_NSINK]++; for(k = 0; k < 3; k++) {d[MA_SMX + k] += m * r[k]; d[MA_SMV + k] += m * P[i].Vel[k];}}
+            for(k = 0; k < 3; k++) {d[MA_MX + k] += m * r[k]; d[MA_MV + k] += m * P[i].Vel[k] - P[i].dp[k];} /* a kick still pending in dp reaches the nodes at the next force_update_tree */
+            if(is_sink) {d[MA_SINKM] += m; ii[MA_NSINK]++; for(k = 0; k < 3; k++) {d[MA_SMX + k] += m * r[k]; d[MA_SMV + k] += m * P[i].Vel[k] - P[i].dp[k];}}
             ii[MA_N]++; if(!(m > 0)) {ii[MA_NZERO]++;}
             dmx[MA_HMAX] = DMAX(dmx[MA_HMAX], hk); dmx[MA_VMAX] = DMAX(dmx[MA_VMAX], vb); dmx[MA_VABS] = DMAX(dmx[MA_VABS], vabs); dmx[MA_SOFT] = DMAX(dmx[MA_SOFT], soft);
         }
