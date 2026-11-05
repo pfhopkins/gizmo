@@ -73,3 +73,12 @@ def test_gmc_cooling(num_mpi_ranks, num_omp_threads):
 
     # check that the test and benchmark agree within 10%
     assert test_stats == pytest.approx(benchmark_stats, rel=0.1)
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (2,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_gmc_cooling_max_timestep_above_run_length(num_mpi_ranks, num_omp_threads):
+    """gmc_cooling_quick.params has MaxSizeTimestep 0.0252 and TimeMax 0.001: a run shorter than the largest step must still run to TimeMax."""
+    test_name = "gmc_cooling"
+    get_cooling_tables(f"test/{test_name}")
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, params_name="gmc_cooling_quick")  # raises if GIZMO exits nonzero or stops before TimeMax
