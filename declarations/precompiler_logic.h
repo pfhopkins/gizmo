@@ -1157,8 +1157,10 @@
 #ifndef BOX_SHEARING_Q
 #define BOX_SHEARING_Q (3.0/2.0)
 #endif
-/* set omega - usually we will default to always using time coordinates such that Omega = 1 at the box center */
+/* Omega at the box center, in code units; defaults to 1 (time in units of 1/Omega) */
+#ifndef BOX_SHEARING_OMEGA_BOX_CENTER
 #define BOX_SHEARING_OMEGA_BOX_CENTER 1.0
+#endif
 /* need analytic gravity on so we can add the appropriate source terms to the EOM */
 #ifndef GRAVITY_ANALYTIC
 #define GRAVITY_ANALYTIC
