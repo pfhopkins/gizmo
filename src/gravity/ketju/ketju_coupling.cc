@@ -233,6 +233,104 @@ static std::vector<ketju_mpi_particle> gather_chain_centers(void)
 }
 
 
+/* ============================================================
+ *  Orbit-based subsystem membership for Type-4 stars (BIFROST, Rantala+ 2023 Sec 3.4):
+ *  chain centres are grouped by pair orbital elements (bound with a < r_region, or a predicted
+ *  pericentre < r_region inside an anticipatory window); only those centres become members,
+ *  so a dense cluster does not merge into one geometric super-region.
+ * ============================================================ */
+static const double KJ_CAPTURE_K = 16.0; /* capture window in units of r_ngb; no pair beyond it forms a subsystem */
+static int pair_forms_subsystem(const ketju_mpi_particle &a, const ketju_mpi_particle &b)
+{
+    const double r_ngb = All.KetjuRegionRadius;
+    double dr[3], dv[3]; double r2 = 0, v2 = 0;
+    for(int k = 0; k < 3; k++) {
+        dr[k] = a.Pos[k] - b.Pos[k]; dv[k] = a.Vel[k] - b.Vel[k];
+        r2 += dr[k] * dr[k]; v2 += dv[k] * dv[k];
+    }
+    double r = sqrt(r2);
+    if(r < r_ngb) return 1;                       /* already deep — must be co-integrated regardless */
+    if(r >= 50.0 * r_ngb) return 0;               /* pair-scan cutoff (BIFROST r_ngb,max analogue) */
+
+    double GM = All.G * (a.Mass + b.Mass);
+    if(GM <= 0 || v2 <= 0) return 0;
+    double E = 0.5 * v2 - GM / r;                 /* specific orbital energy of the pair */
+    if(E < 0) {
+        double sma = -GM / (2.0 * E);
+        if(sma < r_ngb) return 1;                 /* bound + tight: permanent member */
+    }
+    /* predicted pericenter from the (Keplerian 2-body) angular momentum: r_peri = (h^2/GM)/(1+e).
+     * Valid for bound and hyperbolic orbits alike. */
+    double rv = dr[0]*dv[0] + dr[1]*dv[1] + dr[2]*dv[2];
+    double h2 = r2 * v2 - rv * rv;                /* |r x v|^2 */
+    double e2 = 1.0 + 2.0 * E * h2 / (GM * GM); if(e2 < 0) e2 = 0;
+    double r_peri = (h2 / GM) / (1.0 + sqrt(e2));
+    if(r_peri >= r_ngb) return 0;                 /* passage never gets inside the regularized scale */
+
+    /* anticipatory window: capture while |r|/|v_rel| < tau AND r < K*r_ngb, with tau sized so that on
+     * a near-parabolic infall (v ~ sqrt(2GM/r)) the time criterion fires at r_capture ~ K * r_ngb:
+     * r/v = r^1.5/sqrt(2GM) = tau  =>  r_capture = (2 GM tau^2)^(1/3) = K * r_ngb. Weak-field
+     * handoffs: at K=16 the mutual force at capture/release is ~256x weaker than at r_ngb.
+     * The EXPLICIT distance bound is essential: for fast HYPERBOLIC encounters (v_rel set by the
+     * cluster dispersion, not by the pair potential) r/v < tau alone fires at huge distances
+     * (~0.1 pc for r_ngb=500 AU), chaining hundreds of stars into giant merged subsystems. */
+    const double K = KJ_CAPTURE_K;
+    if(r >= K * r_ngb) return 0;
+    double tau = K * sqrt(K) * r_ngb * sqrt(r_ngb) / sqrt(2.0 * GM);
+    if(r / sqrt(v2) < tau) return 1;
+    return 0;
+}
+
+static std::vector<std::vector<ketju_mpi_particle>> build_orbit_regions(
+    const std::vector<ketju_mpi_particle> &centers)
+{
+    int n = centers.size();
+    std::vector<int> group(n);
+    for(int i = 0; i < n; i++) group[i] = i;
+    auto find = [&](int x) {
+        while(group[x] != x) { group[x] = group[group[x]]; x = group[x]; }
+        return x;
+    };
+    auto unite = [&](int a, int b) { a = find(a); b = find(b); if(a != b) group[a] = b; };
+
+    /* only pairs closer than KJ_CAPTURE_K * r_ngb can form a subsystem (bound ones with a < r_ngb lie within 2 r_ngb):
+     * test pairs from neighbouring cells of that size, O(n) instead of O(n^2); the partition does not depend on pair order */
+    const double cell = KJ_CAPTURE_K * All.KetjuRegionRadius;
+    std::unordered_map<long long, std::vector<int>> grid;
+    auto key = [](long long x, long long y, long long z) {return (x & 0x1fffff) | ((y & 0x1fffff) << 21) | ((z & 0x1fffff) << 42);};
+    std::vector<long long> ci(3 * n);
+    for(int i = 0; i < n; i++) {
+        for(int k = 0; k < 3; k++) ci[3*i+k] = (long long)floor(centers[i].Pos[k] / cell);
+        grid[key(ci[3*i], ci[3*i+1], ci[3*i+2])].push_back(i);
+    }
+    for(int i = 0; i < n; i++)
+        for(int dx = -1; dx <= 1; dx++) for(int dy = -1; dy <= 1; dy++) for(int dz = -1; dz <= 1; dz++) {
+            auto it = grid.find(key(ci[3*i] + dx, ci[3*i+1] + dy, ci[3*i+2] + dz));
+            if(it == grid.end()) continue;
+            for(int j : it->second) if(j > i && pair_forms_subsystem(centers[i], centers[j])) unite(i, j);
+        }
+
+    std::vector<std::vector<ketju_mpi_particle>> regions;
+    std::vector<int> root_to_region(n, -1);
+    for(int i = 0; i < n; i++) {
+        int r = find(i);
+        if(root_to_region[r] < 0) { root_to_region[r] = regions.size(); regions.push_back({}); }
+        regions[root_to_region[r]].push_back(centers[i]);
+    }
+    return regions;
+}
+
+/* members of an orbit group: the synchronised centres this rank owns */
+static std::set<int> local_members_from_group(const std::vector<ketju_mpi_particle> &group)
+{
+    std::set<int> members;
+    for(const ketju_mpi_particle &c : group) {
+        if(c.Task != ThisTask) continue;
+        if(!is_chain_eligible(c.Index) || !is_synchronized(c.Index)) continue;
+        members.insert(c.Index);
+    }
+    return members;
+}
 
 
 
@@ -312,7 +410,57 @@ void ketju_find_regions(void)
     std::vector<ketju_mpi_particle> centers = gather_chain_centers();
     if(centers.empty()) return;
 
-    if(ThisTask == 0 && All.Ti_Current == 0) {printf("KETJU: Found 0 region(s) from %d center(s)\n", (int)centers.size());}
+    /* merge overlapping regions */
+    double merge_radius = 2.0 * All.KetjuRegionRadius;
+    std::vector<std::vector<ketju_mpi_particle>> region_centers = build_orbit_regions(centers); (void)merge_radius;
+    region_centers.erase(std::remove_if(region_centers.begin(), region_centers.end(), [](const std::vector<ketju_mpi_particle> &g) {return g.size() < 2;}), region_centers.end());
+    if(region_centers.empty()) {return;}
+
+    /* build regions (first pass: find members) */
+    int n_regions = region_centers.size();
+
+    for(int r = 0; r < n_regions; r++) {
+        KetjuRegion reg;
+        reg.centers = region_centers[r];
+        reg.local_member_indices = local_members_from_group(reg.centers);
+
+        ActiveRegions.push_back(std::move(reg));
+    }
+
+    /* member totals of all regions in one reduction, then per-task counts of the multi-member ones in one gather */
+    std::vector<int> region_counts(n_regions);
+    for(int r = 0; r < n_regions; r++) region_counts[r] = (int)region_centers[r].size(); /* the group is known on every task, and all its centres are members */
+    std::vector<int> multi; /* regions with >= 2 members; the rest stay as placeholders with nothing to integrate */
+    for(int r = 0; r < n_regions; r++) {
+        ActiveRegions[r].total_particle_count = region_counts[r];
+        if(region_counts[r] < 2) continue;
+        multi.push_back(r);
+    }
+    const int n_multi = (int)multi.size();
+    KetjuNumMultiRegions = n_multi;
+
+
+    /* KetjuChainID: hash of the group's smallest (ID, child); the group is known on every task */
+    for(int k = 0; k < n_multi; k++) {
+        KetjuRegion &reg = ActiveRegions[multi[k]];
+        MyIDType chain_id = (MyIDType)-1, min_child = (MyIDType)-1;
+        for(const ketju_mpi_particle &c : reg.centers) {if(c.ID < chain_id || (c.ID == chain_id && c.Child < min_child)) {chain_id = c.ID; min_child = c.Child;}}
+        chain_id ^= min_child * 0x9E3779B97F4A7C15ULL; if(chain_id == 0) {chain_id = 1;} /* siblings share P.ID: the child number keeps chains distinct */
+        for(int idx : reg.local_member_indices) {P[idx].KetjuChainID = chain_id;}
+    }
+
+    /* Region-set summary: only print when the set actually changed (otherwise
+     * we emit ~1+N_region lines per step, which dominates IO). The per-region
+     * listing is only printed when the topology changed; silence it otherwise. */
+    if(ThisTask == 0 && !ActiveRegions.empty()) {
+        static int last_n_regions = -1, last_n_centers = -1;
+        int n_centers = (int)centers.size();
+        if(n_regions != last_n_regions || n_centers != last_n_centers) {
+            printf("KETJU: Found %d region(s) from %d center(s) at t=%g\n", n_regions, n_centers, All.Time);
+            last_n_regions = n_regions;
+            last_n_centers = n_centers;
+        }
+    }
 }
 
 
