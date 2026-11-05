@@ -152,3 +152,5 @@ test/wakeup_falling_sedov/used2
 test/wakeup_falling_sedov/*_ics.hdf5
 test/single_stars_gas_timestep/run/
 test/single_stars_gas_timestep/GIZMO
+test/single_stars_radpressure_cells/run_*/
+test/single_stars_radpressure_cells/GIZMO*
