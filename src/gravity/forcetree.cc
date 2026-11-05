@@ -16,6 +16,7 @@
 #include "pm_highres_region.h"       /* pmforce_is_particle_high_res SSOT (device-callable) */
 #include "let_data.h"   /* LET wire format + per-rank payload structs */
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
+#include "../system/gpu_particles_arena.h" /* gizmo_particles_prefetch_to_host */
 #include "../mesh/nlr_radius_policy.h" /* SSOT helper for force_hmax_per_type_particle_radius */
 #include "../core/timestep_functions.h" /* Hermite source eligibility + prediction, inline (a cross-TU call here costs ~16% of the walk) */
 #ifdef SUBFIND
@@ -294,14 +295,26 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
      * particles, are skipped by the test just below instead: every slot the tree does not contain
      * carries -1, which is what a ghost's slot holds. */
     const int nseed = (NumPart < All.TreeParticleSlots) ? NumPart : All.TreeParticleSlots;
+    /* The host passes from here to the density loop (this seed, the active-gas counts and the density
+       active list) all sweep the particles, which the tree build has just pulled to the device: move
+       them back in bulk rather than one fault at a time. */
+    if((long long) nseed * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host("force_refresh_hmax_per_type_host");}
+    /* Threaded with an atomic max: a maximum does not depend on the order its terms arrive in, so the
+     * bands are the ones the one-thread loop produced. */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_pcie_opt() && nseed >= 65536)
+#endif
     for(int i = 0; i < nseed; i++) {
         int no = Father[i];
         if(no < 0) continue;
         struct particle_data *pa = &P[i];
         if(pa->Mass <= 0) continue;
-        double htmp = force_hmax_per_type_particle_radius(i);
+        MyFloat htmp = (MyFloat) force_hmax_per_type_particle_radius(i);
         int t = (int)pa->Type;
-        if(htmp > Extnodes[no].hmax_per_type[t]) Extnodes[no].hmax_per_type[t] = (MyFloat)htmp;
+        MyFloat *band = &Extnodes[no].hmax_per_type[t];
+        MyFloat cur;
+        __atomic_load(band, &cur, __ATOMIC_RELAXED);
+        while(htmp > cur && !__atomic_compare_exchange(band, &cur, &htmp, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
     }
     /* Step 3: bottom-up max-over-children via father chain. Children always
      * allocated at higher indices than parents, so reverse iteration gives

@@ -249,7 +249,7 @@ void move_particles(integertime time1)
 void do_box_wrapping(void)
 {
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
 #endif
     for(int i = 0; i < NumPart; i++)
     {

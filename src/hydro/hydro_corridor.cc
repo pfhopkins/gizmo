@@ -50,10 +50,20 @@ static void
 global_active_gas_counts(long long *out_sum, int *out_max, long long *out_sum_all_gas)
 {
     long long local_sums[2] = {0, 0};   /* active gas with mass, all active gas */
-    for(int ii : ActiveParticleList) {
-        if(P[ii].Type != 0) continue;
-        local_sums[1]++;
-        if(P[ii].Mass > 0) local_sums[0]++;
+    {
+        const int n_act = (int) ActiveParticleList.size();
+        const int *act = ActiveParticleList.data();
+        long long n_mass = 0, n_gas = 0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(+:n_mass,n_gas) if(gizmo_pcie_opt() && n_act >= 4096)
+#endif
+        for(int k = 0; k < n_act; k++) {
+            const int ii = act[k];
+            if(P[ii].Type != 0) continue;
+            n_gas++;
+            if(P[ii].Mass > 0) n_mass++;
+        }
+        local_sums[0] = n_mass; local_sums[1] = n_gas;
     }
     int local_max = (int) local_sums[0];
     long long sums[2] = {local_sums[0], local_sums[1]};

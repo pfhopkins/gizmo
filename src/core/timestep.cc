@@ -60,7 +60,7 @@ void find_timesteps(void)
         double fastwavedecay = 0.0;
         double fac_magnetic_pressure = 1. / All.cf_atime;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) reduction(max:fastwavespeed,fastwavedecay)
+#pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk()) reduction(max:fastwavespeed,fastwavedecay)
 #endif
         for(i=0;i<NumPart;i++)
         {
@@ -124,10 +124,25 @@ void find_timesteps(void)
 #endif
 
 
+#ifdef GPU_PCIE_OPTIMIZATIONS
+    /* This step's work, before the timebins below change. Each call reads and writes only its own
+       particle, so the pass is threaded ahead of the (serial) bin bookkeeping. */
+    {
+        const int n_act = (int) ActiveParticleList.size();
+        const int *act = ActiveParticleList.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(n_act >= 4096)
+#endif
+        for(int k = 0; k < n_act; k++) {domain_record_step_work(act[k]);}
+    }
+#endif
+
     /* Now assign new timesteps  */
     for (int i : ActiveParticleList)
     {
+#ifndef GPU_PCIE_OPTIMIZATIONS
         domain_record_step_work(i);   /* this step's work, before the timebin below changes */
+#endif
 #ifdef FORCE_EQUAL_TIMESTEPS
         ti_step = ti_min_glob;  /* note that the dilation factor is already applied to ti_min_glob above - re-applying here would double-count it */
 #else

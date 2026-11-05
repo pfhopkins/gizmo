@@ -1871,6 +1871,36 @@ int sidx_search_segments(const struct SidxSegmentView &own, const struct SidxSeg
     return n_own + n_ghost;
 }
 
+/* Whether a pointer is memory a device kernel can read (CUDA managed or device memory). */
+static bool ngl_device_visible(const void *p)
+{
+#if defined(KOKKOS_ENABLE_CUDA)
+    cudaPointerAttributes a;
+    if(cudaPointerGetAttributes(&a, p) != cudaSuccess) {(void) cudaGetLastError(); return false;}
+    return a.type == cudaMemoryTypeManaged || a.type == cudaMemoryTypeDevice;
+#else
+    (void) p;
+    return false;
+#endif
+}
+
+/* Whether gpu_ngb_list_build may set up its queries (radius, position) in a device kernel: a CUDA
+ * build, enough queries to pay for a launch, positions taken from the particles themselves, the
+ * particle array in memory the device can read, and the particles last moved in bulk to the device
+ * (a kernel reading them while they sit on the host would pull them across for the host phase that
+ * follows to pull back). Caller radii in host memory are staged first. */
+static bool ngl_query_setup_on_device(const struct particle_data *P_shared, const double *positions, int num_active)
+{
+#if defined(KOKKOS_ENABLE_CUDA) && defined(GPU_PCIE_OPTIMIZATIONS)
+    if(positions != NULL || num_active < 4096 || P_shared == NULL) {return false;}
+    if(gizmo_particles_prefetch_side() != 1) {return false;}
+    return ngl_device_visible(P_shared);
+#else
+    (void) P_shared; (void) positions; (void) num_active;
+    return false;
+#endif
+}
+
 void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
                         int search_mode, int type_bitmask,
@@ -2183,6 +2213,29 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * read its stored position, and a prediction here would put the list in a frame of its own.  A source at
      * any other position passes it (source_positions_host). */
     long queries_not_current = 0;
+    /* On the device when the particles were last moved there in bulk and the positions are their own
+     * (ngl_query_setup_on_device): the same values written to the same slots, without pulling every
+     * query particle's page to the host between two device phases. Otherwise on host threads, as before. */
+    if(ngl_query_setup_on_device(P_shared, source_positions_host, num_active)) {
+        const int *kact = gnl->d_active;
+        const double *ksr = search_radii_host;
+        if(ksr && !ngl_device_visible(ksr)) {   /* host-only radii: stage them into the (managed) radius array, read in place below */
+            memcpy(d_radii, search_radii_host, (size_t) num_active * sizeof(double));
+            ksr = d_radii;
+        }
+        const struct particle_data *kp = P_shared;
+        double *kr = d_radii, *kpos = d_source_pos;
+        const int kcallers = callers_array;
+        const integertime kt = t_now;
+        const mode_b_radius_policy_t kpol = radius_policy;
+        Kokkos::parallel_reduce("ngl_query_setup", Kokkos::RangePolicy<>(0, num_active), KOKKOS_LAMBDA(int aa, long &nc) {
+            const int i = kact[aa];
+            kr[aa] = ksr ? ksr[aa] : nlr_particle_symmetric_radius(kp[i], kpol);
+            if(!kcallers && kp[i].Ti_current != kt) {nc++;}
+            for(int k = 0; k < 3; k++) {kpos[aa*3 + k] = (double)kp[i].Pos[k];}
+        }, queries_not_current);
+        Kokkos::fence("ngl_query_setup");
+    } else {
 #ifdef _OPENMP
     #pragma omp parallel for schedule(static) reduction(+:queries_not_current)
 #endif
@@ -2195,6 +2248,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
             if(!callers_array && P_shared[i].Ti_current != t_now) {queries_not_current++;}
             for(int k = 0; k < 3; k++) {d_source_pos[aa*3 + k] = (double)P_shared[i].Pos[k];}
         }
+    }
     }
     if(queries_not_current > 0) {
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_source_pos);

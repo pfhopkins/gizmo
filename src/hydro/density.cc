@@ -42,7 +42,7 @@
 void cellcorrections_final_operations_and_cleanup(void)
 {
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
 #endif
     for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) { int i = ActiveParticleList[_apl]; /* check all active elements */
         if(GasGrad_isactive(i, P, CellP)) /* only cells eligible for gradients and hydro */
