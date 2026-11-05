@@ -39,4 +39,6 @@ Checks:
    start, 20 kyr with the model's processes on: the chemistry sees no gas-phase carbon, x(CO) stays exactly 0 (the
    carbon stays in dust). Before: the fixed 50 % depletion left half the carbon in the gas, x(CO) = 2.1e-7.
 
+- `test_27_element_diffusion`: with `TURB_DIFF_METALS` every cell keeps total Z = the sum of the 25 metal slots (1e-10); each slot gains what it gains without diffusion (1e-6). Single stars switch on exact conservation and the 1 % pair cap, as stella_dev.
+
 Reference: the stellar tables (stella-tables a4830ab) and stella_dev `core/init.cc`.
