@@ -1028,6 +1028,11 @@ void init(void)
         CellP[i].BPred = CellP[i].B; CellP[i].DtB = {}; CellP[i].BField_prerefinement = {};
 #endif
 #ifdef COSMIC_RAY_FLUID
+        if(RestartFlag == 0 && (All.CosmicRayInitialAmbient_eVcm3 > 0 || All.CosmicRayInitialCloud_eVcm3 > 0)) { /* initial CR background, split by density; other starts keep what they read */
+            double e_eVcm3 = (CellP[i].nHcgs() >= All.CosmicRayInitialCloudThreshold_nH) ? All.CosmicRayInitialCloud_eVcm3 : All.CosmicRayInitialAmbient_eVcm3;
+            double e_code = e_eVcm3 * 1.602e-12 / UNIT_PRESSURE_IN_CGS * P[i].Mass / (CellP[i].Density * All.cf_a3inv);
+            for(k=0;k<N_CR_PARTICLE_BINS;k++) {CellP[i].CosmicRayEnergy[k] = e_code / N_CR_PARTICLE_BINS;}
+        }
         for(k=0;k<N_CR_PARTICLE_BINS;k++)
         {
             CellP[i].CosmicRayEnergyPred[k]=CellP[i].CosmicRayEnergy[k]; CellP[i].CosmicRayDiffusionCoeff[k]=0; CellP[i].DtCosmicRayEnergy[k]=0;

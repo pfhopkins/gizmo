@@ -86,6 +86,10 @@ struct global_data_all_processes
 				  particle count and the number of ranks (domain_segments_per_rank_for_particles), and
 				  constant for the run thereafter.  Unrelated to TopNodeAllocFactor below, which is
 				  only a capacity for the top-tree arrays. */
+#ifdef COSMIC_RAY_FLUID
+  double CosmicRayInitialAmbient_eVcm3, CosmicRayInitialCloud_eVcm3, CosmicRayInitialCloudThreshold_nH; /*!< initial CR energy density [eV cm^-3] below/above the n_H threshold [cm^-3] on fresh starts (0: none) */
+#endif
+
   double TopNodeAllocFactor;	/*!< Sizes the TOP-level (domain-decomposition) tree, not the full local tree: MaxTopNodes = TopNodeAllocFactor * MaxPart + 1.  Much smaller than TreeAllocFactor (default ~0.008 vs ~0.45) because the top-tree holds one node per top-level domain cell, not one per particle; auto-ratchets on top-node overflow. */
 
 #ifdef DM_SCALARFIELD_SCREENING

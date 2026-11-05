@@ -1596,6 +1596,11 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#ifdef COSMIC_RAY_FLUID
+        strcpy(tag[nt], "CosmicRayInitialAmbient_eVcm3"); addr[nt] = &All.CosmicRayInitialAmbient_eVcm3; id[nt++] = REAL;
+        strcpy(tag[nt], "CosmicRayInitialCloud_eVcm3"); addr[nt] = &All.CosmicRayInitialCloud_eVcm3; id[nt++] = REAL;
+        strcpy(tag[nt], "CosmicRayInitialCloudThreshold_nH"); addr[nt] = &All.CosmicRayInitialCloudThreshold_nH; id[nt++] = REAL;
+#endif
 #ifdef DEVELOPER_MODE
         strcpy(tag[nt], "ErrTolIntAccuracy");
         addr[nt] = &All.ErrTolIntAccuracy;
@@ -3261,6 +3266,11 @@ void read_parameter_file(char *fname)
 #ifdef VISCOSITY_BRAGINSKII
                 if(strcmp("ShearViscosityCoeff",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: code was compiled with Spitzer-Braginski viscosity, so will default to calculating the physical coefficient without arbitrary re-normalization (i.e. user-specified additional coefficient/multipler=%g) \n",tag[i],alternate_tag[i],All.ShearViscosityCoeff); continue;}
                 if(strcmp("BulkViscosityCoeff",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: code was compiled with Spitzer-Braginski viscosity, so will default to 0 bulk viscosity as defined by those physics (=%g) \n",tag[i],alternate_tag[i],All.BulkViscosityCoeff); continue;}
+#endif
+#ifdef COSMIC_RAY_FLUID
+                if(strcmp("CosmicRayInitialAmbient_eVcm3",tag[i])==0) {*((double *)addr[i])=0; continue;}
+                if(strcmp("CosmicRayInitialCloud_eVcm3",tag[i])==0) {*((double *)addr[i])=0; continue;}
+                if(strcmp("CosmicRayInitialCloudThreshold_nH",tag[i])==0) {*((double *)addr[i])=10.; continue;}
 #endif
 #ifdef TURB_DIFFUSION
                 if(strcmp("TurbDiffusionCoefficient",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: code was compiled with turbulent diffusion, so will default to calculating the coefficients without arbitrary re-normalization (i.e. user-specified additional coefficient/multipler=%g) \n",tag[i],alternate_tag[i],All.TurbDiffusion_Coefficient); continue;}
