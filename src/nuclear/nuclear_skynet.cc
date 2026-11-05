@@ -32,6 +32,7 @@
 #include <Reactions/REACLIBReactionLibrary.hpp>
 #include <Reactions/REACLIB.hpp>
 #include <DensityProfiles/ConstantFunction.hpp>
+#include <EquationsOfState/HelmholtzEOS.hpp>
 
 /* species index mapping: GIZMO aprox13 index -> SkyNet nuclide vector index */
 static int skynet_species_map[NUM_NUCLEAR_SPECIES];
@@ -99,7 +100,8 @@ void nuclear_skynet_init(void)
     reacLibs.push_back(&reaclibLib);
 
     /* create the network */
-    skynet_network = new ReactionNetwork(nuclib, reacLibs, nullptr, nullptr, netOpts);
+    HelmholtzEOS helm(datadir + "/helm_table.dat", netOpts); /* the network needs an EOS */
+    skynet_network = new ReactionNetwork(nuclib, reacLibs, &helm, nullptr, netOpts);
 
     MPI_Barrier(MPI_COMM_WORLD);
     if (ThisTask == 0) printf("SkyNet initialization complete.\n");
