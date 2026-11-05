@@ -474,6 +474,9 @@ extern struct gas_cell_data
 #ifdef OUTPUT_CHEM_PHOTORATES
     float SGChemPhotoRates[6];                   /*!< photorates of the last solve */
 #endif
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+    float ShieldFacDust;                  /*!< dust shielding factor of the last solve, for snapshots */
+#endif
     MyFloat Temp;                         /*!< gas temperature from the chemistry [K] */
 #endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS

@@ -1051,6 +1051,12 @@
 #define COOL_LOWTEMP_THIN_ONLY // don't want to double-count trapping of radiation if we're doing it self-consistently
 #endif
 
+#if defined(OUTPUT_SGCHEM_RADIATION_FIELDS) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES)
+#error "OUTPUT_SGCHEM_RADIATION_FIELDS writes the band fluxes of the gravity walk"
+#endif
+#if defined(OUTPUT_SGCHEM_RADIATION_FIELDS) && !defined(OUTPUT_SHIELD_FAC)
+#define OUTPUT_SHIELD_FAC
+#endif
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
 #define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
 #endif

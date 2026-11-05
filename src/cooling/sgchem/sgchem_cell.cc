@@ -76,6 +76,33 @@ struct ChemFUVField sgchem_treecol_field(int i, double *fac_uv)
 }
 #endif
 
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+/* snapshot value of a radiation block: cells from the pixel fields of the last walk, nothing stored for it but the shielding
+   factor of the last solve; stars log10 [erg/s] (-100 when dark) */
+double sgchem_radiation_field_for_snapshot(int i, int blocknr)
+{
+    if(blocknr == IO_SINGLE_STAR_LOG_UV_LUM || blocknr == IO_SINGLE_STAR_LOG_LW_LUM)
+    {
+        double L[SINGLE_STAR_NBANDS], L_bol;
+        if(!single_star_band_luminosities_cgs(i, L, &L_bol)) {return -100.0;}
+        double l = (blocknr == IO_SINGLE_STAR_LOG_LW_LUM) ? L[SINGLE_STAR_BAND_LW] : L[SINGLE_STAR_BAND_PE] + L[SINGLE_STAR_BAND_68];
+        return (l > 0) ? log10(l) : -100.0;
+    }
+    double fac[NPIX]; struct ChemFUVField f = sgchem_treecol_field(i, fac);
+    switch(blocknr)
+    {
+        case IO_SGCHEM_G0_FUV: return f.G0;
+        case IO_SGCHEM_G0_LW: return f.G0_LW;
+        case IO_SGCHEM_G0_FUV_ATTEN: return f.G0 * CellP[i].ShieldFacDust;
+        case IO_SGCHEM_SHIELDFAC_DUST: return CellP[i].ShieldFacDust;
+        case IO_SGCHEM_G0_NUV: return CellP[i].TreeColEgyNUV / HABING_EGY_DENSITY_6_13P6EV_CGS;
+        case IO_SGCHEM_G0_OPT: return CellP[i].TreeColEgyOPT / HABING_EGY_DENSITY_6_13P6EV_CGS;
+        case IO_SGCHEM_CR_ZETA: return All.SGChemCosmicRayIonRate;
+        default: return 0;
+    }
+}
+#endif
+
 /* evolves cell i from specific energy u_code over dt_code [code units]; writes TracAbund, Temp, DustTemp, Ne; returns the new u */
 static double sgchem_cell_step(int i, double u_code, double dt_code)
 {
@@ -153,6 +180,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #endif
 #ifdef OUTPUT_CHEM_PHOTORATES
     for(int k = 0; k < 6; k++) {CellP[i].SGChemPhotoRates[k] = (float) out.photorates[k];}
+#endif
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+    CellP[i].ShieldFacDust = (float) out.fac_shield_dust;
 #endif
     CellP[i].Ne = sgchem_electrons(ab, &in);
     return energy * pow(UNIT_LENGTH_IN_CGS, 3) / UNIT_ENERGY_IN_CGS / (rho / UNIT_DENSITY_IN_CGS);

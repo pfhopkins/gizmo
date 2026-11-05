@@ -1010,6 +1010,9 @@ int single_star_band_luminosities_cgs(int i, double *L, double *L_bol); /* host 
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
 int single_star_rt_band_luminosities(int i, int mode, double *lum, struct particle_data *pp); /* host only */
 #endif
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+double sgchem_radiation_field_for_snapshot(int i, int blocknr);
+#endif
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
 void single_star_radpressure_per_cell(double *dp_total_code);
 #endif
