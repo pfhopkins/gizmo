@@ -1162,7 +1162,7 @@ void write_cpu_log(void)
       fprintf(FdCPU, "TreeOps: build=%lld refresh=%lld decomp=%lld light=%lld defer=%lld escalate=%lld rearrange=%lld condemned_walk=%lld swap_s=%.2f rearr_s=%.2f swaps=%lld\n", TreeOpsCount[TREEOPS_BUILD], TreeOpsCount[TREEOPS_REFRESH], TreeOpsCount[TREEOPS_DECOMP], TreeOpsCount[TREEOPS_DECOMP_LIGHT], TreeOpsCount[TREEOPS_DEFER], TreeOpsCount[TREEOPS_ESCALATE], TreeOpsCount[TREEOPS_REARRANGE], TreeOpsCount[TREEOPS_CONDEMNED_WALK], maint_max[0], maint_max[1], (long long) maint_max[2]);
 #ifdef TREE_INTEGRITY_AUDITS
       fprintf(FdCPU, "TreeGeoAudit: audits=%lld box_excess_audits=%lld worst_excess=%.3g len %.3g h\n", (long long) geo_max[0], (long long) geo_max[1], geo_max[2], geo_max[3]);
-      fprintf(FdCPU, "TreeMomAudit: audits=%lld carried_node_checks=%lld worst_carried_com=%.3g len %.3g widening worst_carried_dv=%.3g vmax_short=%lld (worst x%.3g) maxsoft_short=%lld (worst x%.3g)\n",
+      fprintf(FdCPU, "TreeMomAudit: audits=%lld carried_node_checks=%lld worst_carried_com=%.3g len %.3g widening worst_carried_dv=%.3g vmax_short=%lld (worst x%.3g) maxsoft_short_predicted=%lld (worst x%.3g)\n",
               (long long) geo_max[4], (long long) geo_max[5], geo_max[6], geo_max[7], geo_max[8], (long long) geo_max[9], geo_max[11], (long long) geo_max[10], geo_max[12]);
 #endif
       fprintf(FdCPU,

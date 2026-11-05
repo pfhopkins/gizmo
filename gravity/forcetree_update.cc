@@ -514,7 +514,7 @@ void force_drift_node(int no, integertime time1)
  *  node: lets an audit read lazily drifted nodes at a common time without perturbing the run. */
 void force_node_predict(int no, integertime time1, struct node_prediction *np)
 {
-    np->s = Nodes[no].u.d.s; np->vs = Extnodes[no].vs; np->len = Nodes[no].len; np->hmax = Extnodes[no].hmax;
+    np->s = Nodes[no].u.d.s; np->vs = Extnodes[no].vs; np->len = Nodes[no].len; np->hmax = Extnodes[no].hmax; np->maxsoft = Nodes[no].maxsoft;
     np->sink_pos = {}; np->sink_vel = {};
 #ifdef SINK_CALC_DISTANCES
     np->sink_pos = Nodes[no].sink_pos;

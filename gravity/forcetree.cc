@@ -4696,15 +4696,17 @@ void force_tree_full_audit(int audit_moments, const char *tag)
  *      centre of mass and the members' both move at most at the node's motion bound vmax, so their
  *      separation can grow at most at 2 vmax -- exactly the rate at which drift widens len -- so the
  *      offset may not exceed the widening len has accumulated since the build (fatal); the worst carried
- *      offsets go to cpu.txt. hmax must cover every member's predicted kernel (fatal). vmax and maxsoft
- *      coverage are counted only: a raise made in a threaded loop reaches the other ranks' top-level copies
- *      at the next flush, and maxsoft is not maintained between refreshes on either path.
+ *      offsets go to cpu.txt. hmax must cover every member's predicted kernel (fatal). maxsoft must cover
+ *      every member's softening as stored (fatal): what the build and the full refresh derive it from. Its
+ *      coverage of the softening predicted to now, which the walk reads after drifting a leaf, and vmax
+ *      coverage are counted only: neither path derives maxsoft from predicted kernels, and a vmax raise made
+ *      in a threaded loop reaches the other ranks' top-level copies at the next flush.
  *  Box containment is force_tree_geometry_audit's. */
 long long TreeMomAuditCount = 0, TreeMomAuditCarried = 0, TreeMomAuditVmaxShort = 0, TreeMomAuditSoftShort = 0;
 double TreeMomAuditWorstCOM = 0, TreeMomAuditWorstCOMWiden = 0, TreeMomAuditWorstDV = 0, TreeMomAuditWorstVmaxShort = 0, TreeMomAuditWorstSoftShort = 0;
 enum {MA_M = 0, MA_MX = 1, MA_MV = 4, MA_GASM = 7, MA_SINKM = 8, MA_SMX = 9, MA_SMV = 12, MA_OWN_M = 15, MA_OWN_SINKM = 16, MA_NSUM = 17};
 enum {MA_N = 0, MA_NZERO, MA_NSINK, MA_OWN_N, MA_OWN_NSINK, MA_NI};
-enum {MA_HMAX = 0, MA_VMAX, MA_VABS, MA_SOFT, MA_NMAX};
+enum {MA_HMAX = 0, MA_VMAX, MA_VABS, MA_SOFT, MA_SOFTP, MA_NMAX};
 static void force_tree_moments_audit(const char *tag)
 {
     double xtmp, ytmp, ztmp; (void) xtmp; (void) ytmp; (void) ztmp; /* scratch for the periodic macros */
@@ -4754,6 +4756,14 @@ static void force_tree_moments_audit(const char *tag)
 #ifdef SINGLE_STAR_SINK_DYNAMICS
         if(P[i].Type == 5 && P[i].KernelRadius > soft) {soft = P[i].KernelRadius;}
 #endif
+        double softp = soft; /* ... and as the gravity walk reads it: it drifts a leaf member before taking its softening */
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) && !defined(ADAPTIVE_GRAVSOFT_FORALL)
+#ifdef ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT
+        if(P[i].Type == 0) {softp = DMIN(h, ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT/All.cf_atime);}
+#else
+        if(P[i].Type == 0) {softp = h;}
+#endif
+#endif
         double hk = (P[i].Type == 0) ? DMIN(All.MaxKernelRadius, h) : 0, vb = particle_motion_speed_bound(i);
         int is_sink = 0;
 #ifdef SINK_CALC_DISTANCES
@@ -4776,7 +4786,7 @@ static void force_tree_moments_audit(const char *tag)
             for(k = 0; k < 3; k++) {d[MA_MX + k] += m * r[k]; d[MA_MV + k] += m * P[i].Vel[k] - P[i].dp[k];} /* a kick still pending in dp has not reached the nodes yet */
             if(is_sink) {d[MA_SINKM] += m; ii[MA_NSINK]++; for(k = 0; k < 3; k++) {d[MA_SMX + k] += m * r[k]; d[MA_SMV + k] += m * P[i].Vel[k] - P[i].dp[k];}}
             ii[MA_N]++; if(!(m > 0)) {ii[MA_NZERO]++;}
-            dmx[MA_HMAX] = DMAX(dmx[MA_HMAX], hk); dmx[MA_VMAX] = DMAX(dmx[MA_VMAX], vb); dmx[MA_VABS] = DMAX(dmx[MA_VABS], vabs); dmx[MA_SOFT] = DMAX(dmx[MA_SOFT], soft);
+            dmx[MA_HMAX] = DMAX(dmx[MA_HMAX], hk); dmx[MA_VMAX] = DMAX(dmx[MA_VMAX], vb); dmx[MA_VABS] = DMAX(dmx[MA_VABS], vabs); dmx[MA_SOFT] = DMAX(dmx[MA_SOFT], soft); dmx[MA_SOFTP] = DMAX(dmx[MA_SOFTP], softp);
         }
     }
 
@@ -4883,7 +4893,10 @@ static void force_tree_moments_audit(const char *tag)
         }
         if(dmx[MA_HMAX] > 0 && pr.hmax < 0.999999 * dmx[MA_HMAX]) {MOM_AUDIT_FAIL("node %d (%s, %s) hmax %.10g below a member's predicted kernel %.10g", no, where, fresh ? "fresh" : "carried", pr.hmax, dmx[MA_HMAX]);}
         if(Extnodes[no].vmax < 0.999999 * dmx[MA_VMAX]) {vmax_short++; worst_vshort = DMAX(worst_vshort, dmx[MA_VMAX] / DMAX(Extnodes[no].vmax, MIN_REAL_NUMBER));}
-        if(Nodes[no].maxsoft < 0.999999 * dmx[MA_SOFT]) {soft_short++; worst_sshort = DMAX(worst_sshort, dmx[MA_SOFT] / DMAX(Nodes[no].maxsoft, MIN_REAL_NUMBER));}
+        /* maxsoft decides where the gravity walk opens a node and softens the node's monopole, so falling short of
+           a member's softening means a node used, or softened, as if its members were more compact than they are */
+        if(pr.maxsoft < 0.999999 * dmx[MA_SOFT]) {MOM_AUDIT_FAIL("node %d (%s, %s, N=%lld) maxsoft %.10g below a member's softening %.10g", no, where, fresh ? "fresh" : "carried", n, pr.maxsoft, dmx[MA_SOFT]);}
+        if(pr.maxsoft < 0.999999 * dmx[MA_SOFTP]) {soft_short++; worst_sshort = DMAX(worst_sshort, dmx[MA_SOFTP] / DMAX(pr.maxsoft, MIN_REAL_NUMBER));}
 #ifdef SINK_CALC_DISTANCES
         if(d[MA_SINKM] > 0) /* sinks' ancestors are re-derived at every refresh on both paths */
         {
