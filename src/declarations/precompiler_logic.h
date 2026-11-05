@@ -1765,6 +1765,9 @@
 #if (defined(CR_SCALE_WITH_G0) || defined(CR_BACKGROUND_IONRATE_ATTENUATED) || defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)) && !defined(SGCHEM)
 #error "CR_SCALE_WITH_G0, CR_BACKGROUND_IONRATE_ATTENUATED and ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR set the SGChem field and cosmic-ray rate: set SGCHEM"
 #endif
+#if defined(OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS) && (!defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) || !defined(GALSF))
+#error "OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS needs OUTPUT_MASS_METAL_ENERGY_LEDGER and GALSF"
+#endif
 #if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(GALSF) && !defined(METALS)
 #error "OUTPUT_MASS_METAL_ENERGY_LEDGER: the star-formation and feedback rows need METALS"
 #endif

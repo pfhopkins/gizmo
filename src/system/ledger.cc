@@ -133,4 +133,47 @@ void ledger_restart_io(void (*io)(void *, size_t, int), int modus) /* modus 0 wr
     io(ledger_total, sizeof(ledger_total), modus);
 }
 
+#ifdef OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS
+/* mass_balance_steps.txt: at a checkpoint inside the step, baryon mass (gas + stars) and gas, star and ledger-corrected metal
+   mass; a line only when one of M_bary, M_Z_gas, M_Z_ledger changed by more than 1e-14 since the previous checkpoint, so a leak
+   is found between the two checkpoints that bracket it. M_Z_ledger = gas + star metals - (metals delivered to gas - metals taken
+   from stars), constant when the books close. One MPI_Allreduce per call; code units. */
+void ledger_step_checkpoint(const char *tag)
+{
+    static double last[3] = {-1., -1., -1.};
+    static long long calls = 0;
+    double loc[5] = {0, 0, 0, 0, 0}, glob[5]; /* M_gas, M_stars, MZ_gas, MZ_stars, net yield (cumulative rows of this rank) */
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].Mass <= 0) {continue;}
+        if(P[i].Type == 0) {loc[0] += P[i].Mass; loc[2] += P[i].Mass * P[i].Metallicity[0];}
+        else if(P[i].Type == 4) {loc[1] += P[i].Mass; loc[3] += P[i].Mass * P[i].Metallicity[0];}
+    }
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+    if(ledger_thread) {
+        for(int t = 0; t < ledger_nthreads; t++) {for(int r = 0; r < LEDGER_NROWS; r++) {ledger_merge(&ledger_total[r], &ledger_thread[(size_t) t * LEDGER_NROWS + r]);}}
+        loc[4] = ledger_value(&ledger_total[LEDGER_MZ_FB_TO_GAS]) - ledger_value(&ledger_total[LEDGER_MZ_STARS_LOST]);
+    }
+#endif
+    MPI_Allreduce(loc, glob, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask != 0) {return;}
+    double now[3] = {glob[0] + glob[1], glob[2], glob[2] + glob[3] - glob[4]}, d[3] = {0, 0, 0};
+    int log_it = (calls == 0);
+    for(int k = 0; k < 3; k++) {
+        if(last[k] >= 0) {d[k] = now[k] - last[k]; if(last[k] > 0 && fabs(d[k]) / last[k] > 1.0e-14) {log_it = 1;}}
+        last[k] = now[k];
+    }
+    if(log_it) {
+        char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+        snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%smass_balance_steps.txt", All.OutputDir);
+        FILE *f = fopen(buf, "a");
+        if(f) {
+            if(ftell(f) == 0) {fprintf(f, "# call tag time M_bary dM_bary M_Z_gas dM_Z_gas M_Z_stars M_Z_netyield_cumulative M_Z_ledger dM_Z_ledger  (code units; lines only where a change exceeds 1e-14)\n");}
+            fprintf(f, "%lld %s %.10e %.16e %+.16e %.16e %+.16e %.16e %+.16e %.16e %+.16e\n", calls, tag, All.Time, now[0], d[0], now[1], d[1], glob[3], glob[4], now[2], d[2]);
+            fclose(f);
+        }
+    }
+    calls++;
+}
+#endif /* OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS */
+
 #endif /* OUTPUT_MASS_METAL_ENERGY_LEDGER */

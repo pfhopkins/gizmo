@@ -1265,6 +1265,13 @@ void ledger_init(void);
 void ledger_add(int row, double x);
 void ledger_output(void);
 void ledger_restart_io(void (*io)(void *, size_t, int), int modus);
+#ifdef OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS
+void ledger_step_checkpoint(const char *tag);
+#define LEDGER_STEP(tag) ledger_step_checkpoint(tag)
+#endif
+#endif
+#ifndef LEDGER_STEP
+#define LEDGER_STEP(tag)
 #endif
 #ifdef SGCHEM
 void sgchem_init(void);
