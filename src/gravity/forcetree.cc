@@ -8,6 +8,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#if defined(KETJU_REGULARIZATION)
+#include "ketju/ketju_tree.h"
+#endif
 #include "forcetree.h"               /* GIZMO_EWALD_EN + Ewald-table accessor decls */
 #include "gravtree_force_kernel.h"   /* shared CPU/GPU accepted-source contribution physics (SSOT) */
 #include "gravtree_moment_kernel.h"  /* shared node moment/payload construction physics (SSOT); plain primitives only here */
@@ -2001,6 +2004,9 @@ struct grav_walk_open_inputs_t {
 #ifdef PMGRID
     double rcut, rcut2;
 #endif
+#ifdef KETJU_REGULARIZATION
+    double ketju_open_radius;   /* nodes within this distance of a chain member are opened; 0 = none */
+#endif
 };
 struct grav_walk_member_t {
     int target;                 /* particle index */
@@ -2192,6 +2198,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
         mem.open.ptype = P[tm].Type;
         mem.open.soft = ForceSoftening_KernelRadius(tm);
         mem.open.aold = All.ErrTolForceAcc * P[tm].OldAcc;
+#if defined(KETJU_REGULARIZATION)
+        mem.open.ketju_open_radius = P[tm].KetjuOpenRadius;
+#endif
         mem.pmass = P[tm].Mass;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
         mem.vel = P[tm].Vel;
@@ -2437,6 +2446,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                         prox_target.vel = vel;
 #endif
                         grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P[no].Type; prox_src.src_mass = P[no].Mass; prox_src.motion.vel = src_vel;   /* the state this interaction was evaluated at, so the pair (dr, vel) feeding Min_Sink_Approach_Time stays mutually consistent on a Hermite pass */
+#ifdef KETJU_REGULARIZATION
+                        prox_target.ketju_chain = P[mem.target].KetjuChainID; prox_src.ketju_chain = P[no].KetjuChainID;
+#endif
 #if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
                         prox_src.motion.acc = P[no].Acc_Total_PrevStep;
 #endif
@@ -2981,6 +2993,13 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                     r2, cen0, cen1, cen2, soft, h, aold, ptype,
                     nop->len, mass, nop->maxsoft,
                     pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
+#if defined(KETJU_REGULARIZATION)
+                if(pred == GRAV_ACCEPT_MULTIPOLE && (open.ketju_open_radius > 0 || (open.ketju_open_radius < 0 && !node_is_terminal))) { /* chain member: same-chain partners are leaf pairs; a chain on one rank has none in a terminal foreign node */
+                    double dks0 = nop->center[0] - open.pos[0], dks1 = nop->center[1] - open.pos[1], dks2 = nop->center[2] - open.pos[2];
+                    gravity_box_nearest_image(dks0, dks1, dks2, -1);
+                    if(ketju_node_overlaps_chain_sphere(dks0, dks1, dks2, fabs(open.ketju_open_radius), nop->len)) {pred = GRAV_OPEN_NODE; KETJU_WALK_OPENING_NOTE;}
+                }
+#endif
                 /* Foreign LET policy (mirrors the GPU walk exactly).  A terminal foreign node --
                  * a tagged single-particle leaf, or an aggregate the sender shipped multipole-only --
                  * has no children here: its nextnode is the continuation PAST the subtree, not a

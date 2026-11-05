@@ -1083,6 +1083,9 @@ struct grav_sink_prox_target_t {
 #ifdef SINGLE_STAR_TIMESTEPPING
     Vec3<double> vel;
 #endif
+#ifdef KETJU_REGULARIZATION
+    MyIDType ketju_chain;   /* KETJU chain of the target (0 = none) */
+#endif
 };
 
 /* Source kinematics shared by the leaf + node sink-proximity helpers. Field set is the union
@@ -1101,6 +1104,9 @@ struct grav_sink_source_motion_t {
 struct grav_sink_prox_leaf_src_t {
     int src_type; double src_mass;
     grav_sink_source_motion_t motion;
+#ifdef KETJU_REGULARIZATION
+    MyIDType ketju_chain;   /* KETJU chain of the source (0 = none) */
+#endif
 };
 
 /* Node (aggregate) source. */
@@ -1155,8 +1161,15 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_leaf_accumulate(double r2, const Vec3
 #endif
         double tSqr = r2soft/(vSqr + MIN_REAL_NUMBER), tff4 = r2soft*r2soft*r2soft/(M_total*M_total);
 
+#ifdef KETJU_REGULARIZATION
+        /* MSTAR integrates a same-chain pair inside the region radius over the next step: it does not set the host step */
+        if((target.ketju_chain == 0) || (src.ketju_chain != target.ketju_chain) || (r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius)) {
+#endif
         if(tSqr < prox.Min_Sink_Approach_Time) {prox.Min_Sink_Approach_Time = tSqr;}
         if(tff4 < prox.Min_Sink_Freefall_time) {prox.Min_Sink_Freefall_time = tff4;}
+#ifdef KETJU_REGULARIZATION
+        }
+#endif
 #ifdef SINGLE_STAR_FIND_BINARIES
         if(target.ptype == 5) // only for BH particles and for non center of mass calculation
         {

@@ -1140,6 +1140,7 @@ struct ketju_scatter_particle {
     double Mass;
     double Pos[3];       /* absolute comoving position */
     double Vel[3];       /* CoM-relative peculiar velocity */
+    double Sphere[4];    /* chain bounding sphere at end of step (comoving center, radius) */
 };
 
 /* comparison for sorting scatter particles by Task (for MPI_Scatterv) */
@@ -1198,6 +1199,12 @@ static void scatter_results(KetjuRegion &reg)
                  * In non-cosmo: a_end=1, hubble_end=0, so sp.Vel = ps->vel (unchanged). */
                 sp.Vel[j] = (ps->vel[i][j] - hubble_end * ps->pos[i][j]) * a_end;
             }
+        }
+        { /* chain sphere from the end positions the members drift to; the end-of-step tree opens nodes overlapping it */
+            double c[3] = {0,0,0}, rmax2 = 0; int n_live = reg.integrator->num_particles; /* merged ones sit in the tail */
+            for(int i = 0; i < n_live; i++) for(int j = 0; j < 3; j++) c[j] += ps->pos[i][j] / (a_end * n_live);
+            for(int i = 0; i < n_live; i++) {double d2 = 0; for(int j = 0; j < 3; j++) {double d = ps->pos[i][j] / a_end - c[j]; d2 += d * d;} if(d2 > rmax2) rmax2 = d2;}
+            for(int i = 0; i < n; i++) {for(int j = 0; j < 3; j++) {scatter_buf[i].Sphere[j] = reg.com_pos[j] + c[j];} scatter_buf[i].Sphere[3] = 1.01 * sqrt(rmax2) + MIN_REAL_NUMBER;}
         }
 
     }
@@ -1268,6 +1275,7 @@ static void scatter_results(KetjuRegion &reg)
         if(P[idx].Mass != sp.Mass) {TreeMomentsStaleFlag = 1;} /* node masses and centres follow a merger at the next gravity call */
         P[idx].Mass = sp.Mass;
         struct ketju_member_state &km = ketju_member_open(idx);
+        P[idx].KetjuOpenRadius = (float)(((reg.affected_sim_indices.size() > 1) ? 2.0 : -2.0) * sp.Sphere[3]); /* any partner lies within the sphere's diameter of this member; < 0: on this rank */
 
         /* skip velocity trick for merged particles (mass=0, will be removed) */
         if(sp.Mass <= 0) {
@@ -1596,8 +1604,14 @@ static void ketju_collect_stats(void)
         if(dE > StatMax[1]) StatMax[1] = dE;
     }
 }
+#ifdef TEST_KETJU_WALK_OPENINGS
+long long ketju_walk_openings = 0;
+#endif
 void ketju_report_stats(int final)
 {
+#ifdef TEST_KETJU_WALK_OPENINGS
+    if(final) {long long g = 0; MPI_Reduce(&ketju_walk_openings, &g, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD); if(ThisTask == 0) {printf("KETJU_WALK_OPENINGS %lld\n", g);}}
+#endif
     if(final) {ActiveRegions.clear();} /* integrators go before Kokkos does */
     if(StatCalls == 0) {return;} /* rank-uniform: no region ever */
     if(!final && (StatCalls % 1024) != 0) {return;}
