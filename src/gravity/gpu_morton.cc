@@ -166,11 +166,6 @@ extern "C" const struct Morton128 *gpu_morton_keys(void)
     return g_morton_keys;
 }
 
-extern "C" int gpu_morton_keys_capacity(void)
-{
-    return g_morton_keys ? g_morton_keys_cap : 0;
-}
-
 extern "C" void gpu_morton_release(void)
 {
     if(g_morton_keys) {

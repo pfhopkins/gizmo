@@ -308,7 +308,7 @@ static constexpr double TOPO_RANGESORT_DEVICE_FREE_FRACTION = 0.8;
  * bucketed order by (range, key, position) leaves every particle in its own range, makes the Morton keys nondecreasing
  * within each range, and keeps particles with equal keys in the order this build's bucketing gave them -- the order a
  * stable per-range sort would keep, which can itself differ between runs, since the bucketing takes its slots with
- * atomics.  An index outside the key array takes key zero, as in gpu_morton_sort_indices.
+ * atomics.
  * Returns 0 when sorted, 1 when the sort could not be had (no room, an allocation or the sort's working space refused)
  * before anything was written back, so the ranges can be sorted one by one instead, and 2 when the sort failed for any
  * other reason. */
@@ -324,14 +324,15 @@ static int topo_sort_ranges_one_pass(int ntl, int total)
     using UM = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
     Kokkos::View<TopoRangeKey*, MemSpace, UM> keys(key_buf, total);
     Kokkos::View<int*, MemSpace, UM> vals(val_buf, total);
+    /* Every position holds one of this build's slots: the scatter above writes each position exactly once, with an
+     * index below npart, and both the Morton keys and the leaf of each slot are held for npart slots. */
     const Morton128 *mk = gpu_morton_keys();
-    const int keys_cap = gpu_morton_keys_capacity();
     const int *pt = g_particle_topleaf;
     int *sidx = g_sorted_idx;
     Kokkos::parallel_for("topo_rangesort_gather", Kokkos::RangePolicy<ExSpace>(0, total), KOKKOS_LAMBDA(int j) {
         const int idx = sidx[j];
         TopoRangeKey k;
-        if(idx >= 0 && idx < keys_cap) {k.m = mk[idx];} else {k.m.hi = 0; k.m.lo = 0;}
+        k.m = mk[idx];
         k.range = pt[idx];   /* the leaf the bucketing placed it under */
         k.pos = j;
         keys(j) = k;
@@ -342,7 +343,7 @@ static int topo_sort_ranges_one_pass(int ntl, int total)
     int rc = 0;
     try {
         Kokkos::Experimental::sort_by_key(ExSpace(), keys, vals, TopoRangeKeyLess{});
-    } catch(const std::bad_alloc &e) {   /* Thrust / rocThrust bad_alloc, Kokkos' RawMemoryAllocationFailure: g_sorted_idx is untouched */
+    } catch(const std::bad_alloc &e) {   /* an allocation refused in Thrust, rocThrust or Kokkos: g_sorted_idx is untouched */
         printf("gpu_topology_build: task %d had no room to sort %d particles in one pass (%s); sorting the top-leaf ranges one by one\n",
                ThisTask, total, e.what());
         fflush(stdout);
@@ -366,10 +367,14 @@ static int topo_sort_ranges_one_pass(int ntl, int total)
 
 }  /* anonymous namespace */
 
-/* Device bytes the one-pass top-leaf sort may take for a build over npart particles: 0 where it is not used. */
-extern "C" long long gpu_topology_build_optional_device_bytes(long long npart)
+/* Device memory the one-pass top-leaf sort takes for a build over npart particles (both 0 where it is not used): the keys
+ * and values it allocates, and the allowance it reserves for the sort's own working space, an estimate of memory the GPU
+ * library allocates outside GIZMO's accounting. */
+extern "C" void gpu_topology_build_optional_device_bytes(long long npart, long long *sort_buffers, long long *workspace_estimate)
 {
-    return topo_sort_ranges_in_one_pass ? npart * (long long) TOPO_RANGESORT_BYTES_PER_ELEMENT : 0;
+    const long long buffers = topo_sort_ranges_in_one_pass ? npart * (long long) (TOPO_RANGESORT_BYTES_PER_ELEMENT / 2) : 0;
+    *sort_buffers = buffers;
+    *workspace_estimate = buffers;
 }
 
 extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data *mp)

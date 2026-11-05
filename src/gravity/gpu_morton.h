@@ -77,9 +77,6 @@ int gpu_morton_sort_indices(int count, int *indices_inout);
  * call; callers indexing past that are out of bounds. */
 const struct Morton128 *gpu_morton_keys(void);
 
-/* Entries the key buffer holds (0 before the first acquire). */
-int gpu_morton_keys_capacity(void);
-
 /* Free the internal SharedSpace key buffer.  Idempotent. */
 void gpu_morton_release(void);
 

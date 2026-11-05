@@ -142,9 +142,11 @@ int gpu_leaf_chain_materialize(void);
 
 void gpu_topology_build_release(void);
 
-/* Device bytes the one-pass top-leaf sort may take for a build over npart particles (0 where it is not used).  It is
- * taken only when the device has room at the time, so it is optional memory, outside the reserve a run must fit. */
-long long gpu_topology_build_optional_device_bytes(long long npart);
+/* Device memory the one-pass top-leaf sort takes for a build over npart particles (0 where it is not used): the keys and
+ * values it allocates, and an estimate of the working space the GPU library allocates for the sort outside GIZMO's
+ * accounting.  Taken only when the device has room at the time, and freed after the sort, so it is optional memory,
+ * outside the reserve a run must fit. */
+void gpu_topology_build_optional_device_bytes(long long npart, long long *sort_buffers, long long *workspace_estimate);
 
 #ifdef __cplusplus
 }

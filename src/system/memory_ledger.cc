@@ -809,12 +809,14 @@ int gizmo_memory_preflight(void)
         fflush(stdout);
     }
     /* Device memory taken only when there is room at the time, so it is reported, never required. */
-    const long long optional_device = gpu_topology_build_optional_device_bytes((long long) All.MaxPart);
-    if(optional_device > 0 && ThisTask == 0)
+    long long sort_buffers = 0, sort_workspace_estimate = 0;
+    gpu_topology_build_optional_device_bytes((long long) All.MaxPart, &sort_buffers, &sort_workspace_estimate);
+    if(sort_buffers > 0 && ThisTask == 0)
     {
-        printf("MEMORY PREFLIGHT: optional device memory, outside the reserve above: up to %.1f MB per rank to sort a tree\n"
-               "  build's top-leaf ranges in one pass, taken only when the device has room (otherwise they are sorted one by one).\n",
-               optional_device / 1.0e6);
+        printf("MEMORY PREFLIGHT: optional device memory, outside the reserve above, to sort a tree build's top-leaf ranges in one pass:\n"
+               "  %.1f MB per rank of sort keys and values, plus an estimated %.1f MB for the GPU library's own working space (not\n"
+               "  accounted by GIZMO); taken for each build only when the device has room, otherwise the ranges are sorted one by one.\n",
+               sort_buffers / 1.0e6, sort_workspace_estimate / 1.0e6);
         fflush(stdout);
     }
     return 0;
