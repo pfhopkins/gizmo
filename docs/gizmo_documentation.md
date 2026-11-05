@@ -5461,10 +5461,11 @@ The test problems included are:
 9. Rayleigh-Taylor instability with MHD (rt\_ics.hdf5, rt.params) -- `test/rt`
 10. Kelvin-Helmholtz instability with MHD (kh\_mcnally\_2d\_ics\.hdf5, kh\_mcnally\_2d.params) -- `test/kh_mcnally_2d`
 11. Magneto-Rotational instability in a shearing sheet (mri\_ics.hdf5, mri.params) -- `test/mri`
-12. Magnetized core-collapse and jet-launching (core\_ics.hdf5, core.params) -- `test/core`
-13. Zeldovich pancake with MHD (zeldovich\_mhd\_ics.hdf5, zeldovich\_mhd.params) -- `test/zeldovich_mhd`
-14. Santa Barbara cluster with MHD (sbcluster\_ics.hdf5, sbcluster.params) -- `test/sbcluster`
-15. Isolated galaxy disk with MHD (isodisk\_ics.hdf5, isodisk.params) -- `test/isodisk`
+12. 3D shearing box, hydro and MHD (ICs written by `make_shearing_box_ics.py`; shearing\_box.params, shearing\_box\_mhd.params) -- `test/shearing_box`: the equilibrium shear flow, a uniform epicycle across the radial boundary and a swing-amplified vortical shearing wave (q = 3/2 and 1) against their exact or linear-theory solutions, the epicycle energy of cold gas and collisionless particles (the Coriolis time integration), and with `MAGNETIC` the exact wind-up of a uniform field and the linear MRI growth rate
+13. Magnetized core-collapse and jet-launching (core\_ics.hdf5, core.params) -- `test/core`
+14. Zeldovich pancake with MHD (zeldovich\_mhd\_ics.hdf5, zeldovich\_mhd.params) -- `test/zeldovich_mhd`
+15. Santa Barbara cluster with MHD (sbcluster\_ics.hdf5, sbcluster.params) -- `test/sbcluster`
+16. Isolated galaxy disk with MHD (isodisk\_ics.hdf5, isodisk.params) -- `test/isodisk`
 
 In the list above, parenthesis contain the name of the ICs file and name of the example parameterfile. Just like all of the examples above, this should help you set up and get a problem running, but you should not take any parameters as recommendations or as exactly matching published solutions (rather, you should explore different choices yourself). 
 
