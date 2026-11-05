@@ -67,6 +67,12 @@ def test_soft_binary():
     assert abs(a - 1) < 1e-3 and abs(e - 0.9) < 1e-3
 
 
+@pytest.mark.parametrize("ranks", [1])
+def test_hard_binary(ranks):
+    """softening far below the orbit: the tree's pair force must be taken out exactly"""
+    _run(ranks, params={"TimeBetSnapshot": 1})
+    a, e = _elements()
+    assert abs(a - 1) < 1e-6 and abs(e - 0.9) < 1e-6
 
 
 
