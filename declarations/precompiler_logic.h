@@ -689,10 +689,11 @@
 #define TIDAL_TIMESTEP_CRITERION // need this to estimate the dynamical time
 #endif
 #endif
-/* a particle whose tree walk is skipped keeps the acceleration the gravity call finalized (tree, analytic, direct terms) and
-   advances it with the jerk. A force added to GravAccel after the gravity call must then not ride along on the kept value:
-   either its types always take a walk (needs_new_treeforce: grains, fuzzy DM), or, for a force every type feels, the kept
-   value is held apart in GravAccel_Retained. The shearing-box Coriolis force is velocity-dependent and acts on every type. */
+/* a particle whose tree walk is skipped advances its last gravity with the jerk. A force added to GravAccel after the gravity
+   call must then not ride along on that value: either its types always take a walk (needs_new_treeforce: grains, fuzzy DM),
+   or, for a force every type feels, the tree part is held apart in GravAccel_Retained, and the analytic terms and the forces
+   added after gravity are evaluated afresh each step. The shearing-box Coriolis force is velocity-dependent and acts on every
+   type, and its tidal term changes on the epicycle timescale, which the walk cadence (set by self-gravity) does not see. */
 #if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF) && defined(BOX_SHEARING)
 #define GRAVACCEL_RETAINED_ON_SKIPPED_WALK
 #endif

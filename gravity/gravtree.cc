@@ -714,7 +714,7 @@ void gravity_tree(void)
 
     /* The analytic terms go only onto accelerations this call rebuilt. Kept as they are: a non-Hermite particle in a Hermite pass
        (not re-evaluated, so its GravAccel still holds them and the forces added after gravity) and a skipped walk's extrapolated
-       GravAccel, which holds the terms from its last walk. */
+       GravAccel, which holds the terms from its last walk (unless the tree part is retained apart and they are re-added fresh). */
 #if defined(HERMITE_INTEGRATION) || (defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF))
     std::vector<int> kept_ii; std::vector<Vec3<MyDouble>> kept_accel;
     for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++)
@@ -723,23 +723,18 @@ void gravity_tree(void)
 #ifdef HERMITE_INTEGRATION
         if(HermiteOnlyFlag && !eligible_for_hermite(i)) {keep = 1;}
 #endif
-#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF) && !defined(GRAVACCEL_RETAINED_ON_SKIPPED_WALK)
         if(treeforce_skip_flag[ii]) {keep = 1;}
 #endif
         if(keep) {kept_ii.push_back(ii); kept_accel.push_back(P[i].GravAccel);}
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+        else {P[i].GravAccel_Retained = P[i].GravAccel;} /* the tree part, walked or extrapolated: what a skipped walk advances next */
+#endif
     }
 #endif
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
 #if defined(HERMITE_INTEGRATION) || (defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF))
     for(size_t k = 0; k < kept_ii.size(); k++) {P[ActiveParticleList[kept_ii[k]]].GravAccel = kept_accel[k];}
-#endif
-#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
-    /* the gravity call's acceleration is now final: keep it for the skipped walks that follow (not in a Hermite pass, which leaves
-       the non-Hermite particles' GravAccel, with the forces added after gravity, untouched) */
-#ifdef HERMITE_INTEGRATION
-    if(!HermiteOnlyFlag)
-#endif
-    {for(int i : ActiveParticleList) {P[i].GravAccel_Retained = P[i].GravAccel;}}
 #endif
 
 
