@@ -6,3 +6,5 @@ IMF-sampled single stars source the moment solver's bins from the stellar tables
 - `test_single_ionising_bin`: with one ionising bin the bin holds the table's photon rate at the bin's mean photon energy (2 %).
 
 Reference: the stella-tables file through `treecol_pixels/stella_table_bands.py`. Uses his cooling module, so no chemistry library is needed. The first injection arrives two steps after t = 0.
+
+- `test_excluded_channels`: `GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS`, `GALSF_FB_FIRE_RT_HIIHEATING` and `GALSF_FB_PHOTOIONIZATION_PER_DIRECTION` do not build with this flag: radiation pressure and photoionisation are counted once, in the bins.
