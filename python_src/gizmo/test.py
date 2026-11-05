@@ -423,8 +423,9 @@ def mpirun_is_open_mpi() -> bool:
     return _MPIRUN_IS_OPEN_MPI
 
 def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, timeout: float | None = None,
-             param_overrides: dict | None = None, restart_flag: int = 0):
+             param_overrides: dict | None = None, restart_flag: int = 0, params_name: str | None = None):
     """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run.
+    params_name selects <params_name>.params in place of <test_name>.params (one test directory, several setups).
     restart_flag is GIZMO's second argument: 0 = start from InitCondFile, 2 = snapshot restart from it.
     If the GIZMO subprocess exceeds the timeout, it is killed and the test is skipped
     via pytest.skip. Timeout defaults to GIZMO_TEST_TIMEOUT env var or DEFAULT_TEST_TIMEOUT.
@@ -441,7 +442,7 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     # results that get amplified by the divergence-cleaning feedback loop.
     environ.setdefault("OPENBLAS_NUM_THREADS", "1")
     environ.setdefault("MKL_NUM_THREADS", "1")
-    paramsfile = f"{test_name}.params"
+    paramsfile = f"{params_name or test_name}.params"
     if param_overrides:
         paramsfile = write_params_with_overrides(paramsfile, param_overrides)
     cmd = mpi_launch_command(num_mpi_ranks, num_openmp_threads) + ["./GIZMO", paramsfile, str(restart_flag)]
