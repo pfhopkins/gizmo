@@ -48,6 +48,10 @@ def test_regions(ranks):
     assert re.search(r"Found 1 region\(s\) from 3 center\(s\)", log)
 
 
+def test_mstar_wrapper():
+    log = _run(1, ("TEST_KETJU_MSTAR_PAIR",))
+    d = re.search(r"KETJU_MSTAR_PAIR da/a (\S+) de (\S+)", log)
+    assert d and abs(float(d[1])) < 1e-9 and abs(float(d[2])) < 1e-9
 
 
 
