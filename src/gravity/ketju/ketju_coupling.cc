@@ -780,6 +780,19 @@ __attribute__((unused)) static std::set<int> find_local_particles_in_radius(cons
     }
     return hits;
 }
+static void forward_com_to_affected_root(KetjuRegion &reg)
+{
+    if(reg.affected_tasks.root_sim == reg.compute_tasks.root_sim) return;
+    double buf[6];
+    if(ThisTask == reg.compute_tasks.root_sim) {
+        for(int j = 0; j < 3; j++) { buf[j] = reg.com_pos[j]; buf[3 + j] = reg.com_vel[j]; }
+        MPI_Send(buf, 6, MPI_DOUBLE, reg.affected_tasks.root_sim, 996, MPI_COMM_WORLD);
+    }
+    if(ThisTask == reg.affected_tasks.root_sim) {
+        MPI_Recv(buf, 6, MPI_DOUBLE, reg.compute_tasks.root_sim, 996, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        for(int j = 0; j < 3; j++) { reg.com_pos[j] = buf[j]; reg.com_vel[j] = buf[3 + j]; }
+    }
+}
 
 
 /* counts[t] = members of this region on task t (gathered for all regions at once in ketju_find_regions) */
@@ -798,6 +811,9 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
         if(affected_indices.empty()) return;
         reg.affected_tasks.init(affected_indices, 0);
         reg.affected_sim_indices = affected_indices;
+#ifdef TEST_KETJU_REGION_LOG
+        if(affected_indices.size() > 1 && ThisTask == 0) {static int said = 0; if(!said) {printf("KETJU_REGION_ACROSS_RANKS\n"); said = 1;}}
+#endif
         reg.particle_counts_on_affected.resize(affected_indices.size());
         for(size_t i = 0; i < affected_indices.size(); i++)
             reg.particle_counts_on_affected[i] = counts[affected_indices[i]];
@@ -834,8 +850,45 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
         k++;
     }
 
-    if(reg.total_particle_count != n_local) {endrun(667001);} /* region across ranks */
-    reg.all_particles = local_parts;
+    /* gather all particles on affected root */
+    if(reg.affected_tasks.is_member()) {
+        int n_aff = reg.affected_tasks.size;
+        std::vector<int> aff_counts(n_aff), byte_counts(n_aff), byte_displs(n_aff);
+        MPI_Allgather(&n_local, 1, MPI_INT, aff_counts.data(), 1, MPI_INT, reg.affected_tasks.comm);
+        int total_bytes = 0;
+        for(int t = 0; t < n_aff; t++) {
+            byte_counts[t] = aff_counts[t] * sizeof(ketju_mpi_particle);
+            byte_displs[t] = total_bytes;
+            total_bytes += byte_counts[t];
+        }
+        if(reg.affected_tasks.is_root()) {
+            reg.all_particles.resize(reg.total_particle_count);
+        }
+        MPI_Gatherv(local_parts.data(), n_local * sizeof(ketju_mpi_particle), MPI_BYTE,
+                    reg.all_particles.data(), byte_counts.data(), byte_displs.data(),
+                    MPI_BYTE, reg.affected_tasks.root, reg.affected_tasks.comm);
+    }
+
+    /* if compute root differs from affected root, forward data */
+    if(reg.affected_tasks.root_sim != reg.compute_tasks.root_sim) {
+        if(ThisTask == reg.affected_tasks.root_sim) {
+            MPI_Send(reg.all_particles.data(), reg.total_particle_count * sizeof(ketju_mpi_particle),
+                     MPI_BYTE, reg.compute_tasks.root_sim, 999, MPI_COMM_WORLD);
+        }
+        if(ThisTask == reg.compute_tasks.root_sim) {
+            reg.all_particles.resize(reg.total_particle_count);
+            MPI_Recv(reg.all_particles.data(), reg.total_particle_count * sizeof(ketju_mpi_particle),
+                     MPI_BYTE, reg.affected_tasks.root_sim, 999, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+    }
+
+    /* broadcast particle data to all compute tasks */
+    if(reg.compute_tasks.is_member()) {
+        if(!reg.compute_tasks.is_root()) reg.all_particles.resize(reg.total_particle_count);
+        MPI_Bcast(reg.all_particles.data(), reg.total_particle_count * sizeof(ketju_mpi_particle),
+                  MPI_BYTE, reg.compute_tasks.root, reg.compute_tasks.comm);
+    }
+
     /* set up integrator on compute tasks */
     if(reg.compute_tasks.is_member()) {
         /* compute CoM position and velocity */
@@ -903,6 +956,12 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 
     }
 
+    /* broadcast CoM data to all tasks that need it (affected group for scatter) */
+    forward_com_to_affected_root(reg);
+    if(reg.affected_tasks.is_member()) {
+        MPI_Bcast(reg.com_pos, 3, MPI_DOUBLE, reg.affected_tasks.root, reg.affected_tasks.comm);
+        MPI_Bcast(reg.com_vel, 3, MPI_DOUBLE, reg.affected_tasks.root, reg.affected_tasks.comm);
+    }
 }
 
 /* ============================================================
@@ -1142,7 +1201,57 @@ static void scatter_results(KetjuRegion &reg)
         }
 
     }
-    int my_count = n; std::vector<ketju_scatter_particle> &my_particles = scatter_buf;
+    /* ---- Phase 2: forward from compute root to affected root if they differ ---- */
+    if(reg.compute_tasks.root_sim != reg.affected_tasks.root_sim) {
+        if(ThisTask == reg.compute_tasks.root_sim) {
+            MPI_Send(scatter_buf.data(), n * sizeof(ketju_scatter_particle),
+                     MPI_BYTE, reg.affected_tasks.root_sim, 998, MPI_COMM_WORLD);
+        }
+        if(ThisTask == reg.affected_tasks.root_sim) {
+            scatter_buf.resize(n);
+            MPI_Recv(scatter_buf.data(), n * sizeof(ketju_scatter_particle),
+                     MPI_BYTE, reg.compute_tasks.root_sim, 998, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+    }
+
+    /* compute_root that is not in affected_tasks has finished its job (Send done) */
+    if(!is_affected) return;
+
+    /* ---- Phase 3: affected root sorts by Task, Scattervs to affected tasks ---- */
+
+    /* build map: world task -> affected rank */
+    std::unordered_map<int, int> task_to_aff_rank;
+    for(size_t i = 0; i < reg.affected_sim_indices.size(); i++)
+        task_to_aff_rank[reg.affected_sim_indices[i]] = (int)i;
+
+    std::vector<int> sendcounts(n_aff, 0);
+    std::vector<int> byte_sendcounts(n_aff, 0), byte_displs(n_aff, 0);
+
+    if(reg.affected_tasks.is_root()) {
+        /* sort particles by Task */
+        qsort(scatter_buf.data(), n, sizeof(ketju_scatter_particle), scatter_particle_task_cmp);
+
+        /* compute sendcounts per affected rank */
+        for(int i = 0; i < n; i++) {
+            auto it = task_to_aff_rank.find(scatter_buf[i].Task);
+            if(it != task_to_aff_rank.end())
+                sendcounts[it->second]++;
+        }
+        for(int t = 0; t < n_aff; t++) byte_sendcounts[t] = sendcounts[t] * sizeof(ketju_scatter_particle);
+        for(int t = 1; t < n_aff; t++) byte_displs[t] = byte_displs[t-1] + byte_sendcounts[t-1];
+    }
+
+    /* scatter sendcounts so each task knows how many particles it receives */
+    int my_count = 0;
+    MPI_Scatter(sendcounts.data(), 1, MPI_INT, &my_count, 1, MPI_INT,
+                reg.affected_tasks.root, reg.affected_tasks.comm);
+
+    /* scatter particle data */
+    std::vector<ketju_scatter_particle> my_particles(my_count);
+    MPI_Scatterv(scatter_buf.data(), byte_sendcounts.data(), byte_displs.data(), MPI_BYTE,
+                 my_particles.data(), my_count * sizeof(ketju_scatter_particle), MPI_BYTE,
+                 reg.affected_tasks.root, reg.affected_tasks.comm);
+
     /* ---- Phase 4: each task applies velocity trick to its particles ---- */
     for(int i = 0; i < my_count; i++) {
         ketju_scatter_particle &sp = my_particles[i];
