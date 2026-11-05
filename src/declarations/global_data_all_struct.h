@@ -494,6 +494,10 @@ struct global_data_all_processes
 #endif
 #endif // GALSF_SUBGRID_WINDS //
 
+#if defined(MECHFB_CR_INJECTION) && !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+    double CosmicRay_SNeFraction; /*!< fraction of the energy of fast ejecta given to CRs */
+#endif
+
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
     double SNe_Energy_Renormalization;
     double StellarMassLoss_Rate_Renormalization;

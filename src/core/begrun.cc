@@ -526,7 +526,7 @@ void begrun(void)
       All.AgeTracerBinEnd = all.AgeTracerBinEnd;
 #endif
 #endif
-#if defined(GALSF) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && (defined(COSMIC_RAY_FLUID) || defined(COSMIC_RAY_SUBGRID_LEBRON)) && defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+#if defined(GALSF) && (defined(GALSF_FB_FIRE_STELLAREVOLUTION) || defined(MECHFB_CR_INJECTION)) && (defined(COSMIC_RAY_FLUID) || defined(COSMIC_RAY_SUBGRID_LEBRON)) && defined(CR_DYNAMICAL_INJECTION_IN_SNE)
         All.CosmicRay_SNeFraction = all.CosmicRay_SNeFraction;
 #endif
 
@@ -3345,6 +3345,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("CosmicRayDiffusionCoeff",tag[i])==0) {*((double *)addr[i])=690.; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored diffusivity ~3e29, assuming units kpc/h and km/s (=%g) \n",tag[i],alternate_tag[i],All.CosmicRayDiffusionCoeff); continue;}
 #endif
                 if(strcmp("CosmicRay_SNeFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored ~10 percent conversion to CRs (=%g) \n",tag[i],alternate_tag[i],All.CosmicRay_SNeFraction); continue;}
+#endif
+#if defined(MECHFB_CR_INJECTION) && !defined(FIRE_CRS)
+                if(strcmp("CosmicRay_SNeFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to 10 percent of the fast-ejecta energy to CRs (=%g) \n",tag[i],alternate_tag[i],All.CosmicRay_SNeFraction); continue;}
 #endif
 #if defined(SINGLE_STAR_STARFORGE_DEFAULTS)
                 if(strcmp("SfEffPerFreeFall",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to scaling-default of unity (=%g) \n",tag[i],alternate_tag[i],All.MaxSfrTimescale); continue;}

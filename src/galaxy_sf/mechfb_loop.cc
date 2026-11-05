@@ -233,7 +233,7 @@ void mechfb_fill_call_scalars(struct MechFBCallScalars *scalars) {
      * COSMIC_RAY_FLUID || COSMIC_RAY_SUBGRID_LEBRON). */
     scalars->CosmicRay_SNeFraction = host_all->CosmicRay_SNeFraction;
 #endif
-#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && defined(CRFLUID_EVOLVE_SPECTRUM)
+#if defined(MECHFB_CR_INJECTION) && defined(CRFLUID_EVOLVE_SPECTRUM)
     for (int k = 0; k < N_CR_PARTICLE_BINS; ++k) {
         scalars->CR_global_min_rigidity_in_bin   [k] = host_all->CR_global_min_rigidity_in_bin   [k];
         scalars->CR_global_max_rigidity_in_bin   [k] = host_all->CR_global_max_rigidity_in_bin   [k];

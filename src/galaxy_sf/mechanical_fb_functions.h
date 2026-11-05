@@ -54,7 +54,7 @@ struct MechFBCallScalars {
      * or the LEBRON-subgrid + FIRE_BHS path fails to compile. */
     double CosmicRay_SNeFraction;
 #endif
-#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && defined(CRFLUID_EVOLVE_SPECTRUM)
+#if defined(MECHFB_CR_INJECTION) && defined(CRFLUID_EVOLVE_SPECTRUM)
     double CR_global_min_rigidity_in_bin   [N_CR_PARTICLE_BINS];
     double CR_global_max_rigidity_in_bin   [N_CR_PARTICLE_BINS];
     double CR_global_rigidity_at_bin_center[N_CR_PARTICLE_BINS];
@@ -155,11 +155,14 @@ struct MechFBSourceMode
     int retain_thermal_flag;
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
     double CR_energy_to_inject;  /* total CR energy budget for this source in this mode */
+#if defined(MECHFB_CR_INJECTION) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+    double v_ej_after_cr; /* ejecta speed left after the CR share */
+#endif
 #endif
 };
 
 
-#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#if defined(MECHFB_CR_INJECTION)
 /* Kernel-callable CR injection: writes per-bin CR energy / number / direction
  * deltas into MechFBGasDelta via Kokkos atomics instead of CellP directly.
  * Host scatter (in verify_and_assign_local_mechfb_integrals) normalizes direction and
@@ -220,7 +223,7 @@ static void inject_cosmic_rays_into_delta(
 #endif
     }
 }
-#endif /* COSMIC_RAY_FLUID && GALSF_FB_FIRE_STELLAREVOLUTION */
+#endif /* MECHFB_CR_INJECTION */
 
 
 /* Host-side helpers for the MechFBSpec runner-port.
@@ -294,13 +297,22 @@ static void mechanical_fb_per_source_setup(
     double f_sedov_kin = 1.0 / (1.0 + thermal_to_kinetic_ratio_universal);
     m.momentum_to_couple_term_units = 0;
     m.U_thermal_residual_tocouple = 0;
-    double Energy_injected_codeunits = 0.5 * (double)local.Msne * (double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta;
-    double v_ejecta_eff_init = (double)local.SNe_v_ejecta;
+    double v_ej = (double)local.SNe_v_ejecta;
+#if defined(MECHFB_CR_INJECTION) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+    m.CR_energy_to_inject = 0;
+    if(v_ej > 0 && (m.feedback_type_is_SNe || v_ej > 1000.0 / scalars.unit_vel_in_kms)) { /* the CRs take f of every explosion and of fast winds; the ejecta go on with the rest */
+        m.CR_energy_to_inject = scalars.CosmicRay_SNeFraction * 0.5 * (double)local.Msne * v_ej * v_ej;
+        v_ej *= sqrt(1.0 - scalars.CosmicRay_SNeFraction);
+    }
+    m.v_ej_after_cr = v_ej;
+#endif
+    double Energy_injected_codeunits = 0.5 * (double)local.Msne * v_ej * v_ej;
+    double v_ejecta_eff_init = v_ej;
 
     if(((double)local.Area_weighted_sum[0] > MIN_REAL_NUMBER) && (loop_iteration >= 0))
     {
         double vba_2_eff = m.pnorm_sum * (double)local.Area_weighted_sum[7];
-        v_ejecta_eff_init = sqrt((double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta + vba_2_eff);
+        v_ejecta_eff_init = sqrt(v_ej * v_ej + vba_2_eff);
         Energy_injected_codeunits = 0.5 * (double)local.Msne * v_ejecta_eff_init * v_ejecta_eff_init;
 
         double p_terminal_multiplier_rhoZE =
@@ -322,12 +334,12 @@ static void mechanical_fb_per_source_setup(
 #ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
         if(m.feedback_type_is_SNe) { /* pure-thermal SNe: the whole explosion energy as heat, no radial ejecta momentum */
             m.momentum_to_couple_term_units = 0;
-            m.U_thermal_residual_tocouple = 0.5 * (double)local.Msne * (double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta;
+            m.U_thermal_residual_tocouple = 0.5 * (double)local.Msne * v_ej * v_ej;
         }
 #endif
     }
 
-#if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+#if defined(CR_DYNAMICAL_INJECTION_IN_SNE) && !(defined(MECHFB_CR_INJECTION) && defined(GALSF_SINGLE_STARS_FROM_IMF))
     /* Mirror CPU lines 548-555 in mechanical_fb.cc: compute CR energy budget
      * for this source at current velocity, subtracting it from the ejecta KE.
      * All.CosmicRay_SNeFraction and UNIT_VEL_IN_KMS routed through
@@ -554,7 +566,7 @@ static void mechanical_fb_pair_kernel(
     double KE_initial = 0, KE_final = 0;
     if(couple_anything_but_scalar_mass_and_metals)
     {
-#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#if defined(MECHFB_CR_INJECTION)
         /* CR injection via delta struct (host scatter applies in
          * verify_and_assign_local_mechfb_integrals). */
         double crdir[3] = { -dp[0] / r, -dp[1] / r, -dp[2] / r };
@@ -591,7 +603,11 @@ static void mechanical_fb_pair_kernel(
                 double v0 = (Vel_j_0[k] - (double)local.Vel[k]) / scalars.common.cf_atime, vf = (Vel_j[k] - (double)local.Vel[k]) / scalars.common.cf_atime;
                 dKE_star_frame += 0.5 * (Mass_j * vf * vf - mj_preshock * v0 * v0);
             }
+#ifdef MECHFB_CR_INJECTION
+            d_Egy_internal = pnorm * 0.5 * (double)local.Msne * m.v_ej_after_cr * m.v_ej_after_cr - dKE_star_frame;
+#else
             d_Egy_internal = pnorm * 0.5 * (double)local.Msne * (double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta - dKE_star_frame;
+#endif
         }
 #endif
         if(m.retain_thermal_flag == 0) d_Egy_internal = 0;
