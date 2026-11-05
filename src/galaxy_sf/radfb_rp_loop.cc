@@ -570,6 +570,9 @@ void radiation_pressure_winds_consolidated(void)
     radfb_rp_log_sum_radius  = 0; radfb_rp_log_n_touched   = 0;
     radfb_rp_log_mom_coupled = 0; radfb_rp_log_sum_v_kick  = 0;
     radfb_rp_log_sum_taufac  = 0;
+#ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
+    {double dp_cells = 0; single_star_radpressure_per_cell(&dp_cells); radfb_rp_log_mom_supply += dp_cells; radfb_rp_log_mom_coupled += dp_cells;}
+#endif
 
     std::vector<int>             active_src;
     std::vector<RadFBRPLocalIn>  host_locals;

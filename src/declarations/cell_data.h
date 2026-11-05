@@ -481,6 +481,10 @@ extern struct gas_cell_data
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     float TreeColEgyUV[GALSF_RESOLVEDISM_TREECOL_PIXELS]; /*!< per-pixel unattenuated stellar 6-13.6 eV energy density [erg/cm^3] */
     float TreeColEgyLW, TreeColEgyNUV, TreeColEgyOPT, TreeColEgy68; /*!< totals: 11.2-13.6 (per-pixel floored), 3.444-6, 0.4133-3.444, 6-8 eV [erg/cm^3] */
+#ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
+    float TreeColRadpFlux[4];  /*!< sum over pixels of sigma_b F_b: vector along the pixel centres toward the sources, then the scalar [1e-21 cm^2 x code lum / code length^2] */
+    float RadpAbsorbedLum;     /*!< luminosity this cell absorbed at its last update [code]: its share of the photon cap */
+#endif
 #endif
 #endif
     

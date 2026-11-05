@@ -5,6 +5,7 @@
    sources (GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) and for the radiation-pressure budget at the star
    (GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS). Host only. */
 #include <math.h>
+#include <vector>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "single_star_record.h"
@@ -80,6 +81,63 @@ double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR
 #endif
     double L_abs = DMIN(f_uv * (L[SINGLE_STAR_BAND_PE] + L[SINGLE_STAR_BAND_68]) + f_nuv * L_nuv + f_opt * L[SINGLE_STAR_BAND_OPT], L_bol);
     *tau_IR = 5.0 * dgr * Sigma;
+#ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
+    return L_abs * (*tau_IR) * dt_cgs / C_LIGHT_CGS; /* direct term: per cell, single_star_radpressure_per_cell */
+#else
     return L_abs * (1.0 + *tau_IR) * dt_cgs / C_LIGHT_CGS;
+#endif
+}
+#endif
+
+#ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
+/* direct radiation pressure in the absorbing cell: L_abs = sum_b sigma_b F_b DGR N_H(cell) / 4 pi, pushed away from the pixel
+   centres, all deposits scaled by L_emit / sum(L_abs) when above 1 (stella_dev photon cap). The sum over cells is kept running:
+   an active cell swaps its share, full recount on all-active steps. L_emit is the root node, so no star loop. One Allreduce per call. */
+void single_star_radpressure_per_cell(double *dp_total_code)
+{
+    static double abs_sum_local = 0; static int counted = 0;
+    *dp_total_code = 0;
+    const double to_L = 1.0e-21 * All.cf_a2inv / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS * 4.0 * M_PI); /* sum x DGR N_H -> code lum */
+    const int all_active = (All.HighestActiveTimeBin == All.HighestOccupiedTimeBin);
+    if(!counted || all_active)
+    {
+        abs_sum_local = 0; counted = 1;
+        for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {abs_sum_local += CellP[i].RadpAbsorbedLum;}}
+    }
+    std::vector<double> lum_abs(ActiveParticleList.size(), 0.);
+    for(size_t a = 0; a < ActiveParticleList.size(); a++)
+    {
+        const int i = ActiveParticleList[a];
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        const double dgr = (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_dust_to_gas_ratio(P[i].Metallicity[0]), 0.);
+        lum_abs[a] = to_L * dgr * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+        const double l = lum_abs[a] * CellP[i].TreeColRadpFlux[3];
+        abs_sum_local += l - CellP[i].RadpAbsorbedLum;
+        CellP[i].RadpAbsorbedLum = (float) l;
+    }
+    const MyFloat *root = Nodes[All.TreeNodeIndexBase].stellar_lum;
+    double L_emit = root[RT_FREQ_BIN_PHOTOELECTRIC] + root[RT_FREQ_BIN_GENERIC_USER_FREQ] + root[RT_FREQ_BIN_NUV] + root[RT_FREQ_BIN_OPTICAL_NIR];
+#ifdef GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE
+    L_emit += root[RT_FREQ_BIN_LYMAN_WERNER] + root[RT_FREQ_BIN_GENERIC_USER_FREQ];
+#endif
+    double abs_sum = 0;
+    MPI_Allreduce(&abs_sum_local, &abs_sum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    const double fcons = (abs_sum > L_emit && abs_sum > 0) ? L_emit / abs_sum : 1.0;
+    const double to_p = fcons * UNIT_LUM_IN_CGS * UNIT_TIME_IN_CGS / (C_LIGHT_CGS * UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s); /* code lum x code time -> code momentum */
+    for(size_t a = 0; a < ActiveParticleList.size(); a++)
+    {
+        const int i = ActiveParticleList[a];
+        const double dt = get_particle_timestep_in_physical(i, P);
+        if(!(lum_abs[a] > 0) || !(dt > 0)) {continue;}
+        const double dp = -lum_abs[a] * to_p * dt;
+        double dpmag2 = 0;
+        for(int k = 0; k < 3; k++)
+        {
+            const double dp_k = dp * CellP[i].TreeColRadpFlux[k], dv = dp_k * All.cf_atime / P[i].Mass;
+            P[i].Vel[k] += dv; CellP[i].VelPred[k] += dv; P[i].dp[k] += dv * P[i].Mass;
+            dpmag2 += dp_k * dp_k;
+        }
+        *dp_total_code += sqrt(dpmag2);
+    }
 }
 #endif
