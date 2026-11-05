@@ -106,7 +106,7 @@ def test_winds(built):
     Msun_kms2_in_erg = 1.989e33 * 1.0e10
     booked = 0.5 * delivered * wind_speed(built["StellarTablesFile"], 35.0, 0.014, w["wa"]) ** 2 * Msun_kms2_in_erg
     coupled = (s1["E"] - s0["E"]) * Msun_kms2_in_erg
-    assert 0.99 * booked <= coupled <= 1.08 * booked, (coupled, booked)  # measured 1.045, see the README
+    assert abs(coupled / booked - 1) < 1e-3, (coupled, booked)
     assert len(rows) == 0  # winds are not logged per step
     # momentum: the momentum-conserving wind coupling of the loop balances its radial kicks only
     # approximately on this lattice (measured: 3% of the first step's wind momentum, 0.35 Msun at ~2000 km/s)
