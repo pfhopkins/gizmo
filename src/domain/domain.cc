@@ -880,10 +880,24 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
        and before anything has been freed or rebuilt.  The test is the exact validity condition
        rather than a padded one, so it fires only when a key would actually be wrong. */
     int extent_outgrown_local = 0;
-    for(i = 0; i < NumPart; i++)
+    if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, NumPart))
+    {   /* on all threads: only whether any particle fails the test matters, so there is no early exit to keep */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(|:extent_outgrown_local)
+#endif
+        for(int k = 0; k < NumPart; k++)
+        {
+            if(position_outside_domain_extent(P[k].Pos[0], P[k].Pos[1], P[k].Pos[2], DomainCorner[0], DomainCorner[1], DomainCorner[2], DomainLen))
+                {extent_outgrown_local = 1;}
+        }
+    }
+    else
     {
-        if(position_outside_domain_extent(P[i].Pos[0], P[i].Pos[1], P[i].Pos[2], DomainCorner[0], DomainCorner[1], DomainCorner[2], DomainLen))
-            {extent_outgrown_local = 1; break;}
+        for(i = 0; i < NumPart; i++)
+        {
+            if(position_outside_domain_extent(P[i].Pos[0], P[i].Pos[1], P[i].Pos[2], DomainCorner[0], DomainCorner[1], DomainCorner[2], DomainLen))
+                {extent_outgrown_local = 1; break;}
+        }
     }
     int extent_outgrown = 0;
     MPI_Allreduce(&extent_outgrown_local, &extent_outgrown, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
