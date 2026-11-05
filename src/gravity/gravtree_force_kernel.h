@@ -705,6 +705,38 @@ KOKKOS_INLINE_FUNCTION void grav_pair_optional_acc_combine(grav_pair_optional_ac
     (void) a; (void) b;
 }
 
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+/* GRAVITY_PERIODIC_XY_IMAGES: the (2N+1)^2-1 further x/y images of a source, N = All.GravityPeriodicXYImages, around its nearest image
+ * (src.dr). The box is open in z, so the images are shifted in x and y only. */
+KOKKOS_INLINE_FUNCTION void
+grav_pair_xy_images(const grav_pair_tgt_t &tgt, const grav_pair_src_t &src, grav_pair_core_acc_t &core, grav_pair_optional_acc_t &optional)
+{
+    (void) optional;
+    const int n = All.GravityPeriodicXYImages;
+    for(int a = -n; a <= n; a++)
+    {
+        for(int b = -n; b <= n; b++)
+        {
+            if(a == 0 && b == 0) {continue;}
+            Vec3<double> d = {src.dr[0] + a * boxSize_X, src.dr[1] + b * boxSize_Y, src.dr[2]};
+            const double r2 = d.norm_sq();
+            grav_force_pair_t im = grav_force_pair(sqrt(r2), r2, src.mass, tgt.h, src.h_p, tgt.ptype, src.ptype_sec, tgt.pmass,
+                                                   tgt.zeta, src.zeta_sec, tgt.ags_bitflag);
+            core.acc += im.fac_accel * d;
+#ifdef EVALPOTENTIAL
+            core.pot += im.fac_pot;
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+            grav_tidal_tensor_accumulate(d, im.fac_tidal, im.fac2_tidal, tgt.pm, 0, optional.tidal_tensorps);
+#endif
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+            grav_jerk_accumulate(src.dv, d, im.fac_accel, im.fac2_tidal, tgt.ptype, optional.jerk);
+#endif
+        }
+    }
+}
+#endif /* GRAVITY_PERIODIC_XY_IMAGES */
+
 /* What the walker's payload blocks consume after the evaluation: the separation and the
  * acceleration prefactor as accumulated (PM-truncated when the source was in range of the
  * short-range table, raw otherwise -- the column-integral payloads have no PM completion). */
@@ -760,6 +792,9 @@ grav_pair_evaluate_core(const grav_pair_tgt_t &tgt, grav_pair_src_t &src, grav_p
                                                tgt.pos[0],tgt.pos[1],tgt.pos[2], src.dr, fac_accel);
 #endif
         core.acc += fac_accel * src.dr;
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+        grav_pair_xy_images(tgt, src, core, optional);
+#endif
 #ifdef SINK_DYNFRICTION_FROMTREE
         grav_sink_dynfriction_accumulate(src.dr, src.dv, fac_accel, src.mass, tgt.sink_mass, src.m_j_eff_for_df, tgt.ptype, core.acc);
 #endif

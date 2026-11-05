@@ -2270,6 +2270,12 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.G;
       id[nt++] = REAL;
 
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+      strcpy(tag[nt], "GravityPeriodicXYImages");
+      addr[nt] = &All.GravityPeriodicXYImages;
+      id[nt++] = INT;
+
+#endif
       strcpy(tag[nt], "InitGasTemp");
       strcpy(alternate_tag[nt], "Initial_Gas_Temperature");
       addr[nt] = &All.InitGasTemp;
@@ -3719,6 +3725,9 @@ void read_parameter_file(char *fname)
     {
         if(ThisTask==0) {printf("ErrTolIntAccuracy must be >0 and <0.05 to ensure stability \n");} endrun(1);
     }
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+    if(All.GravityPeriodicXYImages < 0) {if(ThisTask==0) {printf("GravityPeriodicXYImages must be >=0 \n");} endrun(1);}
+#endif
     if((All.ErrTolTheta<=0.1)||(All.ErrTolTheta>=0.9))
     {
         if(ThisTask==0) {printf("ErrTolTheta must be >0.1 and <0.9 to ensure stability \n");} endrun(1);

@@ -267,6 +267,10 @@ struct global_data_all_processes
   double TimeLimitCPU;
   double CPU_Sum[CPU_PARTS];    /*!< sums wallclock time/CPU consumption in whole run */
 
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+  int GravityPeriodicXYImages;	/*!< rings of x/y images summed per interaction: (2N+1)^2-1 images */
+#endif
+
   /* tree code opening criterion */
   double ErrTolTheta;		/*!< Barnes-Hut tree opening angle */
   double ErrTolForceAcc;	/*!< parameter for relative opening criterion in tree walk */
