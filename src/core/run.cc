@@ -281,6 +281,7 @@ void run(void)
 #ifdef KETJU_REGULARIZATION
         ketju_find_regions();    /* chain regions around massive stars/BHs */
         ketju_run_integration(); /* subtract tree pair force, run MSTAR, velocity trick; raises motion bounds */
+        ketju_write_output();
 #endif
         /* The kept neighbour index follows the kicked velocities before anything drifts on them. Every
            velocity change since the last kick -- the second half-kick and the end-of-step writers (winds,
@@ -911,7 +912,13 @@ void find_next_sync_point_and_drift(void)
          * legacy compute_potential() (gravity/potential.cc) and
          * OUTPUT_RECOMPUTE_POTENTIAL flag are retired. */
         gizmo_full_drift_to(All.Ti_Current); /* lazy-drift sync: snapshot writes all-particle predicted state */
+#ifdef KETJU_REGULARIZATION
+        ketju_swap_output_velocities(); /* members ending their step here: write the MSTAR velocity */
+#endif
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
+#ifdef KETJU_REGULARIZATION
+        ketju_swap_output_velocities();
+#endif
         All.Ti_nextoutput = find_next_outputtime(All.Ti_nextoutput + 1);
     }
 

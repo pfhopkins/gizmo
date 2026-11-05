@@ -320,6 +320,7 @@ struct KetjuRegion {
     /* integrator state (only allocated on compute root) */
     struct ketju_system *integrator;
     std::vector<ketju_extra_data> extra_data;
+    std::vector<double> true_vel;  /* MSTAR end-of-step CoM-relative velocities before the second negative half-kick (compute tasks) */
     std::vector<double> coll_radius; /* MSTAR contact radii in its natural units (compute tasks) */
 
     /* CoM frame data (stored at setup, used in scatter) */
@@ -1128,6 +1129,57 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
 }
 
 
+/* Snapshot state of members part-way through their step: for each output time inside a region's step (and at its start,
+ * where the first output after the IC falls: written after this integration), a copy of the region's MSTAR system is
+ * integrated to it (collisions off) and its state is kept by particle ID until the output, so the region's own
+ * integration is unchanged. The state is that of the host scheme at that time: the CoM drifting with its velocity after
+ * the first half-kick, the internal motion from MSTAR. With an output list only the next output time is covered. */
+struct ketju_output_state {MyIDType ID, Child; integertime ti; double pos[3], vel[3];};
+static std::vector<ketju_output_state> KetjuOutputStates; /* compute roots, until gathered at the output */
+static void record_midstep_output_state(KetjuRegion &reg)
+{
+    if(!reg.compute_tasks.is_member() || !reg.integrator) return;
+    integertime t0 = All.Ti_Current, t1 = All.Ti_Current + reg.ti_step;
+    std::vector<integertime> outs;
+    for(integertime to = All.Ti_nextoutput; to >= t0 && to < t1; to = find_next_outputtime(to + 1)) {outs.push_back(to); if(All.OutputListOn) break;}
+    if(outs.empty()) return;
+    struct ketju_system *R = reg.integrator, C;
+    int n = R->num_particles;
+    memset(&C, 0, sizeof(C));
+    kj_mstar_create_system(&C, R->num_pn_particles, n - R->num_pn_particles, reg.compute_tasks.comm);
+    *C.options = *R->options; *C.constants = *R->constants;
+    for(int i = 0; i < n; i++) {
+        C.physical_state->mass[i] = R->physical_state->mass[i];
+        for(int k = 0; k < 3; k++) {C.physical_state->pos[i][k] = R->physical_state->pos[i][k]; C.physical_state->vel[i][k] = R->physical_state->vel[i][k];}
+    }
+    for(int i = 0; i < R->num_pn_particles; i++) for(int k = 0; k < 3; k++) C.physical_state->spin[i][k] = R->physical_state->spin[i][k];
+    C.physical_state->time = 0;
+    double t_done = 0; /* physical time C has been integrated */
+    for(integertime to : outs) {
+        double t_out, a_out = All.cf_atime, hub = 0;
+        if(All.ComovingIntegrationOn) {
+            t_out = get_gravkick_factor(t0, to, -1, 0) * All.cf_atime * exp(0.5 * (to - t0) * All.Timebase_interval);
+            a_out = All.cf_atime * exp((to - t0) * All.Timebase_interval); hub = hubble_function(a_out);
+        } else {t_out = (to - t0) * All.Timebase_interval;}
+        if(t_out > t_done) {
+            kj_state_change_units(C.physical_state, n, 1);
+            kj_mstar_run_integrator(&C, (t_out - t_done) * KJ_TIME_TO_NAT);
+            kj_state_change_units(C.physical_state, n, 0);
+            t_done = t_out;
+        }
+        if(!reg.compute_tasks.is_root()) continue;
+        double drift = (to > t0) ? get_drift_factor(t0, to, 0, 0) : 0;
+        for(int i = 0; i < n; i++) {
+            ketju_output_state o; o.ID = reg.extra_data[i].ID; o.Child = reg.extra_data[i].Child; o.ti = to;
+            for(int k = 0; k < 3; k++) {
+                o.pos[k] = reg.com_pos[k] + reg.com_vel[k] * drift + C.physical_state->pos[i][k] / a_out;
+                o.vel[k] = reg.com_vel[k] + (C.physical_state->vel[i][k] - hub * C.physical_state->pos[i][k]) * a_out;
+            }
+            KetjuOutputStates.push_back(o);
+        }
+    }
+    kj_mstar_free_system(&C);
+}
 
 
 
@@ -1161,6 +1213,7 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
     do_negative_halfstep_kick(reg, first_halfkick, 1, &pair_dv);
 
 
+    record_midstep_output_state(reg);
     /* run MSTAR integrator (all compute tasks participate via compute_tasks.comm) */
     if(reg.compute_tasks.is_member() && reg.integrator) {
         kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 1);
@@ -1190,6 +1243,10 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         }
     }
 
+    if(reg.compute_tasks.is_member() && reg.integrator) {
+        int n = reg.integrator->num_particles; reg.true_vel.assign(3 * reg.total_particle_count, 0.0);
+        for(int i = 0; i < n; i++) for(int j = 0; j < 3; j++) reg.true_vel[3*i+j] = reg.integrator->physical_state->vel[i][j];
+    }
     /* subtract second half of tree force */
     do_negative_halfstep_kick(reg, second_halfkick, 0);
 }
@@ -1334,6 +1391,7 @@ struct ketju_scatter_particle {
     KetjuUID MergedInto; /* ID and child number of the particle MSTAR merged this one into (ID 0: none) */
 #endif
     double Sphere[4];    /* chain bounding sphere at end of step (comoving center, radius) */
+    double TrueVel[3];   /* CoM-relative velocity before the second negative half-kick */
 };
 
 /* comparison for sorting scatter particles by Task (for MPI_Scatterv) */
@@ -1395,6 +1453,7 @@ static void scatter_results(KetjuRegion &reg)
                  * sp.Vel stores CoM-relative canonical momentum (com_vel added later in velocity trick).
                  * In non-cosmo: a_end=1, hubble_end=0, so sp.Vel = ps->vel (unchanged). */
                 sp.Vel[j] = (ps->vel[i][j] - hubble_end * ps->pos[i][j]) * a_end;
+                sp.TrueVel[j] = (reg.true_vel[3*i+j] - hubble_end * ps->pos[i][j]) * a_end;
             }
         }
         { /* chain sphere from the end positions the members drift to; the end-of-step tree opens nodes overlapping it */
@@ -1539,6 +1598,7 @@ static void scatter_results(KetjuRegion &reg)
         struct ketju_member_state &km = ketju_member_open(idx);
         for(int k = 0; k < 4; k++) {km.chain_sphere[k] = sp.Sphere[k];}
         P[idx].KetjuOpenRadius = (float)(((reg.affected_sim_indices.size() > 1) ? 2.0 : -2.0) * sp.Sphere[3]); /* any partner lies within the sphere's diameter of this member; < 0: on this rank */
+        for(int k = 0; k < 3; k++) {km.true_vel[k] = sp.TrueVel[k] + reg.com_vel[k];}
         for(int k = 0; k < 3; k++) {km.chain_vel[k] = reg.com_vel[k];}
 
         /* skip velocity trick for merged particles (mass=0, will be removed) */
@@ -2024,6 +2084,40 @@ void ketju_run_integration(void)
     }
 }
 
+/* Snapshots are written after the drift to the output time but before the step's end: a chain member whose step ends
+ * there still carries the velocity-trick chord velocity, so MSTAR's end-of-step velocity is swapped in for the write, and
+ * back. A member part-way through its step sits on the chord: its position and velocity are swapped with the state
+ * record_midstep_output_state integrated to this time. Called before and after the write (each call swaps). */
+void ketju_swap_output_velocities(void)
+{
+    static std::vector<ketju_output_state> here; /* this output's states, kept between the two calls */
+    static int swapped = 0;
+    ketju_member_step_end_init();
+    if(!swapped && ketju_no_live_chains()) {return;} /* rank-uniform: no chain, no collective */
+    if(!swapped) {
+        int nl = 0; for(const ketju_output_state &o : KetjuOutputStates) if(o.ti == All.Ti_Current) nl++;
+        std::vector<ketju_output_state> mine; for(const ketju_output_state &o : KetjuOutputStates) if(o.ti == All.Ti_Current) mine.push_back(o);
+        std::vector<int> cnt(NTask), bc(NTask), bd(NTask); MPI_Allgather(&nl, 1, MPI_INT, cnt.data(), 1, MPI_INT, MPI_COMM_WORLD);
+        int nt = 0; for(int t = 0; t < NTask; t++) {bc[t] = cnt[t] * sizeof(ketju_output_state); bd[t] = nt * sizeof(ketju_output_state); nt += cnt[t];}
+        here.resize(nt);
+        MPI_Allgatherv(mine.data(), nl * sizeof(ketju_output_state), MPI_BYTE, here.data(), bc.data(), bd.data(), MPI_BYTE, MPI_COMM_WORLD);
+        std::vector<ketju_output_state> keep; for(const ketju_output_state &o : KetjuOutputStates) if(o.ti > All.Ti_Current) keep.push_back(o);
+        KetjuOutputStates.swap(keep);
+    }
+    std::unordered_map<KetjuUID, int, KetjuUIDHash> by_id; for(size_t q = 0; q < here.size(); q++) by_id[{here[q].ID, here[q].Child}] = (int)q;
+    for(int i = 0; i < NumPart; i++) {
+        if(!P[i].KetjuIntegrated || P[i].Mass <= 0) continue;
+        if(P[i].Ti_begstep + P[i].dt_step == All.Ti_Current) {
+            {double *tv = ketju_member(i).true_vel; for(int j = 0; j < 3; j++) {double v = P[i].Vel[j]; P[i].Vel[j] = tv[j]; tv[j] = v;}}
+            continue;
+        }
+        auto it = by_id.find({P[i].ID, P[i].ID_child_number}); if(it == by_id.end()) continue;
+        ketju_output_state &o = here[it->second];
+        for(int j = 0; j < 3; j++) {double x = P[i].Pos[j], v = P[i].Vel[j]; P[i].Pos[j] = o.pos[j]; P[i].Vel[j] = o.vel[j]; o.pos[j] = x; o.vel[j] = v;}
+    }
+    swapped = !swapped;
+    if(!swapped) here.clear();
+}
 
 void ketju_set_final_velocities(void)
 {
@@ -2184,6 +2278,127 @@ void ketju_finish_step(void)
 
     /* free region data (integrators, particle arrays, communicators) */
     ActiveRegions.clear();
+}
+
+/* ============================================================
+ *  Phase C: HDF5 output for KETJU diagnostics
+ *  Based on public GADGET4-KETJU (Mannerkoski+ 2023).
+ *  Writes per-BH trajectories, region data, and merger events.
+ *  Only Task 0 writes; data collected from compute roots.
+ * ============================================================ */
+
+struct ketju_bh_output {
+    double pos[3], vel[3], spin[3];
+    double mass;
+    int timestep_index, n_particles, n_bh;
+};
+
+struct ketju_merger_output {
+    MyIDType id1, id2;
+    double m1, m2, m_remnant;
+    double time, redshift;
+};
+
+static hid_t ketju_output_file = -1;
+static int ketju_output_tstep_index = 0;
+
+void ketju_open_output_file(void)
+{
+    if(ThisTask != 0) return;
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%sketju_output.hdf5", All.OutputDir);
+    if(RestartFlag == 0) {
+        ketju_output_file = H5Fcreate(buf, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
+        /* create groups */
+        hid_t grp = H5Gcreate2(ketju_output_file, "BHs", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Gclose(grp);
+        /* create extendable timestep dataset */
+        hsize_t dims[1] = {0}, maxdims[1] = {H5S_UNLIMITED}, chunk[1] = {64};
+        hid_t space = H5Screate_simple(1, dims, maxdims);
+        hid_t dcpl = H5Pcreate(H5P_DATASET_CREATE);
+        H5Pset_chunk(dcpl, 1, chunk);
+        H5Dcreate2(ketju_output_file, "timesteps", H5T_NATIVE_DOUBLE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+        H5Pclose(dcpl); H5Sclose(space);
+        /* create extendable merger dataset */
+        hid_t merger_type = H5Tcreate(H5T_COMPOUND, sizeof(ketju_merger_output));
+        H5Tinsert(merger_type, "ID1", HOFFSET(ketju_merger_output, id1), H5T_NATIVE_LLONG);
+        H5Tinsert(merger_type, "ID2", HOFFSET(ketju_merger_output, id2), H5T_NATIVE_LLONG);
+        H5Tinsert(merger_type, "M1", HOFFSET(ketju_merger_output, m1), H5T_NATIVE_DOUBLE);
+        H5Tinsert(merger_type, "M2", HOFFSET(ketju_merger_output, m2), H5T_NATIVE_DOUBLE);
+        H5Tinsert(merger_type, "M_remnant", HOFFSET(ketju_merger_output, m_remnant), H5T_NATIVE_DOUBLE);
+        H5Tinsert(merger_type, "time", HOFFSET(ketju_merger_output, time), H5T_NATIVE_DOUBLE);
+        H5Tinsert(merger_type, "redshift", HOFFSET(ketju_merger_output, redshift), H5T_NATIVE_DOUBLE);
+        dims[0] = 0;
+        space = H5Screate_simple(1, dims, maxdims);
+        dcpl = H5Pcreate(H5P_DATASET_CREATE);
+        H5Pset_chunk(dcpl, 1, chunk);
+        H5Dcreate2(ketju_output_file, "mergers", merger_type, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
+        H5Pclose(dcpl); H5Sclose(space); H5Tclose(merger_type);
+    } else {
+        ketju_output_file = H5Fopen(buf, H5F_ACC_RDWR, H5P_DEFAULT);
+        /* read current timestep index */
+        hid_t ds = H5Dopen2(ketju_output_file, "timesteps", H5P_DEFAULT);
+        hid_t sp = H5Dget_space(ds);
+        hsize_t dims[1]; H5Sget_simple_extent_dims(sp, dims, NULL);
+        ketju_output_tstep_index = (int)dims[0];
+        H5Sclose(sp); H5Dclose(ds);
+    }
+    if(ThisTask == 0 && ketju_output_file >= 0)
+        printf("KETJU: Opened HDF5 output file (tstep_index=%d)\n", ketju_output_tstep_index);
+}
+
+void ketju_close_output_file(void)
+{
+    if(ThisTask == 0 && ketju_output_file >= 0) {
+        H5Fclose(ketju_output_file);
+        ketju_output_file = -1;
+    }
+}
+
+static void ketju_hdf5_append_double(const char *dset_name, double value)
+{
+    if(ThisTask != 0 || ketju_output_file < 0) return;
+    hid_t ds = H5Dopen2(ketju_output_file, dset_name, H5P_DEFAULT);
+    hid_t sp = H5Dget_space(ds);
+    hsize_t dims[1]; H5Sget_simple_extent_dims(sp, dims, NULL);
+    hsize_t newdims[1] = {dims[0] + 1};
+    H5Dset_extent(ds, newdims);
+    H5Sclose(sp);
+    sp = H5Dget_space(ds);
+    hsize_t offset[1] = {dims[0]}, count[1] = {1};
+    H5Sselect_hyperslab(sp, H5S_SELECT_SET, offset, NULL, count, NULL);
+    hid_t memsp = H5Screate_simple(1, count, NULL);
+    H5Dwrite(ds, H5T_NATIVE_DOUBLE, memsp, sp, H5P_DEFAULT, &value);
+    H5Sclose(memsp); H5Sclose(sp); H5Dclose(ds);
+}
+
+static void ketju_hdf5_write_merger(ketju_merger_output *merger)
+{
+    if(ThisTask != 0 || ketju_output_file < 0) return;
+    hid_t ds = H5Dopen2(ketju_output_file, "mergers", H5P_DEFAULT);
+    hid_t sp = H5Dget_space(ds);
+    hsize_t dims[1]; H5Sget_simple_extent_dims(sp, dims, NULL);
+    hsize_t newdims[1] = {dims[0] + 1};
+    H5Dset_extent(ds, newdims);
+    H5Sclose(sp);
+    sp = H5Dget_space(ds);
+    hsize_t offset[1] = {dims[0]}, count[1] = {1};
+    H5Sselect_hyperslab(sp, H5S_SELECT_SET, offset, NULL, count, NULL);
+    hid_t memsp = H5Screate_simple(1, count, NULL);
+    hid_t mtype = H5Dget_type(ds);
+    H5Dwrite(ds, mtype, memsp, sp, H5P_DEFAULT, merger);
+    H5Tclose(mtype); H5Sclose(memsp); H5Sclose(sp); H5Dclose(ds);
+}
+
+void ketju_write_output(void)
+{
+    if(ActiveRegions.empty()) return;
+    if(ThisTask != 0 && ketju_output_file < 0) return; /* only task 0 has the file */
+
+    /* write timestep */
+    double phys_time = All.Time; /* scale factor in cosmo, time otherwise */
+    ketju_hdf5_append_double("timesteps", phys_time);
+    ketju_output_tstep_index++;
 }
 
 #endif /* KETJU_REGULARIZATION */

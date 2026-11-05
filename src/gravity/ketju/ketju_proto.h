@@ -16,6 +16,10 @@ void ketju_find_regions(void);
 void ketju_run_integration(void);
 void ketju_set_final_velocities(void);
 void ketju_finish_step(void);
+void ketju_swap_output_velocities(void);
+void ketju_open_output_file(void);
+void ketju_close_output_file(void);
+void ketju_write_output(void);
 #ifdef TEST_KETJU_TREE_MOTION_AUDIT
 void ketju_tree_audit_bounds(void);
 void ketju_tree_audit_nodes(void);

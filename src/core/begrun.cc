@@ -161,6 +161,9 @@ void begrun(void)
 #ifdef COOLING
   InitCool();
 #endif
+#ifdef KETJU_REGULARIZATION
+  ketju_open_output_file();
+#endif
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
   InitCool_dm();
 #endif
