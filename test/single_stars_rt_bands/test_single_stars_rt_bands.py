@@ -5,6 +5,7 @@ every photon stays in the bins.
   test_band_energy: energy per bin over the box = sum over stars of L_table(band) x t x c_red / c (2 %). Bins PE 8-11.2,
     LW, 6-8, NUV 3.444-6, OPT, H0, He0, He1, He2. The bins are disjoint: their sum stays below L_bol.
   test_single_ionising_bin: one ionising bin holds the table's photon rate at the bin's mean photon energy (2 %).
+  test_excluded_channels: the star-side radiation pressure and photoionisation channels do not build with the moment forces.
 The rates are taken between two snapshots: the first injection arrives two steps after t = 0.
 """
 import os
@@ -92,7 +93,7 @@ def nu_eff(lo, hi, T=4e4):
 
 
 def test_band_energy(tables):
-    E, t, age, tab = run(build("multi", ("RT_CHEM_PHOTOION=2",)), "multi", tables)
+    E, t, age, tab = run(build("multi", ("RT_CHEM_PHOTOION=2", "RT_DISABLE_RAD_PRESSURE")), "multi", tables)
     assert abs(t - T_END) < 1e-9
     assert len(E) == 9  # H0 He0 He1 He2 PE LW NUV OPT 6-8
     xp = expected(tab, age, ("log_L_ion_H0", "log_L_ion_He0", "log_L_ion_He1", "log_L_ion_He2", "log_L_FUV_total", "log_L_FUV_M1", "log_L_LW", "log_L_NUV", "log_L_OPT_NIR", "log_L_bol"))
@@ -110,7 +111,17 @@ def test_band_energy(tables):
 
 
 def test_single_ionising_bin(tables):
-    E, t, age, tab = run(build("single", ("RT_CHEM_PHOTOION=1",)), "single", tables)
+    E, t, age, tab = run(build("single", ("RT_CHEM_PHOTOION=1", "RT_DISABLE_RAD_PRESSURE")), "single", tables)
     assert len(E) == 6
     Q = expected(tab, age, ("log_Q_ion",))["log_Q_ion"]
     assert abs(E[0] / Q / EV / nu_eff(13.6, 500.0) - 1) < 2e-2, E[0] / Q / EV
+
+
+@pytest.mark.parametrize("flag", ["GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS", "GALSF_FB_FIRE_RT_HIIHEATING", "GALSF_FB_PHOTOIONIZATION_PER_DIRECTION"])
+def test_excluded_channels(flag):
+    src = TEST_DIR.parents[1] / "src"
+    flags = [l.strip() for l in (TEST_DIR / "Config.sh").read_text().splitlines() if l.strip()] + [flag]
+    defs = ["-D" + f for f in flags]
+    out = subprocess.run(["mpicxx", "-std=c++20", "-E", *defs, "-include", "declarations/precompiler_logic.h", "-x", "c++", "/dev/null", "-o", "/dev/null"],
+                         cwd=src, capture_output=True, text=True)
+    assert out.returncode != 0 and "counted once" in out.stderr, out.stderr[-400:]
