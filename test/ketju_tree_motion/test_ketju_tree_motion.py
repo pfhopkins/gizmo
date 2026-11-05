@@ -46,6 +46,10 @@ def test_nodes_follow_chains():
 
 
 
+def test_imports_follow_chains():
+    a = _run(2)
+    assert a["vmax_chain"] == 0 and a["top_chain"] == 0 and a["box_chain"] == 0
+    assert a["leaves"] > 0 and a["leaf_mean"] < LEAF_MEAN_MAX
 
 
 def test_regions_across_ranks():
