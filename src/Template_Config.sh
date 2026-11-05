@@ -544,6 +544,8 @@
 #AGS_OUTPUTZETA                 # outputs the adaptive-softening correction term zeta for each adaptively-softened particle
 #OUTPUT_COOLRATE                # outputs the net cooling rate (negative where gas is net heating), and conduction rate if enabled
 #OUTPUT_COOLRATE_DETAIL         # outputs cooling rate term by term [saves all individually to snapshot]
+#OUTPUT_INDIVIDUAL_COOLRATES       # SGCHEM: snapshots hold SGChemCoolRates (28) and SGChemChemCoolRates (6) of the last solve, per n_H^2. 136 bytes per cell
+#OUTPUT_CHEM_PHOTORATES            # SGCHEM: snapshots hold ChemPhotoRates (6) of the last solve. 24 bytes per cell
 #OUTPUT_POWERSPEC               # compute and output cosmological power spectra. requires BOX_PERIODIC and PMGRID.
 #OUTPUT_RECOMPUTE_POTENTIAL     # update potential every output even it EVALPOTENTIAL is set
 #OUTPUT_DENS_AROUND_NONGAS      # output gas density in neighborhood of stars [collisionless particle types], not just gas

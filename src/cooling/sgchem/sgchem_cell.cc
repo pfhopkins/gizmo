@@ -108,6 +108,13 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     for(int k = 0; k < TRAC_NUM; k++) {CellP[i].TracAbund[k] = ab[k];}
     CellP[i].Temp = temp;
     CellP[i].DustTemp = out.tdust;
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+    for(int k = 0; k < 28; k++) {CellP[i].SGChemLambda[k] = (float) (out.lambda[k] / yn / yn);}
+    for(int k = 0; k < 6; k++) {CellP[i].SGChemLambdaChem[k] = (float) (out.lambda_chem[k] / yn / yn);}
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+    for(int k = 0; k < 6; k++) {CellP[i].SGChemPhotoRates[k] = (float) out.photorates[k];}
+#endif
     CellP[i].Ne = sgchem_electrons(ab, &in);
     return energy * pow(UNIT_LENGTH_IN_CGS, 3) / UNIT_ENERGY_IN_CGS / (rho / UNIT_DENSITY_IN_CGS);
 }

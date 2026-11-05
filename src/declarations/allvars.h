@@ -768,6 +768,13 @@ enum iofields
 #ifdef SGCHEM
   IO_SGCHEM_TRACABUND,          /* last, so that builds without SGCHEM keep every block number */
   IO_SGCHEM_DUSTTEMP,
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+  IO_SGCHEM_COOLRATES,
+  IO_SGCHEM_CHEMRATES,
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+  IO_CHEM_PHOTORATES,
+#endif
 #endif
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };

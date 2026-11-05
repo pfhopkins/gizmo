@@ -807,6 +807,24 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
         break;
 
 #ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {for(k = 0; k < 28; k++) {*fp++ = (MyOutputFloat) CellP[pindex].SGChemLambda[k];} n++;}
+            break;
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {for(k = 0; k < 6; k++) {*fp++ = (MyOutputFloat) CellP[pindex].SGChemLambdaChem[k];} n++;}
+            break;
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {for(k = 0; k < 6; k++) {*fp++ = (MyOutputFloat) CellP[pindex].SGChemPhotoRates[k];} n++;}
+            break;
+#endif
         case IO_SGCHEM_TRACABUND:
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type) {for(k = 0; k < SGCHEM_NUM_TRACKED_SPECIES; k++) {*fp++ = (MyOutputFloat) CellP[pindex].TracAbund[k];} n++;}
@@ -2421,6 +2439,21 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             break;
             
 #ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+            bytes_per_blockelement = 28 * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+            bytes_per_blockelement = 6 * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+            bytes_per_blockelement = 6 * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
         case IO_SGCHEM_TRACABUND:
             bytes_per_blockelement = SGCHEM_NUM_TRACKED_SPECIES * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
             break;
@@ -2777,6 +2810,21 @@ int get_values_per_blockelement(enum iofields blocknr)
             break; 
 
 #ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+            values = 28;
+            break;
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+            values = 6;
+            break;
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+            values = 6;
+            break;
+#endif
         case IO_SGCHEM_TRACABUND:
             values = SGCHEM_NUM_TRACKED_SPECIES;
             break;
@@ -2993,6 +3041,15 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_MOLECULARFRACTION:
         case IO_CHIMES_ABUNDANCES:
 #ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+#endif
         case IO_SGCHEM_TRACABUND:
 #endif
         case IO_CHIMES_MU:
@@ -3247,6 +3304,15 @@ int blockpresent(enum iofields blocknr)
             break;
 
 #ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+#endif
         case IO_SGCHEM_TRACABUND:
         case IO_SGCHEM_DUSTTEMP:
             return 1;
@@ -3961,6 +4027,21 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             strncpy(label, "DBMA", 4);
             break;
 #ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+            strncpy(label, "SCRT", 4);
+            break;
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+            strncpy(label, "SCCR", 4);
+            break;
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+            strncpy(label, "SCPR", 4);
+            break;
+#endif
         case IO_SGCHEM_TRACABUND:
             strncpy(label, "CCTA", 4);
             break;
@@ -4445,6 +4526,21 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             strcpy(buf, "DustBinMasses");
             break;
 #ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+            strcpy(buf, "SGChemCoolRates");
+            break;
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+            strcpy(buf, "SGChemChemCoolRates");
+            break;
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+            strcpy(buf, "ChemPhotoRates");
+            break;
+#endif
         case IO_SGCHEM_TRACABUND:
             strcpy(buf, "SGChemTracAbund");
             break;

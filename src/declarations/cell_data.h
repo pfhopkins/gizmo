@@ -464,6 +464,12 @@ extern struct gas_cell_data
 #ifdef SGCHEM
     MyFloat TracAbund[SGCHEM_NUM_TRACKED_SPECIES]; /*!< SGChem tracked species, number per H nucleus */
     MyFloat DustTemp;                     /*!< dust temperature from the chemistry [K] */
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+    float SGChemLambda[28], SGChemLambdaChem[6]; /*!< cooling and chemistry rates of the last solve / n_H^2 [erg cm^3 / s] */
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+    float SGChemPhotoRates[6];                   /*!< photorates of the last solve */
+#endif
     MyFloat Temp;                         /*!< gas temperature from the chemistry [K] */
 #endif
     
