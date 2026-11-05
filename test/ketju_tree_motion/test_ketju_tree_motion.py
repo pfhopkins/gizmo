@@ -57,3 +57,10 @@ def test_regions_across_ranks():
     assert np.median(np.abs(a / (1000 * 4.848137e-9) - 1)) < 0.01
 
 
+def test_walk_opens_for_members():
+    """a member takes its partners as leaves: nodes around it that the opening test would accept are opened"""
+    subprocess.run([sys.executable, "make_ketju_tree_motion_ics.py"], cwd=TEST_DIR, check=True)
+    clean_test_outputs(TEST_NAME)
+    build_and_run_test(TEST_NAME, 1, 1, extra_config_flags=("TEST_KETJU_WALK_OPENINGS",))
+    d = re.search(r"KETJU_WALK_OPENINGS (\d+)", open(f"{TEST_DIR}/test_{TEST_NAME}.out").read())
+    assert d and int(d[1]) > 0
