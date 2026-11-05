@@ -1128,6 +1128,84 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
     }
 }
 
+/* ============================================================
+ *  Expand tight binaries: if the tightest binary has a period
+ *  much shorter than the timestep and is an outlier, double its
+ *  semi-major axis to prevent integrator stalling.
+ *  Based on the public GADGET4-KETJU algorithm (Mannerkoski+ 2023).
+ * ============================================================ */
+static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
+{
+    if(!reg.compute_tasks.is_root() || !reg.integrator) return;
+    if(All.KetjuExpandBinariesFactor <= 0) return; /* disabled */
+
+    int n = reg.integrator->num_particles;
+    struct ketju_system_physical_state *ps = reg.integrator->physical_state;
+
+    /* find the tightest bound binary */
+    int best_i = -1, best_j = -1;
+    double min_period = 1e30;
+    int n_tight = 0; /* count of binaries with period < 2*min_period */
+
+    for(int i = 0; i < n; i++) {
+        for(int j = i + 1; j < n; j++) {
+            double dr[3], dv[3], r2 = 0, v2 = 0;
+            for(int k = 0; k < 3; k++) {
+                dr[k] = ps->pos[i][k] - ps->pos[j][k];
+                dv[k] = ps->vel[i][k] - ps->vel[j][k];
+                r2 += dr[k] * dr[k]; v2 += dv[k] * dv[k];
+            }
+            double GM = All.G * (ps->mass[i] + ps->mass[j]);
+            double E = 0.5 * v2 - GM / sqrt(r2);
+            if(E >= 0) continue; /* unbound */
+            double a = -GM / (2.0 * E);
+            double period = 2.0 * M_PI * a * sqrt(a / GM);
+            if(period < min_period) {
+                min_period = period; best_i = i; best_j = j;
+            }
+        }
+    }
+
+    if(best_i < 0) return; /* no bound binaries */
+    if(min_period > All.KetjuExpandBinariesFactor * dt_physical) return; /* not tight enough */
+
+    /* count binaries with period < 2*min_period */
+    for(int i = 0; i < n; i++) {
+        for(int j = i + 1; j < n; j++) {
+            double dr[3], dv[3], r2 = 0, v2 = 0;
+            for(int k = 0; k < 3; k++) {
+                dr[k] = ps->pos[i][k] - ps->pos[j][k];
+                dv[k] = ps->vel[i][k] - ps->vel[j][k];
+                r2 += dr[k] * dr[k]; v2 += dv[k] * dv[k];
+            }
+            double GM = All.G * (ps->mass[i] + ps->mass[j]);
+            double E = 0.5 * v2 - GM / sqrt(r2);
+            if(E >= 0) continue;
+            double a = -GM / (2.0 * E);
+            double period = 2.0 * M_PI * a * sqrt(a / GM);
+            if(period < 2.0 * min_period) n_tight++;
+        }
+    }
+
+    /* only expand if it's an outlier (< max(N/100, 5) tight binaries) */
+    if(n_tight > DMAX(n / 100, 5)) return;
+
+    /* double the semi-major axis: scale relative velocity by 1/sqrt(2)
+     * so a_new = 2*a_old (via virial theorem: E_new = E_old/2) */
+    double scale = 1.0 / sqrt(2.0);
+    double com_vel[3];
+    double mtot = ps->mass[best_i] + ps->mass[best_j];
+    for(int k = 0; k < 3; k++) {
+        com_vel[k] = (ps->mass[best_i] * ps->vel[best_i][k] + ps->mass[best_j] * ps->vel[best_j][k]) / mtot;
+    }
+    for(int k = 0; k < 3; k++) {
+        ps->vel[best_i][k] = com_vel[k] + scale * (ps->vel[best_i][k] - com_vel[k]);
+        ps->vel[best_j][k] = com_vel[k] + scale * (ps->vel[best_j][k] - com_vel[k]);
+    }
+
+    printf("KETJU: expanded tight binary (period=%g -> %g, dt=%g) in region with %d particles\n",
+           min_period, min_period * 2.0 * sqrt(2.0), dt_physical, n);
+}
 
 /* Snapshot state of members part-way through their step: for each output time inside a region's step (and at its start,
  * where the first output after the IC falls: written after this integration), a copy of the region's MSTAR system is
@@ -1182,6 +1260,63 @@ static void record_midstep_output_state(KetjuRegion &reg)
 }
 
 
+/* Exact two-body drift (KetjuKeplerPairs): universal variables with Stumpff functions, Laguerre-Conway iteration (Danby
+ * 1992 sec. 6.9; Conway 1986). r, v are the relative separation and velocity, advanced in place over dt; returns 0 if the
+ * iteration does not converge (the caller then uses MSTAR). */
+static void stumpff(double z, double &C, double &S)
+{
+    if(fabs(z) < 1e-3) {C = 0.5 - z / 24 + z * z / 720 - z * z * z / 40320; S = 1.0 / 6 - z / 120 + z * z / 5040 - z * z * z / 362880; return;}
+    if(z > 0) {double q = sqrt(z); C = (1 - cos(q)) / z; S = (q - sin(q)) / (z * q); return;}
+    double q = sqrt(-z); C = (cosh(q) - 1) / (-z); S = (sinh(q) - q) / (-z * q);
+}
+static int kepler_drift(double r[3], double v[3], double mu, double dt)
+{
+    double r0 = sqrt(r[0]*r[0] + r[1]*r[1] + r[2]*r[2]), v2 = v[0]*v[0] + v[1]*v[1] + v[2]*v[2], rv = r[0]*v[0] + r[1]*v[1] + r[2]*v[2];
+    double alpha = 2 / r0 - v2 / mu, smu = sqrt(mu), sig = rv / smu;
+    if(alpha > 0) {double P = 2 * M_PI / (sqrt(alpha) * alpha * smu); dt = fmod(dt, P);} /* whole periods return the state */
+    double x = (alpha > 0) ? smu * alpha * dt : smu * dt / r0; /* initial universal anomaly */
+    double C, S, F = 0, Fp = 1;
+    int it;
+    for(it = 0; it < 100; it++) {
+        double z = alpha * x * x; stumpff(z, C, S);
+        F = sig * x * x * C + (1 - alpha * r0) * x * x * x * S + r0 * x - smu * dt;
+        Fp = sig * x * (1 - z * S) + (1 - alpha * r0) * x * x * C + r0;
+        double Fpp = sig * (1 - z * C) + (1 - alpha * r0) * x * (1 - z * S), n = 5;
+        double disc = fabs((n - 1) * (n - 1) * Fp * Fp - n * (n - 1) * F * Fpp);
+        double dx = n * F / (Fp + (Fp >= 0 ? 1 : -1) * sqrt(disc));
+        x -= dx;
+        if(fabs(dx) <= 1e-15 * fabs(x) + 1e-300) break;
+    }
+    if(it == 100) return 0;
+    double z = alpha * x * x; stumpff(z, C, S);
+    double f = 1 - x * x / r0 * C, g = dt - x * x * x / smu * S, rn[3];
+    for(int k = 0; k < 3; k++) rn[k] = f * r[k] + g * v[k];
+    double rr = sqrt(rn[0]*rn[0] + rn[1]*rn[1] + rn[2]*rn[2]);
+    double fd = smu / (rr * r0) * (z * S - 1) * x, gd = 1 - x * x / rr * C;
+    for(int k = 0; k < 3; k++) {v[k] = fd * r[k] + gd * v[k]; r[k] = rn[k];}
+    return 1;
+}
+/* Two members without PN advanced as an exact Kepler orbit about their CoM; not when a contact collision is possible */
+static int kepler_pair_step(KetjuRegion &reg, double dt)
+{
+    struct ketju_system *R = reg.integrator; struct ketju_system_physical_state *ps = R->physical_state;
+    if(!All.KetjuKeplerPairs || R->num_particles != 2 || R->num_pn_particles != 0 || R->options->enable_external_tide) return 0;
+    double m0 = ps->mass[0], m1 = ps->mass[1], M = m0 + m1, mu = All.G * M, r[3], v[3], rc[3], vc[3];
+    for(int k = 0; k < 3; k++) {r[k] = ps->pos[1][k] - ps->pos[0][k]; v[k] = ps->vel[1][k] - ps->vel[0][k]; rc[k] = (m0 * ps->pos[0][k] + m1 * ps->pos[1][k]) / M; vc[k] = (m0 * ps->vel[0][k] + m1 * ps->vel[1][k]) / M;}
+    if(R->collision_radius) {
+        double r2 = 0, v2 = 0, rv = 0; for(int k = 0; k < 3; k++) {r2 += r[k]*r[k]; v2 += v[k]*v[k]; rv += r[k]*v[k];}
+        double h2 = r2 * v2 - rv * rv, e2 = 1 + (v2 - 2 * mu / sqrt(r2)) * h2 / (mu * mu), rp = h2 / mu / (1 + sqrt(DMAX(e2, 0.0)));
+        if(rp < (R->collision_radius[0] + R->collision_radius[1]) / KJ_LEN_TO_NAT) return 0;
+    }
+    if(!kepler_drift(r, v, mu, dt)) return 0;
+    for(int k = 0; k < 3; k++) {
+        rc[k] += vc[k] * dt;
+        ps->pos[0][k] = rc[k] - m1 / M * r[k]; ps->pos[1][k] = rc[k] + m0 / M * r[k];
+        ps->vel[0][k] = vc[k] - m1 / M * v[k]; ps->vel[1][k] = vc[k] + m0 / M * v[k];
+    }
+    ps->time += dt; R->perf->successful_steps = 1; R->perf->failed_steps = 0; R->perf->relative_energy_error = 0;
+    return 1;
+}
 
 /* Run the full integration step for one region.
  * Uses proper cosmological kick factors for comoving integration
@@ -1212,13 +1347,24 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
     std::vector<double> pair_dv;
     do_negative_halfstep_kick(reg, first_halfkick, 1, &pair_dv);
 
+    /* expand tight binaries before integration to prevent stalling.
+     * Runs on compute root only — broadcast updated velocities to all compute tasks. */
+    expand_tight_binaries(reg, dt_physical);
+    if(reg.compute_tasks.is_member() && reg.integrator && reg.compute_tasks.size > 1) {
+        int n = reg.integrator->num_particles;
+        MPI_Bcast(reg.integrator->physical_state->vel, 3 * n, MPI_DOUBLE,
+                  reg.compute_tasks.root, reg.compute_tasks.comm);
+    }
 
     record_midstep_output_state(reg);
     /* run MSTAR integrator (all compute tasks participate via compute_tasks.comm) */
     if(reg.compute_tasks.is_member() && reg.integrator) {
+        int kepler = kepler_pair_step(reg, dt_physical);
+        if(!kepler) {
         kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 1);
         kj_mstar_run_integrator(reg.integrator, dt_physical * KJ_TIME_TO_NAT);
         kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 0);
+        }
         if(reg.integrator->num_particles < reg.total_particle_count) {
             /* MSTAR removed merged particles by shifting the arrays: the tail slots hold stale copies in its natural units.
              * Zero them, and put all_particles in the order of extra_data, which MSTAR permuted the same way. */

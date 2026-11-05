@@ -5,4 +5,6 @@
   int    KetjuUseStarStarSoftening;      /*!< keep softening between stars inside chain */
   double KetjuTimestepLimitingFactor;    /*!< radius factor for timestep limiting */
   int    KetjuMaxStepCount;              /*!< max MSTAR steps before bail-out (0=off) */
+  double KetjuExpandBinariesFactor;      /*!< expand tight binaries if period < factor*dt (0=off) */
   double KetjuMinParticlesPerTask;       /*!< minimum particles per compute task */
+  int    KetjuKeplerPairs;               /*!< 1: two-body regions without PN advance by an exact Kepler drift */

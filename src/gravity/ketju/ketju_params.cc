@@ -16,6 +16,7 @@ int ketju_register_params(char (*tag)[50], void **addr, int *id, int nt, int max
     KETJU_TAG("KetjuTimestepLimitingFactor", &All.KetjuTimestepLimitingFactor, type_real);
     KETJU_TAG("KetjuMinParticlesPerTask", &All.KetjuMinParticlesPerTask, type_real);
     KETJU_TAG("KetjuMaxStepCount", &All.KetjuMaxStepCount, type_int);
+    KETJU_TAG("KetjuKeplerPairs", &All.KetjuKeplerPairs, type_int);
 #undef KETJU_TAG
     return nt;
 }
@@ -28,6 +29,7 @@ int ketju_param_default(const char *tag, void *addr)
     KETJU_DEF_REAL("KetjuMinStarMass", 0, " (Type 5 stage<7/star chain centers disabled)");
     KETJU_DEF_REAL("KetjuIntegrationTolerance", 1e-9, "");
     KETJU_DEF_INT("KetjuUseStarStarSoftening", 0, " (unsoftened chains for Type-4 stars)");
+    KETJU_DEF_INT("KetjuKeplerPairs", 1, " (exact Kepler drift for isolated star pairs)");
     KETJU_DEF_REAL("KetjuTimestepLimitingFactor", 100., "");
     KETJU_DEF_REAL("KetjuMinParticlesPerTask", 10., "");
     KETJU_DEF_INT("KetjuMaxStepCount", 100000, "");
