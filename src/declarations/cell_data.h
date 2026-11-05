@@ -489,7 +489,7 @@ extern struct gas_cell_data
     float RadpAbsorbedLum;     /*!< luminosity this cell absorbed at its last update [code]: its share of the photon cap */
 #endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
-    float TreeRayIonPhotonFlux, TreeRayIonEnergyFlux; /*!< attenuated ionising flux summed over pixels [1/s/cm^2, erg/s/cm^2] */
+    float TreeRayIonPhotonFlux[TREECOL_SHELLS_ION_NBANDS], TreeRayIonEnergyFlux[TREECOL_SHELLS_ION_NBANDS]; /*!< attenuated ionising flux per band summed over pixels [1/s/cm^2, erg/s/cm^2] */
 #endif
 #endif
 #endif

@@ -109,14 +109,24 @@ double sgchem_radiation_field_for_snapshot(int i, int blocknr)
    limiter an over-ionised front cell strips its own shielding and the front runs away */
 static void sgchem_treecol_photoion_rates(int i, struct ChemInputs *in, double rho_cgs)
 {
-    const double F_ph = CellP[i].TreeRayIonPhotonFlux, F_en = CellP[i].TreeRayIonEnergyFlux, sig = TREECOL_SHELLS_SIGMA_HI, x_h2 = CellP[i].TracAbund[IH2];
-    if(F_ph <= 0) {return;}
     const double n_h = HYDROGEN_MASSFRAC * rho_cgs / PROTONMASS_CGS, l_cell = pow(P[i].Mass * UNIT_MASS_IN_CGS / rho_cgs, 1.0 / 3.0);
+#ifdef TREECOL_SHELLS_ION_HELIUM
+    const MyFloat *ab = CellP[i].TracAbund; const float *ph = CellP[i].TreeRayIonPhotonFlux, *en = CellP[i].TreeRayIonEnergyFlux;
+    const double n_hi = DMAX(0.0, 1.0 - ab[IHP]) * n_h, n_hei = DMAX(0.0, ABHE - ab[IHEP] - ab[IHEPP]) * n_h, E_H = 13.6 * ELECTRONVOLT_IN_ERGS, E_He = 24.6 * ELECTRONVOLT_IN_ERGS;
+    const double t0 = TREECOL_SHELLS_SIGMA_HI_B0 * n_hi * l_cell, t1 = (TREECOL_SHELLS_SIGMA_HI_B1 * n_hi + TREECOL_SHELLS_SIGMA_HEI_B1 * n_hei) * l_cell;
+    const double f0 = (t0 > 1.0e-8) ? (1.0 - exp(-t0)) / t0 : 1.0, f1 = (t1 > 1.0e-8) ? (1.0 - exp(-t1)) / t1 : 1.0;
+    in->rt_phot_HI = TREECOL_SHELLS_SIGMA_HI_B0 * f0 * ph[0] + TREECOL_SHELLS_SIGMA_HI_B1 * f1 * ph[1];
+    in->rt_heat_HI = TREECOL_SHELLS_SIGMA_HI_B0 * f0 * DMAX(en[0] - E_H * ph[0], 0.0) + TREECOL_SHELLS_SIGMA_HI_B1 * f1 * DMAX(en[1] - E_H * ph[1], 0.0);
+    in->rt_phot_HeI = TREECOL_SHELLS_SIGMA_HEI_B1 * f1 * ph[1]; in->rt_heat_HeI = TREECOL_SHELLS_SIGMA_HEI_B1 * f1 * DMAX(en[1] - E_He * ph[1], 0.0);
+#else
+    const double F_ph = CellP[i].TreeRayIonPhotonFlux[0], F_en = CellP[i].TreeRayIonEnergyFlux[0], sig = TREECOL_SHELLS_SIGMA_HI, x_h2 = CellP[i].TracAbund[IH2];
+    if(F_ph <= 0) {return;}
     const double n_abs = (DMAX(0.0, 1.0 - CellP[i].TracAbund[IHP] - 2.0 * x_h2) + TREECOL_SHELLS_H2_PER_HI * x_h2) * n_h, tau = sig * n_abs * l_cell;
     const double f = sig * ((tau > 1.0e-8) ? (1.0 - exp(-tau)) / tau : 1.0);
     in->rt_phot_HI = f * F_ph; in->rt_heat_HI = f * DMAX(F_en - 13.6 * ELECTRONVOLT_IN_ERGS * F_ph, 0.0);
     in->rt_phot_H2 = TREECOL_SHELLS_H2_PER_HI * in->rt_phot_HI;
     in->rt_heat_H2 = TREECOL_SHELLS_H2_PER_HI * f * DMAX(F_en - 15.2 * ELECTRONVOLT_IN_ERGS * F_ph, 0.0);
+#endif
 }
 #endif
 

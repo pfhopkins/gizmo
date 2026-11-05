@@ -151,7 +151,10 @@ struct treecol_pixels_sums_t {
     float sh[TREECOL_SHELLS_NFIELD][TREECOL_SHELLS_N];     /* per (pixel, shell): band L/r^2 [code units], dust column */
 #endif
 #ifdef TREECOL_SHELLS_ION_N
-    float sh_ion[TREECOL_SHELLS_ION_NFIELD][TREECOL_SHELLS_ION_N]; /* per (ionising pixel, shell): photons, energy, HI column */
+    float sh_ion[TREECOL_SHELLS_ION_NFIELD][TREECOL_SHELLS_ION_N]; /* per (ionising pixel, shell): photons, energy, HI column; with helium photons per band, HI and HeI columns */
+#ifdef TREECOL_SHELLS_ION_HELIUM
+    float ion_ph[2], ion_en[2]; /* unattenuated band totals: the band mean energies of the heat */
+#endif
 #endif
 };
 
@@ -171,6 +174,9 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_zero(treecol_pixels_sums_t &a)
 #ifdef TREECOL_SHELLS_ION_N
     for(int f = 0; f < TREECOL_SHELLS_ION_NFIELD; f++) {for(int k = 0; k < TREECOL_SHELLS_ION_N; k++) {a.sh_ion[f][k] = 0;}}
 #endif
+#ifdef TREECOL_SHELLS_ION_HELIUM
+    a.ion_ph[0] = a.ion_ph[1] = a.ion_en[0] = a.ion_en[1] = 0;
+#endif
 }
 
 /* combine two partial sums (lane partials, in the engine's fixed fold order) */
@@ -189,6 +195,9 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_add(treecol_pixels_sums_t &a, const t
 #endif
 #ifdef TREECOL_SHELLS_ION_N
     for(int f = 0; f < TREECOL_SHELLS_ION_NFIELD; f++) {for(int k = 0; k < TREECOL_SHELLS_ION_N; k++) {a.sh_ion[f][k] += b.sh_ion[f][k];}}
+#endif
+#ifdef TREECOL_SHELLS_ION_HELIUM
+    for(int b_ = 0; b_ < 2; b_++) {a.ion_ph[b_] += b.ion_ph[b_]; a.ion_en[b_] += b.ion_en[b_];}
 #endif
 }
 
@@ -219,7 +228,16 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, 
         a.sh[TREECOL_SHELL_DUST][ip * TREECOL_SHELLS_NSHELL + treecol_shell_of(r * r)] += w * species[TREECOL_PIXELS_DUST];
 #endif
 #ifdef TREECOL_SHELLS_ION_N
+#ifdef TREECOL_SHELLS_ION_HELIUM
+        if(species[TREECOL_PIXELS_HI] + species[TREECOL_PIXELS_HEI] > 0)
+        {
+            const int ic = treecol_hpx_pixel_nside(dr, GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION) * TREECOL_SHELLS_NSHELL + treecol_shell_of(r * r);
+            const double w_ion = w * ((double) TREECOL_SHELLS_ION_NPIX / TREECOL_PIXELS_N);
+            a.sh_ion[TREECOL_SHELL_ION_HI][ic] += w_ion * species[TREECOL_PIXELS_HI]; a.sh_ion[TREECOL_SHELL_ION_HEI][ic] += w_ion * species[TREECOL_PIXELS_HEI];
+        }
+#else
         if(species[TREECOL_PIXELS_HI] > 0) {a.sh_ion[TREECOL_SHELL_ION_HI][treecol_hpx_pixel_nside(dr, GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION) * TREECOL_SHELLS_NSHELL + treecol_shell_of(r * r)] += w * species[TREECOL_PIXELS_HI] * ((double) TREECOL_SHELLS_ION_NPIX / TREECOL_PIXELS_N);}
+#endif
 #endif
     }
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
@@ -230,7 +248,13 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, 
     {
         const double r2_i = fmax(d_lum.norm_sq(), r_floor * r_floor);
         const int ii = treecol_hpx_pixel_nside(d_lum, GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION) * TREECOL_SHELLS_NSHELL + treecol_shell_of(r2_i);
+#ifdef TREECOL_SHELLS_ION_HELIUM
+        a.sh_ion[TREECOL_SHELL_ION_PHOTONS][ii] += lum[RT_FREQ_BIN_ION_PHOTONS] / r2_i; a.sh_ion[TREECOL_SHELL_ION_HE_PHOTONS][ii] += lum[RT_FREQ_BIN_ION_HE_PHOTONS] / r2_i;
+        a.ion_ph[0] += lum[RT_FREQ_BIN_ION_PHOTONS] / r2_i; a.ion_ph[1] += lum[RT_FREQ_BIN_ION_HE_PHOTONS] / r2_i;
+        a.ion_en[0] += lum[RT_FREQ_BIN_ION_ENERGY] / r2_i; a.ion_en[1] += lum[RT_FREQ_BIN_ION_HE_ENERGY] / r2_i;
+#else
         a.sh_ion[TREECOL_SHELL_ION_PHOTONS][ii] += lum[RT_FREQ_BIN_ION_PHOTONS] / r2_i; a.sh_ion[TREECOL_SHELL_ION_ENERGY][ii] += lum[RT_FREQ_BIN_ION_ENERGY] / r2_i;
+#endif
     }
 #endif
     if(l_pe + l_68 > 0 || l_lw > 0 || l_nuv > 0 || l_opt > 0)
@@ -312,7 +336,36 @@ KOKKOS_INLINE_FUNCTION void treecol_shells_sweep(const treecol_pixels_sums_t &a,
 #ifdef TREECOL_SHELLS_ION_N
 /* ionising light outward through the HI column of each pixel, one band at sigma_HI; attenuated photon and energy flux summed over pixels */
 #define TREECOL_SHELLS_SIGMA_HI 6.3e-18
-KOKKOS_INLINE_FUNCTION void treecol_shells_ion_sweep(const treecol_pixels_sums_t &a, float &F_ph, float &F_en)
+/* with helium: photon-weighted means of a 4e4 K blackbody [cm^2], as stella_dev; band 0 13.6-24.6, band 1 24.6-54.4 eV */
+#define TREECOL_SHELLS_SIGMA_HI_B0 3.658e-18
+#define TREECOL_SHELLS_SIGMA_HI_B1 8.482e-19
+#define TREECOL_SHELLS_SIGMA_HEI_B1 5.460e-18
+#ifdef TREECOL_SHELLS_ION_HELIUM
+/* two sweeps: band 0 through HI, band 1 through HI and HeI; energy = attenuated photons x the band mean energy of the unattenuated totals */
+KOKKOS_INLINE_FUNCTION void treecol_shells_ion_sweep(const treecol_pixels_sums_t &a, float *F_ph, float *F_en)
+{
+    const double to_n = UNIT_SURFDEN_IN_CGS * All.cf_a2inv / PROTONMASS_CGS, f = UNIT_LUM_IN_CGS * All.cf_a2inv / (4.0 * M_PI * UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS);
+    double ph[2] = {0, 0};
+    for(int p = 0; p < TREECOL_SHELLS_ION_NPIX; p++)
+    {
+        double t0 = 0, t1 = 0;
+        for(int s = 0; s < TREECOL_SHELLS_NSHELL; s++)
+        {
+            const int k = p * TREECOL_SHELLS_NSHELL + s;
+            const double n_hi = a.sh_ion[TREECOL_SHELL_ION_HI][k] * to_n, n_he = a.sh_ion[TREECOL_SHELL_ION_HEI][k] * to_n;
+            const double d0 = TREECOL_SHELLS_SIGMA_HI_B0 * n_hi, d1 = TREECOL_SHELLS_SIGMA_HI_B1 * n_hi + TREECOL_SHELLS_SIGMA_HEI_B1 * n_he;
+            ph[0] += a.sh_ion[TREECOL_SHELL_ION_PHOTONS][k] * exp(-(t0 + 0.5 * d0)); ph[1] += a.sh_ion[TREECOL_SHELL_ION_HE_PHOTONS][k] * exp(-(t1 + 0.5 * d1));
+            t0 += d0; t1 += d1;
+        }
+    }
+    for(int b = 0; b < 2; b++)
+    {
+        F_ph[b] = (float) (ph[b] * f / (13.6 * ELECTRONVOLT_IN_ERGS));
+        F_en[b] = (a.ion_ph[b] > 0) ? (float) (ph[b] / a.ion_ph[b] * a.ion_en[b] * f) : 0.f;
+    }
+}
+#else
+KOKKOS_INLINE_FUNCTION void treecol_shells_ion_sweep(const treecol_pixels_sums_t &a, float *F_ph, float *F_en)
 {
     const double to_n = UNIT_SURFDEN_IN_CGS * All.cf_a2inv / PROTONMASS_CGS, f = UNIT_LUM_IN_CGS * All.cf_a2inv / (4.0 * M_PI * UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS);
     double ph = 0, en = 0;
@@ -327,8 +380,9 @@ KOKKOS_INLINE_FUNCTION void treecol_shells_ion_sweep(const treecol_pixels_sums_t
             tau += dtau;
         }
     }
-    F_ph = (float) (ph * f / (13.6 * ELECTRONVOLT_IN_ERGS)); F_en = (float) (en * f);
+    F_ph[0] = (float) (ph * f / (13.6 * ELECTRONVOLT_IN_ERGS)); F_en[0] = (float) (en * f);
 }
+#endif
 #endif
 
 /* walk end: write a gas cell's columns and band energy densities [erg/cm^3]; Lyman-Werner floored per pixel at
@@ -369,7 +423,7 @@ static inline void treecol_pixels_copy_cell(struct gas_cell_data &d, const struc
 #endif
 #endif
 #ifdef TREECOL_SHELLS_ION_N
-    d.TreeRayIonPhotonFlux = c.TreeRayIonPhotonFlux; d.TreeRayIonEnergyFlux = c.TreeRayIonEnergyFlux;
+    for(int b = 0; b < TREECOL_SHELLS_ION_NBANDS; b++) {d.TreeRayIonPhotonFlux[b] = c.TreeRayIonPhotonFlux[b]; d.TreeRayIonEnergyFlux[b] = c.TreeRayIonEnergyFlux[b];}
 #endif
 }
 

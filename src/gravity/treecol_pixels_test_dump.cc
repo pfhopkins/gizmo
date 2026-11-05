@@ -70,7 +70,8 @@ void test_dump_treecol_pixels_and_exit(void)
         {double fac_uv[NPIX]; struct ChemFUVField f = sgchem_treecol_field(i, fac_uv); fprintf(fc, " %.17g %.17g %.17g", f.G0, f.G0_LW, f.G0_dust);} /* chemistry inputs */
 #endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
-        fprintf(fc, " %.9g %.9g", CellP[i].TreeRayIonPhotonFlux, CellP[i].TreeRayIonEnergyFlux);
+        for(int b = 0; b < TREECOL_SHELLS_ION_NBANDS; b++) {fprintf(fc, " %.9g", CellP[i].TreeRayIonPhotonFlux[b]);}
+        for(int b = 0; b < TREECOL_SHELLS_ION_NBANDS; b++) {fprintf(fc, " %.9g", CellP[i].TreeRayIonEnergyFlux[b]);}
 #endif
         fprintf(fc, " %.17g %.17g %.17g\n", P[i].Pos[0], P[i].Pos[1], P[i].Pos[2]);
     }
