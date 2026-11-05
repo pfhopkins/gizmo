@@ -269,6 +269,9 @@ void run(void)
         HermiteOnlyFlag = 0;
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+#ifdef KETJU_REGULARIZATION
+        ketju_find_regions();    /* chain regions around massive stars/BHs */
+#endif
         /* The kept neighbour index follows the kicked velocities before anything drifts on them. Every
            velocity change since the last kick -- the second half-kick and the end-of-step writers (winds,
            cooling back-reaction, sink drag) -- was to these same synchronous particles. */
