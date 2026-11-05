@@ -215,6 +215,9 @@ void run(void)
 #ifdef KETJU_REGULARIZATION
             ketju_report_stats(1);
 #endif
+#ifdef TEST_KETJU_TREE_MOTION_AUDIT
+            ketju_tree_audit_report();
+#endif
             restart(0); /* write a restart file to allow continuation of the run for a larger value of TimeMax */
             if(All.Ti_lastoutput != All.Ti_Current) {savepositions(All.SnapshotFileCount++);} /* make a snapshot at the final time in case none has produced at this time; this will be overwritten if All.TimeMax is increased and the run is continued */
             break;
@@ -298,6 +301,9 @@ void run(void)
            next step reaches this rank's own tree and tile indexes at once, but the other ranks' copies only
            here: a loop later in that same step decides its exports against the older bound. */
         gravity_flush_pending_motion_bounds();
+#ifdef TEST_KETJU_TREE_MOTION_AUDIT
+        ketju_tree_audit_bounds();
+#endif
         CPU_Step[CPU_KICKS] += measure_time();
 
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
@@ -442,7 +448,13 @@ void run(void)
            drain the request here instead of carrying a broken tree into the force computation. */
         gizmo_exit_bad_stop_if_requested("run:after_tree_update");
 
+#ifdef TEST_KETJU_TREE_MOTION_AUDIT
+        if(!reconstructed_tree && !TreeMomentsStaleFlag) {ketju_tree_audit_nodes();} /* a refresh pending rewrites the nodes in this gravity call */
+#endif
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
+#ifdef TEST_KETJU_TREE_MOTION_AUDIT
+        ketju_tree_audit_imports();
+#endif
 
 #ifdef DM_DISPERSION_LOOP_ACTIVE
 /*

@@ -16,6 +16,12 @@ void ketju_find_regions(void);
 void ketju_run_integration(void);
 void ketju_set_final_velocities(void);
 void ketju_finish_step(void);
+#ifdef TEST_KETJU_TREE_MOTION_AUDIT
+void ketju_tree_audit_bounds(void);
+void ketju_tree_audit_nodes(void);
+void ketju_tree_audit_imports(void);
+void ketju_tree_audit_report(void);
+#endif
 struct ketju_member_state &ketju_member(int i);
 void tree_pair_softening(int p, double *soft, double *zeta);
 /* chain member whose MSTAR step just ended, with its chain-external field set: its host step follows only that field */
