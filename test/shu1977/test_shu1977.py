@@ -27,8 +27,6 @@ def plot_shu1977_density_slice(coords, rho, boxsize, output_dir="."):
     plt.close(fig)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "fixed by pr/test-fixes: params in m/s against a km/s adiabat, c_s 0.2 m/s, m_sink/m_ff 0.983"))
 @pytest.mark.parametrize("num_mpi_ranks", (8,))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_shu1977(num_mpi_ranks, num_omp_threads):
