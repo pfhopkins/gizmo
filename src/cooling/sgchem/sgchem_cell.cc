@@ -219,6 +219,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     struct ChemFUVField fuv = sgchem_uniform_field(All.SGChemG0, All.SGChemG0_LW, All.SGChemBackgroundG0); /* uniform, unattenuated */
 #endif
     in.G0 = fuv.G0; in.G0_LW = fuv.G0_LW; in.G0_dust = fuv.G0_dust;
+#if defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION)
+    sgchem_rt_ionising_rates(i, &in);
+#endif
     in.cosmic_ray_ion_rate = sgchem_cr_ion_rate(i, fuv.G0);
 #ifdef COSMIC_RAY_FLUID
     in.cr_energy_density = Get_CosmicRayEnergyDensity_cgs(i, P, CellP); /* hadronic and Coulomb heating by the CR fluid */
@@ -350,6 +353,9 @@ double sgchem_docooling(int i, double u_old, double dt, double *ne_eval)
 #endif
     *ne_eval = CellP[i].Ne;
     CellP[i].HI = DMAX(0, 1. - CellP[i].TracAbund[IHP]); /* neutral H nuclei (atomic and molecular) per H */
+#if defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION)
+    sgchem_rt_absorbers(i, CellP[i].TracAbund); /* with the moment solver HI holds what absorbs in the ionising bins */
+#endif
     CellP[i].Gamma = CellP[i].gamma_eos_value();
     if(u_solve > 0) {CellP[i].MeanMolecularWeight = CellP[i].Temp / ((CellP[i].Gamma - 1.) * U_TO_TEMP_UNITS * u_solve);}
     CellP[i].Temperature = (u == u_solve) ? CellP[i].Temp : CellP[i].gas_temperature_from_u(u);

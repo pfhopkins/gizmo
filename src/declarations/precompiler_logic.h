@@ -2023,6 +2023,9 @@
 #if !defined(COOLING) || !defined(METALS) || defined(COOL_GRACKLE)
 #error "SGCHEM needs COOLING and METALS, and excludes COOL_GRACKLE"
 #endif
+#if defined(RT_CHEM_PHOTOION) && (CHEMISTRYNETWORK != 5) && (CHEMISTRYNETWORK != 17)
+#error "SGCHEM: the ionising bins couple to networks 5 and 17"
+#endif
 #if defined(RADTRANSFER) && (!defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS))
 #error "SGCHEM with RT_M1 reads the field from the bins of GALSF_SINGLE_STARS_RT_TABLE_BANDS and takes its H2, CO and floor-pixel shielding from GALSF_RESOLVEDISM_TREECOL_PIXELS"
 #endif

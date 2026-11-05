@@ -1309,6 +1309,12 @@ void sgchem_init_cell_state(int i);
 double sgchem_docooling(int i, double u_old, double dt, double *ne_eval);
 #ifdef RADTRANSFER
 struct ChemFUVField sgchem_rt_field(int i, double *fac_uv, double *pix_att); /* host only */
+#ifdef RT_CHEM_PHOTOION
+void sgchem_rt_init(void);
+struct ChemInputs;
+void sgchem_rt_ionising_rates(int i, struct ChemInputs *in); /* host only */
+void sgchem_rt_absorbers(int i, const double *ab); /* host only */
+#endif
 #endif
 #endif
 #ifdef CHIMES

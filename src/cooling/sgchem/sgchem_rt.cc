@@ -43,4 +43,72 @@ struct ChemFUVField sgchem_rt_field(int i, double *fac_uv, double *pix_att)
     return f;
 }
 
+#ifdef RT_CHEM_PHOTOION
+#if CHEMISTRYNETWORK == 5
+static double sgchem_rt_r_h2 = 0; /* sigma_H2 per molecule / sigma_HI per atom over the ionising bins */
+#endif
+
+/* photon cross-sections as Arepo MRT H2_ionization_crosssection (15.2 eV threshold) and rt_chem.cc */
+static double sgchem_rt_sigma_h2(double e)
+{
+    static const double Epw[12] = {15.20, 15.45, 15.70, 15.95, 16.20, 16.40, 16.65, 16.85, 17.00, 17.20, 17.65, 18.10};
+    static const double Spw[11] = {0.09e-18, 1.15e-18, 3.0e-18, 5.0e-18, 6.75e-18, 8.0e-18, 9.0e-18, 9.5e-18, 9.8e-18, 10.1e-18, 9.8e-18};
+    if(e < 15.2) {return 0;}
+    if(e < 18.1) {for(int k = 0; k < 11; k++) {if(e < Epw[k+1]) {return Spw[k];}}}
+    return 9.75e-18 * pow(18.1 / e, 3);
+}
+
+/* r over the ionising photons of his 4e4 K blackbody (rt_get_sigma); serial, once */
+void sgchem_rt_init(void)
+{
+#if CHEMISTRYNETWORK == 5
+    double s1 = 0, s2 = 0, kT = 4.0e4 * BOLTZMANN_CGS / ELECTRONVOLT_IN_ERGS, de = (500. - 13.6) / 19999.;
+    for(int j = 1; j < 20000; j++) {
+        double e = 13.6 + j * de, x = e / kT, w = (x < 500.) ? e * e / expm1(x) : 0, f = sqrt(e / 13.6 - 1.);
+        s1 += w * 6.3e-18 * pow(13.6 / e, 4) * exp(4. - 4. * atan(f) / f) / (1. - exp(-2. * M_PI / f));
+        s2 += w * sgchem_rt_sigma_h2(e);
+    }
+    sgchem_rt_r_h2 = s2 / s1;
+    if(ThisTask == 0) {printf("SGCHEM: ionising photons on H2, sigma_H2 / sigma_HI = %.3f\n", sgchem_rt_r_h2);}
+#endif
+}
+
+/* rates per atom [1/s] and heating [erg/s per atom] over all ionising bins, as CoolingRate; H2 by the ratio used in the absorbers below */
+void sgchem_rt_ionising_rates(int i, struct ChemInputs *in)
+{
+    for(int k = 0; k < N_RT_FREQ_BINS; k++) {
+        if(!RT_BAND_IS_IONIZING(k)) {continue;}
+        double f = C_LIGHT_CGS / UNIT_LENGTH_IN_CGS * rt_ionizing_band_photon_number_density(i, k, CellP), g = f * All.rt_ion_sigma_HI[k];
+        in->rt_phot_HI += g; in->rt_heat_HI += g * All.rt_ion_G_HI[k] * UNIT_ENERGY_IN_CGS;
+#if CHEMISTRYNETWORK == 5
+        in->rt_phot_H2 += sgchem_rt_r_h2 * g;
+        in->rt_heat_H2 += sgchem_rt_r_h2 * g * DMAX(All.rt_nu_eff_eV[k] - 15.2, 0.) * ELECTRONVOLT_IN_ERGS;
+#endif
+#ifdef RT_CHEM_PHOTOION_HE
+        in->rt_phot_HeI += f * All.rt_ion_sigma_HeI[k]; in->rt_heat_HeI += f * All.rt_ion_sigma_HeI[k] * All.rt_ion_G_HeI[k] * UNIT_ENERGY_IN_CGS;
+        in->rt_phot_HeII += f * All.rt_ion_sigma_HeII[k]; in->rt_heat_HeII += f * All.rt_ion_sigma_HeII[k] * All.rt_ion_G_HeII[k] * UNIT_ENERGY_IN_CGS;
+#endif
+    }
+}
+
+/* the absorbers rt_kappa reads: what the network consumes photons on. Net 5: atomic H plus H2 by the same ratio as its rate,
+   no He species, so the He fields stay empty and helium bins act on H. Net 17: atomic H, its He. */
+void sgchem_rt_absorbers(int i, const double *ab)
+{
+    double xHI = DMAX(0, 1. - 2. * ab[IH2] - ab[IHP]);
+    CellP[i].HII = ab[IHP];
+#if CHEMISTRYNETWORK == 5
+    CellP[i].HI = xHI + sgchem_rt_r_h2 * ab[IH2];
+#ifdef RT_CHEM_PHOTOION_HE
+    CellP[i].HeI = CellP[i].HeII = CellP[i].HeIII = 0;
+#endif
+#else
+    CellP[i].HI = xHI;
+#ifdef RT_CHEM_PHOTOION_HE
+    CellP[i].HeII = ab[IHEP]; CellP[i].HeIII = ab[IHEPP]; CellP[i].HeI = DMAX(0, ABHE - ab[IHEP] - ab[IHEPP]);
+#endif
+#endif
+}
+#endif /* RT_CHEM_PHOTOION */
+
 #endif /* SGCHEM && RADTRANSFER */
