@@ -408,7 +408,7 @@ void particle2in_addFB_SNe(struct addFB_evaluate_data_in_ *in, int i)
     if(is_particle_single_star_eligible(i)) {in->Msne = P[i].Mass;} // conserve mass and destroy star completely
 #endif
     double SNeEgy = All.SNe_Energy_Renormalization*P[i].SNe_ThisTimeStep * 1.0e51/UNIT_ENERGY_IN_CGS; // assume each SNe has 1e51 erg
-#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2 && NUM_METAL_SPECIES>=10)
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2 && NUM_METAL_SPECIES_BASE>=10)
     if(SNeIaFlag==0) {double z_eff = P[i].Metallicity[10]/All.SolarAbundances[10]; if(z_eff < 1) {SNeEgy *= pow(z_eff + 1.e-5 , -0.12);}} // updated to use same metallicity used for stellar evolution, rather than total metallicity, if this derives from pre-explosion winds, etc, for consistency
 #if (FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT > 1)
     if(i>0) {double z0 = P[i].Metallicity[0]/All.SolarAbundances[0];
@@ -442,7 +442,7 @@ void get_SNe_yields(double *yields, int i, double t_gyr, int SNeIaFlag, double *
 #endif
     if(SNeIaFlag==1) {*Msne=1.4;} else {*Msne=8.72;} /* default to a mean mass for Ia vs CC SNe; for updated table of SNe rates and energetics, this is the updated mean mass per explosion to give the correct total SNe mass */
     int k; for(k=0;k<NUM_METAL_SPECIES;k++) {yields[k]=P[i].Metallicity[k];} /* initialize to surface abundances */
-    if(NUM_METAL_SPECIES>=10) { // All, then He,C,N,O,Ne,Mg,Si,S,Ca,Fe
+    if(NUM_METAL_SPECIES_BASE>=10) { // All, then He,C,N,O,Ne,Mg,Si,S,Ca,Fe
         if(SNeIaFlag) { /* SNIa :: from Iwamoto et al. 1999; 'W7' models: total ejecta mass = Msne = 1.4. yields below are -fractional- */
             yields[0]=1; /* total metal mass (species below, + residuals primarily in Ar, Cr, Mn, Ni) */ yields[1]=0; /*He*/
             /* adopted yield: mean of W7 and WDD2 in Mori+2018. other models included below for reference in comments */
@@ -480,7 +480,7 @@ void get_SNe_yields(double *yields, int i, double t_gyr, int SNeIaFlag, double *
         }
     }
 #else
-    if(NUM_METAL_SPECIES>=10) { // All, then He,C,N,O,Ne,Mg,Si,S,Ca,Fe
+    if(NUM_METAL_SPECIES_BASE>=10) { // All, then He,C,N,O,Ne,Mg,Si,S,Ca,Fe
         if(SNeIaFlag) { /* SNIa */ /* from Iwamoto et al. 1999; 'W7' models */
             yields[0]=1;/* total metal mass */ yields[1]=0.0;/*He*/ yields[2]=0.035;/*C*/ yields[3]=8.57e-7;/*N*/ yields[4]=0.102;/*O*/
             yields[5]=0.00321;/*Ne*/ yields[6]=0.00614;/*Mg*/ yields[7]=0.111;/*Si*/ yields[8]=0.0621;/*S*/ yields[9]=0.00857;/*Ca*/ yields[10]=0.531;/*Fe*/
@@ -490,10 +490,10 @@ void get_SNe_yields(double *yields, int i, double t_gyr, int SNeIaFlag, double *
             if(P[i].Metallicity[0]<0.033) {yields[3]*=P[i].Metallicity[0]/All.SolarAbundances[0];} else {yields[3]*=1.65;} /* metal-dependent yields: N scaling is strongly dependent on initial metallicity of the star */
             yields[0] += yields[3]-0.00456; // augment total metal mass for this correction //
         }}
-    if(NUM_METAL_SPECIES==3 || NUM_METAL_SPECIES==4) {if(SNeIaFlag) {yields[0]=1; yields[1]=0.00614; yields[2]=0.531; /* All Z, Mg, Fe in total mass (SnIa) */} else {yields[0]=2.0; yields[1]=0.12; yields[2]=0.0741; /* SnII (per-SNe IMF-weighted averages) */}}
-    if(NUM_METAL_SPECIES==1) {if(SNeIaFlag) {yields[0]=1;} else {yields[0]=0.19;}} /* toy model to use if only evolving one species */
+    if(NUM_METAL_SPECIES_BASE==3 || NUM_METAL_SPECIES_BASE==4) {if(SNeIaFlag) {yields[0]=1; yields[1]=0.00614; yields[2]=0.531; /* All Z, Mg, Fe in total mass (SnIa) */} else {yields[0]=2.0; yields[1]=0.12; yields[2]=0.0741; /* SnII (per-SNe IMF-weighted averages) */}}
+    if(NUM_METAL_SPECIES_BASE==1) {if(SNeIaFlag) {yields[0]=1;} else {yields[0]=0.19;}} /* toy model to use if only evolving one species */
     int k; for(k=0;k<=NUM_LIVE_SPECIES_FOR_COOLTABLES;k++) {yields[k]=yields[k]*(1.-P[i].Metallicity[0]) + (P[i].Metallicity[k]-All.SolarAbundances[k]);} /* add a check to allow for larger abundances in the progenitor stars (usually irrelevant) */
-    if(SNeIaFlag) {if(NUM_METAL_SPECIES>=10) {yields[1]=0.0;}} // no He yield for Ia SNe //
+    if(SNeIaFlag) {if(NUM_METAL_SPECIES_BASE>=10) {yields[1]=0.0;}} // no He yield for Ia SNe //
 #endif // fire-2 vs fire-2.x yields clause
 #ifdef STARFORGE_FEEDBACK_TRACERS
     for(k=0;k<NUM_STARFORGE_FEEDBACK_TRACERS;k++) {yields[STARFORGE_FEEDBACK_TRACER_OFFSET+k]=0;} yields[STARFORGE_FEEDBACK_TRACER_OFFSET+2]=1; // this is 'fully' sne material, so mark as such here, so it is noted for all wind routines [whichever form of the wind subroutine we actually use, otherwise it would only appear in the jet version]
@@ -561,7 +561,7 @@ void get_wind_yields(double *yields, int i)
 #endif
     }
 #endif
-    if(NUM_METAL_SPECIES>=10) /* All, then He,C,N,O,Ne,Mg,Si,S,Ca,Fe ; follow AGB/O star yields in more detail for the light elements */
+    if(NUM_METAL_SPECIES_BASE>=10) /* All, then He,C,N,O,Ne,Mg,Si,S,Ca,Fe ; follow AGB/O star yields in more detail for the light elements */
     {
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
         /* everything except He and CNO and S-process is well-approximated by surface abundances. and CNO is conserved to high accuracy in sum for secondary production */

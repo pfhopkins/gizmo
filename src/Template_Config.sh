@@ -401,6 +401,7 @@
 #CHEMISTRYNETWORK=5             # SGChem network: 5 (H2, H+, CO; default), 3, 15, 16, 17, 18 (metal ions) or 20 (Kim+23)
 #SGCHEM_KEEP_IC_ABUNDANCES      # fresh starts keep SGChemTracAbund from the IC file (default: H2 and CO zero, x(H+) = 1e-4); the IC needs the dataset
 #METALS                         # top-level switch to enable tracking metallicities / different heavy elements (with multiple species optional) for gas and stars [must be included in ICs or injected via dynamical feedback; needed for some routines]
+#METALS_EXTRA_PASSIVE_SPECIES=3 # append this many passive species to Metallicity[] (carried, diffused and written, not used by cooling); for module-defined tracers, first slot METALS_EXTRA_PASSIVE_SPECIES_OFFSET
 #DISK_BETA_COOL                 # simple 'beta-cooling' for protoplanetary-disk problems: relax gas internal energy to a constant irradiation floor on t_cool=beta/Omega (params BetaCool_Beta, BetaCool_Tirr). mutually exclusive with COOLING
 ## ----------------------------------------------------------------------------------------------------
 # ---- additional cooling physics options within the default COOLING (Hopkins et al. 2017) module
