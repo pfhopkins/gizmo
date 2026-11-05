@@ -251,13 +251,15 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
 {
     /* active-index allocation (persists across gradients + hydro; used by the
        request-driven Mode B walkers as their active list) */
-    gizmo_sym_num_active = 0;
-    for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_num_active++;}
-    gizmo_sym_active_indices_on_heap = 0;
-    gizmo_sym_active_indices = (int *) mymalloc("sym_active",
-        (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int));
-    {int aa = 0; for(int ii : ActiveParticleList) {
-        if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_active_indices[aa++] = ii;}}
+    {
+        auto active_gas = [](long k) {const int ii = ActiveParticleList[k]; return P[ii].Type == 0 && P[ii].Mass > 0;};
+        GizmoOrderedSelection selection;
+        gizmo_sym_num_active = (int) selection.count((long) ActiveParticleList.size(), HOST_THREAD_BOOKKEEPING, active_gas);
+        gizmo_sym_active_indices_on_heap = 0;
+        gizmo_sym_active_indices = (int *) mymalloc("sym_active",
+            (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int));
+        selection.fill(active_gas, [](long k, long aa) {gizmo_sym_active_indices[aa] = ActiveParticleList[k]; return 0;});
+    }
 
     /* Whether any rank has active gas: decides, identically on every rank, the
        collective ghost refresh below and refresh's matching skip. A flag, not a

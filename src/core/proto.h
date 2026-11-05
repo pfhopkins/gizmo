@@ -511,6 +511,65 @@ enum GizmoHostThreadSite
 };
 int gizmo_host_threads_take(enum GizmoHostThreadSite site, long long count);   /* 1 if a loop over `count` items should run on all OpenMP threads */
 int gizmo_host_thread_count(void);   /* the OpenMP threads a host loop would run on (1 without OpenMP) */
+/* The items k = 0..n-1 that pass keep(k), in increasing k, numbered 0, 1, ... -- the serial selection on any number of threads.
+ * count() counts them; fill() hands each to put(k, slot) and returns the first slot whose put() returned nonzero, -1 if none.
+ * From the site's count on, both passes run on all threads over contiguous blocks, each block numbered after the ones before
+ * it; below it they are the plain serial loops and nothing is allocated.  keep() must give the same answer in both passes. */
+class GizmoOrderedSelection
+{
+public:
+    template<class Keep> long count(long n, enum GizmoHostThreadSite site, Keep keep)
+    {
+        n_items = n;
+        n_blocks = 0;
+        block_start.clear();
+        if(!gizmo_host_threads_take(site, n))
+        {
+            long kept = 0;
+            for(long k = 0; k < n; k++) {if(keep(k)) {kept++;}}
+            return kept;
+        }
+        const long blocks_wanted = 4L * gizmo_host_thread_count();   /* a few per thread, so uneven blocks still share out */
+        n_blocks = (n < blocks_wanted) ? n : blocks_wanted;
+        block_start.assign((size_t) n_blocks + 1, 0);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+        for(long b = 0; b < n_blocks; b++)
+        {
+            long kept = 0;
+            for(long k = block_first(b); k < block_first(b + 1); k++) {if(keep(k)) {kept++;}}
+            block_start[(size_t) b + 1] = kept;
+        }
+        for(long b = 0; b < n_blocks; b++) {block_start[(size_t) b + 1] += block_start[(size_t) b];}
+        return block_start[(size_t) n_blocks];
+    }
+    template<class Keep, class Put> long fill(Keep keep, Put put) const
+    {
+        long first_flagged = n_items;   /* no slot reaches n_items */
+        if(n_blocks == 0)
+        {
+            long slot = 0;
+            for(long k = 0; k < n_items; k++) {if(keep(k)) {if(put(k, slot) && slot < first_flagged) {first_flagged = slot;} slot++;}}
+        }
+        else
+        {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(min:first_flagged)
+#endif
+            for(long b = 0; b < n_blocks; b++)
+            {
+                long slot = block_start[(size_t) b];
+                for(long k = block_first(b); k < block_first(b + 1); k++) {if(keep(k)) {if(put(k, slot) && slot < first_flagged) {first_flagged = slot;} slot++;}}
+            }
+        }
+        return (first_flagged < n_items) ? first_flagged : -1;
+    }
+private:
+    long block_first(long b) const {return (n_items * b) / n_blocks;}
+    long n_items = 0, n_blocks = 0;
+    std::vector<long> block_start;
+};
 void gizmo_size_memory_arena(void);   /* sets All.WorkingMemoryPoolSize from what will draw on the pool, unless the parameter file asked for a size; call once, before mymalloc_init */
 #ifdef PMGRID
 /* Arena bytes the long-range mesh will want, for startup sizing, split into what it holds for the

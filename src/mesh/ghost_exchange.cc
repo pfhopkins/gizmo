@@ -615,10 +615,10 @@ static int gx_certify_send_list_current(const int *home_idx, int n_slots, intege
  *
  * Nothing is emitted unless every candidate was drifted: storage that cannot grow,
  * or a drift that did not complete, fails the batch before its first emission.
- * Rows must arrive with peers in ascending order (the send set's contract); a row's
- * candidates are compacted in place, so no second buffer is needed.  The accept
- * pass and the emission pass are separate loops, so the first can be threaded on
- * its own if it ever costs enough to matter. */
+ * Rows must arrive with peers in ascending order (the send set's contract), each with
+ * candidate storage of its own: a row's candidates are compacted in place, so no second
+ * buffer is needed, and rows are compacted at the same time on different threads.  The accept
+ * pass runs on all threads; the emission pass after it stays in row order. */
 int gx_send_set_accept_rows(struct ghost_send_set *s, struct gx_candidate_row *rows, long n_rows,
                             int search_mode, mode_b_radius_policy_t radius_policy,
                             double j_radius_scale, double safety_factor)
@@ -638,8 +638,22 @@ int gx_send_set_accept_rows(struct ghost_send_set *s, struct gx_candidate_row *r
         return 1;
     }
 
-    /* Every candidate must be a particle of this set with a supply-pool slot (above). */
+    /* Every candidate must be a particle of this set with a supply-pool slot (above).  The rows are tested on all
+       threads; only a failure rescans them in order, so the message names the first bad candidate. */
+    const int rows_threaded = gizmo_host_threads_take(HOST_THREAD_NEIGHBOUR_WORK, n_rows);
+    int any_outside = 0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 64) reduction(|:any_outside) if(rows_threaded)
+#endif
     for(long r = 0; r < n_rows; r++) {
+        const struct gx_candidate_row *row = &rows[r];
+        for(int c = 0; c < row->count; c++) {
+            const int j = row->local_index[c];
+            const int pp = (j >= 0 && j < NumPart) ? s->j_to_pool[j] : -1;
+            if(pp < 0 || pp >= s->num_pool) {any_outside = 1;}
+        }
+    }
+    for(long r = 0; any_outside && r < n_rows; r++) {
         const struct gx_candidate_row *row = &rows[r];
         for(int c = 0; c < row->count; c++) {
             const int j = row->local_index[c];
@@ -667,7 +681,10 @@ int gx_send_set_accept_rows(struct ghost_send_set *s, struct gx_candidate_row *r
      * from whatever policy the cached pool happened to be built under: pool
      * membership is reused across differing radius policies, and only the tile/BVH/
      * compact geometry may use the build-time policy, because its leaf h was baked
-     * with it. */
+     * with it.  Each row compacts only its own list, so the rows are accepted on all threads. */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 64) if(rows_threaded)
+#endif
     for(long r = 0; r < n_rows; r++) {
         struct gx_candidate_row *row = &rows[r];
         const struct gx_export_envelope_t *e = row->envelope;
@@ -990,11 +1007,12 @@ struct gx_query_t {
  * pre-sized per-envelope candidate slots on the receiver, so each thread writes only its own
  * index.  The walker's lazy node drift is the one shared mutation and is serialized under
  * critical(_modebdrift_).  The candidates' drift is threaded over distinct particles
- * (gx_send_set_accept_rows); merge, accept and send-set emission run serially, which keeps
- * the resulting SET order-independent and therefore deterministic across thread counts.
+ * (gx_send_set_accept_rows), and so is the accept, each row compacting only its own list;
+ * merge and send-set emission run serially, which keeps the resulting SET order-independent
+ * and therefore deterministic across thread counts.
  *
  * MEMORY SHAPE: the threaded receiver materializes one candidate list per received envelope
- * before the serial accept pass.  That is bounded by the exported envelope volume, which is
+ * before the accept pass.  That is bounded by the exported envelope volume, which is
  * measured sparse; a pathologically clustered geometry with very large tot_r would grow it,
  * so it is a known scaling watch-point rather than a fixed bound. */
 /* RECEIVER_FAIL: some rank's receiver could not build its send set -- it could not
@@ -1186,7 +1204,7 @@ static void gx_walk_export_discover(
     /* Host backend.  THREADED: the WALK (dominant cost) runs per received envelope into a pre-sized
      * per-envelope cand slot — each thread writes ONLY its own index (no shared write), walker
      * race-safe.  The walk records what may be a neighbour once drifted; the shared accept
-     * then drifts those candidates (threaded) and accepts and emits SERIALLY (cheap), peer by
+     * then drifts and accepts those candidates (threaded) and emits SERIALLY, peer by
      * peer in ascending order, which is the order the send set requires. */
     if(receiver_ok && !receiver_done_on_device) {
         std::vector<std::vector<int>> per_recv_cands((size_t)(tot_r > 0 ? tot_r : 0));
@@ -1308,21 +1326,16 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                 gx_query_nonfinite(local_queries[q].pos[2]) || gx_query_nonfinite(local_queries[q].h))) q_bad = q;
         }
     } else {
-        for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
-            int i = ActiveParticleList[kk];
-            if(i < 0 || i >= NumPart) continue;
-            if(P[i].Mass <= 0) continue;
-            if(!ghost_type_passes((int)P[i].Type, request_mask)) continue;
-            n_local_queries++;
-        }
+        auto requests = [&](long kk) {
+            const int i = ActiveParticleList[kk];
+            return i >= 0 && i < NumPart && P[i].Mass > 0 && ghost_type_passes((int)P[i].Type, request_mask);
+        };
+        GizmoOrderedSelection selection;
+        n_local_queries = (int) selection.count((long) ActiveParticleList.size(), HOST_THREAD_BOOKKEEPING, requests);
         local_queries = (struct gx_query_t *)
             malloc((size_t)(n_local_queries > 0 ? n_local_queries : 1) * sizeof(struct gx_query_t));
-        int q = 0;
-        for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
-            int i = ActiveParticleList[kk];
-            if(i < 0 || i >= NumPart) continue;
-            if(P[i].Mass <= 0) continue;
-            if(!ghost_type_passes((int)P[i].Type, request_mask)) continue;
+        q_bad = (int) selection.fill(requests, [&](long kk, long q) {
+            const int i = ActiveParticleList[kk];
             local_queries[q].pos[0] = P[i].Pos[0];
             local_queries[q].pos[1] = P[i].Pos[1];
             local_queries[q].pos[2] = P[i].Pos[2];
@@ -1330,11 +1343,9 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             local_queries[q].h    = h * safety_factor;
             local_queries[q].type = (int)P[i].Type;
             local_queries[q]._pad = 0;
-            if(q_bad < 0 &&
-               (gx_query_nonfinite(local_queries[q].pos[0]) || gx_query_nonfinite(local_queries[q].pos[1]) ||
-                gx_query_nonfinite(local_queries[q].pos[2]) || gx_query_nonfinite(local_queries[q].h))) q_bad = q;
-            q++;
-        }
+            return gx_query_nonfinite(local_queries[q].pos[0]) || gx_query_nonfinite(local_queries[q].pos[1]) ||
+                   gx_query_nonfinite(local_queries[q].pos[2]) || gx_query_nonfinite(local_queries[q].h);
+        });
     }
 
     /* Fail-closed: a non-finite query position or radius makes every distance test
@@ -1436,8 +1447,15 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             cache_alloc_failed = 1;
         }
         if(!cache_alloc_failed) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, NumPart))
+#endif
         for(int j = 0; j < NumPart; j++) c_jtop[j] = -1;
         if(tmp_num_pool > 0) memcpy(c_pool, tmp_pool, (size_t)tmp_num_pool * sizeof(int));
+        /* The pool lists distinct particles, so each slot of the map is written by at most one entry. */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, tmp_num_pool))
+#endif
         for(int p = 0; p < tmp_num_pool; p++) {
             int j = tmp_pool[p];
             if(j >= 0 && j < NumPart) c_jtop[j] = p;

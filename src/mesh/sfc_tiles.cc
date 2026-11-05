@@ -19,19 +19,13 @@
 int build_sfc_supply_pool(struct particle_data *P, int num_total,
                           int type_bitmask, int **pool_indices_out)
 {
-    int num_pool = 0;
-    for(int i = 0; i < num_total; i++) {
-        if(!sfc_pool_member(&P[i], type_bitmask)) continue;
-        num_pool++;
-    }
+    auto member = [&](long i) {return sfc_pool_member(&P[i], type_bitmask);};
+    GizmoOrderedSelection selection;
+    const int num_pool = (int) selection.count(num_total, HOST_THREAD_BOOKKEEPING, member);
     if(!pool_indices_out) return num_pool;
 
     int *pool = (int *) mymalloc("sfc_pool", (num_pool > 0 ? num_pool : 1) * sizeof(int));
-    int p = 0;
-    for(int i = 0; i < num_total; i++) {
-        if(!sfc_pool_member(&P[i], type_bitmask)) continue;
-        pool[p++] = i;
-    }
+    selection.fill(member, [&](long i, long p) {pool[p] = (int) i; return 0;});
     *pool_indices_out = pool;
     return num_pool;
 }
