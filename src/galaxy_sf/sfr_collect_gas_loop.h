@@ -18,8 +18,8 @@
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
-#if defined(RADTRANSFER) || defined(SINK_PARTICLES)
-#error "GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS: removing gas does not yet scale radiation or sink-feedback quantities of the donor cells"
+#if defined(SINK_PARTICLES) || (defined(RADTRANSFER) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS))
+#error "GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS: removing gas does not yet scale radiation (outside the table bins) or sink-feedback quantities of the donor cells"
 #endif
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"
@@ -277,6 +277,12 @@ struct SscApplySpec : SscSpecBase {
             for(int w = 0; w < 2; w++) {Cj.CosmicRayAlfvenEnergy[kb][w] *= frac; Cj.CosmicRayAlfvenEnergyPred[kb][w] *= frac; Cj.DtCosmicRayAlfvenEnergy[kb][w] *= frac;}
 #endif
         }
+#endif
+#ifdef RADTRANSFER
+        for(int k = 0; k < N_RT_FREQ_BINS; k++) {Cj.Rad_E_gamma[k] *= frac; Cj.Rad_E_gamma_Pred[k] *= frac;} /* energy per cell: the cell's volume shrinks with its mass */
+#ifdef RT_EVOLVE_FLUX
+        for(int k = 0; k < N_RT_FREQ_BINS; k++) {Cj.Rad_Flux[k] *= frac; Cj.Rad_Flux_Pred[k] *= frac;}
+#endif
 #endif
         (void)frac;
         Pj.Mass = m_new; Cj.Mass = m_new;
