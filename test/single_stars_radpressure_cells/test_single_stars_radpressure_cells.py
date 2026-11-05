@@ -5,6 +5,8 @@ cells, chemistry on, gravity on (the fluxes come from the gravity walk), 2 kyr.
     r floored at the softening (3 %), plus the IR term at the star.
   test_thick: n_H = 1e4, photon cap active: momentum per step = L_emit / c + IR term (3 %). Disjoint bands and
     GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE (stella_dev production: LW and 6-8 eV counted twice in deposit and cap).
+  test_snapshot_fields: OUTPUT_SGCHEM_RADIATION_FIELDS: G0_FUV = L(6-13.6 eV) / (4 pi c r^2) / Habing (3 %, median over cells beyond 3 softenings),
+    fields in shape, star lums in log10 erg/s from the tables (1e-3 dex).
   test_outward: the gas gains positive radial momentum about the star, at least half of what the log says (pixel centres, n_H = 1).
 """
 import os
@@ -27,6 +29,7 @@ BUILDS = {}
 M_STAR, F_LIFE, NGRID, Z = 40.0, 0.3, 16, 0.0142
 MSUN, PC, MP, C = 1.989e33, 3.085678e18, 1.6726e-24, 2.9979e10
 SIG = (2.0e-21, 1.3e-21, 0.5e-21)
+HABING = 5.257e-14  # HABING_EGY_DENSITY_6_13P6EV_CGS
 
 
 @pytest.fixture(scope="module")
@@ -120,6 +123,21 @@ def test_thick(tables, tag, flags, twice):
     got = np.median(per_time(rows)); want = to_mom(L_emit) + ir_term(Lb, rho, twice)
     print(f"thick {tag}: {got:.4g} expected {want:.4g}")
     assert abs(got / want - 1) < 0.03
+
+
+def test_snapshot_fields(tables):
+    d, rows, tab, age, rho, L, star, dx = run(build("fields", ("OUTPUT_SGCHEM_RADIATION_FIELDS",)), "fields", tables, 1.0)
+    with h5py.File(sorted((d / "output").glob("snapshot_*.hdf5"))[-1]) as F:
+        g = F["PartType0"]; s = F["PartType4"]; x = g["Coordinates"][:] - s["Coordinates"][0]
+        fields = {k: g[k][:] for k in ("G0_FUV", "G0_LW", "G0_FUV_atten", "ShieldFac_Dust", "G0_NUV", "G0_OPT", "CR_IonizationRate")}
+        luv, llw = s["UV_Luminosity"][0], s["LW_Luminosity"][0]; t = F["Header"].attrs["Time"]
+    assert all(len(v) == len(x) for v in fields.values())
+    r = np.sqrt((x ** 2).sum(1)); far = r > 3 * dx
+    Lb = bands(tab, age + t * YR_PER_TIME_UNIT)
+    want = (Lb[0] + Lb[2]) / (4 * np.pi * C * (r[far] * PC) ** 2) / HABING
+    print(f"G0_FUV / analytic median {np.median(fields['G0_FUV'][far] / want):.4f}")
+    assert abs(np.median(fields["G0_FUV"][far] / want) - 1) < 0.03
+    assert abs(luv - np.log10(Lb[0] + Lb[2])) < 1e-3 and abs(llw - np.log10(Lb[1])) < 1e-3
 
 
 def test_outward(tables):
