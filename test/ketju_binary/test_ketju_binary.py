@@ -42,6 +42,10 @@ def test_centres():
     assert re.search(r"from 3 center\(s\)", log)
 
 
+@pytest.mark.parametrize("ranks", [1, 2])
+def test_regions(ranks):
+    log = _run(ranks)
+    assert re.search(r"Found 1 region\(s\) from 3 center\(s\)", log)
 
 
 
