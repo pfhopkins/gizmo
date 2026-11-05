@@ -1051,6 +1051,9 @@
 #define COOL_LOWTEMP_THIN_ONLY // don't want to double-count trapping of radiation if we're doing it self-consistently
 #endif
 
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
+#define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
+#endif
 
 
 #if defined(CHIMES_HII_REGIONS) && !defined(GALSF_FB_FIRE_RT_HIIHEATING)

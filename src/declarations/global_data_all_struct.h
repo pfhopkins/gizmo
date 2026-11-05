@@ -196,6 +196,9 @@ struct global_data_all_processes
 
   int HighestActiveTimeBin;
   int HighestOccupiedTimeBin;
+#ifdef WAKEUP_TARGET_BIN_PARAMETER
+  int WakeupTargetBin; /*!< woken cell goes to: 0 = waker bin - log2(WAKEUP), 1 = waker bin, 2 = highest active bin */
+#endif
 
   /* parameters determining output frequency */
   int SnapshotFileCount;	/*!< number of snapshot that is written next */

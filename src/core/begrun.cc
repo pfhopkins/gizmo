@@ -1992,6 +1992,11 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.MaxKernelRadius;
         id[nt++] = REAL;
 
+#ifdef WAKEUP_TARGET_BIN_PARAMETER
+      strcpy(tag[nt], "WakeupTargetBin");
+      addr[nt] = &All.WakeupTargetBin;
+      id[nt++] = INT;
+#endif
         strcpy(tag[nt], "MaxSizeTimestep");
         strcpy(alternate_tag[nt], "Maximum_Timestep_Allowed");
         addr[nt] = &All.MaxSizeTimestep;
@@ -3167,6 +3172,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("MinGasKernelRadiusFractional",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume no mininum (=%g) \n",tag[i],alternate_tag[i],All.MinGasKernelRadiusFractional); continue;}
 #endif
                 if(strcmp("DomainBuild_ActiveFraction",tag[i])==0) {*((double *)addr[i])=0.05; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-decompose whenever 5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.DomainBuild_ActiveFraction); continue;}
+#ifdef WAKEUP_TARGET_BIN_PARAMETER
+                if(strcmp("WakeupTargetBin",tag[i])==0) {*((int *)addr[i])=2; printf("Tag %s not set in parameter file: defaulting to 2 (woken cells go to the highest active bin)\n",tag[i]); continue;}
+#endif
                 if(strcmp("TreeRebuild_ActiveFraction",tag[i])==0) {*((double *)addr[i])=All.DomainBuild_ActiveFraction; printf("Tag %s (%s) not set in parameter file: defaulting to rebuild the gravity tree on the same active fraction the domain is decomposed on (=%g). A decomposition always brings a new tree with it, so a larger value here has no effect; a smaller one rebuilds the tree on steps that keep the existing decomposition. \n",tag[i],alternate_tag[i],All.TreeRebuild_ActiveFraction); continue;}
 #ifdef MHD_MODIFIED_GRADIENT
                 if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=DMIN(All.TreeRebuild_ActiveFraction, All.DomainBuild_ActiveFraction); printf("Tag %s (%s) not set in parameter file: defaulting to run the MG global solve on steps where at least the fraction of gas is active at which the tree or domain is rebuilt (=%g, the smaller of TreeRebuild_ActiveFraction=%g and DomainBuild_ActiveFraction=%g), i.e. when the step already does work over every element; on smaller steps the retained MG correction plus the local CG correction is used. Set 0 to solve on every step with active gas (much more expensive with a deep timestep hierarchy). \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep,All.TreeRebuild_ActiveFraction,All.DomainBuild_ActiveFraction); continue;}
