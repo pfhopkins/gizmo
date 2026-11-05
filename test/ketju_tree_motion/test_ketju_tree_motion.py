@@ -37,6 +37,11 @@ def _run(ranks, ic="ketju_tree_motion_ics", flags=(), params=None):
     return _audit()
 
 
+def test_nodes_follow_chains():
+    a = _run(1)
+    assert a["vmax_chain"] == 0 and a["box_chain"] == 0
+    assert a["vel_chain"] < 1e-10 and a["vel_other"] < 1e-10
+
 
 
 
