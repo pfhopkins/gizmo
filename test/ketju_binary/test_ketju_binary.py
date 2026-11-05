@@ -37,6 +37,9 @@ def test_parameters():
     assert not re.search(r"Tag 'Ketju(RegionRadius|MinStarMass|UseStarStarSoftening|MaxStepCount)' was specified", log)
 
 
+def test_centres():
+    log = _run(2)
+    assert re.search(r"from 3 center\(s\)", log)
 
 
 
