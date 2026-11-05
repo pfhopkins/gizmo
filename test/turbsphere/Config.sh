@@ -21,4 +21,4 @@ TURB_DRIVING
 # force recomputed only on driving updates: the only way turbsphere stirring runs are made
 TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE
 # the loop measures only gas within 2 nominal cloud radii (2R = 10 pc) of the box centre
-TURB_DRIVING_TARGET_SIGMA=2
+TURB_DRIVING_TARGET_VRMS_REGION=2

@@ -705,6 +705,9 @@
 #ifdef SINGLE_STAR_FIND_BINARIES
 #error "SINGLE_STAR_FIND_BINARIES has been removed: its only consumer was SINGLE_STAR_TIMESTEPPING > 0 (super-timestepping). Remove it from Config.sh."
 #endif
+#ifdef TURB_DRIVING_TARGET_SIGMA
+#error "TURB_DRIVING_TARGET_SIGMA has been renamed TURB_DRIVING_TARGET_VRMS_REGION (same value: radius of the measured region, 0 for all gas). The target velocity is TurbDrive_ApproxRMSVturb."
+#endif
 
 
 #ifdef SINGLE_STAR_DIRECT_GRAVITY /* exact O(N_star^2) star-star gravity, replacing the tree for those pairs */

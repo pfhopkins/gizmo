@@ -662,7 +662,7 @@ extern struct global_data_all_processes
     double TimeNextTurbSpectrum;
     int FileNumberTurbSpectrum;
 #endif
-#ifdef TURB_DRIVING_TARGET_SIGMA
+#ifdef TURB_DRIVING_TARGET_VRMS_REGION
     double TurbDriving_DrivingNormFactor; /* gain on the driving acceleration, set by the PID loop on ln(v_target/v_rms) */
     double TurbDriving_PID_Integral;      /* integral term, in units of ln(gain) */
     double TurbDriving_PID_Derivative;    /* low-pass filtered derivative term, in units of ln(gain) */

@@ -178,7 +178,7 @@ void init_turb(void)
     int j; for(j=0;j<100;j++) {double tmp; tmp=st_turbdrive_get_gaussian_random_variable();} // cycle past initial seed
     st_turbdrive_init_ouseq(); // initialize variable for phases
     st_turbdrive_calc_phases(); // initialize phases
-#ifdef TURB_DRIVING_TARGET_SIGMA
+#ifdef TURB_DRIVING_TARGET_VRMS_REGION
     All.TurbDriving_DrivingNormFactor = 1.0; All.TurbDriving_PID_Integral = All.TurbDriving_PID_Derivative = All.TurbDriving_PID_LastError = 0;
     All.TurbDriving_PID_Started = 0;
 #endif
@@ -201,25 +201,25 @@ double st_return_rms_acceleration(void)
 }
 
 
-#ifdef TURB_DRIVING_TARGET_SIGMA
-/* mass-weighted rms velocity of gas about its mean velocity; if TURB_DRIVING_TARGET_SIGMA > 0, only gas
+#ifdef TURB_DRIVING_TARGET_VRMS_REGION
+/* mass-weighted rms velocity of gas about its mean velocity; if TURB_DRIVING_TARGET_VRMS_REGION > 0, only gas
    within that radius of the box center: in code units, or with STARFORGE_GMC_TURBINIT in units of the nominal
    cloud radius. Returns the target if there is no gas to measure. */
 static double st_compute_vrms(void)
 {
     double sums[5] = {0}; /* m, m*v[3], m*v^2 */
 #ifdef STARFORGE_GMC_TURBINIT
-    const double aperture = (double)(TURB_DRIVING_TARGET_SIGMA) * STARFORGE_GMC_TURBINIT_CLOUD_RADIUS_IN_BOXSIZE * All.BoxSize;
+    const double r_region = (double)(TURB_DRIVING_TARGET_VRMS_REGION) * STARFORGE_GMC_TURBINIT_CLOUD_RADIUS_IN_BOXSIZE * All.BoxSize;
 #else
-    const double aperture = (double)(TURB_DRIVING_TARGET_SIGMA);
+    const double r_region = (double)(TURB_DRIVING_TARGET_VRMS_REGION);
 #endif
     const double box_cx = 0.5*boxSize_X, box_cy = 0.5*boxSize_Y, box_cz = 0.5*boxSize_Z;
     for(int i = 0; i < NumPart; i++)
     {
         if(P[i].Type != 0 || P[i].Mass <= 0) continue;
-        if(aperture > 0) {
+        if(r_region > 0) {
             double dx = P[i].Pos[0] - box_cx, dy = P[i].Pos[1] - box_cy, dz = P[i].Pos[2] - box_cz;
-            if(dx*dx + dy*dy + dz*dz > aperture*aperture) continue;
+            if(dx*dx + dy*dy + dz*dz > r_region*r_region) continue;
         }
         sums[0] += P[i].Mass;
         for(int k=0; k<3; k++) {sums[1+k] += P[i].Mass * P[i].Vel[k];}
@@ -260,7 +260,7 @@ static void st_update_driving_gain(void)
     All.TurbDriving_DrivingNormFactor = exp(DMAX(-lng_max, DMIN(lng_max, lng)));
 
     if(ThisTask == 0) {
-        printf("TURB_DRIVING_TARGET_SIGMA: t=%g v_rms=%g v_target=%g gain=%g P=%g I=%g D=%g\n", All.Time, v, v_target,
+        printf("TURB_DRIVING_TARGET_VRMS_REGION: t=%g v_rms=%g v_target=%g gain=%g P=%g I=%g D=%g\n", All.Time, v, v_target,
                All.TurbDriving_DrivingNormFactor, p_term, All.TurbDriving_PID_Integral, All.TurbDriving_PID_Derivative);
         fflush(stdout);
     }
@@ -395,7 +395,7 @@ void set_turb_ampl(void)
         st_update_ouseq();
         PRINT_STATUS(" ..calculating coefficients and phases following desired projection");
         st_turbdrive_calc_phases();
-#ifdef TURB_DRIVING_TARGET_SIGMA
+#ifdef TURB_DRIVING_TARGET_VRMS_REGION
         st_update_driving_gain();
 #endif
         StTPrev = StTPrev + st_return_dt_between_updates() / All.Timebase_interval;
@@ -492,7 +492,7 @@ void add_turb_accel()
 {
     set_turb_ampl();
     double fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
-#ifdef TURB_DRIVING_TARGET_SIGMA
+#ifdef TURB_DRIVING_TARGET_VRMS_REGION
     fac_sol *= All.TurbDriving_DrivingNormFactor; /* applied to the force, not the OU noise amplitude, so it acts immediately */
 #endif
     std::vector<int> cells;
@@ -527,7 +527,7 @@ static void st_write_hdf5_array(hid_t loc, const char *name, hid_t type, const v
 }
 
 /* scalars of the driving state, in the order they are broadcast on reading */
-#ifdef TURB_DRIVING_TARGET_SIGMA
+#ifdef TURB_DRIVING_TARGET_VRMS_REGION
 #define ST_NUM_STATE_SCALARS 8
 #else
 #define ST_NUM_STATE_SCALARS 3
@@ -551,7 +551,7 @@ static void st_get_state_scalars(double *s)
 {
     s[0] = (All.Ti_Current - StTPrev) * unit_integertime_in_physical(-1);
     s[1] = All.TurbInjectedEnergy + StPendingInjectedEnergy; s[2] = All.TurbDissipatedEnergy + StPendingDissipatedEnergy;
-#ifdef TURB_DRIVING_TARGET_SIGMA
+#ifdef TURB_DRIVING_TARGET_VRMS_REGION
     s[3] = All.TurbDriving_DrivingNormFactor; s[4] = All.TurbDriving_PID_Integral; s[5] = All.TurbDriving_PID_Derivative;
     s[6] = All.TurbDriving_PID_LastError; s[7] = All.TurbDriving_PID_Started;
 #endif
@@ -561,7 +561,7 @@ static void st_set_state_scalars(const double *s)
 {
     StTPrev = All.Ti_Current - (integertime) ceil(s[0] / unit_integertime_in_physical(-1)); /* rounded up, or an update due on the first step is missed */
     All.TurbInjectedEnergy = s[1]; All.TurbDissipatedEnergy = s[2];
-#ifdef TURB_DRIVING_TARGET_SIGMA
+#ifdef TURB_DRIVING_TARGET_VRMS_REGION
     All.TurbDriving_DrivingNormFactor = s[3]; All.TurbDriving_PID_Integral = s[4]; All.TurbDriving_PID_Derivative = s[5];
     All.TurbDriving_PID_LastError = s[6]; All.TurbDriving_PID_Started = (int) s[7];
 #endif
