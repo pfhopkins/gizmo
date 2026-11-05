@@ -54,6 +54,10 @@ def test_mstar_wrapper():
     assert d and abs(float(d[1])) < 1e-9 and abs(float(d[2])) < 1e-9
 
 
+def test_region_frame():
+    log = _run(1, ("TEST_KETJU_REGION_LOG",))
+    d = re.search(r"KETJU_REGION n 2 com_error (\S+) p_error (\S+)", log)
+    assert d and float(d[1]) < 1e-12 and float(d[2]) < 1e-12
 
 
 
