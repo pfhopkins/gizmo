@@ -27,10 +27,6 @@ TEST_DIR = f"test/{TEST_NAME}"
 RTOL_CONSERVATION = 1e-12
 EXACT = ("TURB_DIFF_METALS_EXACT_CONSERVATION",)
 
-# The trunk has neither TURB_DIFF_METALS_EXACT_CONSERVATION nor the budget line every case reads.
-pytestmark = pytest.mark.xfail(strict=True, reason=(
-    "fixed by pr/turbulence: the trunk writes no OUTPUT_TURB_DIFF_METALS_BUDGET line"))
-
 _last_build = None
 
 

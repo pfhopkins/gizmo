@@ -22,10 +22,6 @@ TEST_NAME = "turbulent_box"
 TEST_DIR = f"test/{TEST_NAME}"
 CONTROL_LOOP = ("TURB_DRIVING_TARGET_SIGMA=0",)  # measure all gas
 
-# The trunk has no TURB_DRIVING_TARGET_SIGMA loop: the flag builds but drives at a fixed amplitude.
-pytestmark = pytest.mark.xfail(strict=True, reason=(
-    "fixed by pr/turbulence: no TURB_DRIVING_TARGET_SIGMA control loop on the trunk"))
-
 
 def _ensure_ic():
     if path.exists(f"{TEST_DIR}/{TEST_NAME}_ics.hdf5"):
