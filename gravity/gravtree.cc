@@ -712,15 +712,26 @@ void gravity_tree(void)
 #endif /* end tree walk (guarded by SELFGRAVITY_OFF unless non-gravity tree features are active) */
 
 
+    /* The analytic terms go only onto accelerations this call rebuilt. Kept as they are: a non-Hermite particle in a Hermite pass
+       (not re-evaluated, so its GravAccel still holds them and the forces added after gravity) and a skipped walk's extrapolated
+       GravAccel, which holds the terms from its last walk. */
+#if defined(HERMITE_INTEGRATION) || (defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF))
+    std::vector<int> kept_ii; std::vector<Vec3<MyDouble>> kept_accel;
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++)
+    {
+        int i = ActiveParticleList[ii], keep = 0;
+#ifdef HERMITE_INTEGRATION
+        if(HermiteOnlyFlag && !eligible_for_hermite(i)) {keep = 1;}
+#endif
 #if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
-    /* a skipped element's GravAccel, extrapolated from its last walk, already holds the analytic terms added then:
-       keep it, rather than stack another copy on every skipped step */
-    std::vector<Vec3<MyDouble>> skipped_accel;
-    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {if(treeforce_skip_flag[ii]) {skipped_accel.push_back(P[ActiveParticleList[ii]].GravAccel);}}
+        if(treeforce_skip_flag[ii]) {keep = 1;}
+#endif
+        if(keep) {kept_ii.push_back(ii); kept_accel.push_back(P[i].GravAccel);}
+    }
 #endif
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
-#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
-    {size_t k = 0; for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {if(treeforce_skip_flag[ii]) {P[ActiveParticleList[ii]].GravAccel = skipped_accel[k++];}}}
+#if defined(HERMITE_INTEGRATION) || (defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF))
+    for(size_t k = 0; k < kept_ii.size(); k++) {P[ActiveParticleList[kept_ii[k]]].GravAccel = kept_accel[k];}
 #endif
 #ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
     /* the gravity call's acceleration is now final: keep it for the skipped walks that follow (not in a Hermite pass, which leaves
