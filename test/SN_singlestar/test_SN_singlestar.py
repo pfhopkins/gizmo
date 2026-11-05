@@ -213,9 +213,6 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads, extra_config_flags):
     assert vr_binned[i_peak] > 0, f"No outflow at shock: vr = {vr_binned[i_peak]}"
 
 
-# E_therm: trunk 1.22e6; walk only (pr/selfgravity-off-walk) 6.5e5; UV background only 4.0e5; both 9.4e4.
-@pytest.mark.xfail(strict=True, reason=(
-    "fixed by pr/treecool on pr/selfgravity-off-walk: no UV background and no shielding column, E_therm 1.22e6"))
 def test_SN_thermo_fidelity():
     """Guard the u->T conversion in the regimes the SN remnant actually exercises.
 

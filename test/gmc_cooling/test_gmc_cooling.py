@@ -141,8 +141,6 @@ def run_with_treecool(case, treecool_text, num_mpi_ranks, num_omp_threads):
     return proc.returncode, log
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "fixed by pr/treecool: the reader stalls on TREECOOL's '##' header, 0 of 204 UVB entries load"))
 @pytest.mark.parametrize("num_mpi_ranks", (2,))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_gmc_cooling_uvb_table(num_mpi_ranks, num_omp_threads):
