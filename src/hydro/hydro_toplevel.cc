@@ -129,6 +129,21 @@ static double fac_magnetic_pressure;
     hydro routines, AFTER the neighbors have all been checked and summed */
 /* --------------------------------------------------------------------------------- */
 /* --------------------------------------------------------------------------------- */
+#if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
+/*! global gas metal budget after each hydro step: sum of M*Z, and the diffusive exchange still pending (none yet) */
+static void turb_diff_metals_budget_log(void)
+{
+    double loc[2] = {0, 0}, tot[2];
+    for(int i = 0, n_local = ghost_get_num_local(); i < n_local; i++) /* imported ghost copies sit above the local cells here */
+    {
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        loc[0] += P[i].Mass * P[i].Metallicity[0];
+    }
+    MPI_Allreduce(loc, tot, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e\n", All.Time, tot[0], tot[1]);}
+}
+#endif
+
 void hydro_final_operations_and_cleanup(void)
 {
 #ifdef _OPENMP
@@ -418,6 +433,9 @@ void hydro_final_operations_and_cleanup(void)
         } // closes P[i].Type==0 check and so closes loop over particles i
     } // for (loop over active particles) //
 
+#if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
+    turb_diff_metals_budget_log();
+#endif
     
 #ifdef TURB_DRIVING
     add_turb_accel(); // update turbulent driving fields and TurbAccel fields at same time as update HydroAccel, here. With TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE a cell's TurbAccel is only recomputed after the driving phases change, as set by TurbDrive_TimeBetweenTurbUpdates; to avoid large errors that must be set by-hand to be << lambda_min / V where V is the typical turbulent velocity and lambda_min is the smallest driven wavelength.

@@ -538,6 +538,7 @@
 #OUTPUT_GRADIENT_VEL            # outputs the full velocity gradient tensor field for the gas
 #OUTPUT_BFIELD_DIVCLEAN_INFO    # outputs the phi, phi-gradient, and numerical div-B fields used for de-bugging MHD simulations
 #OUTPUT_TIMESTEP                # outputs timesteps for each particle
+#OUTPUT_TURB_DIFF_METALS_BUDGET # print sum(M*Z) of the gas and the pending diffusive exchange after every hydro step (TURB_DIFF_METALS)
 #OUTPUT_SOFTENING               # outputs force softening for each particle
 #AGS_OUTPUTZETA                 # outputs the adaptive-softening correction term zeta for each adaptively-softened particle
 #OUTPUT_COOLRATE                # outputs the net cooling rate (negative where gas is net heating), and conduction rate if enabled
