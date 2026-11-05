@@ -145,6 +145,22 @@ void GravAccel_ShearingSheet()
 #if (BOX_SHEARING==4) /* add vertical gravity to the force law */
         P[i].GravAccel[2] -= BOX_SHEARING_OMEGA_BOX_CENTER * BOX_SHEARING_OMEGA_BOX_CENTER * (P[i].Pos[2]-boxHalf_Z);
 #endif
+#ifdef HERMITE_INTEGRATION
+        /* a Hermite pass re-evaluates the Hermite-integrated particles without the forces added after gravity: their Coriolis term
+           goes in here, on the current (start-of-step, predicted or corrected) velocity, with the jerk of the shearing-sheet terms
+           for the corrector, from the total acceleration */
+        if(HermiteOnlyFlag && eligible_for_hermite(i))
+        {
+            const int ph = BOX_SHEARING_PHI_COORDINATE; const double omega = BOX_SHEARING_OMEGA_BOX_CENTER;
+            P[i].GravAccel[0] += 2.*omega * P[i].Vel[ph];
+            P[i].GravAccel[ph] -= 2.*omega * P[i].Vel[0];
+            P[i].GravJerk[0] += 2.*BOX_SHEARING_Q*omega*omega * P[i].Vel[0] + 2.*omega * P[i].GravAccel[ph];
+            P[i].GravJerk[ph] -= 2.*omega * P[i].GravAccel[0];
+#if (BOX_SHEARING==4)
+            P[i].GravJerk[2] -= omega*omega * P[i].Vel[2];
+#endif
+        }
+#endif
     }
 #endif
 }
