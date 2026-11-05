@@ -26,12 +26,11 @@ _all_ifront = {}
 @pytest.mark.parametrize(
     "extra_config_flags",
     [
-        pytest.param((), id="baseline"),
-        pytest.param(("TRANSPORT_SUBCYCLE=10",), id="subcycle_rt", marks=pytest.mark.xfail(strict=True, reason=(
-            "fixed by pr/selfgravity-off-walk: no sink feedback timestep limiter under SELFGRAVITY_OFF, "
-            "peak T 59 K"))),
-        pytest.param(("TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"), id="subcycle_rt_cooling"),
+        (),
+        ("TRANSPORT_SUBCYCLE=10",),
+        ("TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"),
     ],
+    ids=["baseline", "subcycle_rt", "subcycle_rt_cooling"],
 )
 def test_HII_region_subcycle(num_mpi_ranks, num_omp_threads, extra_config_flags):
     profiles, label, evo = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads, extra_config_flags)
