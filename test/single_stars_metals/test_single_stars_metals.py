@@ -146,6 +146,22 @@ def test_27_element_closure(tables):
     assert np.all(dZ[2:] > 0) and dZ[0] > rows[:, 9].sum()
 
 
+def test_27_element_diffusion(tables):
+    """metal diffusion with single stars, on the defaults of stella_dev: after winds, deaths and diffusion every cell still has
+    total Z = the sum of the 25 metal slots (1e-10), and each slot's gas metal gain is that of the run without diffusion (1e-6)"""
+    a, _ = run_events(tables, build("elements27", ELEMENTS27), "events27", 27)
+    d = run(build("diff27", ELEMENTS27 + ("TURB_DIFF_METALS",)), "diff27", tables, solar27(tables["StellarTablesFile"]),
+            event_stars(tables["StellarTablesFile"]), over={"TimeMax": 5e-3, "TimeBetSnapshot": 5e-3, "TurbDiffusionCoefficient": 1.0})
+    snaps = sorted((d / "output").glob("snapshot_*.hdf5"))
+    m0, Z0 = gas_metals(snaps[0]); m1, Z1 = gas_metals(snaps[-1])
+    ma, Za = gas_metals(a[-1])
+    assert Z1[:, 0].max() < Za[:, 0].max()  # the diffusion ran: it lowers the peak
+    closure = np.abs(Z1[:, 0] - Z1[:, 2:].sum(1)) / Z1[:, 0]
+    dZ, dZb = (m1[:, None] * Z1).sum(0) - (m0[:, None] * Z0).sum(0), (ma[:, None] * Za).sum(0) - (m0[:, None] * Z0).sum(0)
+    print(f"closure with diffusion: max {closure.max():.3g}; slot gains vs no diffusion, max {np.max(np.abs(dZ / dZb - 1)):.3g}")
+    assert np.all(closure <= 1e-10) and np.all(np.abs(dZ / dZb - 1) <= 1e-6)
+
+
 def test_27_element_shared_slots_identical(tables):
     """the same events with and without the 27 elements: slots 0-10, masses, energies, velocities and the star masses
     are bitwise identical"""
