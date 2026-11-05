@@ -86,3 +86,12 @@ def test_one_rank(built):
     ic, snaps = run("r1", 1)
     for a, b in zip(records(ic), records(snaps[-1])):
         assert a.tobytes() == b.tobytes()
+
+
+def test_split_threshold(built):
+    """a cell splits above 2.01 x the largest gas cell of the initial conditions"""
+    ic, snaps = run("split", 2, time_max=0.01)
+    with h5py.File(ic, "r") as F:
+        m_max = F["PartType0/Masses"][()].max()
+    with h5py.File(snaps[-1], "r") as F:
+        assert abs(F["Header"].attrs["Maximum_Mass_For_Cell_Split"] / (2.01 * m_max) - 1) < 1e-6
