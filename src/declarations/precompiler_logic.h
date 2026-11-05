@@ -1016,6 +1016,9 @@
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(CRFLUID_EXCHANGE_PDV_ONLY)
 #define CRFLUID_EXCHANGE_PDV_ONLY /* single stars: CRs take only their own P dV work, no share of shock heating */
 #endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(CRFLUID_STREAMING_LOSS_CAPPED_AT_CR_SPEED)
+#define CRFLUID_STREAMING_LOSS_CAPPED_AT_CR_SPEED /* single stars: the Alfven speed in the streaming loss is at most the CR speed */
+#endif
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_MECHANICAL) && (defined(GALSF_FB_FIRE_STELLAREVOLUTION) || (defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)))
 #define MECHFB_CR_INJECTION /* the mechanical feedback loop injects CRs (supernovae and fast winds) */
 #endif

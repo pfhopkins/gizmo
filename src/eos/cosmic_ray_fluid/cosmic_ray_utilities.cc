@@ -405,7 +405,11 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struc
 #ifdef COOLING
     double ne=1, nh0=0, nHe0=0, nhp=0, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, rho_cgs, u0=cell[i].InternalEnergyPred;
     temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, pp, cell); rho_cgs=rho*UNIT_DENSITY_IN_CGS; // get thermodynamic properties
+#ifdef SGCHEM
+    f_ion = Get_Gas_Ionized_Fraction(i, pp, cell); nh0 = DMAX(0., 1. - f_ion); /* ions per H nucleus; the neutral H nuclei, H2 included, damp the waves */
+#else
     f_ion = DMIN(DMAX(DMAX(DMAX(1-nh0, nhp), ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
+#endif
     /* neutral helium, for the ion-neutral damping term below. the damping expression is itself a
        simple approximation that ignores heavier ions and partially-ionized species, so scaling the
        helium with the hydrogen neutral fraction is accurate enough for it */
