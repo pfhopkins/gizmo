@@ -1010,6 +1010,9 @@
 #if defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS) && !defined(GALSF_SINGLE_STARS_FROM_IMF)
 #define GALSF_SINGLE_STARS_FROM_IMF /* the collected stars carry their drawn mass in the single-star record */
 #endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(CRFLUID_EXCHANGE_PDV_ONLY)
+#define CRFLUID_EXCHANGE_PDV_ONLY /* single stars: CRs take only their own P dV work, no share of shock heating */
+#endif
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL) && !defined(GALSF_SINGLE_STARS_SNE_MECHANICAL_COUPLING) && !defined(GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY)
 #define GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY /* single stars: pure-thermal supernovae by default */
 #endif
