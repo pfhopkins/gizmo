@@ -16,5 +16,6 @@ Checks:
    of the first step's wind momentum (measured 3%: the momentum-conserving coupling balances its kicks only approximately on
    this lattice);
 3. 1 and 4 ranks give the same wind mass (1e-12).
+- the energy gained by gas and star closes to 1e-3 on 1/2 M v^2 of the wind returned: each cell closes its share in the star frame.
 
 Reference: the tables (cumulative wind ejecta read with h5py at the star's grid node) and conservation laws.
