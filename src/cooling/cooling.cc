@@ -2169,7 +2169,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
     double T=1, f_dustgas_solar=1, urad_G0=1, xH0=1, x_e=0, nH_cgs=rho*UNIT_DENSITY_IN_NHCGS; // initialize definitions of some variables used below to prevent compiler warnings
     f_dustgas_solar=1; urad_G0=1; // initialize metal/dust and radiation fields. will assume solar-Z and spatially-uniform Habing field for incident FUV radiation unless reset below.
 #ifdef RT_ISRF_BACKGROUND
-    urad_G0 = All.InterstellarRadiationFieldStrength;
+    urad_G0 = ISRF_BACKGROUND_STRENGTH;
 #endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
     if(cell[i].DelayTimeHII > 0) {cell[i].MolecularMassFraction_perNeutralH=cell[i].MolecularMassFraction=0; return;} // force gas flagged as in HII regions to have zero molecular fraction
@@ -2394,7 +2394,7 @@ KOKKOS_FUNCTION MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, stru
     G0 += cell[target].Rad_E_gamma[RT_FREQ_BIN_PHOTOELECTRIC] * (cell[target].Density * All.cf_a3inv / cell[target].Mass) * UNIT_EGY_DENSITY_IN_HABING; // convert to Habing field //
 #endif
 #if defined(RT_ISRF_BACKGROUND) && (!defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))                                                                        // latter flag decides whether we do treecol/sobolev here to get the background intensity // add a constant assumed FUV background, for isolated ISM simulations that don't get FUV from local sources self-consistently    
-    G0 += All.InterstellarRadiationFieldStrength * 1.7 * exp(-DMAX(pp[target].Metallicity[0] / All.SolarAbundances[0], 1e-4) * column * 500.);                 // RT_ISRF_BACKGROUND rescales the overal ISRF, factor of 1.7 gives Draine 1978 field in Habing units, extinction factor assumes the same FUV band-integrated dust opacity as RT module
+    G0 += ISRF_BACKGROUND_STRENGTH * 1.7 * exp(-DMAX(pp[target].Metallicity[0] / All.SolarAbundances[0], 1e-4) * column * 500.);                 // RT_ISRF_BACKGROUND rescales the overal ISRF, factor of 1.7 gives Draine 1978 field in Habing units, extinction factor assumes the same FUV band-integrated dust opacity as RT module
 #endif
 #ifdef SIMPLE_STEADYSTATE_CHEMISTRY
     if(mode == 1){ // Gong 2017 Eq. 9

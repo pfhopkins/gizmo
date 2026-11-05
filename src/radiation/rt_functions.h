@@ -418,7 +418,7 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
     double e_IR=0.31, Tdust_ext=DMAX(30.,T_cmb); // Milky way ISRF from Draine (2011), assume peak of dust emission at ~100 microns
     double e_HiEgy=0.66, T_hiegy=5800.; // Milky way ISRF from Draine (2011), assume peak of stellar emission at ~0.6 microns [can still have hot dust, this effect is pretty weak]
 #ifdef RT_ISRF_BACKGROUND
-    e_IR *= All.InterstellarRadiationFieldStrength; e_HiEgy *= All.InterstellarRadiationFieldStrength; // need to re-scale the assumed ISRF components
+    e_IR *= ISRF_BACKGROUND_STRENGTH; e_HiEgy *= ISRF_BACKGROUND_STRENGTH; // need to re-scale the assumed ISRF components
     if(!All.ComovingIntegrationOn){
 	e_CMB *= pow(1.+All.RadiationBackgroundRedshift,4);
  	T_cmb *= (1.+All.RadiationBackgroundRedshift);
@@ -968,7 +968,7 @@ void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas
 #if defined(RT_ISRF_BACKGROUND) && defined(RADTRANSFER)
 /* ========================================================================
  * get_background_isrf_urad — ISRF energy density per band, code units.
- * Reads All.RadiationBackgroundRedshift, All.InterstellarRadiationFieldStrength.
+ * Reads All.RadiationBackgroundRedshift, All.InterstellarRadiationFieldStrength (ISRF_BACKGROUND_STRENGTH).
  * ======================================================================== */
 KOKKOS_INLINE_FUNCTION
 void get_background_isrf_urad(int i, double *urad){
@@ -979,16 +979,16 @@ void get_background_isrf_urad(int i, double *urad){
 #ifdef RT_INFRARED
 	double fac_uCMB = 1.;
 	fac_uCMB = pow(1+All.RadiationBackgroundRedshift, 4);
-        if(k==RT_FREQ_BIN_INFRARED){urad[k] = (All.InterstellarRadiationFieldStrength * 0.39 + fac_uCMB * 0.26) * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // 0.33 eV/cm^3 is dust emission peak, 0.26 is CMB - note how this bin actually lumps the two together
+        if(k==RT_FREQ_BIN_INFRARED){urad[k] = (ISRF_BACKGROUND_STRENGTH * 0.39 + fac_uCMB * 0.26) * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // 0.33 eV/cm^3 is dust emission peak, 0.26 is CMB - note how this bin actually lumps the two together
 #endif
 #ifdef RT_OPTICAL_NIR
-        if(k==RT_FREQ_BIN_OPTICAL_NIR){urad[k] = All.InterstellarRadiationFieldStrength * 0.54 * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // stellar emission
+        if(k==RT_FREQ_BIN_OPTICAL_NIR){urad[k] = ISRF_BACKGROUND_STRENGTH * 0.54 * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // stellar emission
 #endif
 #ifdef RT_NUV
-        if(k==RT_FREQ_BIN_NUV){urad[k] = All.InterstellarRadiationFieldStrength * 0.024 * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // stellar emission
+        if(k==RT_FREQ_BIN_NUV){urad[k] = ISRF_BACKGROUND_STRENGTH * 0.024 * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // stellar emission
 #endif
 #ifdef RT_PHOTOELECTRIC
-        if(k==RT_FREQ_BIN_PHOTOELECTRIC){urad[k] = All.InterstellarRadiationFieldStrength * 1.7  / UNIT_EGY_DENSITY_IN_HABING;} // Draine 1978 value = 1.7 Habing
+        if(k==RT_FREQ_BIN_PHOTOELECTRIC){urad[k] = ISRF_BACKGROUND_STRENGTH * 1.7  / UNIT_EGY_DENSITY_IN_HABING;} // Draine 1978 value = 1.7 Habing
 #endif
     }
 }
@@ -1002,7 +1002,7 @@ KOKKOS_INLINE_FUNCTION
 double background_isrf_cmb_Teff(void){
     // Returns the energy-weighted effective temperature of the background ISRF that has equivalent average photon energy to the sum of the ISRF and CMB
     // Necessary because current IR band treatment lumps both radiation fields together
-    double urad_ISRF_CGS_eV = All.InterstellarRadiationFieldStrength * 0.39, Trad_ISRF = 100.;
+    double urad_ISRF_CGS_eV = ISRF_BACKGROUND_STRENGTH * 0.39, Trad_ISRF = 100.;
 #ifdef RT_INFRARED
     Trad_ISRF = DMIN(All.InitRadiationTemp, 100.);
 #endif

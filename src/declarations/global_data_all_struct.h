@@ -152,6 +152,10 @@ struct global_data_all_processes
   double Chimes_f_esc_G0;
 #endif
 #endif // CHIMES
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+  double Mgas0;                 /*!< gas mass at the start (fresh start or snapshot) [code units] */
+  double FactorG0;              /*!< [M(stars < 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr], set at every star-formation call */
+#endif
 #ifdef SGCHEM
   char SGChemTablesPath[256];   /*!< directory of the installed SGChem tables (scripts/get_stella_tables.sh) */
   double SGChemCosmicRayIonRate;/*!< cosmic-ray ionisation rate per H [s^-1] */
@@ -160,10 +164,6 @@ struct global_data_all_processes
   double SGChemG0;              /*!< uniform ISRF-shaped field, 6-13.6 eV [Habing units, Draine 1978 / 1.7] */
   double SGChemG0_LW;           /*!< its Lyman-Werner part, 11.2-13.6 eV [Habing units] */
   double SGChemBackgroundG0;    /*!< scales the background floors (0.324e-2 x this), never the field (stella_dev G0) */
-#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
-  double Mgas0;                 /*!< gas mass at the start (fresh start or snapshot) [code units] */
-  double FactorG0;              /*!< [M(stars < 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr], set at every star-formation call */
-#endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
   double TreeColShieldingLength; /*!< pixel columns only from mass closer than this [code length, physical]; 0 = no limit */
 #ifdef TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS

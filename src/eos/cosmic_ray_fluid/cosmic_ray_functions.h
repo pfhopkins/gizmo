@@ -1488,9 +1488,12 @@ KOKKOS_INLINE_FUNCTION double Get_CosmicRayEnergyDensity_cgs(int i, struct parti
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     return cell[i].SubGrid_CosmicRayEnergyDensity*All.cf_a3inv * UNIT_PRESSURE_IN_CGS;
 #endif
+#if defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR) && !defined(SGCHEM) /* SGCHEM sets its own rate */
+    return All.FactorG0 * sqrt(All.InterstellarRadiationFieldStrength) * 1.6e-12; /* uniform, linear in FactorG0, as stella_dev GHOSDT_G0_CR */
+#endif
 #ifdef RT_ISRF_BACKGROUND
     double column = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp) * UNIT_SURFDEN_IN_CGS, sigma_0=2.23e-3;
-    double u_cr_0 = sqrt(All.InterstellarRadiationFieldStrength) * 1.6e-12;
+    double u_cr_0 = sqrt(ISRF_BACKGROUND_STRENGTH) * 1.6e-12;
     if(column < sigma_0) {return u_cr_0;} else {
         double atten_fac = exp(DMAX(-column/100.,-90)) * (sigma_0/(column+MIN_REAL_NUMBER));
         return atten_fac * u_cr_0;

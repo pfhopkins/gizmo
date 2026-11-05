@@ -116,6 +116,13 @@ extern struct global_data_all_processes All;
 #define boxHalf_Z boxHalf
 #endif
 
+/* the uniform background field (RT_ISRF_BACKGROUND), scaled with the recent star formation rate under ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR (floored at G0 = 0.324e-2 Habing) */
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+#define ISRF_BACKGROUND_STRENGTH (DMAX(All.FactorG0 * All.InterstellarRadiationFieldStrength, 0.324e-2/1.7))
+#else
+#define ISRF_BACKGROUND_STRENGTH (All.InterstellarRadiationFieldStrength)
+#endif
+
 #ifdef BOX_SHEARING
 #define Shearing_Box_Vel_Offset (All.Shearing_Box_Vel_Offset)
 #define Shearing_Box_Pos_Offset (All.Shearing_Box_Pos_Offset)

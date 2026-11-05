@@ -498,8 +498,12 @@ static void recent_sfr_update(int any_changed)
 #ifdef TEST_RECENT_SFR_SCALE_PRINT_FULL_SCAN_EVERY_CALL
     double m = 0, m_tot = 0; for(int i = 0; i < NumPart; i++) {if(P[i].Type == 4 && evaluate_time_since_t_initial_in_Gyr(P[i].StellarAge) < 0.03) {m += P[i].Mass;}}
     MPI_Allreduce(&m, &m_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    double g0 = sgchem_recent_sfr_g0();
-    if(ThisTask == 0) {printf("RECENT_SFR: %.17g %.17g %.17g %d %.17g %.17g\n", All.Time, All.FactorG0, (m_tot / 0.03) / (All.Mgas0 / 4.0), reduced, g0, sgchem_cr_ion_rate(0, g0));}
+#ifdef SGCHEM
+    double g0 = sgchem_recent_sfr_g0(), zeta = sgchem_cr_ion_rate(0, g0);
+#else
+    double g0 = ISRF_BACKGROUND_STRENGTH * 1.7, zeta = Get_CosmicRayEnergyDensity_cgs(0, P, CellP); /* background field [Habing] and CR energy density of cell 0 */
+#endif
+    if(ThisTask == 0) {printf("RECENT_SFR: %.17g %.17g %.17g %d %.17g %.17g\n", All.Time, All.FactorG0, (m_tot / 0.03) / (All.Mgas0 / 4.0), reduced, g0, zeta);}
 #endif
     (void) reduced;
 }
