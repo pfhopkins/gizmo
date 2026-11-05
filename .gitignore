@@ -150,3 +150,5 @@ test/wakeup_falling_sedov/output*/
 test/wakeup_falling_sedov/GIZMO
 test/wakeup_falling_sedov/used2
 test/wakeup_falling_sedov/*_ics.hdf5
+test/single_stars_gas_timestep/run/
+test/single_stars_gas_timestep/GIZMO
