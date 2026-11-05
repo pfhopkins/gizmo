@@ -38,6 +38,7 @@ void force_mark_moments_dirty(int i);
 #define TREE_MAXSOFT_COVERS_HMAX /* gas softening is the kernel, which hmax bounds: every node keeps maxsoft at or above its hmax (force_node_cover_soft) */
 #endif
 #endif
+void force_note_mass_change(int i);         /* thread-safe: i's mass changed with no refresh requested; its chain is marked by force_raise_noted_motion_bounds */
 double force_member_softening(int p);       /* a member's softening as node maxsoft takes it */
 void force_node_cover_soft(int no);
 void force_validate_tree_links(const char *tag);

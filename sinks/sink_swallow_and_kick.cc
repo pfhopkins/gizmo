@@ -485,6 +485,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
                         P[j].dp[k] += Mass_j * Vel_j[k] - Mass_j_0*Vel_j_0[k]; // discrete momentum change
                     }
                     force_note_motion_change(j);
+                    if(Mass_j != Mass_j_0) {force_note_mass_change(j);}
 
                     if(P[j].Type==0) // gas variable, need to update the 'pred' and truemass and related variables as well
                     {

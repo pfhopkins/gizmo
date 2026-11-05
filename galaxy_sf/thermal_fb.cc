@@ -78,7 +78,7 @@ struct OUTPUT_STRUCT_NAME
 
 void out2particle_addthermalFB(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
 {
-    if(P[i].Mass > 0) {P[i].dp -= out->M_coupled * P[i].Vel; P[i].Mass -= out->M_coupled; if((P[i].Mass<0)||(isnan(P[i].Mass))) {P[i].Mass=0;}} if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
+    if(P[i].Mass > 0) {P[i].dp -= out->M_coupled * P[i].Vel; P[i].Mass -= out->M_coupled; if((P[i].Mass<0)||(isnan(P[i].Mass))) {P[i].Mass=0;} force_note_mass_change(i);} if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
 }
 
 
@@ -193,6 +193,7 @@ int addthermalFB_evaluate(int target, int mode, int *exportflag, int *exportnode
                 /* we updated variables that need to get assigned to element 'j' -- let's do it */
                 #pragma omp atomic
                 P[j].Mass += Mass_j - Mass_j_0; // finite mass update [delta difference added here, allowing for another element to update in the meantime] if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
+                force_note_mass_change(j);
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                 #pragma omp atomic
                 CellP[j].MassTrue += Mass_j - Mass_j_0; // finite mass update
@@ -239,6 +240,7 @@ void thermal_fb_calc(void)
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+    force_raise_noted_motion_bounds();
     CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */

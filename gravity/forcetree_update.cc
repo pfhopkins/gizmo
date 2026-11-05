@@ -391,15 +391,46 @@ void force_raise_motion_bound(int i)
 void force_note_motion_change(int i)
 {
     if(i < 0 || i >= (int) MotionChangeMark.size()) {return;}
+#ifdef TREE_REFRESH_INCREMENTAL
+    __atomic_fetch_or(&MotionChangeMark[i], (unsigned char) 1, __ATOMIC_RELAXED); /* bit 2 is force_note_mass_change's */
+#else
     __atomic_store_n(&MotionChangeMark[i], (unsigned char) 1, __ATOMIC_RELAXED);
+#endif
     __atomic_store_n(&MotionChangeMarkAny, 1, __ATOMIC_RELAXED);
+}
+
+/*! Thread-safe: particle i's mass changed where nothing requests a refresh (feedback coupling, partial accretion).
+ *  The full refresh re-derives every node, so on the default path the next one accounts for it whatever triggers
+ *  it; the incremental refresh re-derives only marked chains, so here i's chain is marked (and a refresh
+ *  requested) by force_raise_noted_motion_bounds, which the loop that changed the mass must call before anything
+ *  reorders the particle arrays. */
+void force_note_mass_change(int i)
+{
+#ifdef TREE_REFRESH_INCREMENTAL
+    if(i < 0 || i >= (int) MotionChangeMark.size()) {return;}
+    __atomic_fetch_or(&MotionChangeMark[i], (unsigned char) 2, __ATOMIC_RELAXED);
+    __atomic_store_n(&MotionChangeMarkAny, 1, __ATOMIC_RELAXED);
+#else
+    (void) i;
+#endif
 }
 
 void force_raise_noted_motion_bounds(void)
 {
     if(!MotionChangeMarkAny) {return;}
     int i, n = IMIN(NumPart, (int) MotionChangeMark.size());
+#ifdef TREE_REFRESH_INCREMENTAL
+    for(i = 0; i < n; i++)
+    {
+        unsigned char m = MotionChangeMark[i];
+        if(!m) {continue;}
+        MotionChangeMark[i] = 0;
+        if(m & 1) {force_raise_motion_bound(i);}
+        if(m & 2) {force_mark_moments_dirty(i);}
+    }
+#else
     for(i = 0; i < n; i++) {if(MotionChangeMark[i]) {MotionChangeMark[i] = 0; force_raise_motion_bound(i);}}
+#endif
     MotionChangeMarkAny = 0;
     if((int) MotionChangeMark.size() > n) {memset(MotionChangeMark.data() + n, 0, MotionChangeMark.size() - n);} /* slots vacated by a rearrange */
 }
