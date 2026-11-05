@@ -16,7 +16,7 @@ SfEffPerFreeFall            0.01
 StellarTablesFile           SET_BY_TEST
 SGChemTablesPath            SET_BY_TEST
 SGChemCosmicRayIonRate      2.0e-16
-SGChemDustToGasRatio        1.0
+SGChemDustToGasRatio        1e-8
 SGChemDeuteriumAbundance    2.6e-5
 SGChemG0                    0
 SGChemG0_LW                 0

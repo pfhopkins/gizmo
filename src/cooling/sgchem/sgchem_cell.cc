@@ -261,6 +261,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
     sgchem_treecol_photoion_rates(i, &in, rho);
 #endif
+#ifdef RADTRANSFER
+    in.NH_cell = 0.5 * yn * cbrt(P[i].Mass / (CellP[i].Density * All.cf_a3inv)) * All.cf_atime * UNIT_LENGTH_IN_CGS; /* unresolved half-cell column */
+#endif
 
     int skip = 0; out.tdust = in.tdust;
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION

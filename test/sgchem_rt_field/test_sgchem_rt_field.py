@@ -1,8 +1,8 @@
 """sgchem_rt_field: SGChem reads G0, G0_LW and G0_dust from the moment solver's bins (reports/design/design_m1_coupling.md).
 A uniform molecular box at n_H = 100 cm^-3, no stars shining. The M1 build has its bins seeded in the initial snapshot with
 the band energies of a Draine field of G0 Habing (6-8, 8-11.2, 11.2-13.6, 3.444-6, 0.4133-3.444 eV); the reference is the
-same box without radiation transport, with the same G0 through SGChemG0. RSOL 1e-5 keeps the absorption over the run under
-0.05 %. H2 fraction, temperature and dust temperature agree within 1 %.
+same box without radiation transport, with the same G0 through SGChemG0. Dust-free, so the half-cell dust column and the
+absorption leave the field as seeded. H2 fraction and temperature agree within 1 %.
   test_habing_gate: G0 = 10.
   test_floor: empty bins and SGChemBackgroundG0 = 2 equal the uniform path at G0 = 0 with the same floor.
 """
