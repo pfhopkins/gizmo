@@ -20,7 +20,7 @@ Variants: baseline (fixed SofteningGas), ags (ADAPTIVE_GRAVSOFT_FORGAS: gravity 
 hydro kernel), tidal_adaptive (TIDAL_TIMESTEP_CRITERION + ADAPTIVE_TREEFORCE_UPDATE=0.06: gravity
 re-walked only every fraction of the tidal time).
 
-Tolerances were calibrated on the 2026-11-05 first run (ccalin030, 4 ranks x 2 threads); the
+Tolerances were calibrated on the 2026-11-05 first run (4 ranks x 2 threads); the
 measured values are quoted next to each. All checks are evaluated before any assertion, so one
 run reports every metric.
 """
@@ -110,7 +110,9 @@ VARIANTS = [
                                          "a density gradient as a free surface and inflates the "
                                          "kernel density of the outer 40% of the mass")),
     pytest.param(("KERNEL_CRK_FACES",), id="crk_faces"),
-    # No density-SPH variant here: SPH is guarded cheaply by the shocktube test's sph variant.
+    # Density SPH on the same IC and analytic solution (HYDRO_SPH takes precedence over the MFM flag in
+    # Config.sh, hydro/hydro_evaluate.h). The SPH viscosity/conductivity parameters are in the params file.
+    pytest.param(("HYDRO_DENSITY_SPH",), id="sph"),
 ]
 
 
