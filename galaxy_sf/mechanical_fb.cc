@@ -289,6 +289,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     Vel_j[k] = P[j].Vel[k]; // this can get modified below, so we need to read it thread-safe now
                 }
                 double InternalEnergy_j_0 = InternalEnergy_j, Mass_j_0 = Mass_j, rho_j_0 = rho_j, Vel_j_0[3]; for(k=0;k<3;k++) {Vel_j_0[k]=Vel_j[k];} // save initial values to use below
+                double Vel_star_j[3]; {double dv_sj[3]; for(k=0;k<3;k++) {dv_sj[k] = local.Vel[k] - Vel_j[k];} NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dv_sj,1); for(k=0;k<3;k++) {Vel_star_j[k] = Vel_j[k] + dv_sj[k];}} // star velocity in j's frame (differs across shearing-box boundaries)
 #ifdef METALS
                 double Metallicity_j[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION], Metallicity_j_0[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
                 for(k=0;k<NUM_METAL_SPECIES;k++) {
@@ -336,7 +337,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 /* now, add contribution from relative star-gas particle motion to shock energy */
                 for(k=0;k<3;k++)
                 {
-                    v_bw[k] = local.SNe_v_ejecta*pvec[k]/pnorm + (local.Vel[k]-Vel_j[k])/All.cf_atime;
+                    v_bw[k] = local.SNe_v_ejecta*pvec[k]/pnorm + (Vel_star_j[k]-Vel_j[k])/All.cf_atime;
                     e_shock += v_bw[k]*v_bw[k];
                 }
                 double mj_preshock, dM_ejecta_in, massratio_ejecta, mu_j;
@@ -621,6 +622,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     Vel_j[k] = P[j].Vel[k]; // this can get modified below, so we need to read it thread-safe now
                 }
                 double InternalEnergy_j_0,Mass_j_0,rho_j_0,Vel_j_0[3]; InternalEnergy_j_0=InternalEnergy_j; Mass_j_0=Mass_j; rho_j_0=rho_j; for(k=0;k<3;k++) {Vel_j_0[k]=Vel_j[k];} // save initial values to use below
+                double Vel_star_j[3]; {double dv_sj[3]; for(k=0;k<3;k++) {dv_sj[k] = local.Vel[k] - Vel_j[k];} NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dv_sj,1); for(k=0;k<3;k++) {Vel_star_j[k] = Vel_j[k] + dv_sj[k];}} // star velocity in j's frame (differs across shearing-box boundaries)
 #ifdef METALS
                 double Metallicity_j[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION], Metallicity_j_0[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
                 for(k=0;k<NUM_METAL_SPECIES;k++) {
@@ -668,7 +670,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                         /* now calculate the additional weights that are needed for energy terms */
                         for(k=0;k<3;k++)
                         {
-                            double v_ba = (Vel_j[k] - local.Vel[k]) / All.cf_atime; // relative gas-star velocity (working in physical units here) //
+                            double v_ba = (Vel_j[k] - Vel_star_j[k]) / All.cf_atime; // relative gas-star velocity (working in physical units here) //
                             vel_ba_2 += v_ba*v_ba; // magnitude of velocity vector (for corrected post-shock energies to distribute)
                             cos_vel_ba_pcoupled += v_ba * pvec[k]/pnorm; // direction of ejecta [after correction loop]
                         }
@@ -763,7 +765,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     {
                         for(k=0; k<3; k++)
                         {
-                            double d_vel = mom_prefactor * pvec[k] + massratio_ejecta*(local.Vel[k] - Vel_j[k]); // local.Vel term from extra momentum of moving star, Vel_j term from going from momentum to velocity boost with added mass
+                            double d_vel = mom_prefactor * pvec[k] + massratio_ejecta*(Vel_star_j[k] - Vel_j[k]); // local.Vel term from extra momentum of moving star, Vel_j term from going from momentum to velocity boost with added mass
                             KE_initial += Vel_j_0[k]*Vel_j_0[k]; Vel_j[k] += d_vel; KE_final += Vel_j[k]*Vel_j[k]; // calculate initial and final kinetic energies (here v^2, multiply by mass below)
                         }
                         KE_initial *= 0.5*mj_preshock*All.cf_a2inv; KE_final *= 0.5*Mass_j*All.cf_a2inv;

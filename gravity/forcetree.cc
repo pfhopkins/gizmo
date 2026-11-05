@@ -1750,7 +1750,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 r_source = sqrt(pow(P[no].Pos[0] - center[0],2) + pow(P[no].Pos[1] - center[1],2) + pow(P[no].Pos[2] - center[2],2));
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-                dv = P[no].Vel - vel;
+                dv = P[no].Vel - vel; NGB_SHEARBOX_BOUNDARY_VELCORR_(pos,P[no].Pos,dv,-1);
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
                 /* the source velocity this interaction is evaluated at; the Hermite predictor below
@@ -2130,7 +2130,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 r_source = sqrt(pow(nop->u.d.s[0] - center[0],2) + pow(nop->u.d.s[1] - center[1],2) + pow(nop->u.d.s[2] - center[2],2));
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-                dv = Extnodes[no].vs - vel;
+                dv = Extnodes[no].vs - vel; NGB_SHEARBOX_BOUNDARY_VELCORR_(pos,nop->u.d.s,dv,-1);
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                 cr_injection = nop->cr_injection;

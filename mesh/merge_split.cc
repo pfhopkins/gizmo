@@ -990,6 +990,10 @@ int merge_particles_ij(int i, int j)
         position differences relative to i. the final position will be appropriately box-wrapped after these operations are completed */
     Vec3<double> dp = P[j].Pos - P[i].Pos;
     nearest_xyz(dp,-1);
+#ifdef BOX_SHEARING
+    {Vec3<double> dv_frame = {}; NGB_SHEARBOX_BOUNDARY_VELCORR_(P[i].Pos,P[j].Pos,dv_frame,-1); /* j's velocities in i's frame (they differ across the shearing-box x-boundary) */
+     P[j].Vel += dv_frame; CellP[j].VelPred += dv_frame;}
+#endif
     Vec3<double> pos_new = P[i].Pos + dp * wt_j;
     Vec3<double> dr_j = (P[i].Pos + dp - pos_new) * All.cf_atime; // displacement of j relative to new pos (physical)
     Vec3<double> dr_i = (P[i].Pos - pos_new) * All.cf_atime;       // displacement of i relative to new pos (physical)
