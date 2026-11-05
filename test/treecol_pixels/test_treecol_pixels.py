@@ -155,7 +155,7 @@ PIX_STARS = [(8.0, 0.3), (15.0, 0.5), (25.0, 0.2), (40.0, 0.1), (60.0, 0.4), (10
 SHIELD = 8.0  # TreeColShieldingLength [pc]
 
 
-def pixel_run(tables, ranks):
+def pixel_run(tables, ranks, tag="", over=None):
     L, n = 20.0, 12
     pos, z, ab = gas_with_species(n, L)
     tab = Tables(tables["StellarTablesFile"])
@@ -165,8 +165,8 @@ def pixel_run(tables, ranks):
         lM, lZ = np.log10(M), np.log10(0.0142)
         stars.append((M, tab._i2(tab.t_pms, lM, lZ) + f * tab._i2(tab.life, lM, lZ), rng.uniform(0.15, 0.85, 3) * L))
     exe = build("pix12", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",))
-    out = run(exe, f"pixels_np{ranks}", tables, L, pos, stars, ranks=ranks, z_gas=z, tracabund=ab,
-              overrides={"TreeColShieldingLength": SHIELD})
+    out = run(exe, f"pixels{tag}_np{ranks}", tables, L, pos, stars, ranks=ranks, z_gas=z, tracabund=ab,
+              overrides={"TreeColShieldingLength": SHIELD, **(over or {})})
     cells = load(out, "cells"); cells = cells[np.argsort(cells[:, 0])]
     lum = load(out, "stars"); lum = lum[np.argsort(lum[:, 0])]
     bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
@@ -199,3 +199,14 @@ def test_pixel_columns_and_fluxes(tables, ranks):
     for k, (med, p99) in summary.items():
         bar = (1e-2, 5e-2) if k.startswith("col") else (2e-3, 3e-2) if k != "uv_pix" else (1e-2, 1e-1)
         assert med <= bar[0] and p99 <= bar[1], (k, med, p99)
+
+
+def test_columns_unsoftened(tables):
+    """softening of 1 pc on a 1.7 pc lattice: the columns still follow the unsoftened direct sum, m / (4 pi / 12 r^2)"""
+    soft = {f"Softening{t}": 1.0 for t in ("Gas", "Halo", "Disk", "Bulge", "Stars", "Bndry")}
+    cells, _, _ = pixel_run(tables, 1, tag="_soft", over=soft)
+    gpos, msp = cells[:, -3:], cells[:, 1:4]
+    col = cells[:, 4:40].reshape(-1, 3, 12)
+    for s in range(3):
+        d = [rel(col[i, s].sum(), direct_columns(gpos[i], gpos, msp[:, s], r_max=SHIELD).sum()) for i in range(len(cells))]
+        assert np.median(d) <= 1e-2 and np.percentile(d, 99) <= 5e-2, (s, np.median(d), np.percentile(d, 99))
