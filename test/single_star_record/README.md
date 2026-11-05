@@ -18,3 +18,5 @@ Checks:
 Reference: the initial conditions (records must be carried, not computed). Negative controls run during development:
 with the record dropped on receipt check 1 fails (so stars do change rank); without the merge guard one star (ID 532)
 is merged and check 1 fails.
+
+`test_split_threshold`: with single stars a cell splits above 2.01 x the largest gas cell of the initial conditions, as stella_dev.
