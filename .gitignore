@@ -182,3 +182,6 @@ test/photoion_starbench/run_*/
 test/mechfb_healpix_weights/run_*/
 test/mechfb_mass_kernel_weights/run_*/
 test/mechfb_mass_kernel_weights/GIZMO*
+test/sgchem_rt_field/run_*/
+test/single_stars_rt_bands/run_*/
+test/sgchem_rt_photons/run_*/
