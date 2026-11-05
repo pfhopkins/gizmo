@@ -44,6 +44,11 @@ def test_nodes_follow_chains():
 
 
 
+def test_nodes_follow_mergers():
+    a = _run(1, "ketju_tree_motion_merge_ics")
+    assert a["vmax_chain"] == 0 and a["box_chain"] == 0
+    assert a["vel_chain"] < 1e-10 and a["vel_other"] < 1e-10
+
 
 
 def test_imports_follow_chains():
