@@ -208,7 +208,7 @@ struct hydro_data_in
     MyDouble DelayTime;
 #endif
 
-#if defined(EOS_ELASTIC) || defined(EOS_ANEOS)
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
     int CompositionType;
 #endif
 #ifdef EOS_ELASTIC

@@ -398,7 +398,7 @@ struct HydroForceSpec
 #endif
         }
 #endif
-#if defined(EOS_ELASTIC) || defined(EOS_ANEOS)
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
         local.CompositionType = kc[i].CompositionType;
 #endif
 #ifdef EOS_ELASTIC
