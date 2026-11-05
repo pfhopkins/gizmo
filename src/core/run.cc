@@ -499,6 +499,9 @@ void run(void)
 
         if(stopflag)
         {
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+            rearrange_particle_sequence(); /* fold this step's promoted grains into the gas block, so the restart carries their cells */
+#endif
             restart(0);		/* write restart file */
             MPI_Barrier(MPI_COMM_WORLD);
 
@@ -532,6 +535,9 @@ void run(void)
 
         if(stopflag == 3)
         {
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+            rearrange_particle_sequence(); /* as above */
+#endif
             restart(0);		/* write an occasional restart file */
             stopflag = 0;
             All.TimeLastRestartFile += report_time();

@@ -268,6 +268,12 @@ void solid_material_resolve(void)
 #endif
 #ifdef EOS_DAMAGE_POROSITY
                 m.FractureActivation = All.SolidMaterialPresetFractureActivation[id]; /* SolidMaterialPreset<N>_FractureActivation (not given: the default) */
+#if ((EOS_DAMAGE_POROSITY) & 4)
+                /* SolidMaterialPreset<N>_InitialDistention / _CrushPressureElastic / _CrushPressureSolid (code units; not given: the preset's own) */
+                if(!isnan(All.SolidMaterialPresetPorosity[id][0])) {m.InitialDistention = All.SolidMaterialPresetPorosity[id][0];}
+                if(!isnan(All.SolidMaterialPresetPorosity[id][1])) {m.CrushPressureElastic = All.SolidMaterialPresetPorosity[id][1];}
+                if(!isnan(All.SolidMaterialPresetPorosity[id][2])) {m.CrushPressureSolid = All.SolidMaterialPresetPorosity[id][2];}
+#endif
 #endif
             }
         }

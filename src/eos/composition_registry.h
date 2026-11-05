@@ -126,9 +126,9 @@ GIZMO_GPU_FUNCTION static inline int solid_material_is_elastic(int composition_t
    the dual-flag arm partitions the ID space:
      0 .. N_TILLOTSON_MATERIALS-1     -> Tillotson (sub-index = ID)
      N_TILLOTSON_MATERIALS .. N+M-1   -> ANEOS     (sub-index = ID - N)
-   (the sub-index helpers below convert). Note: the hybrid dual-flag numbering
-   under EOS_TYPES_DEFAULTGAS_AND_SOLIDS (slot 0 = gas, Tillotson 1..6, ANEOS 7+)
-   is not yet a supported public interface.
+   (the sub-index helpers below convert). Under EOS_TYPES_DEFAULTGAS_AND_SOLIDS slot 0 is
+   the gas, the Tillotson presets keep 1..6 and ANEOS tables start at 7 (with Tillotson) or
+   at 1 (ANEOS alone); the User Guide entry of that flag gives the numbering.
 
    The single gas / no-solid-EOS carve-out lives at the top here (SSOT). In
    standard solid builds MATERIAL_TILLOTSON_UNUSED is the sentinel -1, which no

@@ -693,6 +693,7 @@ struct global_data_all_processes
   double SolidMaterialFlawsPerMass[N_SOLID_MATERIAL_IDS]; /*!< tensile flaws: ln(N) N / M of each material's N elements of total mass M, set at startup (an element of mass m holds ~ m x this) */
   double FractureOutOfPlaneExtent; /*!< 1D/2D tensile flaws: thickness (2D) or cross-sectional area (1D) that turns an element's NDIM-volume into a volume */
   double SolidMaterialPresetFractureActivation[N_TILLOTSON_MATERIALS]; /*!< per preset row 1-6: its fracture law (SolidMaterialPreset<N>_FractureActivation; not given = tensile flaws) */
+  double SolidMaterialPresetPorosity[N_TILLOTSON_MATERIALS][3]; /*!< per preset row 1-6: InitialDistention, CrushPressureElastic, CrushPressureSolid (SolidMaterialPreset<N>_*; not given = the preset's own) */
 #endif
 #ifdef EOS_ELASTIC_MELT
   struct solid_strength_model SolidStrengthModel[N_SOLID_MATERIAL_IDS]; /*!< melt and cavitation per CompositionType, resolved at startup */

@@ -724,6 +724,10 @@ void set_units(void)
 #endif
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
     All.GrainPromotion_MassThresh = All.GrainPromotion_MassThresh_cgs / UNIT_MASS_IN_CGS;
+#ifdef CHIMES
+    if(ThisTask == 0) {printf("ERROR: GRAIN_FLUID_PROMOTION cannot be combined with CHIMES: a promoted cell has no CHIMES chemistry state.\n");}
+    endrun(1156);
+#endif
 #endif
 #ifdef PLANET_HEATING
     {
@@ -2647,6 +2651,12 @@ void read_parameter_file(char *fname)
             strcpy(tag[nt], "FractureOutOfPlaneExtent"); addr[nt] = &All.FractureOutOfPlaneExtent; id[nt++] = REAL;
 #endif
             for(int k_p = 1; k_p < N_TILLOTSON_MATERIALS; k_p++) {snprintf(tag[nt], sizeof(tag[nt]), "SolidMaterialPreset%d_FractureActivation", k_p); addr[nt] = &All.SolidMaterialPresetFractureActivation[k_p]; id[nt++] = REAL;}
+#if ((EOS_DAMAGE_POROSITY) & 4)
+            {
+                const char *porosity_names[3] = {"InitialDistention", "CrushPressureElastic", "CrushPressureSolid"};
+                for(int k_p = 1; k_p < N_TILLOTSON_MATERIALS; k_p++) {for(int k_f = 0; k_f < 3; k_f++) {snprintf(tag[nt], sizeof(tag[nt]), "SolidMaterialPreset%d_%s", k_p, porosity_names[k_f]); addr[nt] = &All.SolidMaterialPresetPorosity[k_p][k_f]; id[nt++] = REAL;}}
+            }
+#endif
         }
 #endif
 #ifdef EOS_ELASTIC_MELT
