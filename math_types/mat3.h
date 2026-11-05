@@ -12,6 +12,17 @@ struct Mat3 {
     Vec3<T>& operator[](int i) noexcept { return row[i]; }
     const Vec3<T>& operator[](int i) const noexcept { return row[i]; }
 
+    // Cross-precision conversion and assignment; see the note in vec3.h.
+    template<typename U> operator Mat3<U>() const noexcept {
+        return Mat3<U>{ Vec3<U>(row[0]), Vec3<U>(row[1]), Vec3<U>(row[2]) };
+    }
+    template<typename U> Mat3& operator=(const Mat3<U>& o) noexcept {
+        row[0]=o.row[0]; row[1]=o.row[1]; row[2]=o.row[2]; return *this;
+    }
+    template<typename U> Mat3& operator+=(const Mat3<U>& o) noexcept {
+        row[0]+=o.row[0]; row[1]+=o.row[1]; row[2]+=o.row[2]; return *this;
+    }
+
     T trace() const noexcept { return row[0][0] + row[1][1] + row[2][2]; }
 
     T frobenius_norm_sq() const noexcept {

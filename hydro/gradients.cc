@@ -62,38 +62,40 @@ int GasGrad_isactive(int i, struct particle_data *pp, struct gas_cell_data *cell
 
 /* define a common 'gradients' structure to hold
  everything we're going to take derivatives of */
-struct Quantities_for_Gradients
+/* T = storage type: double for the import copy and the local limiter state, MyCommFloat for the
+   exported partial sums and extrema, which only feed gradient estimates and slope limiters */
+template<typename T> struct Quantities_for_Gradients_T
 {
-    MyDouble Density;
-    MyDouble Pressure;
-    Vec3<MyDouble> Velocity;
+    T Density;
+    T Pressure;
+    Vec3<T> Velocity;
 #ifdef MAGNETIC
-    Vec3<MyDouble> B;
+    Vec3<T> B;
 #ifdef DIVBCLEANING_DEDNER
-    MyDouble Phi;
+    T Phi;
 #endif
 #endif
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-    MyDouble Metallicity[NUM_METAL_SPECIES];
+    T Metallicity[NUM_METAL_SPECIES];
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
-    MyFloat Rad_E_gamma[N_RT_FREQ_BINS];
-    SymmetricTensor2<MyFloat> Rad_E_gamma_ET[N_RT_FREQ_BINS];
+    T Rad_E_gamma[N_RT_FREQ_BINS];
+    SymmetricTensor2<T> Rad_E_gamma_ET[N_RT_FREQ_BINS];
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
-    MyFloat Rad_Flux[N_RT_FREQ_BINS][3];
+    T Rad_Flux[N_RT_FREQ_BINS][3];
 #endif
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
-    MyDouble InternalEnergy;
+    T InternalEnergy;
 #endif
 #ifdef COSMIC_RAY_FLUID
-    MyDouble CosmicRayPressure[N_CR_PARTICLE_BINS];
+    T CosmicRayPressure[N_CR_PARTICLE_BINS];
 #endif
 #ifdef DOGRAD_SOUNDSPEED
-    MyDouble SoundSpeed;
+    T SoundSpeed;
 #endif
 #ifdef TURB_DIFF_DYNAMIC
-    Vec3<MyDouble> Velocity_bar;
+    Vec3<T> Velocity_bar;
 #endif
 };
 
@@ -117,15 +119,15 @@ struct GasGraddata_in
     MyFloat Mass;
     MyFloat KernelRadius;
 #ifdef MHD_CONSTRAINED_GRADIENT
-    MyDouble ConditionNumber;
+    MyCommFloat ConditionNumber;
     SymmetricTensor2<MyDouble> NV_T;
-    MyFloat BGrad[3][3];
+    MyCommFloat BGrad[3][3];
 #endif
     int NodeList[NODELISTLENGTH];
 #ifdef SPHAV_CD10_VISCOSITY_SWITCH
     MyFloat NV_DivVel;
 #endif
-    struct Quantities_for_Gradients GQuant;
+    Quantities_for_Gradients_T<MyDouble> GQuant;
 
 #ifdef TURB_DIFF_DYNAMIC
     MyDouble Norm_hat;
@@ -164,9 +166,9 @@ struct GasGraddata_out
     MyFloat FaceDotB;
     MyFloat FaceCrossX[3][3];
 #endif
-    struct Quantities_for_Gradients Gradients[3];
-    struct Quantities_for_Gradients Maxima;
-    struct Quantities_for_Gradients Minima;
+    Quantities_for_Gradients_T<MyCommFloat> Gradients[3];
+    Quantities_for_Gradients_T<MyCommFloat> Maxima;
+    Quantities_for_Gradients_T<MyCommFloat> Minima;
     MyFloat MaxDistance;
 #ifdef TURB_DIFF_DYNAMIC
     Vec3<MyDouble> Velocity_hat;
@@ -198,8 +200,8 @@ struct GasGraddata_out_iter
  for example for computing the slope-limiters (for the Reimann problem) */
 static struct temporary_data_topass
 {
-    struct Quantities_for_Gradients Maxima;
-    struct Quantities_for_Gradients Minima;
+    Quantities_for_Gradients_T<MyDouble> Maxima;
+    Quantities_for_Gradients_T<MyDouble> Minima;
     MyFloat MaxDistance;
 #if defined(KERNEL_CRK_FACES)
     MyDouble m0;

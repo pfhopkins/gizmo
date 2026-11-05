@@ -466,6 +466,7 @@
 #TREE_REFRESH_INCREMENTAL      # moments refresh re-derives only the nodes above changed particles and sinks, and exchanges only changed top-level leaves (cost no longer grows with the total particle count; changes results slightly: untouched nodes keep their drifted moments)
 #DOMAIN_TIMEBINS=0              # Domain timebin cost weighting: 0=frequency-weighted costs, 1=full per-timebin balancing (Gadget-4 scheme). Omit for unweighted.
 #DOMAIN_FREQ_WEIGHT=9           # Domain cost x min(2^(top occupied bin - particle bin), 2^n): spreads the short-timestep set over ranks (9 measured best on STARFORGE M2e4 at 384 ranks). Changes the layout.
+#PRECISION_DIET=1              # store derived quantities in float where double buys nothing (arithmetic stays double): =1 hydro/gradient exchange buffers; =2 also gradients, Eddington tensors, opacities and other derived per-cell fields of P/CellP (smaller structs and decomposition exchange; restartfiles change layout). Changes results at the float-roundoff level. Needs a value
 ####################################################################################################
 
 

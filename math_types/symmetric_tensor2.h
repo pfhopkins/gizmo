@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <type_traits>
 #include "vec3.h"
 #include "mat3.h"
 
@@ -36,6 +37,17 @@ struct SymmetricTensor2 {
 
     Row operator[](int i) noexcept { return {*this, i}; }
     ConstRow operator[](int i) const noexcept { return {*this, i}; }
+
+    // Cross-precision conversion, assignment and accumulation; see the note in vec3.h.
+    template<typename U> operator SymmetricTensor2<U>() const noexcept {
+        SymmetricTensor2<U> r; for(int k = 0; k < 6; k++) { r.data[k] = static_cast<U>(data[k]); } return r;
+    }
+    template<typename U> SymmetricTensor2& operator=(const SymmetricTensor2<U>& o) noexcept {
+        for(int k = 0; k < 6; k++) { data[k] = static_cast<T>(o.data[k]); } return *this;
+    }
+    template<typename U> SymmetricTensor2& operator+=(const SymmetricTensor2<U>& o) noexcept {
+        for(int k = 0; k < 6; k++) { data[k] = static_cast<T>(data[k] + o.data[k]); } return *this;
+    }
 
     // Trace: sum of diagonal elements.
     T trace() const noexcept { return data[0] + data[1] + data[2]; }
@@ -97,14 +109,26 @@ struct SymmetricTensor2 {
     }
 };
 
-template<typename T>
-inline SymmetricTensor2<T> operator*(T s, SymmetricTensor2<T> t) noexcept { t *= s; return t; }
+// Promote to the common type of the operands; see the note on the free operators in vec3.h.
+template<typename T, typename U> using SymT2Promote = typename std::common_type<T,U>::type;
 
-template<typename T>
-inline SymmetricTensor2<T> operator*(SymmetricTensor2<T> t, T s) noexcept { t *= s; return t; }
+template<typename T, typename U>
+inline SymmetricTensor2<SymT2Promote<T,U>> operator*(U s, const SymmetricTensor2<T>& t) noexcept {
+    using R = SymT2Promote<T,U>; SymmetricTensor2<R> r;
+    for(int k = 0; k < 6; k++) { r.data[k] = R(s) * R(t.data[k]); } return r;
+}
 
-template<typename T>
-inline SymmetricTensor2<T> operator+(SymmetricTensor2<T> a, const SymmetricTensor2<T>& b) noexcept { a += b; return a; }
+template<typename T, typename U>
+inline SymmetricTensor2<SymT2Promote<T,U>> operator*(const SymmetricTensor2<T>& t, U s) noexcept {
+    using R = SymT2Promote<T,U>; SymmetricTensor2<R> r;
+    for(int k = 0; k < 6; k++) { r.data[k] = R(t.data[k]) * R(s); } return r;
+}
+
+template<typename T, typename U>
+inline SymmetricTensor2<SymT2Promote<T,U>> operator+(const SymmetricTensor2<T>& a, const SymmetricTensor2<U>& b) noexcept {
+    using R = SymT2Promote<T,U>; SymmetricTensor2<R> r;
+    for(int k = 0; k < 6; k++) { r.data[k] = R(a.data[k]) + R(b.data[k]); } return r;
+}
 
 template<typename T>
 inline SymmetricTensor2<T> operator-(SymmetricTensor2<T> a, const SymmetricTensor2<T>& b) noexcept { a -= b; return a; }
