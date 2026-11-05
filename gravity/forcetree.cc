@@ -8,17 +8,21 @@
 #include "../core/proto.h"
 #include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
-#include <limits>
-#ifdef TREE_INTEGRITY_AUDITS
-static void force_tree_moments_audit(const char *tag);
-#endif
 #include <vector>
 #include <algorithm>
+#include <limits>
 #ifdef TREE_REFRESH_INCREMENTAL
 static std::vector<int> MomentsDirtyNodes; /* local nodes marked since the last refresh or build */
 static long long MomentsDirtyBuild = -1;   /* TreeOpsCount[TREEOPS_BUILD] when the list was started */
 static int force_treeupdate_pseudos_norecurse = 0; /* force_treeupdate_pseudos rebuilds one node, not its subtree */
 static void force_refresh_node_moments_incremental(void);
+#endif
+#ifdef TREE_INTEGRITY_AUDITS
+static double AuditBuildRootLen = 0;    /* root length at the last whole-tree build: node lengths before any drift widening follow from it */
+static int AuditFreshAll = 1;           /* every node's moments were derived at the last build or refresh */
+static std::vector<char> AuditNodeFresh; /* else: per node, derived (or installed from its owner) at the last refresh */
+static void force_refresh_audit(const char *tag);
+static void force_tree_moments_audit(const char *tag);
 #endif
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
@@ -178,7 +182,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
            collective, so the decision is reduced. */
         int whole = (mp == NULL && npart == NumPart), whole_all;
         MPI_Allreduce(&whole, &whole_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-        if(whole_all) {force_tree_full_audit(1, "build"); force_tree_geometry_audit("build");}
+        if(whole_all) {AuditBuildRootLen = Nodes[All.MaxPart].len; AuditFreshAll = 1; force_tree_full_audit(1, "build"); force_tree_geometry_audit("build");}
     }
 #endif
 
@@ -1550,10 +1554,10 @@ void force_add_element_to_tree(int iparent, int ichild)
      * Indexing Extnodes with it would be a wild write, so leave the opening-criterion fields
      * alone; the child inherits the same -1 and is skipped by the other consumers too. */
     if(Father[iparent] < 0) {return;}
-    TreeAuditMomentsPending = 1; /* the next refresh audits the moments un-strided */
 #ifdef TREE_REFRESH_INCREMENTAL
     force_mark_moments_dirty(ichild);
 #endif
+    TreeAuditMomentsPending = 1; /* the next refresh audits the moments un-strided */
     /* Raise the motion and kernel bounds the child needs over its whole ancestor chain: each of
        those nodes prunes searches by its own bounds, so stopping at the immediate parent leaves the
        child invisible to a query that opens from higher up. The bounds are the CHILD's: for a
@@ -4284,22 +4288,30 @@ void force_refresh_node_moments(void)
 
     PRINT_STATUS(" ..tree node moments refreshed.");
 #ifdef TREE_INTEGRITY_AUDITS
-    /* STARFORGE-type runs refresh near-every step and the moments re-derivation costs about one
-       extra refresh, so sample it -- EXCEPT on the first refresh after a particle-list mutation,
-       which must always be audited: a corrupted Father[] shows up as a moment mismatch right
-       here, and a pure count-stride can let the corruption reach the dynamics first. The cheap
-       exactly-once topology walk runs every time. Builds (rarer) always audit fully. The moments
-       audit is collective and the pending flag rank-local, so the decision is reduced. */
-    {
-        static int refresh_audit_counter = 0;
-        int audit_moments_now = ((++refresh_audit_counter % 8) == 0) || TreeAuditMomentsPending, audit_all;
-        MPI_Allreduce(&audit_moments_now, &audit_all, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        TreeAuditMomentsPending = 0;
-        force_tree_full_audit(audit_all, "refresh");
-        if(audit_all) {force_tree_geometry_audit("refresh");}
-    }
+    AuditFreshAll = 1;
+    force_refresh_audit("refresh");
 #endif
 }
+
+
+#ifdef TREE_INTEGRITY_AUDITS
+/* STARFORGE-type runs refresh near-every step and the moments re-derivation costs about one
+   extra refresh, so sample it -- EXCEPT on the first refresh after a particle-list mutation,
+   which must always be audited: a corrupted Father[] shows up as a moment mismatch right
+   here, and a pure count-stride can let the corruption reach the dynamics first. The cheap
+   exactly-once topology walk runs every time. Builds (rarer) always audit fully. The moments
+   audit is collective and the pending flag rank-local, so the decision is reduced; the stride
+   counter is rank-uniform, as refreshes are. */
+static void force_refresh_audit(const char *tag)
+{
+    static int refresh_audit_counter = 0;
+    int audit_moments_now = ((++refresh_audit_counter % 8) == 0) || TreeAuditMomentsPending, audit_all;
+    MPI_Allreduce(&audit_moments_now, &audit_all, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    TreeAuditMomentsPending = 0;
+    force_tree_full_audit(audit_all, tag);
+    if(audit_all) {force_tree_geometry_audit(tag);}
+}
+#endif
 
 
 /*! Refresh the moments if any rank flagged them stale (rank-uniform decision); called before every gravity
@@ -4319,9 +4331,6 @@ void force_refresh_moments_if_stale(void)
 #else
     int loc[2] = {TreeMomentsStaleFlag, TreeMomentsDirtyFlag}, glob[2];
     MPI_Allreduce(loc, glob, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-#ifdef TREE_INTEGRITY_AUDITS
-    if(glob[1]) {glob[0] = 1;} /* the audits compare every node with a full re-derivation */
-#endif
     if(glob[0] || glob[1])
     {
         CPU_Step[CPU_MISC] += measure_time();
@@ -4461,6 +4470,10 @@ static void force_refresh_node_moments_incremental(void)
         }
     }
     for(int f : D) {refresh_normalize(f); refresh_stamp_current(f);}
+#ifdef TREE_INTEGRITY_AUDITS
+    AuditFreshAll = 0; AuditNodeFresh.assign(Numnodestree, 0);
+    for(int f : D) {AuditNodeFresh[f - All.MaxPart] = 1;}
+#endif
     /* 2. send the re-derived top-level leaves of this rank to every rank */
     std::vector<int> leaves;
     for(int m = 0; m < DomainSegmentsPerTask; m++)
@@ -4484,6 +4497,9 @@ static void force_refresh_node_moments_incremental(void)
             force_drift_node(no, All.Ti_Current); /* widens len over the interval, as the full refresh does */
             domainnode_unpack(&all[n].dm, no);
             refresh_stamp_current(no);
+#ifdef TREE_INTEGRITY_AUDITS
+            AuditNodeFresh[no - All.MaxPart] = 1;
+#endif
         }
         for(p = Nodes[no].u.d.father; p >= 0; p = Nodes[p].u.d.father)
         {
@@ -4500,12 +4516,18 @@ static void force_refresh_node_moments_incremental(void)
         for(p = Nodes[f].u.d.nextnode, n = 0; n < 8; n++) {force_drift_node(p, All.Ti_Current); p = Nodes[p].u.d.sibling;}
         force_treeupdate_pseudos(f);
         refresh_stamp_current(f);
+#ifdef TREE_INTEGRITY_AUDITS
+        AuditNodeFresh[f - All.MaxPart] = 1;
+#endif
     }
     force_treeupdate_pseudos_norecurse = 0;
     for(int f : internal) {Nodes[f].u.d.bitflags &= ~(1 << BITFLAG_MOMENTS_DIRTY);}
     for(int f : D) {Nodes[f].u.d.bitflags &= ~(1 << BITFLAG_MOMENTS_DIRTY);}
     D.clear();
     TreeMomentsDirtyFlag = 0;
+#ifdef TREE_INTEGRITY_AUDITS
+    force_refresh_audit("refresh_incremental"); /* every node is checked against a full re-derivation, the carried ones included */
+#endif
 }
 #endif
 
@@ -4653,26 +4675,33 @@ void force_tree_full_audit(int audit_moments, const char *tag)
 
 
 /*! Tier-1 moments audit (TREE_INTEGRITY_AUDITS builds; COLLECTIVE). Runs right after a whole-tree build or
- *  a moments refresh, when every node has just been derived from its members, and compares every node --
- *  the top level included -- with a re-derivation from the particles (predicted to now) through the Father
- *  chains. The top-level nodes' sums are reduced over all ranks, so the pseudo-particle exchange and the
- *  top-level combine are checked along with the local trees.
+ *  a moments refresh, full or incremental, and compares every node -- the top level included -- with a
+ *  re-derivation from the particles (predicted to now) through the Father chains. The top-level nodes'
+ *  sums are reduced over all ranks, so the pseudo-particle exchange and the top-level combine are checked
+ *  along with the local trees.
  *  (a) Time-independent quantities, fatal: N_part; mass; with the options gasmass, sink_mass, N_SINK.
  *      Integers must match exactly (N_part within the zero-mass members, which the build and the refresh
- *      count differently). The build, the refresh and this audit sum in different orders, so bitwise
- *      agreement is not available; "exact" is the worst-case rounding of two summations of the same n
- *      non-negative terms, 2(n-1) unit roundoffs of the total, taken with margin. Where no arithmetic
- *      intervenes the match is bitwise: a remote copy of a top-level leaf against its owner's (a byte copy).
- *      An internal top-level node must equal the combine of its daughters as force_treeupdate_pseudos forms
- *      it (N_part exactly; mass within the rounding of eight terms, since -ffast-math may reassociate).
- *  (b) Drifted quantities, fatal: every node is current, with its centre of mass, mass-weighted velocity,
- *      and sink position and velocity at the members' values to rounding; hmax covers every member's
- *      predicted kernel. Velocities are compared net of the members' kicks still pending in dp: the next
- *      force_update_tree adds those to the nodes, so a node that already holds them would count them
- *      twice. vmax and maxsoft shortfalls are counted only (cpu.txt).
+ *      count differently). The floating-point sums are summed in a different order by the build, the full
+ *      refresh, the incremental refresh and this audit, so bitwise agreement is not available; "exact" is
+ *      the worst-case rounding of two summations of the same n non-negative terms, 2(n-1) unit roundoffs
+ *      of the total, taken with margin. Where no arithmetic intervenes the match is bitwise: a remote copy
+ *      of a top-level leaf against its owner's (a byte copy). An internal top-level node must equal the
+ *      combine of its daughters as force_treeupdate_pseudos forms it (N_part exactly; mass within the
+ *      rounding of eight terms, since -ffast-math may reassociate).
+ *  (b) Drifted quantities. A node whose whole subtree was derived at this refresh ("fresh": every node
+ *      after a build or a full refresh) must have its centre of mass, mass-weighted velocity, and sink
+ *      position and velocity at the members' values to rounding, fatal. Velocities are compared net of
+ *      the members' kicks still pending in dp, which the nodes receive only at the next tree update. A node an incremental refresh
+ *      carried over (or rebuilt from carried children) keeps the lazily drifted and kicked state. Its
+ *      centre of mass and the members' both move at most at the node's motion bound vmax, so their
+ *      separation can grow at most at 2 vmax -- exactly the rate at which drift widens len -- so the
+ *      offset may not exceed the widening len has accumulated since the build (fatal); the worst carried
+ *      offsets go to cpu.txt. hmax must cover every member's predicted kernel (fatal). vmax and maxsoft
+ *      coverage are counted only: a raise made in a threaded loop reaches the other ranks' top-level copies
+ *      at the next flush, and maxsoft is not maintained between refreshes on either path.
  *  Box containment is force_tree_geometry_audit's. */
-long long TreeMomAuditCount = 0, TreeMomAuditVmaxShort = 0, TreeMomAuditSoftShort = 0;
-double TreeMomAuditWorstVmaxShort = 0, TreeMomAuditWorstSoftShort = 0;
+long long TreeMomAuditCount = 0, TreeMomAuditCarried = 0, TreeMomAuditVmaxShort = 0, TreeMomAuditSoftShort = 0;
+double TreeMomAuditWorstCOM = 0, TreeMomAuditWorstCOMWiden = 0, TreeMomAuditWorstDV = 0, TreeMomAuditWorstVmaxShort = 0, TreeMomAuditWorstSoftShort = 0;
 enum {MA_M = 0, MA_MX = 1, MA_MV = 4, MA_GASM = 7, MA_SINKM = 8, MA_SMX = 9, MA_SMV = 12, MA_OWN_M = 15, MA_OWN_SINKM = 16, MA_NSUM = 17};
 enum {MA_N = 0, MA_NZERO, MA_NSINK, MA_OWN_N, MA_OWN_NSINK, MA_NI};
 enum {MA_HMAX = 0, MA_VMAX, MA_VABS, MA_SOFT, MA_NMAX};
@@ -4684,7 +4713,9 @@ static void force_tree_moments_audit(const char *tag)
     double *ds = (double *) mymalloc("mom_audit_ds", (size_t) nn * MA_NSUM * sizeof(double));
     long long *is = (long long *) mymalloc("mom_audit_is", (size_t) nn * MA_NI * sizeof(long long));
     double *dm = (double *) mymalloc("mom_audit_dm", (size_t) nn * MA_NMAX * sizeof(double));
+    double *lo = (double *) mymalloc("mom_audit_lo", (size_t) nn * sizeof(double));
     int *leaf_of = (int *) mymalloc("mom_audit_leaf", (size_t) IMAX(ntop, 1) * sizeof(int));
+    int *deep = (int *) mymalloc("mom_audit_deep", (size_t) nn * sizeof(int));
     double *cmin = (double *) mymalloc("mom_audit_cmin", (size_t) 6 * IMAX(ntop, 1) * sizeof(double)), *cmax = cmin + 3 * (size_t) IMAX(ntop, 1);
     memset(ds, 0, (size_t) nn * MA_NSUM * sizeof(double)); memset(is, 0, (size_t) nn * MA_NI * sizeof(long long)); memset(dm, 0, (size_t) nn * MA_NMAX * sizeof(double));
 #define MOM_AUDIT_FAIL(...) do {if(nbad < 12) {printf("TREE-MOMENTS-AUDIT task %d [%s] t=%.10g: ", ThisTask, tag, All.Time); printf(__VA_ARGS__); printf("\n");} nbad++;} while(0)
@@ -4694,10 +4725,23 @@ static void force_tree_moments_audit(const char *tag)
     {
         int is_top = (Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) ? 1 : 0;
         if(is_top != (no < All.MaxPart + ntop)) {MOM_AUDIT_FAIL("node %d top-level flag %d, but the top tree is nodes %d..%d", no, is_top, All.MaxPart, All.MaxPart + ntop - 1);}
-        if(Nodes[no].Ti_current != All.Ti_Current || (Nodes[no].u.d.bitflags & (1 << BITFLAG_NODEHASBEENKICKED))) {MOM_AUDIT_FAIL("node %d lagging %lld ticks or holding a pending kick right after a build or refresh", no, (long long) (All.Ti_Current - Nodes[no].Ti_current));}
     }
     for(no = 0; no < ntop; no++) {leaf_of[no] = -1; for(k = 0; k < 3; k++) {cmin[3 * no + k] = cmax[3 * no + k] = Nodes[All.MaxPart + no].center[k];}}
     for(i = 0; i < NTopleaves; i++) {int o = DomainNodeIndex[i] - All.MaxPart; if(o >= 0 && o < ntop) {leaf_of[o] = i;} else {MOM_AUDIT_FAIL("top-level leaf %d at node %d outside the top tree", i, DomainNodeIndex[i]);}}
+
+    /* node lengths before any drift widening, from the build's root length */
+    for(no = All.MaxPart; no < All.MaxPart + nn; no++)
+    {
+        int f = Nodes[no].u.d.father, o = no - All.MaxPart;
+        if(no == All.MaxPart) {lo[o] = AuditBuildRootLen;}
+        else if(f >= All.MaxPart && f < no) {lo[o] = 0.5 * lo[f - All.MaxPart];}
+        else {lo[o] = 0; MOM_AUDIT_FAIL("node %d has father %d, not a lower node index", no, f);}
+    }
+
+    /* fresh down to the leaves: derived at this refresh, and so is every child (reduced over ranks at the top) */
+    for(no = 0; no < nn; no++) {deep[no] = AuditFreshAll || (no < (int) AuditNodeFresh.size() && AuditNodeFresh[no]);}
+    for(i = 0; i < NumPart; i++) {(void) i;} /* particles are always current inputs */
+    for(no = All.MaxPart + nn - 1; no > All.MaxPart; no--) {int f = Nodes[no].u.d.father; if(!deep[no - All.MaxPart] && f >= All.MaxPart && f < All.MaxPart + nn) {deep[f - All.MaxPart] = 0;}}
 
     /* local re-derivation through the Father chains */
     for(i = 0; i < NumPart; i++)
@@ -4729,7 +4773,7 @@ static void force_tree_moments_audit(const char *tag)
             NEAREST_XYZ(r0, r1, r2, -1);
             double r[3] = {r0, r1, r2};
             d[MA_M] += m; d[MA_GASM] += gm;
-            for(k = 0; k < 3; k++) {d[MA_MX + k] += m * r[k]; d[MA_MV + k] += m * P[i].Vel[k] - P[i].dp[k];} /* a kick still pending in dp reaches the nodes at the next force_update_tree */
+            for(k = 0; k < 3; k++) {d[MA_MX + k] += m * r[k]; d[MA_MV + k] += m * P[i].Vel[k] - P[i].dp[k];} /* a kick still pending in dp has not reached the nodes yet */
             if(is_sink) {d[MA_SINKM] += m; ii[MA_NSINK]++; for(k = 0; k < 3; k++) {d[MA_SMX + k] += m * r[k]; d[MA_SMV + k] += m * P[i].Vel[k] - P[i].dp[k];}}
             ii[MA_N]++; if(!(m > 0)) {ii[MA_NZERO]++;}
             dmx[MA_HMAX] = DMAX(dmx[MA_HMAX], hk); dmx[MA_VMAX] = DMAX(dmx[MA_VMAX], vb); dmx[MA_VABS] = DMAX(dmx[MA_VABS], vabs); dmx[MA_SOFT] = DMAX(dmx[MA_SOFT], soft);
@@ -4755,18 +4799,19 @@ static void force_tree_moments_audit(const char *tag)
         MPI_Allreduce(MPI_IN_PLACE, ds, ntop * MA_NSUM, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(MPI_IN_PLACE, is, ntop * MA_NI, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(MPI_IN_PLACE, dm, ntop * MA_NMAX, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(MPI_IN_PLACE, deep, ntop, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
         MPI_Allreduce(MPI_IN_PLACE, cmin, 3 * ntop, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
         MPI_Allreduce(MPI_IN_PLACE, cmax, 3 * ntop, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         for(no = 0; no < ntop; no++) {for(k = 0; k < 3; k++) {if(cmin[3 * no + k] != cmax[3 * no + k]) {MOM_AUDIT_FAIL("top-level node %d centre[%d] differs across ranks (%.17g .. %.17g)", All.MaxPart + no, k, cmin[3 * no + k], cmax[3 * no + k]); break;}}}
     }
 
     /* compare */
-    long long vmax_short = 0, soft_short = 0; double worst_vshort = 0, worst_sshort = 0;
+    long long carried = 0, vmax_short = 0, soft_short = 0; double worst_com = 0, worst_widen = 0, worst_dv = 0, worst_vshort = 0, worst_sshort = 0;
     for(no = All.MaxPart; no < All.MaxPart + nn; no++)
     {
         size_t o = no - All.MaxPart;
         double *d = ds + MA_NSUM * o, *dmx = dm + MA_NMAX * o; long long *ii = is + MA_NI * o;
-        int top = (o < (size_t) ntop), leaf = top ? leaf_of[o] : -1;
+        int top = (o < (size_t) ntop), leaf = top ? leaf_of[o] : -1, fresh = deep[o];
         long long n = ii[MA_N], nz = ii[MA_NZERO], np_st = (long long) Nodes[no].N_part;
         double tolfac = 4.0 * (double) (n + NTask + 16) * eps;
         const char *where = top ? ((leaf >= 0) ? ((DomainTask[leaf] == ThisTask) ? "own top-level leaf" : "remote top-level leaf") : "internal top-level") : "local";
@@ -4811,45 +4856,60 @@ static void force_tree_moments_audit(const char *tag)
 #endif
         }
 
-        double scale = DMAX(fabs(Nodes[no].center[0]), DMAX(fabs(Nodes[no].center[1]), fabs(Nodes[no].center[2]))) + Nodes[no].len, vref = dmx[MA_VABS];
+        struct node_prediction pr; force_node_predict(no, All.Ti_Current, &pr);
+        double scale = DMAX(fabs(Nodes[no].center[0]), DMAX(fabs(Nodes[no].center[1]), fabs(Nodes[no].center[2]))) + pr.len, vref = dmx[MA_VABS];
         double tol_x = tolfac * scale, tol_v = tolfac * vref;
         if(m > 0)
         {
             double off = 0, dv = 0;
-            for(k = 0; k < 3; k++) {dv = DMAX(dv, fabs(Extnodes[no].vs[k] - d[MA_MV + k] / m));}
-            {double r0 = Nodes[no].u.d.s[0] - Nodes[no].center[0], r1 = Nodes[no].u.d.s[1] - Nodes[no].center[1], r2 = Nodes[no].u.d.s[2] - Nodes[no].center[2]; NEAREST_XYZ(r0, r1, r2, -1);
+            for(k = 0; k < 3; k++) {dv = DMAX(dv, fabs(pr.vs[k] - d[MA_MV + k] / m));}
+            {double r0 = pr.s[0] - Nodes[no].center[0], r1 = pr.s[1] - Nodes[no].center[1], r2 = pr.s[2] - Nodes[no].center[2]; NEAREST_XYZ(r0, r1, r2, -1);
             off = DMAX(fabs(r0 - d[MA_MX] / m), DMAX(fabs(r1 - d[MA_MX + 1] / m), fabs(r2 - d[MA_MX + 2] / m)));}
-            if(off > tol_x) {MOM_AUDIT_FAIL("node %d (%s, N=%lld) centre of mass off by %.3g (len %.3g, tol %.3g)", no, where, n, off, (double) Nodes[no].len, tol_x);}
-            if(dv > tol_v) {MOM_AUDIT_FAIL("node %d (%s, N=%lld) mass-weighted velocity off by %.3g (max member |v_k| %.3g, tol %.3g)", no, where, n, dv, vref, tol_v);}
+            if(fresh)
+            {
+                if(off > tol_x) {MOM_AUDIT_FAIL("node %d (%s, fresh, N=%lld) centre of mass off by %.3g (len %.3g, tol %.3g)", no, where, n, off, pr.len, tol_x);}
+                if(dv > tol_v) {MOM_AUDIT_FAIL("node %d (%s, fresh, N=%lld) mass-weighted velocity off by %.3g (max member |v_k| %.3g, tol %.3g)", no, where, n, dv, vref, tol_v);}
+            }
+            else
+            {
+                double widen = pr.len - lo[o];
+                carried++;
+                worst_com = DMAX(worst_com, off / pr.len);
+                if(widen > 0) {worst_widen = DMAX(worst_widen, off / widen);}
+                if(vref > 0) {worst_dv = DMAX(worst_dv, dv / vref);}
+                if(AuditBuildRootLen > 0 && off > widen + tol_x) {MOM_AUDIT_FAIL("node %d (%s, carried, N=%lld) centre of mass off by %.3g, beyond the %.3g its motion bound has widened len since the build (len %.3g, lag %lld ticks)", no, where, n, off, widen, pr.len, (long long) (All.Ti_Current - Nodes[no].Ti_current));}
+                if(dv > 2 * DMAX(Extnodes[no].vmax, vref) + tol_v) {MOM_AUDIT_FAIL("node %d (%s, carried, N=%lld) mass-weighted velocity off by %.3g, beyond twice the motion bound %.3g", no, where, n, dv, DMAX(Extnodes[no].vmax, vref));}
+            }
         }
-        if(dmx[MA_HMAX] > 0 && Extnodes[no].hmax < 0.999999 * dmx[MA_HMAX]) {MOM_AUDIT_FAIL("node %d (%s) hmax %.10g below a member's predicted kernel %.10g", no, where, (double) Extnodes[no].hmax, dmx[MA_HMAX]);}
+        if(dmx[MA_HMAX] > 0 && pr.hmax < 0.999999 * dmx[MA_HMAX]) {MOM_AUDIT_FAIL("node %d (%s, %s) hmax %.10g below a member's predicted kernel %.10g", no, where, fresh ? "fresh" : "carried", pr.hmax, dmx[MA_HMAX]);}
         if(Extnodes[no].vmax < 0.999999 * dmx[MA_VMAX]) {vmax_short++; worst_vshort = DMAX(worst_vshort, dmx[MA_VMAX] / DMAX(Extnodes[no].vmax, MIN_REAL_NUMBER));}
         if(Nodes[no].maxsoft < 0.999999 * dmx[MA_SOFT]) {soft_short++; worst_sshort = DMAX(worst_sshort, dmx[MA_SOFT] / DMAX(Nodes[no].maxsoft, MIN_REAL_NUMBER));}
 #ifdef SINK_CALC_DISTANCES
-        if(d[MA_SINKM] > 0)
+        if(d[MA_SINKM] > 0) /* sinks' ancestors are re-derived at every refresh on both paths */
         {
             double sm = d[MA_SINKM], off = 0, dv = 0;
-            {double r0 = Nodes[no].sink_pos[0] - Nodes[no].center[0], r1 = Nodes[no].sink_pos[1] - Nodes[no].center[1], r2 = Nodes[no].sink_pos[2] - Nodes[no].center[2]; NEAREST_XYZ(r0, r1, r2, -1);
+            {double r0 = pr.sink_pos[0] - Nodes[no].center[0], r1 = pr.sink_pos[1] - Nodes[no].center[1], r2 = pr.sink_pos[2] - Nodes[no].center[2]; NEAREST_XYZ(r0, r1, r2, -1);
             off = DMAX(fabs(r0 - d[MA_SMX] / sm), DMAX(fabs(r1 - d[MA_SMX + 1] / sm), fabs(r2 - d[MA_SMX + 2] / sm)));}
             if(off > tol_x) {MOM_AUDIT_FAIL("node %d (%s, %lld sinks) sink_pos off by %.3g (tol %.3g)", no, where, ii[MA_NSINK], off, tol_x);}
 #ifdef SINK_NODE_MOTION_TRACKED
-            for(k = 0; k < 3; k++) {dv = DMAX(dv, fabs(Nodes[no].sink_vel[k] - d[MA_SMV + k] / sm));}
+            for(k = 0; k < 3; k++) {dv = DMAX(dv, fabs(pr.sink_vel[k] - d[MA_SMV + k] / sm));}
             if(dv > tol_v) {MOM_AUDIT_FAIL("node %d (%s, %lld sinks) sink_vel off by %.3g (tol %.3g)", no, where, ii[MA_NSINK], dv, tol_v);}
 #endif
         }
 #endif
     }
 #undef MOM_AUDIT_FAIL
-    TreeMomAuditCount++; TreeMomAuditVmaxShort += vmax_short; TreeMomAuditSoftShort += soft_short;
+    TreeMomAuditCount++; TreeMomAuditCarried += carried; TreeMomAuditVmaxShort += vmax_short; TreeMomAuditSoftShort += soft_short;
+    TreeMomAuditWorstCOM = DMAX(TreeMomAuditWorstCOM, worst_com); TreeMomAuditWorstCOMWiden = DMAX(TreeMomAuditWorstCOMWiden, worst_widen); TreeMomAuditWorstDV = DMAX(TreeMomAuditWorstDV, worst_dv);
     TreeMomAuditWorstVmaxShort = DMAX(TreeMomAuditWorstVmaxShort, worst_vshort); TreeMomAuditWorstSoftShort = DMAX(TreeMomAuditWorstSoftShort, worst_sshort);
-    myfree(cmin); myfree(leaf_of); myfree(dm); myfree(is); myfree(ds);
-    if(nbad) {printf("TREE-MOMENTS-AUDIT task %d [%s]: %d failed node checks\n", ThisTask, tag, nbad); fflush(stdout); endrun(91575);}
+    myfree(cmin); myfree(deep); myfree(leaf_of); myfree(lo); myfree(dm); myfree(is); myfree(ds);
+    if(nbad) {printf("TREE-MOMENTS-AUDIT task %d [%s]: %d failed node checks (%s refresh state)\n", ThisTask, tag, nbad, AuditFreshAll ? "fully derived" : "incremental"); fflush(stdout); endrun(91575);}
 }
 
 
 /*! Tier-2 geometric audit (TREE_INTEGRITY_AUDITS builds only). The moments audit checks the moments
  *  against their members; this one checks the geometry the walks rely on, with every local particle
- *  predicted to All.Ti_Current:
+ *  and node predicted to All.Ti_Current (an incremental refresh leaves untouched nodes lagging):
  *  (a) each particle lies inside every ancestor's box, center +- len/2 -- the neighbour search
  *      discards a node by exactly that box (rkern + len/2), so a member outside it can be missed.
  *      REPORTED, not fatal: force_drift_node grows the half-width at exactly the speed of the
@@ -4870,9 +4930,11 @@ void force_tree_geometry_audit(const char *tag)
 {
     if(Numnodestree <= 0) {return;}
     double xtmp, ytmp, ztmp; (void) xtmp; (void) ytmp; (void) ztmp; /* scratch for the periodic macros */
+    double *plen = (double *) mymalloc("geo_audit_len", (size_t) Numnodestree * 2 * sizeof(double)), *phmax = plen + Numnodestree; /* per node: predicted len, hmax */
     long long nbad[2] = {0, 0};
     double worst[3] = {0, 0, 0}; /* box excess in len, box excess in h, kernel/hmax */
-    int i, k, worst_i = -1, worst_f = -1;
+    int i, k, no, worst_i = -1, worst_f = -1;
+    for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++) {struct node_prediction pr; force_node_predict(no, All.Ti_Current, &pr); plen[no - All.MaxPart] = pr.len; phmax[no - All.MaxPart] = pr.hmax;}
     for(i = 0; i < NumPart; i++)
     {
         int f = Father[i];
@@ -4880,18 +4942,19 @@ void force_tree_geometry_audit(const char *tag)
         Vec3<MyDouble> x; double h = force_predict_to_current(i, x);
         if(P[i].Type == 0)
         {
-            double hneed = DMIN(h, All.MaxKernelRadius);
-            if(Extnodes[f].hmax < 0.999999 * hneed) {nbad[1]++; worst[2] = DMAX(worst[2], hneed / DMAX(Extnodes[f].hmax, MIN_REAL_NUMBER));}
+            double hneed = DMIN(h, All.MaxKernelRadius), hm = phmax[f - All.MaxPart];
+            if(hm < 0.999999 * hneed) {nbad[1]++; worst[2] = DMAX(worst[2], hneed / DMAX(hm, MIN_REAL_NUMBER));}
         }
         double hscale = (P[i].Type == 0) ? h : ForceSoftening_KernelRadius(i);
         for(; f >= All.MaxPart && f < All.MaxPart + Numnodestree; f = Nodes[f].u.d.father)
         {
-            double dx = x[0] - Nodes[f].center[0], dy = x[1] - Nodes[f].center[1], dz = x[2] - Nodes[f].center[2], len = Nodes[f].len;
+            double dx = x[0] - Nodes[f].center[0], dy = x[1] - Nodes[f].center[1], dz = x[2] - Nodes[f].center[2], len = plen[f - All.MaxPart];
             double d = DMAX(NGB_PERIODIC_BOX_LONG_X(dx,dy,dz,-1), DMAX(NGB_PERIODIC_BOX_LONG_Y(dx,dy,dz,-1), NGB_PERIODIC_BOX_LONG_Z(dx,dy,dz,-1)));
             double excess = d - 0.5 * len;
             if(excess > 0) {nbad[0]++; if(excess / len > worst[0]) {worst[0] = excess / len; worst_i = i; worst_f = f;} if(hscale > 0) {worst[1] = DMAX(worst[1], excess / hscale);}}
         }
     }
+    myfree(plen);
     TreeGeoAuditCount++;
     if(nbad[0]) {TreeGeoAuditBoxCount++; TreeGeoAuditWorstLen = DMAX(TreeGeoAuditWorstLen, worst[0]); TreeGeoAuditWorstH = DMAX(TreeGeoAuditWorstH, worst[1]);}
     if(nbad[0] || nbad[1])
@@ -4901,9 +4964,10 @@ void force_tree_geometry_audit(const char *tag)
         if(worst_i >= 0)
         {
             double vm = 0; for(k = 0; k < 3; k++) {vm = DMAX(vm, fabs(P[worst_i].Vel[k]));}
-            printf("TREE-GEOMETRY-AUDIT task %d: worst box excess: particle %d ID=%llu Type=%d TimeBin=%d lagging %lld ticks, max|v_k|=%g; node %d (N_part=%d, top-level=%d) vmax=%g len=%g\n",
+            printf("TREE-GEOMETRY-AUDIT task %d: worst box excess: particle %d ID=%llu Type=%d TimeBin=%d lagging %lld ticks, max|v_k|=%g; node %d (N_part=%d, top-level=%d, lagging %lld ticks) vmax=%g len=%g\n",
                    ThisTask, worst_i, (unsigned long long) P[worst_i].ID, P[worst_i].Type, P[worst_i].TimeBin, (long long) (All.Ti_Current - P[worst_i].Ti_current), vm,
-                   worst_f, Nodes[worst_f].N_part, (Nodes[worst_f].u.d.bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_INTERNAL_TOPLEVEL))) ? 1 : 0, Extnodes[worst_f].vmax, Nodes[worst_f].len);
+                   worst_f, Nodes[worst_f].N_part, (Nodes[worst_f].u.d.bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_INTERNAL_TOPLEVEL))) ? 1 : 0,
+                   (long long) (All.Ti_Current - Nodes[worst_f].Ti_current), Extnodes[worst_f].vmax, Nodes[worst_f].len);
         }
         fflush(stdout);
         if(nbad[1]) {endrun(91573);} /* the exact check is fatal; the box excess is reported */

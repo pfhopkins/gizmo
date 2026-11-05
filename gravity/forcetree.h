@@ -40,7 +40,10 @@ void force_validate_tree_links(const char *tag);
 void force_tree_full_audit(int audit_moments, const char *tag);
 void force_tree_geometry_audit(const char *tag);
 void force_tree_walk_audit(const char *tag);
-extern long long TreeMomAuditCount; /*!< moments audits run (rank-local) */
+struct node_prediction {Vec3<MyDouble> s, vs, sink_pos, sink_vel; double len, hmax;};
+void force_node_predict(int no, integertime time1, struct node_prediction *np);
+extern long long TreeMomAuditCount, TreeMomAuditCarried; /*!< moments audits run, and node checks of moments carried over from before the last refresh (rank-local) */
+extern double TreeMomAuditWorstCOM, TreeMomAuditWorstCOMWiden, TreeMomAuditWorstDV; /*!< worst carried COM offset in node lengths and in units of its motion-bound widening; worst carried velocity offset over the members' max speed */
 extern long long TreeMomAuditVmaxShort, TreeMomAuditSoftShort; /*!< node checks where vmax / maxsoft fell below a member's current value (reported, not fatal) */
 extern double TreeMomAuditWorstVmaxShort, TreeMomAuditWorstSoftShort; /*!< ... and the worst member value over the node's */
 extern long long TreeGeoAuditCount, TreeGeoAuditBoxCount; /*!< geometry audits run, and those with a box-containment excess (rank-local) */

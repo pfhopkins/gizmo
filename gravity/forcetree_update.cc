@@ -509,6 +509,40 @@ void force_drift_node(int no, integertime time1)
 }
 
 
+#ifdef TREE_INTEGRITY_AUDITS
+/*! The drifted fields of node no as force_drift_node would leave them at time1, without changing the
+ *  node: lets an audit read lazily drifted nodes at a common time without perturbing the run. */
+void force_node_predict(int no, integertime time1, struct node_prediction *np)
+{
+    np->s = Nodes[no].u.d.s; np->vs = Extnodes[no].vs; np->len = Nodes[no].len; np->hmax = Extnodes[no].hmax;
+    np->sink_pos = {}; np->sink_vel = {};
+#ifdef SINK_CALC_DISTANCES
+    np->sink_pos = Nodes[no].sink_pos;
+#ifdef SINK_NODE_MOTION_TRACKED
+    np->sink_vel = Nodes[no].sink_vel;
+#endif
+#endif
+    if(Nodes[no].u.d.bitflags & (1 << BITFLAG_NODEHASBEENKICKED)) /* a kick received at Ti_current is pending until the next drift, but it is already the velocity the node moves with */
+    {
+        double fac = Nodes[no].u.d.mass ? 1 / Nodes[no].u.d.mass : 0;
+        np->vs += fac * Extnodes[no].dp;
+#ifdef SINK_NODE_MOTION_TRACKED
+        double fac_sink = Nodes[no].sink_mass ? 1 / Nodes[no].sink_mass : 0;
+        np->sink_vel += fac_sink * Extnodes[no].sink_dp;
+#endif
+    }
+    if(time1 == Nodes[no].Ti_current) {return;}
+    double dt_drift = get_drift_factor(Nodes[no].Ti_current, time1, no, 1), dt_widen = get_drift_factor(Nodes[no].Ti_current, time1, -1, 0);
+    np->s += np->vs * dt_drift;
+    np->len += 2 * Extnodes[no].vmax * dt_widen;
+#ifdef SINK_NODE_MOTION_TRACKED
+    np->sink_pos += np->sink_vel * dt_drift;
+#endif
+    np->hmax = force_node_hmax_drift(no, dt_widen);
+}
+#endif
+
+
 
 
 
