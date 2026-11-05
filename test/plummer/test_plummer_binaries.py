@@ -420,8 +420,9 @@ def _plot_variant_density_evolution(variant_id, snaps):
 
 
 # The trunk's plummer_binaries.params lacks CritPhysDensity (required since dc7d286b), so GIZMO stops at
-# startup. pr/dry-nbody restores it and removes this marker.
-_UNTIL_DRY_NBODY = pytest.mark.xfail(strict=True, reason=(
+# startup. pr/dry-nbody restores it and removes this marker. run=False: a full run is ~2.5 h
+# at 2 ranks x 4 threads on Genoa.
+_UNTIL_DRY_NBODY = pytest.mark.xfail(strict=True, run=False, reason=(
     "fixed by pr/dry-nbody: params lack CritPhysDensity, GIZMO stops at startup"))
 
 
