@@ -12,6 +12,7 @@
 #include <limits.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../gravity/gpu_topology_build.h"   /* the optional device memory reported by the preflight */
 
 /* Size of the working memory pool when the run's particle count cannot be read up front, which
    normally means the input is missing or unreadable and the run is about to stop and say so. Large
@@ -805,6 +806,15 @@ int gizmo_memory_preflight(void)
                "  room for the memory a run needs while running. Consider fewer ranks/node or more nodes.\n",
                GizmoRanksThisNode, node_persistent / 1.0e9, node_phys / 1.0e9,
                100.0 * (double) node_persistent / (double) node_phys);
+        fflush(stdout);
+    }
+    /* Device memory taken only when there is room at the time, so it is reported, never required. */
+    const long long optional_device = gpu_topology_build_optional_device_bytes((long long) All.MaxPart);
+    if(optional_device > 0 && ThisTask == 0)
+    {
+        printf("MEMORY PREFLIGHT: optional device memory, outside the reserve above: up to %.1f MB per rank to sort a tree\n"
+               "  build's top-leaf ranges in one pass, taken only when the device has room (otherwise they are sorted one by one).\n",
+               optional_device / 1.0e6);
         fflush(stdout);
     }
     return 0;

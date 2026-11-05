@@ -5,8 +5,9 @@
  *
  *   1. Compute a 126-bit Morton key per local particle from its global
  *      domain-bbox-relative position (this header / TU).
- *   2. For each topleaf, sort the local particles assigned to it by their
- *      Morton key (this header / TU).
+ *   2. Within each topleaf, order the local particles assigned to it by their
+ *      Morton key: on a GPU all topleaf ranges in one sort (gpu_topology_build.cc),
+ *      otherwise one sort per range (gpu_morton_sort_indices, this header / TU).
  *   3. LCP-analyse the sorted keys to find octree split points
  *      (gpu_morton_functions.h).
  *   4. Emit tree topology into the SoA `Nodes_dev` mirror.
@@ -75,6 +76,9 @@ int gpu_morton_sort_indices(int count, int *indices_inout);
  * is sized to hold at least `npart` entries from the most recent compute
  * call; callers indexing past that are out of bounds. */
 const struct Morton128 *gpu_morton_keys(void);
+
+/* Entries the key buffer holds (0 before the first acquire). */
+int gpu_morton_keys_capacity(void);
 
 /* Free the internal SharedSpace key buffer.  Idempotent. */
 void gpu_morton_release(void);
