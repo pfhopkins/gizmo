@@ -2328,7 +2328,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     fac_pot *= shortrange_table_potential[tabindex];
 #endif
                     pot += (fac_pot);
-#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
+#if defined(GRAVITY_PERIODIC_XY)
+                    {double drc[3] = {dr[0], dr[1], dr[2]}, ac[3], pc; ewald_xy_corr(drc, ac, &pc); pot += mass * pc;}
+#elif defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
                     pot += (mass * ewald_pot_corr(dr[0], dr[1], dr[2]));
 #endif
 #endif
@@ -2981,7 +2983,16 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
                 if(openflag)
                 {
                     /* now we check if we can avoid opening the cell */
-
+#ifdef GRAVITY_PERIODIC_XY
+                    /* open nodes that straddle the x/y half-box shell (their members map to different images) or are too large for the
+                       tabulated correction to be linear across them; z is open. the shear y-shift is fixed by the x-image, so check x first */
+                    Vec3<double> dc = nop->center - pos; GRAVITY_NEAREST_XYZ(dc[0],dc[1],dc[2],-1);
+                    if(fabs(dc[0]) > 0.5 * (boxSize_X - nop->len) || fabs(dc[1]) > 0.5 * (boxSize_Y - nop->len) || nop->len > 0.20 * DMIN(boxSize_X, boxSize_Y))
+                    {
+                        no = nop->u.d.nextnode;
+                        continue;
+                    }
+#else
                     u = nop->center[0] - pos[0];
                     if(u > boxhalf) {u -= boxsize;}
                     if(u < -boxhalf) {u += boxsize;}
@@ -3016,13 +3027,17 @@ int force_treeevaluate_ewald_correction(int target, int mode, int *exportflag, i
                         no = nop->u.d.nextnode;
                         continue;
                     }
+#endif
                 }
                 
                 no = nop->u.d.sibling;    /* ok, node can be used */
             }
             
             /* compute the Ewald correction force */
-
+#ifdef GRAVITY_PERIODIC_XY
+            {double drc[3] = {dr[0], dr[1], dr[2]}, ac[3]; ewald_xy_corr(drc, ac, NULL); for(int d=0; d<3; d++) {acc[d] += mass * ac[d];}}
+            cost++; continue;
+#endif
             if(dr[0] < 0)
             {
                 dr[0] = -dr[0];
@@ -3381,7 +3396,9 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                     pot += ( fac_pot * mass * kernel_gravity(u, h_inv, 1, -1) );
                 }
             }
-#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
+#if defined(GRAVITY_PERIODIC_XY)
+            {double drc[3] = {dx, dy, dz}, ac[3], pc; ewald_xy_corr(drc, ac, &pc); pot += mass * pc;}
+#elif defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
             pot += (mass * ewald_pot_corr(dx, dy, dz));
 #endif
         }
@@ -3707,7 +3724,7 @@ void dump_particles(void)
  */
 void ewald_init(void)
 {
-#ifndef SELFGRAVITY_OFF
+#if !defined(SELFGRAVITY_OFF) && !defined(GRAVITY_PERIODIC_XY) /* GRAVITY_PERIODIC_XY fills its own tables (ewald_xy_update) */
     int i, j, k, beg, len, size, n, task, count;
     double x[3], force[3];
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];

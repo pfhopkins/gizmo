@@ -116,6 +116,9 @@ void gravity_tree(void)
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
     ewald_max = 1; /* the tree-code will need to iterate to perform the periodic boundary condition corrections */
 #endif
+#ifdef GRAVITY_PERIODIC_XY
+    ewald_xy_update(); /* collective: refresh the x/y Ewald tables for the current shear offset */
+#endif
 
 #ifdef HERMITE_INTEGRATION
     /* The predictor (HermiteOnlyFlag=1) and corrector (=2) passes walk only the Hermite-eligible
@@ -574,6 +577,9 @@ void gravity_tree(void)
 #endif
 
 #ifdef EVALPOTENTIAL
+#ifdef GRAVITY_PERIODIC_XY
+        {double dr0[3] = {0, 0, 0}, ac[3], pc; ewald_xy_corr(dr0, ac, &pc); P[i].Potential += P[i].Mass * pc;} /* the particle's own x/y images */
+#endif
         P[i].Potential *= All.G;
 #ifdef BOX_PERIODIC
         if(All.ComovingIntegrationOn) {P[i].Potential -= All.G * 2.8372975 * pow(P[i].Mass, 2.0 / 3) * pow(All.OmegaMatter * 3 * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits / (8 * M_PI * All.G), 1.0 / 3);} else {if(All.OmegaLambda>0) {P[i].Potential -= 0.5*All.OmegaLambda*All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits * (P[i].Pos.norm_sq());}}

@@ -753,6 +753,7 @@ SYSTEM_OBJS =   system/system.o \
                 system/pinning.o
 
 GRAVITY_OBJS  = gravity/forcetree.o \
+                gravity/ewald_xy.o \
                 gravity/forcetree_update.o \
                 gravity/gravtree.o \
 				gravity/cosmology.o \

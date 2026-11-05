@@ -1176,10 +1176,26 @@
 /* if self-gravity is on, we need to make sure the gravitational forces are not periodic. this is going to cause some errors at the x/y 'edges',
  but for now at least, the periodic gravity routines (particularly the FFT's involved) require a regular periodic map, they cannot handle the
  non-standard map that the shearing box represents. */
-#ifndef GRAVITY_NOT_PERIODIC
+#if !defined(GRAVITY_NOT_PERIODIC) && !defined(GRAVITY_PERIODIC_XY) /* GRAVITY_PERIODIC_XY handles the shear-periodic map by Ewald summation */
 #define GRAVITY_NOT_PERIODIC
 #endif
 #endif // BOX_SHEARING
+
+#if defined(GRAVITY_ANALYTIC_STRATIFIED_DISK) && !defined(GRAVITY_ANALYTIC)
+#define GRAVITY_ANALYTIC
+#endif
+
+#ifdef GRAVITY_PERIODIC_XY /* self-gravity (shear-)periodic in x/y, open in z, by a 2D Ewald correction on the tree */
+#if !defined(BOX_PERIODIC) || defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_X) || defined(BOX_REFLECT_Y) || defined(BOX_OUTFLOW_Y)
+#error "GRAVITY_PERIODIC_XY requires BOX_PERIODIC with periodic x and y boundaries"
+#endif
+#if !(defined(BOX_OUTFLOW_Z) || defined(BOX_REFLECT_Z))
+#error "GRAVITY_PERIODIC_XY requires a non-periodic z boundary (BOX_OUTFLOW_Z or BOX_REFLECT_Z)"
+#endif
+#if defined(PMGRID) || defined(GRAVITY_NOT_PERIODIC) || defined(GRAVITY_SPHERICAL_SYMMETRY) || (defined(BOX_SHEARING) && (BOX_SHEARING < 3))
+#error "GRAVITY_PERIODIC_XY is incompatible with PMGRID, GRAVITY_NOT_PERIODIC, GRAVITY_SPHERICAL_SYMMETRY and 2D shearing sheets"
+#endif
+#endif
 
 
 

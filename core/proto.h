@@ -862,6 +862,11 @@ void ewald_corr(double dx, double dy, double dz, double *fper);
 void ewald_force(int ii, int jj, int kk, double x[3], double force[3]);
 void ewald_force_ni(int iii, int jjj, int kkk, double x[3], double force[3]);
 void ewald_init(void);
+#ifdef GRAVITY_PERIODIC_XY
+void ewald_xy_update(void);
+void ewald_xy_corr(const double dr[3], double acc[3], double *pot);
+void ewald_xy_exact(double dx, double dy, double dz, double s, double Lx, double Ly, double out[4]);
+#endif
 double ewald_psi(double x[3]);
 double ewald_pot_corr(double dx, double dy, double dz);
 int find_ancestor(int i);

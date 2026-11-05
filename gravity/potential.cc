@@ -31,6 +31,9 @@ void compute_potential(void)
     if(All.ComovingIntegrationOn) {set_softenings();}
     
     PRINT_STATUS("Start computation of potential for all particles...");
+#ifdef GRAVITY_PERIODIC_XY
+    ewald_xy_update();
+#endif
     CPU_Step[CPU_MISC] += measure_time();
     
     int TreeReconstructFlag_global; /* reduced read: rank-uniform by convention today, but the build
@@ -168,6 +171,9 @@ void compute_potential(void)
     }
 #endif
     
+#ifdef GRAVITY_PERIODIC_XY
+    {double dr0[3] = {0, 0, 0}, ac[3], pc; ewald_xy_corr(dr0, ac, &pc); for(i = 0; i < NumPart; i++) {P[i].Potential += P[i].Mass * pc;}} /* own x/y images */
+#endif
     for(i = 0; i < NumPart; i++) {P[i].Potential *= All.G;} /* multiply with the gravitational constant for units */
     
 #ifdef PMGRID

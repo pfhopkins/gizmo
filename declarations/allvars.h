@@ -712,6 +712,12 @@ extern struct global_data_all_processes
     double Sink_Rad_MomentumFactor;
 #endif
 
+#ifdef GRAVITY_ANALYTIC_STRATIFIED_DISK
+    double StratDisk_SigmaStar; /*!< stellar-disk surface density (code units) */
+    double StratDisk_ZStar;     /*!< stellar-disk scale height */
+    double StratDisk_RhoDM;     /*!< midplane dark-matter density */
+    double StratDisk_R0;        /*!< galactocentric radius (sets the vertical scale of the halo term) */
+#endif
 #ifdef GRAIN_FLUID
 #define GRAIN_PTYPES 8 /* default to allowed particle type for grains == 3, only, but can make this a more extended list as desired */
 #ifdef GRAIN_RDI_TESTPROBLEM

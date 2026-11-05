@@ -144,6 +144,8 @@
 ## -----------------------------------------------------------------------------------------------------
 #SELFGRAVITY_OFF                # turn off self-gravity (compatible with GRAVITY_ANALYTIC)
 #GRAVITY_NOT_PERIODIC           # self-gravity is not periodic, even though the rest of the box is periodic
+#GRAVITY_ANALYTIC_STRATIFIED_DISK # vertical stellar-disk + dark-matter gravity for a stratified local galactic patch (Kim & Ostriker 2017 form); params StratDisk_SigmaStar/ZStar/RhoDM/R0; mid-plane at the box center in z
+#GRAVITY_PERIODIC_XY            # self-gravity periodic in x/y (shear-periodic with BOX_SHEARING), open in z, via a 2D Ewald correction: for stratified boxes. needs BOX_PERIODIC + BOX_OUTFLOW_Z or BOX_REFLECT_Z; BOX_LONG_X/Y/Z allowed
 ## -----------------------------------------------------------------------------------------------------
 #GRAVITY_ANALYTIC               # specific analytic gravitational force to use instead of or with self-gravity. If set to a numerical value
                                 #  > 0 (e.g. =1), then SINK_CALC_DISTANCES will be enabled, and it will use the nearest BH particle as the center for analytic gravity computations
