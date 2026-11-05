@@ -1052,8 +1052,9 @@ void write_cpu_log(void)
 #ifdef TREE_INTEGRITY_AUDITS
   /* the geometry audit's box-containment check only reports (see force_tree_geometry_audit), so its
      running totals are the only place a growing containment problem would show */
-  double geo_loc[4] = {(double) TreeGeoAuditCount, (double) TreeGeoAuditBoxCount, TreeGeoAuditWorstLen, TreeGeoAuditWorstH}, geo_max[4];
-  MPI_Reduce(geo_loc, geo_max, 4, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+  double geo_loc[9] = {(double) TreeGeoAuditCount, (double) TreeGeoAuditBoxCount, TreeGeoAuditWorstLen, TreeGeoAuditWorstH,
+                       (double) TreeMomAuditCount, (double) TreeMomAuditVmaxShort, (double) TreeMomAuditSoftShort, TreeMomAuditWorstVmaxShort, TreeMomAuditWorstSoftShort}, geo_max[9];
+  MPI_Reduce(geo_loc, geo_max, 9, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 #endif
 
   if(ThisTask == 0)
@@ -1147,6 +1148,8 @@ void write_cpu_log(void)
       fprintf(FdCPU, "TreeOps: build=%lld refresh=%lld decomp=%lld light=%lld defer=%lld escalate=%lld rearrange=%lld condemned_walk=%lld swap_s=%.2f rearr_s=%.2f swaps=%lld\n", TreeOpsCount[TREEOPS_BUILD], TreeOpsCount[TREEOPS_REFRESH], TreeOpsCount[TREEOPS_DECOMP], TreeOpsCount[TREEOPS_DECOMP_LIGHT], TreeOpsCount[TREEOPS_DEFER], TreeOpsCount[TREEOPS_ESCALATE], TreeOpsCount[TREEOPS_REARRANGE], TreeOpsCount[TREEOPS_CONDEMNED_WALK], maint_max[0], maint_max[1], (long long) maint_max[2]);
 #ifdef TREE_INTEGRITY_AUDITS
       fprintf(FdCPU, "TreeGeoAudit: audits=%lld box_excess_audits=%lld worst_excess=%.3g len %.3g h\n", (long long) geo_max[0], (long long) geo_max[1], geo_max[2], geo_max[3]);
+      fprintf(FdCPU, "TreeMomAudit: audits=%lld vmax_short=%lld (worst x%.3g) maxsoft_short=%lld (worst x%.3g)\n",
+              (long long) geo_max[4], (long long) geo_max[5], geo_max[7], (long long) geo_max[6], geo_max[8]);
 #endif
       fprintf(FdCPU,
 	      "total         %10.2f  %5.1f%%\n"

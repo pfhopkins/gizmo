@@ -43,6 +43,20 @@ void force_update_tree(void)
     int i, j; GlobFlag++; DomainNumChanged = 0; DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
     /* note: the current list of active particles still refers to that synchronized at the previous time. */
 
+    /* Raise every kicked member's motion bound before any node below is drifted: the drift widens len by
+       2*vmax over the interval the members have just crossed at their post-kick speeds, and the kick loop
+       drifts each ancestor when it first reaches it -- a node holding several kicked members would be
+       widened at the speed of whichever came first, and len never shrinks to recover. */
+    for(int i : ActiveParticleList)
+    {
+        MyFloat vmax_i = particle_motion_speed_bound(i);
+        for(int no = Father[i]; no >= 0; no = Nodes[no].u.d.father)
+        {
+            if(Extnodes[no].vmax < vmax_i) {Extnodes[no].vmax = vmax_i;}
+            if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) {break;}
+        }
+    }
+
 #ifdef OPENMP_TREE_UPDATE
     /* Phase 1: drift all ancestor nodes to Ti_Current (serial — force_drift_node has complex read-modify-write) */
     for (int i : ActiveParticleList)
@@ -293,6 +307,14 @@ void force_finish_kick_nodes(void)
   MPI_Allgatherv(domainVmax_loc, DomainNumChanged * sizeof(MyFloat), MPI_BYTE,
 		 domainVmax_all, counts, offset_vmax, MPI_BYTE, MPI_COMM_WORLD);
 
+
+  /* raise the bounds of every changed chain before any of its nodes is drifted, as force_update_tree does locally */
+  for(i = 0; i < totDomainNumChanged; i++)
+    {
+      no = domainList_all[i];
+      if(Nodes[no].u.d.bitflags & (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT)) {no = Nodes[no].u.d.father;}
+      for(; no >= 0; no = Nodes[no].u.d.father) {if(Extnodes[no].vmax < domainVmax_all[i]) {Extnodes[no].vmax = domainVmax_all[i];}}
+    }
 
   /* construct momentum kicks in top-level tree */
   for(i = 0; i < totDomainNumChanged; i++)

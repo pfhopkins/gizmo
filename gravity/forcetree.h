@@ -35,6 +35,9 @@ void force_validate_tree_links(const char *tag);
 void force_tree_full_audit(int audit_moments, const char *tag);
 void force_tree_geometry_audit(const char *tag);
 void force_tree_walk_audit(const char *tag);
+extern long long TreeMomAuditCount; /*!< moments audits run (rank-local) */
+extern long long TreeMomAuditVmaxShort, TreeMomAuditSoftShort; /*!< node checks where vmax / maxsoft fell below a member's current value (reported, not fatal) */
+extern double TreeMomAuditWorstVmaxShort, TreeMomAuditWorstSoftShort; /*!< ... and the worst member value over the node's */
 extern long long TreeGeoAuditCount, TreeGeoAuditBoxCount; /*!< geometry audits run, and those with a box-containment excess (rank-local) */
 extern double TreeGeoAuditWorstLen, TreeGeoAuditWorstH;   /*!< worst box excess over the run, in node lengths and in kernel radii */
 #endif
