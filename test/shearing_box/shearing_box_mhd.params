@@ -1,0 +1,39 @@
+% 3D MHD shearing box (BOX_SHEARING=3), coordinates (0,1,2) = (r,phi,z), Omega = 1, L = 1, c_s = 1, q = 3/2.
+% The test overrides InitCondFile, OutputDir, TimeMax and TimeBetSnapshot for each case.
+InitCondFile                       shearing_box_ics
+OutputDir                          output
+TimeMax                            18.85
+BoxSize                            1
+TimeBetSnapshot                    0.5
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+MaxMemSize                         1000
+GravityConstantInternal            1
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxSizeTimestep                    0.05
+ErrTolTheta                        0.7
+ResubmitOn                         0
+ResubmitCommand                    none
+SofteningGas                       0.01
+SofteningGasMaxPhys                0.01
+Softening_Type1                    0.01
+Softening_Type1_MaxPhysLimit       0.01
+Softening_Type2                    0.01
+Softening_Type2_MaxPhysLimit       0.01
+Softening_Type3                    0.01
+Softening_Type3_MaxPhysLimit       0.01
+Softening_Type4                    0.01
+Softening_Type4_MaxPhysLimit       0.01
+Softening_Type5                    0.01
+Softening_Type5_MaxPhysLimit       0.01
+% cgs code units and B in units of sqrt(4 pi) Gauss: IC and snapshot fields are code fields, v_A = B / sqrt(rho)
+UnitLength_in_cm                   1
+UnitMass_in_g                      1
+UnitVelocity_in_cm_per_s           1
+UnitMagneticField_in_gauss         3.5449077018110318
+DivBcleaningParabolicSigma         1.0
+DivBcleaningHyperbolicSigma        1.0

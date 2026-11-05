@@ -74,7 +74,7 @@ void add_analytic_gravitational_forces()
     GravAccel_SpecialCustomNuclearZoomBoundaryConditions(); // special potential boundary conditions and clipping/excision application outside zone of re-zoom-in-simulation. must be set by-hand for problem.
 #endif
 #ifdef BOX_SHEARING
-    GravAccel_ShearingSheet();            // adds coriolis and centrifugal terms for shearing-sheet approximation
+    GravAccel_ShearingSheet();            // adds the tidal term for the shearing-sheet approximation (the Coriolis force is added after all other forces)
 #endif
 #ifdef GRAIN_RDI_TESTPROBLEM
     GravAccel_RDITestProblem();           // vertical gravity+external acceleration for grain-RDI-wind tests
@@ -171,7 +171,7 @@ void GravAccel_RDITestProblem()
 
 
 
-/* adds coriolis and centrifugal terms for shearing-sheet approximation */
+/* adds the tidal (centrifugal) term for the shearing-sheet approximation */
 void GravAccel_ShearingSheet()
 {
 #ifdef BOX_SHEARING
@@ -180,11 +180,7 @@ void GravAccel_ShearingSheet()
         int i = ActiveParticleList[ii]; if(!analytic_gravity_adds_to(i, ii)) {continue;}
         /* centrifugal force term (depends on distance from box center) */
         P[i].GravAccel[0] += 2.*(P[i].Pos[0]-boxHalf_X) * BOX_SHEARING_Q*BOX_SHEARING_OMEGA_BOX_CENTER*BOX_SHEARING_OMEGA_BOX_CENTER;
-        /* coriolis force terms */
-        double vp=0; if(P[i].Type==0) {vp=CellP[i].VelPred[BOX_SHEARING_PHI_COORDINATE];} else {vp=P[i].Vel[BOX_SHEARING_PHI_COORDINATE];}
-        P[i].GravAccel[0] += 2.*vp * BOX_SHEARING_OMEGA_BOX_CENTER;
-        if(P[i].Type==0) {vp=CellP[i].VelPred[0];} else {vp=P[i].Vel[0];}
-        P[i].GravAccel[BOX_SHEARING_PHI_COORDINATE] -= 2.*vp * BOX_SHEARING_OMEGA_BOX_CENTER;
+        /* the Coriolis force is velocity-dependent: it is added after all other forces (shearing_sheet_coriolis_boris, core/accel.cc) */
 #if (BOX_SHEARING==4) /* add vertical gravity to the force law */
         P[i].GravAccel[2] -= BOX_SHEARING_OMEGA_BOX_CENTER * BOX_SHEARING_OMEGA_BOX_CENTER * (P[i].Pos[2]-boxHalf_Z);
 #endif

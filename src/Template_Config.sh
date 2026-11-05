@@ -27,6 +27,7 @@
 #BOX_BND_PARTICLES          # particles with ID=0 are forced in place (their accelerations are set =0): use for special boundary conditions where these particles represent fixed "walls"
 #BOX_SHEARING=1             # shearing box boundaries: 1=r-z sheet (r,z,phi coordinates), 2=r-phi sheet (r,phi,z), 3=r-phi-z box, 4=as 3, with vertical gravity
 #BOX_SHEARING_Q=(3./2.)     # shearing box q=-dlnOmega/dlnr; will default to 3/2 (Keplerian) if not set
+#BOX_SHEARING_OMEGA_BOX_CENTER=1 # Omega at the box center in code units; defaults to 1 (time in units of 1/Omega)
 #BOX_LONG_X=140             # modify box dimensions (non-square finite box): multiply X (not compatible with periodic gravity: if BOX_PERIODIC or PMGRID is active, make sure SELFGRAVITY_OFF or GRAVITY_NOT_PERIODIC is on)
 #BOX_LONG_Y=1               # modify box dimensions (non-square finite box): multiply Y
 #BOX_LONG_Z=1               # modify box dimensions (non-square finite box): multiply Z

@@ -11,6 +11,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../core/timestep_functions.h"   /* the Hermite predicted state written by IO_HERMITE_SYNC */
+#include "../core/predict_functions.h"    /* box_wrap_position_to_primary_image: the shear-periodic image a snapshot writes */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 /* get_ISMDustChemEvo_bin_mass is KOKKOS_INLINE_FUNCTION (Chunk 1, 2026-05-26). */
 #include "../solids/ism_dust_chemistry_functions.h"
@@ -258,6 +259,26 @@ void savepositions(int num)
 
 /*! This function fills the write buffer with particle data. New output blocks can in principle be added here.
  */
+#ifdef BOX_SHEARING
+/* A snapshot can be written between domain decompositions, with particles still outside the box in x: it writes the image the box
+   wrapping would make (box_wrap_position_to_primary_image moves the shearing coordinate with each x fold), and the velocity offset
+   that wrapping applies across each fold. */
+static Vec3<double> snapshot_shear_image(const Vec3<double> &pos)
+{
+    Vec3<MyDouble> image = {(MyDouble) pos[0], (MyDouble) pos[1], (MyDouble) pos[2]};
+    box_wrap_position_to_primary_image(image);
+    return Vec3<double>{(double) image[0], (double) image[1], (double) image[2]};
+}
+/* the shearing-coordinate velocity offset that image carries (the folds down from above minus those up from below) */
+static double snapshot_shear_velocity_offset(const Vec3<MyDouble> &pos)
+{
+    const Vec3<double> reported = gizmo_reported_position(pos);
+    Vec3<MyDouble> image = {(MyDouble) reported[0], (MyDouble) reported[1], (MyDouble) reported[2]};
+    struct box_wrap_x_folds folds = box_wrap_position_to_primary_image(image);
+    return (folds.down_from_above - folds.up_from_below) * Shearing_Box_Vel_Offset;
+}
+#endif
+
 void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 {
     int n, k, pindex;
@@ -290,9 +311,15 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 if(P[pindex].Type == type)
                 {
                     Vec3<double> pos_reported = gizmo_reported_position(P[pindex].Pos);
+#ifdef BOX_SHEARING
+                    pos_reported = snapshot_shear_image(pos_reported);
+#endif
                     for(k = 0; k < 3; k++)
                     {
                         fp_pos[k] = (MyOutputPosFloat) pos_reported[k];
+#ifdef BOX_SHEARING
+                        if(k == 0) {continue;} /* x is already in the box (folded in double above); a float re-wrap here would move it without the shear offsets */
+#endif
 #ifdef BOX_PERIODIC
                         double box_length_xyz;
                         if(k==0) {box_length_xyz = boxSize_X;}
@@ -312,6 +339,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 if(P[pindex].Type == type)
                 {
                     for(k=0;k<3;k++) {fp[k] = (MyOutputFloat) (P[pindex].Vel[k] * sqrt(All.cf_a3inv));} // JUST write the conserved velocity here, not the drifted one in this manner //
+#ifdef BOX_SHEARING
+                    fp[BOX_SHEARING_PHI_COORDINATE] += (MyOutputFloat) snapshot_shear_velocity_offset(P[pindex].Pos); /* consistent with the written position */
+#endif
                     fp += 3;
                     n++;
                 }
@@ -1738,6 +1768,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 if(P[pindex].Type == type)
                 {
                     for(k = 0; k < 3; k++) {fp[k] = (MyOutputFloat) CellP[pindex].ParticleVel[k];}
+#ifdef BOX_SHEARING
+                    fp[BOX_SHEARING_PHI_COORDINATE] += (MyOutputFloat) snapshot_shear_velocity_offset(P[pindex].Pos);
+#endif
                     fp += 3;
                     n++;
                 }

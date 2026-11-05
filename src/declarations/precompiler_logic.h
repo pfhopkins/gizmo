@@ -1205,8 +1205,8 @@
 /* a particle whose tree walk is skipped keeps the acceleration the gravity call finalized (tree, analytic, direct terms) and
    advances it with the jerk. Forces added to GravAccel after the gravity call (drag and grain radiation under the drag flag, quantum pressure) must
    then not ride along on the kept value, so it is kept apart in GravAccel_Retained. Any new force added to GravAccel after
-   gravity must join this list. */
-#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF) && (defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION) || defined(DM_FUZZY))
+   gravity must join this list (the shearing-box Coriolis force is velocity-dependent, so it is one of them). */
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF) && (defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION) || defined(DM_FUZZY) || defined(BOX_SHEARING))
 #define GRAVACCEL_RETAINED_ON_SKIPPED_WALK
 #endif
 
@@ -1454,8 +1454,10 @@
 #ifndef BOX_SHEARING_Q
 #define BOX_SHEARING_Q (3.0/2.0)
 #endif
-/* set omega - usually we will default to always using time coordinates such that Omega = 1 at the box center */
+/* Omega at the box center, in code units: defaults to 1 (time in units of 1/Omega) */
+#ifndef BOX_SHEARING_OMEGA_BOX_CENTER
 #define BOX_SHEARING_OMEGA_BOX_CENTER 1.0
+#endif
 /* need analytic gravity on so we can add the appropriate source terms to the EOM */
 #ifndef GRAVITY_ANALYTIC
 #define GRAVITY_ANALYTIC
