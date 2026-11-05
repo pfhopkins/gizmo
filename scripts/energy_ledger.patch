@@ -1,0 +1,492 @@
+Gas energy ledger for GIZMO (diagnostic only; not meant for the main line).
+
+Books every change of gas kinetic energy (relative to the shear flow in shearing boxes) and
+thermal energy to a channel, and checks the books at each full synchronization:
+
+    git apply scripts/energy_ledger.patch          # or git apply -3
+    # Config: ENERGY_LEDGER                        (optional: LEDGER_TRACE_ID=<particle ID>)
+
+OUTPUT (OutputDir):
+  energy_ledger.txt     one line per full sync: time, E_kin, E_th, dE, residual (dE minus all
+                        channels; roundoff when the books close), then the channels in the order of
+                        the LG_* enum in core/proto.h -- hydro work W, hydro heat Q, hydro limiter,
+                        gravity (incl. Coriolis/tidal), shear drift, long-range RP, turbulence,
+                        feedback KE/TE applied, local RP, HII heating, HII recombination, radiative
+                        gain/loss, floors, SF removal, outflow, merge/split, then (not part of the
+                        closure) feedback energy intended and feedback energy deferred to the hydro du.
+  ledger_events_<task>.txt   single-cell hydro events with |dQ+dW| > 0.05e51 erg (pc/Msun/km/s
+                        units), with the cell's state, timestep and bin.
+  ledger_trace_<task>.txt    with LEDGER_TRACE_ID: every kick, wake check and wakeup of that cell.
+
+HOW TO READ IT: in an MFM run hydro W+Q over any window should be ~0 (hydro exchanges energy, it
+does not create it). Compare W+Q against the feedback energy applied in the same window. In the
+FIRE-3 tall box (scripts/tallbox) at 10-100 Msun, W+Q reaches 2-12x the SN energy input, from
+cells on long timesteps that receive no warning of a nearby SN: the closing half-kick applies
+the post-SN hydro force over the whole half-step.
+
+One MPI_Reduce per full sync. Tested with the tall-box config only; booking sites outside the
+physics it enables (other cooling paths, RT, CRs, sinks) are absent.
+diff --git a/Template_Config.sh b/Template_Config.sh
+index fc790662c..c6ad73151 100644
+--- a/Template_Config.sh
++++ b/Template_Config.sh
+@@ -581,6 +581,7 @@
+ #MERGESPLIT_HARDCODE_MIN_MASS=(1.0e-7)   # manually set minimum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
+ #PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP     # force merge/split operations to occur every timestep, instead of only on domain decomposition steps
+ #MHD_CONSERVE_B_ON_REFINEMENT      # redefine B after density step after a refinement/de-refinement operation so as to exactly conserve "B" between the steps, as compared to conserving the code "VB" between the steps [the default conserved integrated quantity]
++#ENERGY_LEDGER                     # gas energy ledger, no behaviour change: every operation that changes gas kinetic (relative to the shear flow in shearing boxes) or thermal energy books it to a channel -- hydro work and heat, gravity (incl. shearing-box Coriolis + tidal), shear drift, radiation pressure, mechanical feedback (applied and intended), HII heating, radiative gain/loss, floors and limiters, star formation, outflow, merge/split. At each full synchronization energy_ledger.txt gets E_kin, E_th, their change, every channel, and the residual (change minus the channels): any unbooked change, or hydro W+Q != 0, flags non-conservation. One MPI_Reduce per synchronization.
+ #ENERGY_BUDGET_DIAGNOSTIC           # energy diagnostics, no behaviour change. Reports (a) the total gas energy (thermal+kinetic) at every full synchronization, i.e. when All.HighestActiveTimeBin == All.HighestOccupiedTimeBin -- the only point at which Vel and InternalEnergy share a clock and the sum is a genuine conserved quantity, so the 'Energy (synced)' line is the real conservation test and in an adiabatic run should track the injected energy exactly; and (b) cumulative wakeup tallies from timestep.cc -- the residual left by the kick reversal, and processed wakeups split by trigger (hydro / merge / split / newly-spawned) and demotion depth. Do NOT substitute snapshots for the synced total: io.cc writes Velocities from P[].Vel (kick-time) but InternalEnergy from InternalEnergyPred (drift-time), so a snapshot sum is mixed-clock and not conserved. Costs one MPI_Allreduce per synchronization. The per-phase breakdown that once accompanied this (kick1/drift/grav/hydro/mergesplit/kick2/spawn/srcterms, one Allreduce per mark) was hoisted out to scripts/energy_budget_phases.patch -- apply that to localize an error to a specific stage of the step.
+ #  MERGE_SPLIT_ENERGY_DIAGNOSTIC was hoisted out to scripts/merge_energy_diagnostic.patch -- apply that to get it back; setting the flag alone does nothing. It reports the cumulative energy budget of merge operations: dE (change in the true InternalEnergy+KE), dE_pred (same for the predicted variables the hydro actually integrates), KE_com (what a momentum-conserving merge must dissipate), resid (the correction merge_particles_ij computes), how often the InternalEnergyPred floor fires, and the TimeBin/Ti_current relationship of merged pairs. The patch header records what it established, including the dead ends worth not repeating.
+ #WAKEUP_TRUNCATE_STEP_ON_DEMOTION   # AUTO-ENABLED whenever the spawn module (SINK_WIND_SPAWN, itself implied by SINGLE_STAR_FB_JETS/WINDS/SNE) is on; set it explicitly only to force it without spawning, and see WAKEUP_REVERSE_KICK_ON_DEMOTION to opt out. When the WAKEUP timestep limiter demotes a particle mid-step, truncate its current step to end at the system time instead of reversing the kick it already received. GIZMO's default calls do_the_kick with reversed time bounds to un-do part of the applied kick, but that re-derives the increment from state which has changed since, so it does not cancel and instead injects energy -- of order 20% of the injected energy in the adiabatic wind_singlestar test and a few percent of E_SN in SN_singlestar, in both cases from essentially all hydro-triggered wakeups. Saitoh & Makino (2009), whose limiter this is, explicitly avoid "the backward integration of the entire system" (their eq 3) and instead set the new time consistent with the system time with the step as the difference -- which is what this does. Eliminates the error (reversal dE -> 0 to roundoff) and is inert in sedov/noh/interactblast/evrard, where the reversal never fires. CAVEAT: dt_step is then not a power-of-two bin length, so it disagrees with TimeBin; code deriving a step from TimeBin rather than integertime_step() will over-report it.
+diff --git a/cooling/cooling.cc b/cooling/cooling.cc
+index 780ebb0db..6beb1efeb 100644
+--- a/cooling/cooling.cc
++++ b/cooling/cooling.cc
+@@ -251,6 +251,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
+ 
+     if((dtime>0)&&(cell[i].Mass>0)&&(pp[i].Type==0))  // upon start-up, need to protect against dt==0 //
+     {
++#ifdef ENERGY_LEDGER
++        double ledger_u_entry = cell[i].InternalEnergy;
++#endif
+         double uold = DMAX(All.MinEgySpec, cell[i].InternalEnergy); int k; k=0; ne_in=0; ne_out=0;
+ #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
+ #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
+@@ -272,8 +275,17 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
+ 
+ #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+         double rt_diag_dtie_code_dt = cell[i].DtInternalEnergy * dtime * cell[i].Mass; /* code units, before the cgs conversion */
++#endif
++#ifdef ENERGY_LEDGER
++        double ledger_du_raw = 0, ledger_du_eff = 0; /* hydro du handed to the cooling solve, before and after set_PdV_work_heatingrate's limiters */
++#ifndef COOLING_OPERATOR_SPLIT
++        if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {ledger_du_raw = cell[i].DtInternalEnergy * dtime;}
++#endif
+ #endif
+         set_PdV_work_heatingrate(i, dtime, pp, cell);
++#if defined(ENERGY_LEDGER) && !defined(COOLING_OPERATOR_SPLIT)
++        if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {ledger_du_eff = cell[i].DtInternalEnergy * dtime / ((UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC));}
++#endif
+ 
+ #if !defined(CHIMES)
+         ne_in = cell[i].Ne; ne_out = ne_in; /* this variable is not defined if chimes is on */
+@@ -401,6 +413,14 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
+         /* InternalEnergy, InternalEnergyPred, Pressure, ne are now immediately updated; however, if COOLING_OPERATOR_SPLIT
+          is set, then DtInternalEnergy carries information from the hydro loop which is only half-stepped here, so is -not- updated.
+          if the flag is not set (default), then the full hydro-heating is accounted for in the cooling loop, so it should be re-zeroed here */
++#ifdef ENERGY_LEDGER
++        {
++            double m = cell[i].Mass, de_rad = m*(unew - uold - ledger_du_eff);
++            LEDGER_ADD(LG_FLOORS, m*(uold - ledger_u_entry)); /* MinEgySpec raise of the starting energy */
++            LEDGER_ADD(LG_HYDRO_Q, m*ledger_du_raw); LEDGER_ADD(LG_HYDRO_LIMIT, m*(ledger_du_eff - ledger_du_raw));
++            if(de_rad > 0) {LEDGER_ADD(LG_RAD_GAIN, de_rad);} else {LEDGER_ADD(LG_RAD_LOSS, de_rad);}
++        }
++#endif
+         cell[i].InternalEnergy = unew;
+         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
+         set_eos_pressure(i, pp, cell);
+diff --git a/core/kicks.cc b/core/kicks.cc
+index 72f0a4dc2..1b4db6056 100644
+--- a/core/kicks.cc
++++ b/core/kicks.cc
+@@ -280,6 +280,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
+             if(CellP[i].CoolingIsOperatorSplitThisTimestep==0) {du_tot=0;} /* cooling in unsplit, so zero contribution here */
+ #endif
+             double dEnt = CellP[i].InternalEnergy + du_tot;
++#ifdef ENERGY_LEDGER
++            double ledger_u0 = CellP[i].InternalEnergy;
++#endif
+             
+ #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
+             /* if we're using a Riemann solver, we include an energy/entropy-type switch to ensure
+@@ -370,6 +373,11 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
+             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
+ #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+             rt_diag_sc(RT_DIAG_SC_KICK_DU, (CellP[i].InternalEnergy - rt_diag_u0) * P[i].Mass);
++#endif
++#ifdef ENERGY_LEDGER
++            LEDGER_ADD(LG_HYDRO_Q, P[i].Mass * (dEnt - ledger_u0)); /* hydro du applied in the kick (operator-split cells) */
++            ledger_log_hydro_event(i, P[i].Mass * (dEnt - ledger_u0), 0, dt_hydrokick, 0);
++            LEDGER_ADD(LG_FLOORS, P[i].Mass * (CellP[i].InternalEnergy - dEnt)); /* positivity catch and temperature floor */
+ #endif
+         }
+         
+@@ -406,6 +414,21 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
+ #endif
+             }
+         }
++#endif
++#ifdef ENERGY_LEDGER
++        if(P[i].Type == 0) /* kinetic work by each force over this kick, relative to the background flow: sums exactly to the kinetic energy change */
++        {
++            Vec3<double> vmid = ledger_vrel(i) + dp * (0.5 / (mass_new*All.cf_atime)); double fh = mass_new*All.cf_atime*dt_hydrokick, fg = mass_new*dt_gravkick;
++            LEDGER_ADD(LG_HYDRO_W, fh*dot(vmid, CellP[i].HydroAccel)/All.cf_atime);
++            ledger_log_hydro_event(i, 0, fh*dot(vmid, CellP[i].HydroAccel)/All.cf_atime, dt_hydrokick, 2);
++            LEDGER_ADD(LG_GRAV_W, fg*dot(vmid, P[i].GravAccel)/All.cf_atime); /* includes the shearing-box Coriolis + tidal terms */
++#ifdef TURB_DRIVING
++            LEDGER_ADD(LG_TURB_W, fg*dot(vmid, CellP[i].TurbAccel)/All.cf_atime);
++#endif
++#ifdef RT_RAD_PRESSURE_OUTPUT
++            LEDGER_ADD(LG_RADP_LONG_W, fh*dot(vmid, CellP[i].Rad_Accel)/All.cf_atime);
++#endif
++        }
+ #endif
+         P[i].Vel += dp * (1.0 / mass_new); /* correctly accounts for mass change if its allowed */
+ 
+@@ -671,6 +694,9 @@ void apply_special_boundary_conditions(int i, double mass_for_dp, int mode, inte
+         const int outflow_lower = (o == 0 || o == -1), outflow_upper = (o == 0 || o == 1);
+         if((lower_hit && outflow_lower) || (upper_hit && outflow_upper))
+         {
++#ifdef ENERGY_LEDGER
++            if(P[i].Type==0 && P[i].Mass>0) {LEDGER_ADD(LG_OUTFLOW, -P[i].Mass*ledger_specific_energy(i));}
++#endif
+             P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}
+ #pragma omp atomic write
+             TreeMomentsStaleFlag=1; /* reached from the OpenMP-parallel drift; every thread writes the same value, but keep it a defined write */
+diff --git a/core/predict.cc b/core/predict.cc
+index cfe69a8d5..ae1868642 100644
+--- a/core/predict.cc
++++ b/core/predict.cc
+@@ -176,7 +176,19 @@ void drift_particle(int i, integertime time1)
+     if(P[i].Type==0) {advect_mesh_point(i,dt_drift);}
+     else
+ #endif
+-    {P[i].Pos += P[i].Vel * dt_drift;}
++    {
++#if defined(ENERGY_LEDGER) && defined(BOX_SHEARING) /* moving across the shear changes the gas velocity relative to the local shear flow */
++        double ledger_x0 = P[i].Pos[0];
++#endif
++        P[i].Pos += P[i].Vel * dt_drift;
++#if defined(ENERGY_LEDGER) && defined(BOX_SHEARING)
++        if(P[i].Type==0 && P[i].Mass>0)
++        {
++            double qO = BOX_SHEARING_Q*BOX_SHEARING_OMEGA_BOX_CENTER, w0 = P[i].Vel[BOX_SHEARING_PHI_COORDINATE]/All.cf_atime + qO*(ledger_x0-boxHalf_X), w1 = w0 + qO*(P[i].Pos[0]-ledger_x0);
++            LEDGER_ADD(LG_SHEAR_DRIFT, 0.5*P[i].Mass*(w1*w1 - w0*w0));
++        }
++#endif
++    }
+ #endif // FREEZE_HYDRO clause
+ #if (NUMDIMS==1)
+     P[i].Pos[1]=P[i].Pos[2]=0; // force zero-ing
+diff --git a/core/proto.h b/core/proto.h
+index 4e097f087..58f23e6a6 100644
+--- a/core/proto.h
++++ b/core/proto.h
+@@ -124,6 +124,32 @@ void powerspec_turb_save(char *fname, double *disp);
+ void powerspec_turb_collect(void);
+ void powerspec_turb(int filenr);
+ void compute_additional_forces_for_all_particles(void);
++#if defined(ENERGY_LEDGER) && defined(LEDGER_TRACE_ID) /* trace one gas cell's wakeup checks and wakeup handling (ledger_trace_<task>.txt) */
++void ledger_trace(int i, const char *what, double a, double b, double c, double d);
++#define LEDGER_TRACE_(i, what, a, b, c, d) {if(P[(i)].ID == (MyIDType)(LEDGER_TRACE_ID)) {ledger_trace((i), (what), (a), (b), (c), (d));}}
++#else
++#define LEDGER_TRACE_(i, what, a, b, c, d)
++#endif
++#ifdef ENERGY_LEDGER
++/* Gas energy ledger (Template_Config.sh): every operation that changes gas kinetic (relative to the background shear
++   flow, in a shearing box) or thermal energy books its change to one channel; energy_ledger_report() compares the sum
++   with the measured change at full synchronizations, so any unbooked change shows up as the residual. */
++enum {LG_HYDRO_W, LG_HYDRO_Q, LG_HYDRO_LIMIT, LG_GRAV_W, LG_SHEAR_DRIFT, LG_RADP_LONG_W, LG_TURB_W,
++      LG_FB_KE, LG_FB_TE, LG_RADP_LOCAL, LG_HII_HEAT, LG_HII_RECOMB, LG_RAD_GAIN, LG_RAD_LOSS, LG_FLOORS, LG_SF_REMOVED,
++      LG_OUTFLOW, LG_MERGE_SPLIT, LG_N_CLOSURE, /* channels above enter the closure; below are diagnostics only */
++      LG_FB_INTENDED = LG_N_CLOSURE, LG_FB_DEFERRED, LG_N};
++extern double EnergyLedger[LG_N];
++#ifdef _OPENMP
++#define LEDGER_ADD(c, dE) do {double ledger_tmp_ = (dE); _Pragma("omp atomic") EnergyLedger[(c)] += ledger_tmp_;} while(0)
++#else
++#define LEDGER_ADD(c, dE) (EnergyLedger[(c)] += (dE))
++#endif
++Vec3<double> ledger_vrel(int i); /* physical velocity relative to the background flow */
++double ledger_specific_energy(int i); /* 0.5 v_rel^2 + u */
++double ledger_local_gas_energy(void);
++void energy_ledger_report(void);
++void ledger_log_hydro_event(int i, double dQ, double dW, double dt, int where); /* cells with a large single-step hydro energy change */
++#endif
+ 
+ 
+ void set_cosmo_factors_for_current_time(void);
+diff --git a/core/run.cc b/core/run.cc
+index e65b32cce..4e1c8ba58 100644
+--- a/core/run.cc
++++ b/core/run.cc
+@@ -9,11 +9,86 @@
+ #include "../declarations/allvars.h"
+ #include "../core/proto.h"
+ 
++#ifdef ENERGY_LEDGER
++double EnergyLedger[LG_N];
++static const char *LedgerNames[LG_N] = {"hydro_W","hydro_Q","hydro_limit","grav_W","shear_drift","radP_long_W","turb_W",
++    "fb_KE","fb_TE","radP_local","HII_heat","HII_recomb","rad_gain","rad_loss","floors","SF_removed","outflow","merge_split","fb_intended","fb_deferred"};
++Vec3<double> ledger_vrel(int i)
++{
++    Vec3<double> v = P[i].Vel / All.cf_atime;
++#ifdef BOX_SHEARING
++    v[BOX_SHEARING_PHI_COORDINATE] += BOX_SHEARING_Q*BOX_SHEARING_OMEGA_BOX_CENTER*(P[i].Pos[0]-boxHalf_X);
++#endif
++    return v;
++}
++double ledger_specific_energy(int i) {return 0.5*ledger_vrel(i).norm_sq() + CellP[i].InternalEnergy;}
++double ledger_local_gas_energy(void) {double e=0; for(int i=0;i<NumPart;i++) {if(P[i].Type==0 && P[i].Mass>0) {e += P[i].Mass*ledger_specific_energy(i);}} return e;}
++#ifndef LEDGER_EVENT_THRESHOLD_1E51
++#define LEDGER_EVENT_THRESHOLD_1E51 (0.05)
++#endif
++/*! Log a gas cell whose single-step hydro energy change |dQ + dW| exceeds LEDGER_EVENT_THRESHOLD_1E51 (1e51 erg), to
++    ledger_events_<task>.txt: where = 0 kick thermal, 1 cooling-step thermal, 2 kick kinetic. */
++void ledger_log_hydro_event(int i, double dQ, double dW, double dt, int where)
++{
++    double u51 = 1.0e51/UNIT_ENERGY_IN_CGS;
++    if(fabs(dQ + dW) < LEDGER_EVENT_THRESHOLD_1E51*u51) {return;}
++    static FILE *fd = NULL;
++    if(!fd) {char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(fn, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sledger_events_%d.txt", All.OutputDir, ThisTask); fd = fopen(fn, "a");}
++    if(!fd) {return;}
++    Vec3<double> vr = ledger_vrel(i);
++    fprintf(fd, "%.10g %d %llu %.6g %.6g %.6g %.4g %.4g %.4g %.4g %.4g %.4g %d %.4g %.4g %.4g %.4g %.4g %.4g %.4g %.4g %.4g\n", All.Time, where, (unsigned long long) P[i].ID,
++        P[i].Pos[0], P[i].Pos[1], P[i].Pos[2], P[i].Mass, CellP[i].Density, CellP[i].InternalEnergy, dQ/u51, dW/u51, dt, P[i].TimeBin,
++        P[i].KernelRadius, P[i].NumNgb, CellP[i].MaxSignalVel, P[i].Particle_DivVel, CellP[i].HydroAccel.norm(), vr.norm(), CellP[i].ConditionNumber, CellP[i].temperature(), CellP[i].effective_soundspeed());
++    fflush(fd);
++}
++
++#if defined(ENERGY_LEDGER) && defined(LEDGER_TRACE_ID)
++void ledger_trace(int i, const char *what, double a, double b, double c, double d)
++{
++    static FILE *fd = NULL;
++    if(!fd) {char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(fn, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sledger_trace_%d.txt", All.OutputDir, ThisTask); fd = fopen(fn, "a");}
++    if(!fd) {return;}
++    fprintf(fd, "%.10g %s bin=%d active=%d dt=%.4g a=%.6g b=%.6g c=%.6g d=%.6g Ti_beg=%lld Ti_cur=%lld\n", All.Time, what, P[i].TimeBin, TimeBinActive[P[i].TimeBin],
++        get_particle_timestep_in_physical(i), a, b, c, d, (long long)P[i].Ti_begstep, (long long)P[i].Ti_current);
++    fflush(fd);
++}
++#endif
++
++/*! At full synchronizations (where Vel and InternalEnergy share a clock) write the gas kinetic+thermal energy, the
++    cumulative channels, and the residual = (E - E_0) - sum(closure channels) to energy_ledger.txt, in 1e51 erg. */
++void energy_ledger_report(void)
++{
++    if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;}
++    double loc[LG_N+2], glob[LG_N+2]; int i;
++    for(i=0;i<LG_N;i++) {loc[i] = EnergyLedger[i];}
++    loc[LG_N] = loc[LG_N+1] = 0;
++    for(i=0;i<NumPart;i++) {if(P[i].Type==0 && P[i].Mass>0) {loc[LG_N] += 0.5*P[i].Mass*ledger_vrel(i).norm_sq(); loc[LG_N+1] += P[i].Mass*CellP[i].InternalEnergy;}}
++    MPI_Reduce(loc, glob, LG_N+2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
++    if(ThisTask != 0) {return;}
++    static FILE *fd = NULL; static double E0 = -1, L0[LG_N];
++    double u51 = 1.0e51/UNIT_ENERGY_IN_CGS, E = glob[LG_N]+glob[LG_N+1];
++    if(E0 < 0) {E0 = E; for(i=0;i<LG_N;i++) {L0[i] = glob[i];}} /* channels count from the first report, so restarts start clean */
++    if(!fd)
++    {
++        char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(fn, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%senergy_ledger.txt", All.OutputDir);
++        fd = fopen(fn, "a");
++        if(fd) {fprintf(fd, "# gas energy ledger [1e51 erg], cumulative since the first report; residual = dE - sum(closure channels)\n# time E_kin E_th dE residual");
++                for(i=0;i<LG_N;i++) {fprintf(fd, " %s", LedgerNames[i]);} fprintf(fd, "\n");}
++    }
++    if(!fd) {return;}
++    double sum = 0; for(i=0;i<LG_N_CLOSURE;i++) {sum += glob[i]-L0[i];}
++    fprintf(fd, "%.10g %.6g %.6g %.6g %.6g", All.Time, glob[LG_N]/u51, glob[LG_N+1]/u51, (E-E0)/u51, ((E-E0)-sum)/u51);
++    for(i=0;i<LG_N;i++) {fprintf(fd, " %.6g", (glob[i]-L0[i])/u51);}
++    fprintf(fd, "\n"); fflush(fd);
++}
++#endif
++
+ #ifdef ENERGY_BUDGET_DIAGNOSTIC
+ /*! Total gas energy, reported ONLY at full synchronization (HighestActiveTimeBin ==
+     HighestOccupiedTimeBin) -- the only point where Vel and InternalEnergy share a clock and the sum is
+     conserved. Snapshots never satisfy this, since io.cc writes Velocities from Vel (kick-time) but
+     InternalEnergy from InternalEnergyPred (drift-time). Compare successive lines against energy injected. */
++
+ void energy_budget_sync_report(void)
+ {
+     if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;} /* not synchronized: sum is meaningless */
+@@ -279,8 +354,14 @@ void run(void)
+ #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
+         if(!reconstructed_tree)
+         {
++#ifdef ENERGY_LEDGER
++            double ledger_e_ms = ledger_local_gas_energy(); /* split cells only enter NumPart in the rearrange, so bracket both */
++#endif
+             merge_and_split_particles();
+             rearrange_particle_sequence();
++#ifdef ENERGY_LEDGER
++            LEDGER_ADD(LG_MERGE_SPLIT, ledger_local_gas_energy() - ledger_e_ms);
++#endif
+         }
+ #endif
+         
+@@ -288,6 +369,9 @@ void run(void)
+ 
+         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
+         EB_SYNC_REPORT();
++#ifdef ENERGY_LEDGER
++        energy_ledger_report();
++#endif
+ 
+ #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
+         do_hermite_prediction();
+diff --git a/core/timestep.cc b/core/timestep.cc
+index d32dea7d7..8e0988bfe 100644
+--- a/core/timestep.cc
++++ b/core/timestep.cc
+@@ -1492,6 +1492,7 @@ void process_wake_ups(void)
+ 	    }
+ 	    if(bin > max_time_bin_active) {bin = max_time_bin_active;} /* must be active at next kick */
+ 	    if(bin >= binold) {bin = binold;} /* don't increase timestep */
++	    LEDGER_TRACE_(i, "wake_process(wakeup,binold,bin_new,max_active)", P[i].wakeup, binold, bin, max_time_bin_active);
+ 
+ 	    if(bin != binold)
+ 	    {
+diff --git a/domain/domain.cc b/domain/domain.cc
+index 0ae37d6cf..b69a96a9d 100644
+--- a/domain/domain.cc
++++ b/domain/domain.cc
+@@ -360,6 +360,9 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
+     double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
+     TreeDiscardImminent = 1; /* the standing tree dies at the force_treefree below: the prelude's split daughters are deliberately not inserted */
+     wakeup_list_invalidate(); /* merge/split, rearrange, exchange and Peano order all move particles */
++#ifdef ENERGY_LEDGER
++    double ledger_e_ms = ledger_local_gas_energy();
++#endif
+     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
+     {
+         merge_and_split_particles(); /* do the particle split/merge operations: only do this on tree-building super-steps */
+@@ -367,6 +370,9 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
+     t_mergesplit = timediff(t_drift_start, my_second());
+     double t_tmp = my_second();
+     rearrange_particle_sequence(1); /* must be called after merge_and_split_particles, and should always be called before new domains are built; the tree is freed below */
++#ifdef ENERGY_LEDGER
++    LEDGER_ADD(LG_MERGE_SPLIT, ledger_local_gas_energy() - ledger_e_ms);
++#endif
+     t_rearrange = timediff(t_tmp, my_second());
+ 
+     UseAllParticles = UseAllTimeBins;
+diff --git a/galaxy_sf/mechanical_fb.cc b/galaxy_sf/mechanical_fb.cc
+index c0cd7b7e7..09302c454 100644
+--- a/galaxy_sf/mechanical_fb.cc
++++ b/galaxy_sf/mechanical_fb.cc
+@@ -545,6 +545,16 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount,
+         momentum_to_couple_term_units = p_coupled;
+         U_thermal_residual_tocouple = Energy_injected_codeunits - egy_RHS; /* required for energy conservation */
+     }
++#ifdef ENERGY_LEDGER /* what this source should deliver: its energy in its own frame plus the kinetic energy its ejecta carry */
++    if(mode == 0 && loop_iteration >= 0 && local.Msne > 0)
++    {
++        Vec3<double> v_src = local.Vel / All.cf_atime;
++#ifdef BOX_SHEARING
++        v_src[BOX_SHEARING_PHI_COORDINATE] += BOX_SHEARING_Q*BOX_SHEARING_OMEGA_BOX_CENTER*(local.Pos[0]-boxHalf_X);
++#endif
++        LEDGER_ADD(LG_FB_INTENDED, Energy_injected_codeunits + 0.5*local.Msne*v_src.norm_sq());
++    }
++#endif
+     
+ #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+     double CR_energy_to_inject = 0; // account for energy going into CRs, so we don't 'double count' //
+@@ -831,6 +841,9 @@ void verify_and_assign_local_mechfb_integrals(void)
+             m0=CellP[j].MassTrue; CellP[j].MassTrue += dm; /* update conserved mass */
+ #endif
+             double mf=m0+dm; /* save for below */
++#ifdef ENERGY_LEDGER
++            double ledger_ke0 = 0.5*m0*ledger_vrel(j).norm_sq(), ledger_te0 = m0*CellP[j].InternalEnergy, ledger_deferred = 0;
++#endif
+             for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = (m0/mf)*P[j].Metallicity[k] + (1./mf)*LocalGasMechFBInfoTemp[j].Z_injected[k];} /* update metallicity */
+ #if defined(GALSF_ISMDUSTCHEM_MODEL)
+             update_ISMDustChem_after_mechanical_injection(j, LocalGasMechFBInfoTemp[j].Mass_Where_Dust_Shocked, m0, mf, LocalGasMechFBInfoTemp[j].Z_injected); /* update dust chemistry quantities */
+@@ -842,7 +855,11 @@ void verify_and_assign_local_mechfb_integrals(void)
+                 double TE_0=m0*CellP[j].InternalEnergy; dTE=DMAX(-TE_0,dTE); /* ensure against non-negative values */
+                 double dU = (-dm/mf)*CellP[j].InternalEnergy + (1./mf)*dTE; /* using new mass get updated internal energy */
+                 double dt = get_particle_timestep_in_physical(j), implied_heating_cgs=(dU*UNIT_SPECEGY_IN_CGS*PROTONMASS_CGS)/(dt*UNIT_TIME_IN_CGS), typical_cooling_cgs=1.e-23*(CellP[j].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS);
+-                if((implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)))) {CellP[j].DtInternalEnergy += dU/dt;} else {CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;}
++                if((implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)))) {CellP[j].DtInternalEnergy += dU/dt;
++#ifdef ENERGY_LEDGER
++                    ledger_deferred = mf*dU; /* handed to the hydro du: lands in hydro_Q when (and if) a later kick or cooling step applies it */
++#endif
++                } else {CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;}
+                 //CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU; /* update internal energy; simpler (old) way to do it - less accurate phase diagrams at high density, however */
+             }
+             double dKE=LocalGasMechFBInfoTemp[j].KE_injected, dp[3];
+@@ -862,6 +879,9 @@ void verify_and_assign_local_mechfb_integrals(void)
+                 }
+                 force_raise_motion_bound(j);
+             }
++#ifdef ENERGY_LEDGER
++            LEDGER_ADD(LG_FB_KE, 0.5*mf*ledger_vrel(j).norm_sq() - ledger_ke0); LEDGER_ADD(LG_FB_TE, mf*CellP[j].InternalEnergy - ledger_te0); LEDGER_ADD(LG_FB_DEFERRED, ledger_deferred);
++#endif
+             ndone++; /* note another cell accounted for */
+             if(ndone >= N_Gas_Couplings_ThisTask) {break;} /* we have done all cells (note is possible if the same cell is hit many times, N_Gas_Couplings_ThisTask can be much larger than ndone after the full loop. but if its smaller, then we -must- be done with this loop */
+         }
+diff --git a/galaxy_sf/radfb_local.cc b/galaxy_sf/radfb_local.cc
+index 8642b2ba7..81bfef745 100644
+--- a/galaxy_sf/radfb_local.cc
++++ b/galaxy_sf/radfb_local.cc
+@@ -15,6 +15,11 @@
+ 
+ #if defined(GALSF_FB_FIRE_RT_LOCALRP) /* first the radiation pressure coupled in the immediate vicinity of the star */
+ /*!   -- this subroutine is not openmp parallelized at present, so there's not any issue about conflicts over shared memory. if you make it openmp, make sure you protect the writes to shared memory here! -- */
++#ifdef ENERGY_LEDGER /* kinetic energy a local radiation-pressure kick adds, relative to the background flow */
++#define LEDGER_RADP_LOCAL_(j, dv) {Vec3<double> dv_ = (dv)/All.cf_atime; LEDGER_ADD(LG_RADP_LOCAL, P[j].Mass*(dot(ledger_vrel(j), dv_) + 0.5*dv_.norm_sq()));}
++#else
++#define LEDGER_RADP_LOCAL_(j, dv)
++#endif
+ void radiation_pressure_winds_consolidated(void)
+ {
+     double age_threshold_in_gyr = 0.15; // don't bother for older populations, they contribute negligibly here //
+@@ -162,14 +167,14 @@ void radiation_pressure_winds_consolidated(void)
+                                         else {dir = -P[j].GradRho; norm = dir.norm_sq();} // otherwise, along opacity gradient //
+ #endif
+                                     if(norm>0) {norm=sqrt(norm); dir /= norm;} else {dir = {0,0,1}; norm=1;}
+-                                    {auto dv_kick = delta_v_imparted_rp * All.cf_atime * dir; P[j].Vel += dv_kick; CellP[j].VelPred += dv_kick; P[j].dp += dv_kick * P[j].Mass; force_raise_motion_bound(j);} /* apply the kick [put into comoving code units as oppropriate */
++                                    {auto dv_kick = delta_v_imparted_rp * All.cf_atime * dir; LEDGER_RADP_LOCAL_(j, dv_kick); P[j].Vel += dv_kick; CellP[j].VelPred += dv_kick; P[j].dp += dv_kick * P[j].Mass; force_raise_motion_bound(j);} /* apply the kick [put into comoving code units as oppropriate */
+ 
+ #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+                                     /* if we're not forcing the kick orientation, need to separately apply the UV kick */
+                                     delta_v_imparted_rp = dv_imparted_singlescattering; // uv kick: directed from star //
+                                     dir = dp; norm = dir.norm_sq();
+                                     if(norm>0) {norm=sqrt(norm); dir /= norm;} else {dir = {0,0,1}; norm=1;}
+-                                    {auto dv_kick = delta_v_imparted_rp * All.cf_atime * dir; P[j].Vel += dv_kick; CellP[j].VelPred += dv_kick; P[j].dp += dv_kick * P[j].Mass; force_raise_motion_bound(j);} /* apply the kick */
++                                    {auto dv_kick = delta_v_imparted_rp * All.cf_atime * dir; LEDGER_RADP_LOCAL_(j, dv_kick); P[j].Vel += dv_kick; CellP[j].VelPred += dv_kick; P[j].dp += dv_kick * P[j].Mass; force_raise_motion_bound(j);} /* apply the kick */
+ #endif
+                                 } /* closes the stochastic kick gate */
+                             } /* if( (P[j].Mass>0) && (CellP[j].Density>0) ) */
+@@ -429,6 +434,9 @@ int do_the_local_ionization(int target, double dt, int source)
+ #else
+ 
+ #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) 
++#ifdef ENERGY_LEDGER
++    LEDGER_ADD(LG_HII_HEAT, P[target].Mass*(DMAX(CellP[target].InternalEnergy , HIIRegion_Temp / (0.59 * (5./3.-1.) * U_TO_TEMP_UNITS)) - CellP[target].InternalEnergy));
++#endif
+     CellP[target].InternalEnergy = DMAX(CellP[target].InternalEnergy , HIIRegion_Temp / (0.59 * (5./3.-1.) * U_TO_TEMP_UNITS)); /* assume fully-ionized gas with gamma=5/3 */
+     CellP[target].InternalEnergyPred = CellP[target].InternalEnergy; /* full reset of the internal energy */
+ #else
+@@ -444,6 +452,9 @@ int do_the_local_ionization(int target, double dt, int source)
+     double u_eqm = (t4_eqm * HIIRegion_Temp) / (0.59 * (5./3.-1.) * U_TO_TEMP_UNITS); // converted to specific internal energy, assuming full ionization
+     double u_post_ion_no_cooling = CellP[target].InternalEnergy + delta_U_of_ionization; // energy after ionization, before any cooling
+     double u_final = DMIN( u_post_ion_no_cooling , u_eqm ); // don't heat to higher temperature than intial energy of ionization allows
++#ifdef ENERGY_LEDGER
++    LEDGER_ADD(LG_HII_HEAT, P[target].Mass*(u_final - CellP[target].InternalEnergy));
++#endif
+     CellP[target].InternalEnergy = u_final; CellP[target].InternalEnergyPred = u_final; /* add it */
+     /* assign typical strong HII region flux + enough flux to maintain cell fully-ionized, regardless (x'safety-factor'): note this is repeated in the 'self-shield' routine but has to be in both because otherwise this wont appear on the first timestep after which a gas cell is flagged as ionized by this subroutine */
+     double n1000 = CellP[target].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS / 1000.; // density in 1000 cm^-3
+diff --git a/galaxy_sf/sfr_eff.cc b/galaxy_sf/sfr_eff.cc
+index 5f25a03fd..7bb3109eb 100644
+--- a/galaxy_sf/sfr_eff.cc
++++ b/galaxy_sf/sfr_eff.cc
+@@ -523,6 +523,9 @@ void star_formation_parent_routine(void)
+ 
+                         
+                     int i_star = i;
++#ifdef ENERGY_LEDGER
++                    LEDGER_ADD(LG_SF_REMOVED, -((number_of_stars_generated == (GALSF_GENERATIONS - 1)) ? P[i].Mass : mass_of_star) * ledger_specific_energy(i)); /* gas energy carried into the star */
++#endif
+                     if(number_of_stars_generated == (GALSF_GENERATIONS - 1))
+                     {
+                         /* here we turn the gas particle itself into a star, so only change attributes, not the number of total particles */
+diff --git a/hydro/hydro_evaluate.h b/hydro/hydro_evaluate.h
+index abf2cf129..67a3e7519 100644
+--- a/hydro/hydro_evaluate.h
++++ b/hydro/hydro_evaluate.h
+@@ -469,6 +469,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
+ #ifdef WAKEUP
+                 if(!(TimeBinActive[P[j].TimeBin]))
+                 {
++                    LEDGER_TRACE_(j, "wake_check(vsig,4.1*MaxSigVel_j,waker_bin,r)", kernel.vsig, WAKEUP*CellP[j].MaxSignalVel, local.TimeBin, kernel.r);
+                     if(kernel.vsig > WAKEUP*CellP[j].MaxSignalVel) {
+                         #pragma omp atomic write
+                         P[j].wakeup = (short int)(local.TimeBin + 1);
