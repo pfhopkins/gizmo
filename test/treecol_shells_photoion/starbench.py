@@ -65,3 +65,35 @@ def photon_ledger(snap):
     """recombinations per ionising photon: sum alpha_B x^2 n_H^2 V / Q"""
     d = load(snap); n = d["rho"] * UM / UL ** 3 * XH / MP
     return d["t"], float(np.sum(2.6e-13 * d["x"] ** 2 * n ** 2 * d["V"] * UL ** 3) / Q)
+
+
+ABHE = 0.1
+ALPHA_HE = 2.7e-13
+
+
+def load_helium(snap):
+    """net 17: H+, He+, He++ per H nucleus and the cell's n_H, volume"""
+    d = load(snap)
+    with h5py.File(snap, "r") as f:
+        a = f["PartType0"]["SGChemTracAbund"][()]
+    d["xhe"], d["xhepp"] = a[:, 3], a[:, 4]
+    d["n"] = d["rho"] * UM / UL ** 3 * XH / MP
+    return d
+
+
+def band_ledger(snap, q1_over_q):
+    """recombinations per photon at Q = 1e49: all gas / Q, helium / Q1; alpha at 1e4 K, case B"""
+    d = load_helium(snap); ne = (d["x"] + d["xhe"] + 2 * d["xhepp"]) * d["n"]; V = d["V"] * UL ** 3
+    r_h, r_he = np.sum(2.6e-13 * d["x"] * d["n"] * ne * V), np.sum(ALPHA_HE * d["xhe"] * d["n"] * ne * V)
+    return dict(t_myr=d["t"] / MYR, total=float((r_h + r_he) / Q), helium=float(r_he / (q1_over_q * Q)))
+
+
+def helium_front(snap):
+    """R_He / R_IF by the volume integrals of x(He+) / ABHE and x(H+); mean x(He+) / ABHE where x(H+) > 0.9; mean x(He++) / ABHE"""
+    d = load_helium(snap); ion = d["x"] > 0.9; V = d["V"]
+    far = d["rn"] > 0.75 * 0.75 * d["rn"].max(); ins = d["rn"] < 0.75 * d["rn"].max()
+    he = np.clip(d["xhe"] / ABHE - np.median(d["xhe"][far]) / ABHE, 0, 1); h = np.clip(d["x"] - np.median(d["x"][far]), 0, 1)
+    r = (np.sum((he * V)[ins]) / np.sum((h * V)[ins])) ** (1 / 3) if np.sum((h * V)[ins]) > 0 else 0.0
+    return dict(R_he_over_R_if=float(r), x_he_in_hii=float(np.sum((d["xhe"] * V)[ion]) / max(np.sum(V[ion]), 1e-99) / ABHE) if ion.any() else 0.0,
+                x_hepp=float(np.sum((d["xhepp"] * V)[ion]) / max(np.sum(V[ion]), 1e-99) / ABHE) if ion.any() else 0.0)
+
