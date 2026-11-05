@@ -38,6 +38,7 @@
 #include "ketju_coupling.h"
 #include "../../galaxy_sf/single_star_record.h"
 #include "../../system/gpu_particles_arena.h"
+#include "ketju_mstar_kokkos.h"
 
 #ifdef KETJU_REGULARIZATION
 
@@ -68,6 +69,46 @@ void ketju_init_particle(int i)
 }
 
 
+
+/* MSTAR is integrated in natural N-body units (pc, Msun, km/s) whatever the host units: its GBS convergence degrades
+ * badly for e.g. kpc / 1e10 Msun states. Converted in place around ketju_run_integrator only; identity for pc/Msun/km/s hosts. */
+#define KJ_LEN_TO_NAT  (All.UnitLength_in_cm / 3.085678e18)      /* host length unit in pc */
+#define KJ_MASS_TO_NAT (All.UnitMass_in_g / 1.989e33)            /* host mass unit in Msun */
+#define KJ_VEL_TO_NAT  (All.UnitVelocity_in_cm_per_s / 1.0e5)    /* host velocity unit in km/s */
+#define KJ_TIME_TO_NAT (KJ_LEN_TO_NAT / KJ_VEL_TO_NAT)           /* host time unit in pc/(km/s) */
+static void kj_state_change_units(struct ketju_system_physical_state *ps, int n, int to_natural)
+{
+    double fL = KJ_LEN_TO_NAT, fM = KJ_MASS_TO_NAT, fV = KJ_VEL_TO_NAT;
+    if(!to_natural) {fL = 1./fL; fM = 1./fM; fV = 1./fV;}
+    for(int i = 0; i < n; i++) {
+        ps->mass[i] *= fM;
+        for(int j = 0; j < 3; j++) {ps->pos[i][j] *= fL; ps->vel[i][j] *= fV;}
+    }
+    ps->time *= fL / fV;
+}
+
+#ifdef TEST_KETJU_MSTAR_PAIR
+/* one orbit of an e = 0.9 pair through the wrapper and the unit conversion: it must come back to its start */
+void ketju_test_mstar_pair(void)
+{
+    struct ketju_system *S = (struct ketju_system *)calloc(1, sizeof(struct ketju_system));
+    kj_mstar_create_system(S, 0, 2, MPI_COMM_SELF);
+    S->constants->G = All.G * KJ_LEN_TO_NAT * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT / KJ_MASS_TO_NAT;
+    S->constants->c = 2.9979e10 / All.UnitVelocity_in_cm_per_s * KJ_VEL_TO_NAT;
+    S->options->gbs_relative_tolerance = 1e-12;
+    const double m = 1.989e33 / All.UnitMass_in_g, a = All.KetjuRegionRadius, e = 0.9, GM = All.G * 2 * m, ra = a * (1 + e), va = sqrt(GM * (1 - e) / (a * (1 + e))), T = 2 * M_PI * a * sqrt(a / GM);
+    struct ketju_system_physical_state *ps = S->physical_state;
+    ps->time = 0; ps->mass[0] = ps->mass[1] = m;
+    ps->pos[0][0] = 0.5 * ra; ps->pos[1][0] = -0.5 * ra; ps->vel[0][1] = 0.5 * va; ps->vel[1][1] = -0.5 * va;
+    kj_state_change_units(ps, 2, 1);
+    kj_mstar_run_integrator(S, T * KJ_TIME_TO_NAT);
+    kj_state_change_units(ps, 2, 0);
+    double dr[3], dv[3], r2 = 0, v2 = 0; for(int k = 0; k < 3; k++) {dr[k] = ps->pos[0][k] - ps->pos[1][k]; dv[k] = ps->vel[0][k] - ps->vel[1][k]; r2 += dr[k] * dr[k]; v2 += dv[k] * dv[k];}
+    double r = sqrt(r2), af = 1 / (2 / r - v2 / GM), rv = dr[0] * dv[0] + dr[1] * dv[1] + dr[2] * dv[2], l2 = r2 * v2 - rv * rv, ef = sqrt(fmax(0., 1 - l2 / (GM * af)));
+    if(ThisTask == 0) {printf("KETJU_MSTAR_PAIR da/a %.3e de %.3e\n", af / a - 1, ef - e);}
+    kj_mstar_free_system(S); free(S);
+}
+#endif
 
 
 /* ============================================================
@@ -390,6 +431,9 @@ struct KjArenaInvalidate {~KjArenaInvalidate() {gpu_particles_arena_invalidate()
 
 void ketju_find_regions(void)
 {
+#ifdef TEST_KETJU_MSTAR_PAIR
+    if(All.Ti_Current == 0) {ketju_test_mstar_pair();}
+#endif
     KjArenaInvalidate arena_guard;
     KjClock clk(CPU_KETJUFIND);
     /* Clear the chain flags of particles whose step has ended, and only theirs: a member of a region
