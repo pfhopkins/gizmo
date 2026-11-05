@@ -130,11 +130,89 @@ struct ketju_mpi_particle {
 };
 
 /* ============================================================
+ *  Per-particle extra data tracked alongside integrator arrays
+ * ============================================================ */
+struct ketju_extra_data {
+    MyIDType ID;
+    MyIDType Child;
+    int Task;
+    int Index;
+    int Type;
+};
 
 /* ============================================================
  *  MPI task group for parallel KETJU computation
  *  Based on public GADGET4-KETJU (Mannerkoski+ 2023)
  * ============================================================ */
+/* task-group communicators by (tag, task list): every rank asks for every region's groups, so the cache is rank-uniform */
+static std::map<std::pair<int, std::vector<int>>, std::pair<MPI_Group, MPI_Comm>> KetjuCommCache;
+static void ketju_comm_cache_flush(void)
+{
+    for(auto &e : KetjuCommCache) {if(e.second.second != MPI_COMM_NULL) {MPI_Comm_free(&e.second.second);} MPI_Group_free(&e.second.first);}
+    KetjuCommCache.clear();
+}
+
+struct KetjuTaskGroup {
+    MPI_Group group;
+    MPI_Comm comm;
+    int rank;      /* rank within this group, MPI_UNDEFINED if not a member */
+    int size;
+    int root;      /* rank of root within the group */
+    int root_sim;  /* rank of root in MPI_COMM_WORLD */
+
+    KetjuTaskGroup() : group(MPI_GROUP_NULL), comm(MPI_COMM_NULL), rank(MPI_UNDEFINED), size(0), root(MPI_UNDEFINED), root_sim(MPI_UNDEFINED) {}
+
+    void init(const std::vector<int> &task_sim_indices, int tag = 0) {
+        auto key = std::make_pair(tag, task_sim_indices);
+        auto it = KetjuCommCache.find(key);
+        if(it == KetjuCommCache.end()) {
+            MPI_Group world_group, g; MPI_Comm c = MPI_COMM_NULL; int me;
+            MPI_Comm_group(MPI_COMM_WORLD, &world_group);
+            MPI_Group_incl(world_group, task_sim_indices.size(), task_sim_indices.data(), &g);
+            MPI_Group_rank(g, &me);
+            if(me != MPI_UNDEFINED) {MPI_Comm_create_group(MPI_COMM_WORLD, g, tag, &c);}
+            MPI_Group_free(&world_group);
+            it = KetjuCommCache.emplace(key, std::make_pair(g, c)).first;
+        }
+        group = it->second.first; comm = it->second.second;
+        MPI_Group_size(group, &size);
+        MPI_Group_rank(group, &rank);
+        root = 0;
+        root_sim = task_sim_indices[0];
+    }
+
+    void free_comms() {
+        comm = MPI_COMM_NULL; group = MPI_GROUP_NULL; /* owned by KetjuCommCache */
+        rank = MPI_UNDEFINED; size = 0; root = MPI_UNDEFINED; root_sim = MPI_UNDEFINED;
+    }
+
+    /* Set both groups to have the same root task (from intersection) */
+    void set_common_root(KetjuTaskGroup &other) {
+        if(group == MPI_GROUP_NULL || other.group == MPI_GROUP_NULL) return;
+        MPI_Group world_group, intersection;
+        MPI_Comm_group(MPI_COMM_WORLD, &world_group);
+        MPI_Group_intersection(group, other.group, &intersection);
+        if(intersection != MPI_GROUP_EMPTY) {
+            int root_inter = 0;
+            MPI_Group_translate_ranks(intersection, 1, &root_inter, group, &root);
+            MPI_Group_translate_ranks(intersection, 1, &root_inter, other.group, &other.root);
+            MPI_Group_translate_ranks(group, 1, &root, world_group, &root_sim);
+            MPI_Group_translate_ranks(other.group, 1, &other.root, world_group, &other.root_sim);
+        }
+        MPI_Group_free(&intersection);
+        MPI_Group_free(&world_group);
+    }
+
+    int is_member() const { return rank != MPI_UNDEFINED; }
+    int is_root() const { return rank == root; }
+};
+
+/* Compute info for scheduling regions across tasks */
+struct region_compute_info {
+    int compute_sequence_position; /* which sequential run this region belongs to */
+    int first_task_index;          /* first MPI task in compute group */
+    int final_task_index;          /* last MPI task in compute group */
+};
 
 /* ============================================================
  *  A single KETJU region
@@ -144,9 +222,35 @@ struct KetjuRegion {
     std::vector<ketju_mpi_particle> all_particles; /* all chain members (gathered on root) */
     std::set<int> local_member_indices;            /* local P[] indices in this region */
     int total_particle_count;
+    int num_pn_particles;                          /* count of PN-enabled (SMBH) particles */
 
+    /* MPI task groups for parallel computation */
+    KetjuTaskGroup affected_tasks;  /* tasks that hold particles in this region */
+    KetjuTaskGroup compute_tasks;   /* tasks that run the integrator */
+    region_compute_info compute_info;
+    std::vector<int> affected_sim_indices;       /* world ranks of affected tasks */
+    std::vector<int> particle_counts_on_affected; /* particle count per affected task */
 
+    /* integrator state (only allocated on compute root) */
+    struct ketju_system *integrator;
+    std::vector<ketju_extra_data> extra_data;
 
+    /* CoM frame data (stored at setup, used in scatter) */
+    double com_pos[3];
+    double com_vel[3];
+    integertime ti_step;     /* integer timestep for this region */
+
+    KetjuRegion() : total_particle_count(0), num_pn_particles(0), integrator(NULL), ti_step(0) {
+        for(int j = 0; j < 3; j++) { com_pos[j] = 0; com_vel[j] = 0; }
+        compute_info.compute_sequence_position = 0;
+        compute_info.first_task_index = 0;
+        compute_info.final_task_index = 0;
+    }
+    ~KetjuRegion() {
+        if(integrator) { kj_mstar_free_system(integrator); free(integrator); }
+        affected_tasks.free_comms();
+        compute_tasks.free_comms();
+    }
 };
 
 
@@ -375,6 +479,127 @@ static std::set<int> local_members_from_group(const std::vector<ketju_mpi_partic
 
 
 
+/* counts[t] = members of this region on task t (gathered for all regions at once in ketju_find_regions) */
+static void setup_integrator(KetjuRegion &reg, const int *counts)
+{
+    int n_local = reg.local_member_indices.size();
+
+    reg.total_particle_count = 0;
+    for(int t = 0; t < NTask; t++) reg.total_particle_count += counts[t];
+    if(reg.total_particle_count < 2) return; /* need at least 2 particles */
+
+    /* create affected_tasks communicator: only tasks with particles */
+    {
+        std::vector<int> affected_indices;
+        for(int t = 0; t < NTask; t++) { if(counts[t] > 0) affected_indices.push_back(t); }
+        if(affected_indices.empty()) return;
+        reg.affected_tasks.init(affected_indices, 0);
+        reg.affected_sim_indices = affected_indices;
+        reg.particle_counts_on_affected.resize(affected_indices.size());
+        for(size_t i = 0; i < affected_indices.size(); i++)
+            reg.particle_counts_on_affected[i] = counts[affected_indices[i]];
+    }
+
+    /* create compute_tasks communicator: contiguous range from cost-based allocator.
+     * Scatter uses MPI_Scatterv on affected_tasks, so compute/affected groups can
+     * safely differ — data is forwarded via Send/Recv between roots if needed. */
+    {
+        std::vector<int> compute_indices;
+        for(int t = reg.compute_info.first_task_index; t <= reg.compute_info.final_task_index; t++)
+            compute_indices.push_back(t);
+        reg.compute_tasks.init(compute_indices, 1);
+        reg.compute_tasks.set_common_root(reg.affected_tasks);
+    }
+
+    /* fill local particle data */
+    std::vector<ketju_mpi_particle> local_parts(n_local);
+    int k = 0;
+    for(int idx : reg.local_member_indices) {
+        ketju_mpi_particle &mp = local_parts[k];
+        mp.ID = P[idx].ID; mp.Child = P[idx].ID_child_number;
+        mp.Type = P[idx].Type;
+        mp.Task = ThisTask;
+        mp.Index = idx;
+        mp.Mass = P[idx].Mass;
+        for(int j = 0; j < 3; j++) {
+            mp.Pos[j] = P[idx].Pos[j];
+            mp.Vel[j] = P[idx].Vel[j];
+        }
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+#endif
+        k++;
+    }
+
+    if(reg.total_particle_count != n_local) {endrun(667001);} /* region across ranks */
+    reg.all_particles = local_parts;
+    /* set up integrator on compute tasks */
+    if(reg.compute_tasks.is_member()) {
+        /* compute CoM position and velocity */
+        double total_mass = 0;
+        for(int j = 0; j < 3; j++) { reg.com_pos[j] = 0; reg.com_vel[j] = 0; }
+        for(int i = 0; i < reg.total_particle_count; i++) {
+            for(int j = 0; j < 3; j++) {
+                reg.com_pos[j] += reg.all_particles[i].Mass * reg.all_particles[i].Pos[j];
+                reg.com_vel[j] += reg.all_particles[i].Mass * reg.all_particles[i].Vel[j];
+            }
+            total_mass += reg.all_particles[i].Mass;
+        }
+        for(int j = 0; j < 3; j++) { reg.com_pos[j] /= total_mass; reg.com_vel[j] /= total_mass; }
+
+        /* allocate integrator — use compute_tasks.comm for parallel integration */
+        reg.integrator = (struct ketju_system *)calloc(1, sizeof(struct ketju_system));
+        int n_other = reg.total_particle_count - reg.num_pn_particles;
+        kj_mstar_create_system(reg.integrator, reg.num_pn_particles, n_other, reg.compute_tasks.comm);
+
+        /* set units */
+        reg.integrator->constants->G = All.G * KJ_LEN_TO_NAT * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT / KJ_MASS_TO_NAT;
+
+        /* set options */
+        reg.integrator->options->gbs_relative_tolerance = All.KetjuIntegrationTolerance;
+        if(All.KetjuMaxStepCount > 0) reg.integrator->options->max_step_count = All.KetjuMaxStepCount;
+        if(All.KetjuUseStarStarSoftening) {
+            double h = All.ForceSoftening[4] * All.cf_atime;
+            reg.integrator->options->star_star_softening = h * KJ_LEN_TO_NAT;
+        }
+
+        /* fill particle data (relative to CoM, converted to physical coordinates) */
+        reg.extra_data.resize(reg.total_particle_count);
+        struct ketju_system_physical_state *ps = reg.integrator->physical_state;
+        ps->time = 0;
+        double a = All.cf_atime; /* scale factor: 1 for non-cosmo */
+        for(int i = 0; i < reg.total_particle_count; i++) {
+            ps->mass[i] = reg.all_particles[i].Mass;
+            for(int j = 0; j < 3; j++) {
+                /* comoving -> physical: pos_phys = (pos_comov - com_comov) * a */
+                ps->pos[i][j] = (reg.all_particles[i].Pos[j] - reg.com_pos[j]) * a;
+                /* GIZMO Vel stores canonical momentum p = a^2 * dx_comov/dt_phys.
+                 * Peculiar velocity = Vel / a. Physical velocity = v_pec + H*r_phys.
+                 * MSTAR needs physical velocity (includes Hubble flow).
+                 * In non-cosmo: a=1, Vel is already physical, H=0. */
+                double v_pec_rel = (reg.all_particles[i].Vel[j] - reg.com_vel[j]) / a;
+                ps->vel[i][j] = v_pec_rel;
+                if(All.ComovingIntegrationOn)
+                    ps->vel[i][j] += hubble_function(a) * ps->pos[i][j];
+            }
+            reg.extra_data[i].ID = reg.all_particles[i].ID; reg.extra_data[i].Child = reg.all_particles[i].Child;
+            reg.extra_data[i].Task = reg.all_particles[i].Task;
+            reg.extra_data[i].Index = reg.all_particles[i].Index;
+            reg.extra_data[i].Type = reg.all_particles[i].Type;
+        }
+#ifdef TEST_KETJU_REGION_LOG
+        {
+            double e[2] = {0, 0}, M = 0, c[3] = {0, 0, 0}, q[3] = {0, 0, 0}; int n = reg.total_particle_count;
+            for(int i = 0; i < n; i++) {M += ps->mass[i]; for(int j = 0; j < 3; j++) {c[j] += ps->mass[i] * ps->pos[i][j]; q[j] += ps->mass[i] * ps->vel[i][j];}}
+            for(int j = 0; j < 3; j++) {e[0] = fmax(e[0], fabs(c[j]) / M); e[1] = fmax(e[1], fabs(q[j]) / M);}
+            if(All.Ti_Current == 0) {printf("KETJU_REGION n %d com_error %.3e p_error %.3e\n", n, e[0] / All.KetjuRegionRadius, e[1]);}
+        }
+#endif
+        reg.integrator->particle_extra_data = reg.extra_data.data();
+        reg.integrator->particle_extra_data_elem_size = sizeof(ketju_extra_data);
+
+    }
+
+}
 
 /* ============================================================
  *  PHASE 4: Negative half-step kick and integration
@@ -446,6 +671,7 @@ void ketju_find_regions(void)
     }
     ActiveRegions.clear();
     KetjuNumMultiRegions = 0;
+    if(KetjuCommCache.size() > 1024) {ketju_comm_cache_flush();}
 
     /* validate parameters */
     if(All.KetjuRegionRadius <= 0) return;
@@ -482,7 +708,27 @@ void ketju_find_regions(void)
     }
     const int n_multi = (int)multi.size();
     KetjuNumMultiRegions = n_multi;
+    std::vector<int> task_counts((size_t)NTask * n_multi); /* [t * n_multi + k] */
+    for(int k = 0; k < n_multi; k++) {for(const ketju_mpi_particle &c : region_centers[multi[k]]) {task_counts[(size_t)c.Task * n_multi + k]++;}}
 
+    /* A region given one compute task is integrated where its members live (its affected root, the lowest task holding
+     * members): no forwarding to and from a remote task, which would make the affected root wait idle on the remote MSTAR run. */
+    for(int k = 0; k < n_multi; k++) {
+        region_compute_info &ci = ActiveRegions[multi[k]].compute_info;
+        if(ci.first_task_index != ci.final_task_index) continue;
+        for(int t = 0; t < NTask; t++) {if(task_counts[(size_t)t * n_multi + k] > 0) {ci.first_task_index = ci.final_task_index = t; break;}}
+    }
+
+    /* second pass: set up integrators */
+    clk.lap(CPU_KETJUFIND);
+    {
+        std::vector<int> counts(NTask);
+        for(int k = 0; k < n_multi; k++) {
+            for(int t = 0; t < NTask; t++) counts[t] = task_counts[(size_t)t * n_multi + k];
+            setup_integrator(ActiveRegions[multi[k]], counts.data());
+        }
+    }
+    clk.lap(CPU_KETJUEXCH);
 
     /* KetjuChainID: hash of the group's smallest (ID, child); the group is known on every task */
     for(int k = 0; k < n_multi; k++) {
