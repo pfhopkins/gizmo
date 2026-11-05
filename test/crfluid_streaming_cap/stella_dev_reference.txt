@@ -1,0 +1,2 @@
+# stella_dev 22017b407, same ICs and params, the cap on without the rest of GALSF_RESOLVEDISM (scratch guard edit), 2 ranks: fraction of the CR energy lost
+capped 0.006423267
