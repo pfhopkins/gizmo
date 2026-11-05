@@ -37,6 +37,9 @@
 #include "../../mesh/kernel.h"
 #include "ketju_coupling.h"
 #include "../../galaxy_sf/single_star_record.h"
+#define KETJU_TREE_PAIR_KERNEL
+#include "../../gravity/gravtree_force_kernel.h"
+#include "ketju_tree.h"
 #include "../../mesh/gpu_neighbor_list.h"   /* gizmo_motion_bound_raise */
 #include "../../system/gpu_particles_arena.h"
 #include "ketju_mstar_kokkos.h"
@@ -85,6 +88,25 @@ void ketju_init_particle(int i)
     P[i].KetjuOpenRadius = 0;
 }
 
+/* softening and AGS zeta of particle p as the gravity walk uses them: [0] as target, [1] as leaf secondary */
+void tree_pair_softening(int p, double *soft, double *zeta)
+{
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
+    soft[0] = ForceSoftening_KernelRadius(p);
+#else
+    soft[0] = All.ForceSoftening[P[p].Type];
+#endif
+    zeta[0] = 0;
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+    grav_target_select_soft_and_zeta(P[p].Type, P[p].AGS_zeta, soft[0], zeta[0]);
+#endif
+    soft[1] = P[p].ForceSoftening; zeta[1] = 0;
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS)
+    if(P[p].Type == 0) {zeta[1] = P[p].AGS_zeta;}
+#elif defined(ADAPTIVE_GRAVSOFT_FORALL)
+    zeta[1] = P[p].AGS_zeta;
+#endif
+}
 
 
 /* MSTAR is integrated in natural N-body units (pc, Msun, km/s) whatever the host units: its GBS convergence degrades
@@ -144,6 +166,7 @@ struct ketju_mpi_particle {
     double Mass;
     double Pos[3];
     double Vel[3];
+    double Soft[2], Zeta[2]; /* softening/zeta as the tree uses them ([0] target, [1] secondary); fixed for stars under KETJU */
 };
 
 /* ============================================================
@@ -270,6 +293,21 @@ struct KetjuRegion {
     }
 };
 
+/* ============================================================
+ *  Loop scheduling for parallel N² force computation
+ *  Distributes the upper triangle of the N×N pair loop across
+ *  num_proc tasks. Returns the start index for edge_index-th block.
+ *  Based on public GADGET4-KETJU (Mannerkoski+ 2023).
+ * ============================================================ */
+static int loop_scheduling_block_edge(int Nloop, int num_proc, int edge_index)
+{
+    if(Nloop <= 0 || num_proc <= 0) return 0;
+    if(num_proc >= Nloop) num_proc = Nloop;
+    if(edge_index <= 0) return 0;
+    if(edge_index >= num_proc) return Nloop - 1;
+    double P = (double)num_proc, N = (double)Nloop;
+    return (int)ceil(N - 0.5 - sqrt(N * (N - 1) * (P - edge_index) / P + 0.25));
+}
 
 /* ============================================================
  *  Module-level state (persists within a timestep)
@@ -542,6 +580,7 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
             mp.Pos[j] = P[idx].Pos[j];
             mp.Vel[j] = P[idx].Vel[j];
         }
+        tree_pair_softening(idx, mp.Soft, mp.Zeta);
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
 #endif
         k++;
@@ -622,6 +661,81 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
  *  PHASE 4: Negative half-step kick and integration
  * ============================================================ */
 
+/* Subtract softened pairwise gravity between chain members from their velocities.
+ * This undoes the tree force contribution so MSTAR can replace it with exact forces. */
+static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int at_start, std::vector<double> *dv_out = NULL)
+{
+    if(!reg.compute_tasks.is_member() || !reg.integrator) return;
+
+    int n = reg.integrator->num_particles;
+    struct ketju_system_physical_state *ps = reg.integrator->physical_state;
+
+    /* softening of a pair of chain members (all Type 5) as the tree computes it: the larger of the two
+     * particles' softenings, i.e. ForceSoftening[5] (comoving -> physical) */
+    double h = All.ForceSoftening[5] * All.cf_atime;
+
+    /* distribute N² loop across compute tasks */
+    int loop_start = loop_scheduling_block_edge(n, reg.compute_tasks.size, reg.compute_tasks.rank);
+    int loop_end   = loop_scheduling_block_edge(n, reg.compute_tasks.size, reg.compute_tasks.rank + 1);
+
+    std::vector<double> dv(3 * n, 0.0);
+    /* absolute comoving positions as the tree uses them: at the start, the stored host positions; at the end, the exact
+       targets scatter_results computes and the drift is snapped to */
+    std::vector<double> abs_pos(3 * n);
+    double a_kick = All.cf_atime;
+    if(at_start) {
+        for(int i = 0; i < n; i++) for(int k = 0; k < 3; k++) abs_pos[3*i + k] = reg.all_particles[i].Pos[k];
+    } else {
+        if(All.ComovingIntegrationOn) a_kick = All.cf_atime * exp(reg.ti_step * All.Timebase_interval);
+        double dt_drift = get_drift_factor(All.Ti_Current, All.Ti_Current + reg.ti_step, 0, 0);
+        for(int i = 0; i < n; i++) for(int k = 0; k < 3; k++) {
+            double sp_pos = reg.com_pos[k] + ps->pos[i][k] / a_kick;
+            abs_pos[3*i + k] = (dt_drift > 0) ? sp_pos + reg.com_vel[k] * dt_drift : sp_pos;
+        }
+    }
+
+    for(int i = loop_start; i < loop_end; i++) {
+        for(int j = i + 1; j < n; j++) {
+            double dr[3], r2 = 0;
+            for(int k = 0; k < 3; k++) {
+                dr[k] = ps->pos[i][k] - ps->pos[j][k];
+                r2 += dr[k] * dr[k];
+            }
+            double r = sqrt(r2);
+            if(r == 0) continue;
+
+            { /* the tree's own pair kernel and separation (absolute comoving positions, as the tree differences them), with the
+                 softening/zeta of the gravity call whose kick is cancelled */
+                const ketju_mpi_particle &pi = reg.all_particles[i], &pj = reg.all_particles[j];
+                double drc[3]; for(int k = 0; k < 3; k++) {drc[k] = abs_pos[3*i + k] - abs_pos[3*j + k];}
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
+                NEAREST_XYZ(drc[0], drc[1], drc[2], 1);
+#endif
+                const double *si = pi.Soft, *zi = pi.Zeta, *sj = pj.Soft, *zj = pj.Zeta;
+                double r2c = drc[0]*drc[0] + drc[1]*drc[1] + drc[2]*drc[2], rc = sqrt(r2c), f_ij, f_ji, d0, d1, d2;
+                if(rc <= 0) continue;
+                tree_pair_gravity_factors(rc, r2c, ps->mass[j], si[0], sj[1], pi.Type, pj.Type, zi[0], zj[1], ps->mass[i], ags_gravity_kernel_shared_BITFLAG(pi.Type), f_ij, d0, d1, d2);
+                tree_pair_gravity_factors(rc, r2c, ps->mass[i], sj[0], si[1], pj.Type, pi.Type, zj[0], zi[1], ps->mass[j], ags_gravity_kernel_shared_BITFLAG(pj.Type), f_ji, d0, d1, d2);
+                double fac_c = kick_factor * All.G / (a_kick * a_kick); /* comoving pair force -> physical acceleration */
+                for(int k = 0; k < 3; k++) {
+                    dv[3*i + k] += fac_c * f_ij * drc[k];
+                    dv[3*j + k] -= fac_c * f_ji * drc[k];
+                }
+                (void)h;
+            }
+        }
+    }
+
+    /* collect results across compute tasks and apply */
+    MPI_Allreduce(MPI_IN_PLACE, dv.data(), 3 * n, MPI_DOUBLE, MPI_SUM, reg.compute_tasks.comm);
+    if(dv_out) *dv_out = dv;
+
+    for(int i = 0; i < n; i++) {
+        for(int k = 0; k < 3; k++) {
+            ps->vel[i][k] += dv[3*i + k];
+        }
+    }
+}
 
 
 
@@ -634,7 +748,27 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
 {
     if(dt_physical <= 0) return;
 
+    /* Compute kick factors: in comoving integration, the half-step kick
+     * factor is the gravkick integral (dt/a²), not just 0.5*dt_physical.
+     * The scale factor correction accounts for the tree force being computed
+     * in comoving coordinates while KETJU works in physical coordinates. */
+    double first_halfkick, second_halfkick;
+    if(All.ComovingIntegrationOn) {
+        integertime t0 = All.Ti_Current;
+        integertime t1 = t0 + reg.ti_step;
+        integertime tmid = t0 + reg.ti_step / 2;
+        double a0 = All.TimeBegin * exp(t0 * All.Timebase_interval);
+        double a1 = All.TimeBegin * exp(t1 * All.Timebase_interval);
+        first_halfkick  = get_gravkick_factor(t0, tmid, -1, 0) * a0;
+        second_halfkick = get_gravkick_factor(tmid, t1, -1, 0) * a1;
+    } else {
+        first_halfkick  = 0.5 * dt_physical;
+        second_halfkick = 0.5 * dt_physical;
+    }
 
+    /* subtract first half of tree force */
+    std::vector<double> pair_dv;
+    do_negative_halfstep_kick(reg, first_halfkick, 1, &pair_dv);
 
 
     /* run MSTAR integrator (all compute tasks participate via compute_tasks.comm) */
@@ -654,6 +788,8 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         }
     }
 
+    /* subtract second half of tree force */
+    do_negative_halfstep_kick(reg, second_halfkick, 0);
 }
 
 /* ============================================================

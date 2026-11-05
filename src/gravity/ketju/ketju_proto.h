@@ -13,4 +13,5 @@ void ketju_find_regions(void);
 void ketju_run_integration(void);
 void ketju_set_final_velocities(void);
 struct ketju_member_state &ketju_member(int i);
+void tree_pair_softening(int p, double *soft, double *zeta);
 #endif /* KETJU_PROTO_H */
