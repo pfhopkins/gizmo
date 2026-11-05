@@ -522,6 +522,9 @@ struct HydroForceSpec
 #if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
         MERGE_MAX(ElasticImpedanceNeighbour);
 #endif
+#ifdef EOS_ELASTIC
+        MERGE_ADD(ElasticFaceSignalSum);
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         MERGE_ADD(DtMass);
         MERGE_ADD(dMass);

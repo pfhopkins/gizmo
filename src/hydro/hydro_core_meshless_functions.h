@@ -351,6 +351,12 @@ void hydro_core_meshless_compute_pair(
         }
     }
 
+#ifdef EOS_ELASTIC
+    if(Face_Area_Norm > 0) { /* the face-frame signal speed of the final face states, summed over the cell's faces for the solids' finite-volume step limit (timestep.cc) */
+        double signal_L = fabs(dot(Riemann_vec.L.v, n_unit)) / All.cf_atime + Riemann_vec.L.cs, signal_R = fabs(dot(Riemann_vec.R.v, n_unit)) / All.cf_atime + Riemann_vec.R.cs; /* face velocities are in code units here; the solver converts only its own copy */
+        out.ElasticFaceSignalSum += Face_Area_Norm * DMAX(signal_L, signal_R);
+    }
+#endif
     if(!((Riemann_out.P_M > 0) && (!isnan(Riemann_out.P_M)))) {
         /* nothing but bad riemann solutions found */
         memset(&Fluxes, 0, sizeof(struct Conserved_var_Riemann));

@@ -244,6 +244,9 @@ struct hydro_data_out
 #if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
     signed char ElasticImpedanceNeighbour; /*!< 1 if any of the cell's pairs is within the scope of the elastic face impedance dissipation */
 #endif
+#ifdef EOS_ELASTIC
+    MyDouble ElasticFaceSignalSum; /*!< sum over the cell's faces of (face area x face signal speed), for the solids' finite-volume step limit */
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     MyDouble DtMass;
     MyDouble dMass;
