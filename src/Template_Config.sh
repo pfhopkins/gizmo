@@ -282,6 +282,7 @@
 #TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS # TESTING ONLY (StarBench): shining stars emit TestTreeRayFixedRate [1/s]; SGChem pins T(x) = T_n + (1e4 K - T_n) x from TestTreeRayNeutralTemp (test/treecol_shells_photoion)
 #TEST_SINGLE_STARS_TYPE_IA_RATE_MULTIPLIER=(1.e12) # TESTING ONLY: multiplies the single-star Type Ia hazard (a large value makes every eligible white dwarf explode at once)
 #TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS # TESTING ONLY: at the first star-formation step, single stars of given drawn masses at the gas cells named in the parameter TestSingleStarBirths ("ID:M_drawn,...")
+#GALSF_SINGLE_STARS_INSTANT_SN_BEFORE_TIME # single stars of drawn mass 8 Msun and up explode at their first feedback step while the code time is below the parameter TimeInstantSN (0: no effect), whatever their age
 #TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE # TESTING ONLY: a single star is born with the age TestStarInitAgeYr [yr] (formation time back-dated), so its evolution starts there
 #TEST_SINGLE_STARS_SN_AT_FORCED_TIMES # TESTING ONLY: star ID k of the first TestNumStars (first generation) explodes at TestSNTime0 + (k-1) TestSNSpacing [code time], whatever its table lifetime
 #TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME # TESTING ONLY: before the code time TestFBNoGasUntilTime single-star feedback couples to no gas; events stay pending and are retried

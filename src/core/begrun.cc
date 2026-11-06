@@ -1871,6 +1871,11 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.TestNumStars;
         id[nt++] = INT;
 #endif
+#ifdef GALSF_SINGLE_STARS_INSTANT_SN_BEFORE_TIME
+        strcpy(tag[nt], "TimeInstantSN");
+        addr[nt] = &All.TimeInstantSN;
+        id[nt++] = REAL;
+#endif
 #ifdef TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED
         strcpy(tag[nt], "TestFixedWindMdot");
         addr[nt] = &All.TestFixedWindMdot;

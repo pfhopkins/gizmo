@@ -278,6 +278,9 @@ double single_star_eventrates(int i, double dt)
     if(All.TestSNTime0 > 0 && P[i].ID >= 1 && P[i].ID <= (MyIDType)DMAX(All.TestNumStars, 1) && P[i].ID_generation == 0) { /* test only: the owed winds come with the death */
         forced = 1; dead = (All.Time >= All.TestSNTime0 + ((double)P[i].ID - 1.) * All.TestSNSpacing);}
 #endif
+#ifdef GALSF_SINGLE_STARS_INSTANT_SN_BEFORE_TIME
+    if(All.Time < All.TimeInstantSN && SingleStars.M_drawn[s] >= 8.0) {forced = dead = 1;} /* stars of 8 Msun and up explode at once */
+#endif
     if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS && !(forced && dead)) {
         double la = single_star_table_log_age(DMIN(age, age_end), logM, logZ);
         if(la > 0) {
