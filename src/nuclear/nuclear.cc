@@ -84,7 +84,7 @@ void InitNuclearNetwork(void)
 
 /* =========================================================================
    CallNuclearNetwork — dispatch to the selected solver.
-   Pure function: no global state, thread-safe.
+   Pure function: no global state, thread-safe (solver 1: host only, serialised).
    ========================================================================= */
 KOKKOS_FUNCTION int CallNuclearNetwork(const struct nuclear_input *in, struct nuclear_output *out)
 {

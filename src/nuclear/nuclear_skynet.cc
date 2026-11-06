@@ -16,6 +16,7 @@
 #include <cmath>
 #include <string>
 #include <vector>
+#include <mutex>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "nuclear.h"
@@ -38,8 +39,10 @@
 static int skynet_species_map[NUM_NUCLEAR_SPECIES];
 static int skynet_n_species = 0;
 
-/* SkyNet objects — read-only after init */
+/* SkyNet objects: Evolve mutates the network, so calls are serialised below */
 static ReactionNetwork *skynet_network = nullptr;
+static std::mutex skynet_mutex; /* Evolve mutates the network and writes its output files: one call at a time */
+static std::string skynet_output_prefix; /* per rank, so ranks sharing a directory do not write one file */
 
 
 void nuclear_skynet_init(void)
@@ -103,6 +106,8 @@ void nuclear_skynet_init(void)
     HelmholtzEOS helm(datadir + "/helm_table.dat", netOpts); /* the network needs an EOS */
     skynet_network = new ReactionNetwork(nuclib, reacLibs, &helm, nullptr, netOpts);
 
+    skynet_output_prefix = std::string(All.OutputDir) + "/skynet_rank" + std::to_string(ThisTask);
+
     MPI_Barrier(MPI_COMM_WORLD);
     if (ThisTask == 0) printf("SkyNet initialization complete.\n");
 }
@@ -129,8 +134,9 @@ int nuclear_skynet_solve(const struct nuclear_input *in, struct nuclear_output *
     ConstantFunction rho_const(rho_cgs);
 
     /* evolve */
+    std::lock_guard<std::mutex> lock(skynet_mutex);
     const NetworkOutput &result = skynet_network->Evolve(
-        Y_in, 0.0, dt_s, &T9_const, &rho_const, "", dt_s);
+        Y_in, 0.0, dt_s, &T9_const, &rho_const, skynet_output_prefix, dt_s);
 
     /* map back to GIZMO mass fractions */
     const std::vector<double> &Y_final = result.FinalY();
