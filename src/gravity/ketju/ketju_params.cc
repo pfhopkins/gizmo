@@ -10,6 +10,7 @@ int ketju_register_params(char (*tag)[50], void **addr, int *id, int nt, int max
 {
 #define KETJU_TAG(name, ptr, type) do {if(nt >= maxtags) {printf("KETJU parameter tags exceed MAXTAGS=%d\n", maxtags); endrun(886612);} strcpy(tag[nt], name); addr[nt] = (void *) (ptr); id[nt++] = (type);} while(0)
     KETJU_TAG("KetjuRegionRadius", &All.KetjuRegionRadius, type_real);
+    KETJU_TAG("KetjuMinBHMass", &All.KetjuMinBHMass, type_real);
     KETJU_TAG("KetjuMinStarMass", &All.KetjuMinStarMass, type_real);
     KETJU_TAG("KetjuIntegrationTolerance", &All.KetjuIntegrationTolerance, type_real);
     KETJU_TAG("KetjuUseStarStarSoftening", &All.KetjuUseStarStarSoftening, type_int);
@@ -31,6 +32,7 @@ int ketju_param_default(const char *tag, void *addr)
 {
 #define KETJU_DEF_REAL(name, val, why) if(strcmp(name, tag) == 0) {*((double *) addr) = (val); printf("Tag %s not set: defaulting to %g%s\n", tag, (double)(val), why); return 1;}
 #define KETJU_DEF_INT(name, val, why) if(strcmp(name, tag) == 0) {*((int *) addr) = (val); printf("Tag %s not set: defaulting to %d%s\n", tag, (int)(val), why); return 1;}
+    KETJU_DEF_REAL("KetjuMinBHMass", 0, " (Type 5 stage-7/BH chain centers disabled)");
     KETJU_DEF_REAL("KetjuMinStarMass", 0, " (Type 5 stage<7/star chain centers disabled)");
     KETJU_DEF_REAL("KetjuIntegrationTolerance", 1e-9, "");
     KETJU_DEF_INT("KetjuUseStarStarSoftening", 0, " (unsoftened chains for Type-4 stars)");

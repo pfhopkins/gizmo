@@ -436,6 +436,9 @@ int eligible_for_hermite(int i, struct particle_data *pp)
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     if(pp[i].SuperTimestepFlag >= 2) {return 0;}
 #endif
+#ifdef KETJU_REGULARIZATION
+    if(pp[i].KetjuIntegrated || pp[i].HermiteHistoryStale) {return 0;} /* MSTAR integrates it, or its Hermite history is stale */
+#endif
     return 1;
 }
 

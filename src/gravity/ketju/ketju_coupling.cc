@@ -126,6 +126,13 @@ void ketju_init_particle(int i)
 {
     P[i].KetjuIntegrated = 0;
     P[i].KetjuChainID = 0;
+#ifdef HERMITE_INTEGRATION
+    P[i].HermiteHistoryStale = 0;
+#endif
+#ifdef KETJU_SINKS
+    for(int j = 0; j < 3; j++) {P[i].KetjuSpin[j] = 0;}
+    if(RestartFlag == 0 && P[i].Type == 5) {P[i].SinkSubType = 0;} /* IC-placed sinks are SMBHs */
+#endif
 #ifndef GALSF_SINGLE_STARS_FROM_IMF
     P[i].StarIdx = 0;
 #endif
@@ -169,6 +176,9 @@ static void kj_state_change_units(struct ketju_system_physical_state *ps, int n,
     for(int i = 0; i < n; i++) {
         ps->mass[i] *= fM;
         for(int j = 0; j < 3; j++) {ps->pos[i][j] *= fL; ps->vel[i][j] *= fV;}
+#ifdef KETJU_SINKS
+        for(int j = 0; j < 3; j++) {ps->spin[i][j] *= fL * fM * fV;}
+#endif
     }
     ps->time *= fL / fV;
 }
@@ -196,6 +206,18 @@ void ketju_test_mstar_pair(void)
 }
 #endif
 
+/* PN classification for KETJU integrator (0 = PN/BH, 1 = non-PN/star, -1 = not Type 5).
+ * Derived from ProtoStellarStage: stage 7 (relic/BH) → 0, stage <7 (star) → 1.
+ * When SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION is off we lack stage info, so
+ * fall back to non-PN/star (relativistic terms only matter when KetjuPNTerms != "none"). */
+#ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
+#define KETJU_PN_CLASS(i) ((P[(i)].ProtoStellarStage == 7) ? 0 : 1)
+#elif defined(KETJU_TYPE4_STARS) && defined(SINK_PARTICLES)
+#define KETJU_PN_CLASS(i) (P[(i)].SinkSubType) /* sinks: 0 = BH, 1 = promoted stellar remnant */
+#else
+#define KETJU_PN_CLASS(i) (1)
+#endif
+
 /* Cost tracking for load balancing (keyed by first center ID per region) */
 static std::unordered_map<MyIDType, double> region_previous_cost;
 
@@ -215,6 +237,10 @@ struct ketju_mpi_particle {
     double Mass;
     double Pos[3];
     double Vel[3];
+#ifdef KETJU_SINKS
+    short int KetjuPNClass;
+    double Spin[3];
+#endif
     double Soft[2], Zeta[2]; /* softening/zeta as the tree uses them ([0] target, [1] secondary); fixed for stars under KETJU */
 #ifdef KJ_STAR_COLLISIONS
     double CollRadius; /* contact radius, physical code length (0: never collides) */
@@ -233,6 +259,9 @@ struct ketju_extra_data {
     int Task;
     int Index;
     int Type;
+#ifdef KETJU_SINKS
+    short int KetjuPNClass;
+#endif
 #ifdef KJ_STAR_COLLISIONS
     double BirthTime, FormDens;
 #endif
@@ -613,6 +642,26 @@ static void update_region_costs(void)
 static int is_chain_center(int i)
 {
     if(STELLA_OWNS_STAR(P[i]) && All.KetjuMinStarMass > 0 && P[i].Mass >= All.KetjuMinStarMass) return 1; /* stars */
+#ifndef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
+    if(P[i].Type == 5) {return (All.KetjuMinBHMass > 0 && P[i].Mass >= All.KetjuMinBHMass) ? 1 : 0;} /* sinks are BHs or remnants */
+#endif
+    /* STARFORGE: all sinks are Type 5; ProtoStellarStage selects role.
+     * Stages 0-6 (proto / MS / pre-collapse) use KetjuMinStarMass.
+     * Stage 7 (relic/BH) uses KetjuMinBHMass.
+     * Without SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION there's no stage
+     * field — treat every Type 5 as a star (use KetjuMinStarMass only). */
+#ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
+    if(P[i].Type == 5 && P[i].ProtoStellarStage <  7 && All.KetjuMinStarMass > 0) {
+        if(P[i].Mass >= All.KetjuMinStarMass) return 1;
+    }
+    if(P[i].Type == 5 && P[i].ProtoStellarStage == 7 && All.KetjuMinBHMass > 0) {
+        if(P[i].Mass >= All.KetjuMinBHMass) return 1;
+    }
+#else
+    if(P[i].Type == 5 && All.KetjuMinStarMass > 0) {
+        if(P[i].Mass >= All.KetjuMinStarMass) return 1;
+    }
+#endif
     return 0;
 }
 
@@ -629,6 +678,7 @@ static int is_synchronized(int i)
 static int is_chain_eligible(int i)
 {
     /* STARFORGE: every Type 5 sink is a chain-member candidate (regardless of stage) */
+    if(P[i].Type == 5) return 1;
     if(STELLA_OWNS_STAR(P[i])) return 1;
     return 0;
 }
@@ -691,6 +741,10 @@ static std::vector<ketju_mpi_particle> gather_chain_centers(void)
                 local_centers[k].Pos[j] = P[i].Pos[j];
                 local_centers[k].Vel[j] = P[i].Vel[j];
             }
+#ifdef KETJU_SINKS
+            local_centers[k].KetjuPNClass = (P[i].Type == 5) ? KETJU_PN_CLASS(i) : -1;
+            for(int j = 0; j < 3; j++) local_centers[k].Spin[j] = (P[i].Type == 5) ? P[i].KetjuSpin[j] : 0;
+#endif
             local_centers[k].TidalNorm = 0;
             if(KETJU_DT_MEMBER(i) && ketju_member(i).com_dt_tidal < 0.5 * MAX_REAL_NUMBER) local_centers[k].TidalNorm = All.cf_a3inv / (ketju_member(i).com_dt_tidal * ketju_member(i).com_dt_tidal);
             k++;
@@ -843,6 +897,14 @@ __attribute__((unused)) static std::set<int> find_local_particles_in_radius(cons
     }
     return hits;
 }
+
+/* ============================================================
+ *  PHASE 3: MPI gather and integrator setup
+ * ============================================================ */
+
+/* com_pos/com_vel are computed on the compute tasks, but the scatter reads them on the affected
+ * tasks. The two groups can be disjoint (the cost allocator does not look at where a region's
+ * particles live), and then the affected root never computed them: forward them first. */
 static void forward_com_to_affected_root(KetjuRegion &reg)
 {
     if(reg.affected_tasks.root_sim == reg.compute_tasks.root_sim) return;
@@ -922,6 +984,10 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
             mp.Pos[j] = P[idx].Pos[j];
             mp.Vel[j] = P[idx].Vel[j];
         }
+#ifdef KETJU_SINKS
+        mp.KetjuPNClass = (P[idx].Type == 5) ? KETJU_PN_CLASS(idx) : -1;
+        for(int j = 0; j < 3; j++) mp.Spin[j] = (P[idx].Type == 5) ? P[idx].KetjuSpin[j] : 0;
+#endif
         tree_pair_softening(idx, mp.Soft, mp.Zeta);
 #ifdef KJ_STAR_COLLISIONS
         mp.CollRadius = ketju_star_contact_radius(idx);
@@ -1005,6 +1071,9 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
         if(All.KetjuMaxStepCount > 0) reg.integrator->options->max_step_count = All.KetjuMaxStepCount;
         if(All.KetjuUseStarStarSoftening) {
             double h = All.ForceSoftening[4] * All.cf_atime;
+#ifdef KETJU_SINKS
+            if(All.ForceSoftening[5] > 0) h = DMIN(h, All.ForceSoftening[5] * All.cf_atime);
+#endif
             reg.integrator->options->star_star_softening = h * KJ_LEN_TO_NAT;
         }
 
@@ -1033,6 +1102,12 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
             reg.extra_data[i].Type = reg.all_particles[i].Type;
 #ifdef KJ_STAR_COLLISIONS
             reg.extra_data[i].BirthTime = reg.all_particles[i].BirthTime; reg.extra_data[i].FormDens = reg.all_particles[i].FormDens;
+#endif
+#ifdef KETJU_SINKS
+            reg.extra_data[i].KetjuPNClass = reg.all_particles[i].KetjuPNClass;
+            if(i < reg.num_pn_particles) {
+                for(int j = 0; j < 3; j++) ps->spin[i][j] = reg.all_particles[i].Spin[j];
+            }
 #endif
         }
 #ifdef TEST_KETJU_REGION_LOG
@@ -1604,6 +1679,11 @@ struct ketju_scatter_particle {
     double OriginalMass;
     KetjuUID MergedInto; /* ID and child number of the particle MSTAR merged this one into (ID 0: none) */
 #endif
+#ifdef KETJU_SINKS
+    short int KetjuPNClass;
+    double Spin[3];      /* only meaningful for PN particles */
+    int is_pn;           /* 1 if this is a PN particle (index < n_pn) */
+#endif
     double Sphere[4];    /* chain bounding sphere at end of step (comoving center, radius) */
     double TrueVel[3];   /* CoM-relative velocity before the second negative half-kick */
 };
@@ -1669,6 +1749,12 @@ static void scatter_results(KetjuRegion &reg)
                 sp.Vel[j] = (ps->vel[i][j] - hubble_end * ps->pos[i][j]) * a_end;
                 sp.TrueVel[j] = (reg.true_vel[3*i+j] - hubble_end * ps->pos[i][j]) * a_end;
             }
+#ifdef KETJU_SINKS
+            sp.KetjuPNClass = reg.extra_data[i].KetjuPNClass;
+            sp.is_pn = (i < reg.num_pn_particles) ? 1 : 0;
+            for(int j = 0; j < 3; j++)
+                sp.Spin[j] = (i < reg.num_pn_particles) ? ps->spin[i][j] : 0;
+#endif
         }
         { /* chain sphere from the end positions the members drift to; the end-of-step tree opens nodes overlapping it */
             double c[3] = {0,0,0}, rmax2 = 0; int n_live = reg.integrator->num_particles; /* merged ones sit in the tail */
@@ -1849,7 +1935,16 @@ static void scatter_results(KetjuRegion &reg)
             }
         }
         gizmo_motion_bound_raise(&idx, 1); /* velocity set outside the kick: nodes must cover this drift */
+#if SINGLE_STAR_TIMESTEPPING > 0
+        P[idx].SuperTimestepFlag = 0;
+#endif
 
+#ifdef KETJU_SINKS
+        /* update spin for PN particles */
+        if(sp.is_pn && P[idx].Type == 5) {
+            for(int j = 0; j < 3; j++) P[idx].KetjuSpin[j] = sp.Spin[j];
+        }
+#endif
         P[idx].KetjuIntegrated = 1;
     }
 
@@ -2074,9 +2169,12 @@ void ketju_limit_timesteps(void)
     KjArenaInvalidate arena_guard;
     KjClock clk(CPU_KETJULIMIT);
     CachedChainCentersValid = 0;
+#if SINGLE_STAR_TIMESTEPPING > 0
+    for(int i = 0; i < NumPart; i++) {if(P[i].KetjuIntegrated) {P[i].SuperTimestepFlag = 0;}} /* MSTAR integrates it: no binary super-step kick/drift */
+#endif
 
     if(All.KetjuRegionRadius <= 0) return;
-    if(All.KetjuMinStarMass <= 0) return;
+    if(All.KetjuMinBHMass <= 0 && All.KetjuMinStarMass <= 0) return;
 
     /* gather synchronised chain centres (cached for ketju_find_regions) */
     std::vector<ketju_mpi_particle> centers = gather_chain_centers();
@@ -2193,6 +2291,12 @@ void ketju_find_regions(void)
      * in finish_step, so it also survives to the guard checks of the step that follows. */
     for(int i : ActiveParticleList) {
         if(!is_synchronized(i)) continue;
+#ifdef HERMITE_INTEGRATION
+        /* A member whose step just ended: if it stays in a chain it never reaches the stale check
+         * (in-region guard fires first); if it exits, the next eligible_for_hermite() call falls
+         * back to KDK once before re-engaging Hermite with fresh OldPos/Acc/Jerk. */
+        P[i].HermiteHistoryStale = P[i].KetjuIntegrated ? 1 : 0; /* KDK for the whole next step (eligible_for_hermite is device-side and read-only) */
+#endif
         if(P[i].KetjuIntegrated) {ketju_member_close(i);}
         P[i].KetjuIntegrated = 0; P[i].KetjuChainID = 0; P[i].KetjuOpenRadius = 0;
     }
@@ -2202,7 +2306,7 @@ void ketju_find_regions(void)
 
     /* validate parameters */
     if(All.KetjuRegionRadius <= 0) return;
-    if(All.KetjuMinStarMass <= 0) return;
+    if(All.KetjuMinBHMass <= 0 && All.KetjuMinStarMass <= 0) return;
 
     /* reuse chain centers from ketju_limit_timesteps if available, else gather fresh */
     std::vector<ketju_mpi_particle> centers;

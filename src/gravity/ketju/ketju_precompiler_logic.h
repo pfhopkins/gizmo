@@ -7,6 +7,9 @@
 #if defined(ADAPTIVE_GRAVSOFT_FORALL) && (ADAPTIVE_GRAVSOFT_FORALL) & 16
 #error "KETJU_REGULARIZATION needs fixed star softening: use ADAPTIVE_GRAVSOFT_FORALL without bit 16 and SofteningStars <= KetjuRegionRadius"
 #endif
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_PARTICLES)
+#define KETJU_SINKS /* Type-5 sinks (STARFORGE stars or BHs) carry KETJU spin and PN class */
+#endif
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
 #error "GALSF_SINGLE_STARS_FROM_IMF: stars merge only on contact; GALSF_MERGER_STARCLUSTER_PARTICLES merges by distance"
 #endif
