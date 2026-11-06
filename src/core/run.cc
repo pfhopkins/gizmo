@@ -1344,6 +1344,35 @@ void write_cpu_log(void)
 
     CPUThisRun += CPU_Step[0];
 
+    /* Per-step timing log, opt-in with GIZMO_STEP_LOG=1: one line per step on rank 0 with the active
+       count, the top active bin, and the rank-average and rank-max of every CPU_* part (indices as in
+       constants.h). cpu.txt prints only at global syncs and decompositions, which hides how the cost is
+       distributed over the timestep hierarchy. Same format as the legacy backend's steps.txt; the column
+       meanings follow this tree's CPU_* indices. Uses the reductions above, so it adds no collective. */
+    if(ThisTask == 0)
+    {
+        static FILE *fd_steps = NULL; static int steplog_checked = 0;
+        if(!steplog_checked)
+        {
+            steplog_checked = 1;
+            const char *e = getenv("GIZMO_STEP_LOG");
+            if(e && atoi(e) > 0)
+            {
+                char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%ssteps.txt", All.OutputDir);
+                fd_steps = fopen(buf, RestartFlag == 1 ? "a" : "w");
+                if(fd_steps) {fprintf(fd_steps, "# step time nactive top_active_bin top_occupied_bin wall_max wall_avg then avg[1..%d] then max[1..%d] (kokkos CPU_* indices)\n", CPU_PARTS-1, CPU_PARTS-1);}
+            }
+        }
+        if(fd_steps)
+        {
+            fprintf(fd_steps, "%lld %.10g %lld %d %d %.6g %.6g", (long long) All.NumCurrentTiStep, All.Time, (long long) GlobNumForceUpdate, All.HighestActiveTimeBin, All.HighestOccupiedTimeBin, max_CPU_Step[0], avg_CPU_Step[0]);
+            for(i = 1; i < CPU_PARTS; i++) {fprintf(fd_steps, " %.4g", avg_CPU_Step[i]);}
+            for(i = 1; i < CPU_PARTS; i++) {fprintf(fd_steps, " %.4g", max_CPU_Step[i]);}
+            fprintf(fd_steps, "\n");
+            if(All.NumCurrentTiStep % 50 == 0) {fflush(fd_steps);}
+        }
+    }
+
     for(i = 0; i < CPU_PARTS; i++) {CPU_Step[i] = 0;}
     if(ThisTask == 0)
     {
