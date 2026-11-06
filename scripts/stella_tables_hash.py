@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Content hash of a Stella table file, as checked by GIZMO at startup (galaxy_sf/stellar_tables_check.cc).
+"""Content hash of a Stella table file, as checked by GIZMO at startup (galaxy_sf/stella_tables_check.h).
 
 HDF5: sha256 over every dataset, sorted by path: path, a zero byte, then the data in native byte order
 (object timestamps differ between rebuilds of the same table; the data do not). Other files: sha256 of the bytes.

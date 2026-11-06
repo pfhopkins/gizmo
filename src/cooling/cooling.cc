@@ -233,9 +233,9 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
    KOKKOS_FUNCTION marks them __device__ __host__ so nvcc recognizes them as device-callable
    when they appear in call expressions within other KOKKOS_FUNCTION bodies in this TU.
    nvcc may issue advisory warning #20040 (consistent redeclaration) but this is harmless. */
-/* CHIMES and Grackle solve the cooling in host-only external libraries. Their builds cool on the host loop alone, and the
+/* CHIMES, Grackle and SGChem solve the cooling in host-only external libraries. Their builds cool on the host loop alone, and the
    entry points that reach the library are compiled for the host only; every other build keeps them device-callable. */
-#if defined(CHIMES) || defined(COOL_GRACKLE)
+#if defined(CHIMES) || defined(COOL_GRACKLE) || defined(SGCHEM)
 #define COOLING_SOLVE_IN_HOST_LIBRARY
 #define COOLING_SOLVE_FUNCTION
 #else
@@ -874,6 +874,10 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     return DMAX(u,All.MinEgySpec);
 #endif
 
+#ifdef SGCHEM
+    if(cell != CellP || pp != P) {endrun(78002);} /* SGChem reads the global P/CellP; its builds cool them in place on the host loop */
+    return sgchem_docooling(target, u_old, dt, ne_eval);
+#endif
 #ifdef CHIMES
     chimes_update_gas_vars(target, pp, cell);
 
@@ -1941,6 +1945,10 @@ void InitCool(void)
 
 #ifdef COOL_GRACKLE
     InitGrackle();
+#endif
+
+#ifdef SGCHEM
+    sgchem_init();
 #endif
 
 #ifdef CHIMES

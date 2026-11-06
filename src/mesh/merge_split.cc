@@ -1199,6 +1199,12 @@ int merge_particles_ij(int i, int j)
     CellP[j].HeIII = wt_j*CellP[j].HeIII + wt_i*CellP[i].HeIII;
 #endif
 #endif
+#ifdef SGCHEM
+    /* abundances per H nucleus at one H fraction mix by mass; dust and gas temperature as stella_dev */
+    for(k=0;k<SGCHEM_NUM_TRACKED_SPECIES;k++) {CellP[j].TracAbund[k] = wt_j*CellP[j].TracAbund[k] + wt_i*CellP[i].TracAbund[k];}
+    CellP[j].DustTemp = wt_j*CellP[j].DustTemp + wt_i*CellP[i].DustTemp;
+    CellP[j].Temp = wt_j*CellP[j].Temp + wt_i*CellP[i].Temp;
+#endif
 #if defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY > 0)
     /* grackle's species are fractions of the total mass, so they mix by mass */
     CellP[j].grHI = wt_j*CellP[j].grHI + wt_i*CellP[i].grHI; CellP[j].grHII = wt_j*CellP[j].grHII + wt_i*CellP[i].grHII; CellP[j].grHM = wt_j*CellP[j].grHM + wt_i*CellP[i].grHM;

@@ -865,6 +865,16 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:
+            for(n = 0; n < pc; n++) {for(k = 0; k < SGCHEM_NUM_TRACKED_SPECIES; k++) {CellP[offset + n].TracAbund[k] = *fp++;}}
+            break;
+
+        case IO_SGCHEM_DUSTTEMP:
+            for(n = 0; n < pc; n++) {CellP[offset + n].DustTemp = *fp++;}
+            break;
+#endif
+
         case IO_CHIMES_ABUNDANCES:
 #if defined(CHIMES) && !defined(CHIMES_INITIALISE_IN_EQM)
             {
@@ -1521,6 +1531,9 @@ int read_file(char *fname, int readTask, int lastTask)
                     * cold-default synthesis quietly overwrites the IC
                     * (CBE_Moments_LoadedFromIC_PType stays 0). */
                    && blocknr != IO_CBE_MOMENTS
+#endif
+#ifdef SGCHEM_KEEP_IC_ABUNDANCES
+                   && blocknr != IO_SGCHEM_TRACABUND
 #endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(INPUT_READ_SINKPROPS)
                    && blocknr != IO_R_PROTOSTAR

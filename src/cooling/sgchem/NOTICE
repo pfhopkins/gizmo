@@ -1,0 +1,40 @@
+Third-party code in cooling/sgchem
+
+SGChem chemistry networks
+  The C++ here is based on the SGChem Fortran networks by Simon Glover (ITA Heidelberg), with contributions credited
+  in that code's file headers, as distributed in Arepo under the GNU GPL.
+
+SGChem C++ implementation (cooling/sgchem/cxx, sgchem.cc and hooks)
+  Ulrich Steinwandel (uli@mpa-garching.mpg.de), 2026. GNU GPL, as the Fortran code it is based on.
+
+Network 18 (cooling/sgchem/cxx/chem_cool_net18.cc, chem_net18*.h)
+  Built on RTZ, released under the MIT licence:
+
+    MIT License
+    
+    Copyright (c) 2024 HarleyKatz
+    
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+    
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+    
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+Network 20 (cooling/sgchem/cxx/chem_cool_net20.cc and related files)
+  Thermochemistry of TIGRESS-NCR, Kim et al. 2023, ApJS 264, 10 (arXiv:2210.08024), implemented from the paper.
+  Coefficients the paper only cites were taken from the authors' public implementation (pyathena, microphysics/cool.py,
+  commit f188a84; Athena++ shielding.cpp). Terms of that code: to be confirmed.
+
+Used as installed libraries (not included): SUNDIALS/CVODE (BSD-3), Kokkos.
