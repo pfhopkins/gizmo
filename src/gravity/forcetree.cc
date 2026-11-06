@@ -2529,6 +2529,26 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                     dv = Extnodes[no].vs - vel;
 #endif
+                    int k_gh = -1;   /* owner-side Hermite state of a foreign leaf, when one replaces the snapshot */
+#ifdef HERMITE_INTEGRATION
+                    /* A foreign real leaf of a Hermite type, on a Hermite pass: take the owner-side state
+                       (hermite_ghost_entry) in place of the imported snapshot. */
+                    if(fl_tag == 1 && HermiteGhostTab && ForeignLeafID && (HERMITE_INTEGRATION & (1 << fl_type)) && mass > 0)
+                    {
+                        /* A miss is a source whose owner zeroed it since the tree build (a sink merged away or
+                           swallowed: the table skips Mass <= 0). Keep the snapshot, as the device walk does. */
+                        k_gh = hermite_ghost_lookup(HermiteGhostTab, NHermiteGhost, ForeignLeafID[no - (treeBase + maxNodes)]);
+                        if(k_gh >= 0)
+                        {
+                            dr = HermiteGhostTab[k_gh].pos - pos;
+                            GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                            r2 = dr.norm_sq();
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+                            dv = HermiteGhostTab[k_gh].vel - vel;
+#endif
+                        }
+                    }
+#endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                     cr_injection = nop->cr_injection;
 #endif
@@ -2573,6 +2593,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                     if(nop->sink_mass > 0)        /* found a node with non-zero BH mass */
                     {
                         Vec3<double> sink_dr = nop->sink_pos - pos;  /* SHEA:  now using sink_pos instead of center */
+#ifdef HERMITE_INTEGRATION
+                        if(k_gh >= 0) {sink_dr = HermiteGhostTab[k_gh].pos - pos;}   /* the singleton sink IS the leaf: same state as the force */
+#endif
                         GRAVITY_NEAREST_XYZ(sink_dr[0],sink_dr[1],sink_dr[2],-1);
                         grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
 #if defined(SINGLE_STAR_TIMESTEPPING)
@@ -2584,6 +2607,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
                         prox_src.motion.vel = nop->sink_vel;
+#ifdef HERMITE_INTEGRATION
+                        if(k_gh >= 0) {prox_src.motion.vel = HermiteGhostTab[k_gh].vel;}
+#endif
 #endif
 #if defined(SPECIAL_POINT_MOTION)
                         prox_src.motion.acc = nop->sink_acc;

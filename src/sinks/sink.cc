@@ -33,6 +33,27 @@
 #ifdef SINK_PARTICLES // top-level flag [needs to be here to prevent compiler breaking when this is not active] //
 
 
+/* Whether the sink neighbour loops (environment, feed, swallow/kick) can find anything to act on. With mergers compiled
+ * out, a sink's only possible neighbours are gas and, when the search admits them, collisionless types 1-4. If the run
+ * holds none, every loop accumulates zero and writes nothing, so skipping them leaves the same state. Decided from
+ * global counts so every rank takes the same branch, and re-evaluated on every call because spawning can add gas. */
+static int sink_neighbor_loops_can_act(void)
+{
+#ifdef DISABLE_SINK_MERGERS
+    if(All.TotN_gas > 0) {return 1;}
+#if (SINK_NEIGHBOR_BITFLAG & 30)
+    long long n_loc = 0, n_tot = 0;
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type > 0 && P[i].Type < 5) {n_loc++;}}
+    MPI_Allreduce(&n_loc, &n_tot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    if(n_tot > 0) {return 1;}
+#endif
+    return 0;
+#else
+    return 1;
+#endif
+}
+
+
 /*  This is the parent routine for the sink (black hole, star, planet, etc) physics modules.
  *  It is called in calculate_non_standard_physics in run.c */
 void sink_accretion(void)
@@ -49,12 +70,28 @@ void sink_accretion(void)
 #endif
     sink_start();              /* allocates and cleans SinkTempInfo struct */
 
+    /* Skipped, the neighbour loops leave SinkTempInfo at the zeros sink_start() wrote, as they would have; the
+       sink-centric passes (properties, final operations) run either way. */
+    const int do_neighbor_loops = sink_neighbor_loops_can_act();
+    {
+        static int last_reported = 1;
+        if(do_neighbor_loops != last_reported && ThisTask == 0) {
+            printf("%s", do_neighbor_loops ? "Sinks: non-sink particles present again, resuming the sink neighbour loops\n"
+                                     : "Sinks: no gas and DISABLE_SINK_MERGERS, skipping the sink neighbour loops\n");
+            fflush(stdout);
+        }
+        last_reported = do_neighbor_loops;
+    }
+
+    if(do_neighbor_loops)
+    {
     /* this is the PRE-PASS loop.*/
     sink_environment_loop();    /* populates SinkTempInfo based on surrounding gas (sink_environment.c).
                                       If using gravcap the desired mass accretion rate is calculated and set to SinkTempInfo.mass_to_swallow_edd */
 #if defined(SINK_GRAVACCRETION) && (SINK_GRAVACCRETION == 0)
     sink_environment_second_loop();    /* Here we compute quantities that require knowledge of previous environment variables --> Bulge-Disk kinematic decomposition for gravitational torque accretion  */
 #endif
+    }
     /*----------------------------------------------------------------------
      Now do a first set of local operations based on sink environment calculation:
      calculate mdot, dynamical friction, and other 'sink-centric' operations.
@@ -66,6 +103,8 @@ void sink_accretion(void)
      Re-evaluate the decision to stochastically swallow gas if we exceed eddington.
      Use the above info to determine the weight functions for feedback
      ----------------------------------------------------------------------*/
+    if(do_neighbor_loops)
+    {
     sink_feed_loop();       /* sink mergers and gas/star/dm accretion events are evaluated - P[j].SwallowID's are set */
     /*----------------------------------------------------------------------
      Now we do a THIRD pass over the particles, and
@@ -73,6 +112,7 @@ void sink_accretion(void)
      (sink_evaluate_swallow), and 'kicking' operations
      ----------------------------------------------------------------------*/
     sink_swallow_and_kick_loop();
+    }
     /*----------------------------------------------------------------------
      Now do final operations on the results from the last pass
      ----------------------------------------------------------------------*/

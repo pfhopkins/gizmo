@@ -17,12 +17,11 @@ SINGLE_STAR_STARFORGE_DEFAULTS
 IO_SUPPRESS_TIMEBIN_STDOUT=15
 OUTPUT_IN_DOUBLEPRECISION
 DEVELOPER_MODE
-# The energy budget is read from this, not from snapshots: it is measured in-code at full
-# synchronization, which is denser than the snapshot cadence and independent of what the output
-# layer writes. Kept as the ground truth even though IO_HERMITE_SYNC (below) now makes a
-# snapshot-based estimate viable -- two independent measurements of the same quantity is worth
-# more here than one, and this one has no output convention to get wrong.
-# Without this, snapshots carry Velocities at kick-time against drift-time positions -- an
+# test_fewbody.py adds ENERGY_BUDGET_DIAGNOSTIC to its own builds and reads the suite's energy
+# budget from it, not from snapshots: it is measured in-code at full synchronization, which is
+# denser than the snapshot cadence and independent of what the output layer writes. It is not
+# set here because it prints at every full synchronization, nearly every step of test_binary.py.
+# Without IO_HERMITE_SYNC, snapshots carry Velocities at kick-time against drift-time positions -- an
 # O(dt/2 t_dyn) ~ percent error per particle. With 512 stars those average away
 # (plummer_binaries measured 5e-4 that way); with 3-10, where one star can hold a third of the
 # binding energy, they do not. That is why the energy budget above is read in-code instead.
@@ -34,3 +33,6 @@ DEVELOPER_MODE
 # mixed state that floor is partly sampling rather than integration error; these datasets remove
 # the ambiguity.
 IO_HERMITE_SYNC
+# Collisional and gas-free: mergers are opted out explicitly, and with no gas to act on the sink
+# neighbour loops are skipped (the tests check the log for it).
+DISABLE_SINK_MERGERS

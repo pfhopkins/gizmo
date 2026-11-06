@@ -1679,3 +1679,20 @@ void gizmo_kokkos_finalize(void);
 void gizmo_kokkos_fence(void);   /* best-effort device drain for normal (non-fatal) sync points */
 int  gizmo_gpu_device_memory(size_t *free_bytes, size_t *total_bytes);   /* advisory free/total device memory; 0 = unknown */
 void gizmo_gpu_sync_all(void);
+
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+/* Total gas energy at full synchronization; see energy_budget_sync_report() in run.cc. */
+void energy_budget_sync_report(void);
+#define EB_SYNC_REPORT() energy_budget_sync_report()
+#ifdef EVALPOTENTIAL
+/* Kinetic+gravitational energy over all types at full synchronization -- the conserved quantity
+   for a collisionless self-gravitating run, which the gas-only report above cannot see. */
+void energy_budget_gravity_report(void);
+#define EB_GRAV_REPORT() energy_budget_gravity_report()
+#else
+#define EB_GRAV_REPORT()
+#endif
+#else
+#define EB_SYNC_REPORT()
+#define EB_GRAV_REPORT()
+#endif

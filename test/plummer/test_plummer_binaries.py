@@ -41,6 +41,7 @@ from gizmo.test import (
     variant_output_dir,
     assert_final_time,
     parse_params,
+    assert_dry_sink_run,
 )
 
 # This problem shares a directory with the rest of its family; TEST_NAME is that
@@ -49,8 +50,9 @@ from gizmo.test import (
 TEST_NAME = "plummer"
 
 # test/plummer/Config.sh is the pure-gravity build used by test_plummer.py; the binary-star
-# problems additionally need the sink/Hermite physics and the synchronized-state output.
-BINARY_FLAGS = ("SINGLE_STAR_STARFORGE_DEFAULTS", "IO_HERMITE_SYNC")
+# problems additionally need the sink/Hermite physics and the synchronized-state output. The
+# cluster is collisional and gas-free, so mergers are opted out explicitly.
+BINARY_FLAGS = ("SINGLE_STAR_STARFORGE_DEFAULTS", "IO_HERMITE_SYNC", "DISABLE_SINK_MERGERS")
 
 VARIANT = "plummer_binaries"
 TEST_DIR = f"test/{TEST_NAME}"
@@ -446,6 +448,7 @@ def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, re
     if len(snaps) < 2:
         raise RuntimeError(f"GIZMO did not produce enough snapshots in {outputdir}")
     assert_final_time(snaps[-1], TEST_NAME, time_max=time_max)
+    assert_dry_sink_run(f"{TEST_DIR}/test_{TEST_NAME}.out", snaps)
 
     pos0, vel0, mass0, pot0, boxsize = _load_snapshot(snaps[0])
     posf, velf, massf, potf, _ = _load_snapshot(snaps[-1])

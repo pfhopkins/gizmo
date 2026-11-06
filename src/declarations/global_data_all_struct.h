@@ -147,7 +147,7 @@ struct global_data_all_processes
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
   double ArtCondConstant;
 #endif
-#ifdef SINGLE_STAR_SINK_DYNAMICS
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT)
     double MeanGasParticleMass; /*!< the mean gas particle mass */
 #endif
     double MinMassForParticleMerger; /*!< the minimum mass of a gas particle below which it will be merged into a neighbor */
@@ -304,7 +304,7 @@ struct global_data_all_processes
     SofteningStarsMaxPhys,	/*!< for type 4 */
     SofteningBndryMaxPhys;	/*!< for type 5 */
 
-  double ForceSoftening[6];	/*!< current (comoving) gravitational softening lengths for each particle type -- multiplied by a factor 1/KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER to define the maximum kernel extent - at that scale the force is Newtonian */
+  double ForceSoftening[6];	/*!< current (comoving) gravitational softening for each particle type, as the KERNEL SUPPORT RADIUS: the force is exactly Newtonian beyond it. Set from the Softening_Type* parameters, which are Plummer-equivalent, by ForceSoftening = Softening_Type / KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER (gravtree.cc), i.e. 2.8x LARGER than the parameter for a cubic spline. Multiply BY that factor to go the other way and recover the Plummer-equivalent. */
 
   /*! If particle masses are all equal for one type, the corresponding entry in MassTable is set to this value, * allowing the size of the snapshot files to be reduced */
   double MassTable[6];
@@ -681,6 +681,10 @@ struct global_data_all_processes
   double SinkMaxAccretionRadius;
   double SinkEddingtonFactor;	    /*!< Factor above Eddington */
   double SinkRadiativeEfficiency;   /*!< Radiative efficiency determined by the spin value, default value is 0.1 */
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+  double SinkMergerMaxMass;         /*!< most massive sink another sink may absorb (code units); 0 = 10 x its Sink_Formation_Mass */
+  double SinkMergerMaxRadiusFactor; /*!< sinks merge only inside this many sink radii */
+#endif
 #endif
 
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)

@@ -52,6 +52,8 @@ test/*/*.log
 test/*/*.bak
 test/*/*_ics.hdf5
 test/*/spcool_tables/
+# ...and the symlink to it that HII_region_simple/_subcycle make (a symlink is not a directory to git)
+test/*/spcool_tables
 test/*/spcool_tables.tgz
 test/*/TREECOOL
 test/*/ewald_spc_table_*.dat
@@ -129,3 +131,9 @@ _spike_backup_*/
 .claude_required_reading.txt
 # scratch parameter-file variants used when driving a test by hand
 test/*/_*.params
+# suites that generate one IC and one params file per problem keep them in subdirectories, which the
+# patterns above miss
+test/*/ics/
+test/*/params/
+# per-variant result dumps
+test/*/results_*.json
