@@ -188,10 +188,11 @@ def test_sgchem_reads_the_ionised_cells(built_sgchem):
     assert np.all(b["x"][outer] < 0.01) and np.all(b["u"][outer] < 0.05 * u_hii)
     ion = b["x"] > 0.99
     led = np.atleast_2d(np.loadtxt(d / "output" / "ledger.txt"))
-    E_pi = led[-1, 3]  # erg
+    names = [c for c in open(d / "output" / "ledger.txt").readline().split()[1:] if c != "(cumulative;"]
+    E_pi, E_chem = led[-1, names.index("E_photoionisation_heating_erg")], led[-1, names.index("E_chem_heating_erg")]  # erg
     dE = np.sum(b["m"][ion] * (b["u"][ion] - a["u"][ion])) * 1.989e33 * 1e10
     assert E_pi > 0 and abs(E_pi / dE - 1) < 0.05, (E_pi, dE)
-    assert led[-1, 1] < 0.01 * E_pi, (led[-1, 1], E_pi)  # chemistry heating: the network only, not the photoionisation
+    assert E_chem < 0.01 * E_pi, (E_chem, E_pi)  # chemistry heating: the network only, not the photoionisation
 
 
 def test_quiet_steps(built):

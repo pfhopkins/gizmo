@@ -1,4 +1,4 @@
-InitCondFile                sgchem_rt_start_ics
+InitCondFile                sgchem_rt_cr_ics
 OutputDir                   output
 ICFormat                    3
 SnapFormat                  3

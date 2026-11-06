@@ -23,7 +23,9 @@ def _ics():
     if not ic.exists():
         gmc = TEST_DIR.parent / "gmc_cooling" / "gmc_cooling_ics.hdf5"
         if not gmc.exists():
+            cwd = os.getcwd(); os.chdir(gmc.parent)  # the download writes into the working directory
             download_test_files("gmc_cooling")
+            os.chdir(cwd)
         from make_ketju_cloud_restart_ics import make_ketju_cloud_restart_ics
         make_ketju_cloud_restart_ics(str(gmc), str(ic))
 
