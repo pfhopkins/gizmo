@@ -176,7 +176,7 @@ int force_tree_is_allocated(void) {return tree_allocated_flag;}
 /* Imported foreign subtrees are read only by the gravity walks and SUBFIND's potential walk; every neighbour
    walk skips them and stops at a remote top leaf.  Without either consumer no subtree is imported, the foreign
    index range is empty, and foreign top leaves keep pointing at their pseudo-particles. */
-#if !defined(SELFGRAVITY_OFF) || defined(SUBFIND)
+#if defined(GRAVTREE_WALK_ACTIVE) || defined(SUBFIND)
 #define TREE_IMPORTS_FOREIGN_SUBTREES
 #endif
 

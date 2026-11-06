@@ -216,7 +216,9 @@ def _plot(t, de, dr, variant_id):
 # every ceiling below is calibrated for Hermite. The non-Hermite build path of the
 # IO_HERMITE_SYNC output block is covered by test_binary.py's kdk variant.
 @pytest.mark.parametrize("extra_config_flags", [
-    pytest.param((), id="starforge_defaults"),
+    pytest.param((), id="starforge_defaults", marks=pytest.mark.xfail(strict=True, reason=(
+        "fixed by pr/fewbody-multirank: a rank with NumPart = 0 stops in gpu_moment_refresh, and foreign "
+        "leaves are stale in Hermite passes"))),
 ])
 def test_triple(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()

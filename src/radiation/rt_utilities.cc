@@ -195,6 +195,97 @@ void rt_define_effective_frequencies_in_bands(void)
    device). Host external emitted by the non-inline re-include at the top of
    this file. */
 
+#ifdef RT_DIAG_IR_LEDGER
+/* Energy accounting for the IR kick, written by task 0 to <OutputDir>/rt_ir_diag.txt every RT_DIAG_IR_DOUBLE_COUNT
+   sync points (every one if no value is given). Per row: energy that reached the IR band through E_abs_tot_toIR,
+   injected sink luminosity (c_red/c-scaled) integrated over the interval, gas thermal energy, radiation energy per
+   band, then the energy that entered or left each band through each channel since the previous row (rt_diag_add), the
+   gas energy change in the cooling step and the cooling radiation offered to the bands before limiters. The kick source
+   is the band's (Rad_Je + Dt_Rad_E_gamma) dt: transport, which sums to zero over the box, plus the radiation work
+   terms. Inert otherwise. */
+static double rt_diag_ir_donated = 0, rt_diag_lum_dt = 0; /* local sums since the last row */
+static double rt_diag_chan[RT_DIAG_NCHAN][N_RT_FREQ_BINS], rt_diag_cool_gas = 0, rt_diag_cool_rad_offered = 0;
+/* rt_cool_diag.txt: per row, sums since the previous row; columns named in the header. gas_*: gas thermal energy gained (code units, true
+   c); the cooling-step terms are those of the converged-u CoolingRate call times nH^2/rho dt M, so gas_dE_cooling - gas_Q_dt is the
+   backward-Euler residual and gas_unrouted the net heating exchanged with no band. band_*, deu_*: band energy (code units, reduced-c
+   clock); band_clip_*: what each cooling-return limiter withheld. gas_IR_share_K1/K2: IR gas share given to the gas by the
+   opening/closing half-kick, in band units (the split is not tracked under TRANSPORT_SUBCYCLE); gas_DtIE_discarded: the
+   DtInternalEnergy the hydro pre-loop drops, as energy over a half-step. */
+static double rt_diag_sc_sum[RT_DIAG_NSC];
+static const char *rt_diag_sc_names[RT_DIAG_NSC] = {"gas_dE_cooling", "gas_Q_dt", "gas_DtIE_term", "gas_DtIE_code_dt", "gas_thick_limiter",
+    "gas_mol", "gas_mol_heating_part", "gas_dust_coupling", "gas_metal", "gas_HHe", "gas_compton", "gas_CR", "gas_photoelectric",
+    "gas_ion_heating", "gas_heat_total", "gas_lambda_total", "gas_routed", "gas_unrouted", "band_offered_NUV", "band_offered_IR",
+    "band_returned_NUV", "band_returned_IR", "band_clip_max_10uM", "band_clip_max_deu", "band_clip_max_zero", "band_clip_min_099E",
+    "band_clip_min_deu", "band_clip_min_zero", "deu_work", "deu_radabs", "n_deu_touse_pos", "n_cool", "band_coolstep_dust_abs_IR",
+    "band_coolstep_dust_abs_nonIR", "band_coolstep_dust_emit", "band_coolstep_dust_coupling", "band_kick_dust_reemit",
+    "band_kick_dust_emit_implied", "band_kick_dust_coupling_implied", "M_cool", "MT_gas", "MT_dust_cool", "MT_rad", "M_kick",
+    "MT_dust_kick", "MT_gas_kick", "gas_kick_dE", "band_kick_dE", "gas_DtIE_discarded", "gas_IR_share_K1", "gas_IR_share_K2"};
+int rt_diag_kick_mode = 0;
+thread_local struct rt_diag_cool_terms rt_diag_cr;
+void rt_diag_sc(int idx, double v)
+{
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+    rt_diag_sc_sum[idx] += v;
+}
+void rt_diag_ir_add_donated(double de)
+{
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+    rt_diag_ir_donated += de;
+}
+void rt_diag_add(int channel, int k, double de)
+{
+    double *x = (channel == RT_DIAG_COOL_GAS) ? &rt_diag_cool_gas : ((channel == RT_DIAG_COOL_OFFERED) ? &rt_diag_cool_rad_offered : &rt_diag_chan[channel][k]);
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+    *x += de;
+}
+void rt_diag_ir_double_count_report(void)
+{
+    static double t_last = -1, t_row = -1; static long long n_call = 0; static FILE *fd = NULL;
+    int i, k, c, stride = ((RT_DIAG_IR_DOUBLE_COUNT+0) > 1) ? (RT_DIAG_IR_DOUBLE_COUNT+0) : 1;
+    double lum_now = 0, dt = (t_last < 0) ? 0 : All.Time - t_last; t_last = All.Time;
+#ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
+    for(i=0;i<NumPart;i++) {if((P[i].Type==5) && (P[i].Mass>0)) {lum_now += P[i].StarLuminosity_Solar;}}
+#endif
+    rt_diag_lum_dt += lum_now / UNIT_LUM_IN_SOLAR * (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * dt;
+    if((n_call++ % stride) != 0) {return;}
+    const int nv = 5 + (1+RT_DIAG_NCHAN)*N_RT_FREQ_BINS + 2, nall = nv + RT_DIAG_NSC;
+    double loc[nall], glob[nall]; for(i=0;i<nall;i++) {loc[i] = 0;}
+    for(i=0;i<RT_DIAG_NSC;i++) {loc[nv+i] = rt_diag_sc_sum[i]; rt_diag_sc_sum[i] = 0;}
+    loc[0] = rt_diag_ir_donated; loc[1] = rt_diag_lum_dt; loc[2] = lum_now;
+    for(i=0;i<NumPart;i++) {if((P[i].Type==0) && (P[i].Mass>0)) {loc[3] += P[i].Mass*CellP[i].InternalEnergy; loc[4] += P[i].Mass; for(k=0;k<N_RT_FREQ_BINS;k++) {loc[5+k] += CellP[i].Rad_E_gamma[k];}}}
+    for(c=0;c<RT_DIAG_NCHAN;c++) {for(k=0;k<N_RT_FREQ_BINS;k++) {loc[5+(1+c)*N_RT_FREQ_BINS+k] = rt_diag_chan[c][k]; rt_diag_chan[c][k] = 0;}}
+    loc[nv-2] = rt_diag_cool_gas; loc[nv-1] = rt_diag_cool_rad_offered;
+    rt_diag_ir_donated = rt_diag_lum_dt = rt_diag_cool_gas = rt_diag_cool_rad_offered = 0;
+    MPI_Reduce(loc, glob, nall, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask != 0) {return;}
+    static FILE *fd_sc = NULL;
+    if(!fd_sc)
+    {
+        char buf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, MAX_PATH_BUFFERSIZE_TOUSE, "%srt_cool_diag.txt", All.OutputDir);
+        if((fd_sc = fopen(buf, "a"))) {fprintf(fd_sc, "# time"); for(i=0;i<RT_DIAG_NSC;i++) {fprintf(fd_sc, " %s", rt_diag_sc_names[i]);} fprintf(fd_sc, "\n");}
+    }
+    if(fd_sc) {fprintf(fd_sc, "%.12g", All.Time); for(i=0;i<RT_DIAG_NSC;i++) {fprintf(fd_sc, " %.12g", glob[nv+i]);} fprintf(fd_sc, "\n"); fflush(fd_sc);}
+    if(!fd)
+    {
+        char buf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, MAX_PATH_BUFFERSIZE_TOUSE, "%srt_ir_diag.txt", All.OutputDir);
+        if(!(fd = fopen(buf, "a"))) {return;}
+        fprintf(fd, "# time dt_row E_donated_toIR L_inj_dt L_sinks_Lsun E_thermal_gas M_gas E_rad[0..%d] absorbed[0..%d] donated_in[0..%d] "
+                "IR_gas_share[0..%d] cooling_to_band[0..%d] injected[0..%d] kick_source[0..%d] cooling_gas_dE cooling_rad_offered   (code "
+                "units; dt_row = time since the previous row; channel columns are sums over that interval)\n", N_RT_FREQ_BINS-1,
+                N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1);
+    }
+    fprintf(fd, "%.12g %.12g", All.Time, (t_row < 0) ? 0 : All.Time - t_row);
+    for(i=0;i<nv;i++) {fprintf(fd, " %.12g", glob[i]);}
+    fprintf(fd, "\n"); fflush(fd); t_row = All.Time;
+}
+#endif
+
 
 
 #endif

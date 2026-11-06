@@ -770,9 +770,6 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     if(pp[i].FluidType == FLUID_DM) { set_dark_eos_pressure(i, pp, cell); return; }
 #endif
     double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = GAMMA_DEFAULT; soundspeed=0;
-    if(All.Time > All.TimeBegin) {gamma_eos_index = cell[i].gamma_eos_value();} /* can only safely set this after initial startup, not on first call before proper cooling pass */
-    cell[i].Gamma = gamma_eos_index;
-    press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy();
 
 #ifdef COOLING
 #ifdef GIZMO_TRACK_ELECTRON_STATE
@@ -784,7 +781,6 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
            overwriting the cache would discard the solve that has already run */
         double ne=1, nh0=0, nhp=0, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
         temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, pp, cell);
-        cell[i].Gamma = cell[i].gamma_eos_value();
 #ifdef GIZMO_TRACK_ELECTRON_STATE
         ne_battery_save = ne;
 #endif
@@ -796,6 +792,13 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     /* this is the boundary that keeps Temperature fresh: it is the temperature of the energy the
        cell holds right now. anything wanting another energy derives it with gas_temperature_from_u */
     cell[i].Temperature = temp;
+    /* The adiabatic index comes AFTER the temperature write: gamma_eos_value() reads Temperature
+       under EOS_SUBSTELLAR_ISM (the H2 rotational regime), so taken before it the index, and with it
+       the ideal-gas pressure and the sound speed below (Courant step, Riemann solver, signal speeds),
+       lagged one EOS update behind the temperature. Not at startup, before the first cooling pass. */
+    if(All.Time > All.TimeBegin) {gamma_eos_index = cell[i].gamma_eos_value();}
+    cell[i].Gamma = gamma_eos_index;
+    press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy(); /* ideal gas EOS (over-written where a more complex EOS applies) */
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
     cell[i].u_anchor = cell[i].InternalEnergyPred; /* re-anchor along the tangent so the pair stays coherent */
 #endif

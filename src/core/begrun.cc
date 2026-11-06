@@ -156,6 +156,7 @@ void begrun(void)
 
 #ifdef COOLING
   InitCool();
+  if(gizmo_poll_controlled_stop()) return;  /* an unusable TREECOOL or cooling-table allocation stops here, before the ICs are read */
 #endif
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
   InitCool_dm();
