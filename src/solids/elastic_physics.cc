@@ -297,6 +297,10 @@ void solid_material_resolve(void)
     }
 }
 
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+static int solid_material_uses_tensile_flaws(int id) {return solid_material_is_elastic(id) && All.SolidMaterial[id].WeibullK > 0 && All.SolidMaterial[id].FractureActivation == FRACTURE_ACTIVATION_TENSILE_FLAWS;}
+#endif
+
 /* Refuse the run if a cell carries a material that is incomplete for the models this build runs
    (called by every rank from init(), after the CompositionType of every cell is final). */
 void solid_material_check_cells(void)
@@ -305,10 +309,12 @@ void solid_material_check_cells(void)
     for(int i = 0; i < N_gas; i++) {int ct = CellP[i].CompositionType; if(ct >= 0 && ct < N_SOLID_MATERIAL_IDS) {used_local[ct] = 1;}}
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
     /* grain promotion creates cells of these materials during the run (solids/grain_promotion.h): check them now as well */
-    used_local[MATERIAL_TILLOTSON_OLIVINE] = 1;
 #ifdef GRAIN_EVOLUTION
-    used_local[MATERIAL_TILLOTSON_BASALT] = used_local[MATERIAL_TILLOTSON_IRON] = used_local[MATERIAL_TILLOTSON_ICE] = 1;
+    const int promoted_materials[] = {MATERIAL_TILLOTSON_OLIVINE, MATERIAL_TILLOTSON_BASALT, MATERIAL_TILLOTSON_IRON, MATERIAL_TILLOTSON_ICE};
+#else
+    const int promoted_materials[] = {MATERIAL_TILLOTSON_OLIVINE};
 #endif
+    for(int id : promoted_materials) {used_local[id] = 1;}
 #endif
     MPI_Allreduce(used_local, used, N_SOLID_MATERIAL_IDS, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     for(int id = 0; id < N_SOLID_MATERIAL_IDS; id++)
@@ -335,7 +341,7 @@ void solid_material_check_cells(void)
             }
         }
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
-        if(!problem && All.SolidMaterial[id].WeibullK > 0 && All.SolidMaterial[id].FractureActivation == FRACTURE_ACTIVATION_TENSILE_FLAWS)
+        if(!problem && solid_material_uses_tensile_flaws(id))
         {
             bad = 1;
             if(ThisTask == 0) {printf("ERROR: cells carry CompositionType %d with tensile-flaw fracture, whose flaws belong to each element's fixed mass: it needs a fixed-mass method (MFM or SPH), not MFV or a regular grid.\n", id);}
@@ -345,26 +351,70 @@ void solid_material_check_cells(void)
     if(bad) {endrun(1152);}
 
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
-    /* tensile flaws: Benz & Asphaug's N ln N flaws per material body, shared out by mass (an element of mass m holds ~ ln(N) N m / M of them).
-       Every element holds at least one flaw, so a material of a single element has exactly one. Fixed-mass elements keep these totals, so a
-       restart from a snapshot recomputes the same values. */
-    double count_local[N_SOLID_MATERIAL_IDS] = {0}, mass_local[N_SOLID_MATERIAL_IDS] = {0}, mmax_local[N_SOLID_MATERIAL_IDS] = {0};
-    double count[N_SOLID_MATERIAL_IDS], mass[N_SOLID_MATERIAL_IDS], mmax[N_SOLID_MATERIAL_IDS];
-    for(int i = 0; i < N_gas; i++) {int ct = CellP[i].CompositionType; if(ct >= 0 && ct < N_SOLID_MATERIAL_IDS) {count_local[ct] += 1; mass_local[ct] += P[i].Mass; mmax_local[ct] = DMAX(mmax_local[ct], P[i].Mass);}}
-    MPI_Allreduce(count_local, count, N_SOLID_MATERIAL_IDS, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(mass_local, mass, N_SOLID_MATERIAL_IDS, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(mmax_local, mmax, N_SOLID_MATERIAL_IDS, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    /* tensile flaws: Benz & Asphaug's N ln N flaws per body, shared out by mass: an element of mass m holds ~ F m of them, with F = ln(N) N / M
+       of its body's N elements of this material and total mass M (every element holds at least one flaw, so a one-element body has exactly one).
+       F belongs to the element (TensileFlawsPerMass): set once, carried by snapshots and restarts, never recomputed, so a body keeps its flaws
+       when it is placed in a run beside another body. An element without it (negative: a fresh IC, or a file written without the dataset) gets
+       its material's value over all of this run's elements, which is its body's value only if all of them form one body. */
+    double census_local[4][N_SOLID_MATERIAL_IDS] = {{0}}, census[4][N_SOLID_MATERIAL_IDS]; /* per material: elements, their mass, how many are unset, how many not finite */
+    for(int i = 0; i < N_gas; i++)
+    {
+        int ct = CellP[i].CompositionType; if(ct < 0 || ct >= N_SOLID_MATERIAL_IDS) {continue;}
+        double flaws_per_mass = CellP[i].TensileFlawsPerMass;
+        census_local[0][ct] += 1; census_local[1][ct] += P[i].Mass;
+        if(!isfinite(flaws_per_mass)) {census_local[3][ct] += 1;} else if(flaws_per_mass < 0) {census_local[2][ct] += 1;}
+    }
+    MPI_Allreduce(census_local, census, 4 * N_SOLID_MATERIAL_IDS, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    const double *count = census[0], *mass = census[1], *unset = census[2], *invalid = census[3];
+    double flaws_one_body[N_SOLID_MATERIAL_IDS];
     for(int id = 0; id < N_SOLID_MATERIAL_IDS; id++)
     {
-        All.SolidMaterialFlawsPerMass[id] = (count[id] >= 2 && mass[id] > 0) ? log(count[id]) * count[id] / mass[id] : 0;
-        if(count[id] > 0 && solid_material_is_elastic(id) && All.SolidMaterial[id].WeibullK > 0 && All.SolidMaterial[id].FractureActivation == FRACTURE_ACTIVATION_TENSILE_FLAWS
-           && All.SolidMaterialFlawsPerMass[id] * mmax[id] > TENSILE_FLAWS_MAX_PER_ELEMENT)
+        flaws_one_body[id] = (count[id] >= 2 && mass[id] > 0) ? log(count[id]) * count[id] / mass[id] : 0;
+        if(!(count[id] > 0) || !solid_material_uses_tensile_flaws(id)) {continue;} /* only tensile-flaw fracture reads the value: any other material just gets the one-body value below */
+        if(invalid[id] > 0)
         {
             bad = 1;
-            if(ThisTask == 0) {printf("ERROR: CompositionType %d uses tensile-flaw fracture, and its most massive element (%g x the material's mean mass) would hold %g flaws (ln N x N x m / M), above the %d one element may hold: its element masses are too unequal for this model.\n",
-                                      id, mmax[id] * count[id] / mass[id], All.SolidMaterialFlawsPerMass[id] * mmax[id], TENSILE_FLAWS_MAX_PER_ELEMENT);}
+            if(ThisTask == 0) {printf("ERROR: CompositionType %d: %g of its elements carry a tensile-flaw normalisation (TensileFlawsPerMass) that is not a finite number.\n", id, invalid[id]);}
+        }
+        else if(unset[id] > 0 && unset[id] < count[id])
+        {
+            bad = 1;
+            if(ThisTask == 0) {printf("ERROR: CompositionType %d: %g of its %g elements carry a tensile-flaw normalisation (TensileFlawsPerMass) and %g do not. Give every element of the material its body's value: initial conditions that combine bodies carry each body's from that body's own snapshot.\n", id, count[id] - unset[id], count[id], unset[id]);}
+        }
+        else if(unset[id] > 0 && ThisTask == 0)
+        {
+            printf("\n**********************************************************************\n"
+                   "NOTE: CompositionType %d: its %g elements carry no tensile-flaw normalisation (no TensileFlawsPerMass in the input), so they get\n"
+                   "ln(N) N / M over all of them, %g per unit mass. This ASSUMES every element of this material belongs to ONE body. If these initial\n"
+                   "conditions combine several bodies, stop: carry each body's TensileFlawsPerMass from that body's own snapshot instead.\n"
+                   "**********************************************************************\n\n", id, count[id], flaws_one_body[id]);
         }
     }
+    if(bad) {endrun(1152); return;}
+    double flaws_max_local[N_SOLID_MATERIAL_IDS] = {0}, flaws_max[N_SOLID_MATERIAL_IDS];
+    for(int i = 0; i < N_gas; i++)
+    {
+        int ct = CellP[i].CompositionType; if(ct < 0 || ct >= N_SOLID_MATERIAL_IDS) {continue;}
+        if(!(CellP[i].TensileFlawsPerMass >= 0)) {CellP[i].TensileFlawsPerMass = flaws_one_body[ct];}
+        flaws_max_local[ct] = DMAX(flaws_max_local[ct], CellP[i].TensileFlawsPerMass * P[i].Mass);
+    }
+    MPI_Allreduce(flaws_max_local, flaws_max, N_SOLID_MATERIAL_IDS, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    for(int id = 0; id < N_SOLID_MATERIAL_IDS; id++)
+    {
+        if(count[id] > 0 && solid_material_uses_tensile_flaws(id) && flaws_max[id] > TENSILE_FLAWS_MAX_PER_ELEMENT)
+        {
+            bad = 1;
+            if(ThisTask == 0) {printf("ERROR: CompositionType %d uses tensile-flaw fracture, and its most flawed element would hold %g flaws (TensileFlawsPerMass x mass), above the %d one element may hold: its element masses are too unequal within a body for this model.\n",
+                                      id, flaws_max[id], TENSILE_FLAWS_MAX_PER_ELEMENT);}
+        }
+    }
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+    {
+        int any_tensile = 0;
+        for(int id : promoted_materials) {if(solid_material_uses_tensile_flaws(id)) {any_tensile = 1;}}
+        if(any_tensile && ThisTask == 0) {printf("Grain promotion with tensile-flaw fracture: a promoted element is a body of its own (one element), so it holds exactly one tensile flaw.\n");}
+    }
+#endif
     if(bad) {endrun(1152);}
 #endif
 }

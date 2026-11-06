@@ -502,6 +502,9 @@ extern struct gas_cell_data
     MyFloat Damage;        /* scalar fracture damage D in [0,1] */
     MyFloat Distention;    /* Jutzi P-alpha distention alpha in [1, alpha_0] */
     MyFloat ActiveCracks;  /* fracture bookkeeping: number of activated flaws (tensile-flaw law) or the crack radius (shear-activated law), per the material's FractureActivation */
+#if ((EOS_DAMAGE_POROSITY) & 1)
+    MyFloat TensileFlawsPerMass; /* tensile flaws per unit mass of the body this element belongs to, ln(N) N / M of the body's N elements of this material and mass M: the element holds ~ this x its mass. Fixed once set, carried by snapshots; negative = not set yet */
+#endif
 #endif
 #endif
     

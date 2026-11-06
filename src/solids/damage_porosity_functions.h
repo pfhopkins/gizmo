@@ -124,8 +124,8 @@ void damage_update_grady_kipp(double D_prev, double A_prev, double J2,
  * process; each s_j is the sum of j unit exponential draws keyed on the persistent particle identity
  * (ID, child number, generation) and the flaw index, so the thresholds are fixed for the particle, need no storage and do not depend on the
  * domain decomposition. The element holds the flaws with s_j <= s_max, at least one, where
- * s_max = ln(N) N m / M for its material's N elements of total mass M (Benz & Asphaug's N ln N
- * flaws per body, shared out by mass).
+ * s_max = ln(N) N m / M for the N elements of total mass M of its body's material (Benz & Asphaug's
+ * N ln N flaws per body, shared out by mass; the element carries ln(N) N / M as TensileFlawsPerMass).
  * Activation: eps = sigma_max / ((1-D) E), with sigma_max the largest principal value of the
  * damage-reduced total stress -P I + (1-D) S and E = 9 K mu / (3K + mu) (K the material bulk
  * modulus); flaws with s_j <= k V eps^m activate (n_act, kept in ActiveCracks). Pure compression

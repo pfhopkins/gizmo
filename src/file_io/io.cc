@@ -721,12 +721,21 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     for(k=0;k<NUM_METAL_SPECIES;k++)
                     {
                         MyOutputFloat val = (MyOutputFloat) P[pindex].Metallicity[k];
-#ifndef OUTPUT_IN_DOUBLEPRECISION
-                        /* Quantize to ~3.3 significant decimal digits (10-bit mantissa) by zeroing
-                           the low 13 mantissa bits of the float32. This is lossless at the precision
-                           level meaningful for metal abundances, and makes the data ~2x more
-                           compressible with shuffle+deflate (IO_COMPRESS_HDF5). */
-                        {unsigned int *ibits = (unsigned int *)&val; *ibits &= 0xFFFFE000u;}
+#if defined(IO_COMPRESS_HDF5) && !defined(OUTPUT_IN_DOUBLEPRECISION)
+                        /* Drop the low 13 mantissa bits of the float32, leaving ~3 significant
+                           decimal digits, so shuffle+deflate can compress this field -- it is the
+                           largest block in a STARFORGE snapshot (NUM_METAL_SPECIES wide).
+                           Gated on IO_COMPRESS_HDF5: without it the fidelity is spent for nothing.
+                           Rounded, not masked: masking alone truncates toward zero, so every value
+                           loses magnitude and the mean error is -3.4e-4 rather than ~0.
+                           memcpy, not a pointer cast: reading a float through unsigned int* is a
+                           strict-aliasing violation, and both compilers fold these to no code. */
+                        {
+                            uint32_t b; memcpy(&b, &val, sizeof(b));
+                            b += 0xFFFu + ((b >> 13) & 1u);   /* round-to-nearest-even */
+                            b &= 0xFFFFE000u;
+                            memcpy(&val, &b, sizeof(b));
+                        }
 #endif
                         fp[k] = val;
                     }
@@ -1729,6 +1738,17 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp_pos++ = (MyOutputPosFloat) CellP[pindex].TensileFlawsPerMass; /* double, as the positions */
+                    n++;
+                }
+#endif
+            break;
+
         case IO_EOS_RECENT_YIELD_MEMORY:
 #ifdef EOS_ELASTIC
             for(n = 0; n < pc; pindex++)
@@ -2122,10 +2142,16 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
  *  typedefs describe the unformatted-binary layout, which must be known to the bit, and apply only
  *  to that path. Single source of truth for the read-side element width.
  */
+static size_t binary_input_float_bytes(enum iofields blocknr) /* element width of a float block in the unformatted-binary layout */
+{
+    if(blocknr == IO_POS) {return sizeof(MyInputPosFloat);}
+    if(blocknr == IO_DAMAGE_POROSITY_FLAWSPERMASS) {return sizeof(double);} /* a fixed per-element value: always double, so it round-trips exactly */
+    return sizeof(MyInputFloat);
+}
 size_t get_input_float_bytes(enum iofields blocknr)
 {
     if(All.ICFormat == 3) {return sizeof(double);}
-    return (blocknr == IO_POS) ? sizeof(MyInputPosFloat) : sizeof(MyInputFloat);
+    return binary_input_float_bytes(blocknr);
 }
 
 
@@ -2194,6 +2220,10 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
                 bytes_per_blockelement = sizeof(MyInputFloat);
             else
                 bytes_per_blockelement = sizeof(MyOutputFloat);
+            break;
+
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+            bytes_per_blockelement = sizeof(double); /* written and read in double precision always */
             break;
             
         case IO_AGE_PROTOSTAR:
@@ -2494,7 +2524,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         int typekey_read = get_datatype_in_block(blocknr);
         if(typekey_read == 1 || typekey_read == 3)
         {
-            size_t width_binary = (blocknr == IO_POS) ? sizeof(MyInputPosFloat) : sizeof(MyInputFloat);
+            size_t width_binary = binary_input_float_bytes(blocknr);
             /* every float-valued case above is a whole number of input elements wide; if some future
              * block is not, the rescale would silently mis-size it against empty_read_buffer's unpack */
             if(bytes_per_blockelement % ((int) width_binary)) {endrun(219);}
@@ -2544,6 +2574,10 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_EOS_RECENT_YIELD_MEMORY:
         case IO_EOS_STRENGTH_FRACTION:
             typekey = 1;		/* native MyOutputFloat */
+            break;
+
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+            typekey = 3;		/* double, whatever the output precision */
             break;
             
         default:
@@ -2683,6 +2717,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_DAMAGE_POROSITY_DAMAGE:
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
         case IO_EOS_RECENT_YIELD_MEMORY:
         case IO_EOS_STRENGTH_FRACTION:
             values = 1;
@@ -3003,6 +3038,7 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_DAMAGE_POROSITY_DAMAGE:
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
         case IO_EOS_RECENT_YIELD_MEMORY:
         case IO_EOS_STRENGTH_FRACTION:
             for(i = 1; i < 6; i++) {typelist[i] = 0;}
@@ -3311,6 +3347,12 @@ int blockpresent(enum iofields blocknr)
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
 #ifdef EOS_DAMAGE_POROSITY
+            return 1;
+#endif
+            break;
+
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
             return 1;
 #endif
             break;
@@ -3935,6 +3977,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
             strncpy(label, "ACTV", 4);
             break;
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+            strncpy(label, "FLAW", 4);
+            break;
         case IO_EOS_RECENT_YIELD_MEMORY:
             strncpy(label, "RYMM", 4);
             break;
@@ -4410,6 +4455,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
             strcpy(buf, "ActiveCracks");
+            break;
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+            strcpy(buf, "TensileFlawsPerMass");
             break;
         case IO_EOS_RECENT_YIELD_MEMORY:
             strcpy(buf, "RecentYieldMemory");

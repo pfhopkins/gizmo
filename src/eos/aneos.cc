@@ -250,19 +250,39 @@ int aneos_read_table(const char *filename, int mat_index)
 
     tbl->loaded = 1;
 
-    double nonuni_rho = aneos_axis_nonuniformity(tbl->logrho, nrho), nonuni_T = aneos_axis_nonuniformity(tbl->logT, nT);
-    printf("ANEOS: loaded material %d from \"%s\" (%d x %d grid, %d columns%s)\n",
-           tbl->mat_id, filename, nrho, nT, ncols, tbl->lowest_valid_T ? ", per-density lowest valid temperature" : "");
-    printf("  log10(rho) range: [%.3f, %.3f] %s,  log10(T) range: [%.3f, %.3f] %s\n",
-           tbl->logrho_min, tbl->logrho_max, (nonuni_rho < 1.0e-6) ? "uniform" : "irregular",
-           tbl->logT_min, tbl->logT_max, (nonuni_T < 1.0e-6) ? "uniform" : "irregular");
-
     if(mat_index >= ANEOS_Num_Tables_Loaded)
         ANEOS_Num_Tables_Loaded = mat_index + 1;
 
     return 0;
 }
 
+
+/* Bytes one loaded table holds (the same on every rank: each reads every table into memory the host and the device share). */
+size_t aneos_table_bytes(int mat_index)
+{
+    if(!ANEOS_Tables || mat_index < 0 || mat_index >= ANEOS_MAX_MATERIALS || !ANEOS_Tables[mat_index].loaded) return 0;
+    const struct aneos_table *tbl = &ANEOS_Tables[mat_index];
+    size_t ntot = (size_t)tbl->nrho * (size_t)tbl->nT;
+    size_t bytes = ((size_t)tbl->nrho + (size_t)tbl->nT) * sizeof(double) + ((size_t)tbl->nmap_rho + (size_t)tbl->nmap_T + 2) * sizeof(int)
+                 + 3 * ntot * sizeof(double);
+    if(tbl->has_csound) bytes += ntot * sizeof(double);
+    if(tbl->has_phase) bytes += ntot * sizeof(int);
+    if(tbl->lowest_valid_T) bytes += (size_t)tbl->nrho * sizeof(int);
+    return bytes;
+}
+
+/* What a loaded table holds, for the startup log (begrun prints it once, on the first rank). */
+void aneos_report_table(int mat_index, const char *filename)
+{
+    if(!ANEOS_Tables || mat_index < 0 || mat_index >= ANEOS_MAX_MATERIALS || !ANEOS_Tables[mat_index].loaded) return;
+    const struct aneos_table *tbl = &ANEOS_Tables[mat_index];
+    double nonuni_rho = aneos_axis_nonuniformity(tbl->logrho, tbl->nrho), nonuni_T = aneos_axis_nonuniformity(tbl->logT, tbl->nT);
+    printf("ANEOS: table %d = material %d from \"%s\" (%d x %d grid, %d columns%s, %.1f MB)\n", mat_index, tbl->mat_id, filename, tbl->nrho, tbl->nT,
+           5 + tbl->has_csound + tbl->has_phase, tbl->lowest_valid_T ? ", per-density lowest valid temperature" : "", aneos_table_bytes(mat_index) / 1048576.0);
+    printf("  log10(rho) range: [%.3f, %.3f] %s,  log10(T) range: [%.3f, %.3f] %s\n",
+           tbl->logrho_min, tbl->logrho_max, (nonuni_rho < 1.0e-6) ? "uniform" : "irregular",
+           tbl->logT_min, tbl->logT_max, (nonuni_T < 1.0e-6) ? "uniform" : "irregular");
+}
 
 int aneos_cleanup(void)
 {

@@ -481,14 +481,21 @@ void run(void)
         int stopflag = 0;
         if(ThisTask == 0)
         {
-            FILE *fd;
-            char stopfname[DEFAULT_PATH_BUFFERSIZE_TOUSE];
-            snprintf(stopfname, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sstop", All.OutputDir);
-            if((fd = fopen(stopfname, "r")))	/* Is the stop-file present? If yes, interrupt the run. */
+            static double t_last_stopcheck = -1;
+            double t_now = MPI_Wtime();
+            if(t_last_stopcheck < 0) {t_last_stopcheck = t_now;}
+            if(t_now - t_last_stopcheck >= STOP_FILE_CHECK_MIN_WALL_SECONDS)
             {
-                fclose(fd);
-                stopflag = 1;
-                unlink(stopfname);
+                t_last_stopcheck = t_now;
+                FILE *fd;
+                char stopfname[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+                snprintf(stopfname, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sstop", All.OutputDir);
+                if((fd = fopen(stopfname, "r")))	/* Is the stop-file present? If yes, interrupt the run. */
+                {
+                    fclose(fd);
+                    stopflag = 1;
+                    unlink(stopfname);
+                }
             }
 
             if(CPUThisRun > 0.85 * All.TimeLimitCPU)	/* are we running out of CPU-time ? If yes, interrupt run. */

@@ -275,6 +275,13 @@ struct global_data_all_processes
      on steps that keep the existing decomposition. */
   double TreeRebuild_ActiveFraction;	/*!< rebuild the gravity tree once this fraction of the system is active */
   double DomainBuild_ActiveFraction;	/*!< redo the domain decomposition once this fraction of the system is active */
+  /* Adaptive load-balance weights: exponential moving averages over the decomposition history
+     (domain_update_adaptive_weights). Cross-step state, kept in All so a resume carries them: reset to
+     their seeds, the next split lands on different topnode boundaries and every rank gets a different
+     particle set. */
+  double DomainFacWork;		/*!< weight for gravity work */
+  double DomainFacWorkGas;	/*!< weight for hydro work (0 when no gas is present) */
+  double DomainFacLoad;		/*!< weight for particle count (memory) */
 #ifdef MHD_MODIFIED_GRADIENT
   double ActiveFractionForMGSweep;  /*!< minimum active gas fraction to trigger the global MG div(B) solve; on smaller timesteps the local CG correction is used instead */
   int Flag_SkipMGSolve;             /*!< per-timestep flag: 1 = skip MG global solve this step (use CG fallback), 0 = run MG */
@@ -309,14 +316,15 @@ struct global_data_all_processes
   /*! If particle masses are all equal for one type, the corresponding entry in MassTable is set to this value, * allowing the size of the snapshot files to be reduced */
   double MassTable[6];
 
-  /* some filenames */
-  char InitCondFile[100],
-    OutputDir[100],
-    SnapshotFileBase[100],
-    RestartFile[100], ResubmitCommand[100], OutputListFilename[100];
+  /* some filenames: sized as the parameter reader's line buffers and every local path buffer. Fixed-size arrays, since this struct is sent and written as raw bytes. */
+  char InitCondFile[DEFAULT_PATH_BUFFERSIZE_TOUSE],
+    OutputDir[DEFAULT_PATH_BUFFERSIZE_TOUSE],
+    SnapshotFileBase[DEFAULT_PATH_BUFFERSIZE_TOUSE],
+    RestartFile[DEFAULT_PATH_BUFFERSIZE_TOUSE], ResubmitCommand[DEFAULT_PATH_BUFFERSIZE_TOUSE],
+    OutputListFilename[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 
 #ifdef COOL_GRACKLE
-    char GrackleDataFile[100];
+    char GrackleDataFile[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 #endif
     /*! table with desired output times */
     double OutputListTimes[MAXLEN_OUTPUTLIST];
@@ -480,7 +488,7 @@ struct global_data_all_processes
     double AgeTracerRateNormalization;              /* Determines Fraction of time to do age tracer deposition (with checks depending on time bin width for current star) */
 #ifdef GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
     double AgeTracerTimeBins[NUM_AGE_TRACERS+1];    /* Bin edges (left) for stellar age passive scalar tracers when using custom (uneven) bins the final value is the right edge of the final bin, hence a total size +1 the number of tracers */
-    char   AgeTracerListFilename[100];              /* file name to read ages from (in Myr) as a single column */
+    char AgeTracerListFilename[DEFAULT_PATH_BUFFERSIZE_TOUSE];              /* file name to read ages from (in Myr) as a single column */
 #else
     double AgeTracerBinStart;                       /* left bin edge of first age tracers (Myr) - for log spaced bins */
     double AgeTracerBinEnd;                         /* right bin edge of last age tracer (Myr)  - for log spaced bins */
@@ -597,7 +605,7 @@ struct global_data_all_processes
 #ifndef GR_TABULATED_COSMOLOGY_W
 #define GR_TABULATED_COSMOLOGY_W
 #endif
-  char TabulatedCosmologyFile[100];	/*!< tabulated parameters for expansion and/or gravity */
+  char TabulatedCosmologyFile[DEFAULT_PATH_BUFFERSIZE_TOUSE];	/*!< tabulated parameters for expansion and/or gravity */
 #ifdef GR_TABULATED_COSMOLOGY_G
   double Gini;
 #endif
@@ -690,7 +698,6 @@ struct global_data_all_processes
   struct solid_material SolidMaterial[N_SOLID_MATERIAL_IDS]; /*!< strength/damage/porosity per CompositionType, resolved at startup: read through solid_material_of() */
   struct solid_material SolidMaterialCustom; /*!< the custom material (CompositionType 0 of a Tillotson or plain elastic build), from the SolidMaterial_* parameters */
 #ifdef EOS_DAMAGE_POROSITY
-  double SolidMaterialFlawsPerMass[N_SOLID_MATERIAL_IDS]; /*!< tensile flaws: ln(N) N / M of each material's N elements of total mass M, set at startup (an element of mass m holds ~ m x this) */
   double FractureOutOfPlaneExtent; /*!< 1D/2D tensile flaws: thickness (2D) or cross-sectional area (1D) that turns an element's NDIM-volume into a volume */
   double SolidMaterialPresetFractureActivation[N_TILLOTSON_MATERIALS]; /*!< per preset row 1-6: its fracture law (SolidMaterialPreset<N>_FractureActivation; not given = tensile flaws) */
   double SolidMaterialPresetPorosity[N_TILLOTSON_MATERIALS][3]; /*!< per preset row 1-6: InitialDistention, CrushPressureElastic, CrushPressureSolid (SolidMaterialPreset<N>_*; not given = the preset's own) */
@@ -703,15 +710,12 @@ struct global_data_all_processes
 #endif
 
 #ifdef EOS_TABULATED
-    char EosTable[100];
+    char EosTable[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 #endif
 
 #ifdef EOS_ANEOS
-#ifndef ANEOS_MAX_MATERIALS
-#define ANEOS_MAX_MATERIALS 7
-#endif
     int  AneosNumMaterials;                       /* number of ANEOS material tables to load */
-    char AneosTableFiles[ANEOS_MAX_MATERIALS][256]; /* file paths for each material's SESAME table */
+    char AneosTableFiles[ANEOS_MAX_MATERIALS][DEFAULT_PATH_BUFFERSIZE_TOUSE]; /* file paths for each material's SESAME table */
 #ifdef EOS_ELASTIC
     int  AneosSolidMaterialChoice[ANEOS_MAX_MATERIALS];                   /* per table: 1-6 = preset, 0 = the table's own values (AneosTable<N>_SolidMaterial) */
     struct solid_material AneosSolidMaterialCustom[ANEOS_MAX_MATERIALS];  /* per table custom values (AneosTable<N>_ShearModulus etc.) */
@@ -768,7 +772,7 @@ struct global_data_all_processes
   double Sink_jet_precess_period;
 #endif
 #ifdef NUCLEAR_NETWORK
-    char NuclearNetworkDataFile[256];
+    char NuclearNetworkDataFile[DEFAULT_PATH_BUFFERSIZE_TOUSE];
     double NuclearBurningFloor_T;
     double NuclearBurningFloor_rho;
     double NuclearNSE_T_threshold;
