@@ -143,7 +143,7 @@ int nuclear_skynet_solve(const struct nuclear_input *in, struct nuclear_output *
     } catch (const std::exception &err) { /* SkyNet reports a bad state by throwing, which must not leave the threaded caller */
         char msg[512];
         snprintf(msg, sizeof(msg), "SkyNet failed for a cell with rho=%g g/cm^3, T9=%g, dt=%g s: %s", rho_cgs, T9, dt_s, err.what());
-        gizmo_request_controlled_stop(7730, msg, __FILE__, __LINE__, __FUNCTION__);
+        gizmo_request_controlled_stop(7733, msg, __FILE__, __LINE__, __FUNCTION__);
         return -1;
     }
 
