@@ -429,6 +429,7 @@
 #CHEMISTRYNETWORK=5             # SGChem network: 5 (H2, H+, CO; default), 3, 15, 16, 17, 18 (metal ions) or 20 (Kim+23)
 #SGCHEM_DGR_INDEPENDENT_OF_METALLICITY # SGChem dust-to-gas ratio = SGChemDustToGasRatio x Milky Way at every Z (chemistry, TreeCol dust column, single-star radiation pressure); default scales it with the cell Z / 0.014. A fresh start stops if InitMetallicity puts the dust above the metals
 #SGCHEM_KEEP_IC_ABUNDANCES      # fresh starts keep SGChemTracAbund from the IC file (default: H2 and CO zero, x(H+) = 1e-4); the IC needs the dataset
+#TEST_SGCHEM_PRINT_THERMAL_PROPERTIES  # test only (test/sgchem_thermal_state): after each cooling step print what ThermalProperties returns for the cell, next to the stored chemistry state
 #METALS                         # top-level switch to enable tracking metallicities / different heavy elements (with multiple species optional) for gas and stars [must be included in ICs or injected via dynamical feedback; needed for some routines]
 #METALS_EXTRA_PASSIVE_SPECIES=3 # append this many passive species to Metallicity[] (carried, diffused and written, not used by cooling); for module-defined tracers, first slot METALS_EXTRA_PASSIVE_SPECIES_OFFSET
 #DISK_BETA_COOL                 # simple 'beta-cooling' for protoplanetary-disk problems: relax gas internal energy to a constant irradiation floor on t_cool=beta/Omega (params BetaCool_Beta, BetaCool_Tirr). mutually exclusive with COOLING
