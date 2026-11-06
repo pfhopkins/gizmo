@@ -78,7 +78,7 @@ def gas(fname):
         g = F["PartType0"]
         child = g["ParticleChildIDsNumber"][()] if "ParticleChildIDsNumber" in g else np.zeros(len(g["Masses"]), dtype=int)
         s = F["PartType4"]
-        return dict(m=g["Masses"][()], z=g["Metallicity"][()][:, 0], u=g["InternalEnergy"][()], v=g["Velocities"][()], child=child, id=g["ParticleIDs"][()],
+        return dict(m=g["Masses"][()], z=g["Metallicity"][()].reshape(len(g["Masses"]), -1)[:, 0], u=g["InternalEnergy"][()], v=g["Velocities"][()], child=child, id=g["ParticleIDs"][()],
                     x=g["Coordinates"][()], sm=s["Masses"][()], sv=s["Velocities"][()], sid=s["ParticleIDs"][()], sx=s["Coordinates"][()], L=F["Header"].attrs["BoxSize"])
 
 
