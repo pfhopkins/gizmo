@@ -13,6 +13,8 @@ supernovae inject. Each case is checked in two independent halves, from GIZMO's 
 
 Their product is the full budget (E - E0 - N_SN*1e51)/(N_SN*1e51), which is printed for each case.
 
+  test_sne_broadcast_timestep_conserves_energy:  the hydro half again, built with SNE_BROADCAST_TIMESTEP.
+
 Cases differ in gas cell mass and in TimeMax at fixed physical duration (TimeMax sets the integer
 timestep ladder; the long-TimeMax runs stop at T_END on a 'stop' file). The 'resolved' case caps the
 timestep at ~5 kyr, so cells hit by a supernova are already on steps short compared with their
@@ -21,6 +23,7 @@ integration is resolved.
 """
 
 import re
+import shutil
 import subprocess
 import time
 from os import environ, makedirs
@@ -56,6 +59,11 @@ TOL_HYDRO = 0.05
 # superbubble that is percent-level (0.4% at 100 Msun, 1.9% at 10 Msun, measured with the weighting
 # defect below removed), so 5% bounds it with margin.
 TOL_FEEDBACK = 0.05
+# Hydro with SNE_BROADCAST_TIMESTEP. It removes the error at the explosion (+45% to +280% without it), but
+# the blast's expansion through cells on steps set by the unchanged CourantFac leaves +5% to +16% (100 and
+# 10 Msun), comparable to the coupling error above at 100 Msun. A 4x smaller Courant factor, or a non-local
+# Courant condition broadcast through the gravity tree, takes it below 1% at 1.3-2x the cost: see the PR.
+TOL_HYDRO_SBT = 0.20
 
 # name: (gas cell mass [Msun], TimeMax, MaxSizeTimestep)
 CASES = {
@@ -90,31 +98,37 @@ def _param(case, xfail_cases, reason):
     return pytest.param(case, marks=marks, id=case)
 
 
-_BUILT = False
+VARIANTS = {"": (), "_sbt": ("SNE_BROADCAST_TIMESTEP",)}  # suffix: extra Config.sh flags
+_BUILT = set()
 _RESULTS = {}
 
 
-def _build_once():
-    global _BUILT
-    if not _BUILT:
-        build_gizmo_for_test(TEST_NAME, NUM_THREADS)
-        _BUILT = True
+def _build_once(variant=""):
+    """Build each variant once and keep it as its own binary: every build rewrites GIZMO in the test directory."""
+    if variant not in _BUILT:
+        build_gizmo_for_test(TEST_NAME, NUM_THREADS, VARIANTS[variant])
+        shutil.copy2(TEST_DIR / "GIZMO", TEST_DIR / _binary(variant))
+        _BUILT.add(variant)
+
+
+def _binary(variant):
+    return f"GIZMO{variant or '_default'}"
 
 
 def _ic_path(m_gas):
     return f"ics/ics_m{m_gas:g}_000"
 
 
-def _write_params(case, m_gas, time_max, max_dt):
+def _write_params(case, m_gas, time_max, max_dt, variant=""):
     """Per-case parameterfile (relative to the test directory)."""
     text = (TEST_DIR / f"{TEST_NAME}.params").read_text()
-    subs = {"InitCondFile": _ic_path(m_gas), "OutputDir": f"output_{case}",
+    subs = {"InitCondFile": _ic_path(m_gas), "OutputDir": f"output_{case}{variant}",
             "TimeMax": f"{time_max:.10g}", "MaxSizeTimestep": f"{max_dt:.10g}"}
     for key, val in subs.items():
         text, n = re.subn(rf"^{key}\s+\S+", f"{key}    {val}", text, flags=re.M)
         assert n == 1, key
     makedirs(TEST_DIR / "params", exist_ok=True)
-    name = f"params/{case}.params"
+    name = f"params/{case}{variant}.params"
     (TEST_DIR / name).write_text(text)
     return name
 
@@ -124,7 +138,7 @@ def _synced_times(logfile):
         return [float(m.group(1)) for m in re.finditer(r"^Energy \(synced\) t=(\S+)", f.read(), re.M)]
 
 
-def _run_case(case):
+def _run_case(case, variant=""):
     """Run GIZMO for one case from the test directory, stopping it once a full synchronization at or
     past T_END has been reported."""
     m_gas, time_max, max_dt = CASES[case]
@@ -133,12 +147,12 @@ def _run_case(case):
     ic = TEST_DIR / f"{_ic_path(m_gas)}.hdf5"
     if not ic.exists():
         make_ics(str(ic), m_gas=m_gas)
-    params = _write_params(case, m_gas, time_max, max_dt)
-    _robust_replace_dir(str(TEST_DIR / f"output_{case}"))
-    makedirs(TEST_DIR / f"output_{case}")
+    params = _write_params(case, m_gas, time_max, max_dt, variant)
+    _robust_replace_dir(str(TEST_DIR / f"output_{case}{variant}"))
+    makedirs(TEST_DIR / f"output_{case}{variant}")
     env = dict(environ, OMP_NUM_THREADS=str(NUM_THREADS), GIZMO_STOPFILE_INTERVAL_SEC="0")
-    cmd = mpi_launch_command(NUM_RANKS, NUM_THREADS) + ["./GIZMO", params, "2"]
-    out, err = TEST_DIR / f"test_{TEST_NAME}_{case}.out", TEST_DIR / f"test_{TEST_NAME}_{case}.err"
+    cmd = mpi_launch_command(NUM_RANKS, NUM_THREADS) + [f"./{_binary(variant)}", params, "2"]
+    out, err = TEST_DIR / f"test_{TEST_NAME}_{case}{variant}.out", TEST_DIR / f"test_{TEST_NAME}_{case}{variant}.err"
     timeout = _resolve_test_timeout(None)
     t_start = time.time()
     with open(out, "w") as fo, open(err, "w") as fe:
@@ -147,7 +161,7 @@ def _run_case(case):
             time.sleep(2)
             times = _synced_times(out)
             if times and times[-1] >= T_END * (1 - 1e-9):
-                (TEST_DIR / f"output_{case}" / "stop").touch()
+                (TEST_DIR / f"output_{case}{variant}" / "stop").touch()
             if timeout is not None and time.time() - t_start > timeout:
                 proc.kill()
                 pytest.skip(f"{case} exceeded {timeout}s timeout; GIZMO subprocess killed")
@@ -155,16 +169,16 @@ def _run_case(case):
         raise RuntimeError(f"GIZMO exited with status {proc.returncode} for {case}; see {out}, {err}")
 
 
-def energy_budget(case):
+def energy_budget(case, variant=""):
     """(E - E0, E_fb, N_SN) at the last full synchronization at or before T_END."""
-    if case in _RESULTS:
-        return _RESULTS[case]
+    if (case, variant) in _RESULTS:
+        return _RESULTS[(case, variant)]
     m_gas = CASES[case][0]
     if not environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
-        _build_once()
-        _run_case(case)
+        _build_once(variant)
+        _run_case(case, variant)
     rows = []
-    with open(TEST_DIR / f"test_{TEST_NAME}_{case}.out") as f:
+    with open(TEST_DIR / f"test_{TEST_NAME}_{case}{variant}.out") as f:
         for line in f:
             if line.startswith("Energy (synced)"):
                 kv = dict(x.split("=") for x in line.split()[2:])
@@ -175,14 +189,14 @@ def energy_budget(case):
     t, E, E_fb = reached[-1]
     with h5py.File(TEST_DIR / f"{_ic_path(m_gas)}.hdf5", "r") as F:  # the gas starts static
         E0 = float(np.sum(F["PartType0/Masses"][:] * F["PartType0/InternalEnergy"][:]))
-    events = np.atleast_2d(np.loadtxt(TEST_DIR / f"output_{case}" / "MechFeedbackEvents.txt"))
+    events = np.atleast_2d(np.loadtxt(TEST_DIR / f"output_{case}{variant}" / "MechFeedbackEvents.txt"))
     n_sn = float(events[events[:, 0] <= t, 3].sum())
     assert n_sn >= 2, f"{case}: only {n_sn:g} supernovae by t={t:g}; the test needs overlapping events"
     total = (E - E0 - n_sn * E51_CODE) / (n_sn * E51_CODE)
-    print(f"{case}: t={t:.4g} N_SN={n_sn:g} (dE-E_fb)/E_fb={(E - E0 - E_fb) / E_fb:+.4f} "
+    print(f"{case}{variant}: t={t:.4g} N_SN={n_sn:g} (dE-E_fb)/E_fb={(E - E0 - E_fb) / E_fb:+.4f} "
           f"E_fb/(N_SN E51)={E_fb / (n_sn * E51_CODE):.4f} total (dE-N_SN E51)/(N_SN E51)={total:+.4f}")
-    _RESULTS[case] = (E - E0, E_fb, n_sn)
-    return _RESULTS[case]
+    _RESULTS[(case, variant)] = (E - E0, E_fb, n_sn)
+    return _RESULTS[(case, variant)]
 
 
 @pytest.mark.parametrize("case", [_param(c, HYDRO_XFAIL_CASES, _HYDRO_XFAIL) for c in CASES])
@@ -202,4 +216,15 @@ def test_feedback_delivers_sn_energy(case):
     assert abs(err) < TOL_FEEDBACK, (
         f"{case}: mechanical feedback deposited {E_fb / E51_CODE:.3f} E51 for {n_sn:g} supernovae: "
         f"E_fb/(N_SN*1e51 erg) - 1 = {err:+.4f} (tolerance {TOL_FEEDBACK:.0%})"
+    )
+
+
+@pytest.mark.parametrize("case", sorted(HYDRO_XFAIL_CASES))
+def test_sne_broadcast_timestep_conserves_energy(case):
+    """The cases the default build fails, with SNE_BROADCAST_TIMESTEP"""
+    dE, E_fb, n_sn = energy_budget(case, "_sbt")
+    err = (dE - E_fb) / E_fb
+    assert abs(err) < TOL_HYDRO_SBT, (
+        f"{case} (SNE_BROADCAST_TIMESTEP): (dE - E_fb)/E_fb = {err:+.4f} (tolerance {TOL_HYDRO_SBT:.0%}); "
+        f"dE = {dE / E51_CODE:.3f} E51, E_fb = {E_fb / E51_CODE:.3f} E51, N_SN = {n_sn:g}"
     )
