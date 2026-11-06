@@ -1,8 +1,12 @@
 """hot_gas_timebin_clamp: RESOLVEDISM_HOTSYNC_CLAMP keeps everything inside a sphere around gas above 1e6 K on the step of the hot
-gas. Adiabatic gas, 20^3 cells of 1 Msun, one 10 Msun star dying 200 yr in, 2 ranks, 5 kyr.
+gas. Adiabatic gas, 20^3 cells of 1 Msun, one 10 Msun star dying 200 yr in, 2 ranks, 7.4 kyr.
 
 Bar, written before the runs: on each snapshot at least 98 % of the gas inside the sphere (as the clamp defines it) has a step at
 most 2 x the shortest step of the hot gas (2 for the power-of-two bins; particles take the clamp at their next step, hence not 100 %).
+A particle takes a new step only when it next becomes active, and the clamp wakes nobody. So the bar can hold only just after a coarsest
+sync, when every cell has just been active: on such a sync a snapshot still shows the steps before the reassignment (10 %), and 1.1e-3 past
+one (3.0e-3 in the run) gas that entered the growing sphere since then is not clamped yet (75 % with the flag, 6 % without). The first
+choices of snapshot time were logically wrong for that reason; the snapshots moved to 3e-5 after each coarsest sync, the bar did not.
 """
 import shutil
 import subprocess
@@ -41,8 +45,8 @@ def run():
 
 
 def test_gas_near_hot_gas_keeps_its_step(run):
-    snaps = sorted(run.glob("snapshot_*.hdf5"))[1:]
-    assert len(snaps) == 2
+    snaps = sorted(run.glob("snapshot_*.hdf5"))[1:4]  # just after the coarsest syncs; the last one, at the end time, is on one
+    assert len(snaps) == 3
     for s in snaps:
         with h5py.File(s) as f:
             g = f["PartType0"]

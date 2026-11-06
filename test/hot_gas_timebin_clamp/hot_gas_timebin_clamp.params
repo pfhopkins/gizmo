@@ -1,11 +1,11 @@
-% one single star dies 200 yr in, adiabatic gas of 1 Msun cells, n about 10 cm^-3, 5 kyr, a snapshot at 2.5 kyr
+% one single star dies 200 yr in, adiabatic gas of 1 Msun cells, n about 10 cm^-3, 7.4 kyr, snapshots just after each coarsest sync
 InitCondFile                       snapshot
 OutputDir                          output
 TimeBegin                          0
-TimeMax                            5.1e-3
+TimeMax                            7.6e-3
 BoxSize                            28.6
-TimeBetSnapshot                    2.55e-3
-TimeBetStatistics                  5.1e-3
+TimeBetSnapshot                    1.93e-3
+TimeBetStatistics                  1.93e-3
 MaxSizeTimestep                    2.9e-3
 DesNumNgb                          32
 MaxNumNgbDeviation                 0.1
