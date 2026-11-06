@@ -1399,6 +1399,10 @@
 #define NGB_PAIR_CACHE
 #endif
 
+#if defined(HYDRO_PAIR_ONCE) && (defined(_OPENMP) || defined(OPENMP) || defined(BOX_SHEARING) || defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#error "HYDRO_PAIR_ONCE: pure-MPI MFM only (j-side writes are not thread-safe; shearing, dilation, SPH and MFV fluxes are not handled)"
+#endif
+
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
 #error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
 #endif
