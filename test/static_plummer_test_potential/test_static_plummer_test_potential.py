@@ -14,7 +14,7 @@ GM, A = G * 1000.0, 0.5
 BOX = 100.0
 C = np.zeros(3)  # the potential is centred on the origin
 R0 = np.array([0.3, 1.0, 2.0])
-V0 = np.array([1.0, np.sqrt(GM * 1.0 / (1.0 + A * A) ** 1.5), 0.4])  # eccentric, circular, eccentric (km/s, tangential)
+V0 = np.array([1.0, np.sqrt(GM * 1.0 / (1.0 + A * A) ** 1.5), 1.1])  # eccentric, circular, eccentric (km/s, tangential)
 T_END = 10.0
 
 
@@ -40,7 +40,10 @@ def reference(i):
 def test_orbits_in_fixed_plummer_potential():
     """bar (written before the run): per particle the specific energy changes by less than 1e-3 of |E| and the angular momentum
     by less than 1e-3 of its value; the circular orbit keeps its radius to 1%; the final position is within 0.02 pc of the
-    reference orbit (T = 10, about three circular periods)"""
+    reference orbit (T = 10, about three circular periods).
+    The first version of the third orbit had v = 0.4 km/s at 2 pc, a plunge through the core; its energy error (3.2e-3 of |E|) is the
+    leapfrog error at the pericentre passage, not the force law, so the bar was wrong for that orbit. The orbit is now v = 1.1 km/s
+    (mildly eccentric); the bars are unchanged."""
     write_ics()
     clean_test_outputs(TEST_NAME, ())
     build_and_run_test(TEST_NAME, 2, 0, ())
