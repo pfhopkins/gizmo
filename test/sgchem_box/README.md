@@ -17,6 +17,7 @@ metals from `InitMetallicity`, GIZMO's element pattern) built with `SGCHEM` (net
   the final H2, H+, CO and dust temperature equal the standalone run to 1e-8 (measured 8e-10). A snapshot restart
   (flag 2) from snapshot 1 with the datasets renamed to the old `ChemcoolTracAbund`/`ChemcoolDustTemp` reads them
   (log line) and continues as the standalone run from that state (measured 4e-10).
+- `test_sgchem_solar_metallicity`: solar `InitMetallicity` 1 gives the total metal mass fraction 0.014 (stella_dev's solar value; without the stellar tables), 1e-12.
 - `test_sgchem_floor_temperature`: molecular gas (x(H2) = 0.49) restarted with a 60 K floor. The floor assumes atomic gas, so `u`
   stays above the solved energy; the snapshot `Temperature` equals one standalone step from the snapshot before to 1e-8.
 - `test_sgchem_restart`: the run stopped at t = 0.064 (restart files are written at `TimeMax`) and continued to 0.128 from
