@@ -25,7 +25,7 @@ import pytest
 from gizmo.units import G_CODE
 from gizmo.test import build_and_run_test, problem_output_dir
 
-TEST_NAME = "fewbody"
+TEST_NAME = "fewbody_merger"
 VARIANT = "merger"
 TEST_DIR = f"test/{TEST_NAME}"
 IC_FILE = f"{TEST_DIR}/{VARIANT}_ics.hdf5"
