@@ -1042,6 +1042,9 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
 double single_star_ejecta_mass_this_step(int i);
 void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);
+#ifdef HOT_GAS_TIMESTEP_SYNC
+extern int HotGasSyncArmed;
+#endif
 #ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
 int single_star_ejecta_cell_pending(int i);
 void single_star_ejecta_cell_payload(int i, struct addFB_evaluate_data_in_ *in, double *E_code);

@@ -1057,7 +1057,13 @@
 #define  GALSF_GENERATIONS     1    /*!< Number of star particles that may be created per gas particle */
 #endif
 
+#if defined(HOT_GAS_TIMESTEP_SYNC) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#error "HOT_GAS_TIMESTEP_SYNC asks inactive cells for their step, which refreezes their dilation factor"
+#endif
 #ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+#ifndef HOT_GAS_TIMESTEP_SYNC
+#define HOT_GAS_TIMESTEP_SYNC /* one-sided hydro fluxes: the young blast of a cell needs its neighbours on its step */
+#endif
 #if !defined(GALSF_FB_MECHANICAL) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
 #error "GALSF_SINGLE_STARS_SN_EJECTA_CELL needs GALSF_FB_MECHANICAL, GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
 #endif

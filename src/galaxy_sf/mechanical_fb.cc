@@ -335,6 +335,9 @@ void mechanical_fb_calc_toplevel(void)
         int any_local = (num_active > 0) ? 1 : 0, any_active = 0;
         MPI_Allreduce(&any_local, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         if(!any_active) { return; }
+#ifdef HOT_GAS_TIMESTEP_SYNC
+        HotGasSyncArmed = 1;
+#endif
 
         /* persistent grow-only buffer: no per-step alloc or O(N_gas) zero. The
          * buffer is all-zero at entry by the drain-zero invariant below.
