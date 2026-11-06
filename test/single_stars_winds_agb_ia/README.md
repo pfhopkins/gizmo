@@ -17,5 +17,6 @@ Checks:
    this lattice);
 3. 1 and 4 ranks give the same wind mass (1e-12).
 - the energy gained by gas and star closes to 1e-3 on 1/2 M v^2 of the wind returned: each cell closes its share in the star frame.
+- a 150 Msun star's steady wind in 1e7 K gas moving out of it at 0.75 v_w, n_H = 1: run minus a twin with no wind owed (the flow's hydro drift cancels) closes to 2 % on 1/2 M v^2. The weighting pass sums use the ejecta mass, not the star's.
 
 Reference: the tables (cumulative wind ejecta read with h5py at the star's grid node) and conservation laws.
