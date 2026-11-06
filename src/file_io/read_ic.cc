@@ -1034,6 +1034,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS: /* fixed per element once set (its body's normalisation): read back, never recomputed; an absent dataset arrives as -1 = not set */
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].TensileFlawsPerMass = *fp++;}
+#endif
+            break;
+
         case IO_EOS_STRESS_TENSOR: /* evolved deviatoric stress: element 3*k+kf is S[kf][k], the inverse of the snapshot writer */
 #ifdef EOS_ELASTIC
             for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {for(int kf = 0; kf < 3; kf++) {CellP[offset + n].Elastic_Stress_Tensor[kf][k] = *fp++;}}}
@@ -1466,6 +1472,9 @@ int read_file(char *fname, int readTask, int lastTask)
 #endif
 #ifdef EOS_DAMAGE_POROSITY
                    && blocknr != IO_DAMAGE_POROSITY_DAMAGE && blocknr != IO_DAMAGE_POROSITY_DISTENTION && blocknr != IO_DAMAGE_POROSITY_ACTVCRACKS
+#if ((EOS_DAMAGE_POROSITY) & 1)
+                   && blocknr != IO_DAMAGE_POROSITY_FLAWSPERMASS
+#endif
 #endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==1)||(HYDRO_FIX_MESH_MOTION==2)||(HYDRO_FIX_MESH_MOTION==3))
                    && blocknr != IO_PARTVEL
@@ -1532,7 +1541,7 @@ int read_file(char *fname, int readTask, int lastTask)
             if((blocknr == IO_EOS_STRESS_TENSOR || blocknr == IO_EOS_RECENT_YIELD_MEMORY || blocknr == IO_EOS_STRENGTH_FRACTION) && RestartFlag == 0 && All.ICFormat != 3) {continue;} /* a fresh binary IC need not carry it (stress then starts from zero); snapshots of every format do */
 #endif
 #ifdef EOS_DAMAGE_POROSITY
-            if((blocknr == IO_DAMAGE_POROSITY_DAMAGE || blocknr == IO_DAMAGE_POROSITY_DISTENTION || blocknr == IO_DAMAGE_POROSITY_ACTVCRACKS) && RestartFlag == 0 && All.ICFormat != 3) {continue;} /* likewise: an HDF5 IC may set them (e.g. a porous body), a fresh binary IC does not carry them */
+            if((blocknr == IO_DAMAGE_POROSITY_DAMAGE || blocknr == IO_DAMAGE_POROSITY_DISTENTION || blocknr == IO_DAMAGE_POROSITY_ACTVCRACKS || blocknr == IO_DAMAGE_POROSITY_FLAWSPERMASS) && RestartFlag == 0 && All.ICFormat != 3) {continue;} /* likewise: an HDF5 IC may set them (e.g. a porous body), a fresh binary IC does not carry them */
 #endif
 #ifdef MHD_NON_IDEAL_EVOLVED_FLUX
             if(blocknr == IO_NONIDEAL_FLUX && All.ICFormat != 3) {continue;} /* HDF5 only: legacy binary formats never carry it (it starts from zero) */
@@ -1836,6 +1845,13 @@ int read_file(char *fname, int readTask, int lastTask)
                                         {
                                             if(get_input_float_bytes(blocknr) == sizeof(double)) {for(int n_one = 0; n_one < pc; n_one++) {((double *) CommBuffer)[n_one] = 1;}}
                                             else {for(int n_one = 0; n_one < pc; n_one++) {((float *) CommBuffer)[n_one] = 1;}}
+                                        }
+#endif
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+                                        if(blocknr == IO_DAMAGE_POROSITY_FLAWSPERMASS) /* absent: -1 = not set, told apart from a present value (zero included); init decides what an unset element gets */
+                                        {
+                                            if(get_input_float_bytes(blocknr) == sizeof(double)) {for(int n_one = 0; n_one < pc; n_one++) {((double *) CommBuffer)[n_one] = -1;}}
+                                            else {for(int n_one = 0; n_one < pc; n_one++) {((float *) CommBuffer)[n_one] = -1;}}
                                         }
 #endif
                                         if(RestartFlag == 2 && (blocknr == IO_EOS_STRESS_TENSOR || blocknr == IO_EOS_RECENT_YIELD_MEMORY) && ThisTask == readTask && !printed_missing_stress)

@@ -764,6 +764,7 @@ enum iofields
   IO_DAMAGE_POROSITY_DAMAGE,      /* Grady-Kipp scalar D in [0,1] */
   IO_DAMAGE_POROSITY_DISTENTION,  /* Jutzi P-alpha alpha in [1,alpha_0] */
   IO_DAMAGE_POROSITY_ACTVCRACKS,  /* Grady-Kipp active-crack radius */
+  IO_DAMAGE_POROSITY_FLAWSPERMASS, /* tensile flaws per unit mass of the element's body */
   IO_FLUIDTYPE,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };

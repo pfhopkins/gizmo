@@ -1167,6 +1167,11 @@ int merge_particles_ij(int i, int j)
 #ifdef EOS_ELASTIC
     if(solid_material_is_elastic(CellP[j].CompositionType)) {CellP[j].RecentYieldMemory = DMAX(CellP[j].RecentYieldMemory, CellP[i].RecentYieldMemory);} /* the merged element keeps the tensile correction off if either part was flowing plastically; a gas survivor carries none */
 #endif
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+    /* mass-weighted: the merged element's flaw cutoff (TensileFlawsPerMass x mass) is the sum of its parts' (if they came from different
+       bodies, which one is lost); its flaw thresholds are redrawn from the survivor's identity, as a split child's are from its own */
+    CellP[j].TensileFlawsPerMass = wt_j*CellP[j].TensileFlawsPerMass + wt_i*CellP[i].TensileFlawsPerMass;
+#endif
 /* the electron and neutral fractions are part of the same cached composition and mix the same way. each
    is declared by whichever of the cooling and photo-ionization modules owns it, so each line carries that
    field's own existence condition; they differ because only the neutral fraction is declared when the
