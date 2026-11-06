@@ -17,7 +17,7 @@
 void energy_budget_sync_report(void)
 {
     if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;} /* not synchronized: sum is meaningless */
-    double loc[3] = {0,0,0}, glob[3]; int i;
+    double loc[4] = {0,0,0,0}, glob[4]; int i;
     for(i = 0; i < NumPart; i++)
     {
         if(P[i].Type == 0 && P[i].Mass > 0)
@@ -27,11 +27,15 @@ void energy_budget_sync_report(void)
             loc[2] += P[i].Mass;
         }
     }
-    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+#if defined(GALSF_FB_MECHANICAL) && !defined(GALSF_USE_SNE_ONELOOP_SCHEME)
+    loc[3] = energy_budget_mechfb_injected_local();
+#endif
+    MPI_Allreduce(loc, glob, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(ThisTask == 0)
     {
-        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e\n",
-               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2]); fflush(stdout);
+        /* E_fb: cumulative energy mechanical feedback has written into gas Vel/InternalEnergy (0 without it) */
+        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e E_fb=%.10e\n",
+               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2], glob[3]); fflush(stdout);
     }
 }
 
@@ -398,6 +402,14 @@ void set_non_standard_physics_for_current_time(void)
 
 void calculate_non_standard_physics(void)
 {
+#ifdef SNE_BROADCAST_TIMESTEP /* mechanical feedback after the closing kick, which used pre-SN forces (Durier & Dalla Vecchia 2012); then wake the gas the SNe can reach before its step ends */
+    {   int any_fb_local = 0, any_fb_global = 0;
+        for(int i : ActiveParticleList) {if(addFB_evaluate_active_check(i, -1)) {any_fb_local = 1; break;}}
+        MPI_Allreduce(&any_fb_local, &any_fb_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(any_fb_global) {mechanical_fb_calc_toplevel();}
+        sne_causal_wake();
+    }
+#endif
 #ifdef PARTICLE_EXCISION
     apply_excision();
 #endif

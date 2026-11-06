@@ -217,7 +217,9 @@ void compute_stellar_feedback(void)
         int any_fb_local = 0, any_fb_global = 0;
         for(int i : ActiveParticleList) {if(addFB_evaluate_active_check(i, -1)) {any_fb_local = 1; break;}}
         MPI_Allreduce(&any_fb_local, &any_fb_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+#ifndef SNE_BROADCAST_TIMESTEP /* with it, deposited after the closing kick instead (calculate_non_standard_physics) */
         if(any_fb_global) {mechanical_fb_calc_toplevel();}  /* call the parent loop for the different mechanical fb sub-loops */
+#endif
     }
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif

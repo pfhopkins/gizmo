@@ -4486,6 +4486,8 @@ The following test problems are available in the `test/` directory of the source
 
 **GMC Cooling with Radiation Transfer** (`test/gmc_cooling_rt`): As above, but with radiation transport enabled (`RT_EVOLVE_INTENSITIES` or LEBRON), testing the combined cooling+RT pipeline.
 
+**Adiabatic Supernova Cluster** (`test/sn_cluster_adiabatic`): A 1e3 Msun FIRE-3 stellar population (`GALSF_FB_MECHANICAL`, `GALSF_FB_FIRE_STELLAREVOLUTION=3`, `GALSF_SFR_IMF_SAMPLING`) in a uniform periodic box with no cooling, gravity, radiation or stellar mass loss, so the supernovae are the only energy source. Using the in-code synchronized energy tallies of `ENERGY_BUDGET_DIAGNOSTIC`, it checks separately that the hydro conserves the energy feedback deposits and that feedback deposits 1e51 erg per supernova, at two gas resolutions and two values of TimeMax for the same physical duration. See its README for the current (failing, xfail) status.
+
 **Shu 1977 Collapse** (`test/shu1977`): The classic isothermal sphere collapse solution from Shu (1977, ApJ, 214, 488). Tests self-gravitating isothermal gas dynamics and is a standard benchmark for star formation simulations.
 
 <a name="tests-additional-aneos"></a>

@@ -65,6 +65,9 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
     
+#ifdef SNE_BROADCAST_TIMESTEP
+    MyFloat SNe_ArrivalTime; /*!< earliest time after an SN that its ejecta can reach this cell; caps the next step it chooses */
+#endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
     MyFloat time_since_last_treeforce;
     MyFloat tdyn_step_for_treeforce;
