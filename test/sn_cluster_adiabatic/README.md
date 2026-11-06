@@ -36,7 +36,7 @@ case, at the last synchronization at or before t = 10.24:
 * `test_feedback_delivers_sn_energy`: |E_fb / (N_SN * 1e51 erg) - 1| < 5%. The coupling alone. The FIRE
   scheme is built to couple exactly E_SN per event, except that ejecta mass joins a cell at the cell's
   specific internal energy, adding m_ej * u_cell; inside a hot bubble that is percent-level (0.4% at
-  100 Msun and 1.9% at 10 Msun with the weighting defect below removed).
+  100 Msun and 1.9% at 10 Msun).
 
 The product of the two is the full budget, (E - E0 - N_SN E51)/(N_SN E51), which each case prints.
 
@@ -44,32 +44,30 @@ Cases: gas cell mass 100 or 10 Msun, and TimeMax = 10.24 or 1024 at the same 10 
 fixes the integer timestep ladder, (TimeMax - TimeBegin) 2^-k; the long-TimeMax runs are stopped on a
 `stop` file once a synchronization reaches t = 10.24). Runtime about 2 minutes at 2 ranks x 2 threads.
 
-## Current status: both checks fail, and are marked xfail(strict=True)
+## Current status
 
-| case | (dE - E_fb)/E_fb | E_fb/(N_SN E51) | total |
+The hydro check fails in the default build (marked xfail(strict=True)) and passes with `SNE_BROADCAST_TIMESTEP`; the
+coupling check passes.
+
+| case | (dE - E_fb)/E_fb, default | with `SNE_BROADCAST_TIMESTEP` | E_fb/(N_SN E51) |
 |---|---|---|---|
-| m100_resolved | +0.0001 | 1.082 | +0.082 |
-| m100_TimeMax1x | +0.45 (-0.48 on 1 rank) | 1.056 | +0.53 |
-| m100_TimeMax100x | +2.78 | 1.059 | +3.00 |
-| m10_TimeMax1x | +2.49 | 1.022 | +2.56 |
-| m10_TimeMax100x | +1.63 | 1.020 | +1.68 |
+| m100_resolved | -0.0003 | | 1.004 |
+| m100_TimeMax1x | +0.37 (+0.45 before the coupling fix) | +0.057 | 1.001 |
+| m100_TimeMax100x | +3.40 | +0.052 | 1.005 |
+| m10_TimeMax1x | +2.13 | +0.161 | 1.018 |
+| m10_TimeMax100x | +1.56 | +0.143 | 1.016 |
 
-1. Hydro. Nearly all of the error appears at the first supernova into quiescent gas (+8 to +22 E51 from
-   one 1e51 erg event); later supernovae into the hot bubble add +0.1-0.6 E51 each. Mechanical feedback
-   is deposited after the density pass and before the hydro force pass (`compute_stellar_feedback` in
+1. Hydro. Nearly all of the default build's error appears at the first supernova into quiescent gas (+8 to
+   +22 E51 from one 1e51 erg event); later supernovae into the hot bubble add +0.1-0.6 E51 each. Mechanical
+   feedback is deposited after the density pass and before the hydro force pass (`compute_stellar_feedback` in
    `core/accel.cc`), so a receiving cell's closing half-kick of its old step applies the post-explosion
-   pressure forces over half a step sized for the pre-explosion gas. The error is a steep function of
-   that step: capping MaxSizeTimestep at 10 Msun (uncapped cold gas sits on 0.16) gives +2.49 (0.16),
-   +0.32 (0.08), +0.09 (0.04), -0.02 (0.02), -0.02 (0.01), -0.003 (0.005). That steepness is why a
-   change of TimeMax, which shifts the ladder by a non-power-of-2 factor, changes the result so much.
-   Moving the deposit after the closing kick alone makes it far worse (+78 at 10 Msun, since the
-   receivers then keep their pre-explosion step); doing that and also raising the receivers' signal
-   speed and waking them leaves -0.19 to -0.21 (10 Msun) and -0.57 to +0.36 (100 Msun).
-2. Coupling. The weighting pass (loop -1 in `galaxy_sf/mechanical_fb.cc`) uses the star particle's mass
-   in place of the ejecta mass in the mass-loading factor of the kinetic-energy coefficients, so the
-   momentum solution mis-sizes the kinetic energy and the thermal residual no longer makes up the total:
-   over-injection when the star particle outweighs the ejecta (1.06-1.08 at 100 Msun; 1.5 for one
-   1e3 Msun particle in 100 Msun gas), under-injection when it does not (0.87 at 1 Msun). Using the true
-   ejecta mass in that pass gives 1.004.
+   pressure forces over half a step sized for the pre-explosion gas. The error is a steep function of that
+   step: capping MaxSizeTimestep at 10 Msun (uncapped cold gas sits on 0.16) gives +2.49 (0.16), +0.32
+   (0.08), +0.09 (0.04), -0.02 (0.02), -0.02 (0.01), -0.003 (0.005). That steepness is why a change of
+   TimeMax, which shifts the ladder by a non-power-of-2 factor, changes the result so much.
+   `SNE_BROADCAST_TIMESTEP` removes the error at the explosion; the residual builds up as the blasts expand.
+2. Coupling. The weighting pass (loop -1 in `galaxy_sf/mechanical_fb.cc`) used the star particle's mass in
+   place of the ejecta mass in the mass-loading factor of the kinetic-energy coefficients, so the momentum
+   solution mis-sized the kinetic energy: 1.06-1.08 at 100 Msun, 1.5 for one 1e3 Msun particle in 100 Msun
+   gas, 0.87 at 1 Msun. It now uses the ejecta mass of the channel being coupled (SNe, else mass loss).
 
-When a fix lands, the corresponding cases show as XPASS; remove their xfail marks.
