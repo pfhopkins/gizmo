@@ -36,6 +36,9 @@ else
 
         if(target >= 0)	/* if no target is given, export will not occur */
         {
+#ifdef NGB_PSEUDO_HOOK
+            NGB_PSEUDO_HOOK(no);
+#endif
             if(exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
             {
                 exportflag[task] = target;

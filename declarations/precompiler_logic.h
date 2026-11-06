@@ -401,6 +401,11 @@
                               96 ranks -> 31 on M2e4. */
 #endif
 #endif
+#if !defined(DOMAIN_KEEP_OWNERS) && !defined(DOMAIN_KEEP_OWNERS_OFF)
+#define DOMAIN_KEEP_OWNERS /* owner-preserving segment assignment (domain.cc); M2e5 at 384 ranks: 99.7% -> 32-57% of particles
+                              exchanged per decomposition, domain time 0.41x; M2e4 at 48 ranks on one node: 0.98x wall. Opt out with
+                              DOMAIN_KEEP_OWNERS_OFF. */
+#endif
 #define INPUT_POSITIONS_IN_DOUBLE
 #define OUTPUT_POTENTIAL
 #if !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL) && !defined(IO_NO_GRADUAL_SNAPSHOT_RESTART) /* opt-out: restart from a snapshot at physical timesteps, no ramp */
@@ -1349,6 +1354,12 @@
 
 #if (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS)) && !defined(MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION) && !defined(MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION)
 #define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION // the shock-side counterpart: never merge a pair whose merge would thermalize the majority of the energy involved, which cooling then radiates away, making the merge an artificial unresolved shock. MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION opts back out
+#endif
+
+/* gradient and hydro loops reuse the first gradient pass's local pair searches (mesh/ngb.cc); identical results, memory ~ 4 B per
+   neighbour of every active cell. Off where something between those loops could change a search: NGB_PAIR_CACHE_OFF opts out */
+#if !defined(NGB_PAIR_CACHE_OFF) && !defined(TURB_DIFF_DYNAMIC) && !defined(MHD_MODIFIED_GRADIENT) && !(defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES) && (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4))
+#define NGB_PAIR_CACHE
 #endif
 
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)

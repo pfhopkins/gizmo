@@ -8,8 +8,20 @@
 #include "../core/proto.h"
 #include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
+#include <vector>
+#include <algorithm>
 #include <limits>
+#ifdef TREE_REFRESH_INCREMENTAL
+static std::vector<int> MomentsDirtyNodes; /* local nodes marked since the last refresh or build */
+static long long MomentsDirtyBuild = -1;   /* TreeOpsCount[TREEOPS_BUILD] when the list was started */
+static int force_treeupdate_pseudos_norecurse = 0; /* force_treeupdate_pseudos rebuilds one node, not its subtree */
+static void force_refresh_node_moments_incremental(void);
+#endif
 #ifdef TREE_INTEGRITY_AUDITS
+static double AuditBuildRootLen = 0;    /* root length at the last whole-tree build: node lengths before any drift widening follow from it */
+static int AuditFreshAll = 1;           /* every node's moments were derived at the last build or refresh */
+static std::vector<char> AuditNodeFresh; /* else: per node, derived (or installed from its owner) at the last refresh */
+static void force_refresh_audit(const char *tag);
 static void force_tree_moments_audit(const char *tag);
 #endif
 #ifdef SUBFIND
@@ -70,6 +82,16 @@ double ForceSoftening_KernelRadius(int p)
 #endif
 
     return All.ForceSoftening[P[p].Type]; // this is the default if nothing was active above
+}
+
+/* a member's softening as a node's maxsoft takes it: a sink's kernel radius counts as well */
+double force_member_softening(int p)
+{
+    double soft = ForceSoftening_KernelRadius(p);
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    if(P[p].Type == 5 && P[p].KernelRadius > soft) {soft = P[p].KernelRadius;}
+#endif
+    return soft;
 }
 
 
@@ -170,7 +192,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
            collective, so the decision is reduced. */
         int whole = (mp == NULL && npart == NumPart), whole_all;
         MPI_Allreduce(&whole, &whole_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-        if(whole_all) {force_tree_full_audit(1, "build"); force_tree_geometry_audit("build");}
+        if(whole_all) {AuditBuildRootLen = Nodes[All.MaxPart].len; AuditFreshAll = 1; force_tree_full_audit(1, "build"); force_tree_geometry_audit("build");}
     }
 #endif
 
@@ -955,68 +977,188 @@ void force_update_node_recursive(int no, int sib, int father)
  *  top-level tree-nodes of the domain grid.  This data can then be used to
  *  update the pseudo-particles on each CPU accordingly.
  */
-void force_exchange_pseudodata(void)
+struct DomainNODE /* the top-level leaf moments the owning rank sends to every other rank */
 {
-    int i, no, m, ta, recvTask;
-    int *recvcounts, *recvoffset;
-    struct DomainNODE
-    {
-        Vec3<MyFloat> s;
-        Vec3<MyFloat> vs;
-        MyFloat mass;
+    Vec3<MyFloat> s;
+    Vec3<MyFloat> vs;
+    MyFloat mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        MyFloat gasmass;
+    MyFloat gasmass;
 #endif
-        MyFloat hmax;
-        MyFloat vmax;
-        MyFloat divVmax;
-        long N_part;
-        MyFloat maxsoft;
+    MyFloat hmax;
+    MyFloat vmax;
+    MyFloat divVmax;
+    long N_part;
+    MyFloat maxsoft;
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-        MyFloat cr_injection;
+    MyFloat cr_injection;
 #endif
 #ifdef RT_USE_GRAVTREE
-        MyFloat stellar_lum[N_RT_FREQ_BINS];
+    MyFloat stellar_lum[N_RT_FREQ_BINS];
 #ifdef CHIMES_STELLAR_FLUXES
-        double chimes_stellar_lum_G0[CHIMES_LOCAL_UV_NBINS];
-        double chimes_stellar_lum_ion[CHIMES_LOCAL_UV_NBINS];
+    double chimes_stellar_lum_G0[CHIMES_LOCAL_UV_NBINS];
+    double chimes_stellar_lum_ion[CHIMES_LOCAL_UV_NBINS];
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        Vec3<MyFloat> rt_source_lum_s;
-        Vec3<MyFloat> rt_source_lum_vs;
+    Vec3<MyFloat> rt_source_lum_s;
+    Vec3<MyFloat> rt_source_lum_vs;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-        MyFloat sink_lum; Vec3<MyFloat> sink_lum_grad;
+    MyFloat sink_lum; Vec3<MyFloat> sink_lum_grad;
 #endif
 #ifdef SINK_CALC_DISTANCES
-        MyFloat sink_mass;
-        Vec3<MyFloat> sink_pos;
+    MyFloat sink_mass;
+    Vec3<MyFloat> sink_pos;
 #ifdef SINK_NODE_MOTION_TRACKED
-        int N_SINK;
-        Vec3<MyFloat> sink_vel;
+    int N_SINK;
+    Vec3<MyFloat> sink_vel;
 #ifdef SPECIAL_POINT_MOTION
-        Vec3<MyFloat> sink_acc;
+    Vec3<MyFloat> sink_acc;
 #endif
 #ifdef  SINGLE_STAR_FB_TIMESTEPLIMIT
-        MyFloat MaxFeedbackVel;
+    MyFloat MaxFeedbackVel;
 #endif
 #endif
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;
+    SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-        Vec3<MyFloat> s_dm;
-        Vec3<MyFloat> vs_dm;
-        MyFloat mass_dm;
+    Vec3<MyFloat> s_dm;
+    Vec3<MyFloat> vs_dm;
+    MyFloat mass_dm;
 #endif
-        unsigned int bitflags;
+    unsigned int bitflags;
 #ifdef PAD_STRUCTURES
-        int pad[3];
+    int pad[3];
 #endif
+};
+
+static void domainnode_pack(struct DomainNODE *dm, int no)
+{
+    /* read out the multipole moments from the local base cells */
+    dm->s = Nodes[no].u.d.s;
+    dm->vs = Extnodes[no].vs;
+    dm->mass = Nodes[no].u.d.mass;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    dm->gasmass = Nodes[no].gasmass;
+#endif
+    dm->hmax = Extnodes[no].hmax;
+    dm->vmax = Extnodes[no].vmax;
+    dm->divVmax = Extnodes[no].divVmax;
+    dm->bitflags = Nodes[no].u.d.bitflags;
+    dm->N_part = Nodes[no].N_part;
+    dm->maxsoft = Nodes[no].maxsoft;
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    dm->cr_injection = Nodes[no].cr_injection;
+#endif
+#ifdef RT_USE_GRAVTREE
+    int k; for(k=0;k<N_RT_FREQ_BINS;k++) {dm->stellar_lum[k] = Nodes[no].stellar_lum[k];}
+#ifdef CHIMES_STELLAR_FLUXES
+    for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
+    {
+        dm->chimes_stellar_lum_G0[k] = Nodes[no].chimes_stellar_lum_G0[k];
+        dm->chimes_stellar_lum_ion[k] = Nodes[no].chimes_stellar_lum_ion[k];
     }
-    *DomainMoment;
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    dm->rt_source_lum_s = Nodes[no].rt_source_lum_s;
+    dm->rt_source_lum_vs = Extnodes[no].rt_source_lum_vs;
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    dm->sink_lum = Nodes[no].sink_lum;
+    dm->sink_lum_grad = Nodes[no].sink_lum_grad;
+#endif
+#ifdef SINK_CALC_DISTANCES
+    dm->sink_mass = Nodes[no].sink_mass;
+    dm->sink_pos = Nodes[no].sink_pos;
+#ifdef SINK_NODE_MOTION_TRACKED
+    dm->sink_vel = Nodes[no].sink_vel;
+    dm->N_SINK = Nodes[no].N_SINK;
+#ifdef SPECIAL_POINT_MOTION
+    dm->sink_acc = Nodes[no].sink_acc;
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+    dm->MaxFeedbackVel = Nodes[no].MaxFeedbackVel;
+#endif
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    dm->tidal_tensorps_prevstep = Nodes[no].tidal_tensorps_prevstep;
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    dm->s_dm = Nodes[no].s_dm;
+    dm->mass_dm = Nodes[no].mass_dm;
+    dm->vs_dm = Extnodes[no].vs_dm;
+#endif
+}
+
+static void domainnode_unpack(const struct DomainNODE *dm, int no)
+{
+    Nodes[no].u.d.s = dm->s;
+    Extnodes[no].vs = dm->vs;
+    Nodes[no].u.d.mass = dm->mass;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    Nodes[no].gasmass = dm->gasmass;
+#endif
+    Extnodes[no].hmax = dm->hmax;
+    Extnodes[no].vmax = dm->vmax;
+    Extnodes[no].divVmax = dm->divVmax;
+    Nodes[no].N_part = dm->N_part;
+    Nodes[no].u.d.bitflags = (Nodes[no].u.d.bitflags & (~((1 << BITFLAG_MULTIPLEPARTICLES)))) | (dm->bitflags & ((1 << BITFLAG_MULTIPLEPARTICLES)));
+    Nodes[no].maxsoft = dm->maxsoft;
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    Nodes[no].cr_injection = dm->cr_injection;
+#endif
+#ifdef RT_USE_GRAVTREE
+    int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = dm->stellar_lum[k];}
+#ifdef CHIMES_STELLAR_FLUXES
+    for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
+    {
+        Nodes[no].chimes_stellar_lum_G0[k] = dm->chimes_stellar_lum_G0[k];
+        Nodes[no].chimes_stellar_lum_ion[k] = dm->chimes_stellar_lum_ion[k];
+    }
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    Nodes[no].rt_source_lum_s = dm->rt_source_lum_s;
+    Extnodes[no].rt_source_lum_vs = dm->rt_source_lum_vs;
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    Nodes[no].sink_lum = dm->sink_lum;
+    Nodes[no].sink_lum_grad = dm->sink_lum_grad;
+#endif
+#ifdef SINK_CALC_DISTANCES
+    Nodes[no].sink_mass = dm->sink_mass;
+    Nodes[no].sink_pos = dm->sink_pos;
+#ifdef SINK_NODE_MOTION_TRACKED
+    Nodes[no].sink_vel = dm->sink_vel;
+    Nodes[no].N_SINK = dm->N_SINK;
+#ifdef SPECIAL_POINT_MOTION
+    Nodes[no].sink_acc = dm->sink_acc;
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+    Nodes[no].MaxFeedbackVel = dm->MaxFeedbackVel;
+#endif
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    Nodes[no].tidal_tensorps_prevstep = dm->tidal_tensorps_prevstep;
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    Nodes[no].s_dm = dm->s_dm;
+    Nodes[no].mass_dm = dm->mass_dm;
+    Extnodes[no].vs_dm = dm->vs_dm;
+#endif
+}
+
+void force_exchange_pseudodata(void)
+{
+    int i, no, m, ta, recvTask;
+    int *recvcounts, *recvoffset;
+    struct DomainNODE *DomainMoment;
     
     
     DomainMoment = (struct DomainNODE *) mymalloc("DomainMoment", NTopleaves * sizeof(struct DomainNODE));
@@ -1027,79 +1169,37 @@ void force_exchange_pseudodata(void)
         {
             no = DomainNodeIndex[i];
             
-            /* read out the multipole moments from the local base cells */
-            DomainMoment[i].s = Nodes[no].u.d.s;
-            DomainMoment[i].vs = Extnodes[no].vs;
-            DomainMoment[i].mass = Nodes[no].u.d.mass;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-            DomainMoment[i].gasmass = Nodes[no].gasmass;
-#endif
-            DomainMoment[i].hmax = Extnodes[no].hmax;
-            DomainMoment[i].vmax = Extnodes[no].vmax;
-            DomainMoment[i].divVmax = Extnodes[no].divVmax;
-            DomainMoment[i].bitflags = Nodes[no].u.d.bitflags;
-            DomainMoment[i].N_part = Nodes[no].N_part;
-            DomainMoment[i].maxsoft = Nodes[no].maxsoft;
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-            DomainMoment[i].cr_injection = Nodes[no].cr_injection;
-#endif
-#ifdef RT_USE_GRAVTREE
-            int k; for(k=0;k<N_RT_FREQ_BINS;k++) {DomainMoment[i].stellar_lum[k] = Nodes[no].stellar_lum[k];}
-#ifdef CHIMES_STELLAR_FLUXES
-            for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
-            {
-                DomainMoment[i].chimes_stellar_lum_G0[k] = Nodes[no].chimes_stellar_lum_G0[k];
-                DomainMoment[i].chimes_stellar_lum_ion[k] = Nodes[no].chimes_stellar_lum_ion[k];
-            }
-#endif
-#endif
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-            DomainMoment[i].rt_source_lum_s = Nodes[no].rt_source_lum_s;
-            DomainMoment[i].rt_source_lum_vs = Extnodes[no].rt_source_lum_vs;
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-            DomainMoment[i].sink_lum = Nodes[no].sink_lum;
-            DomainMoment[i].sink_lum_grad = Nodes[no].sink_lum_grad;
-#endif
-#ifdef SINK_CALC_DISTANCES
-            DomainMoment[i].sink_mass = Nodes[no].sink_mass;
-            DomainMoment[i].sink_pos = Nodes[no].sink_pos;
-#ifdef SINK_NODE_MOTION_TRACKED
-            DomainMoment[i].sink_vel = Nodes[no].sink_vel;
-            DomainMoment[i].N_SINK = Nodes[no].N_SINK;
-#ifdef SPECIAL_POINT_MOTION
-            DomainMoment[i].sink_acc = Nodes[no].sink_acc;
-#endif
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-            DomainMoment[i].MaxFeedbackVel = Nodes[no].MaxFeedbackVel;
-#endif
-#endif
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-            DomainMoment[i].tidal_tensorps_prevstep = Nodes[no].tidal_tensorps_prevstep;
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-            DomainMoment[i].s_dm = Nodes[no].s_dm;
-            DomainMoment[i].mass_dm = Nodes[no].mass_dm;
-            DomainMoment[i].vs_dm = Extnodes[no].vs_dm;
-#endif
+            domainnode_pack(&DomainMoment[i], no);
         }
 
-    /* share the pseudo-particle data accross CPUs */
+    /* share the pseudo-particle data accross CPUs: one Allgatherv of each rank's segments packed
+       back to back, instead of one per segment (byte copies only, so the result is unchanged) */
     recvcounts = (int *) mymalloc("recvcounts", sizeof(int) * NTask);
     recvoffset = (int *) mymalloc("recvoffset", sizeof(int) * NTask);
-    
-    for(m = 0; m < DomainSegmentsPerTask; m++)
+    size_t node_bytes = sizeof(struct DomainNODE);
+    int ntot = 0;
+    for(recvTask = 0; recvTask < NTask; recvTask++)
     {
-        for(recvTask = 0; recvTask < NTask; recvTask++)
-        {
-            recvcounts[recvTask] =
-            (DomainEndList[recvTask * DomainSegmentsPerTask + m] - DomainStartList[recvTask * DomainSegmentsPerTask + m] +
-             1) * sizeof(struct DomainNODE);
-            recvoffset[recvTask] = DomainStartList[recvTask * DomainSegmentsPerTask + m] * sizeof(struct DomainNODE);
-        }
-        MPI_Allgatherv(MPI_IN_PLACE, recvcounts[ThisTask], MPI_BYTE, &DomainMoment[0], recvcounts, recvoffset, MPI_BYTE, MPI_COMM_WORLD);
+        int n = 0;
+        for(m = 0; m < DomainSegmentsPerTask; m++) {n += DomainEndList[recvTask * DomainSegmentsPerTask + m] - DomainStartList[recvTask * DomainSegmentsPerTask + m] + 1;}
+        recvcounts[recvTask] = n * node_bytes;
+        recvoffset[recvTask] = ntot * node_bytes;
+        ntot += n;
     }
+    char *packed = (char *) mymalloc("DomainMomentPacked", IMAX(ntot, 1) * node_bytes);
+    for(m = 0, i = recvoffset[ThisTask]; m < DomainSegmentsPerTask; m++)
+    {
+        int first = DomainStartList[ThisTask * DomainSegmentsPerTask + m], n = DomainEndList[ThisTask * DomainSegmentsPerTask + m] - first + 1;
+        if(n > 0) {memcpy(packed + i, &DomainMoment[first], n * node_bytes); i += n * node_bytes;}
+    }
+    MPI_Allgatherv(MPI_IN_PLACE, recvcounts[ThisTask], MPI_BYTE, packed, recvcounts, recvoffset, MPI_BYTE, MPI_COMM_WORLD);
+    for(ta = 0; ta < NTask; ta++)
+        for(m = 0, i = recvoffset[ta]; m < DomainSegmentsPerTask; m++)
+        {
+            int first = DomainStartList[ta * DomainSegmentsPerTask + m], n = DomainEndList[ta * DomainSegmentsPerTask + m] - first + 1;
+            if(n > 0) {memcpy(&DomainMoment[first], packed + i, n * node_bytes); i += n * node_bytes;}
+        }
+    myfree(packed);
     
     myfree(recvoffset);
     myfree(recvcounts);
@@ -1112,61 +1212,7 @@ void force_exchange_pseudodata(void)
                 {
                     no = DomainNodeIndex[i];
                     
-                    Nodes[no].u.d.s = DomainMoment[i].s;
-                    Extnodes[no].vs = DomainMoment[i].vs;
-                    Nodes[no].u.d.mass = DomainMoment[i].mass;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-                    Nodes[no].gasmass = DomainMoment[i].gasmass;
-#endif
-                    Extnodes[no].hmax = DomainMoment[i].hmax;
-                    Extnodes[no].vmax = DomainMoment[i].vmax;
-                    Extnodes[no].divVmax = DomainMoment[i].divVmax;
-                    Nodes[no].N_part = DomainMoment[i].N_part;
-                    Nodes[no].u.d.bitflags = (Nodes[no].u.d.bitflags & (~((1 << BITFLAG_MULTIPLEPARTICLES)))) | (DomainMoment[i].bitflags & ((1 << BITFLAG_MULTIPLEPARTICLES)));
-                    Nodes[no].maxsoft = DomainMoment[i].maxsoft;
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-                    Nodes[no].cr_injection = DomainMoment[i].cr_injection;
-#endif
-#ifdef RT_USE_GRAVTREE
-                    int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = DomainMoment[i].stellar_lum[k];}
-#ifdef CHIMES_STELLAR_FLUXES
-                    for (k = 0; k < CHIMES_LOCAL_UV_NBINS; k++)
-                    {
-                        Nodes[no].chimes_stellar_lum_G0[k] = DomainMoment[i].chimes_stellar_lum_G0[k];
-                        Nodes[no].chimes_stellar_lum_ion[k] = DomainMoment[i].chimes_stellar_lum_ion[k];
-                    }
-#endif
-#endif
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-                    Nodes[no].rt_source_lum_s = DomainMoment[i].rt_source_lum_s;
-                    Extnodes[no].rt_source_lum_vs = DomainMoment[i].rt_source_lum_vs;
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-                    Nodes[no].sink_lum = DomainMoment[i].sink_lum;
-                    Nodes[no].sink_lum_grad = DomainMoment[i].sink_lum_grad;
-#endif
-#ifdef SINK_CALC_DISTANCES
-                    Nodes[no].sink_mass = DomainMoment[i].sink_mass;
-                    Nodes[no].sink_pos = DomainMoment[i].sink_pos;
-#ifdef SINK_NODE_MOTION_TRACKED
-                    Nodes[no].sink_vel = DomainMoment[i].sink_vel;
-                    Nodes[no].N_SINK = DomainMoment[i].N_SINK;
-#ifdef SPECIAL_POINT_MOTION
-                    Nodes[no].sink_acc = DomainMoment[i].sink_acc;
-#endif
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                    Nodes[no].MaxFeedbackVel = DomainMoment[i].MaxFeedbackVel;
-#endif
-#endif
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-                    Nodes[no].tidal_tensorps_prevstep = DomainMoment[i].tidal_tensorps_prevstep;
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-                    Nodes[no].s_dm = DomainMoment[i].s_dm;
-                    Nodes[no].mass_dm = DomainMoment[i].mass_dm;
-                    Extnodes[no].vs_dm = DomainMoment[i].vs_dm;
-#endif
+                    domainnode_unpack(&DomainMoment[i], no);
                 }
     
     myfree(DomainMoment);
@@ -1246,6 +1292,9 @@ void force_treeupdate_pseudos(int no)
     {
         if(p >= All.MaxPart && p < All.MaxPart + MaxNodes)    /* internal node */
         {
+#ifdef TREE_REFRESH_INCREMENTAL
+            if(!force_treeupdate_pseudos_norecurse)
+#endif
             if(Nodes[p].u.d.bitflags & (1 << BITFLAG_INTERNAL_TOPLEVEL)) {force_treeupdate_pseudos(p);}
             
             mass += (Nodes[p].u.d.mass);
@@ -1515,6 +1564,9 @@ void force_add_element_to_tree(int iparent, int ichild)
      * Indexing Extnodes with it would be a wild write, so leave the opening-criterion fields
      * alone; the child inherits the same -1 and is skipped by the other consumers too. */
     if(Father[iparent] < 0) {return;}
+#ifdef TREE_REFRESH_INCREMENTAL
+    force_mark_moments_dirty(ichild);
+#endif
     TreeAuditMomentsPending = 1; /* the next refresh audits the moments un-strided */
     /* Raise the motion and kernel bounds the child needs over its whole ancestor chain: each of
        those nodes prunes searches by its own bounds, so stopping at the immediate parent leaves the
@@ -3923,6 +3975,273 @@ static double force_predict_to_current(int i, Vec3<MyDouble> &x)
 }
 
 
+/* Per-node pieces of force_refresh_node_moments, shared with its incremental variant. */
+static void refresh_zero_node(int no)
+{
+    int k; (void) k;
+    /* len is the one geometric field kept across the refresh, and drifting is what widens it to
+       cover members that moved since the node was last current; stamping without it loses that
+       interval until the next build */
+    if(Nodes[no].Ti_current != All.Ti_Current) {force_drift_node(no, All.Ti_Current);}
+    unsigned int saved_bitflags = Nodes[no].u.d.bitflags; /* preserve topology flags (TOPLEVEL etc) */
+    Nodes[no].u.d.mass = 0;
+    Nodes[no].u.d.s = {};
+    Nodes[no].GravCost = 0;
+    Nodes[no].Ti_current = All.Ti_Current;
+    Nodes[no].N_part = 0;
+    Nodes[no].maxsoft = 0;
+    Nodes[no].u.d.bitflags = saved_bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT) | (1 << BITFLAG_INTERNAL_TOPLEVEL));
+    Extnodes[no].vs = {};
+    Extnodes[no].hmax = 0;
+    Extnodes[no].vmax = 0;
+    Extnodes[no].divVmax = 0;
+    Extnodes[no].dp = {};
+#ifdef SINK_NODE_MOTION_TRACKED
+    Extnodes[no].sink_dp = {};
+#endif
+    Extnodes[no].Ti_lastkicked = All.Ti_Current;
+    Extnodes[no].Flag = GlobFlag;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    Nodes[no].gasmass = 0;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    Nodes[no].cr_injection = 0;
+#endif
+#ifdef RT_USE_GRAVTREE
+    for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k]=0;}
+#ifdef CHIMES_STELLAR_FLUXES
+    for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {Nodes[no].chimes_stellar_lum_G0[k]=0; Nodes[no].chimes_stellar_lum_ion[k]=0;}
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    Nodes[no].rt_source_lum_s = {};
+    Extnodes[no].rt_source_lum_vs = {};
+    Extnodes[no].rt_source_lum_dp = {};
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    Nodes[no].sink_lum = 0;
+    Nodes[no].sink_lum_grad = {};
+#endif
+#ifdef SINK_CALC_DISTANCES
+    Nodes[no].sink_mass = 0;
+    Nodes[no].sink_pos = {};
+#ifdef SINK_NODE_MOTION_TRACKED
+    Nodes[no].sink_vel = {};
+    Nodes[no].N_SINK = 0;
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+    Nodes[no].MaxFeedbackVel = 0;
+#endif
+#endif
+#ifdef SPECIAL_POINT_MOTION
+    Nodes[no].sink_acc = {};
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    Nodes[no].tidal_tensorps_prevstep = {};
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    Nodes[no].mass_dm = 0;
+    Nodes[no].s_dm = {};
+    Extnodes[no].vs_dm = {};
+    Extnodes[no].dp_dm = {};
+#endif
+}
+
+/* add particle i (predicted to now) to the mass-weighted sums of node no */
+static void refresh_add_particle(int no, int i)
+{
+    int k; (void) k;
+    struct particle_data *pa = &P[i];
+    Vec3<MyDouble> pos; double kernel_now = force_predict_to_current(i, pos); /* lagging members are read at now, not where they were last drifted */
+    if(pa->dp[0] != 0 || pa->dp[1] != 0 || pa->dp[2] != 0) {pa->dp = {};} /* its current velocity enters the node here, so the kicks still pending in dp are counted: flushed later by force_update_tree, they would be counted twice (conditional, as in the build) */
+
+    Nodes[no].u.d.mass += pa->Mass;
+    Nodes[no].u.d.s += pa->Mass * pos;
+    Extnodes[no].vs += pa->Mass * pa->Vel;
+    Nodes[no].N_part++;
+
+    MyFloat vmax_p = particle_motion_speed_bound(i);
+    if(vmax_p > Extnodes[no].vmax) {Extnodes[no].vmax = vmax_p;}
+
+    double soft_p = ForceSoftening_KernelRadius(i);
+    if(soft_p > Nodes[no].maxsoft) {Nodes[no].maxsoft = soft_p;}
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    if(pa->Type == 5) {if(P[i].KernelRadius > Nodes[no].maxsoft) {Nodes[no].maxsoft = P[i].KernelRadius;}}
+#endif
+
+    if(pa->Type == 0)
+    {
+        double htmp = DMIN(All.MaxKernelRadius, kernel_now);
+        if(htmp > Extnodes[no].hmax) {Extnodes[no].hmax = htmp;}
+        if(P[i].Particle_DivVel > Extnodes[no].divVmax) {Extnodes[no].divVmax = P[i].Particle_DivVel;}
+    }
+
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    if(pa->Type == 0) {Nodes[no].gasmass += pa->Mass;}
+#if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
+    if(pa->Type == 5) {Nodes[no].gasmass += P[i].Sink_Mass_Reservoir;}
+#endif
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    Nodes[no].cr_injection += cr_get_source_injection_rate(i, P, CellP);
+#endif
+#ifdef RT_USE_GRAVTREE
+    {double lum[N_RT_FREQ_BINS];
+#ifdef CHIMES_STELLAR_FLUXES
+    double chimes_lum_G0[CHIMES_LOCAL_UV_NBINS], chimes_lum_ion[CHIMES_LOCAL_UV_NBINS];
+    int active_check = rt_get_source_luminosity_chimes(i,1,lum,chimes_lum_G0,chimes_lum_ion, P, CellP);
+#else
+    int active_check = rt_get_source_luminosity(i,1,lum, P, CellP);
+#endif
+    if(active_check) {
+        double l_sum = 0;
+        for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] += lum[k]; l_sum += lum[k];}
+#ifdef CHIMES_STELLAR_FLUXES
+        for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {Nodes[no].chimes_stellar_lum_G0[k] += chimes_lum_G0[k]; Nodes[no].chimes_stellar_lum_ion[k] += chimes_lum_ion[k];}
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+        Nodes[no].rt_source_lum_s += l_sum * pos;
+        Extnodes[no].rt_source_lum_vs += l_sum * pa->Vel;
+#endif
+    }}
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    if(pa->Type == 5 && pa->Mass > 0) {
+        double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, i);
+        Nodes[no].sink_lum += BHLum;
+#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
+        Nodes[no].sink_lum_grad += pa->Sink_Specific_AngMom * BHLum;
+#else
+        Nodes[no].sink_lum_grad += pa->GradRho * BHLum;
+#endif
+    }
+#endif
+#ifdef SINK_CALC_DISTANCES
+    if(pa->Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) {
+        Nodes[no].sink_mass += pa->Mass;
+        Nodes[no].sink_pos += pa->Mass * pos; /* store as mass-weighted sum, normalize later */
+#ifdef SINK_NODE_MOTION_TRACKED
+        Nodes[no].N_SINK += 1;
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+        Nodes[no].sink_vel += pa->Mass * pa->Vel; /* mass-weighted, normalize later */
+#endif
+#ifdef SPECIAL_POINT_MOTION
+        Nodes[no].sink_acc += pa->Mass * pa->Acc_Total_PrevStep;
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+        if(pa->MaxFeedbackVel > Nodes[no].MaxFeedbackVel) {Nodes[no].MaxFeedbackVel = pa->MaxFeedbackVel;}
+#endif
+    }
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    {for(k=0;k<6;k++) {Nodes[no].tidal_tensorps_prevstep.data[k] += pa->Mass * pa->tidal_tensorps_prevstep.data[k];}}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    if(pa->Type != 0) {Nodes[no].mass_dm += pa->Mass; Nodes[no].s_dm += pa->Mass * pos; Extnodes[no].vs_dm += pa->Mass * pa->Vel;}
+#endif
+}
+
+/* add child node no, still holding mass-weighted sums, into father */
+static void refresh_add_child_sums(int father, int no)
+{
+    int k; (void) k;
+
+    Nodes[father].u.d.mass += Nodes[no].u.d.mass;
+    Nodes[father].u.d.s += Nodes[no].u.d.s; /* still mass-weighted position sum */
+    Extnodes[father].vs += Extnodes[no].vs;
+    Nodes[father].N_part += Nodes[no].N_part;
+    if(Extnodes[no].hmax > Extnodes[father].hmax) {Extnodes[father].hmax = Extnodes[no].hmax;}
+    if(Extnodes[no].vmax > Extnodes[father].vmax) {Extnodes[father].vmax = Extnodes[no].vmax;}
+    if(Extnodes[no].divVmax > Extnodes[father].divVmax) {Extnodes[father].divVmax = Extnodes[no].divVmax;}
+    if(Nodes[no].maxsoft > Nodes[father].maxsoft) {Nodes[father].maxsoft = Nodes[no].maxsoft;}
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    Nodes[father].gasmass += Nodes[no].gasmass;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    Nodes[father].cr_injection += Nodes[no].cr_injection;
+#endif
+#ifdef RT_USE_GRAVTREE
+    for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[father].stellar_lum[k] += Nodes[no].stellar_lum[k];}
+#ifdef CHIMES_STELLAR_FLUXES
+    for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {Nodes[father].chimes_stellar_lum_G0[k] += Nodes[no].chimes_stellar_lum_G0[k]; Nodes[father].chimes_stellar_lum_ion[k] += Nodes[no].chimes_stellar_lum_ion[k];}
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    Nodes[father].rt_source_lum_s += Nodes[no].rt_source_lum_s;
+    Extnodes[father].rt_source_lum_vs += Extnodes[no].rt_source_lum_vs;
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    Nodes[father].sink_lum += Nodes[no].sink_lum;
+    Nodes[father].sink_lum_grad += Nodes[no].sink_lum_grad; /* still lum-weighted sum */
+#endif
+#ifdef SINK_CALC_DISTANCES
+    Nodes[father].sink_mass += Nodes[no].sink_mass;
+    Nodes[father].sink_pos += Nodes[no].sink_pos; /* propagate mass-weighted sum */
+#ifdef SINK_NODE_MOTION_TRACKED
+    Nodes[father].N_SINK += Nodes[no].N_SINK;
+    Nodes[father].sink_vel += Nodes[no].sink_vel;
+#endif
+#ifdef SPECIAL_POINT_MOTION
+    Nodes[father].sink_acc += Nodes[no].sink_acc;
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+    if(Nodes[no].sink_mass > 0 && Nodes[no].MaxFeedbackVel > Nodes[father].MaxFeedbackVel) {Nodes[father].MaxFeedbackVel = Nodes[no].MaxFeedbackVel;}
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    {for(k=0;k<6;k++) {Nodes[father].tidal_tensorps_prevstep.data[k] += Nodes[no].tidal_tensorps_prevstep.data[k];}}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    Nodes[father].mass_dm += Nodes[no].mass_dm;
+    Nodes[father].s_dm += Nodes[no].s_dm;
+    Extnodes[father].vs_dm += Extnodes[no].vs_dm;
+#endif
+}
+
+/* turn the mass-weighted sums of node no into centres, velocities, etc. */
+static void refresh_normalize(int no)
+{
+    int k; (void) k;
+    MyFloat mass = Nodes[no].u.d.mass;
+    if(mass > 0) {
+        Nodes[no].u.d.s /= mass;
+        Extnodes[no].vs /= mass;
+    } else {
+        Nodes[no].u.d.s = Nodes[no].center;
+        Extnodes[no].vs = {};
+    }
+    if(Nodes[no].N_part > 1) {Nodes[no].u.d.bitflags |= (1 << BITFLAG_MULTIPLEPARTICLES);} else {Nodes[no].u.d.bitflags &= ~(1 << BITFLAG_MULTIPLEPARTICLES);}
+#ifdef TREE_MAXSOFT_COVERS_HMAX
+    force_node_cover_soft(no); /* maxsoft was taken from the members' kernels as stored, hmax from them predicted to now */
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    {double l_tot=0; for(k=0;k<N_RT_FREQ_BINS;k++) {l_tot += Nodes[no].stellar_lum[k];}
+    if(l_tot > 0) {Nodes[no].rt_source_lum_s /= l_tot; Extnodes[no].rt_source_lum_vs /= l_tot;}
+    else {Nodes[no].rt_source_lum_s = Nodes[no].center; Extnodes[no].rt_source_lum_vs = {};}}
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    if(Nodes[no].sink_lum > 0) {Nodes[no].sink_lum_grad /= Nodes[no].sink_lum;} else {Nodes[no].sink_lum_grad = {0,0,1};}
+#endif
+#ifdef SINK_CALC_DISTANCES
+    if(Nodes[no].sink_mass > 0) {
+        Nodes[no].sink_pos /= Nodes[no].sink_mass;
+#ifdef SINK_NODE_MOTION_TRACKED
+        Nodes[no].sink_vel /= Nodes[no].sink_mass;
+#endif
+#ifdef SPECIAL_POINT_MOTION
+        Nodes[no].sink_acc /= Nodes[no].sink_mass;
+#endif
+    }
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    if(mass > 0) {MyFloat inv_mass = 1.0/(mass+MIN_REAL_NUMBER); for(k=0;k<6;k++) {Nodes[no].tidal_tensorps_prevstep.data[k] *= inv_mass;}}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    if(Nodes[no].mass_dm > 0) {Nodes[no].s_dm /= Nodes[no].mass_dm; Extnodes[no].vs_dm /= Nodes[no].mass_dm;} else {Nodes[no].s_dm = Nodes[no].center; Extnodes[no].vs_dm = {};}
+#endif
+}
+
 /*! Refresh tree node moments without rebuilding the tree structure. Uses bottom-up accumulation
  *  via Father[] pointers instead of u.suns[] (which are destroyed after the initial tree build
  *  since they share a union with u.d). Nodes are processed from high to low index, which gives
@@ -3939,74 +4258,7 @@ void force_refresh_node_moments(void)
 
     /* Step 1: zero all node moment fields (preserving structural fields: nextnode, sibling, father) */
     for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++)
-    {
-        /* len is the one geometric field kept across the refresh, and drifting is what widens it to
-           cover members that moved since the node was last current; stamping without it loses that
-           interval until the next build */
-        if(Nodes[no].Ti_current != All.Ti_Current) {force_drift_node(no, All.Ti_Current);}
-        unsigned int saved_bitflags = Nodes[no].u.d.bitflags; /* preserve topology flags (TOPLEVEL etc) */
-        Nodes[no].u.d.mass = 0;
-        Nodes[no].u.d.s = {};
-        Nodes[no].GravCost = 0;
-        Nodes[no].Ti_current = All.Ti_Current;
-        Nodes[no].N_part = 0;
-        Nodes[no].maxsoft = 0;
-        Nodes[no].u.d.bitflags = saved_bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT) | (1 << BITFLAG_INTERNAL_TOPLEVEL));
-        Extnodes[no].vs = {};
-        Extnodes[no].hmax = 0;
-        Extnodes[no].vmax = 0;
-        Extnodes[no].divVmax = 0;
-        Extnodes[no].dp = {};
-#ifdef SINK_NODE_MOTION_TRACKED
-        Extnodes[no].sink_dp = {};
-#endif
-        Extnodes[no].Ti_lastkicked = All.Ti_Current;
-        Extnodes[no].Flag = GlobFlag;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        Nodes[no].gasmass = 0;
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-        Nodes[no].cr_injection = 0;
-#endif
-#ifdef RT_USE_GRAVTREE
-        for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k]=0;}
-#ifdef CHIMES_STELLAR_FLUXES
-        for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {Nodes[no].chimes_stellar_lum_G0[k]=0; Nodes[no].chimes_stellar_lum_ion[k]=0;}
-#endif
-#endif
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-        Nodes[no].rt_source_lum_s = {};
-        Extnodes[no].rt_source_lum_vs = {};
-        Extnodes[no].rt_source_lum_dp = {};
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-        Nodes[no].sink_lum = 0;
-        Nodes[no].sink_lum_grad = {};
-#endif
-#ifdef SINK_CALC_DISTANCES
-        Nodes[no].sink_mass = 0;
-        Nodes[no].sink_pos = {};
-#ifdef SINK_NODE_MOTION_TRACKED
-        Nodes[no].sink_vel = {};
-        Nodes[no].N_SINK = 0;
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        Nodes[no].MaxFeedbackVel = 0;
-#endif
-#endif
-#ifdef SPECIAL_POINT_MOTION
-        Nodes[no].sink_acc = {};
-#endif
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        Nodes[no].tidal_tensorps_prevstep = {};
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-        Nodes[no].mass_dm = 0;
-        Nodes[no].s_dm = {};
-        Extnodes[no].vs_dm = {};
-        Extnodes[no].dp_dm = {};
-#endif
-    }
+    {refresh_zero_node(no);}
 
     /* Step 2: accumulate particle contributions into their immediate parent nodes.
        Store s as mass-weighted position sum (NOT center of mass yet) for propagation. */
@@ -4014,218 +4266,283 @@ void force_refresh_node_moments(void)
     {
         no = Father[i];
         if(no < 0) {continue;}
-        struct particle_data *pa = &P[i];
-        Vec3<MyDouble> pos; double kernel_now = force_predict_to_current(i, pos); /* lagging members are read at now, not where they were last drifted */
-        if(pa->dp[0] != 0 || pa->dp[1] != 0 || pa->dp[2] != 0) {pa->dp = {};} /* its current velocity enters the node here, so the kicks still pending in dp are counted: flushed later by force_update_tree, they would be counted twice (conditional, as in the build) */
-
-        Nodes[no].u.d.mass += pa->Mass;
-        Nodes[no].u.d.s += pa->Mass * pos;
-        Extnodes[no].vs += pa->Mass * pa->Vel;
-        Nodes[no].N_part++;
-
-        MyFloat vmax_p = particle_motion_speed_bound(i);
-        if(vmax_p > Extnodes[no].vmax) {Extnodes[no].vmax = vmax_p;}
-
-        double soft_p = ForceSoftening_KernelRadius(i);
-        if(soft_p > Nodes[no].maxsoft) {Nodes[no].maxsoft = soft_p;}
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-        if(pa->Type == 5) {if(P[i].KernelRadius > Nodes[no].maxsoft) {Nodes[no].maxsoft = P[i].KernelRadius;}}
-#endif
-
-        if(pa->Type == 0)
-        {
-            double htmp = DMIN(All.MaxKernelRadius, kernel_now);
-            if(htmp > Extnodes[no].hmax) {Extnodes[no].hmax = htmp;}
-            if(P[i].Particle_DivVel > Extnodes[no].divVmax) {Extnodes[no].divVmax = P[i].Particle_DivVel;}
-        }
-
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        if(pa->Type == 0) {Nodes[no].gasmass += pa->Mass;}
-#if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
-        if(pa->Type == 5) {Nodes[no].gasmass += P[i].Sink_Mass_Reservoir;}
-#endif
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-        Nodes[no].cr_injection += cr_get_source_injection_rate(i, P, CellP);
-#endif
-#ifdef RT_USE_GRAVTREE
-        {double lum[N_RT_FREQ_BINS];
-#ifdef CHIMES_STELLAR_FLUXES
-        double chimes_lum_G0[CHIMES_LOCAL_UV_NBINS], chimes_lum_ion[CHIMES_LOCAL_UV_NBINS];
-        int active_check = rt_get_source_luminosity_chimes(i,1,lum,chimes_lum_G0,chimes_lum_ion, P, CellP);
-#else
-        int active_check = rt_get_source_luminosity(i,1,lum, P, CellP);
-#endif
-        if(active_check) {
-            double l_sum = 0;
-            for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] += lum[k]; l_sum += lum[k];}
-#ifdef CHIMES_STELLAR_FLUXES
-            for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {Nodes[no].chimes_stellar_lum_G0[k] += chimes_lum_G0[k]; Nodes[no].chimes_stellar_lum_ion[k] += chimes_lum_ion[k];}
-#endif
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-            Nodes[no].rt_source_lum_s += l_sum * pos;
-            Extnodes[no].rt_source_lum_vs += l_sum * pa->Vel;
-#endif
-        }}
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-        if(pa->Type == 5 && pa->Mass > 0) {
-            double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, i);
-            Nodes[no].sink_lum += BHLum;
-#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-            Nodes[no].sink_lum_grad += pa->Sink_Specific_AngMom * BHLum;
-#else
-            Nodes[no].sink_lum_grad += pa->GradRho * BHLum;
-#endif
-        }
-#endif
-#ifdef SINK_CALC_DISTANCES
-        if(pa->Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) {
-            Nodes[no].sink_mass += pa->Mass;
-            Nodes[no].sink_pos += pa->Mass * pos; /* store as mass-weighted sum, normalize later */
-#ifdef SINK_NODE_MOTION_TRACKED
-            Nodes[no].N_SINK += 1;
-#endif
-#ifdef SINK_NODE_MOTION_TRACKED
-            Nodes[no].sink_vel += pa->Mass * pa->Vel; /* mass-weighted, normalize later */
-#endif
-#ifdef SPECIAL_POINT_MOTION
-            Nodes[no].sink_acc += pa->Mass * pa->Acc_Total_PrevStep;
-#endif
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-            if(pa->MaxFeedbackVel > Nodes[no].MaxFeedbackVel) {Nodes[no].MaxFeedbackVel = pa->MaxFeedbackVel;}
-#endif
-        }
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        {for(k=0;k<6;k++) {Nodes[no].tidal_tensorps_prevstep.data[k] += pa->Mass * pa->tidal_tensorps_prevstep.data[k];}}
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-        if(pa->Type != 0) {Nodes[no].mass_dm += pa->Mass; Nodes[no].s_dm += pa->Mass * pos; Extnodes[no].vs_dm += pa->Mass * pa->Vel;}
-#endif
+        refresh_add_particle(no, i);
     }
 
     /* Step 3: propagate node moments bottom-up. Children have higher indices than parents,
        so iterating in reverse order processes children before parents. At this stage s, vs,
-       sink_pos, sink_vel, etc. are stored as mass-weighted sums (not yet normalized). */
+       sink_pos, sink_vel, etc. are stored as mass-weighted sums (not yet normalized).
+       Top-level nodes do not propagate: their fathers are internal top-level nodes, whose moments
+       force_treeupdate_pseudos rebuilds below from their daughters. */
     for(no = All.MaxPart + Numnodestree - 1; no >= All.MaxPart; no--)
     {
+        if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) {continue;}
         int father = Nodes[no].u.d.father;
         if(father < All.MaxPart || father >= All.MaxPart + Numnodestree) {continue;} /* root or invalid */
-
-        Nodes[father].u.d.mass += Nodes[no].u.d.mass;
-        Nodes[father].u.d.s += Nodes[no].u.d.s; /* still mass-weighted position sum */
-        Extnodes[father].vs += Extnodes[no].vs;
-        Nodes[father].N_part += Nodes[no].N_part;
-        if(Extnodes[no].hmax > Extnodes[father].hmax) {Extnodes[father].hmax = Extnodes[no].hmax;}
-        if(Extnodes[no].vmax > Extnodes[father].vmax) {Extnodes[father].vmax = Extnodes[no].vmax;}
-        if(Extnodes[no].divVmax > Extnodes[father].divVmax) {Extnodes[father].divVmax = Extnodes[no].divVmax;}
-        if(Nodes[no].maxsoft > Nodes[father].maxsoft) {Nodes[father].maxsoft = Nodes[no].maxsoft;}
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        Nodes[father].gasmass += Nodes[no].gasmass;
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-        Nodes[father].cr_injection += Nodes[no].cr_injection;
-#endif
-#ifdef RT_USE_GRAVTREE
-        for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[father].stellar_lum[k] += Nodes[no].stellar_lum[k];}
-#ifdef CHIMES_STELLAR_FLUXES
-        for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {Nodes[father].chimes_stellar_lum_G0[k] += Nodes[no].chimes_stellar_lum_G0[k]; Nodes[father].chimes_stellar_lum_ion[k] += Nodes[no].chimes_stellar_lum_ion[k];}
-#endif
-#endif
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-        Nodes[father].rt_source_lum_s += Nodes[no].rt_source_lum_s;
-        Extnodes[father].rt_source_lum_vs += Extnodes[no].rt_source_lum_vs;
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-        Nodes[father].sink_lum += Nodes[no].sink_lum;
-        Nodes[father].sink_lum_grad += Nodes[no].sink_lum_grad; /* still lum-weighted sum */
-#endif
-#ifdef SINK_CALC_DISTANCES
-        Nodes[father].sink_mass += Nodes[no].sink_mass;
-        Nodes[father].sink_pos += Nodes[no].sink_pos; /* propagate mass-weighted sum */
-#ifdef SINK_NODE_MOTION_TRACKED
-        Nodes[father].N_SINK += Nodes[no].N_SINK;
-        Nodes[father].sink_vel += Nodes[no].sink_vel;
-#endif
-#ifdef SPECIAL_POINT_MOTION
-        Nodes[father].sink_acc += Nodes[no].sink_acc;
-#endif
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        if(Nodes[no].sink_mass > 0 && Nodes[no].MaxFeedbackVel > Nodes[father].MaxFeedbackVel) {Nodes[father].MaxFeedbackVel = Nodes[no].MaxFeedbackVel;}
-#endif
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        {for(k=0;k<6;k++) {Nodes[father].tidal_tensorps_prevstep.data[k] += Nodes[no].tidal_tensorps_prevstep.data[k];}}
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-        Nodes[father].mass_dm += Nodes[no].mass_dm;
-        Nodes[father].s_dm += Nodes[no].s_dm;
-        Extnodes[father].vs_dm += Extnodes[no].vs_dm;
-#endif
+        refresh_add_child_sums(father, no);
     }
 
-    /* Step 4: normalize mass-weighted sums to get actual COM, velocities, etc. */
+    /* Step 4: normalize mass-weighted sums to get actual COM, velocities, etc. Skipped where step 5
+       overwrites everything this writes: internal top-level nodes (force_treeupdate_pseudos) and
+       top-level leaves of other ranks (force_exchange_pseudodata). */
     for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++)
     {
-        MyFloat mass = Nodes[no].u.d.mass;
-        if(mass > 0) {
-            Nodes[no].u.d.s /= mass;
-            Extnodes[no].vs /= mass;
-        } else {
-            Nodes[no].u.d.s = Nodes[no].center;
-            Extnodes[no].vs = {};
-        }
-        if(Nodes[no].N_part > 1) {Nodes[no].u.d.bitflags |= (1 << BITFLAG_MULTIPLEPARTICLES);} else {Nodes[no].u.d.bitflags &= ~(1 << BITFLAG_MULTIPLEPARTICLES);}
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-        {double l_tot=0; for(k=0;k<N_RT_FREQ_BINS;k++) {l_tot += Nodes[no].stellar_lum[k];}
-        if(l_tot > 0) {Nodes[no].rt_source_lum_s /= l_tot; Extnodes[no].rt_source_lum_vs /= l_tot;}
-        else {Nodes[no].rt_source_lum_s = Nodes[no].center; Extnodes[no].rt_source_lum_vs = {};}}
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-        if(Nodes[no].sink_lum > 0) {Nodes[no].sink_lum_grad /= Nodes[no].sink_lum;} else {Nodes[no].sink_lum_grad = {0,0,1};}
-#endif
-#ifdef SINK_CALC_DISTANCES
-        if(Nodes[no].sink_mass > 0) {
-            Nodes[no].sink_pos /= Nodes[no].sink_mass;
-#ifdef SINK_NODE_MOTION_TRACKED
-            Nodes[no].sink_vel /= Nodes[no].sink_mass;
-#endif
-#ifdef SPECIAL_POINT_MOTION
-            Nodes[no].sink_acc /= Nodes[no].sink_mass;
-#endif
-        }
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        if(mass > 0) {MyFloat inv_mass = 1.0/(mass+MIN_REAL_NUMBER); for(k=0;k<6;k++) {Nodes[no].tidal_tensorps_prevstep.data[k] *= inv_mass;}}
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-        if(Nodes[no].mass_dm > 0) {Nodes[no].s_dm /= Nodes[no].mass_dm; Extnodes[no].vs_dm /= Nodes[no].mass_dm;} else {Nodes[no].s_dm = Nodes[no].center; Extnodes[no].vs_dm = {};}
-#endif
+        unsigned int bf = Nodes[no].u.d.bitflags;
+        if((bf & (1 << BITFLAG_INTERNAL_TOPLEVEL)) || ((bf & (1 << BITFLAG_TOPLEVEL)) && !(bf & (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT)))) {continue;}
+        refresh_normalize(no);
     }
 
+#ifdef TREE_REFRESH_INCREMENTAL
+    MomentsDirtyNodes.clear(); TreeMomentsDirtyFlag = 0; /* the zero pass above dropped every mark */
+#endif
     /* Step 5: sync pseudo-particle data across MPI ranks */
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
 
     PRINT_STATUS(" ..tree node moments refreshed.");
 #ifdef TREE_INTEGRITY_AUDITS
-    /* STARFORGE-type runs refresh near-every step and the moments re-derivation costs about one
-       extra refresh, so sample it -- EXCEPT on the first refresh after a particle-list mutation,
-       which must always be audited: a corrupted Father[] shows up as a moment mismatch right
-       here, and a pure count-stride can let the corruption reach the dynamics first. The cheap
-       exactly-once topology walk runs every time. Builds (rarer) always audit fully. The moments
-       audit is collective and the pending flag rank-local, so the decision is reduced. */
+    AuditFreshAll = 1;
+    force_refresh_audit("refresh");
+#endif
+}
+
+
+#ifdef TREE_INTEGRITY_AUDITS
+/* STARFORGE-type runs refresh near-every step and the moments re-derivation costs about one
+   extra refresh, so sample it -- EXCEPT on the first refresh after a particle-list mutation,
+   which must always be audited: a corrupted Father[] shows up as a moment mismatch right
+   here, and a pure count-stride can let the corruption reach the dynamics first. The cheap
+   exactly-once topology walk runs every time. Builds (rarer) always audit fully. The moments
+   audit is collective and the pending flag rank-local, so the decision is reduced; the stride
+   counter is rank-uniform, as refreshes are. */
+static void force_refresh_audit(const char *tag)
+{
+    static int refresh_audit_counter = 0;
+    int audit_moments_now = ((++refresh_audit_counter % 8) == 0) || TreeAuditMomentsPending, audit_all;
+    MPI_Allreduce(&audit_moments_now, &audit_all, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    TreeAuditMomentsPending = 0;
+    force_tree_full_audit(audit_all, tag);
+    if(audit_all) {force_tree_geometry_audit(tag);}
+}
+#endif
+
+
+/*! Refresh the moments if any rank flagged them stale (rank-uniform decision); called before every gravity
+ *  evaluation that walks the standing tree. */
+void force_refresh_moments_if_stale(void)
+{
+#ifndef TREE_REFRESH_INCREMENTAL
+    int TreeMomentsStaleFlag_global;
+    MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(TreeMomentsStaleFlag_global)
     {
-        static int refresh_audit_counter = 0;
-        int audit_moments_now = ((++refresh_audit_counter % 8) == 0) || TreeAuditMomentsPending, audit_all;
-        MPI_Allreduce(&audit_moments_now, &audit_all, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        TreeAuditMomentsPending = 0;
-        force_tree_full_audit(audit_all, "refresh");
-        if(audit_all) {force_tree_geometry_audit("refresh");}
+        CPU_Step[CPU_MISC] += measure_time();
+        force_refresh_node_moments();
+        CPU_Step[CPU_TREEBUILD] += measure_time();
+        TreeMomentsStaleFlag = 0;
+    }
+#else
+    int loc[2] = {TreeMomentsStaleFlag, TreeMomentsDirtyFlag}, glob[2];
+    MPI_Allreduce(loc, glob, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(glob[0] || glob[1])
+    {
+        CPU_Step[CPU_MISC] += measure_time();
+        if(glob[0]) {force_refresh_node_moments();} else {force_refresh_node_moments_incremental();}
+        CPU_Step[CPU_TREEBUILD] += measure_time();
+        TreeMomentsStaleFlag = 0;
     }
 #endif
 }
+
+
+#ifdef TREE_REFRESH_INCREMENTAL
+/* Incremental moments refresh. The full refresh re-derives every node, and the top tree (replicated on every rank,
+   growing with the total particle count) makes that, and the exchange of every top-level leaf, the dominant cost of
+   a small step at high rank counts. Here only marked nodes are re-derived: the ancestors (up to the top-level leaf)
+   of particles whose mass or membership changed -- force_mark_moments_dirty() at insertion and elimination -- and of
+   every local sink, whose mass, luminosity and motion change continuously. Changed top-level leaves are exchanged,
+   and only their internal top-level ancestors rebuilt. Every other node keeps its drifted and kicked moments, the
+   state it would have had without a refresh, so results differ from the full refresh at the level of that state. */
+
+void force_mark_moments_dirty(int i)
+{
+    if(MomentsDirtyBuild != TreeOpsCount[TREEOPS_BUILD]) {MomentsDirtyNodes.clear(); MomentsDirtyBuild = TreeOpsCount[TREEOPS_BUILD];} /* marks of a freed tree */
+    TreeMomentsDirtyFlag = 1;
+    int no = Father[i];
+    while(no >= All.MaxPart && no < All.MaxPart + Numnodestree)
+    {
+        if(Nodes[no].u.d.bitflags & (1 << BITFLAG_MOMENTS_DIRTY)) {break;}
+        Nodes[no].u.d.bitflags |= (1 << BITFLAG_MOMENTS_DIRTY);
+        MomentsDirtyNodes.push_back(no);
+        if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) {break;} /* internal top-level ancestors are rebuilt after the leaf exchange */
+        no = Nodes[no].u.d.father;
+    }
+    if(Father[i] < 0) {TreeMomentsStaleFlag = 1;} /* not in the tree: only a full refresh is sure to account for it */
+}
+
+/* add a child node whose moments are normalized (not re-derived in this pass) to the mass-weighted sums of father,
+   as force_treeupdate_pseudos combines daughters */
+static void refresh_add_child_normalized(int father, int no)
+{
+    MyFloat m = Nodes[no].u.d.mass;
+    Nodes[father].u.d.mass += m;
+    Nodes[father].u.d.s += m * Nodes[no].u.d.s;
+    Extnodes[father].vs += m * Extnodes[no].vs;
+    if(m > 0) {Nodes[father].N_part += Nodes[no].N_part;}
+    if(Extnodes[no].hmax > Extnodes[father].hmax) {Extnodes[father].hmax = Extnodes[no].hmax;}
+    if(Extnodes[no].vmax > Extnodes[father].vmax) {Extnodes[father].vmax = Extnodes[no].vmax;}
+    if(Extnodes[no].divVmax > Extnodes[father].divVmax) {Extnodes[father].divVmax = Extnodes[no].divVmax;}
+    if(Nodes[no].maxsoft > Nodes[father].maxsoft) {Nodes[father].maxsoft = Nodes[no].maxsoft;}
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    Nodes[father].gasmass += Nodes[no].gasmass;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    Nodes[father].cr_injection += Nodes[no].cr_injection;
+#endif
+#ifdef RT_USE_GRAVTREE
+    {int k; double l_tot = 0; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[father].stellar_lum[k] += Nodes[no].stellar_lum[k]; l_tot += Nodes[no].stellar_lum[k];}
+#ifdef CHIMES_STELLAR_FLUXES
+    for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {Nodes[father].chimes_stellar_lum_G0[k] += Nodes[no].chimes_stellar_lum_G0[k]; Nodes[father].chimes_stellar_lum_ion[k] += Nodes[no].chimes_stellar_lum_ion[k];}
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    Nodes[father].rt_source_lum_s += l_tot * Nodes[no].rt_source_lum_s;
+    Extnodes[father].rt_source_lum_vs += l_tot * Extnodes[no].rt_source_lum_vs;
+#endif
+    (void) l_tot;}
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    Nodes[father].sink_lum += Nodes[no].sink_lum;
+    Nodes[father].sink_lum_grad += Nodes[no].sink_lum * Nodes[no].sink_lum_grad;
+#endif
+#ifdef SINK_CALC_DISTANCES
+    Nodes[father].sink_mass += Nodes[no].sink_mass;
+    Nodes[father].sink_pos += Nodes[no].sink_mass * Nodes[no].sink_pos;
+#ifdef SINK_NODE_MOTION_TRACKED
+    Nodes[father].N_SINK += Nodes[no].N_SINK;
+    Nodes[father].sink_vel += Nodes[no].sink_mass * Nodes[no].sink_vel;
+#ifdef SPECIAL_POINT_MOTION
+    Nodes[father].sink_acc += Nodes[no].sink_mass * Nodes[no].sink_acc;
+#endif
+#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
+    if(Nodes[no].sink_mass > 0 && Nodes[no].MaxFeedbackVel > Nodes[father].MaxFeedbackVel) {Nodes[father].MaxFeedbackVel = Nodes[no].MaxFeedbackVel;}
+#endif
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    {int k; for(k=0;k<6;k++) {Nodes[father].tidal_tensorps_prevstep.data[k] += m * Nodes[no].tidal_tensorps_prevstep.data[k];}}
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    Nodes[father].mass_dm += Nodes[no].mass_dm;
+    Nodes[father].s_dm += Nodes[no].mass_dm * Nodes[no].s_dm;
+    Extnodes[father].vs_dm += Nodes[no].mass_dm * Extnodes[no].vs_dm;
+#endif
+}
+
+/* a node whose moments were just overwritten (re-derived, or received from its owner) is current, with nothing pending */
+static void refresh_stamp_current(int no)
+{
+    Nodes[no].Ti_current = All.Ti_Current;
+    Extnodes[no].dp = {};
+#ifdef SINK_NODE_MOTION_TRACKED
+    Extnodes[no].sink_dp = {};
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    Extnodes[no].rt_source_lum_dp = {};
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    Extnodes[no].dp_dm = {};
+#endif
+    Extnodes[no].Ti_lastkicked = All.Ti_Current;
+    Extnodes[no].Flag = GlobFlag;
+    Nodes[no].u.d.bitflags &= ~(1 << BITFLAG_NODEHASBEENKICKED);
+}
+
+static void force_refresh_node_moments_incremental(void)
+{
+    TreeOpsCount[TREEOPS_REFRESH]++;
+    int i, n, no, p;
+    if(MomentsDirtyBuild != TreeOpsCount[TREEOPS_BUILD]) {MomentsDirtyNodes.clear(); MomentsDirtyBuild = TreeOpsCount[TREEOPS_BUILD];}
+    for(i = 0; i < NumPart; i++) {if(P[i].Type == 5) {force_mark_moments_dirty(i);}}
+    /* 1. re-derive the marked local nodes, children (higher indices) before parents */
+    std::vector<int> &D = MomentsDirtyNodes;
+    std::sort(D.begin(), D.end(), [](int a, int b) {return a > b;});
+    for(int f : D)
+    {
+        refresh_zero_node(f);
+        Nodes[f].u.d.bitflags |= (1 << BITFLAG_MOMENTS_DIRTY); /* refresh_zero_node keeps only the topology bits */
+        for(p = Nodes[f].u.d.nextnode; p >= 0 && p != Nodes[f].u.d.sibling;)
+        {
+            if(p < All.MaxPart) {if(Father[p] == f) {refresh_add_particle(f, p);} p = Nextnode[p];}
+            else if(p < All.MaxPart + MaxNodes)
+            {
+                if(Nodes[p].u.d.bitflags & (1 << BITFLAG_MOMENTS_DIRTY)) {refresh_add_child_sums(f, p);} /* re-derived above, sums not yet normalized */
+                else {force_drift_node(p, All.Ti_Current); refresh_add_child_normalized(f, p);}
+                p = Nodes[p].u.d.sibling;
+            }
+            else {p = Nextnode[p - MaxNodes];}
+        }
+    }
+    for(int f : D) {refresh_normalize(f); refresh_stamp_current(f);}
+#ifdef TREE_INTEGRITY_AUDITS
+    AuditFreshAll = 0; AuditNodeFresh.assign(Numnodestree, 0);
+    for(int f : D) {AuditNodeFresh[f - All.MaxPart] = 1;}
+#endif
+    /* 2. send the re-derived top-level leaves of this rank to every rank */
+    std::vector<int> leaves;
+    for(int m = 0; m < DomainSegmentsPerTask; m++)
+        for(i = DomainStartList[ThisTask * DomainSegmentsPerTask + m]; i <= DomainEndList[ThisTask * DomainSegmentsPerTask + m]; i++)
+            {if(Nodes[DomainNodeIndex[i]].u.d.bitflags & (1 << BITFLAG_MOMENTS_DIRTY)) {leaves.push_back(i);}}
+    struct leaf_msg {int leaf; struct DomainNODE dm;};
+    int nloc = (int) leaves.size(), ntot = 0;
+    std::vector<int> counts(NTask), offs(NTask);
+    MPI_Allgather(&nloc, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    for(n = 0; n < NTask; n++) {offs[n] = ntot * (int) sizeof(leaf_msg); ntot += counts[n]; counts[n] *= (int) sizeof(leaf_msg);}
+    std::vector<leaf_msg> all(IMAX(ntot, 1));
+    for(n = 0; n < nloc; n++) {leaf_msg &lm = all[offs[ThisTask] / sizeof(leaf_msg) + n]; memset(&lm, 0, sizeof(lm)); lm.leaf = leaves[n]; domainnode_pack(&lm.dm, DomainNodeIndex[leaves[n]]);}
+    MPI_Allgatherv(MPI_IN_PLACE, counts[ThisTask], MPI_BYTE, all.data(), counts.data(), offs.data(), MPI_BYTE, MPI_COMM_WORLD);
+    /* 3. install the other ranks' leaves; mark every changed leaf's internal top-level ancestors */
+    std::vector<int> internal;
+    for(n = 0; n < ntot; n++)
+    {
+        no = DomainNodeIndex[all[n].leaf];
+        if(DomainTask[all[n].leaf] != ThisTask)
+        {
+            force_drift_node(no, All.Ti_Current); /* widens len over the interval, as the full refresh does */
+            domainnode_unpack(&all[n].dm, no);
+            refresh_stamp_current(no);
+#ifdef TREE_INTEGRITY_AUDITS
+            AuditNodeFresh[no - All.MaxPart] = 1;
+#endif
+        }
+        for(p = Nodes[no].u.d.father; p >= 0; p = Nodes[p].u.d.father)
+        {
+            if(Nodes[p].u.d.bitflags & (1 << BITFLAG_MOMENTS_DIRTY)) {break;}
+            Nodes[p].u.d.bitflags |= (1 << BITFLAG_MOMENTS_DIRTY); internal.push_back(p);
+        }
+    }
+    /* 4. rebuild those from their daughters, deepest first, every daughter brought to now */
+    std::sort(internal.begin(), internal.end(), [](int a, int b) {return a > b;});
+    force_treeupdate_pseudos_norecurse = 1;
+    for(int f : internal)
+    {
+        force_drift_node(f, All.Ti_Current);
+        for(p = Nodes[f].u.d.nextnode, n = 0; n < 8; n++) {force_drift_node(p, All.Ti_Current); p = Nodes[p].u.d.sibling;}
+        force_treeupdate_pseudos(f);
+        refresh_stamp_current(f);
+#ifdef TREE_INTEGRITY_AUDITS
+        AuditNodeFresh[f - All.MaxPart] = 1;
+#endif
+    }
+    force_treeupdate_pseudos_norecurse = 0;
+    for(int f : internal) {Nodes[f].u.d.bitflags &= ~(1 << BITFLAG_MOMENTS_DIRTY);}
+    for(int f : D) {Nodes[f].u.d.bitflags &= ~(1 << BITFLAG_MOMENTS_DIRTY);}
+    D.clear();
+    TreeMomentsDirtyFlag = 0;
+#ifdef TREE_INTEGRITY_AUDITS
+    force_refresh_audit("refresh_incremental"); /* every node is checked against a full re-derivation, the carried ones included */
+#endif
+}
+#endif
 
 
 /*! Entry check for every consumer that walks the STANDING tree without first offering to rebuild
@@ -4371,29 +4688,38 @@ void force_tree_full_audit(int audit_moments, const char *tag)
 
 
 /*! Tier-1 moments audit (TREE_INTEGRITY_AUDITS builds; COLLECTIVE). Runs right after a whole-tree build or
- *  a moments refresh, when every node has just been derived from its members, and compares every node --
- *  the top level included -- with a re-derivation from the particles (predicted to now) through the Father
- *  chains. The top-level nodes' sums are reduced over all ranks, so the pseudo-particle exchange and the
- *  top-level combine are checked along with the local trees.
+ *  a moments refresh, full or incremental, and compares every node -- the top level included -- with a
+ *  re-derivation from the particles (predicted to now) through the Father chains. The top-level nodes'
+ *  sums are reduced over all ranks, so the pseudo-particle exchange and the top-level combine are checked
+ *  along with the local trees.
  *  (a) Time-independent quantities, fatal: N_part; mass; with the options gasmass, sink_mass, N_SINK.
  *      Integers must match exactly (N_part within the zero-mass members, which the build and the refresh
- *      count differently). The build, the refresh and this audit sum in different orders, so bitwise
- *      agreement is not available; "exact" is the worst-case rounding of two summations of the same n
- *      non-negative terms, 2(n-1) unit roundoffs of the total, taken with margin. Where no arithmetic
- *      intervenes the match is bitwise: a remote copy of a top-level leaf against its owner's (a byte copy).
- *      An internal top-level node must equal the combine of its daughters as force_treeupdate_pseudos forms
- *      it (N_part exactly; mass within the rounding of eight terms, since -ffast-math may reassociate).
- *  (b) Drifted quantities, fatal: every node is current, with its centre of mass, mass-weighted velocity,
- *      and sink position and velocity at the members' values to rounding; hmax covers every member's
- *      predicted kernel. Velocities are compared net of the members' kicks still pending in dp: the next
- *      force_update_tree adds those to the nodes, so a node that already holds them would count them
- *      twice. vmax and maxsoft shortfalls are counted only (cpu.txt).
+ *      count differently). The floating-point sums are summed in a different order by the build, the full
+ *      refresh, the incremental refresh and this audit, so bitwise agreement is not available; "exact" is
+ *      the worst-case rounding of two summations of the same n non-negative terms, 2(n-1) unit roundoffs
+ *      of the total, taken with margin. Where no arithmetic intervenes the match is bitwise: a remote copy
+ *      of a top-level leaf against its owner's (a byte copy). An internal top-level node must equal the
+ *      combine of its daughters as force_treeupdate_pseudos forms it (N_part exactly; mass within the
+ *      rounding of eight terms, since -ffast-math may reassociate).
+ *  (b) Drifted quantities. A node whose whole subtree was derived at this refresh ("fresh": every node
+ *      after a build or a full refresh) must have its centre of mass, mass-weighted velocity, and sink
+ *      position and velocity at the members' values to rounding, fatal. Velocities are compared net of
+ *      the members' kicks still pending in dp, which the nodes receive only at the next tree update. A node an incremental refresh
+ *      carried over (or rebuilt from carried children) keeps the lazily drifted and kicked state. Its
+ *      centre of mass and the members' both move at most at the node's motion bound vmax, so their
+ *      separation can grow at most at 2 vmax -- exactly the rate at which drift widens len -- so the
+ *      offset may not exceed the widening len has accumulated since the build (fatal); the worst carried
+ *      offsets go to cpu.txt. hmax must cover every member's predicted kernel (fatal). maxsoft must cover
+ *      every member's softening as stored (fatal): what the build and the full refresh derive it from. Its
+ *      coverage of the softening predicted to now, which the walk reads after drifting a leaf, and vmax
+ *      coverage are counted only: neither path derives maxsoft from predicted kernels, and a vmax raise made
+ *      in a threaded loop reaches the other ranks' top-level copies at the next flush.
  *  Box containment is force_tree_geometry_audit's. */
-long long TreeMomAuditCount = 0, TreeMomAuditVmaxShort = 0, TreeMomAuditSoftShort = 0;
-double TreeMomAuditWorstVmaxShort = 0, TreeMomAuditWorstSoftShort = 0;
+long long TreeMomAuditCount = 0, TreeMomAuditCarried = 0, TreeMomAuditVmaxShort = 0, TreeMomAuditSoftShort = 0;
+double TreeMomAuditWorstCOM = 0, TreeMomAuditWorstCOMWiden = 0, TreeMomAuditWorstDV = 0, TreeMomAuditWorstVmaxShort = 0, TreeMomAuditWorstSoftShort = 0;
 enum {MA_M = 0, MA_MX = 1, MA_MV = 4, MA_GASM = 7, MA_SINKM = 8, MA_SMX = 9, MA_SMV = 12, MA_OWN_M = 15, MA_OWN_SINKM = 16, MA_NSUM = 17};
 enum {MA_N = 0, MA_NZERO, MA_NSINK, MA_OWN_N, MA_OWN_NSINK, MA_NI};
-enum {MA_HMAX = 0, MA_VMAX, MA_VABS, MA_SOFT, MA_NMAX};
+enum {MA_HMAX = 0, MA_VMAX, MA_VABS, MA_SOFT, MA_SOFTP, MA_NMAX};
 static void force_tree_moments_audit(const char *tag)
 {
     double xtmp, ytmp, ztmp; (void) xtmp; (void) ytmp; (void) ztmp; /* scratch for the periodic macros */
@@ -4402,7 +4728,9 @@ static void force_tree_moments_audit(const char *tag)
     double *ds = (double *) mymalloc("mom_audit_ds", (size_t) nn * MA_NSUM * sizeof(double));
     long long *is = (long long *) mymalloc("mom_audit_is", (size_t) nn * MA_NI * sizeof(long long));
     double *dm = (double *) mymalloc("mom_audit_dm", (size_t) nn * MA_NMAX * sizeof(double));
+    double *lo = (double *) mymalloc("mom_audit_lo", (size_t) nn * sizeof(double));
     int *leaf_of = (int *) mymalloc("mom_audit_leaf", (size_t) IMAX(ntop, 1) * sizeof(int));
+    int *deep = (int *) mymalloc("mom_audit_deep", (size_t) nn * sizeof(int));
     double *cmin = (double *) mymalloc("mom_audit_cmin", (size_t) 6 * IMAX(ntop, 1) * sizeof(double)), *cmax = cmin + 3 * (size_t) IMAX(ntop, 1);
     memset(ds, 0, (size_t) nn * MA_NSUM * sizeof(double)); memset(is, 0, (size_t) nn * MA_NI * sizeof(long long)); memset(dm, 0, (size_t) nn * MA_NMAX * sizeof(double));
 #define MOM_AUDIT_FAIL(...) do {if(nbad < 12) {printf("TREE-MOMENTS-AUDIT task %d [%s] t=%.10g: ", ThisTask, tag, All.Time); printf(__VA_ARGS__); printf("\n");} nbad++;} while(0)
@@ -4412,10 +4740,23 @@ static void force_tree_moments_audit(const char *tag)
     {
         int is_top = (Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) ? 1 : 0;
         if(is_top != (no < All.MaxPart + ntop)) {MOM_AUDIT_FAIL("node %d top-level flag %d, but the top tree is nodes %d..%d", no, is_top, All.MaxPart, All.MaxPart + ntop - 1);}
-        if(Nodes[no].Ti_current != All.Ti_Current || (Nodes[no].u.d.bitflags & (1 << BITFLAG_NODEHASBEENKICKED))) {MOM_AUDIT_FAIL("node %d lagging %lld ticks or holding a pending kick right after a build or refresh", no, (long long) (All.Ti_Current - Nodes[no].Ti_current));}
     }
     for(no = 0; no < ntop; no++) {leaf_of[no] = -1; for(k = 0; k < 3; k++) {cmin[3 * no + k] = cmax[3 * no + k] = Nodes[All.MaxPart + no].center[k];}}
     for(i = 0; i < NTopleaves; i++) {int o = DomainNodeIndex[i] - All.MaxPart; if(o >= 0 && o < ntop) {leaf_of[o] = i;} else {MOM_AUDIT_FAIL("top-level leaf %d at node %d outside the top tree", i, DomainNodeIndex[i]);}}
+
+    /* node lengths before any drift widening, from the build's root length */
+    for(no = All.MaxPart; no < All.MaxPart + nn; no++)
+    {
+        int f = Nodes[no].u.d.father, o = no - All.MaxPart;
+        if(no == All.MaxPart) {lo[o] = AuditBuildRootLen;}
+        else if(f >= All.MaxPart && f < no) {lo[o] = 0.5 * lo[f - All.MaxPart];}
+        else {lo[o] = 0; MOM_AUDIT_FAIL("node %d has father %d, not a lower node index", no, f);}
+    }
+
+    /* fresh down to the leaves: derived at this refresh, and so is every child (reduced over ranks at the top) */
+    for(no = 0; no < nn; no++) {deep[no] = AuditFreshAll || (no < (int) AuditNodeFresh.size() && AuditNodeFresh[no]);}
+    for(i = 0; i < NumPart; i++) {(void) i;} /* particles are always current inputs */
+    for(no = All.MaxPart + nn - 1; no > All.MaxPart; no--) {int f = Nodes[no].u.d.father; if(!deep[no - All.MaxPart] && f >= All.MaxPart && f < All.MaxPart + nn) {deep[f - All.MaxPart] = 0;}}
 
     /* local re-derivation through the Father chains */
     for(i = 0; i < NumPart; i++)
@@ -4427,6 +4768,14 @@ static void force_tree_moments_audit(const char *tag)
         for(k = 0; k < 3; k++) {vabs = DMAX(vabs, fabs(P[i].Vel[k]));}
 #ifdef SINGLE_STAR_SINK_DYNAMICS
         if(P[i].Type == 5 && P[i].KernelRadius > soft) {soft = P[i].KernelRadius;}
+#endif
+        double softp = soft; /* ... and as the gravity walk reads it: it drifts a leaf member before taking its softening */
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) && !defined(ADAPTIVE_GRAVSOFT_FORALL)
+#ifdef ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT
+        if(P[i].Type == 0) {softp = DMIN(h, ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT/All.cf_atime);}
+#else
+        if(P[i].Type == 0) {softp = h;}
+#endif
 #endif
         double hk = (P[i].Type == 0) ? DMIN(All.MaxKernelRadius, h) : 0, vb = particle_motion_speed_bound(i);
         int is_sink = 0;
@@ -4447,10 +4796,10 @@ static void force_tree_moments_audit(const char *tag)
             NEAREST_XYZ(r0, r1, r2, -1);
             double r[3] = {r0, r1, r2};
             d[MA_M] += m; d[MA_GASM] += gm;
-            for(k = 0; k < 3; k++) {d[MA_MX + k] += m * r[k]; d[MA_MV + k] += m * P[i].Vel[k] - P[i].dp[k];} /* a kick still pending in dp reaches the nodes at the next force_update_tree */
+            for(k = 0; k < 3; k++) {d[MA_MX + k] += m * r[k]; d[MA_MV + k] += m * P[i].Vel[k] - P[i].dp[k];} /* a kick still pending in dp has not reached the nodes yet */
             if(is_sink) {d[MA_SINKM] += m; ii[MA_NSINK]++; for(k = 0; k < 3; k++) {d[MA_SMX + k] += m * r[k]; d[MA_SMV + k] += m * P[i].Vel[k] - P[i].dp[k];}}
             ii[MA_N]++; if(!(m > 0)) {ii[MA_NZERO]++;}
-            dmx[MA_HMAX] = DMAX(dmx[MA_HMAX], hk); dmx[MA_VMAX] = DMAX(dmx[MA_VMAX], vb); dmx[MA_VABS] = DMAX(dmx[MA_VABS], vabs); dmx[MA_SOFT] = DMAX(dmx[MA_SOFT], soft);
+            dmx[MA_HMAX] = DMAX(dmx[MA_HMAX], hk); dmx[MA_VMAX] = DMAX(dmx[MA_VMAX], vb); dmx[MA_VABS] = DMAX(dmx[MA_VABS], vabs); dmx[MA_SOFT] = DMAX(dmx[MA_SOFT], soft); dmx[MA_SOFTP] = DMAX(dmx[MA_SOFTP], softp);
         }
     }
 
@@ -4473,18 +4822,19 @@ static void force_tree_moments_audit(const char *tag)
         MPI_Allreduce(MPI_IN_PLACE, ds, ntop * MA_NSUM, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(MPI_IN_PLACE, is, ntop * MA_NI, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(MPI_IN_PLACE, dm, ntop * MA_NMAX, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        MPI_Allreduce(MPI_IN_PLACE, deep, ntop, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
         MPI_Allreduce(MPI_IN_PLACE, cmin, 3 * ntop, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
         MPI_Allreduce(MPI_IN_PLACE, cmax, 3 * ntop, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         for(no = 0; no < ntop; no++) {for(k = 0; k < 3; k++) {if(cmin[3 * no + k] != cmax[3 * no + k]) {MOM_AUDIT_FAIL("top-level node %d centre[%d] differs across ranks (%.17g .. %.17g)", All.MaxPart + no, k, cmin[3 * no + k], cmax[3 * no + k]); break;}}}
     }
 
     /* compare */
-    long long vmax_short = 0, soft_short = 0; double worst_vshort = 0, worst_sshort = 0;
+    long long carried = 0, vmax_short = 0, soft_short = 0; double worst_com = 0, worst_widen = 0, worst_dv = 0, worst_vshort = 0, worst_sshort = 0;
     for(no = All.MaxPart; no < All.MaxPart + nn; no++)
     {
         size_t o = no - All.MaxPart;
         double *d = ds + MA_NSUM * o, *dmx = dm + MA_NMAX * o; long long *ii = is + MA_NI * o;
-        int top = (o < (size_t) ntop), leaf = top ? leaf_of[o] : -1;
+        int top = (o < (size_t) ntop), leaf = top ? leaf_of[o] : -1, fresh = deep[o];
         long long n = ii[MA_N], nz = ii[MA_NZERO], np_st = (long long) Nodes[no].N_part;
         double tolfac = 4.0 * (double) (n + NTask + 16) * eps;
         const char *where = top ? ((leaf >= 0) ? ((DomainTask[leaf] == ThisTask) ? "own top-level leaf" : "remote top-level leaf") : "internal top-level") : "local";
@@ -4529,45 +4879,63 @@ static void force_tree_moments_audit(const char *tag)
 #endif
         }
 
-        double scale = DMAX(fabs(Nodes[no].center[0]), DMAX(fabs(Nodes[no].center[1]), fabs(Nodes[no].center[2]))) + Nodes[no].len, vref = dmx[MA_VABS];
+        struct node_prediction pr; force_node_predict(no, All.Ti_Current, &pr);
+        double scale = DMAX(fabs(Nodes[no].center[0]), DMAX(fabs(Nodes[no].center[1]), fabs(Nodes[no].center[2]))) + pr.len, vref = dmx[MA_VABS];
         double tol_x = tolfac * scale, tol_v = tolfac * vref;
         if(m > 0)
         {
             double off = 0, dv = 0;
-            for(k = 0; k < 3; k++) {dv = DMAX(dv, fabs(Extnodes[no].vs[k] - d[MA_MV + k] / m));}
-            {double r0 = Nodes[no].u.d.s[0] - Nodes[no].center[0], r1 = Nodes[no].u.d.s[1] - Nodes[no].center[1], r2 = Nodes[no].u.d.s[2] - Nodes[no].center[2]; NEAREST_XYZ(r0, r1, r2, -1);
+            for(k = 0; k < 3; k++) {dv = DMAX(dv, fabs(pr.vs[k] - d[MA_MV + k] / m));}
+            {double r0 = pr.s[0] - Nodes[no].center[0], r1 = pr.s[1] - Nodes[no].center[1], r2 = pr.s[2] - Nodes[no].center[2]; NEAREST_XYZ(r0, r1, r2, -1);
             off = DMAX(fabs(r0 - d[MA_MX] / m), DMAX(fabs(r1 - d[MA_MX + 1] / m), fabs(r2 - d[MA_MX + 2] / m)));}
-            if(off > tol_x) {MOM_AUDIT_FAIL("node %d (%s, N=%lld) centre of mass off by %.3g (len %.3g, tol %.3g)", no, where, n, off, (double) Nodes[no].len, tol_x);}
-            if(dv > tol_v) {MOM_AUDIT_FAIL("node %d (%s, N=%lld) mass-weighted velocity off by %.3g (max member |v_k| %.3g, tol %.3g)", no, where, n, dv, vref, tol_v);}
+            if(fresh)
+            {
+                if(off > tol_x) {MOM_AUDIT_FAIL("node %d (%s, fresh, N=%lld) centre of mass off by %.3g (len %.3g, tol %.3g)", no, where, n, off, pr.len, tol_x);}
+                if(dv > tol_v) {MOM_AUDIT_FAIL("node %d (%s, fresh, N=%lld) mass-weighted velocity off by %.3g (max member |v_k| %.3g, tol %.3g)", no, where, n, dv, vref, tol_v);}
+            }
+            else
+            {
+                double widen = pr.len - lo[o];
+                carried++;
+                worst_com = DMAX(worst_com, off / pr.len);
+                if(widen > 0) {worst_widen = DMAX(worst_widen, off / widen);}
+                if(vref > 0) {worst_dv = DMAX(worst_dv, dv / vref);}
+                if(AuditBuildRootLen > 0 && off > widen + tol_x) {MOM_AUDIT_FAIL("node %d (%s, carried, N=%lld) centre of mass off by %.3g, beyond the %.3g its motion bound has widened len since the build (len %.3g, lag %lld ticks)", no, where, n, off, widen, pr.len, (long long) (All.Ti_Current - Nodes[no].Ti_current));}
+                if(dv > 2 * DMAX(Extnodes[no].vmax, vref) + tol_v) {MOM_AUDIT_FAIL("node %d (%s, carried, N=%lld) mass-weighted velocity off by %.3g, beyond twice the motion bound %.3g", no, where, n, dv, DMAX(Extnodes[no].vmax, vref));}
+            }
         }
-        if(dmx[MA_HMAX] > 0 && Extnodes[no].hmax < 0.999999 * dmx[MA_HMAX]) {MOM_AUDIT_FAIL("node %d (%s) hmax %.10g below a member's predicted kernel %.10g", no, where, (double) Extnodes[no].hmax, dmx[MA_HMAX]);}
+        if(dmx[MA_HMAX] > 0 && pr.hmax < 0.999999 * dmx[MA_HMAX]) {MOM_AUDIT_FAIL("node %d (%s, %s) hmax %.10g below a member's predicted kernel %.10g", no, where, fresh ? "fresh" : "carried", pr.hmax, dmx[MA_HMAX]);}
         if(Extnodes[no].vmax < 0.999999 * dmx[MA_VMAX]) {vmax_short++; worst_vshort = DMAX(worst_vshort, dmx[MA_VMAX] / DMAX(Extnodes[no].vmax, MIN_REAL_NUMBER));}
-        if(Nodes[no].maxsoft < 0.999999 * dmx[MA_SOFT]) {soft_short++; worst_sshort = DMAX(worst_sshort, dmx[MA_SOFT] / DMAX(Nodes[no].maxsoft, MIN_REAL_NUMBER));}
+        /* maxsoft decides where the gravity walk opens a node and softens the node's monopole, so falling short of
+           a member's softening means a node used, or softened, as if its members were more compact than they are */
+        if(pr.maxsoft < 0.999999 * dmx[MA_SOFT]) {MOM_AUDIT_FAIL("node %d (%s, %s, N=%lld) maxsoft %.10g below a member's softening %.10g", no, where, fresh ? "fresh" : "carried", n, pr.maxsoft, dmx[MA_SOFT]);}
+        if(pr.maxsoft < 0.999999 * dmx[MA_SOFTP]) {soft_short++; worst_sshort = DMAX(worst_sshort, dmx[MA_SOFTP] / DMAX(pr.maxsoft, MIN_REAL_NUMBER));}
 #ifdef SINK_CALC_DISTANCES
-        if(d[MA_SINKM] > 0)
+        if(d[MA_SINKM] > 0) /* sinks' ancestors are re-derived at every refresh on both paths */
         {
             double sm = d[MA_SINKM], off = 0, dv = 0;
-            {double r0 = Nodes[no].sink_pos[0] - Nodes[no].center[0], r1 = Nodes[no].sink_pos[1] - Nodes[no].center[1], r2 = Nodes[no].sink_pos[2] - Nodes[no].center[2]; NEAREST_XYZ(r0, r1, r2, -1);
+            {double r0 = pr.sink_pos[0] - Nodes[no].center[0], r1 = pr.sink_pos[1] - Nodes[no].center[1], r2 = pr.sink_pos[2] - Nodes[no].center[2]; NEAREST_XYZ(r0, r1, r2, -1);
             off = DMAX(fabs(r0 - d[MA_SMX] / sm), DMAX(fabs(r1 - d[MA_SMX + 1] / sm), fabs(r2 - d[MA_SMX + 2] / sm)));}
             if(off > tol_x) {MOM_AUDIT_FAIL("node %d (%s, %lld sinks) sink_pos off by %.3g (tol %.3g)", no, where, ii[MA_NSINK], off, tol_x);}
 #ifdef SINK_NODE_MOTION_TRACKED
-            for(k = 0; k < 3; k++) {dv = DMAX(dv, fabs(Nodes[no].sink_vel[k] - d[MA_SMV + k] / sm));}
+            for(k = 0; k < 3; k++) {dv = DMAX(dv, fabs(pr.sink_vel[k] - d[MA_SMV + k] / sm));}
             if(dv > tol_v) {MOM_AUDIT_FAIL("node %d (%s, %lld sinks) sink_vel off by %.3g (tol %.3g)", no, where, ii[MA_NSINK], dv, tol_v);}
 #endif
         }
 #endif
     }
 #undef MOM_AUDIT_FAIL
-    TreeMomAuditCount++; TreeMomAuditVmaxShort += vmax_short; TreeMomAuditSoftShort += soft_short;
+    TreeMomAuditCount++; TreeMomAuditCarried += carried; TreeMomAuditVmaxShort += vmax_short; TreeMomAuditSoftShort += soft_short;
+    TreeMomAuditWorstCOM = DMAX(TreeMomAuditWorstCOM, worst_com); TreeMomAuditWorstCOMWiden = DMAX(TreeMomAuditWorstCOMWiden, worst_widen); TreeMomAuditWorstDV = DMAX(TreeMomAuditWorstDV, worst_dv);
     TreeMomAuditWorstVmaxShort = DMAX(TreeMomAuditWorstVmaxShort, worst_vshort); TreeMomAuditWorstSoftShort = DMAX(TreeMomAuditWorstSoftShort, worst_sshort);
-    myfree(cmin); myfree(leaf_of); myfree(dm); myfree(is); myfree(ds);
-    if(nbad) {printf("TREE-MOMENTS-AUDIT task %d [%s]: %d failed node checks\n", ThisTask, tag, nbad); fflush(stdout); endrun(91575);}
+    myfree(cmin); myfree(deep); myfree(leaf_of); myfree(lo); myfree(dm); myfree(is); myfree(ds);
+    if(nbad) {printf("TREE-MOMENTS-AUDIT task %d [%s]: %d failed node checks (%s refresh state)\n", ThisTask, tag, nbad, AuditFreshAll ? "fully derived" : "incremental"); fflush(stdout); endrun(91575);}
 }
 
 
 /*! Tier-2 geometric audit (TREE_INTEGRITY_AUDITS builds only). The moments audit checks the moments
  *  against their members; this one checks the geometry the walks rely on, with every local particle
- *  predicted to All.Ti_Current:
+ *  and node predicted to All.Ti_Current (an incremental refresh leaves untouched nodes lagging):
  *  (a) each particle lies inside every ancestor's box, center +- len/2 -- the neighbour search
  *      discards a node by exactly that box (rkern + len/2), so a member outside it can be missed.
  *      REPORTED, not fatal: force_drift_node grows the half-width at exactly the speed of the
@@ -4588,9 +4956,11 @@ void force_tree_geometry_audit(const char *tag)
 {
     if(Numnodestree <= 0) {return;}
     double xtmp, ytmp, ztmp; (void) xtmp; (void) ytmp; (void) ztmp; /* scratch for the periodic macros */
+    double *plen = (double *) mymalloc("geo_audit_len", (size_t) Numnodestree * 2 * sizeof(double)), *phmax = plen + Numnodestree; /* per node: predicted len, hmax */
     long long nbad[2] = {0, 0};
     double worst[3] = {0, 0, 0}; /* box excess in len, box excess in h, kernel/hmax */
-    int i, k, worst_i = -1, worst_f = -1;
+    int i, k, no, worst_i = -1, worst_f = -1;
+    for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++) {struct node_prediction pr; force_node_predict(no, All.Ti_Current, &pr); plen[no - All.MaxPart] = pr.len; phmax[no - All.MaxPart] = pr.hmax;}
     for(i = 0; i < NumPart; i++)
     {
         int f = Father[i];
@@ -4598,18 +4968,19 @@ void force_tree_geometry_audit(const char *tag)
         Vec3<MyDouble> x; double h = force_predict_to_current(i, x);
         if(P[i].Type == 0)
         {
-            double hneed = DMIN(h, All.MaxKernelRadius);
-            if(Extnodes[f].hmax < 0.999999 * hneed) {nbad[1]++; worst[2] = DMAX(worst[2], hneed / DMAX(Extnodes[f].hmax, MIN_REAL_NUMBER));}
+            double hneed = DMIN(h, All.MaxKernelRadius), hm = phmax[f - All.MaxPart];
+            if(hm < 0.999999 * hneed) {nbad[1]++; worst[2] = DMAX(worst[2], hneed / DMAX(hm, MIN_REAL_NUMBER));}
         }
         double hscale = (P[i].Type == 0) ? h : ForceSoftening_KernelRadius(i);
         for(; f >= All.MaxPart && f < All.MaxPart + Numnodestree; f = Nodes[f].u.d.father)
         {
-            double dx = x[0] - Nodes[f].center[0], dy = x[1] - Nodes[f].center[1], dz = x[2] - Nodes[f].center[2], len = Nodes[f].len;
+            double dx = x[0] - Nodes[f].center[0], dy = x[1] - Nodes[f].center[1], dz = x[2] - Nodes[f].center[2], len = plen[f - All.MaxPart];
             double d = DMAX(NGB_PERIODIC_BOX_LONG_X(dx,dy,dz,-1), DMAX(NGB_PERIODIC_BOX_LONG_Y(dx,dy,dz,-1), NGB_PERIODIC_BOX_LONG_Z(dx,dy,dz,-1)));
             double excess = d - 0.5 * len;
             if(excess > 0) {nbad[0]++; if(excess / len > worst[0]) {worst[0] = excess / len; worst_i = i; worst_f = f;} if(hscale > 0) {worst[1] = DMAX(worst[1], excess / hscale);}}
         }
     }
+    myfree(plen);
     TreeGeoAuditCount++;
     if(nbad[0]) {TreeGeoAuditBoxCount++; TreeGeoAuditWorstLen = DMAX(TreeGeoAuditWorstLen, worst[0]); TreeGeoAuditWorstH = DMAX(TreeGeoAuditWorstH, worst[1]);}
     if(nbad[0] || nbad[1])
@@ -4619,9 +4990,10 @@ void force_tree_geometry_audit(const char *tag)
         if(worst_i >= 0)
         {
             double vm = 0; for(k = 0; k < 3; k++) {vm = DMAX(vm, fabs(P[worst_i].Vel[k]));}
-            printf("TREE-GEOMETRY-AUDIT task %d: worst box excess: particle %d ID=%llu Type=%d TimeBin=%d lagging %lld ticks, max|v_k|=%g; node %d (N_part=%d, top-level=%d) vmax=%g len=%g\n",
+            printf("TREE-GEOMETRY-AUDIT task %d: worst box excess: particle %d ID=%llu Type=%d TimeBin=%d lagging %lld ticks, max|v_k|=%g; node %d (N_part=%d, top-level=%d, lagging %lld ticks) vmax=%g len=%g\n",
                    ThisTask, worst_i, (unsigned long long) P[worst_i].ID, P[worst_i].Type, P[worst_i].TimeBin, (long long) (All.Ti_Current - P[worst_i].Ti_current), vm,
-                   worst_f, Nodes[worst_f].N_part, (Nodes[worst_f].u.d.bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_INTERNAL_TOPLEVEL))) ? 1 : 0, Extnodes[worst_f].vmax, Nodes[worst_f].len);
+                   worst_f, Nodes[worst_f].N_part, (Nodes[worst_f].u.d.bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_INTERNAL_TOPLEVEL))) ? 1 : 0,
+                   (long long) (All.Ti_Current - Nodes[worst_f].Ti_current), Extnodes[worst_f].vmax, Nodes[worst_f].len);
         }
         fflush(stdout);
         if(nbad[1]) {endrun(91573);} /* the exact check is fatal; the box excess is reported */

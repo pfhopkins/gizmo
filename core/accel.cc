@@ -221,7 +221,7 @@ void compute_stellar_feedback(void)
         if(any_fb_global) {mechanical_fb_calc_toplevel();}  /* call the parent loop for the different mechanical fb sub-loops */
 #endif
     }
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
+    CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
 
 #ifdef GALSF_FB_THERMAL

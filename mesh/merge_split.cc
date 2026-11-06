@@ -947,6 +947,9 @@ int merge_particles_ij(int i, int j)
         P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
         P[j].dp += P[j].Vel * P[j].Mass - p_old_j;
         force_raise_motion_bound(j);
+#ifdef TREE_REFRESH_INCREMENTAL
+        if(!TreeDiscardImminent && force_tree_is_allocated()) {force_mark_moments_dirty(j);} /* j's ancestors gain i's mass (i's are marked when it is eliminated) */
+#endif
         return 1;
     } // closes merger of non-gas particles, only gas particles will see the blocks below //
 
@@ -1197,6 +1200,9 @@ int merge_particles_ij(int i, int j)
     P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
     P[j].dp += P[j].Vel * P[j].Mass - p_old_j;
     force_raise_motion_bound(j);
+#ifdef TREE_REFRESH_INCREMENTAL
+    if(!TreeDiscardImminent && force_tree_is_allocated()) {force_mark_moments_dirty(j);} /* j's ancestors gain i's mass (i's are marked when it is eliminated) */
+#endif
     /* call the pressure routine to re-calculate pressure (and sound speeds) as needed */
     set_eos_pressure(j, P, CellP);
 #if defined(MHD_CONSERVE_B_ON_REFINEMENT)
@@ -1215,12 +1221,70 @@ int merge_particles_ij(int i, int j)
   walk and its Father[] is garbage. Cost is O(all tree nodes) per call -- the price of not rebuilding.
  */
 
+/* Thread pointers into slot x (Nextnode, nextnode or sibling) all lie in the subtree of Father[x]: x's thread
+   predecessor is Father[x] itself or something inside it, and every node whose sibling skips to x ends just before
+   x inside that subtree. So the edits a whole-tree walk makes can be made by walking only the subtrees of Father[i]
+   and Father[j] (once, if one contains the other). Returns 0, touching nothing, if those subtrees do not hold a
+   pointer to each slot (a slot outside the tree, or a stale Father): the caller then walks the whole tree. */
+static int treewalk_retarget_local(int i, int j, int remove_mode)
+{
+    int fi = Father[i], fj = (remove_mode ? fi : Father[j]);
+    if(fi < All.MaxPart || fj < All.MaxPart || fi >= All.MaxPart + MaxNodes || fj >= All.MaxPart + MaxNodes) {return 0;}
+    int roots[2] = {fi, fj}, nroots = 2, a;
+    for(a = fi; a >= 0; a = Nodes[a].u.d.father) {if(a == fj) {nroots = 1; roots[0] = fj; break;}}
+    if(nroots == 2) {for(a = fj; a >= 0; a = Nodes[a].u.d.father) {if(a == fi) {nroots = 1; roots[0] = fi; break;}}}
+    int found_i = 0, found_j = 0, pass, r, no, next;
+    for(pass = 0; pass < 2; pass++) /* pass 0 counts, pass 1 edits exactly as the whole-tree walk would */
+    {
+        for(r = 0; r < nroots; r++)
+        {
+            int end = Nodes[roots[r]].u.d.sibling;
+            no = roots[r];
+            while(no >= 0 && no != end)
+            {
+                if(no < All.MaxPart)
+                {
+                    next = Nextnode[no];
+                    if(remove_mode) {if(next == i) {found_i++; if(pass) {Nextnode[no] = Nextnode[i];}}}
+                    else if(no != i && no != j)
+                    {
+                        if(next == i) {found_i++; if(pass) {Nextnode[no] = j;}}
+                        else if(next == j) {found_j++; if(pass) {Nextnode[no] = i;}}
+                    }
+                    no = next;
+                }
+                else if(no < All.MaxPart + MaxNodes)
+                {
+                    next = Nodes[no].u.d.nextnode;
+                    if(remove_mode)
+                    {
+                        if(next == i) {found_i++; if(pass) {Nodes[no].u.d.nextnode = Nextnode[i];}}
+                        if(Nodes[no].u.d.sibling == i) {found_i++; if(pass) {Nodes[no].u.d.sibling = Nextnode[i];}}
+                    }
+                    else
+                    {
+                        if(next == i) {found_i++; if(pass) {Nodes[no].u.d.nextnode = j;}}
+                        else if(next == j) {found_j++; if(pass) {Nodes[no].u.d.nextnode = i;}}
+                        if(Nodes[no].u.d.sibling == i) {found_i++; if(pass) {Nodes[no].u.d.sibling = j;}}
+                        else if(Nodes[no].u.d.sibling == j) {found_j++; if(pass) {Nodes[no].u.d.sibling = i;}}
+                    }
+                    no = next;
+                }
+                else {return 0;} /* a pseudo-particle: not a local subtree after all */
+            }
+        }
+        if(pass == 0 && (found_i == 0 || (!remove_mode && found_j == 0))) {return 0;}
+    }
+    return 1;
+}
+
 void swap_treewalk_pointers(int i, int j){
     // walk the tree and any time we see a nextnode or sibling set to i, swap it to j and vice versa
     double _t0 = my_second(); TreeMaintCount_SwapPointers++;
     int no, next;
     no = All.MaxPart;
 
+    if(treewalk_retarget_local(i, j, 0)) {no = -1;} /* done within the two parents' subtrees */
     while(no >= 0){ // walk the whole tree, starting from the root node (=All.MaxPart)
         if(no < All.MaxPart) { // we got a particle
             next=Nextnode[no];
@@ -1273,6 +1337,7 @@ void swap_treewalk_pointers(int i, int j){
 void remove_particle_from_treewalk(int i){
     int no, next;
     no = All.MaxPart;
+    if(treewalk_retarget_local(i, i, 1)) {return;} /* done within the parent's subtree */
     while(no >= 0){ // walk the tree to find anything that might point to i and redirect it to i's nextnode
         if(no < All.MaxPart){
             next = Nextnode[no];
@@ -1381,6 +1446,9 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
             P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;} /* CellP only exists for gas */
+#ifdef TREE_REFRESH_INCREMENTAL
+            if(repair_walk_links) {force_mark_moments_dirty(i);} /* its ancestors lose its mass at the next refresh */
+#endif
             TimeBinCount[P[i].TimeBin]--;
             if(TimeBinActive[P[i].TimeBin]) {NumForceUpdate--;}
 
@@ -1450,7 +1518,11 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
            contributions are still in every ancestor moment. Re-derive them before the next force
            evaluation -- tot_elim is Allreduce'd above, so this is rank-uniform. Safety net: this fires
            even if the site that zeroed the mass forgot to raise the moments flag itself. */
+#ifdef TREE_REFRESH_INCREMENTAL
+        if(tot_elim > 0) {TreeMomentsDirtyFlag = 1;} /* the eliminated particles' ancestors were marked above */
+#else
         if(tot_elim > 0) {TreeMomentsStaleFlag = 1;}
+#endif
         if(flag) {TreeWalkValidatePending = 1;} /* rank-local note: this rank's threading was edited; the next tree consumer validates it (tier-0) */
         if(flag || count_elim) {TreeAuditMomentsPending = 1;} /* the next refresh audits moments un-strided: post-mutation is exactly when a wrong Father shows as a moment mismatch */
 #ifdef TREE_INTEGRITY_AUDITS

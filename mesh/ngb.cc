@@ -47,7 +47,47 @@ void ngb_treebuild(void)
  *  insertion (which bumps only the immediate parent) and the next force_update_hmax()/rebuild/refresh,
  *  ancestor nodes can under-report hmax and prune a search that should have descended.
  */
-int ngb_treefind_pairs_threads(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode,
+#ifdef NGB_PAIR_CACHE
+/* Cache of the local (mode 0) pair searches: the gradient loop's first pass records, for each element it searches from,
+   the neighbour list and the pseudo-particles (export targets) met, in walk order; the second gradient pass and the hydro
+   loop replay them instead of walking the tree again. Imported (mode 1) searches walk: recording them in a hash map cost
+   more than it saved. Nothing between those loops moves an element, changes a kernel
+   radius or mass, or touches the tree, and every neighbour a replayed walk would visit was already drifted by the
+   recording walk, so a replay returns exactly what the walk would. A replay is used only for the same element, centre
+   and radius; anything else walks. Lifetime: hydro_gradient_calc() begin -> end of hydro_force(). */
+static struct {
+    int state = 0; /* 0 off, 1 record, 2 replay */
+    std::vector<long long> offset; /* per element index: start in data, or -1 */
+    std::vector<int> nngb, npseudo;
+    std::vector<double> key; /* 4 per element: radius and centre of the recorded search */
+    std::vector<int> data; /* per entry: neighbours, then pseudo-particles */
+} NgbPairCache;
+static thread_local int ngb_pair_cache_tl_recording = 0;
+static thread_local std::vector<int> ngb_pair_cache_tl_pseudo;
+
+static std::vector<int> NgbPairCacheTargets; /* elements recorded, so clearing costs O(recorded), not O(NumPart), on deep-hierarchy steps */
+
+void ngb_pair_cache_begin_record(void)
+{
+    if((int)NgbPairCache.offset.size() < NumPart) /* grown, never shrunk or re-cleared: free() resets only the entries it set */
+    {
+        NgbPairCache.offset.resize(NumPart, -1); NgbPairCache.nngb.resize(NumPart, 0); NgbPairCache.npseudo.resize(NumPart, 0); NgbPairCache.key.resize(4*(size_t)NumPart, 0.);
+    }
+    for(int t : NgbPairCacheTargets) {NgbPairCache.offset[t] = -1;} /* in case a previous record was never freed */
+    NgbPairCache.data.clear(); NgbPairCacheTargets.clear(); NgbPairCache.state = 1;
+}
+void ngb_pair_cache_begin_replay(void) {if(NgbPairCache.state) {NgbPairCache.state = 2;}}
+void ngb_pair_cache_free(void)
+{
+    NgbPairCache.state = 0;
+    for(int t : NgbPairCacheTargets) {NgbPairCache.offset[t] = -1;}
+    NgbPairCacheTargets.clear(); NgbPairCache.data.clear(); /* capacity is kept for the next step */
+}
+
+#define NGB_PSEUDO_HOOK(no_) {if(ngb_pair_cache_tl_recording) {ngb_pair_cache_tl_pseudo.push_back(no_);}}
+#endif
+
+static int ngb_treefind_pairs_threads_walk(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode,
                                int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist)
 {
 #include "../system/ngb_codeblock_before_condition.h"
@@ -58,6 +98,81 @@ int ngb_treefind_pairs_threads(MyDouble searchcenter[3], MyFloat rkern, int targ
 #include "../system/ngb_codeblock_after_condition_threaded.h"
 #undef SEARCHBOTHWAYS // must be undefined after code block inserted, or compiler will crash
 #undef NGB_ONLY_OPEN_NODES_CONTAINING_GAS
+}
+#ifdef NGB_PSEUDO_HOOK
+#undef NGB_PSEUDO_HOOK
+#endif
+
+int ngb_treefind_pairs_threads(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode,
+                               int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist)
+{
+#ifdef NGB_PAIR_CACHE
+    int use_cache = (NgbPairCache.state != 0) && (mode == 0) && (target >= 0) && (target < NumPart) && (target < (int)NgbPairCache.offset.size()) && (*startnode == All.MaxPart);
+    if(use_cache && NgbPairCache.state == 2)
+    {
+        long long off = NgbPairCache.offset[target]; const double *key = &NgbPairCache.key[4*(size_t)target];
+        if(off >= 0 && key[0] == (double)rkern && key[1] == (double)searchcenter[0] && key[2] == (double)searchcenter[1] && key[3] == (double)searchcenter[2])
+        {
+            int nngb = NgbPairCache.nngb[target], npseudo = NgbPairCache.npseudo[target];
+            const int *list = &NgbPairCache.data[off];
+            int maxPart = All.MaxPart, maxNodes = MaxNodes, task; long bunchSize = All.BunchSize;
+            for(int k = 0; k < npseudo; k++) /* exports exactly as the walk makes them (ngb_codeblock_after_condition_threaded.h) */
+            {
+                int no = list[nngb + k];
+                if(exportflag[task = DomainTask[no - (maxPart + maxNodes)]] != target)
+                {
+                    exportflag[task] = target;
+                    exportnodecount[task] = NODELISTLENGTH;
+                }
+                if(exportnodecount[task] == NODELISTLENGTH)
+                {
+                    int exitFlag = 0, nexp;
+#ifdef _OPENMP
+#pragma omp critical(_nexportngb_)
+#endif
+                    {
+                        if(Nexport >= bunchSize) {BufferFullFlag = 1; exitFlag = 1;} else {nexp = Nexport; Nexport++;}
+                    }
+                    if(exitFlag) {return -1;}
+                    exportnodecount[task] = 0;
+                    exportindex[task] = nexp;
+                    DataIndexTable[nexp].Task = task;
+                    DataIndexTable[nexp].Index = target;
+                    DataIndexTable[nexp].IndexGet = nexp;
+                }
+                DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] = DomainNodeIndex[no - (maxPart + maxNodes)];
+                if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
+            }
+            if(nngb > 0) {memcpy(ngblist, list, nngb * sizeof(int));}
+            *startnode = -1;
+            return nngb;
+        }
+    }
+    if(use_cache && NgbPairCache.state == 1) {ngb_pair_cache_tl_recording = 1; ngb_pair_cache_tl_pseudo.clear();}
+    int numngb = ngb_treefind_pairs_threads_walk(searchcenter, rkern, target, startnode, mode, exportflag, exportnodecount, exportindex, ngblist);
+    if(ngb_pair_cache_tl_recording)
+    {
+        ngb_pair_cache_tl_recording = 0;
+        if(numngb >= 0 && *startnode < 0) /* completed walk (a full export buffer returns -1 and the element is searched again later) */
+        {
+            int npseudo = (int)ngb_pair_cache_tl_pseudo.size();
+#ifdef _OPENMP
+#pragma omp critical(_ngbpaircache_)
+#endif
+            {
+                long long off = (long long)NgbPairCache.data.size();
+                NgbPairCache.data.insert(NgbPairCache.data.end(), ngblist, ngblist + numngb);
+                NgbPairCache.data.insert(NgbPairCache.data.end(), ngb_pair_cache_tl_pseudo.begin(), ngb_pair_cache_tl_pseudo.end());
+                NgbPairCache.offset[target] = off; NgbPairCache.nngb[target] = numngb; NgbPairCache.npseudo[target] = npseudo; NgbPairCacheTargets.push_back(target);
+                double *key = &NgbPairCache.key[4*(size_t)target];
+                key[0] = (double)rkern; key[1] = (double)searchcenter[0]; key[2] = (double)searchcenter[1]; key[3] = (double)searchcenter[2];
+            }
+        }
+    }
+    return numngb;
+#else
+    return ngb_treefind_pairs_threads_walk(searchcenter, rkern, target, startnode, mode, exportflag, exportnodecount, exportindex, ngblist);
+#endif
 }
 
 

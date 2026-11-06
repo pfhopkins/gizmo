@@ -99,12 +99,11 @@ void determine_where_SNe_occur(void)
         dtmean += dt;
     } // for (int i : ActiveParticleList) //
 
-    MPI_Reduce(&dtmean, &mpi_dtmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&rmean, &mpi_rmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&ptotal, &mpi_ptotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&nhosttotal, &mpi_nhosttotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&ntotal, &mpi_ntotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&npossible, &mpi_npossible, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    {
+        double sne_loc[6] = {dtmean, rmean, ptotal, nhosttotal, ntotal, npossible}, sne_tot[6];
+        MPI_Reduce(sne_loc, sne_tot, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); /* log-file statistics only */
+        mpi_dtmean = sne_tot[0]; mpi_rmean = sne_tot[1]; mpi_ptotal = sne_tot[2]; mpi_nhosttotal = sne_tot[3]; mpi_ntotal = sne_tot[4]; mpi_npossible = sne_tot[5];
+    }
 
     if(ThisTask == 0)
     {
@@ -182,6 +181,7 @@ void out2particle_addFB(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loo
         } else {
             P[i].dp -= out->M_coupled * P[i].Vel; /* track momentum change from mass loss for tree node update */
             P[i].Mass -= out->M_coupled; if((P[i].Mass<0)||(isnan(P[i].Mass))) {P[i].Mass=0;} if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
+            force_note_mass_change(i);
 #ifdef SINGLE_STAR_FB_WINDS
             P[i].Sink_Mass -= out->M_coupled; if((P[i].Sink_Mass<0)||(isnan(P[i].Sink_Mass))) {P[i].Sink_Mass=0;}
 #endif
@@ -462,6 +462,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     P[j].dp[k] += Mass_j*Vel_j[k] - Mass_j_0*Vel_j_0[k]; // discrete momentum change
                 }
                 force_note_motion_change(j);
+                force_note_mass_change(j);
                 #pragma omp atomic
                 CellP[j].InternalEnergy += InternalEnergy_j - InternalEnergy_j_0; // delta-update
                 #pragma omp atomic
@@ -837,6 +838,7 @@ void verify_and_assign_local_mechfb_integrals(void)
             Vec3<double> sn_v0 = P[j].Vel;
 #endif
             double m0=P[j].Mass, dm=LocalGasMechFBInfoTemp[j].m_injected; P[j].Mass += dm; /* update mass */ if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
+            force_note_mass_change(j);
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             m0=CellP[j].MassTrue; CellP[j].MassTrue += dm; /* update conserved mass */
 #endif
@@ -921,6 +923,7 @@ void mechanical_fb_calc_toplevel(void)
 #endif
 #ifndef GALSF_USE_SNE_ONELOOP_SCHEME
     verify_and_assign_local_mechfb_integrals();
+    force_raise_noted_motion_bounds();
     myfree(LocalGasMechFBInfoTemp); /* free the structure */
 #endif
 }

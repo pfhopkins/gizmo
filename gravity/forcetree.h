@@ -27,16 +27,30 @@
 #define BITFLAG_MULTIPLEPARTICLES          7
 #define BITFLAG_NODEHASBEENKICKED          8
 #define BITFLAG_INSIDE_LINKINGLENGTH       9
+#define BITFLAG_MOMENTS_DIRTY              10 /* TREE_REFRESH_INCREMENTAL: this node's moments must be re-derived at the next refresh */
 
 void force_update_tree(void);
 void force_refresh_node_moments(void);
+void force_refresh_moments_if_stale(void);
+#ifdef TREE_REFRESH_INCREMENTAL
+void force_mark_moments_dirty(int i);
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) && !defined(ADAPTIVE_GRAVSOFT_FORALL)
+#define TREE_MAXSOFT_COVERS_HMAX /* gas softening is the kernel, which hmax bounds: every node keeps maxsoft at or above its hmax (force_node_cover_soft) */
+#endif
+#endif
+void force_note_mass_change(int i);         /* thread-safe: i's mass changed with no refresh requested; its chain is marked by force_raise_noted_motion_bounds */
+double force_member_softening(int p);       /* a member's softening as node maxsoft takes it */
+void force_node_cover_soft(int no);
 void force_validate_tree_links(const char *tag);
 #ifdef TREE_INTEGRITY_AUDITS
 void force_tree_full_audit(int audit_moments, const char *tag);
 void force_tree_geometry_audit(const char *tag);
 void force_tree_walk_audit(const char *tag);
-extern long long TreeMomAuditCount; /*!< moments audits run (rank-local) */
-extern long long TreeMomAuditVmaxShort, TreeMomAuditSoftShort; /*!< node checks where vmax / maxsoft fell below a member's current value (reported, not fatal) */
+struct node_prediction {Vec3<MyDouble> s, vs, sink_pos, sink_vel; double len, hmax, maxsoft;};
+void force_node_predict(int no, integertime time1, struct node_prediction *np);
+extern long long TreeMomAuditCount, TreeMomAuditCarried; /*!< moments audits run, and node checks of moments carried over from before the last refresh (rank-local) */
+extern double TreeMomAuditWorstCOM, TreeMomAuditWorstCOMWiden, TreeMomAuditWorstDV; /*!< worst carried COM offset in node lengths and in units of its motion-bound widening; worst carried velocity offset over the members' max speed */
+extern long long TreeMomAuditVmaxShort, TreeMomAuditSoftShort; /*!< node checks where vmax fell below a member's current value, or maxsoft below a member's softening predicted to now (reported, not fatal) */
 extern double TreeMomAuditWorstVmaxShort, TreeMomAuditWorstSoftShort; /*!< ... and the worst member value over the node's */
 extern long long TreeGeoAuditCount, TreeGeoAuditBoxCount; /*!< geometry audits run, and those with a box-containment excess (rank-local) */
 extern double TreeGeoAuditWorstLen, TreeGeoAuditWorstH;   /*!< worst box excess over the run, in node lengths and in kernel radii */

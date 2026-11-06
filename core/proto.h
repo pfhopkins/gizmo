@@ -274,6 +274,9 @@ int MPI_Check_Sendrecv(void *sendbuf, int sendcount, MPI_Datatype sendtype,
                        int dest, int sendtag, void *recvbufreal, int recvcount,
                        MPI_Datatype recvtype, int source, int recvtag, MPI_Comm comm, MPI_Status * status);
 
+void mpi_sparse_counts(const int *send_count, int *recv_count, const long long flags_in[4], long long flags_out[4]);
+void mpi_exchange_with_partners(int ngrp_lo, int ngrp_hi, int tag, char *sbuf, const int *scount, const int *soff, size_t ssize,
+                                char *rbuf, const int *rcount, const int *roff, size_t rsize);
 int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype sendtype,
                              int dest, int sendtag, void *recvbuf0, size_t recvcount,
                              MPI_Datatype recvtype, int source, int recvtag, MPI_Comm comm,
@@ -543,6 +546,11 @@ void set_injection_accel(void);
 
 int density_isactive(int n);
 int GasGrad_isactive(int i, struct particle_data *pp, struct gas_cell_data *cell);
+#ifdef NGB_PAIR_CACHE
+void ngb_pair_cache_begin_record(void);
+void ngb_pair_cache_begin_replay(void);
+void ngb_pair_cache_free(void);
+#endif
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
 void cellcorrections_calc(void);
