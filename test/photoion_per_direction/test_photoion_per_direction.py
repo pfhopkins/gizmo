@@ -211,6 +211,7 @@ def test_quiet_steps(built):
     assert onset <= t_first < onset + 1000.0, (t_first, onset)
     cap = rows[-1, 0] - rows[-2, 0]  # the star is on the cap step by the end
     off_cap = np.abs(rows[:, 0] / cap - np.round(rows[:, 0] / cap)) > 1e-6  # one more: the partner search
+    off_cap[0] = False  # the table is still empty
     assert np.all(rows[:, 11] == 8 + 5 * rows[:, 8] + off_cap), rows[:, [0, 8, 11]]
     assert rows.shape[1] == 15 and np.all(rows[:, 12] > 0) and np.all(rows[:, 12] < 10), rows[:, 12]  # wall time of each solve [s]
 
