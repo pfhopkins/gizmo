@@ -842,6 +842,9 @@ struct global_data_all_processes
     double TestSNTime0, TestSNSpacing; /*!< test only: star ID k of the first TestNumStars explodes at TestSNTime0 + (k-1) TestSNSpacing [code time] */
     int TestNumStars;
 #endif
+#ifdef TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED
+    double TestFixedWindMdot, TestFixedWindVel; /*!< test only: single-star wind rate [Msun/yr] and speed [km/s] */
+#endif
 #ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
     double TestFBNoGasUntilTime; /*!< test only: before this code time single-star feedback couples to no gas */
 #endif

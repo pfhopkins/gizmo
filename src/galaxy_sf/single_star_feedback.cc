@@ -134,6 +134,9 @@ static inline double single_star_death_age_yr(double logM, double logZ) {return 
 /* table age since the zero-age main sequence (log10 yr) at stellar age age_yr; < 0 means still pre-main-sequence */
 static inline double single_star_table_log_age(double age_yr, double logM, double logZ)
 {
+#ifdef TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED
+    return log10(DMAX(age_yr, 100.)); /* test only: the pinned wind runs from birth, no pre-main-sequence delay */
+#endif
     double t = age_yr - stellar_t_PMS(logM, logZ);
     return (t > 0) ? log10(DMAX(t, 100.)) : -1;
 }
@@ -150,6 +153,13 @@ static void single_star_scale(double *y, double Mej)
 static void single_star_wind_owed(int s, double logM, double logZ, double la_to, struct single_star_event *ev)
 {
     double la_from = SingleStars.last_wind_log_age[s], dM = 0;
+#ifdef TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED /* test only: constant rate and speed, the table's surface composition */
+    ev->Mej = All.TestFixedWindMdot * (pow(10., la_to) - ((la_from > 0) ? pow(10., la_from) : 0));
+    for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_surface_abundance(logM, logZ, la_to, k);}
+    single_star_scale(ev->y, ev->Mej);
+    ev->v_kms = DMAX(All.TestFixedWindVel, 10.); ev->log_age_to = la_to;
+    return;
+#endif
     for(int k = 0; k < STBL_NELEM; k++) {
         ev->y[k] = stellar_elem_ej_wind_cumulative(logM, logZ, la_to, k) - ((la_from > 0) ? stellar_elem_ej_wind_cumulative(logM, logZ, la_from, k) : 0);
         dM += ev->y[k];

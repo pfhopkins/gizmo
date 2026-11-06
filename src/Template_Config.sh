@@ -285,6 +285,7 @@
 #TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE # TESTING ONLY: a single star is born with the age TestStarInitAgeYr [yr] (formation time back-dated), so its evolution starts there
 #TEST_SINGLE_STARS_SN_AT_FORCED_TIMES # TESTING ONLY: star ID k of the first TestNumStars (first generation) explodes at TestSNTime0 + (k-1) TestSNSpacing [code time], whatever its table lifetime
 #TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME # TESTING ONLY: before the code time TestFBNoGasUntilTime single-star feedback couples to no gas; events stay pending and are retried
+#TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED # TESTING ONLY: single-star winds at the constant rate TestFixedWindMdot [Msun/yr] and speed TestFixedWindVel [km/s] from birth, instead of the tables (valid before the death)
 #GALSF_SFR_IMF_SAMPLING          # discretely sample the IMF: simplified model with quantized number of massive stars. Cite Kung-Yi Su, Hopkins, et al., Hayward, et al., 2017, "Discrete Effects in Stellar Feedback: Individual Supernovae, Hypernovae, and IMF Sampling in Dwarf Galaxies". 
 #GALSF_GENERATIONS=1             # the number of star particles a gas particle may spawn (defaults to 1, set otherwise if desired)
 ## ----------------------------------------------------------------------------------------------------------------------------

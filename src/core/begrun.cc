@@ -1871,6 +1871,14 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.TestNumStars;
         id[nt++] = INT;
 #endif
+#ifdef TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED
+        strcpy(tag[nt], "TestFixedWindMdot");
+        addr[nt] = &All.TestFixedWindMdot;
+        id[nt++] = REAL;
+        strcpy(tag[nt], "TestFixedWindVel");
+        addr[nt] = &All.TestFixedWindVel;
+        id[nt++] = REAL;
+#endif
 #ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
         strcpy(tag[nt], "TestFBNoGasUntilTime");
         addr[nt] = &All.TestFBNoGasUntilTime;
