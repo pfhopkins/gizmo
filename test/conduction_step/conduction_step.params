@@ -1,0 +1,33 @@
+% Thermal conduction of a sinusoidal internal-energy mode in a frozen 2D periodic box.
+% Isotropic (Config.sh as is) or field-aligned (test adds MAGNETIC and a B field in the IC).
+%
+% Units are arbitrary code units: rho0 = 1, BoxSize = 1, u0 = 1, k = 2 pi.
+% ConductionCoeff = kappa = 1/(4 pi^2) gives D k^2 = (kappa/rho0) k^2 = 1, so the theta=0 / isotropic
+% mode decays by e over TimeMax = 1. MaxSizeTimestep caps the step at TimeMax/1024 (all cells on one
+% bin), ~0.2 of GIZMO's own explicit limit 0.5 dx^2 rho/kappa = 4.8e-3 at 64^2.
+%
+% The test overrides InitCondFile and OutputDir per case.
+InitCondFile                       conduction_step_iso_ics
+OutputDir                          output
+TimeBegin                          0
+TimeMax                            1
+BoxSize                            1
+TimeOfFirstSnapshot                0
+TimeBetSnapshot                    0.125
+MaxSizeTimestep                    0.001
+MinSizeTimestep                    1e-7
+ConductionCoeff                    0.025330295910584444
+MinGasTemp                         0
+DesNumNgb                          20
+MaxNumNgbDeviation                 0.1
+CourantFac                         0.4
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+DivBcleaningParabolicSigma         0.2
+DivBcleaningHyperbolicSigma        1.0
+TimeBetStatistics                  0.5
+MaxMemSize                         1000
+ResubmitOn                         0
+ResubmitCommand                    none
