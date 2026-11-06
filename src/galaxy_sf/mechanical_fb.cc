@@ -159,6 +159,9 @@ void verify_and_assign_local_mechfb_integrals(void)
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
             update_ISMDustChem_after_mechanical_injection(j, LocalGasMechFBInfoTemp[j].Mass_Where_Dust_Shocked, m0, mf, LocalGasMechFBInfoTemp[j].Z_injected); /* update dust chemistry quantities */
 #endif
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+            double TE_cell_0 = m0*CellP[j].InternalEnergy; /* the heat row is the change of the cell's energy over this step */
+#endif
             CellP[j].Density *= mf/m0; /* update density [semi-drift] */
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
             CellP[j].InternalEnergy *= m0/mf; CellP[j].InternalEnergyPred *= m0/mf; /* cold ejecta dilute u at once, whatever the energy of the event */
@@ -177,9 +180,6 @@ void verify_and_assign_local_mechfb_integrals(void)
                     ledger_add(LEDGER_E_FB_THERMAL_DEFERRED, dTE);
 #endif
                 } else {
-#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
-                    ledger_add(LEDGER_E_FB_THERMAL_NOW, dTE);
-#endif
                     CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;
                     /* Direct-dU branch: mark this receiver for positive wakeup
                      * from the most-aggressive source TimeBin that contributed.
@@ -204,6 +204,9 @@ void verify_and_assign_local_mechfb_integrals(void)
                 }
                 //CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU; /* update internal energy; simpler (old) way to do it - less accurate phase diagrams at high density, however */
             }
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+            ledger_add(LEDGER_E_FB_THERMAL_NOW, mf*CellP[j].InternalEnergy - TE_cell_0); /* what reached u; deferred heat is only in the rate */
+#endif
             double dKE=LocalGasMechFBInfoTemp[j].KE_injected, dp[3];
             if(dKE != 0 || LocalGasMechFBInfoTemp[j].p_injected[0] != 0 || LocalGasMechFBInfoTemp[j].p_injected[1] != 0 || LocalGasMechFBInfoTemp[j].p_injected[2] != 0 )
             {
