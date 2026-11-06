@@ -1220,11 +1220,12 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         *n_elec_eval = n_elec; /* save this value for the output cycle */
         LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
+        double metal_table_weight = 1; /* share of the tabulated metal lines not already counted by the nebular term below */
 
 #if defined(RT_CHEM_PHOTOION) && defined(METALS)
         /* Nebular (photoionized forbidden-line) cooling from O+, O++, N+, S+, Ne+: Kim, Gong, Kim &
-           Ostriker 2023 (ApJS 264, 10), Eq. 47. The tabulated metal-line cooling below assumes collisional
-           ionization, which under-predicts the forbidden-line cooling of PHOTOIONIZED gas; this supplies
+           Ostriker 2023 (ApJS 264, 10), Eq. 47. The tabulated metal-line cooling below includes the UV background
+           but not local sources, so it under-predicts the forbidden-line cooling of gas photoionized by stars; this supplies
            the coolant that sets the ~1e4 K equilibrium of an HII region. The rate is per nH^2 like the
            other channels, since the volumetric rate goes as n_e*n_H+. METALS is in the guard because the
            metallicity arrays exist only under it, and the term is metallicity-scaled in any case. */
@@ -1234,7 +1235,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             double LambdaNeb = n_elec * nHp * (pp[target].Metallicity[0] / All.SolarAbundances[0])
                 * 3.68e-23 * exp(-DMIN(3.86/T4, 100.)) / sqrt(T4) * pow(10., log10_fneb)
                 / (1. + 0.12*pow(ne_100, 0.38 - 0.12*lnT4)); /* collisional de-excitation: multi-line, so a temperature-dependent power rather than a single critical density */
-            LambdaNeb *= 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* taper out over 2e4-3.5e4 K, handing off to the collisional metal-line tables below so this is not double-counted through the transition */
+            double neb_weight = 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* taper out over 2e4-3.5e4 K */
+            LambdaNeb *= neb_weight;
+            metal_table_weight = 1. - neb_weight * DMIN(1., DMAX(0., nHp)); /* the tables below count the same forbidden lines: an approximate interpolation in which the ionized fraction hands them to this term and the neutral fraction keeps them */
             if(LambdaNeb > 0) {Lambda += LambdaNeb;}
         }
 #endif
@@ -1252,6 +1255,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             /* tables normalized so ne*ni/(nH*nH) included already, so just multiply by nH^2 */
             /* (sorry, -- dont -- multiply by nH^2 here b/c that's how everything is normalized in this function) */
             LambdaMetal *= n_elec;
+            LambdaMetal *= metal_table_weight;
             /* (modified now to correct out tabulated ne so that calculated ne can be inserted; ni not used b/c it should vary species-to-species */
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
             if(logT<2) {LambdaMetal *= exp(-DMIN((2.-logT)*(2.-logT)/0.1,40.));}
