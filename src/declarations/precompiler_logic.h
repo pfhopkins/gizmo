@@ -6,6 +6,9 @@
 /* also many logical options to force 'parent' or 'top-level' flags to be enabled for the appropriate methods, if we have enabled something using those methods */
 
 /* macro definition we will use throughout below, make sure this is defined up-top here */
+#ifdef NOGRAVITY
+#define SELFGRAVITY_OFF
+#endif
 #define DO_PREPROCESSOR_EXPAND_(VAL)  VAL ## 1
 #define EXPAND_PREPROCESSOR_(VAL)     DO_PREPROCESSOR_EXPAND_(VAL) /* checks for a NON-ZERO value of this parameter */
 #define CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(VAL) !(EXPAND_PREPROCESSOR_(VAL) == 1) /* returns True if a non-zero int value of VAL is set */
@@ -1200,6 +1203,14 @@
 
 #if !defined(RT_USE_GRAVTREE) && defined(RT_SELFGRAVITY_OFF) && !defined(SELFGRAVITY_OFF)
 #define SELFGRAVITY_OFF // safely define SELFGRAVITY_OFF in this case, otherwise we act like there is gravity except in the final setting of accelerations
+#endif
+/* The gravity tree walk also serves consumers that are not gravity: RT flux propagation and column
+   densities (RT_USE_GRAVTREE, RT_USE_TREECOL_FOR_NH) and the sink feedback timestep limiter
+   (SINGLE_STAR_FB_TIMESTEPLIMIT: Min_Sink_FeedbackTime is written by the walk). With SELFGRAVITY_OFF the
+   walk, its device dispatch and the foreign-subtree import still run for them; the accelerations it
+   produces are zeroed afterwards by GravAccel_set_zeros_if_needed. */
+#if !defined(SELFGRAVITY_OFF) || defined(RT_USE_GRAVTREE) || defined(RT_USE_TREECOL_FOR_NH) || defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+#define GRAVTREE_WALK_ACTIVE
 #endif
 
 /* a particle whose tree walk is skipped keeps the acceleration the gravity call finalized (tree, analytic, direct terms) and
