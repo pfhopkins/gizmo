@@ -24,7 +24,7 @@ CritPhysDensity                    1e30
 SfEffPerFreeFall                   0.01
 StellarTablesFile                  SET_BY_TEST
 HIIRegion_fLum_Coupled             1.0
-PhotoionMaxSearchRadius            0.02
+PhotoionMaxSearchRadius            0.06
 PhotoionMaxTimestep                1e4
 SGChemTablesPath                   SET_TABLES
 SGChemCosmicRayIonRate             2.0e-16
