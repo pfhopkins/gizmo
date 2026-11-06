@@ -33,3 +33,5 @@ Softening_Type2_MaxPhysLimit       0.05
 Softening_Type3_MaxPhysLimit       0.05
 Softening_Type4_MaxPhysLimit       0.05
 Softening_Type5_MaxPhysLimit       0.05
+CourantFac                         0.4
+MaxRMSDisplacementFac              0.125
