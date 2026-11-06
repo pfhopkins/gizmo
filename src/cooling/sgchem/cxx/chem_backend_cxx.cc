@@ -29,6 +29,15 @@
 // process-global, immutable-after-init table set
 // ---------------------------------------------------------------------------
 static ChemTables g_tab;
+#ifdef GALSF_FB_PHOTOIONIZATION_RECOMBINATION_AT_CELL_TEMPERATURE
+/* the chemistry's H+ case-B rate (table entry 13) at T */
+double chem_case_b_rate(double temp)
+{
+    int it = CHEM_NMD; double dt = 0;
+    if(temp < g_tab.tmax) {it = (int)(std::log10(temp) / g_tab.dtlog) + 1; if(it < 1) {it = 1;} if(it > CHEM_NMD) {it = CHEM_NMD;} dt = temp - g_tab.temptab[it-1];}
+    return g_tab.chtab[it-1][12] + dt * g_tab.dtchtab[it-1][12];
+}
+#endif
 static int        g_tab_ready = 0;
 
 const ChemTables& chem_cxx_tables() { return g_tab; }
