@@ -72,6 +72,8 @@ struct SinkFeedCallScalars {
                                                  themselves under matching #ifdefs, so the
                                                  fallback zero is never observed */
     uint64_t         rng_ti;             /* (uint64_t)All.Ti_Current, the event time of the draws */
+    double           sink_merger_max_mass;           /* All.SinkMergerMaxMass (0 under !SINGLE_STAR_SINK_DYNAMICS) */
+    double           sink_merger_max_radius_factor;  /* All.SinkMergerMaxRadiusFactor (1 under !SINGLE_STAR_SINK_DYNAMICS) */
 };
 
 /* Per-active host-fill struct, populated by populate_device_context() on
@@ -348,8 +350,9 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             volatile int allow_sink_merger = 1;
             if(r >= 1.0001 * neighbor_particle.Min_Distance_to_Sink)  allow_sink_merger = 0;
             if(r >= heff_j)                                            allow_sink_merger = 0;
-            double max_rmerge = 1.0 * sink_radius;
-            double max_mmerge = 10. * neighbor_particle.Sink_Formation_Mass;
+            double max_rmerge = scalars.sink_merger_max_radius_factor * sink_radius;
+            double max_mmerge = (scalars.sink_merger_max_mass > 0) ? scalars.sink_merger_max_mass
+                                                                    : 10. * neighbor_particle.Sink_Formation_Mass;
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
             /* MERGE_AWAY: helper folds the eligibility checks + extends
              * max_rmerge by softening / kernel-radius / orbital-period
