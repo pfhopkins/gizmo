@@ -27,6 +27,14 @@ int single_star_band_luminosities_cgs(int i, double *L, double *L_bol)
     if(P[i].StarIdx <= 0) {return 0;}
     int s = single_star_slot(P[i].StarIdx);
     if(SingleStars.M_drawn[s] <= All.IMFSampleStellarMassCut) {return 0;}
+#ifdef TEST_SINGLE_STARS_LUMINOSITY_PINNED /* test only: constant L from birth, FUV 0.5 (in the 8-13.6 eV band), LW 0.15, NUV 0.2, optical 0.3, no ionising photons */
+    L[SINGLE_STAR_BAND_PE] = 0.5 * All.TestFixedLbol; L[SINGLE_STAR_BAND_LW] = 0.15 * All.TestFixedLbol; L[SINGLE_STAR_BAND_NUV] = 0.2 * All.TestFixedLbol;
+    L[SINGLE_STAR_BAND_OPT] = 0.3 * All.TestFixedLbol; *L_bol = All.TestFixedLbol;
+    return 1;
+#endif
+#ifdef TEST_SINGLE_STARS_RADIATION_OFF
+    return 0; /* test only: no radiation */
+#endif
     double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
     double age_yr = evaluate_stellar_age_Gyr(i) * 1.e9, t_pms = stellar_t_PMS(logM, logZ);
     if(age_yr >= t_pms + stellar_lifetime(logM, logZ) || age_yr - t_pms <= 0) {return 0;}
@@ -57,6 +65,9 @@ static void single_star_ionizing_rates(int i, double *L_ion, double *Q, double *
     int s = single_star_slot(P[i].StarIdx);
     double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
     double la = log10(DMAX(evaluate_stellar_age_Gyr(i) * 1.e9 - stellar_t_PMS(logM, logZ), 100.));
+#if defined(TEST_SINGLE_STARS_LUMINOSITY_PINNED) || defined(TEST_SINGLE_STARS_RADIATION_OFF)
+    *L_ion = *Q = *L_he = *Q_he = 0; (void) la; return; /* test only */
+#endif
     *L_ion = single_star_band_lum_cgs(stellar_log_L_ion_tot(logM, logZ, la)); *Q = single_star_band_lum_cgs(stellar_log_Q_ion(logM, logZ, la));
     *L_he = *Q_he = 0;
 #ifdef TREECOL_SHELLS_ION_HELIUM

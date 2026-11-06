@@ -74,6 +74,9 @@ double single_star_ionizing_onset_yr(int i)
 /* as single_star_luminosity_age, for the ionising band (from single_star_ionizing_onset_yr) */
 static int single_star_ionizing_age(int i, double *logM, double *logZ, double *log_age)
 {
+#if defined(TEST_SINGLE_STARS_LUMINOSITY_PINNED) || defined(TEST_SINGLE_STARS_RADIATION_OFF)
+    return 0; /* test only: no ionising photons */
+#endif
     if(!single_star_luminosity_age(i, logM, logZ, log_age)) {return 0;}
     double t_on = single_star_ionizing_onset_yr(i);
     return (t_on >= 0 && evaluate_stellar_age_Gyr(i) * 1.e9 >= t_on);
