@@ -5,9 +5,10 @@ gas cells (~1e4 cells; ~15 min on 4 ranks). Exercises BOX_SHEARING, GRAVITY_PERI
 and FIRE-3 star formation and feedback together.
 
 Check: the mean star formation rate surface density over 100-300 Myr, from the stellar mass formed in that window, is
-within a factor of 2 of the benchmark. The benchmark is our own 1e3 Msun run (R8_m1e3_v3, same setup), not TIGRESS:
-it is a regression test. At this resolution the SFR is ~4x below TIGRESS R8 (~2.5e-3), and the hot phase is absent.
-The 200 Myr average spans ~4 cycles of the SFR; 50 Myr windows of the benchmark run vary by 1.7x.
+within a factor of 2 of the benchmark. The benchmark is the mean of our own 1e3 Msun runs of this setup with the
+SN-coupling fix (ejecta-mass weighting) and the LEBRON flux fix, 8.6e-4 to 1.03e-3 across four runs; it is a regression
+test, not TIGRESS. The earlier benchmark (5.2e-4) came from runs that over-injected SN energy. At this resolution the
+SFR is ~2.5x below TIGRESS R8 (~2.5e-3) and the hot phase is absent. The 200 Myr average spans ~4 cycles of the SFR.
 
 Check: the long-range (LEBRON) FUV flux reaches the cool mid-plane gas. Each tree walk rebuilds a cell's raw flux and
 selfshield_local_incident_uv_flux converts it to Habing units in place; with adaptive tree-force updates (the FIRE-3
@@ -30,7 +31,7 @@ TEST_DIR = Path(__file__).parent
 REPO = TEST_DIR.parent.parent
 MYR = 0.9778  # code time unit (pc / (km/s)) in Myr
 L = 1000.0    # pc
-SFR_BENCHMARK = 5.2e-4  # Msun/yr/kpc^2, 100-300 Myr, R8_m1e3_v3
+SFR_BENCHMARK = 9.6e-4  # Msun/yr/kpc^2, 100-300 Myr
 SFR_FACTOR = 2.0
 NH = 1.989e33 / 3.0857e18**3 * 0.7 / 1.6726e-24  # code density -> n_H [cm^-3]
 DARK_HEATING = 1e-28  # erg/s per H atom: G0 ~ 1e-3, the UV background alone
