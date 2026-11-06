@@ -1122,6 +1122,9 @@
 #define COOL_LOWTEMP_THIN_ONLY // don't want to double-count trapping of radiation if we're doing it self-consistently
 #endif
 
+#if defined(GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK) && !defined(GALSF_SINGLE_STARS_27_ELEMENT_YIELDS)
+#error "GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK needs GALSF_SINGLE_STARS_27_ELEMENT_YIELDS"
+#endif
 #if defined(OUTPUT_TREECOL_PIXEL_COLUMNS) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
 #error "OUTPUT_TREECOL_PIXEL_COLUMNS writes the pixel columns of the gravity walk (GALSF_RESOLVEDISM_TREECOL_PIXELS)"
 #endif

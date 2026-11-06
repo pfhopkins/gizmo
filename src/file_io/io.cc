@@ -16,6 +16,9 @@
 #ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
 #include "../gravity/gravtree_treecol_pixels.h"
 #endif
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+#include "../galaxy_sf/stellar_solar_abundances.h"
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 /* get_ISMDustChemEvo_bin_mass is KOKKOS_INLINE_FUNCTION (Chunk 1, 2026-05-26). */
 #include "../solids/ism_dust_chemistry_functions.h"
@@ -723,6 +726,12 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE: /* 27 element mass fractions H..Zn from the metal slots */
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {double x[STELLAR_SOLAR_NELEM]; stellar_element_abundance_from_slots(P[pindex].Metallicity, x); for(k = 0; k < STELLAR_SOLAR_NELEM; k++) {*fp++ = (MyOutputFloat) x[k];} n++;}
+            break;
+#endif
         case IO_Z:			/* gas and star metallicity */
 #ifdef METALS
             for(n = 0; n < pc; pindex++)
@@ -2489,6 +2498,11 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             break;
 #endif
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            bytes_per_blockelement = STELLAR_SOLAR_NELEM * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
         case IO_Z:
 #ifdef METALS
             if(mode)
@@ -2909,6 +2923,11 @@ int get_values_per_blockelement(enum iofields blocknr)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            values = STELLAR_SOLAR_NELEM;
+            break;
+#endif
         case IO_Z:
 #ifdef METALS
             values = NUM_METAL_SPECIES;
@@ -3272,6 +3291,12 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
             return nstars + npart_in_file[5];
             break;
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            for(i = 0; i < 6; i++) {if(i != 0 && i != 4) {typelist[i] = 0;}}
+            return ngas + nstars;
+            break;
+#endif
         case IO_Z:
             for(i = 0; i < 6; i++) {if(i != 0 && i != 4 && i != 5) {typelist[i] = 0;}}
             return ngas + nstars + npart_in_file[5];
@@ -3440,6 +3465,11 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            return 1;
+            break;
+#endif
         case IO_Z:
 #ifdef METALS
             return 1;
@@ -4196,6 +4226,11 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_HSMS:
             strncpy(label, "HSMS", 4);
             break;
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            strncpy(label, "EABU", 4);
+            break;
+#endif
         case IO_Z:
             strncpy(label, "Z   ", 4);
             break;
@@ -4753,6 +4788,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_HSMS:
             strcpy(buf, "StellarKernelMaxRadius");
             break;
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            strcpy(buf, "ElementAbundance");
+            break;
+#endif
         case IO_Z:
             strcpy(buf, "Metallicity");
             break;
