@@ -39,12 +39,12 @@
             double q_grad = wt_i*grad_i[k] + wt_j*grad_j[k];
             double q_direct = d_scalar * kernel.dp[k] * rinv*rinv; // physical u / code length
             grad_dot_x_ij += q_grad * kernel.dp[k]; // physical u
-#ifdef MAGNETIC
+            /* q_direct carries only the pair-direction part of the gradient, so limiting each component against it
+               scales the flux through a face at angle phi to grad(u) by cos^2(phi): a sine mode in 2D decayed at
+               0.79 of the analytic rate. Keep the gradient and only discard it where the two disagree in sign and
+               the direct difference is much larger (the same treatment the MAGNETIC branch always used). */
             grad_ij[k] = MINMOD_G(q_grad , q_direct);
             if(q_grad*q_direct < 0) {if(fabs(q_direct) > 5.*fabs(q_grad)) {grad_ij[k] = 0.0;}}
-#else
-            grad_ij[k] = MINMOD(q_grad , q_direct);
-#endif
         }
 #ifdef MAGNETIC
         if(bhat_mag > 0)

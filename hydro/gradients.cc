@@ -1116,7 +1116,8 @@ void hydro_gradient_calc(void)
             CellP[i].alpha_limiter /= CellP[i].Density;
             NV_dt =  get_particle_timestep_in_physical(i); // physical
             NV_dummy = fabs(1.0 * pow(1.0 - CellP[i].alpha_limiter,4.0) * CellP[i].NV_DivVel); // NV_ quantities are in physical units
-            NV_limiter = NV_dummy*NV_dummy / (NV_dummy*NV_dummy + CellP[i].NV_trSSt);
+            double NV_denom = NV_dummy*NV_dummy + CellP[i].NV_trSSt; /* zero where there is no velocity gradient: the limiter is 0 there, not 0/0 */
+            NV_limiter = (NV_denom > 0) ? NV_dummy*NV_dummy / NV_denom : 0;
             NV_A = DMAX(-CellP[i].NV_dt_DivVel, 0.0);
             divVel_physical = CellP[i].NV_DivVel;
             // add a simple limiter here: alpha_loc is 'prepped' but only switches on when the divergence goes negative: want to add hubble flow here //
