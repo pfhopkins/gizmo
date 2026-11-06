@@ -29,3 +29,4 @@ CR_BACKGROUND_IONRATE_ATTENUATED
 TURB_DRIVING
 OUTPUT_IN_DOUBLEPRECISION
 TEST_GAS_ENERGY_LEDGER_OUTPUT
+TURB_DIFF_METALS_EXACT_CONSERVATION   # default on stella_dev for Stella; not yet a default here, metals do not close without it (1e-5)
