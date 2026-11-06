@@ -469,6 +469,7 @@
 #DOMAIN_TIMEBINS=0              # Domain timebin cost weighting: 0=frequency-weighted costs, 1=full per-timebin balancing (Gadget-4 scheme). Omit for unweighted.
 #DOMAIN_FREQ_WEIGHT=9           # Domain cost x min(2^(top occupied bin - particle bin), 2^n): spreads the short-timestep set over ranks (9 measured best on STARFORGE M2e4 at 384 ranks). Changes the layout.
 #DOMAIN_MULTIBIN                # Domain: balance every timebin level up to the decomposition step at once (per-level tallies per segment, top-leaf refinement by level, multi-row assignment weighted by each level's estimated wall until the next decomposition; counts capped at DOMAIN_MULTIBIN_LOADCAP=1.15 x mean). Use with DOMAIN_FREQ_WEIGHT=9. Changes the layout.
+#DOMAIN_FREQ_WEIGHT_SPLIT_ONLY  # with DOMAIN_FREQ_WEIGHT: the weight enters the split and the assignment only; the top tree is refined on the unweighted cost (keeps the top tree from doubling where deep-bin populations are dense, e.g. disks around sinks). Changes the layout.
 ####################################################################################################
 
 

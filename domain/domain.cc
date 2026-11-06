@@ -110,6 +110,17 @@ static inline int domain_toptree_leaf(peanokey key, struct local_topnode_data *t
 }
 
 static float *particle_total_cost;  /*!< cached per-particle total work cost: (1+multiplier)*costfactor */
+#ifdef DOMAIN_FREQ_WEIGHT
+/*! weight by how often the particle is active, relative to the top occupied bin, capped at 2^DOMAIN_FREQ_WEIGHT: the
+ *  short-timestep set is otherwise costed like any cell and lands on one or two ranks. With DOMAIN_FREQ_WEIGHT_SPLIT_ONLY
+ *  it enters only the per-leaf work (split and assignment); the top tree is refined on the unweighted cost, so a dense
+ *  deep-bin population does not multiply the top-level nodes. */
+static inline double domain_freq_weight(int i)
+{
+    int db = All.HighestOccupiedTimeBin - P[i].TimeBin; if(db > DOMAIN_FREQ_WEIGHT) {db = DOMAIN_FREQ_WEIGHT;}
+    return (db > 0) ? (double) (1 << db) : 1.0;
+}
+#endif
 static float *particle_costfactor;  /*!< cached per-particle base cost factor (for gas work accounting) */
 static float *domainWork;	/*!< a table that gives the total "work" due to the particles stored by each processor */
 static float *domainWorkGas;	/*!< a table that gives the total "work" due to the particles stored by each processor */
@@ -847,10 +858,8 @@ void domain_Decomposition_light(int UseAllTimeBins)
         double wt_mult = domain_particle_cost_multiplier(i);
         particle_costfactor[i] = (float)wt_0;
         double wt_freq = 1;
-#ifdef DOMAIN_FREQ_WEIGHT
-        /* weight by how often the particle is active, relative to the top occupied bin, capped at 2^DOMAIN_FREQ_WEIGHT:
-           the short-timestep set is otherwise costed like any cell and lands on one or two ranks */
-        {int db = All.HighestOccupiedTimeBin - P[i].TimeBin; if(db > DOMAIN_FREQ_WEIGHT) {db = DOMAIN_FREQ_WEIGHT;} if(db > 0) {wt_freq = (double) (1 << db);}}
+#if defined(DOMAIN_FREQ_WEIGHT) && !defined(DOMAIN_FREQ_WEIGHT_SPLIT_ONLY)
+        wt_freq = domain_freq_weight(i); /* drives refinement, split and assignment */
 #endif
         particle_total_cost[i] = (float)((1 + wt_mult) * wt_0 * wt_freq);
         gravcost += particle_total_cost[i];
@@ -1163,9 +1172,8 @@ int domain_decompose(void)
     for(i = 0; i < 6; i++) {NtypeLocal[i] = 0;}
 
     /* compute and cache per-particle costs once, reused in domain_check_for_local_refine and domain_sumCost.
-       particle_total_cost: unweighted cost used for top-tree refinement (preserves spatial structure).
-       For domain_sumCost, we apply timestep frequency weighting there to balance sub-step work
-       without distorting the tree refinement. */
+       The frequency weight (DOMAIN_FREQ_WEIGHT) is folded in here, so it drives the top-tree refinement too, unless
+       DOMAIN_FREQ_WEIGHT_SPLIT_ONLY, which applies it in domain_sumCost only. */
     particle_total_cost = (float *) mymalloc("particle_total_cost", NumPart * sizeof(float));
     particle_costfactor = (float *) mymalloc("particle_costfactor", NumPart * sizeof(float));
     for(i = 0, gravcost = gascost = 0; i < NumPart; i++)
@@ -1178,10 +1186,8 @@ int domain_decompose(void)
         double wt_mult = domain_particle_cost_multiplier(i);
         particle_costfactor[i] = (float)wt_0;
         double wt_freq = 1;
-#ifdef DOMAIN_FREQ_WEIGHT
-        /* weight by how often the particle is active, relative to the top occupied bin, capped at 2^DOMAIN_FREQ_WEIGHT:
-           the short-timestep set is otherwise costed like any cell and lands on one or two ranks */
-        {int db = All.HighestOccupiedTimeBin - P[i].TimeBin; if(db > DOMAIN_FREQ_WEIGHT) {db = DOMAIN_FREQ_WEIGHT;} if(db > 0) {wt_freq = (double) (1 << db);}}
+#if defined(DOMAIN_FREQ_WEIGHT) && !defined(DOMAIN_FREQ_WEIGHT_SPLIT_ONLY)
+        wt_freq = domain_freq_weight(i); /* drives refinement, split and assignment */
 #endif
         particle_total_cost[i] = (float)((1 + wt_mult) * wt_0 * wt_freq);
         gravcost += particle_total_cost[i];
@@ -3387,6 +3393,13 @@ void domain_sumCost(void)
               composite_cost += hcontrib; \
               my_binHydroCost[k_ * NTopleaves + no] += hcontrib; } } \
       wk[no] += composite_cost; \
+      cnt[no] += 1; \
+      if(P[n].Type == 0) { \
+          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {wkg[no] += particle_costfactor[n];} \
+          cntg[no] += 1;} }
+#elif defined(DOMAIN_FREQ_WEIGHT) && defined(DOMAIN_FREQ_WEIGHT_SPLIT_ONLY)
+  #define DOMAIN_SUMCOST_PARTICLE_BODY(n, no, wk, wkg, cnt, cntg) \
+    { wk[no] += (float) (particle_total_cost[n] * domain_freq_weight(n)); \
       cnt[no] += 1; \
       if(P[n].Type == 0) { \
           if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {wkg[no] += particle_costfactor[n];} \
