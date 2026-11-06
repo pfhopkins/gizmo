@@ -176,6 +176,15 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
 #endif
 }
 
+/* the ejecta mass [code] of star i's event this step, 0 if none: the feedback loop's weighting pass needs it */
+double single_star_ejecta_mass_this_step(int i)
+{
+    int kind = (P[i].StarIdx > 0) ? single_star_kind_this_step(i) : SSE_NONE;
+    if(kind == SSE_NONE) {return 0;}
+    struct single_star_event ev; single_star_event_of(i, kind, &ev);
+    return DMAX(ev.Mej, 0) / UNIT_MASS_IN_SOLAR;
+}
+
 /* event log rows, gathered and written by rank 0 in the step of the event:
    time ID kind remnant_type M_drawn M_trigger M_ejecta M_remnant E[erg] M_Z_ejecta mass_residual no_deposit_steps */
 #define SSFB_LOG_COLS 12

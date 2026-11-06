@@ -316,13 +316,10 @@ static void mechanical_fb_per_source_setup(
         double egy_RHS = p_coupled * p_coupled * S2 + p_coupled * S1;
         m.momentum_to_couple_term_units = p_coupled;
         m.U_thermal_residual_tocouple = Energy_injected_codeunits - egy_RHS;
-#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
-        if(m.feedback_type_is_SNe) { /* pure-thermal SNe: the whole explosion energy as heat, no radial ejecta momentum */
-            m.momentum_to_couple_term_units = 0;
-            m.U_thermal_residual_tocouple = 0.5 * (double)local.Msne * (double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta;
-        }
-#endif
     }
+#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
+    if(m.feedback_type_is_SNe) {m.momentum_to_couple_term_units = 0;} /* pure-thermal SNe: no radial ejecta momentum; the cell's closure below gives the whole energy as heat */
+#endif
 
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
     /* Mirror CPU lines 548-555 in mechanical_fb.cc: compute CR energy budget
@@ -581,8 +578,9 @@ static void mechanical_fb_pair_kernel(
             KE_final   *= 0.5 * Mass_j     * scalars.common.cf_a2inv;
         }
         double d_Egy_internal = pnorm * m.U_thermal_residual_tocouple;
-#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
-        { /* the cell closes its own share in the star's frame: its share of the ejecta energy less the kinetic energy it gained */
+        if(m.retain_thermal_flag == 0) d_Egy_internal = 0;
+#if (defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)) || defined(GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY)
+        if(m.retain_thermal_flag) { /* the cell closes its own share in the star's frame: its share of the ejecta energy less the kinetic energy it gained */
             double dKE_star_frame = 0;
             for(int k = 0; k < 3; k++) {
                 double v0 = (Vel_j_0[k] - (double)local.Vel[k]) / scalars.common.cf_atime, vf = (Vel_j[k] - (double)local.Vel[k]) / scalars.common.cf_atime;
@@ -591,7 +589,6 @@ static void mechanical_fb_pair_kernel(
             d_Egy_internal = pnorm * 0.5 * (double)local.Msne * (double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta - dKE_star_frame;
         }
 #endif
-        if(m.retain_thermal_flag == 0) d_Egy_internal = 0;
         d_Egy_internal /= Mass_j;
         if(d_Egy_internal > 0) InternalEnergy_j += d_Egy_internal;
     }
