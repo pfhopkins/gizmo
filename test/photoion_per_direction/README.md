@@ -7,15 +7,15 @@ Problem: a 32^3 lattice of 1 Msun cells at n_H = 10 cm^-3, no gravity, no coolin
 stars from the stellar-evolution tables.
 
 Checks:
-- `test_ionising_stars_in_the_photoionisation_bin`: all ionising stars share one cadence. With MaxSizeTimestep 20 kyr and
-  PhotoionMaxTimestep 1 kyr, a 35 Msun star 1 Myr old steps at most 1 kyr, while the gas keeps its coarse step. A 35 Msun
-  star 1000 yr old steps onto its ionising onset (15 kyr) and then keeps to the same bin. Without the change both stars
+- `test_ionising_stars_in_the_photoionisation_bin`: the step of an ionising star is capped. With MaxSizeTimestep 20 kyr
+  and PhotoionMaxTimestep 1 kyr, a 35 Msun star 1 Myr old steps at most 1 kyr, while the gas keeps its coarse step. A 35
+  Msun star 1000 yr old steps onto its ionising onset (15 kyr) and then keeps to the same cap. Without the cap both stars
   step with the gas.
 - `test_stromgren_sphere`: a 35 Msun star 1 Myr old near the centre (Q = 7.7e48 /s, Stromgren radius 12.7 pc, 9 cells).
   Per pixel the front is where the cells' recombination rates (case B, 2.6e-13 cm^3/s, at each cell's density), summed
   outward, use up Q/12. The smallest and largest of the 12 fronts (log columns 10, 11) lie within one cell of the
   Stromgren radius. Without the change there is no photoionisation log.
-  With the stamp (cells inside the fronts ionised until the next solve, `PhotoionizedUntil`): the recombination rate of
+  With the stamp (cells inside the fronts ionised until the next multiple of the cap step, `PhotoionizedUntil`): the recombination rate of
   the ionised cells is Q to 2% (measured 0.9994-0.99999; log column 7), their volume radius lies within one cell of the
   Stromgren radius, and static gas keeps the same cells at every solve. Without the stamp column 7 is 0.
 - `test_ranks_and_order`: 1, 2 and 4 ranks and a permuted particle order give the same fronts, search passes and
@@ -33,9 +33,21 @@ Checks:
   E_photoionisation_heating_erg, within 5% of the thermal energy the ionised cells gained; the chemistry rows hold the
   network only. Without the change the ionised cells stay neutral and cold.
 - `test_quiet_steps`: a 35 Msun star 10 kyr old, onset at 15.3 kyr. Log column 12 counts the module's reductions and
-  neighbour-loop calls since the previous row. The first solve comes within one photoionisation step of the onset and
-  costs 7 + 5 per search pass plus the one source count at start-up. Before the change it cost 16: one reduction on
-  each of the 5 photoionisation steps without a source. Ionising onsets ride the existing star-formation reduction.
+  neighbour-loop calls since the previous row. The first solve comes within one step of the onset and every solve costs
+  8 + 5 per search pass, nothing more: steps without an active ionising star count nothing. Whether a source is active
+  rides the existing reduction of the highest active bin at the sync point.
+- `test_each_source_solves_on_its_own_step` (1, 2 ranks; `TEST_PHOTOIONIZATION_ONE_STAR_ON_QUARTER_STEP`): two separate
+  stars, one on a quarter of the other's step. Both solve on the long step, the short-step star alone on the three steps
+  between. Each source's recombinations / Q (log columns 14, 15) stay within 2%. The snapshots' `PhotoionizedUntilTime`
+  shows both regions ionised between the solves: another star's solve does not clear an inactive star's region.
+- `test_overlapping_sources_on_different_steps` (1, 2 ranks, permuted order): the pair of the overlap test on different
+  steps. The inactive star's last fronts count as claims in the solving star's bills. The pair holds 2.0 x the cells of
+  one star, the star solving alone holds its half, each source pays its Q, and ranks and order give the same cells
+  and rounds.
+- `test_source_releases_cells_it_left`: a star moving at 1000 km/s drops the cells it left at its own next solve, not
+  at the next long step; a star at rest keeps its region meanwhile.
+- `test_restart_keeps_the_fronts`: the pair stopped halfway and continued with a larger TimeMax (the integer timeline
+  halves): the fronts come back from the restart files (rounds > 0) and stamps and table follow the new timeline.
 - `test_compact_exchange`: the histograms (12 pixels x 64 bins, 12 kB per source) do not travel in the neighbour-loop
   reply records. The rank holding the cells fills a pool by global source index; the non-empty bins go to the
   source's rank in one exchange per pass. Four separate stars on 4 ranks with a 0.02 MB communication chunk trigger no
@@ -53,4 +65,5 @@ active; log column 13 is the wall time of each solve on the slowest rank):
 The work of the solve itself does not grow with the cell count. What grows is the scan of the active particles for
 sources, one particle read per active particle (here all 1e6 per rank), about 0.3% of the run at 8e6. Memory: +8 B per gas
 cell in the cell struct (368 vs 360 B), +8 B per local gas cell in the claim buffer from the first solve, about 200 kB
-per rank of histogram pool; nothing per particle; 4 B per single star (birth density).
+per rank of histogram pool; nothing per particle; 4 B per single star (birth density); 160 B per live ionising source on
+every rank (front table).
