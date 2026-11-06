@@ -3,6 +3,8 @@
   double KetjuMinBHMass;                 /*!< minimum Type 5 stage-7 (BH/relic) mass to act as always-center [code units], 0=off */
   double KetjuMinStarMass;               /*!< minimum star mass to be a chain candidate [code units], 0=off */
   double KetjuIntegrationTolerance;      /*!< GBS relative tolerance */
+  char   KetjuPNTerms[20];               /*!< PN term flags: "all","none","no_spin", or bitstring */
+  int    KetjuEnableBHMergerKicks;       /*!< GW recoil kicks for BH mergers */
   int    KetjuUseStarStarSoftening;      /*!< keep softening between stars inside chain */
   double KetjuTimestepLimitingFactor;    /*!< radius factor for timestep limiting */
   int    KetjuMaxStepCount;              /*!< max MSTAR steps before bail-out (0=off) */

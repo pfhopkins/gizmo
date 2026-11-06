@@ -2,7 +2,7 @@
 #define KETJU_STAR_MERGERS_H
 /* Stellar mergers handed back from the integrator: the victims' metals and drawn masses go to the survivor. */
 #include <vector>
-#if defined(KETJU_REGULARIZATION) && defined(KETJU_MERGE_STARS)
+#if defined(KETJU_REGULARIZATION) && (defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH))
 #define STAR_MERGERS_SHARED
 #endif
 #ifdef STAR_MERGERS_SHARED

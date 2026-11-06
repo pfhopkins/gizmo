@@ -690,7 +690,25 @@ static int is_chain_eligible(int i)
     return 0;
 }
 
+/* ============================================================
+ *  Helper: is this particle PN-enabled? (BH only)
+ * ============================================================ */
+static int is_pn_remnant_type4(const ketju_mpi_particle *p)
+{
+    return 0;
+}
 
+static int is_pn_particle(ketju_mpi_particle *p)
+{
+    if(is_pn_remnant_type4(p)) return 1;
+#ifdef KETJU_SINKS
+    if(p->Type == 5 && p->KetjuPNClass == 0) return 1; /* relic BH: PN */
+#ifdef KETJU_PN_COMPACT_OBJECTS
+    if(p->Type == 5 && p->KetjuPNClass == 1) return 1; /* opt-in: stellar-mass non-relic sinks treated as PN */
+#endif
+#endif
+    return 0;
+}
 
 /* ============================================================
  *  Helper: distance between two positions (with box wrapping)
@@ -708,6 +726,37 @@ static double particle_distance(double *pos1, double *pos2)
 }
 
 
+/* ============================================================
+ *  Parse PN terms string (same logic as GADGET4-KETJU)
+ * ============================================================ */
+static int parse_pn_terms(void)
+{
+    char terms[20];
+    strncpy(terms, All.KetjuPNTerms, sizeof(terms));
+    terms[sizeof(terms)-1] = '\0';
+    for(int i = 0; terms[i]; i++) terms[i] = tolower(terms[i]);
+
+    if(strcmp(terms, "all") == 0) return KETJU_PN_ALL;
+    if(strcmp(terms, "no_spin") == 0) return KETJU_PN_DYNAMIC_ALL;
+    if(strcmp(terms, "none") == 0) return KETJU_PN_NONE;
+
+    int flags = KETJU_PN_NONE;
+    for(int i = 0; terms[i]; i++) {
+        switch(terms[i]) {
+            case '2': flags |= KETJU_PN_1_0_ACC; break;
+            case '4': flags |= KETJU_PN_2_0_ACC; break;
+            case '5': flags |= KETJU_PN_2_5_ACC; break;
+            case '6': flags |= KETJU_PN_3_0_ACC; break;
+            case '7': flags |= KETJU_PN_3_5_ACC; break;
+            case 's': flags |= KETJU_PN_SPIN_ALL; break;
+            case 'c': flags |= KETJU_PN_THREEBODY; break;
+            default:
+                if(ThisTask == 0) printf("KETJU: Warning: unknown PN term character '%c'\n", terms[i]);
+                break;
+        }
+    }
+    return flags;
+}
 
 /* ============================================================
  *  PHASE 2: Find chain centers and build regions
@@ -1054,6 +1103,29 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 
     /* set up integrator on compute tasks */
     if(reg.compute_tasks.is_member()) {
+        /* count PN particles */
+        reg.num_pn_particles = 0;
+        for(int i = 0; i < reg.total_particle_count; i++) {
+            if(is_pn_particle(&reg.all_particles[i])) reg.num_pn_particles++;
+        }
+
+        /* sort: PN particles first */
+        std::stable_sort(reg.all_particles.begin(), reg.all_particles.end(),
+            [](const ketju_mpi_particle &a, const ketju_mpi_particle &b) {
+                int a_pn = 0, b_pn = 0;
+#ifdef KETJU_SINKS
+                if(a.Type == 5 && a.KetjuPNClass == 0) a_pn = 1;
+                if(b.Type == 5 && b.KetjuPNClass == 0) b_pn = 1;
+#endif
+#ifdef KETJU_PN_COMPACT_OBJECTS
+                if(a.Type == 5 && a.KetjuPNClass == 1) a_pn = 1;
+                if(b.Type == 5 && b.KetjuPNClass == 1) b_pn = 1;
+#endif
+                if(is_pn_remnant_type4(&a)) a_pn = 1;
+                if(is_pn_remnant_type4(&b)) b_pn = 1;
+                return a_pn > b_pn;
+            });
+
         /* compute CoM position and velocity */
         double total_mass = 0;
         for(int j = 0; j < 3; j++) { reg.com_pos[j] = 0; reg.com_vel[j] = 0; }
@@ -1073,9 +1145,17 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 
         /* set units */
         reg.integrator->constants->G = All.G * KJ_LEN_TO_NAT * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT / KJ_MASS_TO_NAT;
+#if defined(C_LIGHT_CODE)
+        reg.integrator->constants->c = C_LIGHT_CODE * KJ_VEL_TO_NAT;
+#else
+        reg.integrator->constants->c = 2.9979e10 / All.UnitVelocity_in_cm_per_s * KJ_VEL_TO_NAT;
+#endif
 
         /* set options */
+        reg.integrator->options->PN_flags = parse_pn_terms();
         reg.integrator->options->gbs_relative_tolerance = All.KetjuIntegrationTolerance;
+        reg.integrator->options->enable_bh_mergers = (All.KetjuEnableBHMergerKicks >= 0);
+        reg.integrator->options->enable_bh_merger_kicks = All.KetjuEnableBHMergerKicks;
         if(All.KetjuMaxStepCount > 0) reg.integrator->options->max_step_count = All.KetjuMaxStepCount;
         if(All.KetjuUseStarStarSoftening) {
             double h = All.ForceSoftening[4] * All.cf_atime;
@@ -1594,7 +1674,7 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
 
 /* Merger action descriptor (ketju_star_mergers.h) -- determined on affected root, broadcast to all affected tasks */
 
-#if defined(KETJU_MERGE_STARS)
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
 typedef star_merger_action ketju_merger_action;
 /* Survivor of each merged particle (final_mass 0): the particle MSTAR merged it into (merged_into, followed to a particle
  * still alive), else the nearest survivor (sink coalescences found after the integration). Each survivor receives the
@@ -1643,6 +1723,9 @@ static void handle_mergers(KetjuRegion &reg,
             int type_survivor = reg.extra_data[survivor].Type;
 
             int merge_allowed = 0;
+#ifdef KETJU_MERGE_BH
+            if(type_merged == 5 || type_survivor == 5) merge_allowed = 1;
+#endif
 #ifdef KETJU_MERGE_STARS
             if(type_merged == 4 && type_survivor == 4) merge_allowed = 1;
 #endif
@@ -1717,7 +1800,7 @@ struct ketju_scatter_particle {
     double Mass;
     double Pos[3];       /* absolute comoving position */
     double Vel[3];       /* CoM-relative peculiar velocity */
-#if defined(KETJU_MERGE_STARS)
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
     double OriginalMass;
     KetjuUID MergedInto; /* ID and child number of the particle MSTAR merged this one into (ID 0: none) */
 #endif
@@ -1778,7 +1861,7 @@ static void scatter_results(KetjuRegion &reg)
             sp.Index = reg.extra_data[i].Index;
             sp.Type  = reg.extra_data[i].Type;
             sp.Mass  = ps->mass[i];
-#if defined(KETJU_MERGE_STARS)
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
             sp.OriginalMass = reg.all_particles[i].Mass;
             sp.MergedInto = {0, 0};
 #endif
@@ -1809,7 +1892,7 @@ static void scatter_results(KetjuRegion &reg)
         if(reg.integrator->num_mergers > 0) {
             for(int m = 0; m < reg.integrator->num_mergers; m++) {
                 struct ketju_bh_merger_info *info = &reg.integrator->merger_infos[m];
-#if defined(KETJU_MERGE_STARS)
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
                 scatter_buf[info->extra_index2].MergedInto = {reg.extra_data[info->extra_index1].ID, reg.extra_data[info->extra_index1].Child};
 #endif
                 if(info->is_collision) {
@@ -1887,7 +1970,7 @@ static void scatter_results(KetjuRegion &reg)
     /* ---- Phase 4: each task applies velocity trick to its particles ---- */
     /* also collect full particle data on affected root for stellar collision check + mergers */
     std::vector<double> final_abs_pos, final_rel_vel, final_mass;
-#if defined(KETJU_MERGE_STARS)
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
     std::vector<double> original_mass;
     std::vector<KetjuUID> merged_into;
 #endif
@@ -1897,7 +1980,7 @@ static void scatter_results(KetjuRegion &reg)
         final_abs_pos.resize(3 * n);
         final_rel_vel.resize(3 * n);
         final_mass.resize(n);
-#if defined(KETJU_MERGE_STARS)
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
         original_mass.resize(n); merged_into.resize(n);
 #endif
         /* also rebuild extra_data and all_particles on root from scatter_buf for collision/merger code */
@@ -1911,7 +1994,7 @@ static void scatter_results(KetjuRegion &reg)
             final_rel_vel[3*i+1] = scatter_buf[i].Vel[1];
             final_rel_vel[3*i+2] = scatter_buf[i].Vel[2];
             final_mass[i] = scatter_buf[i].Mass;
-#if defined(KETJU_MERGE_STARS)
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
             original_mass[i] = scatter_buf[i].OriginalMass; merged_into[i] = scatter_buf[i].MergedInto;
 #endif
             reg.extra_data[i].ID    = scatter_buf[i].ID;
@@ -1990,10 +2073,80 @@ static void scatter_results(KetjuRegion &reg)
         P[idx].KetjuIntegrated = 1;
     }
 
+    /* ---- Phase 5: geometric coalescence check for Type 5 sinks ----
+     *  All sinks have ProtoStellarRadius_inSolar populated by the protostellar
+     *  evolution: protostars (stage 1-5) get their physical radius, MS stars
+     *  (stage 6) get the MS radius, relics (stage 7) get 6 * 2GM/c^2 (an ISCO-
+     *  like criterion). Coalescence is therefore detected when (R_i + R_j) >
+     *  separation, regardless of whether the pair is star-star, star-BH, or
+     *  BH-BH. handle_mergers() (gated on KETJU_MERGE_BH) accepts any Type 5
+     *  pair and transfers metals to the survivor. */
+#if defined(KETJU_MERGE_BH) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
+    {
+        const double R_SUN_IN_CM = 6.957e10;
+        std::vector<double> my_radii(my_count, 0.0);
+        for(int i = 0; i < my_count; i++) {
+            if(my_particles[i].Type != 5) continue;
+            int idx = my_particles[i].Index;
+            if(P[idx].ProtoStellarRadius_inSolar > 0)
+                my_radii[i] = P[idx].ProtoStellarRadius_inSolar * R_SUN_IN_CM;
+        }
+
+        std::vector<double> sink_radius_cm;
+        std::vector<int> recv_counts(n_aff, 0), recv_displs(n_aff, 0);
+        MPI_Gather(&my_count, 1, MPI_INT, recv_counts.data(), 1, MPI_INT,
+                   reg.affected_tasks.root, reg.affected_tasks.comm);
+        if(reg.affected_tasks.is_root()) {
+            for(int t = 1; t < n_aff; t++) recv_displs[t] = recv_displs[t-1] + recv_counts[t-1];
+            sink_radius_cm.resize(n, 0.0);
+        }
+        MPI_Gatherv(my_radii.data(), my_count, MPI_DOUBLE,
+                     sink_radius_cm.data(), recv_counts.data(), recv_displs.data(), MPI_DOUBLE,
+                     reg.affected_tasks.root, reg.affected_tasks.comm);
+
+        if(reg.affected_tasks.is_root()) {
+            for(int i = 0; i < n; i++) {
+                if(final_mass[i] <= 0 || reg.extra_data[i].Type != 5) continue;
+                if(sink_radius_cm[i] <= 0) continue;
+                for(int j = i + 1; j < n; j++) {
+                    if(final_mass[j] <= 0 || reg.extra_data[j].Type != 5) continue;
+                    if(sink_radius_cm[j] <= 0) continue;
+                    /* If both are PN-enabled BHs AND KETJU is integrating PN terms,
+                     * MSTAR's BH-merger handler (ketju_calculate_bh_merger_remnant_properties)
+                     * will handle the coalescence with full GR remnant properties
+                     * (mass + spin + recoil kick) at its 12·2GM/c² threshold.
+                     * Skip here to avoid double-merging the same BH-BH pair.
+                     * When PN is off (KetjuPNTerms="none"), MSTAR is dormant and
+                     * we keep the geometric check active for BH-BH too. */
+                    if(reg.extra_data[i].KetjuPNClass == 0 && reg.extra_data[j].KetjuPNClass == 0
+                       && strcmp(All.KetjuPNTerms, "none") != 0) continue;
+                    double d2 = 0;
+                    for(int k = 0; k < 3; k++) {
+                        double dx = final_abs_pos[3*i + k] - final_abs_pos[3*j + k];
+                        d2 += dx * dx;
+                    }
+                    double sep_cm = sqrt(d2) * UNIT_LENGTH_IN_CGS * All.cf_atime;
+                    if(sep_cm < sink_radius_cm[i] + sink_radius_cm[j]) {
+                        int victim = (final_mass[i] < final_mass[j]) ? i : j;
+                        int surv = (victim == i) ? j : i;
+                        final_mass[surv] += final_mass[victim];
+                        final_mass[victim] = 0;
+                        double Mi = original_mass[i] * UNIT_MASS_IN_SOLAR;
+                        double Mj = original_mass[j] * UNIT_MASS_IN_SOLAR;
+                        printf("KETJU SINK COALESCENCE: ID %llu (%.2f Msun) + ID %llu (%.2f Msun) at sep=%.2e cm (R1+R2=%.2e cm)\n",
+                            (unsigned long long)reg.extra_data[i].ID, Mi,
+                            (unsigned long long)reg.extra_data[j].ID, Mj,
+                            sep_cm, sink_radius_cm[i] + sink_radius_cm[j]);
+                    }
+                }
+            }
+        }
+    }
+#endif
 
     /* handle mergers (integrator mergers + stellar collisions) — merger decisions
      * are made on affected root then broadcast to all affected tasks for execution */
-#if defined(KETJU_MERGE_STARS)
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
     handle_mergers(reg, final_abs_pos, final_mass, original_mass, merged_into);
 #endif
 }
