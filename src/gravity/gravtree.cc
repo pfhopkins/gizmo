@@ -763,17 +763,16 @@ gravity_walk_attempt:
 #endif /* end SELFGRAVITY operations (check if SELFGRAVITY_OFF not enabled) */
 
 
-    add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
-
 #ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
-    /* the acceleration is now final for every particle this call rebuilt (the analytic terms' own test): keep it for the skipped walks
-       that follow. A Hermite-only call rebuilds without rerunning the forces added after gravity, so those are missing from the Hermite
-       corrector for any type that both feels one and is Hermite-integrated */
+    /* the tree part of the acceleration, for every particle this call rebuilt: what its skipped walks advance with the jerk. A skipped
+       walk has already advanced its own. The analytic terms and the forces added after gravity go on top, afresh each step */
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif
-    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {int i = ActiveParticleList[ii]; if(analytic_gravity_adds_to(i, ii)) {P[i].GravAccel_Retained = P[i].GravAccel;}}
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {int i = ActiveParticleList[ii]; if(gravity_treewalk_candidate_prewalk(i, ii)) {P[i].GravAccel_Retained = P[i].GravAccel;}}
 #endif
+
+    add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
 
 
     /* Now the force computation is finished: gather timing and diagnostic information */

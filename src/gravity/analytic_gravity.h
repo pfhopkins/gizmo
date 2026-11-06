@@ -33,11 +33,17 @@ void GravAccel_Harmonic1D(void);
 
 /* The analytic terms go onto an acceleration this gravity call has just rebuilt. One it kept (a walk skipped under
    ADAPTIVE_TREEFORCE_UPDATE, or a non-Hermite element in the Hermite re-evaluation) still carries them from its last
-   evaluation, so every routine below asks this before adding its force. */
+   evaluation, so every routine below asks this before adding its force. With GRAVACCEL_RETAINED_ON_SKIPPED_WALK a skipped
+   walk's acceleration is its tree part alone, so the analytic terms go on afresh, at the current position, every step. */
 static inline int analytic_gravity_adds_to(int i, int ii)
 {
 #if defined(SELFGRAVITY_OFF) || defined(RT_SELFGRAVITY_OFF)
     (void) i; (void) ii; return 1; /* GravAccel_set_zeros_if_needed() has just cleared every active element */
+#elif defined(GRAVACCEL_RETAINED_ON_SKIPPED_WALK)
+#ifdef HERMITE_INTEGRATION
+    if(HermiteOnlyFlag) {return gravity_treewalk_candidate_prewalk(i, ii);} /* a Hermite pass adds only to what it re-evaluated */
+#endif
+    (void) ii; return (P[i].Mass > 0);
 #else
     return gravity_treewalk_candidate_prewalk(i, ii);
 #endif
