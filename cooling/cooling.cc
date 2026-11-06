@@ -1241,11 +1241,11 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
 
-        double metal_table_weight = 1; /* blend weight S of the tabulated metal lines in photoionized gas, set by the nebular term below */
+        double metal_table_weight = 1; /* weight of the tabulated metal lines, reduced below only in the photoionized fraction the nebular term covers */
 #if defined(RT_CHEM_PHOTOION) && defined(METALS)   /* reads Metallicity[], which only exists under METALS */
         /* nebular (photoionized forbidden-line) cooling from O+, O++, N+, S+, Ne+ : Kim, Gong, Kim & Ostriker 2023 (ApJS 264, 10), Eq. 47.
-           GIZMO's tabulated metal-line cooling below assumes collisional (CIE) ionization, which under-predicts the forbidden-line cooling of
-           -photoionized- gas; this fit supplies the missing coolant that sets the ~1e4 K equilibrium of HII regions. Lambda_neb is a per-nH^2
+           GIZMO's tabulated metal-line cooling below (Wiersma+08: UV-background photoionization equilibrium) under-predicts the forbidden-line
+           cooling of gas photoionized by stars; this fit supplies the missing coolant that sets the ~1e4 K equilibrium of HII regions. Lambda_neb is a per-nH^2
            coefficient in erg cm^3 s^-1 (= Zg * x_e * x_H+ * C(T,n_e); the volumetric rate ~ n_e*n_H+, so it is n^2 like the other channels --
            it lowers the equilibrium T by raising Lambda(T), not by any density-independence). Valid for photoionized gas (nHp>0, free electrons). */
         if(T > 2.0e3 && T < 5.0e4 && n_elec > 0 && nHp > 0 && target >= 0) {
@@ -1256,7 +1256,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
                 / (1. + 0.12*pow(ne_2, 0.38 - 0.12*lnT4)); /* collisional de-excitation: multi-line, T-dependent power per Kim+23 Eq.47 (not a single critical density) */
             double neb_weight = 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* (1-S): Kim+23 sigmoid taper (a=10) over T_t1=2e4..T_t2=3.5e4 K */
             LambdaNeb *= neb_weight;
-            metal_table_weight = 1. - neb_weight; /* S: the tabulated metal lines below take over only as the nebular fit hands off, or both would count the same forbidden lines */
+            /* the fit replaces the tables only in the ionized fraction, or both would count the same forbidden lines there. Below ~2e4 K the
+               tables then go as n_e*n_HI: electron-excited lines of the singly ionized metals in neutral gas (Fe, Si, S, O, ...), its main coolant */
+            metal_table_weight = 1. - neb_weight * DMAX(0., DMIN(1., nHp));
             if(LambdaNeb > 0) { Lambda += LambdaNeb; }
         }
 #endif
