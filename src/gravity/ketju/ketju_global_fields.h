@@ -10,5 +10,6 @@
   double KetjuRegionMotionCapFactor;     /*!< scales the region-step motion caps; 0 = off */
   double KetjuTidalStepRes;              /*!< region-step floor res*P(1-e)^1.5 for tidally kicked binaries (0 = off) */
   double KetjuTidalErrorBudget;          /*!< per-step tidal kick energy allowed, in units of the binary's |E| */
+  int    KetjuSmoothTide;                /*!< 1: members feel the external tide inside MSTAR, the host kicks only the CoM */
   int    KetjuKeplerPairs;               /*!< 1: two-body regions without PN advance by an exact Kepler drift */
   double KetjuFlybyStepEta;              /*!< Type-4 stars outside regions: fly-by pair step factor (0 = off) */
