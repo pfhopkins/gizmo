@@ -1042,6 +1042,9 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
 double single_star_ejecta_mass_this_step(int i);
 void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+void single_star_event_logs_write(void);
+#endif
 #endif
 #if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
 enum {SINGLE_STAR_BAND_PE, SINGLE_STAR_BAND_LW, SINGLE_STAR_BAND_68, SINGLE_STAR_BAND_NUV, SINGLE_STAR_BAND_OPT, SINGLE_STAR_BAND_ION_H0, SINGLE_STAR_BAND_ION_HE0, SINGLE_STAR_BAND_ION_HE1, SINGLE_STAR_BAND_ION_HE2, SINGLE_STAR_BAND_Q, SINGLE_STAR_NBANDS}; /* Q: photons/s */

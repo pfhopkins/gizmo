@@ -105,6 +105,9 @@ void savepositions(int num)
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
     ledger_output(); /* the ledger's only reduction */
 #endif
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+    single_star_event_logs_write();
+#endif
 
 #ifdef CHIMES_REDUCED_OUTPUT
     if (num % N_chimes_full_output_freq == 0) {Chimes_incl_full_output = 1;} else {Chimes_incl_full_output = 0;}
