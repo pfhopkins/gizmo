@@ -457,6 +457,34 @@ static_assert(TIMEBINS <= 64, "HermiteWalkState carries the active timebins as a
 extern struct HermiteWalkState   HermiteWalk;
 extern struct DriftKickTableView HermiteWalkTables;   /*!< assembled only while HermiteOnlyFlag is set */
 
+/*! Owner-side source state of one Hermite-type particle for a Hermite pass.
+ *
+ *  A foreign leaf in the imported tree is a moment snapshot taken at the last tree build, so in a
+ *  Hermite pass it stands where the leapfrog left it with the leapfrog velocity, not where the
+ *  owner's Hermite predictor/corrector has put it, and it has no Old* state to re-predict from.
+ *  Each Hermite pass every rank therefore publishes, for its own Hermite-type particles, the state a
+ *  LOCAL walk would read (live state, or the Old* prediction for an inactive eligible source), and
+ *  the walks substitute it for a foreign leaf's position and velocity, looked up by particle ID.
+ *  Sorted by ID; SharedSpace, so the device walk reads it directly. */
+struct hermite_ghost_entry {
+    MyIDType id;
+    Vec3<double> pos, vel;
+};
+extern struct hermite_ghost_entry *HermiteGhostTab;   /*!< non-NULL only inside a Hermite-pass gravity_tree() */
+extern int NHermiteGhost;
+
+KOKKOS_INLINE_FUNCTION int hermite_ghost_lookup(const struct hermite_ghost_entry *tab, int n, MyIDType id)
+{
+    int lo = 0, hi = n - 1;
+    while(lo <= hi)
+    {
+        const int mid = lo + ((hi - lo) >> 1);
+        if(tab[mid].id == id) {return mid;}
+        if(tab[mid].id < id) {lo = mid + 1;} else {hi = mid - 1;}
+    }
+    return -1;
+}
+
 /*! Take the snapshot. Host only: it reads the host globals the walks cannot see from
  *  device code, which is the whole reason the snapshot exists. */
 static inline struct HermiteWalkState hermite_walk_state_snapshot(void)
