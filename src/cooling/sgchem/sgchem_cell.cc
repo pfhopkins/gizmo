@@ -3,6 +3,7 @@
 /* SGChem in GIZMO: one gas cell over one cooling step (inputs from the cell, CVODE solve, state back), and the
    DoCooling branch. Host only: the solver scratch is thread_local, each cell's result depends only on its inputs. */
 #include <stdio.h>
+#include <string.h>
 #include <math.h>
 #include "../../declarations/allvars.h"
 #include "../../core/proto.h"
@@ -335,6 +336,19 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     sgchem_rt_cooling_to_infrared(i, out.lambda, temp);
 #endif
     return energy * pow(UNIT_LENGTH_IN_CGS, 3) / UNIT_ENERGY_IN_CGS / (rho / UNIT_DENSITY_IN_CGS);
+}
+
+/* electrons per H from the cell's current abundances: the state the first force pass reads, before any solve */
+double sgchem_startup_electrons(int i)
+{
+    struct ChemInputs in; memset(&in, 0, sizeof(in));
+    sgchem_gas_abundances(i, &in);
+    double ab[TRAC_NUM]; for(int k = 0; k < TRAC_NUM; k++) {ab[k] = CellP[i].TracAbund[k];}
+#if CHEMISTRYNETWORK == 20
+    return ab[IHP]; /* its electrons come from the last solve */
+#else
+    return sgchem_electrons(ab, &in);
+#endif
 }
 
 /* DoCooling branch for SGCHEM (as stella_dev): returns the new u; his cached Ne, HI, Gamma, mean molecular weight and

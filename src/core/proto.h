@@ -1306,6 +1306,7 @@ void ledger_step_checkpoint(const char *tag);
 #ifdef SGCHEM
 void sgchem_init(void);
 void sgchem_init_cell_state(int i);
+double sgchem_startup_electrons(int i);
 double sgchem_docooling(int i, double u_old, double dt, double *ne_eval);
 #ifdef RADTRANSFER
 struct ChemFUVField sgchem_rt_field(int i, double *fac_uv, double *pix_att); /* host only */

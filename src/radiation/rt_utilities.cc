@@ -243,6 +243,9 @@ void rt_set_simple_inits(int RestartFlag)
 #ifdef RT_CHEM_PHOTOION
             if(flag_to_reset_values_on_startup)
             {
+#ifdef SGCHEM
+                CellP[i].Ne = sgchem_startup_electrons(i); sgchem_rt_absorbers(i, CellP[i].TracAbund); CellP[i].HII = DMAX(CellP[i].HII, MIN_REAL_NUMBER); /* the chemistry's start, not fully neutral */
+#else
                 CellP[i].HII = MIN_REAL_NUMBER;
                 CellP[i].HI = 1.0 - CellP[i].HII;
                 CellP[i].Ne = CellP[i].HII;
@@ -252,6 +255,7 @@ void rt_set_simple_inits(int RestartFlag)
                 CellP[i].HeII = MIN_REAL_NUMBER * fac;
                 CellP[i].HeI = (1.0 - CellP[i].HeII - CellP[i].HeIII) * fac;
                 CellP[i].Ne += CellP[i].HeII + 2.0 * CellP[i].HeIII;
+#endif
 #endif
             } else {
 #ifdef RT_CHEM_PHOTOION_HE
