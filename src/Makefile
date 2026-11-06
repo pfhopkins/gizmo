@@ -723,6 +723,53 @@ HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
 HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
 endif
 
+#----------------------------
+# Rusty AMD Genoa nodes (--constraint=genoa), Kokkos OpenMP backend. Select with
+# `export SYSTYPE=RUSTY_GENOA` or a ~/.gizmo file. Unlike "RUSTY" above, this sets CXX/FC and the
+# Kokkos and GSL paths, which the Kokkos translation units need even in a CPU-only build.
+ifeq ($(SYSTYPE),"RUSTY_GENOA")
+CC       =   mpicc
+CXX      =   mpicxx -std=c++20
+ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
+CC       =   mpicxx
+endif
+FC       =   mpifort
+## plain -O2 like the other Kokkos CPU systypes; no -ffast-math or -march (see the position->key
+## contract in declarations/typedefs.h). OPT_EXTRA adds flags without editing this file.
+OPTIMIZE =  -O2 -funroll-loops -g -Wall $(OPT_EXTRA)
+OPTIMIZE += -fopenmp   # the Kokkos OpenMP backend needs it whether or not OPENMP is set
+## There is no Kokkos module on Rusty, so each user builds one once (OpenMP backend, here 4.4.01):
+##   module load modules/2.4-20250724 gcc openmpi cmake
+##   cmake -S <kokkos source> -B <build dir> -DCMAKE_INSTALL_PREFIX=$HOME/opt/kokkos-openmp -DCMAKE_BUILD_TYPE=Release
+##     -DCMAKE_CXX_STANDARD=20 -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=ON
+##     -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_SERIAL=ON -DKokkos_ARCH_ZEN4=ON
+##   cmake --build <build dir> -j 16 && cmake --install <build dir>
+## Installed into the default below. KOKKOS_PATH resolves make command line > environment > $(HOME)/opt/kokkos-openmp. A plain
+## "?=" cannot do this: the unconditional "KOKKOS_PATH =" near the top of this file overrides the
+## environment and leaves the variable defined but empty, and the test harness runs a bare `make`.
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(shell echo $$KOKKOS_PATH)
+endif
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(HOME)/opt/kokkos-openmp
+endif
+KOKKOS_INCL = -I$(KOKKOS_PATH)/include
+KOKKOS_CPPFLAGS = -I$(KOKKOS_PATH)/include
+KOKKOS_LIBS_PATH = -L$(KOKKOS_PATH)/lib64 -L$(KOKKOS_PATH)/lib -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib64 -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib
+KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers
+GPU_CXX    = mpicxx -std=c++20
+GPU_CFLAGS = $(KOKKOS_INCL) -fopenmp
+GPU_LDFLAGS = $(KOKKOS_LIBS_PATH)
+GSL_INCL = -I$(GSL_BASE)/include
+GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
+FFTW3_BASE= /mnt/sw/nix/store/bjzkf3pwcw0gy54db19kd4rl0xdiq98s-fftw-3.3.10/.
+FFTW_INCL= -I$(FFTW3_BASE)/include
+FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
+MPICHLIB =
+HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
+endif
+
 
 #----------------------------------------------------------------------------------------------
 #----------------------------------------------------------------------------------------------
