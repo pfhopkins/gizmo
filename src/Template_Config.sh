@@ -287,6 +287,8 @@
 #TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME # TESTING ONLY: before the code time TestFBNoGasUntilTime single-star feedback couples to no gas; events stay pending and are retried
 #TEST_SINGLE_STARS_LUMINOSITY_PINNED # TESTING ONLY: every single star shines at the constant bolometric luminosity TestFixedLbol [erg/s] from birth: FUV 0.5, NUV 0.2, optical 0.3, Lyman-Werner 0.15, no ionising photons
 #TEST_SINGLE_STARS_RADIATION_OFF # TESTING ONLY: single stars emit no radiation (all bands, bolometric and ionising are zero); TEST_SINGLE_STARS_LUMINOSITY_PINNED takes precedence
+#TEST_SKIP_COOLING_AND_CHEMISTRY_UPDATE # TESTING ONLY (needs COOLING_OPERATOR_SPLIT, no TRANSPORT_SUBCYCLE_COOLING): the cooling and chemistry update is not called, so the energy follows the hydro work alone (adiabatic twin of a cooling run)
+#TEST_DUMP_STATE_AROUND_WIND_DEPOSIT # TESTING ONLY: in each step with a single-star wind, every rank appends the mass, velocity and gas energy of all its particles before and after the feedback loop to OutputDir/wind_dep_dump.<rank>.bin
 #TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED # TESTING ONLY: single-star winds at the constant rate TestFixedWindMdot [Msun/yr] and speed TestFixedWindVel [km/s] from birth, instead of the tables (valid before the death)
 #GALSF_SFR_IMF_SAMPLING          # discretely sample the IMF: simplified model with quantized number of massive stars. Cite Kung-Yi Su, Hopkins, et al., Hayward, et al., 2017, "Discrete Effects in Stellar Feedback: Individual Supernovae, Hypernovae, and IMF Sampling in Dwarf Galaxies". 
 #GALSF_GENERATIONS=1             # the number of star particles a gas particle may spawn (defaults to 1, set otherwise if desired)
