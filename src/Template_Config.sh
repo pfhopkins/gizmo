@@ -459,6 +459,12 @@
                                             # model = 2: add 2 extra O atoms to better match O depletions.
                                             # model = 4: add 1 extra Fe atom to better match Fe depletions.
                                             # model = 8: remove all Fe. Use with additional metallic iron species to avoid Fe limiting silicate growth.
+                                            # model = 16: FeMgSiO4 (GALSF_ISMDUSTCHEM_HU_MODEL).
+#GALSF_ISMDUSTCHEM_HU_MODEL                 # dust processes of Hu et al. 2019, 2023, 2026 (needs SGCHEM and GALSF_ISMDUSTCHEM_MODEL=(1) or (1+2)) in place of the accretion and sputtering of the live dust model, on its fields: sputtering (thermal + nonthermal with the dust-gas drift) per MRN size bin, growth below 300 K (parameters DustGrowthTimescaleGyr, DustGrowthCoulombFactor), silicate FeMgSiO4 (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION=16); 12 B per cell and size bin
+#GALSF_ISMDUSTCHEM_HU_SIZE_BINS=8           # MRN log size bins with their own drift (Hu+19); default 1 (a_eff = 0.035 micron, Hu+26)
+#GALSF_ISMDUSTCHEM_HU_NO_BETATRON           # no betatron term in the drift (Hu+26 unmagnetized)
+#GALSF_ISMDUSTCHEM_HU_SN_EJECTA_CONDENSATION # single-star SNe and Type Ia condense dust in their ejecta (off: Hu+23 has no SN dust; AGB deaths and slow winds always condense)
+#GALSF_ISMDUSTCHEM_HU_SN_SWEPT_MASS_DESTRUCTION # the shared loop's swept-mass SN dust destruction (coarse cells only, double counts resolved sputtering; efficiency 0.4 as stella_dev)
 #GALSF_ISMDUSTCHEM_GRAINSIZEEVO=16          # enable grain size evolution model w/ N number of logarithmically spaced bins (must also turn on GALSF_ISMDUSTCHEM_MODEL= 1 or (1 + 2) only and GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION)
 ####################################################################################################
 

@@ -92,6 +92,7 @@ void Initialize_ISMDustChem_Global_Variables()
     All.ISMDustChem_SilicateNumberOfAtomsTable[1] = 1.06;
     All.ISMDustChem_SilicateNumberOfAtomsTable[2] = 1.;
     All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 0.571;
+    if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 16) {All.ISMDustChem_SilicateNumberOfAtomsTable[0] = 4.; All.ISMDustChem_SilicateNumberOfAtomsTable[1] = 1.; All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 1.;} // FeMgSiO4 (Hu et al.)
     if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 2) {All.ISMDustChem_SilicateNumberOfAtomsTable[0] += 2;} // add 2 more O atoms for silicates to account for excess O depletions with no known carrier
     if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 4) {All.ISMDustChem_SilicateNumberOfAtomsTable[3] += 1;} // add extra Fe to better match Fe depletions
     if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 8) {All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 0;} // remove all Fe from silicates (use with separate metallic iron species)
@@ -212,6 +213,9 @@ void Initialize_ISMDustChem_Particle_Variables(int i, struct particle_data *pp, 
             for (j=0;j<NUM_ISMDUSTCHEM_SOURCES;j++) {cell[i].ISMDustChem_Dust_Source[j] = 0.;}
             for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {cell[i].ISMDustChem_Dust_Species[j] = 0.;}
         }
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+        if(RestartFlag == 0) {ism_dust_hu_seed_cell(i, pp, cell);}
+#endif
 #if (defined(RADTRANSFER) && defined(RT_INFRARED)) || (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
         cell[i].Dust_Temperature = DMIN(All.InitGasTemp,100.);
 #endif

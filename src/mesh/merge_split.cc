@@ -1359,6 +1359,10 @@ int merge_particles_ij(int i, int j)
 #ifdef METALS
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving (includes nuclear species) */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+    {double dj = wt_j * CellP[j].ISMDustChem_Dust_Metal[0], di = wt_i * CellP[i].ISMDustChem_Dust_Metal[0]; /* drift: dust-mass weighted */
+     for(int b = 0; b < GALSF_ISMDUSTCHEM_HU_SIZE_BINS; b++) {for(k = 0; k < 3; k++) {CellP[j].ISMDustChem_Hu_Vrel[b][k] = (dj + di > 0) ? (dj * CellP[j].ISMDustChem_Hu_Vrel[b][k] + di * CellP[i].ISMDustChem_Hu_Vrel[b][k]) / (dj + di) : 0;}}}
+#endif
     for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k] = wt_j*CellP[j].ISMDustChem_Dust_Metal[k] + wt_i*CellP[i].ISMDustChem_Dust_Metal[k];} /* dust-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[j].ISMDustChem_Dust_Source[k] = wt_j*CellP[j].ISMDustChem_Dust_Source[k] + wt_i*CellP[i].ISMDustChem_Dust_Source[k];} /* dust source-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[j].ISMDustChem_Dust_Species[k] = wt_j*CellP[j].ISMDustChem_Dust_Species[k] + wt_i*CellP[i].ISMDustChem_Dust_Species[k];} /* dust species-mass conserving */

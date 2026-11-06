@@ -66,6 +66,9 @@ extern struct gas_cell_data
 #if (!defined(RADTRANSFER) && !defined(RT_INFRARED)) && (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
     MyFloat Dust_Temperature;
 #endif
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+    MyFloat ISMDustChem_Hu_Vrel[GALSF_ISMDUSTCHEM_HU_SIZE_BINS][3]; /*!< dust-gas relative velocity per size bin [km/s] */
+#endif
 #ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
     MyDouble ISMDustChem_Dust_NumberInBin[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS];
     MyDouble ISMDustChem_Dust_SlopeInBin[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS];

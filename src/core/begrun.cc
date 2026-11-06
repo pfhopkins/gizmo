@@ -2493,6 +2493,15 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.IMFSampleStellarMassCut;
       id[nt++] = REAL;
 #endif
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+      strcpy(tag[nt], "DustGrowthTimescaleGyr");
+      addr[nt] = &All.DustGrowthTimescaleGyr;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "DustGrowthCoulombFactor");
+      addr[nt] = &All.DustGrowthCoulombFactor;
+      id[nt++] = REAL;
+#endif
 #ifdef GALSF_SINGLE_STARS_SF_CRITERION
       strcpy(tag[nt], "FacSfThreshMJ");
       addr[nt] = &All.FacSfThreshMJ;
@@ -3334,6 +3343,10 @@ void read_parameter_file(char *fname)
 #ifdef GRAIN_EVOLUTION
                 if(strcmp("GrainEvolution_VelThreshFrag",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g; use the sticking speed)\n",tag[i],alternate_tag[i],All.GrainEvolution_VelThreshFrag); continue;}
                 if(strcmp("GrainEvolution_VelThreshShat",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g; use the species value)\n",tag[i],alternate_tag[i],All.GrainEvolution_VelThreshShat); continue;}
+#endif
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+                if(strcmp("DustGrowthTimescaleGyr",tag[i])==0) {*((double *)addr[i])=1.5; printf("Tag %s not set in parameter file: dust growth time 1.5 Gyr at n=1, T=100 K (Hu+26)\n",tag[i]); continue;}
+                if(strcmp("DustGrowthCoulombFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s not set in parameter file: no Coulomb enhancement of growth (Hu+26)\n",tag[i]); continue;}
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
                 if(strcmp("Initial_ISMDustChem_Depletion",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g) \n",tag[i],alternate_tag[i],All.Initial_ISMDustChem_Depletion); continue;}

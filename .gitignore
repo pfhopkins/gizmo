@@ -131,6 +131,8 @@ test/stellar_evolution_tables/*_override.params
 test/stellar_evolution_tables/unit/lookup_grid
 test/stellar_evolution_tables/unit/lookups.*
 test/single_star_record/run_*/
+test/ism_dust_hu_kernels/test_ism_dust_hu_kernels_*
+test/ism_dust_hu_model/run_*/
 test/single_stars_collect_gas/run_*/
 test/single_stars_collect_gas/GIZMO_default_merging
 test/single_stars_formation/run_*/
