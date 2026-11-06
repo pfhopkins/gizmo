@@ -234,6 +234,11 @@
                                               in every case measured (an empirical bound: the operator alone, by a Gershgorin bound, would allow ~0.4). It applies to every cell the
                                               dissipation acts on: every cell of an EOS_ELASTIC build (strengthless materials included), but in a gas+solid build only the solids and the
                                               gas next to them (cell_data.h ElasticImpedanceNeighbour) */
+#define  ELASTIC_FINITE_VOLUME_COURANT  1.25 /*!< elastic solids: finite-volume step limit, dt <= this x V / sum over the cell's faces of (face area x face signal speed),
+                                              the signal speed being max(|v_L| + c_L, |v_R| + c_R) of the face states in the face frame (timestep.cc). A fixed, measured
+                                              stability coefficient, not a tuning parameter: at the capped Courant factor above, ordered packings (cubic lattices, aligned or
+                                              rotated) of an impacting solid can grow without bound; 1.0 and 1.25 remove that, 1.5 does not, and on a uniform glass the limit
+                                              never sets the step */
 #endif
 
 /* ... often used physical constants (cgs units). note many of these are defined to better precision with different units in e.g. the GSL package, these are purely for user convenience */

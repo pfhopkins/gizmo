@@ -351,6 +351,12 @@ void hydro_core_meshless_compute_pair(
         }
     }
 
+#ifdef EOS_ELASTIC
+    if(Face_Area_Norm > 0) { /* the face-frame signal speed of the final face states, summed over the cell's faces for the solids' finite-volume step limit (timestep.cc) */
+        double signal_L = fabs(dot(Riemann_vec.L.v, n_unit)) / All.cf_atime + Riemann_vec.L.cs, signal_R = fabs(dot(Riemann_vec.R.v, n_unit)) / All.cf_atime + Riemann_vec.R.cs; /* face velocities are in code units here; the solver converts only its own copy */
+        out.ElasticFaceSignalSum += Face_Area_Norm * DMAX(signal_L, signal_R);
+    }
+#endif
     if(!((Riemann_out.P_M > 0) && (!isnan(Riemann_out.P_M)))) {
         /* nothing but bad riemann solutions found */
         memset(&Fluxes, 0, sizeof(struct Conserved_var_Riemann));
@@ -417,11 +423,22 @@ void hydro_core_meshless_compute_pair(
 
 /* the face entropic switch: on slow faces, replace the Riemann energy flux by the PdV form, unless that would move energy
    against the thermal ordering of the two sides. It edits only the isotropic (P_M) energy flux, so with EOS_ELASTIC the
-   deviatoric-stress force and its work (added afterwards) are untouched. Tillotson builds keep the Riemann flux everywhere. */
-#if defined(HYDRO_MESHLESS_FINITE_MASS) && (SLOPE_LIMITER_TOLERANCE < 2) && (!(defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)) || (defined(EOS_ANEOS) && !defined(EOS_TILLOTSON)))
+   deviatoric-stress force and its work (added afterwards) are untouched. In builds with Tillotson materials it acts on two kinds of
+   face only: gas-gas faces (ordered by P/rho, exactly as in a gas-only build) and faces between two cells of the SAME Tillotson material
+   (ordered by specific internal energy: P/rho does not order the thermal state of condensed matter, and the energies of different
+   materials are not comparable). Every other face there -- two different materials, gas-solid, or any face with an ANEOS-table cell --
+   keeps the Riemann energy flux, as before. Without it, a cold condensed cell at a contact can be asked for more internal energy than it
+   holds, and the positivity guard then puts energy back. */
+#if defined(HYDRO_MESHLESS_FINITE_MASS) && (SLOPE_LIMITER_TOLERANCE < 2) && (!(defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)) || defined(EOS_ANEOS) || defined(EOS_TILLOTSON))
     {
+        volatile int face_takes_switch = 1; /* volatile: a runtime gate in device code */
+#ifdef EOS_TILLOTSON
+        const int branch_i = eos_branch_of(local.CompositionType), branch_j = eos_branch_of(CellP[j].CompositionType);
+        const int same_tillotson_material = (branch_i == EOS_BRANCH_TILLOTSON) && (branch_j == EOS_BRANCH_TILLOTSON) && (local.CompositionType == CellP[j].CompositionType);
+        if(!same_tillotson_material && !((branch_i == EOS_BRANCH_NONE) && (branch_j == EOS_BRANCH_NONE))) {face_takes_switch = 0;}
+#endif
         double SM_over_ceff = fabs(Riemann_out.S_M) / DMIN(kernel.sound_i, kernel.sound_j);
-        if((SM_over_ceff < epsilon_entropic_eos_big && All.ComovingIntegrationOn >= 0) || (leak_vs_tol > 1))
+        if(face_takes_switch && ((SM_over_ceff < epsilon_entropic_eos_big && All.ComovingIntegrationOn >= 0) || (leak_vs_tol > 1)))
         {
 #ifdef MAGNETIC
             Riemann_out.P_M -= Riemann_out.Face_MagneticPressure;
@@ -435,7 +452,10 @@ void hydro_core_meshless_compute_pair(
             double du_new = 0.5 * (PdV_i - PdV_j + facenorm_pm * (face_vel_i + face_vel_j));
             double cnum2 = CellP[j].ConditionNumber * CellP[j].ConditionNumber;
             double epsilon_threshold_entropic_eos_ratio = 1.001;
-#ifdef EOS_ANEOS
+#if defined(EOS_TILLOTSON)
+            double thermal_order_i = Pressure_i / local.Density, thermal_order_j = Pressure_j / CellP[j].Density; /* gas-gas face */
+            if(same_tillotson_material) {thermal_order_i = local.InternalEnergyPred; thermal_order_j = CellP[j].InternalEnergyPred;}
+#elif defined(EOS_ANEOS)
             /* order the two sides by temperature: for a tabulated condensed-matter EOS, P/rho does not order the thermal state
                (a cold compressed cell can have the larger P/rho); without a valid temperature on both sides, keep the Riemann flux */
             double thermal_order_i = local.Temperature, thermal_order_j = CellP[j].Temperature;

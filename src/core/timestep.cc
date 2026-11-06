@@ -675,6 +675,13 @@ integertime get_timestep(int p,		/*!< particle index */
             if(P[p].ID == All.SpawnedWindCellID) {dt_courant *= 0.5;} // be more careful if this is a spawned-in gas cell
 #endif
             if(dt_courant < dt) dt = dt_courant;
+#ifdef EOS_ELASTIC
+            if(solid_material_is_elastic(CellP[p].CompositionType) && CellP[p].ElasticFiniteVolumeTimestep > 0) /* the solids' finite-volume step limit (constants.h) */
+            {
+                double dt_finite_volume = ELASTIC_FINITE_VOLUME_COURANT * CellP[p].ElasticFiniteVolumeTimestep;
+                if(dt_finite_volume < dt) {dt = dt_finite_volume;}
+            }
+#endif
 
 #ifdef MHD_BATTERY_MECHANISMS
             /* The battery builds a field out of nothing, at a rate set by the thermodynamic

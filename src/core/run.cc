@@ -209,6 +209,9 @@ void run(void)
         {
             if(ThisTask == 0) {printf("\nFinal time=%g reached. Simulation ends.\n", All.TimeMax);}
             gizmo_full_drift_to(All.Ti_Current); /* lazy-drift sync: restart + final snapshot need all-particle predicted state */
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+            rearrange_particle_sequence(); /* fold the last step's promoted grains into the gas block, so the restart carries their cells */
+#endif
             restart(0); /* write a restart file to allow continuation of the run for a larger value of TimeMax */
             if(All.Ti_lastoutput != All.Ti_Current) {savepositions(All.SnapshotFileCount++);} /* make a snapshot at the final time in case none has produced at this time; this will be overwritten if All.TimeMax is increased and the run is continued */
             break;

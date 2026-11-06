@@ -491,6 +491,7 @@ extern struct gas_cell_data
     Mat3<MyDouble> Elastic_Stress_Tensor; /* deviatoric stress tensor */
     Mat3<MyDouble> Elastic_Stress_Tensor_Pred;
     Mat3<MyDouble> Dt_Elastic_Stress_Tensor;
+    MyDouble ElasticFiniteVolumeTimestep; /* V / sum over the cell's faces of (face area x face signal speed) at its last hydro force evaluation (0: no faces); timestep.cc keeps a solid's step below ELASTIC_FINITE_VOLUME_COURANT times this */
     MyFloat RecentYieldMemory;            /* recent plastic flow: the overstress removed by the yield returns, in units of the yield strength, decaying over ten sound-crossing times of the kernel radius; switches the tensile-instability correction off in material that is flowing plastically (not an accumulated plastic strain) */
 #ifdef EOS_ELASTIC_MELT
     MyFloat StrengthFraction;             /* the strength fraction f (thermal softening) the committed stress was last projected with: the stored stress follows f both ways while partly solid, and once molten (0) only new strain rebuilds it */

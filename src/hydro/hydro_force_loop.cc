@@ -325,6 +325,13 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 #if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
     if(out->ElasticImpedanceNeighbour) { CellP[i].ElasticImpedanceNeighbour = 1; }
 #endif
+#ifdef EOS_ELASTIC
+    {
+        double face_signal_sum = out->ElasticFaceSignalSum;
+        if(!(face_signal_sum >= 0) || !isfinite(face_signal_sum)) {PRINT_WARNING("cell ID %llu: invalid face signal-speed sum %g for the finite-volume step limit", (unsigned long long) P[i].ID, face_signal_sum); endrun(1158);}
+        CellP[i].ElasticFiniteVolumeTimestep = (face_signal_sum > 0) ? P[i].Mass / CellP[i].Density * All.cf_atime*All.cf_atime*All.cf_atime / face_signal_sum : 0;
+    }
+#endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     for(k = 0; k < NUM_METAL_SPECIES; k++) { CellP[i].Dyield[k] += out->Dyield[k]; }
 #endif

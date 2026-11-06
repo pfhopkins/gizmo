@@ -366,6 +366,9 @@ void cooling_parent_routine(void)
     for (int i : ActiveParticleList)
     {
         if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+        if(eos_branch_of(CellP[i].CompositionType) != EOS_BRANCH_NONE) {continue;} /* a solid material of a gas+solid build is not gas: no gas cooling or chemistry (its hydro work is applied in the kick) */
+#endif
 #ifdef GALSF_EFFECTIVE_EQS
         if((CellP[i].Density*All.cf_a3inv > All.PhysDensThresh) && ((All.ComovingIntegrationOn==0) || (CellP[i].Density>=All.OverDensThresh))) {continue;} /* no cooling for effective-eos star-forming particles */
 #endif

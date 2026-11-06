@@ -363,7 +363,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 #endif
             }
 #endif
-#if defined(EOS_ELASTIC) || defined(EOS_ANEOS)
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
             local.CompositionType = kc[ii].CompositionType;
 #endif
 #ifdef EOS_ELASTIC

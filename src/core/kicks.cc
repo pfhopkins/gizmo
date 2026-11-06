@@ -326,6 +326,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
             if((mode == 1) && (du_tot != 0) && (dt_hydrokick > 0)) { /* if about to consider second-halfstep kick (just after hydro) */
                 CellP[i].CoolingIsOperatorSplitThisTimestep=0; /* default to assume un-split */
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+                if(eos_branch_of(CellP[i].CompositionType) != EOS_BRANCH_NONE) {CellP[i].CoolingIsOperatorSplitThisTimestep=1;} /* a solid material takes no gas cooling, so its hydro work is applied here, never handed to the cooling solver */
+#endif
 #if 0 /* this is a more sophisticated check to see if we need to split the cooling from the hydro work term, but it is not currently used because it is less accurate for complicated non-trivial chemistry, which we now adopt, and the energy conservation issues were more related to older problems in the code that we have since fixed*/
                 /* decide if we need to split this particular cell on this particular timestep, since this un-split solver can lead to energy conservation problems if the mechanical heating is much larger than cooling; compare the effective heating rate from the hydro work term to a reference cooling time (which is set to a typical cooling time for the cell, based on its density and the current timestep) */
                 CellP[i].CoolingIsOperatorSplitThisTimestep=1; /* default to assume split */
