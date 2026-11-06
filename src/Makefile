@@ -914,13 +914,13 @@ ifeq (NUCLEAR_NETWORK,$(findstring NUCLEAR_NETWORK,$(CONFIGVARS)))
 GPU_OBJS += nuclear/nuclear.o
 INCL     += nuclear/nuclear.h nuclear/nuclear_physics_functions.h
 endif
-ifeq (NUCLEAR_NETWORK_SOLVER=1,$(findstring NUCLEAR_NETWORK_SOLVER=1,$(CONFIGVARS)))
+ifeq (NUCLEAR_NETWORK_SOLVER 1,$(findstring NUCLEAR_NETWORK_SOLVER 1,$(CONFIGVARS)))
 OBJS    += nuclear/nuclear_skynet.o
 SKYNETLIBS = -lskynet
 else
 SKYNETLIBS =
 endif
-ifeq (NUCLEAR_NETWORK_SOLVER=2,$(findstring NUCLEAR_NETWORK_SOLVER=2,$(CONFIGVARS)))
+ifeq (NUCLEAR_NETWORK_SOLVER 2,$(findstring NUCLEAR_NETWORK_SOLVER 2,$(CONFIGVARS)))
 OBJS    += nuclear/nuclear_torch.o
 TORCHLIBS = -ltorch_nuclear
 else
