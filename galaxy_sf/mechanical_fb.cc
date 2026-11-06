@@ -163,7 +163,29 @@ void particle2in_addFB(struct addFB_evaluate_data_in_ *in, int i, int loop_itera
     for(k=0;k<AREA_WEIGHTED_SUM_ELEMENTS;k++) {in->Area_weighted_sum[k] = P[i].Area_weighted_sum[k];}
     in->Msne = 0; in->unit_mom_SNe = 0; in->SNe_v_ejecta = 0;
     if((P[i].DensityAroundParticle <= 0)||(P[i].Mass <= 0)) {return;} // events not possible [catch for mass->0]
-    if(loop_iteration < 0) {in->Msne=P[i].Mass; in->unit_mom_SNe=1.e-4; in->SNe_v_ejecta=1.0e-4; return;} // weighting loop
+    if(loop_iteration < 0) /* weighting loops. The second (-1) builds the mass-loading weights mu_inv = 1/(1 + w Msne/m_j), so it needs the
+                              ejecta mass the coupling loop will use, not the star particle's: SNe if any this step, else stellar mass loss */
+    {
+        in->Msne = P[i].Mass;
+        if(loop_iteration == -1)
+        {
+            int channel = -1;
+#if defined(GALSF_FB_MECHANICAL) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+            if(P[i].SNe_ThisTimeStep > 0) {channel = 0;} else if(P[i].MassReturn_ThisTimeStep > 0) {channel = 1;}
+#endif
+            if(channel >= 0)
+            {
+#ifdef SNE_NONSINK_SPAWN
+                double unspawned_0 = P[i].unspawned_wind_mass; /* the SN routine books the spawned fraction: undo it, the coupling loop will */
+#endif
+                particle2in_addFB_fromstars(in, i, channel);
+#ifdef SNE_NONSINK_SPAWN
+                P[i].unspawned_wind_mass = unspawned_0;
+#endif
+            }
+        }
+        in->unit_mom_SNe = 1.e-4; in->SNe_v_ejecta = 1.0e-4; return;
+    }
     particle2in_addFB_fromstars(in,i,loop_iteration); // subroutine that actually deals with the assignment of feedback properties
     in->unit_mom_SNe = in->Msne * in->SNe_v_ejecta;
 }

@@ -56,8 +56,8 @@ NUM_THREADS = default_omp_threads()
 TOL_HYDRO = 0.05
 # Coupling: the FIRE scheme is built to couple exactly E_SN per event in the star's frame, except that
 # ejecta mass joins a cell at the cell's specific internal energy, adding m_ej*u_cell. Inside a hot
-# superbubble that is percent-level (0.4% at 100 Msun, 1.9% at 10 Msun, measured with the weighting
-# defect below removed), so 5% bounds it with margin.
+# superbubble that is percent-level (0.4% at 100 Msun, 1.9% at 10 Msun), so 5% bounds it with margin. It caught the
+# weighting pass using the star particle's mass for the ejecta mass (E_fb/(N_SN*1e51 erg) = 1.06-1.08 at 100 Msun).
 TOL_FEEDBACK = 0.05
 # Hydro with SNE_BROADCAST_TIMESTEP. It removes the error at the explosion (+45% to +280% without it), but
 # the blast's expansion through cells on steps set by the unchanged CourantFac leaves +5% to +16% (100 and
@@ -81,16 +81,8 @@ _HYDRO_XFAIL = (
     "pass and before the hydro force pass, so the closing half-kick of a receiving cell's old (long) step "
     "applies the post-explosion pressure forces; capping the step at 5 kyr closes the budget to <0.3%."
 )
-_FEEDBACK_XFAIL = (
-    "Mechanical feedback does not couple E_SN when the ejecta mass differs from the star particle mass: "
-    "measured E_fb/(N_SN*1e51 erg) = 1.056-1.082 at 100 Msun (0.87 at 1 Msun). The weighting pass (loop -1 "
-    "in mechanical_fb.cc) sets the ejecta mass to the star particle mass, so the mass-loading factor in the "
-    "kinetic-energy coefficients is wrong and the momentum solution mis-sizes the kinetic energy; using the "
-    "true ejecta mass there gives 1.004."
-)
 
 HYDRO_XFAIL_CASES = {"m100_TimeMax1x", "m100_TimeMax100x", "m10_TimeMax1x", "m10_TimeMax100x"}
-FEEDBACK_XFAIL_CASES = {"m100_resolved", "m100_TimeMax1x", "m100_TimeMax100x"}
 
 
 def _param(case, xfail_cases, reason):
@@ -209,7 +201,7 @@ def test_hydro_conserves_energy(case):
     )
 
 
-@pytest.mark.parametrize("case", [_param(c, FEEDBACK_XFAIL_CASES, _FEEDBACK_XFAIL) for c in CASES])
+@pytest.mark.parametrize("case", list(CASES))
 def test_feedback_delivers_sn_energy(case):
     dE, E_fb, n_sn = energy_budget(case)
     err = E_fb / (n_sn * E51_CODE) - 1
