@@ -5,7 +5,8 @@ default TREECOOL and with every rate in the table set to 1e-40.
 test_runs_comoving: both runs reach TimeMax (SGChem used to stop on ComovingIntegrationOn).
 test_uvb_ionises: with the background the cells hold more electrons and more H+ than without, at the level of the
   Gamma_HI floor (the final x_e is above 1e-3 and above 3 x the run without).
-test_uvb_rates_in_log: the start-up log names the redshift of the table lookup.
+test_uvb_rates_in_log: the start-up log names the redshift of the table lookup and the default TREECOOL (it begins with
+  '##' comment lines) is read with its rows.
 """
 import glob
 import shutil
@@ -79,3 +80,4 @@ def test_uvb_ionises(runs):
 def test_uvb_rates_in_log(runs):
     log = open(path.join(HERE, f"test_{NAME}.out")).read()
     assert "SGCHEM: UV background from TREECOOL, z = 3" in log
+    assert "with 0 non-zero UVB entries" not in log  # data/cooling/TREECOOL starts with '##' comment lines
