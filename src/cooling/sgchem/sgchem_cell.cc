@@ -369,6 +369,24 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     return energy * pow(UNIT_LENGTH_IN_CGS, 3) / UNIT_ENERGY_IN_CGS / (rho / UNIT_DENSITY_IN_CGS);
 }
 
+#ifdef SGCHEM_TEMPERATURE_FROM_CHEMISTRY_AT_SNAPSHOT_RESTART
+/* gas temperature [K] from the cell's energy and abundances, no solve: a snapshot carries no Temp, and the first force pass reads it */
+double sgchem_startup_temperature(int i)
+{
+    double rho = CellP[i].Density * All.cf_a3inv, energy = DMAX(rho * CellP[i].InternalEnergy, rho * All.MinEgySpec);
+    rho *= UNIT_DENSITY_IN_CGS; energy *= UNIT_ENERGY_IN_CGS / pow(UNIT_LENGTH_IN_CGS, 3);
+    double ab[TRAC_NUM]; for(int k = 0; k < TRAC_NUM; k++) {ab[k] = CellP[i].TracAbund[k];}
+    double yn = rho / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS), temp;
+#if CHEMISTRYNETWORK == 18
+    temp = chem_cxx_net18_temp(ab, energy, yn, chem_cxx_abhe_default());
+#else
+    temp = chem_cxx_calc_temp(ab[IH2], chem_cxx_abhe_default(), energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + ab[IHP]) * yn));
+#endif
+    if(temp < All.MinGasTemp && temp > 0) {temp = All.MinGasTemp;}
+    return temp;
+}
+#endif
+
 /* electrons per H from the cell's current abundances: the state the first force pass reads, before any solve */
 double sgchem_startup_electrons(int i)
 {
