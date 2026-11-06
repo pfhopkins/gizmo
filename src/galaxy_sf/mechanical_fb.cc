@@ -157,10 +157,10 @@ void verify_and_assign_local_mechfb_integrals(void)
             update_ISMDustChem_after_mechanical_injection(j, LocalGasMechFBInfoTemp[j].Mass_Where_Dust_Shocked, m0, mf, LocalGasMechFBInfoTemp[j].Z_injected); /* update dust chemistry quantities */
 #endif
             CellP[j].Density *= mf/m0; /* update density [semi-drift] */
-            double dTE=LocalGasMechFBInfoTemp[j].TE_injected;
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
             CellP[j].InternalEnergy *= m0/mf; CellP[j].InternalEnergyPred *= m0/mf; /* cold ejecta dilute u at once, whatever the energy of the event */
 #endif
+            double dTE=LocalGasMechFBInfoTemp[j].TE_injected;
             if(dTE > 0)
             {
                 double TE_0=m0*CellP[j].InternalEnergy; dTE=DMAX(-TE_0,dTE); /* ensure against non-negative values */

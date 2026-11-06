@@ -112,6 +112,9 @@ void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
             fb.unit_mom_SNe = fb.Msne * fb.SNe_v_ejecta;
         }
     }
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    if (loop_iteration == -1 && fb.Msne > 0) {double M_ej = single_star_ejecta_mass_this_step(i); if (M_ej > 0) {fb.Msne = M_ej;}} /* the sums of this pass use the ejecta mass, not the star's */
+#endif
 
     loc->Pos = fb.Pos;
     loc->Vel = fb.Vel;

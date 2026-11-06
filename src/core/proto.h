@@ -1000,6 +1000,7 @@ void particle2in_addFB_fromstars(struct addFB_evaluate_data_in_ *in, int i, int 
 double single_star_eventrates(int i, double dt);
 double single_star_max_timestep(int p);
 void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
+double single_star_ejecta_mass_this_step(int i);
 void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);
 #endif

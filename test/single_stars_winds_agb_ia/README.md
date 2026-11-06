@@ -26,5 +26,6 @@ Checks:
 6. (`test_wind_energy`, the 35 Msun star alone, as the supernovae's 1e51 erg would hide the wind's 4e49) the energy gained by
    gas and star (kinetic + thermal) closes on the booked 1/2 M v^2 of the wind returned at the table speed to 1e-3 (measured
    0.9995; 1.045 before each cell closed its own share in the star frame).
+7. (`test_wind_energy_in_outflowing_gas`) a 150 Msun star's steady wind in 1e7 K gas moving out of it at 0.75 v_w, n_H = 1: run minus a twin with no wind owed (the flow's hydro drift cancels) closes to 2 % on 1/2 M v^2. The weighting pass sums use the ejecta mass, not the star's.
 
 Reference: the tables (cumulative wind ejecta read with h5py at the star's grid node) and conservation laws.
