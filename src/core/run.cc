@@ -77,7 +77,10 @@ void energy_ledger_report(void)
     for(i=0;i<LG_N;i++) {loc[i] = EnergyLedger[i];}
     loc[LG_N] = loc[LG_N+1] = loc[LG_N+2] = 0;
     for(i=0;i<NumPart;i++) {if(P[i].Type==0 && P[i].Mass>0) {loc[LG_N] += 0.5*P[i].Mass*P[i].Vel.norm_sq()*All.cf_a2inv; loc[LG_N+1] += P[i].Mass*CellP[i].InternalEnergy;
-        if(CellP[i].Density>0) {loc[LG_N+2] += 0.5*CellP[i].B.norm_sq()*(CellP[i].Density/P[i].Mass)/All.cf_atime;}}}
+#ifdef MAGNETIC
+        if(CellP[i].Density>0) {loc[LG_N+2] += 0.5*CellP[i].B.norm_sq()*(CellP[i].Density/P[i].Mass)/All.cf_atime;}
+#endif
+        }}
     MPI_Reduce(loc, glob, LG_N+3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
     static FILE *fd = NULL; static double E0 = -1, EB0 = 0, L0[LG_N];
