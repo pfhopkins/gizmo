@@ -5,8 +5,10 @@ their lifetime at Z = 0.014: 20 Msun (ejecta below the ~32 Msun of its kernel: d
 150 and 320 Msun (ejecta above the kernel gas: a new cell). All of it in 100 yr, so cooling and the chemistry change the books by little.
 
 Bars, written before the first run:
-  test_new_cells_hold_the_ejecta: new cells are the cells with a child ID (the 1 Msun lattice neither splits nor merges by itself). Their mass
-    equals the ejecta of the 150 and 320 Msun stars to 1e-10, their metal mass the ejecta metals to 1e-8, and they exist at all.
+  test_new_cells_hold_the_ejecta: new cells are the cells with a child ID whose ID is one of the IC cells within 2.5 cells of the 150 and 320 Msun
+    stars (a new cell takes the ID of the nearest local cell). Their mass equals the ejecta of those stars to 1e-10, their metal mass the ejecta
+    metals to 1e-8, and they exist at all. Moved before the change, with this reason: the first version took every cell with a child ID, assuming
+    the lattice does not split, but the 20 Msun deposit does split lattice cells (the unchanged code gave 440.7 Msun against 432.1).
   test_books: gas gains all ejecta (1e-12), every star keeps exactly its table remnant, the 320 Msun star leaves none, one event row per
     star; total energy gains the three explosions to 5 %, total momentum changes by less than 5 % of what the ejecta carry.
 """
@@ -66,8 +68,8 @@ def gas(fname):
         g = F["PartType0"]
         child = g["ParticleChildIDsNumber"][()] if "ParticleChildIDsNumber" in g else np.zeros(len(g["Masses"]), dtype=int)
         s = F["PartType4"]
-        return dict(m=g["Masses"][()], z=g["Metallicity"][()][:, 0], u=g["InternalEnergy"][()], v=g["Velocities"][()], child=child,
-                    sm=s["Masses"][()], sv=s["Velocities"][()], sid=s["ParticleIDs"][()])
+        return dict(m=g["Masses"][()], z=g["Metallicity"][()][:, 0], u=g["InternalEnergy"][()], v=g["Velocities"][()], child=child, id=g["ParticleIDs"][()],
+                    x=g["Coordinates"][()], sm=s["Masses"][()], sv=s["Velocities"][()], sid=s["ParticleIDs"][()], sx=s["Coordinates"][()], L=F["Header"].attrs["BoxSize"])
 
 
 def energy(a):
@@ -79,10 +81,15 @@ def momentum(a):
 
 
 def test_new_cells_hold_the_ejecta(run):
-    _, snap, rows = run
-    a = gas(snap)
-    new = a["child"] != 0
+    ic, snap, rows = run
+    a, g0 = gas(snap), gas(ic)
     spawned = rows[rows[:, 4] > 100]  # the 150 and 320 Msun stars
+    near = []
+    for sid in spawned[:, 1].astype(int):
+        d = g0["x"] - g0["sx"][g0["sid"] == sid]
+        d -= g0["L"] * np.round(d / g0["L"])
+        near.append(g0["id"][(d ** 2).sum(1) < (2.5 * g0["L"] / N) ** 2])
+    new = (a["child"] != 0) & np.isin(a["id"], np.concatenate(near))
     assert new.sum() >= 2
     assert abs(a["m"][new].sum() / spawned[:, 6].sum() - 1) < 1e-10, (a["m"][new].sum(), spawned[:, 6])
     assert abs((a["m"] * a["z"])[new].sum() / spawned[:, 9].sum() - 1) < 1e-8
