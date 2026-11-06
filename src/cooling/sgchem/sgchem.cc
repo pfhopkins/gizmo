@@ -51,7 +51,7 @@ static void sgchem_tables_check(void)
 void sgchem_init(void)
 {
     if(ThisTask == 0) {printf("SGCHEM: network %d, tables from %s\n", CHEMISTRYNETWORK, All.SGChemTablesPath); fflush(stdout);}
-    if(All.ComovingIntegrationOn) {if(ThisTask == 0) {printf("SGCHEM: cosmological runs (UV background coupling) are not supported in this tree yet\n");} endrun(78003);}
+    if(All.ComovingIntegrationOn && ThisTask == 0) {printf("SGCHEM: UV background from TREECOOL, z = %.3g\n", 1. / All.Time - 1.);}
     sgchem_tables_check();
 #if defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION)
     sgchem_rt_init();
