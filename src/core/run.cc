@@ -200,6 +200,9 @@ void run(void)
 
     while(1)			/* main timestep iteration loop */
     {
+#if defined(KETJU_REGULARIZATION) && defined(OUTPUT_STAR_ENERGY_DIRECT_SUM)
+        ketju_energy_diagnostic(); /* ETOT_INCODE: direct-sum star energy, printed at synchronised snapshot times */
+#endif
         compute_statistics();	/* regular statistics outputs (like total energy) */
         CPU_Step[CPU_LOGMSG] += measure_time();
 

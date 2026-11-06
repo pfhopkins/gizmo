@@ -246,6 +246,7 @@ struct ketju_mpi_particle {
     double CollRadius; /* contact radius, physical code length (0: never collides) */
     double BirthTime, FormDens; /* StellarAge and physical formation density, for the collision log */
 #endif
+    double GravAcc[3]; /* comoving GravAccel of the gravity call whose kick started this step */
     double TidalNorm;  /* physical |T| of the field external to its chain at its last step end (0: not known) */
     double Tidal[6];   /* tree tidal tensor of the gravity call that started this step (xx yy zz xy yz xz, comoving, with G) */
 };
@@ -425,6 +426,12 @@ struct KjClock {
     ~KjClock() {lap(rest);}
 };
 static double KetjuCollisionEnergy = 0; /* energy change by star collisions since the last KETJU STATS line (compute roots) */
+/* Coupling energy ledger since the last KETJU STATS line, host units (rank-local sums):
+ * [0] internal energy the host's external kicks put into region members (start: compute roots; end: member owners),
+ * [1] its absolute value per region and kick, [2] MSTAR's own energy change (integration error, collisions excluded) */
+static double KetjuEnergyLedger[3] = {0, 0, 0};
+static double KetjuEtot = 0, KetjuEtot0 = 0; static int KetjuEtotSet = 0; /* direct-sum total energy (rank 0) */
+void ketju_note_total_energy(double E, double E0) {KetjuEtot = E; KetjuEtot0 = E0; KetjuEtotSet = 1;}
 
 /* Cache for gather_chain_centers result — shared between ketju_limit_timesteps
  * and ketju_find_regions to avoid a redundant MPI_Allgatherv on COMM_WORLD */
@@ -998,6 +1005,7 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 #endif
         mp.FormDens = 0;
 #endif
+        for(int j = 0; j < 3; j++) mp.GravAcc[j] = P[idx].GravAccel[j];
         for(int j = 0; j < 6; j++) mp.Tidal[j] = 0;
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
         for(int j = 0; j < 6; j++) mp.Tidal[j] = P[idx].tidal_tensorps.data[j];
@@ -1488,6 +1496,21 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         }
     }
 #endif
+    if(reg.compute_tasks.is_root() && reg.integrator) {
+        /* energy the host's first half-kick put into the internal motion: its external part (tree kick minus the pair kick
+         * just removed) relative to its mass-weighted mean, against the CoM-relative velocities it produced */
+        int n = reg.integrator->num_particles; struct ketju_system_physical_state *ps = reg.integrator->physical_state;
+        double a = All.cf_atime, mtot = 0, mean[3] = {0, 0, 0}; std::vector<double> ext(3 * n);
+        for(int i = 0; i < n; i++) {
+            double tr[3] = {0, 0, 0};
+            if(reg.tide_on) {const double *t = reg.tide_T; const double *x = ps->pos[i]; tr[0] = t[0]*x[0] + t[3]*x[1] + t[5]*x[2]; tr[1] = t[3]*x[0] + t[1]*x[1] + t[4]*x[2]; tr[2] = t[5]*x[0] + t[4]*x[1] + t[2]*x[2];}
+            for(int k = 0; k < 3; k++) {ext[3*i+k] = reg.all_particles[i].GravAcc[k] * first_halfkick / (a * a) + pair_dv[3*i+k] - tr[k] * first_halfkick; mean[k] += ps->mass[i] * ext[3*i+k];}
+            mtot += ps->mass[i];
+        }
+        double W = 0;
+        for(int i = 0; i < n; i++) for(int k = 0; k < 3; k++) {double d = ext[3*i+k] - mean[k] / mtot, v = ps->vel[i][k]; W += 0.5 * ps->mass[i] * (v * v - (v - d) * (v - d));}
+        KetjuEnergyLedger[0] += W; KetjuEnergyLedger[1] += fabs(W);
+    }
 
     /* expand tight binaries before integration to prevent stalling.
      * Runs on compute root only — broadcast updated velocities to all compute tasks. */
@@ -1500,6 +1523,13 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
 
     record_midstep_output_state(reg);
     /* run MSTAR integrator (all compute tasks participate via compute_tasks.comm) */
+    auto E_internal = [&reg]() { /* unsoftened internal energy of the live members, host units */
+        struct ketju_system_physical_state *ps = reg.integrator->physical_state; int n = reg.integrator->num_particles; double E = 0;
+        for(int i = 0; i < n; i++) {E += 0.5 * ps->mass[i] * (ps->vel[i][0]*ps->vel[i][0] + ps->vel[i][1]*ps->vel[i][1] + ps->vel[i][2]*ps->vel[i][2]);
+            for(int j = i + 1; j < n; j++) {double d2 = 0; for(int k = 0; k < 3; k++) {double d = ps->pos[i][k] - ps->pos[j][k]; d2 += d * d;} E -= All.G * ps->mass[i] * ps->mass[j] / sqrt(d2);}}
+        return E;
+    };
+    double E_before = (reg.compute_tasks.is_root() && reg.integrator) ? E_internal() : 0;
     if(reg.compute_tasks.is_member() && reg.integrator) {
         int kepler = kepler_pair_step(reg, dt_physical);
         if(!kepler) {
@@ -1521,6 +1551,18 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
 
         int n_steps = reg.integrator->perf->successful_steps + reg.integrator->perf->failed_steps;
         double dE = reg.integrator->perf->relative_energy_error;
+        if(reg.compute_tasks.is_root()) {
+            double dE_coll = 0, eu = KJ_MASS_TO_NAT * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT;
+            for(int m = 0; m < reg.integrator->num_mergers; m++) if(reg.integrator->merger_infos[m].is_collision) dE_coll += reg.integrator->merger_infos[m].dE_collision / eu;
+            /* MSTAR: its error of T - U - U_tide net of collisions (U softened as integrated); exact Kepler pair: direct */
+            KetjuEnergyLedger[2] += kepler ? E_internal() - E_before - dE_coll : dE * fabs(E_before);
+        }
+
+        /* Per-region integration logs are silenced (they generate ~1 line per
+         * region per step, which produces multi-GB stdout files and dominates
+         * wall time via syscall/format overhead). Mergers and the warnings
+         * below remain. Re-enable by defining KETJU_VERBOSE_INTEGRATION. */
+
         if(All.KetjuMaxStepCount > 0 && n_steps >= All.KetjuMaxStepCount) {
             printf("KETJU WARNING: integration hit max step count (%d) — results may be inaccurate!\n",
                    All.KetjuMaxStepCount);
@@ -2431,13 +2473,25 @@ void ketju_report_stats(int final)
     MPI_Reduce(StatMax, glob_max, 2, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     for(int k = 0; k < 8; k++) {StatLoc[k] = 0;}
     StatMax[0] = StatMax[1] = 0;
+    static double cum_energy[4] = {0, 0, 0, 0}; /* external kick work on internal motion (net, |.|), MSTAR error, collisions */
+    double eloc[4] = {KetjuEnergyLedger[0], KetjuEnergyLedger[1], KetjuEnergyLedger[2], KetjuCollisionEnergy}, eglob[4];
+    for(int k = 0; k < 3; k++) KetjuEnergyLedger[k] = 0;
+    KetjuCollisionEnergy = 0;
+    MPI_Reduce(eloc, eglob, 4, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
     for(int k = 0; k < 8; k++) {cum[k] += glob[k];}
+    for(int k = 0; k < 4; k++) {cum_energy[k] += eglob[k];}
     cum_max[0] = DMAX(cum_max[0], glob_max[0]); cum_max[1] = DMAX(cum_max[1], glob_max[1]);
     printf("KETJU STATS: t=%g steps=%lld region-integrations=%lld MSTAR accepted=%lld failed=%lld "
            "max-per-region=%lld |dE/E|>1e-4: %lld max|dE/E|=%g limited-moves down=%lld up=%lld "
            "timestep-regions=%lld set-by-limiting=%lld\n", All.Time, StatCalls, cum[0], cum[1], cum[2], (long long)cum_max[0], cum[3], cum_max[1], cum[4], cum[5], cum[6], cum[7]);
+    /* coupling energy check: if the direct-sum drift is the kick work, the coupling (impulsive external field) dominates;
+     * if it is the MSTAR term, the integrator does. Normalised by |E0| of the direct sum when that is computed. */
+    double norm = (KetjuEtotSet && KetjuEtot0 != 0) ? fabs(KetjuEtot0) : 1;
     printf("KETJU CAPS: t=%g timestep-regions set by motion cap=%lld tide cap=%lld fly-by (task 0)=%lld\n", All.Time, CapTally[0], CapTally[1], FlybyTally);
+    printf("KETJU ENERGY: t=%g units=%s kick-work-internal net=%.4e abs=%.4e MSTAR-dE=%.4e collisions-dE=%.4e ETOT dE=%.4e\n",
+           All.Time, (norm != 1) ? "|E0|" : "code", cum_energy[0] / norm, cum_energy[1] / norm, cum_energy[2] / norm, cum_energy[3] / norm,
+           KetjuEtotSet ? (KetjuEtot - KetjuEtot0) / norm : 0.0);
 }
 
 /* chains alive this step: a reused import keeps the orbital phase of the last build. The tree is rebuilt at a sync point while a chain
@@ -2685,6 +2739,7 @@ void ketju_compute_com_quantities(void)
     MPI_Allgatherv(local_data.data(), n_local * sizeof(ChainMemberData), MPI_BYTE,
                    all_data.data(), byte_counts.data(), byte_displs.data(), MPI_BYTE, MPI_COMM_WORLD);
     std::sort(all_data.begin(), all_data.end(), [](const ChainMemberData &a, const ChainMemberData &b) {return a.chain < b.chain;});
+    std::vector<double> ext_kick(3 * n_local, 0.0);
 
     double h = All.ForceSoftening[5]; /* comoving, like P[].Pos and the tree's pair softening */
     for(int n = 0; n < n_local; n++) {
@@ -2746,6 +2801,36 @@ void ketju_compute_com_quantities(void)
 #else
         ketju_member(idx).com_dt_tidal = MAX_REAL_NUMBER; (void)chain_tidal; /* no tree tidal tensor: no tidal limit, but marks the external values as set */
 #endif
+        { /* the host's second half-kick by the field external to the whole chain (peculiar velocity) */
+            integertime ts = P[idx].integertime_step();
+            double gk = get_gravkick_factor(P[idx].Ti_begstep + ts / 2, P[idx].Ti_begstep + ts, idx, 0);
+            for(int j = 0; j < 3; j++) ext_kick[3*n + j] = (P[idx].GravAccel[j] - chain_grav_all[j]) * gk / All.cf_atime;
+        }
+    }
+    { /* energy the host's end kick put into each chain's internal motion: external kicks relative to their mass-weighted mean,
+       * against the CoM-relative velocities after the kick; counted once per chain, by the task of its first gathered member */
+        struct KickData {MyIDType chain; int task; double mass, vel[3], dv[3];};
+        std::vector<KickData> kl(n_local);
+        for(int n = 0; n < n_local; n++) {
+            kl[n].chain = local_data[n].chain; kl[n].task = ThisTask; kl[n].mass = local_data[n].mass;
+            for(int j = 0; j < 3; j++) {kl[n].vel[j] = local_data[n].vel[j]; kl[n].dv[j] = ext_kick[3*n + j];}
+        }
+        int nt = 0; for(int t = 0; t < NTask; t++) {byte_counts[t] = counts[t] * sizeof(KickData); byte_displs[t] = nt * sizeof(KickData); nt += counts[t];}
+        std::vector<KickData> ka(nt);
+        MPI_Allgatherv(kl.data(), n_local * sizeof(KickData), MPI_BYTE, ka.data(), byte_counts.data(), byte_displs.data(), MPI_BYTE, MPI_COMM_WORLD);
+        std::stable_sort(ka.begin(), ka.end(), [](const KickData &a, const KickData &b) {return a.chain < b.chain;});
+        for(size_t lo = 0; lo < ka.size();) {
+            size_t hi = lo; while(hi < ka.size() && ka[hi].chain == ka[lo].chain) hi++;
+            if(ka[lo].task == ThisTask) {
+                double M = 0, vb[3] = {0, 0, 0}, db[3] = {0, 0, 0}, W = 0;
+                for(size_t q = lo; q < hi; q++) {M += ka[q].mass; for(int j = 0; j < 3; j++) {vb[j] += ka[q].mass * ka[q].vel[j]; db[j] += ka[q].mass * ka[q].dv[j];}}
+                for(size_t q = lo; q < hi; q++) for(int j = 0; j < 3; j++) {
+                    double v = ka[q].vel[j] - vb[j] / M, d = ka[q].dv[j] - db[j] / M; W += 0.5 * ka[q].mass * (v * v - (v - d) * (v - d));
+                }
+                KetjuEnergyLedger[0] += W; KetjuEnergyLedger[1] += fabs(W);
+            }
+            lo = hi;
+        }
     }
 }
 

@@ -9,6 +9,7 @@ INCL += $(KETJU_DIR)/ketju_tree.h
 OBJS += $(KETJU_DIR)/ketju_tree_audit.o
 OBJS += $(KETJU_DIR)/ketju_star_mergers.o
 INCL += $(KETJU_DIR)/ketju_star_mergers.h
+OBJS += $(KETJU_DIR)/ketju_energy_diag.o
 $(if $(wildcard $(KETJU_DIR)/ketju-integrator-c/include/ketju_integrator/ketju_integrator.h),,$(error KETJU: run git submodule update --init src/gravity/ketju/ketju-integrator-c))
 $(if $(wildcard $(KETJU_DIR)/ketju-integrator/include/mstar/mstar.hpp),,$(error KETJU: run git submodule update --init src/gravity/ketju/ketju-integrator))
 KETJU_INCL = -I$(KETJU_DIR)/ketju-integrator/include -I$(KETJU_DIR)/ketju-integrator-c/include

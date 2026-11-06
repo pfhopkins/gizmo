@@ -20,6 +20,9 @@ void ketju_swap_output_velocities(void);
 void ketju_open_output_file(void);
 void ketju_close_output_file(void);
 void ketju_write_output(void);
+void ketju_note_total_energy(double E, double E0);
+void ketju_energy_diagnostic(void);
+void ketju_energy_diag_prepare(void);
 #ifdef TEST_KETJU_TREE_MOTION_AUDIT
 void ketju_tree_audit_bounds(void);
 void ketju_tree_audit_nodes(void);
