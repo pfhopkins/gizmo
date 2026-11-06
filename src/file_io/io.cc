@@ -13,6 +13,9 @@
 #include "../mesh/kernel.h"
 #include "../core/timestep_functions.h"   /* the Hermite predicted state written by IO_HERMITE_SYNC */
 #include "../core/predict_functions.h"    /* box_wrap_position_to_primary_image: the shear-periodic image a snapshot writes */
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+#include "../gravity/gravtree_treecol_pixels.h"
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 /* get_ISMDustChemEvo_bin_mass is KOKKOS_INLINE_FUNCTION (Chunk 1, 2026-05-26). */
 #include "../solids/ism_dust_chemistry_functions.h"
@@ -860,6 +863,12 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
         case IO_CHEM_PHOTORATES:
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type) {for(k = 0; k < 6; k++) {*fp++ = (MyOutputFloat) CellP[pindex].SGChemPhotoRates[k];} n++;}
+            break;
+#endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS: /* [column][pixel] in g/cm^2 */
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {for(k = 0; k < TREECOL_PIXELS_NCOLUMNS * GALSF_RESOLVEDISM_TREECOL_PIXELS; k++) {*fp++ = (MyOutputFloat) (TREECOL_PIXELS_COLUMN(CellP[pindex], k / GALSF_RESOLVEDISM_TREECOL_PIXELS, k % GALSF_RESOLVEDISM_TREECOL_PIXELS) * UNIT_SURFDEN_IN_CGS);} n++;}
             break;
 #endif
         case IO_SGCHEM_TRACABUND:
@@ -2560,6 +2569,11 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             bytes_per_blockelement = 6 * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
             break;
 #endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
+            bytes_per_blockelement = TREECOL_PIXELS_NCOLUMNS * GALSF_RESOLVEDISM_TREECOL_PIXELS * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
         case IO_SGCHEM_TRACABUND:
             bytes_per_blockelement = SGCHEM_NUM_TRACKED_SPECIES * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
             break;
@@ -2954,6 +2968,11 @@ int get_values_per_blockelement(enum iofields blocknr)
             values = 6;
             break;
 #endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
+            values = TREECOL_PIXELS_NCOLUMNS * GALSF_RESOLVEDISM_TREECOL_PIXELS;
+            break;
+#endif
         case IO_SGCHEM_TRACABUND:
             values = SGCHEM_NUM_TRACKED_SPECIES;
             break;
@@ -3187,6 +3206,9 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
 #endif
 #ifdef OUTPUT_CHEM_PHOTORATES
         case IO_CHEM_PHOTORATES:
+#endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
 #endif
         case IO_SGCHEM_TRACABUND:
 #endif
@@ -3470,6 +3492,9 @@ int blockpresent(enum iofields blocknr)
 #endif
 #ifdef OUTPUT_CHEM_PHOTORATES
         case IO_CHEM_PHOTORATES:
+#endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
 #endif
         case IO_SGCHEM_TRACABUND:
         case IO_SGCHEM_DUSTTEMP:
@@ -4226,6 +4251,11 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             strncpy(label, "SCPR", 4);
             break;
 #endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
+            strncpy(label, "TCPC", 4);
+            break;
+#endif
         case IO_SGCHEM_TRACABUND:
             strncpy(label, "CCTA", 4);
             break;
@@ -4776,6 +4806,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
 #ifdef OUTPUT_CHEM_PHOTORATES
         case IO_CHEM_PHOTORATES:
             strcpy(buf, "ChemPhotoRates");
+            break;
+#endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
+            strcpy(buf, "TreeColumnPixels");
             break;
 #endif
         case IO_SGCHEM_TRACABUND:
