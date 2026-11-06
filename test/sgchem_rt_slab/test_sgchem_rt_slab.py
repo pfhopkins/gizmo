@@ -1,6 +1,6 @@
 """sgchem_rt_slab: a slab lit by one star through the moment solver (reports/design/design_m1_coupling.md), the IC of
 treecol_pixels test_slab_shielding: n_H ~ 1e3 slab, N_H ~ 1e22 through it, 40 Msun star 3 pc in front of the face.
-  test_bins_attenuate: on the axis the 6-13.6 eV energy density equals L / (4 pi r^2 c) exp(-tau) of the chemistry's law (20 %) for tau < 3. Open.
+  test_bins_attenuate: on the axis the 6-13.6 eV energy density equals L / (4 pi r^2 c) exp(-tau) of the chemistry's law (20 %) for tau < 3.
   test_attenuation_with_depth: the ratio to analytic stays flat inside the slab: dust acts once.
   test_shielding: after 0.15 Myr the cells deep in the slab hold over 30 x the H2 of the lit face and x_H2 > 1e-2: H2 and CO
     columns act with the transported field, dust in the bins only.
@@ -78,7 +78,6 @@ def field_over_analytic(r):
     return tau, ub / (r["L_uv"] / (4 * np.pi * ((mid - ZSTAR) * PC) ** 2 * C) * np.exp(-tau))
 
 
-@pytest.mark.xfail(strict=False, reason="open: after the face slice the field sits near 0.5 of analytic; see the depth test")
 def test_bins_attenuate(result):
     tau, ratio = field_over_analytic(result)
     print("tau", tau, "field / analytic", ratio)

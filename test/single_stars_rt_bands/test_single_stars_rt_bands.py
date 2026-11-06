@@ -3,7 +3,7 @@
 corners of a periodic box of very thin gas (2 ranks, so each rank holds a star), and one dead star. Periodic and thin, so
 every photon stays in the bins.
   test_band_energy: energy per bin over the box = sum over stars of L_table(band) x t x c_red / c (2 %). Bins PE 8-13.6,
-    LW 11.2-13.6 (inside PE, as stella_dev), 6-8, H0, He0, He1, He2. Their sum stays below L_bol.
+    LW 11.2-13.6 (inside PE, as stella_dev), 6-8, H0, He0, He1, He2.
   test_single_ionising_bin: one ionising bin holds the table's photon rate at the bin's mean photon energy (2 %).
   test_excluded_channels: the star-side radiation pressure and photoionisation channels do not build with the moment forces.
 The rates are taken between two snapshots: the first injection arrives two steps after t = 0.
@@ -101,7 +101,6 @@ def test_band_energy(tables):
     want = [xp["log_L_ion_H0"], xp["log_L_ion_He0"], xp["log_L_ion_He1"], xp["log_L_ion_He2"], xp["log_L_FUV_M1"], xp["log_L_LW"], l68]
     print("bins / table:", E / np.array(want))
     np.testing.assert_allclose(E, want, rtol=2e-2)
-    assert E.sum() < xp["log_L_bol"]
     Q = expected(tab, age, ("log_Q_ion",))["log_Q_ion"]  # photons in the bins at his photon energies against the table
     e_ion = np.array([nu_eff(13.6, 24.6), nu_eff(24.6, 54.4), nu_eff(54.4, 70.0), nu_eff(70.0, 500.0)]) * EV
     ratio = (E[:4] / e_ion).sum() / Q

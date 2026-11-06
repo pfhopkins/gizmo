@@ -62,11 +62,16 @@ static double sgchem_rt_sigma_h2(double e)
     return 9.75e-18 * pow(18.1 / e, 3);
 }
 
+#ifdef RT_CHEM_PHOTOION_HE
+#define SGCHEM_RT_H0_TOP_EV 24.6 /* rt_chem.cc nu_vec */
+#else
+#define SGCHEM_RT_H0_TOP_EV 500.
+#endif
 /* r over the H0 bin's photons of his 4e4 K blackbody (rt_get_sigma); serial, once */
 void sgchem_rt_init(void)
 {
 #if CHEMISTRYNETWORK == 5
-    double s1 = 0, s2 = 0, kT = 4.0e4 * BOLTZMANN_CGS / ELECTRONVOLT_IN_ERGS, de = (All.RHD_bins_nu_max_ev[RT_FREQ_BIN_H0] - 13.6) / 19999.;
+    double s1 = 0, s2 = 0, kT = 4.0e4 * BOLTZMANN_CGS / ELECTRONVOLT_IN_ERGS, de = (SGCHEM_RT_H0_TOP_EV - 13.6) / 19999.;
     for(int j = 1; j < 20000; j++) {
         double e = 13.6 + j * de, x = e / kT, w = (x < 500.) ? e * e / expm1(x) : 0, f = sqrt(e / 13.6 - 1.);
         s1 += w * 6.3e-18 * pow(13.6 / e, 4) * exp(4. - 4. * atan(f) / f) / (1. - exp(-2. * M_PI / f));
