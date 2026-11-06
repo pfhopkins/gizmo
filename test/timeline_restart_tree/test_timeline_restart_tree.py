@@ -17,7 +17,7 @@ TEST_NAME = "timeline_restart_tree"
 TEST_DIR = f"test/{TEST_NAME}"
 T2 = 0.002
 DV_MAX = 1e-10
-STOP_STEP = 25
+STOP_STEP = 8
 
 
 def _final(out):

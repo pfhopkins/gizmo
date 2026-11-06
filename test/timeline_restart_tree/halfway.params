@@ -39,3 +39,5 @@ Softening_Type5_MaxPhysLimit       3.117e-08
 AGS_DesNumNgb                      32
 AGS_MaxNumNgbDeviation             1
 CpuTimeBetRestartFile              1800
+DomainBuild_ActiveFraction 1.1
+TreeRebuild_ActiveFraction 1.1
