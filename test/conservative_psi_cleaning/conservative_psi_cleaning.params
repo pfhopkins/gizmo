@@ -1,0 +1,17 @@
+% a blob of B with a divergence in static gas: cleaning waves cross the box about 2.5 times
+InitCondFile                       ics
+OutputDir                          output
+TimeMax                            0.2
+BoxSize                            1
+TimeBetSnapshot                    0.02
+TimeBetStatistics                  0.2
+MaxSizeTimestep                    0.01
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.1
+MaxRMSDisplacementFac              0.1
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.001
