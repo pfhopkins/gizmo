@@ -52,3 +52,30 @@ scores rho = 0.024, By = 0.024 against the 0.03 bounds. vx has the smallest L1 b
 range (20) is set by the fast shocks; vy carries the delicate structure. The narrow slow-shock
 plateau (~0.11 wide, ~12 bins) leaves ~6 bins after trimming 3 bins at each end; if GIZMO smears the slow shocks more than that, the plateau
 assertion will say so before the value is meaningful.
+
+## Known failure: the Powell induction source at the fast shocks (2026-11-05)
+
+Against the Athena++ reference, rho and v_x match on every plateau to 0.06-0.25%, but B_y is
++1.4% (left) and +4.5% (right) behind the fast shocks, +2.5% between the slow shocks, and the v_y
+plateaus are +11-12%; |divB| h/|B| has rms 0.013 (briowu: 0.003) and peaks at the two fast shocks,
+where v_y shows particle-scale spikes of +-1. The excess is present as soon as the shocks form
+(t=0.02) and is then constant; a 1792x56 run gives the same numbers while the rho and v_x errors
+halve, so it is systematic, not resolution.
+
+Cause: the Powell (8-wave) source in the induction equation, `DtB -= divB * v` in
+hydro/hydro_toplevel.cc, is not conservative. Integrating -divB v_y along the gas path through each
+fast shock from the snapshots predicts +0.049 (left) and +0.23 (right) against the observed +0.055 and
++0.245, in the baseline, constrained-gradient, MFV and 2x runs alike; about 95% of the source is the
+particle-scale correlation of divB with the v_y noise. Toth (2000) designed this problem to show that
+8-wave schemes get the jump conditions at strong shocks wrong, and that is what this is. The scheme is
+Galilean invariant (the problem boosted by v_x+10 or v_y+5 reproduces every plateau to 4 digits), so
+the term is not a frame error. Dropping it fixes the lab-frame problem and breaks the boosted ones;
+a Galilean-invariant smoothed-velocity form fixes B_y but leaves v_y at +-6% and worsens B_x; dropping
+the momentum/energy Powell terms instead makes B_y worse; dropping all of them blows up (energy +11%).
+MHD_CONSTRAINED_GRADIENT halves divB (rms 0.005) and brings B_y to +0.9/+1.3/+1.7% but the v_y
+plateaus stay +5-6%; Dedner cleaning strength (0.2-2x) barely matters; MFV is worse (+9%).
+
+The baseline is therefore a strict xfail with this reason. Do not loosen the tolerances on resolution
+grounds: the error does not converge. Diagnostic runs, patches and plots:
+/mnt/ceph/users/mgrudic/og3_tests_2026-11-05/toth_diag/ (summary_table.txt, profiles_base.png,
+variants_By_vy.png, powell_est.py, smoothpowell.patch, nopowell_ind.patch).

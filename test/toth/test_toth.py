@@ -56,6 +56,21 @@ DIVB_P99_TOL = 0.25  # PROVISIONAL: untuned, not yet run
 ENERGY_TOL = 0.01  # PROVISIONAL: untuned, not yet run
 
 
+# Known failure (measured 2026-11-05 against the Athena++ reference; details in README.md): B_y behind
+# the fast shocks is +1.4% (left) and +4.5% (right), the v_y plateaus +11-12%. The excess is created as
+# the fast shocks form (present at t=0.02, constant after) and does not converge (identical at 2x
+# resolution). It is the Powell 8-wave induction source, DtB -= divB * v (hydro/hydro_toplevel.cc),
+# which is not conservative: at the fast shocks divB spikes to 0.05-0.1 |B|/h and multiplies
+# particle-scale v_y spikes of +-1, and the integral of -divB v_y along the gas path through each
+# shock reproduces the observed excess to 80-95%. This is what Toth (2000) built the problem to
+# expose. The code is Galilean invariant (boosts by vx+10 and vy+5 reproduce the plateaus to 4
+# digits), so deleting or smoothing the term is not a fix. MHD_CONSTRAINED_GRADIENT halves divB and
+# brings B_y within 1.7% but still misses the v_y plateaus by 5%. Strict xfail so an improvement is noticed.
+TOTH_XFAIL = pytest.mark.xfail(strict=True, reason="Powell 8-wave induction source at the strong fast shocks "
+                               "(Toth 2000): B_y +1.4/+4.5% and v_y plateaus +11-12% vs Athena++; see README")
+
+
+@TOTH_XFAIL
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_toth(num_mpi_ranks, num_omp_threads):
