@@ -223,6 +223,9 @@ double get_starformation_rate(int i, int mode)
         double rho_phys = CellP[i].Density * All.cf_a3inv, cs = CellP[i].effective_soundspeed(); /* physical, from the gas pressure (no magnetic term), as the reference implementation */
         double MJ = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)); /* pi^(5/2)/6 c_s^3 / (G^(3/2) rho^(1/2)) */
         if(MJ >= All.FacSfThreshMJ * All.DesNumNgb * P[i].Mass) {return 0;}
+#ifdef GALSF_SINGLE_STARS_SF_CONVERGING_FLOW_ONLY
+        if(P[i].Particle_DivVel * All.cf_a2inv >= 0) {return 0;} /* diverging or static flow: no SF */
+#endif
         return rateOfSF;
     }
 #endif

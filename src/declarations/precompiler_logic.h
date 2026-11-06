@@ -1057,6 +1057,9 @@
 #define  GALSF_GENERATIONS     1    /*!< Number of star particles that may be created per gas particle */
 #endif
 
+#if defined(GALSF_SINGLE_STARS_SF_CONVERGING_FLOW_ONLY) && !defined(GALSF_SINGLE_STARS_SF_CRITERION)
+#error "GALSF_SINGLE_STARS_SF_CONVERGING_FLOW_ONLY requires GALSF_SINGLE_STARS_SF_CRITERION"
+#endif
 #if defined(GALSF_SINGLE_STARS_SF_CRITERION) && !defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS)
 #define GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* the single-star criterion forms stars that collect their drawn mass */
 #endif
