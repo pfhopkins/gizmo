@@ -270,6 +270,9 @@ void begrun(void)
     InitNuclearNetwork();
 #endif
 
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    ledger_init(); /* before the restart files are read */
+#endif
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
     stellar_evolution_tables_init();
     if(gizmo_poll_controlled_stop()) return;
@@ -513,6 +516,9 @@ void begrun(void)
 #endif
 #ifdef COSMIC_RAY_FLUID
       All.CosmicRayDiffusionCoeff = all.CosmicRayDiffusionCoeff;
+#if defined(CRFLUID_INJECTION_AT_SHOCKS)
+      All.CosmicRay_ShockAccelEfficiency = all.CosmicRay_ShockAccelEfficiency;
+#endif
 #endif
 #if defined(GALSF) && defined(GALSF_FB_FIRE_AGE_TRACERS)
       All.AgeTracerRateNormalization = all.AgeTracerRateNormalization;
@@ -523,7 +529,7 @@ void begrun(void)
       All.AgeTracerBinEnd = all.AgeTracerBinEnd;
 #endif
 #endif
-#if defined(GALSF) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && (defined(COSMIC_RAY_FLUID) || defined(COSMIC_RAY_SUBGRID_LEBRON)) && defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+#if defined(GALSF) && (defined(GALSF_FB_FIRE_STELLAREVOLUTION) || defined(MECHFB_CR_INJECTION)) && (defined(COSMIC_RAY_FLUID) || defined(COSMIC_RAY_SUBGRID_LEBRON)) && defined(CR_DYNAMICAL_INJECTION_IN_SNE)
         All.CosmicRay_SNeFraction = all.CosmicRay_SNeFraction;
 #endif
 
@@ -1593,6 +1599,14 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#if defined(CRFLUID_INJECTION_AT_SHOCKS)
+        strcpy(tag[nt], "CosmicRay_ShockAccelEfficiency"); addr[nt] = &All.CosmicRay_ShockAccelEfficiency; id[nt++] = REAL;
+#endif
+#ifdef COSMIC_RAY_FLUID
+        strcpy(tag[nt], "CosmicRayInitialAmbient_eVcm3"); addr[nt] = &All.CosmicRayInitialAmbient_eVcm3; id[nt++] = REAL;
+        strcpy(tag[nt], "CosmicRayInitialCloud_eVcm3"); addr[nt] = &All.CosmicRayInitialCloud_eVcm3; id[nt++] = REAL;
+        strcpy(tag[nt], "CosmicRayInitialCloudThreshold_nH"); addr[nt] = &All.CosmicRayInitialCloudThreshold_nH; id[nt++] = REAL;
+#endif
 #ifdef DEVELOPER_MODE
         strcpy(tag[nt], "ErrTolIntAccuracy");
         addr[nt] = &All.ErrTolIntAccuracy;
@@ -3264,6 +3278,14 @@ void read_parameter_file(char *fname)
                 if(strcmp("ShearViscosityCoeff",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: code was compiled with Spitzer-Braginski viscosity, so will default to calculating the physical coefficient without arbitrary re-normalization (i.e. user-specified additional coefficient/multipler=%g) \n",tag[i],alternate_tag[i],All.ShearViscosityCoeff); continue;}
                 if(strcmp("BulkViscosityCoeff",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: code was compiled with Spitzer-Braginski viscosity, so will default to 0 bulk viscosity as defined by those physics (=%g) \n",tag[i],alternate_tag[i],All.BulkViscosityCoeff); continue;}
 #endif
+#if defined(CRFLUID_INJECTION_AT_SHOCKS)
+                if(strcmp("CosmicRay_ShockAccelEfficiency",tag[i])==0) {*((double *)addr[i])=(double)(CRFLUID_INJECTION_AT_SHOCKS); continue;}
+#endif
+#ifdef COSMIC_RAY_FLUID
+                if(strcmp("CosmicRayInitialAmbient_eVcm3",tag[i])==0) {*((double *)addr[i])=0; continue;}
+                if(strcmp("CosmicRayInitialCloud_eVcm3",tag[i])==0) {*((double *)addr[i])=0; continue;}
+                if(strcmp("CosmicRayInitialCloudThreshold_nH",tag[i])==0) {*((double *)addr[i])=10.; continue;}
+#endif
 #ifdef TURB_DIFFUSION
                 if(strcmp("TurbDiffusionCoefficient",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: code was compiled with turbulent diffusion, so will default to calculating the coefficients without arbitrary re-normalization (i.e. user-specified additional coefficient/multipler=%g) \n",tag[i],alternate_tag[i],All.TurbDiffusion_Coefficient); continue;}
 #endif
@@ -3340,6 +3362,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("CosmicRayDiffusionCoeff",tag[i])==0) {*((double *)addr[i])=690.; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored diffusivity ~3e29, assuming units kpc/h and km/s (=%g) \n",tag[i],alternate_tag[i],All.CosmicRayDiffusionCoeff); continue;}
 #endif
                 if(strcmp("CosmicRay_SNeFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored ~10 percent conversion to CRs (=%g) \n",tag[i],alternate_tag[i],All.CosmicRay_SNeFraction); continue;}
+#endif
+#if defined(MECHFB_CR_INJECTION) && !defined(FIRE_CRS)
+                if(strcmp("CosmicRay_SNeFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to 10 percent of the fast-ejecta energy to CRs (=%g) \n",tag[i],alternate_tag[i],All.CosmicRay_SNeFraction); continue;}
 #endif
 #if defined(SINGLE_STAR_STARFORGE_DEFAULTS)
                 if(strcmp("SfEffPerFreeFall",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to scaling-default of unity (=%g) \n",tag[i],alternate_tag[i],All.MaxSfrTimescale); continue;}

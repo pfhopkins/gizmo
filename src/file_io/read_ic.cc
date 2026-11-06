@@ -1535,6 +1535,9 @@ int read_file(char *fname, int readTask, int lastTask)
 #ifdef SGCHEM_KEEP_IC_ABUNDANCES
                    && blocknr != IO_SGCHEM_TRACABUND
 #endif
+#ifdef INPUT_READ_COSMICRAYENERGY
+                   && blocknr != IO_COSMICRAY_ENERGY
+#endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(INPUT_READ_SINKPROPS)
                    && blocknr != IO_R_PROTOSTAR
                    && blocknr != IO_MASS_D_PROTOSTAR

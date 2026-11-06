@@ -10,6 +10,9 @@
 #include "sgchem_network.h"
 #include "sgchem_dust_to_gas.h"
 #include "../../gravity/gravtree_treecol_pixels.h"
+#ifdef COSMIC_RAY_FLUID
+#include "../../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
+#endif
 #if CHEMISTRYNETWORK == 18
 #include "cxx/chem_net18_layout.h"
 #endif
@@ -97,9 +100,56 @@ double sgchem_radiation_field_for_snapshot(int i, int blocknr)
         case IO_SGCHEM_SHIELDFAC_DUST: return CellP[i].ShieldFacDust;
         case IO_SGCHEM_G0_NUV: return CellP[i].TreeColEgyNUV / HABING_EGY_DENSITY_6_13P6EV_CGS;
         case IO_SGCHEM_G0_OPT: return CellP[i].TreeColEgyOPT / HABING_EGY_DENSITY_6_13P6EV_CGS;
-        case IO_SGCHEM_CR_ZETA: return All.SGChemCosmicRayIonRate;
+        case IO_SGCHEM_CR_ZETA: return sgchem_cr_ion_rate(i, f.G0);
         default: return 0;
     }
+}
+#endif
+
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+double sgchem_recent_sfr_g0(void) {return DMAX(All.FactorG0 * All.SGChemG0, 0.324e-2);} /* G0 = G0_LW = G0_dust, as stella_dev GHOSDT_G0_CR */
+#endif
+
+/* cosmic-ray ionisation rate per H [s^-1] of cell i under the field G0 [Habing], as stella_dev chem_interface.cc */
+double sgchem_cr_ion_rate(int i, double G0)
+{
+#ifdef COSMIC_RAY_FLUID
+    return Get_CosmicRayIonizationRate_cgs(i, P, CellP); /* his rate from the CR fluid (Cummings+16), radioactive terms included */
+#endif
+    double zeta = All.SGChemCosmicRayIonRate;
+#if defined(CR_SCALE_WITH_G0) && defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
+    zeta = All.FactorG0 * zeta; /* unclamped, as stella_dev GHOSDT_G0_CR */
+#elif defined(CR_SCALE_WITH_G0)
+    zeta = DMAX(1e-21, DMIN(2e-16, (G0 / 1.7) * zeta)); /* with the stars' field */
+#endif
+#ifdef CR_BACKGROUND_IONRATE_ATTENUATED
+    zeta = All.SGChemCosmicRayIonRate * CellP[i].TreeColCRAttenuation; /* replaces the scaling, as stella_dev */
+#endif
+    return zeta;
+}
+
+#ifdef COSMIC_RAY_FLUID
+/* the solve's CR ionisation heating de_heat [code energy], minus the radioactive share of zeta (his terms), comes out of
+   the CR energy of cell i, capped at it (as stella_dev sgchem.cc) */
+static void sgchem_cr_ionisation_from_fluid(int i, const struct ChemInputs *in, double de_heat)
+{
+    double zeta_radio = 0;
+#ifdef METALS
+    zeta_radio += 1.e-21 * P[i].Metallicity[0] / All.SolarAbundances[0];
+#if (NUM_METAL_SPECIES > 10)
+    zeta_radio += 1.e-19 * P[i].Metallicity[10] / All.SolarAbundances[10];
+#endif
+#endif
+    double f_cr = (in->cosmic_ray_ion_rate > 0) ? DMIN(DMAX(1. - zeta_radio / in->cosmic_ray_ion_rate, 0.), 1.) : 0;
+    double de = f_cr * DMAX(de_heat, 0), ecr = 0;
+    for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {ecr += CellP[i].CosmicRayEnergy[k];}
+    if(!(de > 0 && ecr > 0)) {return;}
+    if(de > ecr) {static long n_capped = 0; if(n_capped++ == 0) {printf("SGCHEM: CR ionisation heating %g exceeds e_CR %g (ID %llu); capped at e_CR (first of possibly more)\n", de, ecr, (unsigned long long) P[i].ID);} de = ecr;}
+    double q = 1. - de / ecr;
+    for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {CellP[i].CosmicRayEnergy[k] *= q; CellP[i].CosmicRayEnergyPred[k] *= q; CellP[i].CosmicRayFlux[k] *= q; CellP[i].CosmicRayFluxPred[k] *= q;}
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    ledger_add(LEDGER_E_CR_IONISATION_FROM_FLUID, de); ledger_add(LEDGER_E_CHEM_CR_IONISATION, DMAX(de_heat, 0));
+#endif
 }
 #endif
 
@@ -118,11 +168,16 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     in.abundD = All.SGChemDeuteriumAbundance;
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     struct ChemFUVField fuv = sgchem_treecol_field(i, in.fac_uv); /* the stars' field from the gravity walk */
+#elif defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
+    struct ChemFUVField fuv; fuv.G0 = fuv.G0_LW = fuv.G0_dust = sgchem_recent_sfr_g0(); /* uniform, scaled with the recent SFR */
 #else
     struct ChemFUVField fuv = sgchem_uniform_field(All.SGChemG0, All.SGChemG0_LW, All.SGChemBackgroundG0); /* uniform, unattenuated */
 #endif
     in.G0 = fuv.G0; in.G0_LW = fuv.G0_LW; in.G0_dust = fuv.G0_dust;
-    in.cosmic_ray_ion_rate = All.SGChemCosmicRayIonRate;
+    in.cosmic_ray_ion_rate = sgchem_cr_ion_rate(i, fuv.G0);
+#ifdef COSMIC_RAY_FLUID
+    in.cr_energy_density = Get_CosmicRayEnergyDensity_cgs(i, P, CellP); /* hadronic and Coulomb heating by the CR fluid */
+#endif
     in.id_current = (int) P[i].ID;
     in.dust_to_gas_ratio = sgchem_dust_to_gas_ratio(P[i].Metallicity[0]);
 #if CHEMISTRYNETWORK == 18
@@ -163,6 +218,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     sgchem_clamp_pools(ab, &in);
     chem_cxx_evolve_cell(timestep, dl, yn, divv, &energy, ab);
     chem_cxx_read_outputs(&out);
+#ifdef COSMIC_RAY_FLUID
+    sgchem_cr_ionisation_from_fluid(i, &in, out.cr_ion_heat * (P[i].Mass / (CellP[i].Density * All.cf_a3inv)) * pow(UNIT_LENGTH_IN_CGS, 3) / UNIT_ENERGY_IN_CGS);
+#endif
 #if CHEMISTRYNETWORK == 18
     chem_cxx_net18_finish(ab, energy, &temp);
 #elif CHEMISTRYNETWORK == 20

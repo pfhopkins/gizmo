@@ -482,6 +482,9 @@
 
 /* set default modules for different cosmic ray transport settings/packages */
 #ifdef COSMIC_RAY_FLUID
+#if !defined(CRFLUID_SPEEDOFLIGHT_REDUCTION) && (defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS))
+#define CRFLUID_SPEEDOFLIGHT_REDUCTION (3.e7/C_LIGHT_CGS) /* single stars: 300 km/s CR transport speed */
+#endif
 #if !defined(CRFLUID_SPEEDOFLIGHT_REDUCTION)
 #define CRFLUID_SPEEDOFLIGHT_REDUCTION (1.0)
 #endif
@@ -1056,6 +1059,18 @@
 #endif
 #if defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS) && !defined(GALSF_SINGLE_STARS_FROM_IMF)
 #define GALSF_SINGLE_STARS_FROM_IMF /* the collected stars carry their drawn mass in the single-star record */
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(CRFLUID_EXCHANGE_PDV_ONLY)
+#define CRFLUID_EXCHANGE_PDV_ONLY /* single stars: CRs take only their own P dV work, no share of shock heating */
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(CRFLUID_STREAMING_LOSS_CAPPED_AT_CR_SPEED)
+#define CRFLUID_STREAMING_LOSS_CAPPED_AT_CR_SPEED /* single stars: the Alfven speed in the streaming loss is at most the CR speed */
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_MECHANICAL) && (defined(GALSF_FB_FIRE_STELLAREVOLUTION) || (defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)))
+#define MECHFB_CR_INJECTION /* the mechanical feedback loop injects CRs (supernovae and fast winds) */
+#endif
+#if defined(MECHFB_CR_INJECTION) && !defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+#define CR_DYNAMICAL_INJECTION_IN_SNE /* CosmicRay_SNeFraction of the fast-ejecta energy goes to CRs */
 #endif
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL) && !defined(GALSF_SINGLE_STARS_SNE_MECHANICAL_COUPLING) && !defined(GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY)
 #define GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY /* single stars: pure-thermal supernovae by default */
@@ -1817,6 +1832,15 @@
 #endif
 
 
+#if (defined(CR_SCALE_WITH_G0) || defined(CR_BACKGROUND_IONRATE_ATTENUATED) || defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)) && !defined(SGCHEM)
+#error "CR_SCALE_WITH_G0, CR_BACKGROUND_IONRATE_ATTENUATED and ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR set the SGChem field and cosmic-ray rate: set SGCHEM"
+#endif
+#if defined(OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS) && (!defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) || !defined(GALSF))
+#error "OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS needs OUTPUT_MASS_METAL_ENERGY_LEDGER and GALSF"
+#endif
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(GALSF) && !defined(METALS)
+#error "OUTPUT_MASS_METAL_ENERGY_LEDGER: the star-formation and feedback rows need METALS"
+#endif
 #ifdef SGCHEM /* SGChem chemistry (cooling/sgchem/) */
 #if defined(CHIMES)
 #error "SGCHEM and CHIMES are exclusive (one SUNDIALS per build)"
@@ -1824,11 +1848,23 @@
 #if !defined(COOLING) || !defined(METALS) || defined(COOL_GRACKLE)
 #error "SGCHEM needs COOLING and METALS, and excludes COOL_GRACKLE"
 #endif
-#if defined(RADTRANSFER) || defined(COSMIC_RAY_FLUID)
-#error "SGCHEM: the coupling to RADTRANSFER and COSMIC_RAY_FLUID is not in this tree yet"
+#if defined(RADTRANSFER)
+#error "SGCHEM: the coupling to RADTRANSFER is not in this tree yet"
+#endif
+#if defined(COSMIC_RAY_FLUID) && (defined(CR_SCALE_WITH_G0) || defined(CR_BACKGROUND_IONRATE_ATTENUATED))
+#error "CR_SCALE_WITH_G0 and CR_BACKGROUND_IONRATE_ATTENUATED set the SGChem cosmic-ray rate without the CR fluid; with COSMIC_RAY_FLUID it comes from the fluid"
 #endif
 #if !defined(COOL_METAL_LINES_BY_SPECIES)
 #error "SGCHEM reads the element slots: set COOL_METAL_LINES_BY_SPECIES"
+#endif
+#if defined(CR_SCALE_WITH_G0) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
+#error "CR_SCALE_WITH_G0 scales the SGChem cosmic-ray rate with the stars' field (GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) or the recent SFR (ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)"
+#endif
+#if defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR) && (!defined(GALSF) || defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES))
+#error "ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR scales the uniform SGChem field: needs GALSF, excludes the stars' field GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES"
+#endif
+#if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
+#error "CR_BACKGROUND_IONRATE_ATTENUATED attenuates by the gas column of the pixel walk: set GALSF_RESOLVEDISM_TREECOL_PIXELS"
 #endif
 #if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 20 /* tracked species per cell (= TRAC_NUM of cooling/sgchem/sgchem_consts.h) */
 #define SGCHEM_NUM_TRACKED_SPECIES 3

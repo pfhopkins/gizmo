@@ -457,7 +457,9 @@ void run(void)
         CPU_Step[CPU_SNIIHEATING] += measure_time();
 #endif
 
+        LEDGER_STEP("pre_hydro_fb");
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+        LEDGER_STEP("post_hydro_fb");
 #ifdef DM_HEATING
         apply_dm_heating();  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
         CPU_Step[CPU_COOLINGSFR] += measure_time();
@@ -772,7 +774,9 @@ void calculate_non_standard_physics(void)
     grain_promotion_parent_routine();
 #endif
 #ifdef GALSF /* star/sink particle formation */
+    LEDGER_STEP("pre_star_formation");
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
+    LEDGER_STEP("post_star_formation");
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
 

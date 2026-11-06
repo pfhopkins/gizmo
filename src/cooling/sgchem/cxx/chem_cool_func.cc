@@ -426,8 +426,7 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
                        * c.cr_energy_density * yn;
         }
     } else {
-        rates[10] = 0.0;
-        c.cr_ion_heat = 0.0;
+        rates[10] = 0.0; // the T_CMB floor call leaves cr_ion_heat of the main call alone
     }
 
     // ---- (R12) photoelectric heating (Bakes & Tielens 94 / Wolfire+03) ----

@@ -301,6 +301,15 @@ void single_star_feedback_finalize(const int *list, int n)
             continue;
         }
         double z = 0; for(int k = ELEM_C; k < STBL_NELEM; k++) {z += ev.y[k];}
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+        {double dm = ssfb_mass_before[a] - P[i].Mass; /* taken from the star by the loop [code] */
+         ledger_add(LEDGER_M_EJECTA, dm); ledger_add(LEDGER_E_EJECTA, (ev.E > 0) ? dm * (ev.E / UNIT_ENERGY_IN_CGS) / (ev.Mej / UNIT_MASS_IN_SOLAR) : 0.5 * dm * pow(ev.v_kms / UNIT_VEL_IN_KMS, 2)); /* 1/2 dm v_ej^2, v_ej as the loop's */ ledger_add(LEDGER_MZ_EJECTA, (ev.Mej > 0) ? dm * z / ev.Mej : 0); ledger_add(LEDGER_MZ_STARS_LOST, dm * P[i].Metallicity[0]);
+#if defined(COSMIC_RAY_FLUID) && defined(MECHFB_CR_INJECTION)
+         {double e = (ev.E > 0) ? dm * (ev.E / UNIT_ENERGY_IN_CGS) / (ev.Mej / UNIT_MASS_IN_SOLAR) : 0.5 * dm * pow(ev.v_kms / UNIT_VEL_IN_KMS, 2);
+          if(ev.E > 0 || ev.v_kms > 1000.) {ledger_add(LEDGER_E_CR_OFFERED, All.CosmicRay_SNeFraction * e);}}
+#endif
+         if(kind != SSE_WIND) {double dr = P[i].Mass - ev.M_rem / UNIT_MASS_IN_SOLAR; ledger_add(LEDGER_M_REMNANT_RESET, dr); ledger_add(LEDGER_MZ_STARS_LOST, dr * P[i].Metallicity[0]);}}
+#endif
         double residual = (kind == SSE_WIND) ? removed - ev.Mej : P[i].Mass * UNIT_MASS_IN_SOLAR - ev.M_rem;
         double row[SSFB_LOG_COLS] = {All.Time, (double)P[i].ID, (double)kind, (double)ev.remnant_type, SingleStars.M_drawn[s],
                                      (kind == SSE_WIND) ? ssfb_mass_before[a] * UNIT_MASS_IN_SOLAR : ev.M_trigger, ev.Mej, (kind == SSE_WIND) ? P[i].Mass * UNIT_MASS_IN_SOLAR : ev.M_rem,
@@ -315,7 +324,11 @@ void single_star_feedback_finalize(const int *list, int n)
         SingleStars.event_bits[s] |= (kind == SSE_AGB) ? SINGLE_STAR_EVENT_AGB_DONE : SINGLE_STAR_EVENT_SN_DONE;
         SingleStars.M_at_SN_trigger[s] = 0;
         P[i].SNe_ThisTimeStep = 0; P[i].MassReturn_ThisTimeStep = 0;
-    }    single_star_events_flush();
+    }
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+    for(int a = 0; a < n; a++) {recent_sfr_young_mass_add(P[list[a]].StellarAge, P[list[a]].Mass - ssfb_mass_before[a]);} /* winds and deaths */
+#endif
+    single_star_events_flush();
 }
 
 #endif

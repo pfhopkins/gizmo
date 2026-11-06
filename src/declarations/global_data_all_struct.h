@@ -86,6 +86,13 @@ struct global_data_all_processes
 				  particle count and the number of ranks (domain_segments_per_rank_for_particles), and
 				  constant for the run thereafter.  Unrelated to TopNodeAllocFactor below, which is
 				  only a capacity for the top-tree arrays. */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS)
+  double CosmicRay_ShockAccelEfficiency; /*!< fraction of the dissipated shock energy flux into CRs; default: the value of CRFLUID_INJECTION_AT_SHOCKS */
+#endif
+#ifdef COSMIC_RAY_FLUID
+  double CosmicRayInitialAmbient_eVcm3, CosmicRayInitialCloud_eVcm3, CosmicRayInitialCloudThreshold_nH; /*!< initial CR energy density [eV cm^-3] below/above the n_H threshold [cm^-3] on fresh starts (0: none) */
+#endif
+
   double TopNodeAllocFactor;	/*!< Sizes the TOP-level (domain-decomposition) tree, not the full local tree: MaxTopNodes = TopNodeAllocFactor * MaxPart + 1.  Much smaller than TreeAllocFactor (default ~0.008 vs ~0.45) because the top-tree holds one node per top-level domain cell, not one per particle; auto-ratchets on top-node overflow. */
 
 #ifdef DM_SCALARFIELD_SCREENING
@@ -150,6 +157,10 @@ struct global_data_all_processes
   double SGChemG0;              /*!< uniform ISRF-shaped field, 6-13.6 eV [Habing units, Draine 1978 / 1.7] */
   double SGChemG0_LW;           /*!< its Lyman-Werner part, 11.2-13.6 eV [Habing units] */
   double SGChemBackgroundG0;    /*!< scales the background floors (0.324e-2 x this), never the field (stella_dev G0) */
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+  double Mgas0;                 /*!< gas mass at the start (fresh start or snapshot) [code units] */
+  double FactorG0;              /*!< [M(stars < 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr], set at every star-formation call */
+#endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
   double TreeColShieldingLength; /*!< pixel columns only from mass closer than this [code length, physical]; 0 = no limit */
 #endif
@@ -488,6 +499,10 @@ struct global_data_all_processes
   double VariableWindSpecMomentum;  /* momentum available for wind per unit mass of stars formed, in internal velocity units */
 #endif
 #endif // GALSF_SUBGRID_WINDS //
+
+#if defined(MECHFB_CR_INJECTION) && !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+    double CosmicRay_SNeFraction; /*!< fraction of the energy of fast ejecta given to CRs */
+#endif
 
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
     double SNe_Energy_Renormalization;

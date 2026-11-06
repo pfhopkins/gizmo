@@ -779,7 +779,9 @@ void init(void)
 #endif
 #endif
 #ifdef COSMIC_RAY_FLUID
+#ifndef INPUT_READ_COSMICRAYENERGY /* with it, fresh starts keep the CosmicRayEnergy of the ICs */
         if(RestartFlag == 0) {for(j=0;j<N_CR_PARTICLE_BINS;j++) {CellP[i].CosmicRayEnergy[j] = 0;}}
+#endif
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
         if(RestartFlag != 1) {CellP[i].DtCREgyNewInjectionFromShocks = 0;}
 #endif
@@ -990,6 +992,10 @@ void init(void)
 
 
     /* HELLO! This here is where you should insert custom code for hard-wiring the ICs of various test problems */
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+    {double m_gas = 0; for(i = 0; i < N_gas; i++) {m_gas += P[i].Mass;} /* as stella_dev GHOSDT_G0_CR */
+     MPI_Allreduce(&m_gas, &All.Mgas0, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); All.FactorG0 = 0;}
+#endif
 
 
 
@@ -1024,6 +1030,11 @@ void init(void)
         CellP[i].BPred = CellP[i].B; CellP[i].DtB = {}; CellP[i].BField_prerefinement = {};
 #endif
 #ifdef COSMIC_RAY_FLUID
+        if(RestartFlag == 0 && (All.CosmicRayInitialAmbient_eVcm3 > 0 || All.CosmicRayInitialCloud_eVcm3 > 0)) { /* initial CR background, split by density; other starts keep what they read */
+            double e_eVcm3 = (CellP[i].nHcgs() >= All.CosmicRayInitialCloudThreshold_nH) ? All.CosmicRayInitialCloud_eVcm3 : All.CosmicRayInitialAmbient_eVcm3;
+            double e_code = e_eVcm3 * 1.602e-12 / UNIT_PRESSURE_IN_CGS * P[i].Mass / (CellP[i].Density * All.cf_a3inv);
+            for(k=0;k<N_CR_PARTICLE_BINS;k++) {CellP[i].CosmicRayEnergy[k] = e_code / N_CR_PARTICLE_BINS;}
+        }
         for(k=0;k<N_CR_PARTICLE_BINS;k++)
         {
             CellP[i].CosmicRayEnergyPred[k]=CellP[i].CosmicRayEnergy[k]; CellP[i].CosmicRayDiffusionCoeff[k]=0; CellP[i].DtCosmicRayEnergy[k]=0;

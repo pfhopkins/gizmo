@@ -445,6 +445,8 @@ extern struct gas_cell_data
 #ifdef TRANSPORT_SUBCYCLE_COOLING
     MyFloat Dt_Transport_Subcycle_Saved; /*!< saved DtInternalEnergy (code units) before cooling, restored each sub-step */
 #endif
+#endif
+#if defined(TRANSPORT_SUBCYCLE) || defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
 #if defined(COSMIC_RAY_FLUID) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) && !defined(CRFLUID_EVOLVE_SPECTRUM)
     MyFloat DtCosmicRayEnergy_StreamingLoss[N_CR_PARTICLE_BINS]; /*!< hydro-pass streaming-loss contribution to DtCosmicRayEnergy (its gas-heating counterpart is applied once per hydro step), added back each sub-step */
 #endif
@@ -488,6 +490,9 @@ extern struct gas_cell_data
     float TreeColRadpFlux[4];  /*!< sum over pixels of sigma_b F_b: vector along the pixel centres toward the sources, then the scalar [1e-21 cm^2 x code lum / code length^2] */
     float RadpAbsorbedLum;     /*!< luminosity this cell absorbed at its last update [code]: its share of the photon cap */
 #endif
+#endif
+#ifdef CR_BACKGROUND_IONRATE_ATTENUATED
+    float TreeColCRAttenuation; /*!< background cosmic-ray rate attenuation by the gas column (STARFORGE), pixel mean */
 #endif
 #endif
     

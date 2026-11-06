@@ -18,8 +18,8 @@
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
-#if defined(RADTRANSFER) || defined(COSMIC_RAY_FLUID) || defined(SINK_PARTICLES)
-#error "GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS: removing gas does not yet scale radiation, cosmic-ray or sink-feedback quantities of the donor cells"
+#if defined(RADTRANSFER) || defined(SINK_PARTICLES)
+#error "GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS: removing gas does not yet scale radiation or sink-feedback quantities of the donor cells"
 #endif
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"
@@ -259,6 +259,18 @@ struct SscApplySpec : SscSpecBase {
 #ifdef DIVBCLEANING_DEDNER
         Cj.Phi *= frac; Cj.PhiPred *= frac; Cj.DtPhi *= frac; Cj.DtB_PhiCorr *= frac;
 #endif
+#endif
+#ifdef COSMIC_RAY_FLUID
+        for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) { /* CR energy and flux are extensive: the donor keeps its specific values */
+            Cj.CosmicRayEnergy[kb] *= frac; Cj.CosmicRayEnergyPred[kb] *= frac; Cj.DtCosmicRayEnergy[kb] *= frac;
+            Cj.CosmicRayFlux[kb] *= frac; Cj.CosmicRayFluxPred[kb] *= frac;
+#ifdef CRFLUID_EVOLVE_SPECTRUM
+            Cj.CosmicRay_Number_in_Bin[kb] *= frac; Cj.DtCosmicRay_Number_in_Bin[kb] *= frac;
+#endif
+#ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
+            for(int w = 0; w < 2; w++) {Cj.CosmicRayAlfvenEnergy[kb][w] *= frac; Cj.CosmicRayAlfvenEnergyPred[kb][w] *= frac; Cj.DtCosmicRayAlfvenEnergy[kb][w] *= frac;}
+#endif
+        }
 #endif
         (void)frac;
         Pj.Mass = m_new; Cj.Mass = m_new;

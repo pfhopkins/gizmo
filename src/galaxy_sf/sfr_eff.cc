@@ -8,6 +8,9 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+#include <map>
+#endif
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 #include "single_star_imf.h"
 #endif
@@ -460,6 +463,45 @@ int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned)
 }
 
 
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+/* young-star mass by birth time, rank-local and not tied to particles: births and mass changes of young stars add to
+   it, entries leave at 30 Myr; only its total over ranks matters, so particles may move between ranks */
+static std::map<double, double> recent_sfr_young_mass;
+static int recent_sfr_changed = 1, recent_sfr_built = 0;
+
+void recent_sfr_young_mass_add(double t_birth, double dm)
+{
+    if(dm == 0 || !recent_sfr_built || evaluate_time_since_t_initial_in_Gyr(t_birth) >= 0.03) {return;} /* before the start-up scan the scan counts it */
+    recent_sfr_young_mass[t_birth] += dm; recent_sfr_changed = 1;
+}
+
+static void recent_sfr_expire(void) /* the oldest entries first; a scan of all particles once at start-up */
+{
+    if(!recent_sfr_built) {recent_sfr_built = 1; for(int i = 0; i < NumPart; i++) {if(P[i].Type == 4) {recent_sfr_young_mass_add(P[i].StellarAge, P[i].Mass);}}}
+    while(!recent_sfr_young_mass.empty() && evaluate_time_since_t_initial_in_Gyr(recent_sfr_young_mass.begin()->first) >= 0.03)
+        {recent_sfr_young_mass.erase(recent_sfr_young_mass.begin()); recent_sfr_changed = 1;}
+}
+
+/* FactorG0 = [M(stars < 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr] (Hu+21); one reduction, only when some rank's sum changed */
+static void recent_sfr_update(int any_changed)
+{
+    int reduced = 0;
+    if(any_changed) {
+        double m = 0, m_tot = 0; for(auto &e : recent_sfr_young_mass) {m += e.second;}
+        MPI_Allreduce(&m, &m_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); reduced = 1;
+        All.FactorG0 = (m_tot / 0.03) / (All.Mgas0 / 4.0);
+    }
+    recent_sfr_changed = 0;
+#ifdef TEST_RECENT_SFR_SCALE_PRINT_FULL_SCAN_EVERY_CALL
+    double m = 0, m_tot = 0; for(int i = 0; i < NumPart; i++) {if(P[i].Type == 4 && evaluate_time_since_t_initial_in_Gyr(P[i].StellarAge) < 0.03) {m += P[i].Mass;}}
+    MPI_Allreduce(&m, &m_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    double g0 = sgchem_recent_sfr_g0();
+    if(ThisTask == 0) {printf("RECENT_SFR: %.17g %.17g %.17g %d %.17g %.17g\n", All.Time, All.FactorG0, (m_tot / 0.03) / (All.Mgas0 / 4.0), reduced, g0, sgchem_cr_ion_rate(0, g0));}
+#endif
+    (void) reduced;
+}
+#endif
+
 /* parent routine for star formation. for 'effective equation of state' models for star-forming gas, this also updates their effective EOS parameters */
 void star_formation_parent_routine(void)
 {
@@ -619,6 +661,9 @@ void star_formation_parent_routine(void)
 
                         /* ok, we're going to make a star!  -- assign all the properties we need now */
                         sum_mass_stars += P[i_star].Mass;
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+                        ledger_add(LEDGER_M_STARS_FORMED, P[i_star].Mass); ledger_add(LEDGER_MZ_STARS_FORMED, P[i_star].Mass * P[i_star].Metallicity[0]);
+#endif
                         P[i_star].StellarAge = All.Time;
 #if defined(GALSF_SFR_IMF_VARIATION) || defined(GALSF_SFR_IMF_SAMPLING)
                         /* if we're allowing for a variable IMF, this is where we will calculate the IMF properties produced from the gas forming stars */
@@ -767,9 +812,19 @@ void star_formation_parent_routine(void)
 #ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
     stars_spawned += single_star_test_births(stars_spawned);
 #endif
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+    long long young_changed;
+#endif
     {   /* every count this pass changed, in one reduction */
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+        recent_sfr_expire();
+        long long local[4] = {stars_spawned, stars_converted, num_sink_formed, recent_sfr_changed}, total[4]; /* + young-star sums changed */
+        MPI_Allreduce(local, total, 4, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        young_changed = total[3];
+#else
         long long local[3] = {stars_spawned, stars_converted, num_sink_formed}, total[3];
         MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+#endif
         tot_spawned = total[0]; tot_converted = total[1]; tot_sink_formed = (int) total[2];
     }
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
@@ -791,6 +846,10 @@ void star_formation_parent_routine(void)
     } //(tot_spawned > 0 || tot_converted > 0)
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
     sum_mass_stars += single_stars_collect_gas(tot_spawned); /* new single stars take their drawn mass from the gas around them */
+#endif
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+    recent_sfr_young_mass_add(All.Time, sum_mass_stars); /* this call's births */
+    recent_sfr_update(young_changed > 0 || tot_spawned > 0 || tot_converted > 0);
 #endif
     
     for(bin = 0, sfrrate = 0; bin < TIMEBINS; bin++) {if(TimeBinCount[bin]) {sfrrate += TimeBinSfr[bin];}}

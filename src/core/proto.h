@@ -964,6 +964,11 @@ void star_formation_parent_routine(void);
 int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned);
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 double single_stars_collect_gas(long long tot_spawned);
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+void recent_sfr_young_mass_add(double t_birth, double dm);
+double sgchem_recent_sfr_g0(void);
+double sgchem_cr_ion_rate(int i, double G0);
+#endif
 void single_star_attach_to_new_star(int i_star, int i, double M_drawn);
 #ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
 int single_star_test_births(int stars_spawned);
@@ -1220,11 +1225,64 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 
 
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
-enum ledger_rows {LEDGER_CHEM_HEATING, LEDGER_CHEM_COOLING, LEDGER_NROWS}; /* energy rows [code units]; names in system/ledger.cc */
+/* rows X(id, name in ledger.txt, code unit -> output unit, state): state rows are sums over the particles at output, the
+   others cumulative bookings; each row is compiled with its module */
+#ifdef SGCHEM
+#define LEDGER_ROWS_SGCHEM(X) X(LEDGER_CHEM_HEATING, "E_chem_heating_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_CHEM_COOLING, "E_chem_cooling_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_SGCHEM(X)
+#endif
+#ifdef GALSF
+#define LEDGER_ROWS_STARS(X) X(LEDGER_M_GAS, "M_gas_Msun", UNIT_MASS_IN_SOLAR, 1) X(LEDGER_M_STARS, "M_stars_Msun", UNIT_MASS_IN_SOLAR, 1) \
+    X(LEDGER_MZ_GAS, "MZ_gas_Msun", UNIT_MASS_IN_SOLAR, 1) X(LEDGER_MZ_STARS, "MZ_stars_Msun", UNIT_MASS_IN_SOLAR, 1) \
+    X(LEDGER_M_STARS_FORMED, "M_stars_formed_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_MZ_STARS_FORMED, "MZ_stars_formed_Msun", UNIT_MASS_IN_SOLAR, 0)
+#else
+#define LEDGER_ROWS_STARS(X)
+#endif
+#if defined(GALSF_FB_MECHANICAL)
+#define LEDGER_ROWS_FB(X) X(LEDGER_M_FB_TO_GAS, "M_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_MZ_FB_TO_GAS, "MZ_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0) \
+    X(LEDGER_E_FB_THERMAL_NOW, "E_fb_thermal_now_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_FB_THERMAL_DEFERRED, "E_fb_thermal_deferred_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_FB_KINETIC, "E_fb_kinetic_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_FB(X)
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+#define LEDGER_ROWS_SINGLE_STARS(X) X(LEDGER_M_EJECTA, "M_single_star_ejecta_Msun", UNIT_MASS_IN_SOLAR, 0) \
+    X(LEDGER_MZ_EJECTA, "MZ_single_star_ejecta_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_M_REMNANT_RESET, "M_remnant_reset_Msun", UNIT_MASS_IN_SOLAR, 0) \
+    X(LEDGER_MZ_STARS_LOST, "MZ_stars_lost_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_E_EJECTA, "E_single_star_ejecta_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_SINGLE_STARS(X)
+#endif
+#if defined(SGCHEM) && defined(COSMIC_RAY_FLUID)
+#define LEDGER_ROWS_CR_SGCHEM(X) X(LEDGER_E_CR_LOSSES, "E_cr_losses_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_IONISATION_FROM_FLUID, "E_cr_ionisation_from_fluid_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CHEM_CR_IONISATION, "E_chem_cr_ionisation_heating_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_CR_SGCHEM(X)
+#endif
+#ifdef COSMIC_RAY_FLUID /* every change of the CR energy has its row: E_CR - E_CR(0) = injected_sn + injected_wind + shock + clip + exchange + transport - streaming - collected - losses - ionisation_from_fluid */
+#define LEDGER_ROWS_CR(X) X(LEDGER_E_CR, "E_CR_erg", UNIT_ENERGY_IN_CGS, 1) LEDGER_ROWS_CR_SGCHEM(X) \
+    X(LEDGER_E_CR_OFFERED, "E_cr_offered_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_INJECTED_SN, "E_cr_injected_sn_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_INJECTED_WIND, "E_cr_injected_wind_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_SHOCK, "E_cr_shock_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_CLIP, "E_cr_clip_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_EXCHANGE, "E_cr_exchange_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_TRANSPORT, "E_cr_transport_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_STREAMING, "E_cr_streaming_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_COLLECTED, "E_cr_collected_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_CR(X)
+#endif
+#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X)
+#define LEDGER_ROW_ENUM(id, name, unit, state) id,
+enum ledger_rows {LEDGER_ROWS(LEDGER_ROW_ENUM) LEDGER_NROWS};
 void ledger_init(void);
 void ledger_add(int row, double x);
 void ledger_output(void);
 void ledger_restart_io(void (*io)(void *, size_t, int), int modus);
+#ifdef OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS
+void ledger_step_checkpoint(const char *tag);
+#define LEDGER_STEP(tag) ledger_step_checkpoint(tag)
+#endif
+#endif
+#ifndef LEDGER_STEP
+#define LEDGER_STEP(tag)
 #endif
 #ifdef SGCHEM
 void sgchem_init(void);

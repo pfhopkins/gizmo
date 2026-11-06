@@ -338,7 +338,7 @@ void hydro_final_operations_and_cleanup(void)
                 CellP[i].DtInternalEnergy += CellP[i].CosmicRayEnergyPred[k] * streamfac / P[i].Mass; // make sure to divide by mass here to get the correct units since DtInternalEnergy has been converted to specific energy units (while CR energies are absolute)
 #if !defined(CRFLUID_EVOLVE_SPECTRUM)
                 CellP[i].DtCosmicRayEnergy[k] -= cosmicrayfluid_rsol_corrfac(k) * CellP[i].CosmicRayEnergyPred[k] * streamfac; // in the multi-bin formalism, save this operation for the CR cooling ops since can involve bin-to-bin transfer of energy
-#ifdef TRANSPORT_SUBCYCLE
+#if defined(TRANSPORT_SUBCYCLE) || defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
                 CellP[i].DtCosmicRayEnergy_StreamingLoss[k] = -cosmicrayfluid_rsol_corrfac(k) * CellP[i].CosmicRayEnergyPred[k] * streamfac; // the sub-steps recompute the transport part of DtCosmicRayEnergy and add this back
 #endif
 #endif
@@ -519,7 +519,7 @@ void hydro_force_initial_operations_preloop(void)
             for(k=0;k<N_CR_PARTICLE_BINS;k++)
             {
                 CellP[i].DtCosmicRayEnergy[k] = 0;
-#if defined(TRANSPORT_SUBCYCLE) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) && !defined(CRFLUID_EVOLVE_SPECTRUM)
+#if (defined(TRANSPORT_SUBCYCLE) || defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) && !defined(CRFLUID_EVOLVE_SPECTRUM)
                 CellP[i].DtCosmicRayEnergy_StreamingLoss[k] = 0;
 #endif
 #if defined(CRFLUID_EVOLVE_SPECTRUM)

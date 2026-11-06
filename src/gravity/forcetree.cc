@@ -2659,9 +2659,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                     if(grav_target_valid_gas_for_rt(ptype, soft, pmass))
                     {
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
-                        treecol_pixels_accumulate(mem.tcpix, dr, r, fac_accel, mass, tcpix_species, d_stellarlum, mass_stellarlum, KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER * soft);
+                        treecol_pixels_accumulate(mem.tcpix, dr, r, fac_accel, mass, gasmass, tcpix_species, d_stellarlum, mass_stellarlum, KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER * soft);
 #else
-                        treecol_pixels_accumulate(mem.tcpix, dr, r, fac_accel, mass, tcpix_species, dr, NULL, 0);
+                        treecol_pixels_accumulate(mem.tcpix, dr, r, fac_accel, mass, gasmass, tcpix_species, dr, NULL, 0);
 #endif
                     }
 #endif

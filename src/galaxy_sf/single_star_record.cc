@@ -18,9 +18,6 @@
 #if (defined(GALSF_FB_FIRE_RT_LOCALRP) && !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RADTRANSFER) || (defined(RT_USE_GRAVTREE) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES))
 #error "GALSF_SINGLE_STARS_FROM_IMF: no single-star branch in the stellar radiation sources yet; sampled stars would get stellar-population luminosities"
 #endif
-#if defined(COSMIC_RAY_FLUID) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
-#error "GALSF_SINGLE_STARS_FROM_IMF: single-star supernovae inject no cosmic rays yet (the injection of the feedback loop is FIRE-only and the pure-thermal coupling heats with all the energy)"
-#endif
 #if defined(GALSF_SFR_IMF_SAMPLING) || defined(GALSF_SFR_IMF_VARIATION) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
 #error "GALSF_SINGLE_STARS_FROM_IMF: another stellar-mass model is switched on (GALSF_SFR_IMF_SAMPLING, GALSF_SFR_IMF_VARIATION, SINGLE_STAR_SINK_DYNAMICS or GALSF_MERGER_STARCLUSTER_PARTICLES)"
 #endif

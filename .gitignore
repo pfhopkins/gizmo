@@ -154,3 +154,13 @@ test/single_stars_gas_timestep/run/
 test/single_stars_gas_timestep/GIZMO
 test/single_stars_radpressure_cells/run_*/
 test/single_stars_radpressure_cells/GIZMO*
+test/crfluid_exchange_pdv_only/GIZMO_*
+test/crfluid_exchange_pdv_only/output_*/
+test/crfluid_initial_energy/crfluid_initial_energy_ics.hdf5
+test/crfluid_read_ic_energy/crfluid_read_ic_energy_ics.hdf5
+test/crfluid_streaming_cap/GIZMO_*
+test/crfluid_streaming_cap/run_*/
+test/ledger_cr_rows/output_*/
+test/single_stars_cr_injection/run_*/
+test/single_stars_collect_gas_cr/run/
+test/single_stars_cr_speed/run_*/

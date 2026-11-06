@@ -1073,9 +1073,9 @@ gpu_grav_evaluate_pair(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
         if(valid_gas_target)
         {
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
-            treecol_pixels_accumulate(optional_sums.tcpix, src.dr, r, fac_accel, src.mass, pl.tcpix_species, pl.d_stellarlum, pl.mass_stellarlum, KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER * in.open.soft);
+            treecol_pixels_accumulate(optional_sums.tcpix, src.dr, r, fac_accel, src.mass, pl.gasmass, pl.tcpix_species, pl.d_stellarlum, pl.mass_stellarlum, KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER * in.open.soft);
 #else
-            treecol_pixels_accumulate(optional_sums.tcpix, src.dr, r, fac_accel, src.mass, pl.tcpix_species, src.dr, NULL, 0);
+            treecol_pixels_accumulate(optional_sums.tcpix, src.dr, r, fac_accel, src.mass, pl.gasmass, pl.tcpix_species, src.dr, NULL, 0);
 #endif
         }
     }

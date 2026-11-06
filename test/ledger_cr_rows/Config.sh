@@ -1,0 +1,15 @@
+########################################
+# ledger_cr_rows: the magnetised lattice blast of crfluid_exchange_pdv_only with the ledger
+########################################
+HYDRO_MESHLESS_FINITE_MASS
+BOX_PERIODIC
+SELFGRAVITY_OFF
+EOS_GAMMA=(5.0/3.0)
+MAGNETIC
+COOLING_OPERATOR_SPLIT
+COSMIC_RAY_FLUID
+CRFLUID_SPEEDOFLIGHT_REDUCTION=(3.e7/C_LIGHT_CGS)
+CRFLUID_EXCHANGE_PDV_ONLY
+OUTPUT_IN_DOUBLEPRECISION
+OUTPUT_MASS_METAL_ENERGY_LEDGER
+DEVELOPER_MODE

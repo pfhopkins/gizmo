@@ -236,7 +236,7 @@ void mechfb_fill_call_scalars(struct MechFBCallScalars *scalars) {
      * COSMIC_RAY_FLUID || COSMIC_RAY_SUBGRID_LEBRON). */
     scalars->CosmicRay_SNeFraction = host_all->CosmicRay_SNeFraction;
 #endif
-#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && defined(CRFLUID_EVOLVE_SPECTRUM)
+#if defined(MECHFB_CR_INJECTION) && defined(CRFLUID_EVOLVE_SPECTRUM)
     for (int k = 0; k < N_CR_PARTICLE_BINS; ++k) {
         scalars->CR_global_min_rigidity_in_bin   [k] = host_all->CR_global_min_rigidity_in_bin   [k];
         scalars->CR_global_max_rigidity_in_bin   [k] = host_all->CR_global_max_rigidity_in_bin   [k];
@@ -479,6 +479,9 @@ static void mechfb_gas_delta_zero(struct MechFBGasDelta *d) {
     for (int k = 0; k < N_CR_PARTICLE_BINS; ++k) d->CR_number_injected[k] = 0;
 #endif
     for (int k = 0; k < 3; ++k) d->CR_dir_weighted[k] = 0;
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    d->CR_energy_from_sn = 0;
+#endif
 #endif
 }
 
@@ -501,6 +504,9 @@ static void mechfb_gas_delta_add(struct MechFBGasDelta *dst,
     for (int k = 0; k < N_CR_PARTICLE_BINS; ++k) dst->CR_number_injected[k] += src->CR_number_injected[k];
 #endif
     for (int k = 0; k < 3; ++k) dst->CR_dir_weighted[k] += src->CR_dir_weighted[k];
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    dst->CR_energy_from_sn += src->CR_energy_from_sn;
+#endif
 #endif
 }
 
