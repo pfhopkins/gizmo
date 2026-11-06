@@ -6,6 +6,7 @@
 #include <string.h>
 #include <math.h>
 #include "../../declarations/allvars.h"
+#include "../cooling.h"
 #include "../../core/proto.h"
 #include "chem_interface.h"
 #include "sgchem_network.h"
@@ -219,6 +220,15 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #else
     struct ChemFUVField fuv = sgchem_uniform_field(All.SGChemG0, All.SGChemG0_LW, All.SGChemBackgroundG0); /* uniform, unattenuated */
 #endif
+    double uvb[6] = {0, 0, 0, 0, 0, 0}; /* UV background (gJH0, gJHe0, gJHep, epsH0, epsHe0, epsHep), comoving runs only */
+    if(All.ComovingIntegrationOn) {
+        get_uvb_rates(&uvb[0], &uvb[1], &uvb[2], &uvb[3], &uvb[4], &uvb[5]);
+        double G0_uvb = uvb[0] / 2.29e-10, G0_old = fuv.G0; /* Gamma_HI as a Habing field; the LW share is 10 % */
+        if(fuv.G0 < G0_uvb) {fuv.G0 = G0_uvb;}
+        if(fuv.G0_LW < 0.1 * G0_uvb) {fuv.G0_LW = 0.1 * G0_uvb;}
+        fuv.G0_dust += fuv.G0 - G0_old; /* a raise counts ISRF-shaped */
+        in.redshift = 1. / All.Time - 1.;
+    }
     in.G0 = fuv.G0; in.G0_LW = fuv.G0_LW; in.G0_dust = fuv.G0_dust;
 #if defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION)
     sgchem_rt_ionising_rates(i, &in);
@@ -289,6 +299,11 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #endif
     sgchem_network_skipped = skip;
     if(!skip) {
+    if(All.ComovingIntegrationOn) { /* the background is a floor under the local photoionisation and heating rates */
+        double *rate[6] = {&in.rt_phot_HI, &in.rt_phot_HeI, &in.rt_phot_HeII, &in.rt_heat_HI, &in.rt_heat_HeI, &in.rt_heat_HeII};
+        for(int k = 0; k < 6; k++) {if(*rate[k] < uvb[k]) {*rate[k] = uvb[k];}}
+        in.irad_heat = 1;
+    }
     chem_cxx_begin_cell(&in, temp, abh2, abhd, abco);
 #if CHEMISTRYNETWORK == 17
     if(ab[IHP] > 0.99) {ab[IH2] = 0; ab[ICO] = 0; ab[IHD] = 0;} /* fully ionised: no molecules (stiffness) */

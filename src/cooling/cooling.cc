@@ -1829,6 +1829,17 @@ void SetZeroIonization(void)
 }
 
 
+void get_uvb_rates(double *gJH0, double *gJHe0, double *gJHep, double *epsH0, double *epsHe0, double *epsHep)
+{
+    if(gJH0) {*gJH0 = CoolTables.gJH0;}
+    if(gJHe0) {*gJHe0 = CoolTables.gJHe0;}
+    if(gJHep) {*gJHep = CoolTables.gJHep;}
+    if(epsH0) {*epsH0 = CoolTables.epsH0;}
+    if(epsHe0) {*epsHe0 = CoolTables.epsHe0;}
+    if(epsHep) {*epsHep = CoolTables.epsHep;}
+}
+
+
 void IonizeParamsFunction(void)
 {
     int i, nint;
