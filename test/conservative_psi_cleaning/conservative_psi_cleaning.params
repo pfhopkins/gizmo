@@ -2,6 +2,8 @@
 InitCondFile                       ics
 OutputDir                          output
 TimeMax                            0.2
+DivBcleaningParabolicSigma         1.0
+DivBcleaningHyperbolicSigma        1.0
 BoxSize                            1
 TimeBetSnapshot                    0.02
 TimeBetStatistics                  0.2
