@@ -60,4 +60,5 @@ Softening_Type4_MaxPhysLimit       3.117e-5
 Softening_Type5_MaxPhysLimit       3.117e-5
 AGS_DesNumNgb                      32
 AGS_MaxNumNgbDeviation             1
+CritPhysDensity                    1e13
 CpuTimeBetRestartFile              30

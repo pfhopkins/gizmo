@@ -53,6 +53,7 @@ from gizmo.test import (
     clean_test_outputs,
     parse_params,
     variant_output_dir,
+    assert_dry_sink_run,
 )
 
 # This problem shares a directory with the rest of its family; TEST_NAME is that
@@ -61,8 +62,9 @@ from gizmo.test import (
 TEST_NAME = "plummer"
 
 # test/plummer/Config.sh is the pure-gravity build used by test_plummer.py; the binary-star
-# problems additionally need the sink/Hermite physics and the synchronized-state output.
-BINARY_FLAGS = ("SINGLE_STAR_STARFORGE_DEFAULTS", "IO_HERMITE_SYNC")
+# problems additionally need the sink/Hermite physics and the synchronized-state output. The
+# cluster is collisional and gas-free, so mergers are opted out explicitly.
+BINARY_FLAGS = ("SINGLE_STAR_STARFORGE_DEFAULTS", "IO_HERMITE_SYNC", "DISABLE_SINK_MERGERS")
 
 VARIANT = "plummer_binaries_realistic"
 TEST_DIR = f"test/{TEST_NAME}"
@@ -257,6 +259,7 @@ def test_plummer_binaries_realistic(num_mpi_ranks, num_omp_threads, extra_config
     snaps = sorted(glob.glob(outdir + "/snapshot_*.hdf5"),
                    key=lambda f: int(re.search(r"snapshot_(\d+)", f).group(1)))
     assert len(snaps) >= 16, f"only {len(snaps)} snapshots -- the run died early"
+    assert_dry_sink_run(f"{TEST_DIR}/test_{TEST_NAME}.out", snaps)
 
     t, energy, drift = _trajectory(snaps)
     assert np.all(np.diff(t) >= 0), "snapshot times are not monotonic -- file ordering is wrong"

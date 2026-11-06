@@ -454,6 +454,10 @@ void begrun(void)
         All.SinkMaxAccretionRadius = all.SinkMaxAccretionRadius;
         All.SinkRadiativeEfficiency = all.SinkRadiativeEfficiency;
         All.SinkFeedbackFactor = all.SinkFeedbackFactor;
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+        All.SinkMergerMaxMass = all.SinkMergerMaxMass;
+        All.SinkMergerMaxRadiusFactor = all.SinkMergerMaxRadiusFactor;
+#endif
 #if defined(SINK_SEED_FROM_FOF) || defined(SINK_SEED_FROM_LOCALGAS)
         All.SeedSinkMassSigma = all.SeedSinkMassSigma;
         All.SeedSinkMinRedshift = all.SeedSinkMinRedshift;
@@ -2311,6 +2315,16 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.SinkFeedbackFactor;
         id[nt++] = REAL;
 
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+        strcpy(tag[nt], "SinkMergerMaxMass");
+        addr[nt] = &All.SinkMergerMaxMass;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "SinkMergerMaxRadiusFactor");
+        addr[nt] = &All.SinkMergerMaxRadiusFactor;
+        id[nt++] = REAL;
+#endif
+
 #if defined(SINK_SEED_FROM_FOF) || defined(SINK_SEED_FROM_LOCALGAS)
         strcpy(tag[nt], "SeedSinkMassSigma");
         addr[nt] = &All.SeedSinkMassSigma;
@@ -3239,6 +3253,10 @@ void read_parameter_file(char *fname)
                 if(strcmp("CosmicRayDiffusionCoeff",tag[i])==0) {*((double *)addr[i])=690.; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored diffusivity ~3e29, assuming units kpc/h and km/s (=%g) \n",tag[i],alternate_tag[i],All.CosmicRayDiffusionCoeff); continue;}
 #endif
                 if(strcmp("CosmicRay_SNeFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored ~10 percent conversion to CRs (=%g) \n",tag[i],alternate_tag[i],All.CosmicRay_SNeFraction); continue;}
+#endif
+#if defined(SINK_PARTICLES) && defined(SINGLE_STAR_SINK_DYNAMICS)
+                if(strcmp("SinkMergerMaxMass",tag[i])==0) {*((double *)addr[i])=0; continue;} /* 0: the ceiling is 10 x the absorbed sink's Sink_Formation_Mass */
+                if(strcmp("SinkMergerMaxRadiusFactor",tag[i])==0) {*((double *)addr[i])=1; continue;}
 #endif
 #if defined(SINGLE_STAR_STARFORGE_DEFAULTS)
                 if(strcmp("SfEffPerFreeFall",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to scaling-default of unity (=%g) \n",tag[i],alternate_tag[i],All.MaxSfrTimescale); continue;}

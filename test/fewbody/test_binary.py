@@ -58,6 +58,7 @@ from gizmo.test import (
     variant_output_dir,
     parse_params,
     run_test,
+    assert_dry_sink_run,
 )
 
 # This problem shares a directory with the rest of its family; TEST_NAME is that
@@ -302,7 +303,9 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
     override mechanism -- so this costs runs, not rebuilds. Each point overwrites the previous
     one's snapshots, so each is analysed before the next starts.
     """
-    outdir = problem_output_dir(TEST_NAME, VARIANT, extra_config_flags)
+    # run_test, unlike build_and_run_test, does not move GIZMO's output/ under this problem's own
+    # name, so the sweep points land in output/ whatever the fiducial run's directory is.
+    outdir = f"{TEST_DIR}/output"
     etas, errs, series = [], [], []
     for eta in SWEEP_ETAS:
         # run_test resolves <name>.params relative to the TEST directory and is normally called
@@ -376,6 +379,7 @@ def test_binary(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
                    key=lambda f: int(re.search(r"snapshot_(\d+)", f).group(1)))
     if len(snaps) < 64:
         raise RuntimeError(f"GIZMO produced only {len(snaps)} snapshots in {outdir}")
+    assert_dry_sink_run(f"{TEST_DIR}/test_{TEST_NAME}.out", snaps)   # before the order sweep overwrites the log
 
     t, a, ecc, drift, sep, energy, synced = _trajectory(snaps)
     assert np.all(np.diff(t) >= 0), (
