@@ -34,3 +34,7 @@ SGChemDeuteriumAbundance    2.6e-5      % D/H
 SGChemG0                    0           % no radiation field (test_sgchem_habing_field sets one)
 SGChemG0_LW                 0
 SGChemBackgroundG0          0
+BiniX                       0
+BiniY                       0
+BiniZ                       1.0e-12
+UnitMagneticField_in_gauss  1.0
