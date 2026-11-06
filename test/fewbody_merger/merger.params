@@ -46,6 +46,9 @@ Softening_Type5_MaxPhysLimit       1e-4
 CritPhysDensity                    1e13
 CpuTimeBetRestartFile              30
 SinkMaxAccretionRadius             1e-4
+% A gas-free run gives its IC sinks no formation mass to scale the default merger mass ceiling
+% (10 x Sink_Formation_Mass); 1 Msun admits the 0.5 Msun sink.
+SinkMergerMaxMass                  1.0
 
 % Host gravity walk for every step: the device walk keeps the tree-build snapshot on a miss.
 GravityHostWalkBelowActive         1000000000
