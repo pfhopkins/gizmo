@@ -132,3 +132,4 @@ test/*/_*.params
 # built by analysis/eos_state_census/build.sh against the local tree
 analysis/eos_state_census/libcensus.so
 analysis/eos_state_census/libcensus.build.txt
+test/mechfb_energy/*_override.params*

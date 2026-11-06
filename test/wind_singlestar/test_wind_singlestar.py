@@ -235,38 +235,12 @@ def get_snapshots(test_name, extra_config_flags=()):
 )
 def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, wind_mode,
                          cooling_flags):
-    if wind_mode == 2:
-        # KNOWN DEFECT, local mechanical injection. WITH COOLING the shell comes out ~28% inside
-        # Weaver. Mode 2 over-delivers energy per unit injected mass by ~25%, so the bubble is
-        # over-pressured early, radiates the excess, and ends up too small. Two separable causes,
-        # both in the FIRE coupling in galaxy_sf/mechanical_fb.cc:
-        #   - the injection weight is a vector magnitude (wk = pnorm), and the sum of per-neighbour
-        #     magnitudes exceeds one by ~2%, which is exactly the excess mass delivered;
-        #   - e_shock includes the relative star-gas motion, v_ej^2 + 2 v_ej (phat.dv) + dv^2. The
-        #     cross term does not average away, since phat is radial and the gas outflows radially,
-        #     and it grows as the gas accelerates -- consistent with the excess drifting 1.22 -> 1.30
-        #     over a run, and with 2*dv/v_ej for the measured dv ~ 300 km/s.
-        # Arguably a test-premise mismatch rather than a code bug: for a SN ploughing into moving gas
-        # the shock energy in the gas frame genuinely includes relative motion, whereas L_w*t here is
-        # the wind's own mechanical luminosity and excludes it. Resolving that decides whether the
-        # fix belongs in the coupling or in the comparison.
-        #
-        # ADIABATIC mode 2 is covered by this marker too (it was not, until measured). The energy
-        # check already has a wind_mode-dependent bound that tolerates the ~30% surplus, but the
-        # bubble-radius check does not, and the adiabatic case misses it by 3%: measured
-        # xi = 0.7891 vs the Weaver adiabatic R2 coefficient 0.880, relative error 0.1033 against
-        # a 0.10 bound. Same defect, same direction, merely below the threshold that made the
-        # cooling cases obvious -- and note 0.789 sits between Weaver's adiabatic 0.880 and his
-        # radiative 0.76, i.e. the bubble behaves partly radiative despite cooling being off.
-        # Reproduced to the third decimal across two jobs on different nodes and thread counts
-        # (0.1033 and 0.1040), so it is a property of the coupling, not run-to-run scatter, and
-        # it predates the PR #27 sink/Hermite port.
-        #
-        # Not strict: mode 2 injects stochastically, so the size of the miss varies between runs and
-        # a strict marker would make the suite flaky rather than informative. A strict marker would
-        # also break the moment the coupling is fixed, which is the outcome we want.
+    if wind_mode == 2 and cooling_flags:
+        # KNOWN DEFECT, local mechanical injection WITH COOLING: the shell comes out ~28% inside Weaver.
+        # Adiabatic mode 2 conserves energy (test/mechfb_energy), so the energy budget is not the cause.
+        # Not strict: mode 2 injects stochastically, so the size of the miss varies between runs.
         request.node.add_marker(pytest.mark.xfail(
-            reason="mode-2 local injection over-delivers energy per unit mass by ~25%", strict=False))
+            reason="mode-2 local injection with cooling: shell ~28% inside Weaver", strict=False))
     Mdot, v_w = Mdot_vw
     L_w = wind_luminosity_code(Mdot, v_w)
 
@@ -406,7 +380,7 @@ def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, 
     # --- Assertions ---
 
     if not cooling_flags:
-        # Adiabatic: energy conservation. 10% for spawning, matching SN_singlestar, with a few times that
+        # Adiabatic: energy conservation. 10% for either wind mode, matching SN_singlestar, with a few times that
         # much margin in practice; it catches a regression in either MERGE_SPLIT_CONSERVE_ENERGY or
         # WAKEUP_TRUNCATE_STEP_ON_DEMOTION, each of which costs ~20% of L*t on its own.
         #
@@ -416,14 +390,7 @@ def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, 
         # ratio ill-conditioned early, hence the mask. ENERGY_BUDGET_DIAGNOSTIC's 'Energy (synced)' line
         # is the authoritative test; use that, not this, to chase a real conservation question.
         #
-        # KNOWN OPEN DEFECT, wind_mode=2 (local mechanical injection): delivers ~30% MORE energy than
-        # L_w*t. Held at a loose tolerance so the spawning path can still be tested at 10% -- this is an
-        # unexplained bug, not an accepted error budget. It is unrelated to the merge and wakeup fixes:
-        # local injection heats existing gas rather than spawning fast cells, so there is no spawned-cell
-        # merging for either to act on, and the discrepancy is a steady excess rather than a loss. Either
-        # local injection over-delivers, or WIND_LUMINOSITY means something different for mode 2 than the
-        # L_w*t compared against here; check the code's own tracked injected energy against L_w*t first.
-        tol = 0.10 if wind_mode == 1 else 0.35
+        tol = 0.10
         established = snap_times > 0.25 * snap_times.max()  # past the startup transient
         if established.any():
             ratio = (E_kin_x[established] + E_therm_x[established]) / E_inj[established]
