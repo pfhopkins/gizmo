@@ -658,6 +658,10 @@ HYPRE_VERSION := $(shell ls /opt/homebrew/Cellar/hypre/ 2>/dev/null | sort -V | 
 HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/include/
 HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
 endif
+## SkyNet (NUCLEAR_NETWORK_SOLVER=1 only)
+SKYNET_PATH ?= $(HOME)/.local
+SKYNET_EXTRA_INCL ?= -I/opt/homebrew/include
+SKYNET_EXTRA_LIBS ?= -L/opt/homebrew/lib -L/opt/homebrew/opt/gcc/lib/gcc/current -lhdf5_cpp -lhdf5 -lboost_filesystem -lboost_serialization -lgsl -lgslcblas -framework Accelerate -lgfortran
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 # Homebrew's SUNDIALS (`brew install sundials`, 7.x; see the note at the CHIMESINCL/CHIMESLIBS defaults above)
 CHIMESINCL = -I/opt/homebrew/opt/sundials/include
@@ -906,13 +910,18 @@ ifeq (NUCLEAR_NETWORK,$(findstring NUCLEAR_NETWORK,$(CONFIGVARS)))
 GPU_OBJS += nuclear/nuclear.o
 INCL     += nuclear/nuclear.h nuclear/nuclear_physics_functions.h
 endif
-ifeq (NUCLEAR_NETWORK_SOLVER=1,$(findstring NUCLEAR_NETWORK_SOLVER=1,$(CONFIGVARS)))
+ifeq (NUCLEAR_NETWORK_SOLVER 1,$(findstring NUCLEAR_NETWORK_SOLVER 1,$(CONFIGVARS)))
 OBJS    += nuclear/nuclear_skynet.o
-SKYNETLIBS = -lskynet
+# SKYNET_PATH = SkyNet's install prefix, set in your SYSTYPE block, the environment or on the make line.
+# SKYNET_EXTRA_LIBS and SKYNET_EXTRA_INCL = the libraries SkyNet itself needs and any include directories for them, which depend on the machine: override them in your SYSTYPE block.
+SKYNET_EXTRA_LIBS ?= -lhdf5_cpp -lhdf5 -lboost_filesystem -lboost_serialization -lgsl -lgslcblas -llapack -lgfortran
+SKYNETINCL = $(if $(SKYNET_PATH),-I$(SKYNET_PATH)/include/SkyNet -I$(SKYNET_PATH)/include) $(SKYNET_EXTRA_INCL)
+SKYNETLIBS = $(if $(SKYNET_PATH),-L$(SKYNET_PATH)/lib -Wl$(comma)-rpath$(comma)$(SKYNET_PATH)/lib) -lskynet $(SKYNET_EXTRA_LIBS)
 else
+SKYNETINCL =
 SKYNETLIBS =
 endif
-ifeq (NUCLEAR_NETWORK_SOLVER=2,$(findstring NUCLEAR_NETWORK_SOLVER=2,$(CONFIGVARS)))
+ifeq (NUCLEAR_NETWORK_SOLVER 2,$(findstring NUCLEAR_NETWORK_SOLVER 2,$(CONFIGVARS)))
 OBJS    += nuclear/nuclear_torch.o
 TORCHLIBS = -ltorch_nuclear
 else
@@ -952,7 +961,7 @@ endif
 
 # linking libraries (includes machine-dependent options above)
 CFLAGS = $(OPTIONS) $(FFTW_INCL) $(HDF5INCL) \
-         $(GRACKLEINCL) $(CHIMESINCL) $(HYPRE_INCL) $(MKL_INCL) $(KOKKOS_CPPFLAGS)
+         $(GRACKLEINCL) $(CHIMESINCL) $(SKYNETINCL) $(HYPRE_INCL) $(MKL_INCL) $(KOKKOS_CPPFLAGS)
 
 
 

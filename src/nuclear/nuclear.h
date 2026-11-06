@@ -126,10 +126,17 @@ void InitNuclearNetwork(void);
    Called each timestep from core/run.cc. */
 void nuclear_parent_routine(void);
 
-/* Pure function: evaluate the nuclear network for a single particle.
-   No global state access — only reads from the const rate tables and
-   the input struct. Thread-safe, GPU-kernel-safe. */
-KOKKOS_FUNCTION int CallNuclearNetwork(const struct nuclear_input *in, struct nuclear_output *out);
+/* Evaluate the nuclear network for a single particle. The built-in solver has no
+   global state: it only reads the const rate tables and the input struct, so it is
+   thread-safe and callable in device kernels. The external solvers are host libraries:
+   their builds call this from the host only, and SkyNet's one shared network is
+   serialised by a mutex in its wrapper. */
+#if !defined(NUCLEAR_NETWORK_SOLVER) || (NUCLEAR_NETWORK_SOLVER == 0)
+#define NUCLEAR_NETWORK_CALLABLE KOKKOS_FUNCTION
+#else
+#define NUCLEAR_NETWORK_CALLABLE
+#endif
+NUCLEAR_NETWORK_CALLABLE int CallNuclearNetwork(const struct nuclear_input *in, struct nuclear_output *out);
 
 /* Update Ye and Abar in compact cell data from network output.
    Called per-particle after CallNuclearNetwork in the dispatch loop. */
