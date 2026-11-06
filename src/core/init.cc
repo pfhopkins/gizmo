@@ -855,9 +855,6 @@ void init(void)
         CellP[i].Injected_Sink_Energy = 0;
 #endif
     }
-#ifdef EOS_ELASTIC
-    solid_material_check_cells(); /* every CompositionType is final above: refuse a material the cells carry but that is incomplete */
-#endif
 #if defined(EOS_DAMAGE_POROSITY)
     /* damage and porosity, before the first density pass evaluates the equation of state (whose P-alpha update would
      * otherwise read an unset distention). Only a fresh start from a binary IC initializes them: RestartFlag 1 restores
@@ -870,6 +867,9 @@ void init(void)
         {
             CellP[i].Damage = 0;
             CellP[i].ActiveCracks = 0;
+#if ((EOS_DAMAGE_POROSITY) & 1)
+            CellP[i].TensileFlawsPerMass = -1; /* not set: solid_material_check_cells gives it the body's value */
+#endif
             CellP[i].Distention = solid_material_of(CellP[i].CompositionType).InitialDistention; /* alpha_0 per material; 1 = solid */
         }
         if(RestartFlag != 1)
@@ -880,6 +880,9 @@ void init(void)
             if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = 1.0;}
         }
     }
+#endif
+#ifdef EOS_ELASTIC
+    solid_material_check_cells(); /* every CompositionType is final above, and an unset tensile-flaw normalisation is marked: refuse a material the cells carry but that is incomplete, and give unset elements their body's flaws */
 #endif
 
 #ifndef BOX_SHEARING

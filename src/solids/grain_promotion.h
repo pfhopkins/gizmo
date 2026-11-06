@@ -80,6 +80,9 @@ static inline void grain_promotion_init_cellp(int i)
     /* no hydro force (HydroAccel 0) and no stress yet: its first half-step kick comes before its first force evaluation */
 #ifdef EOS_DAMAGE_POROSITY
     CellP[i].Distention   = solid_material_of(ct).InitialDistention; /* alpha_0; damage and active flaws start at 0 */
+#if ((EOS_DAMAGE_POROSITY) & 1)
+    CellP[i].TensileFlawsPerMass = 0; /* a body of its own, of one element: exactly one tensile flaw */
+#endif
 #endif
     CellP[i].Mass = P[i].Mass;
 }
