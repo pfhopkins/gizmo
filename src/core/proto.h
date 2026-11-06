@@ -387,6 +387,9 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #define STATE_COPY_COMMITTED 1
 #define STATE_COPY_PREDICTED 2
 void refresh_eos_and_project(int i, int state_copies);
+#if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
+void eos_gamma_probe_report(void);
+#endif
 #ifdef HYDRO_GENERATE_TARGET_MESH
 /* Declared under the same flag the definitions in eos/eos_functions.h carry: they
    used to be defined unconditionally in eos.cc, so an unguarded declaration would
@@ -1498,6 +1501,9 @@ GIZMO_GPU_FUNCTION inline double rt_diffusion_coefficient(int i, int k_freq, str
 GIZMO_GPU_FUNCTION void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef RADTRANSFER
 GIZMO_GPU_FUNCTION void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
+#endif
+#ifdef RT_DIAG_IR_LEDGER
+#include "../radiation/rt_ir_ledger.h"
 #endif
 #endif
 #ifdef RT_SOURCE_INJECTION

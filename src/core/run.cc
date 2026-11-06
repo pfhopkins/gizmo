@@ -201,6 +201,12 @@ void run(void)
     while(1)			/* main timestep iteration loop */
     {
         compute_statistics();	/* regular statistics outputs (like total energy) */
+#if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
+        eos_gamma_probe_report();
+#endif
+#ifdef RT_DIAG_IR_LEDGER
+        rt_diag_ir_double_count_report();
+#endif
         CPU_Step[CPU_LOGMSG] += measure_time();
 
         write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
@@ -639,15 +645,6 @@ void calculate_non_standard_physics(void)
             printf("Transport subcycling: %d sub-steps (hydro_dt/transport_dt = %.1f)\n",
                    All.Transport_Subcycle_N, max_hydro_dt_global / min_transport_dt_global);
     }
-    /* Save the hydro-pass DtInternalEnergy before the subcycle loop. rt_update_driftkick adds
-       IR gas heating to DtInternalEnergy each sub-step; without resetting, it accumulates N-fold.
-       We reset to the hydro value before each kick so only one sub-step's IR contribution is present. */
-#if defined(RT_INFRARED) && defined(COOLING)
-    for(int idx : ActiveParticleList) {
-        if(P[idx].Type == 0 && P[idx].Mass > 0)
-            CellP[idx].DtIE_IR_Subcycle = CellP[idx].DtInternalEnergy;
-    }
-#endif
 #endif // TRANSPORT_SUBCYCLE
 
 #ifdef RADTRANSFER
@@ -679,6 +676,12 @@ void calculate_non_standard_physics(void)
     gizmo_exit_bad_stop_if_requested("run:after_rt_nonflux"); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif // RADTRANSFER block
 
+#if defined(TRANSPORT_SUBCYCLE) && defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
+    /* inject -> cool -> transport, as without subcycling: cooling sets the ionization state, so it must see
+       the photons just injected before the sub-step kicks absorb them at the (still neutral) gas opacity */
+    cooling_parent_routine();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
+#endif
 #ifdef TRANSPORT_SUBCYCLE
     /* Build the topology the subcycle consumes (active list + gas ghost pool +
        shared symmetric CSR) — AFTER sink accretion / wind spawning / rearrange
@@ -687,19 +690,7 @@ void calculate_non_standard_physics(void)
     transport_subcycle_prepare_topology();
     for(int transport_sub = 0; transport_sub < All.Transport_Subcycle_N; transport_sub++) {
     gizmo_exit_bad_stop_if_requested("run:transport_subcycle_substep");
-    /* --- recompute transport fluxes every sub-step and apply kick --- */
-    transport_subcycle_exchange_fluxes(transport_sub);
-    /* Reset DtInternalEnergy to hydro-pass value before each kick, so rt_update_driftkick's
-       IR gas heating contribution doesn't accumulate across sub-steps. */
-#if defined(RT_INFRARED) && defined(COOLING)
-    for(int idx : ActiveParticleList) {
-        if(P[idx].Type == 0 && P[idx].Mass > 0)
-            CellP[idx].DtInternalEnergy = CellP[idx].DtIE_IR_Subcycle;
-    }
-#endif
-    transport_subcycle_kick();
-#endif
-
+    /* cooling over this sub-step before its transport kick (inject -> cool -> transport, per sub-step) */
 #if defined(TRANSPORT_SUBCYCLE_COOLING) && defined(COOLING)
     /* save DtInternalEnergy before cooling (it gets overwritten with CGS-converted value inside cooling).
        Restore the original code-units value before each sub-step so the CGS conversion isn't applied twice. */
@@ -723,6 +714,11 @@ void calculate_non_standard_physics(void)
     }
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
+    /* --- recompute transport fluxes every sub-step and apply kick --- */
+    transport_subcycle_exchange_fluxes(transport_sub);
+    transport_subcycle_kick();
+#endif
+
 
 #ifdef TRANSPORT_SUBCYCLE
     } /* end transport subcycle loop */
@@ -730,9 +726,6 @@ void calculate_non_standard_physics(void)
        above (active list + shared CSR + gas ghost pool). */
     gizmo_sym_neighbor_list_free();
     ghost_exchange_cleanup();
-    /* After the loop DtInternalEnergy = DtIE_IR_Subcycle + IR_rate_last_substep, which is correct:
-       the pre-kick reset already prevents N-fold accumulation, so the cooling solver and second
-       KDK half-kick see exactly one sub-step's IR contribution at the final Rad_E_gamma state. */
 #if defined(TRANSPORT_SUBCYCLE_COOLING) && !defined(COOLING_OPERATOR_SPLIT)
     /* zero DtInternalEnergy after the subcycle loop — the hydro work has been fully applied across all sub-steps */
     for(int idx : ActiveParticleList) {
@@ -750,7 +743,7 @@ void calculate_non_standard_physics(void)
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 
-#if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
+#if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif

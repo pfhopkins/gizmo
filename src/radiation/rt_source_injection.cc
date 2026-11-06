@@ -65,13 +65,13 @@ void rt_source_injection_initial_operations_preloop(void)
      they just determine their own source functions. so we don't need to do any loops. and we can zero everything before the loop below.
      Active-gas loop: each cell's own source function updates on its own timestep;
      ActiveParticleList also never contains ghost slots, so this stays correct
-     while a ghost pool is materialized inside NumPart. */
-    if(!(RT_SOURCES & 1)) return; // we skip this if gas cells don't have explicit source terms
-
+     while a ghost pool is materialized inside NumPart.
+     The zeroing is needed whether or not gas cells are sources: continuous (non-discrete) injection adds to Rad_Je. */
     for(int j : ActiveParticleList) {
         if(P[j].Type==0) {
-            double lum[N_RT_FREQ_BINS]; int k;
-            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[j].Rad_Je[k]=0;} // need to zero -before- calling injection //
+            int k; for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[j].Rad_Je[k]=0;} // need to zero -before- calling injection //
+            if(!(RT_SOURCES & 1)) {continue;} // gas cells have no explicit source terms
+            double lum[N_RT_FREQ_BINS];
             int active_check = rt_get_source_luminosity(j,0,lum, P, CellP);
             /* here is where we would need to code some source luminosity for the gas */
             for(k=0;k<N_RT_FREQ_BINS;k++) if(active_check) {CellP[j].Rad_Je[k]=lum[k];}

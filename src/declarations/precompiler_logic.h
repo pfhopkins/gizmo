@@ -6,6 +6,9 @@
 /* also many logical options to force 'parent' or 'top-level' flags to be enabled for the appropriate methods, if we have enabled something using those methods */
 
 /* macro definition we will use throughout below, make sure this is defined up-top here */
+#ifdef NOGRAVITY
+#define SELFGRAVITY_OFF
+#endif
 #define DO_PREPROCESSOR_EXPAND_(VAL)  VAL ## 1
 #define EXPAND_PREPROCESSOR_(VAL)     DO_PREPROCESSOR_EXPAND_(VAL) /* checks for a NON-ZERO value of this parameter */
 #define CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(VAL) !(EXPAND_PREPROCESSOR_(VAL) == 1) /* returns True if a non-zero int value of VAL is set */
@@ -542,6 +545,9 @@
 #ifndef ADAPTIVE_TREEFORCE_UPDATE
 #define ADAPTIVE_TREEFORCE_UPDATE (0.0625) // optimization
 #endif
+#ifndef SINK_MDOT_RESERVOIR_CAP
+#define SINK_MDOT_RESERVOIR_CAP 30 /* marginally-resolved accretion guard: while a sink holds fewer than SINK_MDOT_RESERVOIR_CAP_NRESOLVED cells' worth of mass, drain at most M_total/CAP of the reservoir per t_acc (floored at one cell), so a formation gulp does not empty in one step. Above that threshold the sink is resolved and stock M_res/t_acc applies. Default ON for STARFORGE: the production configs all set it, and ungated it once stranded 98% of captured mass on test/shu_M120 */
+#endif
 #if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && !defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) && !defined(OUTPUT_ADDITIONAL_RUNINFO) && !defined(IO_SUPPRESS_TIMEBIN_STDOUT)
 #define IO_SUPPRESS_TIMEBIN_STDOUT 16 // only prints outputs to log file if the highest active timebin index is within n of the highest timebin (dt_bin=2^(-N)*dt_bin,max)
 #endif
@@ -632,14 +638,24 @@
 #if defined(SINGLE_STAR_FB_WINDS) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) || defined(COOLING)
 #define GALSF_FB_FIRE_STELLAREVOLUTION 3 // enable multi-loop feedback from such sources [this is specific to the DG-MG implementations here, not for public use right now!]. for now set to =2, which should force the code version to match previous iterations, as compared to the newer implementations.
 #endif
-#if defined(RT_ISRF_BACKGROUND)
-#if CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(RT_ISRF_BACKGROUND)
-#if (RT_ISRF_BACKGROUND <= 0)
-#undef RT_ISRF_BACKGROUND /* use the negative or zero value above as a key to specifically -undefine- this variable, otherwise it will cause problems below by calling 0 to reset quantities it should not */
-#endif
-#endif
-#endif
 #endif // closes SINGLE_STAR_STARFORGE_DEFAULTS settings
+
+/* RT_ISRF_BACKGROUND=0 (or any value <= 0) in Config.sh switches the interstellar background off, including where an
+   umbrella above would turn it on (those only define it if it is not defined yet). Defined without a value it stays on.
+   The value test is written so that an empty definition is not read as 0: CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_
+   cannot tell 0 from empty. This header has no include guard and is reached twice in a translation unit (through
+   global_data_all_struct.h and allvars.h); on the second pass the umbrellas above would define the flag again, so the
+   switch-off is remembered in RT_ISRF_BACKGROUND_DISABLED and re-applied. */
+#if defined(RT_ISRF_BACKGROUND) && !defined(RT_ISRF_BACKGROUND_DISABLED)
+#if !((1 - RT_ISRF_BACKGROUND - 1 == 2) && (RT_ISRF_BACKGROUND + 0 == 0)) /* given a value */
+#if (RT_ISRF_BACKGROUND + 0 <= 0)
+#define RT_ISRF_BACKGROUND_DISABLED
+#endif
+#endif
+#endif
+#ifdef RT_ISRF_BACKGROUND_DISABLED
+#undef RT_ISRF_BACKGROUND
+#endif
 
 /* starforge names this INPUT_READ_TEMPERATURE; we already had the same capability as
    INPUT_READ_EOSTEMP. Alias them rather than renaming either, so a Config.sh written against
@@ -1037,6 +1053,12 @@
 #ifdef RT_INFRARED
 #define COOL_LOWTEMP_THIN_ONLY // don't want to double-count trapping of radiation if we're doing it self-consistently
 #endif
+/* RT_DIAG_IR_DOUBLE_COUNT (radiation/rt_ir_ledger.h) tallies into host state: per-rank statics, MPI, files. Its
+   accumulation sites sit in device-callable code (rt_functions.h, cooling.cc, rt_source_injection_loop.h), so they
+   are compiled in the host pass only; a CUDA/HIP device pass leaves them out. */
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED) && !(defined(__CUDA_ARCH__) || __HIP_DEVICE_COMPILE__)
+#define RT_DIAG_IR_LEDGER
+#endif
 
 
 
@@ -1200,6 +1222,14 @@
 
 #if !defined(RT_USE_GRAVTREE) && defined(RT_SELFGRAVITY_OFF) && !defined(SELFGRAVITY_OFF)
 #define SELFGRAVITY_OFF // safely define SELFGRAVITY_OFF in this case, otherwise we act like there is gravity except in the final setting of accelerations
+#endif
+/* The gravity tree walk also serves consumers that are not gravity: RT flux propagation and column
+   densities (RT_USE_GRAVTREE, RT_USE_TREECOL_FOR_NH) and the sink feedback timestep limiter
+   (SINGLE_STAR_FB_TIMESTEPLIMIT: Min_Sink_FeedbackTime is written by the walk). With SELFGRAVITY_OFF the
+   walk, its device dispatch and the foreign-subtree import still run for them; the accelerations it
+   produces are zeroed afterwards by GravAccel_set_zeros_if_needed. */
+#if !defined(SELFGRAVITY_OFF) || defined(RT_USE_GRAVTREE) || defined(RT_USE_TREECOL_FOR_NH) || defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+#define GRAVTREE_WALK_ACTIVE
 #endif
 
 /* a particle whose tree walk is skipped keeps the acceleration the gravity call finalized (tree, analytic, direct terms) and

@@ -617,6 +617,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         update_explicit_molecular_fraction(i, 0.5*dtime*UNIT_TIME_IN_CGS, pp, cell); // if we're doing the H2 explicitly with this particular model, we update it in two half-steps before and after the main cooling step
 #endif
 
+#ifdef RT_DIAG_IR_LEDGER
+        double rt_diag_dtie_code_dt = cell[i].DtInternalEnergy * dtime * cell[i].Mass; /* code units, before the cgs conversion */
+#endif
 #ifndef COOLING_OPERATOR_SPLIT
         double DtInternalEnergyEffCGS = cell[i].DtInternalEnergy;
         /* do some prep operations on the hydro-step determined heating/cooling rates before passing to the cooling subroutine */
@@ -691,6 +694,22 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #ifndef COOLING_OPERATOR_SPLIT
         de_u_work = DtInternalEnergyEffCGS / nHcgs * ratefact; /* use the combined and rate-limited value which is more accurately computed above */
 #endif
+#ifdef RT_DIAG_IR_LEDGER
+        rt_diag_add(RT_DIAG_COOL_GAS, 0, de_u); rt_diag_add(RT_DIAG_COOL_OFFERED, 0, de_rad_tot);
+        struct rt_diag_cool_terms cr = rt_diag_cr; /* terms of the converged-u CoolingRate call */
+        double gasfact = ratefact * (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED), routed_sum = 0; for(k=0;k<N_RT_FREQ_BINS;k++) {routed_sum += cell[i].Lambda_RadiativeCooling_toRHDBins[k];}
+        rt_diag_sc(RT_DIAG_SC_DEU, de_u); rt_diag_sc(RT_DIAG_SC_Q, (cr.q_post + cr.dtie)*gasfact); rt_diag_sc(RT_DIAG_SC_DTIE, cr.dtie*gasfact);
+        rt_diag_sc(RT_DIAG_SC_DTIE_CODE, rt_diag_dtie_code_dt); rt_diag_sc(RT_DIAG_SC_THICK, (cr.q_post - cr.q_pre)*gasfact);
+        rt_diag_sc(RT_DIAG_SC_MOL, -cr.mol*gasfact); rt_diag_sc(RT_DIAG_SC_MOL_HEAT, -DMIN(cr.mol,0)*gasfact); rt_diag_sc(RT_DIAG_SC_DUST, -cr.dust*gasfact);
+        rt_diag_sc(RT_DIAG_SC_METAL, -cr.metal*gasfact); rt_diag_sc(RT_DIAG_SC_HHE, -cr.hhe*gasfact); rt_diag_sc(RT_DIAG_SC_COMPTON, -cr.compton*gasfact);
+        rt_diag_sc(RT_DIAG_SC_CR, cr.h_cr*cr.fcorr*gasfact); rt_diag_sc(RT_DIAG_SC_PE, -cr.pelec*gasfact); rt_diag_sc(RT_DIAG_SC_ION_HEAT, cr.h_ion*cr.fcorr*gasfact);
+        rt_diag_sc(RT_DIAG_SC_HEAT, cr.heat*gasfact); rt_diag_sc(RT_DIAG_SC_LAMBDA, -cr.lambda*gasfact);
+        rt_diag_sc(RT_DIAG_SC_ROUTED_GAS, -routed_sum*gasfact); rt_diag_sc(RT_DIAG_SC_UNROUTED, (cr.q_post + routed_sum)*gasfact);
+        rt_diag_sc(RT_DIAG_SC_OFFER_NUV, cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_NUV]*ratefact);
+        rt_diag_sc(RT_DIAG_SC_OFFER_IR, cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED]*ratefact);
+        rt_diag_sc(RT_DIAG_SC_DEU_WORK, de_u_work); rt_diag_sc(RT_DIAG_SC_N_COOL, 1);
+        rt_diag_sc(RT_DIAG_SC_DC_ABS_IR, cr.dc_abs_ir); rt_diag_sc(RT_DIAG_SC_DC_ABS_NONIR, cr.dc_abs_nonir); rt_diag_sc(RT_DIAG_SC_DC_EMIT, cr.dc_emit); rt_diag_sc(RT_DIAG_SC_DC_COUPLE, cr.dc_couple);
+#endif
         double de_u_radabs=0; /* need to collect absorbed photon energy to know how much energy to limit the 'dumped' energy to */
         for(k=0;k<N_RT_FREQ_BINS;k++)
         {
@@ -709,6 +728,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         }
         de_u_work += de_u_radabs; /* add this to the energy reservoir represented by the work function */
         double de_u_touse = de_u - de_u_work; /* this is the actual difference between the implicit hydro work+absorption term and the total term, i.e. a corrected de_u_rad, which we use below */
+#ifdef RT_DIAG_IR_LEDGER
+        rt_diag_sc(RT_DIAG_SC_DEU_RADABS, de_u_radabs); if(de_u_touse > 0) {rt_diag_sc(RT_DIAG_SC_N_TOUSE_POS, 1);}
+#endif
 
         for(k=0;k<N_RT_FREQ_BINS;k++)
         {
@@ -719,6 +741,10 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
                 {
                     double de_rad_min = DMIN(DMAX(-0.99*cell[i].Rad_E_gamma[k], -de_u_touse), 0); // don't let the radiation loss take all the radiation energy into negative, or more than the energy gained from cooling+heating
                     double de_rad_max = DMAX(DMIN(10.*unew*cell[i].Mass, -de_u_touse), 0); // don't let the radiation gain take more than some large factor times the current energy, or more than the energy lost from cooling+heating
+#ifdef RT_DIAG_IR_LEDGER
+                    if(de_rad > de_rad_max) {rt_diag_sc((-de_u_touse <= 0) ? RT_DIAG_SC_CLIP_MAX_ZERO : ((10.*unew*cell[i].Mass < -de_u_touse) ? RT_DIAG_SC_CLIP_MAX_10UM : RT_DIAG_SC_CLIP_MAX_DEU), de_rad - de_rad_max);}
+                    if(de_rad < de_rad_min) {rt_diag_sc((-de_u_touse >= 0) ? RT_DIAG_SC_CLIP_MIN_ZERO : ((-0.99*cell[i].Rad_E_gamma[k] > -de_u_touse) ? RT_DIAG_SC_CLIP_MIN_099E : RT_DIAG_SC_CLIP_MIN_DEU), de_rad_min - de_rad);}
+#endif
                     de_rad = DMAX(DMIN(de_rad, de_rad_max), de_rad_min); // limit de_rad appropriately
                     if(fabs(de_rad) > MIN_REAL_NUMBER)
                     {
@@ -728,6 +754,11 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #endif
                         double Rad_E_gamma_before = cell[i].Rad_E_gamma[k]; // save for immediate use below
                         cell[i].Rad_E_gamma[k] += de_rad; /* energy gained by gas is lost here (or vice versa if dust is acting as a net coolant) */
+#ifdef RT_DIAG_IR_LEDGER
+                        rt_diag_add(RT_DIAG_COOLING_TO_BAND, k, de_rad);
+                        if(k==RT_FREQ_BIN_NUV) {rt_diag_sc(RT_DIAG_SC_RET_NUV, de_rad);}
+                        if(k==RT_FREQ_BIN_INFRARED) {rt_diag_sc(RT_DIAG_SC_RET_IR, de_rad);}
+#endif
                         cell[i].Rad_E_gamma_Pred[k] = cell[i].Rad_E_gamma[k]; /* updated drifted */
 #if defined(RT_EVOLVE_INTENSITIES)
                         { /* emission is isotropic: each of the N bins gets de_rad/N of energy. absorption takes the same fraction from every bin, keeping them positive and the angular shape intact */
@@ -756,6 +787,10 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
          if the flag is not set (default), then the full hydro-heating is accounted for in the cooling loop, so it should be re-zeroed here */
         cell[i].InternalEnergy = unew;
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
+#ifdef RT_DIAG_IR_LEDGER
+        rt_diag_sc(RT_DIAG_SC_M_COOL, cell[i].Mass); rt_diag_sc(RT_DIAG_SC_MT_GAS, cell[i].Mass*cell[i].temperature());
+        rt_diag_sc(RT_DIAG_SC_MT_DUST_COOL, cell[i].Mass*cell[i].Dust_Temperature); rt_diag_sc(RT_DIAG_SC_MT_RAD, cell[i].Mass*cell[i].Radiation_Temperature);
+#endif
 
 #ifdef TWO_TEMPERATURE_PLASMA
         /* 2-T plasma post-cooling update. Two operations, in order:
@@ -1172,9 +1207,12 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 {
     double n_elec=n_elec_guess, nH0, nHe0, nHp, nHep, nHepp, mu; /* ionization states [computed below] */
     double Lambda, Heat, LambdaFF, LambdaCompton, LambdaExc, LambdaExcH0, LambdaExcHep, LambdaIon, LambdaIonH0, LambdaIonHe0, LambdaIonHep;
-    double LambdaRec, LambdaRecHp, LambdaRecHep, LambdaRecHepp, LambdaRecHepd, T, T_cmb_radeff, shieldfac, LambdaMol, LambdaMetal, LambdaPElec, LambdaDust, Heat_Ion_from_UVB, Heat_Ion_from_RHD;
+    double LambdaRec, LambdaRecHp, LambdaRecHep, LambdaRecHepp, LambdaRecHepd, T, T_cmb_radeff, shieldfac, LambdaMol, LambdaMetal, LambdaNeb, LambdaPElec, LambdaDust, Heat_Ion_from_UVB, Heat_Ion_from_RHD;
     double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;	/* hydrogen number dens in cgs units */
-    Lambda=0; Heat=0; LambdaMol=0; LambdaFF=0; LambdaRec=0; LambdaExc=0; LambdaIon=0; LambdaMetal=0; LambdaCompton=0; LambdaPElec=0; LambdaDust=0; Heat_Ion_from_UVB=0; Heat_Ion_from_RHD=0; /* make sure these are all initialized to zero */
+    Lambda=0; Heat=0; LambdaMol=0; LambdaFF=0; LambdaRec=0; LambdaExc=0; LambdaIon=0; LambdaMetal=0; LambdaNeb=0; LambdaCompton=0; LambdaPElec=0; LambdaDust=0; Heat_Ion_from_UVB=0; Heat_Ion_from_RHD=0; /* make sure these are all initialized to zero */
+#ifdef RT_DIAG_IR_LEDGER
+    if(target >= 0) {rt_diag_cr = {}; rt_diag_cr.fcorr = 1;}
+#endif
     if(logT <= CoolTables.Tmin) {logT = CoolTables.Tmin + 0.5 * CoolTables.deltaT;}	/* floor at CoolTables.Tmin */
     if(!isfinite(rho)) {return 0;}
     T = pow(10.0, logT);
@@ -1221,6 +1259,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
 
+        double metal_table_weight = 1; /* blend weight S of the tabulated metal lines in photoionized gas, set by the nebular term below */
 #if defined(RT_CHEM_PHOTOION) && defined(METALS)
         /* Nebular (photoionized forbidden-line) cooling from O+, O++, N+, S+, Ne+: Kim, Gong, Kim &
            Ostriker 2023 (ApJS 264, 10), Eq. 47. The tabulated metal-line cooling below assumes collisional
@@ -1231,10 +1270,12 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         if(T > 2.0e3 && T < 5.0e4 && n_elec > 0 && nHp > 0 && target >= 0) {
             double T4 = T * 1.0e-4, lnT4 = log(T4), ne_100 = nHcgs * n_elec / 100.; /* electron density in units of 100 cm^-3 */
             double log10_fneb = 0.692 + lnT4*(-0.586 + lnT4*(0.816 + lnT4*(-0.505 + lnT4*(0.118 + lnT4*(0.00766 - 0.00508*lnT4)))));
-            double LambdaNeb = n_elec * nHp * (pp[target].Metallicity[0] / All.SolarAbundances[0])
+            LambdaNeb = n_elec * nHp * (pp[target].Metallicity[0] / All.SolarAbundances[0])
                 * 3.68e-23 * exp(-DMIN(3.86/T4, 100.)) / sqrt(T4) * pow(10., log10_fneb)
                 / (1. + 0.12*pow(ne_100, 0.38 - 0.12*lnT4)); /* collisional de-excitation: multi-line, so a temperature-dependent power rather than a single critical density */
-            LambdaNeb *= 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* taper out over 2e4-3.5e4 K, handing off to the collisional metal-line tables below so this is not double-counted through the transition */
+            double neb_weight = 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* (1-S): Kim+23 sigmoid taper (a=10) over 2e4-3.5e4 K */
+            LambdaNeb *= neb_weight;
+            metal_table_weight = 1. - neb_weight; /* S: the tabulated metal lines below take over only as the nebular fit hands off, or both would count the same forbidden lines */
             if(LambdaNeb > 0) {Lambda += LambdaNeb;}
         }
 #endif
@@ -1253,6 +1294,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             /* (sorry, -- dont -- multiply by nH^2 here b/c that's how everything is normalized in this function) */
             LambdaMetal *= n_elec;
             /* (modified now to correct out tabulated ne so that calculated ne can be inserted; ni not used b/c it should vary species-to-species */
+            LambdaMetal *= metal_table_weight;
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
             if(logT<2) {LambdaMetal *= exp(-DMIN((2.-logT)*(2.-logT)/0.1,40.));}
             if(LambdaMetal > 0) {LambdaMetal *= ((T-T_cmb_radeff)/(T+T_cmb_radeff));}
@@ -1397,6 +1439,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
 
         Heat += CR_gas_heating(target, n_elec, nH0, nHcgs, pp, cell); // CR hadronic+Coulomb+ionization heating //
+#ifdef RT_DIAG_IR_LEDGER
+        if(target >= 0) {rt_diag_cr.h_cr = CR_gas_heating(target, n_elec, nH0, nHcgs, pp, cell);}
+#endif
 #if defined(COOL_LOW_TEMPERATURES)
         if(LambdaMol<0) {Heat -= LambdaMol;} // Molecular line heating (Trad_mol_cooling_batch > Tgas) //
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
@@ -1440,12 +1485,16 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         double gas_self_absorption_opacity = rt_kappa_adaptive_IR_band(target,T,T,-1,-1, pp, cell), surface_density_fromcenter = 0.5 * (cell[target].Density*All.cf_a3inv) * (pp[target].Get_Particle_Size()*All.cf_atime);
         double tau_self = gas_self_absorption_opacity * surface_density_fromcenter, fcorr = 1./(1.+tau_self*tau_self);
         Heat*=fcorr; Lambda*=fcorr; LambdaMetal*=fcorr; LambdaExc*=fcorr; LambdaRec*=fcorr; LambdaIon*=fcorr; LambdaPElec*=fcorr; LambdaFF*=fcorr; LambdaMol*=fcorr; LambdaDust*=fcorr; LambdaCompton*=fcorr;
+#ifdef RT_DIAG_IR_LEDGER
+        rt_diag_cr.fcorr = fcorr;
+#endif
     }
 #endif
 
 
 #if defined(RT_NUV)
     double Lambda_rad_NUV = LambdaMetal; // most of LambdaMetal coming out in the NUV, as we define it
+    Lambda_rad_NUV += LambdaNeb; // Kim+23 nebular forbidden-line emission from photoionized gas (computed above under RT_CHEM_PHOTOION; zero otherwise): reprocess it into the NUV band when that band is available, instead of losing it as pure cooling
     Lambda_rad_NUV += LambdaExc; // this represents gas kinetic energy lost to collisional excitation. but each is assumed to produce a cascade back to the ground state, which should emit. note collisional ionization is not included here since the thermal energy is lost to the ionization energy, not to radiation, and the recombination luminosity is tallied separately.
     //Lambda_rad_NUV += LambdaIon; // this is the collisional ionization, distinct from the recombination luminosity. per above, this isn't directly into radiation. if you assumed it did lead to recombination, could use instead of LambdaRec, though would then ignore all but collisional ionization equilibrium. we're usually assuming case B recombination (UV emitted photons re-absorbed), so we'll assume a cascade for these into NUV/optical and other bands [otherwise should be added to photo-ionizing band]. still ignore LambdaRec, because otherwise this will double-count the UV background
     Lambda_rad_NUV += LambdaRec * DMAX(1.-shieldfac,0.) * DMIN(1.,DMAX(0.,Heat_Ion_from_RHD/(Heat_Ion_from_UVB+Heat_Ion_from_RHD+MIN_REAL_NUMBER))); // recombination radiation -- needs to be rate-limited to avoid 2x-counting the UVB, which is what the shieldfac and local_gammamultiplier terms attempt to account for here
@@ -1492,6 +1541,11 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     if(LambdaDust <= 0) {Heat = -LambdaDust; Lambda = 0;}
 #endif
     double Q = Heat - Lambda;
+#ifdef RT_DIAG_IR_LEDGER
+    if(target >= 0) {rt_diag_cr.mol = LambdaMol; rt_diag_cr.dust = LambdaDust; rt_diag_cr.metal = LambdaMetal; rt_diag_cr.hhe = LambdaExc + LambdaIon + LambdaRec + LambdaFF;
+        rt_diag_cr.compton = LambdaCompton; rt_diag_cr.pelec = LambdaPElec; rt_diag_cr.h_ion = Heat_Ion_from_UVB + Heat_Ion_from_RHD;
+        rt_diag_cr.heat = Heat; rt_diag_cr.lambda = Lambda; rt_diag_cr.q_pre = Q;}
+#endif
 #if defined(OUTPUT_COOLRATE_DETAIL)
     if(target>=0) {cell[target].CoolingRate = Lambda; cell[target].HeatingRate = Heat;}
 #endif
@@ -1546,6 +1600,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #if defined(OUTPUT_COOLRATE_DETAIL)
     if(target>=0) {cell[target].NetHeatingRateQ = Q;}
 #endif
+#ifdef RT_DIAG_IR_LEDGER
+    if(target >= 0) {rt_diag_cr.q_post = Q;}
+#endif
 #ifdef OUTPUT_MOLECULAR_FRACTION
     if(target>=0) {cell[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, T, nH0, n_elec, sqrt(shieldfac)*(CoolTables.gJH0/2.29e-10), pp, cell);}
 #endif
@@ -1556,6 +1613,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #if defined(OUTPUT_COOLRATE_DETAIL)
     if(target >= 0) {cell[target].HydroHeatingRate = cell[target].DtInternalEnergy / nHcgs;}
 #endif
+#endif
+#ifdef RT_DIAG_IR_LEDGER
+    if(target >= 0) {rt_diag_cr.dtie = Q - rt_diag_cr.q_post;}
 #endif
     return Q;
 } // ends CoolingRate
@@ -1746,14 +1806,29 @@ static double eH0[TABLESIZE], eHe[TABLESIZE], eHep[TABLESIZE]; // upgrade from f
 static int nheattab;		/* length of table */
 
 
+/* Blank lines and lines starting with '#' are skipped; any other line must be exactly 7 numbers. Every rank reads the
+   file itself, so an unusable table requests the same controlled stop on every rank; begrun drains it after InitCool. */
 void ReadIonizeParams(const char *fname)
 {
-    int i; FILE *fdcool;
-    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456); return;}
+    int i, nrows=0, lineno=0; FILE *fdcool; char line[1024], msg[MAX_PATH_BUFFERSIZE_TOUSE], extra;
+    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory.\n", fname); endrun(456); return;}
     for(i=0; i<TABLESIZE; i++) {inlogz[i]=100; gH0[i]=0; gHe[i]=0; gHep[i]=0; eH0[i]=0; eHe[i]=0; eHep[i]=0;}
-    for(i=0; i<TABLESIZE; i++) {if(fscanf(fdcool, "%g %lg %lg %lg %lg %lg %lg", &inlogz[i], &gH0[i], &gHe[i], &gHep[i], &eH0[i], &eHe[i], &eHep[i]) == EOF) {break;}}
+    msg[0] = '\0';
+    while(fgets(line, sizeof(line), fdcool))
+    {
+        lineno++;
+        char *p = line + strspn(line, " \t\r\n");
+        if(*p == '\0' || *p == '#') {continue;}
+        p[strcspn(p, "\r\n")] = '\0';
+        if(nrows >= TABLESIZE-1) {snprintf(msg, sizeof(msg), "ionization table `%s' has more than %d data rows (line %d); raise TABLESIZE in cooling.cc", fname, TABLESIZE-1, lineno); break;}
+        if(sscanf(p, "%g %lg %lg %lg %lg %lg %lg %c", &inlogz[nrows], &gH0[nrows], &gHe[nrows], &gHep[nrows], &eH0[nrows], &eHe[nrows], &eHep[nrows], &extra) != 7)
+            {snprintf(msg, sizeof(msg), "ionization table `%s' line %d is not blank, a '#' comment, or 7 numbers: \"%.200s\"", fname, lineno, p); break;}
+        nrows++;
+    }
     fclose(fdcool);
     for(i=0, nheattab=0; i<TABLESIZE; i++) {if(gH0[i] != 0.0) {nheattab++;} else {break;}} /*  nheattab is the number of entries in the table */
+    if(!msg[0] && nheattab <= 0) {snprintf(msg, sizeof(msg), "ionization table `%s' has no rows with a non-zero HI photoionization rate (%d data rows read), so the run would have no UV background", fname, nrows);}
+    if(msg[0]) {nheattab = 0; gizmo_request_controlled_stop(456, msg, __FILE__, __LINE__, __FUNCTION__); return;}
     if(ThisTask == 0) printf(" ..read ionization table [TREECOOL] with %d non-zero UVB entries in file `%s'. Make sure to cite the authors from which the UV background was compiled! (See user guide for the correct references).\n", nheattab, fname);
 }
 

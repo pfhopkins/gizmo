@@ -231,6 +231,12 @@ static void rt_source_injection_pair_body(
 #ifdef RT_EVOLVE_ENERGY
         Kokkos::atomic_add(&Cj.Rad_E_gamma_Pred[k], dE);
 #endif
+#ifdef RT_DIAG_IR_LEDGER
+        rt_diag_add(RT_DIAG_INJECTED, k, dE);
+#ifdef RT_REPROCESS_INJECTED_PHOTONS
+        if (donation_bin > -1) { rt_diag_add(RT_DIAG_INJECTED, donation_bin, dE_donation); }
+#endif
+#endif
 #ifdef RT_REPROCESS_INJECTED_PHOTONS
         if (donation_bin > -1) {
             Kokkos::atomic_add(&Cj.Rad_E_gamma[donation_bin], dE_donation);
