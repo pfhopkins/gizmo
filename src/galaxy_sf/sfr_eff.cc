@@ -568,7 +568,14 @@ void star_formation_parent_routine(void)
                 prob = P[i].Mass / mass_of_star * pfac;
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* draw the star's mass first; P = (m_cell / M_star) pfac keeps the SFR on average (LYRA, Gutcke+21; as the reference implementation, P may exceed 1 when M_star < m_cell) */
                 double M_drawn = single_star_imf_draw_massweighted(All.IMFSampleMinMass, gizmo_rng_combine(particle_event_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);
+#ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY /* above nHcutoffSF the star forms now, its mass drawn number-weighted */
+                const bool instant_sf = (CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS > All.nHcutoffSF);
+                if(instant_sf) {M_drawn = single_star_imf_draw_numberweighted(All.IMFSampleMinMass, gizmo_rng_combine(particle_event_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);}
+#endif
                 prob = (P[i].Mass / (M_drawn / UNIT_MASS_IN_SOLAR)) * pfac;
+#ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY
+                if(instant_sf) {prob = 2.;} else
+#endif
                 if(prob > 1) {static int warned = 0; if(!warned) {warned = 1; PRINT_WARNING("single-star formation probability %g > 1 (drawn mass %g Msun below the cell mass): the realised SFR is capped there (reference rule); further cases on task %d not reported", prob, M_drawn, ThisTask);}}
 #endif
                 

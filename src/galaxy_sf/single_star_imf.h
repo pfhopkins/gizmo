@@ -38,4 +38,20 @@ GIZMO_RNG_INLINE double single_star_imf_draw_massweighted(double m_min, uint64_t
     double M = single_star_imf_inverse_cumulative(G0 + u * (G1 - G0));
     return (M < M_min) ? M_min : ((M > M_max) ? M_max : M);
 }
+
+/* one mass [Msun] from the number-weighted IMF: the mass-weighted draw accepted with M_min/M (draw indices 1, 2, ... of the event) */
+GIZMO_RNG_INLINE double single_star_imf_draw_numberweighted(double m_min, uint64_t key, uint64_t event)
+{
+    double M_max = SINGLE_STAR_IMF_MASS_MAX, M_min = (m_min < 0.08) ? 0.08 : m_min;
+    if(M_min > M_max) {M_min = 0.99 * M_max;}
+    double G0 = single_star_imf_cumulative(M_min), G1 = single_star_imf_cumulative(M_max);
+    for(uint64_t k = 0; k < 10000; k++)
+    {
+        double u = gizmo_gpu_rand_double(key, gizmo_rng_event_counter(SINGLE_STAR_IMF_RNG_SALT, event, 1 + 2 * k));
+        double M = single_star_imf_inverse_cumulative(G0 + u * (G1 - G0));
+        M = (M < M_min) ? M_min : ((M > M_max) ? M_max : M);
+        if(gizmo_gpu_rand_double(key, gizmo_rng_event_counter(SINGLE_STAR_IMF_RNG_SALT, event, 2 + 2 * k)) <= M_min / M) {return M;}
+    }
+    return M_min;
+}
 #endif
