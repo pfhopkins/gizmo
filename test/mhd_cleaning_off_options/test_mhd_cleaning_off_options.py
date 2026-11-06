@@ -41,7 +41,9 @@ def run(tag):
     with h5py.File(snap, "r") as F:
         g = F["PartType0"]; o = np.argsort(g["ParticleIDs"][()])
         assert float(F["Header"].attrs["Time"]) >= 0.2 - 1e-9
-        return {k: g[k][()][o] for k in ("MagneticField", "Velocities", "DivBcleaningFunctionPhi", "DivergenceOfMagneticField")}
+        out = {k: g[k][()][o] for k in ("MagneticField", "Velocities", "DivergenceOfMagneticField")}
+        out["DivBcleaningFunctionPhi"] = g["DivBcleaningFunctionPhi"][()][o] if "DivBcleaningFunctionPhi" in g else None  # not written without the cleaning
+        return out
 
 
 @pytest.fixture(scope="module")
@@ -51,10 +53,11 @@ def results():
 
 
 def test_dedner_cleaning_off(results):
-    """bar (written before the run): the cleaning field is nonzero in the default run (max |phi| > 1e-6) and exactly zero
-    in every cell without the cleaning"""
+    """bars: the cleaning field is nonzero in the default run (max |phi| > 1e-6) and the snapshot has no cleaning field at all without the
+    cleaning. The first bar said 'exactly zero in every cell'; it was logically wrong, as a build without the cleaning has no field to
+    write (the first run of the changed code stopped on the missing dataset)"""
     assert np.abs(results["default"]["DivBcleaningFunctionPhi"]).max() > 1e-6
-    assert np.all(results["no_dedner"]["DivBcleaningFunctionPhi"] == 0)
+    assert results["no_dedner"]["DivBcleaningFunctionPhi"] is None
 
 
 def test_powell_terms_off(results):

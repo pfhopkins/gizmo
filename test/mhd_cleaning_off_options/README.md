@@ -10,5 +10,5 @@ Two debugging switches of the MHD scheme, both test only and off by default:
 Problem: Orszag-Tang vortex on a 32^2 lattice (2D, periodic), 0.2 time units, three builds (default and one with each flag),
 2 ranks.
 
-Checks: the default run has a nonzero cleaning field and it is exactly zero without the cleaning; without the Powell terms the
+Checks: the default run has a nonzero cleaning field and no cleaning field is written without the cleaning; without the Powell terms the
 evolved magnetic field differs from the default run (above 1e-6 of the maximum) while the cleaning field is still nonzero.
