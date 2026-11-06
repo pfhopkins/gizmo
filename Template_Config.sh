@@ -468,6 +468,7 @@
 #TREE_REFRESH_INCREMENTAL      # moments refresh re-derives only the nodes above changed particles and sinks, and exchanges only changed top-level leaves (cost no longer grows with the total particle count; changes results slightly: untouched nodes keep their drifted moments)
 #DOMAIN_TIMEBINS=0              # Domain timebin cost weighting: 0=frequency-weighted costs, 1=full per-timebin balancing (Gadget-4 scheme). Omit for unweighted.
 #DOMAIN_FREQ_WEIGHT=9           # Domain cost x min(2^(top occupied bin - particle bin), 2^n): spreads the short-timestep set over ranks (9 measured best on STARFORGE M2e4 at 384 ranks). Changes the layout.
+#DOMAIN_MULTIBIN                # Domain: balance every timebin level up to the decomposition step at once (per-level tallies per segment, top-leaf refinement by level, multi-row assignment weighted by each level's estimated wall until the next decomposition; counts capped at DOMAIN_MULTIBIN_LOADCAP=1.15 x mean). Use with DOMAIN_FREQ_WEIGHT=9. Changes the layout.
 ####################################################################################################
 
 
