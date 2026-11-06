@@ -3,7 +3,7 @@
 
 usage: check_config_reads.py SRC_DIR FILE...   (Config*.sh and *.params; exit 1 if anything is unread)
 A flag counts as read when its name appears in src/ outside Template_Config.sh; a parameter when begrun.cc
-registers its tag. A parameter file tag the code does not know is skipped by GIZMO with a warning only.
+registers its tag outside DEVELOPER_MODE. A parameter file tag the code does not know is skipped by GIZMO with a warning only.
 """
 import re, subprocess, sys
 from pathlib import Path
@@ -35,9 +35,19 @@ for f in files:
         else:
             flags.setdefault(re.split(r"[=\s]", s)[0], []).append(f.name)
 
+tags, dev = set(), []  # tags registered outside #ifdef DEVELOPER_MODE (a production build does not read the others)
+for line in (src / "core/begrun.cc").read_text().splitlines():
+    t = line.strip()
+    if t.startswith("#if"):
+        dev.append(bool(re.match(r"#ifdef\s+DEVELOPER_MODE\b|#if\s+defined\(DEVELOPER_MODE\)", t)))
+    elif t.startswith("#else") and dev:
+        dev[-1] = False
+    elif t.startswith("#endif") and dev:
+        dev.pop()
+    m = re.search(r'strcpy\(\s*(?:alternate_)?tag\[nt\]\s*,\s*"([A-Za-z0-9_]+)"', line)
+    if m and not any(dev):
+        tags.add(m.group(1))
 read_flags = grep_words(set(flags), exclude=("Template_Config.sh",))
-begrun = (src / "core/begrun.cc").read_text()
-tags = set(re.findall(r'strcpy\(\s*(?:alternate_)?tag\[nt\]\s*,\s*"([A-Za-z0-9_]+)"', begrun))
 bad = [(n, w, "flag") for n, w in flags.items() if n not in read_flags]
 bad += [(n, w, "parameter") for n, w in params.items() if n not in tags]
 for n, w, k in sorted(bad):

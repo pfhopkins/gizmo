@@ -1,7 +1,6 @@
 InitCondFile SET_ME
 OutputDir output
 TimeBetSnapshot 0.00025
-TimeBetStatistics 0.00005
 TimeOfFirstSnapshot 0
 SnapFormat 3
 BoxSize 0.07

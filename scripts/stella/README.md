@@ -13,6 +13,6 @@ Set `InitCondFile`, `StellarTablesFile` and `SGChemTablesPath` (and `BoxSize` fo
 - tall box: `GRAVITY_PERIODIC_XY_IMAGES`, no band fluxes, scaled with the recent SFR.
 
 `check_config_reads.py SRC_DIR FILES...` lists every flag and parameter the code does not read (test/stella_configs).
-`MULTIPLEDOMAINS`, `NO_ISEND_IRECV_IN_DOMAIN`, `MaxMemSize` and `BufferSize` are not read in this tree and are not set.
+`MULTIPLEDOMAINS`, `NO_ISEND_IRECV_IN_DOMAIN`, `MaxMemSize` and `BufferSize` are not read in this tree and are not set; `TimeBetStatistics` is read only with `DEVELOPER_MODE` (ledger.txt replaces the energy statistics).
 Not ported, so absent from the params: `TimeInstantSN`, `MaxMassForParticleSplit` (derived from the IC), `CritOverDensity` (fixed 1000).
 `PhotoionMaxTimestep` is not set: the default of 10 kyr differs from stella_dev, which solves every step (inventory H2).
