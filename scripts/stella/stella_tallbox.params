@@ -1,5 +1,4 @@
 InitCondFile SET_ME
-MaxMemSize 2500
 OutputDir output
 TimeBetSnapshot 0.005
 TimeBetStatistics 0.0005
@@ -14,7 +13,6 @@ MinSizeTimestep 0
 GravityPeriodicXYImages 8
 TreeDomainUpdateFrequency 0.05
 PartAllocFactor 5.0
-BufferSize 100
 UnitLength_in_cm 3.085678e21
 UnitMass_in_g 1.989e43
 UnitVelocity_in_cm_per_s 1.0e5
