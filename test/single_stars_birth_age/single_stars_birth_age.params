@@ -1,0 +1,26 @@
+% a star born at the first step starts at an age of 2 Myr (TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE)
+InitCondFile                       single_stars_birth_age_ics
+OutputDir                          output
+TimeMax                            1e-5
+BoxSize                            15.84
+TimeBetSnapshot                    1e-5
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+UnitLength_in_cm                   3.085678e+18
+UnitMass_in_g                      1.989e+33
+UnitVelocity_in_cm_per_s           100000
+MinGasTemp                         10
+ErrTolIntAccuracy                  0.002
+CourantFac                         0.05
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.0015
+TimeBetStatistics                  1e-5
+MaxSizeTimestep                    1e-5
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+DomainBuild_ActiveFraction         0.5
+CritPhysDensity                    1e30
+SfEffPerFreeFall                   0.01
+TestSingleStarBirths               SET_BY_TEST
+TestStarInitAgeYr                  2.0e6
