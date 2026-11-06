@@ -1,0 +1,25 @@
+% a 35 Msun star blowing a wind: the particle state before and after each deposit is dumped (TEST_DUMP_STATE_AROUND_WIND_DEPOSIT)
+InitCondFile                       snapshot
+OutputDir                          output
+TimeMax                            0.01
+BoxSize                            45.0
+TimeBetSnapshot                    0.0025
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+UnitLength_in_cm                   3.085678e+18
+UnitMass_in_g                      1.989e+33
+UnitVelocity_in_cm_per_s           100000
+MinGasTemp                         10
+ErrTolIntAccuracy                  0.002
+CourantFac                         0.05
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.0015
+TimeBetStatistics                  0.0025
+MaxSizeTimestep                    2.5e-4
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+DomainBuild_ActiveFraction         0.5
+CritPhysDensity                    1e30
+SfEffPerFreeFall                   0.01
+StellarTablesFile                  SET_BY_TEST

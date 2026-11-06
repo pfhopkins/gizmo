@@ -1,0 +1,36 @@
+InitCondFile                sgchem_box_ics
+OutputDir                   output
+ICFormat                    3
+SnapFormat                  3
+TimeBegin                   0.0
+TimeMax                     0.032       % 8 equal steps
+TimeOfFirstSnapshot         0.
+TimeBetSnapshot             0.032
+MaxSizeTimestep             4.0e-3      % 32 equal steps
+MinSizeTimestep             1.0e-15
+UnitLength_in_cm            3.086e18    % pc
+UnitMass_in_g               1.989e33    % Msun
+UnitVelocity_in_cm_per_s    1.0e5       % km/s
+ComovingIntegrationOn       0
+BoxSize                     10.0
+Omega0                      0.
+OmegaLambda                 0.
+OmegaBaryon                 0.
+HubbleParam                 1.
+InitGasTemp                 0           % from the IC
+MinGasTemp                  2.73
+InitMetallicity             1.0         % solar, GIZMO's element pattern (fresh starts do not read IC metals)
+DesNumNgb                   32
+SofteningGas                0.1
+SofteningHalo               0.1
+SofteningDisk               0.1
+SofteningBulge              0.1
+SofteningStars              0.1
+SofteningBndry              0.1
+SGChemTablesPath            sgchem_tables          % overridden by the test
+SGChemCosmicRayIonRate      2.0e-16     % s^-1 per H
+SGChemDustToGasRatio        1.0         % Milky Way at solar metallicity
+SGChemDeuteriumAbundance    2.6e-5      % D/H
+SGChemG0                    0           % no radiation field (test_sgchem_habing_field sets one)
+SGChemG0_LW                 0
+SGChemBackgroundG0          0
