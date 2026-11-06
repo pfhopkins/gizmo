@@ -27,6 +27,12 @@ SofteningDisk               0.4
 SofteningBulge              0.4
 SofteningStars              0.4
 SofteningBndry              0.4
+SofteningGasMaxPhys         0.1         % physical, as the comoving softenings are capped
+SofteningHaloMaxPhys        0.1
+SofteningDiskMaxPhys        0.1
+SofteningBulgeMaxPhys       0.1
+SofteningStarsMaxPhys       0.1
+SofteningBndryMaxPhys       0.1
 SGChemTablesPath            sgchem_tables          % overridden by the test
 SGChemCosmicRayIonRate      2.0e-16
 SGChemDustToGasRatio        1.0
