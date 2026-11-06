@@ -1,10 +1,12 @@
 /* Copyright (c) 2026 Ulrich Steinwandel
  * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 /* galaxy_sf/photoion_per_direction.cc -- host side of the per-direction photoionisation (Specs in photoion_per_direction.h).
- * Ionising single stars share one cadence (PhotoionMaxTimestep); at each solve every source finds its fronts alone (search
- * sphere grown or refined as stella_dev) and claims its cells; then, in rounds, sources share the bills of cells claimed by
- * several (fronts only advance), until no front moves; the cells are stamped ionised until the next solve. Reference: stella_dev
- * galaxy_sf/resolvedism_photoion.cc. */
+ * Each ionising single star solves on its own active steps, as gizmo2017 (step at most PhotoionMaxTimestep, no floor). At a
+ * solve every solving source finds its fronts alone (search sphere grown or refined as stella_dev) and claims its cells;
+ * then, in rounds, sources share the bills of cells claimed by several (fronts only advance), until no front moves. Sources
+ * not solving now keep their last fronts (front table) and count as claims; those fronts do not move. Cells stay ionised
+ * until the next multiple of the cap step, where every source solves, so an inactive source's region cannot drop out;
+ * a solving source releases cells it left. Reference: stella_dev galaxy_sf/resolvedism_photoion.cc. */
 #include <mpi.h>
 #include <cstdio>
 #include <cstdlib>
@@ -49,24 +51,35 @@ static long long *pi_claim_sums(int n_gas)
     return pi_claim;
 }
 
-/* sources at the last solve plus onsets since (-1: unknown, as at start-up); the same on every rank */
-static long long pi_num_sources = -1;
-static long long pi_calls = 0; /* this module's reductions and runner calls since the last log row */
+static int pi_any_active = -1;  /* any ionising source active on this step, from the sync point (-1: not known yet) */
+static long long pi_calls = 0;  /* this module's reductions and runner calls since the last log row */
+void photoion_set_any_active(int any) {pi_any_active = any;}
 
-/* single stars on this rank whose ionising onset falls in their step that ends now (counted in the SF reduction) */
-long long photoion_new_sources_local(void)
+/* grows a shared array, keeping its first n_keep entries; 0 if out of memory */
+template <typename T> static int pi_grow(T *&p, int& cap, int n, int n_keep, const char *name)
 {
-    long long n = 0;
-    for(int i : ActiveParticleList) {
-        if(P[i].StarIdx <= 0) {continue;}
-        double t_on = single_star_ionizing_onset_yr(i);
-        if(t_on < 0) {continue;}
-        double age = evaluate_stellar_age_Gyr(i) * 1.e9, dt = (P[i].TimeBin ? (double)((integertime)1 << P[i].TimeBin) : 0.) * All.Timebase_interval * UNIT_TIME_IN_YR;
-        if(age >= t_on && age - dt < t_on) {n++;}
-    }
-    return n;
+    if(n <= cap) {return 1;}
+    T *q = (T *) gizmo_gpu_alloc_shared((size_t) n * sizeof(T), name);
+    if(!q) {gizmo_request_controlled_stop(7904, "per-direction photoionisation: could not grow the front table", __FILE__, __LINE__, __FUNCTION__); return 0;}
+    Kokkos::fence();
+    if(p) {std::memcpy((void *)q, (void *)p, (size_t) n_keep * sizeof(T)); Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
+    p = q; cap = n;
+    return 1;
 }
-void photoion_add_new_sources(long long n) {if(n > 0 && pi_num_sources >= 0) {pi_num_sources += n;}}
+
+/* the front table: last fronts of the live sources, the same on every rank */
+static PiFrontRecord *pi_tab = nullptr;
+static int pi_tab_n = 0, pi_tab_cap = 0;
+static int *pi_flist = nullptr; /* the partners of each source of a solve */
+static int pi_flist_cap = 0;
+static int pi_tab_row(MyIDType id)
+{
+    PiFrontRecord *e = std::lower_bound(pi_tab, pi_tab + pi_tab_n, id, [](const PiFrontRecord& a, MyIDType b) {return a.id < b;});
+    return (e < pi_tab + pi_tab_n && e->id == id) ? (int)(e - pi_tab) : -1;
+}
+int photoion_front_table_size(void) {return pi_tab_n;}
+size_t photoion_front_record_bytes(void) {return sizeof(PiFrontRecord);}
+void *photoion_front_table(int n) {if(n > 0 && !pi_grow(pi_tab, pi_tab_cap, n, 0, "photoion_front_table")) {n = 0;} pi_tab_n = n; return pi_tab;} /* for the restart files */
 
 /* histogram pool: partial histograms of the sources whose cells live on this rank, by slot; grown when a pass fills it */
 static int *pi_pool_slot = nullptr, *pi_pool_g = nullptr, *pi_pool_ctl = nullptr; /* ctl: slots used, full */
@@ -113,24 +126,42 @@ static double photoion_source_rate(int i)
     return All.HIIRegion_fLum_Coupled * single_star_ionizing_photon_rate(i);
 }
 
-/* the photoionisation timebin: the largest bin whose step is within PhotoionMaxTimestep and MaxSizeTimestep */
+/* the integer times of the cells and the table, when TimeMax grows on a restart */
+void photoion_halve_timeline(void)
+{
+    for(int i = 0; i < N_gas; i++) {CellP[i].PhotoionizedUntil /= 2;}
+    for(int t = 0; t < pi_tab_n; t++) {pi_tab[t].ti /= 2;}
+}
+
+/* 1 if an ionising source on this rank is active on this step (rides the reduction at the sync point) */
+int photoion_active_sources_local(void)
+{
+    for(int n = 0; n < TIMEBINS; n++) {
+        if(!TimeBinActive[n]) {continue;}
+        for(int i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {if(P[i].StarIdx > 0 && photoion_source_rate(i) > 0) {return 1;}}
+    }
+    return 0;
+}
+
+/* the cap bin: the largest bin whose step is within PhotoionMaxTimestep and MaxSizeTimestep. No source steps longer, so
+   all live sources are active at each multiple of its step */
 static int photoion_timebin(void)
 {
-    double dt = DMIN(All.PhotoionMaxTimestep / UNIT_TIME_IN_YR, All.MaxSizeTimestep);
+    double dt = DMIN(All.PhotoionMaxTimestep / UNIT_TIME_IN_YR, All.MaxSizeTimestep) * All.cf_hubble_a;
     integertime ti = (integertime)(dt / All.Timebase_interval);
     int b = 1;
     while(b + 1 < TIMEBINS && ((integertime)1 << (b + 1)) <= ti) {b++;}
     return b;
 }
 
-/* largest timestep of single star p [code]: an ionising source keeps to the photoionisation bin; a star that will
-   ionise steps onto its onset age */
+/* largest timestep of single star p [code]: an ionising source at most PhotoionMaxTimestep (it solves on its active
+   steps; a cap, can be smaller, no floor); a star that will ionise steps onto its onset age */
 double photoion_max_timestep(int p)
 {
     double t_on = single_star_ionizing_onset_yr(p);
     if(t_on < 0) {return 0;}
     if(photoion_source_rate(p) > 0) {
-        double dt = (double)((integertime)1 << photoion_timebin()) * All.Timebase_interval;
+        double dt = All.PhotoionMaxTimestep / UNIT_TIME_IN_YR;
 #ifdef TEST_PHOTOIONIZATION_ONE_STAR_ON_QUARTER_STEP
         if(All.TestPhotoionQuarterStepStarID > 0 && P[p].ID == (MyIDType) All.TestPhotoionQuarterStepStarID) {dt *= 0.25;}
 #endif
@@ -160,6 +191,7 @@ PiCallScalars PiSpecBase::populate_call_scalars(const neighbor_loop_args& args)
     s.claim = pi_claim; s.n_claim = DMIN(N_gas, pi_claim_cap);
     s.pool_slot = pi_pool_slot; s.pool_g = pi_pool_g; s.pool_n = pi_pool_ctl; s.pool_full = pi_pool_ctl ? pi_pool_ctl + 1 : nullptr;
     s.pool_cost = pi_pool_cost; s.pool_rmin = pi_pool_rmin; s.pool_cap = pi_pool_cap;
+    s.tab = pi_tab; s.flist = pi_flist;
     return s;
 }
 
@@ -200,7 +232,7 @@ static void pi_run(std::vector<int>& list, std::vector<PiSourceIn>& in, PiSpecBa
 
 /* ---- the front of each pixel ---- */
 
-struct pi_src {int i, g; double Q, R; int refine, open; double front[PI_NPIX], mark[PI_NPIX], held[PI_NPIX];};
+struct pi_src {int i, g, prev, f0, nf; double Q, R; int refine, open; double front[PI_NPIX], mark[PI_NPIX], held[PI_NPIX];};
 
 /* per pixel, where the summed bills cross the budget (fractional front, for diagnostics and refinement) and the marking
    front, rounded up through the innermost cell of the crossing bin (stella_dev v6). Returns 1 if the source searches
@@ -247,7 +279,7 @@ static PiSourceIn pi_source_in(const pi_src& s)
     for(int k = 0; k < 3; k++) {x.Pos[k] = P[s.i].Pos[k];}
     x.R = s.R; x.S_pix = s.Q / PI_NPIX;
     for(int k = 0; k < PI_NPIX; k++) {x.held[k] = s.held[k]; x.mark[k] = s.mark[k];}
-    x.g = s.g;
+    x.g = s.g; x.prev = s.prev; x.f0 = s.f0; x.nf = s.nf;
     return x;
 }
 
@@ -306,13 +338,83 @@ static void pi_claim_all(std::vector<pi_src>& S)
     for(pi_src& s : S) {for(int k = 0; k < PI_NPIX; k++) {s.held[k] = s.mark[k];}}
 }
 
-/* solve when the photoionisation bin is active. Collectives: the source count; per pass the runner call and one
-   reduction; claims; per sharing round the runner calls and one reduction; stamp, drain; the log row. */
+/* a table row counts until the first multiple of the cap step after its solve (where the source solves again, or is gone) */
+static integertime pi_row_end(const PiFrontRecord& e, integertime dti) {return (e.ti / dti + 1) * dti;}
+
+struct pi_sphere {MyIDType id; Vec3<double> Pos; double R;};
+static void pi_counts_in_bytes(const std::vector<long long>& cnt, const std::vector<long long>& off, size_t rec, std::vector<int>& n, std::vector<int>& d)
+{
+    n.resize(NTask); d.resize(NTask);
+    for(int t = 0; t < NTask; t++) {n[t] = (int)(cnt[t] * rec); d[t] = (int)(off[t] * rec);}
+}
+
+/* the partners of each solving source: live table rows not solving now whose fronts can reach it. Every rank computes the
+   same list (it travels as offsets in the source records). Returns the number of partner links. */
+static int pi_find_partners(std::vector<pi_src>& S, const std::vector<long long>& cnt, const std::vector<long long>& off, integertime dti)
+{
+    const int n_tot = (int) off[NTask];
+    std::vector<pi_sphere> mine(S.size()), all(n_tot);
+    for(size_t a = 0; a < S.size(); a++) {
+        pi_sphere& m = mine[a]; m.id = P[S[a].i].ID; m.R = 2.0 * S[a].R; /* rounds can grow a sphere */
+        for(int k = 0; k < 3; k++) {m.Pos[k] = P[S[a].i].Pos[k];}
+        if(S[a].prev >= 0) {Vec3<double> d; for(int k = 0; k < 3; k++) {d[k] = m.Pos[k] - pi_tab[S[a].prev].Pos[k];} m.R = DMAX(m.R, sqrt(d.norm_sq()) + pi_tab[S[a].prev].R);} /* and the cells it may release */
+    }
+    std::vector<int> nb, db; pi_counts_in_bytes(cnt, off, sizeof(pi_sphere), nb, db);
+    pi_calls++; MPI_Allgatherv(mine.data(), (int)(mine.size() * sizeof(pi_sphere)), MPI_BYTE, all.data(), nb.data(), db.data(), MPI_BYTE, MPI_COMM_WORLD);
+    std::vector<char> solving(pi_tab_n, 0);
+    for(const pi_sphere& s : all) {int r = pi_tab_row(s.id); if(r >= 0) {solving[r] = 1;}}
+    std::vector<int> fl, f0(n_tot + 1, 0);
+    for(int g = 0; g < n_tot; g++) {
+        f0[g] = (int) fl.size();
+        for(int t = 0; t < pi_tab_n; t++) {
+            if(solving[t] || pi_row_end(pi_tab[t], dti) <= All.Ti_Current) {continue;}
+            Vec3<double> d; for(int k = 0; k < 3; k++) {d[k] = all[g].Pos[k] - pi_tab[t].Pos[k];}
+            nearest_xyz(d);
+            double reach = all[g].R + pi_tab[t].R;
+            if(d.norm_sq() < reach * reach) {fl.push_back(t);}
+        }
+    }
+    f0[n_tot] = (int) fl.size();
+    if(!pi_grow(pi_flist, pi_flist_cap, DMAX(f0[n_tot], 1), 0, "photoion_partners")) {return 0;}
+    if(!fl.empty()) {std::memcpy(pi_flist, fl.data(), fl.size() * sizeof(int));}
+    for(pi_src& s : S) {s.f0 = f0[s.g]; s.nf = f0[s.g + 1] - f0[s.g];}
+    return f0[n_tot];
+}
+
+/* the solved fronts go into every rank's table; rows that reached their end go */
+static void pi_table_update(const std::vector<pi_src>& S, const std::vector<PiLedgerOut>& L, const std::vector<long long>& cnt, const std::vector<long long>& off, integertime dti, double *ledger_ext)
+{
+    std::vector<PiFrontRecord> mine(S.size()), all(off[NTask]);
+    for(size_t a = 0; a < S.size(); a++) {
+        PiFrontRecord& e = mine[a]; const pi_src& s = S[a];
+        e.id = P[s.i].ID; e.ti = All.Ti_Current; e.R = 0; e.S_pix = s.Q / PI_NPIX; e.ledger = L[a].bill / s.Q;
+        for(int k = 0; k < 3; k++) {e.Pos[k] = P[s.i].Pos[k];}
+        for(int k = 0; k < PI_NPIX; k++) {e.mark[k] = s.mark[k]; e.R = DMAX(e.R, 1.0001 * s.mark[k]);} /* the reach of its fronts */
+    }
+    std::vector<int> nb, db; pi_counts_in_bytes(cnt, off, sizeof(PiFrontRecord), nb, db);
+    pi_calls++; MPI_Allgatherv(mine.data(), (int)(mine.size() * sizeof(PiFrontRecord)), MPI_BYTE, all.data(), nb.data(), db.data(), MPI_BYTE, MPI_COMM_WORLD);
+    ledger_ext[0] = MAX_REAL_NUMBER; ledger_ext[1] = 0;
+    for(const PiFrontRecord& e : all) {ledger_ext[0] = DMIN(ledger_ext[0], e.ledger); ledger_ext[1] = DMAX(ledger_ext[1], e.ledger);}
+    auto by_id = [](const PiFrontRecord& a, const PiFrontRecord& b) {return a.id < b.id;};
+    std::sort(all.begin(), all.end(), by_id);
+    std::vector<PiFrontRecord> keep;
+    for(int t = 0; t < pi_tab_n; t++) {
+        if(pi_row_end(pi_tab[t], dti) > All.Ti_Current && !std::binary_search(all.begin(), all.end(), pi_tab[t], by_id)) {keep.push_back(pi_tab[t]);}
+    }
+    all.insert(all.end(), keep.begin(), keep.end());
+    std::sort(all.begin(), all.end(), by_id);
+    pi_tab_n = (int) all.size(); /* the capacity is reserved at the start of the solve */
+    if(pi_tab_n > 0) {std::memcpy((void *)pi_tab, (void *)all.data(), (size_t) pi_tab_n * sizeof(PiFrontRecord));}
+}
+
+/* solve for the sources active on this step. Collectives: the source count; per pass the runner call and one reduction;
+   off the cap step the partner spheres; claims; per sharing round the runner calls and one reduction; stamp, drain; the
+   table; the log row. A step without an active source returns here (pi_any_active, from the sync point). */
 void photoionization_per_direction(void)
 {
-    if(All.HIIRegion_fLum_Coupled <= 0 || All.Time <= 0) {return;}
+    if(All.HIIRegion_fLum_Coupled <= 0 || All.Time <= 0 || pi_any_active == 0) {return;} /* quiet: no work, no collective */
     const int b_pi = photoion_timebin();
-    if(!TimeBinActive[b_pi] || pi_num_sources == 0) {return;} /* quiet: no work, no collective */
+    const integertime dti = (integertime)1 << b_pi;
     const double t_start = MPI_Wtime();
     const double max_r = All.PhotoionMaxSearchRadius / (UNIT_LENGTH_IN_KPC * All.cf_atime);
     std::vector<pi_src> S;
@@ -321,6 +423,8 @@ void photoionization_per_direction(void)
         double Q = photoion_source_rate(i);
         if(Q <= 0) {continue;}
         pi_src s; std::memset(&s, 0, sizeof(s)); s.i = i; s.Q = Q; s.open = 1;
+        s.prev = pi_tab_row(P[i].ID);
+        if(s.prev >= 0 && pi_row_end(pi_tab[s.prev], dti) < All.Ti_Current) {s.prev = -1;} /* its cells expired */
         for(int k = 0; k < PI_NPIX; k++) {s.held[k] = -1;}
         double nH = (P[i].DensityAroundParticle > 0) ? HYDROGEN_MASSFRAC * P[i].DensityAroundParticle * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS : 1.0;
         double R = pow(3.0 * Q / (4.0 * M_PI * PI_ALPHA_B * nH * nH), 1.0/3.0) / (UNIT_LENGTH_IN_CGS * All.cf_atime); /* the mean-density guess */
@@ -334,9 +438,8 @@ void photoionization_per_direction(void)
     for(int t = 0; t < NTask; t++) {off[t + 1] = off[t] + cnt[t];}
     n_tot = off[NTask];
     for(size_t a = 0; a < S.size(); a++) {S[a].g = (int)(off[ThisTask] + (long long) a);}
-    pi_num_sources = n_tot;
     if(n_tot == 0) {return;}
-    int no_buffer = (pi_claim_sums(N_gas) == nullptr), any_no_buffer = 0;
+    int no_buffer = (pi_claim_sums(N_gas) == nullptr) || !pi_grow(pi_tab, pi_tab_cap, pi_tab_n + (int) n_tot, pi_tab_n, "photoion_front_table"), any_no_buffer = 0;
     pi_calls++; MPI_Allreduce(&no_buffer, &any_no_buffer, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(any_no_buffer) {return;}
     pi_pool_reset((int) n_tot, DMAX(pi_pool_cap, 16));
@@ -359,8 +462,9 @@ void photoionization_per_direction(void)
 
     /* sharing rounds: held cells bill q_sc / A_c, others q_sc / (A_c + q_sc); bills only fall, so fronts only advance.
        Unspent photons escape: they are not handed to another source. */
+    int n_links = (All.Ti_Current % dti != 0 && pi_tab_n > 0) ? pi_find_partners(S, cnt, off, dti) : 0; /* on the cap step all live sources solve */
     pi_claim_all(S);
-    int rounds = 0, moved = (n_tot > 1);
+    int rounds = 0, moved = (n_tot > 1 || n_links > 0);
     for(; rounds < All.PhotoionMaxRounds && moved; rounds++) {
         std::vector<int> which; std::vector<PiHistOut> H;
         for(size_t a = 0; a < S.size(); a++) {which.push_back((int)a);}
@@ -375,16 +479,22 @@ void photoionization_per_direction(void)
         pi_calls++; MPI_Allreduce(&moved_local, &moved, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
 
-    /* stamp until the next solve; drain */
-    const integertime dti = (integertime)1 << b_pi, stamp = (All.Ti_Current / dti + 1) * dti;
+    /* stamp until the next multiple of the cap step: each source solves by then, so the regions of inactive ones stay; a
+       source's cells it left are released; drain */
+    const integertime stamp = (All.Ti_Current / dti + 1) * dti;
     std::vector<int> list; std::vector<PiSourceIn> in;
-    for(pi_src& s : S) {list.push_back(s.i); in.push_back(pi_source_in(s));}
+    for(pi_src& s : S) {
+        if(s.prev >= 0) {const PiFrontRecord& e = pi_tab[s.prev]; Vec3<double> d; for(int k = 0; k < 3; k++) {d[k] = (double)P[s.i].Pos[k] - e.Pos[k];} nearest_xyz(d); s.R = DMAX(s.R, sqrt(d.norm_sq()) + e.R);} /* reach its old cells */
+        list.push_back(s.i); in.push_back(pi_source_in(s));
+    }
     std::vector<PiLedgerOut> L(S.size() + 1);
     PiSpecBase::Aux aux = {nullptr, L.data(), stamp, 0};
     pi_run<PiStampSpec>(list, in, aux);
     pi_run<PiDrainSpec>(list, in, aux);
+    double ledger_ext[2];
+    pi_table_update(S, L, cnt, off, dti, ledger_ext);
 
-    /* log row (HIIheating.txt): sources, Q/X, cells newly ionised, their mass and mean distance, recombination / Q */
+    /* log row (HIIheating.txt): solving sources, Q/X, their cells, mass and mean distance (a shared cell by share), recombination / Q */
     double loc[5] = {0, 0, 0, 0, 0}, tot[5], ext[3] = {0, -MAX_REAL_NUMBER, 0}, ext_tot[3]; /* front max, -(front min), wall time */
     for(size_t a = 0; a < S.size(); a++) {
         loc[0] += S[a].Q; loc[1] += L[a].bill; loc[2] += L[a].n_new; loc[3] += L[a].m_new; loc[4] += L[a].mr_new;
@@ -395,8 +505,8 @@ void photoionization_per_direction(void)
     pi_calls++; MPI_Reduce(ext, ext_tot, 3, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     if(ThisTask == 0) {
         double to_kpc = All.cf_atime * UNIT_LENGTH_IN_KPC;
-        fprintf(FdHIIHeating, "%.16g %lld %g %g %g %g %.8g %d %d %.10g %.10g %lld %.4g\n", All.Time, n_tot, tot[0] / HYDROGEN_MASSFRAC, tot[2], tot[3] * UNIT_MASS_IN_SOLAR,
-                (tot[3] > 0) ? tot[4] / tot[3] * to_kpc : 0., (tot[0] > 0) ? tot[1] / tot[0] : 0., rounds, passes, -ext_tot[1] * to_kpc, ext_tot[0] * to_kpc, pi_calls, ext_tot[2]);
+        fprintf(FdHIIHeating, "%.16g %lld %g %g %g %g %.8g %d %d %.10g %.10g %lld %.4g %.6g %.6g\n", All.Time, n_tot, tot[0] / HYDROGEN_MASSFRAC, tot[2], tot[3] * UNIT_MASS_IN_SOLAR,
+                (tot[3] > 0) ? tot[4] / tot[3] * to_kpc : 0., (tot[0] > 0) ? tot[1] / tot[0] : 0., rounds, passes, -ext_tot[1] * to_kpc, ext_tot[0] * to_kpc, pi_calls, ext_tot[2], ledger_ext[0], ledger_ext[1]);
         fflush(FdHIIHeating);
     }
     pi_calls = 0;

@@ -6,8 +6,10 @@
  * order, threads and ranks) and the innermost cell radius, kept in a pool on the cell's rank and sent to the source's rank
  * in one exchange (not in the reply records); with sharing, a cell claimed by several sources bills each its
  * share q_sc / A_c. claim: A_c += q_sc for cells newly inside a source's fronts. stamp: cells inside the fronts are
- * ionised until the next solve. drain: A_c = 0. All run where the cell lives; A_c is a side buffer by local gas index,
- * zero between solves. Design note: design_photoionisation_pixelised.md. */
+ * ionised until the next multiple of the cap step, and the source drops cells only it held at its last solve. drain:
+ * A_c = 0. All run where the cell lives; A_c is a side buffer by local gas index, zero between solves. A source that does
+ * not solve now keeps its last fronts in a table held by every rank (PiFrontRecord); a solving source reads the
+ * fronts near it and counts them as claims. Design note: design_photoionisation_pixelised.md. */
 #ifndef PHOTOION_PER_DIRECTION_H
 #define PHOTOION_PER_DIRECTION_H
 #include <Kokkos_Core.hpp>
@@ -29,6 +31,16 @@ struct PiSourceIn {
     double held[PI_NPIX];         /* fronts of the cells it has claimed; -1 = none */
     double mark[PI_NPIX];         /* marking fronts */
     int g;                        /* global index of the source in this solve */
+    int prev;                     /* its row in the front table; -1: none */
+    int f0, nf;                   /* its partners: flist[f0 .. f0 + nf) */
+};
+struct PiFrontRecord {            /* a source's last solve, the same on every rank; sorted by id */
+    MyIDType id;
+    integertime ti;               /* when */
+    Vec3<double> Pos;
+    double R, S_pix;
+    double mark[PI_NPIX];
+    double ledger;                /* its recombinations / Q */
 };
 struct PiCallScalars {
     NlrCommonScalars common;
@@ -41,13 +53,15 @@ struct PiCallScalars {
     long long *pool_cost;         /* [slot][PI_NPIX * PI_NBIN] */
     double *pool_rmin;
     int pool_cap;
+    const PiFrontRecord *tab;     /* the front table */
+    const int *flist;             /* table rows of the partners of each source */
 };
 struct PiActiveState {Vec3<double> pos; double h_search; PiSourceIn src;};
 struct PiDeviceContext : NeighborLoopDeviceContextBase {const PiSourceIn *per_active_local;};
 struct PiNeighborData {struct particle_data *neighbor_particle; struct gas_cell_data *neighbor_cell; int j;};
 struct PiHistOut {long long cost[PI_NPIX * PI_NBIN]; double rmin[PI_NPIX * PI_NBIN];}; /* one source, assembled on its rank */
 struct PiCountOut {long long n;};
-struct PiLedgerOut {double bill, n_new, m_new, mr_new;}; /* bills of its cells; cells newly stamped, their mass, mass x radius */
+struct PiLedgerOut {double bill, n_new, m_new, mr_new;}; /* its share of: the bills, the cells, their mass, mass x radius */
 
 /* HEALPix NSIDE 1 ring pixel of direction (x, y, z) (Gorski et al. 2005) */
 KOKKOS_INLINE_FUNCTION
@@ -68,6 +82,14 @@ static int pi_healpix_pixel(double x, double y, double z)
     return (z > 0) ? (int)(2 * ir * (ir - 1) + ip) : (int)(12 - 2 * ir * (ir + 1) + ip);
 }
 
+/* claim weight of a cell of size h at r^2 from a source of S_pix: photons it delivers per bill x 2^32, in [1, 2^54] */
+KOKKOS_INLINE_FUNCTION
+static long long pi_weight(double S_pix, double r2, double h, double bill)
+{
+    double w = ldexp(S_pix * h * h / (4.0 * (r2 + h * h)) / bill, 32);
+    return (w >= 18014398509481984.0) ? 18014398509481984LL : ((w < 1.0) ? 1LL : (long long)llround(w));
+}
+
 /* cell j seen from source s: radius, pixel, bill alpha_B n_e n_H V [1/s]; 0 outside the search sphere */
 KOKKOS_INLINE_FUNCTION
 static int pi_cell(const PiSourceIn& s, const struct particle_data& Pj, const struct gas_cell_data *Cj, int j, const PiCallScalars& cs,
@@ -86,9 +108,30 @@ static int pi_cell(const PiSourceIn& s, const struct particle_data& Pj, const st
     *pix = pi_healpix_pixel(d[0], d[1], d[2]);
     *bill = cs.bill_fac * (double)Cj->Density * (double)Pj.Mass;
     if(!(*bill > 0)) {return 0;}
-    double h = (double)Pj.Get_Particle_Size(), w = ldexp(s.S_pix * h * h / (4.0 * (r2 + h * h)) / *bill, 32); /* photons it delivers per bill, x 2^32 */
-    *q = (w >= 18014398509481984.0) ? 18014398509481984LL : ((w < 1.0) ? 1LL : (long long)llround(w)); /* claim weight in [1, 2^54] */
+    *q = pi_weight(s.S_pix, r2, (double)Pj.Get_Particle_Size(), *bill);
     return 1;
+}
+
+/* cell j inside the fronts of record e: its claim weight there */
+KOKKOS_INLINE_FUNCTION
+static int pi_in_record(const PiFrontRecord& e, const struct particle_data& Pj, double bill, long long *q)
+{
+    Vec3<double> d;
+    for(int k = 0; k < 3; k++) {d[k] = (double)Pj.Pos[k] - e.Pos[k];}
+    nearest_xyz(d);
+    double r2 = d.norm_sq();
+    if(r2 <= 0 || r2 >= e.R * e.R || sqrt(r2) > e.mark[pi_healpix_pixel(d[0], d[1], d[2])]) {return 0;}
+    *q = pi_weight(e.S_pix, r2, (double)Pj.Get_Particle_Size(), bill);
+    return 1;
+}
+
+/* A_c of cell j as source s sees it: the solving sources' claims plus those of its partners' last fronts */
+KOKKOS_INLINE_FUNCTION
+static long long pi_claims(const PiSourceIn& s, const struct particle_data& Pj, int j, double bill, const PiCallScalars& cs)
+{
+    long long A = Kokkos::atomic_load(&cs.claim[j]), q;
+    for(int f = s.f0; f < s.f0 + s.nf; f++) {if(pi_in_record(cs.tab[cs.flist[f]], Pj, bill, &q)) {A += q;}}
+    return A;
 }
 
 KOKKOS_INLINE_FUNCTION static long long pi_sat_add(long long a, long long b) {long long c = a + b; return (c > PI_BIN_MAX) ? PI_BIN_MAX : c;}
@@ -168,7 +211,7 @@ struct PiHistSpec : PiSpecBase {
         double r, bill; int pix; long long q;
         if(!pi_cell(a.src, *nb.neighbor_particle, nb.neighbor_cell, nb.j, cs, &r, &pix, &bill, &q)) {return;}
         if(cs.share) { /* its share: held cells q / A_c, others as if it joined */
-            long long A = Kokkos::atomic_load(&cs.claim[nb.j]);
+            long long A = pi_claims(a.src, *nb.neighbor_particle, nb.j, bill, cs);
             if(r > a.src.held[pix]) {A += q;}
             if(A > 0) {bill *= (double)q / (double)A;}
         }
@@ -184,7 +227,8 @@ struct PiHistSpec : PiSpecBase {
     }
 };
 
-/* stamp: cells inside the marking fronts are ionised until cs.stamp (AtomicMax: order-free); ledger of their bills */
+/* stamp: cells inside the marking fronts are ionised until cs.stamp (AtomicMax: order-free); ledger of their shares. A cell
+   inside the source's last fronts that nobody claims now is released (written only where A = 0, so no stamp races it). */
 struct PiStampSpec : PiSpecBase {
     static constexpr const char *loop_name = "photoion_per_direction_stamp";
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* integer max: bitwise in any order */
@@ -196,11 +240,14 @@ struct PiStampSpec : PiSpecBase {
     static void pair_kernel(const ActiveData& a, const NeighborData& nb, AccumData& out, NoScatter&, const CallScalars& cs) {
         double r, bill; int pix; long long q;
         if(!pi_cell(a.src, *nb.neighbor_particle, nb.neighbor_cell, nb.j, cs, &r, &pix, &bill, &q)) {return;}
-        if(r > a.src.mark[pix]) {return;}
-        long long A = Kokkos::atomic_load(&cs.claim[nb.j]);
-        out.bill += (A > 0) ? bill * (double)q / (double)A : bill; /* its share: the shares of a cell sum to its bill */
-        integertime old = Kokkos::atomic_fetch_max(&nb.neighbor_cell->PhotoionizedUntil, cs.stamp);
-        if(old < cs.stamp) {double m = (double)nb.neighbor_particle->Mass; out.n_new += 1; out.m_new += m; out.mr_new += m * r;}
+        long long A = pi_claims(a.src, *nb.neighbor_particle, nb.j, bill, cs), q_prev;
+        if(r > a.src.mark[pix]) {
+            if(A == 0 && a.src.prev >= 0 && pi_in_record(cs.tab[a.src.prev], *nb.neighbor_particle, bill, &q_prev)) {Kokkos::atomic_store(&nb.neighbor_cell->PhotoionizedUntil, (integertime)0);}
+            return;
+        }
+        double share = (A > 0) ? (double)q / (double)A : 1.0, m = (double)nb.neighbor_particle->Mass * share; /* the shares of a cell sum to one */
+        out.bill += bill * share; out.n_new += share; out.m_new += m; out.mr_new += m * r;
+        Kokkos::atomic_fetch_max(&nb.neighbor_cell->PhotoionizedUntil, cs.stamp);
     }
 };
 

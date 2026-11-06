@@ -1055,8 +1055,8 @@ void open_outputfiles(void)
     if(!(FdHIIHeating = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
     else if(RestartFlag == 0) {
         fprintf(FdHIIHeating,"%s Per-direction photoionisation log [GALSF_FB_PHOTOIONIZATION_PER_DIRECTION], one row per solve. Columns 1-6 as the HII-region loop's log: \n",prefix_char);
-        fprintf(FdHIIHeating,"%s   (1) time [code] (2) ionising sources (3) their photon rate / X_H [1/s] (4) cells newly ionised (5) their mass [Msun] (6) their mass-weighted distance [kpc] \n",prefix_char);
-        fprintf(FdHIIHeating,"%s   (7) recombination rate of the ionised cells / photon rate (8) sharing rounds (9) search passes of the first round (10, 11) smallest and largest pixel front [kpc] (12) reductions and neighbour-loop calls of the photoionisation since the last row (13) wall time of the solve, slowest rank [s] \n",prefix_char);
+        fprintf(FdHIIHeating,"%s   (1) time [code] (2) sources solving now (3) their photon rate / X_H [1/s] (4) their cells, a cell shared with another source by its share (5) their mass [Msun] (6) their mass-weighted distance [kpc] \n",prefix_char);
+        fprintf(FdHIIHeating,"%s   (7) recombination rate of the ionised cells / photon rate (8) sharing rounds (9) search passes of the first round (10, 11) smallest and largest pixel front [kpc] (12) reductions and neighbour-loop calls of the photoionisation since the last row (13) wall time of the solve, slowest rank [s] (14, 15) smallest and largest recombination rate of a source's cells / its photon rate \n",prefix_char);
     }
 #endif
 #ifdef GALSF_FB_FIRE_RT_HIIHEATING
@@ -3920,6 +3920,9 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
 #ifdef TURB_DRIVING
       StTPrev /= 2;
       StTUpdatedAt /= 2;
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+      photoion_halve_timeline();
 #endif
 
     for(i = 0; i < NumPart; i++)

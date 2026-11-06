@@ -458,6 +458,14 @@ void restart(int modus)
 	      }
 	      if(modus) {single_star_record_rebuild_free_list();}
 	  }
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+	  { /* the fronts of the live sources */
+	      int n = photoion_front_table_size();
+	      in(&n, modus);
+	      void *tab = photoion_front_table(n);
+	      if(n > 0) {byten(tab, n * photoion_front_record_bytes(), modus);}
+	  }
+#endif
 #endif
 	  byten(&SelRnd, sizeof(SelRnd), modus);
 
