@@ -81,7 +81,13 @@ struct solid_material {
 #define FRACTURE_ACTIVATION_TENSILE_FLAWS 0
 #define FRACTURE_ACTIVATION_SHEAR         1
 static_assert(sizeof(struct solid_material) == N_SOLID_MATERIAL_PROPERTIES * sizeof(double), "struct solid_material must stay N_SOLID_MATERIAL_PROPERTIES doubles");
-#define N_SOLID_MATERIAL_IDS 16   /* >= every CompositionType layout: Tillotson rows + ANEOS tables (+1 for the gas slot) */
+#ifdef EOS_ANEOS
+#include "aneos.h" /* ANEOS_MAX_MATERIALS: the one definition, shared by the tables and the global struct */
+/* every CompositionType layout: Tillotson rows + ANEOS tables + the gas slot (never fewer than the 16 of the other builds) */
+#define N_SOLID_MATERIAL_IDS ((N_TILLOTSON_MATERIALS + ANEOS_MAX_MATERIALS + 1 > 16) ? (N_TILLOTSON_MATERIALS + ANEOS_MAX_MATERIALS + 1) : 16)
+#else
+#define N_SOLID_MATERIAL_IDS 16   /* >= every CompositionType layout: Tillotson rows (+1 for the gas slot) */
+#endif
 
 #ifdef EOS_ELASTIC_MELT
 /* Thermal softening (melt) and molten cavitation of a solid material, resolved once at

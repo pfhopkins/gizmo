@@ -254,10 +254,24 @@ void begrun(void)
 #endif
 
 #ifdef EOS_ANEOS
-    for(int aneos_k = 0; aneos_k < All.AneosNumMaterials; aneos_k++) {
-        int aneos_ierr = aneos_read_table(All.AneosTableFiles[aneos_k], aneos_k);
-        if(aneos_ierr) {printf("ANEOS: error loading table %d from %s\n", aneos_k, All.AneosTableFiles[aneos_k]); endrun(1);}
+    if(All.AneosNumMaterials < 0 || All.AneosNumMaterials > ANEOS_MAX_MATERIALS)
+    {
+        if(ThisTask == 0) {printf("AneosNumMaterials = %d, but this build holds at most %d tables (set ANEOS_MAX_MATERIALS in Config.sh)\n", All.AneosNumMaterials, ANEOS_MAX_MATERIALS);}
+        endrun(1);
+        return; /* every rank reads the same AneosNumMaterials: none loads a table */
     }
+    {
+        size_t aneos_bytes = 0;
+        for(int aneos_k = 0; aneos_k < All.AneosNumMaterials; aneos_k++) {
+            int aneos_ierr = aneos_read_table(All.AneosTableFiles[aneos_k], aneos_k);
+            if(aneos_ierr) {printf("ANEOS: error loading table %d from %s\n", aneos_k, All.AneosTableFiles[aneos_k]); endrun(1);}
+            if(ThisTask == 0) {aneos_report_table(aneos_k, All.AneosTableFiles[aneos_k]);}
+            aneos_bytes += aneos_table_bytes(aneos_k);
+        }
+        if(ThisTask == 0) {printf("ANEOS: %d of %d table slots loaded (ANEOS_MAX_MATERIALS), %.1f MB on every rank (one allocation the host and the device share)\n",
+                                  All.AneosNumMaterials, ANEOS_MAX_MATERIALS, aneos_bytes / 1048576.0);}
+    }
+    if(gizmo_poll_controlled_stop()) return; /* a table that failed to load stops the run here, in every build */
 #endif
 
 #ifdef EOS_ELASTIC
@@ -1382,7 +1396,11 @@ void read_parameter_file(char *fname)
 #define REAL 1
 #define STRING 2
 #define INT 3
+#ifdef EOS_ANEOS
+#define MAXTAGS (500 + 18 * ANEOS_MAX_MATERIALS) /* the per-table tags (18 per table with strength, damage and melt) scale with the table count */
+#else
 #define MAXTAGS 500
+#endif
 
     FILE *fd, *fdout;
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf1[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf2[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf3[DEFAULT_PATH_BUFFERSIZE_TOUSE], tag[MAXTAGS][50], alternate_tag[MAXTAGS][50];
@@ -2620,6 +2638,7 @@ void read_parameter_file(char *fname)
         id[nt++] = INT;
 
         for(int aneos_k = 0; aneos_k < ANEOS_MAX_MATERIALS; aneos_k++) {
+            if(nt >= MAXTAGS) {printf("Parameter registry full at AneosTable%d (room for %d tags: raise MAXTAGS in begrun.cc)\n", aneos_k, MAXTAGS); errorFlag = 1; break;}
             char aneos_tagname[64];
             snprintf(aneos_tagname, sizeof(aneos_tagname), "AneosTable%d", aneos_k);
             strcpy(tag[nt], aneos_tagname);
@@ -2670,6 +2689,7 @@ void read_parameter_file(char *fname)
 #ifdef EOS_ANEOS
         /* per ANEOS table: the solid material it names (preset 1-6, or 0 = its own values below) */
         for(int aneos_k = 0; aneos_k < ANEOS_MAX_MATERIALS; aneos_k++) {
+            if(nt + 17 > MAXTAGS) {printf("Parameter registry full at AneosTable%d_* (room for %d tags: raise MAXTAGS in begrun.cc)\n", aneos_k, MAXTAGS); errorFlag = 1; break;} /* at most 17 per table below */
             struct solid_material *custom = &All.AneosSolidMaterialCustom[aneos_k];
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_SolidMaterial", aneos_k); addr[nt] = &All.AneosSolidMaterialChoice[aneos_k]; id[nt++] = INT;
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_ShearModulus", aneos_k); addr[nt] = &custom->ShearModulus; id[nt++] = REAL;
@@ -2953,6 +2973,8 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 #endif  // CHIMES
+
+        if(nt > MAXTAGS) {printf("Parameter registry overflow: %d tags for room for %d (raise MAXTAGS in begrun.cc)\n", nt, MAXTAGS); errorFlag = 1;}
 
         if((fd = fopen(fname, "r")))
         {

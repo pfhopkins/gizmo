@@ -30,7 +30,8 @@
 #endif
 
 #ifndef ANEOS_MAX_MATERIALS
-#define ANEOS_MAX_MATERIALS 7
+#define ANEOS_MAX_MATERIALS 7  /* the most SESAME tables a run can load (AneosNumMaterials); Config.sh may set more. Each slot costs ~0.5 KB of
+                                  the global struct (copied to the device at every dispatch), and every LOADED table ~40 nrho nT bytes on every rank. */
 #endif
 
 /* Storage for one ANEOS material table (SESAME-format, pre-computed rho-T grid).
@@ -87,6 +88,8 @@ extern int ANEOS_Num_Tables_Loaded;
 /* Read a SESAME-format table file into slot mat_index.
    Call once per material from the main thread at startup. */
 int aneos_read_table(const char *filename, int mat_index);
+size_t aneos_table_bytes(int mat_index);                       /* bytes a loaded table holds (per rank) */
+void aneos_report_table(int mat_index, const char *filename);    /* its startup log lines */
 
 /* Free all allocated table memory. */
 int aneos_cleanup(void);

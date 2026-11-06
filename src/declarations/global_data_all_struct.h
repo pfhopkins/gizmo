@@ -707,9 +707,6 @@ struct global_data_all_processes
 #endif
 
 #ifdef EOS_ANEOS
-#ifndef ANEOS_MAX_MATERIALS
-#define ANEOS_MAX_MATERIALS 7
-#endif
     int  AneosNumMaterials;                       /* number of ANEOS material tables to load */
     char AneosTableFiles[ANEOS_MAX_MATERIALS][256]; /* file paths for each material's SESAME table */
 #ifdef EOS_ELASTIC
