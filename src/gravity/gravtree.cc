@@ -155,7 +155,12 @@ static void hermite_ghost_table_build(void)
     if(!HermiteOnlyFlag || NTask <= 1) {return;}
     const struct DriftKickTableView tables = drift_kick_table_view_host();
     std::vector<struct hermite_ghost_entry> mine;
-    for(int i = 0; i < NumPart; i++)
+    /* Gas occupies P[0, N_gas). A cell converted in place to another type stays in that block, counted by
+       Stars_converted, until rearrange_particle_sequence moves it out; with none pending, every particle of a
+       gas-free integration set lies at i >= N_gas. Skipping the gas block finds the same entries in the same
+       order, and avoids striding ~1 KB particle records once per gas cell on every Hermite pass. */
+    const int i_first = (((HERMITE_INTEGRATION) & 1) || Stars_converted) ? 0 : N_gas;
+    for(int i = i_first; i < NumPart; i++)
     {
         if(!((1 << P[i].Type) & HERMITE_INTEGRATION) || P[i].Mass <= 0) {continue;}
         struct hermite_ghost_entry e; e.id = P[i].ID;
