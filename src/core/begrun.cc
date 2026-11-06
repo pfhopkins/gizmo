@@ -3036,14 +3036,6 @@ void read_parameter_file(char *fname)
                                 fprintf(stdout, "%-50s%g\n", buf1, *((double *) addr[j]));
                                 break;
                             case STRING:
-                                /* every STRING target is a char[DEFAULT_PATH_BUFFERSIZE_TOUSE] */
-                                if(strlen(buf2) >= DEFAULT_PATH_BUFFERSIZE_TOUSE)
-                                {
-                                    printf("PARAMETER FILE ERROR: value of '%s' exceeds %d characters:\n  %.60s...\n",
-                                           buf1, DEFAULT_PATH_BUFFERSIZE_TOUSE - 1, buf2);
-                                    endrun(886602);
-                                    break; /* endrun returns: nothing may reach the copy below */
-                                }
                                 strcpy((char *) addr[j], buf2);
                                 fprintf(fdout, "%-50s%s\n", buf1, buf2);
                                 fprintf(stdout, "%-50s%s\n", buf1, buf2);
