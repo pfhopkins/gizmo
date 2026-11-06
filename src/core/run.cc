@@ -884,7 +884,10 @@ void calculate_non_standard_physics(void)
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 
-#if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
+#if defined(TEST_SKIP_COOLING_AND_CHEMISTRY_UPDATE) && (!defined(COOLING_OPERATOR_SPLIT) || defined(TRANSPORT_SUBCYCLE_COOLING))
+#error "TEST_SKIP_COOLING_AND_CHEMISTRY_UPDATE needs COOLING_OPERATOR_SPLIT (else the hydro work is applied by the cooling) and no TRANSPORT_SUBCYCLE_COOLING"
+#endif
+#if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING) && !defined(TEST_SKIP_COOLING_AND_CHEMISTRY_UPDATE)
     LEDGER_BRACKET(LG_COOL, cooling_parent_routine()); // top-level cooling and chemistry subroutine //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
