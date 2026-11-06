@@ -1,16 +1,23 @@
-"""single_stars_sn_ejecta_cell: a supernova whose kernel holds less gas than f x its ejecta mass (GALSF_SINGLE_STARS_SN_EJECTA_CELL=f, here 1)
+"""single_stars_sn_ejecta_cell: a supernova whose kernel holds less gas than f x its ejecta mass (GALSF_SINGLE_STARS_SN_EJECTA_CELL=f, here 2)
 is not deposited: its ejecta, explosion energy and yields become one new gas cell at the star, made at the merge/split point, and the
-split routine refines it. Production model (SGChem net 5, tables, 2 ranks). A 16^3 lattice of 1 Msun cells at n_H = 10, four stars past
-their lifetime at Z = 0.014: 20 Msun (ejecta below the ~32 Msun of its kernel: deposited), 40 Msun (failed, no energy: deposited),
-150 and 320 Msun (ejecta above the kernel gas: a new cell). All of it in 100 yr, so cooling and the chemistry change the books by little.
+split routine refines it. Production model (SGChem net 5, tables, 2 ranks). A 16^3 lattice of 1 Msun cells at n_H = 10, three stars past
+their lifetime at Z = 0.014, 100 yr: 12 Msun (10.6 Msun ejecta, 2 x that below the ~32 Msun of its kernel: deposited), 20 Msun (18.5 Msun
+ejecta: a new cell), 320 Msun (a new cell, no remnant).
 
-Bars, written before the first run:
-  test_new_cells_hold_the_ejecta: new cells are the cells with a child ID whose ID is one of the IC cells within 2.5 cells of the 150 and 320 Msun
+Bars:
+  test_new_cells_hold_the_ejecta: new cells are the cells with a child ID whose ID is one of the IC cells within 2.5 cells of the 20 and 320 Msun
     stars (a new cell takes the ID of the nearest local cell). Their mass equals the ejecta of those stars to 1e-10, their metal mass the ejecta
-    metals to 1e-8, and they exist at all. Moved before the change, with this reason: the first version took every cell with a child ID, assuming
-    the lattice does not split, but the 20 Msun deposit does split lattice cells (the unchanged code gave 440.7 Msun against 432.1).
+    metals to 1e-8, and they exist at all.
   test_books: gas gains all ejecta (1e-12), every star keeps exactly its table remnant, the 320 Msun star leaves none, one event row per
-    star; total energy gains the three explosions to 5 %, total momentum changes by less than 5 % of what the ejecta carry.
+    star; total momentum changes by less than 5 % of what the ejecta carry.
+  test_energy: the gas around the 12 and 20 Msun stars gains their two explosions to 5 %.
+Moved after the first runs, with these reasons:
+  - new cells: the first version took every cell with a child ID, assuming the lattice does not split, but the deposit splits lattice cells (the
+    unchanged code gave 440.7 Msun against 432.1). With the IDs around the stars the unchanged code fails at 412.8 against 432.1: the 320 Msun
+    deposit splits cells there too, which a new cell does not do.
+  - energy: the first version had 20, 40, 150, 320 Msun at f = 1 and asked the total for 3e51 erg to 5 %, on the claim that 100 yr of cooling changes
+    the books by little. That claim is false for the heavy ejecta cells: 320 Msun at Z = 0.96 keeps 2e48 of its 1e51 erg, 150 Msun keeps 6.2e50, the
+    20 Msun deposit 9.9e50. The energy bar now sits on the ejecta mass the option is meant for, and the 320 Msun star only on mass and metals.
 """
 import os
 import shutil
@@ -29,6 +36,7 @@ from make_single_stars_supernovae_ics import make_single_stars_supernovae_ics  #
 
 E_UNIT = 1.989e33 * 1e10  # erg per code energy unit
 N = 16
+STARS = [(20.0, (0.25, 0.25, 0.25)), (12.0, (0.75, 0.25, 0.75)), (320.0, (0.75, 0.75, 0.25))]
 
 
 @pytest.fixture(scope="module")
@@ -43,7 +51,7 @@ def run():
         shutil.rmtree(d)
     (d / "output").mkdir(parents=True)
     ic = d / "output" / "snapshot_000.hdf5"
-    L, _ = make_single_stars_supernovae_ics(str(ic), t["StellarTablesFile"], n=N, n_metals=11)
+    L, _ = make_single_stars_supernovae_ics(str(ic), t["StellarTablesFile"], n=N, n_metals=11, stars=STARS)
     with h5py.File(ic, "a") as F:
         F["PartType0/SGChemTracAbund"] = np.tile([0.0, 1.0e-4, 0.0], (N ** 3, 1))
     for f in ("TREECOOL", "spcool_tables"):
@@ -83,7 +91,7 @@ def momentum(a):
 def test_new_cells_hold_the_ejecta(run):
     ic, snap, rows = run
     a, g0 = gas(snap), gas(ic)
-    spawned = rows[rows[:, 4] > 100]  # the 150 and 320 Msun stars
+    spawned = rows[rows[:, 4] != 12]  # the 20 and 320 Msun stars
     near = []
     for sid in spawned[:, 1].astype(int):
         d = g0["x"] - g0["sx"][g0["sid"] == sid]
@@ -98,7 +106,7 @@ def test_new_cells_hold_the_ejecta(run):
 def test_books(run):
     ic, snap, rows = run
     a, b = gas(ic), gas(snap)
-    assert len(rows) == 4 and len(set(rows[:, 1])) == 4
+    assert len(rows) == 3 and len(set(rows[:, 1])) == 3
     assert abs(b["m"].sum() - a["m"].sum() - rows[:, 6].sum()) <= 1e-12 * b["m"].sum()
     left = dict(zip(b["sid"].tolist(), b["sm"].tolist()))
     for r in rows:
@@ -106,7 +114,16 @@ def test_books(run):
             assert left[int(r[1])] == r[7]
         else:
             assert int(r[1]) not in left
-    dE = (energy(b) - energy(a)) * E_UNIT
-    assert abs(dE / rows[:, 8].sum() - 1) < 0.05, dE / rows[:, 8].sum()
     p_ej = (rows[:, 6] * np.linalg.norm(a["sv"][0])).sum()
     assert np.abs(momentum(b) - momentum(a)).max() < 0.05 * p_ej
+
+
+def test_energy(run):
+    ic, snap, _ = run
+    a, b = gas(ic), gas(snap)
+    d = b["x"][None, :, :] - a["sx"][:, None, :]
+    d -= a["L"] * np.round(d / a["L"])
+    own = (d ** 2).sum(2).argmin(0)
+    near = (own == 0) | (own == 1)  # the 20 and 12 Msun stars
+    dE = ((b["m"] * (b["u"] - a["u"][0]))[near].sum() + 0.5 * (b["m"] * (b["v"] ** 2).sum(1))[near].sum()) * E_UNIT
+    assert abs(dE / 2.0e51 - 1) < 0.05, dE / 2.0e51

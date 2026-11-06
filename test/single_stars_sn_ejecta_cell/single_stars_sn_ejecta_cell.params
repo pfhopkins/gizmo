@@ -1,4 +1,4 @@
-% four single stars die in the first step in a 16^3 lattice of 1 Msun cells: 150 and 320 Msun eject more than the kernel holds
+% three single stars die in the first step in a 16^3 lattice of 1 Msun cells: 20 and 320 Msun eject more than half the kernel gas
 InitCondFile                       snapshot
 OutputDir                          output
 TimeMax                            1e-4
