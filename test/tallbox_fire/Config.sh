@@ -10,3 +10,4 @@ BOX_OUTFLOW_Z
 GRAVITY_PERIODIC_XY                   # shear-periodic x/y, open z self-gravity
 GRAVITY_ANALYTIC_STRATIFIED_DISK      # stellar disk + DM vertical gravity (StratDisk_* params)
 MULTIPLEDOMAINS=16
+OUTPUT_COOLRATE_DETAIL                # per-cell photoelectric heating, for the long-range FUV check

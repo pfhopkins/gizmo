@@ -2119,6 +2119,9 @@ void selfshield_local_incident_uv_flux(void)
 {   /* include local self-shielding with the following */
     int i; for (int i : ActiveParticleList)
     {
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+        if(P[i].time_since_last_treeforce > get_particle_timestep_in_physical(i)) {continue;} /* tree walk skipped this step: the flux is the last walk's, already converted and shielded */
+#endif
         if(P[i].Type==0)
         {
             if((CellP[i].Rad_Flux_UV>0) && (P[i].KernelRadius>0) && (CellP[i].Density>0) && (P[i].Mass>0) && (All.Time>0))
