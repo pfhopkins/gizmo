@@ -267,3 +267,29 @@ def test_SN_thermo_fidelity():
         f"remnant thermal energy {E_therm:.3e} outside [3.8e5, 6.4e5]: cooling through the "
         f"1e5-1e6 K band is off (inversion-correct ~5.1e5; the u->T chord defect gave 8.4e5)"
     )
+
+
+def test_SN_metals_extra_passive_species():
+    """METALS_EXTRA_PASSIVE_SPECIES=3 appends three zero slots to Metallicity and changes nothing else (bitwise)."""
+    generate_ics()
+    ranks, threads = default_mpi_ranks(), default_omp_threads()
+    flags = ("METALS_EXTRA_PASSIVE_SPECIES=3",)
+    build_and_run_test(TEST_NAME, ranks, threads, ())
+    build_and_run_test(TEST_NAME, ranks, threads, flags)
+    base = sorted(glob(f"{variant_output_dir(TEST_NAME, ())}/snapshot_*.hdf5"))
+    extra = sorted(glob(f"{variant_output_dir(TEST_NAME, flags)}/snapshot_*.hdf5"))
+    assert base and len(base) == len(extra)
+    for fb, fe in zip(base, extra):
+        with h5py.File(fb, "r") as hb, h5py.File(fe, "r") as he:
+            for ptype in hb:
+                if not ptype.startswith("PartType"):
+                    continue
+                assert set(hb[ptype]) == set(he[ptype]), (fe, ptype)
+                for key in hb[ptype]:
+                    b, e = hb[ptype][key][()], he[ptype][key][()]
+                    if key == "Metallicity":
+                        assert e.shape == (b.shape[0], b.shape[1] + 3), (fe, ptype)
+                        assert np.array_equal(e[:, :b.shape[1]], b), (fe, ptype, key)
+                        assert not np.any(e[:, b.shape[1]:]), (fe, ptype, key)
+                    else:
+                        assert np.array_equal(b, e), (fe, ptype, key)

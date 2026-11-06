@@ -20,7 +20,7 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_species_masses(const struct particle_
 {
     m[TREECOL_PIXELS_DUST] = m[TREECOL_PIXELS_H2] = m[TREECOL_PIXELS_CO] = 0;
     if(pp[i].Type != 0) {return;}
-    double dgr = (cell[i].Temp > 1.0e5) ? 0 : fmax(sgchem_dust_to_gas_ratio(pp[i].Metallicity[0]), 0.); /* hot gas: grains sputtered */
+    double dgr = (cell[i].Temp > 1.0e5) ? 0 : fmax(sgchem_cell_dust_to_gas_ratio(pp, cell, i), 0.); /* hot gas: grains sputtered */
     m[TREECOL_PIXELS_DUST] = dgr * pp[i].Mass;
     double m_H = pp[i].Mass / (1.0 + 4.0 * ABHE);
     m[TREECOL_PIXELS_H2] = 2.0 * cell[i].TracAbund[IH2] * m_H;

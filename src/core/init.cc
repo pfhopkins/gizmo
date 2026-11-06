@@ -9,6 +9,9 @@
 #include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 #include "../eos/composition_registry.h"
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#include "../galaxy_sf/stellar_solar_abundances.h"
+#endif
 
 
 /*! \file init.c
@@ -199,10 +202,13 @@ void init(void)
     All.SolarAbundances[9]=1.01e-4; // Ca  (6.34 -> 0.65e-4, AG=0.67e-4); PS=6.38->6.87e-5
     All.SolarAbundances[10]=1.73e-3; // Fe (7.50 -> 1.31e-3, AG=1.92e-3); PS=7.54->1.38e-3
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) // new default abundances; using Asplund et al. 2009 proto-solar abundances
-    All.SolarAbundances[0]=0.0142; if(NUM_METAL_SPECIES>=10) {
+    All.SolarAbundances[0]=0.0142; if(NUM_METAL_SPECIES_BASE>=10) {
         All.SolarAbundances[1]=0.27030; All.SolarAbundances[2]=2.53e-3; All.SolarAbundances[3]=7.41e-4; All.SolarAbundances[4]=6.13e-3; All.SolarAbundances[5]=1.34e-3;
         All.SolarAbundances[6]=7.57e-4; All.SolarAbundances[7]=7.12e-4; All.SolarAbundances[8]=3.31e-4; All.SolarAbundances[9]=6.87e-5; All.SolarAbundances[10]=1.38e-3;}
 #endif
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    stellar_solar_abundances_fire_slots(All.SolarAbundances, NUM_LIVE_SPECIES_FOR_COOLTABLES); /* the stellar tables' solar composition (Z = 0.014), as stella_dev */
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     Initialize_ISMDustChem_Global_Variables();
@@ -446,6 +452,9 @@ void init(void)
             /* need to allow for a primordial He abundance */
             if(NUM_LIVE_SPECIES_FOR_COOLTABLES>=10) P[i].Metallicity[1]=(1.-HYDROGEN_MASSFRAC)+(All.SolarAbundances[1]-(1.-HYDROGEN_MASSFRAC))*P[i].Metallicity[0]/All.SolarAbundances[0];
             }
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
+            for(j=0;j<STELLAR_EXTRA_NELEM;j++) {P[i].Metallicity[METALS_EXTRA_PASSIVE_SPECIES_OFFSET+j]=stellar_solar_massfrac[stellar_extra_slot_elem[j]]*(P[i].Metallicity[0]/All.SolarAbundances[0]);} /* the other 16 elements, solar */
+#endif
         } // if(RestartFlag == 0)
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
@@ -858,6 +867,9 @@ void init(void)
 #endif
 #if defined(SINK_THERMALFEEDBACK)
         CellP[i].Injected_Sink_Energy = 0;
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        for(j=0;j<NUM_METAL_SPECIES;j++) {CellP[i].Dyield_pending[j] = 0;}
 #endif
     }
 #ifdef EOS_ELASTIC

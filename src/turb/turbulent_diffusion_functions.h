@@ -5,8 +5,9 @@
  * the flag is off the function compiles to a no-op.
  *
  * Writes out.Dyield[k] (i-side, per-thread accumulator, no atomic needed).
- * j-side writes have been removed — they were gated on the legacy
- * j_is_active_for_fluxes flag which is always 0 in modern GIZMO.
+ * With TURB_DIFF_METALS_EXACT_CONSERVATION, each side moves half the exchange and
+ * books the opposite half into pending_j (CellP[j].Dyield_pending, atomic),
+ * which j applies at its next active step; pending_j exists only with the flag.
  * Each side applies the exchange for its own step: the limiters bound the amount
  * over the pair step dt_pair = max(dt_i, dt_j), and cell i receives the fraction
  * dt_i/dt_pair of it.
@@ -35,7 +36,11 @@ void turb_diff_metals_compute_pair(
     double dt_pair,
     double dt_i,
     double mdot_estimated,
-    struct hydro_data_out &out)
+    struct hydro_data_out &out
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+    , MyDouble *pending_j
+#endif
+    )
 {
 #ifdef TURB_DIFF_METALS
     if(!((local.Mass>0) && (Pj.Mass>0) && ((local.TD_DiffCoeff>MIN_REAL_NUMBER) || (CPj.TD_DiffCoeff>MIN_REAL_NUMBER)))) { return; }
@@ -55,6 +60,9 @@ void turb_diff_metals_compute_pair(
     double rho_ij = 0.5 * (rho_i + rho_j);
     const double dt_fraction_i = (dt_pair > 0) ? dt_i / dt_pair : 0; /* cell i receives the amount for its own step */
 
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && defined(GALSF_SINGLE_STARS_27_ELEMENT_YIELDS)
+    double cmag_slot[NUM_METAL_SPECIES] = {0}; /* total Z takes the sum of the metal slots, applied after the loop */
+#endif
     for(int k_species=0; k_species<NUM_METAL_SPECIES; k_species++)
     {
         double cmag = 0.0, grad_dot_x_ij = 0.0;
@@ -93,9 +101,33 @@ void turb_diff_metals_compute_pair(
             double dmet = (Z_j - local.Metallicity[k_species]) * fabs(mdot_estimated) * dt_pair;
             cmag = MINMOD(dmet, cmag);
 #endif
+#ifdef TURB_DIFF_METALS_MAX_DONOR_FRACTION_PER_PAIR
+            /* the donor loses at most this fraction of its species-k mass per pair (same value from either side) */
+            double pair_cap = (TURB_DIFF_METALS_MAX_DONOR_FRACTION_PER_PAIR) * ((cmag > 0) ? Pj.Mass*Z_j : local.Mass*local.Metallicity[k_species]);
+            if(fabs(cmag) > pair_cap) { cmag = (cmag > 0) ? pair_cap : -pair_cap; }
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+            /* each side moves half the exchange over its own step; j's share waits in its pending buffer */
+            cmag *= 0.5 * dt_fraction_i;
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
+            cmag_slot[k_species] = cmag;
+#else
+            out.Dyield[k_species] += cmag;
+            Kokkos::atomic_add(&pending_j[k_species], (MyDouble)(-cmag));
+#endif
+#else
             out.Dyield[k_species] += cmag * dt_fraction_i;
+#endif
         }
     }
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && defined(GALSF_SINGLE_STARS_27_ELEMENT_YIELDS)
+    cmag_slot[0] = 0;
+    for(int k = 2; k <= NUM_LIVE_SPECIES_FOR_COOLTABLES; k++) {cmag_slot[0] += cmag_slot[k];} /* slot 1 is He */
+    for(int k = 0; k < 16; k++) {cmag_slot[0] += cmag_slot[METALS_EXTRA_PASSIVE_SPECIES_OFFSET + k];}
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {
+        if(cmag_slot[k] != 0) {out.Dyield[k] += cmag_slot[k]; Kokkos::atomic_add(&pending_j[k], (MyDouble)(-cmag_slot[k]));}
+    }
+#endif
 #endif /* TURB_DIFF_METALS */
 }
 

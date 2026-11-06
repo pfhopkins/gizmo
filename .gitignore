@@ -164,3 +164,7 @@ test/ledger_cr_rows/output_*/
 test/single_stars_cr_injection/run_*/
 test/single_stars_collect_gas_cr/run/
 test/single_stars_cr_speed/run_*/
+test/single_stars_metals/run_*/
+test/single_stars_metals/GIZMO_*
+test/single_stars_metals/TREECOOL
+test/single_stars_metals/spcool_tables

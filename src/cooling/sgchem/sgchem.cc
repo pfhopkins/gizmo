@@ -9,6 +9,7 @@
 #include "../../declarations/allvars.h"
 #include "../../core/proto.h"
 #include "chem_interface.h"
+#include "sgchem_config.h"
 #include "../../galaxy_sf/stella_tables_check.h"
 
 #ifdef SGCHEM
@@ -84,6 +85,13 @@ void sgchem_init(void)
     p.cr_energy_density = 0.0;
     p.dust_to_gas_ratio = All.SGChemDustToGasRatio;
     chem_cxx_tables_init(&p);
+#ifdef SGCHEM_DGR_INDEPENDENT_OF_METALLICITY
+    {double z_dust = All.SGChemDustToGasRatio * 0.01 / SGCHEM_SOLAR_Z; /* InitMetallicity [solar] below which dust (0.01 x ratio) exceeds the metals */
+    if(RestartFlag == 0 && All.InitMetallicityinSolar < z_dust) {
+        if(ThisTask == 0) {printf("SGCHEM_DGR_INDEPENDENT_OF_METALLICITY: InitMetallicity %g < %g gives a dust mass above the metal mass; lower SGChemDustToGasRatio or drop the flag\n", All.InitMetallicityinSolar, z_dust);}
+        endrun(78004);
+    }}
+#endif
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
     ledger_init();
 #endif

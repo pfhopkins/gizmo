@@ -129,6 +129,24 @@ static double fac_magnetic_pressure;
     hydro routines, AFTER the neighbors have all been checked and summed */
 /* --------------------------------------------------------------------------------- */
 /* --------------------------------------------------------------------------------- */
+#if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
+/*! global gas metal budget after each hydro step: sum of M*Z, and the diffusive exchange still pending (0 without TURB_DIFF_METALS_EXACT_CONSERVATION) */
+static void turb_diff_metals_budget_log(void)
+{
+    double loc[2] = {0, 0}, tot[2];
+    for(int i = 0, n_local = ghost_get_num_local(); i < n_local; i++) /* imported ghost copies sit above the local cells here */
+    {
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        loc[0] += P[i].Mass * P[i].Metallicity[0];
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        loc[1] += CellP[i].Dyield_pending[0];
+#endif
+    }
+    MPI_Allreduce(loc, tot, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e\n", All.Time, tot[0], tot[1]);}
+}
+#endif
+
 void hydro_final_operations_and_cleanup(void)
 {
 #ifdef _OPENMP
@@ -294,7 +312,12 @@ void hydro_final_operations_and_cleanup(void)
 
 
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)) /* update the metal masses from exchange */
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION /* add the exchange received while inactive; floor at 0 (a fractional floor creates metal) */
+            for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] += CellP[i].Dyield_pending[k]; CellP[i].Dyield_pending[k] = 0;}
+            for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.);}
+#else
             for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange: offsets within Dyield match Metallicity layout */
             {int dc0 = ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY; /* base offset for dustchem in Metallicity/Dyield */
             for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[dc0+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
@@ -418,6 +441,9 @@ void hydro_final_operations_and_cleanup(void)
         } // closes P[i].Type==0 check and so closes loop over particles i
     } // for (loop over active particles) //
 
+#if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
+    turb_diff_metals_budget_log();
+#endif
     
 #ifdef TURB_DRIVING
     add_turb_accel(); // update turbulent driving fields and TurbAccel fields at same time as update HydroAccel, here. With TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE a cell's TurbAccel is only recomputed after the driving phases change, as set by TurbDrive_TimeBetweenTurbUpdates; to avoid large errors that must be set by-hand to be << lambda_min / V where V is the typical turbulent velocity and lambda_min is the smallest driven wavelength.

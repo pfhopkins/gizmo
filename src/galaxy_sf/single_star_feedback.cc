@@ -10,6 +10,10 @@
 #include "../declarations/gpu_rng.h"
 #include "single_star_record.h"
 #include "stellar_evolution_tables.h"
+#include "stellar_solar_abundances.h"
+#ifdef GALSF_ISMDUSTCHEM_MODEL
+#include "../solids/ism_dust_chemistry_functions.h"
+#endif
 
 /* Single-star source model for the shared mechanical feedback loop: IMF-sampled stars (single_star_record.h) take their
  * event times, ejecta, energies, yields and remnants from the stellar-evolution tables (stellar_evolution_tables.h).
@@ -212,6 +216,38 @@ double single_star_eventrates(int i, double dt)
     return 1;
 }
 
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && (NUM_LIVE_SPECIES_FOR_COOLTABLES >= 10)
+/* dust condensed in the event's ejecta, as stella_dev resolvedism_dust.cc (Choban+22 efficiencies), in the species of
+   GALSF_ISMDUSTCHEM_MODEL: SN carbon 0.15 of C, silicate 3.5e-4 and iron 1e-3 of the key element; Type Ia iron 5e-3;
+   AGB deaths and slow winds (< 100 km/s) by C/O: carbon = C not in CO, else silicate 0.8 with the O not in CO */
+static void single_star_dust_yields(const struct single_star_event *ev, double *yields)
+{
+    double y[NUM_ISMDUSTCHEM_ELEMENTS], species[NUM_ISMDUSTCHEM_SPECIES] = {0}, dust[NUM_ISMDUSTCHEM_ELEMENTS] = {0}, f_sil = 0, f_c = 0, f_fe = 0, carb = -1;
+    for(int k = 0; k < NUM_ISMDUSTCHEM_ELEMENTS; k++) {y[k] = yields[k];} /* FIRE slots, fractions of the ejecta */
+    if(ev->kind == SSE_SN) {f_c = 0.15; f_sil = 3.5e-4; f_fe = 1.e-3;}
+    else if(ev->kind == SSE_IA) {f_fe = 5.e-3;}
+    else if(ev->kind == SSE_AGB || ev->v_kms < 100.) {
+        if(y[2] / 12. > y[4] / 16.) {carb = DMAX(y[2] - 0.75 * y[4], 0);}
+        else {f_sil = 0.8; y[4] = DMAX(y[4] - 4. / 3. * y[2], 0) / 0.8;}
+    }
+    for(int k = 0; k < NUM_ISMDUSTCHEM_SPECIES; k++) {
+        int s = All.ISMDustChem_TrackedSpeciesIDTable[k], key; double n_key, m_key, w, rho_bulk;
+        if(s == All.ISMDustChem_Carb_Index && carb >= 0) {species[k] = carb; continue;}
+        double f = (s == All.ISMDustChem_Sil_Index) ? f_sil : (s == All.ISMDustChem_Carb_Index) ? f_c : (s == All.ISMDustChem_FreeIron_Index) ? f_fe : 0;
+        if(f <= 0) {continue;}
+        ISMDustChem_get_species_key_elem(s, y, &key, &n_key, &m_key);
+        if(key < 0) {continue;}
+        ISMDustChem_get_species_properties(s, &w, &rho_bulk);
+        species[k] = f * y[key] * w / (n_key * m_key);
+    }
+    ISMDustChem_get_elem_yields_from_species_yields(dust, species);
+    for(int k = 0; k < NUM_ISMDUSTCHEM_ELEMENTS; k++) {yields[ISMDUSTCHEM_DUST_METAL_OFFSET_IN_METALLICITY + k] = dust[k];}
+    for(int k = 0; k < NUM_ISMDUSTCHEM_SOURCES; k++) {yields[ISMDUSTCHEM_DUST_SOURCE_OFFSET_IN_METALLICITY + k] = 0;}
+    yields[ISMDUSTCHEM_DUST_SOURCE_OFFSET_IN_METALLICITY + ((ev->kind == SSE_IA) ? 1 : (ev->kind == SSE_SN) ? 2 : 3)] = dust[0]; /* 1 Type Ia, 2 SN, 3 AGB */
+    for(int k = 0; k < NUM_ISMDUSTCHEM_SPECIES; k++) {yields[ISMDUSTCHEM_DUST_SPECIES_OFFSET_IN_METALLICITY + k] = species[k];}
+}
+#endif
+
 /* single-star branch of particle2in_addFB_fromstars: the event's ejecta mass, ejecta speed and yields */
 void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration)
 {
@@ -228,6 +264,12 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
     in->yields[0] = z / ev.Mej;
 #if (NUM_LIVE_SPECIES_FOR_COOLTABLES >= 10)
     for(int k = 1; k <= 10; k++) {in->yields[k] = ev.y[single_star_fire_slot_elem[k]] / ev.Mej;}
+#endif
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
+    for(int k = 0; k < STELLAR_EXTRA_NELEM; k++) {in->yields[METALS_EXTRA_PASSIVE_SPECIES_OFFSET + k] = ev.y[stellar_extra_slot_elem[k]] / ev.Mej;}
+#endif
+#if defined(GALSF_ISMDUSTCHEM_MODEL) && (NUM_LIVE_SPECIES_FOR_COOLTABLES >= 10)
+    single_star_dust_yields(&ev, in->yields);
 #endif
 #endif
 }

@@ -1527,6 +1527,17 @@
 #undef MHD_CONSTRAINED_GRADIENT_MIDPOINT
 #endif
 
+#if defined(TURB_DIFF_METALS) && defined(GALSF_SINGLE_STARS_FROM_IMF) /* defaults of the single-star model */
+#ifndef TURB_DIFF_METALS_EXACT_CONSERVATION
+#define TURB_DIFF_METALS_EXACT_CONSERVATION
+#endif
+#ifndef TURB_DIFF_METALS_MAX_DONOR_FRACTION_PER_PAIR
+#define TURB_DIFF_METALS_MAX_DONOR_FRACTION_PER_PAIR 0.01
+#endif
+#endif
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
+#error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
+#endif
 #if defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(TURB_DIFF_MASS) || defined(TURB_DIFF_METALS)
 #define TURB_DIFFUSION /* top-level switch to calculate properties needed for scalar turbulent diffusion/mixing: must enable with any specific version */
 #if defined(TURB_DIFF_VELOCITY) && !defined(VISCOSITY)
@@ -1768,10 +1779,29 @@
 #endif
 
 /* NUM_METAL_SPECIES: total size of Metallicity[] array, including ALL passive scalars.
-   Layout: [total_Z, cooling_species..., rprocess..., age_tracers..., starforge_tracers..., dustchem..., nuclear...]
+   Layout: [total_Z, cooling_species..., rprocess..., age_tracers..., starforge_tracers..., dustchem..., nuclear..., extra passive species...]
    Every module that adds fields must add its count here so that all loops, I/O, diffusion,
    merge/split, and MPI exchange automatically handle the correct number of species. */
-#define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS+NUM_ISMDUSTCHEM_PASSIVE_SCALARS+NUM_NUCLEAR_PASSIVE_SCALARS)
+/* passive species appended at the end of Metallicity[] (carried, diffused, merged/split and written; not used by cooling) */
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS /* the 16 table elements outside the FIRE slots go into the first 16 extra passive slots */
+#if !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || !defined(COOL_METAL_LINES_BY_SPECIES)
+#error "GALSF_SINGLE_STARS_27_ELEMENT_YIELDS needs GALSF_SINGLE_STARS_EVOLUTION_TABLES and COOL_METAL_LINES_BY_SPECIES"
+#endif
+#ifndef METALS_EXTRA_PASSIVE_SPECIES
+#define METALS_EXTRA_PASSIVE_SPECIES 16
+#elif (METALS_EXTRA_PASSIVE_SPECIES < 16)
+#error "GALSF_SINGLE_STARS_27_ELEMENT_YIELDS needs METALS_EXTRA_PASSIVE_SPECIES >= 16"
+#endif
+#endif
+#ifndef METALS_EXTRA_PASSIVE_SPECIES
+#define METALS_EXTRA_PASSIVE_SPECIES 0
+#endif
+#if (METALS_EXTRA_PASSIVE_SPECIES > 0) && !defined(METALS)
+#error "METALS_EXTRA_PASSIVE_SPECIES requires METALS"
+#endif
+#define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS+NUM_ISMDUSTCHEM_PASSIVE_SCALARS+NUM_NUCLEAR_PASSIVE_SCALARS+METALS_EXTRA_PASSIVE_SPECIES)
+#define METALS_EXTRA_PASSIVE_SPECIES_OFFSET (NUM_METAL_SPECIES-METALS_EXTRA_PASSIVE_SPECIES) /* first appended slot */
+#define NUM_METAL_SPECIES_BASE (NUM_METAL_SPECIES-METALS_EXTRA_PASSIVE_SPECIES) /* species count without the appended slots, for the checks on the cooling-species layout */
 
 /* offset of ISM dustchem species within Metallicity array */
 #define AGE_TRACER_OFFSET (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES) /* first enrichment-age-tracer slot in Metallicity[]; other tracers and scalars follow */
@@ -1840,6 +1870,12 @@
 #endif
 #if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(GALSF) && !defined(METALS)
 #error "OUTPUT_MASS_METAL_ENERGY_LEDGER: the star-formation and feedback rows need METALS"
+#endif
+#if defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY) && !defined(SGCHEM)
+#error "SGCHEM_DGR_INDEPENDENT_OF_METALLICITY needs SGCHEM"
+#endif
+#if defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY) && defined(GALSF_ISMDUSTCHEM_MODEL)
+#error "SGCHEM_DGR_INDEPENDENT_OF_METALLICITY has no effect with GALSF_ISMDUSTCHEM_MODEL (live dust sets the dust-to-gas ratio)"
 #endif
 #ifdef SGCHEM /* SGChem chemistry (cooling/sgchem/) */
 #if defined(CHIMES)

@@ -566,7 +566,7 @@ void star_formation_parent_routine(void)
                 static constexpr uint64_t SF_ENRICHMENT_RNG_SALT = gizmo_loop_rng_salt("star_formation_enrichment");
                 double w = particle_random_number(i, SF_ENRICHMENT_RNG_SALT, (uint64_t)All.Ti_Current, 0);
                 P[i].Metallicity[0] += w * All.SolarAbundances[0] * pfac;
-                if(NUM_METAL_SPECIES>=10) {int k; for(k=1;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] += w * All.SolarAbundances[k] * pfac;}}
+                if(NUM_METAL_SPECIES_BASE>=10) {int k; for(k=1;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] += w * All.SolarAbundances[k] * pfac;}}
 #endif
                 
                 static constexpr uint64_t STAR_FORMATION_RNG_SALT = gizmo_loop_rng_salt("star_formation");
@@ -790,7 +790,7 @@ void star_formation_parent_routine(void)
                 if(P[i].Type == 0)    /* to protect using a particle that has been turned into a star */
                 {
                     P[i].Metallicity[0] += (1 - w) * All.SolarAbundances[0] * pfac;
-                    if(NUM_METAL_SPECIES>=10) {int k; for(k=1;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] += (1-w) * All.SolarAbundances[k] * pfac;}}
+                    if(NUM_METAL_SPECIES_BASE>=10) {int k; for(k=1;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] += (1-w) * All.SolarAbundances[k] * pfac;}}
                 }
 #endif
             } // closes check of flag==0 for star-formation operation

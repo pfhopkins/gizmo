@@ -279,7 +279,7 @@ KOKKOS_INLINE_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, d
 #ifdef METALS
     if(target >= 0)
     {
-        Z = DMIN(0.25,pp[target].Metallicity[0]); if(NUM_METAL_SPECIES>=10) {Y = DMIN(0.35,pp[target].Metallicity[1]);}
+        Z = DMIN(0.25,pp[target].Metallicity[0]); if(NUM_METAL_SPECIES_BASE>=10) {Y = DMIN(0.35,pp[target].Metallicity[1]);}
         X = 1. - (Y+Z);
     }
 #endif
