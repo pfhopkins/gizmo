@@ -1,8 +1,8 @@
-"""single_stars_sn_ejecta_cell: a supernova whose kernel holds less gas than f x its ejecta mass (GALSF_SINGLE_STARS_SN_EJECTA_CELL=f, here 2)
+"""single_stars_sn_ejecta_cell: a supernova whose kernel holds less gas than f x its ejecta mass (GALSF_SINGLE_STARS_SN_EJECTA_CELL=f, here 2.5)
 is not deposited: its ejecta, explosion energy and yields become one new gas cell at the star, made at the merge/split point, and the
 split routine refines it. Production model (SGChem net 5, tables, 2 ranks). A 16^3 lattice of 1 Msun cells at n_H = 10, three stars past
-their lifetime at Z = 0.014, 100 yr: 12 Msun (10.6 Msun ejecta, 2 x that below the ~32 Msun of its kernel: deposited), 20 Msun (18.5 Msun
-ejecta: a new cell), 320 Msun (a new cell, no remnant).
+their lifetime at Z = 0.014, 100 yr. The kernels hold 32 to 41 Msun, by where the star sits in the lattice (measured): 12 Msun (10.7 Msun ejecta,
+threshold 26.7 Msun: deposited), 20 Msun (18.5 Msun ejecta, threshold 46 Msun: a new cell), 320 Msun (a new cell, no remnant).
 
 Bars:
   test_new_cells_hold_the_ejecta: new cells are the cells with a child ID whose ID is one of the IC cells within 2.5 cells of the 20 and 320 Msun
@@ -18,6 +18,8 @@ Moved after the first runs, with these reasons:
   - energy: the first version had 20, 40, 150, 320 Msun at f = 1 and asked the total for 3e51 erg to 5 %, on the claim that 100 yr of cooling changes
     the books by little. That claim is false for the heavy ejecta cells: 320 Msun at Z = 0.96 keeps 2e48 of its 1e51 erg, 150 Msun keeps 6.2e50, the
     20 Msun deposit 9.9e50. The energy bar now sits on the ejecta mass the option is meant for, and the 320 Msun star only on mass and metals.
+  - f: 2 took the kernel gas as 32 Msun, but the 20 Msun star's kernel held more than its threshold of 36.9, so it deposited; test_new_cells_hold_the_ejecta
+    caught it (330.4 against 338.5 Msun), and test_energy had passed on two deposits. 2.5 clears the measured 32 to 41 Msun on both sides.
 """
 import os
 import shutil
