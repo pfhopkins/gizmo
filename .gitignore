@@ -52,6 +52,8 @@ test/*/*.log
 test/*/*.bak
 test/*/*_ics.hdf5
 test/*/spcool_tables/
+# ...and the symlink to it that HII_region_simple/_subcycle make (a symlink is not a directory to git)
+test/*/spcool_tables
 test/*/spcool_tables.tgz
 test/*/TREECOOL
 test/*/ewald_spc_table_*.dat

@@ -77,6 +77,13 @@ SinkFeedSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
                                               fallback value is never observed. */
 #endif
     scalars.rng_ti                 = (uint64_t)h->Ti_Current;
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    scalars.sink_merger_max_mass          = h->SinkMergerMaxMass;
+    scalars.sink_merger_max_radius_factor = h->SinkMergerMaxRadiusFactor;
+#else
+    scalars.sink_merger_max_mass          = 0;
+    scalars.sink_merger_max_radius_factor = 1;
+#endif
     return scalars;
 }
 

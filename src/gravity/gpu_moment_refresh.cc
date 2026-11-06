@@ -295,11 +295,14 @@ static int  fmirror_cap_     = 0;   /* current capacity in particles */
 
 static int *father_mirror_ensure_(int N)
 {
-    if(fmirror_cap_ < N) {
+    /* At least one entry: a rank holding no particles (a few-body run decomposed over more ranks than it
+     * has busy particles) still builds a tree, and NULL is this function's failure signal. */
+    if(fmirror_cap_ < N || !fmirror_persist_) {
+        const int cap = (N > 1) ? N : 1;
         if(fmirror_persist_) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fmirror_persist_); fmirror_persist_ = NULL;}
-        fmirror_persist_ = (int *) mr_alloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_fmirror", (long)N * sizeof(int));
+        fmirror_persist_ = (int *) mr_alloc<GIZMO_KOKKOS_SHARED_SPACE>("treescratch_moment_fmirror", (long)cap * sizeof(int));
         if(!fmirror_persist_) {printf("gpu_moment_refresh: Father mirror alloc failed\n"); endrun(913305); fmirror_cap_ = 0; return NULL;}
-        fmirror_cap_ = N;
+        fmirror_cap_ = cap;
     }
     /* Father[] only has All.TreeParticleSlots entries, while N counts every particle P[] holds, and
      * that can be the larger of the two once the particle capacity is raised mid-step.  Slots beyond

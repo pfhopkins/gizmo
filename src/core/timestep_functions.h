@@ -430,9 +430,17 @@ int eligible_for_hermite(int i, struct particle_data *pp)
 #if defined(GALSF) /* the formation time only exists, and new particles are only spawned, with GALSF */
     if(pp[i].StellarAge >=DMAX(All.Time - 2*(get_particle_timestep_in_physical(i, pp)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
 #endif
-#if defined(SINK_PARTICLES) || defined(GALSF)
-    if(pp[i].AccretedThisTimestep) {return 0;}
-#endif
+    /* An accreting sink STAYS Hermite-integrated. It used to fall back to KDK for the step
+       ("for stability reasons"), but that decision is per-particle, so when one member of a hard
+       pair accreted and the other did not, the two were integrated by different schemes in the
+       same step and the forces between them stopped being reciprocal. Measured on a 116.6+39.3
+       Msun pair at 20 AU: the members disagreed on 4.5% of steps, per-step sink momentum change
+       jumped 232x on exactly those steps, and total momentum drifted 131 Msun km/s in one sync
+       interval. What the fallback was compensating for is fixed at the source instead: accretion
+       shifts the Hermite carry state along with Pos/Vel (sinks/sink.cc), so the predictor no
+       longer works from a stale base. Coupling eligibility across a pair was rejected: it would
+       demote both members, and losing eligibility shortens the step by SINK_TIMESTEP_SAFETY_FACTOR,
+       which ratchets the hierarchy downward with no matching path back up. */
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     if(pp[i].SuperTimestepFlag >= 2) {return 0;}
 #endif
@@ -456,6 +464,34 @@ static_assert(TIMEBINS <= 64, "HermiteWalkState carries the active timebins as a
  *  Host globals: the walks consume them on the host, and the device walk is handed a copy. */
 extern struct HermiteWalkState   HermiteWalk;
 extern struct DriftKickTableView HermiteWalkTables;   /*!< assembled only while HermiteOnlyFlag is set */
+
+/*! Owner-side source state of one Hermite-type particle for a Hermite pass.
+ *
+ *  A foreign leaf in the imported tree is a moment snapshot taken at the last tree build, so in a
+ *  Hermite pass it stands where the leapfrog left it with the leapfrog velocity, not where the
+ *  owner's Hermite predictor/corrector has put it, and it has no Old* state to re-predict from.
+ *  Each Hermite pass every rank therefore publishes, for its own Hermite-type particles, the state a
+ *  LOCAL walk would read (live state, or the Old* prediction for an inactive eligible source), and
+ *  the walks substitute it for a foreign leaf's position and velocity, looked up by particle ID.
+ *  Sorted by ID; SharedSpace, so the device walk reads it directly. */
+struct hermite_ghost_entry {
+    MyIDType id;
+    Vec3<double> pos, vel;
+};
+extern struct hermite_ghost_entry *HermiteGhostTab;   /*!< non-NULL only inside a Hermite-pass gravity_tree() */
+extern int NHermiteGhost;
+
+KOKKOS_INLINE_FUNCTION int hermite_ghost_lookup(const struct hermite_ghost_entry *tab, int n, MyIDType id)
+{
+    int lo = 0, hi = n - 1;
+    while(lo <= hi)
+    {
+        const int mid = lo + ((hi - lo) >> 1);
+        if(tab[mid].id == id) {return mid;}
+        if(tab[mid].id < id) {lo = mid + 1;} else {hi = mid - 1;}
+    }
+    return -1;
+}
 
 /*! Take the snapshot. Host only: it reads the host globals the walks cannot see from
  *  device code, which is the whole reason the snapshot exists. */
@@ -482,14 +518,26 @@ static inline struct HermiteWalkState hermite_walk_state_snapshot(void)
  *  be empty and would return the start of its previous step. On the corrector pass
  *  do_hermite_prediction has already written the predicted state into Pos and Vel.
  *
+ *  The prediction is also gated on the extrapolation span. The Old* polynomial interpolates
+ *  the source over its OWN step; used past that it is an extrapolation outside its convergence
+ *  radius, and for a close pair it can displace the source by multiples of the separation with
+ *  a sign correlated to the orbit, which rectifies into a centre-of-mass drift rather than
+ *  averaging out. Outside the span the caller falls through to the leapfrog-drifted state:
+ *  larger-order error, but unbiased. A span beyond the step can only come from a stale
+ *  Ti_begstep; find_timesteps now re-derives the marker from the clock, so this is the
+ *  consumer-side guard for whatever still slips through.
+ *
  *  The type test comes first because it is a mask compare, while the full predicate
- *  below it reads several fields and computes a timestep. */
+ *  below it reads several fields and computes a timestep; the span test is two integer
+ *  compares and goes ahead of it for the same reason. */
 KOKKOS_INLINE_FUNCTION
 int hermite_source_needs_prediction(int no, struct particle_data *pp, struct HermiteWalkState hw)
 {
     if(!hw.hermite_only) {return 0;}
     if(!(HERMITE_INTEGRATION & (1 << pp[no].Type))) {return 0;}
     if(hw.active_bins & (1ULL << pp[no].TimeBin)) {return 0;}
+    if(hw.ti_current < pp[no].Ti_begstep) {return 0;}
+    if(hw.ti_current - pp[no].Ti_begstep > pp[no].integertime_step()) {return 0;}
     return eligible_for_hermite(no, pp);
 }
 

@@ -41,7 +41,7 @@ void find_timesteps(void)
     CPU_Step[CPU_MISC] += measure_time();
 
     int i, bin, binold, prev, next;
-    integertime ti_step, ti_step_old, ti_min, ti_stepmax, ti_max;
+    integertime ti_step, ti_min, ti_stepmax, ti_max;
     double aphys;
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     int special_particle_active_with_this_index[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM], j_specialpartical_counter=0;
@@ -139,6 +139,9 @@ void find_timesteps(void)
     }
 
     /* Now assign new timesteps  */
+#ifdef DEVELOPER_MODE
+    int n_stale_marker_warnings = 0; /* the stale-marker report below is capped per call: one line per particle would swamp the log */
+#endif
     for (int i : ActiveParticleList)
     {
         if(!records_threaded) {domain_record_step_work(i);}   /* this step's work, before the timebin below changes */
@@ -147,6 +150,34 @@ void find_timesteps(void)
 #else
         ti_step = get_timestep(i, &aphys, 0);
         ti_step = (integertime)(((double)ti_step) / timestep_dilation_factor(i, P)); /* get_timestep above froze the factor for this particle */
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+        /* Time-symmetric step choice (Hut, Makino & McMillan 1995; block form Makino et al. 2006).
+           The default rule sets a step from the criterion f at its start alone: the largest f over
+           the step while f falls (inbound), the smallest while it rises (outbound). The hierarchy
+           then shrinks and grows one full step late at every bin level, the step sequence is not
+           reversible, and an eccentric orbit drifts in energy although each Hermite step is
+           time-symmetric. Instead take the largest h' in {2h, h, h/2, ...} with
+           h' <= (f_start + f_end)/2, f_end extrapolated linearly from f at the start of the step
+           just completed. f depends on positions and |velocities| only, so it is even under time
+           reversal. Without a criterion history the default rule applies. Ti_begstep still holds
+           the start of the step just completed here; it advances below. */
+        if(P[i].dt_crit_last > 0 && P[i].dt_crit_prev > 0 && All.Ti_Current > P[i].Ti_begstep && P[i].TimeBin > 1)
+        {
+            double ticks_per_unit = 1. / (All.Timebase_interval * timestep_dilation_factor(i, P));
+            double f1 = P[i].dt_crit_last * ticks_per_unit, f0 = P[i].dt_crit_prev * ticks_per_unit; /* in ticks */
+            double dfdh = (f1 - f0) / (double)(All.Ti_Current - P[i].Ti_begstep);
+            double hmax = DMIN(All.MaxSizeTimestep, dt_displacement) * ticks_per_unit;
+            int b;
+            for(b = P[i].TimeBin + 1; b > 1; b--)
+            {
+                double h_try = (double) GET_INTEGERTIME_FROM_TIMEBIN(b);
+                if(h_try > hmax) {continue;}
+                double f2 = DMAX(f1 + dfdh * h_try, 0.01 * f1); /* floor: keeps a steep extrapolated decline positive */
+                if(h_try <= 0.5 * (f1 + f2)) {break;}
+            }
+            ti_step = GET_INTEGERTIME_FROM_TIMEBIN(b); /* growth still goes through the sync-point rule below */
+        }
+#endif
 #endif
         
 #if !defined(FORCE_EQUAL_TIMESTEPS) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
@@ -230,8 +261,25 @@ void find_timesteps(void)
             P[i].TimeBin = bin;
         }
 
-        ti_step_old = P[i].dt_step;
-        P[i].Ti_begstep += ti_step_old;
+        /* Start the new step at the clock, not at the old step plus its length. Being in
+           ActiveParticleList here IS the statement that the particle is synchronized at
+           All.Ti_Current, so for consistent bookkeeping the two forms are bit-identical. They
+           differ only when something upstream left the marker wrong, and then the incremental
+           form advances faithfully from the wrong origin forever -- there is no other absolute
+           write on this path, so a single bad step is permanent. Downstream that shows up as a
+           Hermite source prediction extrapolated over many times the source's own step, far
+           outside the interpolant's convergence radius. Kick intervals are unaffected: kicks
+           take differences of endpoints derived from the same marker, and this lands between
+           the closing and opening kicks, not inside either. */
+#ifdef DEVELOPER_MODE
+        if(P[i].Ti_begstep + P[i].dt_step != All.Ti_Current)
+        {   /* the absolute write heals silently, so report what it healed -- otherwise the next
+               thing that corrupts the marker is invisible */
+            if(n_stale_marker_warnings < 8) {PRINT_WARNING("find_timesteps: step marker for particle ID=%llu type=%d was %lld ticks from the clock (Ti_begstep=%lld dt_step=%lld Ti_Current=%lld); re-deriving", (unsigned long long)P[i].ID, (int)P[i].Type, (long long)(All.Ti_Current - P[i].Ti_begstep - P[i].dt_step), (long long)P[i].Ti_begstep, (long long)P[i].dt_step, (long long)All.Ti_Current);}
+            n_stale_marker_warnings++;
+        }
+#endif
+        P[i].Ti_begstep = All.Ti_Current;
         P[i].dt_step = ti_step;
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
         if(P[i].Type == 5){
@@ -255,6 +303,10 @@ void find_timesteps(void)
 #endif
         
     }
+
+#ifdef DEVELOPER_MODE
+    if(n_stale_marker_warnings > 8) {PRINT_WARNING("find_timesteps: %d stale step markers re-derived on this task this step (first 8 reported above)", n_stale_marker_warnings);}
+#endif
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     MPI_Allreduce(xyz_local, xyz_global, 3*SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD); // broadcast the new position of the special particle
@@ -486,9 +538,46 @@ integertime get_timestep(int p,		/*!< particle index */
 #define SINK_TIMESTEP_SAFETY_FACTOR (0.3)
 #endif
 
+/* Coefficients on dt_tidal, for collisionless particles and for gas. GIZMO's value is 1.0: dt_tidal
+   already scales as sqrt(ErrTolIntAccuracy), so a fixed coefficient is a smaller accuracy parameter,
+   which belongs in the parameter file. That holds only while the tidal criterion is the one being
+   tuned in isolation. Under SINGLE_STAR_SINK_DYNAMICS it is not: ErrTolIntAccuracy also sets the
+   acceleration criterion, the gas self-gravity floor below and the sink two-body criterion, all as
+   sqrt(eta), so the parameter cannot move the tidal step relative to the others; this coefficient is
+   the only knob that does. STARFORGE builds take the starforge_dev values, so the two branches step
+   identically there:
+     gas                                        0.5   (floored anyway by sqrt(eta/(G rho)) below)
+     collisionless, with SINGLE_STAR_TIMESTEPPING 0.5   (dt_tidal must stay above dt_2body so the
+                                                      symmetric two-body criterion binds for both
+                                                      members of a bound pair; see the safety factor)
+     collisionless otherwise                    0.10  (calibrated on an equilibrium Hernquist sphere at
+                                                      ErrTolIntAccuracy=0.01, the published worst case:
+                                                      at 0.5 the tidal criterion is 142x worse than the
+                                                      acceleration criterion in secular energy drift and
+                                                      215x in |dE/E0|; 0.10 brings |dE/E0| to 0.59x of
+                                                      it, for 6.2x the substeps)
+   Without SINGLE_STAR_SINK_DYNAMICS both are 1.0 and this block is a no-op. */
+#ifndef TIDAL_TIMESTEP_PREFAC
+#if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_TIMESTEPPING)
+#define TIDAL_TIMESTEP_PREFAC (0.5)
+#elif defined(SINGLE_STAR_SINK_DYNAMICS)
+#define TIDAL_TIMESTEP_PREFAC (0.10)
+#else
+#define TIDAL_TIMESTEP_PREFAC (1.0)
+#endif
+#endif
+#ifndef TIDAL_TIMESTEP_PREFAC_GAS
+#if defined(SINGLE_STAR_SINK_DYNAMICS)
+#define TIDAL_TIMESTEP_PREFAC_GAS (0.5)
+#else
+#define TIDAL_TIMESTEP_PREFAC_GAS (1.0)
+#endif
+#endif
+
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion
     double tidal_mag_dt = P[p].tidal_tensorps.frobenius_norm_sq();
-    double dt_tidal = sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
+    double tidal_prefac = (P[p].Type == 0) ? TIDAL_TIMESTEP_PREFAC_GAS : TIDAL_TIMESTEP_PREFAC;
+    double dt_tidal = tidal_prefac * sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
     if(P[p].Type == 0) {dt_tidal = DMIN(sqrt(All.ErrTolIntAccuracy/(All.G*CellP[p].Density*All.cf_a3inv)), dt_tidal);} // gas self-gravity timescale as a bare minimum
     if(All.ComovingIntegrationOn){ // floor to the dynamical time of the universe
         double rho0 = (H0_CGS*H0_CGS*(3./(8.*M_PI*GRAVITY_G_CGS))*All.cf_a3inv / UNIT_DENSITY_IN_CGS);
@@ -1314,6 +1403,9 @@ integertime get_timestep(int p,		/*!< particle index */
     }
 
     if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* prevent integer timeline overflow */
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+    P[p].dt_crit_last = eligible_for_hermite(p, P) ? dt : 0; /* every factor and cap applied, not yet quantised */
+#endif
     ti_step = (integertime) (dt / All.Timebase_interval);
     /* Floor the step on the integer timeline. This is not the MinSizeTimestep policy: a run that
        has asked for a controlled stop still has to reach the next phase boundary to take it, and a

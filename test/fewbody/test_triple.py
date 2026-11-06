@@ -84,6 +84,12 @@ V_OUT = np.sqrt(G_CODE * MTOT / A_OUT)
 # it lives off-suite.
 MAX_DE_OVER_E = 1.7e-4
 
+# nbody_accuracy variant (HERMITE_CORRECTOR_ITERATIONS=2 + HERMITE_SYMMETRIC_TIMESTEP): 3x its measured
+# envelope on starforge_dev, 4.10e-5 over the same 50 orbits at 1 rank (this arm runs at 2 ranks;
+# unmeasured so far in this tree).
+NBODY_ACCURACY_FLAGS = ("HERMITE_CORRECTOR_ITERATIONS=2", "HERMITE_SYMMETRIC_TIMESTEP")
+MAX_DE_OVER_E_NBODY_ACCURACY = 1.2e-4
+
 def _ic_matches():
     """Does the IC on disk have the configuration this test is calibrated for?
 
@@ -217,6 +223,7 @@ def _plot(t, de, dr, variant_id):
 # IO_HERMITE_SYNC output block is covered by test_binary.py's kdk variant.
 @pytest.mark.parametrize("extra_config_flags", [
     pytest.param((), id="starforge_defaults"),
+    pytest.param(NBODY_ACCURACY_FLAGS, id="nbody_accuracy"),
 ])
 def test_triple(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()
@@ -258,6 +265,7 @@ def test_triple(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     # slope. Re-adding a sweep means fixing the QUANTITY (difference in the COM frame, and track
     # the tertiary and the inner pair separately, each with ~5 periods of accumulation) and the
     # ESTIMATOR (self-convergence over consecutive pairs needs no converged reference).
-    assert de_env[-1] < MAX_DE_OVER_E, (
+    max_de = MAX_DE_OVER_E_NBODY_ACCURACY if variant_id == "nbody_accuracy" else MAX_DE_OVER_E
+    assert de_env[-1] < max_de, (
         f"relative energy error {de_env[-1]:.3e} over {n_orbits:.0f} outer orbits "
-        f"(tol {MAX_DE_OVER_E})")
+        f"(tol {max_de})")

@@ -1006,9 +1006,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     {
                         Vec3<double> r_out = P[pindex].Pos, v_out = P[pindex].Vel;
                         /* the eligibility predicate, not the type bitmask alone: a star being
-                           super-timestepped, or one that just accreted, is advanced by something
-                           other than this series, so its retained base does not describe where it
-                           goes and the plain values are the honest answer for it */
+                           super-timestepped, or one born within the last two steps, is advanced by
+                           something other than this series, so its retained base does not describe
+                           where it goes and the plain values are the honest answer for it */
                         if((P[pindex].Mass > 0) && eligible_for_hermite(pindex, P)) {
                             hermite_predict_source_state(pindex, P, hermite_out, &hermite_out_tables, r_out, v_out);
                         }
