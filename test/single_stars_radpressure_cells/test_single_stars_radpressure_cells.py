@@ -6,7 +6,7 @@ cells, chemistry on, gravity on (the fluxes come from the gravity walk), 2 kyr.
   test_thick: n_H = 1e4, photon cap active: momentum per step = L_emit / c + IR term (3 %). Disjoint bands and
     GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE (stella_dev production: LW and 6-8 eV counted twice in deposit and cap).
   test_snapshot_fields: OUTPUT_SGCHEM_RADIATION_FIELDS: G0_FUV = L(6-13.6 eV) / (4 pi c r^2) / Habing (3 %, median over cells beyond 3 softenings),
-    fields in shape, star lums in log10 erg/s from the tables (1e-3 dex).
+    fields in shape, star lums in log10 erg/s and the Lyman photon rate in log10 1/s from the tables (1e-3 dex).
   test_outward: the gas gains positive radial momentum about the star, at least half of what the log says (pixel centres, n_H = 1).
 """
 import os
