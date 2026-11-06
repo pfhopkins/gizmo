@@ -22,7 +22,7 @@ def built():
     return tables
 
 
-def run(tag, tables, ranks=2):
+def run(tag, tables, ranks=2, ic_args={}):
     import sys
     sys.path.insert(0, str(TEST_DIR))
     from make_single_stars_winds_agb_ia_ics import make_single_stars_winds_agb_ia_ics
@@ -32,7 +32,7 @@ def run(tag, tables, ranks=2):
     (d / "output").mkdir(parents=True, exist_ok=True)
     ic = d / "output" / "snapshot_000.hdf5"
     if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
-        L = make_single_stars_winds_agb_ia_ics(str(ic), tables["StellarTablesFile"])
+        L = make_single_stars_winds_agb_ia_ics(str(ic), tables["StellarTablesFile"], **ic_args)
         params = Path(TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SET_BY_TEST", tables["StellarTablesFile"])
         params = params.replace("BoxSize                            45.0", f"BoxSize                            {L}")
         (d / f"{TEST_NAME}.params").write_text(params)
@@ -112,6 +112,28 @@ def test_winds(built):
     # approximately on this lattice (measured: 3% of the first step's wind momentum, 0.35 Msun at ~2000 km/s)
     v_max = 3000.0  # km/s, above the table wind speed
     assert np.all(np.abs(s1["p"] - s0["p"]) <= 0.05 * delivered * v_max)
+
+
+def test_wind_energy_in_outflowing_gas(built):
+    """a heavy star's steady wind in hot gas moving out of it at 0.75 v_w: the gas gains what the wind offers. The sums of the
+    weighting pass must use the wind's mass, not the star's: with the star's the momentum solve loses the work on the moving gas"""
+    tables = built["StellarTablesFile"]
+    M = 150.0
+    with h5py.File(tables, "r") as F:
+        Zt, Mt = F["Z"][()], F["M_init"][()]
+        tpms = F["t_PMS"][()].reshape(len(Zt), len(Mt))[int(np.argmin(np.abs(Zt - 0.014))), int(np.argmin(np.abs(Mt - M)))]
+    la = np.log10(1.0e6 - tpms)
+    args = dict(M=M, n_H=1.0, T=1.0e7, v_radial=0.75 * wind_speed(tables, M, 0.014, la))
+    _, snaps, _ = run("outflow", built, ic_args=dict(args, last_wind_log_age=la))
+    _, twin, _ = run("outflow_twin", built, ic_args=dict(args, last_wind_log_age=9.9))  # same flow, no wind owed: its hydro drift cancels
+    s0, s1 = state(twin[-1]), state(snaps[-1])
+    (w,) = s1["stars"].values()
+    assert s0["t"] == s1["t"]
+    Msun_kms2_in_erg = 1.989e33 * 1.0e10
+    offered = 0.5 * (M - w["m"]) * wind_speed(tables, M, 0.014, w["wa"]) ** 2 * Msun_kms2_in_erg
+    gained = (s1["E"] - s0["E"]) * Msun_kms2_in_erg
+    print(f"wind offered {offered:.5e} erg, gas and star gained {gained:.5e} erg, ratio {gained / offered:.4f}")
+    assert offered > 0 and abs(gained / offered - 1) < 0.02, (gained, offered)
 
 
 def test_one_and_four_ranks(built):
