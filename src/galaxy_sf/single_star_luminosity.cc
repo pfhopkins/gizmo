@@ -19,13 +19,14 @@
 static inline double single_star_band_lum_cgs(double log_l) {double l = pow(10., log_l); return (isfinite(l) && l > 0) ? l : 0;}
 
 /* L[SINGLE_STAR_BAND_*] [erg/s] and the bolometric luminosity; returns 0 (all zero) before the main sequence, after death
-   or without a record. 6-8 eV = L(6-13.6) - L(8-13.6), unclipped as stella_dev */
+   without a record or at or below IMFSampleStellarMassCut. 6-8 eV = L(6-13.6) - L(8-13.6), unclipped as stella_dev */
 int single_star_band_luminosities_cgs(int i, double *L, double *L_bol)
 {
     for(int b = 0; b < SINGLE_STAR_NBANDS; b++) {L[b] = 0;}
     *L_bol = 0;
     if(P[i].StarIdx <= 0) {return 0;}
     int s = single_star_slot(P[i].StarIdx);
+    if(SingleStars.M_drawn[s] <= All.IMFSampleStellarMassCut) {return 0;}
     double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
     double age_yr = evaluate_stellar_age_Gyr(i) * 1.e9, t_pms = stellar_t_PMS(logM, logZ);
     if(age_yr >= t_pms + stellar_lifetime(logM, logZ) || age_yr - t_pms <= 0) {return 0;}
@@ -61,11 +62,14 @@ int single_star_rt_band_luminosities(int i, int mode, double *lum, struct partic
 /* photon momentum a single star hands to the gas this step [g cm/s] (stella_dev estimator): band luminosities absorbed
    over the kernel column at the star, f_b = 1 - exp(-sigma_b DGR N_H) with sigma = 2.0 (PE + 6-8), 1.3 (NUV), 0.5 (OPT)
    x 1e-21 cm^2, LW not counted (inside PE), capped at L_bol; plus the IR boost tau_IR = 5 DGR Sigma [cm^2/g] on the
-   absorbed light. GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE adds 6-8 eV to the NUV term as stella_dev production */
+   absorbed light. GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE adds 6-8 eV to the NUV term as stella_dev production.
+   Stars below SINGLE_STAR_RADPRESSURE_MIN_MASS push nothing (stella_dev) */
+#define SINGLE_STAR_RADPRESSURE_MIN_MASS 2.0 /* [Msun] drawn mass */
 double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR)
 {
     double L[SINGLE_STAR_NBANDS], L_bol;
     *tau_IR = 0;
+    if(P[i].StarIdx <= 0 || SingleStars.M_drawn[single_star_slot(P[i].StarIdx)] < SINGLE_STAR_RADPRESSURE_MIN_MASS) {return 0;}
     if(!single_star_band_luminosities_cgs(i, L, &L_bol)) {return 0;}
 #ifdef SGCHEM
     double dgr = DMAX(sgchem_dust_to_gas_ratio(P[i].Metallicity[0]), 0.);

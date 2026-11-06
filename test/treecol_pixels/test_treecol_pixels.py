@@ -131,6 +131,32 @@ def test_star_band_luminosities(tables, ranks):
     np.testing.assert_allclose(root[bins], rows[:, 2:][:, bins].sum(0), rtol=1e-12)
 
 
+def test_radiation_mass_cut(tables):
+    """IMFSampleStellarMassCut 0.5 (stella_dev production): main-sequence stars at or below 0.5 Msun are dark in every
+    band, the others shine as the tables; the root node holds only the shining stars"""
+    tab = Tables(tables["StellarTablesFile"])
+    L, cut = 20.0, 0.5
+    rng = np.random.default_rng(5)
+    stars = []
+    for M in (0.1, 0.2, 0.3, 0.45, 0.5, 0.6, 1.0, 8.0):
+        lM, lZ = np.log10(M), np.log10(0.0142)
+        stars.append((M, tab._i2(tab.t_pms, lM, lZ) + 0.01 * tab._i2(tab.life, lM, lZ), rng.uniform(0.2, 0.8, 3) * L))
+    out = run(build("pix12", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",)), "masscut", tables, L, lattice(12, L), stars,
+              overrides={"IMFSampleStellarMassCut": cut})
+    bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
+    rows = load(out, "stars")
+    assert len(rows) == len(stars)
+    N_gas = 12 ** 3
+    for row in rows:
+        M, age, _ = stars[int(row[0]) - N_gas - 1]
+        age += row[1] * 3.085678e13 / 3.155e7
+        want = tab.bands(M, 0.0142, age) if M > cut else np.zeros(5)
+        assert M <= cut or want.all(), (M, want)
+        np.testing.assert_allclose(row[2:][bins], want, rtol=1e-10, atol=0, err_msg=f"M={M}")
+    root = np.loadtxt(out / "treecol_dump_root_lum_0.txt")
+    np.testing.assert_allclose(root[bins], rows[:, 2:][:, bins].sum(0), rtol=1e-12)
+
+
 def gas_with_species(n, L, seed=7):
     rng = np.random.default_rng(seed)
     pos = lattice(n, L) + rng.uniform(-0.2, 0.2, (n ** 3, 3)) * (L / n)
@@ -162,7 +188,7 @@ PIX_STARS = [(8.0, 0.3), (15.0, 0.5), (25.0, 0.2), (40.0, 0.1), (60.0, 0.4), (10
 SHIELD = 8.0  # TreeColShieldingLength [pc]
 
 
-def pixel_run(tables, ranks, threads=1, tag="", overrides=None):
+def pixel_run(tables, ranks, threads=1, tag="", overrides=None, build_tag="pix12", extra=()):
     L, n = 20.0, 12
     pos, z, ab = gas_with_species(n, L)
     tab = Tables(tables["StellarTablesFile"])
@@ -171,7 +197,7 @@ def pixel_run(tables, ranks, threads=1, tag="", overrides=None):
     for M, f in PIX_STARS:
         lM, lZ = np.log10(M), np.log10(0.0142)
         stars.append((M, tab._i2(tab.t_pms, lM, lZ) + f * tab._i2(tab.life, lM, lZ), rng.uniform(0.15, 0.85, 3) * L))
-    exe = build("pix12", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",))
+    exe = build(build_tag, ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",) + tuple(extra))
     out = run(exe, f"pixels_np{ranks}{tag}", tables, L, pos, stars, ranks=ranks, z_gas=z, tracabund=ab, threads=threads,
               overrides={"TreeColShieldingLength": SHIELD, **(overrides or {})})
     cells = load(out, "cells"); cells = cells[np.argsort(cells[:, 0])]
@@ -249,11 +275,37 @@ def test_slab_shielding(tables):
     assert deep >= 30 * face and deep > 1e-2, (face, deep)
 
 
+LOG16_STEP = 20.0 / 65535  # dex per step of the 16-bit storage
+LOG16_MIN = {"col": -16.0, "egy": -24.0}  # range starts: columns [g/cm^2 at the code normalisation], energy densities [erg/cm^3]
+
+
+FLOAT_STORAGE = ("GALSF_RESOLVEDISM_TREECOL_PIXELS_STORED_AS_FLOAT",)  # parity builds: per-pixel cell values as float
+
+
+def test_pixels_stored_as_16bit_log(tables):
+    """default storage: every stored pixel column and 6-13.6 eV energy density lies on the 16-bit log10 grid and equals the
+    float build (GALSF_RESOLVEDISM_TREECOL_PIXELS_STORED_AS_FLOAT) to half a step (3.5e-4); zeros stay zero; species masses
+    and the band totals are unchanged; G0, G0_LW, G0_dust to 3.5e-4"""
+    a, _, _ = pixel_run(tables, 1, tag="_float", build_tag="pix12_float", extra=FLOAT_STORAGE)
+    b, _, _ = pixel_run(tables, 1)
+    assert (a[:, 0] == b[:, 0]).all()
+    half = 10 ** (LOG16_STEP / 2) - 1 + 1e-7
+    for sl, lo, scale in ((slice(4, 40), LOG16_MIN["col"], 1.989e33 / 3.085678e18 ** 2), (slice(40, 52), LOG16_MIN["egy"], 1.0)):
+        x, y = a[:, sl], b[:, sl]
+        assert ((x == 0) == (y == 0)).all()
+        k = (np.log10(y[y > 0] * scale) - lo) / LOG16_STEP
+        print(f"{sl}: {np.count_nonzero(y)} values, grid offset max {np.abs(k - np.round(k)).max():.1e}, rel. diff max {rel(y, x)[x > 0].max():.2e}")
+        assert np.abs(k - np.round(k)).max() < 1e-3
+        assert rel(y, x)[x > 0].max() <= half
+    assert (a[:, 1:4] == b[:, 1:4]).all() and (a[:, 52:56] == b[:, 52:56]).all()
+    assert rel(b[:, 56:59], a[:, 56:59]).max() <= half
+
+
 @pytest.mark.parametrize("ranks,threads", [(2, 2), (1, 4)])
 def test_host_equals_device(tables, ranks, threads):
     runs = {}
     for tag, below in (("dev_a", 0), ("dev_b", 0), ("host", 10 ** 9)):  # GravityHostWalkBelowActive: 0 = device for any work
-        runs[tag] = pixel_run(tables, ranks, threads, f"_t{threads}_{tag}", {"GravityHostWalkBelowActive": below})[0]
+        runs[tag] = pixel_run(tables, ranks, threads, f"_t{threads}_{tag}", {"GravityHostWalkBelowActive": below}, "pix12_float", FLOAT_STORAGE)[0]
     assert runs["dev_a"].tobytes() == runs["dev_b"].tobytes()
     np.testing.assert_allclose(runs["dev_a"], runs["host"], rtol=2.5e-7, atol=0)  # float storage: at most a rounding step
 

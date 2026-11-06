@@ -452,6 +452,9 @@ struct global_data_all_processes
   double IMFSampleMinMass;           /*!< lower end of the sampled IMF [Msun] (0.08 = full IMF) */
   int SingleStarsRNGRealisation;     /*!< folded into the keys of the IMF draws: another value gives another realisation */
 #endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+  double IMFSampleStellarMassCut;    /*!< single stars at or below this drawn mass [Msun] emit no radiation */
+#endif
 #ifdef GALSF_SINGLE_STARS_SF_CRITERION
   double FacSfThreshMJ;              /*!< SF only where the Jeans mass is below FacSfThreshMJ x DesNumNgb x cell mass */
   double SFCooldownFreeFallFraction; /*!< after a birth the parent cell forms no star for this fraction of its free-fall time */

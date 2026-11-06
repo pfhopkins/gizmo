@@ -7,12 +7,16 @@ lattice at n_H ~ 100 cm^-3 (dust optical depths 0.2-0.8 over the kernel column),
     times (1 + tau_IR), tau_IR = 5 DGR Sigma, over dt / c (2 %); every neighbour gets its share, so the momentum coupled equals it (5 %).
   test_count_6_8ev_twice: GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE (stella_dev production) adds f_NUV L_6-8: the ratio of
     the two budgets equals the table ratio (1e-3, density estimate cancels to first order).
+  test_sources: stars of 40 and 3 Msun push, a 1.5 Msun star does not (stella_dev: sources from 2 Msun) and neither does
+    a 40 Msun star particle without a single-star record: two sources every step, offered momentum = the sum of the two
+    estimators (2 %).
 """
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+import h5py
 import numpy as np
 import pytest
 from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, get_cooling_tables, mpi_launch_command
@@ -45,17 +49,22 @@ def build(tag, extra=()):
     return BUILDS[tag]
 
 
-def run(exe, tag, tables, n=16):
+def run(exe, tag, tables, n=16, stars=((M_STAR, (0.5, 0.5, 0.5), True),)):
+    """stars: (M, position in box units, with a record)"""
     rho = N_H * 1.4 * MP * PC ** 3 / MSUN  # Msun / pc^3 (H nuclei per mass as the chemistry)
     dx = (1.0 / rho) ** (1.0 / 3.0); L = n * dx
     tab = Tables(tables["StellarTablesFile"])
-    lM, lZ = np.log10(M_STAR), np.log10(0.0142)
-    age = tab._i2(tab.t_pms, lM, lZ) + F_LIFE * tab._i2(tab.life, lM, lZ)
+    lZ = np.log10(0.0142)
+    ages = [tab._i2(tab.t_pms, np.log10(M), lZ) + F_LIFE * tab._i2(tab.life, np.log10(M), lZ) for M, _, _ in stars]
+    age = ages[0]
     d = TEST_DIR / f"run_{tag}"
     if d.exists():
         shutil.rmtree(d)
     (d / "output").mkdir(parents=True)
-    make_treecol_pixels_ics(str(d / "output" / "snapshot_000.hdf5"), L, lattice(n, L), [(M_STAR, age, np.full(3, 0.5 * L + 0.31 * dx))], hsml=2 * dx)
+    ic = d / "output" / "snapshot_000.hdf5"
+    make_treecol_pixels_ics(str(ic), L, lattice(n, L), [(M, a, np.asarray(x) * L + 0.31 * dx) for (M, x, _), a in zip(stars, ages)], hsml=2 * dx)
+    with h5py.File(ic, "a") as F:
+        F["PartType4/SingleStarDrawnMass"][...] = [M if rec else 0.0 for M, _, rec in stars]  # 0: no record
     for f in ("TREECOOL", "spcool_tables"):
         if (TEST_DIR / f).exists():
             os.symlink(TEST_DIR / f, d / f)
@@ -73,9 +82,9 @@ def run(exe, tag, tables, n=16):
     return rows, tab, age, rho
 
 
-def expected_per_time(tab, age_yr, rho, twice=False):
+def expected_per_time(tab, age_yr, rho, twice=False, M=M_STAR):
     """stella_dev estimator, L_abs (1 + tau_IR) / c [Msun km/s per code time]: N_H = (rho / m_p) h, Sigma = rho h"""
-    L = tab.bands(M_STAR, 0.0142, age_yr)  # PE, LW, 6-8, NUV 3.444-6, OPT
+    L = tab.bands(M, 0.0142, age_yr)  # PE, LW, 6-8, NUV 3.444-6, OPT
     h = (3 * max(NGB, 64) / (4 * np.pi * rho)) ** (1.0 / 3.0) * PC  # star kernel: max(DesNumNgb, 64) cells of 1 Msun (density_loop.h) [cm]
     rho_cgs = rho * MSUN / PC ** 3
     NH, Sigma, dgr = rho_cgs / MP * h, rho_cgs * h, 0.0142 / 0.014
@@ -107,3 +116,15 @@ def test_count_6_8ev_twice(tables):
     want = expected_per_time(tab, age, rho) / expected_per_time(tab, age, rho, twice=True)
     print(f"disjoint / counted twice: {got:.4f} (tables {want:.4f})")
     assert abs(got / want - 1) < 1e-3
+
+
+def test_sources(tables):
+    stars = ((40.0, (0.25, 0.25, 0.25), True), (3.0, (0.75, 0.25, 0.75), True), (1.5, (0.25, 0.75, 0.75), True), (40.0, (0.75, 0.75, 0.25), False))
+    rows, tab, _, rho = run(build("default"), "sources", tables, stars=stars)
+    offered, _, t = supply_per_time(rows)
+    offered, t = offered[offered > 0], t[offered > 0]
+    assert len(offered) >= 5 and (rows[1:, 2] == 2).all(), rows[:, 2]  # two sources every step (no feedback step at t = 0)
+    lZ = np.log10(0.0142)
+    age = {M: tab._i2(tab.t_pms, np.log10(M), lZ) + F_LIFE * tab._i2(tab.life, np.log10(M), lZ) for M in (40.0, 3.0)}
+    want = np.array([sum(expected_per_time(tab, age[M] + ti * YR_PER_TIME_UNIT, rho, M=M) for M in (40.0, 3.0)) for ti in t])
+    np.testing.assert_allclose(offered, want, rtol=2e-2)
