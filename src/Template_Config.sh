@@ -82,7 +82,7 @@
 ## ----------------------------------------------------------------------------------------------------
 # --------------------------------------- Nuclear Reaction Networks
 #NUCLEAR_NETWORK                 # top-level switch: enables nuclear burning and species tracking. requires EOS_HELMHOLTZ.
-#NUCLEAR_NETWORK_SOLVER=0        # solver: 0=built-in aprox13 alpha-chain (default, no external deps), 1=SkyNet (Lippuner & Roberts 2017), 2=XNet (starkiller-astro, GPU-capable)
+#NUCLEAR_NETWORK_SOLVER=0        # solver: 0=built-in aprox13 alpha-chain (default, no external deps), 1=SkyNet (Lippuner & Roberts 2017), 2=stub, not for production: no burning, marks where an external library (e.g. XNet) can be connected
 #NUCLEAR_NETWORK_NSPECIES=13     # number of species (default 13 for aprox13: He4,C12,O16,Ne20,Mg24,Si28,S32,Ar36,Ca40,Ti44,Cr48,Fe52,Ni56)
 #NUCLEAR_NETWORK_SCREENING       # include Coulomb screening corrections to thermonuclear reaction rates
 #NUCLEAR_NETWORK_NSE_TABLE       # use tabulated NSE (nuclear statistical equilibrium) above threshold T, instead of integrating
