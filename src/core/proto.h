@@ -1324,10 +1324,18 @@ void ledger_restart_io(void (*io)(void *, size_t, int), int modus);
 #ifdef OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS
 void ledger_step_checkpoint(const char *tag);
 #define LEDGER_STEP(tag) ledger_step_checkpoint(tag)
+#ifdef OUTPUT_MASS_BALANCE_BREAKDOWN
+void ledger_diffusion_breakdown(double dMZ_pair, double dMZ_clamp, double dMZ_gross);
+void ledger_element_balance(const char *tag);
+#define LEDGER_STEP_BREAKDOWN(tag) do {ledger_step_checkpoint(tag); ledger_element_balance(tag);} while(0)
+#endif
 #endif
 #endif
 #ifndef LEDGER_STEP
 #define LEDGER_STEP(tag)
+#endif
+#ifndef LEDGER_STEP_BREAKDOWN
+#define LEDGER_STEP_BREAKDOWN(tag)
 #endif
 #ifdef SGCHEM
 void sgchem_init(void);

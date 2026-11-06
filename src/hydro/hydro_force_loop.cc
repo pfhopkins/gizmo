@@ -472,7 +472,9 @@ void hydro_force(void)
     }
 
     double t_postloop_start = my_second();
+    LEDGER_STEP_BREAKDOWN("pre_diff_unpack");
     hydro_final_operations_and_cleanup();
+    LEDGER_STEP_BREAKDOWN("post_diff_unpack");
     double t_postloop = timediff(t_postloop_start, my_second());
     (void)t_postloop;
 

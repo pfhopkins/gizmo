@@ -535,7 +535,9 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
     {
+        LEDGER_STEP_BREAKDOWN("pre_merge_split");
         merge_and_split_particles(); /* do the particle split/merge operations: only do this on tree-building super-steps */
+        LEDGER_STEP_BREAKDOWN("post_merge_split");
     }
     t_mergesplit = timediff(t_drift_start, my_second());
     double t_tmp = my_second();
@@ -845,7 +847,9 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     double t_light_start = my_second(), t_light_mergesplit=0, t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
     if((All.Ti_Current > All.TimeBegin) && (do_particle_mergesplit_key == 1))
     {
+        LEDGER_STEP_BREAKDOWN("pre_merge_split");
         merge_and_split_particles(); /* do the particle split/merge operations */
+        LEDGER_STEP_BREAKDOWN("post_merge_split");
     }
     t_light_mergesplit = timediff(t_light_start, my_second());
     double t_tmp_light = my_second();
