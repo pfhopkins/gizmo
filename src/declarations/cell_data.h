@@ -31,6 +31,9 @@ extern struct gas_cell_data
     MyDouble InternalEnergy;        /*!< specific internal energy [internal thermal energy per unit mass] of cell */
     MyDouble InternalEnergyPred;    /*!< predicted value of the specific internal energy at the current time */
     MyDouble DtInternalEnergy;      /*!< rate of change of specific internal energy */
+#if defined(MAGNETIC) && defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+    MyDouble DtEnergyMHDNum;        /*!< ledger: d(E_th+E_kin+E_B)/dt of the hydro step, booked in the kicks */
+#endif
     
     Vec3<MyDouble> VelPred;         /*!< predicted gas cell velocity at the current time */
     Vec3<MyDouble> HydroAccel;      /*!< acceleration due to hydrodynamical force (for drifting) */

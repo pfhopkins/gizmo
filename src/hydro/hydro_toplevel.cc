@@ -255,6 +255,13 @@ void hydro_final_operations_and_cleanup(void)
 
             /* zero out hydrodynamic PdV work terms if the particle is at the maximum smoothing, these will be incorrect */
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}
+#if defined(MAGNETIC) && defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+            { /* ledger: d(E_th+E_kin+E_B)/dt of this step (Powell/Dedner terms, the -B^2/2 dV/dt the u-equation omits); booked in the kick */
+                Vec3<double> Bp = CellP[i].Bfield() * All.cf_a2inv; double V_phys = P[i].Mass / (CellP[i].Density * All.cf_a3inv);
+                CellP[i].DtEnergyMHDNum = CellP[i].DtInternalEnergy * P[i].Mass + P[i].Mass * dot(CellP[i].VelPred / All.cf_atime, CellP[i].HydroAccel) + dot(Bp, CellP[i].DtB)
+                                          - 0.5 * Bp.norm_sq() * V_phys * P[i].Particle_DivVel * All.cf_a2inv;
+            }
+#endif
 
             // need to explicitly include adiabatic correction from the hubble-flow (for drifting) here //
             if(All.ComovingIntegrationOn) {CellP[i].DtInternalEnergy -= 3*(CellP[i].Gamma-1) * CellP[i].InternalEnergyPred * All.cf_hubble_a;}
