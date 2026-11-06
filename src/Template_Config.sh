@@ -577,6 +577,7 @@
 #IO_REPAIR_COINCIDENT_POSITIONS # opt-in repair of invalid input data in which two particles share a position to the bit. By default such data stops the run, since it is an invalid IC/snapshot and should be seen rather than silently altered; this instead separates each pair once at startup, by 1e-4 of the local interparticle spacing along an ID-seeded direction, preserving the pair's center of mass, and logs every repaired ID and position. Leave off unless deliberately repairing a known-bad input file.
 #IO_REDUNDANT_BACKUP_RESTARTFILE_FREQUENCY=3  # keep an extra set of backup files that are IO_REDUNDANT_BACKUP_RESTARTFILE_FREQUENCY number of restarts old (allows for soft restarts from an older position)
 #IO_GRADUAL_SNAPSHOT_RESTART    # when restarting from a snapshot (flag=2) start every element on the shortest possible timestep - can reduce certain transient behaviors from the restart procedure
+#IO_NO_GRADUAL_SNAPSHOT_RESTART # turn off the IO_GRADUAL_SNAPSHOT_RESTART ramp that SINGLE_STAR_STARFORGE_DEFAULTS enables (benchmarks restarting from a snapshot)
 #IO_SINKS_ONLY_SNAPSHOT_FREQUENCY=0 # determines the number of snapshots with reduced data (sinks only) per full snapshots (gas+sinks+other), e.g., setting this to 2 means 2/3 of the snapshots will be reduced, 1/3 will have full data. Setting this to 0 disables it. developed by DG.
 ####################################################################################################
 
