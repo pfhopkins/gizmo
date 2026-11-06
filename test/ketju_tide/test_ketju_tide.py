@@ -28,7 +28,8 @@ def _elements(m, x, v):
 
 
 @pytest.mark.parametrize("overrides,da_max", [
-    ({"MaxSizeTimestep": 1e-8}, 1e-3),
+    ({"MaxSizeTimestep": 1e-8}, 1e-5),
+    ({"KetjuTidalStepRes": 0.1, "KetjuTidalErrorBudget": 1e-6}, 1e-4),
 ])
 def test_ketju_tide(overrides, da_max):
     subprocess.run([sys.executable, "make_ketju_tide_ics.py"], cwd=TEST_DIR, check=True)
