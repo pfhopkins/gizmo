@@ -213,6 +213,9 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads, extra_config_flags):
     assert vr_binned[i_peak] > 0, f"No outflow at shock: vr = {vr_binned[i_peak]}"
 
 
+# E_therm: trunk 1.22e6; walk only (pr/selfgravity-off-walk) 6.5e5; UV background only 4.0e5; both 9.4e4.
+@pytest.mark.xfail(strict=True, reason=(
+    "fixed by pr/treecool on pr/selfgravity-off-walk: no UV background and no shielding column, E_therm 1.22e6"))
 def test_SN_thermo_fidelity():
     """Guard the u->T conversion in the regimes the SN remnant actually exercises.
 
@@ -259,11 +262,12 @@ def test_SN_thermo_fidelity():
             f"H2-bearing gas is mislabeled at matched u (defective conversion measured 7-9%)"
         )
 
-    # 2. Remnant thermal energy. Inversion-correct arms: 4.96-5.21e5 across machines and
-    #    decompositions (+-5%); the cached-chord defect retained 8.39e5 (+64%). The band is
-    #    wide enough for decomposition scatter and narrow enough to catch percent-tens errors.
+    # 2. Remnant thermal energy, +-25% around the reference ~1.0e5 (this code 9.4e4,
+    #    starforge_dev 1.02e5; decomposition scatter +-5%). Needs the UV background (TREECOOL
+    #    read: 4.0e5 without it) and the gravity walk under SELFGRAVITY_OFF (column density
+    #    for shielding: 6.5e5 without it). The u->T chord defect retained +64%.
     E_therm = float((m * u).sum())
-    assert 3.8e5 < E_therm < 6.4e5, (
-        f"remnant thermal energy {E_therm:.3e} outside [3.8e5, 6.4e5]: cooling through the "
-        f"1e5-1e6 K band is off (inversion-correct ~5.1e5; the u->T chord defect gave 8.4e5)"
+    assert 7.5e4 < E_therm < 1.25e5, (
+        f"remnant thermal energy {E_therm:.3e} outside [7.5e4, 1.25e5]: cooling through the "
+        f"1e5-1e6 K band is off (reference ~1.0e5; no UV background gave 4.0e5, no shielding 6.5e5)"
     )

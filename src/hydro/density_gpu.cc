@@ -93,6 +93,9 @@
      #ifdef HYDRO_MESHLESS_FINITE_VOLUME
        CellP_gpu[j].dMass                  — HYDRO_ATOMIC_ADD
      #endif
+     #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+       CellP_gpu[j].Dyield_pending[]       — Kokkos::atomic_add
+     #endif
      scalar:
        *NeedToWakeup                       — HYDRO_ATOMIC_STORE on wakeup trigger
 
@@ -435,6 +438,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
         P_host[j].wakeup = P_gpu[j].wakeup;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         CellP_host[j].dMass = CellP_gpu[j].dMass;
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP_host[j].Dyield_pending[k] = CellP_gpu[j].Dyield_pending[k];}
 #endif
     }
 

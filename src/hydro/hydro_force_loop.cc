@@ -9,11 +9,12 @@
  *
  * Owns:
  *   - GHOST_WRITEBACK_BUNDLE(hydro_force) manifest (PARTICLE_MAX(wakeup) +
- *     MFV GAS_ADD(dMass))
+ *     MFV GAS_ADD(dMass) + TURB_DIFF_METALS_EXACT_CONSERVATION
+ *     GAS_ADD_ARRAY(Dyield_pending))
  *   - DeviceContext extension lifecycle (UVM int[TIMEBINS] for
  *     TimeBinActive, UVM int for need_wakeup)
  *   - Ghost lifecycle (ghost_writeback_begin pre-zeros ghost-region
- *     wakeup + MFV dMass before bundle snapshot; ghost_writeback_end
+ *     wakeup + MFV dMass + Dyield_pending before bundle snapshot; ghost_writeback_end
  *     calls bundle's reverse-comm; ghost_write_detector_begin/end forward
  *     to the mesh helpers)
  *   - apply_active_writeback (the body from the retired out2particle_hydra
@@ -54,6 +55,9 @@ extern int NeedToWakeupParticles_local;
 
 extern void hydro_force_initial_operations_preloop(void);
 extern void hydro_final_operations_and_cleanup(void);
+#if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
+extern void turb_diff_metals_budget_log(void);
+#endif
 
 /* ============================================================================
  * Ghost-writeback manifest.
@@ -75,6 +79,9 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(hydro_force)
     GHOST_WRITEBACK_PARTICLE_MAX(wakeup)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     GHOST_WRITEBACK_GAS_ADD(dMass)
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+    GHOST_WRITEBACK_GAS_ADD_ARRAY(Dyield_pending, NUM_METAL_SPECIES)
 #endif
 GHOST_WRITEBACK_BUNDLE_END(hydro_force)
 
@@ -196,6 +203,9 @@ void HydroForceSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
             int j = num_local + g;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[j].dMass = 0;
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+            for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP[j].Dyield_pending[k] = 0;}
 #endif
             P[j].wakeup = 0;
         }
@@ -471,6 +481,9 @@ void hydro_force(void)
     (void)t_postloop;
 
     gizmo_hydro_cleanup_symlist_and_ghosts();
+#if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
+    turb_diff_metals_budget_log(); /* after the ghost teardown: imported ghosts sit in P[NumPart..] until then */
+#endif
 
     double t1 = my_second(); cpu_chain_sync(t1);
     (void)t1; (void)t00_truestart;

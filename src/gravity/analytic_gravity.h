@@ -312,12 +312,15 @@ void GravAccel_SpecialCustomNuclearZoomBoundaryConditions()
 void GravAccel_GMCTurbInit()
 {
 #ifdef STARFORGE_GMC_TURBINIT
+#if !(STARFORGE_GMC_TURBINIT+0)
+#error "STARFORGE_GMC_TURBINIT must be set to a non-zero numerical value (the desired virial parameter)"
+#endif
     for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++)
     {
         int i = ActiveParticleList[ii]; if(!analytic_gravity_adds_to(i, ii)) {continue;}
         Vec3<double> dp = P[i].Pos - Vec3<double>{0.5*All.BoxSize, 0.5*All.BoxSize, 0.5*All.BoxSize};
         double r2 = dp.norm_sq(), r = sqrt(r2);
-        double M = 0.808 * All.TotN_gas * All.MeanGasParticleMass, R=All.BoxSize/10; // these are for the default settings of MakeCloud's uniform sphere IC, adjust for your problem!
+        double M = STARFORGE_GMC_TURBINIT_CLOUD_MASS_FRACTION * All.TotN_gas * All.MeanGasParticleMass, R = STARFORGE_GMC_TURBINIT_CLOUD_RADIUS_IN_BOXSIZE * All.BoxSize; // MakeCloud's default uniform sphere IC (allvars.h), adjust for your problem!
         double menc = DMIN(M,M*pow(r/R,3)) + DMAX(0,3*M*log(r/R)); // uniform sphere plus a r^-3 surrounding halo with density matched at the sphere radius
         P[i].GravAccel += dp * (-All.G * STARFORGE_GMC_TURBINIT * menc / (r2*r));
     }
