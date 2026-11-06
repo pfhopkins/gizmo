@@ -129,7 +129,13 @@ double photoion_max_timestep(int p)
 {
     double t_on = single_star_ionizing_onset_yr(p);
     if(t_on < 0) {return 0;}
-    if(photoion_source_rate(p) > 0) {return (double)((integertime)1 << photoion_timebin()) * All.Timebase_interval;}
+    if(photoion_source_rate(p) > 0) {
+        double dt = (double)((integertime)1 << photoion_timebin()) * All.Timebase_interval;
+#ifdef TEST_PHOTOIONIZATION_ONE_STAR_ON_QUARTER_STEP
+        if(All.TestPhotoionQuarterStepStarID > 0 && P[p].ID == (MyIDType) All.TestPhotoionQuarterStepStarID) {dt *= 0.25;}
+#endif
+        return dt;
+    }
     double age = evaluate_stellar_age_Gyr(p) * 1.e9;
     if(age < t_on) {return DMAX(t_on - age, 10.) / UNIT_TIME_IN_YR;}
     return 0;

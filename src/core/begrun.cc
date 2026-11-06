@@ -1907,6 +1907,11 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.TestPhotoionNeutralTemp;
         id[nt++] = REAL;
 #endif
+#ifdef TEST_PHOTOIONIZATION_ONE_STAR_ON_QUARTER_STEP
+        strcpy(tag[nt], "TestPhotoionQuarterStepStarID");
+        addr[nt] = &All.TestPhotoionQuarterStepStarID;
+        id[nt++] = INT;
+#endif
         strcpy(tag[nt], "PhotoionMaxRounds");
         addr[nt] = &All.PhotoionMaxRounds;
         id[nt++] = INT;
@@ -3333,6 +3338,9 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
                 if(strcmp("PhotoionMaxSearchRadius",tag[i])==0) {*((double *)addr[i])=0.05; printf("Tag %s not set in parameter file: defaulting to 0.05 kpc\n",tag[i]); continue;}
+#ifdef TEST_PHOTOIONIZATION_ONE_STAR_ON_QUARTER_STEP
+                if(strcmp("TestPhotoionQuarterStepStarID",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set in parameter file: defaulting to 0\n",tag[i]); continue;}
+#endif
                 if(strcmp("PhotoionMaxRounds",tag[i])==0) {*((int *)addr[i])=16; printf("Tag %s not set in parameter file: defaulting to 16\n",tag[i]); continue;}
                 if(strcmp("PhotoionMaxTimestep",tag[i])==0) {*((double *)addr[i])=1.e4; printf("Tag %s not set in parameter file: defaulting to 10 kyr\n",tag[i]); continue;}
 #endif
