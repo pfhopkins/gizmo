@@ -1044,6 +1044,7 @@ void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
 void single_star_event_logs_write(void);
+void single_star_sfr_windows_write(void);
 #endif
 #endif
 #if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)

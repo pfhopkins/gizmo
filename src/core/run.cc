@@ -528,6 +528,9 @@ void run(void)
         }
 
         if(reconstructed_tree) {
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+            single_star_sfr_windows_write(); /* sfr_rism.txt, tree-build steps only */
+#endif
             /* Caches keyed on particle-slot identity are dropped by the
              * decomposition itself, not here: it re-indexes P[], and callers
              * outside this loop decompose too. See domain_particle_layout_changed. */
