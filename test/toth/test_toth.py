@@ -1,10 +1,9 @@
 """Toth MHD shock tube test (Toth 2000; Hopkins & Raives 2016)
 
 Colliding supersonic flows in an oblique field: two fast shocks, two slow shocks and a contact.
-The 2D run is binned onto x and compared with an independent 1D HLLD finite-volume solution
-(test/mhd_1d_reference.py), computed once per machine and cached in
-test/toth/toth_reference_4096.npz. See README.md for the setup, the comparison window and what
-each assertion is sensitive to.
+The 2D run is binned onto x and compared with a converged 1D Athena++ solution,
+test/toth/toth_exact.txt (see test/mhd_reference_athena/). See README.md for the setup, the
+comparison window and what each assertion is sensitive to.
 """
 
 import sys
@@ -19,11 +18,9 @@ from gizmo.test import (build_and_run_test, assert_final_time, assert_energy_con
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import mhd_1d_reference as ref1d  # noqa: E402
 
-TEST_DIR = Path(__file__).resolve().parent
-
 # Regional L1 over the comparison window, normalised by the reference field's range there.
-# A 2nd-order grid code (the reference solver at the run's 896 cells across x) scores
-# rho 0.006, vx 0.002, vy 0.011, By 0.006. vx is small because its range (20) is dominated by
+# A 2nd-order grid code (Athena++ at the run's 896 cells across x) scores
+# rho 0.007, vx 0.003, vy 0.011, By 0.008. vx is small because its range (20) is dominated by
 # the two fast shocks; vy carries the weak slow-shock / rotational structure.
 L1_TOL = {  # PROVISIONAL: untuned, not yet run
     "rho": 0.03,
@@ -32,9 +29,9 @@ L1_TOL = {  # PROVISIONAL: untuned, not yet run
     "By": 0.03,
 }
 
-# Constant states between waves: (label, field, x inside the plateau). Reference values
-# (4096 cells): 2.680, 3.839, 0.357, 4.038, 3.748, -0.388, 5.427. The plateau between the two
-# slow shocks is narrow (~0.1, ~20 bins) and straddles the contact, across which vy and By are
+# Constant states between waves: (label, field, x inside the plateau). Reference values:
+# 2.680, 3.839, 0.357, 4.038, 3.748, -0.388, 5.427. The plateau between the two
+# slow shocks is narrow (~0.11, ~12 bins) and straddles the contact, across which vy and By are
 # continuous; the density sub-plateaus either side of the contact are too narrow to test.
 PLATEAUS = (
     ("left-post-fast-shock", "rho", 1.80),
@@ -69,7 +66,7 @@ def test_toth(num_mpi_ranks, num_omp_threads):
     assert_final_time(final_snap, test_name)
 
     problem = ref1d.PROBLEMS[test_name]
-    ref = ref1d.load_or_solve(test_name, TEST_DIR)
+    ref = ref1d.load_reference(test_name)
     snap = ref1d.read_snapshot(final_snap, problem["gamma"])
     cmp = ref1d.compare_snapshot(snap, ref, plateaus=PLATEAUS)
     ref1d.plot_comparison(snap, ref, cmp, f"test/{test_name}")

@@ -2,9 +2,9 @@
 
 Classic MHD Riemann problem: fast rarefaction, compound wave (slow shock + rotational
 rarefaction), contact, slow shock, fast rarefaction. The 2D run is binned onto x and compared
-with an independent 1D HLLD finite-volume solution (test/mhd_1d_reference.py), computed once per
-machine and cached in test/briowu/briowu_reference_4096.npz. See README.md for the setup, the
-comparison window and what each assertion is sensitive to.
+with a converged 1D Athena++ solution, test/briowu/briowu_exact.txt (see
+test/mhd_reference_athena/). See README.md for the setup, the comparison window and what each
+assertion is sensitive to.
 """
 
 import sys
@@ -19,11 +19,9 @@ from gizmo.test import (build_and_run_test, assert_final_time, assert_energy_con
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import mhd_1d_reference as ref1d  # noqa: E402
 
-TEST_DIR = Path(__file__).resolve().parent
-
 # Regional L1 over the comparison window, normalised by the reference field's range there.
-# A 2nd-order grid code (the reference solver at the run's 896 cells across x) scores
-# rho 0.006, vx 0.012, vy 0.008, By 0.003.
+# A 2nd-order grid code (Athena++ at the run's 896 cells across x) scores
+# rho 0.004, vx 0.010, vy 0.008, By 0.003.
 L1_TOL = {  # PROVISIONAL: untuned, not yet run
     "rho": 0.03,
     "vx": 0.04,
@@ -31,8 +29,8 @@ L1_TOL = {  # PROVISIONAL: untuned, not yet run
     "By": 0.03,
 }
 
-# Constant states between waves: (label, field, x inside the plateau). Reference values
-# (4096 cells): 0.676, 0.695, -1.584, -0.534, 0.235, 0.117, -0.903.
+# Constant states between waves: (label, field, x inside the plateau). Reference values:
+# 0.676, 0.697, -1.583, -0.534, 0.235, 0.117, -0.903.
 PLATEAUS = (
     ("post-fast-rarefaction", "rho", 1.88),
     ("compound-contact", "rho", 2.04),
@@ -42,9 +40,9 @@ PLATEAUS = (
     ("post-slow-shock", "rho", 2.45),
     ("post-slow-shock", "By", 2.45),
 )
-# Relative error of the binned plateau mean. The 896-cell grid solution is within 0.9% of the
+# Relative error of the binned plateau mean. The 896-cell grid solution is within 0.7% of the
 # reference on every plateau (worst: compound-contact rho).
-PLATEAU_TOL = 0.03  # measured 2026-11-05: six plateaus within 0.1-0.7%, contact-to-slow-shock rho at 2.0%
+PLATEAU_TOL = 0.03  # measured 2026-11-05: six plateaus within 0.1-0.7%, contact-to-slow-shock rho at 2.1%
 
 # |divB| h/|B| over the comparison window, h = (m/rho)^(1/2). OpenGadget3 asserts rms < 0.05 here.
 DIVB_RMS_TOL = 0.05  # PROVISIONAL: untuned, not yet run
@@ -65,7 +63,7 @@ def test_briowu(num_mpi_ranks, num_omp_threads):
     assert_final_time(final_snap, test_name)
 
     problem = ref1d.PROBLEMS[test_name]
-    ref = ref1d.load_or_solve(test_name, TEST_DIR)
+    ref = ref1d.load_reference(test_name)
     snap = ref1d.read_snapshot(final_snap, problem["gamma"])
     cmp = ref1d.compare_snapshot(snap, ref, plateaus=PLATEAUS)
     ref1d.plot_comparison(snap, ref, cmp, f"test/{test_name}")

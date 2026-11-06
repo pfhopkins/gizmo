@@ -1,0 +1,67 @@
+<comment>
+problem   = Toth / Ryu & Jones 1995 test 1a on [0,4], jump at x=2, periodic (GIZMO test/toth)
+reference = Ryu, D. & Jones, T.W., ApJ 442, 228 (1995), test 1a; Toth, G., JCP 161, 605 (2000)
+configure = -b --prob=shock_tube --flux=hlld --coord=cartesian
+units     = Athena++ B: magnetic pressure B^2/2, same as GIZMO's internal (MU_0 = 1) field
+
+<job>
+problem_id  = toth
+
+<output1>
+file_type   = tab       # tabular dump of the primitives
+variable    = prim
+data_format = %.12e
+dt          = 0.08    # outputs at t = 0 and t = tlim
+
+<time>
+cfl_number  = 0.4
+nlim        = -1
+tlim        = 0.08
+integrator  = vl2       # default; rk3 + xorder=3 (needs --nghost=4) as the cross-check
+xorder      = 2         # PLM
+ncycle_out  = 1000
+
+<mesh>
+nx1         = 8192      # overridden on the command line (mesh/nx1=...)
+x1min       = 0.0
+x1max       = 4.0
+ix1_bc      = periodic  # periodic like the GIZMO box: inverted jump at x = 0 = 4
+ox1_bc      = periodic
+
+nx2         = 1
+x2min       = -0.5
+x2max       = 0.5
+ix2_bc      = periodic
+ox2_bc      = periodic
+
+nx3         = 1
+x3min       = -0.5
+x3max       = 0.5
+ix3_bc      = periodic
+ox3_bc      = periodic
+
+<hydro>
+gamma       = 1.6666666666666667
+
+<problem>
+shock_dir   = 1
+xshock      = 2.0
+compute_error = false
+dl          = 1.0
+pl          = 20.0
+ul          = 10.0
+vl          = 0.0
+wl          = 0.0
+bxl         = 1.4104739588693909
+byl         = 1.4104739588693909
+bzl         = 0.0
+
+dr          = 1.0
+pr          = 1.0
+ur          = -10.0
+vr          = 0.0
+wr          = 0.0
+bxr         = 1.4104739588693909
+byr         = 1.4104739588693909
+bzr         = 0.0
+

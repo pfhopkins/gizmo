@@ -1,36 +1,29 @@
-"""Independent 1D ideal-MHD reference solutions for the MHD shock-tube tests (briowu, toth).
+"""Reference solutions and comparison helpers for the 1D MHD shock-tube tests (briowu, toth).
 
-A compact finite-volume solver, deliberately sharing no code with GIZMO: HLLD fluxes (Miyoshi &
-Kusano 2005, J. Comput. Phys. 208, 315), piecewise-linear reconstruction of the primitive
-variables with a minmod limiter, and second-order SSP Runge-Kutta in time. Bx is constant in 1D;
-the evolved variables are (rho, rho v, By, Bz, E). Minmod rather than MC: MC leaves percent-level
-post-shock oscillations behind the slow shock in briowu at 1024 cells; minmod converges
-monotonically, and at 4096 cells differs from the 2048-cell solution by <0.4% (L1 over the
-comparison window, relative to each field's range), well below the test tolerances.
+The references are converged Athena++ (Stone et al. 2020, ApJS 249, 4) solutions: HLLD fluxes,
+PLM reconstruction, VL2 integrator, 8192 cells on the same periodic [0, 4] domain as the GIZMO
+runs, so they also contain the second, inverted discontinuity at x = 0 = L. They are stored as
+plain text in test/<name>/<name>_exact.txt (columns x rho vx vy vz By Bz P; Bx and provenance in
+the header). test/mhd_reference_athena/README.md has the athinput files and the exact commands to
+regenerate them.
 
-Units are Heaviside-Lorentz, as inside GIZMO (MU_0 = 1): magnetic pressure B^2/2, Alfven speed
+Athena++ and GIZMO's internal units agree (MU_0 = 1): magnetic pressure B^2/2, Alfven speed
 B/sqrt(rho). With all unit parameters left at their defaults (as in the briowu and toth params),
 GIZMO's IC and snapshot MagneticField are in these units, so B compares directly.
 
-The box is periodic like the GIZMO runs, so the reference also contains the second, inverted
-discontinuity at x = 0 = L. `clean_window` finds the region around the main jump that the waves
-from that image have not reached, which is where the tests compare.
+`clean_window` finds the region around the main jump that the waves from the periodic image have
+not reached, which is where the tests compare.
 
-    ref = load_or_solve("briowu", "test/briowu")        # cached in test/briowu/*.npz
+    ref = load_reference("briowu")                   # test/briowu/briowu_exact.txt
     rho = np.interp(x, ref["x"], ref["rho"])
 
-The second half of the module bins a 2D GIZMO snapshot onto x and compares it with a reference
+The rest of the module bins a 2D GIZMO snapshot onto x and compares it with a reference
 (`compare_snapshot`, `plot_comparison`); the tests keep their own tolerances.
 """
 
 from pathlib import Path
 
 import numpy as np
-
-# Bump when the scheme changes, so stale caches are recomputed rather than reused.
-SOLVER_VERSION = 1
-
-LIMITER = "minmod"
 
 PRIM_NAMES = ("rho", "vx", "vy", "vz", "By", "Bz", "P")
 
@@ -43,8 +36,8 @@ PROBLEMS = {
         right=(0.125, 0.0, 0.0, 0.0, -1.0, 0.0, 0.1),
         Bx=0.75, gamma=2.0, L=4.0, x0=2.0, t_end=0.2,
     ),
-    # Toth 2000, as in Hopkins & Raives 2016: colliding flows, two fast and two
-    # slow shocks around a contact.
+    # Toth 2000 (Ryu & Jones 1995 test 1a), as in Hopkins & Raives 2016: colliding flows, two
+    # fast and two slow shocks around a contact.
     "toth": dict(
         left=(1.0, 10.0, 0.0, 0.0, 5.0 / np.sqrt(4 * np.pi), 0.0, 20.0),
         right=(1.0, -10.0, 0.0, 0.0, 5.0 / np.sqrt(4 * np.pi), 0.0, 1.0),
@@ -53,185 +46,24 @@ PROBLEMS = {
 }
 
 
-def _prim_to_cons(W, Bx, gamma):
-    rho, vx, vy, vz, By, Bz, P = W
-    E = P / (gamma - 1) + 0.5 * rho * (vx * vx + vy * vy + vz * vz) + 0.5 * (Bx * Bx + By * By + Bz * Bz)
-    return np.array([rho, rho * vx, rho * vy, rho * vz, By, Bz, E])
-
-
-def _cons_to_prim(U, Bx, gamma):
-    rho, mx, my, mz, By, Bz, E = U
-    vx, vy, vz = mx / rho, my / rho, mz / rho
-    P = (gamma - 1) * (E - 0.5 * rho * (vx * vx + vy * vy + vz * vz) - 0.5 * (Bx * Bx + By * By + Bz * Bz))
-    return np.array([rho, vx, vy, vz, By, Bz, P])
-
-
-def _fast_speed(W, Bx, gamma):
-    rho, P, By, Bz = W[0], W[6], W[4], W[5]
-    gp = gamma * P
-    B2 = Bx * Bx + By * By + Bz * Bz
-    a = (gp + B2) / rho
-    return np.sqrt(0.5 * (a + np.sqrt(np.maximum(a * a - 4 * gp * Bx * Bx / (rho * rho), 0.0))))
-
-
-def _flux(W, U, Bx):
-    rho, vx, vy, vz, By, Bz, P = W
-    pT = P + 0.5 * (Bx * Bx + By * By + Bz * Bz)
-    vB = vx * Bx + vy * By + vz * Bz
-    return np.array([
-        rho * vx,
-        rho * vx * vx + pT - Bx * Bx,
-        rho * vx * vy - Bx * By,
-        rho * vx * vz - Bx * Bz,
-        By * vx - Bx * vy,
-        Bz * vx - Bx * vz,
-        (U[6] + pT) * vx - Bx * vB,
-    ])
-
-
-def _hlld(WL, WR, Bx, gamma):
-    """HLLD flux (Miyoshi & Kusano 2005), vectorised over faces; equation numbers refer to MK05."""
-    UL, UR = _prim_to_cons(WL, Bx, gamma), _prim_to_cons(WR, Bx, gamma)
-    FL, FR = _flux(WL, UL, Bx), _flux(WR, UR, Bx)
-    rL, uL, vL, wL, ByL, BzL, pL = WL
-    rR, uR, vR, wR, ByR, BzR, pR = WR
-    pTL = pL + 0.5 * (Bx * Bx + ByL * ByL + BzL * BzL)
-    pTR = pR + 0.5 * (Bx * Bx + ByR * ByR + BzR * BzR)
-    cf = np.maximum(_fast_speed(WL, Bx, gamma), _fast_speed(WR, Bx, gamma))
-    SL = np.minimum(uL, uR) - cf  # (67)
-    SR = np.maximum(uL, uR) + cf
-    dL, dR = rL * (SL - uL), rR * (SR - uR)
-    SM = (dR * uR - dL * uL - pTR + pTL) / (dR - dL)  # (38)
-    pTs = (dR * pTL - dL * pTR + dL * dR * (uR - uL)) / (dR - dL)  # (41)
-
-    def star(u, v, w, By, Bz, E, pT, d, S):
-        rs = d / (S - SM)  # (43)
-        den = d * (S - SM) - Bx * Bx
-        degenerate = np.abs(den) < 1e-12 * (d * (S - SM) + Bx * Bx)
-        den = np.where(degenerate, 1.0, den)
-        vs = np.where(degenerate, v, v - Bx * By * (SM - u) / den)  # (44)
-        ws = np.where(degenerate, w, w - Bx * Bz * (SM - u) / den)  # (46)
-        fac = (d * (S - u) - Bx * Bx) / den
-        Bys = np.where(degenerate, By, By * fac)  # (45)
-        Bzs = np.where(degenerate, Bz, Bz * fac)  # (47)
-        vBs = SM * Bx + vs * Bys + ws * Bzs
-        Es = ((S - u) * E - pT * u + pTs * SM
-              + Bx * (u * Bx + v * By + w * Bz - vBs)) / (S - SM)  # (48)
-        return rs, vs, ws, Bys, Bzs, Es, vBs
-
-    rLs, vLs, wLs, ByLs, BzLs, ELs, vBLs = star(uL, vL, wL, ByL, BzL, UL[6], pTL, dL, SL)
-    rRs, vRs, wRs, ByRs, BzRs, ERs, vBRs = star(uR, vR, wR, ByR, BzR, UR[6], pTR, dR, SR)
-    sL, sR = np.sqrt(rLs), np.sqrt(rRs)
-    sgn = np.sign(Bx)
-    SLs, SRs = SM - np.abs(Bx) / sL, SM + np.abs(Bx) / sR  # (51)
-    inv = 1.0 / (sL + sR)
-    vss = (sL * vLs + sR * vRs + (ByRs - ByLs) * sgn) * inv  # (59)
-    wss = (sL * wLs + sR * wRs + (BzRs - BzLs) * sgn) * inv  # (60)
-    Byss = (sL * ByRs + sR * ByLs + sL * sR * (vRs - vLs) * sgn) * inv  # (61)
-    Bzss = (sL * BzRs + sR * BzLs + sL * sR * (wRs - wLs) * sgn) * inv  # (62)
-    vBss = SM * Bx + vss * Byss + wss * Bzss
-    ELss = ELs - sL * (vBLs - vBss) * sgn  # (63)
-    ERss = ERs + sR * (vBRs - vBss) * sgn
-
-    ULs = np.array([rLs, rLs * SM, rLs * vLs, rLs * wLs, ByLs, BzLs, ELs])
-    URs = np.array([rRs, rRs * SM, rRs * vRs, rRs * wRs, ByRs, BzRs, ERs])
-    ULss = np.array([rLs, rLs * SM, rLs * vss, rLs * wss, Byss, Bzss, ELss])
-    URss = np.array([rRs, rRs * SM, rRs * vss, rRs * wss, Byss, Bzss, ERss])
-
-    FLs = FL + SL * (ULs - UL)  # (64)
-    FRs = FR + SR * (URs - UR)
-    FLss = FLs + SLs * (ULss - ULs)  # (65)
-    FRss = FRs + SRs * (URss - URs)
-    return np.select(
-        [SL > 0, SLs >= 0, SM >= 0, SRs >= 0, SR >= 0],
-        [FL, FLs, FLss, FRss, FRs],
-        FR,
-    )
-
-
-def _limited_slope(W, limiter):
-    """Limited slopes (per cell) of periodic primitive arrays: "minmod" or "mc" (monotonized
-    central)."""
-    dl = W - np.roll(W, 1, axis=1)
-    dr = np.roll(W, -1, axis=1) - W
-    if limiter == "minmod":
-        s = np.minimum(np.abs(dl), np.abs(dr))
-    else:
-        s = np.minimum(np.minimum(2 * np.abs(dl), 2 * np.abs(dr)), 0.5 * np.abs(dl + dr))
-    return np.where(dl * dr > 0, np.sign(dl) * s, 0.0)
-
-
-def _rhs(U, Bx, gamma, dx, bc, limiter):
-    W = _cons_to_prim(U, Bx, gamma)
-    if bc == "outflow":  # two ghost cells copied from the edges, removed again below
-        W = np.concatenate([W[:, :1], W[:, :1], W, W[:, -1:], W[:, -1:]], axis=1)
-    dW = _limited_slope(W, limiter)
-    Wm, Wp = W - 0.5 * dW, W + 0.5 * dW  # face values at the left/right edge of each cell
-    # positivity: drop to first order in any cell whose reconstruction would go non-physical
-    bad = (Wm[0] <= 0) | (Wp[0] <= 0) | (Wm[6] <= 0) | (Wp[6] <= 0)
-    Wm = np.where(bad, W, Wm)
-    Wp = np.where(bad, W, Wp)
-    F = _hlld(Wp, np.roll(Wm, -1, axis=1), Bx, gamma)  # F[:, i] is the flux through face i+1/2
-    dU = -(F - np.roll(F, 1, axis=1)) / dx
-    if bc == "outflow":
-        dU = dU[:, 2:-2]
-    return dU
-
-
-def solve(problem, t_end=None, nx=4096, gamma=None, bc="periodic", cfl=0.4, limiter=LIMITER):
-    """Evolve a named problem (key of PROBLEMS) or a dict with the same fields to t_end.
-
-    The domain is [0, L) with the jump at x0. bc="periodic" reproduces the GIZMO runs, including
-    the inverted discontinuity at x = 0 = L; bc="outflow" has only the jump at x0.
-
-    Returns a dict: x (cell centres), the primitives in PRIM_NAMES, Bx, gamma, t, nx and
-    max_signal_speed (the largest |vx| + c_fast seen during the run, an upper bound on every wave
-    speed in the solution).
-    """
-    p = dict(PROBLEMS[problem]) if isinstance(problem, str) else dict(problem)
-    gamma = p["gamma"] if gamma is None else gamma
-    t_end = p["t_end"] if t_end is None else t_end
-    Bx, L, x0 = p["Bx"], p["L"], p["x0"]
-    dx = L / nx
-    x = (np.arange(nx) + 0.5) * dx
-    W = np.where(x[None, :] < x0, np.array(p["left"])[:, None], np.array(p["right"])[:, None])
-    U = _prim_to_cons(W, Bx, gamma)
-    t, smax_run = 0.0, 0.0
-    while t < t_end:
-        W = _cons_to_prim(U, Bx, gamma)
-        if not (np.all(W[0] > 0) and np.all(W[6] > 0) and np.all(np.isfinite(W))):
-            raise FloatingPointError(f"non-physical state at t={t:.4g}")
-        smax = float(np.max(np.abs(W[1]) + _fast_speed(W, Bx, gamma)))
-        smax_run = max(smax_run, smax)
-        dt = min(cfl * dx / smax, t_end - t)
-        U1 = U + dt * _rhs(U, Bx, gamma, dx, bc, limiter)
-        U = 0.5 * (U + U1 + dt * _rhs(U1, Bx, gamma, dx, bc, limiter))
-        t += dt
-    W = _cons_to_prim(U, Bx, gamma)
-    out = {name: W[k] for k, name in enumerate(PRIM_NAMES)}
-    out.update(x=x, Bx=Bx, gamma=gamma, t=t, nx=nx, L=L, x0=x0, max_signal_speed=smax_run,
+def load_reference(name):
+    """The reference solution for a problem in PROBLEMS, read from test/<name>/<name>_exact.txt:
+    x (cell centres), the primitives in PRIM_NAMES, plus Bx, gamma, L, x0, nx and the initial
+    left/right states from PROBLEMS."""
+    p = PROBLEMS[name]
+    path = Path(__file__).resolve().parent / name / f"{name}_exact.txt"
+    Bx_file = None
+    with open(path) as f:
+        for line in f:
+            if not line.startswith("#"):
+                break
+            if line.startswith("# Bx = "):
+                Bx_file = float(line.split()[3])
+    assert Bx_file is not None and abs(Bx_file / p["Bx"] - 1) < 1e-9, f"{path}: Bx {Bx_file} != {p['Bx']}"
+    d = np.loadtxt(path)
+    ref = dict(zip(("x",) + PRIM_NAMES, d.T))
+    ref.update(Bx=p["Bx"], gamma=p["gamma"], L=p["L"], x0=p["x0"], nx=len(d),
                left=np.array(p["left"], dtype=float), right=np.array(p["right"], dtype=float))
-    return out
-
-
-def load_or_solve(problem, cache_dir, nx=4096):
-    """solve(problem, nx=nx), cached in <cache_dir>/<problem>_reference_<nx>.npz. The cache is
-    reused only if it was made by the same SOLVER_VERSION, limiter and problem definition."""
-    p = PROBLEMS[problem]
-    key = np.array([SOLVER_VERSION, {"minmod": 0, "mc": 1}[LIMITER], nx, p["t_end"], p["gamma"], p["Bx"],
-                    p["L"], p["x0"], *p["left"], *p["right"]], dtype=float)
-    cache = Path(cache_dir) / f"{problem}_reference_{nx}.npz"
-    if cache.exists():
-        try:
-            with np.load(cache) as f:
-                if f["key"].shape == key.shape and np.array_equal(f["key"], key):
-                    return {k: (f[k][()] if f[k].ndim == 0 else f[k]) for k in f.files if k != "key"}
-        except (OSError, ValueError, KeyError):
-            pass  # unreadable or stale: recompute
-    ref = solve(problem, nx=nx)
-    tmp = cache.with_suffix(".tmp.npz")
-    np.savez(tmp, key=key, **ref)
-    tmp.replace(cache)
     return ref
 
 
@@ -398,7 +230,7 @@ def plot_comparison(snap, ref, cmp, test_dir):
         fig, ax = plt.subplots()
         ax.plot(snap["x"][order], snap[field][order], ".", markersize=1, color="0.6", label="GIZMO particles")
         ax.plot(cmp["x_bins"], cmp["binned"][field], "-", lw=0.8, color="C0", label="GIZMO, binned")
-        ax.plot(ref["x"], ref[field], "-", lw=0.8, color="C3", label=f"1D reference ({int(ref['nx'])} cells)")
+        ax.plot(ref["x"], ref[field], "-", lw=0.8, color="C3", label=f"Athena++ ({int(ref['nx'])} cells)")
         for xw in cmp["window"]:
             ax.axvline(xw, color="k", lw=0.5, ls=":")
         ax.set_xlabel("x")
