@@ -479,6 +479,9 @@ static void mechanical_fb_pair_kernel(
 
     double wk_vec[AREA_WEIGHTED_SUM_ELEMENTS] = {0};
     wk_vec[0] = wk;
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+    if(u < 1) {wk_vec[AREA_WEIGHTED_SUM_KERNEL_GAS] = Mass_j;}
+#endif
     if(dp[0] > 0) { wk_vec[1] = wk * dp[0] / r; wk_vec[2] = 0; } else { wk_vec[1] = 0; wk_vec[2] = wk * dp[0] / r; }
     if(dp[1] > 0) { wk_vec[3] = wk * dp[1] / r; wk_vec[4] = 0; } else { wk_vec[3] = 0; wk_vec[4] = wk * dp[1] / r; }
     if(dp[2] > 0) { wk_vec[5] = wk * dp[2] / r; wk_vec[6] = 0; } else { wk_vec[5] = 0; wk_vec[6] = wk * dp[2] / r; }

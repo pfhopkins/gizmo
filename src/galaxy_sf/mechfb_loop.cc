@@ -150,6 +150,9 @@ void mech_fb_apply_aws_out(const struct MechFBOut *out, int i, int loop_iteratio
     if (loop_iteration == -1) { kmin = 7; kmax = AREA_WEIGHTED_SUM_ELEMENTS; }
 #endif
     for (int k = kmin; k < kmax; ++k) P[i].Area_weighted_sum[k] = out->Area_weighted_sum[k];
+#if defined(GALSF_SINGLE_STARS_SN_EJECTA_CELL) && defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS)
+    if (loop_iteration == -1) {P[i].Area_weighted_sum[AREA_WEIGHTED_SUM_KERNEL_GAS] = out->Area_weighted_sum[AREA_WEIGHTED_SUM_KERNEL_GAS];}
+#endif
 }
 
 void mech_fb_apply_source_mass_out(struct particle_data *P_arr,

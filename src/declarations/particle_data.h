@@ -145,9 +145,18 @@ extern ALIGN(32) struct particle_data
 #ifdef GALSF_FB_MECHANICAL
 #ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
 #define AREA_WEIGHTED_SUM_PIXELS 12 /* slot of the first of the 12 pixel cell counts */
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+#define AREA_WEIGHTED_SUM_ELEMENTS 25
+#else
 #define AREA_WEIGHTED_SUM_ELEMENTS 24 /* the 12 weights below plus the cell counts */
+#endif
+#elif defined(GALSF_SINGLE_STARS_SN_EJECTA_CELL)
+#define AREA_WEIGHTED_SUM_ELEMENTS 13
 #else
 #define AREA_WEIGHTED_SUM_ELEMENTS 12 /* number of weights needed for full momentum-and-energy conserving system */
+#endif
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+#define AREA_WEIGHTED_SUM_KERNEL_GAS (AREA_WEIGHTED_SUM_ELEMENTS - 1) /* last slot: gas mass in the star's kernel */
 #endif
     MyFloat Area_weighted_sum[AREA_WEIGHTED_SUM_ELEMENTS]; /* normalized weights for particles in kernel weighted by area, not mass */
 #endif

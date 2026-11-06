@@ -1057,6 +1057,14 @@
 #define  GALSF_GENERATIONS     1    /*!< Number of star particles that may be created per gas particle */
 #endif
 
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+#if !defined(GALSF_FB_MECHANICAL) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_SINGLE_STARS_SN_EJECTA_CELL needs GALSF_FB_MECHANICAL, GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
+#error "GALSF_SINGLE_STARS_SN_EJECTA_CELL does not set the grain size bins of the new cell"
+#endif
+#endif
 #if defined(GALSF_SINGLE_STARS_SF_CRITERION) && !defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS)
 #define GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* the single-star criterion forms stars that collect their drawn mass */
 #endif

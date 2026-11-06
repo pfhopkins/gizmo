@@ -305,6 +305,10 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
 /* a star pair can merge only inside this many of the larger of their two softenings (evaluate_starstar_merger_for_starcluster_particle_pair) */
 #define STARCLUSTER_MERGER_MAX_SEPARATION_IN_SOFTENINGS 1.
 #endif
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+static int make_sn_ejecta_cell(int i, int n_particles_split);
+#endif
+
 void merge_and_split_particles(void)
 {
     if(ghost_require_no_live_pool_for_layout_change("merge_and_split_particles")) {return;}
@@ -678,12 +682,20 @@ void merge_and_split_particles(void)
     do_box_wrapping();
 #endif
     myfree(Ptmp);
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+    for(i = 0; i < NumPart; i++) {
+        if(P[i].Type == 4 && single_star_ejecta_cell_pending(i) && make_sn_ejecta_cell(i, n_particles_split)) {n_particles_split++; n_particles_gas_split++;}
+    }
+#endif
     
     {
         long long local[3] = {n_particles_merged, n_particles_split, n_particles_gas_split}, total[3];
         MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_n_particles_merged = total[0]; MPI_n_particles_split = total[1]; MPI_n_particles_gas_split = total[2];
     }
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+    if(MPI_n_particles_split > 0) {single_star_ejecta_cells_flush();}
+#endif
     if(ThisTask == 0)
     {
         if(MPI_n_particles_merged > 0 || MPI_n_particles_split > 0)
@@ -715,6 +727,81 @@ void merge_and_split_particles(void)
 static int UnmetSplitDemand = 0;
 int gizmo_get_unmet_split_demand(void) {return UnmetSplitDemand;}
 void gizmo_reset_unmet_split_demand(void) {UnmetSplitDemand = 0;}
+
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+/* the pending supernova of star i becomes a new gas cell: a copy of the nearest local cell, holding only the ejecta at the
+   star, with its velocity, the explosion energy as heat and the yields. 0 = not now (no local gas or no storage): retried */
+static int make_sn_ejecta_cell(int i, int n_particles_split)
+{
+    const int out_of_storage = (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas)) || (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart));
+    if(out_of_storage || !gizmo_particle_index_fits_live_tree(NumPart + n_particles_split + 1)) {if(out_of_storage && UnmetSplitDemand < All.MaxPartExpandable) {UnmetSplitDemand++;} return 0;}
+    int tmpl = -1; double r2_min = MAX_REAL_NUMBER;
+    for(int q = 0; q < N_gas; q++) {
+        if(P[q].Type != 0 || P[q].Mass <= 0) {continue;}
+        Vec3<double> dq = P[i].Pos - P[q].Pos; nearest_xyz(dq);
+        double r2 = dq.norm_sq();
+        if(r2 < r2_min) {r2_min = r2; tmpl = q;}
+    }
+    if(tmpl < 0) {return 0;}
+    struct addFB_evaluate_data_in_ in; double E_code = 0;
+    single_star_ejecta_cell_payload(i, &in, &E_code);
+    long j = NumPart + n_particles_split;
+    double m_ratio = in.Msne / P[tmpl].Mass;
+    P[j] = P[tmpl]; CellP[j] = CellP[tmpl];
+    P[j].ID_child_number = P[tmpl].ID_child_number + (MyIDType)(1 << ((int)P[tmpl].ID_generation)); /* as a split */
+    P[tmpl].ID_generation = P[tmpl].ID_generation + 1;
+    if(P[tmpl].ID_generation > 30) {P[tmpl].ID_generation = 0;}
+    P[j].ID_generation = P[tmpl].ID_generation;
+    static constexpr uint64_t EJECTA_CELL_DIRECTION_RNG_SALT = gizmo_loop_rng_salt("ejecta_cell_direction");
+    double phi = 2.0*M_PI*particle_random_number(i, EJECTA_CELL_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 0), cth = 2.0*(particle_random_number(i, EJECTA_CELL_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 1)-0.5), sth = sqrt(1.-cth*cth), dr = 0.05 * P[tmpl].KernelRadius;
+    Vec3<double> n_dir; n_dir[0] = sth*cos(phi); n_dir[1] = sth*sin(phi); n_dir[2] = cth;
+    P[j].Pos = P[i].Pos + n_dir * dr;
+    P[j].Vel = P[i].Vel; CellP[j].VelPred = P[i].Vel; CellP[j].HydroAccel = {}; P[j].dp = {};
+    P[j].Mass = CellP[j].Mass = in.Msne;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    CellP[j].MassTrue = in.Msne; CellP[j].dMass = 0; CellP[j].DtMass = 0;
+#endif
+    CellP[j].InternalEnergy = CellP[j].InternalEnergyPred = E_code / in.Msne; CellP[j].DtInternalEnergy = 0;
+#ifdef SGCHEM
+    CellP[j].Temp = (5./3.-1.) * CellP[j].InternalEnergy * UNIT_SPECEGY_IN_CGS * 0.6 * PROTONMASS_CGS / BOLTZMANN_CGS; /* the stored temperature of a fully ionised cell until its first solve */
+#endif
+#ifdef METALS
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {P[j].Metallicity[k] = in.yields[k];}
+#endif
+#ifdef MAGNETIC /* the template's field strength, not its flux */
+    CellP[j].B = CellP[tmpl].B * m_ratio; CellP[j].BPred = CellP[tmpl].BPred * m_ratio; CellP[j].DtB = {}; CellP[j].divB = 0;
+#ifdef DIVBCLEANING_DEDNER
+    CellP[j].Phi = CellP[j].PhiPred = CellP[j].DtPhi = 0; CellP[j].DtB_PhiCorr = {};
+#endif
+#endif
+#ifdef TURB_DIFF_METALS
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP[j].Dyield[k] = 0;}
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP[j].Dyield_pending[k] = 0;}
+#endif
+#ifdef RADTRANSFER /* the copy took no radiation or cosmic rays with it: none created */
+    for(int k = 0; k < N_RT_FREQ_BINS; k++) {
+        CellP[j].Rad_E_gamma[k] = 0;
+#ifdef RT_EVOLVE_ENERGY
+        CellP[j].Rad_E_gamma_Pred[k] = CellP[j].Dt_Rad_E_gamma[k] = 0;
+#endif
+#ifdef RT_EVOLVE_FLUX
+        for(int d = 0; d < 3; d++) {CellP[j].Rad_Flux[k][d] = CellP[j].Rad_Flux_Pred[k][d] = CellP[j].Dt_Rad_Flux[k][d] = 0;}
+#endif
+    }
+#endif
+#ifdef COSMIC_RAY_FLUID
+    for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {CellP[j].CosmicRayEnergy[k] = CellP[j].CosmicRayEnergyPred[k] = CellP[j].DtCosmicRayEnergy[k] = 0; CellP[j].CosmicRayFlux[k] = {}; CellP[j].CosmicRayFluxPred[k] = {};}
+#endif
+#if defined(SINK_THERMALFEEDBACK)
+    CellP[j].Injected_Sink_Energy = 0;
+#endif
+    P[j].wakeup = -1; wakeup_sidecar_mark((int)j); NeedToWakeupParticles_local = 1; /* its own timestep, not the template's */
+    single_star_ejecta_cell_done(i, in.Msne);
+    return 1;
+}
+#endif
 
 int split_particle_i(int i, int n_particles_split, double r_near)
 {
