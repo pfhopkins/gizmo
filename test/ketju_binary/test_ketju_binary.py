@@ -100,3 +100,7 @@ def test_energy_lines():
     assert d and max(abs(float(x)) for x in d) < 1e-6
 
 
+def test_remnant_pn():
+    """stars marked as black hole remnants take PN terms: the log says so"""
+    log = _run(1, ("KETJU_PN_REMNANT_TAG", "TEST_KETJU_REMNANT_AT_START", "TEST_KETJU_REGION_LOG"), params={"KetjuPNTerms": "2457"})
+    assert re.search(r"KETJU_REGION_PN 2", log)
