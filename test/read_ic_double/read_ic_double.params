@@ -7,7 +7,6 @@ TimeBegin                       0.0
 TimeMax                         1.0e-6
 TimeOfFirstSnapshot             0
 TimeBetSnapshot                 1.0e-6
-TimeBetStatistics               1.0e-6
 ComovingIntegrationOn           0
 BoxSize                         1.0
 MaxSizeTimestep                 1.0e-6
@@ -33,3 +32,12 @@ SofteningDisk                   1.0e-4
 SofteningBulge                  1.0e-4
 SofteningStars                  1.0e-4
 SofteningBndry                  1.0e-4
+ResubmitOn                  0
+ResubmitCommand             none
+ErrTolIntAccuracy           0.01
+ErrTolTheta                 0.7
+ErrTolForceAcc              0.0025
+CourantFac                  0.2
+MaxRMSDisplacementFac       0.125
+MaxNumNgbDeviation          1
+TimeBetStatistics           1e-6

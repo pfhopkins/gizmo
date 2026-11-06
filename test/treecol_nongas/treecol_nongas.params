@@ -21,3 +21,12 @@ UnitLength_in_cm           3.085678e21
 UnitMass_in_g              1.989e43
 UnitVelocity_in_cm_per_s   1.0e5
 InitGasTemp                1000
+ResubmitOn                  0
+ResubmitCommand             none
+ErrTolIntAccuracy           0.01
+ErrTolTheta                 0.7
+ErrTolForceAcc              0.0025
+CourantFac                  0.2
+MaxRMSDisplacementFac       0.125
+MaxNumNgbDeviation          1
+TimeBetStatistics           1.0
