@@ -878,6 +878,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
         case IO_SGCHEM_CR_ZETA:
         case IO_SINGLE_STAR_LOG_UV_LUM:
         case IO_SINGLE_STAR_LOG_LW_LUM:
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type) {*fp++ = (MyOutputFloat) sgchem_radiation_field_for_snapshot(pindex, blocknr); n++;}
             break;
@@ -2295,6 +2296,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_SGCHEM_CR_ZETA:
         case IO_SINGLE_STAR_LOG_UV_LUM:
         case IO_SINGLE_STAR_LOG_LW_LUM:
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
 #endif
 #endif
         case IO_HII:
@@ -2726,6 +2728,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_SGCHEM_CR_ZETA:
         case IO_SINGLE_STAR_LOG_UV_LUM:
         case IO_SINGLE_STAR_LOG_LW_LUM:
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
 #endif
 #endif
         case IO_HII:
@@ -3223,6 +3226,7 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
 #ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
         case IO_SINGLE_STAR_LOG_UV_LUM:
         case IO_SINGLE_STAR_LOG_LW_LUM:
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
 #endif
         case IO_HSMS:
             for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
@@ -3476,6 +3480,7 @@ int blockpresent(enum iofields blocknr)
         case IO_SGCHEM_CR_ZETA:
         case IO_SINGLE_STAR_LOG_UV_LUM:
         case IO_SINGLE_STAR_LOG_LW_LUM:
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
 #endif
             return 1;
 #endif
@@ -4252,6 +4257,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_SINGLE_STAR_LOG_LW_LUM:
             strncpy(label, "SLLW", 4);
             break;
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
+            strncpy(label, "SLLQ", 4);
+            break;
 #endif
 #endif
         case IO_CHIMES_ABUNDANCES:
@@ -4800,6 +4808,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_SINGLE_STAR_LOG_LW_LUM:
             strcpy(buf, "LW_Luminosity");
+            break;
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
+            strcpy(buf, "Lyman_PhotonRate");
             break;
 #endif
 #endif
