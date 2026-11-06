@@ -41,8 +41,9 @@ static int skynet_n_species = 0;
 
 /* SkyNet objects: Evolve mutates the network, so calls are serialised below */
 static ReactionNetwork *skynet_network = nullptr;
-static std::mutex skynet_mutex; /* Evolve mutates the network and writes its output files: one call at a time */
-static std::string skynet_output_prefix; /* per rank, so ranks sharing a directory do not write one file */
+static HelmholtzEOS *skynet_eos = nullptr; /* lives as long as the network that points at it */
+static std::mutex skynet_mutex; /* Evolve mutates the network and writes its output files, which SkyNet has no option to turn off: one call at a time, so threads gain nothing here */
+static std::string skynet_output_prefix; /* per rank, so ranks sharing a directory do not write one file; each call overwrites it (about 41 kB) */
 
 
 void nuclear_skynet_init(void)
@@ -90,6 +91,7 @@ void nuclear_skynet_init(void)
     /* configure network options */
     NetworkOptions netOpts;
     netOpts.IsSelfHeating = false; /* T provided externally by GIZMO */
+    netOpts.DisableStdoutOutput = true; /* it would otherwise print on every cell's every call */
 
     /* load REACLIB reaction rates and build the reaction library */
     REACLIB reaclib(reaclibfile);
@@ -103,10 +105,10 @@ void nuclear_skynet_init(void)
     reacLibs.push_back(&reaclibLib);
 
     /* create the network */
-    HelmholtzEOS helm(datadir + "/helm_table.dat", netOpts); /* the network needs an EOS */
-    skynet_network = new ReactionNetwork(nuclib, reacLibs, &helm, nullptr, netOpts);
+    skynet_eos = new HelmholtzEOS(All.EosTable, netOpts); /* the network needs an EOS: the same table the run reads */
+    skynet_network = new ReactionNetwork(nuclib, reacLibs, skynet_eos, nullptr, netOpts);
 
-    skynet_output_prefix = std::string(All.OutputDir) + "/skynet_rank" + std::to_string(ThisTask);
+    skynet_output_prefix = std::string(All.OutputDir) + "skynet_rank" + std::to_string(ThisTask);
 
     MPI_Barrier(MPI_COMM_WORLD);
     if (ThisTask == 0) printf("SkyNet initialization complete.\n");
@@ -135,11 +137,18 @@ int nuclear_skynet_solve(const struct nuclear_input *in, struct nuclear_output *
 
     /* evolve */
     std::lock_guard<std::mutex> lock(skynet_mutex);
-    const NetworkOutput &result = skynet_network->Evolve(
-        Y_in, 0.0, dt_s, &T9_const, &rho_const, skynet_output_prefix, dt_s);
+    const NetworkOutput *result = nullptr;
+    try {
+        result = &skynet_network->Evolve(Y_in, 0.0, dt_s, &T9_const, &rho_const, skynet_output_prefix, dt_s);
+    } catch (const std::exception &err) { /* SkyNet reports a bad state by throwing, which must not leave the threaded caller */
+        char msg[512];
+        snprintf(msg, sizeof(msg), "SkyNet failed for a cell with rho=%g g/cm^3, T9=%g, dt=%g s: %s", rho_cgs, T9, dt_s, err.what());
+        gizmo_request_controlled_stop(7730, msg, __FILE__, __LINE__, __FUNCTION__);
+        return -1;
+    }
 
     /* map back to GIZMO mass fractions */
-    const std::vector<double> &Y_final = result.FinalY();
+    const std::vector<double> &Y_final = result->FinalY();
     double sum = 0;
     for (int k = 0; k < NUM_NUCLEAR_SPECIES; k++) {
         if (skynet_species_map[k] >= 0 && skynet_species_map[k] < (int)Y_final.size()) {
