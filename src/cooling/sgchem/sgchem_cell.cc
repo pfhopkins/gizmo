@@ -309,6 +309,21 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #if CHEMISTRYNETWORK == 17
     if(ab[IHP] > 0.99) {ab[IH2] = 0; ab[ICO] = 0; ab[IHD] = 0;} /* fully ionised: no molecules (stiffness) */
 #endif
+#ifdef TEST_SGCHEM_PRINT_INPUT_POOL_VIOLATIONS /* species above the pools they draw from, as handed to the solver (before the clamp) */
+#if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 17 || CHEMISTRYNETWORK == 20
+    {
+        int viol = 0; const double rtol = 1.0e-3;
+        if(ab[ICO] > DMIN(in.abundc, in.abundo) * (1.0 + rtol) + 1.0e-20) {viol |= 1;}
+        if(2.0 * ab[IH2] + ab[IHP] > 1.0 + rtol) {viol |= 2;}
+#if CHEMISTRYNETWORK == 17
+        if(ab[IHEP] + ab[IHEPP] > in.abhe * (1.0 + rtol) + 1.0e-20) {viol |= 4;}
+        if(ab[IDP] + ab[IHD] > in.abundD * (1.0 + rtol) + 1.0e-20) {viol |= 8;}
+#endif
+        if(viol) {printf("SGCHEM_INPUT_VIOLATION: ID=%llu viol=%d yn=%.4e T=%.4e pools abundc=%.6e abundo=%.6e abhe=%.6e abundD=%.6e H2=%.6e H+=%.6e CO=%.6e\n",
+                         (unsigned long long) P[i].ID, viol, yn, temp, in.abundc, in.abundo, in.abhe, in.abundD, ab[IH2], ab[IHP], ab[ICO]);}
+    }
+#endif
+#endif
     sgchem_clamp_pools(ab, &in);
     chem_cxx_evolve_cell(timestep, dl, yn, divv, &energy, ab);
     chem_cxx_read_outputs(&out);
