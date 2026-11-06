@@ -54,6 +54,23 @@ def clean_test_outputs(test_name: str, extra_config_flags=()):
         remove(f)
 
 
+SINK_LOOPS_SKIPPED_MSG = "skipping the sink neighbour loops"
+
+
+def assert_dry_sink_run(log_path: str, snapshots):
+    """For a gas-free sink run built with DISABLE_SINK_MERGERS: the sink count must not change between the first and
+    last snapshot, and the run log must show that the sink neighbour loops were skipped. The log check is dropped when
+    the log is absent (GIZMO_TEST_SKIP_BUILD_RUN validates snapshots produced elsewhere)."""
+    with h5py.File(snapshots[0], "r") as f0, h5py.File(snapshots[-1], "r") as f1:
+        n0, n1 = int(f0["Header"].attrs["NumPart_Total"][5]), int(f1["Header"].attrs["NumPart_Total"][5])
+    assert n1 == n0, f"{n0} sinks at the start, {n1} at the end: a merger happened with DISABLE_SINK_MERGERS set"
+    if path.isfile(log_path):
+        with open(log_path, errors="replace") as fh:
+            assert SINK_LOOPS_SKIPPED_MSG in fh.read(), (
+                f"{log_path} lacks '{SINK_LOOPS_SKIPPED_MSG}': a gas-free DISABLE_SINK_MERGERS run entered the "
+                f"sink neighbour loops")
+
+
 def physical_cores():
     """Number of physical cores, which is what core binding allocates -- not cpu_count(),
     which counts hardware threads and so doubles the answer wherever SMT is on."""
@@ -126,10 +143,12 @@ def _current_systype():
     return ""
 
 
-def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
+def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_config_flags: tuple = (), post_build=None):
     """Sets environment variables and runs a script for building gizmo for a given test.
     If num_openmp_threads > 0, appends OPENMP=<num_openmp_threads> to Config.sh before building.
     extra_config_flags is a tuple of strings to append to Config.sh (e.g. ("TRANSPORT_SUBCYCLE=10",)).
+    post_build, if given, is called with no arguments once the build has finished, so it can use the
+    objects in src/ before another build replaces them (e.g. link_test_driver).
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
@@ -147,6 +166,34 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
         raise FileNotFoundError("Did not successfully build GIZMO")
     move("src/GIZMO", f"test/{test_name}/GIZMO")
     system(f"chmod +x test/{test_name}/GIZMO")
+    if post_build is not None:
+        post_build()
+
+
+_SRC_DIR = path.join(path.dirname(path.dirname(path.dirname(path.dirname(path.abspath(__file__))))), "src")
+
+
+def link_test_driver(source: str, exe: str):
+    """Compile a test driver and link it against the objects of the build that just finished, in place of
+    core/main.o, so the code under test is exactly what GIZMO was built from. Call it from
+    build_gizmo_for_test's post_build. The driver gets core/main.cc's compile flags minus -ffast-math (so
+    its isfinite() checks work) plus -I src, so it includes headers as the sources do."""
+    makedirs(path.dirname(exe), exist_ok=True)
+    dry = subprocess.run(["make", "-n", "-B", "GIZMO"], capture_output=True, text=True, cwd=_SRC_DIR).stdout.splitlines()
+    compile_main = [l for l in dry if " -c core/main.cc" in l]
+    link = [l for l in dry if "-o GIZMO" in l]
+    assert compile_main and link, "could not read the compile/link commands from make -n"
+    obj = path.splitext(exe)[0] + ".o"
+    cc = [t for t in shlex.split(compile_main[-1]) if t != "-ffast-math"]
+    cc[cc.index("core/main.cc")] = source
+    cc[cc.index("core/main.o")] = obj
+    cc.insert(1, "-I" + _SRC_DIR)
+    ln = shlex.split(link[-1])
+    ln[ln.index("core/main.o")] = obj
+    ln[ln.index("GIZMO")] = exe
+    for cmd in (cc, ln):
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=_SRC_DIR)
+        assert r.returncode == 0, "driver build failed:\n%s\n%s" % (" ".join(cmd), r.stderr[-4000:])
 
 
 def download_test_files(test_name: str, params_name: str = None):

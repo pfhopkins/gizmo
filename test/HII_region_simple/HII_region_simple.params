@@ -1,0 +1,106 @@
+%---- Relevant files
+InitCondFile  HII_region_simple_ics
+OutputDir     output
+
+%---- File formats
+ICFormat    3
+SnapFormat  3
+
+%---- Output parameters
+RestartFile                 restart
+SnapshotFileBase            snapshot
+OutputListOn                0
+OutputListFilename          output_times.txt
+NumFilesPerSnapshot         1
+NumFilesWrittenInParallel   1
+
+%---- Output frequency
+TimeOfFirstSnapshot     0.0
+TimeBetSnapshot         0.1
+TimeBetStatistics       0.05
+
+%---- CPU run-time and checkpointing time-limits
+TimeLimitCPU            172800
+CpuTimeBetRestartFile   7200
+ResubmitOn              0
+ResubmitCommand         my-scriptfile
+
+%---- Desired simulation beginning and end times (in code units) for run
+TimeBegin   0.0
+TimeMax     1.0
+
+%---- Maximum and minimum timesteps allowed
+MaxSizeTimestep         0.025
+MinSizeTimestep         1.0e-15
+
+%---- System of units: pc, Msun, km/s
+UnitLength_in_cm            3.09e+18
+UnitMass_in_g               1.989e+33
+UnitVelocity_in_cm_per_s    1.00e+05
+GravityConstantInternal     1e-100
+
+%---- Cosmological parameters
+ComovingIntegrationOn   0
+BoxSize                 20.0
+Omega0                  0.
+OmegaLambda             0.
+OmegaBaryon             0.
+HubbleParam             1.
+
+%---- Rebuild domains when >this fraction of particles active
+DomainBuild_ActiveFraction   0.005
+
+%---- Initial hydro temperature & temperature floor (in Kelvin)
+InitGasTemp     1e2
+MinGasTemp      2.73
+
+%---- Hydro reconstruction (kernel) parameters
+DesNumNgb               32
+MaxKernelRadius         1.0e10
+MinGasKernelRadiusFractional    0
+
+%---- Gravitational softening lengths
+SofteningGas    1e-10
+SofteningHalo   0.020
+SofteningDisk   0.150
+SofteningBulge  0.500
+SofteningStars  0.01
+SofteningBndry  0.01
+
+SofteningGasMaxPhys     0.0005
+SofteningHaloMaxPhys    0.010
+SofteningDiskMaxPhys    0.075
+SofteningBulgeMaxPhys   0.250
+SofteningStarsMaxPhys   0.0005
+SofteningBndryMaxPhys   0.0005
+
+%---- Star Formation parameters
+CritPhysDensity     1.00e+13
+SfEffPerFreeFall    1.0
+
+%---- FIRE explicit star formation & feedback model
+InitMetallicity             1.0
+InitStellarAge              0.0
+SNeIIEnergyFrac             1.0
+GasReturnFraction           1.0
+GasReturnEnergy             1.0
+
+InterstellarRadiationFieldStrength  1.0
+
+%---- Black Hole accretion & formation
+SeedSinkMass                 5.00e-01
+SeedReservoirMass            0.0
+SinkAccretionFactor          1.0
+SinkEddingtonFactor          1e100
+SinkNgbFactor                1.0
+SinkMaxAccretionRadius       1.00e+02
+SinkRadiativeEfficiency      5e-7
+SinkFeedbackFactor           1.0
+
+%--- Developer-Mode Parameters
+ErrTolTheta                  0.5
+ErrTolForceAcc               0.0025
+ErrTolIntAccuracy        0.01
+CourantFac               0.2
+MaxRMSDisplacementFac    0.125
+MaxNumNgbDeviation      0.05
