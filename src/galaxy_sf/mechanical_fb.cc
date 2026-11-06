@@ -310,9 +310,31 @@ void verify_and_assign_local_mechfb_integrals(void)
 
 
 
+#ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
+/* test only: record = int phase (0 before, 1 after), long long record number, double time, long long n, then n x {unsigned long long ID, int type, double mass, vx, vy, vz, u} */
+static void mechfb_test_state_dump(int phase)
+{
+    static long long ncall = 0;
+    char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+    snprintf(fn, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%swind_dep_dump.%d.bin", All.OutputDir, ThisTask);
+    FILE *fd = fopen(fn, "ab"); if(!fd) {return;}
+    long long n = NumPart, rec = ncall / 2; double t = All.Time;
+    fwrite(&phase, sizeof(int), 1, fd); fwrite(&rec, sizeof(long long), 1, fd); fwrite(&t, sizeof(double), 1, fd); fwrite(&n, sizeof(long long), 1, fd);
+    for(int i = 0; i < NumPart; i++) {
+        unsigned long long id = P[i].ID; int ty = P[i].Type;
+        double row[5] = {(double)P[i].Mass, (double)P[i].Vel[0], (double)P[i].Vel[1], (double)P[i].Vel[2], (P[i].Type == 0) ? (double)CellP[i].InternalEnergy : 0.0};
+        fwrite(&id, sizeof(unsigned long long), 1, fd); fwrite(&ty, sizeof(int), 1, fd); fwrite(row, sizeof(double), 5, fd);
+    }
+    fclose(fd); ncall++;
+}
+#endif
+
 /* parent routine which calls all of the mechanical fb loops and verifies coupling, if needed */
 void mechanical_fb_calc_toplevel(void)
 {
+#ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
+    int n_wind_all = 0;
+#endif
     PRINT_STATUS("Start mechanical feedback computation...");
 
     /* GPU port: dispatch all 6 modes at once on the GPU, sharing a single
@@ -355,6 +377,12 @@ void mechanical_fb_calc_toplevel(void)
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
         single_star_feedback_prepare(nl_active, num_active);
 #endif
+#ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
+        int n_wind = 0;
+        for(int a = 0; a < num_active; a++) {if(P[nl_active[a]].MassReturn_ThisTimeStep > 0) {n_wind++;}}
+        MPI_Allreduce(&n_wind, &n_wind_all, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        if(n_wind_all > 0) {mechfb_test_state_dump(0);}
+#endif
         int *nl_loop = nl_active, n_loop = num_active;
 #ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
         if(All.Time < All.TestFBNoGasUntilTime) {n_loop = 0;} /* test only: events find no gas, stay pending */
@@ -370,6 +398,9 @@ void mechanical_fb_calc_toplevel(void)
 
 
     verify_and_assign_local_mechfb_integrals();
+#ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
+    if(n_wind_all > 0) {mechfb_test_state_dump(1);} /* after the deposits are applied to the cells */
+#endif
     /* persistent buffer: NOT freed -- reused across steps, kept all-zero by the
      * drain-zero in verify_and_assign_local_mechfb_integrals. */
 }
