@@ -379,6 +379,10 @@ void cooling_parent_routine(void)
     }
     int N_active = (int) cool_indices.size();
     if(N_active == 0) {return;}
+#ifdef SGCHEM_PRINT_STEP_COOLING_DIAGNOSTICS
+    std::vector<double> u_before_diag(N_active);
+    for(int j = 0; j < N_active; j++) {u_before_diag[j] = CellP[cool_indices[j]].InternalEnergy;}
+#endif
 
     /* Steps 2-4: Gather / Dispatch / Scatter in batches.
      *
@@ -555,6 +559,20 @@ void cooling_parent_routine(void)
 #endif
     }
   } /* end CPU/GPU path selection */
+#ifdef SGCHEM_PRINT_STEP_COOLING_DIAGNOSTICS
+    { /* this rank's cells only, no communication: energy the update removed, running sum, temperature and density ranges */
+        static double dE_cum = 0;
+        double dE = 0, T_min = 1e30, T_max = -1e30, nH_min = 1e30, nH_max = -1e30;
+        for(int j = 0; j < N_active; j++) {
+            int i = cool_indices[j];
+            double nH = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS * HYDROGEN_MASSFRAC;
+            dE += (u_before_diag[j] - CellP[i].InternalEnergy) * P[i].Mass;
+            T_min = DMIN(T_min, CellP[i].Temp); T_max = DMAX(T_max, CellP[i].Temp); nH_min = DMIN(nH_min, nH); nH_max = DMAX(nH_max, nH);
+        }
+        dE_cum += dE;
+        PRINT_STATUS("SGCHEM_DIAG: N_active=%d  dE_cool=%.4e[code]  E_cool_cum=%.4e[code]  T=[%.2e,%.2e]K  nH=[%.2e,%.2e]cm^-3", N_active, dE, dE_cum, T_min, T_max, nH_min, nH_max);
+    }
+#endif
 }
 
 
