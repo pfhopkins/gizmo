@@ -1041,18 +1041,6 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
-        case IO_FACE_AREA_SUM:     /* sum_j A_ij of the effective faces: the closure residual, physical area */
-#ifdef OUTPUT_FACE_AREA_SUM
-            for(n = 0; n < pc; pindex++)
-                if(P[pindex].Type == type)
-                {
-                    for(k = 0; k < 3; k++) {fp[k] = (MyOutputFloat) CellP[pindex].Face_Area[k];}
-                    fp += 3;
-                    n++;
-                }
-#endif
-            break;
-
             
         case IO_DTENTR:		/* rate of change of internal energy */
 #ifdef OUTPUT_CHANGEOFENERGY
@@ -2008,7 +1996,6 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_HERMITE_VEL:
         case IO_ACCEL:
         case IO_HYDROACCEL:
-        case IO_FACE_AREA_SUM:
         case IO_BFLD:
         case IO_AMBIPOLAR:
         case IO_HALL:
@@ -2361,7 +2348,6 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_HERMITE_VEL:
         case IO_ACCEL:
         case IO_HYDROACCEL:
-        case IO_FACE_AREA_SUM:
         case IO_BFLD:
         case IO_GRADPHI:
         case IO_GRADRHO:
@@ -2664,7 +2650,6 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_PARTVEL:
         case IO_RAD_ACCEL:
         case IO_HYDROACCEL:
-        case IO_FACE_AREA_SUM:
         case IO_RADGAMMA:
         case IO_RAD_OPACITY:
         case IO_RAD_TEMP:
@@ -3107,12 +3092,6 @@ int blockpresent(enum iofields blocknr)
 
         case IO_HYDROACCEL:
 #ifdef OUTPUT_HYDROACCELERATION
-            return 1;
-#endif
-            break;
-
-        case IO_FACE_AREA_SUM:
-#if defined(OUTPUT_FACE_AREA_SUM) && !defined(HYDRO_SPH)
             return 1;
 #endif
             break;
@@ -3662,9 +3641,6 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_HYDROACCEL:
             strncpy(label, "ACCH", 4);
             break;
-        case IO_FACE_AREA_SUM:
-            strncpy(label, "FACA", 4);
-            break;
         case IO_DTENTR:
             strncpy(label, "ENDT", 4);
             break;
@@ -4104,9 +4080,6 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_HYDROACCEL:
             strcpy(buf, "HydroAcceleration");
-            break;
-        case IO_FACE_AREA_SUM:
-            strcpy(buf, "FaceAreaSum");
             break;
         case IO_DTENTR:
             strcpy(buf, "RateOfChangeOfInternalEnergy");

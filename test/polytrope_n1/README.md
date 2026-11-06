@@ -118,7 +118,7 @@ surface_volcorr differ only in degree) and for two different ICs. The cause is s
   `enforce_adiabat` variants, run to TimeMax 10; the others stop at 4 (one pulsation period), before
   the convection the heat flux triggers reaches the interior.
 
-What the free surface itself does at t=0 (`OUTPUT_FACE_AREA_SUM`, per IC shell from the surface;
+What the free surface itself does at t=0 (measured with a temporary output of the face-closure residual sum_j A_ij, per IC shell from the surface;
 the shells are one spacing apart, H is about two spacings):
 
 | shell r | enclosed mass | (R-r)/H | kernel density bias | \|sum_j A_ij\| / 4 pi H^2 | net radial force / \|g\| |

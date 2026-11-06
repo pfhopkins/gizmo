@@ -356,10 +356,8 @@ struct OUTPUT_STRUCT_NAME
 #endif
 #endif
 
-#if defined(MAGNETIC) || defined(OUTPUT_FACE_AREA_SUM)
-    Vec3<MyDouble> Face_Area;
-#endif
 #if defined(MAGNETIC)
+    Vec3<MyDouble> Face_Area;
     Vec3<MyFloat> DtB;
     MyFloat divB;
 #if defined(DIVBCLEANING_DEDNER)
@@ -617,12 +615,9 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 #endif
 #endif
 
-#if defined(MAGNETIC) || defined(OUTPUT_FACE_AREA_SUM)
-    CellP[i].Face_Area += out->Face_Area;
-#endif
 #if defined(MAGNETIC)
     /* can't just do DtB += out-> DtB, because for some hydro methods, the induction equation is solved in the density loop; need to simply add it here */
-    CellP[i].DtB += out->DtB;
+    CellP[i].DtB += out->DtB; CellP[i].Face_Area += out->Face_Area;
     CellP[i].divB += out->divB;
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
@@ -1034,11 +1029,8 @@ void hydro_force_initial_operations_preloop(void)
             for(int k=0;k<N_RT_FREQ_BINS;k++) {int k_dir; for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++) {CellP[i].Dt_Rad_Intensity[k][k_dir] = 0;}}
 #endif
 #endif
-#if defined(MAGNETIC) || defined(OUTPUT_FACE_AREA_SUM)
-            CellP[i].Face_Area = {};
-#endif
 #ifdef MAGNETIC
-            CellP[i].divB = 0;
+            CellP[i].divB = 0; CellP[i].Face_Area = {};
 #ifdef DIVBCLEANING_DEDNER
             CellP[i].DtB_PhiCorr = {};
 #endif

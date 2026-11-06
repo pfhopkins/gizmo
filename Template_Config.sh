@@ -478,7 +478,6 @@
 #OUTPUT_POTENTIAL               # forces code to compute+output potentials in snapshots
 #OUTPUT_TIDAL_TENSOR            # writes tidal tensor (computed in gravity) to snapshots
 #OUTPUT_ACCELERATION            # output physical acceleration of each particle in snapshots
-#OUTPUT_FACE_AREA_SUM           # output "FaceAreaSum" (MFM/MFV): sum_j A_ij of a cell's effective faces (physical area) from its last hydro step. Divided by 4 pi h^2 (h = KernelMaxRadius) it is the closure error: ~1e-4-1e-3 in a well-sampled fluid, percents where faces do not close (free surfaces)
 #OUTPUT_HYDROACCELERATION       # output the 'hydrodynamic' (includes -all- stress tensor terms) acceleration. if enabled with 'OUTPUT_ACCELERATION', that will output the gravitational acceleration, so the sum of the two is the total
 #IO_HERMITE_SYNC                # output HermiteSyncCoordinates/HermiteSyncVelocities: a mutually consistent (r,v) pair at the snapshot time for Hermite-integrated particles. The ordinary Coordinates/Velocities are NOT such a pair (positions are drifted to the output time, velocities are left at the last kick), so vis-viva, orbital elements and kinetic energy are all evaluated on a state that never existed. Predicted, not corrected: 4th order in position, 3rd in velocity
 #OUTPUT_CHANGEOFENERGY          # outputs rate-of-change of internal energy of gas particles in snapshots
