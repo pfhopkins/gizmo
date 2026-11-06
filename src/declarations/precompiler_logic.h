@@ -10,6 +10,53 @@
 #define EXPAND_PREPROCESSOR_(VAL)     DO_PREPROCESSOR_EXPAND_(VAL) /* checks for a NON-ZERO value of this parameter */
 #define CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(VAL) !(EXPAND_PREPROCESSOR_(VAL) == 1) /* returns True if a non-zero int value of VAL is set */
 
+/* the usual Stella set; each flag still works alone (scripts/stella holds the production configs). the flags the chemistry sources read stay in Config.sh, they see no other header */
+#ifdef STELLA_DEFAULTS
+#if !defined(SGCHEM) || !defined(METALS) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES)
+#error "STELLA_DEFAULTS: set SGCHEM, CHEMISTRYNETWORK, METALS, GALSF_RESOLVEDISM_TREECOL_PIXELS=12 and GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES in Config.sh"
+#endif
+#ifndef COOLING
+#define COOLING
+#endif
+#ifndef COOLING_OPERATOR_SPLIT
+#define COOLING_OPERATOR_SPLIT
+#endif
+#ifndef COOL_METAL_LINES_BY_SPECIES
+#define COOL_METAL_LINES_BY_SPECIES
+#endif
+#ifndef GALSF
+#define GALSF
+#endif
+#ifndef GALSF_SINGLE_STARS_FROM_IMF
+#define GALSF_SINGLE_STARS_FROM_IMF
+#endif
+#ifndef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+#define GALSF_SINGLE_STARS_EVOLUTION_TABLES
+#endif
+#ifndef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+#define GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+#endif
+#ifndef GALSF_SINGLE_STARS_SF_CRITERION
+#define GALSF_SINGLE_STARS_SF_CRITERION
+#endif
+#ifndef GALSF_SINGLE_STARS_TYPE_IA
+#define GALSF_SINGLE_STARS_TYPE_IA
+#endif
+#ifndef GALSF_FB_MECHANICAL
+#define GALSF_FB_MECHANICAL
+#endif
+#ifndef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
+#define GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
+#endif
+#ifndef TIDAL_TIMESTEP_CRITERION
+#define TIDAL_TIMESTEP_CRITERION
+#endif
+#ifndef DO_DENSITY_AROUND_NONGAS_PARTICLES
+#define DO_DENSITY_AROUND_NONGAS_PARTICLES
+#endif
+#endif
+
+
 /* set default slope limiters */
 #if !defined(SLOPE_LIMITER_TOLERANCE)
 #define SLOPE_LIMITER_TOLERANCE 1
