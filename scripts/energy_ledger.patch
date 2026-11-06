@@ -27,17 +27,17 @@ the post-SN hydro force over the whole half-step.
 One MPI_Reduce per full sync. Tested with the tall-box config only; booking sites outside the
 physics it enables (other cooling paths, RT, CRs, sinks) are absent.
 diff --git a/Template_Config.sh b/Template_Config.sh
-index fc790662c..c6ad73151 100644
+index 4ac13379f..b5379696f 100644
 --- a/Template_Config.sh
 +++ b/Template_Config.sh
-@@ -581,6 +581,7 @@
+@@ -580,6 +580,7 @@
  #MERGESPLIT_HARDCODE_MIN_MASS=(1.0e-7)   # manually set minimum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
  #PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP     # force merge/split operations to occur every timestep, instead of only on domain decomposition steps
  #MHD_CONSERVE_B_ON_REFINEMENT      # redefine B after density step after a refinement/de-refinement operation so as to exactly conserve "B" between the steps, as compared to conserving the code "VB" between the steps [the default conserved integrated quantity]
 +#ENERGY_LEDGER                     # gas energy ledger, no behaviour change: every operation that changes gas kinetic (relative to the shear flow in shearing boxes) or thermal energy books it to a channel -- hydro work and heat, gravity (incl. shearing-box Coriolis + tidal), shear drift, radiation pressure, mechanical feedback (applied and intended), HII heating, radiative gain/loss, floors and limiters, star formation, outflow, merge/split. At each full synchronization energy_ledger.txt gets E_kin, E_th, their change, every channel, and the residual (change minus the channels): any unbooked change, or hydro W+Q != 0, flags non-conservation. One MPI_Reduce per synchronization.
- #ENERGY_BUDGET_DIAGNOSTIC           # energy diagnostics, no behaviour change. Reports (a) the total gas energy (thermal+kinetic) at every full synchronization, i.e. when All.HighestActiveTimeBin == All.HighestOccupiedTimeBin -- the only point at which Vel and InternalEnergy share a clock and the sum is a genuine conserved quantity, so the 'Energy (synced)' line is the real conservation test and in an adiabatic run should track the injected energy exactly; and (b) cumulative wakeup tallies from timestep.cc -- the residual left by the kick reversal, and processed wakeups split by trigger (hydro / merge / split / newly-spawned) and demotion depth. Do NOT substitute snapshots for the synced total: io.cc writes Velocities from P[].Vel (kick-time) but InternalEnergy from InternalEnergyPred (drift-time), so a snapshot sum is mixed-clock and not conserved. Costs one MPI_Allreduce per synchronization. The per-phase breakdown that once accompanied this (kick1/drift/grav/hydro/mergesplit/kick2/spawn/srcterms, one Allreduce per mark) was hoisted out to scripts/energy_budget_phases.patch -- apply that to localize an error to a specific stage of the step.
+ #ENERGY_BUDGET_DIAGNOSTIC           # energy diagnostics, no behaviour change. Reports (a) the total gas energy (thermal+kinetic) at every full synchronization, i.e. when All.HighestActiveTimeBin == All.HighestOccupiedTimeBin -- the only point at which Vel and InternalEnergy share a clock and the sum is a genuine conserved quantity, so the 'Energy (synced)' line is the real conservation test and in an adiabatic run should track the injected energy exactly (its E_fb field is the cumulative energy mechanical feedback has written into the gas, to compare against); and (b) cumulative wakeup tallies from timestep.cc -- the residual left by the kick reversal, and processed wakeups split by trigger (hydro / merge / split / newly-spawned) and demotion depth. Do NOT substitute snapshots for the synced total: io.cc writes Velocities from P[].Vel (kick-time) but InternalEnergy from InternalEnergyPred (drift-time), so a snapshot sum is mixed-clock and not conserved. Costs one MPI_Allreduce per synchronization. The per-phase breakdown that once accompanied this (kick1/drift/grav/hydro/mergesplit/kick2/spawn/srcterms, one Allreduce per mark) was hoisted out to scripts/energy_budget_phases.patch -- apply that to localize an error to a specific stage of the step.
  #  MERGE_SPLIT_ENERGY_DIAGNOSTIC was hoisted out to scripts/merge_energy_diagnostic.patch -- apply that to get it back; setting the flag alone does nothing. It reports the cumulative energy budget of merge operations: dE (change in the true InternalEnergy+KE), dE_pred (same for the predicted variables the hydro actually integrates), KE_com (what a momentum-conserving merge must dissipate), resid (the correction merge_particles_ij computes), how often the InternalEnergyPred floor fires, and the TimeBin/Ti_current relationship of merged pairs. The patch header records what it established, including the dead ends worth not repeating.
- #WAKEUP_TRUNCATE_STEP_ON_DEMOTION   # AUTO-ENABLED whenever the spawn module (SINK_WIND_SPAWN, itself implied by SINGLE_STAR_FB_JETS/WINDS/SNE) is on; set it explicitly only to force it without spawning, and see WAKEUP_REVERSE_KICK_ON_DEMOTION to opt out. When the WAKEUP timestep limiter demotes a particle mid-step, truncate its current step to end at the system time instead of reversing the kick it already received. GIZMO's default calls do_the_kick with reversed time bounds to un-do part of the applied kick, but that re-derives the increment from state which has changed since, so it does not cancel and instead injects energy -- of order 20% of the injected energy in the adiabatic wind_singlestar test and a few percent of E_SN in SN_singlestar, in both cases from essentially all hydro-triggered wakeups. Saitoh & Makino (2009), whose limiter this is, explicitly avoid "the backward integration of the entire system" (their eq 3) and instead set the new time consistent with the system time with the step as the difference -- which is what this does. Eliminates the error (reversal dE -> 0 to roundoff) and is inert in sedov/noh/interactblast/evrard, where the reversal never fires. CAVEAT: dt_step is then not a power-of-two bin length, so it disagrees with TimeBin; code deriving a step from TimeBin rather than integertime_step() will over-report it.
+ #SNE_BROADCAST_TIMESTEP            # FIRE mechanical SNe without energy creation from long gas timesteps; no parameters. Feedback is deposited after the closing kick (steps ending now close with pre-SN forces), SN heat goes in instantly rather than as a deferred du/dt, and recipients choose their next step from their post-injection signal speed (Durier & Dalla Vecchia 2012). Each SN reaches gas at distance r no sooner than r/v, v = min(v_ejecta, sqrt(2 E_SN / m_gas)): every gas cell caps its next step at 0.5 CourantFac r/v, and one whose current step would outlast that is woken now. Without it, a cell on a long step gets the post-SN pressure force over its whole closing half-kick and creates energy (several x E_SN in test/sn_cluster_adiabatic and the FIRE tall box at 10-100 Msun). Costs one Allgather and a loop over local gas on steps with SNe.
 diff --git a/cooling/cooling.cc b/cooling/cooling.cc
 index 780ebb0db..6beb1efeb 100644
 --- a/cooling/cooling.cc
@@ -86,10 +86,10 @@ index 780ebb0db..6beb1efeb 100644
          cell[i].InternalEnergyPred = cell[i].InternalEnergy;
          set_eos_pressure(i, pp, cell);
 diff --git a/core/kicks.cc b/core/kicks.cc
-index 72f0a4dc2..1b4db6056 100644
+index 065008acd..99910ba75 100644
 --- a/core/kicks.cc
 +++ b/core/kicks.cc
-@@ -280,6 +280,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
+@@ -277,6 +277,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
              if(CellP[i].CoolingIsOperatorSplitThisTimestep==0) {du_tot=0;} /* cooling in unsplit, so zero contribution here */
  #endif
              double dEnt = CellP[i].InternalEnergy + du_tot;
@@ -99,7 +99,7 @@ index 72f0a4dc2..1b4db6056 100644
              
  #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
              /* if we're using a Riemann solver, we include an energy/entropy-type switch to ensure
-@@ -370,6 +373,11 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
+@@ -367,6 +370,11 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
              CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
  #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
              rt_diag_sc(RT_DIAG_SC_KICK_DU, (CellP[i].InternalEnergy - rt_diag_u0) * P[i].Mass);
@@ -111,7 +111,7 @@ index 72f0a4dc2..1b4db6056 100644
  #endif
          }
          
-@@ -406,6 +414,21 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
+@@ -400,6 +408,21 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
  #endif
              }
          }
@@ -133,7 +133,7 @@ index 72f0a4dc2..1b4db6056 100644
  #endif
          P[i].Vel += dp * (1.0 / mass_new); /* correctly accounts for mass change if its allowed */
  
-@@ -671,6 +694,9 @@ void apply_special_boundary_conditions(int i, double mass_for_dp, int mode, inte
+@@ -665,6 +688,9 @@ void apply_special_boundary_conditions(int i, double mass_for_dp, int mode, inte
          const int outflow_lower = (o == 0 || o == -1), outflow_upper = (o == 0 || o == 1);
          if((lower_hit && outflow_lower) || (upper_hit && outflow_upper))
          {
@@ -144,10 +144,10 @@ index 72f0a4dc2..1b4db6056 100644
  #pragma omp atomic write
              TreeMomentsStaleFlag=1; /* reached from the OpenMP-parallel drift; every thread writes the same value, but keep it a defined write */
 diff --git a/core/predict.cc b/core/predict.cc
-index cfe69a8d5..ae1868642 100644
+index e1b0aa368..adda6c3e8 100644
 --- a/core/predict.cc
 +++ b/core/predict.cc
-@@ -176,7 +176,19 @@ void drift_particle(int i, integertime time1)
+@@ -152,7 +152,19 @@ void drift_particle(int i, integertime time1)
      if(P[i].Type==0) {advect_mesh_point(i,dt_drift);}
      else
  #endif
@@ -169,7 +169,7 @@ index cfe69a8d5..ae1868642 100644
  #if (NUMDIMS==1)
      P[i].Pos[1]=P[i].Pos[2]=0; // force zero-ing
 diff --git a/core/proto.h b/core/proto.h
-index 4e097f087..58f23e6a6 100644
+index 8c45f0893..5b8b9c5d5 100644
 --- a/core/proto.h
 +++ b/core/proto.h
 @@ -124,6 +124,32 @@ void powerspec_turb_save(char *fname, double *disp);
@@ -206,7 +206,7 @@ index 4e097f087..58f23e6a6 100644
  
  void set_cosmo_factors_for_current_time(void);
 diff --git a/core/run.cc b/core/run.cc
-index e65b32cce..4e1c8ba58 100644
+index bf82f6e38..2e7106f1f 100644
 --- a/core/run.cc
 +++ b/core/run.cc
 @@ -9,11 +9,86 @@
@@ -296,7 +296,7 @@ index e65b32cce..4e1c8ba58 100644
  void energy_budget_sync_report(void)
  {
      if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;} /* not synchronized: sum is meaningless */
-@@ -279,8 +354,14 @@ void run(void)
+@@ -283,8 +358,14 @@ void run(void)
  #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
          if(!reconstructed_tree)
          {
@@ -311,7 +311,7 @@ index e65b32cce..4e1c8ba58 100644
          }
  #endif
          
-@@ -288,6 +369,9 @@ void run(void)
+@@ -292,6 +373,9 @@ void run(void)
  
          calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
          EB_SYNC_REPORT();
@@ -322,10 +322,10 @@ index e65b32cce..4e1c8ba58 100644
  #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
          do_hermite_prediction();
 diff --git a/core/timestep.cc b/core/timestep.cc
-index d32dea7d7..8e0988bfe 100644
+index 8816e6dab..ca67efe52 100644
 --- a/core/timestep.cc
 +++ b/core/timestep.cc
-@@ -1492,6 +1492,7 @@ void process_wake_ups(void)
+@@ -1463,6 +1463,7 @@ void process_wake_ups(void)
  	    }
  	    if(bin > max_time_bin_active) {bin = max_time_bin_active;} /* must be active at next kick */
  	    if(bin >= binold) {bin = binold;} /* don't increase timestep */
@@ -358,10 +358,10 @@ index 0ae37d6cf..b69a96a9d 100644
  
      UseAllParticles = UseAllTimeBins;
 diff --git a/galaxy_sf/mechanical_fb.cc b/galaxy_sf/mechanical_fb.cc
-index c0cd7b7e7..09302c454 100644
+index 12fae439d..a55d47af3 100644
 --- a/galaxy_sf/mechanical_fb.cc
 +++ b/galaxy_sf/mechanical_fb.cc
-@@ -545,6 +545,16 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount,
+@@ -549,6 +549,16 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount,
          momentum_to_couple_term_units = p_coupled;
          U_thermal_residual_tocouple = Energy_injected_codeunits - egy_RHS; /* required for energy conservation */
      }
@@ -378,7 +378,7 @@ index c0cd7b7e7..09302c454 100644
      
  #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
      double CR_energy_to_inject = 0; // account for energy going into CRs, so we don't 'double count' //
-@@ -831,6 +841,9 @@ void verify_and_assign_local_mechfb_integrals(void)
+@@ -841,6 +851,9 @@ void verify_and_assign_local_mechfb_integrals(void)
              m0=CellP[j].MassTrue; CellP[j].MassTrue += dm; /* update conserved mass */
  #endif
              double mf=m0+dm; /* save for below */
@@ -388,29 +388,16 @@ index c0cd7b7e7..09302c454 100644
              for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = (m0/mf)*P[j].Metallicity[k] + (1./mf)*LocalGasMechFBInfoTemp[j].Z_injected[k];} /* update metallicity */
  #if defined(GALSF_ISMDUSTCHEM_MODEL)
              update_ISMDustChem_after_mechanical_injection(j, LocalGasMechFBInfoTemp[j].Mass_Where_Dust_Shocked, m0, mf, LocalGasMechFBInfoTemp[j].Z_injected); /* update dust chemistry quantities */
-@@ -842,7 +855,11 @@ void verify_and_assign_local_mechfb_integrals(void)
-                 double TE_0=m0*CellP[j].InternalEnergy; dTE=DMAX(-TE_0,dTE); /* ensure against non-negative values */
-                 double dU = (-dm/mf)*CellP[j].InternalEnergy + (1./mf)*dTE; /* using new mass get updated internal energy */
-                 double dt = get_particle_timestep_in_physical(j), implied_heating_cgs=(dU*UNIT_SPECEGY_IN_CGS*PROTONMASS_CGS)/(dt*UNIT_TIME_IN_CGS), typical_cooling_cgs=1.e-23*(CellP[j].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS);
--                if((implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)))) {CellP[j].DtInternalEnergy += dU/dt;} else {CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;}
-+                if((implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)))) {CellP[j].DtInternalEnergy += dU/dt;
-+#ifdef ENERGY_LEDGER
-+                    ledger_deferred = mf*dU; /* handed to the hydro du: lands in hydro_Q when (and if) a later kick or cooling step applies it */
+@@ -887,6 +900,9 @@ void verify_and_assign_local_mechfb_integrals(void)
+ #endif
+ #ifdef SNE_BROADCAST_TIMESTEP /* the next step is chosen from the post-injection signal speed (Durier & Dalla Vecchia 2012) */
+             {double vsig_new = 2.*sqrt(CellP[j].soundspeed2_from_u(CellP[j].InternalEnergy)) + (P[j].Vel - sn_v0).norm()/All.cf_atime; if(vsig_new > CellP[j].MaxSignalVel) {CellP[j].MaxSignalVel = vsig_new;}}
 +#endif
-+                } else {CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;}
-                 //CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU; /* update internal energy; simpler (old) way to do it - less accurate phase diagrams at high density, however */
-             }
-             double dKE=LocalGasMechFBInfoTemp[j].KE_injected, dp[3];
-@@ -862,6 +879,9 @@ void verify_and_assign_local_mechfb_integrals(void)
-                 }
-                 force_raise_motion_bound(j);
-             }
 +#ifdef ENERGY_LEDGER
 +            LEDGER_ADD(LG_FB_KE, 0.5*mf*ledger_vrel(j).norm_sq() - ledger_ke0); LEDGER_ADD(LG_FB_TE, mf*CellP[j].InternalEnergy - ledger_te0); LEDGER_ADD(LG_FB_DEFERRED, ledger_deferred);
-+#endif
+ #endif
              ndone++; /* note another cell accounted for */
              if(ndone >= N_Gas_Couplings_ThisTask) {break;} /* we have done all cells (note is possible if the same cell is hit many times, N_Gas_Couplings_ThisTask can be much larger than ndone after the full loop. but if its smaller, then we -must- be done with this loop */
-         }
 diff --git a/galaxy_sf/radfb_local.cc b/galaxy_sf/radfb_local.cc
 index 8642b2ba7..81bfef745 100644
 --- a/galaxy_sf/radfb_local.cc
@@ -465,7 +452,7 @@ index 8642b2ba7..81bfef745 100644
      /* assign typical strong HII region flux + enough flux to maintain cell fully-ionized, regardless (x'safety-factor'): note this is repeated in the 'self-shield' routine but has to be in both because otherwise this wont appear on the first timestep after which a gas cell is flagged as ionized by this subroutine */
      double n1000 = CellP[target].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS / 1000.; // density in 1000 cm^-3
 diff --git a/galaxy_sf/sfr_eff.cc b/galaxy_sf/sfr_eff.cc
-index 5f25a03fd..7bb3109eb 100644
+index 5e6575491..caa2f3c45 100644
 --- a/galaxy_sf/sfr_eff.cc
 +++ b/galaxy_sf/sfr_eff.cc
 @@ -523,6 +523,9 @@ void star_formation_parent_routine(void)
