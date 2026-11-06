@@ -1221,11 +1221,11 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
 
-        double metal_table_weight = 1; /* blend weight S of the tabulated metal lines in photoionized gas, set by the nebular term below */
+        double metal_table_weight = 1; /* weight of the tabulated metal lines, reduced below only in the photoionized fraction the nebular term covers */
 #if defined(RT_CHEM_PHOTOION) && defined(METALS)
         /* Nebular (photoionized forbidden-line) cooling from O+, O++, N+, S+, Ne+: Kim, Gong, Kim &
-           Ostriker 2023 (ApJS 264, 10), Eq. 47. The tabulated metal-line cooling below assumes collisional
-           ionization, which under-predicts the forbidden-line cooling of PHOTOIONIZED gas; this supplies
+           Ostriker 2023 (ApJS 264, 10), Eq. 47. The tabulated metal-line cooling below (Wiersma+08: UV-background
+           photoionization equilibrium) under-predicts the forbidden-line cooling of gas photoionized by stars; this supplies
            the coolant that sets the ~1e4 K equilibrium of an HII region. The rate is per nH^2 like the
            other channels, since the volumetric rate goes as n_e*n_H+. METALS is in the guard because the
            metallicity arrays exist only under it, and the term is metallicity-scaled in any case. */
@@ -1237,7 +1237,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
                 / (1. + 0.12*pow(ne_100, 0.38 - 0.12*lnT4)); /* collisional de-excitation: multi-line, so a temperature-dependent power rather than a single critical density */
             double neb_weight = 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* (1-S): Kim+23 sigmoid taper (a=10) over 2e4-3.5e4 K */
             LambdaNeb *= neb_weight;
-            metal_table_weight = 1. - neb_weight; /* S: the tabulated metal lines below take over only as the nebular fit hands off, or both would count the same forbidden lines */
+            /* the fit replaces the tables only in the ionized fraction, or both would count the same forbidden lines there. Below ~2e4 K the
+               tables then go as n_e*n_HI: electron-excited lines of the singly ionized metals in neutral gas (Fe, Si, S, O, ...), its main coolant */
+            metal_table_weight = 1. - neb_weight * DMAX(0., DMIN(1., nHp));
             if(LambdaNeb > 0) {Lambda += LambdaNeb;}
         }
 #endif
