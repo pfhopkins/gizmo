@@ -16,7 +16,11 @@ int ketju_register_params(char (*tag)[50], void **addr, int *id, int nt, int max
     KETJU_TAG("KetjuTimestepLimitingFactor", &All.KetjuTimestepLimitingFactor, type_real);
     KETJU_TAG("KetjuMinParticlesPerTask", &All.KetjuMinParticlesPerTask, type_real);
     KETJU_TAG("KetjuMaxStepCount", &All.KetjuMaxStepCount, type_int);
+    KETJU_TAG("KetjuRegionMotionCapFactor", &All.KetjuRegionMotionCapFactor, type_real);
+    KETJU_TAG("KetjuTidalStepRes", &All.KetjuTidalStepRes, type_real);
+    KETJU_TAG("KetjuTidalErrorBudget", &All.KetjuTidalErrorBudget, type_real);
     KETJU_TAG("KetjuKeplerPairs", &All.KetjuKeplerPairs, type_int);
+    KETJU_TAG("KetjuFlybyStepEta", &All.KetjuFlybyStepEta, type_real);
 #undef KETJU_TAG
     return nt;
 }
@@ -33,6 +37,10 @@ int ketju_param_default(const char *tag, void *addr)
     KETJU_DEF_REAL("KetjuTimestepLimitingFactor", 100., "");
     KETJU_DEF_REAL("KetjuMinParticlesPerTask", 10., "");
     KETJU_DEF_INT("KetjuMaxStepCount", 100000, "");
+    KETJU_DEF_REAL("KetjuRegionMotionCapFactor", 1, " (Mannerkoski+ 2023 caps)");
+    KETJU_DEF_REAL("KetjuTidalStepRes", 0, " (off)");
+    KETJU_DEF_REAL("KetjuTidalErrorBudget", 1e-5, "");
+    KETJU_DEF_REAL("KetjuFlybyStepEta", 0, " (off)");
 #undef KETJU_DEF_REAL
 #undef KETJU_DEF_INT
     return 0;
