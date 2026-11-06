@@ -1001,6 +1001,17 @@ double calculate_individual_stellar_luminosity(double mdot, double mass, long i)
 double return_probability_of_this_forming_sink_from_seed_model(int i);
 
 void particle2in_addFB_fromstars(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+double single_star_ionizing_luminosity_cgs(int i);
+double single_star_ionizing_photon_rate(int i);
+double single_star_ionizing_onset_yr(int i);
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+void photoionization_per_direction(void);
+double photoion_max_timestep(int p);
+long long photoion_new_sources_local(void);
+void photoion_add_new_sources(long long n);
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
 double single_star_eventrates(int i, double dt);
 double single_star_max_timestep(int p);
@@ -1269,7 +1280,12 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #else
 #define LEDGER_ROWS_CR(X)
 #endif
-#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X)
+#if defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION) && defined(SGCHEM)
+#define LEDGER_ROWS_PI(X) X(LEDGER_PI_HEATING, "E_photoionisation_heating_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_PI(X)
+#endif
+#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X) LEDGER_ROWS_PI(X)
 #define LEDGER_ROW_ENUM(id, name, unit, state) id,
 enum ledger_rows {LEDGER_ROWS(LEDGER_ROW_ENUM) LEDGER_NROWS};
 void ledger_init(void);

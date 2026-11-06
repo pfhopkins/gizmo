@@ -13,7 +13,10 @@ Checks:
 1. every snapshot of a 4-rank run holds all 64 stars, each with its mass, drawn mass and birth metallicity bitwise equal
    to the initial conditions;
 2. a run stopped halfway and continued from its restart files ends with the same records;
-3. a 1-rank run ends with the same records.
+3. a 1-rank run ends with the same records;
+4. built with GALSF_SINGLE_STARS_EVOLUTION_TABLES (GIZMO_tables), the record also holds the birth density (stella_dev's
+   FormationDensity, a float: the physical parent-cell density at birth, set in single_star_attach_to_new_star); it
+   follows the stars as in 1 and 2 on 4 ranks, bitwise.
 
 Reference: the initial conditions (records must be carried, not computed). Negative controls run during development:
 with the record dropped on receipt check 1 fails (so stars do change rank); without the merge guard one star (ID 532)

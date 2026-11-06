@@ -12,7 +12,14 @@
 #define SINGLE_STAR_RECORD_FIELDS(X) \
     X(double, M_drawn, "drawn IMF mass [Msun]: the evolution mass for the tables") \
     X(double, Z_birth, "total metallicity at birth (mass fraction)") \
+    SINGLE_STAR_RECORD_TABLE_FIELDS(X) \
     SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X)
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+#define SINGLE_STAR_RECORD_TABLE_FIELDS(X) \
+    X(float, rho_birth, "physical gas density of the parent cell at birth [code]; 0 = unknown")
+#else
+#define SINGLE_STAR_RECORD_TABLE_FIELDS(X)
+#endif
 
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
 #define SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X) \

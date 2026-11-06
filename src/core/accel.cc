@@ -288,6 +288,10 @@ void compute_stellar_feedback(void)
     gizmo_exit_bad_stop_if_requested("accel:after_thermal_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
 
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    photoionization_per_direction(); /* per-direction Stromgren photoionisation around single stars */
+    gizmo_exit_bad_stop_if_requested("accel:after_photoionization"); CPU_Step[CPU_HIIHEATING] += measure_time();
+#endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
     HII_heating_singledomain(); /* local photo-ionization heating */
     gizmo_exit_bad_stop_if_requested("accel:after_hii_heating"); CPU_Step[CPU_HIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */

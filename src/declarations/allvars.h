@@ -330,7 +330,7 @@ extern FILE *FdSfr;        /*!< file handle for star formation log-file. */
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 extern FILE *FdMomWinds;    /*!< file handle for local photon-momentum subgrid model log-file */
 #endif
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
 extern FILE *FdHIIHeating;    /*!< file handle for local HII model log-file */
 #endif
 #ifdef GALSF_FB_MECHANICAL
@@ -651,6 +651,9 @@ enum iofields
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
   IO_SINGLE_STAR_DRAWN_MASS,
   IO_SINGLE_STAR_BIRTH_Z,
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+  IO_SINGLE_STAR_BIRTH_DENSITY,
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
   IO_SINGLE_STAR_EVENT_BITS,
   IO_SINGLE_STAR_LAST_WIND_LOG_AGE,

@@ -113,3 +113,7 @@ def test_lookups(built):
     assert np.fromfile(f"{out}.bol.1").tobytes() == bol.tobytes() and len(bol) == 8 * 64 * 7 * 1
     i_bol = ref_bol[:, 0].astype(int)
     assert np.all(np.abs(bol[i_bol] - ref_bol[:, 1]) <= 1e-12 * np.abs(ref_bol[:, 1]) + 1e-300)
+    ion, ref_ion = np.fromfile(f"{out}.ion.0"), np.loadtxt(unit / "lookup_reference_ion.txt")
+    assert np.fromfile(f"{out}.ion.1").tobytes() == ion.tobytes() and len(ion) == 8 * 64 * 7 * 2
+    i_ion = ref_ion[:, 0].astype(int)
+    assert np.all(np.abs(ion[i_ion] - ref_ion[:, 1]) <= 1e-12 * np.abs(ref_ion[:, 1]) + 1e-300)

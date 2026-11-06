@@ -289,6 +289,9 @@ extern struct gas_cell_data
     MyDouble DM_Rho;                  /*!< kernel-weighted DM mass density at gas cell (physical) */
 #endif
     
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    integertime PhotoionizedUntil;    /*!< photoionised while Ti_Current is below this (set at each solve) */
+#endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
     MyFloat DelayTimeHII;             /*!< flag indicating particle is ionized by nearby star */
 #endif

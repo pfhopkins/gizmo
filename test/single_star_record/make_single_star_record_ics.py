@@ -26,4 +26,5 @@ def make_single_star_record_ics(fname):
         s["ParticleIDs"] = np.arange(N + 1, N + N_STARS + 1, dtype=np.uint32); s["Masses"] = rng.uniform(0.1, 50, N_STARS)  # some below the merge threshold of 0.49 Msun: sampled stars are never merged
         s["StellarFormationTime"] = np.zeros(N_STARS)
         s["SingleStarDrawnMass"] = rng.uniform(0.08, 150, N_STARS); s["SingleStarBirthMetallicity"] = rng.uniform(1e-4, 0.03, N_STARS)
+        s["SingleStarBirthDensity"] = rng.uniform(1.0, 1.0e6, N_STARS).astype(np.float32).astype(np.float64)  # read with GALSF_SINGLE_STARS_EVOLUTION_TABLES (a float in the record)
     return L

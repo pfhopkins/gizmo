@@ -208,7 +208,7 @@
 #endif
 
 
-#if defined(SGCHEM) && (CHEMISTRYNETWORK != 1)
+#if defined(SGCHEM) && (CHEMISTRYNETWORK != 1) && !defined(TEST_PHOTOIONIZATION_FIXED_RATE_TWO_TEMPERATURE_GAS) /* the StarBench benchmark keeps 0.76 */
 #define  HYDROGEN_MASSFRAC 0.7065 /*!< evolved ISM, matches SGChem ABHE = 0.1 */
 #elif !(defined(RT_HYDROGEN_GAS_ONLY) || (defined(CHIMES_HYDROGEN_ONLY) && !defined(METALS))) || defined(RT_CHEM_PHOTOION_HE)
 #define  HYDROGEN_MASSFRAC 0.76 /*!< mass fraction of hydrogen, relevant only for radiative cooling */

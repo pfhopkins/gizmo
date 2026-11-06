@@ -164,6 +164,8 @@ static void sgchem_cr_ionisation_from_fluid(int i, const struct ChemInputs *in, 
 }
 #endif
 
+static thread_local int sgchem_network_skipped = 0; /* the last cell step ran no network (photoionised or test pin) */
+
 /* evolves cell i from specific energy u_code over dt_code [code units]; writes TracAbund, Temp, DustTemp, Ne; returns the new u */
 static double sgchem_cell_step(int i, double u_code, double dt_code)
 {
@@ -222,6 +224,25 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     sgchem_treecol_columns(i, &in);
 #endif
 
+    int skip = 0; out.tdust = in.tdust;
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    {  /* photoionised cell (as stella_dev): ionised abundances, no network, energy at least that of 1e4 K ionised gas */
+        double e_HII = 1.0e4 * 1.5 * BOLTZMANN_CGS * yn * (2.0 + 2.0 * ABHE + in.abundD + in.abundc);
+        int ionised = (All.Ti_Current < CellP[i].PhotoionizedUntil);
+        if(ionised) {
+            skip = 1; sgchem_set_ionized(ab, &in);
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+            if(energy < e_HII) {ledger_add(LEDGER_PI_HEATING, (e_HII - energy) / rho * P[i].Mass * UNIT_MASS_IN_CGS / UNIT_ENERGY_IN_CGS);}
+#endif
+            energy = DMAX(energy, e_HII);
+        }
+#ifdef TEST_PHOTOIONIZATION_FIXED_RATE_TWO_TEMPERATURE_GAS
+        if(All.TestPhotoionNeutralTemp > 0) {skip = 1; energy = ionised ? e_HII : All.TestPhotoionNeutralTemp * 1.5 * BOLTZMANN_CGS * yn * (1.0 + ABHE);} /* StarBench: ionised at 1e4 K, neutral isothermal, no network */
+#endif
+    }
+#endif
+    sgchem_network_skipped = skip;
+    if(!skip) {
     chem_cxx_begin_cell(&in, temp, abh2, abhd, abco);
 #if CHEMISTRYNETWORK == 17
     if(ab[IHP] > 0.99) {ab[IH2] = 0; ab[ICO] = 0; ab[IHD] = 0;} /* fully ionised: no molecules (stiffness) */
@@ -232,6 +253,7 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #ifdef COSMIC_RAY_FLUID
     sgchem_cr_ionisation_from_fluid(i, &in, out.cr_ion_heat * (P[i].Mass / (CellP[i].Density * All.cf_a3inv)) * pow(UNIT_LENGTH_IN_CGS, 3) / UNIT_ENERGY_IN_CGS);
 #endif
+    }
 #if CHEMISTRYNETWORK == 18
     chem_cxx_net18_finish(ab, energy, &temp);
 #elif CHEMISTRYNETWORK == 20
@@ -273,10 +295,13 @@ double sgchem_docooling(int i, double u_old, double dt, double *ne_eval)
     } else
 #endif
     {u = u_solve = sgchem_cell_step(i, u_in = u_old, dt);}
+#ifdef TEST_PHOTOIONIZATION_FIXED_RATE_TWO_TEMPERATURE_GAS
+    if(All.TestPhotoionNeutralTemp > 0) {u = u_solve;} /* StarBench: the pinned energy */
+#endif
     if(!isfinite(u)) {printf("SGCHEM: non-finite energy after cooling, ID=%llu u=%g, keeping %g\n", (unsigned long long) P[i].ID, u, u_before); u = u_solve = u_before;}
     u = DMAX(u, All.MinEgySpec);
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
-    {double dE = (u_solve - u_in) * P[i].Mass; ledger_add(dE > 0 ? LEDGER_CHEM_HEATING : LEDGER_CHEM_COOLING, fabs(dE));} /* the solve only */
+    if(!sgchem_network_skipped) {double dE = (u_solve - u_in) * P[i].Mass; ledger_add(dE > 0 ? LEDGER_CHEM_HEATING : LEDGER_CHEM_COOLING, fabs(dE));} /* the solve only */
 #endif
     *ne_eval = CellP[i].Ne;
     CellP[i].HI = DMAX(0, 1. - CellP[i].TracAbund[IHP]); /* neutral H nuclei (atomic and molecular) per H */

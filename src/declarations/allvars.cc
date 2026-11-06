@@ -227,7 +227,7 @@ FILE *FdSfr;			/*!< file handle for sfr.txt log-file. */
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 FILE *FdMomWinds;	/*!< file handle for MomWinds.txt log-file */
 #endif
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
 FILE *FdHIIHeating;	/*!< file handle for HIIheating.txt log-file */
 #endif
 #ifdef GALSF_FB_MECHANICAL

@@ -30,5 +30,6 @@ every lookup on a fixed grid of 64 masses x 8 metallicities x 7 ages (226,843 va
    the reference to 1e-12 relative, lies in [0, 1] and never falls with age.
 The band luminosities of the gravity-tree sources are checked the same way (`.bands` output, `unit/lookup_reference_bands.txt`).
 So is the bolometric luminosity of the radiation pressure (`.bol`, `unit/lookup_reference_bol.txt`).
+The ionising photon rate and luminosity of the HII-region sources are checked the same way (`.ion` output, `unit/lookup_reference_ion.txt`).
 The tables themselves are not monotone in lifetime below 2 Msun (around 0.09, 0.35 and 1.8-1.9 Msun); that is a
 property of the stella-tables build, not of the lookups.

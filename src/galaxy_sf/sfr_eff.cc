@@ -217,6 +217,9 @@ double get_starformation_rate(int i, int mode)
 #ifdef GALSF_FB_FIRE_RT_HIIHEATING
         if(CellP[i].DelayTimeHII > 0) {return 0;}
 #endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        if(All.Ti_Current < CellP[i].PhotoionizedUntil) {return 0;}
+#endif
         double rho_phys = CellP[i].Density * All.cf_a3inv, cs = CellP[i].effective_soundspeed(); /* physical, from the gas pressure (no magnetic term), as the reference implementation */
         double MJ = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)); /* pi^(5/2)/6 c_s^3 / (G^(3/2) rho^(1/2)) */
         if(MJ >= All.FacSfThreshMJ * All.DesNumNgb * P[i].Mass) {return 0;}
@@ -816,11 +819,24 @@ void star_formation_parent_routine(void)
     long long young_changed;
 #endif
     {   /* every count this pass changed, in one reduction */
+#if defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
         recent_sfr_expire();
-        long long local[4] = {stars_spawned, stars_converted, num_sink_formed, recent_sfr_changed}, total[4]; /* + young-star sums changed */
-        MPI_Allreduce(local, total, 4, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+#endif
+        long long local[5] = {stars_spawned, stars_converted, num_sink_formed, 0, 0}, total[5]; /* + young-star sums changed, ionising onsets */
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+        local[3] = recent_sfr_changed;
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        local[4] = photoion_new_sources_local();
+#endif
+        MPI_Allreduce(local, total, 5, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
         young_changed = total[3];
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        photoion_add_new_sources(total[4]);
+#endif
 #else
         long long local[3] = {stars_spawned, stars_converted, num_sink_formed}, total[3];
         MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);

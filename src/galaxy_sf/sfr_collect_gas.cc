@@ -94,6 +94,9 @@ SscCallScalars SscSpecBase::populate_call_scalars(const neighbor_loop_args& args
     s.n_pairs = aux ? aux->n_pairs : nullptr; s.records = aux ? aux->records : nullptr;
     s.n_records = aux ? aux->n_records : nullptr; s.capacity = aux ? aux->capacity : 0;
     s.donor = ssc_donor; s.n_donor = DMIN(N_gas, ssc_donor_cap); s.task = ThisTask;
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    s.ti_current = All.Ti_Current;
+#endif
     return s;
 }
 
@@ -325,6 +328,9 @@ void single_star_attach_to_new_star(int i_star, int i, double M_drawn)
 #endif
     force_tree_note_type_presence(i_star);
     struct single_star_record r; memset(&r, 0, sizeof(r)); r.M_drawn = M_drawn;
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+    r.rho_birth = (float)(CellP[i].Density * All.cf_a3inv); /* physical, as stella_dev FormationDensity */
+#endif
     P[i_star].StarIdx = single_star_record_new(&r);
     ssc_births.push_back({i_star, i, CellP[i].Density});
 }

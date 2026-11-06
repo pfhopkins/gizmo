@@ -447,6 +447,9 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
 #endif
         if(dt_i <= 0) continue;
         double stellum_i = All.HIIRegion_fLum_Coupled * particle_ionizing_luminosity_in_cgs(ip);
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+        if(P[ip].StarIdx > 0) {stellum_i = All.HIIRegion_fLum_Coupled * single_star_ionizing_photon_rate(ip) / 3.05e10;} /* the table photon rate, in the units this loop converts with 3.05e10 photons per erg */
+#endif
 #ifdef CHIMES_HII_REGIONS
         stellum_i = chimes_ion_luminosity(evaluate_stellar_age_Gyr(ip)*1000., P[ip].Mass*UNIT_MASS_IN_SOLAR) * 4.68e-11;
 #endif
