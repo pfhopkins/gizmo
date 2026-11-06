@@ -187,3 +187,5 @@ test/single_stars_rt_bands/run_*/
 test/sgchem_rt_photons/run_*/
 test/sgchem_rt_slab/run_*/
 test/sgchem_rt_infrared/run_*/
+test/sgchem_rt_cr/output/
+test/sgchem_rt_cr/*.hdf5
