@@ -7,5 +7,7 @@
 #endif
 #ifdef KETJU_SINKS
     MyDouble KetjuSpin[3];       /*!< BH spin angular momentum S */
+#if !defined(GALSF_SINGLE_STARS_BH_PROMOTION)
     short int SinkSubType;       /*!< 0 = SMBH (IC/seeded), 1 = stellar-mass BH (dead star) */
+#endif
 #endif

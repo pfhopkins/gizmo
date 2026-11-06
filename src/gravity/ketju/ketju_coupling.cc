@@ -145,7 +145,9 @@ void ketju_init_particle(int i)
 #endif
 #ifdef KETJU_SINKS
     for(int j = 0; j < 3; j++) {P[i].KetjuSpin[j] = 0;}
+#if !defined(GALSF_SINGLE_STARS_BH_PROMOTION)
     if(RestartFlag == 0 && P[i].Type == 5) {P[i].SinkSubType = 0;} /* IC-placed sinks are SMBHs */
+#endif
 #endif
 #ifndef GALSF_SINGLE_STARS_FROM_IMF
     P[i].StarIdx = 0;

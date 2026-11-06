@@ -432,6 +432,16 @@ void single_star_feedback_finalize(const int *list, int n)
         SingleStars.remnant_tag[s] = (int8_t)(ev.remnant_type + 1); /* compact remnants take PN terms in KETJU */
 #endif
         SingleStars.M_at_SN_trigger[s] = 0;
+#ifdef GALSF_SINGLE_STARS_BH_PROMOTION
+        if(kind != SSE_AGB && (ev.remnant_type == REM_PPISN || ev.remnant_type == REM_FSN || ev.remnant_type == REM_DBH) && P[i].Mass > 0) { /* black hole: a sink from here on */
+            P[i].Type = 5; P[i].Sink_Mass = P[i].Mass; P[i].Sink_Formation_Mass = P[i].Mass; P[i].Sink_Mdot = 0;
+            P[i].Sink_TimeBinGasNeighbor = 0; P[i].SwallowID = 0; P[i].IndexMapToTempStruc = -1;
+            P[i].KernelRadius = All.ForceSoftening[5]; TreeReconstructFlag = 1;
+#ifdef KETJU_SINKS
+            P[i].SinkSubType = 1;
+#endif
+        }
+#endif
         P[i].SNe_ThisTimeStep = 0; P[i].MassReturn_ThisTimeStep = 0;
     }
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
