@@ -584,6 +584,7 @@ let_build_attempt:
      * host loop over Numnodestree -- the worst sparse-active scaling. */
     if(gpu_node_reset_ephemeral(Numnodestree) != 0) {endrun(90000067);}
     if(gpu_moment_refresh(-1) != 0) {endrun(90000068);}
+    if(mp == NULL && npart == NumPart) {for(int i = 0; i < NumPart; i++) {if(P[i].dp[0] != 0 || P[i].dp[1] != 0 || P[i].dp[2] != 0) {P[i].dp = {};}}} /* the nodes hold the current velocities, so pending kicks are in them; conditional store: a dirty cache line per particle costs 14 % of the build (#103) */
     if(gpu_nextnode_thread() != 0) {endrun(90000069);}
     /* Link each multi-particle leaf's members now that its successor is known. ⛔ Must run BEFORE the
      * writeback and the tree export below: the export enumerates a leaf by following these links, so
@@ -4394,6 +4395,14 @@ void force_refresh_node_moments(void)
          * fall through force_exchange_pseudodata (matched, topology-driven);
          * the gravtree:after_refresh_moments poll drains before the walk. */
         if(gpu_moment_refresh(-1) != 0)          {endrun(90000086);}
+        { /* each member just entered its node with its current velocity, kicks still pending in dp included */
+            const int n_slots = (NumPart < All.TreeParticleSlots) ? NumPart : All.TreeParticleSlots;
+            for(i = 0; i < n_slots; i++) {
+                no = Father[i];
+                if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + Numnodestree) {continue;}
+                if(P[i].dp[0] != 0 || P[i].dp[1] != 0 || P[i].dp[2] != 0) {P[i].dp = {};}
+            }
+        }
         /* Mode B: re-seed per-type bands; gpu_moment_refresh wrote scalar
          * hmax to AoS but not per-type. Without this, hmax_per_type[] are
          * left at zero by the GPU bypass and Mode B's SYMMETRIC walker

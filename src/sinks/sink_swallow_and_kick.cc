@@ -691,6 +691,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     for(j = NumPart + num_already_spawned; j < NumPart + num_already_spawned + n_particles_split; j++)
     {   /* first, clone the 'dummy' particle so various fields are set appropriately */
         P[j] = P[dummy_cell_i_to_clone]; CellP[j] = CellP[dummy_cell_i_to_clone]; /* set the pointers equal to one another -- all quantities get copied, we only have to modify what needs changing */
+        P[j].dp = {}; /* the template's pending kick stays with the template; the new cell's momentum enters the tree when its node is re-derived */
         domain_clear_work_history(j);   /* a new cell, not a copy of the template's work */
         wakeup_sidecar_mark(j);   /* whole-struct clone inherits the template particle's wakeup into the spawned slot */
 #ifdef MHD_MODIFIED_GRADIENT

@@ -246,9 +246,6 @@ void gravity_tree(void)
         {
             CPU_Step[CPU_MISC] += measure_time();
             force_refresh_node_moments();
-#ifdef KETJU_REGULARIZATION
-            for(int i = 0; i < NumPart; i++) {P[i].dp = {};} /* KETJU writes momentum after the tree update: the refresh read those velocities */
-#endif
             gizmo_exit_bad_stop_if_requested("gravtree:after_refresh_moments"); /* drain refresh bad-stop before any gravity walk */
             CPU_Step[CPU_TREEBUILD] += measure_time();
             TreeMomentsStaleFlag = 0;
