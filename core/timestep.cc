@@ -506,6 +506,9 @@ integertime get_timestep(int p,		/*!< particle index */
     dt=DMIN(dt,dt_tidal);
 #endif
 
+#ifdef SNE_BROADCAST_TIMESTEP
+    if(P[p].Type == 0 && P[p].SNe_ArrivalTime < MAX_REAL_NUMBER) {dt = DMIN(dt, 0.5 * All.CourantFac * P[p].SNe_ArrivalTime); if(flag == 0) {P[p].SNe_ArrivalTime = MAX_REAL_NUMBER;}} /* the step chosen after an SN ends well before its ejecta can arrive; used once */
+#endif
 #ifdef SINGLE_STAR_TIMESTEPPING // this ensures that binaries advance in lock-step, which gives superior conservation
     if(P[p].Type == 5)
     {
@@ -1450,6 +1453,10 @@ void process_wake_ups(void)
 		/* hydro wakeup: target timestep = dt_waker / WAKEUP */
 		int waker_bin = P[i].wakeup - 1;
 		bin = IMAX(0, waker_bin - wakeup_bin_offset);
+	    } else if(P[i].wakeup == -4) {
+		/* an SN can reach it before its step ends (sne_causal_wake): start now on the step the arrival time allows */
+		double aphys_sn; integertime ti_sn = get_timestep(i, &aphys_sn, 0), ti_p2 = TIMEBASE; while(ti_p2 > ti_sn) {ti_p2 >>= 1;}
+		bin = get_timestep_bin(ti_p2);
 	    } else {
 		/* generic wakeup (sinks, merge, etc.): use highest active bin */
 		bin = max_time_bin_active;

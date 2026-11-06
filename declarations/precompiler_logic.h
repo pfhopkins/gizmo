@@ -1195,6 +1195,11 @@
 #endif
 #endif
 
+#ifdef SNE_BROADCAST_TIMESTEP
+#if !defined(GALSF_FB_MECHANICAL) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#error "SNE_BROADCAST_TIMESTEP requires GALSF_FB_MECHANICAL with GALSF_FB_FIRE_STELLAREVOLUTION"
+#endif
+#endif
 
 
 /* block for metals and other passive scalars, should stay in this order. like the RHD, probably a more elegant way to do this with functions, but designed here to use compiler logic instead */

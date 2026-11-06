@@ -402,6 +402,14 @@ void set_non_standard_physics_for_current_time(void)
 
 void calculate_non_standard_physics(void)
 {
+#ifdef SNE_BROADCAST_TIMESTEP /* mechanical feedback after the closing kick, which used pre-SN forces (Durier & Dalla Vecchia 2012); then wake the gas the SNe can reach before its step ends */
+    {   int any_fb_local = 0, any_fb_global = 0;
+        for(int i : ActiveParticleList) {if(addFB_evaluate_active_check(i, -1)) {any_fb_local = 1; break;}}
+        MPI_Allreduce(&any_fb_local, &any_fb_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(any_fb_global) {mechanical_fb_calc_toplevel();}
+        sne_causal_wake();
+    }
+#endif
 #ifdef PARTICLE_EXCISION
     apply_excision();
 #endif

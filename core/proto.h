@@ -574,6 +574,11 @@ void find_dt_displacement_constraint(double hfac);
 void process_wake_ups(void);
 #endif
 void wakeup_list_note(int i);
+#ifdef SNE_BROADCAST_TIMESTEP
+double sne_broadcast_velocity(int i, double n_sn);
+void sne_broadcast_record(Vec3<MyDouble> pos, double v);
+void sne_causal_wake(void);
+#endif
 void wakeup_list_invalidate(void);
 void set_units_sfr(void);
 void gravity_forcetest(void);

@@ -589,6 +589,9 @@ void init(void)
         P[i].Particle_DivVel = 0;
         CellP[i].ConditionNumber = 1;
         CellP[i].DtInternalEnergy = 0;
+#ifdef SNE_BROADCAST_TIMESTEP
+        P[i].SNe_ArrivalTime = MAX_REAL_NUMBER;
+#endif
         if(RestartFlag == 0)
         {
             /* first-guess temperature: gamma_eos_value() -- and through it the H2 partition series --
@@ -1035,7 +1038,7 @@ void init(void)
         All.MinMassForParticleMerger = MERGESPLIT_HARDCODE_MIN_MASS;
 #endif
 
-#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT) /* Get mean gas mass, used in various subroutines */
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT) || defined(SNE_BROADCAST_TIMESTEP) /* Get mean gas mass, used in various subroutines */
         double mpi_mass_tot; long mpi_Ngas; long Ngas_l = (long) N_gas;
         MPI_Allreduce(&mass_tot, &mpi_mass_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&Ngas_l, &mpi_Ngas, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
