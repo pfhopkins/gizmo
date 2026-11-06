@@ -168,6 +168,7 @@
 ## -----------------------------------------------------------------------------------------------------
 #SELFGRAVITY_OFF                # turn off self-gravity (compatible with GRAVITY_ANALYTIC)
 #GRAVITY_NOT_PERIODIC           # self-gravity is not periodic, even though the rest of the box is periodic
+#TEST_FROZEN_STARS_ZERO_VELOCITY_AND_ACCELERATION # test only: in the kick every star particle (type 4) gets zero acceleration and velocity and nothing else, so star sources stay fixed while the gravity tree runs for the radiation and columns
 #GRAVITY_PERIODIC_XY_IMAGES     # self-gravity periodic in x and y by explicit image sums (parameter GravityPeriodicXYImages = N: (2N+1)^2-1 images per interaction), open in z; for tall boxes (BOX_LONG_Z) with BOX_PERIODIC and BOX_OUTFLOW_Z or BOX_REFLECT_Z; implies GRAVITY_NOT_PERIODIC (no Ewald, no PM)
 ## -----------------------------------------------------------------------------------------------------
 #GRAVITY_ANALYTIC               # specific analytic gravitational force to use instead of or with self-gravity. If set to a numerical value
