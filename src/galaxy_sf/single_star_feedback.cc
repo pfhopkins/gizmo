@@ -260,11 +260,12 @@ double single_star_eventrates(int i, double dt)
         return 1;
     }
     double age = single_star_age_yr(i), age_end = single_star_death_age_yr(logM, logZ);
-    int dead = (age > age_end);
+    int dead = (age > age_end), forced = 0;
 #ifdef TEST_SINGLE_STARS_SN_AT_FORCED_TIMES
-    if(All.TestSNTime0 > 0 && P[i].ID >= 1 && P[i].ID <= (MyIDType)DMAX(All.TestNumStars, 1) && P[i].ID_generation == 0) {dead = (All.Time >= All.TestSNTime0 + ((double)P[i].ID - 1.) * All.TestSNSpacing);} /* test only */
+    if(All.TestSNTime0 > 0 && P[i].ID >= 1 && P[i].ID <= (MyIDType)DMAX(All.TestNumStars, 1) && P[i].ID_generation == 0) { /* test only: the owed winds come with the death */
+        forced = 1; dead = (All.Time >= All.TestSNTime0 + ((double)P[i].ID - 1.) * All.TestSNSpacing);}
 #endif
-    if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS) {
+    if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS && !(forced && dead)) {
         double la = single_star_table_log_age(DMIN(age, age_end), logM, logZ);
         if(la > 0) {
             struct single_star_event ev; single_star_wind_owed(s, logM, logZ, la, &ev);
