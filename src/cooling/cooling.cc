@@ -1220,11 +1220,12 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         *n_elec_eval = n_elec; /* save this value for the output cycle */
         LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
+        double metal_table_weight = 1; /* share of the tabulated metal lines not already counted by the nebular term below */
 
 #if defined(RT_CHEM_PHOTOION) && defined(METALS)
         /* Nebular (photoionized forbidden-line) cooling from O+, O++, N+, S+, Ne+: Kim, Gong, Kim &
-           Ostriker 2023 (ApJS 264, 10), Eq. 47. The tabulated metal-line cooling below assumes collisional
-           ionization, which under-predicts the forbidden-line cooling of PHOTOIONIZED gas; this supplies
+           Ostriker 2023 (ApJS 264, 10), Eq. 47. The tabulated metal-line cooling below includes the UV background
+           but not local sources, so it under-predicts the forbidden-line cooling of gas photoionized by stars; this supplies
            the coolant that sets the ~1e4 K equilibrium of an HII region. The rate is per nH^2 like the
            other channels, since the volumetric rate goes as n_e*n_H+. METALS is in the guard because the
            metallicity arrays exist only under it, and the term is metallicity-scaled in any case. */
@@ -1234,7 +1235,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             double LambdaNeb = n_elec * nHp * (pp[target].Metallicity[0] / All.SolarAbundances[0])
                 * 3.68e-23 * exp(-DMIN(3.86/T4, 100.)) / sqrt(T4) * pow(10., log10_fneb)
                 / (1. + 0.12*pow(ne_100, 0.38 - 0.12*lnT4)); /* collisional de-excitation: multi-line, so a temperature-dependent power rather than a single critical density */
-            LambdaNeb *= 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* taper out over 2e4-3.5e4 K, handing off to the collisional metal-line tables below so this is not double-counted through the transition */
+            double neb_weight = 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* taper out over 2e4-3.5e4 K */
+            LambdaNeb *= neb_weight;
+            metal_table_weight = 1. - neb_weight * DMIN(1., DMAX(0., nHp)); /* the tables below count the same forbidden lines: an approximate interpolation in which the ionized fraction hands them to this term and the neutral fraction keeps them */
             if(LambdaNeb > 0) {Lambda += LambdaNeb;}
         }
 #endif
@@ -1252,6 +1255,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             /* tables normalized so ne*ni/(nH*nH) included already, so just multiply by nH^2 */
             /* (sorry, -- dont -- multiply by nH^2 here b/c that's how everything is normalized in this function) */
             LambdaMetal *= n_elec;
+            LambdaMetal *= metal_table_weight;
             /* (modified now to correct out tabulated ne so that calculated ne can be inserted; ni not used b/c it should vary species-to-species */
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
             if(logT<2) {LambdaMetal *= exp(-DMIN((2.-logT)*(2.-logT)/0.1,40.));}
@@ -1749,12 +1753,22 @@ static int nheattab;		/* length of table */
 void ReadIonizeParams(const char *fname)
 {
     int i; FILE *fdcool;
-    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456); return;}
+    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory.\n", fname); endrun(456); return;}
     for(i=0; i<TABLESIZE; i++) {inlogz[i]=100; gH0[i]=0; gHe[i]=0; gHep[i]=0; eH0[i]=0; eHe[i]=0; eHep[i]=0;}
-    for(i=0; i<TABLESIZE; i++) {if(fscanf(fdcool, "%g %lg %lg %lg %lg %lg %lg", &inlogz[i], &gH0[i], &gHe[i], &gHep[i], &eH0[i], &eHe[i], &eHep[i]) == EOF) {break;}}
+    char line[1024]; int n_rows = 0;
+    while(fgets(line, sizeof(line), fdcool))
+    {
+        const char *text = line + strspn(line, " \t\r\n");
+        if(*text == '\0' || *text == '#') {continue;} /* blank lines and comments (e.g. the citation header of the distributed tables) */
+        char extra; /* the table keeps one row past the last entry (see TABLESIZE), and the extra conversion refuses anything after the seventh number */
+        if(n_rows >= TABLESIZE-1 || sscanf(text, "%g %lg %lg %lg %lg %lg %lg %c", &inlogz[n_rows], &gH0[n_rows], &gHe[n_rows], &gHep[n_rows], &eH0[n_rows], &eHe[n_rows], &eHep[n_rows], &extra) != 7)
+            {printf(" Ionization table `%s': row %d is not exactly 7 numbers, or the table has more than %d rows:\n %s\n", fname, n_rows+1, (int)TABLESIZE-1, text); fclose(fdcool); endrun(456); return;}
+        n_rows++;
+    }
     fclose(fdcool);
     for(i=0, nheattab=0; i<TABLESIZE; i++) {if(gH0[i] != 0.0) {nheattab++;} else {break;}} /*  nheattab is the number of entries in the table */
     if(ThisTask == 0) printf(" ..read ionization table [TREECOOL] with %d non-zero UVB entries in file `%s'. Make sure to cite the authors from which the UV background was compiled! (See user guide for the correct references).\n", nheattab, fname);
+    if((ThisTask == 0) && (nheattab == 0)) {printf(" WARNING: the ionization table `%s' has no non-zero entries: this run has no UV background, and with it no tabulated metal-line cooling.\n", fname);}
 }
 
 

@@ -935,7 +935,8 @@ void hydro_gradient_calc(void)
             CellP[i].alpha_limiter /= CellP[i].Density;
             double NV_dt = get_particle_timestep_in_physical(i, P);
             double NV_dummy = fabs(1.0 * pow(1.0 - CellP[i].alpha_limiter, 4.0) * CellP[i].NV_DivVel);
-            double NV_limiter = NV_dummy * NV_dummy / (NV_dummy * NV_dummy + CellP[i].NV_trSSt);
+            double NV_denominator = NV_dummy * NV_dummy + CellP[i].NV_trSSt; /* zero where the gas has no velocity gradient */
+            double NV_limiter = (NV_denominator > 0) ? NV_dummy * NV_dummy / NV_denominator : 0;
             double NV_A = DMAX(-CellP[i].NV_dt_DivVel, 0.0);
             double divVel_physical = CellP[i].NV_DivVel;
             if(All.ComovingIntegrationOn) { divVel_physical += 3 * All.cf_hubble_a; }

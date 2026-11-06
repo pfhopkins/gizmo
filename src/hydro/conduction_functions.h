@@ -67,12 +67,8 @@ void conduction_compute_pair(
         double q_grad = wt_i * grad_i[k] + wt_j * grad_j[k];
         double q_direct = d_scalar * kernel.dp[k] * rinv * rinv;
         grad_dot_x_ij += q_grad * kernel.dp[k];
-#ifdef MAGNETIC
         grad_ij[k] = MINMOD_G(q_grad, q_direct);
         if(q_grad * q_direct < 0) { if(fabs(q_direct) > 5. * fabs(q_grad)) { grad_ij[k] = 0.0; } }
-#else
-        grad_ij[k] = MINMOD(q_grad, q_direct);
-#endif
     }
     if(bhat_mag > 0)
     {

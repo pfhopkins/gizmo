@@ -84,9 +84,9 @@ void InitNuclearNetwork(void)
 
 /* =========================================================================
    CallNuclearNetwork — dispatch to the selected solver.
-   Pure function: no global state, thread-safe.
+   The built-in solver has no global state; solver 1 runs on the host, serialised by its wrapper.
    ========================================================================= */
-KOKKOS_FUNCTION int CallNuclearNetwork(const struct nuclear_input *in, struct nuclear_output *out)
+NUCLEAR_NETWORK_CALLABLE int CallNuclearNetwork(const struct nuclear_input *in, struct nuclear_output *out)
 {
     memset(out, 0, sizeof(*out));
 #if !defined(NUCLEAR_NETWORK_SOLVER) || (NUCLEAR_NETWORK_SOLVER == 0)
@@ -196,7 +196,7 @@ void nuclear_parent_routine(void)
     if (N_active == 0) return;
 
     /* Steps 2-4: Gather / Dispatch / Scatter — batched for GPU, same as cooling */
-#if !defined(CHIMES)
+#if !defined(CHIMES) && (!defined(NUCLEAR_NETWORK_SOLVER) || (NUCLEAR_NETWORK_SOLVER == 0)) /* the external solvers are host libraries */
   if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
     GIZMO_GPU_ENSURE_ALL_FRESH(); /* device nuclear network reads All mirrors; tiny-N CPU path reads host All directly */
     static const int GPU_BURN_BATCH_SIZE = 32768;
