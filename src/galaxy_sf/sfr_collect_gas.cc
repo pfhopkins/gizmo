@@ -323,6 +323,9 @@ void single_star_attach_to_new_star(int i_star, int i, double M_drawn)
 {
     P[i_star].Type = 4;
     P[i_star].StellarAge = All.Time;
+#ifdef TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE
+    P[i_star].StellarAge = All.Time - All.TestStarInitAgeYr / UNIT_TIME_IN_YR; /* test only */
+#endif
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
     P[i_star].DensityAroundParticle = CellP[i].Density;
 #endif

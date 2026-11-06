@@ -355,7 +355,11 @@ void mechanical_fb_calc_toplevel(void)
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
         single_star_feedback_prepare(nl_active, num_active);
 #endif
-        mechfb_run_iterative(nl_active, num_active,
+        int *nl_loop = nl_active, n_loop = num_active;
+#ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
+        if(All.Time < All.TestFBNoGasUntilTime) {n_loop = 0;} /* test only: events find no gas, stay pending */
+#endif
+        mechfb_run_iterative(nl_loop, n_loop,
                               LocalGasMechFBInfoTemp, N_gas);
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
         single_star_feedback_finalize(nl_active, num_active); /* remnant = table, or the event stays pending */

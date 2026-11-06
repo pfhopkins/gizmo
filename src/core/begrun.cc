@@ -1855,6 +1855,28 @@ void read_parameter_file(char *fname)
         id[nt++] = STRING;
 #endif
 
+#ifdef TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE
+        strcpy(tag[nt], "TestStarInitAgeYr");
+        addr[nt] = &All.TestStarInitAgeYr;
+        id[nt++] = REAL;
+#endif
+#ifdef TEST_SINGLE_STARS_SN_AT_FORCED_TIMES
+        strcpy(tag[nt], "TestSNTime0");
+        addr[nt] = &All.TestSNTime0;
+        id[nt++] = REAL;
+        strcpy(tag[nt], "TestSNSpacing");
+        addr[nt] = &All.TestSNSpacing;
+        id[nt++] = REAL;
+        strcpy(tag[nt], "TestNumStars");
+        addr[nt] = &All.TestNumStars;
+        id[nt++] = INT;
+#endif
+#ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
+        strcpy(tag[nt], "TestFBNoGasUntilTime");
+        addr[nt] = &All.TestFBNoGasUntilTime;
+        id[nt++] = REAL;
+#endif
+
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
         strcpy(tag[nt], "StellarTablesFile");
         addr[nt] = All.StellarTablesFile;

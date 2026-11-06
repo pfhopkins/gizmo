@@ -260,17 +260,21 @@ double single_star_eventrates(int i, double dt)
         return 1;
     }
     double age = single_star_age_yr(i), age_end = single_star_death_age_yr(logM, logZ);
+    int dead = (age > age_end);
+#ifdef TEST_SINGLE_STARS_SN_AT_FORCED_TIMES
+    if(All.TestSNTime0 > 0 && P[i].ID >= 1 && P[i].ID <= (MyIDType)DMAX(All.TestNumStars, 1) && P[i].ID_generation == 0) {dead = (All.Time >= All.TestSNTime0 + ((double)P[i].ID - 1.) * All.TestSNSpacing);} /* test only */
+#endif
     if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS) {
         double la = single_star_table_log_age(DMIN(age, age_end), logM, logZ);
         if(la > 0) {
             struct single_star_event ev; single_star_wind_owed(s, logM, logZ, la, &ev);
-            if(age <= age_end && ev.Mej > 0) {P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0;}
-            if(age > age_end && ev.Mej > SINGLE_STAR_WIND_FLUSH_MIN && SingleStars.no_deposit_count[s] < 2) {
+            if(!dead && ev.Mej > 0) {P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0;}
+            if(dead && ev.Mej > SINGLE_STAR_WIND_FLUSH_MIN && SingleStars.no_deposit_count[s] < 2) {
                 P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0; /* winds owed up to the end of life go first */
             }
         }
     }
-    if(age <= age_end) {return 0;}
+    if(!dead) {return 0;}
     SingleStars.M_at_SN_trigger[s] = P[i].Mass; /* death: freeze the mass for every pack of the event */
     SingleStars.no_deposit_count[s] = 0;
     if(is_wd) {P[i].MassReturn_ThisTimeStep = 1;} else {P[i].SNe_ThisTimeStep = 1;}
