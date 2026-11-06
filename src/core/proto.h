@@ -133,6 +133,29 @@ void powerspec_turb_save(char *fname, double *disp);
 void powerspec_turb_collect(void);
 void powerspec_turb(int filenr);
 void compute_additional_forces_for_all_particles(void);
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT /* gas energy ledger (diagnostic): kick terms booked per cell, source terms bracketed by the gas energy sum */
+enum {LG_HYDRO_W, LG_HYDRO_Q, LG_GRAV_W, LG_RADP_LONG_W, LG_TURB_W, LG_FB_SN, LG_FB_OTHER, LG_PHOTOION, LG_COOL, LG_FLOORS, LG_SF, LG_MERGE_SPLIT, LG_N_CLOSURE,
+      LG_FB_DEFERRED = LG_N_CLOSURE, LG_WAKE_N, LG_N};
+extern double EnergyLedger[LG_N];
+#ifdef _OPENMP
+#define LEDGER_ADD(c, dE) do {double ledger_tmp_ = (dE); _Pragma("omp atomic") EnergyLedger[(c)] += ledger_tmp_;} while(0)
+#else
+#define LEDGER_ADD(c, dE) (EnergyLedger[(c)] += (dE))
+#endif
+double ledger_local_gas_energy(void);
+#define LEDGER_NEL 27 /* table elements H..Zn */
+extern double LedgerOffered[LEDGER_NEL+2]; /* cumulative, at the star: element masses, then mass, then SN energy [code] */
+extern int LedgerNSN; /* SNe fired on this rank, cumulative */
+void ledger_fb_begin(void);
+void ledger_fb_end(void);
+void energy_ledger_report(void);
+void ledger_log_hydro_event(int i, double dQ, double dW, double dt, int mode);
+#define LEDGER_FB(stmt) {ledger_fb_begin(); stmt; ledger_fb_end();}
+#define LEDGER_BRACKET(c, stmt) {double ledger_e0_ = ledger_local_gas_energy(); stmt; LEDGER_ADD(c, ledger_local_gas_energy() - ledger_e0_);}
+#else
+#define LEDGER_BRACKET(c, stmt) {stmt;}
+#define LEDGER_FB(stmt) {stmt;}
+#endif
 
 
 void set_cosmo_factors_for_current_time(void);

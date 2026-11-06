@@ -1488,6 +1488,10 @@ static std::vector<int> WokenParticles;
 void process_wake_ups(void)
 {
     WokenParticles.clear();
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+    {static int ledger_wake_off = -1; if(ledger_wake_off < 0) {ledger_wake_off = (getenv("LEDGER_WAKEUP_OFF") != NULL);} /* drop every wake-up request: sensitivity runs only */
+    if(ledger_wake_off) {for(int ii = 0; ii < NumPart; ii++) {P[ii].wakeup = 0;} NeedToWakeupParticles_local = 0; NeedToWakeupParticles = 0; return;}}
+#endif
 #ifdef FORCE_EQUAL_TIMESTEPS
     return; /* no wakeups if all particles are on the same timestep */
 #endif
@@ -1688,6 +1692,9 @@ void process_wake_ups(void)
 	}
     }
 
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+    EnergyLedger[LG_WAKE_N] += n;
+#endif
     sumup_large_ints(1, &n, &ntot);
     if(ThisTask == 0) {if(ntot > 0) {printf("%d%09d particles activated (in wakeup check).\n", (int) (ntot / 1000000000), (int) (ntot % 1000000000));}}
     NeedToWakeupParticles = 0;

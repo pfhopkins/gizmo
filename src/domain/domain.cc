@@ -529,6 +529,9 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
      * t1, so without this the interval preceding t0 is charged to nobody. */
     CPU_Step[CPU_DOMAIN] += measure_time();
     const double child0_drift = CPU_ChildCharged;
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+    double ledger_e_ms = ledger_local_gas_energy();
+#endif
     double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
     {
@@ -537,6 +540,9 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     t_mergesplit = timediff(t_drift_start, my_second());
     double t_tmp = my_second();
     rearrange_particle_sequence(1); /* must be called after merge_and_split_particles, and should always be called before new domains are built; the tree is freed below */
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+    LEDGER_ADD(LG_MERGE_SPLIT, ledger_local_gas_energy() - ledger_e_ms);
+#endif
     t_rearrange = timediff(t_tmp, my_second());
 
     UseAllParticles = UseAllTimeBins;

@@ -186,6 +186,9 @@ void verify_and_assign_local_mechfb_integrals(void)
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
                     ledger_add(LEDGER_E_FB_THERMAL_DEFERRED, dTE);
 #endif
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+                    LEDGER_ADD(LG_FB_DEFERRED, dTE);
+#endif
                 } else
 #endif
                 {

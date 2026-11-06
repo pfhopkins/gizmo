@@ -347,6 +347,16 @@ double single_star_ejecta_mass_this_step(int i)
     return DMAX(ev.Mej, 0) / UNIT_MASS_IN_SOLAR;
 }
 
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+/* Metallicity slot holding table element k (-1: H, which has no slot) */
+int ledger_met_slot(int k)
+{
+    for(int s = 1; s <= 10; s++) {if(single_star_fire_slot_elem[s] == k) {return s;}}
+    for(int e = 0; e < STELLAR_EXTRA_NELEM; e++) {if(stellar_extra_slot_elem[e] == k) {return METALS_EXTRA_PASSIVE_SPECIES_OFFSET + e;}}
+    return -1;
+}
+#endif
+
 /* event log rows, gathered and written by rank 0 in the step of the event:
    time ID kind remnant_type M_drawn M_trigger M_ejecta M_remnant E[erg] M_Z_ejecta mass_residual no_deposit_steps */
 #define SSFB_LOG_COLS 12
@@ -407,6 +417,14 @@ void single_star_feedback_finalize(const int *list, int n)
             continue;
         }
         double z = 0; for(int k = ELEM_C; k < STBL_NELEM; k++) {z += ev.y[k];}
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+        if(ev.Mej > 0) { /* offered, at the star */
+            double off = 1. / UNIT_MASS_IN_SOLAR;
+            for(int k = 0; k < LEDGER_NEL; k++) {LedgerOffered[k] += ev.y[k] * off;}
+            LedgerOffered[LEDGER_NEL] += ev.Mej * off; LedgerOffered[LEDGER_NEL+1] += ev.E / UNIT_ENERGY_IN_CGS;
+            if(ev.E > 0) {LedgerNSN++;}
+        }
+#endif
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
         {double dm = ssfb_mass_before[a] - P[i].Mass; /* taken from the star by the loop [code] */
          ledger_add(LEDGER_M_EJECTA, dm); ledger_add(LEDGER_E_EJECTA, (ev.E > 0) ? dm * (ev.E / UNIT_ENERGY_IN_CGS) / (ev.Mej / UNIT_MASS_IN_SOLAR) : 0.5 * dm * pow(ev.v_kms / UNIT_VEL_IN_KMS, 2)); /* 1/2 dm v_ej^2, v_ej as the loop's */ ledger_add(LEDGER_MZ_EJECTA, (ev.Mej > 0) ? dm * z / ev.Mej : 0); ledger_add(LEDGER_MZ_STARS_LOST, dm * P[i].Metallicity[0]);
