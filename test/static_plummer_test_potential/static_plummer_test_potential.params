@@ -7,7 +7,7 @@ TimeBetSnapshot                    5
 TimeOfFirstSnapshot                0
 TimeBegin                          0
 TimeBetStatistics                    5
-MaxSizeTimestep                    0.01
+MaxSizeTimestep                    0.05
 MinSizeTimestep                    1e-9
 ErrTolIntAccuracy                  0.005
 ErrTolTheta                        0.5
