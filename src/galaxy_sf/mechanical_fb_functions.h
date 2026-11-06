@@ -248,7 +248,7 @@ static int mechanical_fb_star_active_check(int i, int fb_loop_iteration,
     if(P_arr[i].Type == 5 && !P_arr[i].do_gas_search_this_timestep) return 0;
 #endif
     if(P_arr[i].SNe_ThisTimeStep > 0) { if(fb_loop_iteration < 0 || fb_loop_iteration == 0) return 1; }
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
     if(P_arr[i].MassReturn_ThisTimeStep > 0) { if(fb_loop_iteration < 0 || fb_loop_iteration == 1) return 1; }
 #ifdef GALSF_FB_FIRE_RPROCESS
     if(P_arr[i].RProcessEvent_ThisTimeStep > 0) { if(fb_loop_iteration < 0 || fb_loop_iteration == 2) return 1; }
@@ -316,6 +316,12 @@ static void mechanical_fb_per_source_setup(
         double egy_RHS = p_coupled * p_coupled * S2 + p_coupled * S1;
         m.momentum_to_couple_term_units = p_coupled;
         m.U_thermal_residual_tocouple = Energy_injected_codeunits - egy_RHS;
+#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
+        if(m.feedback_type_is_SNe) { /* pure-thermal SNe: the whole explosion energy as heat, no radial ejecta momentum */
+            m.momentum_to_couple_term_units = 0;
+            m.U_thermal_residual_tocouple = 0.5 * (double)local.Msne * (double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta;
+        }
+#endif
     }
 
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
@@ -560,7 +566,11 @@ static void mechanical_fb_pair_kernel(
                                        home_gas_delta, ghost_gas_delta);
 #endif
         double mom_prefactor = scalars.common.cf_atime * m.momentum_to_couple_term_units / Mass_j;
+#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
+        if(mom_prefactor > 0 || m.feedback_type_is_SNe) { /* pure-thermal SNe: the ejecta carry the star's velocity */
+#else
         if(mom_prefactor > 0) {
+#endif
             for(int k = 0; k < 3; k++) {
                 double d_vel = mom_prefactor * pvec[k] + massratio_ejecta * ((double)local.Vel[k] - Vel_j[k]);
                 KE_initial += Vel_j_0[k] * Vel_j_0[k];
@@ -571,6 +581,16 @@ static void mechanical_fb_pair_kernel(
             KE_final   *= 0.5 * Mass_j     * scalars.common.cf_a2inv;
         }
         double d_Egy_internal = pnorm * m.U_thermal_residual_tocouple;
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+        { /* the cell closes its own share in the star's frame: its share of the ejecta energy less the kinetic energy it gained */
+            double dKE_star_frame = 0;
+            for(int k = 0; k < 3; k++) {
+                double v0 = (Vel_j_0[k] - (double)local.Vel[k]) / scalars.common.cf_atime, vf = (Vel_j[k] - (double)local.Vel[k]) / scalars.common.cf_atime;
+                dKE_star_frame += 0.5 * (Mass_j * vf * vf - mj_preshock * v0 * v0);
+            }
+            d_Egy_internal = pnorm * 0.5 * (double)local.Msne * (double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta - dKE_star_frame;
+        }
+#endif
         if(m.retain_thermal_flag == 0) d_Egy_internal = 0;
         d_Egy_internal /= Mass_j;
         if(d_Egy_internal > 0) InternalEnergy_j += d_Egy_internal;
@@ -587,7 +607,11 @@ static void mechanical_fb_pair_kernel(
      * convention encoding: wakeup_val = source.TimeBin + 1. */
     Kokkos::atomic_max(&gd->max_source_wakeup, wakeup_flag_from_timebin(local.TimeBin));
     Kokkos::atomic_add(&gd->m_injected, Mass_j - Mass_j_0);
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    Kokkos::atomic_add(&gd->TE_injected, Mass_j * (InternalEnergy_j - InternalEnergy_j_0)); /* cold ejecta: the added mass carries no ambient u */
+#else
     Kokkos::atomic_add(&gd->TE_injected, Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0);
+#endif
     Kokkos::atomic_add(&gd->KE_injected, KE_final - KE_initial);
 #ifdef METALS
     for(int k = 0; k < NUM_METAL_SPECIES; k++) {

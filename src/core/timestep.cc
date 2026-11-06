@@ -1133,6 +1133,9 @@ integertime get_timestep(int p,		/*!< particle index */
         if(dt_stellar_evol>0) {if(dt_stellar_evol<dt) {dt = dt_stellar_evol;}}
     }
 #endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+    if(P[p].StarIdx > 0) {double dt_star = single_star_max_timestep(p); if(dt_star > 0 && dt_star < dt) {dt = dt_star;}} /* next stellar-evolution event of a single star */
+#endif
 
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
@@ -1562,6 +1565,9 @@ void process_wake_ups(void)
 		/* Floor at the lowest-currently-occupied-and-active bin (see comment
 		 * above the i-loop). Prevents the multiplicative wakeup cascade. */
 		if(bin < lowest_occupied_active_bin) bin = lowest_occupied_active_bin;
+#ifdef WAKEUP_TARGET_BIN_PARAMETER
+		if(All.WakeupTargetBin == 1) {bin = waker_bin;} else if(All.WakeupTargetBin == 2) {bin = max_time_bin_active;}
+#endif
 #ifdef STOP_WHEN_BELOW_MINTIMESTEP
 		/* If wakeup assigns a bin whose physical timestep is below MinSizeTimestep, abort with full
 		 * context. Without this, the wakeup-application path silently floors at bin 0 (dt ~ Timebase_interval) bypassing the get_timestep() warning. */

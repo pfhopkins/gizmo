@@ -28,7 +28,7 @@ int addFB_evaluate_active_check(int i, int fb_loop_iteration)
     if(P[i].Type == 5 && !P[i].do_gas_search_this_timestep) {return 0;}
 #endif
     if(P[i].SNe_ThisTimeStep>0) {if(fb_loop_iteration<0 || fb_loop_iteration==0) {return 1;}}
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
     if(P[i].MassReturn_ThisTimeStep>0) {if(fb_loop_iteration<0 || fb_loop_iteration==1) {return 1;}}
 #ifdef GALSF_FB_FIRE_RPROCESS
     if(P[i].RProcessEvent_ThisTimeStep>0) {if(fb_loop_iteration<0 || fb_loop_iteration==2) {return 1;}}
@@ -55,7 +55,7 @@ void determine_where_SNe_occur(void)
     for (int i : ActiveParticleList)
     {
         P[i].SNe_ThisTimeStep=0;
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
         P[i].MassReturn_ThisTimeStep=0;
 #ifdef GALSF_FB_FIRE_RPROCESS
         P[i].RProcessEvent_ThisTimeStep=0;
@@ -158,10 +158,16 @@ void verify_and_assign_local_mechfb_integrals(void)
 #endif
             CellP[j].Density *= mf/m0; /* update density [semi-drift] */
             double dTE=LocalGasMechFBInfoTemp[j].TE_injected;
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+            CellP[j].InternalEnergy *= m0/mf; CellP[j].InternalEnergyPred *= m0/mf; /* cold ejecta dilute u at once, whatever the energy of the event */
+#endif
             if(dTE > 0)
             {
                 double TE_0=m0*CellP[j].InternalEnergy; dTE=DMAX(-TE_0,dTE); /* ensure against non-negative values */
                 double dU = (-dm/mf)*CellP[j].InternalEnergy + (1./mf)*dTE; /* using new mass get updated internal energy */
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+                dU = (1./mf)*dTE; /* the dilution is done above */
+#endif
                 double dt = get_particle_timestep_in_physical(j, P), implied_heating_cgs=(dU*UNIT_SPECEGY_IN_CGS*PROTONMASS_CGS)/(dt*UNIT_TIME_IN_CGS), typical_cooling_cgs=1.e-23*(CellP[j].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS);
                 if((implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)))) {CellP[j].DtInternalEnergy += dU/dt;} else {
                     CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;
@@ -312,8 +318,14 @@ void mechanical_fb_calc_toplevel(void)
         {int aa = 0; for(int ii : ActiveParticleList) {
             if(addFB_evaluate_active_check(ii, -2)) nl_active[aa++] = ii;
         }}
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+        single_star_feedback_prepare(nl_active, num_active);
+#endif
         mechfb_run_iterative(nl_active, num_active,
                               LocalGasMechFBInfoTemp, N_gas);
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+        single_star_feedback_finalize(nl_active, num_active); /* remnant = table, or the event stays pending */
+#endif
         myfree(nl_active);
     }
 

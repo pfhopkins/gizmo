@@ -3,6 +3,7 @@
 import platform
 import shlex
 import subprocess
+import sys
 from os import system, environ, path, chdir, cpu_count, remove, makedirs
 from urllib.error import HTTPError, URLError
 from urllib.request import urlretrieve
@@ -416,6 +417,23 @@ def get_cooling_tables(test_directory="."):
         repo_root = path.dirname(path.dirname(path.dirname(path.dirname(path.abspath(__file__)))))
         treecool_src = path.join(repo_root, "data", "cooling", "TREECOOL")
         system(f"cp {treecool_src} {test_directory}")
+
+
+def get_stellar_evolution_tables() -> dict:
+    """Install the stella-tables tables once with scripts/get_stella_tables.sh (built from the stella-tables repo at the
+    commit these sources expect, hash-checked) and return the parameter values pointing at them.
+    The install directory is GIZMO_STELLA_TABLES_DIR if set, else the script's default (~/.stella-tables/<commit>);
+    it is shared between tests and checkouts and reused while its hashes match. The script runs with this interpreter as
+    PYTHON (it has numpy and h5py, which the harness needs anyway); set PYTHON to override."""
+    repo_root = path.dirname(path.dirname(path.dirname(path.dirname(path.abspath(__file__)))))
+    cmd = ["bash", path.join(repo_root, "scripts", "get_stella_tables.sh")]
+    if environ.get("GIZMO_STELLA_TABLES_DIR"):
+        cmd.append(environ["GIZMO_STELLA_TABLES_DIR"])
+    out = subprocess.run(cmd, capture_output=True, text=True, env={**environ, "PYTHON": environ.get("PYTHON", sys.executable)})
+    if out.returncode != 0:
+        raise RuntimeError(f"get_stella_tables.sh failed:\n{out.stdout}\n{out.stderr}")
+    prefix = [l for l in out.stdout.splitlines() if l.startswith("get_stella_tables: ") and " holds " in l][-1].split()[1]
+    return {"StellarTablesFile": path.join(prefix, "stellar_tables_unified.hdf5")}
 
 
 def write_params_with_overrides(paramsfile: str, overrides: dict) -> str:

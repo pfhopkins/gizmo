@@ -289,6 +289,10 @@ extern struct gas_cell_data
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
     MyFloat DelayTimeHII;             /*!< flag indicating particle is ionized by nearby star */
 #endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+    MyFloat SingleStarSFCooldown;     /*!< remaining time [physical] in which this cell forms no star after a birth */
+    unsigned char SingleStarSpawnBlock; /*!< 1 after a birth until the cell's density is recomputed */
+#endif
 #ifdef GALSF_FB_TURNOFF_COOLING
     MyFloat DelayTimeCoolingSNe;      /*!< flag indicating cooling is suppressed b/c heated by SNe */
 #endif

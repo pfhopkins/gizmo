@@ -8,6 +8,12 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+#include "single_star_imf.h"
+#endif
+#if defined(GALSF_SINGLE_STARS_SF_CRITERION) && defined(GALSF_SFR_CRITERION)
+#error "GALSF_SINGLE_STARS_SF_CRITERION replaces GALSF_SFR_CRITERION"
+#endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
 static constexpr uint64_t NEW_SINK_SPIN_RNG_SALT = gizmo_loop_rng_salt("new_sink_spin"); /* the spin direction of a sink made here */
 #endif
@@ -203,6 +209,17 @@ double get_starformation_rate(int i, int mode)
     tsfr = sqrt(All.PhysDensThresh / (CellP[i].Density * All.cf_a3inv)) * All.MaxSfrTimescale; /* set default SFR timescale to scale appropriately with the gas dynamical time */
     rateOfSF = P[i].Mass / tsfr; /* 'normal' sfr from density law above */
     if(tsfr<=0 || rateOfSF<=0 || flag==0) {return 0;} /* nonsense here, return 0 */
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION /* single stars (the reference implementation's criterion): no SF in ionised cells, Jeans mass below FacSfThreshMJ x N_ngb x m */
+    {
+#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+        if(CellP[i].DelayTimeHII > 0) {return 0;}
+#endif
+        double rho_phys = CellP[i].Density * All.cf_a3inv, cs = CellP[i].effective_soundspeed(); /* physical, from the gas pressure (no magnetic term), as the reference implementation */
+        double MJ = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)); /* pi^(5/2)/6 c_s^3 / (G^(3/2) rho^(1/2)) */
+        if(MJ >= All.FacSfThreshMJ * All.DesNumNgb * P[i].Mass) {return 0;}
+        return rateOfSF;
+    }
+#endif
     
 #if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION)
     int cell_can_be_singlestar = is_particle_single_star_eligible(i); // call function to determine if we're actually eligible to be a true single-star element
@@ -394,6 +411,55 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
 
 
 
+/* spawn a new star particle of the given mass from gas cell i (the cell keeps the rest of its mass): a new index after
+   the existing particles, linked into i's timebin, with a child ID, inserted into the standing tree. Returns its index,
+   or -1 if it cannot be placed now (it can form after the next tree rebuild). stars_spawned = spawns so far this call. */
+int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned)
+{
+    int i_star = NumPart + stars_spawned;
+    if(!gizmo_particle_index_fits_live_tree(i_star))
+    {
+        /* Storage has room, but the tree standing right now cannot index this
+         * slot, and a star has to be inserted into it.  Skip this one and let it
+         * form after the next rebuild -- the same deferral the code already takes
+         * when it declines to spawn. */
+        PRINT_WARNING("On Task=%d we skip spawning a star at index %d: the standing tree has only %d particle slots. It can form after the next tree rebuild.",ThisTask, i_star, All.TreeParticleSlots);
+        fflush(stdout);
+        return -1;
+    }
+    if(i_star >= All.MaxPart)
+    {
+        PRINT_WARNING("On Task=%d with NumPart=%d we try to spawn %d particles. Sorry, no space left...(All.MaxPart=%d)",ThisTask, NumPart, stars_spawned, All.MaxPart);
+        fflush(stdout);
+        endrun(8888);
+        return -1; /* no space to spawn: soft-stop and skip this particle's spawn (no OOB P[i_star] write / push_back / timebin mutation). The ActiveParticleList loop has no in-body collective, so skipping can't desync the post-loop Allreduces; drains at the next poll. */
+    }
+    P[i_star] = P[i]; // copy the entire structure to the new particle, needed to initialize
+    wakeup_sidecar_mark(i_star);   /* whole-struct copy inherits P[i].wakeup into the new star slot */
+    ActiveParticleList.push_back(i_star);
+    NumForceUpdate++;
+    TimeBinCount[P[i_star].TimeBin]++;
+    PrevInTimeBin[i_star] = i;
+    NextInTimeBin[i_star] = NextInTimeBin[i];
+    if(NextInTimeBin[i] >= 0) {PrevInTimeBin[NextInTimeBin[i]] = i_star;}
+    NextInTimeBin[i] = i_star;
+    if(LastInTimeBin[P[i].TimeBin] == i) {LastInTimeBin[P[i].TimeBin] = i_star;}
+    P[i_star].ID_child_number = P[i].ID_child_number + (MyIDType)(1 << ((int)P[i].ID_generation)); // particle 'i' retains its child number; this ensures uniqueness
+    P[i].ID_generation = P[i].ID_generation + 1;
+    if(P[i].ID_generation > 30) {P[i].ID_generation=0;} // roll over at 32 generations (unlikely to ever reach this)
+    P[i_star].ID_generation = P[i].ID_generation; // ok, all set!
+    P[i_star].Mass = mass_of_star; /* i_star = NumPart+stars_spawned (>= MaxPartGas); no CellP[i_star] write — CellP[] is sized All.MaxPartGas */
+    P[i].Mass -= P[i_star].Mass; CellP[i].Mass = P[i].Mass; /* i is still gas here */
+    if(P[i].Mass<0) {P[i].Mass=0;} CellP[i].Mass = P[i].Mass;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    CellP[i].MassTrue -= P[i_star].Mass;
+    if(CellP[i].MassTrue<0) {CellP[i].MassTrue=0;}
+#endif
+    force_add_element_to_tree(i, i_star);
+    return i_star;
+}
+
+
 /* parent routine for star formation. for 'effective equation of state' models for star-forming gas, this also updates their effective EOS parameters */
 void star_formation_parent_routine(void)
 {
@@ -424,6 +490,10 @@ void star_formation_parent_routine(void)
 #ifdef GALSF_FB_TURNOFF_COOLING
             if(CellP[i].DelayTimeCoolingSNe > 0) {flag=1; CellP[i].DelayTimeCoolingSNe -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
 #endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+            if(CellP[i].SingleStarSpawnBlock) {flag=1;} /* a star formed here: wait for the density to be recomputed */
+            if(CellP[i].SingleStarSFCooldown > 0) {flag=1; CellP[i].SingleStarSFCooldown -= dtime; if(CellP[i].SingleStarSFCooldown < 0) {CellP[i].SingleStarSFCooldown = 0;}} /* free-fall cool-down after a birth */
+#endif
             
             if((flag == 0)&&(dtime>0))        /* active star formation (upon start-up, we need to protect against dt==0) */
             {
@@ -444,6 +514,11 @@ void star_formation_parent_routine(void)
                 if(dtime>0) {TimeBinSfr[P[i].TimeBin] += CellP[i].Sfr;}
                 
                 prob = P[i].Mass / mass_of_star * pfac;
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* draw the star's mass first; P = (m_cell / M_star) pfac keeps the SFR on average (LYRA, Gutcke+21; as the reference implementation, P may exceed 1 when M_star < m_cell) */
+                double M_drawn = single_star_imf_draw_massweighted(All.IMFSampleMinMass, gizmo_rng_combine(particle_event_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);
+                prob = (P[i].Mass / (M_drawn / UNIT_MASS_IN_SOLAR)) * pfac;
+                if(prob > 1) {static int warned = 0; if(!warned) {warned = 1; PRINT_WARNING("single-star formation probability %g > 1 (drawn mass %g Msun below the cell mass): the realised SFR is capped there (reference rule); further cases on task %d not reported", prob, M_drawn, ThisTask);}}
+#endif
                 
 #if defined(METALS) && defined(GALSF_EFFECTIVE_EQS) // does instantaneous enrichment //
                 static constexpr uint64_t SF_ENRICHMENT_RNG_SALT = gizmo_loop_rng_salt("star_formation_enrichment");
@@ -455,6 +530,11 @@ void star_formation_parent_routine(void)
                 static constexpr uint64_t STAR_FORMATION_RNG_SALT = gizmo_loop_rng_salt("star_formation");
                 if(particle_random_number(i, STAR_FORMATION_RNG_SALT, (uint64_t)All.Ti_Current, 0) < prob)    /* ok, make a star */
                 {
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* a zero-mass single star that collects its drawn mass after this loop; its mass enters the SF statistics there */
+                    {int i_star = spawn_star_from_gas(i, 0, stars_spawned);
+                     if(i_star >= 0) {single_star_attach_to_new_star(i_star, i, M_drawn); stars_spawned++;}}
+                    continue;
+#endif
                     
 #ifdef SINK_SEED_FROM_LOCALGAS
                     /* before making a star, assess whether or not we can instead make a sink seed particle */
@@ -532,46 +612,8 @@ void star_formation_parent_routine(void)
 #endif
                     } else {
                         /* here we spawn a new star particle, so have to do some extra work to note that the total number of particles in the code is modified, and create the new particle */
-                        i_star = NumPart + stars_spawned;
-                        if(!gizmo_particle_index_fits_live_tree(i_star))
-                        {
-                            /* Storage has room, but the tree standing right now cannot index this
-                             * slot, and a star has to be inserted into it.  Skip this one and let it
-                             * form after the next rebuild -- the same deferral the code already takes
-                             * when it declines to spawn. */
-                            PRINT_WARNING("On Task=%d we skip spawning a star at index %d: the standing tree has only %d particle slots. It can form after the next tree rebuild.",ThisTask, i_star, All.TreeParticleSlots);
-                            fflush(stdout);
-                            continue;
-                        }
-                        if(i_star >= All.MaxPart)
-                        {
-                            PRINT_WARNING("On Task=%d with NumPart=%d we try to spawn %d particles. Sorry, no space left...(All.MaxPart=%d)",ThisTask, NumPart, stars_spawned, All.MaxPart);
-                            fflush(stdout);
-                            endrun(8888);
-                            continue; /* no space to spawn: soft-stop and skip this particle's spawn (no OOB P[i_star] write / push_back / timebin mutation). The ActiveParticleList loop has no in-body collective, so continue can't desync the post-loop Allreduces; drains at the next poll. */
-                        }
-                        P[i_star] = P[i]; // copy the entire structure to the new particle, needed to initialize
-                        wakeup_sidecar_mark(i_star);   /* whole-struct copy inherits P[i].wakeup into the new star slot */
-                        ActiveParticleList.push_back(i_star);
-                        NumForceUpdate++;
-                        TimeBinCount[P[i_star].TimeBin]++;
-                        PrevInTimeBin[i_star] = i;
-                        NextInTimeBin[i_star] = NextInTimeBin[i];
-                        if(NextInTimeBin[i] >= 0) {PrevInTimeBin[NextInTimeBin[i]] = i_star;}
-                        NextInTimeBin[i] = i_star;
-                        if(LastInTimeBin[P[i].TimeBin] == i) {LastInTimeBin[P[i].TimeBin] = i_star;}
-                        P[i_star].ID_child_number = P[i].ID_child_number + (MyIDType)(1 << ((int)P[i].ID_generation)); // particle 'i' retains its child number; this ensures uniqueness
-                        P[i].ID_generation = P[i].ID_generation + 1;
-                        if(P[i].ID_generation > 30) {P[i].ID_generation=0;} // roll over at 32 generations (unlikely to ever reach this)
-                        P[i_star].ID_generation = P[i].ID_generation; // ok, all set!
-                        P[i_star].Mass = mass_of_star; /* i_star = NumPart+stars_spawned (>= MaxPartGas); no CellP[i_star] write — CellP[] is sized All.MaxPartGas */
-                        P[i].Mass -= P[i_star].Mass; CellP[i].Mass = P[i].Mass; /* i is still gas here */
-                        if(P[i].Mass<0) {P[i].Mass=0;} CellP[i].Mass = P[i].Mass;
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                        CellP[i].MassTrue -= P[i_star].Mass;
-                        if(CellP[i].MassTrue<0) {CellP[i].MassTrue=0;}
-#endif
-                        force_add_element_to_tree(i, i_star);
+                        i_star = spawn_star_from_gas(i, mass_of_star, stars_spawned);
+                        if(i_star < 0) {continue;}
                         stars_spawned++;
                     }
 
@@ -722,6 +764,9 @@ void star_formation_parent_routine(void)
     
     
     
+#ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
+    stars_spawned += single_star_test_births(stars_spawned);
+#endif
     {   /* every count this pass changed, in one reduction */
         long long local[3] = {stars_spawned, stars_converted, num_sink_formed}, total[3];
         MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -744,6 +789,9 @@ void star_formation_parent_routine(void)
         /* Note: N_gas is only reduced once rearrange_particle_sequence is called */
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
     } //(tot_spawned > 0 || tot_converted > 0)
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+    sum_mass_stars += single_stars_collect_gas(tot_spawned); /* new single stars take their drawn mass from the gas around them */
+#endif
     
     for(bin = 0, sfrrate = 0; bin < TIMEBINS; bin++) {if(TimeBinCount[bin]) {sfrrate += TimeBinSfr[bin];}}
     

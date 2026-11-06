@@ -1004,6 +1004,19 @@
 #define  GALSF_GENERATIONS     1    /*!< Number of star particles that may be created per gas particle */
 #endif
 
+#if defined(GALSF_SINGLE_STARS_SF_CRITERION) && !defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS)
+#define GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* the single-star criterion forms stars that collect their drawn mass */
+#endif
+#if defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS) && !defined(GALSF_SINGLE_STARS_FROM_IMF)
+#define GALSF_SINGLE_STARS_FROM_IMF /* the collected stars carry their drawn mass in the single-star record */
+#endif
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL) && !defined(GALSF_SINGLE_STARS_SNE_MECHANICAL_COUPLING) && !defined(GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY)
+#define GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY /* single stars: pure-thermal supernovae by default */
+#endif
+#if defined(GALSF_FB_FIRE_STELLAREVOLUTION) || (defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL))
+#define GALSF_FB_MASS_RETURN_EVENTS /* the mechanical feedback loop also returns stellar mass (mode 1) */
+#endif
+
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 #define OUTPUT_SOFTENING  /*! output softening to snapshots */
@@ -1038,6 +1051,9 @@
 #define COOL_LOWTEMP_THIN_ONLY // don't want to double-count trapping of radiation if we're doing it self-consistently
 #endif
 
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
+#define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
+#endif
 
 
 #if defined(CHIMES_HII_REGIONS) && !defined(GALSF_FB_FIRE_RT_HIIHEATING)

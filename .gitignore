@@ -105,8 +105,6 @@ docs/scratch/
 test/biermann_growth/NOTES.md
 
 # Python bytecode caches (regenerated on every pytest invocation, not source).
-__pycache__/
-*.pyc
 *.pyo
 test/fire_m11i/
 test/poisson_starforge/
@@ -129,3 +127,26 @@ _spike_backup_*/
 .claude_required_reading.txt
 # scratch parameter-file variants used when driving a test by hand
 test/*/_*.params
+test/stellar_evolution_tables/*_override.params
+test/stellar_evolution_tables/unit/lookup_grid
+test/stellar_evolution_tables/unit/lookups.*
+test/single_star_record/run_*/
+test/single_stars_collect_gas/run_*/
+test/single_stars_collect_gas/GIZMO_default_merging
+test/single_stars_formation/run_*/
+test/single_stars_sf_criterion/run_*/
+test/single_stars_supernovae/run_*/
+test/single_stars_supernovae/GIZMO_elements
+test/single_stars_supernovae/TREECOOL
+test/single_stars_supernovae/spcool_tables
+test/single_stars_winds_agb_ia/run_*/
+test/treecol_pixels/run_*/
+test/treecol_pixels/GIZMO_*
+test/single_stars_radiation_pressure/run_*/
+test/single_stars_radiation_pressure/GIZMO_*
+test/single_stars_merge_split/run/
+test/single_stars_merge_split/GIZMO
+test/wakeup_falling_sedov/output*/
+test/wakeup_falling_sedov/GIZMO
+test/wakeup_falling_sedov/used2
+test/wakeup_falling_sedov/*_ics.hdf5

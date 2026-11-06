@@ -12,6 +12,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../galaxy_sf/stellar_evolution_tables.h"
 #include "../sidm/dm_cooling_tables.h"   /* InitCool_dm() declaration only; the full dm_fluid_functions.h chain belongs in GPU_OBJS TUs where Kokkos_Core.hpp is in-scope, not in host TUs like this one */
 
 
@@ -267,6 +268,13 @@ void begrun(void)
 
 #ifdef NUCLEAR_NETWORK
     InitNuclearNetwork();
+#endif
+
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+    stellar_evolution_tables_init();
+    if(gizmo_poll_controlled_stop()) return;
+    stellar_evolution_tables_load();
+    if(gizmo_poll_controlled_stop()) return;
 #endif
 
 #ifdef TURB_DRIVING
@@ -1812,6 +1820,23 @@ void read_parameter_file(char *fname)
 #endif
 #endif
 
+#ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
+        strcpy(tag[nt], "TestSingleStarBirths");
+        addr[nt] = All.TestSingleStarBirths;
+        id[nt++] = STRING;
+#endif
+
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        strcpy(tag[nt], "StellarTablesFile");
+        addr[nt] = All.StellarTablesFile;
+        id[nt++] = STRING;
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+        strcpy(tag[nt], "MaxStellarTimestep");
+        addr[nt] = &All.MaxStellarTimestep;
+        id[nt++] = REAL;
+#endif
+#endif
+
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
         strcpy(tag[nt], "SNeIIEnergyFrac");
         strcpy(alternate_tag[nt], "SNe_Energy_Renormalization");
@@ -1967,6 +1992,11 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.MaxKernelRadius;
         id[nt++] = REAL;
 
+#ifdef WAKEUP_TARGET_BIN_PARAMETER
+      strcpy(tag[nt], "WakeupTargetBin");
+      addr[nt] = &All.WakeupTargetBin;
+      id[nt++] = INT;
+#endif
         strcpy(tag[nt], "MaxSizeTimestep");
         strcpy(alternate_tag[nt], "Maximum_Timestep_Allowed");
         addr[nt] = &All.MaxSizeTimestep;
@@ -2406,6 +2436,24 @@ void read_parameter_file(char *fname)
             defined as the SF timescale in code units at the critical physical
             density given above. use the dimensionless SfEffPerFreeFall
             to calculate this */
+#endif
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+      strcpy(tag[nt], "IMFSampleMinMass");
+      addr[nt] = &All.IMFSampleMinMass;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SingleStarsRNGRealisation");
+      addr[nt] = &All.SingleStarsRNGRealisation;
+      id[nt++] = INT;
+#endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+      strcpy(tag[nt], "FacSfThreshMJ");
+      addr[nt] = &All.FacSfThreshMJ;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SFCooldownFreeFallFraction");
+      addr[nt] = &All.SFCooldownFreeFallFraction;
+      id[nt++] = REAL;
 #endif
 
 #ifdef GALSF_EFFECTIVE_EQS
@@ -3124,6 +3172,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("MinGasKernelRadiusFractional",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume no mininum (=%g) \n",tag[i],alternate_tag[i],All.MinGasKernelRadiusFractional); continue;}
 #endif
                 if(strcmp("DomainBuild_ActiveFraction",tag[i])==0) {*((double *)addr[i])=0.05; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-decompose whenever 5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.DomainBuild_ActiveFraction); continue;}
+#ifdef WAKEUP_TARGET_BIN_PARAMETER
+                if(strcmp("WakeupTargetBin",tag[i])==0) {*((int *)addr[i])=2; printf("Tag %s not set in parameter file: defaulting to 2 (woken cells go to the highest active bin)\n",tag[i]); continue;}
+#endif
                 if(strcmp("TreeRebuild_ActiveFraction",tag[i])==0) {*((double *)addr[i])=All.DomainBuild_ActiveFraction; printf("Tag %s (%s) not set in parameter file: defaulting to rebuild the gravity tree on the same active fraction the domain is decomposed on (=%g). A decomposition always brings a new tree with it, so a larger value here has no effect; a smaller one rebuilds the tree on steps that keep the existing decomposition. \n",tag[i],alternate_tag[i],All.TreeRebuild_ActiveFraction); continue;}
 #ifdef MHD_MODIFIED_GRADIENT
                 if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=DMIN(All.TreeRebuild_ActiveFraction, All.DomainBuild_ActiveFraction); printf("Tag %s (%s) not set in parameter file: defaulting to run the MG global solve on steps where at least the fraction of gas is active at which the tree or domain is rebuilt (=%g, the smaller of TreeRebuild_ActiveFraction=%g and DomainBuild_ActiveFraction=%g), i.e. when the step already does work over every element; on smaller steps the retained MG correction plus the local CG correction is used. Set 0 to solve on every step with active gas (much more expensive with a deep timestep hierarchy). \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep,All.TreeRebuild_ActiveFraction,All.DomainBuild_ActiveFraction); continue;}
@@ -3175,6 +3226,13 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef TURB_DIFFUSION
                 if(strcmp("TurbDiffusionCoefficient",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: code was compiled with turbulent diffusion, so will default to calculating the coefficients without arbitrary re-normalization (i.e. user-specified additional coefficient/multipler=%g) \n",tag[i],alternate_tag[i],All.TurbDiffusion_Coefficient); continue;}
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+                if(strcmp("MaxStellarTimestep",tag[i])==0) {*((double *)addr[i])=50000.; printf("Tag %s not set in parameter file: defaulting to 50 kyr\n",tag[i]); continue;}
+#endif
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+                if(strcmp("SingleStarsRNGRealisation",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set in parameter file: defaulting to realisation 0\n",tag[i]); continue;}
+                if(strcmp("IMFSampleMinMass",tag[i])==0) {*((double *)addr[i])=0.08; printf("Tag %s not set in parameter file: defaulting to the full IMF (0.08 Msun)\n",tag[i]); continue;}
 #endif
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED)
                 if(strcmp("InitMetallicity",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (Z=%g) \n",tag[i],alternate_tag[i],All.InitMetallicityinSolar); continue;}

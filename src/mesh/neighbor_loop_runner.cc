@@ -88,6 +88,10 @@
 #include "../galaxy_sf/thermal_fb_loop.h"
 #endif
 
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+#include "../galaxy_sf/sfr_collect_gas_loop.h"
+#endif
+
 #ifdef HYDRO_VOLUME_CORRECTIONS
 #include "../hydro/cellcorrections_loop.h"
 #endif
@@ -7604,6 +7608,16 @@ template void run_neighbor_loop_iterative<MechFBSpec>(const neighbor_loop_args_i
  * otherwise hit an undefined type at this template instantiation site). */
 #ifdef GALSF_FB_THERMAL
 template void run_neighbor_loop<ThermalFBSpec>(const neighbor_loop_args&);
+#endif
+
+/* single-star gas collection: five one-way Specs over the new stars, evaluated where the donors live.
+ * See galaxy_sf/sfr_collect_gas_loop.h. */
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+template void run_neighbor_loop<SscCountSpec>(const neighbor_loop_args&);
+template void run_neighbor_loop<SscRequestSpec>(const neighbor_loop_args&);
+template void run_neighbor_loop<SscGrantSpec>(const neighbor_loop_args&);
+template void run_neighbor_loop<SscClearSpec>(const neighbor_loop_args&);
+template void run_neighbor_loop<SscApplySpec>(const neighbor_loop_args&);
 #endif
 
 /* Cellcorrections corridor: CellcorrectionsSpec — first-pass

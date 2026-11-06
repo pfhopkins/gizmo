@@ -196,6 +196,9 @@ struct global_data_all_processes
 
   int HighestActiveTimeBin;
   int HighestOccupiedTimeBin;
+#ifdef WAKEUP_TARGET_BIN_PARAMETER
+  int WakeupTargetBin; /*!< woken cell goes to: 0 = waker bin - log2(WAKEUP), 1 = waker bin, 2 = highest active bin */
+#endif
 
   /* parameters determining output frequency */
   int SnapshotFileCount;	/*!< number of snapshot that is written next */
@@ -433,6 +436,14 @@ struct global_data_all_processes
   double OverDensThresh;
   double PhysDensThresh;
   double MaxSfrTimescale;
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+  double IMFSampleMinMass;           /*!< lower end of the sampled IMF [Msun] (0.08 = full IMF) */
+  int SingleStarsRNGRealisation;     /*!< folded into the keys of the IMF draws: another value gives another realisation */
+#endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+  double FacSfThreshMJ;              /*!< SF only where the Jeans mass is below FacSfThreshMJ x DesNumNgb x cell mass */
+  double SFCooldownFreeFallFraction; /*!< after a birth the parent cell forms no star for this fraction of its free-fall time */
+#endif
 
 #ifdef GALSF_EFFECTIVE_EQS
   double EgySpecSN;
@@ -767,6 +778,16 @@ struct global_data_all_processes
   double Sink_jet_precess_degree;
   double Sink_jet_precess_period;
 #endif
+#ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
+    char TestSingleStarBirths[256]; /*!< test only: "ID:M_drawn,..." single stars formed at these gas cells at the first star-formation step */
+#endif
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+    char StellarTablesFile[256]; /*!< stella-tables main table (scripts/get_stella_tables.sh); the wind table is read from the same directory */
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+    double MaxStellarTimestep; /*!< largest timestep of a single star [yr] */
+#endif
+#endif
+
 #ifdef NUCLEAR_NETWORK
     char NuclearNetworkDataFile[256];
     double NuclearBurningFloor_T;

@@ -471,6 +471,9 @@ enum {
   GIZMO_MEM_PARTICLE_SOA = 0,   /* P / CellP / WakeupDirty persistent particle storage (UVM) */
   GIZMO_MEM_TREE_NODES,         /* local + foreign tree-node arrays (UVM) */
   GIZMO_MEM_STL_TIMEBIN,        /* ActiveParticleList / Next- / PrevInTimeBin (host STL) */
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+  GIZMO_MEM_SINGLE_STARS,       /* single-star records, gas-collection sums, stellar-evolution tables (galaxy_sf/) */
+#endif
   GIZMO_MEM_NFAMILY
 };
 void gizmo_mem_account_add(int family, long long delta_bytes);
@@ -958,6 +961,14 @@ void begrun(void);
 void check_omega(void);
 void compute_global_quantities_of_system(void);
 void star_formation_parent_routine(void);
+int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned);
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+double single_stars_collect_gas(long long tot_spawned);
+void single_star_attach_to_new_star(int i_star, int i, double M_drawn);
+#ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
+int single_star_test_births(int stars_spawned);
+#endif
+#endif
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
 void grain_promotion_parent_routine(void);
 #endif
@@ -985,6 +996,13 @@ double calculate_individual_stellar_luminosity(double mdot, double mass, long i)
 double return_probability_of_this_forming_sink_from_seed_model(int i);
 
 void particle2in_addFB_fromstars(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+double single_star_eventrates(int i, double dt);
+double single_star_max_timestep(int p);
+void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
+void single_star_feedback_prepare(const int *list, int n);
+void single_star_feedback_finalize(const int *list, int n);
+#endif
 double mechanical_fb_calculate_eventrates(int i, double dt);
 double Z_for_stellar_evol(int i);
 #ifdef METALS

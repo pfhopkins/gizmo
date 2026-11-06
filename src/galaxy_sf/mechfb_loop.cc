@@ -41,7 +41,7 @@ int addFB_evaluate_active_check(int i, int fb_loop_iteration);
  * ========================================================================== */
 int mechfb_compute_num_modes(void) {
     int num_modes = 3;
-#if defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#if defined(GALSF_FB_MASS_RETURN_EVENTS)
     num_modes = 4;
 #if defined(GALSF_FB_FIRE_RPROCESS)
     num_modes = 5;

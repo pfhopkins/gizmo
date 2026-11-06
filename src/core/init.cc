@@ -327,7 +327,7 @@ void init(void)
 #endif
 #ifdef GALSF_FB_MECHANICAL
             int k; for(k=0;k<AREA_WEIGHTED_SUM_ELEMENTS;k++) {P[i].Area_weighted_sum[k] = 0;}
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
             P[i].MassReturn_ThisTimeStep = 0;
 #ifdef GALSF_FB_FIRE_RPROCESS
             P[i].RProcessEvent_ThisTimeStep = 0;
@@ -1151,7 +1151,11 @@ void init(void)
             All.MinMassForParticleMerger /= (float)GALSF_GENERATIONS;
 #endif
         } else {All.MinMassForParticleMerger = mpi_splitmerge_readmin;} /* use the version from the ICs */
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        if(mpi_splitmerge_readmax <= 0) {All.MaxMassForParticleSplit  = 2.01 * mpi_mass_max;} else {All.MaxMassForParticleSplit = mpi_splitmerge_readmax;}
+#else
         if(mpi_splitmerge_readmax <= 0) {All.MaxMassForParticleSplit  = 3.01 * mpi_mass_max;} else {All.MaxMassForParticleSplit = mpi_splitmerge_readmax;}
+#endif
 #ifdef MERGESPLIT_HARDCODE_MAX_MASS
         All.MaxMassForParticleSplit = MERGESPLIT_HARDCODE_MAX_MASS;
 #endif

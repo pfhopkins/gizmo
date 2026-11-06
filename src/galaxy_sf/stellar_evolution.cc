@@ -65,6 +65,9 @@ double calculate_relative_light_to_mass_ratio_from_imf(double stellar_age_in_gyr
 void particle2in_addFB_fromstars(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration)
 {
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+    if(P[i].StarIdx > 0) {single_star_particle2in(in, i, fb_loop_iteration); return;} /* IMF-sampled single star: stellar-evolution tables */
+#endif
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
     if(fb_loop_iteration == 0) {particle2in_addFB_SNe(in,i);}
     if(fb_loop_iteration == 1) {particle2in_addFB_winds(in,i);}
@@ -98,6 +101,10 @@ void particle2in_addFB_fromstars(struct addFB_evaluate_data_in_ *in, int i, int 
     quantities from stars. */
 double mechanical_fb_calculate_eventrates(int i, double dt)
 {
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+    if(P[i].StarIdx > 0) {return single_star_eventrates(i, dt);} /* IMF-sampled single star: stellar-evolution tables */
+    P[i].SNe_ThisTimeStep = 0; return 0; /* a star without a record is no feedback source in a single-star build */
+#endif
 #if defined(GALSF_FB_MECHANICAL) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) // FIRE-specific stellar population version: separate calculation for SNe, stellar mass loss, R-process injection //
     double SNe_rate = mechanical_fb_calculate_eventrates_SNe(i,dt);
     mechanical_fb_calculate_eventrates_Winds(i,dt);

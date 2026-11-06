@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../galaxy_sf/single_star_record.h"
 #include "../mesh/kernel.h"
 #include "../core/timestep_functions.h"   /* the Hermite predicted state written by IO_HERMITE_SYNC */
 #include "../core/predict_functions.h"    /* box_wrap_position_to_primary_image: the shear-periodic image a snapshot writes */
@@ -1470,6 +1471,28 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+        case IO_SINGLE_STAR_BIRTH_Z:
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+#endif
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    struct single_star_record r; single_star_record_get(P[pindex].StarIdx, &r); /* zeros without a record */
+                    double v = (blocknr == IO_SINGLE_STAR_DRAWN_MASS) ? r.M_drawn : r.Z_birth;
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+                    if(blocknr == IO_SINGLE_STAR_EVENT_BITS) {v = r.event_bits;}
+                    if(blocknr == IO_SINGLE_STAR_LAST_WIND_LOG_AGE) {v = r.last_wind_log_age;}
+#endif
+                    *fp++ = (MyOutputFloat) v;
+                    n++;
+                }
+            break;
+#endif
+
         case IO_STAGE_PROTOSTAR:
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
             for(n = 0; n < pc; pindex++)
@@ -2246,6 +2269,14 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_R_PROTOSTAR:
         case IO_MASS_D_PROTOSTAR:
         case IO_ZAMS_MASS:
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+        case IO_SINGLE_STAR_BIRTH_Z:
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+#endif
+#endif
         case IO_LUM_SINGLESTAR:
         case IO_EOSTEMP:
 #ifdef TWO_TEMPERATURE_PLASMA
@@ -2636,6 +2667,14 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_R_PROTOSTAR:
         case IO_MASS_D_PROTOSTAR:
         case IO_ZAMS_MASS:
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+        case IO_SINGLE_STAR_BIRTH_Z:
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+#endif
+#endif
         case IO_STAGE_PROTOSTAR:
         case IO_AGE_PROTOSTAR:
         case IO_LUM_SINGLESTAR:
@@ -3072,6 +3111,18 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_SINKMDOT:
         case IO_R_PROTOSTAR:
         case IO_MASS_D_PROTOSTAR:
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+        case IO_SINGLE_STAR_BIRTH_Z:
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+#endif
+            for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
+            return nstars;
+            break;
+#endif
+
         case IO_ZAMS_MASS:
         case IO_STAGE_PROTOSTAR:
         case IO_AGE_PROTOSTAR:
@@ -3610,6 +3661,17 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+        case IO_SINGLE_STAR_BIRTH_Z:
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+#endif
+            return 1;
+            break;
+#endif
+
         case IO_STAGE_PROTOSTAR:
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
             return 1;
@@ -4112,6 +4174,22 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_ZAMS_MASS:
             strncpy(label, "PSMS", 4);
             break;
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+            strncpy(label, "SSMD", 4);
+            break;
+        case IO_SINGLE_STAR_BIRTH_Z:
+            strncpy(label, "SSZB", 4);
+            break;
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+            strncpy(label, "SSEB", 4);
+            break;
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+            strncpy(label, "SSWA", 4);
+            break;
+#endif
+#endif
         case IO_LUM_SINGLESTAR:
             strncpy(label, "LUMS", 4);
             break;
@@ -4582,6 +4660,22 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_ZAMS_MASS:
             strcpy(buf, "ZAMS_Mass");
             break;
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+            strcpy(buf, "SingleStarDrawnMass");
+            break;
+        case IO_SINGLE_STAR_BIRTH_Z:
+            strcpy(buf, "SingleStarBirthMetallicity");
+            break;
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+            strcpy(buf, "SingleStarEventBits");
+            break;
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+            strcpy(buf, "SingleStarLastWindLogAge");
+            break;
+#endif
+#endif
         case IO_STAGE_PROTOSTAR:
             strcpy(buf, "ProtoStellarStage");
             break;
