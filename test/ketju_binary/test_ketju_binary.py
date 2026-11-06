@@ -94,5 +94,9 @@ def test_kepler_pair():
     assert re.findall(r"region-integrations=(\d+) MSTAR accepted=(\d+)", log)[-1][0] == re.findall(r"MSTAR accepted=(\d+)", log)[-1]  # one exact drift per region, no GBS steps
 
 
+def test_energy_lines():
+    log = _run(1, ("OUTPUT_STAR_ENERGY_DIRECT_SUM",))
+    d = re.findall(r"ETOT_INCODE: t=\S+ E=\S+ dE/\|E0\|=(\S+)", log)
+    assert d and max(abs(float(x)) for x in d) < 1e-6
 
 
