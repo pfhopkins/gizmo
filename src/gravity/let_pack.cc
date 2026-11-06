@@ -932,6 +932,9 @@ static void let_wire_moment_ref(struct LETNodeWire *w, moment_node_ref<MyFloat> 
     ref.bitflags = NULL;   /* multiple-particles bit forced below, after finalize */
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     ref.gasmass  = &w->node.gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    ref.treecol_species_mass = &w->node.treecol_species_mass[0];
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     ref.stellar_lum = &w->node.stellar_lum[0];
@@ -999,6 +1002,9 @@ static void let_fill_particle_src(int p_idx, moment_particle_src<MyFloat> *src_o
     src.force_softening   = ForceSoftening_KernelRadius(p_idx);
     src.particle_divvel   = particle_radius_growth_rate(p_idx, P);
     src.radius_drifts     = particle_radius_drifts_with_divergence_P(p_idx, P);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_species_masses(P, CellP, p_idx, src.treecol_species_mass);
+#endif
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
     src.sink_mass_reservoir = (double) pa->Sink_Mass_Reservoir;
 #endif
@@ -1844,6 +1850,9 @@ static void let_wire_fields(C &c, R &w, int kind)
     c.field(w.node.maxsoft);
 #if defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
     c.field(w.node.gasmass);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    c.field(w.node.treecol_species_mass);
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     c.field(w.node.stellar_lum);

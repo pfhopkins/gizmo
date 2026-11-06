@@ -868,6 +868,20 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type) {*fp++ = (MyOutputFloat) CellP[pindex].DustTemp; n++;}
             break;
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+        case IO_SGCHEM_G0_LW:
+        case IO_SGCHEM_G0_FUV_ATTEN:
+        case IO_SGCHEM_SHIELDFAC_DUST:
+        case IO_SGCHEM_G0_NUV:
+        case IO_SGCHEM_G0_OPT:
+        case IO_SGCHEM_CR_ZETA:
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {*fp++ = (MyOutputFloat) sgchem_radiation_field_for_snapshot(pindex, blocknr); n++;}
+            break;
+#endif
 #endif
 
         case IO_CHIMES_ABUNDANCES:
@@ -2265,6 +2279,17 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_NH:
 #ifdef SGCHEM
         case IO_SGCHEM_DUSTTEMP:
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+        case IO_SGCHEM_G0_LW:
+        case IO_SGCHEM_G0_FUV_ATTEN:
+        case IO_SGCHEM_SHIELDFAC_DUST:
+        case IO_SGCHEM_G0_NUV:
+        case IO_SGCHEM_G0_OPT:
+        case IO_SGCHEM_CR_ZETA:
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+#endif
 #endif
         case IO_HII:
         case IO_HeI:
@@ -2682,6 +2707,17 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_NH:
 #ifdef SGCHEM
         case IO_SGCHEM_DUSTTEMP:
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+        case IO_SGCHEM_G0_LW:
+        case IO_SGCHEM_G0_FUV_ATTEN:
+        case IO_SGCHEM_SHIELDFAC_DUST:
+        case IO_SGCHEM_G0_NUV:
+        case IO_SGCHEM_G0_OPT:
+        case IO_SGCHEM_CR_ZETA:
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+#endif
 #endif
         case IO_HII:
         case IO_HeI:
@@ -3047,6 +3083,15 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_NH:
 #ifdef SGCHEM
         case IO_SGCHEM_DUSTTEMP:
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+        case IO_SGCHEM_G0_LW:
+        case IO_SGCHEM_G0_FUV_ATTEN:
+        case IO_SGCHEM_SHIELDFAC_DUST:
+        case IO_SGCHEM_G0_NUV:
+        case IO_SGCHEM_G0_OPT:
+        case IO_SGCHEM_CR_ZETA:
+#endif
 #endif
         case IO_HII:
         case IO_HeI:
@@ -3163,6 +3208,10 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_OSTAR:
         case IO_DTOSTAR:
         case IO_STAR_EFFECTIVE_SIZE:
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+#endif
         case IO_HSMS:
             for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
             return nstars;
@@ -3402,6 +3451,17 @@ int blockpresent(enum iofields blocknr)
 #endif
         case IO_SGCHEM_TRACABUND:
         case IO_SGCHEM_DUSTTEMP:
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+        case IO_SGCHEM_G0_LW:
+        case IO_SGCHEM_G0_FUV_ATTEN:
+        case IO_SGCHEM_SHIELDFAC_DUST:
+        case IO_SGCHEM_G0_NUV:
+        case IO_SGCHEM_G0_OPT:
+        case IO_SGCHEM_CR_ZETA:
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+#endif
             return 1;
 #endif
 
@@ -4146,6 +4206,35 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_SGCHEM_DUSTTEMP:
             strncpy(label, "CCDT", 4);
             break;
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+            strncpy(label, "SG0F", 4);
+            break;
+        case IO_SGCHEM_G0_LW:
+            strncpy(label, "SG0L", 4);
+            break;
+        case IO_SGCHEM_G0_FUV_ATTEN:
+            strncpy(label, "SG0A", 4);
+            break;
+        case IO_SGCHEM_SHIELDFAC_DUST:
+            strncpy(label, "SSHD", 4);
+            break;
+        case IO_SGCHEM_G0_NUV:
+            strncpy(label, "SG0N", 4);
+            break;
+        case IO_SGCHEM_G0_OPT:
+            strncpy(label, "SG0O", 4);
+            break;
+        case IO_SGCHEM_CR_ZETA:
+            strncpy(label, "SCRZ", 4);
+            break;
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+            strncpy(label, "SLUV", 4);
+            break;
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+            strncpy(label, "SLLW", 4);
+            break;
+#endif
 #endif
         case IO_CHIMES_ABUNDANCES:
             strncpy(label, "CHIM", 4);
@@ -4661,6 +4750,35 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_SGCHEM_DUSTTEMP:
             strcpy(buf, "SGChemDustTemp");
             break;
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+            strcpy(buf, "G0_FUV");
+            break;
+        case IO_SGCHEM_G0_LW:
+            strcpy(buf, "G0_LW");
+            break;
+        case IO_SGCHEM_G0_FUV_ATTEN:
+            strcpy(buf, "G0_FUV_atten");
+            break;
+        case IO_SGCHEM_SHIELDFAC_DUST:
+            strcpy(buf, "ShieldFac_Dust");
+            break;
+        case IO_SGCHEM_G0_NUV:
+            strcpy(buf, "G0_NUV");
+            break;
+        case IO_SGCHEM_G0_OPT:
+            strcpy(buf, "G0_OPT");
+            break;
+        case IO_SGCHEM_CR_ZETA:
+            strcpy(buf, "CR_IonizationRate");
+            break;
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+            strcpy(buf, "UV_Luminosity");
+            break;
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+            strcpy(buf, "LW_Luminosity");
+            break;
+#endif
 #endif
         case IO_CHIMES_ABUNDANCES:
             strcpy(buf, "ChimesAbundances");

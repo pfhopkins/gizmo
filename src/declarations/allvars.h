@@ -783,6 +783,17 @@ enum iofields
 #ifdef OUTPUT_CHEM_PHOTORATES
   IO_CHEM_PHOTORATES,
 #endif
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+  IO_SGCHEM_G0_FUV,
+  IO_SGCHEM_G0_LW,
+  IO_SGCHEM_G0_FUV_ATTEN,
+  IO_SGCHEM_SHIELDFAC_DUST,
+  IO_SGCHEM_G0_NUV,
+  IO_SGCHEM_G0_OPT,
+  IO_SGCHEM_CR_ZETA,
+  IO_SINGLE_STAR_LOG_UV_LUM,
+  IO_SINGLE_STAR_LOG_LW_LUM,
+#endif
 #endif
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
@@ -870,6 +881,9 @@ extern ALIGN(32) struct NODE
     MyFloat maxsoft;        /*!< hold the maximum gravitational softening of particle in the node */
 #if defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
   MyFloat gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+  MyFloat treecol_species_mass[TREECOL_PIXELS_NSPECIES]; /*!< dust-weighted gas, H2 and CO masses (gravity/gravtree_treecol_pixels.h) */
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
   MyFloat stellar_lum[N_RT_FREQ_BINS]; /*!< luminosity in the node*/

@@ -791,6 +791,8 @@ STARFORM_OBJS = galaxy_sf/sfr_eff.o \
                 galaxy_sf/stellar_tables_check.o \
                 galaxy_sf/single_star_feedback.o \
                 galaxy_sf/single_star_record.o \
+                galaxy_sf/single_star_luminosity.o \
+                gravity/treecol_pixels_test_dump.o \
                 galaxy_sf/mechanical_fb.o \
                 galaxy_sf/radfb_local.o \
                 galaxy_sf/dm_heating.o
@@ -873,6 +875,7 @@ OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) \
 INCL    += 	declarations/allvars.h \
 			core/proto.h \
 			gravity/forcetree.h \
+			gravity/gravtree_treecol_pixels.h cooling/sgchem/sgchem_dust_to_gas.h \
 			gravity/myfftw3.h \
 			domain/domain.h \
 			system/myqsort.h \

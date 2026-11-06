@@ -1051,9 +1051,70 @@
 #define COOL_LOWTEMP_THIN_ONLY // don't want to double-count trapping of radiation if we're doing it self-consistently
 #endif
 
+#if defined(OUTPUT_SGCHEM_RADIATION_FIELDS) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES)
+#error "OUTPUT_SGCHEM_RADIATION_FIELDS writes the band fluxes of the gravity walk"
+#endif
+#if defined(OUTPUT_SGCHEM_RADIATION_FIELDS) && !defined(OUTPUT_SHIELD_FAC)
+#define OUTPUT_SHIELD_FAC
+#endif
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
 #define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
 #endif
+#ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS /* single stars: band-resolved photon momentum at the star, in the local radiation-pressure loop */
+#if !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS needs GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#ifndef GALSF_FB_FIRE_RT_LOCALRP
+#define GALSF_FB_FIRE_RT_LOCALRP
+#endif
+#endif
+#if defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) && defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(GALSF_FB_RADPRESSURE_DIRECT_TERM_AT_STAR)
+#define GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL /* direct term per gas cell from the pixel fluxes; IR boost stays at the star */
+#endif
+#if defined(GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE) && !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+#error "GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE is an option of GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS"
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS /* per-direction columns and band fluxes in the gravity walk (gravity/gravtree_treecol_pixels.h) */
+#if GALSF_RESOLVEDISM_TREECOL_PIXELS == 12
+#define TREECOL_PIXELS_NSIDE 1
+#elif GALSF_RESOLVEDISM_TREECOL_PIXELS == 48
+#define TREECOL_PIXELS_NSIDE 2
+#elif GALSF_RESOLVEDISM_TREECOL_PIXELS == 192
+#define TREECOL_PIXELS_NSIDE 4
+#else
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS must be 12, 48 or 192 (HEALPix NSIDE 1, 2, 4)"
+#endif
+#ifndef SGCHEM
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS feeds the SGChem chemistry: set SGCHEM"
+#endif
+#define TREECOL_PIXELS_NSPECIES 3 /* dust-weighted gas, H2, CO */
+#ifndef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+#define GRAVTREE_CALCULATE_GAS_MASS_IN_NODE /* the species masses ride the gas-mass node paths */
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES /* single stars shine in disjoint table bands through the gravity-tree source arrays */
+#if !defined(SGCHEM) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES needs SGCHEM, GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#ifndef GALSF_RESOLVEDISM_TREECOL_PIXELS
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES is part of GALSF_RESOLVEDISM_TREECOL_PIXELS (the chemistry reads the fluxes from the pixel cell fields)"
+#endif
+#if (defined(RADTRANSFER) || defined(RT_LEBRON) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RT_USE_GRAVTREE)) && !defined(RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND) /* this file is read twice */
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES excludes RADTRANSFER, RT_LEBRON, GALSF_FB_FIRE_RT_LONGRANGE and other gravity-tree radiation (own band meanings)"
+#endif
+#define RT_USE_GRAVTREE
+#define RT_SEPARATELY_TRACK_LUMPOS
+#define RT_PHOTOELECTRIC      /* 8-13.6 eV */
+#define RT_LYMAN_WERNER       /* 11.2-13.6 eV, inside the photoelectric band */
+#define RT_NUV                /* 3.444-6 eV with the split below */
+#define RT_OPTICAL_NIR        /* 0.4133-3.444 eV */
+#define RT_GENERIC_USER_FREQ  /* 6-8 eV with the split below */
+#define RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND
+#ifndef RT_SOURCES
+#define RT_SOURCES 16
+#endif
+#endif
+
 
 
 #if defined(CHIMES_HII_REGIONS) && !defined(GALSF_FB_FIRE_RT_HIIHEATING)
@@ -1840,7 +1901,8 @@
  * This is a COMPILE-TIME capability predicate; the eager-vs-lazy choice at
  * runtime is made by a separate structural (num_active) threshold. */
 #if !defined(GR_TABULATED_COSMOLOGY) && !defined(GR_TABULATED_COSMOLOGY_W) \
- && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H)
+ && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H) \
+ && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) /* single-star bands: host-only table lookups */
 #define GRAVTREE_SOURCE_LAZY_SUPPORTED
 #endif
 
