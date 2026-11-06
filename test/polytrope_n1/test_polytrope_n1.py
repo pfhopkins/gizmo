@@ -7,10 +7,12 @@ gradient. Checks, each against the analytic solution:
   (a) t=0 forces, binned in enclosed mass fraction 5-90%: gravity ("Acceleration", gravity-only
       because OUTPUT_HYDROACCELERATION is also set) vs -G M(r)/r^2; hydro ("HydroAcceleration")
       vs -grad(P)/rho = -2 K drho/dr; and their sum vs zero. Also the t=0 shell density.
-  (b) persistence over one pulsation period (TimeMax = 4): 10/50/90% Lagrange radii vs t=0,
-      interior mass-weighted rms speed vs the central sound speed, and the final shell-density
-      profile. The horizon is short on purpose: the MFM free surface launches a rarefaction that
-      reaches the interior at t ~ 4.5 and disassembles the star afterwards (see README).
+  (b) persistence over one pulsation period (TimeMax = 4; 10 for entropic_faces/enforce_adiabat):
+      10/50/90% Lagrange radii vs t=0, interior mass-weighted rms speed vs the central sound speed,
+      the final shell-density profile, and the per-cell entropy drift (asserted for the variants
+      without spurious heat transport). With the default MFM energy switch heat flows from the
+      50-80% mass layers into the envelope from t=0, which expands, and the interior convects after
+      t ~ 4.5 (see README, "Why the star boils").
   (b') the snapshot kernel density vs analytic over 5-90% of the mass: catches a density estimator
       that is wrong on a stratified body (HYDRO_KERNEL_SURFACE_VOLCORR is, and is xfailed).
   (c) energy: total (thermal + kinetic + 0.5 sum m phi) conserved, and U(0) = 1/4, W(0) = -3/4.
@@ -18,7 +20,8 @@ gradient. Checks, each against the analytic solution:
 
 Variants: baseline (fixed SofteningGas), ags (ADAPTIVE_GRAVSOFT_FORGAS: gravity softened with the
 hydro kernel), tidal_adaptive (TIDAL_TIMESTEP_CRITERION + ADAPTIVE_TREEFORCE_UPDATE=0.06: gravity
-re-walked only every fraction of the tidal time).
+re-walked only every fraction of the tidal time), surface_volcorr, crk_faces, sph, entropic_faces
+(PdV energy flux on slow faces) and enforce_adiabat (u = K rho exactly); see VARIANTS.
 
 Tolerances were calibrated on the 2026-11-05 first run (4 ranks x 2 threads); the
 measured values are quoted next to each. All checks are evaluated before any assertion, so one
@@ -93,6 +96,12 @@ VRMS_TOL = 0.05             # interior v_rms / c_s,central              [~; 0.02
 U0_TOL = 0.03               # |U(0)/U_exact - 1|                        [<1e-5]
 W0_TOL = 0.03               # |W(0)/W_exact - 1|                        [9e-4]
 ENERGY_TOL = 0.01           # |E_f/E_0 - 1|, E_0 ~ -1/2                 [1.1e-3 at t=10]
+# per-cell entropy, max over t=0 mass bands (5-90%) of |median ln((u/rho)_f/(u/rho)_0)|; asserted only for
+# the variants in ADIABATIC_VARIANTS. Default MFM fails it by an order of magnitude (see README, "Why the
+# star boils"): 0.54 at t=4 [baseline]; 0.009 entropic_faces, 0.032 sph.
+ENTROPY_TOL = 0.05
+ADIABATIC_VARIANTS = ("entropic_faces", "sph")
+ENTROPY_MASS_BANDS = ((0.05, 0.2), (0.2, 0.4), (0.4, 0.6), (0.6, 0.8), (0.8, 0.9))
 
 VARIANTS = [
     pytest.param((), id="baseline"),
@@ -113,7 +122,20 @@ VARIANTS = [
     # Density SPH on the same IC and analytic solution (HYDRO_SPH takes precedence over the MFM flag in
     # Config.sh, hydro/hydro_evaluate.h). The SPH viscosity/conductivity parameters are in the params file.
     pytest.param(("HYDRO_DENSITY_SPH",), id="sph"),
+    # The MFM face energy switch keeps the Riemann energy flux on faces with 0.01 < |S_M|/c_s < 0.6 when it
+    # moves energy from higher to lower P/rho. At rest, S_M comes only from reconstruction mismatch, so the
+    # switch rectifies that noise into a down-gradient heat flux: the outer layers heat (lnA +1.5 at the
+    # surface by t=1), the 50-80% layers cool (-0.2) and the envelope boils off. FORCE_ENTROPIC_EOS_BELOW=(0.6)
+    # takes the PdV form on every face below |S_M| = 0.5 c_s; the same IC then holds to 1.3% in r10/r50/r90 and
+    # 1.6% in r99 over t = 10 (measured 2026-11-05).
+    pytest.param(("FORCE_ENTROPIC_EOS_BELOW=(0.6)",), id="entropic_faces"),
+    # Strictly polytropic gas (u reset to K rho every step): no energy can move between layers, so this
+    # isolates the force balance. Holds like entropic_faces (r10/r50/r90 within 1.5% over t = 10).
+    pytest.param(("EOS_ENFORCE_ADIABAT=(2.0/3.14159265358979)",), id="enforce_adiabat"),
 ]
+# variants without the spurious heat flux run 2.5 pulsation periods (TimeMax 4 for the rest, see README)
+LONG_HORIZON_TIMEMAX = 10.0
+LONG_HORIZON_VARIANTS = ("entropic_faces", "enforce_adiabat")
 
 
 def _ensure_ic():
@@ -134,6 +156,7 @@ def _load_snapshot(snap):
                           ("u", "InternalEnergy"), ("pot", "Potential"), ("rho", "Density"),
                           ("a_grav", "Acceleration"), ("a_hydro", "HydroAcceleration")):
             out[key] = g[name][:].astype(float) if name in g else None
+        out["ids"] = g["ParticleIDs"][:].astype(np.int64)
     com = np.average(out["pos"], axis=0, weights=out["mass"])
     out["dx"] = out["pos"] - com
     out["r"] = np.sqrt(np.sum(out["dx"]**2, axis=1))
@@ -211,6 +234,20 @@ def _vrms_interior(s, max_fraction=CHECK_MASS_FRACTIONS[1]):
     sel = s["r"] <= r_cut
     v2 = np.sum(s["vel"][sel]**2, axis=1)
     return float(np.sqrt(np.average(v2, weights=s["mass"][sel])))
+
+
+def _entropy_drift(s0, sf, bands=ENTROPY_MASS_BANDS):
+    """Per t=0 enclosed-mass band, the median over cells of ln(A_f/A_0), A = u/rho (= P/rho^gamma up to a
+    constant for gamma = 2), matched by ParticleIDs. Zero for adiabatic flow; a spurious heat flux shows up as
+    opposite-signed bands."""
+    o0, of = np.argsort(s0["ids"]), np.argsort(sf["ids"])
+    if not np.array_equal(s0["ids"][o0], sf["ids"][of]):
+        raise RuntimeError("particle IDs differ between the first and last snapshot")
+    dlna = np.log((sf["u"][of] / sf["rho"][of]) / (s0["u"][o0] / s0["rho"][o0]))
+    r0 = s0["r"][o0]
+    q0 = np.empty_like(r0)
+    q0[np.argsort(r0)] = (np.arange(len(r0)) + 0.5) / len(r0)
+    return np.array([np.median(dlna[(q0 >= a) & (q0 < b)]) for a, b in bands])
 
 
 def _t0_force_metrics(s0, edges):
@@ -323,14 +360,16 @@ def _plot_summary():
 def test_polytrope_n1(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     poly.check_analytic_identities()
     _ensure_ic()
-    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags)
-
     variant_id = request.node.callspec.id.split("-")[0]
+    time_max = LONG_HORIZON_TIMEMAX if variant_id in LONG_HORIZON_VARIANTS else None
+    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags,
+                       param_overrides={"TimeMax": time_max} if time_max else None)
+
     outputdir = variant_output_dir(TEST_NAME, extra_config_flags)
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
     if len(snaps) < 2:
         raise RuntimeError(f"GIZMO did not produce enough snapshots in {outputdir}")
-    assert_final_time(snaps[-1], TEST_NAME)
+    assert_final_time(snaps[-1], TEST_NAME, time_max=time_max)
 
     s0 = _load_snapshot(snaps[0])
     sf = _load_snapshot(snaps[-1])
@@ -359,6 +398,8 @@ def test_polytrope_n1(num_mpi_ranks, num_omp_threads, extra_config_flags, reques
         energy.append(_energy_components(d))
     times, lagrange, energy = np.array(times), np.array(lagrange), np.array(energy)
     lag_rel = np.abs(lagrange[-1] / lagrange[0] - 1.0)
+    dlna_bands = _entropy_drift(s0, sf)
+    entropy_drift = float(np.max(np.abs(dlna_bands)))
 
     # (c) energy at t=0; total-energy conservation is asserted below via the harness
     u0, _, w0 = energy[0]
@@ -388,6 +429,8 @@ def test_polytrope_n1(num_mpi_ranks, num_omp_threads, extra_config_flags, reques
           f"t=0 kernel density rms(rho/rho_analytic - 1) over 5-90% mass {kernel_rho_rms:.3e}")
     print(f"  Lagrange |dr/r| at {LAGRANGE_FRACTIONS}: {np.array2string(lag_rel, precision=4)}")
     print(f"  final interior v_rms / c_s,c = {vrms_f:.3e}")
+    print(f"  per-cell entropy, median ln(A_f/A_0) in t=0 mass bands {ENTROPY_MASS_BANDS}: "
+          f"{np.array2string(dlna_bands, precision=4)} (max |.| {entropy_drift:.3e})")
     print(f"  U(0) = {u0:.5f} (exact {poly.U_EXACT}), W(0) = {w0:.5f} (exact {poly.W_EXACT}), "
           f"E_f/E_0 - 1 = {e_ratio - 1:.3e}, COM drift {final_drift:.3e}")
     print("  plots: " + ", ".join(p for p in plots if p))
@@ -418,6 +461,9 @@ def test_polytrope_n1(num_mpi_ranks, num_omp_threads, extra_config_flags, reques
         check(rel < tol, f"{int(100 * f)}% Lagrange radius moved |dr/r| = {rel:.4f} >= {tol} "
                          f"(r0={lagrange[0][LAGRANGE_FRACTIONS.index(f)]:.4f})")
     check(vrms_f < VRMS_TOL, f"final interior v_rms = {vrms_f:.3e} c_s,c >= {VRMS_TOL} (spurious motions)")
+    if variant_id in ADIABATIC_VARIANTS:
+        check(entropy_drift < ENTROPY_TOL, f"per-cell entropy drift max |median ln(A_f/A_0)| = {entropy_drift:.3e} "
+                                           f">= {ENTROPY_TOL} (spurious heat exchange between layers)")
     check(abs(u0 / poly.U_EXACT - 1) < U0_TOL, f"U(0) = {u0:.5f}, exact {poly.U_EXACT} (tol {U0_TOL:.0%})")
     check(np.isfinite(w0) and abs(w0 / poly.W_EXACT - 1) < W0_TOL,
           f"W(0) = 0.5 sum m phi = {w0:.5f}, exact {poly.W_EXACT} (tol {W0_TOL:.0%})")

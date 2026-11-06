@@ -25,8 +25,8 @@ Code units G = M = R = 1, xi = pi r / R (Lane-Emden n = 1, theta = sin(xi)/xi):
 Timescales: dynamical time sqrt(R^3/GM) = 1; centre-to-surface sound crossing
 int dr/c_s = 1.88; fundamental radial pulsation period about 3.2 (adiabatic wave equation
 with Gamma_1 = 2; the homologous-mode estimate omega^2 = (3 Gamma - 4)|W|/I gives the same to
-1%). `TimeMax = 4` covers one pulsation period and two sound crossings; see "Why the horizon
-is short" below for why it is not longer.
+1%). `TimeMax = 4` covers one pulsation period and two sound crossings; the `entropic_faces` and
+`enforce_adiabat` variants run to 10 (see "Why the star boils" below).
 `make_polytrope_n1_ics.check_analytic_identities()` verifies M(R), U, W, the virial relation
 and the hydrostatic balance by quadrature, and the test calls it before every run.
 
@@ -84,20 +84,68 @@ Properties worth knowing when reading the results:
   mass profile) was biased high by up to +7.6% at 90-95% and noisier everywhere. GIZMO's own
   t=0 force balance on the shell IC is within 0.1% of zero over 5-80% of the mass.
 
-## Why the horizon is short (measured 2026-11-05)
+## Why the star boils (measured 2026-11-05)
 
-MFM has no boundary treatment for a free surface: the outermost cells have one-sided kernels,
-their faces do not close, and the kernel density there is biased high (+3-4% in the outer 5%
-of the mass). The t=0 net radial force is +7-14% outward over the outer 10% of the mass and -6%
-in the 80-90% layer, while 5-80% balances to 0.1%. The envelope therefore expands from t=0, and
-the rarefaction it launches reaches the interior at t ~ 4.5. Before that the interior only rings
-in the fundamental mode (period 3; U oscillates by +-2%): raw Lagrange radii at t=4 are within
-+1.7% (r10), -3.3% (r50), -0.6% (r90) of t=0 and v_rms is 2% of c_s. After it the star
-disassembles: by t=10, r10 +9%, r50 -7%, r90 +13%, v_rms 10% of c_s, identically for the
-baseline, ags and tidal_adaptive variants and for both the stretched-lattice and the shell IC.
-So the persistence checks stop at one pulsation period, and anything longer would need the
-star embedded in a hot, tenuous atmosphere at the matching pressure (truncate at ~95% mass,
-reflective box), which leaves the interior analytic solution unchanged. Not done.
+With the default ideal-gas MFM energy equation the envelope expands from t=0 (r99 +8% at t=1,
++58% at t=4, +163% at t=10) and after t ~ 4.5 the interior disassembles (by t=10: r10 -6%, r50 -7%,
+r90 +13%, v_rms 10% of c_s), alike for baseline, ags and tidal_adaptive (crk_faces and
+surface_volcorr differ only in degree) and for two different ICs. The cause is spurious heat transport, not the surface force imbalance:
+
+- **Energy moves between layers at rest.** Per-cell entropy A = u/rho (matched by ID): by t=1,
+  before any motion (v_rms 1% of c_s, r/r0 = 1.00), the 70-80% mass layer has lost 20% of its
+  entropy (median ln A -0.21; 50-70%: -0.10) and the outer 5% has gained a factor 4.6 (+1.52); the outer 5% holds 3.4x
+  the thermal energy of the adiabat K rho^(gamma-1) at t=1, 13x at t=4, 35x at t=10, while the
+  60-80% layers drop to 0.83x and 0.61x. The 0-50% mass is untouched until convection reaches it.
+  Total energy is conserved to 1e-3: this is internal energy pumped outward. The n=1 polytrope is
+  isentropic, so the cooled 50-80% layer now has lower entropy than the gas below it, and the
+  interior convects (v_rms grows from t ~ 4.5, cells from the inner 10% end up at
+  2.4x their initial radius by t=10).
+- **Mechanism.** In MFM (hydro/hydro_core_meshless.h) a face with |S_M| below
+  epsilon_entropic_eos_big (0.6 with self-gravity, hydro/hydro_evaluate.h) replaces the Riemann
+  energy flux by the PdV form, except where 0.01 < |S_M|/c_s and the Riemann flux moves energy from
+  the higher-P/rho side to the lower one (or within bounds): then the Riemann flux is kept. At rest,
+  S_M comes only from the mismatch of the two reconstructed face pressures, which is large in the
+  outer layers (one-sided kernels, steep profile). The switch keeps mismatches of one sign and
+  zeroes the other, i.e. it rectifies reconstruction noise into a down-gradient (hot interior to
+  cool envelope) heat flux. This is upstream GIZMO logic, not a port defect.
+- **Proof.** `FORCE_ENTROPIC_EOS_BELOW=(0.6)` sets epsilon_entropic_eos_small = 0.6 and leaves
+  epsilon_entropic_eos_big at 0.5 (the self-gravity default is then skipped), so every face with
+  |S_M| < 0.5 min(c_i, c_j) takes the PdV flux. Same IC, flags and params, t=10: r10/r50/r90/r99
+  within 1.6% of t=0 at all times (oscillating with the fundamental mode), v_rms 1% of c_s, per-cell
+  entropy within 1.3% in every band over 5-90% of the mass (+3% in the outer 5%), outer-5% thermal
+  energy within 3% of the adiabat, E conserved to 1e-4. `EOS_ENFORCE_ADIABAT` (u reset to K rho
+  each step) gives the same: radii within 1.5%, v_rms 1% of c_s. These are the `entropic_faces` and
+  `enforce_adiabat` variants, run to TimeMax 10; the others stop at 4 (one pulsation period), before
+  the convection the heat flux triggers reaches the interior.
+
+What the free surface itself does at t=0 (`OUTPUT_FACE_AREA_SUM`, per IC shell from the surface;
+the shells are one spacing apart, H is about two spacings):
+
+| shell r | enclosed mass | (R-r)/H | kernel density bias | \|sum_j A_ij\| / 4 pi H^2 | net radial force / \|g\| |
+|---|---|---|---|---|---|
+| 0.709 | 0.73 | 3.1 | -0.4% | 5e-4 | +3.7% |
+| 0.758 | 0.81 | 2.4 | -0.4% | 9e-4 | -2.4% |
+| 0.811 | 0.89 | 1.7 | -0.5% | 3.4e-3 | -8.8% |
+| 0.870 | 0.96 | 1.0 | +0.1% | 1.2e-3 | +13.8% |
+| 0.937 | 1.00 | 0.4 | +3.9% | 3.1e-2 | +6.6% |
+
+(interior |sum A|/4 pi H^2 = 3-4e-4.) Faces fail to close only in the outermost shell, and there
+the unclosed area at the cell's own pressure, P_i sum_j A_ij / m_i, is +55% of |g| against a force
+excess of +6.6%: the missing face is the vacuum boundary and is mostly physical. The +-9-14% errors
+one to two shells further in, where the faces close to 1e-3, are one-sided-kernel gradient errors.
+The kernel density bias (+4% in the outer shell) is a 4% pressure error in the outer 4% of the mass.
+DesNumNgb 48/64 (cubic spline allows 30-64): outermost-shell closure 0.022/0.017, density bias
++4.6%/+5.5%, net force in the 90-95% band +19%/+22%, r99 at t=1 +10%/+11% (32: +8%), entropy
+transfer unchanged; not a lever. With the heat flux off, these force errors only drive the
+fundamental-mode oscillation above.
+
+A truncated star (q_cut 0.95, r_cut 0.895) in an isothermal hydrostatic ambient (f = 0.1 density
+contrast, m_amb = 0.1 m, u_amb = 0.575, periodic 5^3 box with `GRAVITY_NOT_PERIODIC`, 116k ambient
+cells holding 0.354 M; `make_polytrope_n1_ics.py --ambient-q-cut 0.95`) removes the surface force
+error (t=0 net force +2.4% at 90-100% of the star) but not the heat flux: the 50-80% layers still
+lose 20% of their entropy by t=2 and the star's outer 10% gains ln A +0.4-0.7 (+1.0 by t=10), the interior convects
+from t ~ 5, and at t=10 r50 -2.7%, r90 +3.1%, v_rms 9.5% of c_s, for 4.5x the cells and 2.5x the
+cost (986 s vs 402 s at 4x2). Not used.
 
 The two options that exist for free surfaces were tried, on both ICs, run to t=10:
 
@@ -137,6 +185,11 @@ criterion afterwards). `CourantFac 0.2`. Snapshots every 0.5.
 | `baseline` | none | fixed gas softening |
 | `ags` | `ADAPTIVE_GRAVSOFT_FORGAS` | gravity softened with the hydro kernel |
 | `tidal_adaptive` | `TIDAL_TIMESTEP_CRITERION`, `ADAPTIVE_TREEFORCE_UPDATE=0.06` | tidal timesteps; gravity re-walked only every 0.06 tidal times |
+| `surface_volcorr` | `HYDRO_KERNEL_SURFACE_VOLCORR` | free-surface volume correction; xfail (see above) |
+| `crk_faces` | `KERNEL_CRK_FACES` | CRK-corrected faces |
+| `sph` | `HYDRO_DENSITY_SPH` | density SPH on the same IC |
+| `entropic_faces` | `FORCE_ENTROPIC_EOS_BELOW=(0.6)` | PdV energy flux on every face below \|S_M\| = 0.5 c_s; TimeMax 10 |
+| `enforce_adiabat` | `EOS_ENFORCE_ADIABAT=(2.0/3.14159265358979)` | u = K rho exactly; TimeMax 10 |
 
 ## Checks
 
@@ -154,6 +207,7 @@ and the outer 10% is the surface. Radii are measured from the centre of mass of 
 | (b) 10/50/90% Lagrange radii (smoothed mass profile) at TimeMax vs t=0 | secular expansion or contraction, e.g. under skipped tree walks (`tidal_adaptive`) |
 | (b) interior (inside 90% of the mass) mass-weighted v_rms at TimeMax / c_s,central | spurious velocity noise, lattice relaxation that never settles |
 | (b) final shell density vs analytic (log L1) | profile drift |
+| (b) per-cell entropy drift: max over t=0 mass bands (5-90%) of \|median ln((u/rho)_f/(u/rho)_0)\|, matched by ID; asserted (< 0.05) only for `entropic_faces` and `sph` (measured 0.009 at t=4, 0.013 at t=10; sph 0.032), printed for the rest (0.54 for baseline at t=4) | spurious heat exchange between layers |
 | (c) total energy (thermal + kinetic + 0.5 sum m phi) conserved, via `assert_energy_conserved(include_potential=True)` | spurious heating, gravity-hydro energy coupling |
 | (c) U(0) = 1/4 and W(0) = 0.5 sum m phi = -3/4 | IC thermal energy, `OUTPUT_POTENTIAL` conventions |
 | (d) centre-of-mass drift (`momentum_drift_common`), sanity ceiling only | correlated tree-force errors |

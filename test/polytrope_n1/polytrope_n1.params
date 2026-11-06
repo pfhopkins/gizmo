@@ -2,10 +2,10 @@
 % Code units G = M = R = 1: rho_c = pi/4, K = 2/pi, central sound speed c_s = 1.
 % Dynamical time sqrt(R^3/GM) = 1; centre-to-surface sound crossing int dr/c_s = 1.88;
 % fundamental radial pulsation period ~3.2 (LAWE, Gamma_1=2). TimeMax = 4 covers one pulsation
-% period and two sound crossings. Longer is not useful: MFM's free surface (one-sided kernels,
-% faces that do not close) launches a rarefaction that reaches the interior at t ~ 4.5 and then
-% disassembles the star (r90 +13%, r50 -7% by t = 10, identically for every variant and for two
-% different ICs), so the equilibrium checks are only meaningful before that.
+% period and two sound crossings. With the default MFM energy switch, spurious heat flows from the
+% 50-80% mass layers into the envelope from t=0 (README, "Why the star boils"); the envelope expands
+% and the interior convects after t ~ 4.5. The entropic_faces and enforce_adiabat variants, which
+% have no such flux, override TimeMax to 10 and hold to 1.6%.
 % N = 2^15 equal-mass cells; mean spacing at the half-mass radius (r_h = 0.607, rho = 0.389)
 % is (m/rho)^(1/3) = 0.043. SofteningGas = 0.021 (Plummer-equivalent, ~0.5x that spacing; kernel
 % support 2.8x = 0.06, comparable to the hydro kernel radius 0.07-0.08 inside r_h).

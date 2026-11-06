@@ -62,8 +62,10 @@ extern struct gas_cell_data
 #endif
 #endif
     
-#ifdef MAGNETIC
+#if defined(MAGNETIC) || defined(OUTPUT_FACE_AREA_SUM)
     Vec3<MyDouble> Face_Area;       /*!< vector sum of effective areas of 'faces'; this is used to check closure for meshless methods */
+#endif
+#ifdef MAGNETIC
     Vec3<MyDouble> BPred;           /*!< current magnetic field strength */
     Vec3<MyDouble> BField_prerefinement; /*!< safety variable that stores the B-field before a refinement-type operation to allow it to be more conservatively reset correctly after the (de)refinement completes */
     Vec3<MyDouble> B;               /*!< actual B (conserved variable used for integration; can be B*V for flux schemes) */

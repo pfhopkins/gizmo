@@ -317,6 +317,117 @@ def make_polytrope_n1_ics(outfile, n_part=N_DEFAULT, seed=SEED, q_max=Q_MAX, jit
 
 
 # ------------------------------------------------------------------------------------------
+# truncated star in a hydrostatic ambient medium (the polytrope_n1_ambient IC)
+# ------------------------------------------------------------------------------------------
+
+Q_CUT = 0.95     # the star keeps the shells inside this enclosed mass fraction (snapped to a shell boundary)
+F_AMB = 0.1      # ambient/star density contrast at the interface; ambient cells have mass F_AMB * m
+BOX_AMB = 5.0    # side of the periodic box (hydro only; gravity is not periodic), star at its centre
+
+
+def _cube_sphere_fraction(r, half, n_dir=20000):
+    """Fraction of the sphere of radius r, centred in the cube [-half, half]^3, that lies in the cube."""
+    nmax = np.max(np.abs(_fibonacci_sphere(n_dir)), axis=1)
+    return np.array([np.mean(nmax * x < half) for x in np.atleast_1d(r)])
+
+
+def ambient_profile(q_cut=Q_CUT, f_amb=F_AMB, box=BOX_AMB, n_part=N_DEFAULT, ngrid=4001, iters=30):
+    """The truncation radius and the isothermal (constant u) atmosphere outside it.
+
+    The star is the regular shells of shell_layout(n_part, q_max=q_cut), i.e. the standard
+    construction with its step rescaled so a shell boundary falls at q_cut, without the final lumped
+    shell: r_cut is that boundary and the star's mass q_cut * M is exact. At r_cut the ambient has
+    rho_amb = f_amb rho(r_cut) and the star's pressure P_cut = K rho(r_cut)^2, so
+    u_amb = P_cut / ((gamma-1) rho_amb); outside, hydrostatic balance at constant u gives
+    dln(rho)/dr = -G M(r) / ((gamma-1) u_amb r^2), with M(r) = star + the atmosphere inside r that is
+    also inside the box (spherically averaged; iterated). Interior gravity is unchanged (shell theorem),
+    so the analytic star solution still holds inside r_cut."""
+    counts, _, _, r_out = shell_layout(n_part, q_cut)
+    n_star, r_cut = int(np.sum(counts[:-1])), float(r_out[-2])
+    m_star = n_star * TOTAL_MASS / n_part
+    rho_cut = float(rho_analytic(r_cut))
+    p_cut = K_POLY * rho_cut**2
+    rho0 = f_amb * rho_cut
+    u_amb = p_cut / ((GAMMA - 1.0) * rho0)
+    half = 0.5 * box
+    r = np.linspace(r_cut, half * np.sqrt(3.0), ngrid)
+    frac = _cube_sphere_fraction(r, half)
+
+    def cumtrapz(f):
+        return np.concatenate([[0.0], np.cumsum(0.5 * (f[1:] + f[:-1]) * np.diff(r))])
+
+    rho = np.full_like(r, rho0)
+    for _ in range(iters):
+        m_enc = m_star + cumtrapz(4.0 * np.pi * r**2 * frac * rho)
+        rho = rho0 * np.exp(-cumtrapz(G * m_enc / r**2) / ((GAMMA - 1.0) * u_amb))
+    return {"n_star": n_star, "q_cut": m_star / TOTAL_MASS, "r_cut": r_cut, "rho_cut": rho_cut, "p_cut": p_cut,
+            "rho_amb0": rho0, "u_amb": u_amb, "box": box, "r": r, "rho": rho, "m_enc": m_enc,
+            "m_amb": float(m_enc[-1] - m_star), "f_amb": f_amb}
+
+
+def _ambient_positions(prof, m_amb, rng):
+    """Fibonacci shells continuing the star's construction outside r_cut with the ambient density
+    and cell mass: spacing (m_amb/rho_amb)^(1/3) equals the star's at r_cut. Shell counts follow the
+    full-sphere mass; cells outside the box are dropped."""
+    r, rho = prof["r"], prof["rho"]
+
+    def cumtrapz(f):
+        return np.concatenate([[0.0], np.cumsum(0.5 * (f[1:] + f[:-1]) * np.diff(r))])
+
+    s = cumtrapz((rho / m_amb) ** (1.0 / 3.0))
+    m_full = cumtrapz(4.0 * np.pi * r**2 * rho)
+    i_rdm = cumtrapz(4.0 * np.pi * r**3 * rho)
+    n_shell = max(int(round(s[-1])), 1)
+    r_b = np.interp(s[-1] * np.arange(n_shell + 1) / n_shell, s, r)
+    cum = np.unique(np.rint(np.interp(r_b, r, m_full) / m_amb).astype(np.int64))
+    counts = np.diff(cum)
+    r_in = np.interp(cum[:-1] * m_amb, m_full, r)
+    r_out = np.interp(cum[1:] * m_amb, m_full, r)
+    r_shell = (np.interp(r_out, r, i_rdm) - np.interp(r_in, r, i_rdm)) / (counts * m_amb)
+    pos = np.concatenate([x * (_fibonacci_sphere(k) @ _random_rotation(rng).T) for k, x in zip(counts, r_shell)])
+    return pos[np.all(np.abs(pos) < 0.5 * prof["box"], axis=1)]
+
+
+def make_polytrope_n1_ambient_ics(outfile, n_part=N_DEFAULT, seed=SEED, q_cut=Q_CUT, f_amb=F_AMB, box=BOX_AMB):
+    """The polytrope truncated at q_cut (see ambient_profile(); same cell mass and u as the standard IC)
+    inside a hydrostatic ambient medium at the truncation pressure (ambient_profile()), filling a
+    periodic box of side `box` centred on the star. Star cells have ParticleIDs 1..n_star."""
+    prof = ambient_profile(q_cut, f_amb, box, n_part)
+    m = TOTAL_MASS / n_part
+    pos_star = fibonacci_shell_positions(n_part, seed, q_max=q_cut)[:prof["n_star"]]
+    pos_star -= pos_star.mean(axis=0)
+    pos_amb = _ambient_positions(prof, f_amb * m, np.random.default_rng(seed + 1))
+    pos = np.concatenate([pos_star, pos_amb])
+    n_amb = len(pos_amb)
+    mass = np.concatenate([np.full(prof["n_star"], m), np.full(n_amb, f_amb * m)])
+    u = np.concatenate([u_analytic(np.sqrt(np.sum(pos_star**2, axis=1))), np.full(n_amb, prof["u_amb"])])
+    n_tot = len(mass)
+    with h5py.File(outfile, "w") as F:
+        F.attrs["make_polytrope_n1_ics_version"] = IC_VERSION
+        F.attrs["make_polytrope_n1_ics_args"] = f"ambient seed={seed} q_cut={q_cut} f_amb={f_amb} box={box}"
+        for key in ("n_star", "q_cut", "r_cut", "p_cut", "rho_amb0", "u_amb", "m_amb"):
+            F.attrs[key] = prof[key]
+        h = F.create_group("Header")
+        npart = np.array([n_tot, 0, 0, 0, 0, 0])
+        h.attrs["NumPart_ThisFile"] = npart
+        h.attrs["NumPart_Total"] = npart
+        h.attrs["NumPart_Total_HighWord"] = np.zeros(6, dtype=int)
+        h.attrs["MassTable"] = np.zeros(6)
+        h.attrs["BoxSize"] = box
+        h.attrs["Time"] = 0.0
+        h.attrs["Redshift"] = 0.0
+        h.attrs["NumFilesPerSnapshot"] = 1
+        h.attrs["Flag_DoublePrecision"] = 0
+        p = F.create_group("PartType0")
+        p.create_dataset("Coordinates", data=pos + 0.5 * box)
+        p.create_dataset("Velocities", data=np.zeros_like(pos))
+        p.create_dataset("Masses", data=mass)
+        p.create_dataset("InternalEnergy", data=u)
+        p.create_dataset("ParticleIDs", data=np.arange(1, n_tot + 1, dtype=np.uint32))
+    return prof, n_amb
+
+
+# ------------------------------------------------------------------------------------------
 # diagnostics
 # ------------------------------------------------------------------------------------------
 
@@ -447,11 +558,21 @@ if __name__ == "__main__":
     parser.add_argument("--jitter", type=float, default=JITTER)
     parser.add_argument("--relax-iters", type=int, default=RELAX_ITERS)
     parser.add_argument("--out", default="polytrope_n1_ics.hdf5")
+    parser.add_argument("--ambient-q-cut", type=float, default=None,
+                        help="write the truncated star in an ambient medium instead (make_polytrope_n1_ambient_ics)")
+    parser.add_argument("--f-amb", type=float, default=F_AMB)
+    parser.add_argument("--box", type=float, default=BOX_AMB)
     parser.add_argument("--validate-only", action="store_true", help="diagnose an existing --out file")
     parser.add_argument("--snapshot", default=None,
                         help="also compare the offline kernel density with a GIZMO snapshot's Density")
     args = parser.parse_args()
     print("analytic identities:", check_analytic_identities())
+    if args.ambient_q_cut is not None:
+        prof, n_amb = make_polytrope_n1_ambient_ics(args.out, n_part=args.N, seed=args.seed, q_cut=args.ambient_q_cut,
+                                                    f_amb=args.f_amb, box=args.box)
+        print(f"wrote {args.out}: {prof['n_star']} star cells (q_cut {prof['q_cut']:.5f}, r_cut {prof['r_cut']:.5f}, "
+              f"P_cut {prof['p_cut']:.4e}), {n_amb} ambient cells (u {prof['u_amb']:.4f}, mass {prof['m_amb']:.4f})")
+        raise SystemExit(0)
     if not args.validate_only:
         t0 = time.time()
         make_polytrope_n1_ics(args.out, n_part=args.N, seed=args.seed, q_max=args.q_max,

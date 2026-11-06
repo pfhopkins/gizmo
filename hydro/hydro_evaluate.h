@@ -386,10 +386,10 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
                 out.Acc += FluxCorrectionFactor_to_i * Fluxes.v;
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * Fluxes.p;
-#ifdef MAGNETIC
-#ifndef HYDRO_SPH
+#if (defined(MAGNETIC) || defined(OUTPUT_FACE_AREA_SUM)) && !defined(HYDRO_SPH)
                 out.Face_Area += Face_Area_Vec;
 #endif
+#ifdef MAGNETIC
 #ifndef FREEZE_HYDRO
                 out.DtB += FluxCorrectionFactor_to_i * Fluxes.B;
                 out.divB += Fluxes.B_normal_corrected;
@@ -428,10 +428,10 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
                     CellP[j].HydroAccel -= FluxCorrectionFactor_to_j * Fluxes.v;
                     CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * Fluxes.p;
-#ifdef MAGNETIC
-#ifndef HYDRO_SPH
+#if (defined(MAGNETIC) || defined(OUTPUT_FACE_AREA_SUM)) && !defined(HYDRO_SPH)
                     CellP[j].Face_Area -= Face_Area_Vec;
 #endif
+#ifdef MAGNETIC
 #ifndef FREEZE_HYDRO
                     CellP[j].DtB -= FluxCorrectionFactor_to_j * Fluxes.B;
                     CellP[j].divB -= Fluxes.B_normal_corrected;
