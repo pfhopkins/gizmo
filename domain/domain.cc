@@ -94,6 +94,17 @@ static struct peano_hilbert_data
 static void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB);
 static void domain_add_cost(struct local_topnode_data *treeA, int noA, long long count, double cost, double gascost);
 
+#ifdef DOMAIN_TOPLEAF_TINY /* opt-in: on tiny problems (top-leaf count limit below DOMAIN_TOPLEAF_TINY_COUNTLIMIT particles) a top node
+                              holding at most DOMAIN_TOPLEAF_TINY_MINSPLIT particles is never split */
+#ifndef DOMAIN_TOPLEAF_TINY_COUNTLIMIT
+#define DOMAIN_TOPLEAF_TINY_COUNTLIMIT 16
+#endif
+#ifndef DOMAIN_TOPLEAF_TINY_MINSPLIT
+#define DOMAIN_TOPLEAF_TINY_MINSPLIT 8
+#endif
+#endif
+static long long TopMinSplitCount = 0; /* a top node with at most this many particles is never split (0: the original rule) */
+
 /*! the top-tree leaf node (index into tNodes) holding a Peano-Hilbert key; walks with bit shifts instead of 128-bit division */
 static inline int domain_toptree_node(peanokey key, struct local_topnode_data *tNodes)
 {
@@ -1258,6 +1269,7 @@ int domain_decompose(void)
 #ifdef DOMAIN_KEEP_BOUNDARIES
     domain_mark_boundary_candidates();
 #endif
+    multipledomains = DomainSegmentsPerTask; /* the top tree may have lowered it */
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
 #ifdef DOMAIN_KEEP_BOUNDARIES
     KeepBoundaryCand.clear(); /* only the main split snaps; the memory-bound fallback below is the plain load split */
@@ -2942,7 +2954,7 @@ int domain_check_for_local_refine(int i, double countlimit, double costlimit)
 #ifdef DOMAIN_MULTIBIN
   if(MB_Active && flag == 0 && topNodes[i].Count > MB_LimMin && topNodes[i].Count <= countlimit && topNodes[i].Cost <= costlimit && topNodes[i].Size >= 8) {flag = domain_mb_node_needs_refine(i);}
 #endif
-  if((topNodes[i].Count > countlimit || topNodes[i].Cost > costlimit || flag == 1) && topNodes[i].Size >= 8)
+  if((topNodes[i].Count > countlimit || topNodes[i].Cost > costlimit || flag == 1) && topNodes[i].Size >= 8 && topNodes[i].Count > TopMinSplitCount)
     {
       if(topNodes[i].Size >= 8)
 	{
@@ -3198,6 +3210,12 @@ int domain_determineTopTree(void)
 
   costlimit = totgravcost / (TOPNODEFACTOR * multipledomains * NTask);
   countlimit = totpartcount / (TOPNODEFACTOR * multipledomains * NTask);
+#ifdef DOMAIN_TOPLEAF_TINY
+  /* With few particles per rank the count limit falls to a few particles, and the cost and 80%-of-parent rules chain
+     nodes of one or a few particles down to the finest key level: M10-core (12.4k cells) reached 56-62k top leaves at
+     96 ranks. Leaves of a few particles are fine enough for the split. */
+  TopMinSplitCount = (countlimit < DOMAIN_TOPLEAF_TINY_COUNTLIMIT) ? DOMAIN_TOPLEAF_TINY_MINSPLIT : 0;
+#endif
 
   errflag = domain_check_for_local_refine(0, countlimit, costlimit);
 
@@ -3288,7 +3306,7 @@ int domain_determineTopTree(void)
     {
       if(topNodes[i].Daughter < 0)
 	if(topNodes[i].Count > countlimit || topNodes[i].Cost > costlimit)	/* ok, let's add nodes if we can */
-	  if(topNodes[i].Size > 1)
+	  if(topNodes[i].Size > 1 && topNodes[i].Count > TopMinSplitCount)
 	    {
 	      if((NTopnodes + 8) <= MaxTopNodes)
 		{
@@ -3325,7 +3343,12 @@ int domain_determineTopTree(void)
   /* count toplevel leaves */
   domain_sumCost();
 
-  if(NTopleaves < multipledomains * NTask) {endrun(112);}
+  if(NTopleaves < multipledomains * NTask) /* tiny problems: fewer segments per rank rather than empty ones */
+  {
+      if(NTopleaves < NTask) {endrun(112);}
+      DomainSegmentsPerTask = NTopleaves / NTask;
+      if(ThisTask == 0) {printf("Domain segments per rank: %d -> %d (only %d top leaves)\n", multipledomains, DomainSegmentsPerTask, NTopleaves);}
+  }
 
   return 0;
 }
