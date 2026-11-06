@@ -18,6 +18,15 @@ stops) and checks them against exact values.
     host walk, and repeats bitwise (2 ranks x 2 threads; 1 rank x 4 threads, where every target takes the device walk).
   test_chemistry_inputs: the SGChem field of every cell from the tree energy densities (pixels floored at
     0.324e-2 SGChemBackgroundG0 / 12 Habing): G0, G0_LW and the band-resolved grain-heating G0_dust as stella_dev (1e-6).
+  test_radial_shells_attenuate_bands: with GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS the stored stellar bands are
+    dust-attenuated per (pixel, shell) in the walk: 6-13.6, 11.2-13.6, 3.444-6 and 0.4133-3.444 eV against a direct
+    sweep over all particles (tree-error bars, 1 and 2 ranks).
+  test_radial_shells_without_dust: without dust the sweep returns the unattenuated pixels (3e-6).
+  test_ionising_sources_and_absorbers: ionising energy and photon rate as the tables in two tree source bins, root node
+    sums, H-ionising absorber masses per cell and in the root node.
+  test_ionising_sweep: photon and energy flux per cell against a direct sweep through the HI column at NSIDE 2 (median 20 %, tree error at tau ~ 1).
+  test_radial_shells_photon_cap: thick cells: implied absorption brought back to the stars' emission (2e-3).
+  test_radial_shells_host_equals_device: device walk repeats bitwise and equals the host walk to float sums (1e-5).
   test_far_field_g0: after five steps with chemistry, during which one star dies, the tree 6-13.6 eV field of every cell
     equals the direct sum over the stars' current luminosities (median |ratio - 1| <= 1e-2, p99 <= 5e-2): node
     luminosities are refreshed, the dead star is dark (2 ranks).
@@ -31,6 +40,7 @@ stops) and checks them against exact values.
     3e-17 (e_CR / 1.8 eV cm^-3) + 1e-21 Z/0.014 the e_CR term is lower by the stated factor 0.9612 (1e-10).
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -45,7 +55,7 @@ TEST_DIR = Path(__file__).parent
 sys.path.insert(0, str(TEST_DIR))
 from make_treecol_pixels_ics import make_treecol_pixels_ics, lattice  # noqa: E402
 from stella_table_bands import Tables  # noqa: E402
-from treecol_reference import direct_columns, direct_energy_density  # noqa: E402
+from treecol_reference import direct_columns, direct_energy_density, direct_shell_sweep  # noqa: E402
 
 BUILDS = {}
 
@@ -240,7 +250,7 @@ PIX_STARS = [(8.0, 0.3), (15.0, 0.5), (25.0, 0.2), (40.0, 0.1), (60.0, 0.4), (10
 SHIELD = 8.0  # TreeColShieldingLength [pc]
 
 
-def pixel_run(tables, ranks, threads=1, tag="", overrides=None, build_tag="pix12", extra=(), flags=(), gas_mass=1.0, e_cr=None):
+def pixel_run(tables, ranks, threads=1, tag="", overrides=None, build_tag="pix12", extra=(), flags=(), gas_mass=1.0, e_cr=None, **ic):
     L, n = 20.0, 12
     pos, z, ab = gas_with_species(n, L)
     tab = Tables(tables["StellarTablesFile"])
@@ -251,7 +261,7 @@ def pixel_run(tables, ranks, threads=1, tag="", overrides=None, build_tag="pix12
         stars.append((M, tab._i2(tab.t_pms, lM, lZ) + f * tab._i2(tab.life, lM, lZ), rng.uniform(0.15, 0.85, 3) * L))
     exe = build("_".join((build_tag,) + flags), ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",) + tuple(extra) + flags)
     out = run(exe, f"pixels_np{ranks}{tag}", tables, L, pos, stars, ranks=ranks, z_gas=z, tracabund=ab, threads=threads,
-              gas_mass=gas_mass, e_cr=e_cr, overrides={"TreeColShieldingLength": SHIELD, **(overrides or {})})
+              gas_mass=gas_mass, e_cr=e_cr, overrides={"TreeColShieldingLength": SHIELD, **(overrides or {})}, **ic)
     cells = load(out, "cells"); cells = cells[np.argsort(cells[:, 0])]
     lum = load(out, "stars"); lum = lum[np.argsort(lum[:, 0])]
     bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
@@ -372,6 +382,118 @@ def test_chemistry_inputs(tables):
     for got, want in ((cells[:, 56], G0), (cells[:, 57], G0_LW), (cells[:, 58], G0_dust)):
         np.testing.assert_allclose(got, want, rtol=1e-6)
     assert np.median(G0) > 10 * g0bg  # the stars dominate the floor
+
+
+SIGMA_UV, SIGMA_LW = 2.5 * 5.348e-22, 2.0e-21  # cm^2 per H at solar dust-to-gas ratio (chemistry df25, f_dust)
+SIGMA_NUV, SIGMA_OPT = 1.3e-21, 0.5e-21
+TO_NH = 1.989e33 / 3.085678e18 ** 2 * 0.7065 / 1.6726e-24  # Msun/pc^2 to H/cm^2, X_H of SGChem builds
+
+
+@pytest.mark.parametrize("ranks", [1, 2])
+def test_radial_shells_attenuate_bands(tables, ranks):
+    cells, spos, bands = pixel_run(tables, ranks, tag="_shells", build_tag="shells", gas_mass=8.0,
+                                   extra=("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",))
+    pos = cells[:, -3:]; m_dust = cells[:, 1]; floor = 0.01
+    log = (TEST_DIR / f"run_pixels_np{ranks}_shells" / f"test_{TEST_NAME}.out").read_text()
+    caps = re.findall(r"photon cap engaged, f=([0-9.e+-]+)", log)
+    cells[:, 40:55] /= float(caps[-1]) if caps else 1.0  # the sweep before the global cap
+    pick = np.random.default_rng(3).choice(len(pos), 150, replace=False)
+    want = np.array([direct_shell_sweep(pos[i], pos, m_dust, spos, bands[:, 0] + bands[:, 2], SIGMA_UV * TO_NH, SHIELD, r_floor=floor) for i in pick])
+    r = rel(cells[pick, 40:52].ravel(), want.ravel())[want.ravel() > 1e-6 * want.max()]
+    assert np.median(r) < 0.05 and np.percentile(r, 90) < 0.3, (np.median(r), np.percentile(r, 90))
+    for col, band, sig in ((52, 1, SIGMA_LW), (53, 3, SIGMA_NUV), (54, 4, SIGMA_OPT)):
+        want = np.array([direct_shell_sweep(pos[i], pos, m_dust, spos, bands[:, band], sig * TO_NH, SHIELD, r_floor=floor).sum() for i in pick])
+        assert np.median(rel(cells[pick, col], want)) < 0.05, (col, np.median(rel(cells[pick, col], want)))
+
+
+def test_radial_shells_without_dust(tables):
+    over = {"SGChemDustToGasRatio": 0.0}
+    plain, _, _ = pixel_run(tables, 1, tag="_nodust", build_tag="pix12_float", extra=FLOAT_STORAGE, overrides=over)
+    shells, _, _ = pixel_run(tables, 1, tag="_shells_nodust", build_tag="shellsf", overrides=over,
+                             extra=FLOAT_STORAGE + ("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",))
+    assert plain[:, 40:52].max() > 0
+    np.testing.assert_allclose(shells[:, 40:55], plain[:, 40:55], rtol=3e-6, atol=1e-30)
+
+
+SHELLS = ("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",)
+ION = SHELLS + ("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION=2",)
+
+
+def test_ionising_sources_and_absorbers(tables):
+    """stars carry the table's ionising energy and photon rate in two tree source bins, the root node their sums and the
+    H-ionising absorbers of all cells (H atoms + 1.34 per H2); the pixel columns keep their three species"""
+    tab = Tables(tables["StellarTablesFile"])
+    L = 20.0
+    pos, z, ab = gas_with_species(12, L)
+    rng = np.random.default_rng(13)
+    stars = []
+    for M, f in PIX_STARS:
+        lM, lZ = np.log10(M), np.log10(0.0142)
+        stars.append((M, tab._i2(tab.t_pms, lM, lZ) + f * tab._i2(tab.life, lM, lZ), rng.uniform(0.15, 0.85, 3) * L))
+    out = run(build("ion", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",) + ION), "ion", tables, L, pos, stars, z_gas=z, tracabund=ab,
+              overrides={"TreeColShieldingLength": SHIELD})
+    bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
+    assert len(bins) == 7
+    rows = load(out, "stars"); rows = rows[np.argsort(rows[:, 0])]
+    want = np.array([tab.ionising(M, 0.0142, age) for M, age, _ in stars])
+    EV = 1.60217733e-12
+    np.testing.assert_allclose(rows[:, 2:][:, bins[5]], want[:, 0], rtol=1e-10)
+    np.testing.assert_allclose(rows[:, 2:][:, bins[6]] / (13.6 * EV), want[:, 1], rtol=1e-10)
+    root = np.loadtxt(out / "treecol_dump_root_lum_0.txt")
+    np.testing.assert_allclose(root[bins[5:]], rows[:, 2:][:, bins[5:]].sum(0), rtol=1e-12)
+    cells = load(out, "cells"); cells = cells[np.argsort(cells[:, 0])]
+    hi = (1 - ab[:, 1] - 2 * ab[:, 0] + 1.34 * ab[:, 0]) * 0.7065
+    np.testing.assert_allclose(cells[:, 4], hi, rtol=1e-12)
+    np.testing.assert_allclose(np.loadtxt(out / "treecol_dump_root_species_0.txt")[3], hi.sum(), rtol=1e-12)
+
+
+def test_ionising_sweep(tables):
+    """photon and energy flux of each cell against a direct sweep through the HI column at NSIDE 2 (light cells: tau ~ 1;
+    the tree lumps mass per pixel, flux biased high by ~10 % there; a wrong pixel area in the column gives > 50 %)"""
+    tab = Tables(tables["StellarTablesFile"])
+    L, m_gas = 20.0, 4e-4
+    pos, z, ab = gas_with_species(12, L)
+    ab[:, 0] = 0  # atomic
+    rng = np.random.default_rng(13)
+    stars = []
+    for M, f in PIX_STARS:
+        lM, lZ = np.log10(M), np.log10(0.0142)
+        stars.append((M, tab._i2(tab.t_pms, lM, lZ) + f * tab._i2(tab.life, lM, lZ), rng.uniform(0.15, 0.85, 3) * L))
+    out = run(build("ion", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",) + ION), "ion_sweep", tables, L, pos, stars, z_gas=z, tracabund=ab,
+              gas_mass=m_gas, overrides={"TreeColShieldingLength": SHIELD})
+    cells = load(out, "cells"); cells = cells[np.argsort(cells[:, 0])]
+    rows = load(out, "stars"); rows = rows[np.argsort(rows[:, 0])]
+    bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
+    Q_e, L_e = rows[:, 2:][:, bins[6]], rows[:, 2:][:, bins[5]]
+    gas, m_hi, spos = cells[:, -3:], cells[:, 4], rows[:, -3:]
+    sigma = 6.3e-18 * 1.989e33 / 3.085678e18 ** 2 / 1.6726e-24
+    pick = np.random.default_rng(3).choice(len(gas), 150, replace=False)
+    u_to_f = 2.9979e10
+    want_ph = np.array([direct_shell_sweep(gas[i], gas, m_hi, spos, Q_e, sigma, SHIELD, npix=48, r_floor=0.01).sum() for i in pick]) * u_to_f / (13.6 * 1.60217733e-12)
+    want_en = np.array([direct_shell_sweep(gas[i], gas, m_hi, spos, L_e, sigma, SHIELD, npix=48, r_floor=0.01).sum() for i in pick]) * u_to_f
+    assert np.median(rel(cells[pick, -5], want_ph)) < 0.2, np.median(rel(cells[pick, -5], want_ph))
+    assert np.median(rel(cells[pick, -4], want_en)) < 0.2, np.median(rel(cells[pick, -4], want_en))
+
+
+def test_radial_shells_photon_cap(tables):
+    """500 Msun cells: each is thick in itself, so the implied absorption exceeds the emission and the cap brings it back"""
+    tag = "_shells_cap"
+    cells, _, _ = pixel_run(tables, 2, tag=tag, build_tag="shells", gas_mass=500.0, extra=("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",))
+    out = TEST_DIR / f"run_pixels_np2{tag}" / "output"
+    bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
+    root = np.loadtxt(out / "treecol_dump_root_lum_0.txt")
+    L_emit = root[bins[0]] + root[bins[2]]
+    absorbed = (cells[:, 40:52].sum(1) * 2.9979e10 * SIGMA_UV * cells[:, 1] * 1.989e33 * 0.7065 / 1.6726e-24).sum()
+    assert abs(absorbed / L_emit - 1) < 2e-3, absorbed / L_emit
+
+
+def test_radial_shells_host_equals_device(tables):
+    sh = FLOAT_STORAGE + ("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",)
+    runs = {}
+    for tag, below in (("dev_a", 0), ("dev_b", 0), ("host", 10 ** 9)):
+        runs[tag] = pixel_run(tables, 1, 4, f"_shells_{tag}", {"GravityHostWalkBelowActive": below}, "shellsf", sh, gas_mass=8.0)[0]
+    assert runs["dev_a"].tobytes() == runs["dev_b"].tobytes()
+    np.testing.assert_allclose(runs["dev_a"], runs["host"], rtol=1e-5, atol=1e-40)  # float shell sums, other order
 
 
 def test_far_field_g0(tables):

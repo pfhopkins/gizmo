@@ -42,3 +42,25 @@ def direct_energy_density(target, pos, L_cgs, npix=12, r_floor=0.0):
     u = np.zeros(npix)
     np.add.at(u, ring_pixel(d, int(np.sqrt(npix / 12))), L_cgs / (4 * np.pi * C_LIGHT * r2 * PC ** 2))
     return u
+
+
+def shell_of(r2, nshell, shield):
+    """log-radial shell of r^2: nshell shells over 3 dex below the shielding length, clamped"""
+    s = nshell - 1 + np.floor(0.5 * np.log10(r2 / shield ** 2) * nshell / 3.0).astype(int)
+    return np.clip(s, 0, nshell - 1)
+
+
+def direct_shell_sweep(target, gas_pos, m_dust, star_pos, L_cgs, sigma_nh, shield, nshell=12, npix=12, r_floor=0.0):
+    """per-pixel energy density [erg/cm^3] of point sources L_cgs [erg/s] at star_pos [pc] behind the dust of the gas
+    cells: per (pixel, shell) sources attenuated by the optical depth of the interior shells plus half their own;
+    sigma_nh = optical depth per unit dust mass column m_dust / (4 pi / npix r^2)"""
+    nside = int(np.sqrt(npix / 12))
+    d = gas_pos - target; r2 = (d ** 2).sum(1); ok = (r2 > 0) & (r2 < shield ** 2)
+    col = np.zeros((npix, nshell))
+    np.add.at(col, (ring_pixel(d[ok], nside), shell_of(r2[ok], nshell, shield)), m_dust[ok] / (4 * np.pi / npix * r2[ok]))
+    d = star_pos - target; r2 = np.maximum((d ** 2).sum(1), r_floor ** 2)
+    src = np.zeros((npix, nshell))
+    np.add.at(src, (ring_pixel(d, nside), shell_of(r2, nshell, shield)), L_cgs / (4 * np.pi * C_LIGHT * r2 * PC ** 2))
+    dtau = sigma_nh * col
+    tau = np.cumsum(dtau, axis=1) - 0.5 * dtau
+    return (src * np.exp(-tau)).sum(1)

@@ -99,6 +99,9 @@ void begrun(void)
 #endif
 
   read_parameter_file(ParameterFile);	/* ... read in parameters for this run */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS
+  if(All.TreeColShieldingLength <= 0) {if(ThisTask == 0) {printf("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS needs TreeColShieldingLength > 0: the shells span 3 dex below it\n");} endrun(9817302);}
+#endif
   particle_receive_staging_init();   /* a failure is a controlled stop, drained by the poll below */
 
   /* Bad-stop poll: parameter/config validation (inside read_parameter_file)
@@ -2958,6 +2961,15 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "TreeColShieldingLength");
       addr[nt] = &All.TreeColShieldingLength;
       id[nt++] = REAL;
+#ifdef TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS
+      strcpy(tag[nt], "TestTreeRayFixedRate");
+      addr[nt] = &All.TestTreeRayFixedRate;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "TestTreeRayNeutralTemp");
+      addr[nt] = &All.TestTreeRayNeutralTemp;
+      id[nt++] = REAL;
+#endif
 #endif
 #endif
 

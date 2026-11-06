@@ -1036,6 +1036,9 @@ void single_star_radpressure_per_cell(double *dp_total_code);
 #ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
 double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR); /* host only */
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS
+void treecol_shells_photon_cap(void);
+#endif
 #ifdef TEST_DUMP_TREECOL_PIXELS_AND_EXIT
 void test_dump_treecol_pixels_and_exit(void);
 #endif

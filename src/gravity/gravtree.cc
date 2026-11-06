@@ -561,6 +561,9 @@ gravity_walk_attempt:
 
     myfree(DataNodeList); myfree(DataIndexTable);
 
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS
+    treecol_shells_photon_cap();
+#endif
     /* now perform final operations on results [communication loop is done] */
 #ifndef GRAVITY_HYBRID_OPENING_CRIT  // in collisional systems we don't want to rely on the relative opening criterion alone, because aold can be dominated by a binary companion but we still want accurate contributions from distant nodes. Thus we combine BH and relative criteria. - MYG
     /* Switch to the relative opening criterion for the following force computations.

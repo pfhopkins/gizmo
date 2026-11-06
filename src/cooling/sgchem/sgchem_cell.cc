@@ -164,6 +164,33 @@ static void sgchem_cr_ionisation_from_fluid(int i, const struct ChemInputs *in, 
 }
 #endif
 
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
+/* rates from the swept fluxes: sigma_HI F per atom, with the excess over threshold as heat; a cell thick to ionising photons
+   takes only those entering it, (1 - e^-tau) / tau (Abel & Wandelt 99): the tree has no source depletion, so without the
+   limiter an over-ionised front cell strips its own shielding and the front runs away */
+static void sgchem_treecol_photoion_rates(int i, struct ChemInputs *in, double rho_cgs)
+{
+    const double n_h = HYDROGEN_MASSFRAC * rho_cgs / PROTONMASS_CGS, l_cell = pow(P[i].Mass * UNIT_MASS_IN_CGS / rho_cgs, 1.0 / 3.0);
+#ifdef TREECOL_SHELLS_ION_HELIUM
+    const MyFloat *ab = CellP[i].TracAbund; const float *ph = CellP[i].TreeRayIonPhotonFlux, *en = CellP[i].TreeRayIonEnergyFlux;
+    const double n_hi = DMAX(0.0, 1.0 - ab[IHP]) * n_h, n_hei = DMAX(0.0, ABHE - ab[IHEP] - ab[IHEPP]) * n_h, E_H = 13.6 * ELECTRONVOLT_IN_ERGS, E_He = 24.6 * ELECTRONVOLT_IN_ERGS;
+    const double t0 = TREECOL_SHELLS_SIGMA_HI_B0 * n_hi * l_cell, t1 = (TREECOL_SHELLS_SIGMA_HI_B1 * n_hi + TREECOL_SHELLS_SIGMA_HEI_B1 * n_hei) * l_cell;
+    const double f0 = (t0 > 1.0e-8) ? (1.0 - exp(-t0)) / t0 : 1.0, f1 = (t1 > 1.0e-8) ? (1.0 - exp(-t1)) / t1 : 1.0;
+    in->rt_phot_HI = TREECOL_SHELLS_SIGMA_HI_B0 * f0 * ph[0] + TREECOL_SHELLS_SIGMA_HI_B1 * f1 * ph[1];
+    in->rt_heat_HI = TREECOL_SHELLS_SIGMA_HI_B0 * f0 * DMAX(en[0] - E_H * ph[0], 0.0) + TREECOL_SHELLS_SIGMA_HI_B1 * f1 * DMAX(en[1] - E_H * ph[1], 0.0);
+    in->rt_phot_HeI = TREECOL_SHELLS_SIGMA_HEI_B1 * f1 * ph[1]; in->rt_heat_HeI = TREECOL_SHELLS_SIGMA_HEI_B1 * f1 * DMAX(en[1] - E_He * ph[1], 0.0);
+#else
+    const double F_ph = CellP[i].TreeRayIonPhotonFlux[0], F_en = CellP[i].TreeRayIonEnergyFlux[0], sig = TREECOL_SHELLS_SIGMA_HI, x_h2 = CellP[i].TracAbund[IH2];
+    if(F_ph <= 0) {return;}
+    const double n_abs = (DMAX(0.0, 1.0 - CellP[i].TracAbund[IHP] - 2.0 * x_h2) + TREECOL_SHELLS_H2_PER_HI * x_h2) * n_h, tau = sig * n_abs * l_cell;
+    const double f = sig * ((tau > 1.0e-8) ? (1.0 - exp(-tau)) / tau : 1.0);
+    in->rt_phot_HI = f * F_ph; in->rt_heat_HI = f * DMAX(F_en - 13.6 * ELECTRONVOLT_IN_ERGS * F_ph, 0.0);
+    in->rt_phot_H2 = TREECOL_SHELLS_H2_PER_HI * in->rt_phot_HI;
+    in->rt_heat_H2 = TREECOL_SHELLS_H2_PER_HI * f * DMAX(F_en - 15.2 * ELECTRONVOLT_IN_ERGS * F_ph, 0.0);
+#endif
+}
+#endif
+
 static thread_local int sgchem_network_skipped = 0; /* the last cell step ran no network (photoionised or test pin) */
 
 /* evolves cell i from specific energy u_code over dt_code [code units]; writes TracAbund, Temp, DustTemp, Ne; returns the new u */
@@ -181,6 +208,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     in.abundD = All.SGChemDeuteriumAbundance;
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     struct ChemFUVField fuv = sgchem_treecol_field(i, in.fac_uv); /* the stars' field from the gravity walk */
+#ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+    for(int k = 0; k < NPIX; k++) {in.pix_att[k] = (TREECOL_PIXELS_EGY_UV(CellP[i], k) < 0.324e-2 * All.SGChemBackgroundG0 / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS) ? 1. : 0.;}
+#endif
 #elif defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
     struct ChemFUVField fuv; fuv.G0 = fuv.G0_LW = fuv.G0_dust = sgchem_recent_sfr_g0(); /* uniform, scaled with the recent SFR */
 #else
@@ -223,6 +253,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
     sgchem_treecol_columns(i, &in);
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
+    sgchem_treecol_photoion_rates(i, &in, rho);
+#endif
 
     int skip = 0; out.tdust = in.tdust;
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
@@ -252,6 +285,13 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     chem_cxx_read_outputs(&out);
 #ifdef COSMIC_RAY_FLUID
     sgchem_cr_ionisation_from_fluid(i, &in, out.cr_ion_heat * (P[i].Mass / (CellP[i].Density * All.cf_a3inv)) * pow(UNIT_LENGTH_IN_CGS, 3) / UNIT_ENERGY_IN_CGS);
+#endif
+#ifdef TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS
+    if(All.TestTreeRayNeutralTemp > 0) /* StarBench: T(x) = T_n + (1e4 K - T_n) x, no losses */
+    {
+        double x = DMIN(DMAX(ab[IHP], 0.0), 1.0);
+        energy = (All.TestTreeRayNeutralTemp + (1.0e4 - All.TestTreeRayNeutralTemp) * x) * 1.5 * BOLTZMANN_CGS * yn * (1.0 + ABHE + x);
+    }
 #endif
     }
 #if CHEMISTRYNETWORK == 18
@@ -297,6 +337,9 @@ double sgchem_docooling(int i, double u_old, double dt, double *ne_eval)
     {u = u_solve = sgchem_cell_step(i, u_in = u_old, dt);}
 #ifdef TEST_PHOTOIONIZATION_FIXED_RATE_TWO_TEMPERATURE_GAS
     if(All.TestPhotoionNeutralTemp > 0) {u = u_solve;} /* StarBench: the pinned energy */
+#endif
+#ifdef TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS
+    if(All.TestTreeRayNeutralTemp > 0) {u = u_solve;} /* the pinned energy */
 #endif
     if(!isfinite(u)) {printf("SGCHEM: non-finite energy after cooling, ID=%llu u=%g, keeping %g\n", (unsigned long long) P[i].ID, u, u_before); u = u_solve = u_before;}
     u = DMAX(u, All.MinEgySpec);

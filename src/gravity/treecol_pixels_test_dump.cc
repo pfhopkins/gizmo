@@ -47,7 +47,14 @@ void test_dump_treecol_pixels_and_exit(void)
         for(int k = 0; k < N_RT_FREQ_BINS; k++) {fprintf(fd, "%.17g ", Nodes[All.TreeNodeIndexBase].stellar_lum[k] * UNIT_LUM_IN_CGS);}
         fprintf(fd, "\n"); fclose(fd);
         fd = treecol_dump_open("bins"); /* bin indices: PE LW 6-8 NUV OPT */
-        fprintf(fd, "%d %d %d %d %d\n", RT_FREQ_BIN_PHOTOELECTRIC, RT_FREQ_BIN_LYMAN_WERNER, RT_FREQ_BIN_GENERIC_USER_FREQ, RT_FREQ_BIN_NUV, RT_FREQ_BIN_OPTICAL_NIR);
+        fprintf(fd, "%d %d %d %d %d", RT_FREQ_BIN_PHOTOELECTRIC, RT_FREQ_BIN_LYMAN_WERNER, RT_FREQ_BIN_GENERIC_USER_FREQ, RT_FREQ_BIN_NUV, RT_FREQ_BIN_OPTICAL_NIR);
+#ifdef RT_FREQ_BIN_ION_ENERGY
+        fprintf(fd, " %d %d", RT_FREQ_BIN_ION_ENERGY, RT_FREQ_BIN_ION_PHOTONS);
+#endif
+#ifdef RT_FREQ_BIN_ION_HE_ENERGY
+        fprintf(fd, " %d %d", RT_FREQ_BIN_ION_HE_ENERGY, RT_FREQ_BIN_ION_HE_PHOTONS);
+#endif
+        fprintf(fd, "\n");
         fclose(fd);
     }
 #endif
@@ -59,7 +66,7 @@ void test_dump_treecol_pixels_and_exit(void)
         double m[TREECOL_PIXELS_NSPECIES]; treecol_pixels_species_masses(P, CellP, i, m);
         fprintf(fc, "%llu", (unsigned long long) P[i].ID);
         for(int k = 0; k < TREECOL_PIXELS_NSPECIES; k++) {fprintf(fc, " %.17g", m[k]);}
-        for(int k = 0; k < TREECOL_PIXELS_NSPECIES; k++) {for(int j = 0; j < GALSF_RESOLVEDISM_TREECOL_PIXELS; j++) {fprintf(fc, " %.9g", TREECOL_PIXELS_COLUMN(CellP[i], k, j));}}
+        for(int k = 0; k < TREECOL_PIXELS_NCOLUMNS; k++) {for(int j = 0; j < GALSF_RESOLVEDISM_TREECOL_PIXELS; j++) {fprintf(fc, " %.9g", TREECOL_PIXELS_COLUMN(CellP[i], k, j));}}
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
         for(int j = 0; j < GALSF_RESOLVEDISM_TREECOL_PIXELS; j++) {fprintf(fc, " %.9g", TREECOL_PIXELS_EGY_UV(CellP[i], j));}
         fprintf(fc, " %.9g %.9g %.9g %.9g", CellP[i].TreeColEgyLW, CellP[i].TreeColEgyNUV, CellP[i].TreeColEgyOPT, CellP[i].TreeColEgy68);
@@ -70,6 +77,10 @@ void test_dump_treecol_pixels_and_exit(void)
 #ifdef COSMIC_RAY_FLUID
         fprintf(fc, " %.17g", Get_CosmicRayEnergyDensity_cgs(i, P, CellP)); /* [erg cm^-3] */
 #endif
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
+        for(int b = 0; b < TREECOL_SHELLS_ION_NBANDS; b++) {fprintf(fc, " %.9g", CellP[i].TreeRayIonPhotonFlux[b]);}
+        for(int b = 0; b < TREECOL_SHELLS_ION_NBANDS; b++) {fprintf(fc, " %.9g", CellP[i].TreeRayIonEnergyFlux[b]);}
 #endif
         fprintf(fc, " %.17g %.17g %.17g\n", P[i].Pos[0], P[i].Pos[1], P[i].Pos[2]);
     }
