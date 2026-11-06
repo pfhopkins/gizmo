@@ -97,6 +97,7 @@ struct ChemFUVField sgchem_treecol_field(int i, double *fac_uv)
    factor of the last solve; stars log10 [erg/s] (-100 when dark) */
 double sgchem_radiation_field_for_snapshot(int i, int blocknr)
 {
+    if(blocknr == IO_SINGLE_STAR_LOG_LYMAN_Q) {double q = single_star_ionizing_photon_rate(i); return (q > 0) ? log10(q) : -100.0;} /* log10 photons/s */
     if(blocknr == IO_SINGLE_STAR_LOG_UV_LUM || blocknr == IO_SINGLE_STAR_LOG_LW_LUM)
     {
         double L[SINGLE_STAR_NBANDS], L_bol;

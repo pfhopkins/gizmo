@@ -6,7 +6,7 @@ cells, chemistry on, gravity on (the fluxes come from the gravity walk), 2 kyr.
   test_thick: n_H = 1e4, photon cap active: momentum per step = L_emit / c + IR term (3 %). Disjoint bands and
     GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE (stella_dev production: LW and 6-8 eV counted twice in deposit and cap).
   test_snapshot_fields: OUTPUT_SGCHEM_RADIATION_FIELDS: G0_FUV = L(6-13.6 eV) / (4 pi c r^2) / Habing (3 %, median over cells beyond 3 softenings),
-    fields in shape, star lums in log10 erg/s from the tables (1e-3 dex).
+    fields in shape, star lums in log10 erg/s and the Lyman photon rate in log10 1/s from the tables (1e-3 dex).
   test_outward: the gas gains positive radial momentum about the star, at least half of what the log says (pixel centres, n_H = 1).
 """
 import os
@@ -130,7 +130,7 @@ def test_snapshot_fields(tables):
     with h5py.File(sorted((d / "output").glob("snapshot_*.hdf5"))[-1]) as F:
         g = F["PartType0"]; s = F["PartType4"]; x = g["Coordinates"][:] - s["Coordinates"][0]
         fields = {k: g[k][:] for k in ("G0_FUV", "G0_LW", "G0_FUV_atten", "ShieldFac_Dust", "G0_NUV", "G0_OPT", "CR_IonizationRate")}
-        luv, llw = s["UV_Luminosity"][0], s["LW_Luminosity"][0]; t = F["Header"].attrs["Time"]
+        luv, llw, lq = s["UV_Luminosity"][0], s["LW_Luminosity"][0], s["Lyman_PhotonRate"][0]; t = F["Header"].attrs["Time"]
     assert all(len(v) == len(x) for v in fields.values())
     r = np.sqrt((x ** 2).sum(1)); far = r > 3 * dx
     Lb = bands(tab, age + t * YR_PER_TIME_UNIT)
@@ -138,6 +138,7 @@ def test_snapshot_fields(tables):
     print(f"G0_FUV / analytic median {np.median(fields['G0_FUV'][far] / want):.4f}")
     assert abs(np.median(fields["G0_FUV"][far] / want) - 1) < 0.03
     assert abs(luv - np.log10(Lb[0] + Lb[2])) < 1e-3 and abs(llw - np.log10(Lb[1])) < 1e-3
+    assert abs(lq - np.log10(tab.ionising(M_STAR, Z, age + t * YR_PER_TIME_UNIT)[1])) < 1e-3  # log10 photons/s from the tables
 
 
 def test_outward(tables):

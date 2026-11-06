@@ -803,6 +803,7 @@ enum iofields
   IO_SGCHEM_CR_ZETA,
   IO_SINGLE_STAR_LOG_UV_LUM,
   IO_SINGLE_STAR_LOG_LW_LUM,
+  IO_SINGLE_STAR_LOG_LYMAN_Q,
 #endif
 #endif
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
