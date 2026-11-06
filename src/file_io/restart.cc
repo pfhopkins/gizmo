@@ -455,6 +455,15 @@ void restart(int modus)
 	  byten(&StTUpdatedAt, sizeof(StTUpdatedAt),modus);
 #endif
 
+	  /* Cross-step tree/domain request state. Plain globals, not in All, so without this a request
+	     raised during the step that wrote the file vanished on resume: the ladder at the top of the next
+	     step consumes these, and the resume-path tree build in run() does not clear or repair them.
+	     DomainExtentOutgrownLocal is rank-local, as is this file. */
+	  byten(&TreeReconstructFlag, sizeof(TreeReconstructFlag), modus);
+	  byten(&DomainReconstructFlag, sizeof(DomainReconstructFlag), modus);
+	  byten(&TreeMomentsStaleFlag, sizeof(TreeMomentsStaleFlag), modus);
+	  byten(&DomainExtentOutgrownLocal, sizeof(DomainExtentOutgrownLocal), modus);
+
 	  /* write flags for active timebins */
 	  byten(TimeBinActive, TIMEBINS * sizeof(int), modus);
 
