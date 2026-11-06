@@ -43,6 +43,9 @@
 #include "../../mesh/gpu_neighbor_list.h"   /* gizmo_motion_bound_raise */
 #include "../../system/gpu_particles_arena.h"
 #include "ketju_mstar_kokkos.h"
+#ifdef KETJU_PN_REMNANT_TAG
+#include "../../galaxy_sf/stellar_evolution_tables.h" /* remnant types */
+#endif
 #include "ketju_star_mergers.h"
 
 #ifdef KETJU_REGULARIZATION
@@ -120,6 +123,17 @@ static void ketju_member_close(int i)
 #endif
 }
 
+#ifdef KETJU_PN_REMNANT_TAG
+/* remnant type of a dead Type-4 star, kept in its record; -1 = live star */
+static int ketju_remnant_type(int i)
+{
+    if(P[i].Type != 4) {return -1;}
+#ifdef TEST_KETJU_REMNANT_AT_START
+    return REM_DBH;
+#endif
+    return (P[i].StarIdx > 0) ? SingleStars.remnant_tag[single_star_slot(P[i].StarIdx)] - 1 : -1;
+}
+#endif
 
 /* start-up state of the KETJU fields */
 void ketju_init_particle(int i)
@@ -137,6 +151,8 @@ void ketju_init_particle(int i)
     P[i].StarIdx = 0;
 #endif
     P[i].KetjuOpenRadius = 0;
+#ifdef KETJU_PN_REMNANT_TAG
+#endif
 }
 
 /* softening and AGS zeta of particle p as the gravity walk uses them: [0] as target, [1] as leaf secondary */
@@ -240,6 +256,9 @@ struct ketju_mpi_particle {
 #ifdef KETJU_SINKS
     short int KetjuPNClass;
     double Spin[3];
+#endif
+#ifdef KETJU_PN_REMNANT_TAG
+    signed char RemnantType; /* Type-4 compact remnant code (-1 = live star) */
 #endif
     double Soft[2], Zeta[2]; /* softening/zeta as the tree uses them ([0] target, [1] secondary); fixed for stars under KETJU */
 #ifdef KJ_STAR_COLLISIONS
@@ -695,6 +714,10 @@ static int is_chain_eligible(int i)
  * ============================================================ */
 static int is_pn_remnant_type4(const ketju_mpi_particle *p)
 {
+#ifdef KETJU_PN_REMNANT_TAG
+    if(p->Type == 4 && (p->RemnantType == REM_ECSN || p->RemnantType == REM_CCSN || p->RemnantType == REM_FSN ||
+                        p->RemnantType == REM_PPISN || p->RemnantType == REM_DBH)) return 1; /* NS/BH remnants */
+#endif
     return 0;
 }
 
@@ -800,6 +823,9 @@ static std::vector<ketju_mpi_particle> gather_chain_centers(void)
 #ifdef KETJU_SINKS
             local_centers[k].KetjuPNClass = (P[i].Type == 5) ? KETJU_PN_CLASS(i) : -1;
             for(int j = 0; j < 3; j++) local_centers[k].Spin[j] = (P[i].Type == 5) ? P[i].KetjuSpin[j] : 0;
+#endif
+#ifdef KETJU_PN_REMNANT_TAG
+            local_centers[k].RemnantType = ketju_remnant_type(i);
 #endif
             local_centers[k].TidalNorm = 0;
             if(KETJU_DT_MEMBER(i) && ketju_member(i).com_dt_tidal < 0.5 * MAX_REAL_NUMBER) local_centers[k].TidalNorm = All.cf_a3inv / (ketju_member(i).com_dt_tidal * ketju_member(i).com_dt_tidal);
@@ -981,6 +1007,9 @@ static void forward_com_to_affected_root(KetjuRegion &reg)
 static double ketju_star_contact_radius(int i)
 {
     if(P[i].Type != 4 || P[i].Mass <= 0) return 0;
+#ifdef KETJU_PN_REMNANT_TAG
+    if(ketju_remnant_type(i) >= 0) return 0;
+#endif
     double R_cm;
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
     if(P[i].StarIdx > 0 && SingleStars.event_bits[single_star_slot(P[i].StarIdx)] != 0) {return 0;} /* a remnant */
@@ -1043,6 +1072,9 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 #ifdef KETJU_SINKS
         mp.KetjuPNClass = (P[idx].Type == 5) ? KETJU_PN_CLASS(idx) : -1;
         for(int j = 0; j < 3; j++) mp.Spin[j] = (P[idx].Type == 5) ? P[idx].KetjuSpin[j] : 0;
+#endif
+#ifdef KETJU_PN_REMNANT_TAG
+            mp.RemnantType = ketju_remnant_type(idx);
 #endif
         tree_pair_softening(idx, mp.Soft, mp.Zeta);
 #ifdef KJ_STAR_COLLISIONS
@@ -1198,6 +1230,9 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
             }
 #endif
         }
+#if defined(TEST_KETJU_REGION_LOG) && defined(KETJU_PN_REMNANT_TAG)
+        if(All.Ti_Current == 0) {printf("KETJU_REGION_PN %d\n", reg.num_pn_particles);}
+#endif
 #ifdef TEST_KETJU_REGION_LOG
         {
             double e[2] = {0, 0}, M = 0, c[3] = {0, 0, 0}, q[3] = {0, 0, 0}; int n = reg.total_particle_count;

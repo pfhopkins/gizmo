@@ -4,7 +4,7 @@
 #ifndef STELLAR_EVOLUTION_TABLES_H
 #define STELLAR_EVOLUTION_TABLES_H
 
-#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || defined(KETJU_PN_REMNANT_TAG)
 #include <string>
 #include <vector>
 #define STBL_NZ    15     /* table grid: metallicities */

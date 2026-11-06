@@ -428,6 +428,9 @@ void single_star_feedback_finalize(const int *list, int n)
         ssfb_rows.insert(ssfb_rows.end(), row, row + SSFB_LOG_COLS);
         P[i].Mass = ev.M_rem / UNIT_MASS_IN_SOLAR; /* exactly the table remnant; 0 (PISN, Type Ia) removes the particle */
         SingleStars.event_bits[s] |= (kind == SSE_AGB) ? SINGLE_STAR_EVENT_AGB_DONE : SINGLE_STAR_EVENT_SN_DONE;
+#ifdef KETJU_PN_REMNANT_TAG
+        SingleStars.remnant_tag[s] = (int8_t)(ev.remnant_type + 1); /* compact remnants take PN terms in KETJU */
+#endif
         SingleStars.M_at_SN_trigger[s] = 0;
         P[i].SNe_ThisTimeStep = 0; P[i].MassReturn_ThisTimeStep = 0;
     }
