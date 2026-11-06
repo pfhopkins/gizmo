@@ -253,6 +253,7 @@
 #define  THOMPSON_CX_CGS    (6.65245e-25)
 #define  ELECTRONCHARGE_CGS (4.8032e-10)
 #define  SECONDS_PER_YEAR   (3.155e7)
+#define  STOP_FILE_CHECK_MIN_WALL_SECONDS (1.0) /* wall seconds between stop-file checks: at most one per step, skipped on steps shorter than this. The check opens a file on a shared filesystem while every other rank waits on it. */
 #define  HUBBLE_H100_CGS    (3.2407789e-18)    /* in h/sec */
 #define  ELECTRONVOLT_IN_ERGS (1.60217733e-12)
 #define  PLANCK_CGS         (6.6260755e-27)
