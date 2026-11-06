@@ -22,7 +22,11 @@ static MPI_Datatype MPI_TYPE_TIME = MPI_LONG_LONG;
  * always in the last bit. Writing the expression once in a shared inline does NOT fix it -- the
  * inline is expanded into both contexts and then transformed differently in each.
  *
- * So the contract is enforced here rather than defended at each site. */
+ * So the contract is enforced here rather than defended at each site.  Behind it: the mapping is
+ * written once (domain/domain_key_functions.h), the host calls it through one noinline emission
+ * (domain_peano_key_of_position), and every tree build re-keys a sample of the device's keys on the
+ * host and stops the run if they differ (gpu_topology_build.cc).  Those make a divergence loud; this
+ * refusal is what keeps it from arising. */
 #ifdef __FAST_MATH__
 #error "A fast floating-point model breaks the position->key contract: it licenses reciprocal and fused-multiply-add rewrites, so the domain exchange and the tree build can compute different keys for the same particle and silently detach it from every rank's tree. Check this systype's OPTIMIZE in the Makefile for -ffast-math or -Ofast -- and note that the Intel compilers select a fast model BY DEFAULT, with no such flag present, in which case add -fp-model=precise -no-fma."
 #endif

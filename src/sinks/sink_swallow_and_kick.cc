@@ -215,7 +215,7 @@ void sink_swallow_and_kick_loop(void)
     args.aux         = &aux;
     run_neighbor_loop<SinkSwkSpec>(args);
 
-    /* physics: caller scatter + MPI_Reduce of swallow counters */
+    /* physics: caller scatter + Allreduce of swallow counters */
     int N_gas_sw = 0, N_sink_sw = 0, N_star_sw = 0, N_dm_sw = 0;
     sink_swk_scatter(active_list, num_active, per_active_accum,
                      &N_gas_sw, &N_sink_sw, &N_star_sw, &N_dm_sw);
@@ -223,12 +223,18 @@ void sink_swallow_and_kick_loop(void)
        topology from before this must know (counted on the sink's rank; consumers decide collectively). */
     if(N_gas_sw > 0) {ghost_exchange_gas_eligibility_changed("sink_swallow_and_kick_loop");}
 
+    /* Allreduce, not Reduce: every rank needs the global count, because it raises the moments
+       flag and gates the cleanup rearrange in run.cc, and both decisions must be rank-uniform. */
     int Ntot_gas = 0, Ntot_sink = 0, Ntot_star = 0, Ntot_dm = 0;
-    MPI_Reduce(&N_gas_sw,  &Ntot_gas,  1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&N_sink_sw, &Ntot_sink, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&N_star_sw, &Ntot_star, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&N_dm_sw,   &Ntot_dm,   1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-    if(ThisTask == 0 && (Ntot_gas || Ntot_sink || Ntot_star || Ntot_dm)) {
+    MPI_Allreduce(&N_gas_sw,  &Ntot_gas,  1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&N_sink_sw, &Ntot_sink, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&N_star_sw, &Ntot_star, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&N_dm_sw,   &Ntot_dm,   1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    NtotSwallowedThisStep = Ntot_gas + Ntot_sink + Ntot_star + Ntot_dm;
+    /* A swallowed particle sits at Mass=0, still linked in the tree, with its mass in every ancestor
+       moment until the next refresh; the slot itself is eliminated by the cleanup rearrange. */
+    if(NtotSwallowedThisStep > 0) {TreeMomentsStaleFlag = 1;}
+    if(ThisTask == 0 && NtotSwallowedThisStep > 0) {
         printf("Accretion done: swallowed %d gas, %d star, %d dm, and %d sink particles\n",
                Ntot_gas, Ntot_star, Ntot_dm, Ntot_sink);
         fflush(stdout);
@@ -303,6 +309,7 @@ void spawn_sink_wind_feedback(void)
     if(MPI_n_particles_split>0) {
 #ifdef MAINTAIN_TREE_IN_REARRANGE
         All.NumForcesSinceLastTreeBuild +=  0.0001 * All.TreeRebuild_ActiveFraction * All.TotNumPart; // we can insert spawned particles in the tree, but still a good idea to rebuild the tree every now and then, so we bring the next treebuild a bit sooner; additional cost should be small
+        TreeMomentsStaleFlag = 1; /* the spawned cells' mass and the debited sink mass enter the node moments at the next refresh; rank-uniform (inside the reduced MPI_n_particles_split>0 gate) */
 #else
         TreeReconstructFlag = 1; // otherwise just wipe and rebuild the tree next chance you get - more expensive but more accurate
 #endif

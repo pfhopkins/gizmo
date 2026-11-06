@@ -27,6 +27,7 @@
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../system/gpu_particles_arena.h"
+#include "../domain/domain_key_functions.h"
 #include "gpu_morton.h"
 #include "gpu_morton_functions.h"
 #include "gpu_peano_walk.h"
@@ -160,26 +161,21 @@ static int *grow_int_buffer(int *buf, int old_cap, int new_cap, const char *labe
     return buf;
 }
 
-/* The one place a position becomes a (Peano, Morton) key pair.  Used by the bucketing kernel, by the
- * retained-attachment recovery, and by the clamp, so the three cannot drift apart. */
+/* The device's route from a position to a (Peano, Morton) key pair.  The position -> integer
+ * coordinate mapping is the shared one in domain_key_functions.h, the same source the host
+ * decomposition keys with; the bucketing kernel, the retained-attachment recovery, the clamp and
+ * the equivalence check below all come through here.  coords_out, if given, receives the integer
+ * coordinates the keys were built from. */
 KOKKOS_INLINE_FUNCTION peanokey topo_key_of_position_(double x, double y, double z,
                                                       double dc0, double dc1, double dc2,
-                                                      double dlen, int bits, Morton128 *morton_out)
+                                                      double dlen, int bits, Morton128 *morton_out,
+                                                      uint64_t *coords_out = NULL)
 {
-    double fx = (dlen > 0.0) ? ((x - dc0) / dlen) : 0.0;
-    double fy = (dlen > 0.0) ? ((y - dc1) / dlen) : 0.0;
-    double fz = (dlen > 0.0) ? ((z - dc2) / dlen) : 0.0;
-    /* Clamp the sum, not the fraction: the key is the mantissa of (frac + 1.0), and a fraction just
-     * under 1.0 can carry that sum up to 2.0, whose mantissa is zero -- the first cell instead of the
-     * last.  See gpu_morton.cc. */
-    double sx = fx + 1.0, sy = fy + 1.0, sz = fz + 1.0;
-    if(!(sx >= 1.0)) {sx = 1.0;} if(!(sx < 2.0)) {sx = 0x1.fffffffffffffp0;}
-    if(!(sy >= 1.0)) {sy = 1.0;} if(!(sy < 2.0)) {sy = 0x1.fffffffffffffp0;}
-    if(!(sz >= 1.0)) {sz = 1.0;} if(!(sz < 2.0)) {sz = 0x1.fffffffffffffp0;}
+    uint64_t c[3];
+    domain_key_integer_coordinates(x, y, z, dc0, dc1, dc2, dlen, bits, c);
+    if(coords_out) {coords_out[0] = c[0]; coords_out[1] = c[1]; coords_out[2] = c[2];}
     Morton128 m;
-    peanokey pkey = gpu_peano_and_morton_key(gpu_morton_double_to_int42(sx),
-                                             gpu_morton_double_to_int42(sy),
-                                             gpu_morton_double_to_int42(sz), bits, &m);
+    peanokey pkey = gpu_peano_and_morton_key(c[0], c[1], c[2], bits, &m);
     *morton_out = m;
     return pkey;
 }
@@ -193,6 +189,89 @@ struct topo_build_ctx {
     const struct topnode_data *tn;
     const int                 *dni;
 };
+
+/* ---- Host/device key equivalence check ----
+ * The decomposition keys a particle on the host and this build keys it on the device, each from its
+ * own expansion of domain_key_functions.h, possibly by different compilers.  The mapping is exact
+ * under a strict floating-point model, but a fast model lets the two expansions round differently,
+ * and a last-bit difference that carries into the top mantissa bits puts the particle in a top-leaf
+ * another rank owns.  Every build therefore keys a bounded sample of its particles on the device,
+ * records the exact coordinates it keyed, and has the host re-key those coordinates through its
+ * single emission (domain_peano_key_of_position).  Any difference is a build whose ownership and
+ * placement can disagree, so it requests a controlled stop.  The sample rotates through the
+ * particles across builds; a compiler-level divergence shows up in a measurable fraction of random
+ * coordinates, so it is caught within a few builds rather than once per orphaned particle. */
+#define TOPO_KEY_CHECK_SAMPLE 4096
+struct topo_key_sample {
+    double   pos[3];     /* the coordinates the device keyed, so the host recomputes from identical inputs */
+    uint64_t coord[3];   /* the device's integer coordinates */
+    peanokey key;        /* the device's Peano key */
+};
+static struct topo_key_sample *g_key_check          = NULL;   /* SharedSpace, [TOPO_KEY_CHECK_SAMPLE] */
+static int                     g_key_check_disabled = 0;      /* set when its buffer could not be had */
+static long                    g_key_check_builds   = 0;      /* builds checked on this rank; rotates the sample */
+
+static void topo_print_peanokey_(const char *label, peanokey k)
+{
+    printf("%s=0x%016llx%016llx", label, (unsigned long long)((unsigned __int128)k >> 64), (unsigned long long)(unsigned __int128)k);
+}
+
+static void topo_check_key_mapping_(int npart, const struct topo_build_ctx &ctx,
+                                    double dc0, double dc1, double dc2, double dlen, int bits)
+{
+    if(npart <= 0 || g_key_check_disabled) {return;}
+    if(!g_key_check) {
+        g_key_check = (struct topo_key_sample *) gizmo_gpu_alloc_shared(sizeof(struct topo_key_sample) * TOPO_KEY_CHECK_SAMPLE, "treescratch_build_key_check");
+        if(!g_key_check) {
+            printf("gpu_topology_build: task %d could not allocate the host/device key-check sample; the check is off on this task\n", ThisTask);
+            g_key_check_disabled = 1;
+            return;
+        }
+    }
+    const int nsample = (npart < TOPO_KEY_CHECK_SAMPLE) ? npart : TOPO_KEY_CHECK_SAMPLE;
+    const int stride  = npart / nsample;                           /* >= 1 */
+    const int offset  = (int)(g_key_check_builds % stride);        /* offset + (nsample-1)*stride < npart */
+    g_key_check_builds++;
+
+    const int *stp = g_slot_map_active ? g_slot_to_particle : NULL;
+    struct particle_data *P_dev = ctx.P_dev;
+    struct topo_key_sample *smp = g_key_check;
+    Kokkos::parallel_for("topo_key_check", nsample, KOKKOS_LAMBDA(int j) {
+        const int slot = offset + j * stride;
+        const int real = stp ? stp[slot] : slot;
+        const double x = P_dev[real].Pos[0], y = P_dev[real].Pos[1], z = P_dev[real].Pos[2];
+        Morton128 m;
+        smp[j].pos[0] = x; smp[j].pos[1] = y; smp[j].pos[2] = z;
+        smp[j].key = topo_key_of_position_(x, y, z, dc0, dc1, dc2, dlen, bits, &m, smp[j].coord);
+    });
+    Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_key_check", nsample);
+
+    long nbad = 0; int first = -1;
+    for(int j = 0; j < nsample; j++) {
+        peano1D hc[3];
+        const peanokey hk = domain_peano_key_of_position(smp[j].pos[0], smp[j].pos[1], smp[j].pos[2], hc);
+        if(hk != smp[j].key || (uint64_t)hc[0] != smp[j].coord[0] || (uint64_t)hc[1] != smp[j].coord[1] || (uint64_t)hc[2] != smp[j].coord[2]) {
+            if(first < 0) {first = j;}
+            nbad++;
+        }
+    }
+    if(nbad == 0) {return;}
+
+    peano1D hc[3];
+    const peanokey hk = domain_peano_key_of_position(smp[first].pos[0], smp[first].pos[1], smp[first].pos[2], hc);
+    printf("gpu_topology_build: task %d: the host and the device key the same position differently for %ld of %d sampled particles. "
+           "First: pos=(%.17g, %.17g, %.17g) host coords=(%llu, %llu, %llu) device coords=(%llu, %llu, %llu) ",
+           ThisTask, nbad, nsample, smp[first].pos[0], smp[first].pos[1], smp[first].pos[2],
+           (unsigned long long)hc[0], (unsigned long long)hc[1], (unsigned long long)hc[2],
+           (unsigned long long)smp[first].coord[0], (unsigned long long)smp[first].coord[1], (unsigned long long)smp[first].coord[2]);
+    topo_print_peanokey_("host key", hk); printf(" "); topo_print_peanokey_("device key", smp[first].key);
+    printf(". The domain decomposition and the tree build cannot be trusted to agree about which rank owns a particle: "
+           "the two translation units, or the two compilers, do not compute domain_key_functions.h the same way "
+           "(an unsafe floating-point model is the known cause).\n");
+    fflush(stdout);
+    gizmo_request_controlled_stop(91565, "host/device position->key mapping disagreement", __FILE__, __LINE__, __func__);
+}
 
 static int topo_acquire_(int npart, const struct unbind_data *mp, const char *site, struct topo_build_ctx *ctx)
 {
@@ -421,6 +500,7 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
         Kokkos::fence();
         gizmo_gpu_check_last_error("topo_keys_and_assign", npart);
     }
+    topo_check_key_mapping_(npart, ctx, dc0, dc1, dc2, dlen, bits);
 
     /* Retained attachment: a particle kept under the topleaf it hung from in the standing tree takes
      * its key from the point where its true position is clamped into that leaf's cube.  The cube is
@@ -435,7 +515,7 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
         const int  nret = g_retained_n;
         struct NODE *Nodes_uvm = Nodes;
         /* How far inside the face the clamped point has to land.  A key keeps the top 42 bits of the
-         * mantissa (gpu_morton_double_to_int42), so one cell of key space is DomainLen * 2^-42 of
+         * mantissa (domain_key_functions.h), so one cell of key space is DomainLen * 2^-42 of
          * position, and a point merely a rounding step below the upper face still encodes into the
          * NEXT cell -- i.e. into the neighbouring top-leaf.  Two cells of margin puts it clear of that
          * and of the rounding in forming the fraction, while being geometrically nothing: a top-leaf
@@ -1412,6 +1492,7 @@ extern "C" void gpu_topology_build_release(void)
     gizmo_gpu_free_device(g_counters_dev);       g_counters_dev       = NULL;
     if(g_slot_to_particle) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_slot_to_particle); g_slot_to_particle = NULL;}
     if(g_retained_slots)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_retained_slots);   g_retained_slots   = NULL;}
+    if(g_key_check)        {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_key_check);        g_key_check        = NULL;}
 #if TREE_LEAF_BUCKET_SIZE > 1
     if(g_leaf_chain)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_leaf_chain);       g_leaf_chain       = NULL;}
     g_leaf_chain_count = 0;

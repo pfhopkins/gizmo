@@ -27,6 +27,8 @@ def plot_shu1977_density_slice(coords, rho, boxsize, output_dir="."):
     plt.close(fig)
 
 
+@pytest.mark.xfail(strict=True, reason=(
+    "fixed by pr/test-fixes: params in m/s against a km/s adiabat, c_s 0.2 m/s, m_sink/m_ff 0.983"))
 @pytest.mark.parametrize("num_mpi_ranks", (8,))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_shu1977(num_mpi_ranks, num_omp_threads):
@@ -40,6 +42,27 @@ def test_shu1977(num_mpi_ranks, num_omp_threads):
         num_sinks = f["Header"].attrs["NumPart_ThisFile"][5]
 
     assert num_sinks == 1, f"Expected exactly 1 PartType5 particle, got {num_sinks}"
+
+    # Pressure support. A shell of this overdense isothermal sphere (M(<r) = k r) would reach the
+    # centre at t = (pi/2) r / sqrt(2 G k) without pressure, so the sink would hold
+    # M_ff(t) = (2/pi) sqrt(2 G) k^1.5 t. Gas that is effectively pressureless (e.g. an
+    # EOS_ENFORCE_ADIABAT given in different velocity units from the params file) still makes
+    # exactly one sink, but accretes at that rate.
+    with h5py.File(path.join(path.dirname(final_snap), "snapshot_000.hdf5"), "r") as F:
+        G = F["Header"].attrs["Gravitational_Constant_In_Code_Inits"]
+        x = F["PartType0/Coordinates"][:].astype(np.float64)
+        m = F["PartType0/Masses"][:].astype(np.float64)
+    r = np.linalg.norm(x - np.average(x, axis=0, weights=m), axis=1)
+    order = np.argsort(r)
+    k = np.median((np.cumsum(m[order]) / r[order])[len(m) // 10 : 9 * len(m) // 10])
+    with h5py.File(final_snap, "r") as F:
+        t_final = F["Header"].attrs["Time"]
+        m_sink = F["PartType5/Masses"][:].sum()
+    m_ff = (2 / np.pi) * np.sqrt(2 * G) * k**1.5 * t_final
+    assert m_sink < 0.9 * m_ff, (
+        f"sink mass {m_sink:.4g} is {m_sink / m_ff:.3f} of the pressureless free-fall value "
+        f"{m_ff:.4g}: the gas has no effective pressure support"
+    )
 
     with h5py.File(final_snap, "r") as F:
         coords = F["PartType0/Coordinates"][:]
