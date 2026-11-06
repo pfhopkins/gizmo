@@ -377,6 +377,9 @@ static void mechanical_fb_per_source_setup(
 #ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
     if(m.feedback_type_is_SNe) {m.momentum_to_couple_term_units = 0;} /* pure-thermal SNe: no radial ejecta momentum; the cell's closure below gives the whole energy as heat */
 #endif
+#ifdef GALSF_SINGLE_STARS_WINDS_THERMAL_ONLY
+    if(loop_iteration == 1) {m.momentum_to_couple_term_units = 0;} /* winds and AGB ejecta: no kick, the cell's closure gives the whole energy as heat */
+#endif
 
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE) && !(defined(MECHFB_CR_INJECTION) && defined(GALSF_SINGLE_STARS_FROM_IMF))
     /* Mirror CPU lines 548-555 in mechanical_fb.cc: compute CR energy budget
@@ -580,6 +583,9 @@ static void mechanical_fb_pair_kernel(
 #ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
     if(m.feedback_type_is_SNe) {pnorm = wk_local_norm;} /* heat needs no balance: the plain share */
 #endif
+#ifdef GALSF_SINGLE_STARS_WINDS_THERMAL_ONLY
+    if(loop_iteration == 1) {pnorm = wk_local_norm;}
+#endif
 #endif
     double dM_ejecta_in = pnorm * (double)local.Msne;
     double mj_preshock = Mass_j;
@@ -648,7 +654,9 @@ static void mechanical_fb_pair_kernel(
                                        home_gas_delta, ghost_gas_delta);
 #endif
         double mom_prefactor = scalars.common.cf_atime * m.momentum_to_couple_term_units / Mass_j;
-#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
+#if defined(GALSF_SINGLE_STARS_WINDS_THERMAL_ONLY)
+        if(mom_prefactor > 0 || m.feedback_type_is_SNe || loop_iteration == 1) { /* no kick: the ejecta carry the star's velocity */
+#elif defined(GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY)
         if(mom_prefactor > 0 || m.feedback_type_is_SNe) { /* pure-thermal SNe: the ejecta carry the star's velocity */
 #else
         if(mom_prefactor > 0) {
