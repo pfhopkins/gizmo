@@ -1753,12 +1753,22 @@ static int nheattab;		/* length of table */
 void ReadIonizeParams(const char *fname)
 {
     int i; FILE *fdcool;
-    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456); return;}
+    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory.\n", fname); endrun(456); return;}
     for(i=0; i<TABLESIZE; i++) {inlogz[i]=100; gH0[i]=0; gHe[i]=0; gHep[i]=0; eH0[i]=0; eHe[i]=0; eHep[i]=0;}
-    for(i=0; i<TABLESIZE; i++) {if(fscanf(fdcool, "%g %lg %lg %lg %lg %lg %lg", &inlogz[i], &gH0[i], &gHe[i], &gHep[i], &eH0[i], &eHe[i], &eHep[i]) == EOF) {break;}}
+    char line[1024]; int n_rows = 0;
+    while(fgets(line, sizeof(line), fdcool))
+    {
+        const char *text = line + strspn(line, " \t\r\n");
+        if(*text == '\0' || *text == '#') {continue;} /* blank lines and comments (e.g. the citation header of the distributed tables) */
+        char extra; /* the table keeps one row past the last entry (see TABLESIZE), and the extra conversion refuses anything after the seventh number */
+        if(n_rows >= TABLESIZE-1 || sscanf(text, "%g %lg %lg %lg %lg %lg %lg %c", &inlogz[n_rows], &gH0[n_rows], &gHe[n_rows], &gHep[n_rows], &eH0[n_rows], &eHe[n_rows], &eHep[n_rows], &extra) != 7)
+            {printf(" Ionization table `%s': row %d is not exactly 7 numbers, or the table has more than %d rows:\n %s\n", fname, n_rows+1, (int)TABLESIZE-1, text); fclose(fdcool); endrun(456); return;}
+        n_rows++;
+    }
     fclose(fdcool);
     for(i=0, nheattab=0; i<TABLESIZE; i++) {if(gH0[i] != 0.0) {nheattab++;} else {break;}} /*  nheattab is the number of entries in the table */
     if(ThisTask == 0) printf(" ..read ionization table [TREECOOL] with %d non-zero UVB entries in file `%s'. Make sure to cite the authors from which the UV background was compiled! (See user guide for the correct references).\n", nheattab, fname);
+    if((ThisTask == 0) && (nheattab == 0)) {printf(" WARNING: the ionization table `%s' has no non-zero entries: this run has no UV background, and with it no tabulated metal-line cooling.\n", fname);}
 }
 
 
