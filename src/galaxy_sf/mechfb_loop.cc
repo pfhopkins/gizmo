@@ -27,6 +27,9 @@
 #include "../mesh/ghost_symlist_lifecycle.h"   /* gizmo_ghost_safety_factor() */
 
 #include "mechfb_loop.h"
+#ifdef MECHFB_BALANCED_SHARES
+#include "../mesh/gpu_neighbor_list.h"         /* gizmo_motion_bound_raise */
+#endif
 
 #ifdef GALSF_FB_MECHANICAL
 
@@ -426,6 +429,12 @@ void MechFBSpec::after_iter_global(const neighbor_loop_args& args,
             mech_fb_apply_aws_out(&accum, i, mode);
         } else if (accum.M_coupled > 0) {
             mech_fb_apply_source_mass_out(P, CellP, i, accum.M_coupled);
+#ifdef MECHFB_BALANCED_SHARES
+            if (P[i].Mass > 0) { /* what the gas took unbalanced: rounding, or the whole momentum when all gas lies along one ray */
+                for (int k = 0; k < 3; ++k) {P[i].Vel[k] -= accum.p_to_gas[k] * nlr_host_all_ptr()->cf_atime / P[i].Mass;}
+                gizmo_motion_bound_raise(&i, 1);
+            }
+#endif
         }
     }
 }

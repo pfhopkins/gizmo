@@ -45,6 +45,9 @@
 #ifndef GALSF_FB_MECHANICAL
 #define GALSF_FB_MECHANICAL
 #endif
+#if !defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS) && !defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS) && !defined(GALSF_FB_MECHANICAL_FACE_AREA_WEIGHTS)
+#define GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+#endif
 #ifndef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
 #define GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
 #endif
@@ -1121,6 +1124,14 @@
 #endif
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
 #define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
+#endif
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS /* one weighting per build; the cell closes the energy of a deposit only for single stars from the tables */
+#if defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS) || defined(GALSF_FB_MECHANICAL_FACE_AREA_WEIGHTS)
+#error "GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS, GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS and GALSF_FB_MECHANICAL_FACE_AREA_WEIGHTS exclude each other"
+#endif
+#if !defined(GALSF_FB_MECHANICAL) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS needs GALSF_FB_MECHANICAL, GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
 #endif
 #ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS /* single stars: band-resolved photon momentum at the star, in the local radiation-pressure loop */
 #if !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)

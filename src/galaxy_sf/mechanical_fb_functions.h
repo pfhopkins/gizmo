@@ -31,6 +31,10 @@
 
 #include "../mesh/neighbor_loop_runner.h"  /* NlrCommonScalars */
 
+#if defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS) || defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS)
+#define MECHFB_BALANCED_SHARES /* shares q = w (r - mean of w r) normalised by sum |q|, in place of the face-wise balancing */
+#endif
+
 /* Cosmology + unit-factor + CR-rigidity scalars for mechfb kernel helpers.
  * Built host-side once per call via mechfb_fill_call_scalars (mechfb_loop.cc);
  * threaded into mechanical_fb_per_source_setup, mechanical_fb_pair_kernel, and
@@ -136,6 +140,9 @@ struct MechFBOut
 {
     MyFloat M_coupled;
     MyFloat Area_weighted_sum[AREA_WEIGHTED_SUM_ELEMENTS];
+#ifdef MECHFB_BALANCED_SHARES
+    MyFloat p_to_gas[3]; /* momentum handed to the gas in the star's frame: the star recoils with it */
+#endif
 };
 
 /* Per-source per-mode precomputed state. Built in the lambda once per star-mode. */
@@ -284,9 +291,11 @@ KOKKOS_INLINE_FUNCTION int mechfb_hpx_nside1_pixel(double x, double y, double z)
     int ir = (int)(tp * tmp) + (int)((1.0 - tp) * tmp) + 1, ip = ((int)(tt * ir)) % (4 * ir);
     return (z > 0) ? 2 * ir * (ir - 1) + ip : 12 - 2 * ir * (ir + 1) + ip;
 }
+#endif
 
+#ifdef MECHFB_BALANCED_SHARES
 /* share wk of the cell along its direction less the weighted mean direction, so the shares balance exactly */
-KOKKOS_INLINE_FUNCTION void mechfb_healpix_balanced_vector(const struct MechFBLocalIn& local, double wk_norm, double wk, const Vec3<double>& dp, double r, double* pvec, double* pnorm)
+KOKKOS_INLINE_FUNCTION void mechfb_balanced_vector(const struct MechFBLocalIn& local, double wk_norm, double wk, const Vec3<double>& dp, double r, double* pvec, double* pnorm)
 {
     *pnorm = 0;
     for(int k = 0; k < 3; k++)
@@ -358,6 +367,9 @@ static void mechanical_fb_per_source_setup(
         if((S2_E < 0.01 * S1_2) && (S1 > 0.0)) p0_egycon = egy_0_norm_for_soln / S1 * (1.0 - S2_E / (4.0 * S1_2));
 
         double p_coupled = DMIN(p0_egycon, p_terminal);
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+        if(m.feedback_type_is_SNe == 0) {p_coupled = (double)local.Msne * (double)local.SNe_v_ejecta;} /* the booked momentum whatever the gas does; the cell closes the energy */
+#endif
         double egy_RHS = p_coupled * p_coupled * S2 + p_coupled * S1;
         m.momentum_to_couple_term_units = p_coupled;
         m.U_thermal_residual_tocouple = Energy_injected_codeunits - egy_RHS;
@@ -450,6 +462,10 @@ static void mechanical_fb_pair_kernel(
     if(V_j < 0 || V_j != V_j) V_j = 0;
     double face_area = fabs(V_i * V_i * dwk_self + V_j * V_j * dwk_j);
     double wk = 0.5 * (1 - 1 / sqrt(1 + face_area / (M_PI * r * r)));
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+    kernel_main(u, m.hinv3, m.hinv4, &wk_self, &dwk_self, -1);
+    wk = (u < 1) ? Mass_j * wk_self : 0; /* mass x kernel over the star's own kernel */
+#endif
     if(wk <= 0 || wk != wk) return;
 #ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
     if(r2 > m.h2) return; /* the star's own kernel only */
@@ -501,8 +517,8 @@ static void mechanical_fb_pair_kernel(
             pnorm += pvec[k] * pvec[k];
         }
         pnorm = sqrt(pnorm);
-#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
-        mechfb_healpix_balanced_vector(local, m.wk_norm, wk * m.wk_norm, dp, r, pvec, &pnorm);
+#ifdef MECHFB_BALANCED_SHARES
+        mechfb_balanced_vector(local, m.wk_norm, wk * m.wk_norm, dp, r, pvec, &pnorm);
 #endif
         for(int k = 0; k < 3; k++)
         {
@@ -551,12 +567,12 @@ static void mechanical_fb_pair_kernel(
         pnorm += pvec[k] * pvec[k];
     }
     pnorm = sqrt(pnorm);
-#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
-    mechfb_healpix_balanced_vector(local, m.wk_norm, wk_local_norm, dp, r, pvec, &pnorm);
+#ifdef MECHFB_BALANCED_SHARES
+    mechfb_balanced_vector(local, m.wk_norm, wk_local_norm, dp, r, pvec, &pnorm);
 #endif
     pnorm *= m.pnorm_sum;
     for(int k = 0; k < 3; k++) pvec[k] *= m.pnorm_sum;
-#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+#ifdef MECHFB_BALANCED_SHARES
     if((double)local.Area_weighted_sum[10] < 1.0e-6) { /* all gas along one ray: radial */
         pnorm = wk_local_norm;
         for(int k = 0; k < 3; k++) {pvec[k] = -wk_local_norm * dp[k] / r;}
@@ -636,6 +652,9 @@ static void mechanical_fb_pair_kernel(
         if(mom_prefactor > 0 || m.feedback_type_is_SNe) { /* pure-thermal SNe: the ejecta carry the star's velocity */
 #else
         if(mom_prefactor > 0) {
+#endif
+#ifdef MECHFB_BALANCED_SHARES
+            for(int k = 0; k < 3; k++) {myout.p_to_gas[k] += (MyFloat)(m.momentum_to_couple_term_units * pvec[k]);}
 #endif
             for(int k = 0; k < 3; k++) {
                 double d_vel = mom_prefactor * pvec[k] + massratio_ejecta * ((double)local.Vel[k] - Vel_j[k]);

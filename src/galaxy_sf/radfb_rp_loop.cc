@@ -363,6 +363,9 @@ int radfb_rp_local_fill(int i,
     double RtauMax  = P_host[i].KernelRadius * (2.0 + tau_IR);
     RtauMax = DMAX(1.0e-3 / (unit_length_in_kpc * HostAll->cf_atime),
                    DMIN(1.0 / (unit_length_in_kpc * HostAll->cf_atime), RtauMax));
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+    RtauMax = P_host[i].KernelRadius; /* the star's own kernel, as the mechanical feedback */
+#endif
 
     /* stochastic gate */
     double v_wind_threshold = 15.0 / unit_vel_in_kms;

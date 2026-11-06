@@ -129,6 +129,9 @@ struct RadFBRPLocalIn {
      * estimate, which needs how many cells share the sightline, not how much of
      * the sky each one covers. */
     double         wt_area;
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+    double         mean_dir[3];           /* staged weighted mean of the directions to the cells */
+#endif
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
     MyFloat        delta_v_imparted_rp;   /* per-kick target velocity (stochastic threshold) */
 #endif
@@ -152,6 +155,9 @@ struct RadFBRPAccum {
                                   * neighbours. Held apart from wt_sum because the kick
                                   * weight is a covering factor and carries distance, while
                                   * the absorbed-fraction estimate needs a bare cell count. */
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+    double   wt_dir[3];          /* iter 0 output: Sum w r, r the unit vector to the cell */
+#endif
     double   n_touched;          /* gas cells actually kicked */
     double   mom_coupled;        /* Sum of mass * |dv| given to those cells */
     double   sum_v_kick;         /* Sum of |dv|, for the mean kick velocity */
@@ -216,6 +222,18 @@ static double radfb_rp_kernel_weight(double h_j, double r2, double rkern2, doubl
     return (h_j * h_j) / (eps2 + r2) * sqrt(taper);
 }
 
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+/* the mechanical feedback's weight: mass x kernel over the star's own kernel */
+KOKKOS_INLINE_FUNCTION
+static double radfb_rp_mass_kernel_weight(double Mass_j, double r2, double h)
+{
+    double hinv, hinv3, hinv4, wk = 0, dwk = 0;
+    kernel_hinv(h, &hinv, &hinv3, &hinv4);
+    kernel_main(sqrt(r2) * hinv, hinv3, hinv4, &wk, &dwk, -1);
+    return Mass_j * wk;
+}
+#endif
+
 KOKKOS_INLINE_FUNCTION
 static void radfb_rp_pair_kick(
     const RadFBRPLocalIn& loc,
@@ -236,9 +254,13 @@ static void radfb_rp_pair_kick(
 
     double h_j   = Pj.Get_Particle_Size();
     double rkern = (double)loc.KernelRadius;
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+    double wk    = radfb_rp_mass_kernel_weight(Mass_j, r2, rkern) / (double)loc.wt_sum;
+#else
     double eps   = (double)loc.SourceKernelRadius;
     double wk    = radfb_rp_kernel_weight(h_j, r2, rkern * rkern, eps * eps)
                  / (double)loc.wt_sum;
+#endif
     if (wk <= 0) return;
 
     double dE = (double)loc.dE_over_c;
@@ -301,6 +323,9 @@ static void radfb_rp_pair_kick(
     {
         double norm = sqrt(dv_kick.norm_sq()), scale = (norm > 0) ? -dv_ss * scalars.common.cf_atime / norm : 0;
         dv_kick[0] *= scale; dv_kick[1] *= scale; dv_kick[2] *= scale;
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+        for(int k = 0; k < 3; k++) {dv_kick[k] -= dv_ss * scalars.common.cf_atime * loc.mean_dir[k];} /* no net momentum */
+#endif
     }
     (void) dv_ms;
 #elif (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
@@ -510,6 +535,9 @@ struct RadFBRPSpec {
     static void merge_accum(AccumData& local_accum, const AccumData& peer_accum)
     {
 #define ACCUM_ADD(field)  local_accum.field += peer_accum.field;
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+        for(int k = 0; k < 3; k++) {ACCUM_ADD(wt_dir[k])}
+#endif
         ACCUM_ADD(wt_sum)
         ACCUM_ADD(jet_momentum_used)
         ACCUM_ADD(wt_area)
@@ -551,6 +579,9 @@ struct RadFBRPSpec {
             if (per_active_local != nullptr) {   /* absent only when staging failed and the stop is requested */
                 per_active_local[call_slot].wt_sum  = accum.wt_sum;
                 per_active_local[call_slot].wt_area = accum.wt_area;
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+                for(int k = 0; k < 3; k++) {per_active_local[call_slot].mean_dir[k] = accum.wt_dir[k] / (MIN_REAL_NUMBER + accum.wt_sum);}
+#endif
             }
             if (accum.wt_sum <= 0) {
                 return IterResult{IterStatus::Converged, h_search_current};
@@ -573,6 +604,9 @@ struct RadFBRPSpec {
         accum.mom_coupled       = 0;
         accum.sum_v_kick        = 0;
         accum.sum_taufac        = 0;
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+        for(int k = 0; k < 3; k++) {accum.wt_dir[k] = 0;}
+#endif
     }
 
     KOKKOS_INLINE_FUNCTION
@@ -657,8 +691,14 @@ struct RadFBRPSpec {
              * its address for an atomic is only defined while it lives in
              * global memory, which the lane-private partial does not. */
             double h_j   = Pj.Get_Particle_Size();
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+            double w_mk = radfb_rp_mass_kernel_weight((double)Pj.Mass, r2, sqrt(h2)), r_inv = 1.0 / sqrt(r2);
+            accum.wt_sum += w_mk;
+            for(int k = 0; k < 3; k++) {accum.wt_dir[k] -= w_mk * dp[k] * r_inv;}
+#else
             double eps   = (double)active.local.SourceKernelRadius;
             accum.wt_sum  += radfb_rp_kernel_weight(h_j, r2, h2, eps * eps);
+#endif
             accum.wt_area += h_j * h_j;
         } else {
             /* iter 1 : apply kicks using staged active.local.wt_sum */

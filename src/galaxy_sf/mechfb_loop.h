@@ -247,6 +247,9 @@ struct MechFBSpec {
         for (int k = 0; k < AREA_WEIGHTED_SUM_ELEMENTS; ++k) {
             local.Area_weighted_sum[k] += peer.Area_weighted_sum[k];
         }
+#ifdef MECHFB_BALANCED_SHARES
+        for (int k = 0; k < 3; ++k) {local.p_to_gas[k] += peer.p_to_gas[k];}
+#endif
     }
 
     /* Per-active post-iter hook — STATUS-ONLY.
@@ -302,6 +305,9 @@ struct MechFBSpec {
         for (int k = 0; k < AREA_WEIGHTED_SUM_ELEMENTS; ++k) {
             accum.Area_weighted_sum[k] = 0;
         }
+#ifdef MECHFB_BALANCED_SHARES
+        for (int k = 0; k < 3; ++k) {accum.p_to_gas[k] = 0;}
+#endif
     }
 
     KOKKOS_INLINE_FUNCTION
