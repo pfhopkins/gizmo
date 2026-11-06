@@ -94,8 +94,8 @@ static struct peano_hilbert_data
 static void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB);
 static void domain_add_cost(struct local_topnode_data *treeA, int noA, long long count, double cost, double gascost);
 
-/*! Walk the top tree to find the leaf node for a given Peano-Hilbert key, using bitwise operations instead of 128-bit division */
-static inline int domain_toptree_leaf(peanokey key, struct local_topnode_data *tNodes)
+/*! the top-tree leaf node (index into tNodes) holding a Peano-Hilbert key; walks with bit shifts instead of 128-bit division */
+static inline int domain_toptree_node(peanokey key, struct local_topnode_data *tNodes)
 {
     int no = 0;
     peanokey mask = ((peanokey)7) << (3 * (BITS_PER_DIMENSION - 1));
@@ -106,8 +106,11 @@ static inline int domain_toptree_leaf(peanokey key, struct local_topnode_data *t
         mask >>= 3;
         shift -= 3;
     }
-    return tNodes[no].Leaf;
+    return no;
 }
+
+/*! the top-tree leaf index for a Peano-Hilbert key */
+static inline int domain_toptree_leaf(peanokey key, struct local_topnode_data *tNodes) {return tNodes[domain_toptree_node(key, tNodes)].Leaf;}
 
 static float *particle_total_cost;  /*!< cached per-particle total work cost: (1+multiplier)*costfactor */
 #ifdef DOMAIN_FREQ_WEIGHT
@@ -470,29 +473,38 @@ static int domain_mb_node_needs_refine(int i)
  *  weighted level k, recount, repeat. The local pass above sees only each rank's own particles, so once a decomposition
  *  has spread a core's short-timestep set over many ranks no rank refines it, the next decomposition gets coarse leaves
  *  and re-concentrates the set (the balance alternated decomposition to decomposition). Uses Key[] of the local
- *  particles; every decision is made from reduced data, so the tree stays rank-identical. Returns 1 if out of top nodes. */
+ *  particles; every decision is made from reduced data, so the tree stays rank-identical. Returns 1 if out of top nodes.
+ *  A leaf that a pass leaves unsplit keeps its particles, so only the previous pass's new leaves can still split: each
+ *  pass after the first counts and reduces just those (same splits, in the same node order, as recounting every leaf). */
 static int domain_mb_global_refine(void)
 {
     int K = 0; while(K < MB_K && MB_W[K] <= 0) {K++;} /* first weighted level; all from there on (cumulative) */
     const int k0 = K; K = MB_K - k0; if(K <= 0) {return 0;}
+    std::vector<int> pnode(NumPart, -1); /* the leaf node holding each counted particle */
+    int first = 0; /* candidate leaves are the nodes [first, NTopnodes) */
     for(int iter = 0; iter < 16; iter++)
     {
-        NTopleaves = 0; domain_walktoptree(0);
-        std::vector<int> cnt((size_t) NTopleaves * K, 0);
+        const int nnodes = NTopnodes;
+        std::vector<int> slot(nnodes - first, -1); int ncand = 0;
+        for(int no = first; no < nnodes; no++) {if(topNodes[no].Daughter < 0) {slot[no - first] = ncand++;}}
+        std::vector<int> cnt((size_t) ncand * K, 0);
         for(int i = 0; i < NumPart; i++)
         {
 #ifdef SUBFIND
             if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
 #endif
             int k = MB_LevOfBin[P[i].TimeBin] - k0; if(k >= K) {continue;} if(k < 0) {k = 0;}
-            cnt[(size_t) domain_toptree_leaf(Key[i], topNodes) * K + k]++;
+            int no = pnode[i];
+            if(iter > 0 && topNodes[no].Daughter < 0) {continue;} /* its leaf was not split: not a candidate */
+            no = domain_toptree_node(Key[i], topNodes); pnode[i] = no;
+            if(no >= first) {cnt[(size_t) slot[no - first] * K + k]++;}
         }
-        MPI_Allreduce(MPI_IN_PLACE, cnt.data(), NTopleaves * K, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        int nsplit = 0, nnodes = NTopnodes;
-        for(int no = 0; no < nnodes; no++)
+        MPI_Allreduce(MPI_IN_PLACE, cnt.data(), ncand * K, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        int nsplit = 0;
+        for(int no = first; no < nnodes; no++)
         {
             if(topNodes[no].Daughter >= 0 || topNodes[no].Size < 8) {continue;}
-            const int *c = &cnt[(size_t) topNodes[no].Leaf * K]; long long acc = 0; int need = 0;
+            const int *c = &cnt[(size_t) slot[no - first] * K]; long long acc = 0; int need = 0;
             for(int k = 0; k < K && !need; k++) {acc += c[k]; if(acc > MB_Lim[k0 + k]) {need = 1;}}
             if(!need) {continue;}
             if(NTopnodes + 8 > MaxTopNodes) {return 1;}
@@ -506,6 +518,7 @@ static int domain_mb_global_refine(void)
             NTopnodes += 8; nsplit++;
         }
         if(nsplit == 0) {break;}
+        first = nnodes;
     }
     return 0;
 }
