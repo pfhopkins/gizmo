@@ -1214,7 +1214,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_accumulate(double r2, const Vec3
                                                            grav_sink_prox_target_t target,
                                                            grav_sink_prox_accum_t &prox)
 {
-    (void) r2; (void) src; (void) target;
+    (void) r2; (void) src; (void) target; /* r2 is the distance to the node's mass centre: every term below uses the node's sink instead */
     double sink_r2 = sink_dr.norm_sq(); // + (nop->len)*(nop->len);
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
     if(target.ptype != SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
@@ -1229,7 +1229,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_accumulate(double r2, const Vec3
         }
 #ifdef SINGLE_STAR_TIMESTEPPING
     Vec3<double> sink_dv = src.motion.vel - target.vel; double vSqr=sink_dv.norm_sq(), M_total=src.sink_mass+target.pmass, r2soft;
-    r2soft = DMAX(SinkParticle_GravityKernelRadius, target.soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = r2 + r2soft*r2soft;
+    r2soft = DMAX(SinkParticle_GravityKernelRadius, target.soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = sink_r2 + r2soft*r2soft; /* the node's sink, as in the leaf form, not the node's mass centre */
     double tSqr = r2soft/(vSqr + MIN_REAL_NUMBER), tff4 = r2soft*r2soft*r2soft/(M_total*M_total);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
     if(target.ptype == 0) {
@@ -1242,7 +1242,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_accumulate(double r2, const Vec3
 #ifdef SINGLE_STAR_FIND_BINARIES
     if(target.ptype == 5 && src.n_sink == 1) // only do it if we're looking at a single star in the node
     {
-        double specific_energy = 0.5*vSqr - All.G*M_total/sqrt(r2);
+        double specific_energy = 0.5*vSqr - All.G*M_total/sqrt(sink_r2); /* the companion's separation, which comp_dx below stores */
         if (specific_energy<0)
         {
             double semimajor_axis= -All.G*M_total/(2.*specific_energy);
