@@ -6,6 +6,7 @@
 #include <time.h>
 #include <limits.h>
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "forcetree.h"               /* GIZMO_EWALD_EN + Ewald-table accessor decls */
@@ -2218,6 +2219,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
         mem.tgt = tgt;
 #ifdef RT_USE_GRAVTREE
         mem.valid_gas_particle_for_rt = grav_target_valid_gas_for_rt(mem.open.ptype, mem.open.soft, mem.pmass);
+#ifdef HYDRO_MULTIFLUID_DM
+        if(mem.valid_gas_particle_for_rt && P[tm].FluidType == FLUID_DM) {mem.valid_gas_particle_for_rt = 0;} /* the dark fluid takes no baryonic radiation */
+#endif
 #if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
         if(mem.valid_gas_particle_for_rt)
         {

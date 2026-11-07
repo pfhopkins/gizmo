@@ -1057,6 +1057,9 @@ void rt_apply_boundary_conditions(int i, struct particle_data *pp, struct gas_ce
 KOKKOS_INLINE_FUNCTION
 void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#ifdef HYDRO_MULTIFLUID_DM
+    if(pp[i].FluidType == FLUID_DM) {return;} /* the dark fluid neither absorbs nor emits baryonic radiation */
+#endif
 #if defined(RT_EVOLVE_ENERGY) || defined(RT_EVOLVE_INTENSITIES)
     int kf, k_tmp; double total_erad_emission_minus_absorption = 0;
 #if defined(RT_EVOLVE_INTENSITIES) && defined(RT_RAD_PRESSURE_FORCES)
@@ -1532,7 +1535,11 @@ KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum
 
 
 #ifdef RADTRANSFER
-    if(pp[i].Type == 0) /* generic sub routines for gas as a source term, should go at the very end of this routine */
+    if(pp[i].Type == 0 /* generic sub routines for gas as a source term, should go at the very end of this routine */
+#ifdef HYDRO_MULTIFLUID_DM
+       && pp[i].FluidType != FLUID_DM /* the dark fluid emits no baryonic radiation */
+#endif
+      )
     {
         SET_ACTIVE_RT_CHECK(); rt_get_lum_gas(i,lum, pp, cell); // optionally re-distributes cooling flux as a blackbody; but also where bands like free-free reside //
         int k; for(k=0;k<N_RT_FREQ_BINS;k++) {lum[k] += cell[i].Rad_Je[k];}

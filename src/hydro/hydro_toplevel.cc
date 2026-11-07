@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/multifluid_helpers.h"
 #ifdef MHD_NON_IDEAL_EVOLVED_FLUX
 #include "nonideal_mhd_functions.h"
 #endif
@@ -245,6 +246,9 @@ void hydro_final_operations_and_cleanup(void)
             Vec3<double> radacc = {}; int kfreq;
             for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++)
             {
+#ifdef HYDRO_MULTIFLUID_DM
+                if(P[i].FluidType == FLUID_DM) {break;} /* the dark fluid has no coupling to baryonic radiation */
+#endif
                 double vol_inv = CellP[i].Density*All.cf_a3inv/P[i].Mass, f_kappa_abs = rt_absorb_frac_albedo(i,kfreq, P, CellP), flux_mag=0, erad_i=0, flux_corr=0, work_band=0, rmag=0;
                 Vec3<double> vel_i = {}, vdot_h = {}, flux_i = {}, radacc_thisband = {};
                 erad_i = CellP[i].Rad_E_gamma_Pred[kfreq]*vol_inv; // radiation energy density, needed below
@@ -285,6 +289,9 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #ifdef RT_RADPRESSURE_IN_HYDRO
             int kfreq; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {
+#ifdef HYDRO_MULTIFLUID_DM
+                if(P[i].FluidType == FLUID_DM) {break;} /* the dark fluid has no coupling to baryonic radiation */
+#endif
                 double fac = (1./3.) * CellP[i].flux_limiter(kfreq) * CellP[i].Rad_E_gamma_Pred[kfreq] * P[i].Particle_DivVel*All.cf_a2inv * (1.-2.*rt_absorb_frac_albedo(i, kfreq, P, CellP));
                 CellP[i].Dt_Rad_E_gamma[kfreq] -= (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * fac; CellP[i].DtInternalEnergy += fac / P[i].Mass; /* exact energy conservation; for appropriate RSOL definitions - careful of terms here where beta arises */
             }

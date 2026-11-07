@@ -584,9 +584,6 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         struct PhysicsTablesView dm_tables_view = cooling_owner_tables_view();
         do_dark_cooling_for_particle(i, pp, cell, &dm_tables_view);
 #endif
-#if defined(RT_INFRARED) && !defined(COOLING_OPERATOR_SPLIT)
-        cell[i].InternalEnergy_FromIR_Pending = 0; /* the dark fluid takes no heating from baryonic radiation */
-#endif
         return;
     }
 #endif
