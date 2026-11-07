@@ -104,6 +104,9 @@ static void domain_add_cost(struct local_topnode_data *treeA, int noA, long long
 #endif
 #endif
 static long long TopMinSplitCount = 0; /* a top node with at most this many particles is never split (0: the original rule) */
+#ifdef DOMAIN_TOPLEAF_TINY
+static int TopLeafTinyFallback = 0; /* 1: rebuilding the top tree with the original rule */
+#endif
 
 /*! the top-tree leaf node (index into tNodes) holding a Peano-Hilbert key; walks with bit shifts instead of 128-bit division */
 static inline int domain_toptree_node(peanokey key, struct local_topnode_data *tNodes)
@@ -3214,7 +3217,7 @@ int domain_determineTopTree(void)
   /* With few particles per rank the count limit falls to a few particles, and the cost and 80%-of-parent rules chain
      nodes of one or a few particles down to the finest key level: M10-core (12.4k cells) reached 56-62k top leaves at
      96 ranks. Leaves of a few particles are fine enough for the split. */
-  TopMinSplitCount = (countlimit < DOMAIN_TOPLEAF_TINY_COUNTLIMIT) ? DOMAIN_TOPLEAF_TINY_MINSPLIT : 0;
+  TopMinSplitCount = (countlimit < DOMAIN_TOPLEAF_TINY_COUNTLIMIT && !TopLeafTinyFallback) ? DOMAIN_TOPLEAF_TINY_MINSPLIT : 0;
 #endif
 
   errflag = domain_check_for_local_refine(0, countlimit, costlimit);
@@ -3342,6 +3345,17 @@ int domain_determineTopTree(void)
 #endif
   /* count toplevel leaves */
   domain_sumCost();
+
+#ifdef DOMAIN_TOPLEAF_TINY
+  /* The minimum split count can leave the root unsplit (at most DOMAIN_TOPLEAF_TINY_MINSPLIT particles) or fewer leaves
+     than ranks. The force tree needs a split root (force_create_empty_nodes assigns DomainNodeIndex only to daughters)
+     and every rank needs a leaf: rebuild with the original rule. The top tree is the same on all ranks, so all do. */
+  if(TopMinSplitCount > 0 && (topNodes[0].Daughter < 0 || NTopleaves < NTask))
+  {
+      TopLeafTinyFallback = 1; errflag = domain_determineTopTree(); TopLeafTinyFallback = 0;
+      return errflag;
+  }
+#endif
 
   if(NTopleaves < multipledomains * NTask) /* tiny problems: fewer segments per rank rather than empty ones */
   {
