@@ -227,6 +227,29 @@ struct SinkFeedDeviceContext : NeighborLoopDeviceContextBase {
  * salts above).
  * ========================================================================== */
 
+/* Which of two sinks swallows the other, decided the same way from either side, so a pair has exactly one candidate unless
+ * the two mass measures disagree: the larger Sink_Mass, or the larger total Mass where the Sink_Mass ties; with sink dynamics
+ * a sink larger in Sink_Mass but smaller in total Mass swallows nothing, and neither does its partner (as in legacy). Both
+ * measures equal -- e.g. two sinks born from cells of one glass IC that have not yet accreted -- the wrapped separation
+ * j - i decides: it is antisymmetric, so the first axis on which it is nonzero is negative for exactly one of the pair. All
+ * three zero is r2 == 0, which the caller excludes. A NaN mass never merges. */
+KOKKOS_INLINE_FUNCTION
+static int sink_swallows_sink_neighbor(double sink_mass_i, double mass_i, double sink_mass_j, double mass_j, const Vec3<double>& dpos)
+{
+    if(!(sink_mass_i == sink_mass_i) || !(sink_mass_j == sink_mass_j) || !(mass_i == mass_i) || !(mass_j == mass_j)) {return 0;}
+    if(sink_mass_j != sink_mass_i)
+    {
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+        if((mass_j != mass_i) && ((mass_j < mass_i) != (sink_mass_j < sink_mass_i))) {return 0;}
+#endif
+        return sink_mass_j < sink_mass_i;
+    }
+    if(mass_j != mass_i) {return mass_j < mass_i;}
+    if(dpos[0] != 0) {return dpos[0] < 0;}
+    if(dpos[1] != 0) {return dpos[1] < 0;}
+    return dpos[2] < 0;
+}
+
 KOKKOS_INLINE_FUNCTION
 static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                                   const SinkFeedCallScalars& scalars,
@@ -314,8 +337,9 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
     if(neighbor_particle.Type == 5) {
         /* Identity is a separation of zero: IDs are not unique, so the identifier half of this test
          * did nothing the distance does not already do, and could only mis-fire. */
-        if((r2 > 0) &&
-           (SwallowID_j == 0) && (neighbor_particle.Sink_Mass < local.Sink_Mass)) {
+        if((r2 > 0) && (SwallowID_j == 0) &&
+           sink_swallows_sink_neighbor((double)local.Sink_Mass, (double)local.Mass,
+                                       (double)neighbor_particle.Sink_Mass, (double)neighbor_particle.Mass, dpos)) {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
             /* volatile per [[feedback_gpu]] §D.3 (nvc++ device-lambda
              * const-prop bug on int gate vars assigned conditionally —
@@ -323,17 +347,6 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             volatile int allow_sink_merger = 1;
             if(r >= 1.0001 * neighbor_particle.Min_Distance_to_Sink)  allow_sink_merger = 0;
             if(r >= heff_j)                                            allow_sink_merger = 0;
-            if(neighbor_particle.Mass > local.Mass)                    allow_sink_merger = 0;
-            /* Two sinks of exactly equal mass need one of them picked, the same way on both sides.
-             * Ordering on the identifier cannot do that when identifiers repeat -- it left this
-             * gate OPEN on both, so each swallowed the other.  The wrapped separation is
-             * antisymmetric, so the first axis on which it is nonzero is positive for exactly one
-             * of the pair; all three zero is r2 == 0, already excluded above. */
-            if(neighbor_particle.Mass == local.Mass) {
-                if(dpos[0] != 0)      {if(dpos[0] > 0) {allow_sink_merger = 0;}}
-                else if(dpos[1] != 0) {if(dpos[1] > 0) {allow_sink_merger = 0;}}
-                else if(dpos[2] > 0)  {allow_sink_merger = 0;}
-            }
             double max_rmerge = 1.0 * sink_radius;
             double max_mmerge = 10. * neighbor_particle.Sink_Formation_Mass;
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
