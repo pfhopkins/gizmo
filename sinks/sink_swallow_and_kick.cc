@@ -432,7 +432,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
 #endif
 #ifdef SINK_OUTPUT_MOREINFO
                         printf(" ..BAL kick: P[j].ID %llu ID %llu Type(j) %d f_acc %g M(j) %g V(j).xyz %g/%g/%g P(j).xyz %g/%g/%g p(i).xyz %g/%g/%g v_out %g \n",(unsigned long long) P[j].ID, (unsigned long long) P[j].SwallowID,P[j].Type, All.Sink_accreted_fraction,Mass_j,Vel_j[0],Vel_j[1],Vel_j[2],P[j].Pos[0],P[j].Pos[1],P[j].Pos[2],local.Pos[0],local.Pos[1],local.Pos[2],v_kick);
-                        fprintf(FdSinkWindDetails,"%.16g  %llu %g  %2.16g %2.16g %2.16g  %2.16g %2.16g %2.16g %g %g %g %llu  %2.16g %2.16g %2.16g\n",All.Time, (unsigned long long)P[j].ID, Mass_j, P[j].Pos[0],P[j].Pos[1],P[j].Pos[2],  Vel_j[0],Vel_j[1],Vel_j[2],dir[0]/norm,dir[1]/norm,dir[2]/norm, (unsigned long long)local.ID, local.Pos[0],local.Pos[1],local.Pos[2]); fflush(FdSinkWindDetails);
+                        fprintf(FdSinkWindDetails,"%.16g  %llu %g  %2.16g %2.16g %2.16g  %2.16g %2.16g %2.16g %g %g %g %llu  %2.16g %2.16g %2.16g\n",All.Time, (unsigned long long)P[j].ID, Mass_j, P[j].Pos[0],P[j].Pos[1],P[j].Pos[2],  Vel_j[0],Vel_j[1],Vel_j[2],dir[0],dir[1],dir[2], (unsigned long long)local.ID, local.Pos[0],local.Pos[1],local.Pos[2]); fflush(FdSinkWindDetails);
 #endif
 #endif // #ifdef SINK_WIND_KICK
                         #pragma omp atomic

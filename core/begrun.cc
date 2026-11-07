@@ -651,9 +651,8 @@ void open_outputfiles(void)
       fprintf(FdSinkWindDetails,"%s   (4,5,6) Coordinate (x,y,z) position of kicked element [code units] \n",prefix_char);
       fprintf(FdSinkWindDetails,"%s   (7,8,9) Velocity (x,y,z) of kicked element [code units] \n",prefix_char);
       fprintf(FdSinkWindDetails,"%s   (10,11,12) Directional unit vector (x,y,z) of kick \n",prefix_char);
-      fprintf(FdSinkWindDetails,"%s   (13,14,15) Coordinate (x,y,z) position of secondary [code units] \n",prefix_char);
-      fprintf(FdSinkWindDetails,"%s   (16) ID of kicking sink \n",prefix_char);
-      fprintf(FdSinkWindDetails,"%s   (17,18,19) Coordinate (x,y,z) position of kicking sink [code units] \n",prefix_char);
+      fprintf(FdSinkWindDetails,"%s   (13) ID of kicking sink \n",prefix_char);
+      fprintf(FdSinkWindDetails,"%s   (14,15,16) Coordinate (x,y,z) position of kicking sink [code units] \n",prefix_char);
   }
 #endif
 #endif // output-more-info if
