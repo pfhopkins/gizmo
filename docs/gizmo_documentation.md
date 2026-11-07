@@ -2035,6 +2035,7 @@ There are a variety of flags for additional special behaviors. Here are several 
 # ----- optional and de-bugging modules (intended for specific behaviors)
 ## ----------------------------------------------------------------------------------------------------
 #SINK_RETURN_ANGMOM_TO_GAS        # BH/sink particles return accreted angular momentum to surrounding gas (per Hubber+13) to represent AM transfer (loss in accreting material)
+#SINK_RETURN_BFLUX              # (experimental) sinks carry the magnetic flux of the gas they accrete and return it to the surrounding gas over the depletion time of their accretion reservoir (at most 10% per step). Requires MAGNETIC and SINK_ALPHADISK_ACCRETION.
 #SINGLE_STAR_FIND_BINARIES      # manually enable identification of close binaries (normally enabled automatically if actually used for e.g. hermite timestepping). cite Grudic et al. arXiv:2010.11254
 #SINGLE_STAR_FB_LOCAL_RP        # approximate local radiation pressure from single-star sources, using the same LEBRON-type approximation as in FIRE - useage follows the FIRE collaboration policies
 #SINGLE_STAR_FB_RT_HEATING      # proto-stellar heating: luminosity determined by SinkRadiativeEfficiency (typical ~5e-7). This particular module used without radiation-hydrodynamics uses FIRE modules, so citations follow those. But by enabling explicit radiation-hydrodynamics, this is not needed, and the user can treat full radiative feedback in the public code.
@@ -2179,6 +2180,7 @@ These models also involve their own parameterfile settings, in addition to those
 # -- mechanical (wind from accretion disk/BH with specified mass/momentum/energy-loading relative to accretion rate)
 #SINK_WIND_KICK=1                 # gas in kernel given stochastic 'kicks' at fixed velocity. (>0=isotropic, <0=collimated, absolute value sets momentum-loading in L/c units). cite Angles-Alcazar et al., 2017, MNRAS, 464, 2840
 #SINK_WIND_SPAWN=2                # spawn virtual 'wind' particles to carry BH winds out. value=min number spawned per spawn-step. Cite Torrey et al 2020MNRAS.497.5292T, Su et al., arXiv:2102.02206, and Grudic et al. arXiv:2010.11254 for use and numerical methods and tests
+#SNE_NONSINK_SPAWN              # (experimental) supernovae from ordinary star particles (type 4) deliver half their ejecta mass as spawned gas cells of 0.5 Msun, the rest coupled as mechanical feedback. Requires GALSF_FB_MECHANICAL and SINK_WIND_SPAWN (whose value sets how many cells are spawned at once).
 # -- radiative: [FIRE] these currently are built on the architecture of the FIRE stellar FB modules, and require some of those be active. their use therefore follows FIRE policies (see details above). however, if explicit-radiation-hydrodynamics is enabled, users can achieve this functionality entirely in the public code, with appropriate hooks in the cooling functions
 #SINK_COMPTON_HEATING             # enable Compton heating/cooling from BHs in cooling function (needs SINK_PHOTONMOMENTUM). cite Hopkins et al., 2016, MNRAS, 458, 816
 #SINK_HII_HEATING                 # photo-ionization feedback from BH (needs GALSF_FB_FIRE_RT_HIIHEATING). cite Hopkins et al., arXiv:1702.06148
@@ -2210,7 +2212,7 @@ These models also involve their own parameterfile settings, in addition to those
 <a name="config-bh-additionalbhoptions"></a>
 ### _BH Output/Additional Options_ 
 
-These are miscellaneous additional BH options. See also the description of the various modules **SINGLE\_STAR\_TIMESTEPPING**, **SINK\_ACCRETE\_NEARESTFIRST**, **SINK\_RETURN\_ANGMOM\_TO\_GAS**, **SINK\_SWALLOW\_SMALLTIMESTEPS**, above in the 'Sink Particle and Single-Star' modules: these are all fully-compatible with the BH modules here as well!
+These are miscellaneous additional BH options. See also the description of the various modules **SINGLE\_STAR\_TIMESTEPPING**, **SINK\_RETURN\_ANGMOM\_TO\_GAS**, **SINK\_SWALLOW\_SMALLTIMESTEPS**, above in the 'Sink Particle and Single-Star' modules: these are all fully-compatible with the BH modules here as well!
 
 ```bash
 ####################################################################################################
