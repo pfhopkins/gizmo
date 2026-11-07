@@ -913,6 +913,9 @@ void gizmo_hydro_corridor_end(void);
 size_t sizemax(size_t a, size_t b);
 
 void reconstruct_timebins(void);
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+void hermite_local_sources_rebuild(void);
+#endif
 peanokey domain_peano_key(int i);                     /* Peano key of particle i: the ONLY host route from a position to a key */
 peanokey peano_hilbert_key(peano1D x, peano1D y, peano1D z, int bits);
 peanokey peano_and_morton_key(peano1D x, peano1D y, peano1D z, int bits, peanokey *morton);

@@ -1043,7 +1043,7 @@ static void let_emit_particle_leaf_from_src(int p_idx, const moment_particle_src
      * value); the two it cannot carry are Type and AGS_zeta.  Mirror the local-leaf AGS guards
      * EXACTLY: Type always, zeta only when the adaptive-softening field exists, else 0. */
     w->leaf_type     = pa->Type;
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
     w->leaf_id       = pa->ID;
 #endif
     w->leaf_force_softening = (MyFloat) src.force_softening;  /* pure ForceSoftening, NOT the node's
@@ -1217,7 +1217,7 @@ static void let_build_bucket_aggregate(struct LETPackContext *pk, int n, int hea
      * asking for a tree that has gone stale, which a rebuild repairs. */
     w->leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;
     w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
     w->leaf_id = 0;
 #endif
 }
@@ -1260,7 +1260,7 @@ int     *ForeignLeafTag  = NULL;
 int     *ForeignLeafType = NULL;
 MyFloat *ForeignLeafZeta = NULL;
 MyFloat *ForeignLeafSoft = NULL;
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
 /* Kept apart from the sidecars above, with its own capacity, so the tree's allocate/grow/free paths are
  * untouched: reserved before every install to cover the foreign storage, and never shrunk. */
 MyIDType *ForeignLeafID = NULL;
@@ -1434,7 +1434,7 @@ static void pack_recurse(struct LETPackContext *pk, int no, int sib_terminator,
     struct LETNodeWire *w = &(*buf)[my_idx];
     w->remote_id = no;
     w->leaf_tag = LET_LEAF_TAG_NODE; w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;  /* default: node */
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
     w->leaf_id = 0;
 #endif
     w->node = Nodes[no];     /* full struct copy including all #ifdef payloads */
@@ -1480,7 +1480,7 @@ static void pack_recurse(struct LETPackContext *pk, int no, int sib_terminator,
             struct particle_data *pa = &P[p];
             w->leaf_tag      = LET_LEAF_TAG_REAL_LEAF;
             w->leaf_type     = pa->Type;
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
             w->leaf_id       = pa->ID;
 #endif
             w->leaf_force_softening = (MyFloat) ForceSoftening_KernelRadius(p);
@@ -1832,7 +1832,7 @@ static void let_wire_fields(C &c, R &w, int kind)
     c.field(w.leaf_type);
     c.field(w.leaf_ags_zeta);
     c.field(w.leaf_force_softening);
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
     c.field(w.leaf_id);
 #endif
 }
@@ -2196,7 +2196,7 @@ extern "C" let_exchange_status_t let_exchange_nodes(unsigned char **send_buf_per
             grow_failed_local = 1;
         }
     }
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
     if(!grow_failed_local && let_foreign_leaf_id_reserve(AllocatedForeignNodes) != 0)
     {
         printf("LET install: rank %d could not allocate the foreign-leaf ID sidecar for %d slots. Stopping.\n", ThisTask, AllocatedForeignNodes);
@@ -2690,7 +2690,7 @@ struct let_install_sink {
             ForeignLeafType[foreign_slot] = rec.leaf_type;
             ForeignLeafZeta[foreign_slot] = rec.leaf_ags_zeta;
             ForeignLeafSoft[foreign_slot] = rec.leaf_force_softening;
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
             if(ForeignLeafID && foreign_slot < ForeignLeafIDCap) {ForeignLeafID[foreign_slot] = rec.leaf_id;}
 #endif
         }

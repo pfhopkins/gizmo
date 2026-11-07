@@ -221,9 +221,11 @@ struct gpu_ewald_pot_data_t {
 #ifdef HERMITE_INTEGRATION
 struct gpu_hermite_walk_data_t {
     struct HermiteWalkState   state;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
     const struct hermite_ghost_entry *ghost;   /* owner-side Hermite source table, NULL outside a multi-rank Hermite pass */
     int n_ghost;
     const MyIDType *foreign_leaf_id;           /* ForeignLeafID (SharedSpace), indexed by foreign slot */
+#endif
 };
 #endif
 
@@ -1340,8 +1342,8 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
     src.dv[1] = (double) nd.motion.vs_[1] - in.vel[1];
     src.dv[2] = (double) nd.motion.vs_[2] - in.vel[2];
 #endif
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
     int k_gh = -1;   /* owner-side Hermite state of a foreign leaf, when one replaces the snapshot */
-#ifdef HERMITE_INTEGRATION
     /* A foreign real leaf of a Hermite type, on a Hermite pass: the owner-side state (hermite_ghost_entry)
        in place of the imported snapshot. Mirrors forcetree.cc. */
     if(nd.fl_tag == 1 && ctx.hermite.ghost && ctx.hermite.foreign_leaf_id && nd.fl_slot >= 0
@@ -1430,7 +1432,7 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
 #else
         for(int k = 0; k < 3; k++) {sink_dr[k] = tree_soa->sink_pos[idx][k] - in.open.pos[k];}   /* not moved between builds */
 #endif
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
         if(k_gh >= 0) {sink_dr = ctx.hermite.ghost[k_gh].pos - in.open.pos;}   /* the singleton sink IS the leaf: same state as the force */
 #endif
         gravity_box_nearest_image(sink_dr[0], sink_dr[1], sink_dr[2], -1);
@@ -1444,7 +1446,7 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
         prox_src.motion.vel = Vec3<double>{(double)nd.motion.sink_vel_[0], (double)nd.motion.sink_vel_[1], (double)nd.motion.sink_vel_[2]};
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
         if(k_gh >= 0) {prox_src.motion.vel = ctx.hermite.ghost[k_gh].vel;}
 #endif
 #endif
@@ -2926,9 +2928,11 @@ extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
 #ifdef HERMITE_INTEGRATION
     struct gpu_hermite_walk_data_t hermite_dev;
     hermite_dev.state = HermiteWalk;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
     hermite_dev.ghost = HermiteGhostTab;
     hermite_dev.n_ghost = NHermiteGhost;
     hermite_dev.foreign_leaf_id = ForeignLeafID;
+#endif
 #endif
 
     /* Invariant guard: reset the per-walk counter. */

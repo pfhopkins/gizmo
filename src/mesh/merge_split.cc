@@ -1692,7 +1692,11 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
     if(identity_changed) {ghost_exchange_supply_identity_changed("rearrange_particle_sequence"); gpu_sidx_notify_owned_changed(); gpu_leaf_mirror_note_slots_moved();}
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    if(flag_sum) {reconstruct_timebins();}
+    if(flag_sum) {reconstruct_timebins();
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+        if(repair_walk_links) {hermite_local_sources_rebuild();}   /* the indices moved under a standing tree; otherwise a build follows and lists them */
+#endif
+    }
     /* Slots moved and the walk links were not repaired with them (no MAINTAIN_TREE_IN_REARRANGE, or a caller that
        rebuilds the tree anyway), so this tree must not be walked again.  The sink spawn already asks for a rebuild on
        its own account; every other caller that

@@ -457,6 +457,7 @@ static_assert(TIMEBINS <= 64, "HermiteWalkState carries the active timebins as a
 extern struct HermiteWalkState   HermiteWalk;
 extern struct DriftKickTableView HermiteWalkTables;   /*!< assembled only while HermiteOnlyFlag is set */
 
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
 /*! Owner-side source state of one Hermite-type particle for a Hermite pass.
  *
  *  A foreign leaf in the imported tree is a moment snapshot taken at the last tree build, so in a
@@ -484,6 +485,7 @@ KOKKOS_INLINE_FUNCTION int hermite_ghost_lookup(const struct hermite_ghost_entry
     }
     return -1;
 }
+#endif
 
 /*! Take the snapshot. Host only: it reads the host globals the walks cannot see from
  *  device code, which is the whole reason the snapshot exists. */

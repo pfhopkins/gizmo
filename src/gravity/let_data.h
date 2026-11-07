@@ -253,7 +253,7 @@ struct LETNodeWire {
                             * that injects momentum under adaptive softening.  Carry the pure value. */
     int     leaf_type;     /* source particle Type -> ptype_sec */
     int     _pad1;         /* explicit tail pad: keeps an array of these records 8-byte aligned */
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
     MyIDType leaf_id;      /* source particle ID for a real leaf, 0 otherwise: the key into the Hermite
                             * passes' owner-side source table (HermiteGhostTab) */
 #endif
@@ -295,7 +295,7 @@ extern int     *ForeignLeafTag;   /* one of LET_LEAF_TAG_* above: NODE (descenda
 extern int     *ForeignLeafType;  /* source particle Type for a foreign leaf  (-> ptype_sec) */
 extern MyFloat *ForeignLeafZeta;  /* source particle AGS_zeta for a foreign leaf (-> zeta_sec) */
 extern MyFloat *ForeignLeafSoft;  /* source particle ForceSoftening for a foreign leaf (-> h_p) */
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
 extern MyIDType *ForeignLeafID;   /* source particle ID for a foreign leaf, same indexing; SharedSpace, own capacity */
 #endif
 

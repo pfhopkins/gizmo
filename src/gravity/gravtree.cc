@@ -136,9 +136,20 @@ void refresh_old_acceleration_for_tree_opening(void)
 
 
 
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
 struct hermite_ghost_entry *HermiteGhostTab = NULL;
 int NHermiteGhost = 0;
+
+/* This rank's Hermite-type particles, listed where every particle is visited anyway -- each gravity tree build and each
+ * re-sequencing under a standing tree -- so a Hermite pass reads only these and never scans the particles. A particle created since the build is
+ * not in any other rank's imported tree, so nobody looks it up; one removed since has zero mass and is skipped. */
+static std::vector<int> HermiteLocalSources;
+void hermite_local_sources_rebuild(void)
+{
+    HermiteLocalSources.clear();
+    if(NTask <= 1) {return;}   /* a single rank imports no foreign leaves, so the table is never built */
+    for(int i = 0; i < NumPart; i++) {if(((1 << P[i].Type) & HERMITE_INTEGRATION) && P[i].Mass > 0) {HermiteLocalSources.push_back(i);}}
+}
 
 static int hermite_ghost_cmp(const void *a, const void *b)
 {
@@ -155,9 +166,9 @@ static void hermite_ghost_table_build(void)
     if(!HermiteOnlyFlag || NTask <= 1) {return;}
     const struct DriftKickTableView tables = drift_kick_table_view_host();
     std::vector<struct hermite_ghost_entry> mine;
-    for(int i = 0; i < NumPart; i++)
+    for(int i : HermiteLocalSources)
     {
-        if(!((1 << P[i].Type) & HERMITE_INTEGRATION) || P[i].Mass <= 0) {continue;}
+        if(i >= NumPart || !((1 << P[i].Type) & HERMITE_INTEGRATION) || P[i].Mass <= 0) {continue;}
         struct hermite_ghost_entry e; e.id = P[i].ID;
         Vec3<double> pos = P[i].Pos, vel = P[i].Vel;
         if(P[i].Ti_current < All.Ti_Current)
@@ -219,7 +230,9 @@ void gravity_tree(void)
        pass, since the predictor returns immediately when HermiteOnlyFlag is 0. */
     HermiteWalk = hermite_walk_state_snapshot();
     if(HermiteOnlyFlag) {HermiteWalkTables = drift_kick_table_view_host();}
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
     hermite_ghost_table_build();
+#endif
 #endif
 
     /* construct tree if needed */
@@ -944,7 +957,7 @@ gravity_walk_attempt:
         if(sum_costtotal>0) {PRINT_STATUS(" ..relative error in the total number of tree-gravity interactions = %g", (sum_costtotal - sum_costtotal_new) / sum_costtotal);}
     }
 #endif
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
     hermite_ghost_table_free();
 #endif
     CPU_Step[CPU_TREEMISC] += measure_time();

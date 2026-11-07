@@ -775,6 +775,9 @@
 #endif
 #ifdef HERMITE_INTEGRATION
 #define COMPUTE_JERK_IN_GRAVTREE /* needs to be computed in order to do the Hermite integration */
+#if !(defined(SINGLE_STAR_DIRECT_GRAVITY) && ((HERMITE_INTEGRATION) == 32))
+#define HERMITE_FOREIGN_SOURCE_TABLE /* Hermite passes take a foreign Hermite-type leaf at its owner's predicted state (gravtree.cc). Not needed when Hermite covers only sinks and their mutual gravity is the direct sum, which the tree never evaluates */
+#endif
 #if defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
 #define MAINTAIN_TREE_IN_REARRANGE /* spawning winds is the one thing that re-sequences the particles while the tree is still standing, and the Hermite pass walks that tree after the source terms have run, deliberately skipping the rebuild they asked for.  Together they need a tree whose links are repaired as particles move rather than one waiting to be rebuilt.  Every other caller re-sequences either inside a decomposition or immediately before a build, so this asks nothing of a run that does not spawn. */
 #endif

@@ -195,6 +195,9 @@ int force_treebuild_gravity(void)
     building_gravity_tree = 1;
     const int status = force_treebuild(NumPart, NULL);
     building_gravity_tree = 0;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    hermite_local_sources_rebuild();   /* the Hermite-type particles this tree exports, listed while the build has visited every particle */
+#endif
     return status;
 }
 
@@ -2529,8 +2532,8 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                     dv = Extnodes[no].vs - vel;
 #endif
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
                     int k_gh = -1;   /* owner-side Hermite state of a foreign leaf, when one replaces the snapshot */
-#ifdef HERMITE_INTEGRATION
                     /* A foreign real leaf of a Hermite type, on a Hermite pass: take the owner-side state
                        (hermite_ghost_entry) in place of the imported snapshot. */
                     if(fl_tag == 1 && HermiteGhostTab && ForeignLeafID && (HERMITE_INTEGRATION & (1 << fl_type)) && mass > 0)
@@ -2593,7 +2596,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                     if(nop->sink_mass > 0)        /* found a node with non-zero BH mass */
                     {
                         Vec3<double> sink_dr = nop->sink_pos - pos;  /* SHEA:  now using sink_pos instead of center */
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
                         if(k_gh >= 0) {sink_dr = HermiteGhostTab[k_gh].pos - pos;}   /* the singleton sink IS the leaf: same state as the force */
 #endif
                         GRAVITY_NEAREST_XYZ(sink_dr[0],sink_dr[1],sink_dr[2],-1);
@@ -2607,7 +2610,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
                         prox_src.motion.vel = nop->sink_vel;
-#ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
                         if(k_gh >= 0) {prox_src.motion.vel = HermiteGhostTab[k_gh].vel;}
 #endif
 #endif
