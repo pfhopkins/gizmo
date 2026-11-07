@@ -87,6 +87,7 @@ void savepositions(int num)
     int n, filenr, gr, ngroups, primaryTask, lastTask;
 
     CPU_Step[CPU_MISC] += measure_time();
+    sink_ledger_flush(); /* so the sink ledger holds every event up to this snapshot */
 
 #ifdef CHIMES_REDUCED_OUTPUT
     if (num % N_chimes_full_output_freq == 0) {Chimes_incl_full_output = 1;} else {Chimes_incl_full_output = 0;}

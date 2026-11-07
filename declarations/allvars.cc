@@ -265,16 +265,9 @@ FILE *FdSNeFBLogFile;	/*!< file handle for SNIIheating.txt log-file */
 
 #ifdef SINK_PARTICLES
 FILE *FdSinks;		/*!< file handle for sinks.txt log-file. */
-#ifdef OUTPUT_SINK_ACCRETION_HIST
-FILE *FdSinkSwallowDetails;
-#endif
-#ifdef OUTPUT_SINK_FORMATION_PROPS
-FILE *FdSinkFormationDetails;
-#endif
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(SINK_OUTPUT_MOREINFO)
 FILE *FdSinksDetails;
 #ifdef SINK_OUTPUT_MOREINFO
-FILE *FdSinkMergerDetails;
 #ifdef SINK_WIND_KICK
 FILE *FdSinkWindDetails;
 #endif
