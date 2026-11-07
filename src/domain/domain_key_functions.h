@@ -12,7 +12,7 @@
  * licenses reciprocals or fused multiply-adds would not, which is why declarations/typedefs.h refuses
  * to compile under __FAST_MATH__.
  *
- * Header-only and Kokkos-free so host translation units can include it.
+ * Header-only and Kokkos-free, so host and device translation units include the same source.
  */
 
 #ifndef GIZMO_DOMAIN_KEY_FUNCTIONS_H
@@ -20,13 +20,11 @@
 
 #include <stdint.h>
 
-/* A private annotation, keyed on the compiler rather than on whether Kokkos was included first, so the functions are
- * device-callable wherever a device compiler sees them and this header never defines Kokkos's own macro. */
-#if defined(__CUDACC__) || defined(__HIPCC__)
-#define DOMAIN_KEY_FUNCTION __host__ __device__ inline
-#else
-#define DOMAIN_KEY_FUNCTION inline
+/* The project's host/device annotation (declarations/macros.h, reached through allvars.h before this header). */
+#ifndef GIZMO_GPU_FUNCTION
+#error "domain_key_functions.h needs GIZMO_GPU_FUNCTION: include declarations/allvars.h first"
 #endif
+#define DOMAIN_KEY_FUNCTION GIZMO_GPU_FUNCTION inline
 
 /* The coordinate the key is read from: (pos - corner) / len + 1.0, which lies in [1.0, 2.0) for a
  * position inside the extent, so that its mantissa is the position's fraction of the extent.
