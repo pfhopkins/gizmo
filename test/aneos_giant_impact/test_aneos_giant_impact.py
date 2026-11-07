@@ -6,9 +6,11 @@ Validates that GIZMO can:
   3. Run a short hydro evolution without crashing
   4. Produce physically reasonable output (T > 0, P > 0, finite values)
 
-This is a crash/sanity test, not a quantitative accuracy test. It uses
-downsampled Stewart group tables (forsterite S19, iron S20) and a simple
-uniform-density differentiated sphere IC.
+It is a short smoke run (self-gravity off, a tiny fraction of a dynamical time) that also checks the IC: the body is built by
+the HSE builder (generate_ics.py) on the Stewart tables, and the test requires that no particle below the free-surface layer
+was given a substitute EOS state, and that GIZMO's own zero-time density and pressure there reproduce the hydrostatic profile
+the IC was built for. The companion Config_selfgrav.sh + aneos_giant_impact_selfgrav.params hold the same body with
+self-gravity for ~11 dynamical times.
 """
 
 import pytest
@@ -66,10 +68,18 @@ def setup_tables(test_dir):
         )
 
 
-def setup_ics(test_dir):
-    """Generate ICs if needed."""
-    ic_path = join(test_dir, "aneos_giant_impact_ics.hdf5")
+def _ic_is_current(ic_path):
+    """an IC written by the current generate_ics.py (it records the hydrostatic profile the checks compare against)"""
     if not isfile(ic_path):
+        return False
+    with h5py.File(ic_path, "r") as f:
+        return "HSEProfile" in f
+
+
+def setup_ics(test_dir):
+    """Generate ICs if missing or written by an older generator."""
+    ic_path = join(test_dir, "aneos_giant_impact_ics.hdf5")
+    if not _ic_is_current(ic_path):
         subprocess.run(
             [sys.executable, join(test_dir, "generate_ics.py")],
             check=True,
@@ -93,6 +103,37 @@ def test_aneos_giant_impact(num_mpi_ranks, num_omp_threads):
 
     run_test(test_name, num_mpi_ranks, num_omp_threads)
     chdir("../../")
+
+    # The IC: no substituted EOS states below the free-surface layer (generate_ics.py refuses to write one, and records the counts)
+    ic_path = join(test_dir, "aneos_giant_impact_ics.hdf5")
+    with h5py.File(ic_path, "r") as f:
+        attrs = dict(f["PartType0"].attrs)
+        prof = {k: f["HSEProfile"][k][:] for k in ("r", "P", "rho", "zone_id")}
+        free_surface_ids = f["HSEProfile/FreeSurfaceIDs"][:]
+        comp_ic = f["PartType0/CompositionType"][:]
+    assert attrs["EOS_substitutions_interior"] == 0, f"{attrs['EOS_substitutions_interior']} interior particles have a substitute EOS state"
+    print(f"IC: {len(comp_ic)} particles (forsterite {np.sum(comp_ic == 0)}, iron {np.sum(comp_ic == 1)}; "
+          f"{attrs['N_free_surface']} in the free-surface layer), substitutions interior {attrs['EOS_substitutions_interior']} / "
+          f"free surface {attrs['EOS_substitutions_free_surface']}")
+
+    # GIZMO's zero-time density and pressure below the free-surface layer vs the hydrostatic profile the IC was built for
+    # (each material read on its own branch of the profile; measured: density <= 1e-4, pressure <= 2e-4 off)
+    with h5py.File(join(test_dir, "output", "snapshot_000.hdf5"), "r") as F:
+        g = F["PartType0"]
+        ids, x, m = g["ParticleIDs"][:], g["Coordinates"][:], g["Masses"][:]
+        rho0, P0, comp0 = g["Density"][:], g["Pressure"][:], g["CompositionType"][:]
+    r = np.linalg.norm(x - (m[:, None] * x).sum(0) / m.sum(), axis=1)
+    interior = ~np.isin(ids, free_surface_ids)
+    for z, name in ((0, "forsterite"), (1, "iron")):
+        q = interior & (comp0 == z)
+        on = prof["zone_id"] == z
+        rho_prof = np.interp(np.clip(r[q], prof["r"][on].min(), prof["r"][on].max()), prof["r"][on], prof["rho"][on])
+        P_prof = np.interp(r[q], prof["r"], prof["P"])
+        d_rho, d_P = np.max(np.abs(rho0[q] / rho_prof - 1)), np.max(np.abs(P0[q] / P_prof - 1))
+        print(f"zero time, {name} below the free-surface layer ({q.sum()}): max |rho / rho_HSE - 1| {d_rho:.2e}, max |P / P_HSE - 1| {d_P:.2e}")
+        assert q.sum() >= 100, f"only {q.sum()} {name} particles below the free-surface layer (too few for the check)"
+        assert d_rho < 1e-3, f"{name}: GIZMO's zero-time density is {d_rho:.2e} off the hydrostatic profile"
+        assert d_P < 2e-3, f"{name}: GIZMO's zero-time pressure is {d_P:.2e} off the hydrostatic profile"
 
     # Check that output exists
     final_snap = get_final_snapshot(test_name)
