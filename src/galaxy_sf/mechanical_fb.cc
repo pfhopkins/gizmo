@@ -147,6 +147,7 @@ void verify_and_assign_local_mechfb_integrals(void)
         if(P[j].Type==0 && P[j].Mass>0)
         {
             kicked.push_back(j);
+            const Vec3<MyDouble> vel_before_deposit = P[j].Vel;
             double m0=P[j].Mass, dm=LocalGasMechFBInfoTemp[j].m_injected; P[j].Mass += dm; /* update mass */ if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             m0=CellP[j].MassTrue; CellP[j].MassTrue += dm; /* update conserved mass */
@@ -177,8 +178,9 @@ void verify_and_assign_local_mechfb_integrals(void)
                      * immediately, killing the cascade at its root. Standard
                      * hydro-convention encoding via max_source_wakeup accumulator
                      * -- no special encoding, no EOS/MaxSignalVel refresh (which
-                     * would be silent suppression of legitimate wakeup). Weak heating,
-                     * small next to cooling over the receiver's own step, is not marked. */
+                     * would be silent suppression of legitimate wakeup; only a receiver active now,
+                     * whose next step is chosen right after the deposit, has its signal speed raised).
+                     * Weak heating, small next to cooling over the receiver's own step, is not marked. */
                     int wakeup_val = LocalGasMechFBInfoTemp[j].max_source_wakeup;
                     if(wakeup_val > 0 && wakeup_val > P[j].wakeup) {
                         P[j].wakeup = wakeup_val;
@@ -251,6 +253,9 @@ void verify_and_assign_local_mechfb_integrals(void)
                 }
             }
 #endif /* COSMIC_RAY_FLUID */
+            refresh_eos_and_project(j, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED); /* the deposit is an accepted change to both state copies */
+            if(TimeBinActive[P[j].TimeBin]) /* its next step is chosen right after this, from a signal speed the hydro pass set before the deposit: raise it to the new state. An inactive cell keeps its own, which its active neighbours' wakeup check compares against */
+                {CellP[j].MaxSignalVel = DMAX(CellP[j].MaxSignalVel, 2.*CellP[j].effective_soundspeed()) + sqrt((P[j].Vel - vel_before_deposit).norm_sq()) / All.cf_atime;}
             /* apply to every home gas cell with pending deltas (N_injected>0):
                this buffer is the single source of truth for received feedback,
                populated by all paths (single/multi-rank, both dispatch modes)

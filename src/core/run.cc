@@ -466,6 +466,21 @@ void run(void)
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
         CPU_Step[CPU_KICKS] += measure_time();
 
+#if defined(GALSF) && defined(GALSF_FB_MECHANICAL)
+        /* mechanical feedback after the closing kick: a step ending here closes with the forces of the gas it was taken in, not with a
+           post-feedback pressure over half a step sized for the pre-feedback gas (which creates energy); the receivers' signal speed is
+           raised at deposition, so the next step, which opens with this step's forces, is short */
+        int mechanical_fb_this_step = (All.TotN_gas > 0);
+#ifdef GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW
+        mechanical_fb_this_step = mechanical_fb_this_step && (All.Dt_Since_LastFBCalc_Gyr >= All.Dt_Min_Between_FBCalc_Gyr); /* the cadence decision compute_stellar_feedback made this step */
+#endif
+        if(mechanical_fb_this_step)
+        {
+            mechanical_fb_calc_toplevel();
+            gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
+        }
+#endif
+
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
