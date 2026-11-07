@@ -116,6 +116,17 @@
 #define NUCLEAR_NETWORK_NSPECIES 13
 #endif
 #define NUM_NUCLEAR_SPECIES NUCLEAR_NETWORK_NSPECIES
+#if (NUCLEAR_NETWORK_SOLVER == 2)
+#error "NUCLEAR_NETWORK_SOLVER=2 is a stub that does no burning (nuclear/nuclear_torch.cc marks where an external network can be connected): use 0 (built-in) or 1 (SkyNet)"
+#elif (NUCLEAR_NETWORK_SOLVER != 0) && (NUCLEAR_NETWORK_SOLVER != 1)
+#error "NUCLEAR_NETWORK_SOLVER must be 0 (built-in network) or 1 (SkyNet)"
+#endif
+#if (NUCLEAR_NETWORK_NSPECIES != 13)
+#error "NUCLEAR_NETWORK_NSPECIES must be 13: both solvers use the 13-species table"
+#endif
+#if (NUCLEAR_NETWORK_SOLVER == 1) && (defined(NUCLEAR_NETWORK_NSE_TABLE) || defined(NUCLEAR_NETWORK_NEUTRINOS))
+#error "NUCLEAR_NETWORK_NSE_TABLE and NUCLEAR_NETWORK_NEUTRINOS work with the built-in network only, not with SkyNet"
+#endif
 #ifdef NUCLEAR_NETWORK_NEUTRINOS
 #ifndef RADTRANSFER
 #define RADTRANSFER  /* neutrino transport requires RT framework */

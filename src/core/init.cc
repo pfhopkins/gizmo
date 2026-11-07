@@ -1218,7 +1218,7 @@ void init(void)
     if(RestartFlag == 4)
     {
         All.Time = All.TimeBegin = header.time;
-        snprintf(All.SnapshotFileBase, 100, "%s_converted", All.SnapshotFileBase);
+        {char base[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(base, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s", All.SnapshotFileBase); snprintf(All.SnapshotFileBase, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s_converted", base);}
         if(ThisTask == 0) {printf("Start writing file %s\n", All.SnapshotFileBase);}
         printf("RestartSnapNum %d\n", RestartSnapNum);
 

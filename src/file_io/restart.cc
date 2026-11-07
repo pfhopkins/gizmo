@@ -24,28 +24,62 @@ static ChimesFloat *gasAbundancesBuf;
 static void in(int *x, int modus);
 static void byten(void *x, size_t n, int modus);
 
-/* Restartfile layout guard (see restart()): it compares the memory the file holds, never a source or binary identity, so a
-   recompile that leaves this memory unchanged resumes as before. The magic distinguishes a header from the leading bytes
-   of an All struct written by a pre-sentinel binary. Struct sizes are checked automatically; bump
-   RESTARTFILE_LAYOUT_VERSION whenever a byten() field is added or removed in restart() without a struct
-   size changing. Version 1 is the layout the sentinel arrived with, which also changed All and the list
-   of serialized globals, so no header-less file matches it. */
+/* The header of every restart file. A restart file is a byte image, so only a run with the same rank count and the same
+   size of every raw structure in it can read it. This compares that memory, never a source or binary identity, so a recompile
+   that leaves it unchanged resumes as before. Counts the file records are checked against what was allocated for them when
+   they are read (particles, cells, tree nodes, top nodes); a length set by the build or the parameters before the read (the
+   rank count, the CHIMES species count, the turbulent-driving mode count) is in the table. A reordering or a same-size type change cannot be seen from here: bump RESTARTFILE_LAYOUT_VERSION for those,
+   and whenever an item is added to or removed from restart() without a size below changing. Add every new raw structure to this table. */
 #define RESTARTFILE_MAGIC 0x52535446u
-#define RESTARTFILE_LAYOUT_VERSION 1u
-struct restart_layout_header {unsigned int magic, layout_version; unsigned long long size_all, size_p, size_cell;};
+#define RESTARTFILE_LAYOUT_VERSION 3u
+enum {RESTART_ITEM_ALL, RESTART_ITEM_P, RESTART_ITEM_CELL, RESTART_ITEM_NODE, RESTART_ITEM_EXTNODE, RESTART_ITEM_TOPNODE, RESTART_ITEM_TIMEBINS, RESTART_ITEM_CHIMES_GAS, RESTART_ITEM_CHIMES_FLOAT, RESTART_ITEM_CHIMES_SPECIES, RESTART_ITEM_TURB_MODES, RESTART_N_ITEMS};
+static const char *restart_item_names[RESTART_N_ITEMS] = {"All", "P", "CellP", "tree node", "tree node extension", "top node", "timebin count", "Chimes gas state", "Chimes abundance", "Chimes species", "turbulent driving modes"};
+struct restart_layout_header {unsigned int magic, layout_version; unsigned long long n_tasks, item_size[RESTART_N_ITEMS];};
 
-static struct restart_layout_header restart_layout_header_of_this_binary(void)
+static struct restart_layout_header restart_layout_header_of_this_run(void)
 {
-    struct restart_layout_header hdr = {RESTARTFILE_MAGIC, RESTARTFILE_LAYOUT_VERSION,
-        (unsigned long long) sizeof(struct global_data_all_processes), (unsigned long long) sizeof(struct particle_data), (unsigned long long) sizeof(struct gas_cell_data)};
+    struct restart_layout_header hdr; memset(&hdr, 0, sizeof(hdr));
+    hdr.magic = RESTARTFILE_MAGIC; hdr.layout_version = RESTARTFILE_LAYOUT_VERSION; hdr.n_tasks = (unsigned long long) NTask;
+    hdr.item_size[RESTART_ITEM_ALL] = sizeof(struct global_data_all_processes);
+    hdr.item_size[RESTART_ITEM_P] = sizeof(struct particle_data);
+    hdr.item_size[RESTART_ITEM_CELL] = sizeof(struct gas_cell_data);
+    hdr.item_size[RESTART_ITEM_NODE] = sizeof(struct NODE);
+    hdr.item_size[RESTART_ITEM_EXTNODE] = sizeof(struct extNODE);
+    hdr.item_size[RESTART_ITEM_TOPNODE] = sizeof(struct topnode_data);
+    hdr.item_size[RESTART_ITEM_TIMEBINS] = TIMEBINS;
+#ifdef CHIMES
+    hdr.item_size[RESTART_ITEM_CHIMES_GAS] = sizeof(struct gasVariables);
+    hdr.item_size[RESTART_ITEM_CHIMES_FLOAT] = sizeof(ChimesFloat);
+    hdr.item_size[RESTART_ITEM_CHIMES_SPECIES] = (unsigned long long) ChimesGlobalVars.totalNumberOfSpecies; /* set by InitCool, before any restart read */
+#endif
+#ifdef TURB_DRIVING
+    hdr.item_size[RESTART_ITEM_TURB_MODES] = (unsigned long long) StNModes; /* set by init_turb from the parameters, before any restart read; the mode arrays are allocated at it */
+#endif
     return hdr;
 }
 
-/*! Reads the layout header at the start of f. Returns 1 when one is present (f is left past it), 0 when
- *  the bytes there are not a header: a pre-sentinel file, which begins with All. */
+/*! Reads the header at the start of f. Returns 1 for a header of this layout version (f is left past it), -1 for a header of
+ *  another version (only hdr->layout_version is set: the rest of such a header is not read, its fields may differ), 0 for none. */
 static int restart_read_layout_header(FILE *f, struct restart_layout_header *hdr)
 {
-    return (fread(hdr, sizeof(*hdr), 1, f) == 1 && hdr->magic == RESTARTFILE_MAGIC);
+    unsigned int lead[2];
+    if(fread(lead, sizeof(lead), 1, f) != 1 || lead[0] != RESTARTFILE_MAGIC) {return 0;}
+    hdr->magic = lead[0]; hdr->layout_version = lead[1];
+    if(lead[1] != RESTARTFILE_LAYOUT_VERSION) {return -1;}
+    return (fread(&hdr->n_tasks, sizeof(*hdr) - offsetof(struct restart_layout_header, n_tasks), 1, f) == 1) ? 1 : 0;
+}
+
+/*! Prints why this run cannot read the file whose header (of this layout version) is hdr. Returns 1 if it cannot, 0 if it can. */
+static int restart_layout_differs(const char *file, const struct restart_layout_header *hdr, const struct restart_layout_header *want)
+{
+    int i, differs = (hdr->n_tasks != want->n_tasks);
+    for(i = 0; i < RESTART_N_ITEMS; i++) {if(hdr->item_size[i] != want->item_size[i]) {differs = 1;}}
+    if(!differs) {return 0;}
+    printf("Restart file '%s' cannot be read by this run (file/run): ranks %llu/%llu", file, hdr->n_tasks, want->n_tasks);
+    for(i = 0; i < RESTART_N_ITEMS; i++) {if(hdr->item_size[i] != want->item_size[i]) {printf(", %s %llu/%llu", restart_item_names[i], hdr->item_size[i], want->item_size[i]);}}
+    printf(". Resume with the same rank count and a build of that layout, or restart from a snapshot.\n");
+    fflush(stdout);
+    return 1;
 }
 
 int old_MaxPart = 0, new_MaxPart;
@@ -55,8 +89,8 @@ int old_MaxPart = 0, new_MaxPart;
  *  startup to size the memory arena, which has to be sized before anything is allocated from it
  *  and therefore before the restart files are read properly.
  *
- *  Deliberately modest about what it is for. The whole run-parameter block is the first thing in
- *  a restart file, so this reads it into a throwaway copy and takes one number out; it never
+ *  Deliberately modest about what it is for. The whole run-parameter block follows the layout header
+ *  in a restart file, so this reads it into a throwaway copy and takes one number out; it never
  *  touches the live parameters, and restart() below remains the only thing that actually loads
  *  them. The number is also not required to be exact: a run's particle count grows as gas spawns
  *  winds and stars, so the primary file and the backup can legitimately disagree, and the size
@@ -87,7 +121,7 @@ long long peek_total_particles_in_restart(void)
                 struct restart_layout_header hdr;
                 /* The header sits before All; a file without one or with a different All would misread
                    here, so leave it unreadable for restart() to explain. */
-                if(restart_read_layout_header(f, &hdr) && hdr.size_all == (unsigned long long) sizeof(stored) && fread(&stored, sizeof(stored), 1, f) == 1) {total = (long long) stored.TotNumPart;}
+                if(restart_read_layout_header(f, &hdr) == 1 && hdr.item_size[RESTART_ITEM_ALL] == (unsigned long long) sizeof(stored) && fread(&stored, sizeof(stored), 1, f) == 1) {total = (long long) stored.TotNumPart;}
                 fclose(f);
             }
         }
@@ -246,30 +280,27 @@ void restart(int modus)
 
 	  save_PartAllocFactor = All.PartAllocFactor;
 
-	  /* Layout sentinel. What follows is a raw byte image of All, P, CellP and a hand-picked list of
-	     globals, so any change to those structs or to that list makes older restartfiles unreadable --
-	     and without this header they misread silently (every later field shifted) or crash somewhere far
-	     downstream. Written first; on read a missing or different header is a clean, explained stop.
-	     (Skipped if the file failed to open.) */
+	  /* The header goes first, ahead of everything it describes. Any disagreement stops here, before the payload. */
 	  if(!restart_status)
 	    {
-	      struct restart_layout_header want = restart_layout_header_of_this_binary(), hdr = want;
+	      struct restart_layout_header want = restart_layout_header_of_this_run(), hdr = want; int header_read = 1;
 	      if(modus == 0) {byten(&hdr, sizeof(hdr), modus);}
-	      else if(!restart_read_layout_header(fd, &hdr))
+	      else if((header_read = restart_read_layout_header(fd, &hdr)) == 0)
 		{
-		  /* No header: written before the sentinel existed, and the layout changed with it, so no such
-		     file matches this build. */
-		  printf("Restart file '%s' carries no layout header: it was written before this build's restartfile layout and cannot be read by it. "
-			 "Resume with a build of that layout, or restart from a snapshot.\n", buf);
+		  printf("Restart file '%s' has no layout header: it is empty or truncated, or was written by a build older than this format. "
+			 "Restart from a snapshot, or resume with a build of that format.\n", buf);
 		  fflush(stdout);
 		  endrun(7879); restart_status = 7879;   /* soft: skip this rank's payload, drain at the per-turn poll */
 		}
-	      else if(hdr.layout_version != want.layout_version || hdr.size_all != want.size_all || hdr.size_p != want.size_p || hdr.size_cell != want.size_cell)
+	      else if(header_read < 0)
 		{
-		  printf("Restart file '%s' was written with a different data layout (file/binary: layout version %u/%u, sizeof All %llu/%llu, P %llu/%llu, CellP %llu/%llu). "
-			 "Restartfiles are byte images and do not survive changes to these structures: resume with a build of that layout, or restart from a snapshot.\n",
-			 buf, hdr.layout_version, want.layout_version, hdr.size_all, want.size_all, hdr.size_p, want.size_p, hdr.size_cell, want.size_cell);
+		  printf("Restart file '%s' was written in restart layout version %u; this build reads version %u. Restart from a snapshot, or resume with a build of that version.\n",
+			 buf, hdr.layout_version, want.layout_version);
 		  fflush(stdout);
+		  endrun(7879); restart_status = 7879;   /* soft: skip this rank's payload, drain at the per-turn poll */
+		}
+	      else if(restart_layout_differs(buf, &hdr, &want))
+		{
 		  endrun(7879); restart_status = 7879;   /* soft: skip this rank's payload, drain at the per-turn poll */
 		}
 	    }
@@ -578,6 +609,12 @@ void restart(int modus)
 	      if(modus)		/* read */
 		{
 		  domain_allocate();
+		  if(NTopnodes > MaxTopNodes || NTopleaves > MaxTopNodes)
+		    {
+		      printf("Restart file on task=%d holds %d top nodes, more than the %d this run allocates. Resume with the same parameters, or restart from a snapshot.\n", ThisTask, NTopnodes, MaxTopNodes);
+		      fflush(stdout);
+		      endrun(90001027); restart_status = 90001027; goto finish_turn;   /* soft: skip this rank's payload, drain at the per-turn poll */
+		    }
 		  /* The reader must rebuild the layout the WRITER serialized, so the slot count comes
 		   * from the file, not from this rank's current capacity. The two are equal only while
 		   * the capacity never moves; once it can grow mid-step the writer's tree side arrays

@@ -94,8 +94,6 @@ int nuclear_torch_solve(const struct nuclear_input *in, struct nuclear_output *o
     out->Ye = in->Ye;
     nuclear_compute_ye_abar(out->X, &out->Ye, &out->Abar);
     out->de = 0; out->edot = 0; out->burning_timescale = 1.0e30;
-    {static int warned = 0; if (!warned && ThisTask == 0) {
-        printf("WARNING: XNet solver stub called — build and link libxnet for actual burning\n"); warned = 1;}}
     return 0;
 }
 

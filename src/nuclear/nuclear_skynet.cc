@@ -34,6 +34,9 @@
 #include <Reactions/REACLIB.hpp>
 #include <DensityProfiles/ConstantFunction.hpp>
 #include <EquationsOfState/HelmholtzEOS.hpp>
+#ifdef NUCLEAR_NETWORK_SCREENING
+#include <EquationsOfState/SkyNetScreening.hpp>
+#endif
 
 /* species index mapping: GIZMO aprox13 index -> SkyNet nuclide vector index */
 static int skynet_species_map[NUM_NUCLEAR_SPECIES];
@@ -42,11 +45,12 @@ static int skynet_n_species = 0;
 /* SkyNet objects: Evolve mutates the network, so calls are serialised below */
 static ReactionNetwork *skynet_network = nullptr;
 static HelmholtzEOS *skynet_eos = nullptr; /* lives as long as the network that points at it */
+static Screening *skynet_screening = nullptr; /* likewise; stays null without NUCLEAR_NETWORK_SCREENING */
 static std::mutex skynet_mutex; /* Evolve mutates the network and writes its output files, which SkyNet has no option to turn off: one call at a time, so threads gain nothing here */
-static std::string skynet_output_prefix; /* per rank, so ranks sharing a directory do not write one file; each call overwrites it (about 41 kB) */
+static std::string skynet_output_prefix; /* per rank, so ranks sharing a directory do not write the same files; each call rewrites this rank's files */
 
 
-void nuclear_skynet_init(void)
+static void build_skynet_network(void)
 {
     if (ThisTask == 0) {
         printf("SkyNet nuclear network: initializing\n");
@@ -92,13 +96,16 @@ void nuclear_skynet_init(void)
     NetworkOptions netOpts;
     netOpts.IsSelfHeating = false; /* T provided externally by GIZMO */
     netOpts.DisableStdoutOutput = true; /* it would otherwise print on every cell's every call */
+#ifdef NUCLEAR_NETWORK_SCREENING
+    netOpts.EnableScreening = true;
+#endif
 
     /* load REACLIB reaction rates and build the reaction library */
     REACLIB reaclib(reaclibfile);
     REACLIBReactionLibrary reaclibLib(reaclib, "JINA REACLIB",
         ReactionTypeStruct::Strong, true,
         LeptonModeStruct::TreatAllAsDecay, "CF88+JINA",
-        nuclib, netOpts, false);
+        nuclib, netOpts, netOpts.EnableScreening); /* the last argument applies the screening to these rates */
 
     /* assemble the reaction library vector */
     ReactionLibs reacLibs;
@@ -106,12 +113,28 @@ void nuclear_skynet_init(void)
 
     /* create the network */
     skynet_eos = new HelmholtzEOS(All.EosTable, netOpts); /* the network needs an EOS: the same table the run reads */
-    skynet_network = new ReactionNetwork(nuclib, reacLibs, skynet_eos, nullptr, netOpts);
+#ifdef NUCLEAR_NETWORK_SCREENING
+    skynet_screening = new SkyNetScreening(nuclib);
+#endif
+    skynet_network = new ReactionNetwork(nuclib, reacLibs, skynet_eos, skynet_screening, netOpts);
 
     skynet_output_prefix = std::string(All.OutputDir) + "skynet_rank" + std::to_string(ThisTask);
 
-    MPI_Barrier(MPI_COMM_WORLD);
     if (ThisTask == 0) printf("SkyNet initialization complete.\n");
+}
+
+
+void nuclear_skynet_init(void)
+{
+    /* SkyNet reports a missing or bad file by throwing, and not every library it uses throws a std::exception */
+    try {
+        build_skynet_network();
+    } catch (const std::exception &err) {
+        char msg[512]; snprintf(msg, sizeof(msg), "SkyNet could not be set up: %s", err.what());
+        gizmo_request_controlled_stop(7733, msg, __FILE__, __LINE__, __FUNCTION__);
+    } catch (...) {
+        gizmo_request_controlled_stop(7733, "SkyNet could not be set up (a library error, e.g. HDF5: check the files in NuclearNetworkDataFile)", __FILE__, __LINE__, __FUNCTION__);
+    }
 }
 
 
@@ -137,6 +160,7 @@ int nuclear_skynet_solve(const struct nuclear_input *in, struct nuclear_output *
 
     /* evolve */
     std::lock_guard<std::mutex> lock(skynet_mutex);
+    if (gizmo_controlled_stop_local_reason()) {return -1;} /* a stop is already requested: no further burns or files */
     const NetworkOutput *result = nullptr;
     try {
         result = &skynet_network->Evolve(Y_in, 0.0, dt_s, &T9_const, &rho_const, skynet_output_prefix, dt_s);
@@ -144,6 +168,9 @@ int nuclear_skynet_solve(const struct nuclear_input *in, struct nuclear_output *
         char msg[512];
         snprintf(msg, sizeof(msg), "SkyNet failed for a cell with rho=%g g/cm^3, T9=%g, dt=%g s: %s", rho_cgs, T9, dt_s, err.what());
         gizmo_request_controlled_stop(7733, msg, __FILE__, __LINE__, __FUNCTION__);
+        return -1;
+    } catch (...) { /* an HDF5 failure, such as a full disk, is not a std::exception */
+        gizmo_request_controlled_stop(7733, "SkyNet failed for a cell (a library error, e.g. HDF5 writing its output in OutputDir)", __FILE__, __LINE__, __FUNCTION__);
         return -1;
     }
 
