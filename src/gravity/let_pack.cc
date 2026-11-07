@@ -149,88 +149,6 @@ static double let_node_len_over_tree_lifetime(int no, double len)
 
 
 /* ----------------------------------------------------------------------
- * Active-only LET helpers.
- *
- * Each rank computes a per-topleaf bitmap (one bit per topleaf, NTopleaves
- * total) where bit tl == 1 iff topleaf tl is owned by ThisTask AND at least
- * one particle in ActiveParticleList lives in tl.  Bitmaps are MPI_Allgathered
- * so every rank sees every other rank's active-topleaf set.  In the pack
- * loop, sender S short-circuits packing for receiver R when R's bitmap is
- * all zero (R has no active particles -> R does not need any LET data).
- *
- * Particle -> topleaf lookup uses Father[i] -> ancestor chain until the
- * first BITFLAG_TOPLEVEL node, which is necessarily a topleaf (only
- * topleaves contain particles; internal topnodes have only topnode children).
- * ---------------------------------------------------------------------- */
-static inline int let_bitmap_word_count(int n_topleaves)
-{
-    return (n_topleaves + 63) / 64;
-}
-
-static inline int let_bitmap_test(const uint64_t *b, int tl)
-{
-    return (int) ((b[tl >> 6] >> (tl & 63)) & 1ULL);
-}
-
-static inline int let_bitmap_any_set(const uint64_t *b, int n_words)
-{
-    if(!b) return 1;  /* NULL bitmap -> conservative: assume some bits set */
-    for(int w = 0; w < n_words; w++) if(b[w]) return 1;
-    return 0;
-}
-
-extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
-{
-    memset(bitmap, 0, (size_t)n_words * sizeof(uint64_t));
-    if(NTopleaves <= 0) return;
-
-    /* Build inverse lookup: Nodes[no] -> topleaf index (or -1) for MY topleaves only. */
-    int *my_tl_lookup = (int *) mymalloc("LET_my_tl_lookup", (size_t)MaxNodes * sizeof(int));
-    for(int j = 0; j < MaxNodes; j++) my_tl_lookup[j] = -1;
-    for(int t = 0; t < NTopleaves; t++)
-    {
-        if(DomainTask[t] != ThisTask) continue;
-        int no = DomainNodeIndex[t];
-        if(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes)
-            my_tl_lookup[no - All.TreeNodeIndexBase] = t;
-    }
-
-    /* Fallback: if ActiveParticleList is empty (e.g. tree rebuilt before
-     * make_list_of_active_particles ran for the current step), set all MY
-     * topleaves' bits.  Preserves conservative (ship-everything) fallback behavior. */
-    if(ActiveParticleList.empty())
-    {
-        for(int t = 0; t < NTopleaves; t++)
-        {
-            if(DomainTask[t] != ThisTask) continue;
-            bitmap[t >> 6] |= (1ULL << (t & 63));
-        }
-        myfree(my_tl_lookup);
-        return;
-    }
-
-    for(size_t k = 0; k < ActiveParticleList.size(); k++)
-    {
-        int i = ActiveParticleList[k];
-        if(i < 0 || i >= NumPart) continue;
-        if(P[i].Mass <= 0) continue;
-        int no = Father[i];
-        int guard = 0;
-        while(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes && guard++ < 1024)
-        {
-            int tl = my_tl_lookup[no - All.TreeNodeIndexBase];
-            if(tl >= 0)
-            {
-                bitmap[tl >> 6] |= (1ULL << (tl & 63));
-                break;
-            }
-            no = Nodes[no].u.d.father;
-        }
-    }
-    myfree(my_tl_lookup);
-}
-
-/* ----------------------------------------------------------------------
  * Cluster cover leaves (see struct LETCoverLeaf).  Each rank groups its OWNED-topleaf targets by
  * softening octave and displacement octave into cluster leaves (let_compute_local_payload), and the per-rank cluster lists are
  * Allgatherv'd so every sender holds every receiver's cluster leaves for the cover-tree essentiality test.
@@ -353,9 +271,7 @@ static struct LETOrphanRecord *let_my_orphan_for_topleaf(int t)
 /* ----------------------------------------------------------------------
  * Step 1: per-rank-payload computation
  * ---------------------------------------------------------------------- */
-extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
-                                          const uint64_t *active_bitmap,
-                                          int bitmap_n_words)
+extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
 {
     /* bbox: union of OUR topleaf bboxes (each topleaf's [center-len/2, center+len/2]).
      * NOTE: as of the per-topleaf cover fix the bbox COORDS no longer feed LET
@@ -363,15 +279,13 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
      * sender-side from replicated topleaf geometry, not this single union box);
      * only has_cover (>=1 owned topleaf) is still consumed. The coords are kept
      * for wire-format compatibility + debug. min_OldAcc/soft/sink below ARE still
-     * used (whole-rank worst-case scalars fed to the same predicate). If
-     * active_bitmap is non-NULL, restrict to ACTIVE topleaves only. */
+     * used (whole-rank worst-case scalars fed to the same predicate). */
     out->bbox_min[0] = out->bbox_min[1] = out->bbox_min[2] = DBL_MAX;
     out->bbox_max[0] = out->bbox_max[1] = out->bbox_max[2] = -DBL_MAX;
     int found_any = 0;
     for(int i = 0; i < NTopleaves; i++)
     {
         if(DomainTask[i] != ThisTask) continue;
-        if(active_bitmap && !let_bitmap_test(active_bitmap, i)) continue;
         int no = DomainNodeIndex[i];
         if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes) continue;
         double cx = (double) Nodes[no].center[0];
@@ -400,8 +314,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     /* Per-particle bounds -> CLUSTER MEMBERS (grouped later by topleaf, softening octave and displacement octave) + WHOLE-RANK
      * reduce. Each local target is bucketed to its owning topleaf via the Father chain; owned targets are
      * stashed as cluster members, drifted ones ride an orphan record. The whole-rank payload scalars below are
-     * the reduce over all local targets -- a conservative wire-compat fallback (has_cover + empty-rank guard).
-     * active_bitmap non-NULL -> restrict to ActiveParticleList (tight); else all NumPart (conservative). */
+     * the reduce over all local targets -- a conservative wire-compat fallback (has_cover + empty-rank guard). */
     out->min_OldAcc = DBL_MAX;
     for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = 0.0;
     out->min_soft = DBL_MAX;
@@ -421,11 +334,8 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     g_my_orphans_n = 0;   /* drift-orphan records rebuilt each payload compute */
     g_cl_members_n = 0;   /* cluster members re-collected each payload compute */
 
-    int n_iter = (active_bitmap && !ActiveParticleList.empty()) ? (int) ActiveParticleList.size() : NumPart;
-    for(int kk = 0; kk < n_iter; kk++)
+    for(int i = 0; i < NumPart; i++)
     {
-        int i = (active_bitmap && !ActiveParticleList.empty()) ? ActiveParticleList[kk] : kk;
-        if(i < 0 || i >= NumPart) continue;
         if(P[i].Mass <= 0) continue;
         int t = P[i].Type;
         if(t < 0 || t > 5) continue;
@@ -2010,9 +1920,7 @@ extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
                                   int *out_capacity,
                                   struct LETSubtreeHeader **out_hdr_buf,
                                   int *out_hdr_capacity,
-                                  int *out_hdr_count,
-                                  const uint64_t *receiver_active_bitmap,
-                                  int bitmap_n_words)
+                                  int *out_hdr_count)
 {
     int count = 0;
     int hdr_count = 0;
@@ -2025,16 +1933,9 @@ extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
         *out_hdr_count = 0;
         return 0;
     }
-    /* Experimental active-receiver-cover mode only: short-circuit when receiver R
-     * has zero active particles.  receiver_active_bitmap is NULL on the default all-local path. */
-    if(receiver_active_bitmap && !let_bitmap_any_set(receiver_active_bitmap, bitmap_n_words))
-    {
-        *out_hdr_count = 0;
-        return 0;
-    }
     /* Build R's cluster cover tree (file-scope pk->cover*, consumed by
-     * let_node_essential_for_rank during this receiver's pack). R's clusters were
-     * already active-restricted when R computed them, so no sender-side bitmap here. */
+     * let_node_essential_for_rank during this receiver's pack). R's clusters span all of
+     * R's particles. */
     let_build_cover_tree(pk, R);
     /* Pack each of OUR topleaves' subtrees independently, entering pack_recurse from the
      * topleaf with sib_terminator = topleaf.sibling (topleaves already in R's domain are R's
@@ -2920,31 +2821,13 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     /* All-local receiver cover (WHICH particles): the payload worst-case scalars
      * (min_OldAcc/soft/sink) still cover ALL of R's particles, not just active ones,
      * so inactive / TREECOL / RT consumers stay complete (an active-only cover would
-     * silently drop them; still behind the audit-gated, default-OFF compile guard).
+     * silently drop them).
      * Note this is ORTHOGONAL to the per-topleaf cover GEOMETRY (how the boxes are
      * grouped) that the pack now uses: per-topleaf refines min_dist selectivity while
      * this all-local scalar cover keeps completeness. The shared cell predicate
      * (conservative + walk-consistent) + the self-sizing foreign arena keep it safe. */
     struct LETPerRankPayload my_payload;
-#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
-    int bitmap_n_words = let_bitmap_word_count(NTopleaves);
-    if(bitmap_n_words < 1) bitmap_n_words = 1;
-    uint64_t *my_active_bitmap = (uint64_t *) mymalloc("LET_my_active_bitmap",
-        (size_t) bitmap_n_words * sizeof(uint64_t));
-    let_compute_local_active_bitmap(my_active_bitmap, bitmap_n_words);
-
-    uint64_t *all_active_bitmaps = (uint64_t *) mymalloc("LET_all_active_bitmaps",
-        (size_t) NTask * (size_t) bitmap_n_words * sizeof(uint64_t));
-    MPI_Allgather(my_active_bitmap, bitmap_n_words, MPI_UINT64_T,
-                  all_active_bitmaps, bitmap_n_words, MPI_UINT64_T,
-                  MPI_COMM_WORLD);
-
-    /* Tighten the cover to MY active topleaves only (may regress TREECOL self-shielding for
-     * non-active particles -- that is exactly what the audit gate guards). */
-    let_compute_local_payload(&my_payload, my_active_bitmap, bitmap_n_words);
-#else
-    let_compute_local_payload(&my_payload, NULL, 0);
-#endif
+    let_compute_local_payload(&my_payload);
 
     struct LETPerRankPayload *all_payloads =
         (struct LETPerRankPayload *) mymalloc("LET_payloads", NTask * sizeof(struct LETPerRankPayload));
@@ -3108,16 +2991,9 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 #else
         struct LETPackContext *pk = &g_pack_ctx[0];
 #endif
-#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
-        const uint64_t *r_bitmap = all_active_bitmaps + (size_t) r * (size_t) bitmap_n_words;
         n = let_pack_for_rank(pk, r, all_payloads, own_topleaves.data(), (int) own_topleaves.size(),
                               &pk->scratch, &pk->scratch_cap,
-                              &send_hdr_per_rank[r], &hcap, &hcnt, r_bitmap, bitmap_n_words);
-#else
-        n = let_pack_for_rank(pk, r, all_payloads, own_topleaves.data(), (int) own_topleaves.size(),
-                              &pk->scratch, &pk->scratch_cap,
-                              &send_hdr_per_rank[r], &hcap, &hcnt, NULL, 0);
-#endif
+                              &send_hdr_per_rank[r], &hcap, &hcnt);
         /* Encode this destination's records; on any failure it ships nothing, like a failed pack. */
         const long long units = pk->pack_oom ? -1 : let_wire_encode_destination(pk, pk->scratch, n, &send_per_rank[r]);
         if(units < 0)
@@ -3207,10 +3083,6 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     myfree(send_hdr_per_rank);
     myfree(send_per_rank);
     myfree(all_payloads);
-#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
-    myfree(all_active_bitmaps);
-    myfree(my_active_bitmap);
-#endif
     /* Worst-status wins: a send-buffer malloc failure (g_let_pack_oom) is not
      * fixable by a larger foreign arena, so it outranks a retryable overflow. */
     if(g_let_pack_oom) return LET_PACK_OOM;
