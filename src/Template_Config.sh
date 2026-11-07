@@ -451,6 +451,7 @@
 #RT_COMOVING                            # solve RHD equations formulated in the comoving frame, as compared to the default mixed-frame formulation; see Mihalas+Mihalas 84
 # -------------------- physics: wavelengths+coupled RT-chemistry networks (if any of these is used, cite Hopkins et al. 2018, MNRAS, 480, 800) -----------------------------------
 #RT_SOURCES=1+16+32                     # source types for radiation given by bitflag (1=2^0=gas,16=2^4=new stars,32=2^5=BH)
+#RT_ILIEV_TEST1                         # test problem (Iliev et al. 2006 test 1, test/iliev_test1): type-4 sources emit 5e48 ionizing photons/s (single-band H0) and the photoionization chemistry uses rates at a fixed 1e4 K
 #RT_XRAY=3                              # x-rays: 1=soft (0.5-2 keV), 2=hard (>2 keV), 3=soft+hard; used for Compton-heating
 #RT_CHEM_PHOTOION=2                     # ionizing photons: 1=H-only [single-band], 2=H+He [four-band]
 #RT_LYMAN_WERNER                        # lyman-werner [narrow H2 dissociating] band
