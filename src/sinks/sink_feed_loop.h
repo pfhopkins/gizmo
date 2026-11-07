@@ -334,6 +334,7 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
 #endif
 
     /* ---- sink-sink merger check ---- */
+#ifndef DISABLE_SINK_MERGERS
     if(neighbor_particle.Type == 5) {
         /* Identity is a separation of zero: IDs are not unique, so the identifier half of this test
          * did nothing the distance does not already do, and could only mis-fire. */
@@ -380,6 +381,7 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             }
         }
     }
+#endif /* DISABLE_SINK_MERGERS */
 
     /* ---- grav-capture check (non-Type5) ---- */
 #if defined(SINK_GRAVCAPTURE_GAS) || defined(SINK_GRAVCAPTURE_NONGAS)
