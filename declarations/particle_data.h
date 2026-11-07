@@ -14,6 +14,9 @@ extern ALIGN(32) struct particle_data
     
     integertime Ti_begstep;         /*!< marks start of current timestep of particle on integer timeline */
     integertime Ti_current;         /*!< current time of the particle */
+#if defined(PRECISION_DIET) && (PRECISION_DIET >= 2)
+    MyFloat KernelRadius;           /*!< search radius around particle for neighbors/interactions (=2 layout: in the alignment hole before Pos, so a neighbour-search candidate touches one cache line less) */
+#endif
     
     ALIGN(32) Vec3<MyDouble> Pos;   /*!< particle position at its current time */
     MyDouble Mass;                  /*!< particle mass */
@@ -98,7 +101,9 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
     
+#if !(defined(PRECISION_DIET) && (PRECISION_DIET >= 2))
     MyFloat KernelRadius;           /*!< search radius around particle for neighbors/interactions */
+#endif
     MyFloat NumNgb;                 /*!< neighbor number around particle */
     MyScratchFloat DrkernNgbFactor;        /*!< correction factor needed for varying kernel lengths */
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
