@@ -320,7 +320,7 @@ void init(void)
             Vec3<double> nx,ny,nz; int kw; get_random_orthonormal_basis(i, INITIAL_WIND_BASIS_RNG_SALT, 0, nx,ny,nz); for(kw=0;kw<3;kw++) {P[i].Wind_direction[kw] = nx[kw]; P[i].Wind_direction[kw+3] = ny[kw];}
 #endif
 #endif
-#ifdef SINK_WIND_SPAWN
+#if defined(SINK_PARTICLES) && defined(SINK_WIND_SPAWN) /* the guard the reservoirs are declared under */
             /* spawn reservoirs of a sink read from an IC rather than formed in-run would otherwise hold whatever
                was in the slot: both are skipped by read_ic on a fresh start and read back on a snapshot restart */
             if(RestartFlag == 0)

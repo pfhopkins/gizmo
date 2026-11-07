@@ -41,7 +41,7 @@ void hydrogen_molecule_zrot_mixture(double temp, double result[3]) {
         if (j & 1) { // ortho (odd j)
             zterm_ortho *= (2 * j + 1) * expterm / (2 * j - 3);
             double dzterm = (jjplusone - 2) * x * zterm_ortho;
-            const double d2zterm = ((jjplusone - 2) * x - 2) * dzterm; /* its own statement, as before, so no compiler fuses it into the sum */
+            const double d2zterm = ((jjplusone - 2) * x - 2) * dzterm; /* its own statement, as before: a compiler that contracts only within a statement then keeps the old rounding */
             z_ortho += zterm_ortho; dz_ortho += dzterm; d2z_ortho += d2zterm;
         } else { // para (even j)
             zterm_para *= (2 * j + 1) * expterm / (2 * j - 3);
