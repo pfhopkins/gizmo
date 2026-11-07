@@ -1210,7 +1210,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
             double L_particle = P[p].Get_Particle_Size();
             double vsig = P[p].Sink_SurroundingGasVel;
-#if defined(SINGLE_STAR_FB_TIMESTEPLIMIT) && !defined(NOGRAVITY)
+#if defined(SINGLE_STAR_FB_TIMESTEPLIMIT) && !defined(SELFGRAVITY_OFF) /* as for the gas feedback limiter: the feedback velocity is zero there */
             vsig += P[p].MaxFeedbackVel;
 #endif                        
             double dt_cour_sink = All.CourantFac * (L_particle*All.cf_atime) / vsig;

@@ -608,7 +608,7 @@
 #define RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
 #endif // closes SINGLE_STAR_RT_DEFAULTS
 
-#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED) && !defined(NOGRAVITY))
+#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED) && !defined(SELFGRAVITY_OFF)) /* the column densities come from the gravity tree walk */
 #define RT_USE_TREECOL_FOR_NH 6 /* This gives a better approximation for column density than the usual scale-length estimator, but is overkill for typical 1e-3msun-resolving simulations that only marginally resolve the opacity limit. Enable for high (<1e-5msun) resolution sims */
 #endif
 #ifdef COOLING
