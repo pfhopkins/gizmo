@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <limits.h>
 #include <string.h>
 #include <math.h>
 #include <mpi.h>
@@ -694,34 +695,11 @@ void init(void)
             CellP[i].DtInternalEnergy = 0;
             CellP[i].Mass = P[i].Mass;
             CellP[i].Density = -1;
-#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
-#ifdef IO_COMPOSITIONTYPE_NOT_IN_ICFILE
+#if (defined(EOS_TILLOTSON) || defined(EOS_ANEOS)) && defined(IO_COMPOSITIONTYPE_NOT_IN_ICFILE)
             /* composition is not read from the IC: default every Type-0 cell to slot 0
                (gas under EOS_TYPES_DEFAULTGAS_AND_SOLIDS, else the custom material-0).
                Solids set their composition later (e.g. grain promotion). */
             CellP[i].CompositionType = 0;
-#else
-            /* composition is read from the IC (read_ic.cc); preserve the per-particle
-               value but sanitize out-of-range/garbage so it can never index an invalid
-               EOS material slot. This is the single guarantee point that every cell
-               carries a valid CompositionType before any solid-EOS dispatch or
-               Tillotson_EOS_params[]/aneos table lookup. */
-            {
-                const int comp_max =
-#if defined(EOS_TILLOTSON) && defined(EOS_ANEOS)
-                    N_TILLOTSON_MATERIALS + All.AneosNumMaterials;
-#elif defined(EOS_ANEOS)
-#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
-                    All.AneosNumMaterials + 1; /* slot 0 = gas; tables occupy 1..AneosNumMaterials */
-#else
-                    All.AneosNumMaterials;
-#endif
-#else
-                    N_TILLOTSON_MATERIALS;
-#endif
-                if(CellP[i].CompositionType < 0 || CellP[i].CompositionType >= comp_max) {CellP[i].CompositionType = 0;}
-            }
-#endif
 #endif
 #ifdef COOLING
 #ifndef CHIMES
@@ -856,6 +834,42 @@ void init(void)
         CellP[i].Injected_Sink_Energy = 0;
 #endif
     }
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    /* a cell whose CompositionType names no material of this build stops the run here, before anything looks up its equation
+       of state, instead of running it as some other material. Every start that reads composition is covered: an IC, and a
+       snapshot (RestartFlag 2-6), which carries it even with IO_COMPOSITIONTYPE_NOT_IN_ICFILE (that flag only skips the IC
+       block; its fresh start has just set every cell to 0) */
+    {
+        const int comp_max =
+#if defined(EOS_TILLOTSON) && defined(EOS_ANEOS)
+            N_TILLOTSON_MATERIALS + All.AneosNumMaterials;
+#elif defined(EOS_ANEOS)
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+            All.AneosNumMaterials + 1; /* slot 0 = gas; tables occupy 1..AneosNumMaterials */
+#else
+            All.AneosNumMaterials;
+#endif
+#else
+            N_TILLOTSON_MATERIALS;
+#endif
+        long long n_bad = 0, n_bad_all = 0; int id_lo = INT_MAX, id_hi = INT_MIN, lo_all, hi_all;
+        for(i = 0; i < N_gas; i++)
+        {
+            int ct = CellP[i].CompositionType;
+            if(ct < 0 || ct >= comp_max) {n_bad++; if(ct < id_lo) {id_lo = ct;} if(ct > id_hi) {id_hi = ct;}}
+        }
+        MPI_Allreduce(&n_bad, &n_bad_all, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&id_lo, &lo_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&id_hi, &hi_all, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(n_bad_all > 0)
+        {
+            if(ThisTask == 0 && comp_max > 0) {printf("ERROR: %lld cells carry a CompositionType that names no material of this build (values found: %d to %d; this build's materials are 0 to %d -- see the User Guide's numbering for EOS_TILLOTSON / EOS_ANEOS / EOS_TYPES_DEFAULTGAS_AND_SOLIDS). Fix the initial conditions.\n", n_bad_all, lo_all, hi_all, comp_max - 1);}
+            if(ThisTask == 0 && comp_max <= 0) {printf("ERROR: %lld cells carry a CompositionType, but this build loads no material (AneosNumMaterials = 0).\n", n_bad_all);}
+            endrun(1);
+        }
+    }
+    if(gizmo_poll_controlled_stop()) return;
+#endif
 #if defined(EOS_DAMAGE_POROSITY)
     /* damage and porosity, before the first density pass evaluates the equation of state (whose P-alpha update would
      * otherwise read an unset distention). Only a fresh start from a binary IC initializes them: RestartFlag 1 restores

@@ -300,6 +300,7 @@ void begrun(void)
   if(RestartFlag == 0 || RestartFlag == 2 || RestartFlag == 3 || RestartFlag == 4 || RestartFlag == 5 || RestartFlag == 6)
     {
       init();			/* ... read in initial model */
+      if(gizmo_poll_controlled_stop()) return; /* initial conditions refused while being set up (e.g. a CompositionType naming no material) */
     }
   else
     {

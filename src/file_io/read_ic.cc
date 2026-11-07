@@ -1783,7 +1783,9 @@ int read_file(char *fname, int readTask, int lastTask)
                                         switch(get_datatype_in_block(blocknr))
                                         {
                                             case 0:
-                                                hdf5_datatype = H5Tcopy(H5T_NATIVE_UINT);
+                                                /* CompositionType is signed: reading it into an unsigned type clipped a negative id
+                                                 * to 0 in HDF5's conversion, before init could refuse it */
+                                                hdf5_datatype = H5Tcopy(blocknr == IO_EOSCOMP ? H5T_NATIVE_INT : H5T_NATIVE_UINT);
                                                 break;
 
                                             case 1:
