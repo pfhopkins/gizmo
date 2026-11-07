@@ -5,21 +5,7 @@
 #include "../GIZMO_config.h"
 #endif
 
-#ifdef EOS_HELMHOLTZ
-#define EOS_TABULATED
-#define EOS_USES_CGS
-#define EOS_CARRIES_YE
-#define EOS_CARRIES_ABAR
-#define EOS_PROVIDES_ENTROPY
-#define EOS_PROVIDES_CV
-#endif
-
-#ifdef EOS_ANEOS
-#define EOS_TABULATED
-#define EOS_USES_CGS
-#define EOS_PROVIDES_ENTROPY
-#define EOS_PROVIDES_CV
-#endif
+#include "../declarations/precompiler_logic.h"
 
 #if defined(EOS_ANEOS) && defined(EOS_HELMHOLTZ)
 #error "EOS_ANEOS and EOS_HELMHOLTZ are mutually exclusive"
