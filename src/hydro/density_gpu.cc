@@ -35,6 +35,7 @@
 #include "../core/proto.h"
 #include "../core/timestep_functions.h"
 #include "../mesh/kernel.h"
+#include "../declarations/multifluid_helpers.h"
 #include "../mesh/neighbor_list.h"
 #include "../mesh/sfc_tiles.h"
 #include "../mesh/sfc_tiles_functions.h"
@@ -404,6 +405,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             for(int64_t idx = offsets[aa]; idx < offsets[aa + 1]; idx++)
             {
                 int j = neighbors[idx];
+#ifdef HYDRO_MULTIFLUID
+                if(!same_lagrangian_fluid_id(kp[ii].FluidType, kp[j].FluidType)) {continue;} /* different fluids exchange no fluxes, as in the hydro pass */
+#endif
                 memset(&Fluxes, 0, sizeof(Fluxes));
                 hydro_accumulate_neighbor(local, out, kernel, Fluxes, j,
                                           local.dt_hydrostep_i, kp, kc,
