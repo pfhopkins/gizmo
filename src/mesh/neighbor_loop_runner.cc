@@ -7154,11 +7154,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             }
         }
 
-        /* Partition-by-subgroup debug assertion (DEBUG / GIZMO_NLR_ASSERT_PARTITION
+        /* Partition-by-subgroup debug assertion (DEBUG
          * only; zero production overhead). Checks each active's active_subgroup_key
          * against the iter-0 j_type_bitmask; a mismatch routes to the graceful
          * controlled stop below. Host-side, before per-iter dispatch. */
-#if defined(DEBUG) || defined(GIZMO_NLR_ASSERT_PARTITION)
+#if defined(DEBUG)
         if constexpr (nlr_spec_actives_partition_by_subgroup_v<Spec>) {
             int local_partition_bad = 0;
             for (int sg = 0; sg < args.num_subgroups && !local_partition_bad; sg++) {
