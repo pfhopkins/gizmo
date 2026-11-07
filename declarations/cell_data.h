@@ -157,8 +157,8 @@ extern struct gas_cell_data
         MyScratchFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
 #endif
     } Gradients;
-    SymmetricTensor2<MyDouble> NV_T; /*!< holds the tensor used for gradient estimation */
-    Vec3<MyDouble> NV_T_face_weights; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
+    SymmetricTensor2<MyScratchFloat> NV_T; /*!< holds the tensor used for gradient estimation */
+    Vec3<MyScratchFloat> NV_T_face_weights; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
     MyScratchFloat ConditionNumber;   /*!< condition number of the gradient matrix: needed to ensure stability */
     MyScratchFloat FaceClosureError;      /*!< dimensionless measure of face closure */
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
@@ -180,7 +180,7 @@ extern struct gas_cell_data
     MyDouble EgyWtDensity;          /*!< 'effective' rho to use in hydro equations */
 #endif
     
-    MyFloat MaxSignalVel;           /*!< maximum signal velocity (needed for time-stepping) */
+    MyScratchFloat MaxSignalVel;    /*!< maximum signal velocity (needed for time-stepping) */
     int recent_refinement_flag;     /*!< key that tells the code this cell was just refined or de-refined, to know to treat some other operations with care */
     
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
@@ -223,7 +223,7 @@ extern struct gas_cell_data
     int CoolingIsOperatorSplitThisTimestep; /* flag to tell us if cooling is operator split or not on a given timestep */
 #endif
 #ifndef CHIMES
-    MyFloat Ne;  /*!< electron fraction, expressed as local electron number density normalized to the hydrogen number density. Gives indirectly ionization state and mean molecular weight. */
+    MyScratchFloat Ne;  /*!< electron fraction, expressed as local electron number density normalized to the hydrogen number density. Gives indirectly ionization state and mean molecular weight. */
 #endif
 #endif
 #ifdef GALSF

@@ -57,14 +57,14 @@ extern ALIGN(32) struct particle_data
 #endif
 #if defined(GALSF_SFR_TIDAL_HILL_CRITERION) || defined(TIDAL_TIMESTEP_CRITERION) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(OUTPUT_TIDAL_TENSOR) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
 #define COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    SymmetricTensor2<MyFloat> tidal_tensorps;            /*!< tidal tensor (=second derivatives of grav. potential) */
+    SymmetricTensor2<MyScratchFloat> tidal_tensorps;     /*!< tidal tensor (=second derivatives of grav. potential) */
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    MyFloat tidal_tensor_mag_prev;                       /*!< saved frobenius norm of the tidal tensor, from the previous timestep >*/
-    SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;   /*!< save the entire tensor if this is active >*/
+    MyScratchFloat tidal_tensor_mag_prev;                /*!< saved frobenius norm of the tidal tensor, from the previous timestep >*/
+    SymmetricTensor2<MyScratchFloat> tidal_tensorps_prevstep; /*!< save the entire tensor if this is active >*/
     MyFloat tidal_zeta;                                  /*!< also need to calculate an analog of the ags zeta variable here >*/
 #endif
 #ifdef PMGRID
-    SymmetricTensor2<MyFloat> tidal_tensorpsPM;          /*!< for TreePM simulations, long range tidal field */
+    SymmetricTensor2<MyScratchFloat> tidal_tensorpsPM;   /*!< for TreePM simulations, long range tidal field */
 #endif
 #endif
     
@@ -104,7 +104,7 @@ extern ALIGN(32) struct particle_data
 #if !(defined(PRECISION_DIET) && (PRECISION_DIET >= 2))
     MyFloat KernelRadius;           /*!< search radius around particle for neighbors/interactions */
 #endif
-    MyFloat NumNgb;                 /*!< neighbor number around particle */
+    MyScratchFloat NumNgb;          /*!< neighbor number around particle */
     MyScratchFloat DrkernNgbFactor;        /*!< correction factor needed for varying kernel lengths */
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
     MyScratchFloat DensityAroundParticle;         /*!< gas density in the neighborhood of the collisionless particle (evaluated from neighbors) */
@@ -351,7 +351,7 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
-    Mat3<MyDouble> NV_T;                                           /*!< holds the tensor used for gradient estimation */
+    Mat3<MyScratchFloat> NV_T;                                     /*!< holds the tensor used for gradient estimation */
 #endif
 #ifdef CBE_INTEGRATOR
     double CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];         /* moments per basis function */

@@ -212,7 +212,7 @@ struct INPUT_STRUCT_NAME
         MyCommFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
 #endif
     } Gradients;
-    SymmetricTensor2<MyDouble> NV_T;
+    SymmetricTensor2<MyScratchFloat> NV_T;
     
 #if defined(KERNEL_CRK_FACES)
     MyFloat Tensor_CRK_Face_Corrections[16];
@@ -320,7 +320,7 @@ struct OUTPUT_STRUCT_NAME
     //MyDouble dMomentum[3]; //manifest-indiv-timestep-debug//
     MyDouble DtInternalEnergy;
     //MyDouble dInternalEnergy; //manifest-indiv-timestep-debug//
-    MyFloat MaxSignalVel;
+    MyScratchFloat MaxSignalVel;
 #ifdef OUTPUT_SHOCK_MACH_NUMBER
     MyFloat MaxShockMachNumber;
 #endif

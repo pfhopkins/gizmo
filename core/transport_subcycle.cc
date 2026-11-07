@@ -84,7 +84,7 @@ static struct INPUT_STRUCT_NAME
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     Vec3<MyFloat> ParticleVel;
 #endif
-    SymmetricTensor2<MyDouble> NV_T;  /* gradient matrix for face area computation */
+    SymmetricTensor2<MyScratchFloat> NV_T;  /* gradient matrix for face area computation */
     int NodeList[NODELISTLENGTH];     /* required by code_block_xchange framework */
 }
 *DATAIN_NAME, *DATAGET_NAME;
