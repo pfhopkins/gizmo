@@ -372,17 +372,8 @@ extern FILE *FdSNeFBLogFile;    /*!< file handle for mechanical feedback log-fil
 #ifdef SINK_PARTICLES
 extern FILE *FdSinks;    /*!< file handle for sinks.txt log-file. */
 #endif
-#ifdef OUTPUT_SINK_ACCRETION_HIST
-extern FILE *FdSinkSwallowDetails;
-#endif
-#ifdef OUTPUT_SINK_FORMATION_PROPS
-extern FILE *FdSinkFormationDetails;
-#endif
 #if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(SINK_OUTPUT_MOREINFO)) && defined(SINK_PARTICLES)
 extern FILE *FdSinksDetails;
-#ifdef SINK_OUTPUT_MOREINFO
-extern FILE *FdSinkMergerDetails;
-#endif
 #ifdef SINK_WIND_KICK
 extern FILE *FdSinkWindDetails;
 #endif

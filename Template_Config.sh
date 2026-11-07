@@ -502,8 +502,8 @@
 #OUTPUT_DELAY_TIME_HII          # output DelayTimeHII. Requires GALSF_FB_FIRE_RT_HIIHEATING (and corresponding flags/permissions set)
 #OUTPUT_MOLECULAR_FRACTION      # output the code-estimated molecular mass fraction [needs COOLING], for e.g. approximate molecular fraction estimators (as opposed to detailed chemistry modules, which already output this)
 #OUTPUT_TEMPERATURE             # output the in-code gas temperature
-#OUTPUT_SINK_ACCRETION_HIST     # save full accretion histories of sink (BH/star/etc) particles
-#OUTPUT_SINK_FORMATION_PROPS    # save at-formation properties of sink particles
+#OUTPUT_SINK_ACCRETION_HIST     # log every gas accretion and sink merger event to OutputDir/sink_events/{accretion,merger}.npy (NumPy structured arrays; README.txt there documents the columns)
+#OUTPUT_SINK_FORMATION_PROPS    # log every sink formation event with at-formation gas properties to OutputDir/sink_events/formation.npy
 #OUTPUT_SINK_DISTANCES          # saves the distance to the nearest sink, if SINK_CALC_DISTANCES is enabled, to snapshots
 #OUTPUT_RT_RAD_FLUX             # save flux vector for radiation methods that explictly evolve the flux (e.g. M1)
 #OUTPUT_RT_RAD_OPACITY          # save opacities for the different bands for explicit radiation-hydro methods

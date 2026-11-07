@@ -363,10 +363,16 @@ void run(void)
             }
             else
                 stopflag = 0;
+#ifdef SINK_LEDGER_ACTIVE
+            static double t_last_ledger_flush = -1; double t_now = MPI_Wtime();
+            if(t_last_ledger_flush < 0 || stopflag == 3) {t_last_ledger_flush = t_now;} /* restart writes flush the ledger themselves */
+            if(stopflag == 0 && t_now - t_last_ledger_flush >= SINK_LEDGER_FLUSH_INTERVAL_SEC) {t_last_ledger_flush = t_now; stopflag = 4;} /* 4 = flush the sink ledger */
+#endif
         }
 
         MPI_Bcast(&stopflag, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
+        if(stopflag == 4) {sink_ledger_flush(); stopflag = 0;}
         if(stopflag == 3)
         {
             restart(0);		/* write an occasional restart file */
