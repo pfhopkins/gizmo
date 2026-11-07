@@ -101,6 +101,16 @@ void GravAccel_set_zeros_if_needed()
     for (int i : ActiveParticleList) {for(int k=0;k<6;k++) {P[i].tidal_tensorps.data[k]=0;}}
 #endif
 #endif
+#if defined(SELFGRAVITY_OFF)
+    /* the tree walk that zeroes then accumulates these never runs, so they would keep whatever the slot held
+       before the particle claimed it; the Hermite kick copies GravJerk into its retained state every step */
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+    for (int i : ActiveParticleList) {P[i].GravJerk = {};}
+#endif
+#if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL)
+    for (int i : ActiveParticleList) {P[i].Potential = 0;}
+#endif
+#endif
 }
 
 
