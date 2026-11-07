@@ -267,7 +267,13 @@ bool gizmo_hydro_corridor_csr_arrays(const int **rows, int *n_rows, const int64_
     return true;
 }
 
-void gizmo_hydro_corridor_refresh_ghost_values(const char *stage)
+static void corridor_refresh(const char *stage, bool values_current);
+
+void gizmo_hydro_corridor_refresh_ghost_values(const char *stage) {corridor_refresh(stage, false);}
+
+void gizmo_hydro_corridor_revalidate_ghost_pool(const char *stage) {corridor_refresh(stage, true);}
+
+static void corridor_refresh(const char *stage, bool values_current)
 {
     /* No-op unless the corridor owns a published Mode-A view this step —
      * Mode B / fallback paths keep their own refresh semantics. At NTask==1
@@ -287,6 +293,7 @@ void gizmo_hydro_corridor_refresh_ghost_values(const char *stage)
      * a refresh-guard failure — falls CLOSED to the full path below. */
     int same_pool = (ghost_pool_is_live() && ghost_provenance_epoch() == g_corridor_pool_epoch) ? 1 : 0;
     MPI_Allreduce(MPI_IN_PLACE, &same_pool, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);   /* both paths are collective */
+    if(same_pool && values_current) {return;}
     if(same_pool) {
         int refresh_rc = ghost_refresh_values();
         if(refresh_rc == GHOST_REFRESH_OK) {

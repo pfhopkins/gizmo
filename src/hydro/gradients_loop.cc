@@ -473,7 +473,14 @@ void hydro_gradient_calc(void)
     const GizmoHydroCorridorMode   corridor_mode = gizmo_hydro_corridor_get_mode();
     const bool corridor_built_csr = (gizmo_hydro_corridor_external_csr() != nullptr);
     if(corridor_built_csr) {
+#if defined(HYDRO_VOLUME_CORRECTIONS) || defined(TURB_DIFF_DYNAMIC)
         gizmo_hydro_corridor_refresh_ghost_values("pre_gradients");
+#else
+        /* Neither writer of the "pre_gradients" stage is compiled, so the
+         * corridor import is still current: a value refresh here would ship
+         * every ghost again unchanged. */
+        gizmo_hydro_corridor_revalidate_ghost_pool("pre_gradients");
+#endif
     } else if(corridor_mode == GizmoHydroCorridorMode::MODE_A
               && gizmo_sym_any_active_global) {
         printf("FATAL: hydro_gradient_calc in Mode A with active gas but no published corridor CSR on task %d.\n", ThisTask);
