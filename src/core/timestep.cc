@@ -1256,10 +1256,6 @@ integertime get_timestep(int p,		/*!< particle index */
     /* convert the physical timestep to dloga if needed. Note: If comoving integration has not been selected, All.cf_hubble_a=1. */
     dt *= All.cf_hubble_a;
 
-#ifdef ONLY_PM
-    dt = All.MaxSizeTimestep;
-#endif
-
     if(dt >= All.MaxSizeTimestep) {dt = All.MaxSizeTimestep;}
 
     if(dt >= dt_displacement) {dt = dt_displacement;}

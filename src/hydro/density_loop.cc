@@ -432,7 +432,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
 #if defined(SINK_PARTICLES)
         if (P[i].Type == 5) {
             P[i].Sink_TimeBinGasNeighbor = (short int)accum.Sink_TimeBinGasNeighbor;
-  #if defined(BH_ACCRETE_NEARESTFIRST) || defined(SINGLE_STAR_TIMESTEPPING)
+  #if defined(SINGLE_STAR_TIMESTEPPING)
             P[i].Sink_dr_to_NearestGasNeighbor = (MyFloat)accum.Sink_dr_to_NearestGasNeighbor;
   #endif
         }
