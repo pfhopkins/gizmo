@@ -1202,10 +1202,10 @@
 #define SELFGRAVITY_OFF // safely define SELFGRAVITY_OFF in this case, otherwise we act like there is gravity except in the final setting of accelerations
 #endif
 
-/* a particle whose tree walk is skipped keeps the acceleration the gravity call finalized (tree, analytic, direct terms) and
-   advances it with the jerk. Forces added to GravAccel after the gravity call (drag and grain radiation under the drag flag, quantum pressure) must
-   then not ride along on the kept value, so it is kept apart in GravAccel_Retained. Any new force added to GravAccel after
-   gravity must join this list (the shearing-box Coriolis force is velocity-dependent, so it is one of them). */
+/* a particle whose tree walk is skipped advances the tree and direct-sum part of its gravity with the jerk. Forces added to GravAccel after the gravity call (drag and
+   grain radiation under the drag flag, quantum pressure, the shearing-box Coriolis force) must then not ride along on that value, so in these builds that
+   part is kept apart in GravAccel_Retained and the analytic terms are added afresh every step. Without this list a skipped walk keeps the
+   acceleration its last walk finalized, analytic terms included. Any new force added to GravAccel after gravity must join this list. */
 #if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF) && (defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION) || defined(DM_FUZZY) || defined(BOX_SHEARING))
 #define GRAVACCEL_RETAINED_ON_SKIPPED_WALK
 #endif
