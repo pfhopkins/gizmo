@@ -222,6 +222,9 @@ void sink_swallow_and_kick_loop(void)
     /* Swallowed gas keeps its slot with zero mass until compaction; anything that kept the gas
        topology from before this must know (counted on the sink's rank; consumers decide collectively). */
     if(N_gas_sw > 0) {ghost_exchange_gas_eligibility_changed("sink_swallow_and_kick_loop");}
+    /* Swallowed particles keep their slot, at zero mass and still linked in the tree, until the next rearrange or build,
+       and the node moments are deliberately not refreshed for them: a refresh is an all-node pass, and swallows happen on
+       the smallest steps (see the moment-refresh note in gravtree.cc). */
 
     int Ntot_gas = 0, Ntot_sink = 0, Ntot_star = 0, Ntot_dm = 0;
     MPI_Reduce(&N_gas_sw,  &Ntot_gas,  1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);

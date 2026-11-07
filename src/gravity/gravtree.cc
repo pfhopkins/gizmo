@@ -230,9 +230,15 @@ void gravity_tree(void)
         PRINT_STATUS(" ..Tree construction done.");
     }
 
-    /* refresh tree moments if stale (e.g. after star formation or sink mass change).
-       This must run before ANY gravity evaluation including Hermite calls, since
-       stale moments produce wrong forces. Much cheaper than a full treebuild. */
+    /* Refresh the node moments where a site has asked for it (a sink formed in place, a sink losing mass). This must run
+       before any gravity evaluation, Hermite passes included. The refresh is a pass over every node, so it is asked for
+       only where a change cannot wait for the next build. Otherwise the node moments are left stale between builds ON
+       PURPOSE -- after ordinary star formation, sink swallows and spawns -- a deliberate choice, not an oversight: a new star's luminosity keys off its
+       age, which is zero at formation, so it is not yet meaningful; an immediate refresh would make the local tree
+       disagree with the tree exported to other ranks (rebuilt only at full builds) whenever a luminosity changes, i.e.
+       every step; the finite-time staleness smooths the early-age fluctuations of close sources, which an immediate
+       refresh turns into opening-criterion noise and, in past experiments, larger force errors; and it would put an
+       all-node pass on the smallest steps. A build is forced once insertions pass 1% of the particles. */
     {
         int TreeMomentsStaleFlag_global;
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);

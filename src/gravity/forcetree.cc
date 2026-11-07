@@ -1821,13 +1821,14 @@ void force_add_element_to_tree(int iparent, int ichild)
     /* The child's speed bound goes up its whole chain, to the top-level node other ranks route by; the
      * parent's node alone would let it outrun every ancestor box until its first kick or the next build. */
     gravity_note_inserted_motion_bound(ichild);
-    // update parent node property [maximum softening] for opening criteria
+    /* update parent node property [maximum softening] for opening criteria. The bound and the per-type band below are raised
+       from the PARENT's radius and type, not the inserted child's: a spawned child's own band reaches the tree when it is
+       next active (force_update_hmax) or at the next build. Known and accepted: measured on a FIRE galaxy run, no neighbour pair depended on the stale band
+       (checks after 13 spawns, none locally or remotely); change this only if a missed pair is shown. */
     MyFloat new_hmax = DMAX(Extnodes[father].hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[iparent].KernelRadius, All.MaxKernelRadius));
     Extnodes[father].hmax = new_hmax;
-    /* Mode B per-type incremental update — only the band corresponding to
-     * iparent's type. Other bands unchanged (correct: this insertion adds
-     * one particle, only its type's band can grow). Conservative across every
-     * leaf-policy-selectable source via the shared helper. */
+    /* Mode B per-type incremental update -- the band of the parent's type, as for the bound above.
+     * Conservative across every leaf-policy-selectable source via the shared helper. */
     {
         int ptype = (int)P[iparent].Type;
         double htmp = force_hmax_per_type_particle_radius(iparent);
