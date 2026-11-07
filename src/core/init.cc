@@ -745,6 +745,13 @@ void init(void)
             CellP[i].Rad_Flux_AGN = 0;
 #endif
         }
+#if defined(COOL_MOLECFRAC_NONEQM)
+        if(RestartFlag == 2) /* the snapshot stores the fraction per neutral H; rebuild the total from it */
+        {
+            CellP[i].MolecularMassFraction_perNeutralH = DMIN(1,DMAX(0,CellP[i].MolecularMassFraction_perNeutralH));
+            CellP[i].MolecularMassFraction = DMIN(1,DMAX(0, 1.-CellP[i].Ne/1.25)) * CellP[i].MolecularMassFraction_perNeutralH;
+        }
+#endif
         /* the cached composition is not carried in snapshots, so seed it on any start that does not
            restore the cell wholesale. it is refreshed at the first equation-of-state call regardless */
         if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT; CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT;}
@@ -1231,14 +1238,6 @@ void init(void)
     }
     
 
-#if defined(COOL_MOLECFRAC_NONEQM)
-    if(RestartFlag == 2) // should have read in CellP[i].MolecularMassFraction_perNeutralH
-    {
-        CellP[i].MolecularMassFraction_perNeutralH = DMIN(1,DMAX(0,CellP[i].MolecularMassFraction_perNeutralH));
-        CellP[i].MolecularMassFraction = DMIN(1,DMAX(0, 1.-CellP[i].Ne/1.25)) * CellP[i].MolecularMassFraction_perNeutralH;
-    }
-#endif
-    
 
 #ifdef CHIMES_INITIALISE_IN_EQM
     if (RestartFlag != 1)
