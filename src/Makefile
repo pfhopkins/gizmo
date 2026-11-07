@@ -970,7 +970,7 @@ SKYNETLIBS =
 endif
 ifeq (NUCLEAR_NETWORK_SOLVER 2,$(findstring NUCLEAR_NETWORK_SOLVER 2,$(CONFIGVARS)))
 OBJS    += nuclear/nuclear_torch.o
-TORCHLIBS = -ltorch_nuclear
+TORCHLIBS = # the solver 2 stub links nothing; a real library is named here
 else
 TORCHLIBS =
 endif
