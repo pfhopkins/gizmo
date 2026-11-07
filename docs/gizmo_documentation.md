@@ -813,7 +813,7 @@ Sometimes you may want to interrupt the code manually with the possibility to re
     cd /active_run_directory/
     > stop
 
-The code will then write a restart-file and terminate itself after the current timestep is completed, and the file ‘stop’ will be erased automatically. Restart files are also generated when the last timestep of a simulation has been completed. They can be used if one later wants to extend the simulation beyond the original final time.
+The code will then write a restart-file and terminate itself at the end of the first timestep on which it checks for the file (it checks at most once per second of wall-clock time), and the file ‘stop’ will be erased automatically. Restart files are also generated when the last timestep of a simulation has been completed. They can be used if one later wants to extend the simulation beyond the original final time.
 
 
 <a name="cpugpu"></a>

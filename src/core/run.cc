@@ -483,8 +483,7 @@ void run(void)
         {
             static double t_last_stopcheck = -1;
             double t_now = MPI_Wtime();
-            if(t_last_stopcheck < 0) {t_last_stopcheck = t_now;}
-            if(t_now - t_last_stopcheck >= STOP_FILE_CHECK_MIN_WALL_SECONDS)
+            if((t_last_stopcheck < 0) || (t_now - t_last_stopcheck >= STOP_FILE_CHECK_MIN_WALL_SECONDS))
             {
                 t_last_stopcheck = t_now;
                 FILE *fd;
