@@ -724,6 +724,9 @@ gpu_grav_member_inputs_init(const gpu_grav_walk_ctx_t &ctx, int target, gpu_grav
 #ifdef RT_USE_GRAVTREE
     /* valid-gas RT gate via the shared helper */
     in.valid_gas_particle_for_rt = grav_target_valid_gas_for_rt(ptype, soft, pmass);
+#ifdef HYDRO_MULTIFLUID_DM
+    if(in.valid_gas_particle_for_rt && P_dev[target].FluidType == FLUID_DM) {in.valid_gas_particle_for_rt = 0;} /* the dark fluid takes no baryonic radiation */
+#endif
 #endif /* RT_USE_GRAVTREE */
 
     /* RT_LEBRON radiation-pressure coupling factor (forcetree.cc). Once per target, before

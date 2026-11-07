@@ -594,6 +594,9 @@ void init(void)
         P[i].Particle_DivVel = 0;
         CellP[i].ConditionNumber = 1;
         CellP[i].DtInternalEnergy = 0;
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+        CellP[i].InternalEnergy_FromIR_Pending = 0;
+#endif
         CellP[i].FaceClosureError = 0;
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
         CellP[i].KernelDensityForVolumeRelaxation = 0; /* set by the first density pass */
