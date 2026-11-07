@@ -3087,6 +3087,8 @@ Note that *all* of these FIRE parameters have sensible default values (the value
     SinkNgbFactor           3.0	    % multiplier for kernel neighbors for BH 
     SinkMaxAccretionRadius  0.02	    % max radius for BH neighbor search/accretion (code units)
     SinkRadiativeEfficiency 0.1        % radiative efficiency (for accretion and feedback)
+    SinkMergerMaxMass       0          % most massive sink another sink may absorb, code units; 0 = 10x its formation mass (SINGLE_STAR_SINK_DYNAMICS)
+    SinkMergerMaxRadiusFactor 1.0      % sinks merge only inside this many sink radii (SINGLE_STAR_SINK_DYNAMICS)
     %--- feedback 
     SinkFeedbackFactor      1.0	    % generic feedback strength multiplier 
     Sink_Rad_MomentumFactor 1.0	    % multiply radiation pressure (SINK_PHOTONMOMENTUM) 
@@ -3125,6 +3127,10 @@ These parameters control the sub-grid models for super-massive black hole partic
 **SinkRadiativeEfficiency**: Radiative efficiency of the BH (defined in the standard manner, $L =$ SinkRadiativeEfficiency $*\,(dM/dt) * c^{2}$). Used to calculate luminosities for feedback, eddington accretion rates, and correct the actual accreted mass.
 
 **SinkFeedbackFactor**: Multiplier for the strength of all BH feedback mechanisms (whatever is enabled, the energy/momentum will be scaled by this factor relative to its 'default' which corresponds to values =1). You can set this =0 to turn off BH feedback.
+
+**SinkMergerMaxMass**: With `SINGLE_STAR_SINK_DYNAMICS`, the most massive sink (code mass units) that another sink may absorb in a sink-sink merger. Default =0, which uses 10 times the absorbed sink's formation mass (`SinkInitialMass` in snapshots). Set it to permit mergers where that mass is zero or unrepresentative, e.g. sinks from the initial conditions of a gas-free run. `SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES` overrides it.
+
+**SinkMergerMaxRadiusFactor**: With `SINGLE_STAR_SINK_DYNAMICS`, two sinks merge only inside this many sink radii of each other (the other merger criteria still apply). Default =1.
 
 **SINK\_FluxMomentumFactor** or **SINK\_Rad_MomentumFactor**: (Either name here produces the same functionality). This serves the same role as SinkFeedbackFactor, specific to the radiation pressure terms from the BH. Currently this is separated just for de-bugging purposes.
 
