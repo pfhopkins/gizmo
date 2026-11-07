@@ -761,7 +761,7 @@ GPU_CXX    = mpicxx -std=c++20
 GPU_CFLAGS = $(KOKKOS_INCL) -fopenmp
 GPU_LDFLAGS = $(KOKKOS_LIBS_PATH)
 GSL_INCL = -I$(GSL_BASE)/include
-GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE) -lgsl -lgslcblas
+GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE)/lib -lgsl -lgslcblas
 FFTW3_BASE= /mnt/sw/nix/store/bjzkf3pwcw0gy54db19kd4rl0xdiq98s-fftw-3.3.10/.
 FFTW_INCL= -I$(FFTW3_BASE)/include
 FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
@@ -970,7 +970,7 @@ SKYNETLIBS =
 endif
 ifeq (NUCLEAR_NETWORK_SOLVER 2,$(findstring NUCLEAR_NETWORK_SOLVER 2,$(CONFIGVARS)))
 OBJS    += nuclear/nuclear_torch.o
-TORCHLIBS = -ltorch_nuclear
+TORCHLIBS = # the solver 2 stub links nothing; a real library is named here
 else
 TORCHLIBS =
 endif

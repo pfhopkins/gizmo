@@ -281,6 +281,7 @@ void begrun(void)
 
 #ifdef NUCLEAR_NETWORK
     InitNuclearNetwork();
+    if(gizmo_poll_controlled_stop()) return; /* a network that failed to load stops the run here */
 #endif
 
 #ifdef TURB_DRIVING
@@ -3058,12 +3059,17 @@ void read_parameter_file(char *fname)
 
                 i = strlen(All.OutputDir);
                 if(i > 0) {if(All.OutputDir[i - 1] != '/') {strcat(All.OutputDir, "/");}}
+                if(strlen(All.OutputDir) + DMAX(strlen(All.RestartFile), strlen(All.SnapshotFileBase)) + 64 > DEFAULT_PATH_BUFFERSIZE_TOUSE) /* the room each output path built from them needs */
+                {
+                    printf("OutputDir and RestartFile or SnapshotFileBase are too long for the paths built from them (together they must stay about 64 characters under %d).\n", DEFAULT_PATH_BUFFERSIZE_TOUSE);
+                    errorFlag = 1;
+                }
 
                 snprintf(buf1, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", fname, "-usedvalues");
                 snprintf(buf2, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "parameters-usedvalues");
                 /* silence cp stderr when output dir does not yet exist; mkdir -p ensures the dest exists */
-                snprintf(buf3, DEFAULT_PATH_BUFFERSIZE_TOUSE, "mkdir -p %s 2>/dev/null; cp %s %s 2>/dev/null", All.OutputDir, buf1, buf2);
-                int ret; ret = system(buf3);
+                {char copy_command[3*DEFAULT_PATH_BUFFERSIZE_TOUSE + 64]; snprintf(copy_command, sizeof(copy_command), "mkdir -p %s 2>/dev/null; cp %s %s 2>/dev/null", All.OutputDir, buf1, buf2);
+                int ret; ret = system(copy_command);}
             }
         }
         else

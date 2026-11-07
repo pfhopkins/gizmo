@@ -61,6 +61,17 @@ double return_local_gammamultiplier_impl(int target, struct gas_cell_data *cell,
 }
 
 
+/* The UV background's HI photoionization rate before self-shielding: zero wherever the chemistry has no background. */
+KOKKOS_INLINE_FUNCTION
+double return_uvb_HI_rate_unshielded(double local_gammamultiplier, const struct PhysicsTablesView *tables)
+{
+#if defined(RT_DISABLE_UV_BACKGROUND)
+    return 0;
+#else
+    return (tables->cooling->J_UV != 0) ? tables->cooling->gJH0 * local_gammamultiplier : 0;
+#endif
+}
+
 /* ================================================================
    return_uvb_shieldfac — UVB self-shielding attenuation
    ================================================================ */
@@ -179,7 +190,7 @@ double find_abundances_and_rates_impl(double logT, double rho, int target, doubl
         }
         else
         {
-            gJH0ne = tables->cooling->gJH0 * local_gammamultiplier / necgs * shieldfac;
+            gJH0ne = return_uvb_HI_rate_unshielded(local_gammamultiplier, tables) / necgs * shieldfac;
             gJH0ne = DMAX(gJH0ne, EPSILON_SMALL); if(!isfinite(gJH0ne)) {gJH0ne=0;}
             gJHe0ne = tables->cooling->gJHe0 * local_gammamultiplier / necgs * shieldfac;
             gJHe0ne = DMAX(gJHe0ne, EPSILON_SMALL); if(!isfinite(gJHe0ne)) {gJHe0ne=0;}
