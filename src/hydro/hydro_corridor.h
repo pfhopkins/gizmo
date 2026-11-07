@@ -172,6 +172,12 @@ void gizmo_hydro_corridor_begin(void);
  * "pre_hydro_force"). */
 void gizmo_hydro_corridor_refresh_ghost_values(const char *stage);
 
+/* For a call site where no owner field a later neighbour-side reader consumes
+ * can have been written since the pool was packed: re-import (the FULL path
+ * above) only if the live pool is no longer the corridor's own import, and
+ * otherwise ship nothing. Collective, like the refresh. */
+void gizmo_hydro_corridor_revalidate_ghost_pool(const char *stage);
+
 /* Accessor for downstream corridor consumers. Returns a non-null pointer
  * iff gizmo_hydro_corridor_begin populated a usable Mode-A CSR for this
  * corridor span. nullptr otherwise: Mode B consumers use the corridor-built
