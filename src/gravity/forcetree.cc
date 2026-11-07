@@ -1827,8 +1827,7 @@ void force_add_element_to_tree(int iparent, int ichild)
        (checks after 13 spawns, none locally or remotely); change this only if a missed pair is shown. */
     MyFloat new_hmax = DMAX(Extnodes[father].hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[iparent].KernelRadius, All.MaxKernelRadius));
     Extnodes[father].hmax = new_hmax;
-    /* Mode B per-type incremental update -- the band of the parent's type, as for the bound above.
-     * Conservative across every leaf-policy-selectable source via the shared helper. */
+    /* Mode B per-type incremental update -- the band of the parent's type, as for the bound above. */
     {
         int ptype = (int)P[iparent].Type;
         double htmp = force_hmax_per_type_particle_radius(iparent);

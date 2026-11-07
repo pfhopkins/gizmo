@@ -12,8 +12,8 @@
  * licenses reciprocals or fused multiply-adds would not, which is why declarations/typedefs.h refuses
  * to compile under __FAST_MATH__.
  *
- * Header-only and Kokkos-free so host translation units can include it: KOKKOS_INLINE_FUNCTION is
- * the real macro when Kokkos_Core.hpp was included first, and plain inline otherwise.
+ * Header-only and Kokkos-free so host translation units can include it: the functions carry Kokkos's
+ * annotation when Kokkos_Core.hpp was included first, and are plain inline otherwise.
  */
 
 #ifndef GIZMO_DOMAIN_KEY_FUNCTIONS_H
@@ -21,8 +21,12 @@
 
 #include <stdint.h>
 
-#ifndef KOKKOS_INLINE_FUNCTION
-#define KOKKOS_INLINE_FUNCTION inline
+/* A private annotation, so that including this header before Kokkos does not define Kokkos's own macro for the
+ * rest of the translation unit. */
+#ifdef KOKKOS_INLINE_FUNCTION
+#define DOMAIN_KEY_FUNCTION KOKKOS_INLINE_FUNCTION
+#else
+#define DOMAIN_KEY_FUNCTION inline
 #endif
 
 /* The coordinate the key is read from: (pos - corner) / len + 1.0, which lies in [1.0, 2.0) for a
@@ -32,7 +36,7 @@
  * coordinate takes the lower bound rather than passing through; no extent yet (len <= 0) maps to
  * the lower bound too.  Callers that must know whether a position was inside the extent test it
  * beforehand (position_outside_domain_extent); here it is only made to key somewhere valid. */
-KOKKOS_INLINE_FUNCTION double domain_key_scaled_coordinate(double pos, double corner, double len)
+DOMAIN_KEY_FUNCTION double domain_key_scaled_coordinate(double pos, double corner, double len)
 {
     double f = (len > 0.0) ? ((pos - corner) / len) : 0.0;
     double s = f + 1.0;
@@ -42,7 +46,7 @@ KOKKOS_INLINE_FUNCTION double domain_key_scaled_coordinate(double pos, double co
 }
 
 /* The top `bits` mantissa bits of a double in [1.0, 2.0), as the integer coordinate in [0, 2^bits). */
-KOKKOS_INLINE_FUNCTION uint64_t domain_key_integer_coordinate(double scaled, int bits)
+DOMAIN_KEY_FUNCTION uint64_t domain_key_integer_coordinate(double scaled, int bits)
 {
     union {double d; uint64_t ull;} u;
     u.d = scaled;
@@ -50,7 +54,7 @@ KOKKOS_INLINE_FUNCTION uint64_t domain_key_integer_coordinate(double scaled, int
 }
 
 /* Position -> the three integer coordinates every key is built from. */
-KOKKOS_INLINE_FUNCTION void domain_key_integer_coordinates(double x, double y, double z,
+DOMAIN_KEY_FUNCTION void domain_key_integer_coordinates(double x, double y, double z,
                                                            double corner_x, double corner_y, double corner_z,
                                                            double len, int bits, uint64_t out[3])
 {
@@ -58,5 +62,7 @@ KOKKOS_INLINE_FUNCTION void domain_key_integer_coordinates(double x, double y, d
     out[1] = domain_key_integer_coordinate(domain_key_scaled_coordinate(y, corner_y, len), bits);
     out[2] = domain_key_integer_coordinate(domain_key_scaled_coordinate(z, corner_z, len), bits);
 }
+
+#undef DOMAIN_KEY_FUNCTION
 
 #endif /* GIZMO_DOMAIN_KEY_FUNCTIONS_H */
