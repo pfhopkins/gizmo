@@ -4924,6 +4924,21 @@ static void force_tree_moments_audit(const char *tag)
         }
 #endif
     }
+    /* a remote copy of a top-level leaf, predicted to now, may not hold a smaller kernel bound than its owner's: the owner
+       exchanges a raise only when its own copy falls short, so a copy behind it can miss a member's kernel (1e-9 allows
+       the rounding of copies drifted in different steps) */
+    if(ntop > 0)
+    {
+        std::vector<double> own(ntop, 0.0);
+        for(int t = 0; t < ntop; t++) {int lf = leaf_of[t]; if(lf >= 0 && DomainTask[lf] == ThisTask) {struct node_prediction pq; force_node_predict(All.MaxPart + t, All.Ti_Current, &pq); own[t] = pq.hmax;}}
+        MPI_Allreduce(MPI_IN_PLACE, own.data(), ntop, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        for(int t = 0; t < ntop; t++)
+        {
+            int lf = leaf_of[t]; if(lf < 0 || DomainTask[lf] == ThisTask) {continue;}
+            struct node_prediction pq; force_node_predict(All.MaxPart + t, All.Ti_Current, &pq);
+            if(pq.hmax < own[t] * (1 - 1e-9)) {MOM_AUDIT_FAIL("node %d (remote leaf %d of task %d) hmax %.10g below the owner's %.10g (ratio %.9f)", All.MaxPart + t, lf, DomainTask[lf], pq.hmax, own[t], pq.hmax / own[t]);}
+        }
+    }
 #undef MOM_AUDIT_FAIL
     TreeMomAuditCount++; TreeMomAuditCarried += carried; TreeMomAuditVmaxShort += vmax_short; TreeMomAuditSoftShort += soft_short;
     TreeMomAuditWorstCOM = DMAX(TreeMomAuditWorstCOM, worst_com); TreeMomAuditWorstCOMWiden = DMAX(TreeMomAuditWorstCOMWiden, worst_widen); TreeMomAuditWorstDV = DMAX(TreeMomAuditWorstDV, worst_dv);

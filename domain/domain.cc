@@ -110,6 +110,17 @@ static inline int domain_toptree_leaf(peanokey key, struct local_topnode_data *t
 }
 
 static float *particle_total_cost;  /*!< cached per-particle total work cost: (1+multiplier)*costfactor */
+#ifdef DOMAIN_FREQ_WEIGHT
+/*! weight by how often the particle is active, relative to the top occupied bin, capped at 2^DOMAIN_FREQ_WEIGHT: the
+ *  short-timestep set is otherwise costed like any cell and lands on one or two ranks. With DOMAIN_FREQ_WEIGHT_SPLIT_ONLY
+ *  it enters only the per-leaf work (split and assignment); the top tree is refined on the unweighted cost, so a dense
+ *  deep-bin population does not multiply the top-level nodes. */
+static inline double domain_freq_weight(int i)
+{
+    int db = All.HighestOccupiedTimeBin - P[i].TimeBin; if(db > DOMAIN_FREQ_WEIGHT) {db = DOMAIN_FREQ_WEIGHT;}
+    return (db > 0) ? (double) (1 << db) : 1.0;
+}
+#endif
 static float *particle_costfactor;  /*!< cached per-particle base cost factor (for gas work accounting) */
 static float *domainWork;	/*!< a table that gives the total "work" due to the particles stored by each processor */
 static float *domainWorkGas;	/*!< a table that gives the total "work" due to the particles stored by each processor */
@@ -354,6 +365,170 @@ void domain_init_timebin_costs(void)
     }
 }
 #endif /* DOMAIN_TIMEBINS == 1 */
+
+#ifdef DOMAIN_MULTIBIN
+/* Multi-level balance. A layout serves the decomposition step and every smaller step until the next decomposition;
+   the step whose highest active bin is b runs the set {TimeBin <= b} (a "level"). Balancing one composite cost (even
+   frequency-weighted) leaves each level's set on a few ranks. Here every occupied level up to the decomposition step's
+   gets its own per-rank tally, weighted by the wall it costs before the next decomposition, and:
+     - top leaves are refined (in each rank's local pass) until none holds more than ~1/NTask of a weighted level;
+     - the Peano split spends part of its boundaries on the level shares (DOMAIN_MULTIBIN_SPLIT);
+     - the assignment minimizes sum_k w_k max_r share_k(r), with work as one more row and the particle and gas
+       counts as rows under a cap (DOMAIN_MULTIBIN_LOADCAP x mean). */
+#define MB_MAXLEV 16
+#ifndef DOMAIN_MULTIBIN_SPLIT
+#define DOMAIN_MULTIBIN_SPLIT 0.333  /*!< share of the level terms in the split composite; work and count split the rest */
+#endif
+#ifndef DOMAIN_MULTIBIN_LOADCAP
+#define DOMAIN_MULTIBIN_LOADCAP 1.15 /*!< cap on a rank's particle and gas counts, in units of the mean */
+#endif
+#ifndef DOMAIN_MULTIBIN_MINLEAF
+#define DOMAIN_MULTIBIN_MINLEAF 64   /*!< refinement stops at this many members of a level per leaf: finer pieces put most of
+                                          an active particle's neighbours on other ranks, and the exports cost more than the
+                                          balance gains (M2e5 at 384 ranks: limit members/NTask, i.e. ~1, made the 1e2-1e4
+                                          steps 11% slower) */
+#endif
+#ifndef DOMAIN_MULTIBIN_KEEP_SLACK
+#define DOMAIN_MULTIBIN_KEEP_SLACK 0.02 /*!< owner-preserving assignment kept if its objective is within this of the fresh one */
+#endif
+static int MB_Active = 0, MB_K = 0, MB_BinS = 0;
+static int MB_Level[MB_MAXLEV];        /* listed timebins, ascending */
+static double MB_Tot[MB_MAXLEV];       /* global members of each level (cumulative: TimeBin <= level) */
+static double MB_W[MB_MAXLEV];         /* objective weight: wall of the level's steps before the next decomposition, normalized */
+static long long MB_Lim[MB_MAXLEV];    /* refinement: max members of a level per top leaf */
+static long long MB_LimMin;
+static int MB_LevOfBin[TIMEBINS];      /* first listed level containing the bin; MB_K if none */
+static double MB_SplitW[TIMEBINS];     /* per-particle weight in the split composite, by bin */
+static float *domainWorkMB = NULL;     /* per top leaf: sum of MB_SplitW */
+static std::vector<double> MB_SegLev;  /* [segment][level] members, after the split */
+
+/*! levels, weights and refinement limits from the global bin census */
+static void domain_mb_setup(void)
+{
+    long long loc[TIMEBINS], tot[TIMEBINS]; for(int b = 0; b < TIMEBINS; b++) {loc[b] = 0;}
+    for(int i = 0; i < NumPart; i++) {loc[P[i].TimeBin]++;}
+    MPI_Allreduce(loc, tot, TIMEBINS, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    const int bd = All.HighestActiveTimeBin;
+    int lev[TIMEBINS], nl = 0; long long cum = 0;
+    for(int b = 0; b <= bd && b < TIMEBINS; b++) {cum += tot[b]; if(tot[b] > 0 && cum >= 4) {lev[nl++] = b;}}
+    int first = (nl > MB_MAXLEV) ? nl - MB_MAXLEV : 0; /* too many levels: the deepest fold into the lowest kept one */
+    MB_K = nl - first; MB_Active = (MB_K > 0 && UseAllParticles == 0);
+    if(!MB_Active) {return;}
+    for(int k = 0; k < MB_K; k++) {MB_Level[k] = lev[first + k];}
+    /* b_s: the lowest level whose period alone accumulates the decomposition cadence's force count. Steps at levels
+       >= b_s each get their own decomposition, so before the next one the layout runs 2^(b_s-1-b) steps of each
+       level b < b_s, plus the present step at bd. */
+    MB_BinS = bd;
+    for(int k = 0; k < MB_K; k++)
+    {
+        double f = 0; for(int j = 0; j <= MB_Level[k]; j++) {f += ldexp((double) tot[j], MB_Level[k] - j);}
+        if(f >= All.TreeDomainUpdateFrequency * (double) All.TotNumPart) {MB_BinS = MB_Level[k]; break;}
+    }
+    /* a level's weight is the wall it costs before the next decomposition: steps x wall per step. Step wall grows far
+       slower than the active count (latency, exports): on STARFORGE M2e4 at 384 ranks it follows ~sqrt(members) within
+       +-20% from 50 to 1e5 actives, which is used here. Not the measured CPU_TimeBin walls: those are timing noise, and
+       the layout must be a deterministic function of the state. */
+    double wsum = 0, wpos = 0; int npos = 0;
+    for(int k = 0, b = 0; k < MB_K; k++)
+    {
+        double c = 0; for(; b <= MB_Level[k]; b++) {c += tot[b];}
+        MB_Tot[k] = c + (k > 0 ? MB_Tot[k-1] : 0);
+    }
+    for(int k = 0; k < MB_K; k++)
+    {
+        double t = sqrt(MB_Tot[k]);
+        double n = (MB_Level[k] < MB_BinS) ? ldexp(1.0, MB_BinS - 1 - MB_Level[k]) : ((MB_Level[k] == bd) ? 1.0 : 0.0);
+        MB_W[k] = n * t; wsum += MB_W[k]; if(MB_W[k] > 0) {wpos += MB_W[k]; npos++;}
+    }
+    double sq[MB_MAXLEV], sqsum = 0;
+    for(int k = 0; k < MB_K; k++) {MB_W[k] /= wsum; sq[k] = (MB_W[k] > 0) ? sqrt(MB_W[k] * npos / wpos) : 0; sqsum += sq[k];}
+    MB_LimMin = LLONG_MAX;
+    for(int k = 0; k < MB_K; k++)
+    {
+        sq[k] /= sqsum;
+        MB_Lim[k] = (MB_W[k] > 0) ? (long long) DMAX((double) DOMAIN_MULTIBIN_MINLEAF, floor(MB_Tot[k] / NTask)) : LLONG_MAX;
+        if(MB_Lim[k] < MB_LimMin) {MB_LimMin = MB_Lim[k];}
+    }
+    for(int b = 0, k = 0; b < TIMEBINS; b++)
+    {
+        while(k < MB_K && MB_Level[k] < b) {k++;}
+        MB_LevOfBin[b] = k; MB_SplitW[b] = 0;
+        for(int kk = k; kk < MB_K; kk++) {MB_SplitW[b] += sq[kk] / MB_Tot[kk];}
+    }
+}
+
+/*! does top node i (its local particles mp[PIndex..PIndex+Count)) hold more than MB_Lim[k] members of some level? */
+static int domain_mb_node_needs_refine(int i)
+{
+    long long c[MB_MAXLEV + 1]; for(int k = 0; k <= MB_K; k++) {c[k] = 0;}
+    for(int p = topNodes[i].PIndex; p < topNodes[i].PIndex + topNodes[i].Count; p++) {c[MB_LevOfBin[P[mp[p].index].TimeBin]]++;}
+    long long acc = 0; for(int k = 0; k < MB_K; k++) {acc += c[k]; if(acc > MB_Lim[k]) {return 1;}}
+    return 0;
+}
+
+/*! Refine the combined top tree on GLOBAL level counts: split every leaf that holds more than MB_Lim[k] members of a
+ *  weighted level k, recount, repeat. The local pass above sees only each rank's own particles, so once a decomposition
+ *  has spread a core's short-timestep set over many ranks no rank refines it, the next decomposition gets coarse leaves
+ *  and re-concentrates the set (the balance alternated decomposition to decomposition). Uses Key[] of the local
+ *  particles; every decision is made from reduced data, so the tree stays rank-identical. Returns 1 if out of top nodes. */
+static int domain_mb_global_refine(void)
+{
+    int K = 0; while(K < MB_K && MB_W[K] <= 0) {K++;} /* first weighted level; all from there on (cumulative) */
+    const int k0 = K; K = MB_K - k0; if(K <= 0) {return 0;}
+    for(int iter = 0; iter < 16; iter++)
+    {
+        NTopleaves = 0; domain_walktoptree(0);
+        std::vector<int> cnt((size_t) NTopleaves * K, 0);
+        for(int i = 0; i < NumPart; i++)
+        {
+#ifdef SUBFIND
+            if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
+#endif
+            int k = MB_LevOfBin[P[i].TimeBin] - k0; if(k >= K) {continue;} if(k < 0) {k = 0;}
+            cnt[(size_t) domain_toptree_leaf(Key[i], topNodes) * K + k]++;
+        }
+        MPI_Allreduce(MPI_IN_PLACE, cnt.data(), NTopleaves * K, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        int nsplit = 0, nnodes = NTopnodes;
+        for(int no = 0; no < nnodes; no++)
+        {
+            if(topNodes[no].Daughter >= 0 || topNodes[no].Size < 8) {continue;}
+            const int *c = &cnt[(size_t) topNodes[no].Leaf * K]; long long acc = 0; int need = 0;
+            for(int k = 0; k < K && !need; k++) {acc += c[k]; if(acc > MB_Lim[k0 + k]) {need = 1;}}
+            if(!need) {continue;}
+            if(NTopnodes + 8 > MaxTopNodes) {return 1;}
+            topNodes[no].Daughter = NTopnodes;
+            for(int j = 0; j < 8; j++)
+            {
+                int sub = NTopnodes + j;
+                topNodes[sub].Size = (topNodes[no].Size >> 3); topNodes[sub].Count = topNodes[no].Count / 8; topNodes[sub].Cost = topNodes[no].Cost / 8;
+                topNodes[sub].Daughter = -1; topNodes[sub].Parent = no; topNodes[sub].StartKey = topNodes[no].StartKey + j * topNodes[sub].Size;
+            }
+            NTopnodes += 8; nsplit++;
+        }
+        if(nsplit == 0) {break;}
+    }
+    return 0;
+}
+
+/*! per-segment level members (cumulative), for the nseg segments of the fresh split */
+static void domain_mb_segment_levels(int nseg)
+{
+    std::vector<int> leaf_seg(NTopleaves, -1);
+    for(int s = 0; s < nseg; s++) {for(int leaf = DomainStartList[s]; leaf <= DomainEndList[s]; leaf++) {leaf_seg[leaf] = s;}}
+    MB_SegLev.assign((size_t) nseg * MB_K, 0.0);
+    std::vector<double> loc((size_t) nseg * MB_K, 0.0);
+    for(int i = 0; i < NumPart; i++)
+    {
+#ifdef SUBFIND
+        if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
+#endif
+        int k = MB_LevOfBin[P[i].TimeBin]; if(k >= MB_K) {continue;}
+        int s = leaf_seg[domain_toptree_leaf(Key[i], topNodes)]; if(s >= 0) {loc[(size_t) s * MB_K + k] += 1;}
+    }
+    for(int s = 0; s < nseg; s++) {for(int k = 1; k < MB_K; k++) {loc[(size_t) s * MB_K + k] += loc[(size_t) s * MB_K + k - 1];}}
+    MPI_Allreduce(loc.data(), MB_SegLev.data(), nseg * MB_K, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+}
+#endif /* DOMAIN_MULTIBIN */
 
 /*! Peano segments per rank for a decomposition of totpart particles: MULTIPLEDOMAINS, or, with
  *  DOMAIN_TARGET_PARTICLES_PER_SEGMENT, chosen from the particle load and bounded by MULTIPLEDOMAINS (constants.h).
@@ -683,10 +858,8 @@ void domain_Decomposition_light(int UseAllTimeBins)
         double wt_mult = domain_particle_cost_multiplier(i);
         particle_costfactor[i] = (float)wt_0;
         double wt_freq = 1;
-#ifdef DOMAIN_FREQ_WEIGHT
-        /* weight by how often the particle is active, relative to the top occupied bin, capped at 2^DOMAIN_FREQ_WEIGHT:
-           the short-timestep set is otherwise costed like any cell and lands on one or two ranks */
-        {int db = All.HighestOccupiedTimeBin - P[i].TimeBin; if(db > DOMAIN_FREQ_WEIGHT) {db = DOMAIN_FREQ_WEIGHT;} if(db > 0) {wt_freq = (double) (1 << db);}}
+#if defined(DOMAIN_FREQ_WEIGHT) && !defined(DOMAIN_FREQ_WEIGHT_SPLIT_ONLY)
+        wt_freq = domain_freq_weight(i); /* drives refinement, split and assignment */
 #endif
         particle_total_cost[i] = (float)((1 + wt_mult) * wt_0 * wt_freq);
         gravcost += particle_total_cost[i];
@@ -999,9 +1172,8 @@ int domain_decompose(void)
     for(i = 0; i < 6; i++) {NtypeLocal[i] = 0;}
 
     /* compute and cache per-particle costs once, reused in domain_check_for_local_refine and domain_sumCost.
-       particle_total_cost: unweighted cost used for top-tree refinement (preserves spatial structure).
-       For domain_sumCost, we apply timestep frequency weighting there to balance sub-step work
-       without distorting the tree refinement. */
+       The frequency weight (DOMAIN_FREQ_WEIGHT) is folded in here, so it drives the top-tree refinement too, unless
+       DOMAIN_FREQ_WEIGHT_SPLIT_ONLY, which applies it in domain_sumCost only. */
     particle_total_cost = (float *) mymalloc("particle_total_cost", NumPart * sizeof(float));
     particle_costfactor = (float *) mymalloc("particle_costfactor", NumPart * sizeof(float));
     for(i = 0, gravcost = gascost = 0; i < NumPart; i++)
@@ -1014,10 +1186,8 @@ int domain_decompose(void)
         double wt_mult = domain_particle_cost_multiplier(i);
         particle_costfactor[i] = (float)wt_0;
         double wt_freq = 1;
-#ifdef DOMAIN_FREQ_WEIGHT
-        /* weight by how often the particle is active, relative to the top occupied bin, capped at 2^DOMAIN_FREQ_WEIGHT:
-           the short-timestep set is otherwise costed like any cell and lands on one or two ranks */
-        {int db = All.HighestOccupiedTimeBin - P[i].TimeBin; if(db > DOMAIN_FREQ_WEIGHT) {db = DOMAIN_FREQ_WEIGHT;} if(db > 0) {wt_freq = (double) (1 << db);}}
+#if defined(DOMAIN_FREQ_WEIGHT) && !defined(DOMAIN_FREQ_WEIGHT_SPLIT_ONLY)
+        wt_freq = domain_freq_weight(i); /* drives refinement, split and assignment */
 #endif
         particle_total_cost[i] = (float)((1 + wt_mult) * wt_0 * wt_freq);
         gravcost += particle_total_cost[i];
@@ -1058,10 +1228,17 @@ int domain_decompose(void)
 #if (DOMAIN_TIMEBINS == 1)
     domain_init_timebin_costs(); /* compute per-timebin normalization before tree building / cost accumulation */
 #endif
+#ifdef DOMAIN_MULTIBIN
+    domain_mb_setup();
+#endif
 
     /* determine global dimensions of domain grid */
     domain_findExtent();
-    if(domain_determineTopTree()) {myfree(particle_costfactor); myfree(particle_total_cost); return 1;}
+    if(domain_determineTopTree()) {myfree(particle_costfactor); myfree(particle_total_cost);
+#ifdef DOMAIN_MULTIBIN
+        if(domainWorkMB) {free(domainWorkMB); domainWorkMB = NULL;} MB_Active = 0;
+#endif
+        return 1;}
     myfree(particle_costfactor); myfree(particle_total_cost);
 
     /* find the split of the domain grid */
@@ -1074,6 +1251,9 @@ int domain_decompose(void)
 #endif
 #ifdef DOMAIN_KEEP_OWNERS
     domain_keep_owner_census(multipledomains * NTask);
+#endif
+#ifdef DOMAIN_MULTIBIN
+    if(MB_Active) {domain_mb_segment_levels(multipledomains * NTask);}
 #endif
     domain_assign_load_or_work_balanced(1,multipledomains);
 
@@ -1103,6 +1283,10 @@ int domain_decompose(void)
        it dereferences NULL. Same defect existed in domain_Decomposition_light(). */
     if(domainBinHydroCost) {free(domainBinHydroCost); domainBinHydroCost = NULL;}
     if(domainBinGravCost)  {free(domainBinGravCost);  domainBinGravCost  = NULL;}
+#endif
+#ifdef DOMAIN_MULTIBIN
+    if(domainWorkMB) {free(domainWorkMB); domainWorkMB = NULL;}
+    MB_Active = 0; std::vector<double>().swap(MB_SegLev);
 #endif
 
     if(ThisTask == 0)
@@ -1615,6 +1799,17 @@ void domain_findSplit_work_balanced(int ncpu, int ndomain)
           fac_workgas = domain_fac_workgas / (total * workgas);
       }
 
+  double fac_mb = 0; const float *wmb = NULL;
+#ifdef DOMAIN_MULTIBIN
+  if(MB_Active && domainWorkMB)
+  {   /* fixed shares, not the adaptive ones: those chase the decomposition step's active-gas metric, which the multi-level
+         assignment does not balance, and starve the count term the assignment's caps need */
+      double t = 0; for(i = 0; i < ndomain; i++) {t += domainWorkMB[i];}
+      if(t > 0) {fac_mb = DOMAIN_MULTIBIN_SPLIT / t; wmb = domainWorkMB; fac_work = 0.5 * (1 - DOMAIN_MULTIBIN_SPLIT) / work; fac_load = 0.5 * (1 - DOMAIN_MULTIBIN_SPLIT) / load; fac_workgas = 0;}
+  }
+#endif
+#define DOMAIN_SPLIT_MB_TERM(e) (wmb ? fac_mb * wmb[e] : 0.0)
+
   workavg = 1.0 / ncpu;
 
 #ifdef DOMAIN_KEEP_BOUNDARIES
@@ -1660,7 +1855,7 @@ void domain_findSplit_work_balanced(int ncpu, int ndomain)
       work = 0;
       end = start;
 
-      work += fac_work * domainWork[end] + fac_load * domainCount[end] + fac_workgas * domainWorkGas[end];
+      work += fac_work * domainWork[end] + fac_load * domainCount[end] + fac_workgas * domainWorkGas[end] + DOMAIN_SPLIT_MB_TERM(end);
       while((work + work_before < workavg + workavg_before) || (i == ncpu - 1 && end < ndomain - 1))
 	{
 	  if((ndomain - end) > (ncpu - i))
@@ -1668,7 +1863,7 @@ void domain_findSplit_work_balanced(int ncpu, int ndomain)
 	  else
 	    {break;}
 
-	  work += fac_work * domainWork[end] + fac_load * domainCount[end] + fac_workgas * domainWorkGas[end];
+	  work += fac_work * domainWork[end] + fac_load * domainCount[end] + fac_workgas * domainWorkGas[end] + DOMAIN_SPLIT_MB_TERM(end);
 	}
 
       DomainStartList[i] = start;
@@ -1678,6 +1873,7 @@ void domain_findSplit_work_balanced(int ncpu, int ndomain)
       workavg_before += workavg;
       start = end + 1;
     }
+#undef DOMAIN_SPLIT_MB_TERM
 }
 
 static struct domain_segments_data
@@ -1691,6 +1887,9 @@ static struct domain_segments_data
   double load_activegas;
   double load_gas;         /* gas particle count for memory constraint */
   double normalized_load;
+#ifdef DOMAIN_MULTIBIN
+  int seg;                 /* index in the split (DomainStartList order), for MB_SegLev */
+#endif
 #if (DOMAIN_TIMEBINS == 1)
   double bin_GravCost[TIMEBINS];   /* per-timebin gravity cost for this segment */
   double bin_HydroCost[TIMEBINS];  /* per-timebin hydro cost for this segment */
@@ -1737,6 +1936,165 @@ int domain_sort_load(const void *a, const void *b)
      (((struct domain_segments_data *) b)->normalized_load)) {return +1;}
   return 0;
 }
+
+#ifdef DOMAIN_MULTIBIN
+/*! Multi-level assignment of the nseg = mdom*NTask segments in domainAssign (sets .task). Rows: the MB_K levels (weights
+ *  MB_W), work, particle count and gas count (weight 1 each); counts also capped. x and U are in units of the mean
+ *  rank share. Greedy: segments by decreasing weighted size, each to the open rank that least raises sum_q w_q U^8
+ *  (fewest cap violations first); then swaps out of each level's most loaded rank while F = sum_q w_q max_r U drops.
+ *  With DOMAIN_KEEP_OWNERS the same is redone seeding segments on their majority holders, and kept if F stays within
+ *  DOMAIN_MULTIBIN_KEEP_SLACK and fewer particles move. Every rank computes the same answer. */
+static void domain_mb_assign(int mdom, double max_load_per_task, double max_gasload_per_task)
+{
+    double t0 = my_second();
+    const int nseg = mdom * NTask, K = MB_K, R = K + 3, nt = NTask;
+    std::vector<double> x((size_t) nseg * R), w(R, 1.0), tot(R, 0.0), cap(R, 1.0e300);
+    for(int n = 0; n < nseg; n++)
+    {
+        double *xs = &x[(size_t) n * R]; const int sg = domainAssign[n].seg;
+        for(int k = 0; k < K; k++) {xs[k] = MB_SegLev[(size_t) sg * K + k];}
+        xs[K] = domainAssign[n].work; xs[K+1] = domainAssign[n].load; xs[K+2] = domainAssign[n].load_gas;
+        for(int q = 0; q < R; q++) {tot[q] += xs[q];}
+    }
+    for(int q = 0; q < R; q++) {double f = (tot[q] > 0) ? nt / tot[q] : 0; for(int n = 0; n < nseg; n++) {x[(size_t) n * R + q] *= f;}}
+    for(int k = 0; k < K; k++) {w[k] = MB_W[k];}
+    cap[K+1] = DMIN(DOMAIN_MULTIBIN_LOADCAP, (tot[K+1] > 0) ? max_load_per_task * nt / tot[K+1] : 1.0e300);
+    cap[K+2] = DMIN(DOMAIN_MULTIBIN_LOADCAP, (tot[K+2] > 0) ? max_gasload_per_task * nt / tot[K+2] : 1.0e300);
+    auto p8 = [](double u) -> double {double u2 = u * u, u4 = u2 * u2; return u4 * u4;};
+    std::vector<int> order(nseg); std::vector<double> comp(nseg, 0.0);
+    for(int n = 0; n < nseg; n++) {order[n] = n; for(int q = 0; q < R; q++) {comp[n] += w[q] * x[(size_t) n * R + q];}}
+    std::stable_sort(order.begin(), order.end(), [&](int a, int b) {return comp[a] > comp[b];});
+
+    /* fill: place the unplaced segments greedily onto U/cnt */
+    auto fill = [&](std::vector<int> &task, std::vector<double> &U, std::vector<int> &cnt) {
+        for(int s : order)
+        {
+            if(task[s] >= 0) {continue;}
+            const double *xs = &x[(size_t) s * R]; int bt = -1; double bv = 0, bd = 0;
+            for(int r = 0; r < nt; r++)
+            {
+                if(cnt[r] >= mdom) {continue;}
+                double v = 0, d = 0;
+                for(int q = K + 1; q < R; q++) {v += DMAX(0.0, U[(size_t) q * nt + r] + xs[q] - cap[q]);}
+                for(int q = 0; q < R; q++) {if(xs[q] > 0) {double u = U[(size_t) q * nt + r]; d += w[q] * (p8(u + xs[q]) - p8(u));}}
+                if(bt < 0 || v < bv || (v == bv && d < bd)) {bt = r; bv = v; bd = d;}
+            }
+            task[s] = bt; cnt[bt]++; for(int q = 0; q < R; q++) {U[(size_t) q * nt + bt] += xs[q];}
+        }
+    };
+    auto rowmax = [&](const std::vector<double> &U, int q, int *arg) -> double {
+        double m = -1; *arg = 0; for(int r = 0; r < nt; r++) {if(U[(size_t) q * nt + r] > m) {m = U[(size_t) q * nt + r]; *arg = r;}} return m;};
+    /* swap refinement on F; returns F */
+    auto refine = [&](std::vector<int> &task, std::vector<double> &U, unsigned long long seed) -> double {
+        std::vector<int> segs((size_t) nt * mdom), fillc(nt, 0);
+        for(int s = 0; s < nseg; s++) {segs[(size_t) task[s] * mdom + fillc[task[s]]++] = s;}
+        std::vector<double> M(R); std::vector<int> A(R); double F = 0;
+        for(int q = 0; q < R; q++) {M[q] = rowmax(U, q, &A[q]); F += w[q] * M[q];}
+        long iters = (long) DMIN(20.0 * nseg, 200000.0);
+        auto rnd = [&](unsigned long long m) -> unsigned long long {seed = seed * 6364136223846793005ULL + 1442695040888963407ULL; return (seed >> 33) % m;};
+        for(long it = 0; it < iters; it++)
+        {
+            int q0 = (int) rnd(R); if(w[q0] <= 0) {continue;}
+            int t1 = A[q0], i1 = (int) rnd(mdom), s1 = segs[(size_t) t1 * mdom + i1], s2 = (int) rnd(nseg), t2 = task[s2];
+            if(t1 == t2) {continue;}
+            const double *x1 = &x[(size_t) s1 * R], *x2 = &x[(size_t) s2 * R];
+            int ok = 1;
+            for(int q = K + 1; q < R; q++)
+            {
+                if(x1[q] > x2[q] && U[(size_t) q * nt + t2] + x1[q] - x2[q] > cap[q]) {ok = 0;}
+                if(x2[q] > x1[q] && U[(size_t) q * nt + t1] + x2[q] - x1[q] > cap[q]) {ok = 0;}
+            }
+            if(!ok) {continue;}
+            double nF = 0;
+            for(int q = 0; q < R && nF < F; q++)
+            {
+                if(w[q] <= 0) {continue;}
+                double a1 = U[(size_t) q * nt + t1] + x2[q] - x1[q], a2 = U[(size_t) q * nt + t2] + x1[q] - x2[q], m;
+                if(A[q] != t1 && A[q] != t2) {m = DMAX(M[q], DMAX(a1, a2));}
+                else {m = DMAX(a1, a2); for(int r = 0; r < nt; r++) {if(r != t1 && r != t2 && U[(size_t) q * nt + r] > m) {m = U[(size_t) q * nt + r];}}}
+                nF += w[q] * m;
+            }
+            if(nF < F * (1 - 1.0e-12))
+            {
+                for(int q = 0; q < R; q++) {U[(size_t) q * nt + t1] += x2[q] - x1[q]; U[(size_t) q * nt + t2] += x1[q] - x2[q];}
+                task[s1] = t2; task[s2] = t1; segs[(size_t) t1 * mdom + i1] = s2;
+                for(int j = 0; j < mdom; j++) {if(segs[(size_t) t2 * mdom + j] == s2) {segs[(size_t) t2 * mdom + j] = s1; break;}}
+                F = 0; for(int q = 0; q < R; q++) {M[q] = rowmax(U, q, &A[q]); F += w[q] * M[q];}
+            }
+        }
+        return F;
+    };
+
+#ifdef DOMAIN_KEEP_OWNERS
+    /* F is blind to rank labels: rename the groups so each lands on the rank already holding most of it (greedy
+       matching on the majority-holder counts), which leaves the balance unchanged and cuts the exchange */
+    auto relabel = [&](std::vector<int> &task, std::vector<double> &U) {
+        std::vector<std::pair<long long, double>> pr; pr.reserve(nseg);
+        for(int s = 0; s < nseg; s++) {if(domainAssign[s].keep_rank >= 0 && domainAssign[s].keep_count > 0) {pr.push_back({(long long) task[s] * nt + domainAssign[s].keep_rank, (double) domainAssign[s].keep_count});}}
+        std::sort(pr.begin(), pr.end(), [](const std::pair<long long, double> &a, const std::pair<long long, double> &b) {return a.first < b.first;});
+        std::vector<std::pair<long long, double>> agg;
+        for(auto &e : pr) {if(!agg.empty() && agg.back().first == e.first) {agg.back().second += e.second;} else {agg.push_back(e);}}
+        std::stable_sort(agg.begin(), agg.end(), [](const std::pair<long long, double> &a, const std::pair<long long, double> &b) {return a.second > b.second;});
+        std::vector<int> to(nt, -1), used(nt, 0);
+        for(auto &e : agg) {int g = (int) (e.first / nt), r = (int) (e.first % nt); if(to[g] < 0 && !used[r]) {to[g] = r; used[r] = 1;}}
+        for(int g = 0, r = 0; g < nt; g++) {if(to[g] < 0) {while(used[r]) {r++;} to[g] = r; used[r] = 1;}}
+        std::vector<double> V(U.size());
+        for(int q = 0; q < R; q++) {for(int g = 0; g < nt; g++) {V[(size_t) q * nt + to[g]] = U[(size_t) q * nt + g];}}
+        U.swap(V); for(int s = 0; s < nseg; s++) {task[s] = to[task[s]];}
+    };
+#endif
+    std::vector<int> task(nseg, -1), cnt(nt, 0); std::vector<double> U((size_t) R * nt, 0.0);
+    fill(task, U, cnt);
+    double F = refine(task, U, 12345ULL);
+#ifdef DOMAIN_KEEP_OWNERS
+    relabel(task, U);
+#endif
+    std::vector<double> Mf(R); for(int q = 0; q < R; q++) {int a; Mf[q] = rowmax(U, q, &a);}
+    int kept = 0; double mv_fresh = 0, mv_keep = 0, F_keep = 0;
+#ifdef DOMAIN_KEEP_OWNERS
+    {
+        auto moved = [&](int s, int t) -> double {return domainAssign[s].load - ((t == domainAssign[s].keep_rank) ? domainAssign[s].keep_count : 0);};
+        for(int s = 0; s < nseg; s++) {mv_fresh += moved(s, task[s]);}
+        /* one holding per Peano run of equal majority holders (see the plain keep-owners pass) */
+        std::vector<int> bys(nseg), runkeep(nseg, 1), ord(nseg);
+        for(int s = 0; s < nseg; s++) {bys[s] = ord[s] = s;}
+        std::sort(bys.begin(), bys.end(), [&](int a, int b) {return domainAssign[a].start < domainAssign[b].start;});
+        for(int i = 0; i < nseg;)
+        {
+            int j = i + 1, best = bys[i];
+            while(j < nseg && domainAssign[bys[i]].keep_rank >= 0 && domainAssign[bys[j]].keep_rank == domainAssign[bys[i]].keep_rank)
+                {if(domainAssign[bys[j]].keep_count > domainAssign[best].keep_count) {best = bys[j];} j++;}
+            for(int q = i; q < j; q++) {if(bys[q] != best) {runkeep[bys[q]] = 0;}}
+            i = j;
+        }
+        std::stable_sort(ord.begin(), ord.end(), [&](int a, int b) {return domainAssign[a].keep_count > domainAssign[b].keep_count;});
+        std::vector<int> tk(nseg, -1), ck(nt, 0); std::vector<double> Uk((size_t) R * nt, 0.0);
+        for(int s : ord)
+        {
+            int t = domainAssign[s].keep_rank;
+            if(!runkeep[s] || domainAssign[s].keep_count <= 0 || t < 0 || ck[t] >= mdom) {continue;}
+            int ok = 1; for(int q = 0; q < R && ok; q++) {if(Uk[(size_t) q * nt + t] + x[(size_t) s * R + q] > Mf[q]) {ok = 0;}}
+            if(!ok) {continue;}
+            tk[s] = t; ck[t]++; for(int q = 0; q < R; q++) {Uk[(size_t) q * nt + t] += x[(size_t) s * R + q];}
+        }
+        fill(tk, Uk, ck);
+        F_keep = refine(tk, Uk, 54321ULL); relabel(tk, Uk);
+        for(int s = 0; s < nseg; s++) {mv_keep += moved(s, tk[s]);}
+        int capok = 1; for(int q = K + 1; q < R; q++) {for(int r = 0; r < nt; r++) {if(Uk[(size_t) q * nt + r] > DMAX(cap[q], Mf[q]) * (1 + 1.0e-12)) {capok = 0;}}}
+        if(capok && F_keep <= F * (1 + DOMAIN_MULTIBIN_KEEP_SLACK) && mv_keep < mv_fresh) {task = tk; U = Uk; kept = 1;}
+        if(!capok) {kept = -1;}
+    }
+#endif
+    for(int s = 0; s < nseg; s++) {domainAssign[s].task = task[s];}
+    if(ThisTask == 0)
+    {
+        printf("Domain multibin: b_d=%d b_s=%d %s F fresh %.4f keep %.4f moved fresh %.4f keep %.4f %.3f s | level:max/mean(w)",
+               All.HighestActiveTimeBin, MB_BinS, kept > 0 ? "kept" : (kept < 0 ? "fresh(cap)" : "fresh"), F, F_keep, mv_fresh / (tot[K+1] + 1e-30), mv_keep / (tot[K+1] + 1e-30), timediff(t0, my_second()));
+        for(int q = 0; q < R; q++) {int a; double m = rowmax(U, q, &a); if(q < K) {printf(" %d:%.2f(%.3f)", MB_Level[q], m, w[q]);} else {printf(" %s:%.2f", q == K ? "work" : (q == K + 1 ? "load" : "gas"), m);}}
+        printf("\n"); fflush(stdout);
+    }
+}
+#endif
 
 void domain_assign_load_or_work_balanced(int mode, int multipledomains)
 {
@@ -1786,6 +2144,9 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
     {
       domainAssign[n].start = DomainStartList[n];
       domainAssign[n].end = DomainEndList[n];
+#ifdef DOMAIN_MULTIBIN
+      domainAssign[n].seg = n;
+#endif
 #ifdef DOMAIN_KEEP_OWNERS
       domainAssign[n].keep_rank = KeepOwnerRank[n]; domainAssign[n].keep_count = KeepOwnerCount[n];
 #endif
@@ -1853,6 +2214,9 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       queues[q].last = NTask - 1;
     }
 
+#ifdef DOMAIN_MULTIBIN
+  if(mode == 1 && MB_Active) {domain_mb_assign(multipledomains, max_load_per_task, max_gasload_per_task); goto domain_assign_done;}
+#endif
   for(n = 0; n < multipledomains * NTask; n++)
     {
       /* need to decide, which of the tasks that has the lowest load in one of the queues is best */
@@ -2234,6 +2598,9 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
   }
 #endif
 
+#ifdef DOMAIN_MULTIBIN
+domain_assign_done:
+#endif
   qsort(domainAssign, multipledomains * NTask, sizeof(struct domain_segments_data), domain_sort_task);
 
   for(n = 0; n < multipledomains * NTask; n++)
@@ -2559,6 +2926,9 @@ int domain_check_for_local_refine(int i, double countlimit, double costlimit)
       if(topNodes[i].Count > 0.8 * topNodes[topNodes[i].Parent].Count || topNodes[i].Cost > 0.8 * topNodes[topNodes[i].Parent].Cost) {flag = 1;}
     }
 
+#ifdef DOMAIN_MULTIBIN
+  if(MB_Active && flag == 0 && topNodes[i].Count > MB_LimMin && topNodes[i].Count <= countlimit && topNodes[i].Cost <= costlimit && topNodes[i].Size >= 8) {flag = domain_mb_node_needs_refine(i);}
+#endif
   if((topNodes[i].Count > countlimit || topNodes[i].Cost > costlimit || flag == 1) && topNodes[i].Size >= 8)
     {
       if(topNodes[i].Size >= 8)
@@ -2936,6 +3306,9 @@ int domain_determineTopTree(void)
   if(errsum) {return errsum;}
 
   PRINT_STATUS(" ..NTopnodes after=%d", NTopnodes);
+#ifdef DOMAIN_MULTIBIN
+  if(MB_Active) {errflag = domain_mb_global_refine(); MPI_Allreduce(&errflag, &errsum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD); if(errsum) {return errsum;}}
+#endif
   /* count toplevel leaves */
   domain_sumCost();
 
@@ -3024,6 +3397,13 @@ void domain_sumCost(void)
       if(P[n].Type == 0) { \
           if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {wkg[no] += particle_costfactor[n];} \
           cntg[no] += 1;} }
+#elif defined(DOMAIN_FREQ_WEIGHT) && defined(DOMAIN_FREQ_WEIGHT_SPLIT_ONLY)
+  #define DOMAIN_SUMCOST_PARTICLE_BODY(n, no, wk, wkg, cnt, cntg) \
+    { wk[no] += (float) (particle_total_cost[n] * domain_freq_weight(n)); \
+      cnt[no] += 1; \
+      if(P[n].Type == 0) { \
+          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {wkg[no] += particle_costfactor[n];} \
+          cntg[no] += 1;} }
 #else
   #define DOMAIN_SUMCOST_PARTICLE_BODY(n, no, wk, wkg, cnt, cntg) \
     { wk[no] += particle_total_cost[n]; \
@@ -3093,6 +3473,22 @@ void domain_sumCost(void)
 #endif
 #undef DOMAIN_SUMCOST_PARTICLE_BODY
 
+#ifdef DOMAIN_MULTIBIN
+  if(MB_Active)
+  {
+      if(domainWorkMB) {free(domainWorkMB);}
+      domainWorkMB = (float *) malloc(NTopleaves * sizeof(float)); /* malloc: must outlive this mymalloc frame, until the split */
+      std::vector<float> loc(NTopleaves, 0.f);
+      for(n = 0; n < NumPart; n++)
+      {
+#ifdef SUBFIND
+          if(GrNr >= 0 && P[n].GrNr != GrNr) {continue;}
+#endif
+          double w = MB_SplitW[P[n].TimeBin]; if(w > 0) {loc[domain_toptree_leaf(Key[n], topNodes)] += (float) w;}
+      }
+      MPI_Allreduce(loc.data(), domainWorkMB, NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+  }
+#endif
   MPI_Allreduce(local_domainWork, domainWork, NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
   MPI_Allreduce(local_domainWorkGas, domainWorkGas, NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
   MPI_Allreduce(local_domainCount, domainCount, NTopleaves, MPI_INT, MPI_SUM, MPI_COMM_WORLD);

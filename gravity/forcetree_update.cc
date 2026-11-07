@@ -361,8 +361,18 @@ static void force_raise_chain_bounds(int no, MyFloat vmax, MyFloat hmax, int lis
 {
     for(; no >= All.MaxPart && no < All.MaxPart + Numnodestree; no = Nodes[no].u.d.father)
     {
+#ifdef TREE_REFRESH_INCREMENTAL
+        /* hmax is a bound at the node's Ti_current, grown from there by drift: the same value raised on a lagging copy
+           is a larger bound than on a current one. Raise it on the node drifted to now, the time the exchanges ship it
+           at, so every rank's copy holds the same bound (vmax before the drift, as in force_kick_node). */
+        int vmax_held = (Extnodes[no].vmax >= vmax);
+        if(!vmax_held) {Extnodes[no].vmax = vmax;}
+        force_drift_node(no, All.Ti_Current);
+        if(vmax_held && Extnodes[no].hmax >= hmax) {break;}
+#else
         if(Extnodes[no].vmax >= vmax && Extnodes[no].hmax >= hmax) {break;}
         if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
+#endif
         if(Extnodes[no].hmax < hmax) {Extnodes[no].hmax = hmax;}
 #ifdef TREE_MAXSOFT_COVERS_HMAX
         force_node_cover_soft(no);
@@ -446,6 +456,9 @@ void force_flush_motion_bounds(void)
     struct MotionBoundRecord {int no; MyFloat vmax, hmax;};
     std::vector<MotionBoundRecord> loc;
     loc.reserve(MotionTopPending.size());
+#ifdef TREE_REFRESH_INCREMENTAL
+    for(int no : MotionTopPending) {force_drift_node(no, All.Ti_Current);} /* ship the bounds as of now: receivers apply them to their copies drifted to now */
+#endif
     for(int no : MotionTopPending) {loc.push_back({no, Extnodes[no].vmax, Extnodes[no].hmax});}
     MotionTopPending.clear(); MotionTopGen++;
     if(MotionTopGen == 0) {MotionTopGen = 1; MotionTopStamp.assign(MotionTopStamp.size(), 0);}
@@ -643,8 +656,15 @@ void force_update_hmax(void)
         no = Father[i];
         while(no >= 0)
         {
+#ifdef TREE_REFRESH_INCREMENTAL
+            /* up to the top-level node, whose bounds phase 2 raises and ships as of now: a current node does not
+               imply current ancestors */
+            if(Nodes[no].Ti_current != All.Ti_Current) {force_drift_node(no, All.Ti_Current);}
+            if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) {break;}
+#else
             if(Nodes[no].Ti_current == All.Ti_Current) {break;}
             force_drift_node(no, All.Ti_Current);
+#endif
             no = Nodes[no].u.d.father;
         }
       }
