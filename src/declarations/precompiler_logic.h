@@ -1892,3 +1892,20 @@
 #if defined(HYDRO_KERNEL_SURFACE_VOLCORR) && (defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS))
 #define KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE /* cells carry a CompositionType: the surface correction stands down at material interfaces (mesh/kernel.h) */
 #endif
+
+/* what the tabulated equations of state imply: the global parameter, cell and EOS structures depend on these, so every file must see them */
+#ifdef EOS_HELMHOLTZ
+#define EOS_TABULATED
+#define EOS_USES_CGS
+#define EOS_CARRIES_YE
+#define EOS_CARRIES_ABAR
+#define EOS_PROVIDES_ENTROPY
+#define EOS_PROVIDES_CV
+#endif
+
+#ifdef EOS_ANEOS
+#define EOS_TABULATED
+#define EOS_USES_CGS
+#define EOS_PROVIDES_ENTROPY
+#define EOS_PROVIDES_CV
+#endif
