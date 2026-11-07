@@ -1352,6 +1352,19 @@ int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
 void rearrange_particle_sequence(int tree_rebuilt_before_next_walk = 0);
 void swap_treewalk_pointers(int i, int j);
+#ifdef TREE_MOMENTS_DELTA
+extern int TreeMomentsNeedFullRefresh;   /* a moment change the incremental refresh does not cover (type changes, ...) */
+#define TREE_MOMENTS_NEED_FULL() (TreeMomentsNeedFullRefresh = 1)
+void tree_counted_mass_reset(void);
+void tree_counted_mass_swap(int i, int j);
+void tree_counted_mass_insert(int i);
+void tree_counted_mass_eliminate(int i);
+int tree_counted_mass_ready(void);
+void force_refresh_node_moments_delta(void);
+void force_refresh_node_moments_delta_check(void);
+#else
+#define TREE_MOMENTS_NEED_FULL() ((void) 0)
+#endif
 void remove_particle_from_tree(int i);
 void reorder_gas(void);
 void reorder_particles(void);

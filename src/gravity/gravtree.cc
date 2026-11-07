@@ -297,8 +297,25 @@ void gravity_tree(void)
        This must run before ANY gravity evaluation including Hermite calls, since
        stale moments produce wrong forces. Much cheaper than a full treebuild. */
     {
+#ifdef TREE_MOMENTS_DELTA
+        int flags_local[2] = {TreeMomentsStaleFlag, (TreeMomentsStaleFlag && !tree_counted_mass_ready()) ? 1 : 0}, flags_global[2];
+        MPI_Allreduce(flags_local, flags_global, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        const int TreeMomentsStaleFlag_global = flags_global[0];
+        if(TreeMomentsStaleFlag_global && !flags_global[1])
+        {
+            CPU_Step[CPU_MISC] += measure_time();
+            force_refresh_node_moments_delta();
+            static int delta_check = -1; if(delta_check < 0) {const char *e = getenv("GIZMO_TREE_DELTA_CHECK"); delta_check = (e && atoi(e) > 0);}
+            if(delta_check) {force_refresh_node_moments_delta_check();}   /* validation only: compare with a full refresh, keep the full one */
+            gizmo_exit_bad_stop_if_requested("gravtree:after_refresh_moments");
+            CPU_Step[CPU_TREEBUILD] += measure_time();
+            TreeMomentsStaleFlag = 0;
+        }
+        else
+#else
         int TreeMomentsStaleFlag_global;
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+#endif
         if(TreeMomentsStaleFlag_global)
         {
             CPU_Step[CPU_MISC] += measure_time();

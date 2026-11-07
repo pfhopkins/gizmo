@@ -5,6 +5,7 @@
 #include <math.h>
 #include <time.h>
 #include <limits.h>
+#include <vector>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -195,6 +196,9 @@ int force_treebuild_gravity(void)
     building_gravity_tree = 1;
     const int status = force_treebuild(NumPart, NULL);
     building_gravity_tree = 0;
+#ifdef TREE_MOMENTS_DELTA
+    if(status >= 0) {tree_counted_mass_reset();}   /* a successful build returns its node count */
+#endif
     return status;
 }
 
@@ -359,6 +363,9 @@ void force_tree_invalidate_global_topology(void) {g_force_global_topology_valid 
  *  wherever that parent happens to be. */
 void force_tree_swap_attachment_slots(int i, int j)
 {
+#ifdef TREE_MOMENTS_DELTA
+    tree_counted_mass_swap(i, j);
+#endif
     if(!g_force_global_topology_valid) {return;}
     if(i < 0 || j < 0 || i >= All.TreeParticleSlots || j >= All.TreeParticleSlots || !Father)
     {
@@ -1818,6 +1825,9 @@ void force_add_element_to_tree(int iparent, int ichild)
     Nextnode[iparent] = ichild; // insert new particle into linked list
     Nextnode[ichild] = no; // order correctly
     Father[ichild] = father; // set parent node to be the same
+#ifdef TREE_MOMENTS_DELTA
+    tree_counted_mass_insert(ichild);   /* not in the node moments until the next refresh */
+#endif
     /* The child's speed bound goes up its whole chain, to the top-level node other ranks route by; the
      * parent's node alone would let it outrun every ancestor box until its first kick or the next build. */
     gravity_note_inserted_motion_bound(ichild);
@@ -4385,6 +4395,197 @@ void force_refresh_node_moments(void)
             if(gpu_topnode_moment_resum() != 0)      {endrun(90000089);}
         }
         PRINT_STATUS(" ..tree node moments refreshed (GPU).");
+#ifdef TREE_MOMENTS_DELTA
+        tree_counted_mass_reset();
+#endif
         return;
     }
 }
+
+#ifdef TREE_MOMENTS_DELTA
+#if defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION) || defined(DM_SCALARFIELD_SCREENING)
+#error "TREE_MOMENTS_DELTA does not maintain the tidal or DM-screening node moments"
+#endif
+/* Incremental tree-moment refresh for mass-only changes (accretion, sink spawning, sink mass changes, elimination of
+ * zero-mass slots). TreeCountedMass[i] is the mass particle slot i contributes to the node moments; it is set at every
+ * build and full refresh, follows particles through the tree's slot swaps, and is -1 for a particle inserted into the
+ * standing tree but not yet counted. The refresh applies each difference along the particle's father chain, up to its
+ * top leaf, then rebuilds the replicated top tree with the usual pseudo-particle exchange. Mass, centre of mass, mass
+ * velocity, gas mass, particle counts and the sink moments are maintained; luminosity and max-type moments keep their
+ * values from the last build or full refresh (inserted particles already raise the bounds). Changes of type or anything
+ * else set TreeMomentsNeedFullRefresh and take the full refresh. */
+static MyFloat *TreeCountedMass = NULL;
+static int TreeCountedMassCap = 0;
+int TreeMomentsNeedFullRefresh = 0;
+
+void tree_counted_mass_reset(void)
+{
+    if(TreeCountedMassCap < All.MaxPart)
+    {
+        if(TreeCountedMass) {free(TreeCountedMass);}
+        TreeCountedMass = (MyFloat *) malloc((size_t) All.MaxPart * sizeof(MyFloat));
+        TreeCountedMassCap = TreeCountedMass ? All.MaxPart : 0;
+    }
+    if(!TreeCountedMass) {TreeMomentsNeedFullRefresh = 1; return;}
+    for(int i = 0; i < NumPart; i++) {TreeCountedMass[i] = P[i].Mass;}
+    TreeMomentsNeedFullRefresh = 0;
+}
+
+void tree_counted_mass_swap(int i, int j)
+{
+    if(!TreeCountedMass) {return;}
+    if(i < 0 || j < 0 || i >= TreeCountedMassCap || j >= TreeCountedMassCap) {TreeMomentsNeedFullRefresh = 1; return;}
+    const MyFloat t = TreeCountedMass[i]; TreeCountedMass[i] = TreeCountedMass[j]; TreeCountedMass[j] = t;
+}
+
+void tree_counted_mass_insert(int i)
+{
+    if(!TreeCountedMass || i < 0 || i >= TreeCountedMassCap) {TreeMomentsNeedFullRefresh = 1; return;}
+    TreeCountedMass[i] = -1;
+}
+
+int tree_counted_mass_ready(void) {return (TreeCountedMass != NULL && TreeCountedMassCap >= NumPart && !TreeMomentsNeedFullRefresh);}
+
+/* Add mass dm (and dN particles) at particle i's current state to every node from its leaf up to its top leaf. */
+static void tree_moment_delta_along_chain(int i, double dm, int dN)
+{
+    if(Father[i] < 0) {return;}
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    const Vec3<double> x = P[i].Pos, v = P[i].Vel;
+    const int type = (int) P[i].Type;
+    const int lo = All.TreeNodeIndexBase, hi = All.TreeNodeIndexBase + Numnodestree;
+    for(int no = Father[i]; no >= lo && no < hi; no = Nodes[no].u.d.father)
+    {
+        if(Nodes[no].u.d.bitflags & (1u << BITFLAG_INTERNAL_TOPLEVEL)) {break;}   /* re-summed from the leaves after the exchange */
+        force_drift_node(no, All.Ti_Current);
+        const double M = Nodes[no].u.d.mass, Mn = M + dm;
+        if(Mn > 0)
+        {
+            for(int k = 0; k < 3; k++)
+            {
+                Nodes[no].u.d.s[k] = (MyFloat) ((M * Nodes[no].u.d.s[k] + dm * x[k]) / Mn);
+                Extnodes[no].vs[k] = (MyFloat) ((M * Extnodes[no].vs[k] + dm * v[k]) / Mn);
+            }
+        }
+        Nodes[no].u.d.mass = (MyFloat) ((Mn > 0) ? Mn : 0);
+        Nodes[no].N_part += dN;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        if(type == 0) {Nodes[no].gasmass = (MyFloat) DMAX(0., Nodes[no].gasmass + dm);}
+#endif
+#ifdef SINK_CALC_DISTANCES
+        if(type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
+        {
+            const double sm = Nodes[no].sink_mass, smn = sm + dm;
+            if(smn > 0)
+            {
+                for(int k = 0; k < 3; k++)
+                {
+                    Nodes[no].sink_pos[k] = (MyFloat) ((sm * Nodes[no].sink_pos[k] + dm * x[k]) / smn);
+#if defined(SINK_NODE_MOTION_TRACKED)
+                    Nodes[no].sink_vel[k] = (MyFloat) ((sm * Nodes[no].sink_vel[k] + dm * v[k]) / smn);
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+                    Nodes[no].sink_acc[k] = (MyFloat) ((sm * Nodes[no].sink_acc[k] + dm * P[i].Acc_Total_PrevStep[k]) / smn);
+#endif
+                }
+            }
+            Nodes[no].sink_mass = (MyFloat) ((smn > 0) ? smn : 0);
+#if defined(SINK_NODE_MOTION_TRACKED)
+            Nodes[no].N_SINK += dN;
+#endif
+        }
+#endif
+        const int k = soa ? gpu_gravity_tree_mirror_slot(no) : -1;
+        if(k >= 0)
+        {
+            if(soa->mass) {soa->mass[k] = (MyGravFloat) Nodes[no].u.d.mass;}
+            if(soa->s) {soa->s[k] = {(MyGravFloat) Nodes[no].u.d.s[0], (MyGravFloat) Nodes[no].u.d.s[1], (MyGravFloat) Nodes[no].u.d.s[2]};}
+            if(soa->node_vs) {soa->node_vs[k] = {(MyGravFloat) Extnodes[no].vs[0], (MyGravFloat) Extnodes[no].vs[1], (MyGravFloat) Extnodes[no].vs[2]};}
+            if(soa->N_part) {soa->N_part[k] = Nodes[no].N_part;}
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+            if(soa->gasmass) {soa->gasmass[k] = (MyGravFloat) Nodes[no].gasmass;}
+#endif
+#ifdef SINK_CALC_DISTANCES
+            if(soa->sink_mass) {soa->sink_mass[k] = (MyGravFloat) Nodes[no].sink_mass;}
+            if(soa->sink_pos) {soa->sink_pos[k] = {(MyGravFloat) Nodes[no].sink_pos[0], (MyGravFloat) Nodes[no].sink_pos[1], (MyGravFloat) Nodes[no].sink_pos[2]};}
+#if defined(SINK_NODE_MOTION_TRACKED)
+            if(soa->sink_vel) {soa->sink_vel[k] = {(MyGravFloat) Nodes[no].sink_vel[0], (MyGravFloat) Nodes[no].sink_vel[1], (MyGravFloat) Nodes[no].sink_vel[2]};}
+            if(soa->N_SINK) {soa->N_SINK[k] = Nodes[no].N_SINK;}
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+            if(soa->sink_acc) {soa->sink_acc[k] = {(MyGravFloat) Nodes[no].sink_acc[0], (MyGravFloat) Nodes[no].sink_acc[1], (MyGravFloat) Nodes[no].sink_acc[2]};}
+#endif
+#endif
+        }
+        gpu_node_dirty_claim(no);
+    }
+}
+
+/* Slot i is about to be removed from the tree: take out whatever it still contributes. */
+void tree_counted_mass_eliminate(int i)
+{
+    if(!TreeCountedMass || i < 0 || i >= TreeCountedMassCap) {TreeMomentsNeedFullRefresh = 1; return;}
+    const double counted = TreeCountedMass[i];
+    if(counted >= 0) {tree_moment_delta_along_chain(i, -counted, -1);}
+    TreeCountedMass[i] = 0;
+}
+
+/* Collective: every rank calls it when the global stale flag is set and no rank needs the full refresh. */
+void force_refresh_node_moments_delta(void)
+{
+    int nchanged = 0;
+    for(int i = 0; i < NumPart; i++)
+    {
+        const double c = TreeCountedMass[i], m = P[i].Mass;
+        if(c < 0) {tree_moment_delta_along_chain(i, m, 1); TreeCountedMass[i] = P[i].Mass; nchanged++;}
+        else if(m != c) {tree_moment_delta_along_chain(i, m - c, 0); TreeCountedMass[i] = P[i].Mass; nchanged++;}
+    }
+    /* The exchange copies top-leaf moments without their clocks, and the re-sum combines them: bring every top-level
+       node to the current time first, as the full refresh's sweep does. */
+    for(int t = 0; t < NTopnodes; t++) {if(TopNodeNodeIndex[t] >= 0) {force_drift_node(TopNodeNodeIndex[t], All.Ti_Current);}}
+    for(int i = 0; i < NTopleaves; i++) {force_drift_node(DomainNodeIndex[i], All.Ti_Current);}
+    int pseudo_status = force_exchange_pseudodata();
+    if(!pseudo_status) {
+        if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(90000088);}
+        if(gpu_topnode_moment_resum() != 0)      {endrun(90000089);}
+    }
+    PRINT_STATUS(" ..tree node moments updated incrementally (%d particles).", nchanged);
+}
+
+/* Validation (GIZMO_TREE_DELTA_CHECK=1): after an incremental refresh, run the full one and report the largest
+   differences in the additive moments over this rank's nodes below the top level. Collective. */
+void force_refresh_node_moments_delta_check(void)
+{
+    const int lo = All.TreeNodeIndexBase, n = Numnodestree;
+    std::vector<double> m0(n), g0(n), sm0(n); std::vector<long> np0(n);
+    for(int k = 0; k < n; k++)
+    {
+        const int no = lo + k; m0[k] = Nodes[no].u.d.mass; np0[k] = Nodes[no].N_part; g0[k] = 0; sm0[k] = 0;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        g0[k] = Nodes[no].gasmass;
+#endif
+#ifdef SINK_CALC_DISTANCES
+        sm0[k] = Nodes[no].sink_mass;
+#endif
+    }
+    force_refresh_node_moments();
+    double dmax[4] = {0, 0, 0, 0}, gmax[4];
+    for(int k = 0; k < n; k++)
+    {
+        const int no = lo + k;
+        if(Nodes[no].u.d.bitflags & (1u << BITFLAG_INTERNAL_TOPLEVEL)) {continue;}
+        const double m = Nodes[no].u.d.mass;
+        dmax[0] = DMAX(dmax[0], fabs(m - m0[k]) / DMAX(m, MIN_REAL_NUMBER));
+        dmax[1] = DMAX(dmax[1], (double) labs(Nodes[no].N_part - np0[k]));
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        dmax[2] = DMAX(dmax[2], fabs(Nodes[no].gasmass - g0[k]) / DMAX(m, MIN_REAL_NUMBER));
+#endif
+#ifdef SINK_CALC_DISTANCES
+        dmax[3] = DMAX(dmax[3], fabs(Nodes[no].sink_mass - sm0[k]) / DMAX(m, MIN_REAL_NUMBER));
+#endif
+    }
+    MPI_Reduce(dmax, gmax, 4, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    if(ThisTask == 0) {printf("TREE_DELTA_CHECK Ti=%lld max rel |dmass| %.3e  |dN_part| %.0f  rel |dgasmass| %.3e  rel |dsinkmass| %.3e\n",
+                              (long long) All.Ti_Current, gmax[0], gmax[1], gmax[2], gmax[3]); fflush(stdout);}
+}
+#endif /* TREE_MOMENTS_DELTA */
