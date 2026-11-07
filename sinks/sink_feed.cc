@@ -223,8 +223,8 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                                 if(r >= heff_j) {allow_sink_merger = 0;} // beyond MAX[search/kernel/softening] radius: heff_j = DMAX( P[j].KernelRadius , ForceSoftening_KernelRadius(j) )
                                 if(P[j].Mass > local.Mass) {allow_sink_merger = 0;} // always merge from more massive eating lower
                                 if((P[j].Mass == local.Mass) && (P[j].ID > local.ID)) {allow_sink_merger = 0;} // randomly pick for equal masses which way the merger goes
-                                double max_rmerge = 1.0*sink_radius; // default STARFORGE behavior: only merge away stuff that is within the softening radius; sink_radius=SinkParticle_GravityKernelRadius
-                                double max_mmerge = 10.*P[j].Sink_Formation_Mass; // default STARFORGE behavior: only merge away stuff no more massive than a few gas cells
+                                double max_rmerge = All.SinkMergerMaxRadiusFactor*sink_radius; // default (factor 1) STARFORGE behavior: only merge away stuff that is within the softening radius; sink_radius=SinkParticle_GravityKernelRadius
+                                double max_mmerge = (All.SinkMergerMaxMass > 0) ? All.SinkMergerMaxMass : 10.*P[j].Sink_Formation_Mass; // default STARFORGE behavior: only merge away stuff no more massive than a few gas cells
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
                                 if(local.Sink_eligible_for_binary_merge_away == 0) {allow_sink_merger = 0;}
                                 if(is_star_eligible_for_binary_merge_away(j) == 0) {allow_sink_merger = 0;}
