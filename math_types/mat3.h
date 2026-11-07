@@ -23,57 +23,64 @@ struct Mat3 {
         row[0]+=o.row[0]; row[1]+=o.row[1]; row[2]+=o.row[2]; return *this;
     }
 
-    T trace() const noexcept { return row[0][0] + row[1][1] + row[2][2]; }
+    using W = MathWideT<T>; /* arithmetic type; see vec3.h */
 
-    T frobenius_norm_sq() const noexcept {
+    W trace() const noexcept { return W(row[0][0]) + W(row[1][1]) + W(row[2][2]); }
+
+    W frobenius_norm_sq() const noexcept {
         return row[0].norm_sq() + row[1].norm_sq() + row[2].norm_sq();
     }
-    T frobenius_norm() const noexcept { return std::sqrt(frobenius_norm_sq()); }
+    W frobenius_norm() const noexcept { return std::sqrt(frobenius_norm_sq()); }
 
     // Matrix-vector product: M * v
-    Vec3<T> matvec(const Vec3<T>& v) const noexcept {
-        return Vec3<T>{ dot(row[0], v), dot(row[1], v), dot(row[2], v) };
+    Vec3<W> matvec(const Vec3<T>& v) const noexcept {
+        return Vec3<W>{ dot(row[0], v), dot(row[1], v), dot(row[2], v) };
+    }
+    template<typename U> Vec3<Vec3Promote<T,U>> matvec(const Vec3<U>& v) const noexcept {
+        return Vec3<Vec3Promote<T,U>>{ dot(row[0], v), dot(row[1], v), dot(row[2], v) };
     }
 
     // Transpose-multiply: M^T * v
-    Vec3<T> Tmatvec(const Vec3<T>& v) const noexcept {
-        return Vec3<T>{ row[0][0]*v[0] + row[1][0]*v[1] + row[2][0]*v[2],
-                        row[0][1]*v[0] + row[1][1]*v[1] + row[2][1]*v[2],
-                        row[0][2]*v[0] + row[1][2]*v[1] + row[2][2]*v[2] };
+    Vec3<W> Tmatvec(const Vec3<T>& v) const noexcept {
+        return Vec3<W>{ W(row[0][0])*v[0] + W(row[1][0])*v[1] + W(row[2][0])*v[2],
+                        W(row[0][1])*v[0] + W(row[1][1])*v[1] + W(row[2][1])*v[2],
+                        W(row[0][2])*v[0] + W(row[1][2])*v[1] + W(row[2][2])*v[2] };
     }
 
     // Curl of vector field whose gradient is this matrix: (dv2/dx1 - dv1/dx2, dv0/dx2 - dv2/dx0, dv1/dx0 - dv0/dx1)
     // where row[i][j] = dv_i/dx_j
-    Vec3<T> curl() const noexcept {
-        return Vec3<T>{ row[2][1] - row[1][2], row[0][2] - row[2][0], row[1][0] - row[0][1] };
+    Vec3<W> curl() const noexcept {
+        return Vec3<W>{ W(row[2][1]) - W(row[1][2]), W(row[0][2]) - W(row[2][0]), W(row[1][0]) - W(row[0][1]) };
     }
 
     // Determinant of the matrix.
-    T det() const noexcept {
-        return row[0][0] * (row[1][1] * row[2][2] - row[1][2] * row[2][1])
-             - row[0][1] * (row[1][0] * row[2][2] - row[1][2] * row[2][0])
-             + row[0][2] * (row[1][0] * row[2][1] - row[1][1] * row[2][0]);
+    W det() const noexcept {
+        const Mat3<W> m = *this;
+        return m.row[0][0] * (m.row[1][1] * m.row[2][2] - m.row[1][2] * m.row[2][1])
+             - m.row[0][1] * (m.row[1][0] * m.row[2][2] - m.row[1][2] * m.row[2][0])
+             + m.row[0][2] * (m.row[1][0] * m.row[2][1] - m.row[1][1] * m.row[2][0]);
     }
 
     // Invert the matrix, writing the result into `inv`.
     // Returns the determinant. If the matrix is singular (det==0 or NaN),
     // `inv` is zeroed and 0 is returned.
-    T invert(Mat3& inv) const noexcept {
-        T d = det();
-        if(d == T(0) || d != d) { // d != d catches NaN
+    W invert(Mat3& inv) const noexcept {
+        const Mat3<W> m = *this;
+        W d = det();
+        if(d == W(0) || d != d) { // d != d catches NaN
             inv = Mat3{};
-            return T(0);
+            return W(0);
         }
-        T inv_d = T(1) / d;
-        inv[0][0] = (row[1][1] * row[2][2] - row[1][2] * row[2][1]) * inv_d;
-        inv[0][1] = (row[0][2] * row[2][1] - row[0][1] * row[2][2]) * inv_d;
-        inv[0][2] = (row[0][1] * row[1][2] - row[0][2] * row[1][1]) * inv_d;
-        inv[1][0] = (row[1][2] * row[2][0] - row[1][0] * row[2][2]) * inv_d;
-        inv[1][1] = (row[0][0] * row[2][2] - row[0][2] * row[2][0]) * inv_d;
-        inv[1][2] = (row[0][2] * row[1][0] - row[0][0] * row[1][2]) * inv_d;
-        inv[2][0] = (row[1][0] * row[2][1] - row[1][1] * row[2][0]) * inv_d;
-        inv[2][1] = (row[0][1] * row[2][0] - row[0][0] * row[2][1]) * inv_d;
-        inv[2][2] = (row[0][0] * row[1][1] - row[0][1] * row[1][0]) * inv_d;
+        W inv_d = W(1) / d;
+        inv[0][0] = (m.row[1][1] * m.row[2][2] - m.row[1][2] * m.row[2][1]) * inv_d;
+        inv[0][1] = (m.row[0][2] * m.row[2][1] - m.row[0][1] * m.row[2][2]) * inv_d;
+        inv[0][2] = (m.row[0][1] * m.row[1][2] - m.row[0][2] * m.row[1][1]) * inv_d;
+        inv[1][0] = (m.row[1][2] * m.row[2][0] - m.row[1][0] * m.row[2][2]) * inv_d;
+        inv[1][1] = (m.row[0][0] * m.row[2][2] - m.row[0][2] * m.row[2][0]) * inv_d;
+        inv[1][2] = (m.row[0][2] * m.row[1][0] - m.row[0][0] * m.row[1][2]) * inv_d;
+        inv[2][0] = (m.row[1][0] * m.row[2][1] - m.row[1][1] * m.row[2][0]) * inv_d;
+        inv[2][1] = (m.row[0][1] * m.row[2][0] - m.row[0][0] * m.row[2][1]) * inv_d;
+        inv[2][2] = (m.row[0][0] * m.row[1][1] - m.row[0][1] * m.row[1][0]) * inv_d;
         return d;
     }
 

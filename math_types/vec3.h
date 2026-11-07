@@ -3,6 +3,12 @@
 #include <cmath>
 #include <type_traits>
 
+// Arithmetic type for data read out of float storage (PRECISION_DIET): reductions, products and the free
+// binary operators evaluate in double. Identity for double, so double-only code is unchanged.
+template<typename T> struct MathWide { using type = T; };
+template<> struct MathWide<float> { using type = double; };
+template<typename T> using MathWideT = typename MathWide<T>::type;
+
 // 3-vector templated on element type.
 // Stores 3 elements contiguously — layout-identical to T[3].
 // Trivial aggregate (no user-provided constructors) — safe for memset/memcpy/MPI.
@@ -42,13 +48,13 @@ struct Vec3 {
     Vec3& operator*=(T s) noexcept { data[0]*=s; data[1]*=s; data[2]*=s; return *this; }
     Vec3& operator/=(T s) noexcept { T inv=T(1)/s; data[0]*=inv; data[1]*=inv; data[2]*=inv; return *this; }
 
-    T norm_sq() const noexcept { return data[0]*data[0] + data[1]*data[1] + data[2]*data[2]; }
-    T norm() const noexcept { return std::sqrt(norm_sq()); }
+    MathWideT<T> norm_sq() const noexcept { using W = MathWideT<T>; return W(data[0])*W(data[0]) + W(data[1])*W(data[1]) + W(data[2])*W(data[2]); }
+    MathWideT<T> norm() const noexcept { return std::sqrt(norm_sq()); }
 };
 
 // Binary operators evaluate in the common type of the operands, so a float-stored field meeting a double
 // computes in double. With T==U they are the plain same-type operators (bitwise unchanged).
-template<typename T, typename U> using Vec3Promote = typename std::common_type<T,U>::type;
+template<typename T, typename U> using Vec3Promote = MathWideT<typename std::common_type<T,U>::type>;
 
 template<typename T, typename U> inline Vec3<Vec3Promote<T,U>> operator+(const Vec3<T>& a, const Vec3<U>& b) noexcept {
     using R = Vec3Promote<T,U>;
