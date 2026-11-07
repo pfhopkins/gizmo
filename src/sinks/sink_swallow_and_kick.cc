@@ -696,6 +696,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #ifdef MHD_MODIFIED_GRADIENT
         CellP[j].MG_cgcoeff = 0; CellP[j].MG_piece_token = 0; CellP[j].MG_envelope = 0;   /* a new cell has no MG state (the template's belongs to another place) */
 #endif
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+        CellP[j].InternalEnergy_FromIR_Pending = 0; /* a new cell has absorbed no IR yet (the template's belongs to another place) */
+#endif
 
 #if defined(SINK_TEST_WIND_MIXED_FASTSLOW) || defined(SINK_RIAF_SUBEDDINGTON_MODEL)
         if(P[i].Type==5) {

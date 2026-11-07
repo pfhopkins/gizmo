@@ -373,7 +373,11 @@ void cooling_parent_routine(void)
         if((CellP[i].Density*All.cf_a3inv > All.PhysDensThresh) && ((All.ComovingIntegrationOn==0) || (CellP[i].Density>=All.OverDensThresh))) {continue;} /* no cooling for effective-eos star-forming particles */
 #endif
 #ifdef GALSF_FB_TURNOFF_COOLING
-        if(CellP[i].DelayTimeCoolingSNe > 0) {continue;} /* no cooling for particles marked in delayed cooling */
+        if(CellP[i].DelayTimeCoolingSNe > 0) { /* no cooling for particles marked in delayed cooling */
+#if defined(RT_INFRARED) && !defined(COOLING_OPERATOR_SPLIT)
+            CellP[i].InternalEnergy += CellP[i].InternalEnergy_FromIR_Pending; CellP[i].InternalEnergyPred += CellP[i].InternalEnergy_FromIR_Pending; CellP[i].InternalEnergy_FromIR_Pending = 0; set_eos_pressure(i, P, CellP); /* with cooling off there is nothing to balance the absorbed IR against: heat the gas directly */
+#endif
+            continue;}
 #endif
         cool_indices.push_back(i);
     }
@@ -580,6 +584,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         struct PhysicsTablesView dm_tables_view = cooling_owner_tables_view();
         do_dark_cooling_for_particle(i, pp, cell, &dm_tables_view);
 #endif
+#if defined(RT_INFRARED) && !defined(COOLING_OPERATOR_SPLIT)
+        cell[i].InternalEnergy_FromIR_Pending = 0; /* the dark fluid takes no heating from baryonic radiation */
+#endif
         return;
     }
 #endif
@@ -640,6 +647,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
             }
         }
         DtInternalEnergyEffCGS = DMIN(DtInternalEnergyEffCGS ,  1.e4*cell[i].InternalEnergy/dtime ); // equivalent to saying we cant massively enhance internal energy in a single timestep from the hydro work terms: should be big, since just numerical [shocks are real!]
+#ifdef RT_INFRARED
+        if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {double du_IR = cell[i].InternalEnergy_FromIR_Pending; cell[i].InternalEnergy_FromIR_Pending = 0; DtInternalEnergyEffCGS += du_IR / dtime;} /* IR absorbed since the last cooling call, as a heating rate over this call: a real energy input, not a numerical hydro term, so it is added after the hydro-work limits */
+#endif
         /* and convert to cgs before use in the cooling sub-routine */
         DtInternalEnergyEffCGS *= (UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC);
         if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy = DtInternalEnergyEffCGS;} // if unsplit, send this converted variable to cooling below

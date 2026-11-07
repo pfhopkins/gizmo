@@ -1254,7 +1254,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 #else
                 if(mode==0) {
                     if(cell[i].CoolingIsOperatorSplitThisTimestep) {cell[i].InternalEnergy += (de_abs * IRBand_opacity_fraction_from_gas_absorption) / cell[i].Mass;} /* a cell split this step (e.g. a solid, which takes no cooling) has had its kick: heat it directly, as above */
-                    else {cell[i].DtInternalEnergy += (de_abs * IRBand_opacity_fraction_from_gas_absorption) / ((MIN_REAL_NUMBER + dt_entr) * cell[i].Mass);} /* this fraction absorbed by gas goes into a heating rate which can be balanced implicitly in the cooling function later */
+                    else {cell[i].InternalEnergy_FromIR_Pending += (de_abs * IRBand_opacity_fraction_from_gas_absorption) / cell[i].Mass;} /* held until the cell's next cooling call, which balances it implicitly against cooling */
                 }
 #endif
 #endif

@@ -1162,6 +1162,9 @@ int merge_particles_ij(int i, int j)
 
     CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;
     CellP[j].InternalEnergyPred = wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred;
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+    CellP[j].InternalEnergy_FromIR_Pending = wt_j*CellP[j].InternalEnergy_FromIR_Pending + wt_i*CellP[i].InternalEnergy_FromIR_Pending; /* IR energy not yet given to the cooling solve, mass-weighted like the internal energy */
+#endif
     CellP[j].MeanMolecularWeight = wt_j*CellP[j].MeanMolecularWeight + wt_i*CellP[i].MeanMolecularWeight; /* cached composition mixes with the mass, as the other terms do */
     CellP[j].Gamma = wt_j*CellP[j].Gamma + wt_i*CellP[i].Gamma;
 #ifdef EOS_ELASTIC

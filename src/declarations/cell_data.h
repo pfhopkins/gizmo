@@ -31,6 +31,9 @@ extern struct gas_cell_data
     MyDouble InternalEnergy;        /*!< specific internal energy [internal thermal energy per unit mass] of cell */
     MyDouble InternalEnergyPred;    /*!< predicted value of the specific internal energy at the current time */
     MyDouble DtInternalEnergy;      /*!< rate of change of specific internal energy */
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+    MyDouble InternalEnergy_FromIR_Pending; /*!< specific energy absorbed by the gas from the IR band since its last cooling call; the cooling solve takes it as heating */
+#endif
     
     Vec3<MyDouble> VelPred;         /*!< predicted gas cell velocity at the current time */
     Vec3<MyDouble> HydroAccel;      /*!< acceleration due to hydrodynamical force (for drifting) */
@@ -434,9 +437,6 @@ extern struct gas_cell_data
     MyFloat Transport_Dt_Subcycle;  /*!< transport-limited timestep, stored separately when subcycling (not folded into hydro dt) */
 #if defined(RT_RAD_PRESSURE_FORCES) && defined(RT_EVOLVE_ENERGY)
     MyFloat Dt_Rad_E_gamma_Work[N_RT_FREQ_BINS]; /*!< saved rad pressure work contribution to Dt_Rad_E_gamma, added back each sub-step */
-#endif
-#if defined(RT_INFRARED) && defined(COOLING)
-    MyFloat DtIE_IR_Subcycle; /*!< hydro-pass DtInternalEnergy, saved before subcycle loop to prevent IR heating accumulation */
 #endif
 #ifdef TRANSPORT_SUBCYCLE_COOLING
     MyFloat Dt_Transport_Subcycle_Saved; /*!< saved DtInternalEnergy (code units) before cooling, restored each sub-step */
