@@ -1277,6 +1277,12 @@ static int let_foreign_leaf_id_reserve(int n)
     if(n > 0) {memset(ForeignLeafID, 0, (size_t) n * sizeof(MyIDType));}
     return 0;
 }
+/* At shutdown, before Kokkos is finalized. */
+void let_foreign_leaf_id_release(void)
+{
+    if(ForeignLeafID) {gpu_tree_free_bytes(ForeignLeafID);}
+    ForeignLeafID = NULL; ForeignLeafIDCap = 0;
+}
 #endif
 
 static void grow_wire_buf(struct LETPackContext *pk, struct LETNodeWire **buf, int needed, int *capacity)

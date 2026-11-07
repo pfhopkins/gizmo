@@ -19,6 +19,7 @@
 #include "./analytic_gravity.h"
 #include "gpu_topology_finalize.h"   /* gpu_tree_alloc_bytes: the Hermite ghost table is SharedSpace */
 #include <vector>
+#include <algorithm>
 
 /*! Host-vs-device routing for the gravity walk, keyed on the RANK-LOCAL count of active
  *  gravity candidates. With few candidates the host walk is the cheaper route; with many
@@ -137,8 +138,12 @@ void refresh_old_acceleration_for_tree_opening(void)
 
 
 #ifdef HERMITE_FOREIGN_SOURCE_TABLE
-struct hermite_ghost_entry *HermiteGhostTab = NULL;
+struct hermite_ghost_entry *HermiteGhostTab = NULL;   /* the table for the current Hermite pass; NULL outside one */
 int NHermiteGhost = 0;
+/* Storage behind the table (SharedSpace, read by both walks): kept across passes and grown only when the global
+ * count of Hermite-type particles exceeds its capacity, so a pass normally allocates nothing. */
+static struct hermite_ghost_entry *HermiteGhostStore = NULL;
+static int HermiteGhostCapacity = 0;
 
 /* This rank's Hermite-type particles, listed where every particle is visited anyway -- each gravity tree build and each
  * re-sequencing under a standing tree -- so a Hermite pass reads only these and never scans the particles. A particle created since the build is
@@ -151,11 +156,11 @@ void hermite_local_sources_rebuild(void)
     for(int i = 0; i < NumPart; i++) {if(((1 << P[i].Type) & HERMITE_INTEGRATION) && P[i].Mass > 0) {HermiteLocalSources.push_back(i);}}
 }
 
-static int hermite_ghost_cmp(const void *a, const void *b)
-{
-    const MyIDType ia = ((const struct hermite_ghost_entry *) a)->id, ib = ((const struct hermite_ghost_entry *) b)->id;
-    return (ia > ib) - (ia < ib);
-}
+/* Host buffers of the table build, reused from pass to pass. HermiteGhostOrder[k] is the gathered entry that
+ * goes to table slot k (ascending ID): reused while the count is unchanged and the result is still sorted, which
+ * holds between tree builds unless a listed particle drops out; otherwise rebuilt. */
+static std::vector<struct hermite_ghost_entry> HermiteGhostMine, HermiteGhostGathered;
+static std::vector<int> HermiteGhostCounts, HermiteGhostDispls, HermiteGhostOrder;
 
 /* Gather every rank's Hermite-type particles at the state a local walk would read them in this pass
  * (see hermite_ghost_entry). Only on a Hermite pass with more than one rank: a single rank has no
@@ -165,7 +170,8 @@ static void hermite_ghost_table_build(void)
     HermiteGhostTab = NULL; NHermiteGhost = 0;
     if(!HermiteOnlyFlag || NTask <= 1) {return;}
     const struct DriftKickTableView tables = drift_kick_table_view_host();
-    std::vector<struct hermite_ghost_entry> mine;
+    std::vector<struct hermite_ghost_entry> &mine = HermiteGhostMine;
+    mine.clear();
     for(int i : HermiteLocalSources)
     {
         if(i >= NumPart || !((1 << P[i].Type) & HERMITE_INTEGRATION) || P[i].Mass <= 0) {continue;}
@@ -183,22 +189,59 @@ static void hermite_ghost_table_build(void)
     }
     const int esz = (int) sizeof(struct hermite_ghost_entry);
     int n_local = (int) mine.size();
-    std::vector<int> counts(NTask), displs(NTask);
+    std::vector<int> &counts = HermiteGhostCounts, &displs = HermiteGhostDispls;
+    counts.resize(NTask); displs.resize(NTask);
     MPI_Allgather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
     int n_tot = 0;
     for(int t = 0; t < NTask; t++) {displs[t] = n_tot * esz; n_tot += counts[t]; counts[t] *= esz;}
     if(n_tot == 0) {return;}
-    HermiteGhostTab = (struct hermite_ghost_entry *) gpu_tree_alloc_bytes((size_t) n_tot * esz, "hermite_ghost_table");
-    if(!HermiteGhostTab) {endrun(90000099);}
-    MPI_Allgatherv(mine.data(), n_local * esz, MPI_BYTE, HermiteGhostTab, counts.data(), displs.data(), MPI_BYTE, MPI_COMM_WORLD);
-    qsort(HermiteGhostTab, n_tot, esz, hermite_ghost_cmp);
+    if(n_tot > HermiteGhostCapacity)   /* n_tot is global, so every rank grows on the same pass */
+    {
+        const int capacity = n_tot + n_tot / 2;   /* headroom, so a run that keeps forming sinks does not regrow at each new count */
+        struct hermite_ghost_entry *grown = (struct hermite_ghost_entry *) gpu_tree_alloc_bytes((size_t) capacity * esz, "hermite_ghost_table");
+        int ok = (grown != NULL), all_ok = 0;
+        MPI_Allreduce(&ok, &all_ok, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if(!all_ok)   /* every rank stops here together, rather than one rank missing the exchange below */
+        {
+            if(grown) {gpu_tree_free_bytes(grown);}
+            endrun(90000099); return;
+        }
+        if(HermiteGhostStore) {gpu_tree_free_bytes(HermiteGhostStore);}
+        HermiteGhostStore = grown; HermiteGhostCapacity = capacity;
+    }
+    std::vector<struct hermite_ghost_entry> &gathered = HermiteGhostGathered;
+    gathered.resize(n_tot);
+    MPI_Allgatherv(mine.data(), n_local * esz, MPI_BYTE, gathered.data(), counts.data(), displs.data(), MPI_BYTE, MPI_COMM_WORLD);
+    HermiteGhostTab = HermiteGhostStore;
+    std::vector<int> &order = HermiteGhostOrder;
+    int sorted = ((int) order.size() == n_tot);
+    for(int k = 0; sorted && k < n_tot; k++)
+    {
+        HermiteGhostTab[k] = gathered[order[k]];
+        if(k > 0 && HermiteGhostTab[k].id < HermiteGhostTab[k-1].id) {sorted = 0;}
+    }
+    if(!sorted)
+    {
+        order.resize(n_tot);
+        for(int k = 0; k < n_tot; k++) {order[k] = k;}
+        std::sort(order.begin(), order.end(), [&gathered](int a, int b) {return gathered[a].id < gathered[b].id;});
+        for(int k = 0; k < n_tot; k++) {HermiteGhostTab[k] = gathered[order[k]];}
+    }
     NHermiteGhost = n_tot;
 }
 
-static void hermite_ghost_table_free(void)
+/* End of a Hermite pass: the walks stop using the table; its storage is kept for the next pass. */
+static void hermite_ghost_table_close(void)
 {
-    if(HermiteGhostTab) {gpu_tree_free_bytes(HermiteGhostTab);}
     HermiteGhostTab = NULL; NHermiteGhost = 0;
+}
+
+/* At shutdown, before Kokkos is finalized. */
+void hermite_ghost_table_release(void)
+{
+    hermite_ghost_table_close();
+    if(HermiteGhostStore) {gpu_tree_free_bytes(HermiteGhostStore);}
+    HermiteGhostStore = NULL; HermiteGhostCapacity = 0;
 }
 #endif
 
@@ -958,7 +1001,7 @@ gravity_walk_attempt:
     }
 #endif
 #ifdef HERMITE_FOREIGN_SOURCE_TABLE
-    hermite_ghost_table_free();
+    hermite_ghost_table_close();
 #endif
     CPU_Step[CPU_TREEMISC] += measure_time();
 }

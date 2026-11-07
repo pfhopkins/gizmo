@@ -2934,6 +2934,10 @@ void gizmo_kokkos_finalize(void)
     gx_motion_target_release();
     gpu_node_dirty_release();
     gpu_topology_build_release();
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    hermite_ghost_table_release();
+    let_foreign_leaf_id_release();
+#endif
     Kokkos::finalize();
 }
 /* Best-effort drain of in-flight device work. Used by the reviewed hard-abort
