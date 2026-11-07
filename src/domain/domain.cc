@@ -9,6 +9,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "domain_key_functions.h"
 #include "../declarations/gpu_rng.h"
 #include "../core/wakeup_sidecar.h"
 #include "../system/gpu_particles_arena.h"
@@ -869,11 +870,11 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
                  t_light_mergesplit, t_light_rearrange, t_light_drift, t_light_boxwrap, t_light_barrier, t_light_total);
 
     /* The lightweight repartition reuses the extent the last full decomposition measured, and the
-       Peano key is only meaningful for a particle inside it: domain_double_to_int() reads the
-       mantissa of (Pos-DomainCorner)/DomainLen + 1.0, which encodes the position only while that
-       value stays in [1,2).  A particle outside the extent leaves that range, and the key it gets
-       is a valid-looking key for somewhere else -- the top tree spans every Peano cell, so nothing
-       downstream can notice.  Only a full decomposition re-measures the extent, so check it here,
+       Peano key is only meaningful for a particle inside it: the key is read from the mantissa of
+       (Pos-DomainCorner)/DomainLen + 1.0 (domain_key_functions.h), which encodes the position only
+       while that value stays in [1,2).  A particle outside the extent leaves that range, and the
+       key it gets is a valid-looking key for somewhere else -- the top tree spans every Peano cell,
+       so nothing downstream can notice.  Only a full decomposition re-measures the extent, so check it here,
        after this step's drift and wrapping have settled the positions the keys will be built from,
        and before anything has been freed or rebuilt.  The test is the exact validity condition
        rather than a padded one, so it fires only when a key would actually be wrong. */
@@ -935,10 +936,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
 #endif
     for(int k = 0; k < NumPart; k++)
     {
-        peano1D xb = domain_double_to_int(((P[k].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[k].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[k].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        Key[k] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+        Key[k] = domain_peano_key(k);
     }
 
     /* temporarily reconstruct the local topNodes from the persistent TopNodes for domain_sumCost.
@@ -1102,10 +1100,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
 #endif
     for(int k = 0; k < NumPart; k++)
     {
-        peano1D xb = domain_double_to_int(((P[k].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[k].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[k].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        PersistentKey[k] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+        PersistentKey[k] = domain_peano_key(k);
     }
     Key = NULL; /* no longer valid as a mymalloc pointer */
 
@@ -3359,10 +3354,7 @@ int domain_determineTopTree(void)
   #endif
   for(i = 0; i < NumPart; i++)
     {
-      peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-      peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-      peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-      Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+      Key[i] = domain_peano_key(i);
     }
   for(i = 0, count = 0; i < NumPart; i++)
     {
@@ -3378,10 +3370,7 @@ int domain_determineTopTree(void)
   #endif
   for(i = 0; i < NumPart; i++)
     {
-      peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-      peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-      peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-      mp[i].key = Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+      mp[i].key = Key[i] = domain_peano_key(i);
       mp[i].index = i;
     }
   count = NumPart;
@@ -3717,16 +3706,13 @@ void domain_sumCost(void)
 }
 
 
-/*! Coordinate conversion to integer. d is coordinate in double precision. returns coordinate in integer of type peano1D. written as part of arepo code dev, from public arepo code by V Springel. */
-peano1D domain_double_to_int(double d)
+/*! Peano key of particle i's current position: the host's one route from a position to a key, through the
+ *  mapping in domain_key_functions.h that the device tree build and the neighbour-list index also use. */
+peanokey domain_peano_key(int i)
 {
-    union
-    {
-        double d;
-        unsigned long long ull;
-    } u;
-    u.d = d;
-    return (peano1D)((u.ull & 0xFFFFFFFFFFFFFllu) >> (52 - BITS_PER_DIMENSION));
+    uint64_t c[3];
+    domain_key_integer_coordinates(P[i].Pos[0], P[i].Pos[1], P[i].Pos[2], DomainCorner[0], DomainCorner[1], DomainCorner[2], DomainLen, BITS_PER_DIMENSION, c);
+    return peano_hilbert_key((peano1D) c[0], (peano1D) c[1], (peano1D) c[2], BITS_PER_DIMENSION);
 }
 
 
