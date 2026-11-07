@@ -59,6 +59,7 @@
 
 #include "gpu_pseudo_update.h"  /* gpu_mirror_publish_imported_node, gpu_set_soa_nextnode */
 #include "forcetree.h"          /* force_tree_grow_foreign_storage */
+#include "gpu_topology_finalize.h"       /* gpu_tree_alloc_bytes / gpu_tree_free_bytes */
 #include "gpu_gravity_tree.h"            /* suns_backup: the tree's own direct-child slots; the node mirror's foreign capacity */
 
 
@@ -1042,6 +1043,9 @@ static void let_emit_particle_leaf_from_src(int p_idx, const moment_particle_src
      * value); the two it cannot carry are Type and AGS_zeta.  Mirror the local-leaf AGS guards
      * EXACTLY: Type always, zeta only when the adaptive-softening field exists, else 0. */
     w->leaf_type     = pa->Type;
+#ifdef HERMITE_INTEGRATION
+    w->leaf_id       = pa->ID;
+#endif
     w->leaf_force_softening = (MyFloat) src.force_softening;  /* pure ForceSoftening, NOT the node's
                                                               * conflated maxsoft=max(soft,kernel) */
     w->leaf_ags_zeta = 0;
@@ -1213,6 +1217,9 @@ static void let_build_bucket_aggregate(struct LETPackContext *pk, int n, int hea
      * asking for a tree that has gone stale, which a rebuild repairs. */
     w->leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;
     w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;
+#ifdef HERMITE_INTEGRATION
+    w->leaf_id = 0;
+#endif
 }
 
 #endif
@@ -1253,6 +1260,24 @@ int     *ForeignLeafTag  = NULL;
 int     *ForeignLeafType = NULL;
 MyFloat *ForeignLeafZeta = NULL;
 MyFloat *ForeignLeafSoft = NULL;
+#ifdef HERMITE_INTEGRATION
+/* Kept apart from the sidecars above, with its own capacity, so the tree's allocate/grow/free paths are
+ * untouched: reserved before every install to cover the foreign storage, and never shrunk. */
+MyIDType *ForeignLeafID = NULL;
+static int ForeignLeafIDCap = 0;
+static int let_foreign_leaf_id_reserve(int n)
+{
+    if(n > ForeignLeafIDCap)
+    {
+        MyIDType *p = (MyIDType *) gpu_tree_alloc_bytes((size_t) n * sizeof(MyIDType), "tree_foreign_id");
+        if(!p) {return 1;}
+        if(ForeignLeafID) {gpu_tree_free_bytes(ForeignLeafID);}
+        ForeignLeafID = p; ForeignLeafIDCap = n;
+    }
+    if(n > 0) {memset(ForeignLeafID, 0, (size_t) n * sizeof(MyIDType));}
+    return 0;
+}
+#endif
 
 static void grow_wire_buf(struct LETPackContext *pk, struct LETNodeWire **buf, int needed, int *capacity)
 {
@@ -1409,6 +1434,9 @@ static void pack_recurse(struct LETPackContext *pk, int no, int sib_terminator,
     struct LETNodeWire *w = &(*buf)[my_idx];
     w->remote_id = no;
     w->leaf_tag = LET_LEAF_TAG_NODE; w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;  /* default: node */
+#ifdef HERMITE_INTEGRATION
+    w->leaf_id = 0;
+#endif
     w->node = Nodes[no];     /* full struct copy including all #ifdef payloads */
     /* The per-node type-presence bits mean "present and owned by the rank that holds this node",
      * so they must not travel: on the receiver this node describes somebody else's particles, and
@@ -1452,6 +1480,9 @@ static void pack_recurse(struct LETPackContext *pk, int no, int sib_terminator,
             struct particle_data *pa = &P[p];
             w->leaf_tag      = LET_LEAF_TAG_REAL_LEAF;
             w->leaf_type     = pa->Type;
+#ifdef HERMITE_INTEGRATION
+            w->leaf_id       = pa->ID;
+#endif
             w->leaf_force_softening = (MyFloat) ForceSoftening_KernelRadius(p);
             w->leaf_ags_zeta = 0;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
@@ -1801,6 +1832,9 @@ static void let_wire_fields(C &c, R &w, int kind)
     c.field(w.leaf_type);
     c.field(w.leaf_ags_zeta);
     c.field(w.leaf_force_softening);
+#ifdef HERMITE_INTEGRATION
+    c.field(w.leaf_id);
+#endif
 }
 
 static size_t let_wire_record_bytes(int kind)
@@ -2162,6 +2196,14 @@ extern "C" let_exchange_status_t let_exchange_nodes(unsigned char **send_buf_per
             grow_failed_local = 1;
         }
     }
+#ifdef HERMITE_INTEGRATION
+    if(!grow_failed_local && let_foreign_leaf_id_reserve(AllocatedForeignNodes) != 0)
+    {
+        printf("LET install: rank %d could not allocate the foreign-leaf ID sidecar for %d slots. Stopping.\n", ThisTask, AllocatedForeignNodes);
+        fflush(stdout);
+        grow_failed_local = 1;
+    }
+#endif
     int grow_failed_any   = 0;
     MPI_Allreduce(&grow_failed_local, &grow_failed_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(grow_failed_any)
@@ -2648,6 +2690,9 @@ struct let_install_sink {
             ForeignLeafType[foreign_slot] = rec.leaf_type;
             ForeignLeafZeta[foreign_slot] = rec.leaf_ags_zeta;
             ForeignLeafSoft[foreign_slot] = rec.leaf_force_softening;
+#ifdef HERMITE_INTEGRATION
+            if(ForeignLeafID && foreign_slot < ForeignLeafIDCap) {ForeignLeafID[foreign_slot] = rec.leaf_id;}
+#endif
         }
         gpu_mirror_publish_imported_node(mirror, abs_idx, &rec);
     }
