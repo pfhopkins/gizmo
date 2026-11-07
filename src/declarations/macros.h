@@ -284,7 +284,9 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
  * estimate.  It is not a proof of sufficiency -- the incomplete-import detector remains the
  * backstop for the rare miss -- but a run of the cosmological and nuclear-zoom problems needed a
  * repair on 1 step in ~3000 with it, against 1 in 4 without any allowance at all. */
+#ifndef LET_TREE_LIFETIME_PAD_FACTOR   /* Config may set it (e.g. LET_TREE_LIFETIME_PAD_FACTOR=1) */
 #define LET_TREE_LIFETIME_PAD_FACTOR 2
+#endif
 
 /* macro name concatenation for our modular precompiler method of writing new loops easily */
 
