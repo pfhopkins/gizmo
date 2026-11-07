@@ -1312,6 +1312,14 @@ struct DensitySpec {
                      * NOT density. */
                     short int TimeBin_j = Pj.TimeBin;
                     if (TimeBin_j < 0) { TimeBin_j = -TimeBin_j - 1; }
+                    /* A step truncated by a wake-up is shorter than its bin, so the bin over-reports how
+                     * long this neighbour runs and a sink stepping on it outruns its gas; unlike gas, a
+                     * sink cannot be woken to recover. Floor at the bin the actual step fits, stopping at
+                     * 1: bin 0 has zero length and reads as 'no neighbour', which would disable the limiter. */
+                    {
+                        const integertime dt_j = Pj.integertime_step();
+                        if (dt_j > 0) { while (TimeBin_j > 1 && GET_INTEGERTIME_FROM_TIMEBIN(TimeBin_j) > dt_j) { TimeBin_j--; } }
+                    }
                     if (accum.Sink_TimeBinGasNeighbor > TimeBin_j) {
                         accum.Sink_TimeBinGasNeighbor = TimeBin_j;
                     }
