@@ -2138,6 +2138,9 @@ void selfshield_local_incident_uv_flux(void)
     for(int idx = 0; idx < n_act; ++idx)
     {
         int i = ActiveParticleList[idx];
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+        if(!gravity_treeforce_candidate_frozen(idx)) {continue;} /* tree walk skipped this step: the cell still holds the last walk's flux, already converted and attenuated below, so keep it as is */
+#endif
         if(P[i].Type==0)
         {
             if((CellP[i].Rad_Flux_UV>0) && (P[i].KernelRadius>0) && (CellP[i].Density>0) && (P[i].Mass>0) && (All.Time>0))

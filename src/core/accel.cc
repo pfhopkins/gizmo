@@ -88,7 +88,7 @@ void compute_hydro_densities_and_forces(void)
         interpolate_fluxes_opacities_gasgrains(); /* this must be called here for the computation of opacities and radiative quantity gradients below to be correct */
         CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif
-#ifdef GALSF /* PFH set of feedback routines; here because for e.g. strong SNe, obtain better stability if they are coupled discretely just -before- the hydro force is computed */
+#ifdef GALSF /* PFH set of feedback routines (thermal, photo-ionization, radiation pressure), coupled discretely just -before- the hydro force is computed; mechanical feedback is coupled after the closing kick (run.cc) */
         compute_stellar_feedback();
 #endif
 
@@ -275,10 +275,7 @@ void compute_stellar_feedback(void)
     if(All.Dt_Since_LastFBCalc_Gyr < All.Dt_Min_Between_FBCalc_Gyr) {return;}
 #endif
 
-#ifdef GALSF_FB_MECHANICAL /* check the mechanical sources of feedback */
-    mechanical_fb_calc_toplevel();  /* call the parent loop for the different mechanical fb sub-loops */
-    gizmo_exit_bad_stop_if_requested("accel:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
-#endif
+    /* mechanical feedback is coupled after the closing half-kick instead (run.cc), under the same cadence decision made here */
 
 #ifdef GALSF_FB_THERMAL
     thermal_fb_calc(); /* thermal feedback */
