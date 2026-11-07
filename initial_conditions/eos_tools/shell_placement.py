@@ -213,7 +213,7 @@ def _interface_spacing_ratio(prof, coords, masses, zone, z_outer):
     return spacing(z_outer + 1, np.max) / spacing(z_outer, np.min)
 
 
-def seagen_shells(prof, zones, n_particles, mass_ratio="spacing", seed=17, verbose=True):
+def seagen_shells(prof, zones, n_particles, mass_ratio="spacing", seed=17, verbose=True, scan_contrast=1.3):
     """Place particles on SEAGen shells (Kegerreis et al. 2019), one material per zone.
 
     mass_ratio sets the particle mass of each zone relative to the zone outside it (one value per material
@@ -221,7 +221,9 @@ def seagen_shells(prof, zones, n_particles, mass_ratio="spacing", seed=17, verbo
     = for each interface, the realised ratio whose particle spacing ratio across that interface is nearest 1
     (equal particle volume on both sides). SEAGen fits whole shells, so a requested ratio is realised only
     approximately and the admissible ratios are discrete: the scan tries requested ratios from 0.85 to 1.75 times
-    the interface density ratio (inner over outer) and keeps the realisation itself. Positions are not relaxed
+    the interface density ratio (inner over outer) and keeps the realisation itself. Interfaces whose density ratio
+    is within scan_contrast of 1 (the bins of a graded interior) take the density ratio itself, without the scan of
+    19 realisations: at a small contrast the shell quantisation moves the spacing ratio far less. Positions are not relaxed
     afterwards (relaxing toward the profile density disorders the shells and worsens the discrete force balance).
     Needs the optional package seagen (pip install seagen)."""
     try:
@@ -235,7 +237,9 @@ def seagen_shells(prof, zones, n_particles, mass_ratio="spacing", seed=17, verbo
     for z_outer in reversed(range(nz - 1)):          # interfaces from the centre outward; inner ones already fixed
         rho_out = rho[zid == z_outer][np.argmin(r[zid == z_outer])]   # densities either side of the interface
         rho_in = rho[zid == z_outer + 1][np.argmax(r[zid == z_outer + 1])]
-        if mass_ratio == "spacing":
+        if mass_ratio == "spacing" and max(rho_in / rho_out, rho_out / rho_in) < scan_contrast:
+            m_rel[z_outer + 1:] = m_rel[z_outer + 1:] / m_rel[z_outer + 1] * (m_rel[z_outer] * rho_in / rho_out)
+        elif mass_ratio == "spacing":
             best = None
             for f in np.arange(0.85, 1.7501, 0.05):
                 trial = m_rel.copy(); trial[z_outer + 1:] = m_rel[z_outer + 1:] / m_rel[z_outer + 1] * (m_rel[z_outer] * f * rho_in / rho_out)

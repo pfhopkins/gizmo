@@ -164,6 +164,41 @@ class SesameTable:
     def entropy_v(self, rho, T):
         return self._interp(self.S, *self._cell_v(rho, T))
 
+    # status codes of T_from_u_v
+    INVERT_OK, INVERT_BELOW, INVERT_ABOVE, INVERT_NOT_UNIQUE = 0, 1, 2, 3
+
+    def T_from_u_v(self, rho, u):
+        """T with u(rho, T) = u for arrays of (rho, u), exact on the table's own interpolant: at fixed density log u is
+        linear in log T inside each temperature interval, so the root is found by locating the interval it lies in.
+        Returns (T, status): INVERT_OK; INVERT_BELOW (u below the lowest valid temperature row, where a lookup returns
+        the edge state, so the state is not on the table) or INVERT_ABOVE (beyond the hottest row), T then at that
+        edge; INVERT_NOT_UNIQUE where u(T) at this density crosses u more than once (u not monotone in T) or is exactly
+        flat at u over a temperature interval (the converted Stewart tables carry such plateaus along their melt lines),
+        T then one of the roots."""
+        rho = np.atleast_1d(np.asarray(rho, float)); L = np.log10(np.maximum(np.atleast_1d(np.asarray(u, float)), 1e-300))
+        i, t = self._locate_v(self.logrho, np.log10(rho))
+        col = (1 - t)[:, None] * self.logu[i, :] + t[:, None] * self.logu[i + 1, :]       # log u(T) at each density
+        k = (np.zeros(len(rho), int) if self.lowest_valid_T is None
+             else np.maximum(self.lowest_valid_T[i], self.lowest_valid_T[i + 1]))
+        valid = np.arange(self.nT - 1)[None, :] >= k[:, None]                              # intervals at or above the floor
+        s = col - L[:, None]
+        cross = valid & (((s[:, :-1] <= 0) & (s[:, 1:] > 0)) | ((s[:, :-1] >= 0) & (s[:, 1:] < 0)))
+        cross[:, -1] |= valid[:, -1] & (s[:, -2] < 0) & (s[:, -1] == 0)                # a root exactly at the hottest row
+        n_cross = cross.sum(axis=1)
+        # an interval where both bracketing density rows hold the same u at both temperatures is exactly flat in T: every T of it
+        # fits; u (a value re-derived from the interpolant) matches the plateau only to rounding, hence the tolerance
+        flat = (self.logu[i, :-1] == self.logu[i, 1:]) & (self.logu[i + 1, :-1] == self.logu[i + 1, 1:])
+        on_plateau = (valid & flat & (np.abs(s[:, :-1]) <= 1e-12 * np.maximum(1.0, np.abs(L))[:, None])).any(axis=1)
+        j = np.where(n_cross > 0, np.argmax(cross, axis=1), 0)
+        n = np.arange(len(rho))
+        f = np.clip(-s[n, j] / np.where(s[n, j + 1] != s[n, j], s[n, j + 1] - s[n, j], 1.0), 0.0, 1.0)
+        T = 10.0 ** (self.logT[j] + f * (self.logT[j + 1] - self.logT[j]))
+        status = np.where((n_cross == 1) & ~on_plateau, self.INVERT_OK, self.INVERT_NOT_UNIQUE)
+        below = (n_cross == 0) & (L < col[n, k]); above = (n_cross == 0) & ~below
+        T = np.where(below, self.T_axis[k], np.where(above, self.T_axis[-1], T))
+        status = np.where(below, self.INVERT_BELOW, np.where(above, self.INVERT_ABOVE, status))
+        return T, status
+
     def rho_from_PT_v(self, P, T, n_iter=64):
         """rho with P(rho, T) = P for arrays of (P, T): bisection in log10(rho) over the table axis. P is
         non-decreasing in rho at fixed T, so this converges to the upper edge of the set P(rho) < P -- the
