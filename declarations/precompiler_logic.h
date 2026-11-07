@@ -516,6 +516,8 @@
    - DOMAIN_FREQ_WEIGHT_SPLIT_ONLY (opt out: DOMAIN_FREQ_WEIGHT_SPLIT_ONLY_OFF): that weight enters the split and the
      assignment only; the top tree is refined on the unweighted cost. Without it the weighted refinement doubles the top
      tree on Bate-type runs (deep-bin disks around sinks) and the bundle regresses there (1.02-1.04x). Changes the layout.
+   - HYDRO_PAIR_ONCE (opt out: HYDRO_PAIR_ONCE_OFF), pure-MPI MFM builds only: see its definition below (after the hydro
+     and threading flags are final).
    Measured: wall over one full top-level timestep cycle, time-matched, vs the same code with STARFORGE_OPTIMIZATIONS_OFF
    on the same nodes; pairs repeated with the order swapped.
      one Genoa node, 48x1 per socket:  STARFORGE M2e4 stress case 0.810/0.805; M2e4 production without RT 0.858/0.862;
@@ -1399,6 +1401,14 @@
 #define NGB_PAIR_CACHE
 #endif
 
+/* STARFORGE_OPTIMIZATIONS component, defined here because it needs the final hydro-method and threading flags: each active
+   pair's hydro flux is evaluated once, from the smaller-timestep side (opt out: HYDRO_PAIR_ONCE_OFF). Pure-MPI MFM only, so
+   OpenMP builds keep the two-sided evaluation. Not bitwise: results differ at about the level of a rank-count change (one-sided
+   face fallbacks and RT clamps are taken from the evaluating side). M2e4 96x1 one node, full cycle: 0.93x wall, same step count;
+   fb_norad 0.96-0.97x; Bate neutral. */
+#if defined(STARFORGE_OPTIMIZATIONS) && !defined(HYDRO_PAIR_ONCE) && !defined(HYDRO_PAIR_ONCE_OFF) && defined(HYDRO_MESHLESS_FINITE_MASS) && !(defined(_OPENMP) || defined(OPENMP) || defined(BOX_SHEARING) || defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#define HYDRO_PAIR_ONCE
+#endif
 #if defined(HYDRO_PAIR_ONCE) && (defined(_OPENMP) || defined(OPENMP) || defined(BOX_SHEARING) || defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
 #error "HYDRO_PAIR_ONCE: pure-MPI MFM only (j-side writes are not thread-safe; shearing, dilation, SPH and MFV fluxes are not handled)"
 #endif
