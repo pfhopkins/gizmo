@@ -2535,14 +2535,18 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                        (hermite_ghost_entry) in place of the imported snapshot. */
                     if(fl_tag == 1 && HermiteGhostTab && ForeignLeafID && (HERMITE_INTEGRATION & (1 << fl_type)) && mass > 0)
                     {
+                        /* A miss is a source whose owner zeroed it since the tree build (a sink merged away or
+                           swallowed: the table skips Mass <= 0). Keep the snapshot, as the device walk does. */
                         k_gh = hermite_ghost_lookup(HermiteGhostTab, NHermiteGhost, ForeignLeafID[no - (treeBase + maxNodes)]);
-                        if(k_gh < 0) {endrun(90000098);}
-                        dr = HermiteGhostTab[k_gh].pos - pos;
-                        GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
-                        r2 = dr.norm_sq();
+                        if(k_gh >= 0)
+                        {
+                            dr = HermiteGhostTab[k_gh].pos - pos;
+                            GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                            r2 = dr.norm_sq();
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-                        dv = HermiteGhostTab[k_gh].vel - vel;
+                            dv = HermiteGhostTab[k_gh].vel - vel;
 #endif
+                        }
                     }
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
