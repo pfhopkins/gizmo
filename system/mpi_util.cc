@@ -202,14 +202,20 @@ static void mpi_sparse_counts_op(void *in, void *inout, int *len, MPI_Datatype *
  *  pattern; Hoefler, Siebert & Lumsdaine 2010). The reduction runs alongside. Results are identical to an
  *  Alltoall of the counts plus an Allreduce of the flags; the cost is one barrier rather than an all-pairs exchange
  *  when few ranks export. Consecutive calls alternate tags: a rank can only start call k+1 after every rank has
- *  entered call k's barrier, so a message of call k+1 is never taken for one of call k. */
+ *  entered call k's barrier, so a message of call k+1 is never taken for one of call k.
+ *  The reduction and barrier run on a private duplicate of MPI_COMM_WORLD: OpenMPI's libnbc tags each nonblocking
+ *  collective with the next of a decreasing sequence, and pml/ucx keeps only 24 tag bits, so on a shared communicator
+ *  call 2^23-67 puts the barrier on tag 106, its messages are taken by the probe below and the handshake hangs. On
+ *  their own communicator the collectives can only alias each other, 2^24 operations apart. The counts must stay on
+ *  MPI_COMM_WORLD for the same reason. */
 void mpi_sparse_counts(const int *send_count, int *recv_count, const long long flags_in[4], long long flags_out[4])
 {
-    static MPI_Op op = MPI_OP_NULL; static int parity = 0;
+    static MPI_Op op = MPI_OP_NULL; static int parity = 0; static MPI_Comm coll_comm = MPI_COMM_NULL;
     if(op == MPI_OP_NULL) {MPI_Op_create(mpi_sparse_counts_op, 1, &op);}
+    if(coll_comm == MPI_COMM_NULL) {MPI_Comm_dup(MPI_COMM_WORLD, &coll_comm);} /* collective: every rank makes its first call here at the same point */
     int tag = parity ? TAG_SPARSE_COUNTS_B : TAG_SPARSE_COUNTS_A; parity ^= 1;
     MPI_Request red; long long fin[4] = {flags_in[0], flags_in[1], flags_in[2], flags_in[3]};
-    MPI_Iallreduce(fin, flags_out, 4, MPI_LONG_LONG, op, MPI_COMM_WORLD, &red);
+    MPI_Iallreduce(fin, flags_out, 4, MPI_LONG_LONG, op, coll_comm, &red);
     for(int r = 0; r < NTask; r++) {recv_count[r] = 0;}
     recv_count[ThisTask] = send_count[ThisTask];
     std::vector<MPI_Request> sreq;
@@ -223,7 +229,7 @@ void mpi_sparse_counts(const int *send_count, int *recv_count, const long long f
         if(!in_barrier)
         {
             int sent = 1; if(!sreq.empty()) {MPI_Testall((int) sreq.size(), sreq.data(), &sent, MPI_STATUSES_IGNORE);}
-            if(sent) {MPI_Ibarrier(MPI_COMM_WORLD, &bar); in_barrier = 1;}
+            if(sent) {MPI_Ibarrier(coll_comm, &bar); in_barrier = 1;}
         }
         else {int done; MPI_Test(&bar, &done, MPI_STATUS_IGNORE); if(done) {break;}}
     }
