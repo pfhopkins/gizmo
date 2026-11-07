@@ -230,7 +230,7 @@ void gravity_tree(void)
         PRINT_STATUS(" ..Tree construction done.");
     }
 
-    /* Refresh the node moments where a site has asked for it (a sink formed in place, a sink losing mass). This must run
+    /* Refresh the node moments where a site has asked for it (a sink formed, a sink run down to its relic mass). This must run
        before any gravity evaluation, Hermite passes included. The refresh is a pass over every node, so it is asked for
        only where a change cannot wait for the next build. Otherwise the node moments are left stale between builds ON
        PURPOSE -- after ordinary star formation, sink swallows and spawns -- a deliberate choice, not an oversight: a new star's luminosity keys off its

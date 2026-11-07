@@ -12,8 +12,7 @@
  * licenses reciprocals or fused multiply-adds would not, which is why declarations/typedefs.h refuses
  * to compile under __FAST_MATH__.
  *
- * Header-only and Kokkos-free so host translation units can include it: the functions carry Kokkos's
- * annotation when Kokkos_Core.hpp was included first, and are plain inline otherwise.
+ * Header-only and Kokkos-free so host translation units can include it.
  */
 
 #ifndef GIZMO_DOMAIN_KEY_FUNCTIONS_H
@@ -21,10 +20,10 @@
 
 #include <stdint.h>
 
-/* A private annotation, so that including this header before Kokkos does not define Kokkos's own macro for the
- * rest of the translation unit. */
-#ifdef KOKKOS_INLINE_FUNCTION
-#define DOMAIN_KEY_FUNCTION KOKKOS_INLINE_FUNCTION
+/* A private annotation, keyed on the compiler rather than on whether Kokkos was included first, so the functions are
+ * device-callable wherever a device compiler sees them and this header never defines Kokkos's own macro. */
+#if defined(__CUDACC__) || defined(__HIPCC__)
+#define DOMAIN_KEY_FUNCTION __host__ __device__ inline
 #else
 #define DOMAIN_KEY_FUNCTION inline
 #endif

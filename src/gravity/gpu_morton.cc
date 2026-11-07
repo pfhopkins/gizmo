@@ -31,6 +31,8 @@
 #include "gpu_morton.h"
 #include "gpu_morton_functions.h"
 
+static_assert(BITS_PER_DIMENSION == 42, "the 128-bit Morton encode splits each axis into two 21-bit halves");
+
 
 namespace {
 
