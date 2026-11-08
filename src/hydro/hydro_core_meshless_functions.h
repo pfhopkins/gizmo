@@ -423,19 +423,27 @@ void hydro_core_meshless_compute_pair(
 
 /* the face entropic switch: on slow faces, replace the Riemann energy flux by the PdV form, unless that would move energy
    against the thermal ordering of the two sides. It edits only the isotropic (P_M) energy flux, so with EOS_ELASTIC the
-   deviatoric-stress force and its work (added afterwards) are untouched. In builds with Tillotson materials it acts on two kinds of
-   face only: gas-gas faces (ordered by P/rho, exactly as in a gas-only build) and faces between two cells of the SAME Tillotson material
-   (ordered by specific internal energy: P/rho does not order the thermal state of condensed matter, and the energies of different
-   materials are not comparable). Every other face there -- two different materials, gas-solid, or any face with an ANEOS-table cell --
-   keeps the Riemann energy flux, as before. Without it, a cold condensed cell at a contact can be asked for more internal energy than it
-   holds, and the positivity guard then puts energy back. */
+   deviatoric-stress force and its work (added afterwards) are untouched. Which faces take it, and how their two sides are ordered,
+   depends only on the materials of the two cells, never on which other equations of state the build also carries:
+     gas - gas                                    ordered by P/rho, as in a gas-only build;
+     two cells of the same Tillotson material     ordered by specific internal energy (P/rho does not order the thermal state of
+                                                  condensed matter, and the energies of different materials are not comparable);
+     two ANEOS-table cells (same or different)    ordered by temperature, which is comparable across tables; without a finite positive
+                                                  temperature on both sides the face keeps the Riemann flux (unless the neighbour's
+                                                  gradient matrix is ill-conditioned, which turns the PdV form on for every eligible face);
+     every other face (gas - solid, two different Tillotson materials, Tillotson - ANEOS) keeps the Riemann energy flux.
+   On a mixed face the switch could ask a cold condensed cell at a contact for more internal energy than it holds, and the positivity
+   guard would then put energy back. */
 #if defined(HYDRO_MESHLESS_FINITE_MASS) && (SLOPE_LIMITER_TOLERANCE < 2) && (!(defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)) || defined(EOS_ANEOS) || defined(EOS_TILLOTSON))
     {
         volatile int face_takes_switch = 1; /* volatile: a runtime gate in device code */
-#ifdef EOS_TILLOTSON
+        volatile int face_thermal_order = 0; /* how the two sides are ordered: 0 P/rho, 1 specific internal energy, 2 temperature */
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
         const int branch_i = eos_branch_of(local.CompositionType), branch_j = eos_branch_of(CellP[j].CompositionType);
-        const int same_tillotson_material = (branch_i == EOS_BRANCH_TILLOTSON) && (branch_j == EOS_BRANCH_TILLOTSON) && (local.CompositionType == CellP[j].CompositionType);
-        if(!same_tillotson_material && !((branch_i == EOS_BRANCH_NONE) && (branch_j == EOS_BRANCH_NONE))) {face_takes_switch = 0;}
+        if((branch_i == EOS_BRANCH_NONE) && (branch_j == EOS_BRANCH_NONE)) {face_thermal_order = 0;}
+        else if((branch_i == EOS_BRANCH_TILLOTSON) && (branch_j == EOS_BRANCH_TILLOTSON) && (local.CompositionType == CellP[j].CompositionType)) {face_thermal_order = 1;}
+        else if((branch_i == EOS_BRANCH_ANEOS) && (branch_j == EOS_BRANCH_ANEOS)) {face_thermal_order = 2;}
+        else {face_takes_switch = 0;}
 #endif
         double SM_over_ceff = fabs(Riemann_out.S_M) / DMIN(kernel.sound_i, kernel.sound_j);
         if(face_takes_switch && ((SM_over_ceff < epsilon_entropic_eos_big && All.ComovingIntegrationOn >= 0) || (leak_vs_tol > 1)))
@@ -452,16 +460,16 @@ void hydro_core_meshless_compute_pair(
             double du_new = 0.5 * (PdV_i - PdV_j + facenorm_pm * (face_vel_i + face_vel_j));
             double cnum2 = CellP[j].ConditionNumber * CellP[j].ConditionNumber;
             double epsilon_threshold_entropic_eos_ratio = 1.001;
-#if defined(EOS_TILLOTSON)
-            double thermal_order_i = Pressure_i / local.Density, thermal_order_j = Pressure_j / CellP[j].Density; /* gas-gas face */
-            if(same_tillotson_material) {thermal_order_i = local.InternalEnergyPred; thermal_order_j = CellP[j].InternalEnergyPred;}
-#elif defined(EOS_ANEOS)
-            /* order the two sides by temperature: for a tabulated condensed-matter EOS, P/rho does not order the thermal state
-               (a cold compressed cell can have the larger P/rho); without a valid temperature on both sides, keep the Riemann flux */
-            double thermal_order_i = local.Temperature, thermal_order_j = CellP[j].Temperature;
-            if(!(thermal_order_i > 0 && thermal_order_j > 0 && isfinite(thermal_order_i) && isfinite(thermal_order_j))) {use_entropic_energy_equation = 0;}
-#else
             double thermal_order_i = Pressure_i / local.Density, thermal_order_j = Pressure_j / CellP[j].Density;
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+            if(face_thermal_order == 1) {thermal_order_i = local.InternalEnergyPred; thermal_order_j = CellP[j].InternalEnergyPred;}
+#endif
+#ifdef EOS_ANEOS
+            if(face_thermal_order == 2) /* a tabulated condensed-matter EOS: P/rho does not order the thermal state (a cold compressed cell can have the larger P/rho) */
+            {
+                thermal_order_i = local.Temperature; thermal_order_j = CellP[j].Temperature;
+                if(!(thermal_order_i > 0 && thermal_order_j > 0 && isfinite(thermal_order_i) && isfinite(thermal_order_j))) {use_entropic_energy_equation = 0;}
+            }
 #endif
             if(use_entropic_energy_equation && SM_over_ceff > epsilon_entropic_eos_small && cnum2 < cnumcrit2)
             {
