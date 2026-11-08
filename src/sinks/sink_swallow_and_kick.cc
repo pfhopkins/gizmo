@@ -756,8 +756,10 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         NumForceUpdate++;
         TimeBinCount[bin]++; TimeBinCountGas[bin]++; PrevInTimeBin[j] = i0; /* likewise add it to the counters that register how many particles are in each timebin */
         NextInTimeBin[j] = NextInTimeBin[i0]; if(NextInTimeBin[i0] >= 0) {PrevInTimeBin[NextInTimeBin[i0]] = j;} NextInTimeBin[i0] = j; if(LastInTimeBin[bin] == i0) {LastInTimeBin[bin] = j;}
-        P[j].Ti_begstep = All.Ti_Current; P[j].Ti_current = All.Ti_Current;
-        P[j].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
+        /* the new cell joins the active list, so like every particle in it the step it carries must end now: find_timesteps
+           starts its next step at that end (at the start of the run the carried step has zero length) */
+        P[j].dt_step = IMIN(GET_INTEGERTIME_FROM_TIMEBIN(bin), All.Ti_Current);
+        P[j].Ti_begstep = All.Ti_Current - P[j].dt_step; P[j].Ti_current = All.Ti_Current;
         P[j].wakeup = -1; wakeup_sidecar_mark(j);
         NeedToWakeupParticles_local = 1;
         /* this is a giant pile of variables to zero out. dont need everything here because we cloned a valid particle, but handy anyways */

@@ -93,6 +93,10 @@ void turb_diff_metals_compute_pair(
             double dmet = (Z_j - local.Metallicity[k_species]) * fabs(mdot_estimated) * dt_pair;
             cmag = MINMOD(dmet, cmag);
 #endif
+            /* only cell i is updated, with its own step's share of the pair exchange; j takes its share when it is active.
+               So across timebins metal mass is conserved to integration accuracy, as momentum and energy are; only total mass
+               has machinery that makes it exact (the MFV mass flux, where the endpoint with the shorter step owns the pair and
+               updates both sides). An opt-in exact form for metals along those lines is described in GitHub issue #35. */
             out.Dyield[k_species] += cmag * dt_fraction_i;
         }
     }

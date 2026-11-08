@@ -486,16 +486,29 @@ integertime get_timestep(int p,		/*!< particle index */
 #define SINK_TIMESTEP_SAFETY_FACTOR (0.3)
 #endif
 
+/* Optional factor on the tidal timestep (Config option, default 1: the tidal step is set by ErrTolIntAccuracy alone). It scales
+   only the tidal-tensor estimate, not the gas self-gravity and cosmological floors below nor the dynamical time that sets the
+   tree-force update cadence. */
+#ifndef TIDAL_TIMESTEP_PREFAC
+#define TIDAL_TIMESTEP_PREFAC (1.0)
+#endif
+static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "TIDAL_TIMESTEP_PREFAC shortens the tidal timestep: it must lie in (0,1]");
+
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion
     double tidal_mag_dt = P[p].tidal_tensorps.frobenius_norm_sq();
-    double dt_tidal = sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
-    if(P[p].Type == 0) {dt_tidal = DMIN(sqrt(All.ErrTolIntAccuracy/(All.G*CellP[p].Density*All.cf_a3inv)), dt_tidal);} // gas self-gravity timescale as a bare minimum
+    double dt_dynamical = sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
+    double dt_tidal = (TIDAL_TIMESTEP_PREFAC) * dt_dynamical;
+    if(P[p].Type == 0) { // gas self-gravity timescale as a bare minimum
+        double dt_selfgravity = sqrt(All.ErrTolIntAccuracy/(All.G*CellP[p].Density*All.cf_a3inv));
+        dt_tidal = DMIN(dt_selfgravity, dt_tidal); dt_dynamical = DMIN(dt_selfgravity, dt_dynamical);
+    }
     if(All.ComovingIntegrationOn){ // floor to the dynamical time of the universe
         double rho0 = (H0_CGS*H0_CGS*(3./(8.*M_PI*GRAVITY_G_CGS))*All.cf_a3inv / UNIT_DENSITY_IN_CGS);
-        dt_tidal = DMIN(dt_tidal, sqrt(All.ErrTolIntAccuracy / (All.G * rho0)));
-    } 
+        double dt_hubble = sqrt(All.ErrTolIntAccuracy / (All.G * rho0));
+        dt_tidal = DMIN(dt_tidal, dt_hubble); dt_dynamical = DMIN(dt_dynamical, dt_hubble);
+    }
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
-    P[p].tdyn_step_for_treeforce = dt_tidal; // hang onto this to decide how frequently to update the treeforce
+    P[p].tdyn_step_for_treeforce = dt_dynamical; // hang onto this to decide how frequently to update the treeforce
 #endif
 #ifdef HERMITE_INTEGRATION
     /* divide out the second-order margin, as the two-body criterion below does. After the tree-update
@@ -504,7 +517,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
     
 #if (SINGLE_STAR_TIMESTEPPING > 0)
-    if(P[p].SuperTimestepFlag>=2) {dt_tidal = sqrt(2*All.ErrTolIntAccuracy) * P[p].COM_dt_tidal;}
+    if(P[p].SuperTimestepFlag>=2) {dt_tidal = (TIDAL_TIMESTEP_PREFAC) * sqrt(2*All.ErrTolIntAccuracy) * P[p].COM_dt_tidal;} // the binary's centre-of-mass tidal step replaces the one above, so it takes the same factor
 #endif
     dt=DMIN(dt,dt_tidal);
 #endif
@@ -1181,7 +1194,7 @@ integertime get_timestep(int p,		/*!< particle index */
             dt_accr = DMIN(dt_accr, target_mass_for_wind_spawning(p) / P[p].Sink_Mdot); 
 #endif
         } // if(P[p].Sink_Mdot > 0 && P[p].Sink_Mass > 0)
-#if defined(SINK_SEED_GROWTH_TESTS) || defined(FIRE_BHS)
+#if defined(FIRE_BHS)
         double dt_evol = 4.2e5 / UNIT_TIME_IN_YR; // totally arbitrary hard-coding here //
 #ifdef TURB_DRIVING
         if(dt_evol > 1.e-3*st_return_mode_correlation_time()) {dt_evol=1.e-3*st_return_mode_correlation_time();}

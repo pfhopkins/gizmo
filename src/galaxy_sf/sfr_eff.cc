@@ -236,7 +236,7 @@ double get_starformation_rate(int i, int mode)
             gradv[3*j + k]=vt; dv2abs+=vt*vt; if(j==k) {divv+=vt;} // save for possible use below
         }}
     dv2abs_0=dv2abs; // save for possible use below
-#if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION) && ((defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY)) || defined(RT_INFRARED) || defined(EOS_GMC_BAROTROPIC)) // if we have to deal with optically-thick thermo
+#if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION) && defined(SINK_OPACITY_LIMIT_THERMODYNAMICS) // if we have to deal with optically-thick thermo
     double nHcgs = HYDROGEN_MASSFRAC * (CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS);
     if(nHcgs > 1e13) {v_fast = DMIN(v_fast, 0.2/UNIT_VEL_IN_KMS);} // limiter to permit sink formation in simulations that really resolve the opacity limit and bog down when an optically-thick core forms. Modify this if you want to follow first collapse more/less - scale as c_s ~ n^(1/5)
 #endif

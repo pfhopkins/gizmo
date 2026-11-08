@@ -1052,6 +1052,13 @@
 #define COOL_LOWTEMP_THIN_ONLY // don't want to double-count trapping of radiation if we're doing it self-consistently
 #endif
 
+/* the thermodynamics follows gas into the optically thick regime (cooling not restricted to optically thin gas, the infrared
+   radiation that traps it, or a barotropic equation of state), so a collapsing core stalls at the opacity limit: sink formation
+   and sink capture both ask this one question (after every block above that can switch on one of its inputs) */
+#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY)) || defined(RT_INFRARED) || defined(EOS_GMC_BAROTROPIC)
+#define SINK_OPACITY_LIMIT_THERMODYNAMICS
+#endif
+
 
 
 #if defined(CHIMES_HII_REGIONS) && !defined(GALSF_FB_FIRE_RT_HIIHEATING)
