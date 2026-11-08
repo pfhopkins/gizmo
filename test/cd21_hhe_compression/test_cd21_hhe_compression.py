@@ -47,19 +47,20 @@ def _download_native_table(native, test_dir):
 
 
 def setup_table_and_ics(test_dir):
-    """Build the SESAME table + IC if absent."""
+    """Convert the SESAME table from the native one on every run (under a second), so it always comes from the current converter;
+    build the IC if absent."""
     sesame = join(test_dir, "cd21_y0275.sesame")
     native = join(test_dir, "cd21_y0275.dat")
-    if not isfile(sesame):
-        if not isfile(native):
-            _download_native_table(native, test_dir)
-        subprocess.run(
-            [sys.executable,
-             join(test_dir, "..", "..", "initial_conditions", "eos_tools", "cms_to_sesame.py"),
-             "--input", native, "--output", sesame,
-             "--y", "0.275", "--mat-id", "2721", "--nrho", "200"],
-            check=True,
-        )
+    if not isfile(native):
+        _download_native_table(native, test_dir)
+    subprocess.run(
+        [sys.executable,
+         join(test_dir, "..", "..", "initial_conditions", "eos_tools", "cms_to_sesame.py"),
+         "--input", native, "--output", sesame,
+         "--y", "0.275", "--mat-id", "2721", "--nrho", "200",
+         "--logP-min", "-6.5", "--logP-max", "8"],   # the table's placeholder corners lie outside this range
+        check=True,
+    )
     if not isfile(join(test_dir, "compression_ics.hdf5")):
         subprocess.run(
             [sys.executable, join(test_dir, "make_ics.py")],

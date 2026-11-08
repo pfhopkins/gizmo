@@ -15,15 +15,23 @@ ANEOS dispatch (`EOS_ANEOS`) — no new C++ branch.
    python initial_conditions/eos_tools/cms_to_sesame.py \
        --input  cd21_y0275.dat \
        --output cd21_y0275.sesame \
-       --y 0.275 --mat-id 2721
+       --y 0.275 --mat-id 2721 --logP-min -6.5 --logP-max 8
    ```
    The converter:
+   - keeps the native pressures 10^-6.5 .. 10^8 GPa by default (the published
+     table holds placeholder values in its extreme-pressure corners;
+     `--full-pressure-range` keeps them, for auditing only);
    - inverts the native (logT, logP) grid to a uniform (logρ, logT) grid
      (intersection of native ρ ranges across T to avoid extrapolation),
      CGS units throughout;
-   - computes adiabatic sound speed via
-     `gamma1 = 1 / [ dlnρ/dlnP|_T + ∇_ad · dlnρ/dlnT|_P ]`;
-   - emits ncols=6 SESAME (`rho T P u S cs`).
+   - takes the adiabatic sound speed from the table's own P and u along the
+     first-law adiabat, `cs² = P_ρ + P_T (P/ρ² − u_ρ)/u_T`;
+   - sets a lowest valid temperature per density above the cold, dense states
+     where the published u falls as T rises (there one energy names several
+     temperatures): a validity boundary, not a repair; it refuses if any such
+     state remains above it;
+   - emits ncols=6 SESAME (`rho T P u S cs`) with the `lowest_valid_T_index`
+     block, and prints the command and the input and output SHA-256 hashes.
 3. Build the IC:
    ```
    python make_ics.py
@@ -39,8 +47,11 @@ The converter has a synthetic ideal-gas round-trip:
 ```
 python initial_conditions/eos_tools/cms_to_sesame.py --selftest
 ```
-Passes when P, u, cs round-trip to <1e-5 against the analytic ideal-gas
-solution.
+Passes when P, u, cs round-trip to <1e-3 against the analytic ideal-gas
+solution (measured ~3e-6), and when the same gas with an injected u that
+falls as T rises (and one corrupted density point) gets the point masked, a
+validity floor above the fall, a block that reads back exactly, and the falls
+reported with `--no-defect-floor`.
 
 ## Test Config / params
 
