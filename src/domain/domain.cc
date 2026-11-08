@@ -216,8 +216,21 @@ static int LightRepartitionCount = 0; /*!< number of consecutive lightweight rep
  * counts a node's cost is dominated by one/few particles whose work is NOT divisible by further
  * spatial splitting, so refining only wastes topnodes + downstream per-leaf work (Morton sort,
  * DomainNodeIndex, LET subtree headers, routing band checks) without improving load balance.
- * Count-driven refinement is unaffected. Internal constant, not a user parameter. */
+ * Count-driven refinement has its own low-count rule below. Internal constant, not a user parameter. */
 static const int DOMAIN_COST_REFINE_MIN_COUNT = 16;
+/* When the count limit falls below DOMAIN_TINY_COUNT_LIMIT particles per requested leaf (few particles per rank), the
+ * count rules (over the limit, or holding most of the parent) chain nodes of a few particles -- a single particle, a
+ * tight pair -- down to the finest key level, eight nodes a level, giving more top leaves than particles that every
+ * decomposition, tree build and small-step neighbour search then carries; so does the cost rule of the pass after the
+ * combine, which has no low-count floor. There, a node holding at most DOMAIN_TINY_MIN_SPLIT_COUNT particles is not
+ * split by count, nor by cost after the combine (local cost refinement already needs DOMAIN_COST_REFINE_MIN_COUNT).
+ * Applied only when the problem has more than DOMAIN_TINY_COUNT_LIMIT particles per domain segment: leaves then hold
+ * about DOMAIN_TINY_MIN_SPLIT_COUNT particles or fewer (up to ~9 where the pass after the combine splits on rounded-down
+ * estimates), so there are still more leaves than segments and the root splits. Internal constants, not user parameters. */
+static const int DOMAIN_TINY_COUNT_LIMIT = 16;
+static const int DOMAIN_TINY_MIN_SPLIT_COUNT = 8;
+static long long g_domain_tiny_split_min = 0; /* set per top-tree build; 0 = rule off */
+static inline int domain_tiny_rule_allows_split(long long count) {return (g_domain_tiny_split_min == 0) || (count > g_domain_tiny_split_min);}
 #ifndef LIGHT_REPARTITION_LEAF_SHARE_LIMIT
 #define LIGHT_REPARTITION_LEAF_SHARE_LIMIT 20.0
 #endif
@@ -3103,12 +3116,12 @@ int domain_check_for_local_refine(int i, double countlimit, double costlimit)
       if(topNodes[i].Cost  > 0.8 * topNodes[topNodes[i].Parent].Cost)  {flag_cost  = 1;}
     }
 
-  /* Count-driven refinement is unguarded (particle count is spatially divisible). Cost-driven
+  /* Count-driven refinement is guarded only on tiny problems (domain_tiny_rule_allows_split). Cost-driven
    * refinement is guarded: below DOMAIN_COST_REFINE_MIN_COUNT the node's cost is dominated by
    * indivisible per-particle work that further splitting cannot redistribute. Full particle cost
    * is still used unchanged for domain ASSIGNMENT (domain_sumCost) -- only the refinement DECISION
    * here is guarded. */
-  int count_refine = (topNodes[i].Count > countlimit) || flag_count;
+  int count_refine = ((topNodes[i].Count > countlimit) || flag_count) && domain_tiny_rule_allows_split(topNodes[i].Count);
   int cost_wants   = (topNodes[i].Cost > costlimit) || flag_cost;
   int cost_refine  = (topNodes[i].Count > DOMAIN_COST_REFINE_MIN_COUNT) && cost_wants;
   if(cost_wants && !cost_refine && !count_refine)
@@ -3403,14 +3416,17 @@ int domain_determineTopTree(void)
   const double target_top_leaves = leaves_per_rank * (double) NTask;
   costlimit = totgravcost / target_top_leaves;
   countlimit = totpartcount / target_top_leaves;
+  const int tiny_rule = (countlimit < DOMAIN_TINY_COUNT_LIMIT)
+                        && ((double) totpartcount > (double) DOMAIN_TINY_COUNT_LIMIT * (double) multipledomains * (double) NTask);
+  g_domain_tiny_split_min = tiny_rule ? DOMAIN_TINY_MIN_SPLIT_COUNT : 0;
 
   g_domain_cost_suppressed = 0; g_domain_cost_suppressed_maxratio = 0;
   errflag = domain_check_for_local_refine(0, countlimit, costlimit);
   /* Compact aggregate report when the indivisible-cost floor suppressed cost-driven refinement,
-   * so the guard's effect is visible without per-node spam. Count-driven refinement is unaffected. */
+   * so the guard's effect is visible without per-node spam. */
   if(ThisTask == 0 && g_domain_cost_suppressed > 0)
-    PRINT_STATUS(" ..top-tree: suppressed cost refinement in %ld low-count node(s) (min_count=%d, max Cost/costlimit=%.1f); count refinement unchanged",
-                 g_domain_cost_suppressed, DOMAIN_COST_REFINE_MIN_COUNT, g_domain_cost_suppressed_maxratio);
+    PRINT_STATUS(" ..top-tree: suppressed cost refinement in %ld low-count node(s) (min_count=%d, max Cost/costlimit=%.1f); tiny-problem split minimum=%lld",
+                 g_domain_cost_suppressed, DOMAIN_COST_REFINE_MIN_COUNT, g_domain_cost_suppressed_maxratio, g_domain_tiny_split_min);
 
   myfree(mp);
 
@@ -3500,7 +3516,7 @@ int domain_determineTopTree(void)
   for(i = 0, errflag = 0; i < NTopnodes; i++)
     {
       if(topNodes[i].Daughter < 0)
-	if(topNodes[i].Count > countlimit || topNodes[i].Cost > costlimit)	/* ok, let's add nodes if we can */
+	if(((topNodes[i].Count > countlimit) || (topNodes[i].Cost > costlimit)) && domain_tiny_rule_allows_split(topNodes[i].Count))	/* ok, let's add nodes if we can */
 	  if(topNodes[i].Size > 1)
 	    {
 	      if((NTopnodes + 8) <= MaxTopNodes)
