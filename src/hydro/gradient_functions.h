@@ -62,7 +62,9 @@ struct Quantities_for_Gradients
 #endif
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
     MyFloat Rad_E_gamma[N_RT_FREQ_BINS];
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
     SymmetricTensor2<MyFloat> Rad_E_gamma_ET[N_RT_FREQ_BINS];
+#endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
     MyFloat Rad_Flux[N_RT_FREQ_BINS][3];
 #endif
@@ -533,11 +535,15 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #endif
 
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
     SymmetricTensor2<double> dnET[N_RT_FREQ_BINS];
+#endif
     double dn[N_RT_FREQ_BINS];
     double V_i_inv = 1/V_i, V_j_inv = CellP[j].Density/P[j].Mass;
     for(int k=0;k<N_RT_FREQ_BINS;k++) {
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
         dnET[k] = (CellP[j].Rad_E_gamma_Pred[k]*V_j_inv) * CellP[j].ET[k] - (local->GQuant.Rad_E_gamma[k]*V_i_inv) * local->GQuant.Rad_E_gamma_ET[k];
+#endif
         dn[k] = CellP[j].Rad_E_gamma_Pred[k]*V_j_inv - local->GQuant.Rad_E_gamma[k]*V_i_inv;
         MINMAX_CHECK(dn[k], out->Minima.Rad_E_gamma[k], out->Maxima.Rad_E_gamma[k]);
     }
@@ -634,7 +640,9 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
             for(int k2=0;k2<N_RT_FREQ_BINS;k2++) {
                 out->Gradients[k].Rad_E_gamma[k2] += wk_xyz_i * dn[k2];
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
                 out->Gradients[k].Rad_E_gamma_ET[k2] += wk_xyz_i * dnET[k2];
+#endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
                 int k_d; for(k_d=0;k_d<3;k_d++) {out->Gradients[k].Rad_Flux[k2][k_d] += wk_xyz_i * dflux_rt[k2][k_d];}
 #endif

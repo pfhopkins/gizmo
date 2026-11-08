@@ -1166,6 +1166,11 @@
 #if (defined(RT_FLUXLIMITER) || defined(RT_RAD_PRESSURE_FORCES) || defined(RT_SOLVER_EXPLICIT)) && !defined(RT_COMPGRAD_EDDINGTON_TENSOR) //&& !defined(RT_EVOLVE_FLUX) && !defined(RT_EVOLVE_INTENSITIES))
 #define RT_COMPGRAD_EDDINGTON_TENSOR
 #endif
+/* the neighbour-loop gradient of the Eddington-tensor-weighted radiation energy is read only by the flux limiter and by OTVET; otherwise (M1, or
+   any method without a flux limiter) the gradient finalization replaces it with ET.grad(E) before anything reads it, so it is neither computed nor carried */
+#if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (defined(RT_FLUXLIMITER) || defined(RT_OTVET))
+#define RT_COMPGRAD_ET_IN_NGB_LOOP
+#endif
 
 /* enable appropriate chemistry flags if we are using the photoionization modules */
 #if defined(RT_CHEM_PHOTOION)

@@ -353,8 +353,8 @@ void GradientsSpec::apply_active_writeback(const neighbor_loop_args& args,
             }
 #endif
         }
-        /* The gradient dotted into the Eddington tensor (NV_T matvec replay) —
-         * gradients.cc:432-448 verbatim. */
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
+        /* The gradient dotted into the Eddington tensor (NV_T matvec replay). */
         for(int k_freq = 0; k_freq < N_RT_FREQ_BINS; k_freq++) {
             for(int k_xyz = 0; k_xyz < 3; k_xyz++) {
                 for(int j_xyz = 0; j_xyz < 3; j_xyz++) {
@@ -366,6 +366,7 @@ void GradientsSpec::apply_active_writeback(const neighbor_loop_args& args,
                 }
             }
         }
+#endif
 #endif
 
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
