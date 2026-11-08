@@ -41,7 +41,7 @@ enum EosBranch {
    Under EOS_TYPES_DEFAULTGAS_AND_SOLIDS (hybrid gas+solid setups, e.g. grain
    promotion) slot 0 instead means "no solid EOS -- behave as the standard gas
    fluid", and MATERIAL_TILLOTSON_UNUSED becomes a sentinel (-1) that no real
-   cell ever carries (the CompositionType clamp in init.cc enforces this). */
+   cell ever carries (init.cc stops the run on any CompositionType outside the build's materials). */
 enum {
 #ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
     MATERIAL_TILLOTSON_UNUSED  = 0,  /* 0 = gas / no solid EOS */
