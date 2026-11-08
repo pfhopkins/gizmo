@@ -430,9 +430,9 @@ int eligible_for_hermite(int i, struct particle_data *pp)
 #if defined(GALSF) /* the formation time only exists, and new particles are only spawned, with GALSF */
     if(pp[i].StellarAge >=DMAX(All.Time - 2*(get_particle_timestep_in_physical(i, pp)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
 #endif
-#if defined(SINK_PARTICLES) || defined(GALSF)
-    if(pp[i].AccretedThisTimestep) {return 0;}
-#endif
+    /* An accreting sink stays Hermite-integrated: a per-particle fallback would put the two members of a pair on different
+       schemes whenever only one of them accretes, and the force between them would no longer be reciprocal. The accretion
+       jump is carried into the Hermite step's starting state instead (sink_final_operations). */
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     if(pp[i].SuperTimestepFlag >= 2) {return 0;}
 #endif

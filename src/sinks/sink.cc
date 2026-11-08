@@ -665,6 +665,7 @@ void sink_final_operations(void)
         {
 #ifdef HERMITE_INTEGRATION
             P[n].AccretedThisTimestep = 1;
+            const Vec3<double> pos_before_accretion = P[n].Pos, vel_before_accretion = P[n].Vel;
 #endif
             double m_new; m_new = P[n].Mass + SinkTempInfo[i].accreted_Mass;
 #if (SINK_FOLLOW_ACCRETED_ANGMOM == 1) /* in this case we are only counting this if its coming from BH particles */
@@ -679,6 +680,18 @@ void sink_final_operations(void)
 #if defined(SINK_FOLLOW_ACCRETED_COM) && !defined(SINK_REPOSITION_ON_POTMIN)
             P[n].Pos = (P[n].Pos*m_new + SinkTempInfo[i].accreted_centerofmass) / m_new;
             gizmo_mark_position_dirty_indices(&n, 1);
+#endif
+#ifdef HERMITE_INTEGRATION
+            if(eligible_for_hermite(n, P))
+            {   /* The Hermite predictor and corrector that follow rebuild this step's end state from the state saved at its
+                   start. Accretion changed position and velocity at the step's end, so shift that starting state such that both
+                   return the post-accretion state: the velocity by the velocity jump, the position by the position jump less the
+                   distance that velocity jump would otherwise add over the step. */
+                const double dt_grav = get_gravkick_factor(P[n].Ti_begstep, P[n].Ti_begstep + P[n].integertime_step(), n, 0);
+                const Vec3<double> dvel = P[n].Vel - vel_before_accretion;
+                P[n].OldVel += dvel;
+                P[n].OldPos += (P[n].Pos - pos_before_accretion) - dvel * dt_grav;
+            }
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
             P[n].Sink_Specific_AngMom = (P[n].Sink_Specific_AngMom*P[n].Mass + SinkTempInfo[i].accreted_J) / m_new;
