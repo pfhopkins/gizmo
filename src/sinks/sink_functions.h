@@ -1,12 +1,10 @@
 /* sink_functions.h — GPU-callable wrappers for sink helper routines.
  *
- * Provides KOKKOS_INLINE_FUNCTION versions of sink_vesc and
- * sink_check_boundedness that take explicit struct refs instead of particle
- * indices, so they can be called from device lambdas in sink_environment_gpu.cc.
- *
- * These mirror the CPU implementations in sink.cc exactly.  The #define All
- * redirect in gpu_all_mirror.h ensures All.* accesses go to All_dev when
- * compiled as a GPU TU.
+ * The escape speed and the gravitational-capture test used by the sink
+ * neighbour loops (sink_vesc_gpu, sink_check_boundedness_gpu), taking explicit
+ * struct refs instead of particle indices so the device kernels can call them.
+ * They are the only copies.  The #define All redirect in gpu_all_mirror.h
+ * ensures All.* accesses go to All_dev when compiled as a GPU TU.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -75,7 +73,10 @@ static int sink_check_boundedness_gpu(const struct particle_data& kp_j,
 #endif
     if(gas_density > 0) {
         if((kp_j.Get_Particle_Size() > sink_radius * 1.396263) && (kp_j.Type == 0)) { return 0; }
-#if defined(COOLING)
+#ifdef SINK_OPACITY_LIMIT_THERMODYNAMICS
+        /* At the bottom of an optically thick core (n_H > 1e13 cm^-3) the gas sound speed of several km/s can exceed the softened
+           escape speed, so nothing would be accretable and the sink could not grow: use at least the unsoftened escape speed of the
+           enclosed gas mass. The same condition lets sink formation proceed there (sfr_eff.cc). */
         double nHcgs = HYDROGEN_MASSFRAC * (gas_density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS);
         if(nHcgs > 1e13 && (cs > 0.1 * vrel || kp_j.Type != 0)) {
             double m_eff = 4. * M_PI * dr_code * dr_code * dr_code * gas_density;
