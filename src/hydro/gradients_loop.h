@@ -339,7 +339,9 @@ struct GradientsSpec
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
         for(int k = 0; k < N_RT_FREQ_BINS; k++) {
             local.GQuant.Rad_E_gamma[k]    = kc[i].Rad_E_gamma_Pred[k];
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
             local.GQuant.Rad_E_gamma_ET[k] = kc[i].ET[k];
+#endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
             for(int k2 = 0; k2 < 3; k2++) {
                 local.GQuant.Rad_Flux[k][k2] = kc[i].Rad_Flux_Pred[k][k2];
@@ -470,10 +472,12 @@ struct GradientsSpec
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
             for(int j = 0; j < N_RT_FREQ_BINS; j++) {
                 MERGE_ADD(Gradients[k].Rad_E_gamma[j]);
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
                 /* SymmetricTensor2 stores 6 unique elements behind [i][j]==[j][i]
                  * aliasing — iterate raw storage to avoid double-adding the
                  * off-diagonals (xy/yz/xz appear via both index orderings). */
                 for(int kd = 0; kd < 6; kd++) { MERGE_ADD(Gradients[k].Rad_E_gamma_ET[j].data[kd]); }
+#endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
                 for(int kd = 0; kd < 3; kd++) { MERGE_ADD(Gradients[k].Rad_Flux[j][kd]); }
 #endif
