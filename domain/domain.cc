@@ -1848,7 +1848,7 @@ void domain_findSplit_work_balanced(int ncpu, int ndomain)
          DOMAIN_KEEP_BOUNDARIES mean segments of the rule's end. Otherwise every cost change shifts the phase of
          all later boundaries, and the census below finds most segments straddling two holders. */
       std::vector<double> cum(ndomain + 1, 0.0);
-      for(i = 0; i < ndomain; i++) {cum[i + 1] = cum[i] + fac_work * domainWork[i] + fac_load * domainCount[i] + fac_workgas * domainWorkGas[i];}
+      for(i = 0; i < ndomain; i++) {cum[i + 1] = cum[i] + fac_work * domainWork[i] + fac_load * domainCount[i] + fac_workgas * domainWorkGas[i] + DOMAIN_SPLIT_MB_TERM(i);}
       const double tol = DOMAIN_KEEP_BOUNDARIES * workavg;
       int n_snapped = 0;
       for(i = 0, start = 0; i < ncpu; i++)
