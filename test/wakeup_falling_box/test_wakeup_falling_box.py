@@ -24,35 +24,52 @@ from gizmo.test import (
 TEST_NAME = "wakeup_falling_box"
 TEST_DIR = Path(__file__).parent
 G_Y = -0.5  # GravAccel_RayleighTaylorTest
-MIN_OCCUPIED_BIN = 50  # 50 with the wake-up floor, 46 without
+MAX_WAKEUP_DEEPENING = 2  # bins; 0 with the wake-up floor, 4 without
+
+# one row of an "Occupied timebins" report: bin, non-cell and cell counts, dt, cumulative, flags, avg-time, cpu-frac
+_TIMEBIN_ROW = re.compile(r"^ [X ]  bin=\s*(\d+)\s+(\d+)\s+(\d+)\s+\S+\s+\d+ . .\s+(\S+)\s+(\S+)%$")
 
 
-def lowest_occupied_timebin(stdout_file):
-    """Lowest timebin holding any particle over all sync points after the first, from the
-    "Occupied timebins" table GIZMO prints at every sync point. Sync point 0 is skipped: every
-    particle starts in bin 0 before its first timestep is assigned."""
-    row = re.compile(r"bin=\s*(\d+)\s+(\d+)\s+(\d+)\s")
-    lowest, n_tables, sync, in_table = None, 0, None, False
-    with open(stdout_file) as f:
+def timebin_reports(stdout_file):
+    """Every "Occupied timebins" report in a GIZMO stdout log, as (sync point, woken, rows): woken says whether a
+    wake-up had been processed before the report, rows are (bin, particles, avg-time, cpu-frac %). Fails if there is
+    nothing to parse, so the checks built on it cannot pass vacuously."""
+    reports, rows, sync, woken = [], None, None, False
+    with open(stdout_file, errors="replace") as f:
         for line in f:
+            if rows is not None:
+                m = _TIMEBIN_ROW.match(line.rstrip("\n"))
+                if m:
+                    rows.append((int(m.group(1)), int(m.group(2)) + int(m.group(3)), float(m.group(4)),
+                                 float(m.group(5))))
+                    continue
+                reports.append((sync, woken, rows))
+                rows = None
             if line.startswith("Sync-Point "):
                 sync = int(line.split()[1].rstrip(","))
-                in_table = False
             elif line.startswith("Occupied timebins"):
-                in_table = sync is not None and sync > 0
-                n_tables += in_table
-            elif in_table:
-                m = row.search(line)
-                if m:
-                    if int(m.group(2)) + int(m.group(3)) > 0:
-                        b = int(m.group(1))
-                        lowest = b if lowest is None else min(lowest, b)
-                elif line.startswith("Total active"):
-                    in_table = False
-    assert n_tables > 100 and lowest is not None, (
-        f"parsed {n_tables} 'Occupied timebins' tables from {stdout_file}: the timebin report format "
-        f"changed or the run did not print it, so the wake-up floor check cannot run")
-    return lowest
+                rows = []
+            elif "activated (in wakeup check)" in line:
+                woken = True
+    n_rows = sum(len(r) for _, _, r in reports)
+    assert len(reports) > 100 and n_rows > 0, (
+        f"parsed {len(reports)} 'Occupied timebins' reports with {n_rows} rows from {stdout_file}: the report "
+        f"format changed or the run did not print it, so the timebin checks cannot run")
+    return reports
+
+
+def wakeup_deepening(reports):
+    """Bins by which the deepest occupied bin drops below its depth before the first wake-up. The reference is the
+    sync points from the first one (all cells start in bin 0 at sync point 0) up to the first wake-up: there the bins
+    are what the timestep criteria ask for, independent of the ICs, parameters and timebase."""
+    def deepest(rows):
+        return min(b for b, n, _, _ in rows if n > 0)
+
+    ref = [deepest(r) for s, w, r in reports if s and not w and r]
+    after = [deepest(r) for s, w, r in reports if w and r]
+    assert ref and after, (f"{len(ref)} reports before the first wake-up and {len(after)} after it: the wake-up "
+                           f"floor check needs both")
+    return min(ref) - min(after)
 
 
 def generate_ics():
@@ -78,13 +95,13 @@ def test_wakeup_falling_box(num_mpi_ranks, num_omp_threads):
         n_woken = sum(int(l.split()[0]) for l in f if "activated (in wakeup check)" in l)
     assert n_woken > 1000, f"only {n_woken} wakeups: the test no longer exercises the wakeup path"
 
-    # Wake-up floor: a hydro wake-up may not place a cell below the lowest occupied active bin. Without
-    # the floor, cells woken by the blast shell land up to 3 bins below it and cascade (lowest bin 46);
-    # with it, no bin below 50 is ever occupied.
-    lowest_bin = lowest_occupied_timebin(TEST_DIR / f"test_{TEST_NAME}.out")
-    assert lowest_bin >= MIN_OCCUPIED_BIN, (
-        f"lowest occupied timebin {lowest_bin} < {MIN_OCCUPIED_BIN}: hydro wake-ups are placing cells "
-        f"below the wake-up floor (lowest occupied active bin)")
+    # Wake-up floor: a hydro wake-up may not place a cell below the lowest occupied active bin. Without the floor,
+    # cells woken by the blast shell land up to 3 bins below it and cascade, 4 bins below the pre-wake-up depth.
+    reports = timebin_reports(TEST_DIR / f"test_{TEST_NAME}.out")
+    drop = wakeup_deepening(reports)
+    assert drop <= MAX_WAKEUP_DEEPENING, (
+        f"the deepest occupied timebin fell {drop} bins below its depth before the first wake-up "
+        f"(> {MAX_WAKEUP_DEEPENING}): hydro wake-ups are placing cells below the wake-up floor")
 
     with h5py.File(final_snap, "r") as F:
         t = F["Header"].attrs["Time"]
