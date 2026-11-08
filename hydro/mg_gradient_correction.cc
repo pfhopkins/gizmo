@@ -84,7 +84,7 @@ struct MGdata_in {
     MyFloat KernelRadius;
     MyFloat Density;
     MyFloat ConditionNumber;
-    SymmetricTensor2<MyScratchFloat> NV_T;
+    SymmetricTensor2<MyDouble> NV_T;
     Vec3<MyDouble> BPred;      /* B = BPred * Density/Mass */
     Mat3<MyDouble> GradB;      /* slope-limited B gradient */
     int OrigTask;              /* task that owns this particle */

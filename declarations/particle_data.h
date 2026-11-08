@@ -104,7 +104,7 @@ extern ALIGN(32) struct particle_data
 #if !(defined(PRECISION_DIET) && (PRECISION_DIET >= 2))
     MyFloat KernelRadius;           /*!< search radius around particle for neighbors/interactions */
 #endif
-    MyScratchFloat NumNgb;          /*!< neighbor number around particle */
+    MyFloat NumNgb;                 /*!< neighbor number around particle */
     MyScratchFloat DrkernNgbFactor;        /*!< correction factor needed for varying kernel lengths */
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
     MyScratchFloat DensityAroundParticle;         /*!< gas density in the neighborhood of the collisionless particle (evaluated from neighbors) */
@@ -351,7 +351,7 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
 #if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
-    Mat3<MyScratchFloat> NV_T;                                     /*!< holds the tensor used for gradient estimation */
+    Mat3<MyDouble> NV_T;                                           /*!< holds the tensor used for gradient estimation */
 #endif
 #ifdef CBE_INTEGRATOR
     double CBE_basis_moments[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];         /* moments per basis function */

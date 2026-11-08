@@ -19,7 +19,7 @@
    bytes of an All struct written by a pre-sentinel binary. */
 #define RESTARTFILE_MAGIC 0x52535446u
 #if defined(PRECISION_DIET) && (PRECISION_DIET >= 2)
-#define RESTARTFILE_LAYOUT_VERSION 0x10003u /* float storage of derived P/CellP fields: scripts/restart_convert.py converts older files */
+#define RESTARTFILE_LAYOUT_VERSION 0x10004u /* float storage of derived P/CellP fields: scripts/restart_convert.py converts older files */
 #else
 #define RESTARTFILE_LAYOUT_VERSION 2u
 #endif

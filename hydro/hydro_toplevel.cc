@@ -212,7 +212,7 @@ struct INPUT_STRUCT_NAME
         MyCommFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
 #endif
     } Gradients;
-    SymmetricTensor2<MyScratchFloat> NV_T;
+    SymmetricTensor2<MyDouble> NV_T;
     
 #if defined(KERNEL_CRK_FACES)
     MyFloat Tensor_CRK_Face_Corrections[16];

@@ -120,7 +120,7 @@ struct GasGraddata_in
     MyFloat KernelRadius;
 #ifdef MHD_CONSTRAINED_GRADIENT
     MyCommFloat ConditionNumber;
-    SymmetricTensor2<MyScratchFloat> NV_T;
+    SymmetricTensor2<MyDouble> NV_T;
     MyCommFloat BGrad[3][3];
 #endif
     int NodeList[NODELISTLENGTH];
