@@ -81,6 +81,11 @@ static inline double merge_kinetic_dissipation_fraction(int i, int j)
 int does_particle_need_to_be_merged(int i)
 {
     if(P[i].Mass <= 0) {return 0;}
+#ifdef PREVENT_PARTICLE_MERGE
+    /* no merging, splitting still allowed (PREVENT_PARTICLE_MERGE_SPLIT disables both): the
+       diffusion-free, finest-resolution reference case. */
+    return 0;
+#endif
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
     return 0;
 #else
@@ -559,6 +564,11 @@ void merge_and_split_particles(void)
                         }}
 #endif
                     if (P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;}
+#ifdef SINK_SPAWN_NO_MERGE
+                    /* never merge a spawned cell, in either direction: holds the spawned population fixed so
+                       merged and unmerged outflows can be compared directly. */
+                    if (is_spawned_i || (P[j].ID==All.SpawnedWindCellID && P[j].Type==0)) {do_allow_merger = 0;}
+#endif
 #ifdef SINK_SPAWN_MERGE_WHEN_AMBIENT
                     /* Retire a spawned cell only once it has actually joined the ambient medium, rather
                        than as soon as its velocity relative to one neighbour drops below that neighbour's
@@ -1162,6 +1172,9 @@ int merge_particles_ij(int i, int j)
 
     CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;
     CellP[j].InternalEnergyPred = wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred;
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+    CellP[j].InternalEnergy_FromIR_Pending = wt_j*CellP[j].InternalEnergy_FromIR_Pending + wt_i*CellP[i].InternalEnergy_FromIR_Pending; /* IR energy not yet given to the cooling solve, mass-weighted like the internal energy */
+#endif
     CellP[j].MeanMolecularWeight = wt_j*CellP[j].MeanMolecularWeight + wt_i*CellP[i].MeanMolecularWeight; /* cached composition mixes with the mass, as the other terms do */
     CellP[j].Gamma = wt_j*CellP[j].Gamma + wt_i*CellP[i].Gamma;
 #ifdef EOS_ELASTIC
@@ -1692,7 +1705,11 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
     if(identity_changed) {ghost_exchange_supply_identity_changed("rearrange_particle_sequence"); gpu_sidx_notify_owned_changed(); gpu_leaf_mirror_note_slots_moved();}
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    if(flag_sum) {reconstruct_timebins();}
+    if(flag_sum) {reconstruct_timebins();
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+        if(repair_walk_links) {hermite_local_sources_rebuild();}   /* the indices moved under a standing tree; otherwise a build follows and lists them */
+#endif
+    }
     /* Slots moved and the walk links were not repaired with them (no MAINTAIN_TREE_IN_REARRANGE, or a caller that
        rebuilds the tree anyway), so this tree must not be walked again.  The sink spawn already asks for a rebuild on
        its own account; every other caller that

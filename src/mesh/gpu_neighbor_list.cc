@@ -60,6 +60,7 @@ static void gx_walk_drift_tables_refresh(void)
 #include "../gravity/gpu_gravity_tree.h" /* node SoA + drift certification */
 #include "../gravity/gpu_peano_walk.h"   /* the domain mirrors the top-leaf map reads */
 #include "../gravity/gpu_morton_functions.h" /* Morton128 keys for the index build */
+#include "../domain/domain_key_functions.h"  /* the one position -> integer coordinate mapping */
 #include "../gravity/ags_functions.h"        /* the AGS inputs of the after-drift reach rule */
 #include "../core/predict_functions.h"       /* box_wrap_position_to_primary_image */
 #include <Kokkos_Sort.hpp>
@@ -968,12 +969,7 @@ Morton128 sidx_member_key(const double image[3], const struct SidxKeyFrame &fram
                                                        frame.corner[0], frame.corner[1], frame.corner[2], frame.len);
 #endif
     uint64_t q[3];
-    for(int k = 0; k < 3; k++) {
-        double u = (frame.len > 0) ? (image[k] - frame.corner[k]) / frame.len + 1.0 : 1.0;
-        if(!(u >= 1.0)) {u = 1.0;}
-        if(!(u < 2.0))  {u = 1.9999999999999998;}
-        q[k] = gpu_morton_double_to_int42(u);
-    }
+    domain_key_integer_coordinates(image[0], image[1], image[2], frame.corner[0], frame.corner[1], frame.corner[2], frame.len, BITS_PER_DIMENSION, q);
     Morton128 key = gpu_morton_encode128(q[0], q[1], q[2]);
     if(outside) {key.hi |= SIDX_KEY_OUTSIDE;}
     return key;

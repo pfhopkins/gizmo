@@ -691,6 +691,9 @@ void star_formation_parent_routine(void)
                         if(P[i_star].FluidType == FLUID_DM) { if(P[i_star].Type != 3) {P[i_star].Type = 3;} } else /* dark fluid -> inert collisionless Type=3 */
 #endif
                         { if(P[i_star].Type != 5) {P[i_star].Type = 4;} } // if we didn't set to type 5 above, default to type 4
+                        /* a new star (type 4; a sink formed above has already asked for a refresh) enters the type-conditioned node
+                           moments, its luminosity among them, only at the next build or refresh, deliberately: its luminosity keys off its
+                           age, zero at formation (see the moment-refresh note in gravtree.cc) */
                         force_tree_note_type_presence(i_star);  /* the element's type is final here, so tell the standing tree before anything walks it looking for that type */
                         if(i_star != i) {gravity_note_inserted_motion_bound(i_star);}  /* a spawned element's speed is readable only now */
 

@@ -466,6 +466,21 @@ void run(void)
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
         CPU_Step[CPU_KICKS] += measure_time();
 
+#if defined(GALSF) && defined(GALSF_FB_MECHANICAL)
+        /* mechanical feedback after the closing kick: a step ending here closes with the forces of the gas it was taken in, not with a
+           post-feedback pressure over half a step sized for the pre-feedback gas (which creates energy); the receivers' signal speed is
+           raised at deposition, so the next step, which opens with this step's forces, is short */
+        int mechanical_fb_this_step = (All.TotN_gas > 0);
+#ifdef GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW
+        mechanical_fb_this_step = mechanical_fb_this_step && (All.Dt_Since_LastFBCalc_Gyr >= All.Dt_Min_Between_FBCalc_Gyr); /* the cadence decision compute_stellar_feedback made this step */
+#endif
+        if(mechanical_fb_this_step)
+        {
+            mechanical_fb_calc_toplevel();
+            gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
+        }
+#endif
+
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
@@ -645,15 +660,6 @@ void calculate_non_standard_physics(void)
             printf("Transport subcycling: %d sub-steps (hydro_dt/transport_dt = %.1f)\n",
                    All.Transport_Subcycle_N, max_hydro_dt_global / min_transport_dt_global);
     }
-    /* Save the hydro-pass DtInternalEnergy before the subcycle loop. rt_update_driftkick adds
-       IR gas heating to DtInternalEnergy each sub-step; without resetting, it accumulates N-fold.
-       We reset to the hydro value before each kick so only one sub-step's IR contribution is present. */
-#if defined(RT_INFRARED) && defined(COOLING)
-    for(int idx : ActiveParticleList) {
-        if(P[idx].Type == 0 && P[idx].Mass > 0)
-            CellP[idx].DtIE_IR_Subcycle = CellP[idx].DtInternalEnergy;
-    }
-#endif
 #endif // TRANSPORT_SUBCYCLE
 
 #ifdef RADTRANSFER
@@ -695,14 +701,6 @@ void calculate_non_standard_physics(void)
     gizmo_exit_bad_stop_if_requested("run:transport_subcycle_substep");
     /* --- recompute transport fluxes every sub-step and apply kick --- */
     transport_subcycle_exchange_fluxes(transport_sub);
-    /* Reset DtInternalEnergy to hydro-pass value before each kick, so rt_update_driftkick's
-       IR gas heating contribution doesn't accumulate across sub-steps. */
-#if defined(RT_INFRARED) && defined(COOLING)
-    for(int idx : ActiveParticleList) {
-        if(P[idx].Type == 0 && P[idx].Mass > 0)
-            CellP[idx].DtInternalEnergy = CellP[idx].DtIE_IR_Subcycle;
-    }
-#endif
     transport_subcycle_kick();
 #endif
 
@@ -736,9 +734,6 @@ void calculate_non_standard_physics(void)
        above (active list + shared CSR + gas ghost pool). */
     gizmo_sym_neighbor_list_free();
     ghost_exchange_cleanup();
-    /* After the loop DtInternalEnergy = DtIE_IR_Subcycle + IR_rate_last_substep, which is correct:
-       the pre-kick reset already prevents N-fold accumulation, so the cooling solver and second
-       KDK half-kick see exactly one sub-step's IR contribution at the final Rad_E_gamma state. */
 #if defined(TRANSPORT_SUBCYCLE_COOLING) && !defined(COOLING_OPERATOR_SPLIT)
     /* zero DtInternalEnergy after the subcycle loop — the hydro work has been fully applied across all sub-steps */
     for(int idx : ActiveParticleList) {

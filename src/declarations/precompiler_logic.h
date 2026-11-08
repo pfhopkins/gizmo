@@ -619,7 +619,7 @@
 #define RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
 #endif // closes SINGLE_STAR_RT_DEFAULTS
 
-#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED) && !defined(NOGRAVITY))
+#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED) && !defined(SELFGRAVITY_OFF)) /* the column densities come from the gravity tree walk */
 #define RT_USE_TREECOL_FOR_NH 6 /* This gives a better approximation for column density than the usual scale-length estimator, but is overkill for typical 1e-3msun-resolving simulations that only marginally resolve the opacity limit. Enable for high (<1e-5msun) resolution sims */
 #endif
 #ifdef COOLING
@@ -775,6 +775,9 @@
 #endif
 #ifdef HERMITE_INTEGRATION
 #define COMPUTE_JERK_IN_GRAVTREE /* needs to be computed in order to do the Hermite integration */
+#if !(defined(SINGLE_STAR_DIRECT_GRAVITY) && ((HERMITE_INTEGRATION) == 32))
+#define HERMITE_FOREIGN_SOURCE_TABLE /* Hermite passes take a foreign Hermite-type leaf at its owner's predicted state (gravtree.cc). Not needed when Hermite covers only sinks and their mutual gravity is the direct sum, which the tree never evaluates */
+#endif
 #if defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
 #define MAINTAIN_TREE_IN_REARRANGE /* spawning winds is the one thing that re-sequences the particles while the tree is still standing, and the Hermite pass walks that tree after the source terms have run, deliberately skipping the rebuild they asked for.  Together they need a tree whose links are repaired as particles move rather than one waiting to be rebuilt.  Every other caller re-sequences either inside a decomposition or immediately before a build, so this asks nothing of a run that does not spawn. */
 #endif
@@ -1213,10 +1216,10 @@
 #define SELFGRAVITY_OFF // safely define SELFGRAVITY_OFF in this case, otherwise we act like there is gravity except in the final setting of accelerations
 #endif
 
-/* a particle whose tree walk is skipped keeps the acceleration the gravity call finalized (tree, analytic, direct terms) and
-   advances it with the jerk. Forces added to GravAccel after the gravity call (drag and grain radiation under the drag flag, quantum pressure) must
-   then not ride along on the kept value, so it is kept apart in GravAccel_Retained. Any new force added to GravAccel after
-   gravity must join this list (the shearing-box Coriolis force is velocity-dependent, so it is one of them). */
+/* a particle whose tree walk is skipped advances the tree and direct-sum part of its gravity with the jerk. Forces added to GravAccel after the gravity call (drag and
+   grain radiation under the drag flag, quantum pressure, the shearing-box Coriolis force) must then not ride along on that value, so in these builds that
+   part is kept apart in GravAccel_Retained and the analytic terms are added afresh every step. Without this list a skipped walk keeps the
+   acceleration its last walk finalized, analytic terms included. Any new force added to GravAccel after gravity must join this list. */
 #if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF) && (defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION) || defined(DM_FUZZY) || defined(BOX_SHEARING))
 #define GRAVACCEL_RETAINED_ON_SKIPPED_WALK
 #endif

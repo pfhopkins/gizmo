@@ -253,6 +253,10 @@ struct LETNodeWire {
                             * that injects momentum under adaptive softening.  Carry the pure value. */
     int     leaf_type;     /* source particle Type -> ptype_sec */
     int     _pad1;         /* explicit tail pad: keeps an array of these records 8-byte aligned */
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    MyIDType leaf_id;      /* source particle ID for a real leaf, 0 otherwise: the key into the Hermite
+                            * passes' owner-side source table (HermiteGhostTab) */
+#endif
 };
 #ifdef __cplusplus
 #include <cstddef>
@@ -291,6 +295,9 @@ extern int     *ForeignLeafTag;   /* one of LET_LEAF_TAG_* above: NODE (descenda
 extern int     *ForeignLeafType;  /* source particle Type for a foreign leaf  (-> ptype_sec) */
 extern MyFloat *ForeignLeafZeta;  /* source particle AGS_zeta for a foreign leaf (-> zeta_sec) */
 extern MyFloat *ForeignLeafSoft;  /* source particle ForceSoftening for a foreign leaf (-> h_p) */
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+extern MyIDType *ForeignLeafID;   /* source particle ID for a foreign leaf, same indexing; SharedSpace, own capacity */
+#endif
 
 /* Subtree-exit on the wire: a relabelled sibling/nextnode that leaves the shipped
  * subtree carries LET_WIRE_EXIT (defined in let_pack.cc), which the receiver maps to
@@ -333,27 +340,11 @@ extern "C" {
 #endif
 
 /*! Compute this rank's LETPerRankPayload from local particle state.  Called
- *  once per gravity-tree build, just before the LET exchange.
- *
- *  If active_bitmap is non-NULL: bbox spans only ACTIVE topleaves on this
- *  rank, and per-particle bounds (OldAcc, softening, has_sink) span only
- *  ActiveParticleList.  This is the "tight" mode -- safe iff the
- *  receiver's walk only consults LET data for its active particles.
- *
- *  If active_bitmap is NULL: bbox spans all MY topleaves and per-particle
- *  bounds span all NumPart.  Conservative mode -- always safe,
- *  including for RT/TREECOL walks that may consult foreign-tree column
- *  density for non-active particles. */
-void let_compute_local_payload(struct LETPerRankPayload *out,
-                               const uint64_t *active_bitmap,
-                               int bitmap_n_words);
-
-/*! Compute this rank's active-topleaf bitmap.  bitmap is sized
- *  n_words = (NTopleaves+63)/64 uint64_t.  Bit tl is set iff topleaf tl is
- *  owned by this rank AND at least one particle in ActiveParticleList lives
- *  in it.  If ActiveParticleList is empty, all of MY topleaves' bits are set
- *  (conservative fallback).  Bits for topleaves owned by other ranks are 0. */
-void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words);
+ *  once per gravity-tree build, just before the LET exchange.  bbox spans all MY
+ *  topleaves and per-particle bounds span all NumPart: always safe, including for
+ *  RT/TREECOL walks that may consult foreign-tree column density for non-active
+ *  particles. */
+void let_compute_local_payload(struct LETPerRankPayload *out);
 
 /*! MPI_Allgather all ranks' LETPerRankPayload into a buffer indexed by rank
  *  (so payload[r] gives rank r's payload).  Returns 0 on success. */
@@ -364,9 +355,7 @@ int  let_exchange_payloads(const struct LETPerRankPayload *local,
  *  array.  Walks Nodes_base[] from the root, including each node n the shared
  *  opening predicate would OPEN for R's cover (let_node_essential_for_rank).
  *  Ships nothing to a receiver with no local cover (all_ranks[R].has_cover==0).
- *  receiver_active_bitmap is consulted ONLY in the experimental active-receiver-
- *  cover mode (LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL); it is NULL on the default
- *  all-local path.  own_topleaves[0..n_own_topleaves) lists this rank's top leaves that have
+ *  own_topleaves[0..n_own_topleaves) lists this rank's top leaves that have
  *  a subtree to pack, in ascending order; it does not depend on R, so the caller builds it once
  *  per exchange.  Returns the number of nodes packed; *out grown as needed. */
 struct LETPackContext;   /* the packing scratch, private to let_pack.cc */
@@ -377,9 +366,7 @@ int  let_pack_for_rank(struct LETPackContext *pk, int R,
                        int *out_capacity,
                        struct LETSubtreeHeader **out_hdr_buf,
                        int *out_hdr_capacity,
-                       int *out_hdr_count,
-                       const uint64_t *receiver_active_bitmap,
-                       int bitmap_n_words);
+                       int *out_hdr_count);
 
 /*! LET exchange outcome.  Distinguishes the retryable foreign-arena overflow
  *  (force_treebuild grows the arena and rebuilds) from non-retryable failures

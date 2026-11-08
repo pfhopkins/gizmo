@@ -147,6 +147,7 @@ void verify_and_assign_local_mechfb_integrals(void)
         if(P[j].Type==0 && P[j].Mass>0)
         {
             kicked.push_back(j);
+            const Vec3<MyDouble> vel_before_deposit = P[j].Vel;
             double m0=P[j].Mass, dm=LocalGasMechFBInfoTemp[j].m_injected; P[j].Mass += dm; /* update mass */ if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             m0=CellP[j].MassTrue; CellP[j].MassTrue += dm; /* update conserved mass */
@@ -163,9 +164,10 @@ void verify_and_assign_local_mechfb_integrals(void)
                 double TE_0=m0*CellP[j].InternalEnergy; dTE=DMAX(-TE_0,dTE); /* ensure against non-negative values */
                 double dU = (-dm/mf)*CellP[j].InternalEnergy + (1./mf)*dTE; /* using new mass get updated internal energy */
                 double dt = get_particle_timestep_in_physical(j, P), implied_heating_cgs=(dU*UNIT_SPECEGY_IN_CGS*PROTONMASS_CGS)/(dt*UNIT_TIME_IN_CGS), typical_cooling_cgs=1.e-23*(CellP[j].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS);
-                if((implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)))) {CellP[j].DtInternalEnergy += dU/dt;} else {
-                    CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;
-                    /* Direct-dU branch: mark this receiver for positive wakeup
+                int weak_heating = (implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)));
+                CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU; /* always injected now: a heating rate here would be reset by the hydro pass before any kick applied it */
+                if(!weak_heating) {
+                    /* Strong heating: mark this receiver for positive wakeup
                      * from the most-aggressive source TimeBin that contributed.
                      * Without this, the receiver's stale post-injection state
                      * (huge u, low MaxSignalVel) is only "discovered" later by a
@@ -176,9 +178,9 @@ void verify_and_assign_local_mechfb_integrals(void)
                      * immediately, killing the cascade at its root. Standard
                      * hydro-convention encoding via max_source_wakeup accumulator
                      * -- no special encoding, no EOS/MaxSignalVel refresh (which
-                     * would be silent suppression of legitimate wakeup). Deferred-dU
-                     * branch intentionally NOT marked: u unchanged there, no
-                     * perturbation. */
+                     * would be silent suppression of legitimate wakeup; only a receiver active now,
+                     * whose next step is chosen right after the deposit, has its signal speed raised).
+                     * Weak heating, small next to cooling over the receiver's own step, is not marked. */
                     int wakeup_val = LocalGasMechFBInfoTemp[j].max_source_wakeup;
                     if(wakeup_val > 0 && wakeup_val > P[j].wakeup) {
                         P[j].wakeup = wakeup_val;
@@ -186,7 +188,6 @@ void verify_and_assign_local_mechfb_integrals(void)
                         NeedToWakeupParticles_local = 1;
                     }
                 }
-                //CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU; /* update internal energy; simpler (old) way to do it - less accurate phase diagrams at high density, however */
             }
             double dKE=LocalGasMechFBInfoTemp[j].KE_injected, dp[3];
             if(dKE != 0 || LocalGasMechFBInfoTemp[j].p_injected[0] != 0 || LocalGasMechFBInfoTemp[j].p_injected[1] != 0 || LocalGasMechFBInfoTemp[j].p_injected[2] != 0 )
@@ -252,6 +253,9 @@ void verify_and_assign_local_mechfb_integrals(void)
                 }
             }
 #endif /* COSMIC_RAY_FLUID */
+            refresh_eos_and_project(j, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED); /* the deposit is an accepted change to both state copies */
+            if(TimeBinActive[P[j].TimeBin]) /* its next step is chosen right after this, from a signal speed the hydro pass set before the deposit: raise it to the new state. An inactive cell keeps its own, which its active neighbours' wakeup check compares against */
+                {CellP[j].MaxSignalVel = DMAX(CellP[j].MaxSignalVel, 2.*CellP[j].effective_soundspeed()) + sqrt((P[j].Vel - vel_before_deposit).norm_sq()) / All.cf_atime;}
             /* apply to every home gas cell with pending deltas (N_injected>0):
                this buffer is the single source of truth for received feedback,
                populated by all paths (single/multi-rank, both dispatch modes)

@@ -33,11 +33,17 @@ void GravAccel_Harmonic1D(void);
 
 /* The analytic terms go onto an acceleration this gravity call has just rebuilt. One it kept (a walk skipped under
    ADAPTIVE_TREEFORCE_UPDATE, or a non-Hermite element in the Hermite re-evaluation) still carries them from its last
-   evaluation, so every routine below asks this before adding its force. */
+   evaluation, so every routine below asks this before adding its force. With GRAVACCEL_RETAINED_ON_SKIPPED_WALK a skipped
+   walk's acceleration is its tree part alone, so the analytic terms go on afresh, at the current position, every step. */
 static inline int analytic_gravity_adds_to(int i, int ii)
 {
 #if defined(SELFGRAVITY_OFF) || defined(RT_SELFGRAVITY_OFF)
     (void) i; (void) ii; return 1; /* GravAccel_set_zeros_if_needed() has just cleared every active element */
+#elif defined(GRAVACCEL_RETAINED_ON_SKIPPED_WALK)
+#ifdef HERMITE_INTEGRATION
+    if(HermiteOnlyFlag) {return gravity_treewalk_candidate_prewalk(i, ii);} /* a Hermite pass adds only to what it re-evaluated */
+#endif
+    (void) ii; return (P[i].Mass > 0);
 #else
     return gravity_treewalk_candidate_prewalk(i, ii);
 #endif
@@ -93,6 +99,16 @@ void GravAccel_set_zeros_if_needed()
     int i; for (int i : ActiveParticleList) {P[i].GravAccel = {};}
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE)
     for (int i : ActiveParticleList) {for(int k=0;k<6;k++) {P[i].tidal_tensorps.data[k]=0;}}
+#endif
+#endif
+#if defined(SELFGRAVITY_OFF)
+    /* the tree walk that zeroes then accumulates these never runs, so they would keep whatever the slot held
+       before the particle claimed it; the Hermite kick copies GravJerk into its retained state every step */
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+    for (int i : ActiveParticleList) {P[i].GravJerk = {};}
+#endif
+#if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL)
+    for (int i : ActiveParticleList) {P[i].Potential = 0;}
 #endif
 #endif
 }
@@ -183,6 +199,22 @@ void GravAccel_ShearingSheet()
         /* the Coriolis force is velocity-dependent: it is added after all other forces (shearing_sheet_coriolis_boris, core/accel.cc) */
 #if (BOX_SHEARING==4) /* add vertical gravity to the force law */
         P[i].GravAccel[2] -= BOX_SHEARING_OMEGA_BOX_CENTER * BOX_SHEARING_OMEGA_BOX_CENTER * (P[i].Pos[2]-boxHalf_Z);
+#endif
+#ifdef HERMITE_INTEGRATION
+        /* the Hermite passes re-evaluate Hermite-integrated particles without the forces added after gravity: their Coriolis force goes in
+           here, on the current (start-of-step, predicted or corrected) velocity, with the jerk of the shearing-sheet terms, from the total
+           acceleration, for the corrector */
+        if(HermiteOnlyFlag && eligible_for_hermite(i, P))
+        {
+            const int ph = BOX_SHEARING_PHI_COORDINATE; const double omega = BOX_SHEARING_OMEGA_BOX_CENTER;
+            P[i].GravAccel[0] += 2.*omega * P[i].Vel[ph];
+            P[i].GravAccel[ph] -= 2.*omega * P[i].Vel[0];
+            P[i].GravJerk[0] += 2.*BOX_SHEARING_Q*omega*omega * P[i].Vel[0] + 2.*omega * P[i].GravAccel[ph];
+            P[i].GravJerk[ph] -= 2.*omega * P[i].GravAccel[0];
+#if (BOX_SHEARING==4)
+            P[i].GravJerk[2] -= omega*omega * P[i].Vel[2];
+#endif
+        }
 #endif
     }
 #endif

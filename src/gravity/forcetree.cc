@@ -6,6 +6,7 @@
 #include <time.h>
 #include <limits.h>
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "forcetree.h"               /* GIZMO_EWALD_EN + Ewald-table accessor decls */
@@ -195,6 +196,9 @@ int force_treebuild_gravity(void)
     building_gravity_tree = 1;
     const int status = force_treebuild(NumPart, NULL);
     building_gravity_tree = 0;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    hermite_local_sources_rebuild();   /* the Hermite-type particles this tree exports, listed while the build has visited every particle */
+#endif
     return status;
 }
 
@@ -1821,13 +1825,13 @@ void force_add_element_to_tree(int iparent, int ichild)
     /* The child's speed bound goes up its whole chain, to the top-level node other ranks route by; the
      * parent's node alone would let it outrun every ancestor box until its first kick or the next build. */
     gravity_note_inserted_motion_bound(ichild);
-    // update parent node property [maximum softening] for opening criteria
+    /* update parent node property [maximum softening] for opening criteria. The bound and the per-type band below are raised
+       from the PARENT's radius and type, not the inserted child's: a spawned child's own band reaches the tree when it is
+       next active (force_update_hmax) or at the next build. Known and accepted: measured on a FIRE galaxy run, no neighbour pair depended on the stale band
+       (checks after 13 spawns, none locally or remotely); change this only if a missed pair is shown. */
     MyFloat new_hmax = DMAX(Extnodes[father].hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[iparent].KernelRadius, All.MaxKernelRadius));
     Extnodes[father].hmax = new_hmax;
-    /* Mode B per-type incremental update — only the band corresponding to
-     * iparent's type. Other bands unchanged (correct: this insertion adds
-     * one particle, only its type's band can grow). Conservative across every
-     * leaf-policy-selectable source via the shared helper. */
+    /* Mode B per-type incremental update -- the band of the parent's type, as for the bound above. */
     {
         int ptype = (int)P[iparent].Type;
         double htmp = force_hmax_per_type_particle_radius(iparent);
@@ -2218,6 +2222,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
         mem.tgt = tgt;
 #ifdef RT_USE_GRAVTREE
         mem.valid_gas_particle_for_rt = grav_target_valid_gas_for_rt(mem.open.ptype, mem.open.soft, mem.pmass);
+#ifdef HYDRO_MULTIFLUID_DM
+        if(mem.valid_gas_particle_for_rt && P[tm].FluidType == FLUID_DM) {mem.valid_gas_particle_for_rt = 0;} /* the dark fluid takes no baryonic radiation */
+#endif
 #if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
         if(mem.valid_gas_particle_for_rt)
         {
@@ -2529,6 +2536,26 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                     dv = Extnodes[no].vs - vel;
 #endif
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+                    int k_gh = -1;   /* owner-side Hermite state of a foreign leaf, when one replaces the snapshot */
+                    /* A foreign real leaf of a Hermite type, on a Hermite pass: take the owner-side state
+                       (hermite_ghost_entry) in place of the imported snapshot. */
+                    if(fl_tag == 1 && HermiteGhostTab && ForeignLeafID && (HERMITE_INTEGRATION & (1 << fl_type)) && mass > 0)
+                    {
+                        /* A miss is a source whose owner zeroed it since the tree build (a sink merged away or
+                           swallowed: the table skips Mass <= 0). Keep the snapshot, as the device walk does. */
+                        k_gh = hermite_ghost_lookup(HermiteGhostTab, NHermiteGhost, ForeignLeafID[no - (treeBase + maxNodes)]);
+                        if(k_gh >= 0)
+                        {
+                            dr = HermiteGhostTab[k_gh].pos - pos;
+                            GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                            r2 = dr.norm_sq();
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+                            dv = HermiteGhostTab[k_gh].vel - vel;
+#endif
+                        }
+                    }
+#endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                     cr_injection = nop->cr_injection;
 #endif
@@ -2573,6 +2600,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                     if(nop->sink_mass > 0)        /* found a node with non-zero BH mass */
                     {
                         Vec3<double> sink_dr = nop->sink_pos - pos;  /* SHEA:  now using sink_pos instead of center */
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+                        if(k_gh >= 0) {sink_dr = HermiteGhostTab[k_gh].pos - pos;}   /* the singleton sink IS the leaf: same state as the force */
+#endif
                         GRAVITY_NEAREST_XYZ(sink_dr[0],sink_dr[1],sink_dr[2],-1);
                         grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
 #if defined(SINGLE_STAR_TIMESTEPPING)
@@ -2584,6 +2614,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
                         prox_src.motion.vel = nop->sink_vel;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+                        if(k_gh >= 0) {prox_src.motion.vel = HermiteGhostTab[k_gh].vel;}
+#endif
 #endif
 #if defined(SPECIAL_POINT_MOTION)
                         prox_src.motion.acc = nop->sink_acc;

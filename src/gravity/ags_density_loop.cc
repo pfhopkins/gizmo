@@ -45,33 +45,6 @@
  * precompiler_logic.h so after_iter's minsoft/maxsoft clamp matches the AGS
  * radius solver in gravity/ags_rkern.cc. */
 
-/* Targeted diagnostic trace.
- *
- * Compile with -DGIZMO_NLR_AGS_DEBUG_ID_TRACE=<particle_ID> to enable
- * per-particle per-iter state dump for the specified ID. Used to diagnose
- * a first-Vista-validation regression (runner crashes endrun(888) on
- * type-5 sink ID=2190205 with soft=0; legacy passes same config).
- *
- * Production builds without the macro carry no overhead and no print
- * sites. The legacy mirror in ags_rkern.cc was deleted with the rest of
- * the legacy body in the cleanup. */
-#ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
-static inline void ags_debug_trace_id_state(const char *label, int i)
-{
-    if((long long)P[i].ID != (long long)GIZMO_NLR_AGS_DEBUG_ID_TRACE) return;
-    printf("[AGS_TRACE rank=%d %s] ID=%lld Type=%d Mass=%g TimeBin=%d "
-           "AGS_KernelRadius=%g KernelRadius=%g ForceSoftening=%g "
-           "AGS_zeta=%g NumNgb=%g AGS_vsig=%g\n",
-           ThisTask, label, (long long)P[i].ID, (int)P[i].Type,
-           (double)P[i].Mass, (int)P[i].TimeBin,
-           (double)P[i].AGS_KernelRadius, (double)P[i].KernelRadius,
-           (double)P[i].ForceSoftening,
-           (double)P[i].AGS_zeta, (double)P[i].NumNgb,
-           (double)P[i].AGS_vsig);
-    fflush(stdout);
-}
-#endif
-
 /* ============================================================================
  * PHYSICS HOOKS
  * ========================================================================== */
@@ -285,8 +258,7 @@ void AgsDensitySpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
  *   2. Build per-bm subgroup partition (legacy rkern.cc:112-128):
  *      ags_gravity_kernel_shared_BITFLAG(P[i].Type) is a pure function of
  *      Type, so each active belongs to exactly one bm group (the runner's
- *      partition assertion checks this every iter under DEBUG /
- *      GIZMO_NLR_ASSERT_PARTITION). Allreduce the bm-presence mask so all
+ *      partition assertion checks this every iter under DEBUG). Allreduce the bm-presence mask so all
  *      ranks see the same subgroup ordering (empty-on-this-rank subgroups
  *      get nullptr active_indices + num_active_local=0).
  *
@@ -331,39 +303,8 @@ void ags_density(void)
             AGS_Prev[i]     = P[i].AGS_KernelRadius;
             P[i].AGS_vsig   = 0;
             P[i].wakeup     = 0;
-#ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
-            ags_debug_trace_id_state("pre_solve_init", i);
-#endif
         }
     }
-
-    /* Pre-solve hard guard. If any ags-active particle
-     * enters with AGS_KernelRadius <= 0, the convergence test will
-     * spuriously "converge" at h=0 (maxsoft clamp via AGS_Prev*AGS_DSOFT_TOL
-     * collapses), leaving the particle with soft=0 → endrun(888) in
-     * get_timestep. Either init.cc didn't seed properly, or some upstream
-     * path corrupted the radius. Fail loudly with full state to surface
-     * the root class. Debug-gated; remove (or convert to assert) once
-     * the regression is fixed. */
-#ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
-    for (int i : ActiveParticleList) {
-        if(ags_density_isactive(i) && !(P[i].AGS_KernelRadius > 0)) {
-            fprintf(stderr,
-                "[AGS_GUARD rank=%d] FATAL: ags-active particle entered "
-                "ags_density() with AGS_KernelRadius <= 0. "
-                "ID=%lld Type=%d Mass=%g TimeBin=%d "
-                "AGS_KernelRadius=%g KernelRadius=%g ForceSoftening=%g "
-                "minsoft=%g maxsoft=%g\n",
-                ThisTask, (long long)P[i].ID, (int)P[i].Type,
-                (double)P[i].Mass, (int)P[i].TimeBin,
-                (double)P[i].AGS_KernelRadius, (double)P[i].KernelRadius,
-                (double)P[i].ForceSoftening,
-                ags_return_minsoft(i), ags_return_maxsoft(i));
-            fflush(stderr);
-            endrun(81360);
-        }
-    }
-#endif
 
     /* (2) Build per-bm subgroup partition. */
     std::map<int, std::vector<int>> bm_groups_host;
@@ -452,10 +393,6 @@ void ags_density(void)
     const double t_runner = cpu_minus_children(timediff(t_runner_start, my_second()), child0_runner);
     CPU_Step[CPU_AGSDENSCOMPUTE] += t_runner;
 
-#ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
-    for (int i : ActiveParticleList) ags_debug_trace_id_state("post_runner_pre_final", i);
-#endif
-
     /* Post-runner cleanup. */
     if(NTask > 1) ghost_exchange_cleanup();
 
@@ -491,9 +428,6 @@ void ags_density(void)
             }
         }
     }
-#ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
-    for (int i : ActiveParticleList) ags_debug_trace_id_state("post_final_final", i);
-#endif
 
     myfree(AGS_Prev);
 

@@ -321,6 +321,17 @@ void init(void)
             Vec3<double> nx,ny,nz; int kw; get_random_orthonormal_basis(i, INITIAL_WIND_BASIS_RNG_SALT, 0, nx,ny,nz); for(kw=0;kw<3;kw++) {P[i].Wind_direction[kw] = nx[kw]; P[i].Wind_direction[kw+3] = ny[kw];}
 #endif
 #endif
+#if defined(SINK_PARTICLES) && defined(SINK_WIND_SPAWN) /* the guard the reservoirs are declared under */
+            /* spawn reservoirs of a sink read from an IC rather than formed in-run would otherwise hold whatever
+               was in the slot: both are skipped by read_ic on a fresh start and read back on a snapshot restart */
+            if(RestartFlag == 0)
+            {
+                P[i].unspawned_wind_mass = 0;
+#ifdef SINGLE_STAR_FB_JETS
+                P[i].unspawned_jet_mass = 0;
+#endif
+            }
+#endif
 #if defined(GALSF_FB_FIRE_RT_LOCALRP)
             P[i].NewStar_Momentum_For_JetFeedback = 0;
 #endif
@@ -584,6 +595,9 @@ void init(void)
         P[i].Particle_DivVel = 0;
         CellP[i].ConditionNumber = 1;
         CellP[i].DtInternalEnergy = 0;
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+        CellP[i].InternalEnergy_FromIR_Pending = 0;
+#endif
         CellP[i].FaceClosureError = 0;
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
         CellP[i].KernelDensityForVolumeRelaxation = 0; /* set by the first density pass */
@@ -723,6 +737,13 @@ void init(void)
             CellP[i].Rad_Flux_AGN = 0;
 #endif
         }
+#if defined(COOL_MOLECFRAC_NONEQM)
+        if(RestartFlag == 2) /* the snapshot stores the fraction per neutral H; rebuild the total from it */
+        {
+            CellP[i].MolecularMassFraction_perNeutralH = DMIN(1,DMAX(0,CellP[i].MolecularMassFraction_perNeutralH));
+            CellP[i].MolecularMassFraction = DMIN(1,DMAX(0, 1.-CellP[i].Ne/1.25)) * CellP[i].MolecularMassFraction_perNeutralH;
+        }
+#endif
         /* the cached composition is not carried in snapshots, so seed it on any start that does not
            restore the cell wholesale. it is refreshed at the first equation-of-state call regardless */
         if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT; CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT;}
@@ -1177,18 +1198,20 @@ void init(void)
         All.MinMassForParticleMerger = MERGESPLIT_HARDCODE_MIN_MASS;
 #endif
 
-#ifdef SINGLE_STAR_SINK_DYNAMICS /* Get mean gas mass, used in various subroutines */
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT) /* Get mean gas mass, used in various subroutines (GravAccel_GMCTurbInit reads it without sinks) */
         double mpi_mass_tot; long mpi_Ngas; long Ngas_l = (long) N_gas;
         MPI_Allreduce(&mass_tot, &mpi_mass_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&Ngas_l, &mpi_Ngas, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
         if(mpi_Ngas > 0) /* a gas-free run has no mean gas mass: keep the sink masses assigned above instead of a 0/0 */
         {
             All.MeanGasParticleMass = mpi_mass_tot/( (double)mpi_Ngas );
+#ifdef SINGLE_STAR_SINK_DYNAMICS
             if(RestartFlag==0){
                 for(i=0; i<NumPart; i++){
                     if(P[i].Type==5){P[i].Sink_Formation_Mass = All.MeanGasParticleMass;} // will behave as if this sink formed from a gas cell with the average mass
                 }
             }
+#endif
         }
 #endif
     }
@@ -1243,14 +1266,6 @@ void init(void)
     }
     
 
-#if defined(COOL_MOLECFRAC_NONEQM)
-    if(RestartFlag == 2) // should have read in CellP[i].MolecularMassFraction_perNeutralH
-    {
-        CellP[i].MolecularMassFraction_perNeutralH = DMIN(1,DMAX(0,CellP[i].MolecularMassFraction_perNeutralH));
-        CellP[i].MolecularMassFraction = DMIN(1,DMAX(0, 1.-CellP[i].Ne/1.25)) * CellP[i].MolecularMassFraction_perNeutralH;
-    }
-#endif
-    
 
 #ifdef CHIMES_INITIALISE_IN_EQM
     if (RestartFlag != 1)

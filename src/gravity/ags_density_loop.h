@@ -373,7 +373,7 @@ struct AgsDensitySpec {
     /* Partition-by-subgroup contract per design v0.4.2 §5a. Each active i
      * lives in exactly one bm subgroup determined by P[i].Type (fixed for
      * lifetime). Runner asserts via active_subgroup_key under
-     * GIZMO_NLR_ASSERT_PARTITION / DEBUG. */
+     * DEBUG. */
     static constexpr bool actives_partition_by_subgroup     = true;
 
     using CallScalars   = AgsDensityCallScalars;
@@ -636,19 +636,6 @@ struct AgsDensitySpec {
              * design v0.4.2 §8). */
         }
 
-    #ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
-        if((long long)P[i].ID == (long long)GIZMO_NLR_AGS_DEBUG_ID_TRACE) {
-            printf("[AGS_TRACE rank=%d after_iter ENTER iter=%d] ID=%lld "
-                   "current_h=%g AGS_Prev=%g accum.Ngb=%g accum.AGS_vsig_max=%g "
-                   "Left=%g Right=%g\n",
-                   this_task, iter, (long long)P[i].ID,
-                   current_h, scratch.AGS_Prev,
-                   accum.Ngb, accum.AGS_vsig_max,
-                   scratch.Left, scratch.Right);
-            KOKKOS_IF_ON_HOST((fflush(stdout);))
-        }
-    #endif
-
         /* Final-radius writeback: the runner owns
          * its own per-active radii_uvm[sg][slot] (mutated via AdjustRadius
          * returns), but P[i].AGS_KernelRadius is what the post-runner
@@ -808,19 +795,6 @@ struct AgsDensitySpec {
         }
 
         if(!redo_particle) {
-    #ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
-            if((long long)P[i].ID == (long long)GIZMO_NLR_AGS_DEBUG_ID_TRACE) {
-                printf("[AGS_TRACE rank=%d after_iter Converged] ID=%lld iter=%d "
-                       "current_h=%g AGS_Prev=%g NumNgb_raw=%g NumNgb_norm=%g "
-                       "Left=%g Right=%g minsoft=%g maxsoft=%g "
-                       "set_to_maxrkern=%d set_to_minrkern=%d\n",
-                       this_task, (long long)P[i].ID, iter,
-                       current_h, scratch.AGS_Prev, NumNgb_raw, NumNgb_norm,
-                       scratch.Left, scratch.Right, minsoft, maxsoft,
-                       scratch.set_to_maxrkern, scratch.set_to_minrkern);
-                KOKKOS_IF_ON_HOST((fflush(stdout);))
-            }
-    #endif
             /* Converged — runner removes from active_set. Caller-side final
              * pass picks up P[i].AGS_KernelRadius at its current value. */
             return IterResult{IterStatus::Converged, 0.0};
@@ -851,30 +825,8 @@ struct AgsDensitySpec {
         if(scratch.set_to_maxrkern == 0 && scratch.set_to_minrkern == 0) {
             /* Standard bisection update (rkern.cc:284-393). */
             if(NumNgb_norm < (desnumngb - desnumngbdev)) {
-    #ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
-                if((long long)P[i].ID == (long long)GIZMO_NLR_AGS_DEBUG_ID_TRACE) {
-                    printf("[AGS_TRACE rank=%d after_iter BISECT_LEFT iter=%d] ID=%lld "
-                           "NumNgb_norm=%g desnumngb=%g desnumngbdev=%g "
-                           "current_h=%g Left_before=%g (will set Left=current_h)\n",
-                           this_task, iter, (long long)P[i].ID,
-                           NumNgb_norm, desnumngb, desnumngbdev,
-                           current_h, scratch.Left);
-                    KOKKOS_IF_ON_HOST((fflush(stdout);))
-                }
-    #endif
                 if(current_h > scratch.Left) scratch.Left = current_h;
             } else {
-    #ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
-                if((long long)P[i].ID == (long long)GIZMO_NLR_AGS_DEBUG_ID_TRACE) {
-                    printf("[AGS_TRACE rank=%d after_iter BISECT_RIGHT iter=%d] ID=%lld "
-                           "NumNgb_norm=%g desnumngb=%g desnumngbdev=%g "
-                           "current_h=%g Right_before=%g (will set Right=current_h)\n",
-                           this_task, iter, (long long)P[i].ID,
-                           NumNgb_norm, desnumngb, desnumngbdev,
-                           current_h, scratch.Right);
-                    KOKKOS_IF_ON_HOST((fflush(stdout);))
-                }
-    #endif
                 if(scratch.Right != 0) {
                     if(current_h < scratch.Right) scratch.Right = current_h;
                 } else {
@@ -958,18 +910,6 @@ struct AgsDensitySpec {
          * iter-K value while radii_uvm[sg][slot] holds iter-(K+1) — and the
          * post-runner finalize pass would see the stale K value. */
         P[i].AGS_KernelRadius = (MyFloat)new_h;
-
-    #ifdef GIZMO_NLR_AGS_DEBUG_ID_TRACE
-        if((long long)P[i].ID == (long long)GIZMO_NLR_AGS_DEBUG_ID_TRACE) {
-            printf("[AGS_TRACE rank=%d after_iter AdjustRadius] ID=%lld iter=%d "
-                   "current_h=%g new_h=%g NumNgb_raw=%g NumNgb_norm=%g "
-                   "Left=%g Right=%g minsoft=%g maxsoft=%g\n",
-                   this_task, (long long)P[i].ID, iter,
-                   current_h, new_h, NumNgb_raw, NumNgb_norm,
-                   scratch.Left, scratch.Right, minsoft, maxsoft);
-            KOKKOS_IF_ON_HOST((fflush(stdout);))
-        }
-    #endif
 
         return IterResult{IterStatus::AdjustRadius, new_h};
     }

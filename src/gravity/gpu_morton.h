@@ -13,8 +13,8 @@
  *   4. Emit tree topology into the SoA `Nodes_dev` mirror.
  *
  * The Morton encoding mirrors GIZMO's CPU build precision: 42 bits per axis
- * via the IEEE-754 mantissa-bit-trick (matches host domain_double_to_int
- * with BITS_PER_DIMENSION = 42).  Keys are stored as the Morton128 struct
+ * from the position -> integer coordinate mapping shared with the host
+ * (domain/domain_key_functions.h).  Keys are stored as the Morton128 struct
  * defined in gpu_morton_functions.h: a (hi, lo) pair of uint64_t,
  * lexicographically equivalent to the full 126-bit Morton ordering.
  *

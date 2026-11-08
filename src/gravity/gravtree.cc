@@ -17,6 +17,9 @@
 #include "../mesh/kernel.h"
 #include "../declarations/gpu_rng.h"
 #include "./analytic_gravity.h"
+#include "gpu_topology_finalize.h"   /* gpu_tree_alloc_bytes: the Hermite ghost table is SharedSpace */
+#include <vector>
+#include <algorithm>
 
 /*! Host-vs-device routing for the gravity walk, keyed on the RANK-LOCAL count of active
  *  gravity candidates. With few candidates the host walk is the cheaper route; with many
@@ -134,6 +137,114 @@ void refresh_old_acceleration_for_tree_opening(void)
 
 
 
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+struct hermite_ghost_entry *HermiteGhostTab = NULL;   /* the table for the current Hermite pass; NULL outside one */
+int NHermiteGhost = 0;
+/* Storage behind the table (SharedSpace, read by both walks): kept across passes and grown only when the global
+ * count of Hermite-type particles exceeds its capacity, so a pass normally allocates nothing. */
+static struct hermite_ghost_entry *HermiteGhostStore = NULL;
+static int HermiteGhostCapacity = 0;
+
+/* This rank's Hermite-type particles, listed where every particle is visited anyway -- each gravity tree build and each
+ * re-sequencing under a standing tree -- so a Hermite pass reads only these and never scans the particles. A particle created since the build is
+ * not in any other rank's imported tree, so nobody looks it up; one removed since has zero mass and is skipped. */
+static std::vector<int> HermiteLocalSources;
+void hermite_local_sources_rebuild(void)
+{
+    HermiteLocalSources.clear();
+    if(NTask <= 1) {return;}   /* a single rank imports no foreign leaves, so the table is never built */
+    for(int i = 0; i < NumPart; i++) {if(((1 << P[i].Type) & HERMITE_INTEGRATION) && P[i].Mass > 0) {HermiteLocalSources.push_back(i);}}
+}
+
+/* Host buffers of the table build, reused from pass to pass. HermiteGhostOrder[k] is the gathered entry that
+ * goes to table slot k (ascending ID): reused while the count is unchanged and the result is still sorted, which
+ * holds between tree builds unless a listed particle drops out; otherwise rebuilt. */
+static std::vector<struct hermite_ghost_entry> HermiteGhostMine, HermiteGhostGathered;
+static std::vector<int> HermiteGhostCounts, HermiteGhostDispls, HermiteGhostOrder;
+
+/* Gather every rank's Hermite-type particles at the state a local walk would read them in this pass
+ * (see hermite_ghost_entry). Only on a Hermite pass with more than one rank: a single rank has no
+ * foreign leaves. */
+static void hermite_ghost_table_build(void)
+{
+    HermiteGhostTab = NULL; NHermiteGhost = 0;
+    if(!HermiteOnlyFlag || NTask <= 1) {return;}
+    const struct DriftKickTableView tables = drift_kick_table_view_host();
+    std::vector<struct hermite_ghost_entry> &mine = HermiteGhostMine;
+    mine.clear();
+    for(int i : HermiteLocalSources)
+    {
+        if(i >= NumPart || !((1 << P[i].Type) & HERMITE_INTEGRATION) || P[i].Mass <= 0) {continue;}
+        struct hermite_ghost_entry e; e.id = P[i].ID;
+        Vec3<double> pos = P[i].Pos, vel = P[i].Vel;
+        if(P[i].Ti_current < All.Ti_Current)
+        {
+            struct particle_motion_prediction motion(P, CellP, i);
+            predict_particle_motion(motion, All.Ti_Current, &tables);
+            pos = motion.pos_; vel = motion.vel_;
+        }
+        if(hermite_source_needs_prediction(i, P, HermiteWalk)) {hermite_predict_source_state(i, P, HermiteWalk, &HermiteWalkTables, pos, vel);}
+        e.pos = pos; e.vel = vel;
+        mine.push_back(e);
+    }
+    const int esz = (int) sizeof(struct hermite_ghost_entry);
+    int n_local = (int) mine.size();
+    std::vector<int> &counts = HermiteGhostCounts, &displs = HermiteGhostDispls;
+    counts.resize(NTask); displs.resize(NTask);
+    MPI_Allgather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    int n_tot = 0;
+    for(int t = 0; t < NTask; t++) {displs[t] = n_tot * esz; n_tot += counts[t]; counts[t] *= esz;}
+    if(n_tot == 0) {return;}
+    if(n_tot > HermiteGhostCapacity)   /* n_tot is global, so every rank grows on the same pass */
+    {
+        const int capacity = n_tot + n_tot / 2;   /* headroom, so a run that keeps forming sinks does not regrow at each new count */
+        struct hermite_ghost_entry *grown = (struct hermite_ghost_entry *) gpu_tree_alloc_bytes((size_t) capacity * esz, "hermite_ghost_table");
+        int ok = (grown != NULL), all_ok = 0;
+        MPI_Allreduce(&ok, &all_ok, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if(!all_ok)   /* every rank stops here together, rather than one rank missing the exchange below */
+        {
+            if(grown) {gpu_tree_free_bytes(grown);}
+            endrun(90000099); return;
+        }
+        if(HermiteGhostStore) {gpu_tree_free_bytes(HermiteGhostStore);}
+        HermiteGhostStore = grown; HermiteGhostCapacity = capacity;
+    }
+    std::vector<struct hermite_ghost_entry> &gathered = HermiteGhostGathered;
+    gathered.resize(n_tot);
+    MPI_Allgatherv(mine.data(), n_local * esz, MPI_BYTE, gathered.data(), counts.data(), displs.data(), MPI_BYTE, MPI_COMM_WORLD);
+    HermiteGhostTab = HermiteGhostStore;
+    std::vector<int> &order = HermiteGhostOrder;
+    int sorted = ((int) order.size() == n_tot);
+    for(int k = 0; sorted && k < n_tot; k++)
+    {
+        HermiteGhostTab[k] = gathered[order[k]];
+        if(k > 0 && HermiteGhostTab[k].id < HermiteGhostTab[k-1].id) {sorted = 0;}
+    }
+    if(!sorted)
+    {
+        order.resize(n_tot);
+        for(int k = 0; k < n_tot; k++) {order[k] = k;}
+        std::sort(order.begin(), order.end(), [&gathered](int a, int b) {return gathered[a].id < gathered[b].id;});
+        for(int k = 0; k < n_tot; k++) {HermiteGhostTab[k] = gathered[order[k]];}
+    }
+    NHermiteGhost = n_tot;
+}
+
+/* End of a Hermite pass: the walks stop using the table; its storage is kept for the next pass. */
+static void hermite_ghost_table_close(void)
+{
+    HermiteGhostTab = NULL; NHermiteGhost = 0;
+}
+
+/* At shutdown, before Kokkos is finalized. */
+void hermite_ghost_table_release(void)
+{
+    hermite_ghost_table_close();
+    if(HermiteGhostStore) {gpu_tree_free_bytes(HermiteGhostStore);}
+    HermiteGhostStore = NULL; HermiteGhostCapacity = 0;
+}
+#endif
+
 void gravity_tree(void)
 {
     /* initialize variables */
@@ -162,6 +273,9 @@ void gravity_tree(void)
        pass, since the predictor returns immediately when HermiteOnlyFlag is 0. */
     HermiteWalk = hermite_walk_state_snapshot();
     if(HermiteOnlyFlag) {HermiteWalkTables = drift_kick_table_view_host();}
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    hermite_ghost_table_build();
+#endif
 #endif
 
     /* construct tree if needed */
@@ -230,9 +344,15 @@ void gravity_tree(void)
         PRINT_STATUS(" ..Tree construction done.");
     }
 
-    /* refresh tree moments if stale (e.g. after star formation or sink mass change).
-       This must run before ANY gravity evaluation including Hermite calls, since
-       stale moments produce wrong forces. Much cheaper than a full treebuild. */
+    /* Refresh the node moments where a site has asked for it (a sink formed, a sink run down to its relic mass). This must run
+       before any gravity evaluation, Hermite passes included. The refresh is a pass over every node, so it is asked for
+       only where a change cannot wait for the next build. Otherwise the node moments are left stale between builds ON
+       PURPOSE -- after ordinary star formation, sink swallows and spawns -- a deliberate choice, not an oversight: a new star's luminosity keys off its
+       age, which is zero at formation, so it is not yet meaningful; an immediate refresh would make the local tree
+       disagree with the tree exported to other ranks (rebuilt only at full builds) whenever a luminosity changes, i.e.
+       every step; the finite-time staleness smooths the early-age fluctuations of close sources, which an immediate
+       refresh turns into opening-criterion noise and, in past experiments, larger force errors; and it would put an
+       all-node pass on the smallest steps. A build is forced once insertions pass 1% of the particles. */
     {
         int TreeMomentsStaleFlag_global;
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -735,16 +855,6 @@ gravity_walk_attempt:
 	    } // we put a floor here to avoid underflow errors where exp(-large) = 0 - will just return a very high surface density that will be in the highly optically thick regime where both the ISRF and cooling radiation escape will be negligible
         P[i].SigmaEff = -log(attenuation/RT_USE_TREECOL_FOR_NH) / (kappa_photoelectric * UNIT_SURFDEN_IN_CGS);
 	    if(P[i].SigmaEff < minimum_column) {P[i].SigmaEff = minimum_column;} // if in the overflowing regime just take the minimum column density to extrapolate better to the IR-thick regime
-#ifdef GIZMO_TREECOL_DIAG
-        if(ThisTask==0 && P[i].Type==0 && i<10 && All.NumCurrentTiStep<4) {
-            double csum=0; for(int kb=0;kb<RT_USE_TREECOL_FOR_NH;kb++) csum+=P[i].ColumnDensityBins[kb];
-            printf("TREECOL_DIAG step=%d i=%d ID=%llu SigmaEff=%g binsum=%g bins=[%g,%g,%g,%g,%g,%g] LET=%d\n",
-                   All.NumCurrentTiStep,(int)i,(unsigned long long)P[i].ID,P[i].SigmaEff,csum,
-                   P[i].ColumnDensityBins[0],P[i].ColumnDensityBins[1],P[i].ColumnDensityBins[2],
-                   P[i].ColumnDensityBins[3],P[i].ColumnDensityBins[4],P[i].ColumnDensityBins[5],
-                   (MaxForeignNodes>0)?1:0); fflush(stdout);
-        }
-#endif
 #endif
 
 #if !defined(BOX_PERIODIC) && !defined(PMGRID) /* some factors here in case we are trying to do comoving simulations in a non-periodic box (special use cases) */
@@ -763,17 +873,16 @@ gravity_walk_attempt:
 #endif /* end SELFGRAVITY operations (check if SELFGRAVITY_OFF not enabled) */
 
 
-    add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
-
 #ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
-    /* the acceleration is now final for every particle this call rebuilt (the analytic terms' own test): keep it for the skipped walks
-       that follow. A Hermite-only call rebuilds without rerunning the forces added after gravity, so those are missing from the Hermite
-       corrector for any type that both feels one and is Hermite-integrated */
+    /* the tree part of the acceleration, for every particle this call rebuilt: what its skipped walks advance with the jerk. A skipped
+       walk has already advanced its own. The analytic terms and the forces added after gravity go on top, afresh each step */
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif
-    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {int i = ActiveParticleList[ii]; if(analytic_gravity_adds_to(i, ii)) {P[i].GravAccel_Retained = P[i].GravAccel;}}
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {int i = ActiveParticleList[ii]; if(gravity_treewalk_candidate_prewalk(i, ii)) {P[i].GravAccel_Retained = P[i].GravAccel;}}
 #endif
+
+    add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
 
 
     /* Now the force computation is finished: gather timing and diagnostic information */
@@ -890,6 +999,9 @@ gravity_walk_attempt:
          * whichever path each target took. A larger value means the two no longer measure the same thing. */
         if(sum_costtotal>0) {PRINT_STATUS(" ..relative error in the total number of tree-gravity interactions = %g", (sum_costtotal - sum_costtotal_new) / sum_costtotal);}
     }
+#endif
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    hermite_ghost_table_close();
 #endif
     CPU_Step[CPU_TREEMISC] += measure_time();
 }

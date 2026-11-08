@@ -221,6 +221,11 @@ struct gpu_ewald_pot_data_t {
 #ifdef HERMITE_INTEGRATION
 struct gpu_hermite_walk_data_t {
     struct HermiteWalkState   state;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    const struct hermite_ghost_entry *ghost;   /* owner-side Hermite source table, NULL outside a multi-rank Hermite pass */
+    int n_ghost;
+    const MyIDType *foreign_leaf_id;           /* ForeignLeafID (SharedSpace), indexed by foreign slot */
+#endif
 };
 #endif
 
@@ -719,6 +724,9 @@ gpu_grav_member_inputs_init(const gpu_grav_walk_ctx_t &ctx, int target, gpu_grav
 #ifdef RT_USE_GRAVTREE
     /* valid-gas RT gate via the shared helper */
     in.valid_gas_particle_for_rt = grav_target_valid_gas_for_rt(ptype, soft, pmass);
+#ifdef HYDRO_MULTIFLUID_DM
+    if(in.valid_gas_particle_for_rt && P_dev[target].FluidType == FLUID_DM) {in.valid_gas_particle_for_rt = 0;} /* the dark fluid takes no baryonic radiation */
+#endif
 #endif /* RT_USE_GRAVTREE */
 
     /* RT_LEBRON radiation-pressure coupling factor (forcetree.cc). Once per target, before
@@ -842,6 +850,7 @@ struct gpu_grav_node_prelude_t {
     node_motion_prediction motion;  /* every moving field at the walk time; s_node and len_node are copied out of it */
     int in_foreign_n;
     int fl_tag, fl_type;            /* foreign-leaf identity (sidecar), or 0 / -1 */
+    int fl_slot;                    /* foreign slot of the identity above, or -1 */
     double fl_zeta, fl_soft;
     grav_node_kind_t node_kind;
     int sibling, nextnode;
@@ -868,10 +877,11 @@ gpu_grav_node_prelude(const gpu_grav_walk_ctx_t &ctx, int no, gpu_grav_node_prel
 
     /* Foreign-leaf identity lookup.  foreign_slot = idx-maxNodes -- the foreign-only sidecar
      * index, EXPLICIT and bounds-checked so it can never be confused with the SoA index idx. */
-    nd.fl_tag = 0; nd.fl_type = -1; nd.fl_zeta = 0.0; nd.fl_soft = 0.0;
+    nd.fl_tag = 0; nd.fl_type = -1; nd.fl_zeta = 0.0; nd.fl_soft = 0.0; nd.fl_slot = -1;
     if(nd.in_foreign_n && tree_soa->foreign_leaf_tag) {
         int fs = idx - ctx.maxNodes;
         if(fs >= 0 && fs < tree_soa->foreign_leaf_cap) {
+            nd.fl_slot = fs;
             nd.fl_tag  = tree_soa->foreign_leaf_tag[fs];
             nd.fl_type = tree_soa->foreign_leaf_type[fs];
             nd.fl_zeta = (double) tree_soa->foreign_leaf_zeta[fs];
@@ -1335,6 +1345,24 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
     src.dv[1] = (double) nd.motion.vs_[1] - in.vel[1];
     src.dv[2] = (double) nd.motion.vs_[2] - in.vel[2];
 #endif
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    int k_gh = -1;   /* owner-side Hermite state of a foreign leaf, when one replaces the snapshot */
+    /* A foreign real leaf of a Hermite type, on a Hermite pass: the owner-side state (hermite_ghost_entry)
+       in place of the imported snapshot. Mirrors forcetree.cc. */
+    if(nd.fl_tag == 1 && ctx.hermite.ghost && ctx.hermite.foreign_leaf_id && nd.fl_slot >= 0
+       && (HERMITE_INTEGRATION & (1 << nd.fl_type)) && src.mass > 0)
+    {
+        k_gh = hermite_ghost_lookup(ctx.hermite.ghost, ctx.hermite.n_ghost, ctx.hermite.foreign_leaf_id[nd.fl_slot]);
+        if(k_gh >= 0) {
+            src.dr = ctx.hermite.ghost[k_gh].pos - in.open.pos;
+            gravity_box_nearest_image(src.dr[0], src.dr[1], src.dr[2], -1);
+            src.r2 = src.dr.norm_sq();
+#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
+            src.dv = ctx.hermite.ghost[k_gh].vel - in.vel;
+#endif
+        }
+    }
+#endif
 #ifdef SINK_DYNFRICTION_FROMTREE
     {
         long np = tree_soa->N_part[idx];
@@ -1407,6 +1435,9 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
 #else
         for(int k = 0; k < 3; k++) {sink_dr[k] = tree_soa->sink_pos[idx][k] - in.open.pos[k];}   /* not moved between builds */
 #endif
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+        if(k_gh >= 0) {sink_dr = ctx.hermite.ghost[k_gh].pos - in.open.pos;}   /* the singleton sink IS the leaf: same state as the force */
+#endif
         gravity_box_nearest_image(sink_dr[0], sink_dr[1], sink_dr[2], -1);
         grav_sink_prox_target_t prox_target = {}; prox_target.ptype = in.open.ptype; prox_target.pmass = in.pmass; prox_target.soft = in.open.soft;
 #if defined(SINGLE_STAR_TIMESTEPPING)
@@ -1418,6 +1449,9 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
         prox_src.motion.vel = Vec3<double>{(double)nd.motion.sink_vel_[0], (double)nd.motion.sink_vel_[1], (double)nd.motion.sink_vel_[2]};
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+        if(k_gh >= 0) {prox_src.motion.vel = ctx.hermite.ghost[k_gh].vel;}
+#endif
 #endif
 #if defined(SPECIAL_POINT_MOTION)
         prox_src.motion.acc = tree_soa->sink_acc[idx];
@@ -2897,6 +2931,11 @@ extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
 #ifdef HERMITE_INTEGRATION
     struct gpu_hermite_walk_data_t hermite_dev;
     hermite_dev.state = HermiteWalk;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    hermite_dev.ghost = HermiteGhostTab;
+    hermite_dev.n_ghost = NHermiteGhost;
+    hermite_dev.foreign_leaf_id = ForeignLeafID;
+#endif
 #endif
 
     /* Invariant guard: reset the per-walk counter. */

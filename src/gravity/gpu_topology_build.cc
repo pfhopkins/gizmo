@@ -27,6 +27,7 @@
 #include "../declarations/gpu_error_check.h"
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../system/gpu_particles_arena.h"
+#include "../domain/domain_key_functions.h"
 #include "gpu_morton.h"
 #include "gpu_morton_functions.h"
 #include "gpu_peano_walk.h"
@@ -160,26 +161,18 @@ static int *grow_int_buffer(int *buf, int old_cap, int new_cap, const char *labe
     return buf;
 }
 
-/* The one place a position becomes a (Peano, Morton) key pair.  Used by the bucketing kernel, by the
- * retained-attachment recovery, and by the clamp, so the three cannot drift apart. */
+/* The device's route from a position to a (Peano, Morton) key pair.  The position -> integer
+ * coordinate mapping is the shared one in domain_key_functions.h, the same source the host
+ * decomposition keys with; the bucketing kernel, the retained-attachment recovery and the clamp
+ * all come through here. */
 KOKKOS_INLINE_FUNCTION peanokey topo_key_of_position_(double x, double y, double z,
                                                       double dc0, double dc1, double dc2,
                                                       double dlen, int bits, Morton128 *morton_out)
 {
-    double fx = (dlen > 0.0) ? ((x - dc0) / dlen) : 0.0;
-    double fy = (dlen > 0.0) ? ((y - dc1) / dlen) : 0.0;
-    double fz = (dlen > 0.0) ? ((z - dc2) / dlen) : 0.0;
-    /* Clamp the sum, not the fraction: the key is the mantissa of (frac + 1.0), and a fraction just
-     * under 1.0 can carry that sum up to 2.0, whose mantissa is zero -- the first cell instead of the
-     * last.  See gpu_morton.cc. */
-    double sx = fx + 1.0, sy = fy + 1.0, sz = fz + 1.0;
-    if(!(sx >= 1.0)) {sx = 1.0;} if(!(sx < 2.0)) {sx = 0x1.fffffffffffffp0;}
-    if(!(sy >= 1.0)) {sy = 1.0;} if(!(sy < 2.0)) {sy = 0x1.fffffffffffffp0;}
-    if(!(sz >= 1.0)) {sz = 1.0;} if(!(sz < 2.0)) {sz = 0x1.fffffffffffffp0;}
+    uint64_t c[3];
+    domain_key_integer_coordinates(x, y, z, dc0, dc1, dc2, dlen, bits, c);
     Morton128 m;
-    peanokey pkey = gpu_peano_and_morton_key(gpu_morton_double_to_int42(sx),
-                                             gpu_morton_double_to_int42(sy),
-                                             gpu_morton_double_to_int42(sz), bits, &m);
+    peanokey pkey = gpu_peano_and_morton_key(c[0], c[1], c[2], bits, &m);
     *morton_out = m;
     return pkey;
 }
@@ -435,7 +428,7 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
         const int  nret = g_retained_n;
         struct NODE *Nodes_uvm = Nodes;
         /* How far inside the face the clamped point has to land.  A key keeps the top 42 bits of the
-         * mantissa (gpu_morton_double_to_int42), so one cell of key space is DomainLen * 2^-42 of
+         * mantissa (domain_key_functions.h), so one cell of key space is DomainLen * 2^-42 of
          * position, and a point merely a rounding step below the upper face still encodes into the
          * NEXT cell -- i.e. into the neighbouring top-leaf.  Two cells of margin puts it clear of that
          * and of the rounding in forming the fraction, while being geometrically nothing: a top-leaf

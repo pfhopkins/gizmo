@@ -12,8 +12,8 @@
  *     density_evaluate_data_out_ (literal field-by-field port):
  *     NV_T_face_weights/ParticleVel/GradH_numer = Vec3<MyDouble>;
  *     NV_D/NV_A = MyFloat[3][3]; GradRho/Gas_B = Vec3<MyFloat>/Vec3<MyDouble>;
- *     Sink_dr_to_NearestGasNeighbor nested under BH_ACCRETE_NEARESTFIRST
- *     || SINGLE_STAR_TIMESTEPPING; GasVel under TURB_DRIVING || GRAIN_FLUID
+ *     Sink_dr_to_NearestGasNeighbor nested under SINGLE_STAR_TIMESTEPPING;
+ *     GasVel under TURB_DRIVING || GRAIN_FLUID
  *     (NOT GRAIN_FLUID alone); no invented Gas_Density / SmoothedVel.
  *   - ActiveData mirrors density_functions.h:33-46 density_evaluate_data_in_:
  *     Pos=Vec3<MyDouble>, Vel=Vec3<MyFloat>, Type=int, Accel=Vec3<MyFloat>
@@ -151,7 +151,7 @@ struct DensityAccumData {
 
 #if defined(SINK_PARTICLES)
     int                        Sink_TimeBinGasNeighbor;       /* MIN, init = TIMEBINS */
-  #if defined(BH_ACCRETE_NEARESTFIRST) || defined(SINGLE_STAR_TIMESTEPPING)
+  #if defined(SINGLE_STAR_TIMESTEPPING)
     MyDouble                   Sink_dr_to_NearestGasNeighbor; /* MIN, init = MAX_REAL_NUMBER */
   #endif
 #endif
@@ -392,11 +392,7 @@ struct DensitySpec {
      *
      * Gating mirrors AccumData declaration verbatim:
      * Sink_TimeBinGasNeighbor under SINK_PARTICLES; Sink_dr_to_NearestGasNeighbor
-     * under (SINK_PARTICLES && (BH_ACCRETE_NEARESTFIRST||SINGLE_STAR_TIMESTEPPING)).
-     * The asymmetry between declaration gate (BH || SINGLE_STAR) and
-     * pair-body update gate (SINGLE_STAR only) is the legacy's; the merge
-     * follows the DECLARATION gate, so the field is correctly combined
-     * regardless of whether the pair body touched it this iter.
+     * under (SINK_PARTICLES && SINGLE_STAR_TIMESTEPPING).
      * ==================================================================== */
     KOKKOS_INLINE_FUNCTION
     static void merge_accum(AccumData& local, const AccumData& peer) {
@@ -456,7 +452,7 @@ struct DensitySpec {
         if (peer.Sink_TimeBinGasNeighbor < local.Sink_TimeBinGasNeighbor) {
             local.Sink_TimeBinGasNeighbor = peer.Sink_TimeBinGasNeighbor;
         }
-  #if defined(BH_ACCRETE_NEARESTFIRST) || defined(SINGLE_STAR_TIMESTEPPING)
+  #if defined(SINGLE_STAR_TIMESTEPPING)
         /* MIN reduction: legacy `if(dr_eff_wtd < out->dr) out->dr = dr_eff_wtd`
          * at density_functions.h:141. Sentinel init = MAX_REAL_NUMBER. */
         if (peer.Sink_dr_to_NearestGasNeighbor < local.Sink_dr_to_NearestGasNeighbor) {
@@ -1011,7 +1007,7 @@ struct DensitySpec {
 #endif
 #if defined(SINK_PARTICLES)
         accum.Sink_TimeBinGasNeighbor       = TIMEBINS;          /* MIN-reduction sentinel */
-  #if defined(BH_ACCRETE_NEARESTFIRST) || defined(SINGLE_STAR_TIMESTEPPING)
+  #if defined(SINGLE_STAR_TIMESTEPPING)
         accum.Sink_dr_to_NearestGasNeighbor = MAX_REAL_NUMBER;   /* MIN-reduction sentinel */
   #endif
 #endif
@@ -1316,6 +1312,14 @@ struct DensitySpec {
                      * NOT density. */
                     short int TimeBin_j = Pj.TimeBin;
                     if (TimeBin_j < 0) { TimeBin_j = -TimeBin_j - 1; }
+                    /* A step truncated by a wake-up is shorter than its bin, so the bin over-reports how
+                     * long this neighbour runs and a sink stepping on it outruns its gas; unlike gas, a
+                     * sink cannot be woken to recover. Floor at the bin the actual step fits, stopping at
+                     * 1: bin 0 has zero length and reads as 'no neighbour', which would disable the limiter. */
+                    {
+                        const integertime dt_j = Pj.integertime_step();
+                        if (dt_j > 0) { while (TimeBin_j > 1 && GET_INTEGERTIME_FROM_TIMEBIN(TimeBin_j) > dt_j) { TimeBin_j--; } }
+                    }
                     if (accum.Sink_TimeBinGasNeighbor > TimeBin_j) {
                         accum.Sink_TimeBinGasNeighbor = TimeBin_j;
                     }

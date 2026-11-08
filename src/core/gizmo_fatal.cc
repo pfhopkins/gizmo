@@ -169,15 +169,5 @@ void gizmo_install_mpi_error_handler(void)
             reason ? reason : "(no reason given)");
     fflush(stderr);
 
-#ifdef GIZMO_UNSAFE_LOCAL_COREDUMP_HOLD
-    /* LOCAL-DEBUG ONLY, never defined on Vista/production. Preserves a core-dump-
-     * friendly hold for a local debugger. This path is a KNOWN node-lock risk and
-     * is compiled out of every production build (grep gate asserts the default
-     * fatal path is clean). */
-    fprintf(stderr, "  [GIZMO_UNSAFE_LOCAL_COREDUMP_HOLD] holding for local debugger; abort() for core\n");
-    fflush(stderr);
-    abort();
-#endif
-
     gizmo_fatal_fast_exit(code, "reviewed hard-exit (mid-protocol / allocator floor)");
 }

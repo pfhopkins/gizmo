@@ -222,6 +222,9 @@ void sink_swallow_and_kick_loop(void)
     /* Swallowed gas keeps its slot with zero mass until compaction; anything that kept the gas
        topology from before this must know (counted on the sink's rank; consumers decide collectively). */
     if(N_gas_sw > 0) {ghost_exchange_gas_eligibility_changed("sink_swallow_and_kick_loop");}
+    /* Swallowed particles keep their slot, at zero mass and still linked in the tree, until the next rearrange or build,
+       and the node moments are deliberately not refreshed for them: a refresh is an all-node pass, and swallows happen on
+       the smallest steps (see the moment-refresh note in gravtree.cc). */
 
     int Ntot_gas = 0, Ntot_sink = 0, Ntot_star = 0, Ntot_dm = 0;
     MPI_Reduce(&N_gas_sw,  &Ntot_gas,  1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -695,6 +698,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         wakeup_sidecar_mark(j);   /* whole-struct clone inherits the template particle's wakeup into the spawned slot */
 #ifdef MHD_MODIFIED_GRADIENT
         CellP[j].MG_cgcoeff = 0; CellP[j].MG_piece_token = 0; CellP[j].MG_envelope = 0;   /* a new cell has no MG state (the template's belongs to another place) */
+#endif
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+        CellP[j].InternalEnergy_FromIR_Pending = 0; /* a new cell has absorbed no IR yet (the template's belongs to another place) */
 #endif
 
 #if defined(SINK_TEST_WIND_MIXED_FASTSLOW) || defined(SINK_RIAF_SUBEDDINGTON_MODEL)
