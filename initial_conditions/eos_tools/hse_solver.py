@@ -136,7 +136,7 @@ def _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps=4000, sur
     zone_id[0] = 0
 
     iz = 0
-    r_at_mzero = -1.0  # tracks first index where m hit 0; -1 = never
+    r_at_mzero = -1.0  # radius where the enclosed mass reaches 0 (interpolated inside its step); -1 = never
 
     for k in range(n_steps):
         if r[k] <= 0 or m[k] <= 0:
@@ -194,6 +194,10 @@ def _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps=4000, sur
             if mode == "u": val_n = val + (P[k] / rho[k] ** 2) * (P_n - P[k]) / max(mat.pressure_cs2(rho[k], val, mode)[1], 1e-30)
         # Floor pressure to keep EOS inversion sane.
         if P_n < P_surface * 1e-6: P_n = P_surface * 1e-6
+        if m_n <= 0 and r_at_mzero < 0:
+            # the mass runs out inside this step: locate it by linear interpolation of m (on the step grid it would jump by a whole
+            # step, which no radius change can resolve below that size)
+            r_at_mzero = r_now + dr_left * (m_now / (m_now - m_n)) if m_now > m_n else r_now
         if m_n < 0: m_n = 0.0
         P[k + 1] = P_n; m[k + 1] = m_n; val = val_n
         if mode == "adiabat":
@@ -214,13 +218,17 @@ def _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps=4000, sur
 
 
 def solve_hse(M_total, T_surface, P_surface, zones,
-              R_lo=None, R_hi=None, tol=1e-7, maxit=80, n_steps=2000, verbose=False, adiabat_route="first_law",
+              R_lo=None, R_hi=None, tol=1e-9, maxit=80, n_steps=2000, verbose=False, adiabat_route="first_law",
               allow_invalid=False):
     """Bisect on body radius R such that m(r=0) = 0. Returns the converged
-    integrated profile dict from `_integrate_inward`, plus 'R'. The mass left at the
-    centre acts as a point mass on the innermost steps (dP/dr = -G m rho / r^2), so tol
-    (the fraction of M_total allowed to remain) must be small: 1e-3 left the central
-    pressure of an Earth-mass body ~20x too high. adiabat_route: "first_law" (default) or "entropy", see the module docstring.
+    integrated profile dict from `_integrate_inward`, plus 'R'. The residual is a signed
+    mass fraction: the mass left at the centre (positive), or the mass a core reaching the
+    centre would still need (negative; where the mass runs out, located inside its step, at
+    the innermost density). Mass left at the centre acts as a point mass on the innermost
+    steps (dP/dr = -G m rho / r^2), so tol must be small: 1e-3 left the central pressure of
+    an Earth-mass body ~20x too high, and 1e-7 by up to ~6e-4 (ice-giant and impactor
+    bodies, against tol 1e-10 and 1e-12, which agree to below 1e-6). A graded test body
+    (water-rock mixture bins) converged at 1e-9 but not at 1e-10, hence the default. adiabat_route: "first_law" (default) or "entropy", see the module docstring.
     A trial profile is VALID when it is finite, every inner zone's adiabat could start, and no point lay beyond the end of a
     tabulated adiabat (where its end state would stand in for states the table does not have). Invalid trials may steer the
     bisection, but a solution is accepted only when the residual is within tol and the final bracket is formed by valid
@@ -250,12 +258,19 @@ def solve_hse(M_total, T_surface, P_surface, zones,
         if prof["n_beyond_adiabat"] > 0:
             why.append(f"{prof['n_beyond_adiabat']} points beyond a tabulated adiabat's range (it ends at "
                        f"{', '.join(sorted(set(prof['adiabat_ends'])))}): the table does not reach this pressure")
-        # Signed residual: the mass runs out before the centre -> -r_at_mzero/R (negative); mass is left at the centre ->
-        # +m_center/M_total (positive); ~0 at the solution. Which side a too-small R falls on depends on the body: a
+        # Signed residual: the mass runs out before the centre -> minus the mass the missing core would hold (negative); mass is
+        # left at the centre -> +m_center/M_total (positive); ~0 at the solution. Which side a too-small R falls on depends on the body: a
         # condensed body with too small a radius cannot hold its mass even at its table's densest state, which leaves mass at
         # the centre, and with too large a radius its near-incompressible outer layers hold all of it; the bisection only
         # needs the sign change.
-        res = -prof["r_at_mzero"] / R if prof["r_at_mzero"] > 0 else prof["m"][-1] / M_total
+        if prof["r_at_mzero"] > 0:
+            # the mass runs out at r0 before the centre: the residual is the mass a core of radius r0 would hold at the innermost
+            # density reached, -(4 pi / 3) rho r0^3 / M, so that both sides of the root are mass fractions and the residual is
+            # continuous through it (a radius fraction on this side jumps against the mass fraction on the other)
+            k_last = int(np.nonzero(prof["m"] > 0)[0][-1]) if np.any(prof["m"] > 0) else 0
+            res = -(4.0 * np.pi / 3.0) * prof["rho"][k_last] * prof["r_at_mzero"] ** 3 / M_total
+        else:
+            res = prof["m"][-1] / M_total
         if not np.isfinite(res):
             raise RuntimeError(f"solve_hse: non-finite profile at trial radius {R:.4e} (check the zone spec and the tables' range)")
         prof["invalid_because"] = why

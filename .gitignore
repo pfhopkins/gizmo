@@ -129,3 +129,6 @@ _spike_backup_*/
 .claude_required_reading.txt
 # scratch parameter-file variants used when driving a test by hand
 test/*/_*.params
+# built by analysis/eos_state_census/build.sh against the local tree
+analysis/eos_state_census/libcensus.so
+analysis/eos_state_census/libcensus.build.txt
