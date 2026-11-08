@@ -17,9 +17,10 @@ phase, 1 + k component k two-phase, 9 overlap flag. The sha256 of every input an
 Not supported: mixtures whose components condense out of one another at low pressure (e.g. water in an H/He envelope near condensation),
 which need a chemical-potential treatment rather than additive volumes.
 
-    python3 -m initial_conditions.eos_tools.mix_tables <out.sesame> <table_1> <X_1> [<table_2> <X_2> ...] [--accept-u-order-pairs]
+    python3 -m initial_conditions.eos_tools.mix_tables <out.sesame> <table_1> <X_1> [<table_2> <X_2> ...] [--repair-u-order]
     (fractions sum to 1). A table with pressure falling with density, an undefined sound speed or a density gap is refused; one where u
-    does not rise with T (some energies name several temperatures) is refused unless --accept-u-order-pairs."""
+    does not rise with T (some energies name several temperatures) is refused unless --repair-u-order, which makes u rise by the smallest
+    change (rising_log_energy) and prints every node it changed."""
 import hashlib, os, sys
 import numpy as np
 from .sesame_loader import SesameTable
@@ -239,11 +240,37 @@ def write(path, rho, T, P, U, S, C, PH, lvt, mat_id=400):
     return back
 
 
-def make(out, specs, nrho=1431, lrho=(-6.0, np.log10(20.0)), T_from=0, verbose=True, accept_u_order_pairs=False):
-    """specs = [(table path, X)]; T axis = that of specs[T_from]; returns (SesameTable of the written file, report lines).
+def rising_log_energy(logu, floor, step=1.0e-6):
+    """u(T) made strictly increasing by the smallest change, density by density: only a density whose log10 u does not rise at some
+    temperature step at or above its floor row is touched; there log10 u (from the floor row up) is replaced by its least-squares
+    projection onto sequences rising by at least `step` dex per row (pool adjacent violators on log10 u - step * row, slope added back).
+    GIZMO's inversion calls a cell flat below about 4e-9 dex, so step = 1e-6 leaves no plateau. Returns the new array and the changed
+    nodes as (density index, row, old log10 u, new log10 u)."""
+    out = np.array(logu, float, copy=True); changed = []
+    for i in range(out.shape[0]):
+        j0 = int(floor[i]); seg = out[i, j0:]
+        if np.all(np.diff(seg) > 0): continue
+        k = np.arange(seg.size); y = seg - step * k
+        vals, wts, lens = [], [], []
+        for v in y:
+            vals.append(v); wts.append(1.0); lens.append(1)
+            while len(vals) > 1 and vals[-2] > vals[-1]:
+                w = wts[-2] + wts[-1]; vals[-2:] = [(vals[-2] * wts[-2] + vals[-1] * wts[-1]) / w]; wts[-2:] = [w]; lens[-2:] = [lens[-2] + lens[-1]]
+        fixed = np.concatenate([np.full(n, v) for v, n in zip(vals, lens)]) + step * k
+        for jj in np.flatnonzero(fixed != seg): changed.append((i, j0 + jj, seg[jj], fixed[jj]))
+        out[i, j0:] = fixed
+    return out, changed
+
+
+def make(out, specs, nrho=1431, lrho=(-6.0, np.log10(20.0)), T_from=0, verbose=True, repair_u_order=False,
+         repair_max_dlogu=1.0e-3, repair_max_node_fraction=1.0e-4, repair_step=1.0e-6):
+    """specs = [(table path, X)]; T axis = that of specs[T_from]; returns (SesameTable of the written file, report lines, diagnostics).
     Refuses (ValueError, nothing written) a table with pressure decreasing in density, a written sound speed undefined or <= 0, or
-    densities missing inside the axis; u not rising in T (where one energy names several temperatures) is refused unless
-    accept_u_order_pairs (e.g. pairs inherited from a component that has them; the run stops on a state with several roots there)."""
+    densities missing inside the axis; u not rising in T (where one energy names several temperatures, on which a run stops) is refused
+    unless repair_u_order, which applies rising_log_energy to the valid rows and reports every node it changed (e.g. a fall inherited
+    from a component that sits in its own two-phase band there). The repair is bounded: it is refused if it would move any log10 u by
+    more than repair_max_dlogu or change more than repair_max_node_fraction of the valid nodes (a larger fall is a defect of a
+    component or of the mixture, not a band to smooth over)."""
     comps = [SesameTable(p) for p, _ in specs]; X = np.array([x for _, x in specs], float)
     if abs(X.sum() - 1) > 1e-12 or np.any(X < 0):
         raise ValueError(f'mass fractions must be >= 0 and sum to 1 (got {X})')
@@ -299,15 +326,34 @@ def make(out, specs, nrho=1431, lrho=(-6.0, np.log10(20.0)), T_from=0, verbose=T
         raise ValueError(f'refusing {out}: pressure decreases with density at {nonmono} node pairs')
     if np.sum(valid & ~(C > 0)):
         raise ValueError(f'refusing {out}: written sound speed undefined or <= 0 at {int(np.sum(valid & ~(C > 0)))} valid nodes')
-    if nbad_cv and not accept_u_order_pairs:
+    if nbad_cv and not repair_u_order:
         ii, jj = np.nonzero(vp & ~(np.diff(U, axis=1) > 0))
         raise ValueError(f'refusing {out}: u does not rise with T at {nbad_cv} node pairs (rho {10 ** lr[ii].min():.3g} .. {10 ** lr[ii].max():.3g} g/cc, '
                          f'T {T_axis[jj].min():.4g} .. {T_axis[jj + 1].max():.4g} K): there one energy names several temperatures; '
-                         'pass accept_u_order_pairs=True (command line: --accept-u-order-pairs) if they are inherited from a component and accepted')
+                         'repair_u_order=True (command line: --repair-u-order) makes u rise by the smallest change')
+    changed = []
+    if nbad_cv:
+        logU, changed = rising_log_energy(np.log10(U), lvt, repair_step)
+        dmax = max(abs(b - a) for _, _, a, b in changed)
+        if dmax > repair_max_dlogu or len(changed) > repair_max_node_fraction * valid.sum():
+            raise ValueError(f'refusing {out}: making u rise would change {len(changed)} nodes (limit {repair_max_node_fraction:g} of '
+                             f'{valid.sum()} valid) by up to {dmax:.2e} dex (limit {repair_max_dlogu:g}): too large for a repair')
+        rows = sorted({c[0] for c in changed})   # only the repaired densities are rewritten (no round trip elsewhere)
+        U[rows] = 10 ** logU[rows]
+        for i in rows:   # below the floor the copied floor row follows the repaired floor value
+            if lvt[i] > 0: U[i, :lvt[i]] = U[i, lvt[i]]
+        rise = [np.min(np.diff(np.log10(U[i, lvt[i]:]))) for i in rows]
+        if np.sum(vp & ~(np.diff(U, axis=1) > 0)) or min(rise) < repair_step * (1 - 1e-6):
+            raise ValueError(f'refusing {out}: after the repair u does not rise by {repair_step:g} dex per row (smallest {min(rise):.3e})')
+        rep.append(f'  u(T) repaired: {len(changed)} nodes at {len(rows)} densities '
+                   f'(rho {min(10 ** lr[c[0]] for c in changed):.3g} .. {max(10 ** lr[c[0]] for c in changed):.3g} g/cc), max |d log10 u| {dmax:.2e}; '
+                   f'smallest rise {min(rise):.2e} dex per row; P, S, sound speed unchanged')
+        rep += [f'    rho {10 ** lr[i]:.5g} T {T_axis[j]:.4g}: log10 u {a:.7f} -> {b:.7f}' for i, j, a, b in changed]
     back = write(out, 10 ** lr, T_axis, P, U, S, C, PH, lvt)
     rep.append(f'  wrote {out} sha256 {sha256_file(out)}; inputs: ' + ', '.join(f'{os.path.basename(p)} sha256 {sha256_file(p)}' for p, _ in specs))
     if verbose: print('\n'.join(rep))
-    return back, rep, dict(lr=lr, T=T_axis, P=P, U=U, S=S, PH=PH, lvt=lvt, cs2=cs2, cV=cV, comps=comps, X=X)
+    return back, rep, dict(lr=lr, T=T_axis, P=P, U=U, S=S, PH=PH, lvt=lvt, cs2_before_repair=cs2, cV_before_repair=cV, comps=comps, X=X,
+                           n_u_repaired=len(changed))
 
 
 def sha256_file(path, block=1 << 24):
@@ -319,9 +365,9 @@ def sha256_file(path, block=1 << 24):
 
 if __name__ == '__main__':
     a = sys.argv[1:]
-    accept = "--accept-u-order-pairs" in a
-    a = [x for x in a if x != "--accept-u-order-pairs"]
+    repair = "--repair-u-order" in a
+    a = [x for x in a if x != "--repair-u-order"]
     if len(a) < 3 or len(a) % 2 == 0:
         sys.exit(__doc__)
     out, specs = a[0], [(a[k], float(a[k + 1])) for k in range(1, len(a), 2)]
-    make(out, specs, accept_u_order_pairs=accept)
+    make(out, specs, repair_u_order=repair)

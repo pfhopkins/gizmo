@@ -1,21 +1,30 @@
 #!/usr/bin/env python3
 """Self-test of census.py: a synthetic snapshot whose cells each sit in one constructed state (one CompositionType and one table slot per
-case) is run through census.py; every case must raise its own flag and every control must not. Uses three tables from the table directory:
-cd21_y0275.sesame (H/He with a validity-floor block), water_baseline.sesame (a few density intervals where u(T) falls: several roots) and
-forsterite_S19_T4.sesame (a melt plateau).
+case) is run through census.py; every case must raise its own flag and every control must not. Uses two tables from the table directory,
+cd21_y0275.sesame (H/He with a validity-floor block) and forsterite_S19_T4.sesame (a melt plateau), and writes a small constructed table
+into the work directory in which u(T) falls at three densities (several roots; no production table is allowed to have that).
     known_positives.py <workdir> --tables <dir>"""
 import argparse, os, subprocess, sys
 import numpy as np
 import h5py
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+sys.path.insert(0, HERE); sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
 from census import Lib, BIT, REPORTED
+from initial_conditions.eos_tools.mix_tables import write as write_sesame
 
 ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 ap.add_argument("workdir"); ap.add_argument("--tables", required=True)
 a = ap.parse_args()
-T_FLOORED, T_WATER, T_S19 = (os.path.join(a.tables, f) for f in ("cd21_y0275.sesame", "water_baseline.sesame", "forsterite_S19_T4.sesame"))
+T_FLOORED, T_S19 = (os.path.join(a.tables, f) for f in ("cd21_y0275.sesame", "forsterite_S19_T4.sesame"))
 work = os.path.abspath(a.workdir); out = os.path.join(work, "output"); os.makedirs(out, exist_ok=True)
+# the constructed table with a fold: u proportional to T (P = 0.4 rho u), except that at densities 6-8 every energy from row 31 up is
+# cut by 15%, so u falls from row 30 to row 31 there (rows are 8% apart in T)
+T_FOLD = os.path.join(work, "folded.sesame")
+f_rho, f_T = np.logspace(0.0, 1.0, 16), np.logspace(2.0, 4.0, 60)
+f_U = 1.0e7 * np.tile(f_T, (f_rho.size, 1)); f_U[6:9, 31:] *= 0.85
+f_P = 0.4 * f_rho[:, None] * f_U
+write_sesame(T_FOLD, f_rho, f_T, f_P, f_U, 1.0e7 * np.log(np.tile(f_T, (f_rho.size, 1))), np.sqrt(1.4 * f_P / f_rho[:, None]),
+             np.zeros(f_U.shape, int), np.zeros(f_rho.size, int), mat_id=999)
 lib = Lib()
 cases = []   # (name, table, rho, u, must, must_not)
 
@@ -54,10 +63,10 @@ add("u_above_top", T_FLOORED, r_mid, 2.0 * u_top, must=["U_AT_TOP"])
 add("near_top", T_FLOORED, r_mid, 0.85 * u_top, must=["NEAR_TOP"], must_not=["U_AT_TOP"])
 add("near_top_control", T_FLOORED, r_mid, 0.75 * u_top, must_not=["NEAR_TOP", "U_AT_TOP"])
 
-# several roots and fold proximity: water, where u(T) falls in a few dense cold intervals
-lib.load(T_WATER, 1)
+# several roots and fold proximity: the constructed table, where u(T) falls at three densities
+lib.load(T_FOLD, 1)
 found = None
-for lr in np.linspace(np.log10(4.5), np.log10(6.0), 300):
+for lr in np.linspace(np.log10(f_rho[5]), np.log10(f_rho[9]), 300):
     ub, ut2 = lib.energy_bounds(1, [10**lr])
     us = 10**np.linspace(np.log10(ub[0]) + 1e-4, np.log10(ut2[0]) - 1e-3, 3000)
     rr = lib.classify(1, np.full(us.size, 10**lr), us, np.full(us.size, 250.0), np.ones(us.size, np.uint8))
@@ -67,10 +76,10 @@ for lr in np.linspace(np.log10(4.5), np.log10(6.0), 300):
         found = (10**lr, us[k[0]], us[top] * 10**(-rr["fold_margin"][top]))   # inside, margin = -(upper edge - log u)
         break
 if not found:
-    sys.exit(f"{T_WATER}: no several-root state found at 4.5-6 g/cc")
-add("several_roots", T_WATER, found[0], found[1], must=["ROOTS_MULTI", "FOLD_IN"], must_not=["FOLD_GATE_MISS"])
-add("fold_near", T_WATER, found[0], found[2] * 10**0.05, must=["FOLD_NEAR"], must_not=["FOLD_IN"])
-add("fold_near_control", T_WATER, found[0], found[2] * 10**0.12, must_not=["FOLD_NEAR", "FOLD_IN"])
+    sys.exit(f"{T_FOLD}: no several-root state found around the constructed fold")
+add("several_roots", T_FOLD, found[0], found[1], must=["ROOTS_MULTI", "FOLD_IN"], must_not=["FOLD_GATE_MISS"])
+add("fold_near", T_FOLD, found[0], found[2] * 10**0.05, must=["FOLD_NEAR"], must_not=["FOLD_IN"])
+add("fold_near_control", T_FOLD, found[0], found[2] * 10**0.12, must_not=["FOLD_NEAR", "FOLD_IN"])
 
 # plateau: forsterite's melt band near 3 g/cc
 lib.load(T_S19, 2)

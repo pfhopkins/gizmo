@@ -42,7 +42,7 @@ P_CONDENSED_SURFACE = 1e6      # dyn/cm^2 (1 bar)
 TABLES = {
     "hhe":       ("cd21_y0275.sesame",        "4d971be9653bcb4ff23c140746d2ea4139b49d468eff4b8977f5f10911aae62a", 0.275, 1e8),
     "hhe_y0245": ("cd21_y0245.sesame",        "58ac77e5fcc6c532431186f8b00c50931c73bb354a5a1df70aa06e955bb88075", 0.245, 1e8),
-    "water":     ("water_baseline.sesame",    "13d37e09dbefb620b8496450862dec17eb904e3ee5603cdaf91e7facbfe259ab", None, 4e7),
+    "water":     ("water_baseline_r1.sesame", "34f0f64c99e0165c0dda3522f0f491d3637a11bb89890e1f248b22c126b41072", None, 4e7),
     "forsterite": ("forsterite_S19_T4.sesame", "b5921224c54dbab80de721509bbe3e7e8f192694027e422ce35f4aa41913521f", None, 1e7),
     "iron":      ("iron_S20_T4.sesame",       "36a17ca3a9ddcadea19ae7b4e7348c66ac2dcce09dc4129380ce2662b223f610", None, 4.5e6),
 }
@@ -96,19 +96,20 @@ def bin_path(K, k, bin_dir):
     return os.path.join(bin_dir, f"graded_water_forsterite_K{K}_k{k:02d}.sesame")
 
 
-def write_bins(K, table_dir, bin_dir, accept_u_order_pairs=False):
+def write_bins(K, table_dir, bin_dir):
     """the K mixture tables of a graded water -> forsterite zone (mix_tables.make on the verified component tables); returns their paths
-    and sha256 (also written to bin_dir/graded_K<K>.json). accept_u_order_pairs: see mix_tables.make (water_baseline's accepted cold corner,
-    ~600 GPa near 250 K, passes into every bin)"""
+    and sha256 (also written to bin_dir/graded_K<K>.json). Where a bin's u does not rise with T (water in its ice / superionic band near
+    250 K and ~600 GPa passes a small fall into the mixture) it is made to rise by the smallest change (mix_tables.rising_log_energy); the
+    manifest records how many nodes each bin had changed."""
     from .mix_tables import make
     w, fo = table_path("water", table_dir), table_path("forsterite", table_dir)
     os.makedirs(bin_dir, exist_ok=True)
     out = []
     for k, x in enumerate(bin_fractions(K)):
         p = bin_path(K, k, bin_dir)
-        make(p, [(w, 1.0 - x), (fo, x)], accept_u_order_pairs=accept_u_order_pairs)
-        out.append(dict(file=os.path.basename(p), rock_fraction=x, sha256=sha256_file(p)))
-    manifest = dict(K=K, components={"water": TABLES["water"][1], "forsterite": TABLES["forsterite"][1]}, accept_u_order_pairs=accept_u_order_pairs, bins=out)
+        _, _, diag = make(p, [(w, 1.0 - x), (fo, x)], repair_u_order=True)
+        out.append(dict(file=os.path.basename(p), rock_fraction=x, sha256=sha256_file(p), u_order_nodes_repaired=diag["n_u_repaired"]))
+    manifest = dict(K=K, components={"water": TABLES["water"][1], "forsterite": TABLES["forsterite"][1]}, bins=out)
     text = json.dumps(manifest, indent=1) + "\n"
     with open(os.path.join(bin_dir, f"graded_K{K}.json"), "w") as f: f.write(text)
     return out
@@ -268,7 +269,6 @@ def main(argv=None):
     ap.add_argument("args", nargs="*")
     ap.add_argument("--tables"); ap.add_argument("--bins"); ap.add_argument("--K", type=int, default=0)
     ap.add_argument("--layout", choices=sorted(LAYOUT_OFFSET), help="the build's equation-of-state layout (required for body / params)")
-    ap.add_argument("--accept-u-order-pairs", action="store_true", help="bins: accept u not rising with T inherited from a component")
     ap.add_argument("--kernel", type=int); ap.add_argument("--ngb", type=float)
     ap.add_argument("--T", type=float); ap.add_argument("--mass", type=float); ap.add_argument("--id-offset", type=int, default=0)
     ap.add_argument("--calibrate", choices=["particle", "shell", "none"], default="particle")
@@ -284,7 +284,7 @@ def main(argv=None):
         if p not in PRESETS: ap.error(f"unknown preset '{p}' (list shows them)")
     if a.mode == "bins":
         if len(a.args) != 1 or not a.bins: ap.error("bins <K> --bins DIR")
-        write_bins(int(a.args[0]), a.tables, a.bins, a.accept_u_order_pairs)
+        write_bins(int(a.args[0]), a.tables, a.bins)
     elif a.mode == "body":
         if len(a.args) != 3 or a.kernel is None or a.ngb is None or a.layout is None:
             ap.error("body <preset> <N> <out.hdf5> --layout LAYOUT --kernel K --ngb N")
