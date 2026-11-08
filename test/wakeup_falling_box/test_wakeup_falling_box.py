@@ -4,7 +4,8 @@ A Sedov blast in a periodic box under a uniform acceleration g. Pressure forces 
 mass-weighted mean velocity must follow v_cm = g*t. A cell woken mid-step has been kicked only to its old
 step's midpoint and is not in the first half-kick of its new step; unless process_wake_ups supplies both
 kicks, each woken cell leaves an error ~ g*(dt_old + dt_new)/2 in v_cm. Only the final snapshot is checked: every particle is
-synchronised there, while at intermediate outputs inactive particles hold half-kicked velocities.
+synchronised there, while at intermediate outputs inactive particles hold half-kicked velocities. The run's timebin
+reports also check the wake-up floor and the report's cpu-frac column, which this deep, gapped hierarchy exercises.
 """
 
 import re
@@ -72,6 +73,27 @@ def wakeup_deepening(reports):
     return min(ref) - min(after)
 
 
+def timebin_report_inconsistencies(reports):
+    """(gapped, bad): reports with an empty bin below the highest occupied one, and reports whose cpu-frac column is not
+    each occupied bin's share of the CPU time -- its avg-time weighted by how often it is active relative to the
+    highest occupied bin (2^(H-bin), halved below the top), bins below an empty one included. The 2-decimal rounding
+    of avg-time sets the bounds on each share."""
+    n_gap = n_bad = 0
+    for _, _, rows in reports:
+        if not rows:
+            continue
+        bins = np.array([r[0] for r in rows])
+        avg, frac = np.array([r[2] for r in rows]), np.array([r[3] for r in rows])
+        n_gap += np.any(np.diff(bins) < -1)
+        w = 2.0 ** (bins.max() - bins)
+        w = np.where(w > 1, w / 2, w)
+        lo_t, hi_t = w * np.maximum(avg - 0.005, 0), w * (avg + 0.005)
+        lo = 100 * lo_t / np.maximum(lo_t + (hi_t.sum() - hi_t), 1e-300)
+        hi = 100 * np.minimum(hi_t / np.maximum(hi_t + (lo_t.sum() - lo_t), 1e-300), 1)
+        n_bad += np.any((frac < lo - 0.05) | (frac > hi + 0.05))
+    return int(n_gap), int(n_bad)
+
+
 def generate_ics():
     ic_file = TEST_DIR / f"{TEST_NAME}_ics.hdf5"
     if not ic_file.exists():
@@ -102,6 +124,12 @@ def test_wakeup_falling_box(num_mpi_ranks, num_omp_threads):
     assert drop <= MAX_WAKEUP_DEEPENING, (
         f"the deepest occupied timebin fell {drop} bins below its depth before the first wake-up "
         f"(> {MAX_WAKEUP_DEEPENING}): hydro wake-ups are placing cells below the wake-up floor")
+
+    # Timebin report: the blast's hierarchy leaves empty bins between occupied ones, which the cpu-frac column must
+    # weight correctly.
+    n_gap, n_bad = timebin_report_inconsistencies(reports)
+    assert n_gap > 0, "no timebin report has a gap: the cpu-frac check below an empty bin is not exercised"
+    assert n_bad == 0, f"{n_bad} of {len(reports)} timebin reports have a cpu-frac inconsistent with their avg-time"
 
     with h5py.File(final_snap, "r") as F:
         t = F["Header"].attrs["Time"]
