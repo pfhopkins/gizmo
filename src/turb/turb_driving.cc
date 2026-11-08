@@ -194,6 +194,9 @@ void init_turb(void)
     int j; for(j=0;j<100;j++) {double tmp; tmp=st_turbdrive_get_gaussian_random_variable();} // cycle past initial seed
     st_turbdrive_init_ouseq(); // initialize variable for phases
     st_turbdrive_calc_phases(); // initialize phases
+#ifdef TURB_DRIVING_TARGET_SIGMA
+    All.TurbDriving_TargetSigma_Gain = 1; All.TurbDriving_TargetSigma_Integral = 0; All.TurbDriving_TargetSigma_Started = 0; /* a restart from restartfiles reads the saved loop state back afterwards */
+#endif
     set_turb_ampl(); // set initial amplitudes and calculate initial quantities needed for dissipation measures
     StTPrev = All.Ti_Current; // mark current time as last update of turb driving fields
     StTUpdatedAt = All.Ti_Current;
@@ -249,6 +252,47 @@ double solenoidal_frac_total_weight_renormalization(void)
     return sqrt(3.0/1.0)*sqrt(3.0)*1.0/sqrt(1.0-2.0*All.TurbDriving_Global_SolenoidalFraction+1.0*All.TurbDriving_Global_SolenoidalFraction*All.TurbDriving_Global_SolenoidalFraction);
 #endif
 }
+
+
+/* scalar multiplying the summed driving modes in every evaluation of the driving force (host, device, and the refresh of a
+   woken or spawned cell): the solenoidal renormalization and, with TURB_DRIVING_TARGET_SIGMA, the control-loop gain, which
+   acts on the force rather than on the noise amplitude so that a change takes effect at once instead of over a coherence time */
+static double st_driving_force_norm(void)
+{
+    double fac = 2.*solenoidal_frac_total_weight_renormalization();
+#ifdef TURB_DRIVING_TARGET_SIGMA
+    fac *= All.TurbDriving_TargetSigma_Gain;
+#endif
+    return fac;
+}
+
+
+#ifdef TURB_DRIVING_TARGET_SIGMA
+/* proportional-integral loop on e = ln(v_target / v_rms), called at each driving update: sets the gain on the driving force,
+   between 1/100 and 100. Working in ln(gain) keeps the gain positive and treats over- and under-shoot alike; the error is
+   clamped to +-ln 2, and the integral does not grow while the gain is saturated in the direction it would push. With an
+   integral term, the first update that measures gas sets it so the loop starts at gain 1, the uncontrolled amplitude, on a
+   fresh start or a snapshot restart. */
+static void st_update_driving_gain(double v_rms, int measured)
+{
+    if(!measured) {PRINT_STATUS(" ..no gas within TurbDrive_TargetSigma_Radius of the box centre: driving gain left at %g", All.TurbDriving_TargetSigma_Gain); return;}
+    const double v_target = All.TurbDriving_Global_AccelerationPowerVariable, t_eddy = st_return_driving_scale() / v_target;
+    const double dt = st_return_dt_between_updates(), e_max = log(2.), lng_max = log(100.);
+    const double Kp = All.TurbDriving_TargetSigma_Kp, Ti = All.TurbDriving_TargetSigma_Ti * t_eddy;
+    double e = log(v_target / DMAX(v_rms, 1.e-3*v_target)); e = DMAX(-e_max, DMIN(e_max, e));
+    if(Ti <= 0) {All.TurbDriving_TargetSigma_Integral = 0;} /* proportional only, also when a restart switches the integral off */
+    else if(!All.TurbDriving_TargetSigma_Started) {All.TurbDriving_TargetSigma_Integral = -Kp * e;}
+    else
+    {
+        double integral = All.TurbDriving_TargetSigma_Integral + Kp * e * dt / Ti, lng = Kp * e + integral;
+        if(fabs(lng) < lng_max || lng * e < 0) {All.TurbDriving_TargetSigma_Integral = integral;}
+    }
+    All.TurbDriving_TargetSigma_Started = 1;
+    double lng = Kp * e + All.TurbDriving_TargetSigma_Integral;
+    All.TurbDriving_TargetSigma_Gain = exp(DMAX(-lng_max, DMIN(lng_max, lng)));
+    PRINT_STATUS(" ..driven rms velocity %g (target %g): gain on the driving force %g", v_rms, v_target, All.TurbDriving_TargetSigma_Gain);
+}
+#endif
 
 
 /* update the Markov random variable that is the dimensional multiplier for the acceleration field, which has a correlation time specified */
@@ -307,6 +351,11 @@ void set_turb_ampl(void)
     if(new_turbforce_needed_this_timestep())
     {
         double delta = (All.Ti_Current - StTPrev) * unit_integertime_in_physical(-1, P);
+#ifdef TURB_DRIVING_TARGET_SIGMA
+        double vsums[7] = {0}, vglob[7] = {0}; /* the two energies, then mass, momentum and m v^2 of the measured gas: one reduction for all */
+        const double radius2 = All.TurbDriving_TargetSigma_Radius * All.TurbDriving_TargetSigma_Radius;
+        const double box_centre[3] = {0.5*boxSize_X, 0.5*boxSize_Y, 0.5*boxSize_Z};
+#endif
         if(delta > 0)
         {
             int i; double e_diss_sum=0, e_drive_sum=0, glob_diss_sum=0, glob_drive_sum=0;
@@ -327,10 +376,27 @@ void set_turb_ampl(void)
                     } else {
                         CellP[i].DuDt_diss = CellP[i].EgyDiss = CellP[i].DuDt_drive = CellP[i].EgyDrive = 0;
                     }
+#ifdef TURB_DRIVING_TARGET_SIGMA
+                    if(P[i].Mass > 0)
+                    {
+                        double r2 = 0; for(int k=0; k<NUMDIMS; k++) {double dx = P[i].Pos[k] - box_centre[k]; r2 += dx*dx;}
+                        if(radius2 <= 0 || r2 <= radius2)
+                        {
+                            vsums[2] += P[i].Mass; for(int k=0; k<3; k++) {vsums[3+k] += P[i].Mass * P[i].Vel[k];}
+                            vsums[6] += P[i].Mass * P[i].Vel.norm_sq();
+                        }
+                    }
+#endif
                 }
             }
+#ifdef TURB_DRIVING_TARGET_SIGMA
+            vsums[0] = e_diss_sum; vsums[1] = e_drive_sum;
+            MPI_Allreduce(vsums, vglob, 7, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+            glob_diss_sum = vglob[0]; glob_drive_sum = vglob[1];
+#else
             MPI_Allreduce(&e_diss_sum, &glob_diss_sum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
             MPI_Allreduce(&e_drive_sum, &glob_drive_sum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+#endif
             All.TurbDissipatedEnergy += glob_diss_sum;
             All.TurbInjectedEnergy += glob_drive_sum;
         }
@@ -338,6 +404,13 @@ void set_turb_ampl(void)
         st_update_ouseq();
         PRINT_STATUS(" ..calculating coefficients and phases following desired projection");
         st_turbdrive_calc_phases();
+#ifdef TURB_DRIVING_TARGET_SIGMA
+        {
+            double v_rms = 0, vmean2 = 0;
+            if(vglob[2] > 0) {for(int k=0; k<3; k++) {vmean2 += (vglob[3+k]/vglob[2]) * (vglob[3+k]/vglob[2]);} v_rms = sqrt(DMAX(vglob[6]/vglob[2] - vmean2, 0.));}
+            st_update_driving_gain(v_rms, vglob[2] > 0);
+        }
+#endif
         StTUpdatedAt = All.Ti_Current;
         StTPrev = StTPrev + st_return_dt_between_updates() / All.Timebase_interval;
         PRINT_STATUS(" ..updated turbulent stirring field at time %f", StTPrev * All.Timebase_interval);
@@ -583,7 +656,7 @@ void turb_accel_refresh_for_new_step(int i, integertime ti_previous_step_start)
 {
 #ifdef TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE
     if(turb_accel_needs_update(i, ti_previous_step_start))
-        {add_turb_accel_for_particle(i, P, CellP, turb_mode_lattice_host(), 2.*solenoidal_frac_total_weight_renormalization());}
+        {add_turb_accel_for_particle(i, P, CellP, turb_mode_lattice_host(), st_driving_force_norm());}
 #endif
 }
 
@@ -591,7 +664,7 @@ void turb_accel_refresh_for_new_step(int i, integertime ti_previous_step_start)
 void add_turb_accel()
 {
     set_turb_ampl();
-    double fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
+    double fac_sol = st_driving_force_norm();
 
     /* Build active gas particle index list */
     int N_active = 0;

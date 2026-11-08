@@ -1,10 +1,10 @@
 # turbulent_box
 
-Driven isothermal turbulence in a periodic box at a fixed driving amplitude. Carried over from
-`starforge_dev`, where the amplitude is instead held at a target Mach number by the
-`TURB_DRIVING_TARGET_SIGMA` control loop; this tree does not have that loop, so the problem is a
-stirring and timing vehicle here, with no pass/fail test. It is the box of GitHub issue #78
-(hydro-dominated cost on PCIe GPUs).
+Driven isothermal turbulence in a periodic box. `Config.sh` drives at a fixed amplitude, which settles near Mach 15
+for a Mach-10 `TurbDrive_ApproxRMSVturb`; this is also the timing box of GitHub issue #78 (hydro-dominated cost on
+PCIe GPUs). `test_turbulent_box.py` adds `TURB_DRIVING_TARGET_SIGMA`, which steers the driving toward Mach 10, in
+two variants (hydro; MHD with the force recomputed only on driving updates), and checks the Mach number from the
+snapshots against broad limits: that the loop removes the order-unity error without running away.
 
 | | |
 |-|-|
