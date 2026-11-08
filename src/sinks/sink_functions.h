@@ -28,11 +28,11 @@ static double sink_vesc_gpu(const struct particle_data& kp_j,
                             double mass_i, double r_code, double sink_softening)
 {
     double cs_to_add = 10. / UNIT_VEL_IN_KMS;
-#if defined(SINK_SEED_GROWTH_TESTS) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
     cs_to_add = 0;
 #endif
     double m_eff = mass_i + kp_j.Mass;
-#if defined(SINK_SEED_GROWTH_TESTS) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
     double gas_density = -1;
     if(kp_j.Type == 0) { gas_density = kc_j.Density; }
 #ifdef GRAIN_FLUID
@@ -97,8 +97,6 @@ static int sink_check_boundedness_gpu(const struct particle_data& kp_j,
 #endif
         return (dr_code > sink_radius) ? 0 : 1;
 #endif
-        /* Note: SINK_SEED_GROWTH_TESTS path omitted — incompatible with SINGLE_STAR_SINK_DYNAMICS
-           (guarded by #if !defined(SINGLE_STAR_SINK_DYNAMICS) in the CPU version). */
         if(apocenter < apocenter_max) { bound = 1; }
     }
     return bound;
