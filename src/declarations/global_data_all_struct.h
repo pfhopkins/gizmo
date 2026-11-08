@@ -311,7 +311,10 @@ struct global_data_all_processes
     SofteningStarsMaxPhys,	/*!< for type 4 */
     SofteningBndryMaxPhys;	/*!< for type 5 */
 
-  double ForceSoftening[6];	/*!< current (comoving) gravitational softening lengths for each particle type -- multiplied by a factor 1/KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER to define the maximum kernel extent - at that scale the force is Newtonian */
+  double ForceSoftening[6];	/*!< current (comoving) gravitational softening for each particle type, as the radius of the kernel's compact support
+                                     (the force is exactly Newtonian beyond it). Set from the Plummer-equivalent Softening_Type* parameters (capped
+                                     at their MaxPhys values in comoving runs) as softening / KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER (gravtree.cc):
+                                     2.8x the Plummer-equivalent value for a cubic spline */
 
   /*! If particle masses are all equal for one type, the corresponding entry in MassTable is set to this value, * allowing the size of the snapshot files to be reduced */
   double MassTable[6];
