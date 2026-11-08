@@ -162,6 +162,9 @@ void do_second_halfstep_kick(void)
 #ifdef TURB_DRIVING
     do_turb_driving_step_second_half();
 #endif
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    eos_limits_count_cell_updates();
+#endif
     gpu_particles_arena_invalidate(); /* host Vel/Entropy kicked; arena stale */
 }
 
@@ -426,14 +429,17 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             {
                 double u_before_radblock = CellP[i].InternalEnergy;
                 demin=DMAX(0.025*CellP[i].InternalEnergy, u_floor); emin=0.025*(erad_tot/rsol_fac + CellP[i].InternalEnergy*P[i].Mass); enew=DMAX(erad_tot/rsol_fac + dEnt*P[i].Mass, emin);
-                dEnt=(enew - erad_tot/rsol_fac) / P[i].Mass; if(dEnt < demin) {dErad=rsol_fac*(dEnt-demin); dEnt=demin;}
+                dEnt=(enew - erad_tot/rsol_fac) / P[i].Mass; if(dEnt < demin) {dErad=rsol_fac*(dEnt-demin); dEnt=demin; EOS_LIMIT_RECORD_KICK_RADIATION_FLOOR(CellP[i].CompositionType);}
                 if(dErad<-0.975*erad_tot) {dErad=-0.975*erad_tot;} CellP[i].InternalEnergy = dEnt; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {CellP[i].Rad_E_gamma[kfreq] *= 1 + dErad/erad_tot;}
             } else {
+                EOS_LIMIT_RECORD_KICK_CATCH(CellP[i].CompositionType, CellP[i].InternalEnergy, dEnt, u_floor, P[i].Mass);
                 CellP[i].InternalEnergy = internal_energy_positivity_catch(CellP[i].InternalEnergy, dEnt, u_floor);
             }
 #else
+            EOS_LIMIT_RECORD_KICK_CATCH(CellP[i].CompositionType, CellP[i].InternalEnergy, dEnt, u_floor, P[i].Mass);
             CellP[i].InternalEnergy = internal_energy_positivity_catch(CellP[i].InternalEnergy, dEnt, u_floor);
 #endif
+            EOS_LIMIT_RECORD_KICK_MIN_ENERGY(CellP[i].CompositionType, CellP[i].InternalEnergy, P[i].Mass);
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
         }
         

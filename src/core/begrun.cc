@@ -273,6 +273,10 @@ void begrun(void)
     }
     if(gizmo_poll_controlled_stop()) return; /* a table that failed to load stops the run here, in every build */
 #endif
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    eos_limits_init(); /* before init(): its first equation-of-state evaluations are counted (the startup line of eos_limits.txt) */
+    if(gizmo_poll_controlled_stop()) return;
+#endif
 
 #ifdef EOS_ELASTIC
     solid_material_resolve(); /* strength/damage/porosity per CompositionType, from the presets and the parameterfile, before init() uses them */

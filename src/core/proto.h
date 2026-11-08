@@ -419,6 +419,31 @@ GIZMO_GPU_FUNCTION static inline double internal_energy_positivity_catch(double 
     return (u_floor > 0 && u < u_floor) ? u_floor : u;
 }
 
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+void eos_limits_init(void);                                     /* allocates this rank's counter blocks (startup, before init) */
+void eos_limits_record_host(int composition_type, int counter, int energy_index, double energy); /* one host-side event (energy_index < 0: none) */
+void eos_limits_count_cell_updates(void);                       /* this step's active cells per material (the denominator) */
+void eos_limits_emit(int startup);                              /* reduce, write a line per material to eos_limits.txt, reset the interval */
+
+/* The kick's limits on the committed energy, each with the energy it adds (never negative): the halving from u_new to u_old / 2, then
+   the floor from there to u_floor */
+static inline void eos_limits_record_kick_catch(int composition_type, double u_old, double u_new, double u_floor, double mass)
+{
+    int event = internal_energy_positivity_catch_event(u_old, u_new, u_floor);
+    double u_halved = (event & 1) ? 0.5 * u_old : u_new;
+    if(event & 1) {eos_limits_record_host(composition_type, EOS_LIMIT_KICK_HALVED, EOS_LIMIT_ENERGY_KICK_HALVED, (u_halved - u_new) * mass);}
+    if(event & 2) {eos_limits_record_host(composition_type, EOS_LIMIT_KICK_FLOOR, EOS_LIMIT_ENERGY_KICK_FLOOR, (u_floor - u_halved) * mass);}
+}
+#define EOS_LIMIT_RECORD_KICK_CATCH(...) eos_limits_record_kick_catch(__VA_ARGS__)
+#define EOS_LIMIT_RECORD_KICK_MIN_ENERGY(composition_type, u, mass) \
+    {if(All.MinEgySpec && (u) < All.MinEgySpec) {eos_limits_record_host(composition_type, EOS_LIMIT_KICK_MIN_ENERGY, EOS_LIMIT_ENERGY_KICK_MIN_ENERGY, (All.MinEgySpec - (u)) * (mass));}}
+#define EOS_LIMIT_RECORD_KICK_RADIATION_FLOOR(composition_type) eos_limits_record_host(composition_type, EOS_LIMIT_RADIATION_FLOOR, -1, 0)
+#else
+#define EOS_LIMIT_RECORD_KICK_CATCH(...)   /* builds without a solid or tabulated equation of state count nothing */
+#define EOS_LIMIT_RECORD_KICK_MIN_ENERGY(...)
+#define EOS_LIMIT_RECORD_KICK_RADIATION_FLOOR(...)
+#endif
+
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
 double weight_function_for_weighted_motion_smoothing(double r, int mode);
 #endif

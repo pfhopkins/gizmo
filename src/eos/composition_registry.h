@@ -89,6 +89,62 @@ static_assert(sizeof(struct solid_material) == N_SOLID_MATERIAL_PROPERTIES * siz
 #define N_SOLID_MATERIAL_IDS 16   /* >= every CompositionType layout: Tillotson rows (+1 for the gas slot) */
 #endif
 
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+/* Counts of the times the solid / tabulated equations of state had to limit a state, per material (CompositionType), written to
+   eos_limits.txt. Every count is added on the branch where the limit acts, so a step that limits nothing adds nothing; the
+   active cell-updates (the first count) are the denominator. See the User Guide (eos_limits.txt) for what each count means. */
+#define EOS_LIMIT_SLOTS N_SOLID_MATERIAL_IDS /* one per CompositionType of any layout */
+enum {EOS_LIMIT_CELL_UPDATES, EOS_LIMIT_RHO_BELOW_TABLE, EOS_LIMIT_RHO_ABOVE_TABLE, EOS_LIMIT_U_BELOW_FLOOR, EOS_LIMIT_U_ABOVE_TABLE,
+      EOS_LIMIT_PLATEAU, EOS_LIMIT_RECOVERED,
+      EOS_LIMIT_KICK_HALVED, EOS_LIMIT_KICK_FLOOR, EOS_LIMIT_KICK_MIN_ENERGY, EOS_LIMIT_DRIFT_HALVED, EOS_LIMIT_DRIFT_FLOOR,
+      EOS_LIMIT_DRIFT_MIN_ENERGY, EOS_LIMIT_RADIATION_FLOOR, EOS_LIMIT_N_COUNTS};
+enum {EOS_LIMIT_ENERGY_KICK_HALVED, EOS_LIMIT_ENERGY_KICK_FLOOR, EOS_LIMIT_ENERGY_KICK_MIN_ENERGY, EOS_LIMIT_N_ENERGIES};
+enum {EOS_LIMIT_MAX_PLATEAU_LOGT_WIDTH, EOS_LIMIT_MAX_PLATEAU_PRESSURE_SPREAD, EOS_LIMIT_N_MAXIMA};
+struct eos_limit_slot {unsigned long long count[EOS_LIMIT_N_COUNTS]; double energy[EOS_LIMIT_N_ENERGIES]; double maximum[EOS_LIMIT_N_MAXIMA];};
+struct eos_limit_counts {struct eos_limit_slot slot[EOS_LIMIT_SLOTS];};
+
+GIZMO_GPU_FUNCTION static inline int eos_limit_slot_of(int composition_type)
+{
+    return (composition_type < 0) ? 0 : ((composition_type >= EOS_LIMIT_SLOTS) ? EOS_LIMIT_SLOTS - 1 : composition_type);
+}
+
+/* Thread-safe adds to a counter block. The device pass uses the GPU compiler's own atomics and the host pass the compiler's
+   builtins (no Kokkos here, so the header stays usable from host-only files). Only the rare limiting branches call these. */
+GIZMO_GPU_FUNCTION static inline void eos_limit_atomic_count(unsigned long long *c, unsigned long long n)
+{
+#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+    atomicAdd(c, n);
+#else
+    __atomic_fetch_add(c, n, __ATOMIC_RELAXED);
+#endif
+}
+static inline void eos_limit_atomic_energy(double *e, double de) /* host only: the energies are added by the kick */
+{
+    double old_value, new_value;
+    __atomic_load(e, &old_value, __ATOMIC_RELAXED);
+    do {new_value = old_value + de;} while(!__atomic_compare_exchange(e, &old_value, &new_value, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+}
+GIZMO_GPU_FUNCTION static inline void eos_limit_atomic_max(double *m, double x) /* x >= 0: non-negative doubles order as their bit patterns */
+{
+    union {double d; unsigned long long u;} value; value.d = (x > 0) ? x : 0;
+#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+    atomicMax((unsigned long long *) m, value.u);
+#else
+    unsigned long long *bits = (unsigned long long *) m, old_bits = __atomic_load_n(bits, __ATOMIC_RELAXED);
+    while(old_bits < value.u && !__atomic_compare_exchange_n(bits, &old_bits, value.u, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
+#endif
+}
+
+/* Which limits internal_energy_positivity_catch applies to the update u_old -> u_new, as bits: 1 = the halving, 2 = the material's floor
+   (applied after the halving; both can act on one update), 0 = none. Computed exactly as the catch decides, without changing it. */
+GIZMO_GPU_FUNCTION static inline int internal_energy_positivity_catch_event(double u_old, double u_new, double u_floor)
+{
+    int halved = (u_new < 0.5*u_old); double u = halved ? 0.5*u_old : u_new;
+    return (halved ? 1 : 0) | ((u_floor > 0 && u < u_floor) ? 2 : 0);
+}
+
+#endif /* EOS_TILLOTSON || EOS_ANEOS */
+
 #ifdef EOS_ELASTIC_MELT
 /* Thermal softening (melt) and molten cavitation of a solid material, resolved once at
    startup (solid_material_resolve) per CompositionType. A material keeps the fraction f of its cold shear modulus and yield strength:

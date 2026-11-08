@@ -87,6 +87,7 @@ static void *aneos_shared_calloc(size_t n, size_t sz, const char *label)
 static void aneos_free_table_arrays(struct aneos_table *tbl)
 {
     double **dbl[] = {&tbl->logrho, &tbl->logT, &tbl->log_pressure, &tbl->log_energy, &tbl->entropy, &tbl->log_csound};
+    if(tbl->fold_logu) {gpu_particles_uvm_free(tbl->fold_logu); tbl->fold_logu = NULL;}
     for(int k = 0; k < (int)(sizeof(dbl) / sizeof(dbl[0])); k++) {if(*dbl[k]) {gpu_particles_uvm_free(*dbl[k]); *dbl[k] = NULL;}}
     int **ints[] = {&tbl->phase, &tbl->map_rho, &tbl->map_T, &tbl->lowest_valid_T};
     for(int k = 0; k < (int)(sizeof(ints) / sizeof(ints[0])); k++) {if(*ints[k]) {gpu_particles_uvm_free(*ints[k]); *ints[k] = NULL;}}
@@ -248,6 +249,27 @@ int aneos_read_table(const char *filename, int mat_index)
     aneos_build_axis_map(tbl->logrho, nrho, tbl->nmap_rho, tbl->map_rho, &tbl->inv_binwidth_rho);
     aneos_build_axis_map(tbl->logT, nT, tbl->nmap_T, tbl->map_T, &tbl->inv_binwidth_T);
 
+    /* Where an energy can name several temperatures. At a density inside [i, i+1] each row's log10(u) mixes the two columns' values
+       linearly, so a cell of that column falls only where a cell of one of the two columns falls, and its end values lie between the
+       four values there. An energy reached at two temperatures (or touched at an extremum) is crossed by a falling cell; so the range of
+       every falling cell's end values (a fall larger than the solve's tolerance) bounds the energies a solve must check the column for. */
+    tbl->fold_logu = (double *)aneos_shared_calloc(2 * (size_t)nrho, sizeof(double), "aneos_fold_logu");
+    if(!tbl->fold_logu) {return aneos_refuse(NULL, tbl, filename, "could not allocate the fold ranges", nrho);}
+    const double fall = log10(1.0 + ANEOS_INVERSION_TOLERANCE);
+    for(int i = 0; i < nrho; i++) {
+        double lo = 1e300, hi = -1e300;
+        if(i < nrho - 1) {
+            int k = tbl->lowest_valid_T ? tbl->lowest_valid_T[i] : 0, k1 = tbl->lowest_valid_T ? tbl->lowest_valid_T[i + 1] : 0;
+            for(int j = (k1 > k) ? k1 : k; j < nT - 1; j++) {
+                int falls = 0;
+                for(int c = i; c <= i + 1; c++) {if(tbl->log_energy[c * nT + j + 1] < tbl->log_energy[c * nT + j] - fall) {falls = 1;}}
+                if(!falls) continue;
+                for(int c = i; c <= i + 1; c++) {for(int jj = j; jj <= j + 1; jj++) {double v = tbl->log_energy[c * nT + jj]; if(v < lo) {lo = v;} if(v > hi) {hi = v;}}}
+            }
+        }
+        tbl->fold_logu[2 * i] = lo; tbl->fold_logu[2 * i + 1] = hi;
+    }
+
     tbl->loaded = 1;
 
     if(mat_index >= ANEOS_Num_Tables_Loaded)
@@ -268,6 +290,7 @@ size_t aneos_table_bytes(int mat_index)
     if(tbl->has_csound) bytes += ntot * sizeof(double);
     if(tbl->has_phase) bytes += ntot * sizeof(int);
     if(tbl->lowest_valid_T) bytes += (size_t)tbl->nrho * sizeof(int);
+    if(tbl->fold_logu) bytes += 2 * (size_t)tbl->nrho * sizeof(double);
     return bytes;
 }
 
@@ -282,6 +305,8 @@ void aneos_report_table(int mat_index, const char *filename)
     printf("  log10(rho) range: [%.3f, %.3f] %s,  log10(T) range: [%.3f, %.3f] %s\n",
            tbl->logrho_min, tbl->logrho_max, (nonuni_rho < 1.0e-6) ? "uniform" : "irregular",
            tbl->logT_min, tbl->logT_max, (nonuni_T < 1.0e-6) ? "uniform" : "irregular");
+    int n_fold = 0; for(int i = 0; i < tbl->nrho - 1; i++) {n_fold += (tbl->fold_logu[2 * i] <= tbl->fold_logu[2 * i + 1]);}
+    if(n_fold) {printf("  %d of %d density intervals have u falling with T above the valid floor: a solve whose energy lies in that range checks the whole column\n", n_fold, tbl->nrho - 1);}
 }
 
 int aneos_cleanup(void)

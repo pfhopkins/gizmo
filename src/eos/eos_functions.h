@@ -520,7 +520,67 @@ struct EosTableView
 #ifdef EOS_ANEOS
     const struct aneos_table *aneos;
 #endif
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    struct eos_limit_counts *limits_host;   /* this rank's eos_limits.txt counts: the host pass of a body adds here */
+    struct eos_limit_counts *limits_device; /* and the device pass here (device memory; host memory in a build without a device) */
+#endif
 };
+
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+extern struct eos_limit_counts *EosLimitsHost, *EosLimitsDevice; /* owned by eos.cc */
+
+/* The counter block the calling pass of a device-callable body adds to */
+KOKKOS_INLINE_FUNCTION struct eos_limit_counts *eos_limit_block(const struct EosTableView *eos_tables)
+{
+    if(!eos_tables) {return NULL;}
+#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+    return eos_tables->limits_device;
+#else
+    return eos_tables->limits_host;
+#endif
+}
+
+KOKKOS_INLINE_FUNCTION void eos_limit_count(const struct EosTableView *eos_tables, int composition_type, int counter)
+{
+    struct eos_limit_counts *block = eos_limit_block(eos_tables);
+    if(block) {eos_limit_atomic_count(&block->slot[eos_limit_slot_of(composition_type)].count[counter], 1);}
+}
+
+/* Count the limits, if any, that internal_energy_positivity_catch(u_old, u_new, u_floor) applies */
+KOKKOS_INLINE_FUNCTION void eos_limit_count_catch(const struct EosTableView *eos_tables, int composition_type, double u_old, double u_new, double u_floor,
+                                                  int counter_halved, int counter_floor)
+{
+    int event = internal_energy_positivity_catch_event(u_old, u_new, u_floor);
+    if(event & 1) {eos_limit_count(eos_tables, composition_type, counter_halved);}
+    if(event & 2) {eos_limit_count(eos_tables, composition_type, counter_floor);}
+}
+
+#ifdef EOS_ANEOS
+/* Count what an energy inversion reported (called only when it reported something) */
+KOKKOS_INLINE_FUNCTION void eos_limit_record_inversion(const struct EosTableView *eos_tables, int composition_type, const struct aneos_inversion_report *report)
+{
+    struct eos_limit_counts *block = eos_limit_block(eos_tables);
+    if(!block) {return;}
+    struct eos_limit_slot *slot = &block->slot[eos_limit_slot_of(composition_type)];
+    /* no root / several roots are not counted: they stop the run, and the stop prints the state instead */
+    const int flag_of[6] = {ANEOS_INVERSION_RHO_BELOW_TABLE, ANEOS_INVERSION_RHO_ABOVE_TABLE, ANEOS_INVERSION_U_BELOW_FLOOR, ANEOS_INVERSION_U_ABOVE_TABLE,
+                            ANEOS_INVERSION_PLATEAU, ANEOS_INVERSION_RECOVERED};
+    const int counter_of[6] = {EOS_LIMIT_RHO_BELOW_TABLE, EOS_LIMIT_RHO_ABOVE_TABLE, EOS_LIMIT_U_BELOW_FLOOR, EOS_LIMIT_U_ABOVE_TABLE,
+                               EOS_LIMIT_PLATEAU, EOS_LIMIT_RECOVERED};
+    for(int k = 0; k < 6; k++) {if(report->flags & flag_of[k]) {eos_limit_atomic_count(&slot->count[counter_of[k]], 1);}}
+    if(report->flags & ANEOS_INVERSION_PLATEAU)
+    {
+        eos_limit_atomic_max(&slot->maximum[EOS_LIMIT_MAX_PLATEAU_LOGT_WIDTH], report->plateau_logT_width);
+        eos_limit_atomic_max(&slot->maximum[EOS_LIMIT_MAX_PLATEAU_PRESSURE_SPREAD], report->plateau_P_spread);
+    }
+}
+#endif
+#define EOS_LIMIT_COUNT(...) eos_limit_count(__VA_ARGS__)
+#define EOS_LIMIT_COUNT_CATCH(...) eos_limit_count_catch(__VA_ARGS__)
+#else
+#define EOS_LIMIT_COUNT(...)        /* builds without a solid or tabulated equation of state count nothing */
+#define EOS_LIMIT_COUNT_CATCH(...)
+#endif
 
 /* Fill a view from the live tables.
 
@@ -546,6 +606,10 @@ inline struct EosTableView eos_tables_view(void)
 #endif
 #ifdef EOS_ANEOS
     view.aneos = ANEOS_Tables;
+#endif
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    view.limits_host = EosLimitsHost;
+    view.limits_device = EosLimitsDevice;
 #endif
     return view;
 }
@@ -970,8 +1034,19 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
             double aneos_T_guess = cell[i].Temperature;
             double aneos_P, aneos_cs;
             int aneos_phase;
+            struct aneos_inversion_report aneos_report;
             int aneos_ierr = aneos_compute_P(eos_tables->aneos, aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
-                          &aneos_P, &aneos_cs, NULL, NULL, NULL, &aneos_phase); /* entropy, Cv and Gruneisen not needed here */
+                          &aneos_P, &aneos_cs, NULL, NULL, NULL, &aneos_phase, &aneos_report); /* entropy, Cv and Gruneisen not needed here */
+            if(aneos_report.flags) {eos_limit_record_inversion(eos_tables, cell[i].CompositionType, &aneos_report);}
+            if(aneos_report.flags & (ANEOS_INVERSION_NO_ROOT | ANEOS_INVERSION_MULTIPLE_ROOTS))
+            {
+                /* the energy names no single temperature of this material at this density: any state chosen here would be
+                   arbitrary physics, so the run stops with the state that caused it */
+                printf("ERROR: cell ID %llu (CompositionType %d, ANEOS table %d): rho = %g g/cm^3, u = %g erg/g has %d temperatures in the table's valid range log10(T) = %g to %g (exactly one is needed). Stopping.\n",
+                       (unsigned long long) pp[i].ID, cell[i].CompositionType, aneos_mat, aneos_rho_cgs, aneos_u_cgs, aneos_report.n_roots,
+                       aneos_report.logT_lo, aneos_report.logT_hi);
+                endrun((aneos_report.n_roots == 0) ? 920910 : 920911);
+            }
             /* The cell's CompositionType names a material whose table was never
                loaded: a setup error, and the same for every cell of that type, so
                there is nothing to recover to. endrun requests a controlled stop on

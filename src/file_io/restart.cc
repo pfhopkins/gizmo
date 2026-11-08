@@ -167,6 +167,9 @@ void restart(int modus)
 #ifdef CHIMES 
     int partIndex, abunIndex; 
 #endif 
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    if(modus == 0) {eos_limits_emit(0);} /* every restart write (periodic, stop file, wall time, final time) flushes the interval so far */
+#endif
     
     if(ThisTask == 0 && modus == 0) // writing re-start files: move old files to .bak
     {

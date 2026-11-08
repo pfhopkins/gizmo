@@ -187,15 +187,17 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             if(erad_tot > 0)
             {
                 int_e_min=DMAX(0.025*cell[i].InternalEnergyPred, u_floor); tot_e_min=0.025*(erad_tot/rsol_fac+cell[i].InternalEnergyPred*pp[i].Mass);
-                enew=DMAX(erad_tot/rsol_fac+etmp*pp[i].Mass,tot_e_min); etmp=(enew-erad_tot/rsol_fac)/pp[i].Mass; if(etmp<int_e_min) {dErad=rsol_fac*(etmp-int_e_min); etmp=int_e_min;}
+                enew=DMAX(erad_tot/rsol_fac+etmp*pp[i].Mass,tot_e_min); etmp=(enew-erad_tot/rsol_fac)/pp[i].Mass; if(etmp<int_e_min) {dErad=rsol_fac*(etmp-int_e_min); etmp=int_e_min; EOS_LIMIT_COUNT(eos_tables, cell[i].CompositionType, EOS_LIMIT_RADIATION_FLOOR);}
                 if(dErad<-0.975*erad_tot) {dErad=-0.975*erad_tot;} cell[i].InternalEnergyPred = etmp; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {cell[i].Rad_E_gamma_Pred[kfreq] *= 1 + dErad/erad_tot;}
             } else {
+                EOS_LIMIT_COUNT_CATCH(eos_tables, cell[i].CompositionType, cell[i].InternalEnergyPred, etmp, u_floor, EOS_LIMIT_DRIFT_HALVED, EOS_LIMIT_DRIFT_FLOOR);
                 cell[i].InternalEnergyPred = internal_energy_positivity_catch(cell[i].InternalEnergyPred, etmp, u_floor);
             }
 #else
+            EOS_LIMIT_COUNT_CATCH(eos_tables, cell[i].CompositionType, cell[i].InternalEnergyPred, etmp, u_floor, EOS_LIMIT_DRIFT_HALVED, EOS_LIMIT_DRIFT_FLOOR);
             cell[i].InternalEnergyPred = internal_energy_positivity_catch(cell[i].InternalEnergyPred, etmp, u_floor);
 #endif
-            if(cell[i].InternalEnergyPred<All.MinEgySpec) cell[i].InternalEnergyPred=All.MinEgySpec;
+            if(cell[i].InternalEnergyPred<All.MinEgySpec) {cell[i].InternalEnergyPred=All.MinEgySpec; EOS_LIMIT_COUNT(eos_tables, cell[i].CompositionType, EOS_LIMIT_DRIFT_MIN_ENERGY);}
             
 #ifdef HYDRO_PRESSURE_SPH
             cell[i].EgyWtDensity *= exp(-divv_fac);

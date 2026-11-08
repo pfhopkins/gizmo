@@ -197,6 +197,9 @@ void run(void)
         gizmo_exit_bad_stop_if_requested("run:restart_treebuild");
         if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
     }
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    eos_limits_emit(1); /* what startup needed, before any step */
+#endif
 
     while(1)			/* main timestep iteration loop */
     {
@@ -799,6 +802,9 @@ void compute_statistics(void)
          * on TimeBetStatistics so this doesn't fire every step. */
         gizmo_full_drift_to(All.Ti_Current);
         energy_statistics();	/* compute and output energy statistics */
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+        eos_limits_emit(0);
+#endif
 #if defined(CBE_INTEGRATOR) && (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO))
         /*  emit per-output-interval CBE diagnostic line and
          * reset the per-rank accumulators. Co-located with energy_statistics

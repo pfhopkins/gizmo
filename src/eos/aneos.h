@@ -57,6 +57,8 @@ struct aneos_table {
     int     has_csound;   /* 1 if sound speed column present in table */
     int     has_phase;    /* 1 if phase column present in table */
     int    *lowest_valid_T; /* optional, length nrho: per density, the lowest temperature row the EOS is valid at (NULL = row 0 everywhere) */
+    double *fold_logu;    /* length 2 nrho, built at load: for the density interval [i, i+1], the log10(u) range [2i, 2i+1] over which u(T) can take a
+                             value at more than one temperature above the valid floor (lo > hi: nowhere); a solve whose energy lies in it checks the whole column */
 
     /* Grid bounds */
     double logrho_min, logrho_max;
@@ -247,6 +249,89 @@ int aneos_lookup_rhoT_P(const struct aneos_table *tables, int mat_index,
     return 0;
 }
 
+#define ANEOS_INVERSION_TOLERANCE 1.0e-8 /* relative tolerance on u of the temperature solve */
+
+/* What an energy inversion had to do besides an ordinary converged solve (bit flags), and the size of a plateau it met */
+#define ANEOS_INVERSION_RHO_BELOW_TABLE   1  /* density below the table: evaluated at its lowest density */
+#define ANEOS_INVERSION_RHO_ABOVE_TABLE   2  /* density above the table: evaluated at its highest density */
+#define ANEOS_INVERSION_U_BELOW_FLOOR     4  /* energy at or below the lowest valid temperature's: the state at that temperature */
+#define ANEOS_INVERSION_U_ABOVE_TABLE     8  /* energy at or above the hottest row's: the state at that temperature */
+#define ANEOS_INVERSION_PLATEAU          16  /* u(T) is flat to the solve's tolerance where it landed: T is not determined there */
+#define ANEOS_INVERSION_RECOVERED        32  /* the search of the whole column found its one root where the iteration did not converge, or where
+                                                the energy lies outside the column's end values but inside its range */
+#define ANEOS_INVERSION_NO_ROOT          64  /* ... the search found none */
+#define ANEOS_INVERSION_MULTIPLE_ROOTS  128  /* ... the search found several */
+struct aneos_inversion_report {
+    int    flags;
+    int    n_roots;             /* roots the column search found, when it ran */
+    double plateau_logT_width;  /* PLATEAU: width in log10(T) of the flat stretch */
+    double plateau_P_spread;    /* PLATEAU: |P(hot end) - P(cold end)| / max of the two, at this density */
+    double logT_lo, logT_hi;    /* the valid log10(T) range at this density */
+};
+
+/* log10(Q) at temperature row j, at the located density (the interpolant's value on that row) */
+static KOKKOS_INLINE_FUNCTION double aneos_row_value(const struct aneos_table *tbl, const double *log_qty, struct aneos_axis_location r, int j)
+{
+    return (1.0 - r.t) * log_qty[r.i * tbl->nT + j] + r.t * log_qty[(r.i + 1) * tbl->nT + j];
+}
+
+/* The lowest valid temperature ROW at the located density: the higher of its two columns' rows (as aneos_logT_floor) */
+static KOKKOS_INLINE_FUNCTION int aneos_floor_row(const struct aneos_table *tbl, struct aneos_axis_location r)
+{
+    if(!tbl->lowest_valid_T) return 0;
+    int k = tbl->lowest_valid_T[r.i], k1 = tbl->lowest_valid_T[r.i + 1];
+    return (k1 > k) ? k1 : k;
+}
+
+/* Record the flat stretch of rows around [j_lo, j_hi] whose log10(u) lies within tol_log of log10(u) = lu: its width in log10(T)
+   and the spread of the pressure over its rows (the pressures the state could have, given only its energy) */
+static KOKKOS_INLINE_FUNCTION void aneos_measure_plateau(const struct aneos_table *tbl, struct aneos_axis_location r, double lu, double tol_log,
+                                                       int j_lo, int j_hi, struct aneos_inversion_report *report)
+{
+    int j_floor = aneos_floor_row(tbl, r);
+    while(j_lo > j_floor && fabs(aneos_row_value(tbl, tbl->log_energy, r, j_lo - 1) - lu) <= tol_log) {j_lo--;}
+    while(j_hi < tbl->nT - 1 && fabs(aneos_row_value(tbl, tbl->log_energy, r, j_hi + 1) - lu) <= tol_log) {j_hi++;}
+    double lp_min = aneos_row_value(tbl, tbl->log_pressure, r, j_lo), lp_max = lp_min;
+    for(int j = j_lo + 1; j <= j_hi; j++) {double lp = aneos_row_value(tbl, tbl->log_pressure, r, j); if(lp < lp_min) {lp_min = lp;} if(lp > lp_max) {lp_max = lp;}}
+    double width = tbl->logT[j_hi] - tbl->logT[j_lo], spread = 1.0 - pow(10.0, lp_min - lp_max); /* (P_max - P_min) / P_max */
+    report->flags |= ANEOS_INVERSION_PLATEAU; /* a column with several plateaus reports the widest stretch and the largest spread */
+    if(width > report->plateau_logT_width) {report->plateau_logT_width = width;}
+    if(spread > report->plateau_P_spread) {report->plateau_P_spread = spread;}
+}
+
+/* Every root of log10(u(T)) = lu on the valid rows of the located density's column. The interpolant is linear in log10(u) against
+   log10(T) inside each cell, so a sign change locates its root exactly; a run of rows within tol_log of lu is one root (a plateau,
+   whose middle is returned). Returns the number of roots and the log10(T) of the last one found. */
+static KOKKOS_INLINE_FUNCTION int aneos_column_roots(const struct aneos_table *tbl, struct aneos_axis_location r, double lu, double tol_log,
+                                                   double *lT_root, struct aneos_inversion_report *report)
+{
+    int n_roots = 0, sign_prev = 0, run_start = -1;
+    double d_prev = 0;
+    for(int j = aneos_floor_row(tbl, r); j < tbl->nT; j++)
+    {
+        double d = aneos_row_value(tbl, tbl->log_energy, r, j) - lu;
+        int sign = (fabs(d) <= tol_log) ? 0 : ((d > 0) ? 1 : -1);
+        if(sign == 0) {if(run_start < 0) {run_start = j;} continue;} /* inside a run of rows at the target */
+        if(run_start >= 0) /* a run just ended: one root, at its middle */
+        {
+            n_roots++; *lT_root = 0.5 * (tbl->logT[run_start] + tbl->logT[j - 1]);
+            if(j - 1 > run_start) {aneos_measure_plateau(tbl, r, lu, tol_log, run_start, j - 1, report);}
+            run_start = -1;
+        }
+        else if(sign_prev != 0 && sign != sign_prev) /* a crossing inside the cell (j-1, j) */
+        {
+            n_roots++; *lT_root = tbl->logT[j - 1] + (tbl->logT[j] - tbl->logT[j - 1]) * (-d_prev / (d - d_prev));
+        }
+        sign_prev = sign; d_prev = d;
+    }
+    if(run_start >= 0) /* a run reaching the hottest row */
+    {
+        n_roots++; *lT_root = 0.5 * (tbl->logT[run_start] + tbl->logT[tbl->nT - 1]);
+        if(tbl->nT - 1 > run_start) {aneos_measure_plateau(tbl, r, lu, tol_log, run_start, tbl->nT - 1, report);}
+    }
+    return n_roots;
+}
+
 KOKKOS_INLINE_FUNCTION
 int aneos_compute_P(const struct aneos_table *tables, int mat_index,
                   double rho_cgs, double u_cgs,
@@ -256,8 +341,12 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
                   double *entropy_cgs,
                   double *cv_cgs,
                   double *gruneisen,
-                  int    *phase_out)
+                  int    *phase_out,
+                  struct aneos_inversion_report *report) /* what the inversion had to do (NULL: not wanted) */
 {
+    struct aneos_inversion_report unused_report;
+    if(!report) {report = &unused_report;}
+    report->flags = 0; report->n_roots = 0; report->plateau_logT_width = 0; report->plateau_P_spread = 0;
     if(mat_index < 0 || mat_index >= ANEOS_MAX_MATERIALS) return 1;
     const struct aneos_table *tbl = &tables[mat_index];
     if(!tbl->loaded) return 1;
@@ -265,8 +354,8 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
     double lr = log10(rho_cgs > 0 ? rho_cgs : 1e-30);
 
     /* Clamp log(rho) to table */
-    if(lr < tbl->logrho_min) lr = tbl->logrho_min;
-    if(lr > tbl->logrho_max) lr = tbl->logrho_max;
+    if(lr < tbl->logrho_min) {lr = tbl->logrho_min; report->flags |= ANEOS_INVERSION_RHO_BELOW_TABLE;}
+    if(lr > tbl->logrho_max) {lr = tbl->logrho_max; report->flags |= ANEOS_INVERSION_RHO_ABOVE_TABLE;}
 
     /* density is fixed through the temperature solve: locate it once */
     struct aneos_axis_location r = aneos_locate_rho(tbl, lr);
@@ -278,7 +367,7 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
     double lT, T;
     int converged = 0;
     int max_iter = 50;
-    double tol = 1.0e-8;
+    double tol = ANEOS_INVERSION_TOLERANCE;
 
     /* Initial guess from T_guess (cached particle temperature) */
     T = (T_guess && *T_guess > 0) ? *T_guess : 1000.0;
@@ -297,11 +386,15 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
     double u_hi = pow(10.0, aneos_interp(tbl, tbl->log_energy, r, aneos_locate_T(tbl, lT_hi)));
 
     /* If u_target is outside the valid range, clamp: below it, every quantity is that of the state at the lower edge */
+    report->logT_lo = lT_lo; report->logT_hi = lT_hi;
+    int ordinary_solve = 0; /* 1: an energy inside the valid range, solved by the iteration (the only case a plateau check applies to) */
+    int column_searched = 0; /* 1: the whole-column search has classified this state */
     if(u_target <= u_lo) {
-        lT = lT_lo; converged = 1;
+        lT = lT_lo; converged = 1; if(u_target < u_lo * (1.0 - tol)) {report->flags |= ANEOS_INVERSION_U_BELOW_FLOOR;} /* a state held exactly at the floor is not counted again here */
     } else if(u_target >= u_hi) {
-        lT = lT_hi; converged = 1;
-    }
+        lT = lT_hi; converged = 1; if(u_target > u_hi * (1.0 + tol)) {report->flags |= ANEOS_INVERSION_U_ABOVE_TABLE;}
+    } else {ordinary_solve = 1;}
+    const double tol_log = log10(1.0 + tol); /* the solve's tolerance on u, as a difference in log10(u) */
 
     for(int iter = 0; iter < max_iter && !converged; iter++) {
         struct aneos_axis_location Tl = aneos_locate_T(tbl, lT);
@@ -339,8 +432,22 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
     }
 
     if(!converged) {
-        /* Fallback: use best bracket midpoint */
-        lT = 0.5 * (lT_lo + lT_hi);
+        /* The iteration ran out: search the whole valid column. Exactly one root is used; none or several are reported to the
+           caller, which stops the run (the bracket midpoint is then only a placeholder state for the shutdown). */
+        double lT_root = 0;
+        report->n_roots = aneos_column_roots(tbl, r, log10(u_target), tol_log, &lT_root, report);
+        if(report->n_roots == 1) {report->flags |= ANEOS_INVERSION_RECOVERED; lT = lT_root;}
+        else {report->flags |= (report->n_roots == 0) ? ANEOS_INVERSION_NO_ROOT : ANEOS_INVERSION_MULTIPLE_ROOTS; lT = 0.5 * (lT_lo + lT_hi);}
+        ordinary_solve = 0; column_searched = 1;
+    }
+    if(!column_searched && tbl->fold_logu && fabs(log10(u_target) - 0.5 * (tbl->fold_logu[2 * r.i] + tbl->fold_logu[2 * r.i + 1]))
+                                                <= 0.5 * (tbl->fold_logu[2 * r.i + 1] - tbl->fold_logu[2 * r.i]) + tol_log) {
+        /* this energy lies where u falls with T somewhere in this density interval: a converged or clamped answer may not be the only state with it */
+        double lT_root = 0;
+        report->n_roots = aneos_column_roots(tbl, r, log10(u_target), tol_log, &lT_root, report);
+        if(report->n_roots >= 2) {report->flags |= ANEOS_INVERSION_MULTIPLE_ROOTS; lT = 0.5 * (lT_lo + lT_hi); ordinary_solve = 0;}
+        else if(report->n_roots == 1 && !ordinary_solve) { /* clamped at an end value, but the column holds the state: take it */
+            report->flags &= ~(ANEOS_INVERSION_U_BELOW_FLOOR | ANEOS_INVERSION_U_ABOVE_TABLE); report->flags |= ANEOS_INVERSION_RECOVERED; lT = lT_root;}
     }
 
     T = pow(10.0, lT);
@@ -348,6 +455,11 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
 
     /* --- Look up all quantities at the converged (rho, T) --- */
     struct aneos_axis_location Tloc = aneos_locate_T(tbl, lT);
+    if(ordinary_solve && report != &unused_report) {
+        /* converged: if u(T) is flat to the tolerance across the cell it landed in, T is not determined by u there */
+        double du_cell = aneos_row_value(tbl, tbl->log_energy, r, Tloc.i + 1) - aneos_row_value(tbl, tbl->log_energy, r, Tloc.i);
+        if(fabs(du_cell) <= tol_log) {aneos_measure_plateau(tbl, r, log10(u_target), tol_log, Tloc.i, Tloc.i + 1, report);}
+    }
     if(press_cgs) *press_cgs = pow(10.0, aneos_interp(tbl, tbl->log_pressure, r, Tloc));
     if(entropy_cgs) *entropy_cgs = aneos_interp(tbl, tbl->entropy, r, Tloc);
 
@@ -404,7 +516,7 @@ inline int aneos_compute(int mat_index,
                          int    *phase_out)
 {
     return aneos_compute_P(ANEOS_Tables, mat_index, rho_cgs, u_cgs, T_guess,
-                           press_cgs, cs_cgs, entropy_cgs, cv_cgs, gruneisen, phase_out);
+                           press_cgs, cs_cgs, entropy_cgs, cv_cgs, gruneisen, phase_out, NULL);
 }
 
 /* Direct lookup from (rho, T) in CGS, no temperature inversion.
