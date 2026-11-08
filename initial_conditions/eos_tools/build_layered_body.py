@@ -27,6 +27,8 @@ Earth-like body:
 import numpy as np
 import h5py
 
+from .shell_placement import shells_of, _placement_domains
+
 
 def write_hdf5(path, placed, prof, box_size, center_offset=None, id_offset=0):
     """Write IC file matching the schema used by the existing planet test
@@ -77,14 +79,6 @@ def write_hdf5(path, placed, prof, box_size, center_offset=None, id_offset=0):
 
     print(f"Wrote {path}: n={n}  R={prof['R']:.3e} cm  "
           f"P_c={prof['P'][-1]:.3e} dyn/cm^2  T_c={prof['T'][-1]:.3e} K")
-
-
-def shells_of(r, rel_gap=1e-3):
-    """shell index (0 = innermost) of each particle of one material: SEAGen places a material's particles on spheres, so their
-    radii cluster (to within the small offset between the shells' centre and the body's centre of mass, far below the spacing)"""
-    o = np.argsort(r); rs = r[o]; cut = np.concatenate([[0], np.cumsum(np.diff(rs) / rs[1:] > rel_gap)])
-    idx = np.empty(len(r), int); idx[o] = cut
-    return idx
 
 
 def hydrostatic_pressure(prof, r_particles, m_particles, P_surface):
@@ -222,8 +216,54 @@ def calibrate_planet(placed, prof, zones, P_surface, rho_kernel, h, calibrate_ma
     return prof_cal
 
 
+def _align_grouped_zones(zones, prof, placed, M_total, T_surface, P_surface, n_particles, mass_ratio, seed, n_steps, adiabat_route,
+                         tol, max_passes, allow_unaligned=False):
+    """zones placed together (a placement group) get whole shells, so their profile masses and the shells' disagree: move each boundary
+    INSIDE a placement domain to the realised masses (the domain's total and every boundary between domains stay as requested), drop
+    zones that received no shell, solve the profile again and place again, until no grouped zone is empty and every one's realised mass is
+    within tol of its profile mass (a new profile gives new shells, so one pass is not enough). A pass that finds empty zones always drops
+    them and places again, also beyond max_passes (each such pass removes at least one zone). Not within tol after max_passes: refused,
+    unless allow_unaligned (diagnostics only: a warning). A placement domain that receives no particles is refused. Prints the residual."""
+    import copy
+    from .hse_solver import solve_hse
+    from .shell_placement import seagen_shells
+    zones = [copy.copy(z) for z in zones]; npass = 0
+    while True:
+        npass += 1
+        dom = _placement_domains(zones); M_real = placed["zone_mass"]
+        inner = np.array([z.inner_mass_frac for z in zones]); outer = np.r_[1.0, inner[:-1]]
+        grouped = np.array([getattr(z, "placement_group", None) is not None for z in zones])   # also a group's last surviving zone
+        for d in np.unique(dom[grouped]):
+            if M_real[dom == d].sum() <= 0:
+                raise ValueError("build_planet: the placement group of zones " + ", ".join(zones[z].material.name for z in np.where(dom == d)[0])
+                                 + " received no particles (its mass is below one particle shell): give it more mass or the body more particles")
+        M_prof = (outer - inner) * M_total
+        live = grouped & (M_prof > 0)
+        resid = np.abs(M_real[live] / M_prof[live] - 1).max() if live.any() else 0.0
+        empty = grouped & (M_real == 0)
+        msg = (f"build_planet: zones placed together after {npass} pass(es): largest |realised / profile mass - 1| {resid:.2e} "
+               f"(tolerance {tol:.0e}) over {int(live.sum())} zones holding shells")
+        if not empty.any() and resid <= tol: print("  " + msg); break
+        if not empty.any() and npass >= max_passes:
+            if not allow_unaligned:
+                raise ValueError(msg + ": not reached in max_align_passes (raise it, use more particles, or allow_unaligned=True for diagnostics)")
+            print("  WARNING " + msg + ": not reached in max_align_passes (allow_unaligned)"); break
+        for d in np.unique(dom[grouped]):
+            members = np.where(dom == d)[0]
+            top, bottom = outer[members[0]], inner[members[-1]]          # the domain's requested outer and inner mass fractions
+            m = M_real[members] / M_real[members].sum() * (top - bottom)  # its zones' realised masses, scaled to the domain's requested total
+            for k, z in enumerate(members[:-1]): zones[z].inner_mass_frac = float(bottom + m[k + 1:].sum())
+        zones = [z for z, e in zip(zones, empty) if not e]
+        prof = solve_hse(M_total=M_total, T_surface=T_surface, P_surface=P_surface, zones=zones, n_steps=n_steps, adiabat_route=adiabat_route)
+        print(f"  HSE profile with shell-aligned zone masses (pass {npass}, {np.sum(empty)} zones without a shell dropped): R = {prof['R']:.4e} cm, "
+              f"P_c = {prof['P'][-1]:.3e}, T_c = {prof['T'][-1]:.3e}")
+        placed = seagen_shells(prof, zones, n_particles, mass_ratio=mass_ratio, seed=seed)
+    return zones, prof, placed
+
+
 def build_planet(zones, M_total, T_surface, P_surface, n_particles, out, kernel=3, des_num_ngb=32, mass_ratio="spacing",
-                 calibrate_masses=False, box_size=None, seed=17, n_steps=4000, adiabat_route="first_law", id_offset=0):
+                 calibrate_masses=False, box_size=None, seed=17, n_steps=4000, adiabat_route="first_law", id_offset=0,
+                 align_tol=1e-2, max_align_passes=5, allow_unaligned=False):
     """Layered body in hydrostatic equilibrium, in one call: HSE profile -> SEAGen shells with the particle mass
     matched to the spacing across each material interface -> GIZMO's kernel density at the placed positions (the run's
     KERNEL_FUNCTION `kernel` and DesNumNgb) -> u per particle so that EOS(rho, u) = P_HSE, stopping if a particle below the
@@ -231,13 +271,21 @@ def build_planet(zones, M_total, T_surface, P_surface, n_particles, out, kernel=
     "particle" one mass per particle, so that the run's density equals the profile's, printing the requested and realised masses) -> HDF5 IC at `out`, which records the
     kernel and neighbour number it was built for. zones are ordered outer -> inner (see hse_solver.Zone). The run's own zero-time
     densities (its h band and, in EOS_ELASTIC builds, its free-surface correction) can be passed to calibrate_planet instead.
-    adiabat_route: see hse_solver; id_offset: the body's ParticleIDs start after it (write_hdf5). Returns (placed, prof)."""
+    adiabat_route: see hse_solver; id_offset: the body's ParticleIDs start after it (write_hdf5). Zones sharing a placement_group (the
+    composition bins of a graded interior) are placed as one domain and get whole shells; the profile is then solved again with their
+    shell-aligned masses and the body placed again, until every such zone's realised mass is within align_tol of its profile mass (at most
+    max_align_passes, else the build is refused unless allow_unaligned; zones left without a shell are always dropped), so each bin's
+    equation of state applies where its shells sit to that tolerance. Boundaries between placement domains keep the requested masses.
+    Returns (placed, prof)."""
     from .hse_solver import solve_hse
     from .shell_placement import seagen_shells
     from .sph_density import estimate_sph_density
     prof = solve_hse(M_total=M_total, T_surface=T_surface, P_surface=P_surface, zones=zones, n_steps=n_steps, adiabat_route=adiabat_route)
     print(f"  HSE profile: R = {prof['R']:.4e} cm, P_c = {prof['P'][-1]:.3e}, T_c = {prof['T'][-1]:.3e}")
     placed = seagen_shells(prof, zones, n_particles, mass_ratio=mass_ratio, seed=seed)
+    if any(getattr(z, "placement_group", None) is not None for z in zones):
+        zones, prof, placed = _align_grouped_zones(zones, prof, placed, M_total, T_surface, P_surface, n_particles, mass_ratio, seed,
+                                                   n_steps, adiabat_route, align_tol, max_align_passes, allow_unaligned)
     rho, h = estimate_sph_density(placed["coords"], placed["masses"], des_num_ngb=des_num_ngb, kernel=kernel)
     prof = calibrate_planet(placed, prof, zones, P_surface, rho, h, calibrate_masses=calibrate_masses)
     placed["kernel"], placed["des_num_ngb"] = kernel, des_num_ngb

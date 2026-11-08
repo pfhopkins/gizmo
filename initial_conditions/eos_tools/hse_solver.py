@@ -44,9 +44,12 @@ class Zone:
     Thermal entry of an adiabatic zone below the outermost one (the outermost enters at T_surface): T continuous across
     its top boundary (default), or T_top = the temperature at its top, or dT_top = the jump at its top (T_top = boundary
     T + dT_top).
+
+    placement_group: consecutive zones with the same (not None) value are placed as ONE domain (shell_placement.seagen_shells):
+    the composition bins of a graded interior, which differ in their equation of state but not in how particles are laid out.
     """
 
-    def __init__(self, material, inner_mass_frac, T_profile="adiabatic", T_iso=None, T_top=None, dT_top=None):
+    def __init__(self, material, inner_mass_frac, T_profile="adiabatic", T_iso=None, T_top=None, dT_top=None, placement_group=None):
         if T_profile not in ("adiabatic", "isothermal"):
             raise ValueError(f"T_profile={T_profile!r} not in {{adiabatic,isothermal}}")
         if T_profile == "isothermal" and T_iso is None:
@@ -61,6 +64,7 @@ class Zone:
         self.T_iso = T_iso
         self.T_top = T_top
         self.dT_top = dT_top
+        self.placement_group = placement_group
 
     def entry_T(self, T_boundary):
         """the temperature this zone starts at, given the temperature at the bottom of the zone above"""
