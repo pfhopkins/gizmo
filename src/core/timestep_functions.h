@@ -512,14 +512,22 @@ static inline struct HermiteWalkState hermite_walk_state_snapshot(void)
  *  be empty and would return the start of its previous step. On the corrector pass
  *  do_hermite_prediction has already written the predicted state into Pos and Vel.
  *
+ *  The prediction is used only inside the source's own step: the Old* polynomial
+ *  describes the source over that step, and evaluated beyond it, it is an
+ *  extrapolation that can carry the source a multiple of a close pair's separation
+ *  along the orbit. Outside the step the leapfrog-drifted state is used instead.
+ *
  *  The type test comes first because it is a mask compare, while the full predicate
- *  below it reads several fields and computes a timestep. */
+ *  below it reads several fields and computes a timestep; the step-span test is two
+ *  integer compares and goes ahead of it for the same reason. */
 KOKKOS_INLINE_FUNCTION
 int hermite_source_needs_prediction(int no, struct particle_data *pp, struct HermiteWalkState hw)
 {
     if(!hw.hermite_only) {return 0;}
     if(!(HERMITE_INTEGRATION & (1 << pp[no].Type))) {return 0;}
     if(hw.active_bins & (1ULL << pp[no].TimeBin)) {return 0;}
+    if(hw.ti_current < pp[no].Ti_begstep) {return 0;}
+    if(hw.ti_current - pp[no].Ti_begstep > pp[no].integertime_step()) {return 0;}
     return eligible_for_hermite(no, pp);
 }
 
