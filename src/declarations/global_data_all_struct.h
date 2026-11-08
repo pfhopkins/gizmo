@@ -342,6 +342,14 @@ struct global_data_all_processes
     double TimeNextTurbSpectrum;
     int FileNumberTurbSpectrum;
 #endif
+#ifdef TURB_DRIVING_TARGET_SIGMA
+    double TurbDriving_TargetSigma_Radius;   /* only gas within this distance of the box centre is measured; <= 0: all gas */
+    double TurbDriving_TargetSigma_Kp;       /* proportional gain on ln(v_target / v_rms) */
+    double TurbDriving_TargetSigma_Ti;       /* integral time, in units of TurbDrive_MaxWavelength / TurbDrive_ApproxRMSVturb; <= 0: no integral term */
+    double TurbDriving_TargetSigma_Gain;     /* factor on the driving acceleration, set at each driving update */
+    double TurbDriving_TargetSigma_Integral; /* integral term, in units of ln(gain) */
+    int TurbDriving_TargetSigma_Started;     /* 0 until the first update that measures any gas */
+#endif
 #endif
 
 #ifdef RADTRANSFER

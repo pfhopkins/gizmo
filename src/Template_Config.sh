@@ -149,6 +149,7 @@
 ####################################################################################################
 #TURB_DRIVING                   # turns on turbulent driving/stirring. see begrun for parameters that must be set
 #TURB_DRIVING_SPECTRUMGRID=128  # activates on-the-fly calculation of the turbulent velocity, vorticity, and smoothed-velocity power spectra, evaluated on a grid of linear-size TURB_DRIVING_SPECTRUMGRID elements. Requires BOX_PERIODIC
+#TURB_DRIVING_TARGET_SIGMA      # steer the driving amplitude so the gas rms velocity approaches TurbDrive_ApproxRMSVturb: approximately corrects the order-unity mismatch between the driving parameters and the velocity they produce (parameters TurbDrive_TargetSigma_Radius/_Kp/_Ti)
 ####################################################################################################
 
 
