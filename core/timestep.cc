@@ -1028,7 +1028,7 @@ integertime get_timestep(int p,		/*!< particle index */
             dt_accr = DMIN(dt_accr, target_mass_for_wind_spawning(p) / P[p].Sink_Mdot); 
 #endif
         } // if(P[p].Sink_Mdot > 0 && P[p].Sink_Mass > 0)
-#if defined(SINK_SEED_GROWTH_TESTS) || defined(FIRE_BHS)
+#if defined(FIRE_BHS)
         double dt_evol = 4.2e5 / UNIT_TIME_IN_YR; // totally arbitrary hard-coding here //
 #ifdef TURB_DRIVING
         if(dt_evol > 1.e-3*st_return_mode_correlation_time()) {dt_evol=1.e-3*st_return_mode_correlation_time();}

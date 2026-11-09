@@ -21,6 +21,9 @@ extern struct gas_cell_data
     MyDouble InternalEnergy;        /*!< specific internal energy [internal thermal energy per unit mass] of cell */
     MyDouble InternalEnergyPred;    /*!< predicted value of the specific internal energy at the current time */
     MyDouble DtInternalEnergy;      /*!< rate of change of specific internal energy */
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+    MyDouble InternalEnergy_FromIR_Pending; /*!< specific energy absorbed by the gas from the IR band since its last cooling call; the cooling solve takes it as heating */
+#endif
     
     Vec3<MyDouble> VelPred;         /*!< predicted gas cell velocity at the current time */
     Vec3<MyDouble> HydroAccel;      /*!< acceleration due to hydrodynamical force (for drifting) */

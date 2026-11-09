@@ -90,11 +90,11 @@ void sink_accretion(void)
 double sink_vesc(int j, double mass, double r_code, double sink_softening)
 {
     double cs_to_add = 10. / UNIT_VEL_IN_KMS; /* we can optionally add a 'fudge factor' to v_esc to set a minimum value; useful for -some- galaxy applications */
-#if defined(SINK_SEED_GROWTH_TESTS) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
     cs_to_add = 0;
 #endif
     double m_eff = mass + P[j].Mass; // acount for 2-body mass
-#if defined(SINK_SEED_GROWTH_TESTS) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
     double gas_density = -1; if(P[j].Type == 0) {gas_density = CellP[j].Density;}
 #ifdef GRAIN_FLUID
     if((1<<P[j].Type) & GRAIN_PTYPES) {gas_density = P[j].Gas_Density;}
@@ -130,12 +130,10 @@ int sink_check_boundedness(int j, double vrel, double vesc, double dr_code, doub
     if(gas_density > 0)
     {
         if((P[j].Get_Particle_Size() > sink_radius*1.396263) && (P[j].Type == 0)) {return 0;} // particle volume should be less than sink volume, enforcing a minimum spatial resolution around the sink
-#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY)) || defined(RT_INFRARED) || defined(EOS_GMC_BAROTROPIC)  // check if we're probably sitting at the bottom of a quasi-hydrostatic Larson core
-        /* this guard must match the sink-formation side in sfr_eff.cc, which caps the effective support speed above the same
-            n_H=1e13 threshold so first-core thermal energy cannot veto formation. Both ask whether the run resolves the
-            opacity limit, and a barotropic EOS answers yes just as COOLING does. Gating on COOLING alone compiled this out
-            for barotropic runs, leaving a newly-formed sink with v_esc set by its own single-cell mass while the surrounding
-            first-core gas carries c_s of several km/s: nothing was accretable, so the sink could never grow out of it. */
+#ifdef SINK_OPACITY_LIMIT_THERMODYNAMICS // the run follows gas to the opacity limit (same condition as sink formation in sfr_eff.cc)
+        /* At the bottom of an optically thick core (n_H > 1e13 cm^-3) the gas sound speed of several km/s can exceed the softened
+           escape speed, so nothing would be accretable and the sink could not grow: use at least the unsoftened escape speed of the
+           enclosed gas mass. sfr_eff.cc caps the support speed above the same threshold so formation can proceed there. */
         double nHcgs = HYDROGEN_MASSFRAC * (gas_density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS);
         if(nHcgs > 1e13 && (cs > 0.1 * vrel || P[j].Type != 0)) {double m_eff = 4. * M_PI * dr_code * dr_code * dr_code * gas_density; vesc = DMAX(sqrt(2*All.G * m_eff / dr_code), vesc);} // assume an isothermal sphere interior, for Shu-type solution, and re-estimate vesc using self-gravity of the gas
 #endif
@@ -152,12 +150,6 @@ int sink_check_boundedness(int j, double vrel, double vesc, double dr_code, doub
         if((1 << P[j].Type) & (GRAIN_PTYPES)) {if(dr_code>1.4*sink_radius) {return 0;} else {return 1;}} // simply yes-no, if bound and within sink radius, gets accreted
 #endif
         if(dr_code>sink_radius) {return 0;} else {return 1;} // simply yes-no, if bound and within sink radius, gets accreted
-#endif
-#if !defined(SINGLE_STAR_SINK_DYNAMICS) && !defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS) && defined(SINK_SEED_GROWTH_TESTS)
-        double r_j = ForceSoftening_KernelRadius(j);
-        if(P[j].Type == 0) {r_j = DMAX(r_j , P[j].KernelRadius);}
-        apocenter_max = DMAX(10.0*SinkParticle_GravityKernelRadius,DMIN(50.0*SinkParticle_GravityKernelRadius,r_j));
-        if(P[j].Type == 5) {apocenter_max = DMIN(apocenter_max , 1.*SinkParticle_GravityKernelRadius);}
 #endif
         if(apocenter < apocenter_max) {bound = 1;}
     }
@@ -807,9 +799,14 @@ void sink_final_operations(void)
 #ifdef HERMITE_INTEGRATION
             /* Keep the carry state on the post-accretion trajectory. Without this the prediction
                later in the same step recomputes Pos/Vel from the stale base and silently discards
-               the accretion kick (test/shu1977 shows it as COM drift). */
-            P[n].OldVel += P[n].Vel - hermite_pre_vel;
-            P[n].OldPos += P[n].Pos - hermite_pre_pos;
+               the accretion kick (test/shu1977 shows it as COM drift). The predictor and corrector
+               rebuild this step's end state from the start state, and the jump was applied at the
+               end: shift the start velocity by the velocity jump, and the start position by the
+               position jump less the distance that velocity jump would otherwise add over the step. */
+            const double dt_grav = get_gravkick_factor(P[n].Ti_begstep, P[n].Ti_begstep + P[n].integertime_step(), n, 0);
+            const Vec3<double> dvel = P[n].Vel - hermite_pre_vel;
+            P[n].OldVel += dvel;
+            P[n].OldPos += (P[n].Pos - hermite_pre_pos) - dvel * dt_grav;
 #endif
             force_raise_motion_bound(n); /* accretion moved this sink's velocity outside the kick */
         } // if(masses > 0) check
