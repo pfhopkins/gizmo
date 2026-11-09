@@ -835,6 +835,25 @@ struct global_data_all_processes
 #ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
     char TestSingleStarBirths[256]; /*!< test only: "ID:M_drawn,..." single stars formed at these gas cells at the first star-formation step */
 #endif
+#ifdef TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE
+    double TestStarInitAgeYr; /*!< test only: a single star is born with this age [yr] */
+#endif
+#ifdef TEST_SINGLE_STARS_SN_AT_FORCED_TIMES
+    double TestSNTime0, TestSNSpacing; /*!< test only: star ID k of the first TestNumStars explodes at TestSNTime0 + (k-1) TestSNSpacing [code time] */
+    int TestNumStars;
+#endif
+#ifdef GALSF_SINGLE_STARS_INSTANT_SN_BEFORE_TIME
+    double TimeInstantSN; /*!< single stars of 8 Msun and up explode at their first feedback step while the code time is below this */
+#endif
+#ifdef TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED
+    double TestFixedWindMdot, TestFixedWindVel; /*!< test only: single-star wind rate [Msun/yr] and speed [km/s] */
+#endif
+#ifdef TEST_SINGLE_STARS_LUMINOSITY_PINNED
+    double TestFixedLbol; /*!< test only: bolometric luminosity of every single star [erg/s] */
+#endif
+#ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
+    double TestFBNoGasUntilTime; /*!< test only: before this code time single-star feedback couples to no gas */
+#endif
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
     char StellarTablesFile[256]; /*!< stella-tables main table (scripts/get_stella_tables.sh); the wind table is read from the same directory */
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)

@@ -967,6 +967,9 @@ KOKKOS_INLINE_FUNCTION void cosmic_ray_inject_from_resolved_shocks(int i, double
 void ledger_cr_kick(int i, int k, double dt, double eCR_new); /* ledger.cc: this header comes before the row names */
 void ledger_cr_exchange(double dCR_div);
 void ledger_cr_shock(double dE);
+#ifdef SGCHEM
+void ledger_kick_floor(double dE);
+#endif
 #else
 #define CR_LEDGER_ON_HOST(...)
 #endif
@@ -1092,6 +1095,13 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         /* now need to account for the adiabatic heating/cooling of the 'fluid', here, with gamma=GAMMA_COSMICRAY(k_CRegy) */
         double dCR_div = CR_calculate_adiabatic_gasCR_exchange_term(i, dt_entr, (GAMMA_COSMICRAY(k_CRegy)-1.)*eCR_tmp, mode, pp, cell); // this will handle the update below - separate subroutine b/c we want to allow it to appear in a couple different places
         double uf = DMAX(u0 - dCR_div/pp[i].Mass , All.MinEgySpec); // final updated value of internal energy per above
+#if defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+        CR_LEDGER_ON_HOST(if(mode==0) { /* gas energy the MinEgySpec floors add */
+            double u_in = cell[i].InternalEnergy, u_raw = u0 - dCR_div/pp[i].Mass, de_floor = 0;
+            if(u_in < All.MinEgySpec) {de_floor += (All.MinEgySpec - u_in) * pp[i].Mass;}
+            if(u_raw < All.MinEgySpec) {de_floor += (All.MinEgySpec - u_raw) * pp[i].Mass;}
+            if(de_floor != 0 && isfinite(de_floor)) {ledger_kick_floor(de_floor);}})
+#endif
         if(mode==0) {cell[i].InternalEnergy = uf;} else {cell[i].InternalEnergyPred = uf;} // update gas
 #if !defined(CRFLUID_EVOLVE_SPECTRUM)
         if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy] += dCR_div;} else {cell[i].CosmicRayEnergyPred[k_CRegy] += dCR_div;} // update CRs: note if explicitly evolving spectrum, this is done separately below //

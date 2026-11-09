@@ -74,6 +74,9 @@ double single_star_ionizing_onset_yr(int i)
 /* as single_star_luminosity_age, for the ionising band (from single_star_ionizing_onset_yr) */
 static int single_star_ionizing_age(int i, double *logM, double *logZ, double *log_age)
 {
+#if defined(TEST_SINGLE_STARS_LUMINOSITY_PINNED) || defined(TEST_SINGLE_STARS_RADIATION_OFF)
+    return 0; /* test only: no ionising photons */
+#endif
     if(!single_star_luminosity_age(i, logM, logZ, log_age)) {return 0;}
     double t_on = single_star_ionizing_onset_yr(i);
     return (t_on >= 0 && evaluate_stellar_age_Gyr(i) * 1.e9 >= t_on);
@@ -134,6 +137,9 @@ static inline double single_star_death_age_yr(double logM, double logZ) {return 
 /* table age since the zero-age main sequence (log10 yr) at stellar age age_yr; < 0 means still pre-main-sequence */
 static inline double single_star_table_log_age(double age_yr, double logM, double logZ)
 {
+#ifdef TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED
+    return log10(DMAX(age_yr, 100.)); /* test only: the pinned wind runs from birth, no pre-main-sequence delay */
+#endif
     double t = age_yr - stellar_t_PMS(logM, logZ);
     return (t > 0) ? log10(DMAX(t, 100.)) : -1;
 }
@@ -150,6 +156,13 @@ static void single_star_scale(double *y, double Mej)
 static void single_star_wind_owed(int s, double logM, double logZ, double la_to, struct single_star_event *ev)
 {
     double la_from = SingleStars.last_wind_log_age[s], dM = 0;
+#ifdef TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED /* test only: constant rate and speed, the table's surface composition */
+    ev->Mej = All.TestFixedWindMdot * (pow(10., la_to) - ((la_from > 0) ? pow(10., la_from) : 0));
+    for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_surface_abundance(logM, logZ, la_to, k);}
+    single_star_scale(ev->y, ev->Mej);
+    ev->v_kms = DMAX(All.TestFixedWindVel, 10.); ev->log_age_to = la_to;
+    return;
+#endif
     for(int k = 0; k < STBL_NELEM; k++) {
         ev->y[k] = stellar_elem_ej_wind_cumulative(logM, logZ, la_to, k) - ((la_from > 0) ? stellar_elem_ej_wind_cumulative(logM, logZ, la_from, k) : 0);
         dM += ev->y[k];
@@ -260,17 +273,25 @@ double single_star_eventrates(int i, double dt)
         return 1;
     }
     double age = single_star_age_yr(i), age_end = single_star_death_age_yr(logM, logZ);
-    if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS) {
+    int dead = (age > age_end), forced = 0;
+#ifdef TEST_SINGLE_STARS_SN_AT_FORCED_TIMES
+    if(All.TestSNTime0 > 0 && P[i].ID >= 1 && P[i].ID <= (MyIDType)DMAX(All.TestNumStars, 1) && P[i].ID_generation == 0) { /* test only: the owed winds come with the death */
+        forced = 1; dead = (All.Time >= All.TestSNTime0 + ((double)P[i].ID - 1.) * All.TestSNSpacing);}
+#endif
+#ifdef GALSF_SINGLE_STARS_INSTANT_SN_BEFORE_TIME
+    if(All.Time < All.TimeInstantSN && SingleStars.M_drawn[s] >= 8.0) {forced = dead = 1;} /* stars of 8 Msun and up explode at once */
+#endif
+    if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS && !(forced && dead)) {
         double la = single_star_table_log_age(DMIN(age, age_end), logM, logZ);
         if(la > 0) {
             struct single_star_event ev; single_star_wind_owed(s, logM, logZ, la, &ev);
-            if(age <= age_end && ev.Mej > 0) {P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0;}
-            if(age > age_end && ev.Mej > SINGLE_STAR_WIND_FLUSH_MIN && SingleStars.no_deposit_count[s] < 2) {
+            if(!dead && ev.Mej > 0) {P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0;}
+            if(dead && ev.Mej > SINGLE_STAR_WIND_FLUSH_MIN && SingleStars.no_deposit_count[s] < 2) {
                 P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0; /* winds owed up to the end of life go first */
             }
         }
     }
-    if(age <= age_end) {return 0;}
+    if(!dead) {return 0;}
     SingleStars.M_at_SN_trigger[s] = P[i].Mass; /* death: freeze the mass for every pack of the event */
     SingleStars.no_deposit_count[s] = 0;
     if(is_wd) {P[i].MassReturn_ThisTimeStep = 1;} else {P[i].SNe_ThisTimeStep = 1;}

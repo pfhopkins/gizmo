@@ -65,4 +65,30 @@ void single_star_event_logs_write(void)
     for(int f = 0; f < 3; f++) {if(ssl_fd[f]) {fflush(ssl_fd[f]);}}
 }
 
+/* sfr_rism.txt (stella_dev): star-formation rate [Msun/yr] of the stars younger than 50, 40, 30, 20, 5 and 1 Myr (drawn masses) and the
+   number of stars; collective with one reduction, called in the steps that build the tree only */
+void single_star_sfr_windows_write(void)
+{
+    static const double window_myr[6] = {50., 40., 30., 20., 5., 1.};
+    double loc[7] = {0, 0, 0, 0, 0, 0, 0}, glob[7];
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].Type != 4 || P[i].StarIdx <= 0 || P[i].Mass <= 0) {continue;}
+        double M = SingleStars.M_drawn[single_star_slot(P[i].StarIdx)], age_myr = evaluate_stellar_age_Gyr(i) * 1.e3;
+        loc[6] += 1;
+        for(int w = 0; w < 6; w++) {if(age_myr <= window_myr[w]) {loc[w] += M;}}
+    }
+    MPI_Reduce(loc, glob, 7, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask != 0) {return;}
+    static FILE *fd = NULL;
+    if(!fd) {
+        char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "sfr_rism.txt");
+        fd = fopen(buf, (RestartFlag == 0) ? "w" : "a");
+        if(fd && RestartFlag == 0) {fprintf(fd, "# time N_stars SFR_50Myr SFR_40Myr SFR_30Myr SFR_20Myr SFR_5Myr SFR_1Myr [Msun/yr]\n");}
+    }
+    if(!fd) {return;}
+    fprintf(fd, "%12.6f  %8d", All.Time, (int) glob[6]);
+    for(int w = 0; w < 6; w++) {fprintf(fd, "  %12.6e", glob[w] / (window_myr[w] * 1.e6));}
+    fprintf(fd, "\n"); fflush(fd);
+}
+
 #endif

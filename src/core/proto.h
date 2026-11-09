@@ -1044,6 +1044,7 @@ void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
 void single_star_event_logs_write(void);
+void single_star_sfr_windows_write(void);
 #endif
 #endif
 #if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
@@ -1314,7 +1315,18 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #else
 #define LEDGER_ROWS_PI(X)
 #endif
-#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X) LEDGER_ROWS_PI(X)
+#ifdef SGCHEM /* gas energy the kick limiter and the temperature floor add; the energy the MHD source terms create */
+#define LEDGER_ROWS_KICK_FLOOR(X) X(LEDGER_E_KICK_FLOOR, "E_kick_floor_erg", UNIT_ENERGY_IN_CGS, 0)
+#ifdef MAGNETIC
+#define LEDGER_ROWS_MHD(X) X(LEDGER_E_MHD_NUMERICAL, "E_mhd_numerical_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_MHD(X)
+#endif
+#else
+#define LEDGER_ROWS_KICK_FLOOR(X)
+#define LEDGER_ROWS_MHD(X)
+#endif
+#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X) LEDGER_ROWS_PI(X) LEDGER_ROWS_KICK_FLOOR(X) LEDGER_ROWS_MHD(X)
 #define LEDGER_ROW_ENUM(id, name, unit, state) id,
 enum ledger_rows {LEDGER_ROWS(LEDGER_ROW_ENUM) LEDGER_NROWS};
 void ledger_init(void);
