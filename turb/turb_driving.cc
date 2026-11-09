@@ -213,13 +213,13 @@ static double st_compute_vrms(void)
 #else
     const double r_region = (double)(TURB_DRIVING_TARGET_VRMS_REGION);
 #endif
-    const double box_cx = 0.5*boxSize_X, box_cy = 0.5*boxSize_Y, box_cz = 0.5*boxSize_Z;
+    const double box_c[3] = {0.5*boxSize_X, 0.5*boxSize_Y, 0.5*boxSize_Z};
     for(int i = 0; i < NumPart; i++)
     {
         if(P[i].Type != 0 || P[i].Mass <= 0) continue;
         if(r_region > 0) {
-            double dx = P[i].Pos[0] - box_cx, dy = P[i].Pos[1] - box_cy, dz = P[i].Pos[2] - box_cz;
-            if(dx*dx + dy*dy + dz*dz > r_region*r_region) continue;
+            double r2 = 0; for(int k = 0; k < NUMDIMS; k++) {double dx = P[i].Pos[k] - box_c[k]; r2 += dx*dx;} /* over the run's dimensions: in 2D the third coordinate is 0, not the box centre */
+            if(r2 > r_region*r_region) continue;
         }
         sums[0] += P[i].Mass;
         for(int k=0; k<3; k++) {sums[1+k] += P[i].Mass * P[i].Vel[k];}
@@ -247,8 +247,9 @@ static void st_update_driving_gain(void)
     double v = st_compute_vrms();
     double e = log(v_target / DMAX(v, 1.e-3*v_target)); e = DMAX(-e_max, DMIN(e_max, e));
     int first_update = !All.TurbDriving_PID_Started;
-    if(first_update) /* bumpless start: begin at gain 1, with no derivative kick */
-        {All.TurbDriving_PID_LastError = e; All.TurbDriving_PID_Integral = -Kp * e; All.TurbDriving_PID_Started = 1;}
+    if(first_update) {All.TurbDriving_PID_LastError = e; All.TurbDriving_PID_Started = 1;} /* bumpless start: no derivative kick */
+    if(Ti <= 0) {All.TurbDriving_PID_Integral = 0;} /* proportional only, also when a restart switches the integral off */
+    else if(first_update) {All.TurbDriving_PID_Integral = -Kp * e;} /* the loop opens at gain 1, the uncontrolled amplitude */
 
     All.TurbDriving_PID_Derivative = (Tf * All.TurbDriving_PID_Derivative + Kp * Td * (e - All.TurbDriving_PID_LastError)) / (Tf + dt);
     All.TurbDriving_PID_LastError = e;
