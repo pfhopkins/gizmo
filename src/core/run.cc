@@ -606,6 +606,13 @@ void run(void)
         {
             mechanical_fb_calc_toplevel();
             gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
+#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
+            if(MechFBAnyCellReceived) { /* gizmo2017: refresh densities, gradients and forces against the state after the deposit */
+                MechFBAnyCellReceived = 0;
+                if(ThisTask == 0) {printf("HYDRO_RECOMPUTE_AFTER_FEEDBACK: repeating the hydro pass after a deposit\n");}
+                HydroRecomputeAfterFeedback = 1; compute_hydro_densities_and_forces(); HydroRecomputeAfterFeedback = 0;
+            }
+#endif
         }
 #endif
 

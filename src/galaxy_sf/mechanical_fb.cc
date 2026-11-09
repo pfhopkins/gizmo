@@ -136,6 +136,9 @@ static struct MechFBGasDelta *LocalGasMechFBInfoTemp;
 
 
 /* subroutine to check for total kinetic energy change and thermal energy change after integrating the effects of all SNe over all cells, and coupling this to particles,  */
+#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
+int MechFBCellsReceived = 0, MechFBAnyCellReceived = 0; /* cells this rank fed this step; any rank, set by the driver */
+#endif
 void verify_and_assign_local_mechfb_integrals(void)
 {
     /* The cells this pass kicks: their motion bounds are raised once at the
@@ -147,6 +150,9 @@ void verify_and_assign_local_mechfb_integrals(void)
         if(P[j].Type==0 && P[j].Mass>0)
         {
             kicked.push_back(j);
+#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
+            MechFBCellsReceived++;
+#endif
             const Vec3<MyDouble> vel_before_deposit = P[j].Vel;
             double m0=P[j].Mass, dm=LocalGasMechFBInfoTemp[j].m_injected; P[j].Mass += dm; /* update mass */ if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
@@ -370,6 +376,9 @@ void mechanical_fb_calc_toplevel(void)
 
 
     verify_and_assign_local_mechfb_integrals();
+#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
+    {int got = (MechFBCellsReceived > 0); MechFBCellsReceived = 0; MPI_Allreduce(&got, &MechFBAnyCellReceived, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);} /* only past the active-source check: no collective on quiet steps */
+#endif
     /* persistent buffer: NOT freed -- reused across steps, kept all-zero by the
      * drain-zero in verify_and_assign_local_mechfb_integrals. */
 }
