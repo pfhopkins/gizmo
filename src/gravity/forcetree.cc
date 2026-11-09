@@ -1130,7 +1130,13 @@ static int *pseudo_recvcounts_pending = NULL;
 static int *pseudo_recvoffset_pending = NULL;
 static int  pseudo_n_requests_pending = 0;
 
-void force_exchange_pseudodata_issue(void)
+static void force_exchange_pseudodata_post(int blocking);
+void force_exchange_pseudodata_issue(void) {force_exchange_pseudodata_post(0);}
+
+/* blocking=1 when the caller has nothing to overlap with the exchange: the blocking Allgatherv then uses MPI's tuned
+ * algorithms, where the nonblocking schedule progresses only inside MPI calls (at 96 ranks on 4 nodes it took ~1.5x
+ * as long). The same bytes land in the same places either way. */
+static void force_exchange_pseudodata_post(int blocking)
 {
     int i, no, m;
     /* Re-entrant issue() (a prior issue had no matching complete()): soft
@@ -1249,9 +1255,17 @@ void force_exchange_pseudodata_issue(void)
               }
             ro[recvTask] = (int) offset_bytes;
         }
-        MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
-                        &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
-                        &pseudo_requests_pending[m]);
+        if(blocking)
+        {
+            MPI_Allgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE, &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD);
+            pseudo_requests_pending[m] = MPI_REQUEST_NULL;
+        }
+        else
+        {
+            MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
+                            &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
+                            &pseudo_requests_pending[m]);
+        }
     }
 }
 
@@ -1370,7 +1384,7 @@ int force_exchange_pseudodata_complete(void)
  *  pseudo-update work and drains at its poll). */
 int force_exchange_pseudodata(void)
 {
-    force_exchange_pseudodata_issue();
+    force_exchange_pseudodata_post(1);
     return force_exchange_pseudodata_complete();
 }
 
