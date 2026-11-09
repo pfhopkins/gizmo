@@ -377,6 +377,9 @@ static void mechanical_fb_per_source_setup(
 #ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
     if(m.feedback_type_is_SNe) {m.momentum_to_couple_term_units = 0;} /* pure-thermal SNe: no radial ejecta momentum; the cell's closure below gives the whole energy as heat */
 #endif
+#ifdef GALSF_SINGLE_STARS_WINDS_THERMAL_ONLY
+    if(loop_iteration == 1) {m.momentum_to_couple_term_units = 0;} /* winds and AGB ejecta: no kick, the cell's closure gives the whole energy as heat */
+#endif
 
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE) && !(defined(MECHFB_CR_INJECTION) && defined(GALSF_SINGLE_STARS_FROM_IMF))
     /* Mirror CPU lines 548-555 in mechanical_fb.cc: compute CR energy budget
@@ -479,6 +482,9 @@ static void mechanical_fb_pair_kernel(
 
     double wk_vec[AREA_WEIGHTED_SUM_ELEMENTS] = {0};
     wk_vec[0] = wk;
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+    if(u < 1) {wk_vec[AREA_WEIGHTED_SUM_KERNEL_GAS] = Mass_j;}
+#endif
     if(dp[0] > 0) { wk_vec[1] = wk * dp[0] / r; wk_vec[2] = 0; } else { wk_vec[1] = 0; wk_vec[2] = wk * dp[0] / r; }
     if(dp[1] > 0) { wk_vec[3] = wk * dp[1] / r; wk_vec[4] = 0; } else { wk_vec[3] = 0; wk_vec[4] = wk * dp[1] / r; }
     if(dp[2] > 0) { wk_vec[5] = wk * dp[2] / r; wk_vec[6] = 0; } else { wk_vec[5] = 0; wk_vec[6] = wk * dp[2] / r; }
@@ -580,6 +586,9 @@ static void mechanical_fb_pair_kernel(
 #ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
     if(m.feedback_type_is_SNe) {pnorm = wk_local_norm;} /* heat needs no balance: the plain share */
 #endif
+#ifdef GALSF_SINGLE_STARS_WINDS_THERMAL_ONLY
+    if(loop_iteration == 1) {pnorm = wk_local_norm;}
+#endif
 #endif
     double dM_ejecta_in = pnorm * (double)local.Msne;
     double mj_preshock = Mass_j;
@@ -648,7 +657,9 @@ static void mechanical_fb_pair_kernel(
                                        home_gas_delta, ghost_gas_delta);
 #endif
         double mom_prefactor = scalars.common.cf_atime * m.momentum_to_couple_term_units / Mass_j;
-#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
+#if defined(GALSF_SINGLE_STARS_WINDS_THERMAL_ONLY)
+        if(mom_prefactor > 0 || m.feedback_type_is_SNe || loop_iteration == 1) { /* no kick: the ejecta carry the star's velocity */
+#elif defined(GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY)
         if(mom_prefactor > 0 || m.feedback_type_is_SNe) { /* pure-thermal SNe: the ejecta carry the star's velocity */
 #else
         if(mom_prefactor > 0) {

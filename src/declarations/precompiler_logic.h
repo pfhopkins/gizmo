@@ -48,7 +48,7 @@
 #if !defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS) && !defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS) && !defined(GALSF_FB_MECHANICAL_FACE_AREA_WEIGHTS)
 #define GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
 #endif
-#if !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) /* with the moment solver its bins push */
+#if !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) && !defined(GALSF_SINGLE_STARS_WINDS_THERMAL_ONLY) /* with the moment solver its bins push */
 #define GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
 #endif
 #ifndef TIDAL_TIMESTEP_CRITERION
@@ -1071,6 +1071,26 @@
 #define  GALSF_GENERATIONS     1    /*!< Number of star particles that may be created per gas particle */
 #endif
 
+#if defined(GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY) && !defined(GALSF_SINGLE_STARS_SF_CRITERION)
+#error "GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY requires GALSF_SINGLE_STARS_SF_CRITERION"
+#endif
+#if defined(GALSF_SINGLE_STARS_SF_CONVERGING_FLOW_ONLY) && !defined(GALSF_SINGLE_STARS_SF_CRITERION)
+#error "GALSF_SINGLE_STARS_SF_CONVERGING_FLOW_ONLY requires GALSF_SINGLE_STARS_SF_CRITERION"
+#endif
+#if defined(HOT_GAS_TIMESTEP_SYNC) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#error "HOT_GAS_TIMESTEP_SYNC asks inactive cells for their step, which refreezes their dilation factor"
+#endif
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+#ifndef HOT_GAS_TIMESTEP_SYNC
+#define HOT_GAS_TIMESTEP_SYNC /* one-sided hydro fluxes: the young blast of a cell needs its neighbours on its step */
+#endif
+#if !defined(GALSF_FB_MECHANICAL) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_SINGLE_STARS_SN_EJECTA_CELL needs GALSF_FB_MECHANICAL, GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
+#error "GALSF_SINGLE_STARS_SN_EJECTA_CELL does not set the grain size bins of the new cell"
+#endif
+#endif
 #if defined(GALSF_SINGLE_STARS_SF_CRITERION) && !defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS)
 #define GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* the single-star criterion forms stars that collect their drawn mass */
 #endif
@@ -1094,6 +1114,17 @@
 #endif
 #if defined(GALSF_FB_FIRE_STELLAREVOLUTION) || (defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL))
 #define GALSF_FB_MASS_RETURN_EVENTS /* the mechanical feedback loop also returns stellar mass (mode 1) */
+#endif
+#if defined(GALSF_SINGLE_STARS_WINDS_IN_CHUNKS) && (!defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || !defined(GALSF_FB_MECHANICAL))
+#error "GALSF_SINGLE_STARS_WINDS_IN_CHUNKS needs GALSF_SINGLE_STARS_FROM_IMF, GALSF_SINGLE_STARS_EVOLUTION_TABLES and GALSF_FB_MECHANICAL"
+#endif
+#ifdef GALSF_SINGLE_STARS_WINDS_THERMAL_ONLY
+#if !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || !defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#error "GALSF_SINGLE_STARS_WINDS_THERMAL_ONLY needs GALSF_SINGLE_STARS_FROM_IMF, GALSF_SINGLE_STARS_EVOLUTION_TABLES and GALSF_FB_MECHANICAL, without FIRE stellar evolution"
+#endif
+#if defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+#error "GALSF_SINGLE_STARS_WINDS_THERMAL_ONLY has no radiation-pressure kick: leave out GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS"
+#endif
 #endif
 
 
@@ -1135,6 +1166,12 @@
    and sink capture both ask this one question (after every block above that can switch on one of its inputs) */
 #if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY)) || defined(RT_INFRARED) || defined(EOS_GMC_BAROTROPIC)
 #define SINK_OPACITY_LIMIT_THERMODYNAMICS
+#endif
+#if defined(GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK) && !defined(GALSF_SINGLE_STARS_27_ELEMENT_YIELDS)
+#error "GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK needs GALSF_SINGLE_STARS_27_ELEMENT_YIELDS"
+#endif
+#if defined(OUTPUT_TREECOL_PIXEL_COLUMNS) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
+#error "OUTPUT_TREECOL_PIXEL_COLUMNS writes the pixel columns of the gravity walk (GALSF_RESOLVEDISM_TREECOL_PIXELS)"
 #endif
 #if defined(OUTPUT_SGCHEM_RADIATION_FIELDS) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES)
 #error "OUTPUT_SGCHEM_RADIATION_FIELDS writes the band fluxes of the gravity walk"
@@ -1638,7 +1675,9 @@
 #endif
 
 #ifdef MAGNETIC /* recommended MHD switches -- only turn these off for de-bugging */
+#ifndef TEST_MHD_NO_DEDNER_CLEANING /* test only: disables div-cleaning */
 #define DIVBCLEANING_DEDNER         /* hyperbolic/parabolic div-cleaing (Dedner 2002), with TP improvements */
+#endif
 #ifdef HYDRO_SPH /* MHD switches specific to SPH MHD */
 #define SPH_TP12_ARTIFICIAL_RESISTIVITY   /* turns on magnetic dissipation ('artificial resistivity'): uses tricco switch =h*|gradB|/|B| */
 #endif
@@ -2025,6 +2064,9 @@
 #endif
 #if defined(OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS) && (!defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) || !defined(GALSF))
 #error "OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS needs OUTPUT_MASS_METAL_ENERGY_LEDGER and GALSF"
+#endif
+#if defined(GALSF_FB_PHOTOIONIZATION_RECOMBINATION_AT_CELL_TEMPERATURE) && !(defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION) && defined(SGCHEM))
+#error "GALSF_FB_PHOTOIONIZATION_RECOMBINATION_AT_CELL_TEMPERATURE needs GALSF_FB_PHOTOIONIZATION_PER_DIRECTION and SGCHEM"
 #endif
 #if defined(OUTPUT_MASS_BALANCE_BREAKDOWN) && !defined(OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS)
 #error "OUTPUT_MASS_BALANCE_BREAKDOWN needs OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS"

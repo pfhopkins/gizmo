@@ -97,6 +97,9 @@ void ledger_cr_kick(int i, int k, double dt, double eCR_new)
 void ledger_cr_exchange(double dCR_div) {ledger_add(LEDGER_E_CR_EXCHANGE, dCR_div);}
 void ledger_cr_shock(double dE) {ledger_add(LEDGER_E_CR_SHOCK, dE);}
 #endif
+#ifdef SGCHEM
+void ledger_kick_floor(double dE) {ledger_add(LEDGER_E_KICK_FLOOR, dE);}
+#endif
 
 static void ledger_state_rows(void) /* the state rows: sums over this rank's particles now */
 {

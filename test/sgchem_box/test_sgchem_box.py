@@ -359,3 +359,11 @@ int main(void) {
     exe = tmp_path / "ledger_value_unit"
     subprocess.run(["g++", "-O1", str(c), "-o", str(exe), "-lm"], check=True)
     assert float(subprocess.run([str(exe)], capture_output=True, text=True, check=True).stdout) == -2.5
+
+
+def test_sgchem_solar_metallicity(tables, box):
+    """InitMetallicity 1 (solar) sets the total metal mass fraction to the stella_dev value 0.014 in a SGChem build without the stellar tables
+    (before: 0.02). Bar written before the run: every cell of snapshot 0 has Metallicity[0] = 0.014 to 1e-12."""
+    with h5py.File(path.join(HERE, "output", "snapshot_000.hdf5")) as s0:
+        z = s0["PartType0/Metallicity"][:, 0]
+    assert np.all(np.abs(z - 0.014) < 1e-12), (z.min(), z.max())

@@ -14,6 +14,9 @@
 #include <cmath>
 #include <vector>
 #include <algorithm>
+#include <map>
+#include <tuple>
+#include <array>
 #include <Kokkos_Core.hpp>
 #include "../declarations/gpu_all_mirror.h"  /* before allvars.h */
 #include "../declarations/allvars.h"
@@ -237,6 +240,35 @@ double single_stars_collect_gas(long long tot_spawned)
         gpu_particles_arena_invalidate();
     }
 
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+    { /* IMFinfo.txt: one row per (star, donor cell) with the mass taken over all passes (failed draws left out), written by rank 0 sorted by star and donor */
+        std::map<std::tuple<unsigned long long, unsigned long long, int, unsigned long long>, long long> taken;
+        for(const SscGrantRecord& r : records) {
+            bool failed = false;
+            for(const ssc_key& f : failed_all) {if(r.id == f.id && r.child == f.child && r.gen == f.gen) {failed = true; break;}}
+            if(!failed) {taken[std::make_tuple((unsigned long long)r.id, (unsigned long long)r.child, r.gen, (unsigned long long)P[r.j].ID)] += r.g;}
+        }
+        std::vector<double> mine; for(const auto& kv : taken) {mine.push_back((double)std::get<0>(kv.first)); mine.push_back((double)std::get<3>(kv.first)); mine.push_back((double)kv.second * mu * UNIT_MASS_IN_SOLAR);}
+        int nm = (int) mine.size(), nall = 0; std::vector<int> cnt(NTask), dsp(NTask);
+        MPI_Gather(&nm, 1, MPI_INT, cnt.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0) {for(int t = 0; t < NTask; t++) {dsp[t] = nall; nall += cnt[t];}}
+        std::vector<double> got(DMAX(nall, 1));
+        MPI_Gatherv(mine.data(), nm, MPI_DOUBLE, got.data(), cnt.data(), dsp.data(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0 && nall > 0) {
+            static FILE *fd = NULL;
+            if(!fd) {
+                char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "IMFinfo.txt");
+                fd = fopen(buf, (RestartFlag == 0) ? "w" : "a");
+                if(fd && RestartFlag == 0) {fprintf(fd, "# time star_ID donor_gas_ID dM_taken[Msun]\n");}
+            }
+            std::vector<std::array<double,3>> v(nall / 3); for(size_t k = 0; k < v.size(); k++) {v[k] = {got[3*k], got[3*k+1], got[3*k+2]};}
+            std::sort(v.begin(), v.end());
+            for(const auto& x : v) {if(fd) {fprintf(fd, "%.10g %.0f %.0f %.12e\n", All.Time, x[0], x[1], x[2]);}}
+            if(fd) {fflush(fd);}
+        }
+    }
+#endif
+
     /* apply: each donor loses its granted quanta once */
     {
         std::vector<int> list; std::vector<SscStarIn> in;
@@ -323,6 +355,9 @@ void single_star_attach_to_new_star(int i_star, int i, double M_drawn)
 {
     P[i_star].Type = 4;
     P[i_star].StellarAge = All.Time;
+#ifdef TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE
+    P[i_star].StellarAge = All.Time - All.TestStarInitAgeYr / UNIT_TIME_IN_YR; /* test only */
+#endif
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
     P[i_star].DensityAroundParticle = CellP[i].Density;
 #endif

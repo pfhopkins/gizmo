@@ -190,7 +190,11 @@ void init(void)
 
 #ifdef METALS
     for(j=0;j<NUM_METAL_SPECIES;j++) {All.SolarAbundances[j]=0;} // initialize all to zero
+#ifdef SGCHEM
+    All.SolarAbundances[0]=0.014;       // SGChem: Asplund+ 2009 present-day solar Z, as stella_dev
+#else
     All.SolarAbundances[0]=0.02;        // all metals (by mass); present photospheric abundances from Asplund et al. 2009 (Z=0.0134, proto-solar=0.0142) in notes;
+#endif
     //   also Anders+Grevesse 1989 (older, but hugely-cited compilation; their Z=0.0201, proto-solar=0.0213)
 #ifdef COOL_METAL_LINES_BY_SPECIES
     All.SolarAbundances[1]=0.28;    // He  (10.93 in units where log[H]=12, so photospheric mass fraction -> Y=0.2485 [Hydrogen X=0.7381]; Anders+Grevesse Y=0.2485, X=0.7314), with proto-solar Y=0.27
@@ -1060,6 +1064,13 @@ void init(void)
        Here we only need the post-density cleanup since no gradients/hydro follow. */
     density();
     if(NTask > 1) {ghost_exchange_cleanup();}
+#ifdef SGCHEM_TEMPERATURE_FROM_CHEMISTRY_AT_SNAPSHOT_RESTART
+    if(RestartFlag == 2) {for(i = 0; i < N_gas; i++) {if(P[i].Type == 0) {CellP[i].Temp = sgchem_startup_temperature(i);
+#ifdef TEST_SGCHEM_PRINT_THERMAL_PROPERTIES
+        printf("RESTARTTEMP %llu %.17g\n", (unsigned long long) P[i].ID, (double) CellP[i].Temp);
+#endif
+    }}} /* snapshots carry no Temp: derive it before the first force pass reads it */
+#endif
 
     /* Seed the per-particle ForceSoftening cache for ALL particles loaded from
      * the IC.  This populates the single-source-of-truth value read by both CPU

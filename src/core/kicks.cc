@@ -273,6 +273,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
     Vec3<double> dp; double dt_entr, dt_gravkick, dt_hydrokick;
     double mass_old, mass_pred, mass_new;
     mass_old = mass_pred = mass_new = P[i].Mass;    
+#ifdef TEST_FROZEN_STARS_ZERO_VELOCITY_AND_ACCELERATION
+    if(P[i].Type == 4) {P[i].GravAccel = {}; P[i].Vel = {}; return;} /* stars stay where they are while the gravity tree runs for the radiation */
+#endif
     
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     /* need to do the slightly more complicated update scheme to maintain exact mass conservation */
@@ -447,6 +450,12 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #endif
             EOS_LIMIT_RECORD_KICK_MIN_ENERGY(CellP[i].CompositionType, CellP[i].InternalEnergy, P[i].Mass);
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
+#if defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+            ledger_add(LEDGER_E_KICK_FLOOR, P[i].Mass * (CellP[i].InternalEnergy - dEnt)); /* what the limiter and the floor add */
+#ifdef MAGNETIC
+            ledger_add(LEDGER_E_MHD_NUMERICAL, CellP[i].DtEnergyMHDNum * dt_hydrokick);
+#endif
+#endif
 #ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
             LEDGER_ADD(LG_HYDRO_Q, P[i].Mass * (dEnt - ledger_u0)); ledger_log_hydro_event(i, P[i].Mass * (dEnt - ledger_u0), 0, dt_hydrokick, mode);
             LEDGER_ADD(LG_FLOORS, P[i].Mass * (CellP[i].InternalEnergy - dEnt));

@@ -1891,6 +1891,46 @@ void read_parameter_file(char *fname)
         id[nt++] = STRING;
 #endif
 
+#ifdef TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE
+        strcpy(tag[nt], "TestStarInitAgeYr");
+        addr[nt] = &All.TestStarInitAgeYr;
+        id[nt++] = REAL;
+#endif
+#ifdef TEST_SINGLE_STARS_SN_AT_FORCED_TIMES
+        strcpy(tag[nt], "TestSNTime0");
+        addr[nt] = &All.TestSNTime0;
+        id[nt++] = REAL;
+        strcpy(tag[nt], "TestSNSpacing");
+        addr[nt] = &All.TestSNSpacing;
+        id[nt++] = REAL;
+        strcpy(tag[nt], "TestNumStars");
+        addr[nt] = &All.TestNumStars;
+        id[nt++] = INT;
+#endif
+#ifdef GALSF_SINGLE_STARS_INSTANT_SN_BEFORE_TIME
+        strcpy(tag[nt], "TimeInstantSN");
+        addr[nt] = &All.TimeInstantSN;
+        id[nt++] = REAL;
+#endif
+#ifdef TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED
+        strcpy(tag[nt], "TestFixedWindMdot");
+        addr[nt] = &All.TestFixedWindMdot;
+        id[nt++] = REAL;
+        strcpy(tag[nt], "TestFixedWindVel");
+        addr[nt] = &All.TestFixedWindVel;
+        id[nt++] = REAL;
+#endif
+#ifdef TEST_SINGLE_STARS_LUMINOSITY_PINNED
+        strcpy(tag[nt], "TestFixedLbol");
+        addr[nt] = &All.TestFixedLbol;
+        id[nt++] = REAL;
+#endif
+#ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
+        strcpy(tag[nt], "TestFBNoGasUntilTime");
+        addr[nt] = &All.TestFBNoGasUntilTime;
+        id[nt++] = REAL;
+#endif
+
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
         strcpy(tag[nt], "StellarTablesFile");
         addr[nt] = All.StellarTablesFile;
@@ -2562,6 +2602,11 @@ void read_parameter_file(char *fname)
 
       strcpy(tag[nt], "SFCooldownFreeFallFraction");
       addr[nt] = &All.SFCooldownFreeFallFraction;
+      id[nt++] = REAL;
+#endif
+#ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY
+      strcpy(tag[nt], "nHcutoffSF");
+      addr[nt] = &All.nHcutoffSF;
       id[nt++] = REAL;
 #endif
 

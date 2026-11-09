@@ -42,9 +42,16 @@ struct PiFrontRecord {            /* a source's last solve, the same on every ra
     double mark[PI_NPIX];
     double ledger;                /* its recombinations / Q */
 };
+#ifdef GALSF_FB_PHOTOIONIZATION_RECOMBINATION_AT_CELL_TEMPERATURE
+#define PI_ALPHA_NT 51
+double chem_case_b_rate(double temp);
+#endif
 struct PiCallScalars {
     NlrCommonScalars common;
     double bill_fac;              /* bill [1/s] = bill_fac * rho_code * m_code */
+#ifdef GALSF_FB_PHOTOIONIZATION_RECOMBINATION_AT_CELL_TEMPERATURE
+    float alpha_ratio[PI_ALPHA_NT]; /* alpha_B(T) / alpha_B(1e4 K), log T = 4 + 0.1 k */
+#endif
     integertime stamp;            /* stamp: ionised until this time */
     long long *claim;             /* A_c by local gas index */
     int n_claim;
@@ -107,6 +114,9 @@ static int pi_cell(const PiSourceIn& s, const struct particle_data& Pj, const st
     *r = sqrt(r2);
     *pix = pi_healpix_pixel(d[0], d[1], d[2]);
     *bill = cs.bill_fac * (double)Cj->Density * (double)Pj.Mass;
+#ifdef GALSF_FB_PHOTOIONIZATION_RECOMBINATION_AT_CELL_TEMPERATURE
+    if(Cj->Temp > 1.0e4) {double x = 10. * (log10((double)Cj->Temp) - 4.); int it = (x < PI_ALPHA_NT - 2) ? (int)x : PI_ALPHA_NT - 2; *bill *= cs.alpha_ratio[it] + (x - it) * (cs.alpha_ratio[it+1] - cs.alpha_ratio[it]);}
+#endif
     if(!(*bill > 0)) {return 0;}
     *q = pi_weight(s.S_pix, r2, (double)Pj.Get_Particle_Size(), *bill);
     return 1;

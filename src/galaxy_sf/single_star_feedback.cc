@@ -22,6 +22,7 @@
  *   - winds (drawn mass >= 8 Msun, after the pre-main sequence): every star step returns the table's cumulative wind
  *     ejecta between the age of the last delivery and now, at the table wind speed, with that interval's composition;
  *     the last delivery age advances only when the mass coupled;
+ *     with GALSF_SINGLE_STARS_WINDS_IN_CHUNKS only when the mass owed passes a fraction of the drawn mass;
  *   - death (age > PMS time + table lifetime): first any wind mass still owed up to the end of life, then the death
  *     itself; the star's mass at the death trigger is frozen in the record (M_at_SN_trigger), and every pack of the event
  *     recomputes ejecta, energy and yields from it;
@@ -74,6 +75,9 @@ double single_star_ionizing_onset_yr(int i)
 /* as single_star_luminosity_age, for the ionising band (from single_star_ionizing_onset_yr) */
 static int single_star_ionizing_age(int i, double *logM, double *logZ, double *log_age)
 {
+#if defined(TEST_SINGLE_STARS_LUMINOSITY_PINNED) || defined(TEST_SINGLE_STARS_RADIATION_OFF)
+    return 0; /* test only: no ionising photons */
+#endif
     if(!single_star_luminosity_age(i, logM, logZ, log_age)) {return 0;}
     double t_on = single_star_ionizing_onset_yr(i);
     return (t_on >= 0 && evaluate_stellar_age_Gyr(i) * 1.e9 >= t_on);
@@ -134,6 +138,9 @@ static inline double single_star_death_age_yr(double logM, double logZ) {return 
 /* table age since the zero-age main sequence (log10 yr) at stellar age age_yr; < 0 means still pre-main-sequence */
 static inline double single_star_table_log_age(double age_yr, double logM, double logZ)
 {
+#ifdef TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED
+    return log10(DMAX(age_yr, 100.)); /* test only: the pinned wind runs from birth, no pre-main-sequence delay */
+#endif
     double t = age_yr - stellar_t_PMS(logM, logZ);
     return (t > 0) ? log10(DMAX(t, 100.)) : -1;
 }
@@ -150,6 +157,13 @@ static void single_star_scale(double *y, double Mej)
 static void single_star_wind_owed(int s, double logM, double logZ, double la_to, struct single_star_event *ev)
 {
     double la_from = SingleStars.last_wind_log_age[s], dM = 0;
+#ifdef TEST_SINGLE_STARS_WIND_PINNED_RATE_AND_SPEED /* test only: constant rate and speed, the table's surface composition */
+    ev->Mej = All.TestFixedWindMdot * (pow(10., la_to) - ((la_from > 0) ? pow(10., la_from) : 0));
+    for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_surface_abundance(logM, logZ, la_to, k);}
+    single_star_scale(ev->y, ev->Mej);
+    ev->v_kms = DMAX(All.TestFixedWindVel, 10.); ev->log_age_to = la_to;
+    return;
+#endif
     for(int k = 0; k < STBL_NELEM; k++) {
         ev->y[k] = stellar_elem_ej_wind_cumulative(logM, logZ, la_to, k) - ((la_from > 0) ? stellar_elem_ej_wind_cumulative(logM, logZ, la_from, k) : 0);
         dM += ev->y[k];
@@ -260,17 +274,28 @@ double single_star_eventrates(int i, double dt)
         return 1;
     }
     double age = single_star_age_yr(i), age_end = single_star_death_age_yr(logM, logZ);
-    if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS) {
+    int dead = (age > age_end), forced = 0;
+#ifdef TEST_SINGLE_STARS_SN_AT_FORCED_TIMES
+    if(All.TestSNTime0 > 0 && P[i].ID >= 1 && P[i].ID <= (MyIDType)DMAX(All.TestNumStars, 1) && P[i].ID_generation == 0) { /* test only: the owed winds come with the death */
+        forced = 1; dead = (All.Time >= All.TestSNTime0 + ((double)P[i].ID - 1.) * All.TestSNSpacing);}
+#endif
+#ifdef GALSF_SINGLE_STARS_INSTANT_SN_BEFORE_TIME
+    if(All.Time < All.TimeInstantSN && SingleStars.M_drawn[s] >= 8.0) {forced = dead = 1;} /* stars of 8 Msun and up explode at once */
+#endif
+    if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS && !(forced && dead)) {
         double la = single_star_table_log_age(DMIN(age, age_end), logM, logZ);
         if(la > 0) {
             struct single_star_event ev; single_star_wind_owed(s, logM, logZ, la, &ev);
-            if(age <= age_end && ev.Mej > 0) {P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0;}
-            if(age > age_end && ev.Mej > SINGLE_STAR_WIND_FLUSH_MIN && SingleStars.no_deposit_count[s] < 2) {
+#ifdef GALSF_SINGLE_STARS_WINDS_IN_CHUNKS
+            if(!dead && ev.Mej <= DMIN(0.01 + 0.19 * (SingleStars.M_drawn[s] - SINGLE_STAR_WIND_MIN_MASS) / 342., 0.2) * SingleStars.M_drawn[s]) {return 0;} /* hold it until the mass owed is 1% (8 Msun) to 20% (350 Msun) of the drawn mass */
+#endif
+            if(!dead && ev.Mej > 0) {P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0;}
+            if(dead && ev.Mej > SINGLE_STAR_WIND_FLUSH_MIN && SingleStars.no_deposit_count[s] < 2) {
                 P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0; /* winds owed up to the end of life go first */
             }
         }
     }
-    if(age <= age_end) {return 0;}
+    if(!dead) {return 0;}
     SingleStars.M_at_SN_trigger[s] = P[i].Mass; /* death: freeze the mass for every pack of the event */
     SingleStars.no_deposit_count[s] = 0;
     if(is_wd) {P[i].MassReturn_ThisTimeStep = 1;} else {P[i].SNe_ThisTimeStep = 1;}
@@ -312,6 +337,16 @@ static void single_star_dust_yields(const struct single_star_event *ev, double *
 }
 #endif
 
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+static int ssfb_making_ejecta_cell = 0;
+/* a supernova with too little gas in the kernel: the ejecta become a new cell, not a deposit */
+static int single_star_sn_needs_ejecta_cell(int i, const struct single_star_event *ev)
+{
+    return !ssfb_making_ejecta_cell && ev->kind == SSE_SN && ev->E > 0 && ev->Mej > 0
+        && P[i].Area_weighted_sum[AREA_WEIGHTED_SUM_KERNEL_GAS] * UNIT_MASS_IN_SOLAR < (double)(GALSF_SINGLE_STARS_SN_EJECTA_CELL) * ev->Mej;
+}
+#endif
+
 /* single-star branch of particle2in_addFB_fromstars: the event's ejecta mass, ejecta speed and yields */
 void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration)
 {
@@ -320,6 +355,9 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
     if(kind == SSE_NONE || fb_loop_iteration != ((kind == SSE_SN || kind == SSE_IA) ? 0 : 1)) {return;}
     struct single_star_event ev; single_star_event_of(i, kind, &ev);
     if(ev.Mej <= 0) {return;}
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+    if(single_star_sn_needs_ejecta_cell(i, &ev)) {return;}
+#endif
     in->Msne = ev.Mej / UNIT_MASS_IN_SOLAR;
     in->SNe_v_ejecta = (ev.E > 0) ? sqrt(2. * (ev.E / UNIT_ENERGY_IN_CGS) / in->Msne) : ev.v_kms / UNIT_VEL_IN_KMS;
 #ifdef METALS
@@ -431,6 +469,12 @@ void single_star_feedback_finalize(const int *list, int n)
         if(kind == SSE_NONE) {continue;}
         int s = single_star_slot(P[i].StarIdx);
         struct single_star_event ev; single_star_event_of(i, kind, &ev);
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+        if(single_star_sn_needs_ejecta_cell(i, &ev)) { /* waits for the merge/split point: SN_DONE with M_at_SN_trigger kept */
+            SingleStars.event_bits[s] |= SINGLE_STAR_EVENT_SN_DONE; P[i].SNe_ThisTimeStep = 0;
+            continue;
+        }
+#endif
         double removed = (ssfb_mass_before[a] - P[i].Mass) * UNIT_MASS_IN_SOLAR;
         if(ev.Mej > 0 && removed <= 0) { /* nothing coupled: try again next step */
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
@@ -493,7 +537,41 @@ void single_star_feedback_finalize(const int *list, int n)
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
     for(int a = 0; a < n; a++) {recent_sfr_young_mass_add(P[list[a]].StellarAge, P[list[a]].Mass - ssfb_mass_before[a]);} /* winds and deaths */
 #endif
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+    if(ssfb_making_ejecta_cell) {return;} /* one rank alone: the row goes out with single_star_ejecta_cells_flush */
+#endif
     single_star_events_flush();
 }
+
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+int single_star_ejecta_cell_pending(int i)
+{
+    if(P[i].StarIdx <= 0) {return 0;}
+    int s = single_star_slot(P[i].StarIdx);
+    return (SingleStars.event_bits[s] & SINGLE_STAR_EVENT_SN_DONE) && SingleStars.M_at_SN_trigger[s] > 0;
+}
+
+/* the pending event of star i, as the loop would have packed it: ejecta [code], energy [code], yields */
+void single_star_ejecta_cell_payload(int i, struct addFB_evaluate_data_in_ *in, double *E_code)
+{
+    int s = single_star_slot(P[i].StarIdx);
+    SingleStars.event_bits[s] &= ~SINGLE_STAR_EVENT_SN_DONE; P[i].SNe_ThisTimeStep = 1;
+    struct single_star_event ev; single_star_event_of(i, SSE_SN, &ev);
+    ssfb_making_ejecta_cell = 1;
+    single_star_particle2in(in, i, 0);
+    *E_code = ev.E / UNIT_ENERGY_IN_CGS;
+}
+
+/* the cell exists: the mass leaves the star, and the event closes as one that coupled */
+void single_star_ejecta_cell_done(int i, double M_ejecta)
+{
+    single_star_feedback_prepare(&i, 1);
+    P[i].Mass -= M_ejecta;
+    single_star_feedback_finalize(&i, 1);
+    ssfb_making_ejecta_cell = 0;
+}
+
+void single_star_ejecta_cells_flush(void) {single_star_events_flush();}
+#endif
 
 #endif

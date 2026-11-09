@@ -186,6 +186,9 @@ PiCallScalars PiSpecBase::populate_call_scalars(const neighbor_loop_args& args)
     PiCallScalars s;
     s.common = nlr_common_scalars_from_all();
     s.bill_fac = PI_ALPHA_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC / (PROTONMASS_CGS * PROTONMASS_CGS) * All.cf_a3inv * UNIT_DENSITY_IN_CGS * UNIT_MASS_IN_CGS;
+#ifdef GALSF_FB_PHOTOIONIZATION_RECOMBINATION_AT_CELL_TEMPERATURE
+    for(int k = 0; k < PI_ALPHA_NT; k++) {s.alpha_ratio[k] = chem_case_b_rate(pow(10., 4. + 0.1 * k)) / chem_case_b_rate(1.e4);}
+#endif
     Aux *aux = nlr_aux<PiHistSpec>(args);
     s.stamp = aux ? aux->stamp : 0; s.share = aux ? aux->share : 0;
     s.claim = pi_claim; s.n_claim = DMIN(N_gas, pi_claim_cap);

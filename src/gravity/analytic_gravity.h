@@ -30,6 +30,9 @@ void GravAccel_SpecialCustomNuclearZoomBoundaryConditions(void);
 void GravAccel_GMCTurbInit(void);
 void GravAccel_FilamentTurbInit(void);
 void GravAccel_Harmonic1D(void);
+#ifdef TEST_GRAVITY_STATIC_PLUMMER
+void GravAccel_TestStaticPlummer(void);
+#endif
 
 /* The analytic terms go onto an acceleration this gravity call has just rebuilt. One it kept (a walk skipped under
    ADAPTIVE_TREEFORCE_UPDATE, or a non-Hermite element in the Hermite re-evaluation) still carries them from its last
@@ -58,6 +61,9 @@ void add_analytic_gravitational_forces()
 #ifdef GRAVITY_ANALYTIC
 #ifdef GRAVITY_TESTPROBLEM_RT
     GravAccel_RayleighTaylorTest();       // uniform vertical force for Rayleigh-Taylor-type tests
+#endif
+#ifdef TEST_GRAVITY_STATIC_PLUMMER
+    GravAccel_TestStaticPlummer();        // fixed Plummer sphere at the origin (stand-in for a static gas potential)
 #endif
     //GravAccel_StaticPlummerSphere();    // plummer sphere
     //GravAccel_StaticHernquist();        // hernquist-profile sphere
@@ -251,6 +257,30 @@ void GravAccel_StaticPlummerSphere()
 }
 
 
+
+#ifdef TEST_GRAVITY_STATIC_PLUMMER
+/* fixed Plummer potential phi = -G M / sqrt(r^2 + a^2) at the origin, M [Msun] and a [pc] from the two macros (defaults 1000, 0.5) */
+#ifndef TEST_GRAVITY_STATIC_PLUMMER_MSUN
+#define TEST_GRAVITY_STATIC_PLUMMER_MSUN 1000.
+#endif
+#ifndef TEST_GRAVITY_STATIC_PLUMMER_PC
+#define TEST_GRAVITY_STATIC_PLUMMER_PC 0.5
+#endif
+void GravAccel_TestStaticPlummer()
+{
+    double M = TEST_GRAVITY_STATIC_PLUMMER_MSUN / UNIT_MASS_IN_SOLAR, a = TEST_GRAVITY_STATIC_PLUMMER_PC / UNIT_LENGTH_IN_PC;
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++)
+    {
+        int i = ActiveParticleList[ii]; if(!analytic_gravity_adds_to(i, ii)) {continue;}
+        Vec3<double> dp = P[i].Pos;
+        double q = dp.norm_sq() + a*a, f = pow(q, 1.5), f2 = pow(q, 2.5);
+        P[i].GravAccel += dp * (-All.G * M / f);
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+        for(int k=0;k<3;k++) {P[i].tidal_tensorps[k][k] -= All.G * M / f; for(int j=k;j<3;j++) {P[i].tidal_tensorps[k][j] += 3 * All.G * M * dp[k]*dp[j] / f2;}}
+#endif
+    }
+}
+#endif
 
 /* static Hernquist Profile (parameters specified in the routine below) */
 void GravAccel_StaticHernquist()

@@ -31,11 +31,78 @@
 static double dt_displacement = 0;
 
 
+#ifdef HOT_GAS_TIMESTEP_SYNC
+int HotGasSyncArmed = 1; /* set by feedback events and new ejecta cells; off again when no hot gas is left, so quiet steps do nothing */
+/* the step for everything near hot gas: a quarter of its Courant step (from get_timestep, never its bin, which holds the last clamp); TIMEBASE = no hot gas */
+static integertime hot_gas_sync_step(Vec3<double> *centre, double *R2)
+{
+    const double u_hot = (1.0e6 * BOLTZMANN_CGS) / ((2./3.) * 0.6 * PROTONMASS_CGS) / UNIT_SPECEGY_IN_CGS;
+    integertime ti_loc = TIMEBASE, ti_glob = TIMEBASE; double aphys, sum_loc[4] = {0,0,0,0}, sum_glob[4];
+    for(int i = 0; i < N_gas; i++) {
+        if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].InternalEnergyPred <= u_hot) {continue;}
+        integertime t = get_timestep(i, &aphys, 0);
+        if(t > 0 && t < ti_loc) {ti_loc = t;}
+        for(int k = 0; k < 3; k++) {sum_loc[k] += P[i].Pos[k];}
+        sum_loc[3] += 1;
+    }
+    MPI_Allreduce(&ti_loc, &ti_glob, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(sum_loc, sum_glob, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(sum_glob[3] <= 0) {HotGasSyncArmed = 0; return TIMEBASE;}
+    for(int k = 0; k < 3; k++) {(*centre)[k] = sum_glob[k] / sum_glob[3];}
+    double rh_loc[2] = {0,0}, rh_glob[2];
+    for(int i = 0; i < N_gas; i++) {
+        if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].InternalEnergyPred <= u_hot) {continue;}
+        Vec3<double> d = P[i].Pos - *centre; nearest_xyz(d);
+        rh_loc[0] = DMAX(rh_loc[0], d.norm_sq()); rh_loc[1] = DMAX(rh_loc[1], P[i].KernelRadius);
+    }
+    MPI_Allreduce(rh_loc, rh_glob, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    *R2 = pow(sqrt(rh_glob[0]) + 3. * rh_glob[1], 2);
+    return DMAX(ti_glob >> 2, 2);
+}
+#endif
+
 /*! This function advances the system in momentum space, i.e. it does apply the 'kick' operation after the
  *  forces have been computed. Additionally, it assigns new timesteps to particles. At start-up, a
  *  half-timestep is carried out, as well as at the end of the simulation. In between, the half-step kick that
  *  ends the previous timestep and the half-step kick for the new timestep are combined into one operation.
  */
+#ifdef RESOLVEDISM_HOTSYNC_CLAMP
+static integertime hotsync_ti = TIMEBASE; /* step of everything inside the sphere; TIMEBASE = no hot gas */
+static double hotsync_cen[3], hotsync_R2 = -1;
+
+/* gas above 1e6 K: a quarter of its shortest step, and a sphere around it (centroid + farthest hot cell + 3 largest kernels, not wrapped) */
+static void hotsync_clamp_prepare(void)
+{
+    const double u_hot = (1.0e6 * BOLTZMANN_CGS) / ((2./3.) * 0.6 * PROTONMASS_CGS) / UNIT_SPECEGY_IN_CGS;
+    std::vector<int> hot;
+    for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0 && P[i].Mass > 0 && CellP[i].InternalEnergyPred > u_hot) {hot.push_back(i);}}
+    int any_local = hot.empty() ? 0 : 1, any = 0;
+    MPI_Allreduce(&any_local, &any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    hotsync_ti = TIMEBASE; hotsync_R2 = -1;
+    if(!any) {return;}
+    integertime ti_local = TIMEBASE, ti_glob; double aphys, sum_loc[4] = {0,0,0,0}, sum_glob[4], rh_loc[2] = {0,0}, rh_glob[2];
+    for(int i : hot) {
+        struct particle_data p_keep = P[i]; struct gas_cell_data c_keep = CellP[i];
+        integertime t = get_timestep(i, &aphys, 0); /* its own step, never its bin: the bin holds the last clamp */
+        P[i] = p_keep; CellP[i] = c_keep; /* inactive cells stay as they are */
+        if(t > 0 && t < ti_local) {ti_local = t;}
+        for(int k = 0; k < 3; k++) {sum_loc[k] += P[i].Pos[k];}
+        sum_loc[3] += 1;
+    }
+    MPI_Allreduce(&ti_local, &ti_glob, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(sum_loc, sum_glob, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    for(int k = 0; k < 3; k++) {hotsync_cen[k] = sum_glob[k] / sum_glob[3];}
+    for(int i : hot) {
+        double r2 = 0; for(int k = 0; k < 3; k++) {double d = P[i].Pos[k] - hotsync_cen[k]; r2 += d * d;}
+        rh_loc[0] = DMAX(rh_loc[0], r2); rh_loc[1] = DMAX(rh_loc[1], P[i].KernelRadius);
+    }
+    MPI_Allreduce(rh_loc, rh_glob, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    hotsync_ti = DMAX(ti_glob >> 2, 2);
+    double R = sqrt(rh_glob[0]) + 3. * rh_glob[1];
+    hotsync_R2 = R * R;
+}
+#endif
+
 void find_timesteps(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
@@ -137,6 +204,13 @@ void find_timesteps(void)
 #endif
         for(long k = 0; k < n_act; k++) {domain_record_step_work(act[k]);}
     }
+#ifdef RESOLVEDISM_HOTSYNC_CLAMP
+    hotsync_clamp_prepare();
+#endif
+#ifdef HOT_GAS_TIMESTEP_SYNC
+    integertime ti_hot_sync = TIMEBASE; Vec3<double> hot_sync_centre; double hot_sync_R2 = -1;
+    if(HotGasSyncArmed) {ti_hot_sync = hot_gas_sync_step(&hot_sync_centre, &hot_sync_R2);}
+#endif
 
     /* Now assign new timesteps  */
     for (int i : ActiveParticleList)
@@ -156,6 +230,15 @@ void find_timesteps(void)
             if(ti_step > ti_max_glob) {ti_step = ti_max_glob;}
         }
         //if(ti_min_glob > 0) {if(is_particle_a_special_zoom_target(i)) {while(ti_step > ti_min_glob) {ti_step >>= 1;}}} // set this per the above loop to minimum threshold relative to previous steps
+#endif
+#ifdef RESOLVEDISM_HOTSYNC_CLAMP
+        if(hotsync_R2 > 0 && ti_step > hotsync_ti) {
+            double r2 = 0; for(int k = 0; k < 3; k++) {double d = P[i].Pos[k] - hotsync_cen[k]; r2 += d * d;}
+            if(r2 < hotsync_R2) {ti_step = hotsync_ti;}
+        }
+#endif
+#ifdef HOT_GAS_TIMESTEP_SYNC
+        if(ti_step > ti_hot_sync) {Vec3<double> d = P[i].Pos - hot_sync_centre; nearest_xyz(d); if(d.norm_sq() < hot_sync_R2) {ti_step = ti_hot_sync;}}
 #endif
         /* make it a power 2 subdivision */
         ti_min = TIMEBASE;

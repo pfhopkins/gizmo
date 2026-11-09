@@ -172,12 +172,14 @@ void hydro_final_operations_and_cleanup(void)
             /* need to subtract out the source terms proportional to the (non-zero) B-field divergence; to stabilize the scheme */
             {
                 Vec3<double> Bi = CellP[i].Bfield() * All.cf_a2inv;
+#ifndef TEST_MHD_NO_POWELL_SOURCE_TERMS /* test only: leave the div-B source terms out */
 #ifndef HYDRO_SPH
                 /* this part of the induction equation has to do with advection of div-B, it is not present in SPH */
                 CellP[i].DtB -= CellP[i].divB * (CellP[i].VelPred/All.cf_atime);
 #endif
                 CellP[i].HydroAccel -= CellP[i].divB * Bi;
                 CellP[i].DtInternalEnergy -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
+#endif
             }
 
             double magnorm_closure = Get_DtB_FaceArea_Limiter(i, P, CellP);
@@ -256,6 +258,13 @@ void hydro_final_operations_and_cleanup(void)
 
             /* zero out hydrodynamic PdV work terms if the particle is at the maximum smoothing, these will be incorrect */
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}
+#if defined(MAGNETIC) && defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+            { /* ledger: d(E_th+E_kin+E_B)/dt of this step (Powell/Dedner terms, the -B^2/2 dV/dt the u-equation omits); booked in the kick */
+                Vec3<double> Bp = CellP[i].Bfield() * All.cf_a2inv; double V_phys = P[i].Mass / (CellP[i].Density * All.cf_a3inv);
+                CellP[i].DtEnergyMHDNum = CellP[i].DtInternalEnergy * P[i].Mass + P[i].Mass * dot(CellP[i].VelPred / All.cf_atime, CellP[i].HydroAccel) + dot(Bp, CellP[i].DtB)
+                                          - 0.5 * Bp.norm_sq() * V_phys * P[i].Particle_DivVel * All.cf_a2inv;
+            }
+#endif
 
             // need to explicitly include adiabatic correction from the hubble-flow (for drifting) here //
             if(All.ComovingIntegrationOn) {CellP[i].DtInternalEnergy -= 3*(CellP[i].Gamma-1) * CellP[i].InternalEnergyPred * All.cf_hubble_a;}

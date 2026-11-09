@@ -11,6 +11,7 @@
 #SYSTYPE="MacBookCellar"
 SYSTYPE="MacBookCellar_Kokkos"
 #SYSTYPE="Vista"
+#SYSTYPE="Orion_Kokkos" # MPCDF Orion CPU nodes, Kokkos OpenMP backend (KOKKOS_HOME_ORION)
 #SYSTYPE="Expanse"
 #SYSTYPE="CaltechHPC"
 #SYSTYPE="RUSTY"

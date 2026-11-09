@@ -34,6 +34,9 @@ extern struct gas_cell_data
 #if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
     MyDouble InternalEnergy_FromIR_Pending; /*!< specific energy absorbed by the gas from the IR band since its last cooling call; the cooling solve takes it as heating */
 #endif
+#if defined(MAGNETIC) && defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+    MyDouble DtEnergyMHDNum;        /*!< ledger: d(E_th+E_kin+E_B)/dt of the hydro step, booked in the kicks */
+#endif
     
     Vec3<MyDouble> VelPred;         /*!< predicted gas cell velocity at the current time */
     Vec3<MyDouble> HydroAccel;      /*!< acceleration due to hydrodynamical force (for drifting) */
