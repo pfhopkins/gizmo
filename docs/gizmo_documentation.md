@@ -1909,6 +1909,10 @@ The switches below are in development (developer: Ulrich Steinwandel, GitHub Ull
 
 **TEST\_DIVBCLEANING\_ALTERNATING\_CLEANING\_SPEED**: Test only. The div-B cleaning speed (of the conservative cleaning above, or of the Dedner cleaning) doubles in every other interval of 0.05 code time units (Tricco, Price & Bate 2016 sec. 3.2). Used by `test/conservative_psi_cleaning` (`test_pair_conserves[alternating]`).
 
+**MHD\_CONSERVE\_ENERGY\_ON\_KERNEL\_VOLUME\_CHANGE**: Total-energy closure for meshless MHD. The magnetic energy of a cell, E_B = |V B|^2 / (2 V), follows its kernel volume, while the internal-energy equation books the magnetic work from the face volume change (B^2/2 dV/dt from the faces). At low plasma beta the difference is a net energy gain (about +3 % in 2 Myr in the test box at beta 0.14). With this switch each kick charges the internal energy with the actual change of the cell E_B since its last kick (volume change and this kick's B update) minus what the energy equation booked; B is unchanged. In cold, low-beta gas the debit can exceed u, and the temperature floor then clips it. With `DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH` the E_B change from the cleaning pair is charged as well (as on stella_dev; the combination is not tested). No parameters. Requires `MAGNETIC` with a meshless method and the default leapfrog. Memory: 3 doubles per cell. Not enabled in any Stella configuration. Test: `test/mhd_kernel_volume_energy`.
+
+**MHD\_RESCALE\_B\_TO\_BOOKED\_MAGNETIC\_ENERGY**: The alternative to the switch above; do not set both. Each kick rescales |V B| so that the cell E_B equals the E_B the energy equation booked. It closes the total energy but breaks flux freezing. No parameters. Same requirements and memory. Not enabled in any Stella configuration. Test: `test/mhd_kernel_volume_energy`.
+
 **Behaviour without a switch.**
 * *Comoving density refresh*: in comoving runs, single stars from the tables younger than 35 Myr refresh their neighbour density every step, as they already do in non-comoving runs. Their radiation and wind radii therefore follow the gas. Test: `test/photoion_per_direction` (`test_young_star_density_follows_the_gas_in_comoving_runs`).
 * *Death-log columns*: `SNinfo.txt` gains columns 21-26 and `AGBinfo.txt` columns 19-24 (with `GALSF_SINGLE_STARS_EVENT_LOGS`). They hold the ambient n_H [cm^-3], T [K, mu = 1.22], the star's kernel radius [pc], its neighbour number, the birth n_H [cm^-3], and the birth comoving density at the current a [cm^-3]. Test: `test/single_stars_event_logs`.
@@ -1924,6 +1928,7 @@ The switches below are in development (developer: Ulrich Steinwandel, GitHub Ull
 | `GALSF_RESOLVEDISM_SN_SPAWN` | `GALSF_SINGLE_STARS_SN_EJECTA_CELL` |
 | `SGCHEM_PRIMORDIAL_HELIUM`, `SGCHEM_DGR_REMY_RUYER14`, `SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS`, `SGCHEM_UVB_TREECOL_SHIELDING`, `TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS` | same names |
 | `DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH` and its sub-switches, `DIVBCLEANING_CONSERVATIVE_SIGMA`, `TEST_DIVBCLEANING_ALTERNATING_CLEANING_SPEED` | same names |
+| `MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE`, `MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY` | same names |
 | parameters `PopIII_*`, `nHcutoffSF` | same names |
 
 
