@@ -1134,6 +1134,7 @@ void particle2in_addFB_fromstars(struct addFB_evaluate_data_in_ *in, int i, int 
 double single_star_ionizing_luminosity_cgs(int i);
 double single_star_ionizing_photon_rate(int i);
 double single_star_ionizing_onset_yr(int i);
+void single_star_light_switch_check(void);
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
 void photoionization_per_direction(void);

@@ -223,3 +223,26 @@ void single_star_radpressure_per_cell(double *dp_total_code)
     }
 }
 #endif
+
+#if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+/* before a gravity call: refresh the tree node moments (luminosities) if a single star started to shine, started to ionise or went
+   dark since the last call; reduced in gravity_tree, so no collective here */
+void single_star_light_switch_check(void)
+{
+    static double t_last = -1; double t0 = t_last; t_last = All.Time;
+    if(t0 < 0 || All.Time <= t0) {return;}
+    double dt_yr = evaluate_time_since_t_initial_in_Gyr(t0) * 1.e9;
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].Type != 4 || P[i].StarIdx <= 0 || P[i].Mass <= 0) {continue;}
+        int s = single_star_slot(P[i].StarIdx);
+        if(SingleStars.M_drawn[s] <= All.IMFSampleStellarMassCut) {continue;}
+#if defined(GALSF_FB_MECHANICAL)
+        if(SingleStars.event_bits[s] & (SINGLE_STAR_EVENT_SN_DONE | SINGLE_STAR_EVENT_AGB_DONE)) {continue;}
+#endif
+        double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
+        double age = evaluate_stellar_age_Gyr(i) * 1.e9, t_pms = stellar_t_PMS(logM, logZ), t_on = single_star_ionizing_onset_yr(i);
+        double t_switch[3] = {t_pms, t_pms + stellar_lifetime(logM, logZ), t_on};
+        for(int k = 0; k < 3; k++) {if(t_switch[k] > 0 && age - dt_yr < t_switch[k] && t_switch[k] <= age) {TreeMomentsStaleFlag = 1; return;}}
+    }
+}
+#endif

@@ -46,6 +46,9 @@ void compute_grav_accelerations(void)
 #endif
 
   {
+#if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    single_star_light_switch_check(); /* node luminosities follow a star that starts to shine or goes dark */
+#endif
     gravity_tree();		/* computes gravity accel. */
 
     /* For the first timestep, we redo it to allow usage of relative opening criterion for consistent accuracy.
