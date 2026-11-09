@@ -90,11 +90,11 @@ void sink_accretion(void)
 double sink_vesc(int j, double mass, double r_code, double sink_softening)
 {
     double cs_to_add = 10. / UNIT_VEL_IN_KMS; /* we can optionally add a 'fudge factor' to v_esc to set a minimum value; useful for -some- galaxy applications */
-#if defined(SINK_SEED_GROWTH_TESTS) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
     cs_to_add = 0;
 #endif
     double m_eff = mass + P[j].Mass; // acount for 2-body mass
-#if defined(SINK_SEED_GROWTH_TESTS) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS)
     double gas_density = -1; if(P[j].Type == 0) {gas_density = CellP[j].Density;}
 #ifdef GRAIN_FLUID
     if((1<<P[j].Type) & GRAIN_PTYPES) {gas_density = P[j].Gas_Density;}
@@ -150,12 +150,6 @@ int sink_check_boundedness(int j, double vrel, double vesc, double dr_code, doub
         if((1 << P[j].Type) & (GRAIN_PTYPES)) {if(dr_code>1.4*sink_radius) {return 0;} else {return 1;}} // simply yes-no, if bound and within sink radius, gets accreted
 #endif
         if(dr_code>sink_radius) {return 0;} else {return 1;} // simply yes-no, if bound and within sink radius, gets accreted
-#endif
-#if !defined(SINGLE_STAR_SINK_DYNAMICS) && !defined(SINK_GRAVCAPTURE_FIXEDSINKRADIUS) && defined(SINK_SEED_GROWTH_TESTS)
-        double r_j = ForceSoftening_KernelRadius(j);
-        if(P[j].Type == 0) {r_j = DMAX(r_j , P[j].KernelRadius);}
-        apocenter_max = DMAX(10.0*SinkParticle_GravityKernelRadius,DMIN(50.0*SinkParticle_GravityKernelRadius,r_j));
-        if(P[j].Type == 5) {apocenter_max = DMIN(apocenter_max , 1.*SinkParticle_GravityKernelRadius);}
 #endif
         if(apocenter < apocenter_max) {bound = 1;}
     }
