@@ -151,7 +151,8 @@ static void single_star_scale(double *y, double Mej)
     for(int k = 0; k < STBL_NELEM; k++) {y[k] *= f;}
 }
 
-/* the wind mass owed between the last delivery and log age la_to, with its composition */
+/* the wind mass owed between the last delivery and log age la_to, element by element from the cumulative table, so deliveries
+   telescope; the table is non-decreasing, a negative difference is interpolation rounding */
 static void single_star_wind_owed(int s, double logM, double logZ, double la_to, struct single_star_event *ev)
 {
     double la_from = SingleStars.last_wind_log_age[s], dM = 0;
@@ -163,15 +164,10 @@ static void single_star_wind_owed(int s, double logM, double logZ, double la_to,
     return;
 #endif
     for(int k = 0; k < STBL_NELEM; k++) {
-        ev->y[k] = stellar_elem_ej_wind_cumulative(logM, logZ, la_to, k) - ((la_from > 0) ? stellar_elem_ej_wind_cumulative(logM, logZ, la_from, k) : 0);
+        ev->y[k] = DMAX(stellar_elem_ej_wind_cumulative(logM, logZ, la_to, k) - ((la_from > 0) ? stellar_elem_ej_wind_cumulative(logM, logZ, la_from, k) : 0), 0);
         dM += ev->y[k];
     }
-    ev->Mej = DMAX(dM, 0);
-    if(ev->Mej > 0) {
-        int neg = 0; for(int k = 0; k < STBL_NELEM; k++) {if(ev->y[k] < 0) {neg = 1;}}
-        if(neg) {for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_surface_abundance(logM, logZ, la_to, k);}} /* flat interval: surface composition */
-        single_star_scale(ev->y, ev->Mej);
-    }
+    ev->Mej = dM;
     ev->v_kms = DMAX(stellar_v_wind(logM, logZ, la_to), 10.);
     ev->log_age_to = la_to;
 }
