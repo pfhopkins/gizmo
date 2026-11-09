@@ -337,6 +337,16 @@ static void single_star_dust_yields(const struct single_star_event *ev, double *
 }
 #endif
 
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+static int ssfb_making_ejecta_cell = 0;
+/* a supernova with too little gas in the kernel: the ejecta become a new cell, not a deposit */
+static int single_star_sn_needs_ejecta_cell(int i, const struct single_star_event *ev)
+{
+    return !ssfb_making_ejecta_cell && ev->kind == SSE_SN && ev->E > 0 && ev->Mej > 0
+        && P[i].Area_weighted_sum[AREA_WEIGHTED_SUM_KERNEL_GAS] * UNIT_MASS_IN_SOLAR < (double)(GALSF_SINGLE_STARS_SN_EJECTA_CELL) * ev->Mej;
+}
+#endif
+
 /* single-star branch of particle2in_addFB_fromstars: the event's ejecta mass, ejecta speed and yields */
 void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration)
 {
@@ -345,6 +355,9 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
     if(kind == SSE_NONE || fb_loop_iteration != ((kind == SSE_SN || kind == SSE_IA) ? 0 : 1)) {return;}
     struct single_star_event ev; single_star_event_of(i, kind, &ev);
     if(ev.Mej <= 0) {return;}
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+    if(single_star_sn_needs_ejecta_cell(i, &ev)) {return;}
+#endif
     in->Msne = ev.Mej / UNIT_MASS_IN_SOLAR;
     in->SNe_v_ejecta = (ev.E > 0) ? sqrt(2. * (ev.E / UNIT_ENERGY_IN_CGS) / in->Msne) : ev.v_kms / UNIT_VEL_IN_KMS;
 #ifdef METALS
@@ -456,6 +469,12 @@ void single_star_feedback_finalize(const int *list, int n)
         if(kind == SSE_NONE) {continue;}
         int s = single_star_slot(P[i].StarIdx);
         struct single_star_event ev; single_star_event_of(i, kind, &ev);
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+        if(single_star_sn_needs_ejecta_cell(i, &ev)) { /* waits for the merge/split point: SN_DONE with M_at_SN_trigger kept */
+            SingleStars.event_bits[s] |= SINGLE_STAR_EVENT_SN_DONE; P[i].SNe_ThisTimeStep = 0;
+            continue;
+        }
+#endif
         double removed = (ssfb_mass_before[a] - P[i].Mass) * UNIT_MASS_IN_SOLAR;
         if(ev.Mej > 0 && removed <= 0) { /* nothing coupled: try again next step */
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
@@ -518,7 +537,41 @@ void single_star_feedback_finalize(const int *list, int n)
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
     for(int a = 0; a < n; a++) {recent_sfr_young_mass_add(P[list[a]].StellarAge, P[list[a]].Mass - ssfb_mass_before[a]);} /* winds and deaths */
 #endif
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+    if(ssfb_making_ejecta_cell) {return;} /* one rank alone: the row goes out with single_star_ejecta_cells_flush */
+#endif
     single_star_events_flush();
 }
+
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+int single_star_ejecta_cell_pending(int i)
+{
+    if(P[i].StarIdx <= 0) {return 0;}
+    int s = single_star_slot(P[i].StarIdx);
+    return (SingleStars.event_bits[s] & SINGLE_STAR_EVENT_SN_DONE) && SingleStars.M_at_SN_trigger[s] > 0;
+}
+
+/* the pending event of star i, as the loop would have packed it: ejecta [code], energy [code], yields */
+void single_star_ejecta_cell_payload(int i, struct addFB_evaluate_data_in_ *in, double *E_code)
+{
+    int s = single_star_slot(P[i].StarIdx);
+    SingleStars.event_bits[s] &= ~SINGLE_STAR_EVENT_SN_DONE; P[i].SNe_ThisTimeStep = 1;
+    struct single_star_event ev; single_star_event_of(i, SSE_SN, &ev);
+    ssfb_making_ejecta_cell = 1;
+    single_star_particle2in(in, i, 0);
+    *E_code = ev.E / UNIT_ENERGY_IN_CGS;
+}
+
+/* the cell exists: the mass leaves the star, and the event closes as one that coupled */
+void single_star_ejecta_cell_done(int i, double M_ejecta)
+{
+    single_star_feedback_prepare(&i, 1);
+    P[i].Mass -= M_ejecta;
+    single_star_feedback_finalize(&i, 1);
+    ssfb_making_ejecta_cell = 0;
+}
+
+void single_star_ejecta_cells_flush(void) {single_star_events_flush();}
+#endif
 
 #endif
