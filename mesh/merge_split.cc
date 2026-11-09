@@ -1278,6 +1278,7 @@ static int treewalk_retarget_local(int i, int j, int remove_mode)
         }
         if(pass == 0 && (found_i == 0 || (!remove_mode && found_j == 0))) {return 0;}
     }
+    for(r = 0; r < nroots; r++) {tree_edit_note_local(roots[r]);} /* the edits stayed inside these subtrees */
     return 1;
 }
 
@@ -1288,6 +1289,8 @@ void swap_treewalk_pointers(int i, int j){
     no = All.MaxPart;
 
     if(treewalk_retarget_local(i, j, 0)) {no = -1;} /* done within the two parents' subtrees */
+    else {tree_edit_note_global();}
+    tree_edit_note_slot(i); tree_edit_note_slot(j);
     while(no >= 0){ // walk the whole tree, starting from the root node (=All.MaxPart)
         if(no < All.MaxPart) { // we got a particle
             next=Nextnode[no];
@@ -1341,6 +1344,7 @@ void remove_particle_from_treewalk(int i){
     int no, next;
     no = All.MaxPart;
     if(treewalk_retarget_local(i, i, 1)) {return;} /* done within the parent's subtree */
+    tree_edit_note_global();
     while(no >= 0){ // walk the tree to find anything that might point to i and redirect it to i's nextnode
         if(no < All.MaxPart){
             next = Nextnode[no];
