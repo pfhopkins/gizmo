@@ -116,30 +116,18 @@ double drift_divv_factor(int i, double dt_drift)
 /*! The fastest particle i can move along any one axis, per unit of UNDILATED drift interval: a tree
  *  node's box grows by this bound (over its members) times the interval since it was last drifted, so
  *  a member not yet brought current is still inside it. Follows drift_particle's position update term
- *  by term -- a finite-volume cell moves with its mesh-generating point, a super-timestepped sink adds
- *  its orbit about the binary's centre of mass, and a dilated particle covers only its dilated share of
- *  the interval -- so a change to how a particle moves belongs in both. */
+ *  by term -- a finite-volume cell moves with its mesh-generating point, and a dilated particle covers
+ *  only its dilated share of the interval -- so a change to how a particle moves belongs in both. */
 double particle_motion_speed_bound(int i)
 {
 #if defined(FREEZE_HYDRO)
     return 0;
 #else
-    Vec3<double> v = P[i].Vel; double extra = 0;
+    Vec3<double> v = P[i].Vel;
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME)
     if(P[i].Type == 0) {v = CellP[i].ParticleVel;}
 #endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-#ifdef KETJU_REGULARIZATION
-    if((P[i].Type == 5) && (P[i].SuperTimestepFlag >= 2) && !P[i].KetjuIntegrated)
-#else
-    if((P[i].Type == 5) && (P[i].SuperTimestepFlag >= 2))
-#endif
-    {
-        double share = P[i].comp_Mass / (P[i].Mass + P[i].comp_Mass); /* the sink's share of the relative motion */
-        v += P[i].comp_dv * share; extra = share * binary_relative_speed_bound(i);
-    }
-#endif
-    double bound = DMAX(fabs(v[0]), DMAX(fabs(v[1]), fabs(v[2]))) + extra;
+    double bound = DMAX(fabs(v[0]), DMAX(fabs(v[1]), fabs(v[2])));
     return bound * return_timestep_dilation_factor(i, 0);
 #endif
 }
@@ -157,29 +145,9 @@ void drift_particle(int i, integertime time1)
     
     dt_drift = get_drift_factor(time0, time1, i, 0);
         
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    Vec3<double> fewbody_drift_dx = {}, fewbody_kick_dv = {}; /* a super-timestepped sink's internal orbit, on top of its binary's centre-of-mass drift */
-#endif
 #if !defined(FREEZE_HYDRO)
-    /* A finite-volume gas cell moves with its mesh-generating point, a super-timestepped sink with its
-       binary, everything else with its own velocity. The two special cases are different particle
-       types, so both are live in a build that has both. particle_motion_speed_bound follows these rules. */
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-#ifdef KETJU_REGULARIZATION
-    if( (P[i].Type == 5) && (P[i].SuperTimestepFlag>=2) && !P[i].KetjuIntegrated )
-#else
-    if( (P[i].Type == 5) && (P[i].SuperTimestepFlag>=2) )
-#endif
-    {
-        Vec3<double> COM_Vel = P[i].Vel + P[i].comp_dv * (P[i].comp_Mass/(P[i].Mass+P[i].comp_Mass)); //center of mass velocity
-        P[i].Pos += COM_Vel * dt_drift; //center of mass drift
-        odeint_super_timestep(i, dt_drift, fewbody_kick_dv, fewbody_drift_dx, 1); // do_fewbody_drift
-        P[i].GravAccel = P[i].COM_GravAccel; //Overwrite the acceleration with center of mass value
-        P[i].Pos += fewbody_drift_dx; //Keplerian evolution
-        P[i].Vel += fewbody_kick_dv; //move on binary.orbit
-    }
-    else
-#endif
+    /* A finite-volume gas cell moves with its mesh-generating point, everything else with its own
+       velocity. particle_motion_speed_bound follows these rules. */
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME)
     if(P[i].Type==0) {advect_mesh_point(i,dt_drift);}
     else
@@ -238,9 +206,6 @@ void drift_particle(int i, integertime time1)
 #else
             CellP[i].VelPred += P[i].GravAccel * dt_gravkick + CellP[i].HydroAccel * (dt_hydrokick*All.cf_atime); /* make sure v is in code units */
 #endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-	        if((P[i].Type == 5) && (P[i].SuperTimestepFlag>=2)) {CellP[i].VelPred += fewbody_kick_dv;}
-#endif	    
             
 #if defined(TURB_DRIVING)
             CellP[i].VelPred += CellP[i].TurbAccel * dt_gravkick;

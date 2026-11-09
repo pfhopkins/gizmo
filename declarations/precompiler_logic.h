@@ -464,6 +464,14 @@
                               96 ranks -> 31 on M2e4. */
 #endif
 #endif
+#if !defined(DOMAIN_KEEP_OWNERS) && !defined(DOMAIN_KEEP_OWNERS_OFF)
+#define DOMAIN_KEEP_OWNERS /* owner-preserving segment assignment (domain.cc); M2e5 at 384 ranks: 99.7% -> 32-57% of particles
+                              exchanged per decomposition, domain time 0.41x; M2e4 at 48 ranks on one node: 0.98x wall. Opt out with
+                              DOMAIN_KEEP_OWNERS_OFF. */
+#endif
+#if !defined(STARFORGE_OPTIMIZATIONS) && !defined(STARFORGE_OPTIMIZATIONS_OFF)
+#define STARFORGE_OPTIMIZATIONS /* bundle of opt-in performance options, expanded below; opt out with STARFORGE_OPTIMIZATIONS_OFF */
+#endif
 #define INPUT_POSITIONS_IN_DOUBLE
 #define OUTPUT_POTENTIAL
 #if !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL) && !defined(IO_NO_GRADUAL_SNAPSHOT_RESTART) /* opt-out: restart from a snapshot at physical timesteps, no ramp */
@@ -479,7 +487,7 @@
 #define ADAPTIVE_GRAVSOFT_FORGAS
 #define GRAVITY_ACCURATE_FEWBODY_INTEGRATION
 #ifndef SINGLE_STAR_TIMESTEPPING
-#define SINGLE_STAR_TIMESTEPPING 0 /* a run may set 1 or 2 in Config.sh to super-timestep hard binaries */
+#define SINGLE_STAR_TIMESTEPPING 0
 #endif
 #define SINGLE_STAR_ACCRETION 12
 #define SINGLE_STAR_SINK_FORMATION (0+1+2+4+8+16+32+64+2048) // 0=density threshold, 1=virial criterion, 2=convergent flow, 4=local extremum, 8=no sink in kernel, 16=not falling into sink, 32=hill (tidal) criterion, 64=Jeans criterion, 128=converging flow along all principle axes, 256=self-shielding/molecular, 512=multi-free-fall (smooth dependence on virial), 1024=numerical escape if too dense, 2048=virial is time-averaged
@@ -558,6 +566,40 @@
 #define GALSF_FB_FIRE_STELLAREVOLUTION 3 // enable multi-loop feedback from such sources [this is specific to the DG-MG implementations here, not for public use right now!]. for now set to =2, which should force the code version to match previous iterations, as compared to the newer implementations.
 #endif
 #endif // closes SINGLE_STAR_STARFORGE_DEFAULTS settings
+
+#ifdef STARFORGE_OPTIMIZATIONS
+/* Performance bundle (default under SINGLE_STAR_STARFORGE_DEFAULTS; STARFORGE_OPTIMIZATIONS_OFF removes it). Each component
+   has its own opt-out, and setting a component explicitly (e.g. DOMAIN_FREQ_WEIGHT=4) overrides the bundle's value.
+   None of them is bitwise: results change at the level of a rank-count change.
+   - TREE_REFRESH_INCREMENTAL (opt out: TREE_REFRESH_INCREMENTAL_OFF): sink/feedback moment refreshes re-derive only the
+     chains above changed particles. Changes results slightly (untouched nodes keep their drifted moments).
+   - DOMAIN_MULTIBIN (opt out: DOMAIN_MULTIBIN_OFF): the decomposition balances every active level up to its own, not one
+     composite cost. Changes the domain layout.
+   - DOMAIN_FREQ_WEIGHT=9 (opt out: DOMAIN_FREQ_WEIGHT_OFF): particle work x min(2^(top bin - bin), 2^9). Changes the layout.
+   - DOMAIN_FREQ_WEIGHT_SPLIT_ONLY (opt out: DOMAIN_FREQ_WEIGHT_SPLIT_ONLY_OFF): that weight enters the split and the
+     assignment only; the top tree is refined on the unweighted cost. Without it the weighted refinement doubles the top
+     tree on Bate-type runs (deep-bin disks around sinks) and the bundle regresses there (1.02-1.04x). Changes the layout.
+   Measured: wall over one full top-level timestep cycle, time-matched, vs the same code with STARFORGE_OPTIMIZATIONS_OFF
+   on the same nodes; pairs repeated with the order swapped.
+     one Genoa node, 48x1 per socket:  STARFORGE M2e4 stress case 0.810/0.805; M2e4 production without RT 0.858/0.862;
+                                       Bate et al. 2003 M50 after sink formation 0.774/0.788 (8 sinks), 0.768/0.757 (20 sinks)
+     384x1 on 4 Genoa nodes:           M2e4 0.686/0.688 (baseline repeats 1.000/1.000); M2e5 0.776/0.779
+   Per component on M2e4 / Bate (10-15 min screens): incremental refresh 0.90 / 0.80-0.87; multibin + split-only weight on
+   top 0.90 / 0.88-0.90; multibin with the weight also refining the top tree 0.92 / 1.02-1.04 (rejected). At 384 ranks
+   the bundle with DOMAIN_FREQ_WEIGHT_SPLIT_ONLY_OFF gives M2e4 0.739, i.e. split-only gains there too. */
+#if !defined(TREE_REFRESH_INCREMENTAL) && !defined(TREE_REFRESH_INCREMENTAL_OFF)
+#define TREE_REFRESH_INCREMENTAL
+#endif
+#if !defined(DOMAIN_MULTIBIN) && !defined(DOMAIN_MULTIBIN_OFF)
+#define DOMAIN_MULTIBIN
+#endif
+#if !defined(DOMAIN_FREQ_WEIGHT) && !defined(DOMAIN_FREQ_WEIGHT_OFF)
+#define DOMAIN_FREQ_WEIGHT 9
+#endif
+#if defined(DOMAIN_FREQ_WEIGHT) && !defined(DOMAIN_FREQ_WEIGHT_SPLIT_ONLY) && !defined(DOMAIN_FREQ_WEIGHT_SPLIT_ONLY_OFF)
+#define DOMAIN_FREQ_WEIGHT_SPLIT_ONLY
+#endif
+#endif // STARFORGE_OPTIMIZATIONS
 
 /* RT_ISRF_BACKGROUND=0 (or any value <= 0) in Config.sh switches the interstellar background off, including where an
    umbrella above would turn it on (those only define it if it is not defined yet). Defined without a value it stays on.
@@ -764,24 +806,30 @@
 #define TIDAL_TIMESTEP_CRITERION // need this to estimate the dynamical time
 #endif
 #endif
-
-
-#if (SINGLE_STAR_TIMESTEPPING > 0) /* if single-star timestepping is on, need to make sure the binary-identification flag is active */
-#ifndef SINGLE_STAR_FIND_BINARIES
-#define SINGLE_STAR_FIND_BINARIES
+/* a particle whose tree walk is skipped advances its last gravity with the jerk. A force added to GravAccel after the gravity
+   call must then not ride along on that value: either its types always take a walk (needs_new_treeforce: grains, fuzzy DM),
+   or, for a force every type feels, the tree part is held apart in GravAccel_Retained, and the analytic terms and the forces
+   added after gravity are evaluated afresh each step. The shearing-box Coriolis force is velocity-dependent and acts on every
+   type, and its tidal term changes on the epicycle timescale, which the walk cadence (set by self-gravity) does not see. */
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF) && defined(BOX_SHEARING)
+#define GRAVACCEL_RETAINED_ON_SKIPPED_WALK
 #endif
+
+
+#if defined(SINGLE_STAR_TIMESTEPPING) && (SINGLE_STAR_TIMESTEPPING > 0)
+#error "SINGLE_STAR_TIMESTEPPING > 0 (super-timestepping of sink binaries) has been removed. Use SINGLE_STAR_TIMESTEPPING=0; for regularized few-body integration of tight sink systems, use KETJU_REGULARIZATION (branch starforge_dev+ketju)."
+#endif
+#ifdef SINGLE_STAR_FIND_BINARIES
+#error "SINGLE_STAR_FIND_BINARIES has been removed: its only consumer was SINGLE_STAR_TIMESTEPPING > 0 (super-timestepping). Remove it from Config.sh."
+#endif
+#ifdef TURB_DRIVING_TARGET_SIGMA
+#error "TURB_DRIVING_TARGET_SIGMA has been renamed TURB_DRIVING_TARGET_VRMS_REGION (same value: radius of the measured region, 0 for all gas). The target velocity is TurbDrive_ApproxRMSVturb."
 #endif
 
 
 #ifdef SINGLE_STAR_DIRECT_GRAVITY /* exact O(N_star^2) star-star gravity, replacing the tree for those pairs */
 #if !defined(SINK_CALC_DISTANCES)
 #define SINK_CALC_DISTANCES /* the tree's node-level sink_mass is what tells the walk which nodes to drop for star targets */
-#endif
-#if defined(SINGLE_STAR_FIND_BINARIES)
-/* SINGLE_STAR_FIND_BINARIES identifies a binary companion during the tree walk, from the very
-   star-star node interactions this flag removes, and the direct sum does not reconstruct it.
-   Silently losing binary detection would change the integration, so refuse the combination. */
-#error "SINGLE_STAR_DIRECT_GRAVITY does not yet supply the companion search that SINGLE_STAR_FIND_BINARIES (and hence SINGLE_STAR_TIMESTEPPING > 0) needs; use one or the other."
 #endif
 #endif
 
@@ -1320,8 +1368,10 @@
 #ifndef BOX_SHEARING_Q
 #define BOX_SHEARING_Q (3.0/2.0)
 #endif
-/* set omega - usually we will default to always using time coordinates such that Omega = 1 at the box center */
+/* Omega at the box center, in code units; defaults to 1 (time in units of 1/Omega) */
+#ifndef BOX_SHEARING_OMEGA_BOX_CENTER
 #define BOX_SHEARING_OMEGA_BOX_CENTER 1.0
+#endif
 /* need analytic gravity on so we can add the appropriate source terms to the EOM */
 #ifndef GRAVITY_ANALYTIC
 #define GRAVITY_ANALYTIC
@@ -1329,7 +1379,7 @@
 /* if self-gravity is on, we need to make sure the gravitational forces are not periodic. this is going to cause some errors at the x/y 'edges',
  but for now at least, the periodic gravity routines (particularly the FFT's involved) require a regular periodic map, they cannot handle the
  non-standard map that the shearing box represents. */
-#ifndef GRAVITY_NOT_PERIODIC
+#if !defined(GRAVITY_NOT_PERIODIC) && !defined(GRAVITY_PERIODIC_XY) /* GRAVITY_PERIODIC_XY handles the shear-periodic map by Ewald summation */
 #define GRAVITY_NOT_PERIODIC
 #endif
 #endif // BOX_SHEARING
@@ -1356,6 +1406,28 @@
 
 #ifdef TALLBOX
 #error "TALLBOX was removed: use BOX_PERIODIC + BOX_OUTFLOW_Z (+ BOX_LONG_Z) with GRAVITY_PERIODIC_XY_IMAGES"
+#endif
+
+#if defined(GRAVITY_ANALYTIC_STRATIFIED_DISK) && !defined(GRAVITY_ANALYTIC)
+#define GRAVITY_ANALYTIC
+#endif
+
+#ifdef GRAVITY_PERIODIC_XY /* self-gravity (shear-)periodic in x/y, open in z, by a 2D Ewald correction on the tree */
+#if !defined(BOX_PERIODIC) || defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_X) || defined(BOX_REFLECT_Y) || defined(BOX_OUTFLOW_Y)
+#error "GRAVITY_PERIODIC_XY requires BOX_PERIODIC with periodic x and y boundaries"
+#endif
+#if !(defined(BOX_OUTFLOW_Z) || defined(BOX_REFLECT_Z))
+#error "GRAVITY_PERIODIC_XY requires a non-periodic z boundary (BOX_OUTFLOW_Z or BOX_REFLECT_Z)"
+#endif
+#if defined(PMGRID) || defined(GRAVITY_NOT_PERIODIC) || defined(GRAVITY_SPHERICAL_SYMMETRY) || (defined(BOX_SHEARING) && (BOX_SHEARING < 3))
+#error "GRAVITY_PERIODIC_XY is incompatible with PMGRID, GRAVITY_NOT_PERIODIC, GRAVITY_SPHERICAL_SYMMETRY and 2D shearing sheets"
+#endif
+#endif
+
+#ifdef SNE_BROADCAST_TIMESTEP
+#if !defined(GALSF_FB_MECHANICAL) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#error "SNE_BROADCAST_TIMESTEP requires GALSF_FB_MECHANICAL with GALSF_FB_FIRE_STELLAREVOLUTION"
+#endif
 #endif
 
 
@@ -1932,6 +2004,12 @@
 #if defined(TURB_DIFF_METALS) && (defined(GALSF_RESOLVEDISM) || defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)) && !defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
 #define TURB_DIFF_METALS_EXACT_CONSERVATION /* Stella: element-slot closure and dust diffusion use the pending exchange */
 #endif
+/* gradient and hydro loops reuse the first gradient pass's local pair searches (mesh/ngb.cc); identical results, memory ~ 4 B per
+   neighbour of every active cell. Off where something between those loops could change a search: NGB_PAIR_CACHE_OFF opts out */
+#if !defined(NGB_PAIR_CACHE_OFF) && !defined(TURB_DIFF_DYNAMIC) && !defined(MHD_MODIFIED_GRADIENT) && !(defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES) && (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4))
+#define NGB_PAIR_CACHE
+#endif
+
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
 #error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
 #endif

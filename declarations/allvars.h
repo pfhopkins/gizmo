@@ -246,6 +246,9 @@ extern int TreeReconstructFlag; /*!< the standing tree is CONDEMNED: its storage
     TreeMomentsStaleFlag below (moments re-derivation on intact topology -- strictly cheaper).
     Serialized in restartfiles. */
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
+#ifdef TREE_REFRESH_INCREMENTAL
+extern int TreeMomentsDirtyFlag; /*!< some node is marked (force_mark_moments_dirty): the next refresh may re-derive only the marked chains, unless TreeMomentsStaleFlag asks for all */
+#endif
 extern int DomainReconstructFlag; /*!< a full domain decomposition (particle ownership/balance) is owed.
     Consumed ONLY by the step-start ladder in run.cc; cleared by the decomposition itself, which
     self-raises TreeReconstructFlag for the tree half. Physics events that merely condemn the tree
@@ -404,17 +407,8 @@ extern FILE *FdSNeFBLogFile;    /*!< file handle for mechanical feedback log-fil
 #ifdef SINK_PARTICLES
 extern FILE *FdSinks;    /*!< file handle for sinks.txt log-file. */
 #endif
-#ifdef OUTPUT_SINK_ACCRETION_HIST
-extern FILE *FdSinkSwallowDetails;
-#endif
-#ifdef OUTPUT_SINK_FORMATION_PROPS
-extern FILE *FdSinkFormationDetails;
-#endif
 #if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(SINK_OUTPUT_MOREINFO)) && defined(SINK_PARTICLES)
 extern FILE *FdSinksDetails;
-#ifdef SINK_OUTPUT_MOREINFO
-extern FILE *FdSinkMergerDetails;
-#endif
 #ifdef SINK_WIND_KICK
 extern FILE *FdSinkWindDetails;
 #endif
@@ -608,7 +602,7 @@ extern struct global_data_all_processes
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
   double ArtCondConstant;
 #endif
-#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT)
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT) || defined(SNE_BROADCAST_TIMESTEP)
     double MeanGasParticleMass; /*!< the mean gas particle mass */
 #endif
     double MinMassForParticleMerger; /*!< the minimum mass of a gas particle below which it will be merged into a neighbor */
@@ -779,7 +773,7 @@ extern struct global_data_all_processes
     double TimeNextTurbSpectrum;
     int FileNumberTurbSpectrum;
 #endif
-#ifdef TURB_DRIVING_TARGET_SIGMA
+#ifdef TURB_DRIVING_TARGET_VRMS_REGION
     double TurbDriving_DrivingNormFactor; /* gain on the driving acceleration, set by the PID loop on ln(v_target/v_rms) */
     double TurbDriving_PID_Integral;      /* integral term, in units of ln(gain) */
     double TurbDriving_PID_Derivative;    /* low-pass filtered derivative term, in units of ln(gain) */
@@ -833,6 +827,12 @@ extern struct global_data_all_processes
     double Sink_Rad_MomentumFactor;
 #endif
 
+#ifdef GRAVITY_ANALYTIC_STRATIFIED_DISK
+    double StratDisk_SigmaStar; /*!< stellar-disk surface density (code units) */
+    double StratDisk_ZStar;     /*!< stellar-disk scale height */
+    double StratDisk_RhoDM;     /*!< midplane dark-matter density */
+    double StratDisk_R0;        /*!< galactocentric radius (sets the vertical scale of the halo term) */
+#endif
 #ifdef GRAIN_FLUID
 #define GRAIN_PTYPES 8 /* default to allowed particle type for grains == 3, only, but can make this a more extended list as desired */
 #ifdef GRAIN_RDI_TESTPROBLEM
@@ -1123,6 +1123,10 @@ extern struct global_data_all_processes
 #ifdef SINK_PARTICLES
   double SinkAccretionFactor;	/*!< Rescale sink accretion rate normaliation */
   double SinkFeedbackFactor;	/*!< Rescale sink feedback normalization */
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+  double SinkMergerMaxMass;         /*!< most massive sink another sink may absorb (code units); 0 = 10 x its Sink_Formation_Mass */
+  double SinkMergerMaxRadiusFactor; /*!< sinks merge only inside this many sink radii */
+#endif
   double SeedSinkMass;          /*!< Seed sink particle mass */
 #if defined(SINK_SEED_FROM_FOF) || defined(SINK_SEED_FROM_LOCALGAS)
   double SeedSinkMassSigma;     /*!< Standard deviation of initial sink particle masses */
@@ -1306,18 +1310,8 @@ extern struct gravdata_in
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
     MyFloat AGS_zeta;
 #endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-    MyFloat Min_Sink_OrbitalTime;   /*!<orbital time for binary */
-    Vec3<MyDouble> comp_dx;        /*!< position of binary companion */
-    Vec3<MyDouble> comp_dv;        /*!< velocity of binary companion */
-    MyDouble comp_Mass;         /*!< mass of binary companion */
-    int is_in_a_binary;
-#endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
     SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;
-#endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    int SuperTimestepFlag;  /*!< 2 if allowed to super-timestep, 1 if a candidate for super-timestepping, 0 otherwise */
 #endif
 #ifdef KETJU_REGULARIZATION
 #ifdef KETJU_TYPE4_STARS
@@ -1421,22 +1415,9 @@ extern struct gravdata_out
     MyFloat weight_sum_for_special_point_smoothing;
 #endif
 #endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-    MyFloat Min_Sink_OrbitalTime; //orbital time for binary
-    Vec3<MyDouble> comp_dx; //position of binary companion
-    Vec3<MyDouble> comp_dv; //velocity of binary companion
-    MyDouble comp_Mass; //mass of binary companion
-    int is_in_a_binary; // 1 if star is in a binary, 0 otherwise
-#endif
 #ifdef SINGLE_STAR_TIMESTEPPING
     MyFloat Min_Sink_Freefall_time;    // minimum value of sqrt(R^3 / G(M_SINK + M_particle)) as calculated from the tree-walk
     MyFloat Min_Sink_Approach_Time; // smallest approach time t_a = |v_radial|/r
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    SymmetricTensor2<MyFloat> COM_tidal_tensorps; //tidal tensor evaluated at the center of mass without contribution from the companion
-    MyDouble COM_GravAccel[3]; //gravitational acceleration evaluated at the center of mass without contribution from the companion
-    int COM_calc_flag; //flag that tells whether this was only a rerun to get the acceleration ad the tidal tenor at the center of mass of a binary
-    int SuperTimestepFlag; // 2 if allowed to super-timestep, 1 if a candidate for super-timestepping, 0 otherwise
-#endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
     MyFloat Min_Sink_FeedbackTime; // minimum time for feedback to arrive from a star
 #endif    

@@ -24,6 +24,7 @@ void GravAccel_GrowingDiskPotential(void);
 void GravAccel_StaticNFW(void);
 void GravAccel_RayleighTaylorTest(void);
 void GravAccel_ShearingSheet(void);
+void GravAccel_StratifiedDisk(void);
 void GravAccel_PaczynskiWiita(void);
 void GravAccel_RDITestProblem(void);
 void GravAccel_SpecialCustomNuclearZoomBoundaryConditions(void);
@@ -68,13 +69,32 @@ void add_analytic_gravitational_forces()
     GravAccel_SpecialCustomNuclearZoomBoundaryConditions(); // special potential boundary conditions and clipping/excision application outside zone of re-zoom-in-simulation. must be set by-hand for problem.
 #endif
 #ifdef BOX_SHEARING
-    GravAccel_ShearingSheet();            // adds coriolis and centrifugal terms for shearing-sheet approximation
+    GravAccel_ShearingSheet();            // adds the tidal term for the shearing-sheet approximation
+#endif
+#ifdef GRAVITY_ANALYTIC_STRATIFIED_DISK
+    GravAccel_StratifiedDisk();           // vertical stellar-disk + dark-matter gravity for a local patch of a galactic disk
 #endif
 #ifdef GRAIN_RDI_TESTPROBLEM
     GravAccel_RDITestProblem();           // vertical gravity+external acceleration for grain-RDI-wind tests
 #endif
 #ifdef GALSF_RESOLVEDISM_TALLBOX
     GravAccel_HuTallbox();                // Hu, Sternberg & van Dishoeck 2021 MW-like static vertical potential (stellar disk tanh + vertical NFW) for the stratified-ISM tallbox
+#endif
+}
+
+
+
+/* vertical gravity of the stellar disk and dark-matter halo at galactocentric radius R0, in the form of Kim & Ostriker (2017, TIGRESS):
+   Phi_* = 2 pi G Sigma_* (sqrt(z^2 + z_*^2) - z_*),  Phi_DM = 2 pi G rho_DM R0^2 ln(1 + z^2/R0^2),  z from the box mid-plane. non-comoving only. */
+void GravAccel_StratifiedDisk()
+{
+#ifdef GRAVITY_ANALYTIC_STRATIFIED_DISK
+    const double gstar = 2.*M_PI*All.G*All.StratDisk_SigmaStar, gdm = 4.*M_PI*All.G*All.StratDisk_RhoDM, zs2 = All.StratDisk_ZStar*All.StratDisk_ZStar, iR02 = 1./(All.StratDisk_R0*All.StratDisk_R0);
+    for(int i : ActiveParticleList)
+    {
+        double z = P[i].Pos[2] - boxHalf_Z;
+        P[i].GravAccel[2] -= gstar * z / sqrt(z*z + zs2) + gdm * z / (1. + z*z*iR02);
+    }
 #endif
 }
 
@@ -143,7 +163,7 @@ void GravAccel_RDITestProblem()
 
 
 
-/* adds coriolis and centrifugal terms for shearing-sheet approximation */
+/* adds the tidal (centrifugal) term for the shearing-sheet approximation */
 void GravAccel_ShearingSheet()
 {
 #ifdef BOX_SHEARING
@@ -151,13 +171,25 @@ void GravAccel_ShearingSheet()
     {
         /* centrifugal force term (depends on distance from box center) */
         P[i].GravAccel[0] += 2.*(P[i].Pos[0]-boxHalf_X) * BOX_SHEARING_Q*BOX_SHEARING_OMEGA_BOX_CENTER*BOX_SHEARING_OMEGA_BOX_CENTER;
-        /* coriolis force terms */
-        double vp=0; if(P[i].Type==0) {vp=CellP[i].VelPred[BOX_SHEARING_PHI_COORDINATE];} else {vp=P[i].Vel[BOX_SHEARING_PHI_COORDINATE];}
-        P[i].GravAccel[0] += 2.*vp * BOX_SHEARING_OMEGA_BOX_CENTER;
-        if(P[i].Type==0) {vp=CellP[i].VelPred[0];} else {vp=P[i].Vel[0];}
-        P[i].GravAccel[BOX_SHEARING_PHI_COORDINATE] -= 2.*vp * BOX_SHEARING_OMEGA_BOX_CENTER;
+        /* the Coriolis term is velocity-dependent and added after all other forces: see shearing_sheet_coriolis_boris() */
 #if (BOX_SHEARING==4) /* add vertical gravity to the force law */
         P[i].GravAccel[2] -= BOX_SHEARING_OMEGA_BOX_CENTER * BOX_SHEARING_OMEGA_BOX_CENTER * (P[i].Pos[2]-boxHalf_Z);
+#endif
+#ifdef HERMITE_INTEGRATION
+        /* a Hermite pass re-evaluates the Hermite-integrated particles without the forces added after gravity: their Coriolis term
+           goes in here, on the current (start-of-step, predicted or corrected) velocity, with the jerk of the shearing-sheet terms
+           for the corrector, from the total acceleration */
+        if(HermiteOnlyFlag && eligible_for_hermite(i))
+        {
+            const int ph = BOX_SHEARING_PHI_COORDINATE; const double omega = BOX_SHEARING_OMEGA_BOX_CENTER;
+            P[i].GravAccel[0] += 2.*omega * P[i].Vel[ph];
+            P[i].GravAccel[ph] -= 2.*omega * P[i].Vel[0];
+            P[i].GravJerk[0] += 2.*BOX_SHEARING_Q*omega*omega * P[i].Vel[0] + 2.*omega * P[i].GravAccel[ph];
+            P[i].GravJerk[ph] -= 2.*omega * P[i].GravAccel[0];
+#if (BOX_SHEARING==4)
+            P[i].GravJerk[2] -= omega*omega * P[i].Vel[2];
+#endif
+        }
 #endif
     }
 #endif

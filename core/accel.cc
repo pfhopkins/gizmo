@@ -142,6 +142,56 @@ void compute_hydro_densities_and_forces(void)
 
 
 
+#ifdef BOX_SHEARING
+/* Shearing-sheet Coriolis force, as a Boris step over each particle's timestep (as for the grain Lorentz force): half a kick from
+   every other acceleration, a rotation at 2 Omega that keeps the speed, half a kick. The rotation's velocity change over dt enters
+   GravAccel as an effective acceleration, which the kicks apply as usual. Evaluated explicitly, a velocity-dependent force makes the
+   epicycles of the kick-drift-kick integration grow; every other acceleration has to be final for the step, so this runs last.
+   GravAccel holds it for this step only (GRAVACCEL_RETAINED_ON_SKIPPED_WALK keeps it out of a skipped walk's kept gravity).
+   Not comoving: velocities and accelerations are physical. */
+static void shearing_sheet_coriolis_boris(void)
+{
+    const int ph = BOX_SHEARING_PHI_COORDINATE;
+    const double omega = BOX_SHEARING_OMEGA_BOX_CENTER;
+    const int n_active = (int) ActiveParticleList.size();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int ii = 0; ii < n_active; ii++)
+    {
+        const int i = ActiveParticleList[ii];
+        const double dt = get_particle_timestep_in_physical(i);
+        double coriolis_x, coriolis_ph;
+        if(dt <= 0) /* no timestep yet (the first force evaluation): the dt -> 0 limit, the explicit force on the predicted velocity */
+        {
+            const double v_x = (P[i].Type == 0) ? CellP[i].VelPred[0] : P[i].Vel[0], v_ph = (P[i].Type == 0) ? CellP[i].VelPred[ph] : P[i].Vel[ph];
+            coriolis_x = 2. * omega * v_ph;
+            coriolis_ph = -2. * omega * v_x;
+        } else {
+            double acc_x = P[i].GravAccel[0], acc_ph = P[i].GravAccel[ph];
+            if(P[i].Type == 0)
+            {
+                acc_x += CellP[i].HydroAccel[0]; acc_ph += CellP[i].HydroAccel[ph];
+#ifdef TURB_DRIVING
+                acc_x += CellP[i].TurbAccel[0]; acc_ph += CellP[i].TurbAccel[ph];
+#endif
+#ifdef RT_RAD_PRESSURE_OUTPUT
+                acc_x += CellP[i].Rad_Accel[0]; acc_ph += CellP[i].Rad_Accel[ph];
+#endif
+            }
+            const double vm_x = P[i].Vel[0] + 0.5 * dt * acc_x, vm_ph = P[i].Vel[ph] + 0.5 * dt * acc_ph;
+            const double t = omega * dt, s = 2. * t / (1. + t * t);   /* rotation by 2 Omega dt: its half-angle tangent is Omega dt */
+            const double vt_x = vm_x + t * vm_ph, vt_ph = vm_ph - t * vm_x;
+            coriolis_x = s * vt_ph / dt;
+            coriolis_ph = -s * vt_x / dt;
+        }
+        P[i].GravAccel[0] += coriolis_x;
+        P[i].GravAccel[ph] += coriolis_ph;
+    }
+}
+#endif
+
+
 void compute_additional_forces_for_all_particles(void)
 {
 #if defined(DM_FUZZY) || defined(CBE_INTEGRATOR_WITHGRADIENTS)
@@ -152,6 +202,9 @@ void compute_additional_forces_for_all_particles(void)
 #endif
 #ifdef GRAIN_FLUID
     apply_grain_dragforce(); /* if we are solving a coupled set of grains via aerodynamic drag, this is where their acceleration should be calculated */
+#endif
+#ifdef BOX_SHEARING
+    shearing_sheet_coriolis_boris(); /* last: it needs every other acceleration */
 #endif
 }
 
@@ -181,9 +234,11 @@ void compute_stellar_feedback(void)
         int any_fb_local = 0, any_fb_global = 0;
         for(int i : ActiveParticleList) {if(addFB_evaluate_active_check(i, -1)) {any_fb_local = 1; break;}}
         MPI_Allreduce(&any_fb_local, &any_fb_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+#ifndef SNE_BROADCAST_TIMESTEP /* with it, deposited after the closing kick instead (calculate_non_standard_physics) */
         if(any_fb_global) {mechanical_fb_calc_toplevel();}  /* call the parent loop for the different mechanical fb sub-loops */
+#endif
     }
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
+    CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
 
 #ifdef GALSF_FB_THERMAL

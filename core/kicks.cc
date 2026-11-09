@@ -120,9 +120,6 @@ int eligible_for_hermite(int i)
        base. Demoting both members together was rejected: demotion shortens the step, a one-way
        ratchet on the hierarchy. */
 #endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    if(P[i].SuperTimestepFlag >= 2) {return 0;}
-#endif
 #ifdef KETJU_REGULARIZATION
     if(P[i].KetjuIntegrated) {return 0;} /* KETJU particles use MSTAR, not Hermite */
     if(ketju_is_particle_in_region(i)) {return 0;} /* current chain members: KETJU only */
@@ -474,13 +471,6 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
              * that pulls chain members apart and unbinds nominally circular binaries. */
             dp += P[i].GravAccel * (mass_pred * dt_gravkick);
         }
-#if (SINGLE_STAR_TIMESTEPPING > 0)  //if we're super-timestepping, the above accounts for the change in COM velocity. Now we do the internal binary velocity change
-#ifdef KETJU_REGULARIZATION
-        if((P[i].Type == 5) && (P[i].SuperTimestepFlag>=2) && !P[i].KetjuIntegrated) {dp += (P[i].COM_GravAccel - P[i].GravAccel) * (mass_pred * dt_gravkick);}
-#else
-        if((P[i].Type == 5) && (P[i].SuperTimestepFlag>=2)) {dp += (P[i].COM_GravAccel - P[i].GravAccel) * (mass_pred * dt_gravkick);}
-#endif
-#endif
 #ifdef HERMITE_INTEGRATION
         // we augment this to a whole-step kick for the initial Hermite prediction step, which is done alongside the first half-step kick.
         if((1<<P[i].Type) & HERMITE_INTEGRATION)

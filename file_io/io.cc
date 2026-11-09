@@ -87,6 +87,7 @@ void savepositions(int num)
     int n, filenr, gr, ngroups, primaryTask, lastTask;
 
     CPU_Step[CPU_MISC] += measure_time();
+    sink_ledger_flush(); /* so the sink ledger holds every event up to this snapshot */
 
 #ifdef CHIMES_REDUCED_OUTPUT
     if (num % N_chimes_full_output_freq == 0) {Chimes_incl_full_output = 1;} else {Chimes_incl_full_output = 0;}
@@ -260,6 +261,19 @@ void savepositions(int num)
 
 
 
+#ifdef BOX_SHEARING
+/* Number of x-wraps do_box_wrapping would apply at x (positive for x >= L). Snapshots can be written between domain
+   decompositions, with particles still outside the box: folding x back into it must also shift phi and v_phi by the
+   shear-periodic offsets, as do_box_wrapping does, or the written positions and velocities are inconsistent. */
+static int shearing_box_x_wraps(double x)
+{
+    int n = 0;
+    while(x < 0) {x += boxSize_X; n--;}
+    while(x >= boxSize_X) {x -= boxSize_X; n++;}
+    return n;
+}
+#endif
+
 /*! This function fills the write buffer with particle data. New output blocks can in principle be added here.
  */
 void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
@@ -293,11 +307,20 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
+#ifdef BOX_SHEARING
+                    int n_xwrap = shearing_box_x_wraps(P[pindex].Pos[0]);
+#endif
                     for(k = 0; k < 3; k++)
                     {
                         fp_pos[k] = (MyOutputPosFloat) P[pindex].Pos[k];
 #ifdef RANDOMIZE_GRAVTREE_PERIODIC
                         fp_pos[k] -= (MyOutputPosFloat) All.RandomShift[k]; /* un-shift the RANDOMIZE_GRAVTREE frame so snapshots hold physical coords; wrap below refolds */
+#endif
+#ifdef BOX_SHEARING
+                        if(k==0) {fp_pos[k] = (MyOutputPosFloat) (P[pindex].Pos[0] - n_xwrap * boxSize_X); continue;} /* wrapped in double, so it agrees with n_xwrap */
+#if (BOX_SHEARING > 1)
+                        if(k==BOX_SHEARING_PHI_COORDINATE) {fp_pos[k] = (MyOutputPosFloat) (P[pindex].Pos[k] + n_xwrap * Shearing_Box_Pos_Offset);}
+#endif
 #endif
 #ifdef BOX_PERIODIC
                         double box_length_xyz;
@@ -324,6 +347,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 if(P[pindex].Type == type)
                 {
                     for(k=0;k<3;k++) {fp[k] = (MyOutputFloat) (P[pindex].Vel[k] * sqrt(All.cf_a3inv));} // JUST write the conserved velocity here, not the drifted one in this manner //
+#ifdef BOX_SHEARING
+                    fp[BOX_SHEARING_PHI_COORDINATE] += (MyOutputFloat) (shearing_box_x_wraps(P[pindex].Pos[0]) * Shearing_Box_Vel_Offset); /* consistent with the written position */
+#endif
                     fp += 3;
                     n++;
                 }
@@ -1341,8 +1367,8 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                        datasets simply carry the ordinary Pos/Vel via the fallback below. */
                     int _herm = 0;
 #ifdef HERMITE_INTEGRATION
-                    /* the full eligibility predicate, not the type bitmask alone: a star being
-                       super-timestepped or in its born-yesterday settling window is advanced by
+                    /* the full eligibility predicate, not the type bitmask alone: a star in its
+                       born-yesterday settling window is advanced by
                        KDK, so its retained base does not describe where it goes and the plain
                        drifted values are the right ones for it. NB the reference snapshot of
                        an energy diagnostic must come from ELIGIBLE stars -- IC-read sinks carry
@@ -2016,6 +2042,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 if(P[pindex].Type == type)
                 {
                     for(k = 0; k < 3; k++) {fp[k] = (MyOutputFloat) CellP[pindex].ParticleVel[k];}
+#ifdef BOX_SHEARING
+                    fp[BOX_SHEARING_PHI_COORDINATE] += (MyOutputFloat) (shearing_box_x_wraps(P[pindex].Pos[0]) * Shearing_Box_Vel_Offset);
+#endif
                     fp += 3;
                     n++;
                 }

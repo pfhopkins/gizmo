@@ -1,7 +1,7 @@
 # turbulent_box
 
 Driven isothermal turbulence in a periodic box, held at a target Mach number by the
-`TURB_DRIVING_TARGET_SIGMA` control loop.
+`TURB_DRIVING_TARGET_VRMS_REGION` control loop.
 
 | | |
 |-|-|
@@ -26,5 +26,5 @@ own measurement: mass-weighted rms velocity about the mean over the isothermal s
 2 t_eddy (t_eddy = `TurbDrive_MaxWavelength / TurbDrive_ApproxRMSVturb` = 5) the mean must be within
 3% of the target and every snapshot within 10%, and the peak over the whole run, spin-up included,
 must stay under 1.1x the target.
-`mach_vs_time<variant>.png` shows the snapshot Mach number, the loop's measurement, the driving gain,
-and for MHD the plasma beta.
+`mach_vs_time.png` shows, for every variant with output on disk, the snapshot Mach number, the loop's
+measurement, the driving gain, and for MHD the plasma beta.

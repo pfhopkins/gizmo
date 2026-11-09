@@ -229,7 +229,7 @@ void resolvedism_mass_balance_log(const char *tag)
 void energy_budget_sync_report(void)
 {
     if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;} /* not synchronized: sum is meaningless */
-    double loc[6] = {0,0,0,0,0,0}, glob[6]; int i, k;
+    double loc[7] = {0,0,0,0,0,0,0}, glob[7]; int i, k;
     for(i = 0; i < NumPart; i++)
     {
         if(P[i].Type == 0 && P[i].Mass > 0)
@@ -240,11 +240,15 @@ void energy_budget_sync_report(void)
             for(k = 0; k < 3; k++) {loc[3+k] += P[i].Mass * P[i].Vel[k] / All.cf_atime;} /* physical momentum */
         }
     }
-    MPI_Allreduce(loc, glob, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+#if defined(GALSF_FB_MECHANICAL) && !defined(GALSF_USE_SNE_ONELOOP_SCHEME)
+    loc[6] = energy_budget_mechfb_injected_local();
+#endif
+    MPI_Allreduce(loc, glob, 7, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(ThisTask == 0)
     {
-        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e P_gas=%.16e %.16e %.16e\n",
-               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2], glob[3], glob[4], glob[5]); fflush(stdout);
+        /* E_fb: cumulative energy mechanical feedback has written into gas Vel/InternalEnergy (0 without it) */
+        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e P_gas=%.16e %.16e %.16e E_fb=%.10e\n",
+               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2], glob[3], glob[4], glob[5], glob[6]); fflush(stdout);
     }
 }
 
@@ -823,10 +827,16 @@ void run(void)
             }
             else
                 stopflag = 0;
+#ifdef SINK_LEDGER_ACTIVE
+            static double t_last_ledger_flush = -1; double t_now = MPI_Wtime();
+            if(t_last_ledger_flush < 0 || stopflag == 3) {t_last_ledger_flush = t_now;} /* restart writes flush the ledger themselves */
+            if(stopflag == 0 && t_now - t_last_ledger_flush >= SINK_LEDGER_FLUSH_INTERVAL_SEC) {t_last_ledger_flush = t_now; stopflag = 4;} /* 4 = flush the sink ledger */
+#endif
         }
 
         MPI_Bcast(&stopflag, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
+        if(stopflag == 4) {sink_ledger_flush(); stopflag = 0;}
         if(stopflag == 3)
         {
             restart(0);		/* write an occasional restart file */
@@ -834,7 +844,7 @@ void run(void)
             All.TimeLastRestartFile += report_time();
         }
 
-        report_memory_usage(&HighMark_run, "RUN");
+        if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {report_memory_usage(&HighMark_run, "RUN");} /* a per-rank Allgather: top-level steps only, as for the cpu log */
     }
 
 }
@@ -889,6 +899,14 @@ void calculate_non_standard_physics(void)
         for(i_fb = 0; i_fb < N_gas; i_fb++) {CellP[i_fb].FBinjFlag = 0;}
     }
 #endif
+#ifdef SNE_BROADCAST_TIMESTEP /* mechanical feedback after the closing kick, which used pre-SN forces (Durier & Dalla Vecchia 2012); then wake the gas the SNe can reach before its step ends */
+    {   int any_fb_local = 0, any_fb_global = 0;
+        for(int i : ActiveParticleList) {if(addFB_evaluate_active_check(i, -1)) {any_fb_local = 1; break;}}
+        MPI_Allreduce(&any_fb_local, &any_fb_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(any_fb_global) {mechanical_fb_calc_toplevel();}
+        sne_causal_wake();
+    }
+#endif
 #ifdef PARTICLE_EXCISION
     apply_excision();
 #endif
@@ -933,7 +951,7 @@ void calculate_non_standard_physics(void)
 #if defined(TREE_INTEGRITY_AUDITS) && defined(MAINTAIN_TREE_IN_REARRANGE)
         if(need_cleanup_rearrange) {force_tree_full_audit(0, "sink_cleanup");}
 #endif
-        MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SINKS] += measure_time();
+        CPU_Step[CPU_SINKS] += measure_time();
     }
 #endif
 
@@ -995,7 +1013,7 @@ void calculate_non_standard_physics(void)
     if(Flag_FullStep) {rt_write_chemistry_stats();}
 #endif
 #endif
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
+    CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif // RADTRANSFER block
 
     MCBAL_LOG("pre_photoion");
@@ -1046,8 +1064,7 @@ void calculate_non_standard_physics(void)
 
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING) && !defined(RESOLVEDISM_ADIABATIC_NOCOOL) /* NOCOOL = adiabatic test twin: skip the energy/chemistry update */
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
-    CPU_Step[CPU_COOLINGSFR] += measure_time(); /* this rank's own cooling work */
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLSFRIMBAL] += measure_time(); /* wait for the slowest rank: cooling-loop imbalance, booked separately */
+    CPU_Step[CPU_COOLINGSFR] += measure_time(); /* this rank's own cooling work; the wait for the slowest rank lands in the next collective */
 #endif
     MCBAL_LOG("post_cooling");
 #ifdef GALSF_RESOLVEDISM_DUST
@@ -1080,7 +1097,7 @@ void calculate_non_standard_physics(void)
 #endif
 #endif
     CPU_Step[CPU_COOLINGSFR] += measure_time(); /* the Stella steps after star formation */
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLSFRIMBAL] += measure_time(); /* arrival spread only */
+    CPU_Step[CPU_COOLSFRIMBAL] += measure_time();
     MCBAL_LOG("post_starform_FB");
 #endif
 
@@ -1160,10 +1177,18 @@ void find_next_sync_point_and_drift(void)
 
   All.NumCurrentTiStep++;	/* we are now moving to the next sync point */
 
-  /* find the next kick time */
+  /* find the next kick time. One reduction of the global bin occupancy gives it, and below the active count and
+     the highest active and occupied bins: each is a min/sum/max over bins, so global counts give what separate
+     per-quantity reductions gave. */
+  long long bincount_glob[TIMEBINS];
+  {
+    long long bincount_loc[TIMEBINS];
+    for(n = 0; n < TIMEBINS; n++) {bincount_loc[n] = TimeBinCount[n];}
+    MPI_Allreduce(bincount_loc, bincount_glob, TIMEBINS, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+  }
   for(n = 0, ti_next_kick = TIMEBASE, highest_occupied_bin = 0; n < TIMEBINS; n++)
     {
-      if(TimeBinCount[n])
+      if(bincount_glob[n])
 	{
 	  if(n > 0)
 	    {
@@ -1182,7 +1207,7 @@ void find_next_sync_point_and_drift(void)
 	}
     }
 
-  MPI_Allreduce(&ti_next_kick, &ti_next_kick_global, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
+  ti_next_kick_global = ti_next_kick;
 
 #ifdef SINK_TRIGGERED_FINE_OUTPUT
   if(!FineOutputActive && fine_output_sink_exists())
@@ -1269,24 +1294,24 @@ void find_next_sync_point_and_drift(void)
   All.TimeStep = All.Time - timeold;
 
   /* mark the bins that will be active */
-  for(n = 1, TimeBinActive[0] = 1, NumForceUpdate = TimeBinCount[0], highest_active_bin = 0; n < TIMEBINS; n++)
+  for(n = 1, TimeBinActive[0] = 1, NumForceUpdate = TimeBinCount[0], GlobNumForceUpdate = bincount_glob[0], highest_active_bin = 0; n < TIMEBINS; n++)
     {
       dt_bin = GET_INTEGERTIME_FROM_TIMEBIN(n);
       if((ti_next_kick_global % dt_bin) == 0)
 	{
 	  TimeBinActive[n] = 1;
 	  NumForceUpdate += TimeBinCount[n];
-	  if(TimeBinCount[n])
+	  GlobNumForceUpdate += bincount_glob[n];
+	  if(bincount_glob[n])
 	    highest_active_bin = n;
 	}
       else
 	TimeBinActive[n] = 0;
     }
 
-  sumup_large_ints(1, &NumForceUpdate, &GlobNumForceUpdate);
   All.NumForcesSinceLastDomainDecomp += GlobNumForceUpdate;
-  MPI_Allreduce(&highest_active_bin, &All.HighestActiveTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-  MPI_Allreduce(&highest_occupied_bin, &All.HighestOccupiedTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+  All.HighestActiveTimeBin = highest_active_bin;
+  All.HighestOccupiedTimeBin = highest_occupied_bin;
 
   if(GlobNumForceUpdate == All.TotNumPart)
     {
@@ -1477,14 +1502,20 @@ void output_log_messages(void)
   double weight, corr_weight; /* 2^(bins below the highest occupied): beyond an int after 31 bins */
   double sum, avg_CPU_TimeBin[TIMEBINS], frac_CPU_TimeBin[TIMEBINS];
 
-  sumup_large_ints(TIMEBINS, TimeBinCount, tot_count);
-  sumup_large_ints(TIMEBINS, TimeBinCountGas, tot_count_gas);
-
 #if defined(IO_SUPPRESS_TIMEBIN_STDOUT)
-    if((ThisTask == 0) && (All.HighestActiveTimeBin>=(TIMEBINS-IO_SUPPRESS_TIMEBIN_STDOUT)))
+  int print_timebins = (All.HighestActiveTimeBin>=(TIMEBINS-IO_SUPPRESS_TIMEBIN_STDOUT)); /* identical on every rank */
 #else
-    if(ThisTask == 0)
+  int print_timebins = 1;
 #endif
+  if(!print_timebins) {output_extra_log_messages(); return;} /* the bin census below only feeds rank 0's print */
+  {
+    long long cnt_loc[2*TIMEBINS], cnt_glob[2*TIMEBINS];
+    for(i = 0; i < TIMEBINS; i++) {cnt_loc[i] = TimeBinCount[i]; cnt_loc[TIMEBINS+i] = TimeBinCountGas[i];}
+    MPI_Reduce(cnt_loc, cnt_glob, 2*TIMEBINS, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask == 0) {for(i = 0; i < TIMEBINS; i++) {tot_count[i] = cnt_glob[i]; tot_count_gas[i] = cnt_glob[TIMEBINS+i];}}
+  }
+
+    if(ThisTask == 0)
     {
         if(All.ComovingIntegrationOn)
         {
@@ -1598,8 +1629,10 @@ void write_cpu_log(void)
 #ifdef TREE_INTEGRITY_AUDITS
   /* the geometry audit's box-containment check only reports (see force_tree_geometry_audit), so its
      running totals are the only place a growing containment problem would show */
-  double geo_loc[4] = {(double) TreeGeoAuditCount, (double) TreeGeoAuditBoxCount, TreeGeoAuditWorstLen, TreeGeoAuditWorstH}, geo_max[4];
-  MPI_Reduce(geo_loc, geo_max, 4, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+  double geo_loc[13] = {(double) TreeGeoAuditCount, (double) TreeGeoAuditBoxCount, TreeGeoAuditWorstLen, TreeGeoAuditWorstH,
+                        (double) TreeMomAuditCount, (double) TreeMomAuditCarried, TreeMomAuditWorstCOM, TreeMomAuditWorstCOMWiden, TreeMomAuditWorstDV,
+                        (double) TreeMomAuditVmaxShort, (double) TreeMomAuditSoftShort, TreeMomAuditWorstVmaxShort, TreeMomAuditWorstSoftShort}, geo_max[13];
+  MPI_Reduce(geo_loc, geo_max, 13, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
 #endif
 
   if(ThisTask == 0)
@@ -1693,6 +1726,8 @@ void write_cpu_log(void)
       fprintf(FdCPU, "TreeOps: build=%lld refresh=%lld decomp=%lld light=%lld defer=%lld escalate=%lld rearrange=%lld condemned_walk=%lld swap_s=%.2f rearr_s=%.2f swaps=%lld\n", TreeOpsCount[TREEOPS_BUILD], TreeOpsCount[TREEOPS_REFRESH], TreeOpsCount[TREEOPS_DECOMP], TreeOpsCount[TREEOPS_DECOMP_LIGHT], TreeOpsCount[TREEOPS_DEFER], TreeOpsCount[TREEOPS_ESCALATE], TreeOpsCount[TREEOPS_REARRANGE], TreeOpsCount[TREEOPS_CONDEMNED_WALK], maint_max[0], maint_max[1], (long long) maint_max[2]);
 #ifdef TREE_INTEGRITY_AUDITS
       fprintf(FdCPU, "TreeGeoAudit: audits=%lld box_excess_audits=%lld worst_excess=%.3g len %.3g h\n", (long long) geo_max[0], (long long) geo_max[1], geo_max[2], geo_max[3]);
+      fprintf(FdCPU, "TreeMomAudit: audits=%lld carried_node_checks=%lld worst_carried_com=%.3g len %.3g widening worst_carried_dv=%.3g vmax_short=%lld (worst x%.3g) maxsoft_short_predicted=%lld (worst x%.3g)\n",
+              (long long) geo_max[4], (long long) geo_max[5], geo_max[6], geo_max[7], geo_max[8], (long long) geo_max[9], geo_max[11], (long long) geo_max[10], geo_max[12]);
 #endif
       fprintf(FdCPU,
 	      "total         %10.2f  %5.1f%%\n"
@@ -1816,13 +1851,13 @@ void write_cpu_log(void)
     All.CPU_Sum[CPU_IMPROVDIFFCOMM], (All.CPU_Sum[CPU_IMPROVDIFFCOMM]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_IMPROVDIFFMISC], (All.CPU_Sum[CPU_IMPROVDIFFMISC]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
-    All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_DENSCOMM] + All.CPU_Sum[CPU_DENSWAIT] + All.CPU_Sum[CPU_DENSMISC]
+    All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_GRADCOMPUTE] + All.CPU_Sum[CPU_DENSCOMM] + All.CPU_Sum[CPU_DENSWAIT] + All.CPU_Sum[CPU_DENSMISC]
               + All.CPU_Sum[CPU_HYDCOMPUTE] + All.CPU_Sum[CPU_HYDCOMM] + All.CPU_Sum[CPU_HYDMISC]
               + All.CPU_Sum[CPU_HYDWAIT] + All.CPU_Sum[CPU_TREEHMAXUPDATE],
-    (All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_DENSCOMM] + All.CPU_Sum[CPU_DENSWAIT] + All.CPU_Sum[CPU_DENSMISC]
+    (All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_GRADCOMPUTE] + All.CPU_Sum[CPU_DENSCOMM] + All.CPU_Sum[CPU_DENSWAIT] + All.CPU_Sum[CPU_DENSMISC]
               + All.CPU_Sum[CPU_HYDCOMPUTE] + All.CPU_Sum[CPU_HYDCOMM] + All.CPU_Sum[CPU_HYDMISC]
               + All.CPU_Sum[CPU_HYDWAIT] + All.CPU_Sum[CPU_TREEHMAXUPDATE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_DENSCOMPUTE], (All.CPU_Sum[CPU_DENSCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_GRADCOMPUTE], (All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_GRADCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DENSCOMM], (All.CPU_Sum[CPU_DENSCOMM]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DENSWAIT], (All.CPU_Sum[CPU_DENSWAIT]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_HYDCOMPUTE], (All.CPU_Sum[CPU_HYDCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,

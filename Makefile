@@ -825,6 +825,7 @@ SYSTEM_OBJS =   system/system.o \
                 system/pinning.o
 
 GRAVITY_OBJS  = gravity/forcetree.o \
+                gravity/ewald_xy.o \
                 gravity/forcetree_update.o \
                 gravity/gravtree.o \
 				gravity/cosmology.o \
@@ -833,7 +834,6 @@ GRAVITY_OBJS  = gravity/forcetree.o \
                 gravity/pm_nonperiodic.o \
                 gravity/longrange.o \
                 gravity/ags_rkern.o \
-                gravity/binary.o \
                 gravity/star_direct_gravity.o
 
 HYDRO_OBJS = 	hydro/hydro_toplevel.o \
@@ -867,7 +867,8 @@ SINK_OBJS = sinks/sink.o \
             sinks/sink_util.o \
             sinks/sink_environment.o \
             sinks/sink_feed.o \
-            sinks/sink_swallow_and_kick.o
+            sinks/sink_swallow_and_kick.o \
+            sinks/sink_ledger.o
 
 RHD_OBJS =  radiation/rt_utilities.o \
 			radiation/rt_CGmethod.o \

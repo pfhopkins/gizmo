@@ -1,0 +1,67 @@
+<comment>
+problem   = Brio & Wu shock tube on [0,4], jump at x=2, periodic (GIZMO test/briowu)
+reference = Brio, M. & Wu, C.C., JCP 75, 400 (1988)
+configure = -b --prob=shock_tube --flux=hlld --coord=cartesian
+units     = Athena++ B: magnetic pressure B^2/2, same as GIZMO's internal (MU_0 = 1) field
+
+<job>
+problem_id  = briowu
+
+<output1>
+file_type   = tab       # tabular dump of the primitives
+variable    = prim
+data_format = %.12e
+dt          = 0.2    # outputs at t = 0 and t = tlim
+
+<time>
+cfl_number  = 0.4
+nlim        = -1
+tlim        = 0.2
+integrator  = vl2       # default; rk3 + xorder=3 (needs --nghost=4) as the cross-check
+xorder      = 2         # PLM
+ncycle_out  = 1000
+
+<mesh>
+nx1         = 8192      # overridden on the command line (mesh/nx1=...)
+x1min       = 0.0
+x1max       = 4.0
+ix1_bc      = periodic  # periodic like the GIZMO box: inverted jump at x = 0 = 4
+ox1_bc      = periodic
+
+nx2         = 1
+x2min       = -0.5
+x2max       = 0.5
+ix2_bc      = periodic
+ox2_bc      = periodic
+
+nx3         = 1
+x3min       = -0.5
+x3max       = 0.5
+ix3_bc      = periodic
+ox3_bc      = periodic
+
+<hydro>
+gamma       = 2.0
+
+<problem>
+shock_dir   = 1
+xshock      = 2.0
+compute_error = false
+dl          = 1.0
+pl          = 1.0
+ul          = 0.0
+vl          = 0.0
+wl          = 0.0
+bxl         = 0.75
+byl         = 1.0
+bzl         = 0.0
+
+dr          = 0.125
+pr          = 0.1
+ur          = 0.0
+vr          = 0.0
+wr          = 0.0
+bxr         = 0.75
+byr         = -1.0
+bzr         = 0.0
+

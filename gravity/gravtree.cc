@@ -177,15 +177,7 @@ void gravity_tree(void)
        This must run before ANY gravity evaluation including Hermite calls, since
        stale moments produce wrong forces. Much cheaper than a full treebuild. */
     {
-        int TreeMomentsStaleFlag_global;
-        MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(TreeMomentsStaleFlag_global)
-        {
-            CPU_Step[CPU_MISC] += measure_time();
-            force_refresh_node_moments();
-            CPU_Step[CPU_TREEBUILD] += measure_time();
-            TreeMomentsStaleFlag = 0;
-        }
+        force_refresh_moments_if_stale();
     }
 
     CPU_Step[CPU_TREEMISC] += measure_time(); t0 = my_second();
@@ -203,6 +195,9 @@ void gravity_tree(void)
     Ewaldcount = 0; Costtotal = 0; N_nodesinlist = 0; ewald_max=0;
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
     ewald_max = 1; /* the tree-code will need to iterate to perform the periodic boundary condition corrections */
+#endif
+#ifdef GRAVITY_PERIODIC_XY
+    ewald_xy_update(); /* collective: refresh the x/y Ewald tables for the current shear offset */
 #endif
 
 #ifdef HERMITE_INTEGRATION
@@ -349,25 +344,18 @@ void gravity_tree(void)
             for(j = 0; j < NTask; j++) {Send_count[j] = 0;}
             for(j = 0; j < Nexport; j++) {Send_count[DataIndexTable[j].Task]++;}
             mysort_dataindex(DataIndexTable, Nexport, sizeof(struct data_index), data_index_compare); /* construct export count tables */
-            /* One Alltoall carries, per destination, the export count plus three rank-wide words: the done flag
-               (NextParticle is final here; nothing below moves it before the old ndone test), the total export
-               count and the arena bytes left once the two export buffers below are taken. Every rank derives the
-               same ndone and the same bound on every rank's import from the gathered words, so the trailing ndone
-               Allreduce is gone and the import-memory Allreduce runs only when that bound fails. */
+            /* One handshake carries the export counts plus three rank-wide words: the done flag (NextParticle is
+               final here; nothing below moves it before the old ndone test), the total export count and the arena
+               bytes left once the two export buffers below are taken. Every rank derives the same ndone and the
+               same bound on every rank's import, so there is no ndone Allreduce and the import-memory Allreduce
+               runs only when that bound fails. */
             if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;}
-            long long *xch_send = (long long *) mymalloc("xch_send", 4 * NTask * sizeof(long long));
-            long long *xch_recv = (long long *) mymalloc("xch_recv", 4 * NTask * sizeof(long long));
-            {
-                long long free_after = (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct gravdata_in) + sizeof(struct gravdata_out)) - 1048576; /* 1 MB slack covers mymalloc's alignment rounding */
-                for(j = 0; j < NTask; j++) {xch_send[4*j] = Send_count[j]; xch_send[4*j+1] = ndone_flag; xch_send[4*j+2] = Nexport; xch_send[4*j+3] = free_after;}
-            }
+            long long xch_in[4] = {ndone_flag, Nexport, (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct gravdata_in) + sizeof(struct gravdata_out)) - 1048576, 0}, xch_out[4]; /* 1 MB slack covers mymalloc's alignment rounding */
             tstart = my_second();
-            MPI_Alltoall(xch_send, 4, MPI_LONG_LONG, xch_recv, 4, MPI_LONG_LONG, MPI_COMM_WORLD); /* broadcast import/export counts (+ done flag, export total, free bytes) */
+            mpi_sparse_counts(Send_count, Recv_count, xch_in, xch_out); /* import counts, plus done flags, export total and free bytes reduced */
             tend = my_second(); timewait1 += timediff(tstart, tend);
-            long long xch_export_total = 0, xch_free_min = xch_recv[3];
-            for(j = 0, ndone = 0; j < NTask; j++) {Recv_count[j] = (int) xch_recv[4*j]; ndone += (int) xch_recv[4*j+1]; xch_export_total += xch_recv[4*j+2]; if(xch_recv[4*j+3] < xch_free_min) {xch_free_min = xch_recv[4*j+3];}}
+            ndone = (int) xch_out[0]; long long xch_export_total = xch_out[1], xch_free_min = xch_out[2];
             int xch_import_fits_everywhere = (xch_export_total * (long long) (sizeof(struct gravdata_in) + sizeof(struct gravdata_out)) + 16384 <= xch_free_min); /* every rank's Nimport <= the global export total: identical inputs on every rank, identical answer */
-            myfree(xch_recv); myfree(xch_send);
 
             for(j = 0, Send_offset[0] = 0; j < NTask; j++) {if(j > 0) {Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1];}} /* calculate export table offsets */
             GravDataIn = (struct gravdata_in *) mymalloc("GravDataIn", Nexport * sizeof(struct gravdata_in));
@@ -387,16 +375,6 @@ void gravity_tree(void)
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 GravDataIn[j].Vel = P[place].Vel;
-#endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-                if(P[place].Type == 5)
-                {
-                    GravDataIn[j].Min_Sink_OrbitalTime = P[place].Min_Sink_OrbitalTime; //orbital time for binary
-                    GravDataIn[j].comp_Mass = P[place].comp_Mass; //mass of binary companion
-                    GravDataIn[j].is_in_a_binary = P[place].is_in_a_binary; // 1 if we're in a binary, 0 if not
-                    GravDataIn[j].comp_dx = P[place].comp_dx; GravDataIn[j].comp_dv = P[place].comp_dv;
-                }
-                else {P[place].is_in_a_binary=0; /* setting values to zero just to be sure */}
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FORGAS
                 if(P[place].Type == 0) {GravDataIn[j].AGS_zeta = P[place].AGS_zeta;} else {GravDataIn[j].AGS_zeta = 0;} /* same zeta as the source side, also at the softening floor */
@@ -473,9 +451,7 @@ void gravity_tree(void)
 #endif
                     gravity_secondary_loop(&mainthreadid);
                 }
-                tend = my_second(); timetree2 += timediff(tstart, tend); tstart = my_second();
-                MPI_Barrier(MPI_COMM_WORLD); /* insert MPI Barrier here - will be forced by comms below anyways but this allows for clean timing measurements */
-                tend = my_second(); timewait2 += timediff(tstart, tend);
+                tend = my_second(); timetree2 += timediff(tstart, tend); /* no barrier: the results exchange below waits only for actual partners */
 
                 tstart = my_second(); Nimport = 0;
                 for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* send the results for imported elements back to their host tasks */
@@ -535,15 +511,6 @@ void gravity_tree(void)
 #ifdef SINGLE_STAR_TIMESTEPPING
                 if(GravDataOut[j].Min_Sink_Approach_Time < P[place].Min_Sink_Approach_Time) {P[place].Min_Sink_Approach_Time = GravDataOut[j].Min_Sink_Approach_Time;}
                 if(GravDataOut[j].Min_Sink_Freefall_time < P[place].Min_Sink_Freefall_time) {P[place].Min_Sink_Freefall_time = GravDataOut[j].Min_Sink_Freefall_time;}
-#ifdef SINGLE_STAR_FIND_BINARIES
-                if((P[place].Type == 5) && (GravDataOut[j].Min_Sink_OrbitalTime < P[place].Min_Sink_OrbitalTime))
-                {
-                    P[place].Min_Sink_OrbitalTime = GravDataOut[j].Min_Sink_OrbitalTime;
-                    P[place].comp_Mass = GravDataOut[j].comp_Mass;
-                    P[place].is_in_a_binary = GravDataOut[j].is_in_a_binary;
-                    P[place].comp_dx=GravDataOut[j].comp_dx; P[place].comp_dv=GravDataOut[j].comp_dv;
-                }
-#endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
                 if(GravDataOut[j].Min_Sink_FeedbackTime < P[place].Min_Sink_FeedbackTime) {P[place].Min_Sink_FeedbackTime = GravDataOut[j].Min_Sink_FeedbackTime;}
 #endif                
@@ -838,6 +805,9 @@ void gravity_tree(void)
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         double dt = get_particle_timestep_in_physical(i);
         if(treeforce_skip_flag[ii]) { // use cached decision from BEFORE tree walk to avoid mismatch if tree walk modified quantities that needs_new_treeforce depends on
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+            P[i].GravAccel = P[i].GravAccel_Retained; /* the kept gravity, without the forces added after the last gravity call */
+#endif
             P[i].GravAccel += P[i].GravJerk * (dt * All.cf_a2inv); // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
             P[i].time_since_last_treeforce += dt;
             continue;
@@ -857,11 +827,11 @@ void gravity_tree(void)
 #endif
         /* before anything: multiply by G for correct units [be sure operations above/below are aware of this!] */
         P[i].GravAccel *= All.G;
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-        P[i].COM_GravAccel *= All.G;
-#endif
 
 #ifdef EVALPOTENTIAL
+#ifdef GRAVITY_PERIODIC_XY
+        {double dr0[3] = {0, 0, 0}, ac[3], pc; ewald_xy_corr(dr0, ac, &pc); P[i].Potential += P[i].Mass * pc;} /* the particle's own x/y images */
+#endif
         P[i].Potential *= All.G;
 #ifdef BOX_PERIODIC
         if(All.ComovingIntegrationOn) {P[i].Potential -= All.G * 2.8372975 * pow(P[i].Mass, 2.0 / 3) * pow(All.OmegaMatter * 3 * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits / (8 * M_PI * All.G), 1.0 / 3);} else {if(All.OmegaLambda>0) {P[i].Potential -= 0.5*All.OmegaLambda*All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits * (P[i].Pos.norm_sq());}}
@@ -899,13 +869,6 @@ void gravity_tree(void)
                 P[i].OldAcc = accel.norm() / All.G; /* convert back to the non-G units for convenience to match units in loops assumed */
             }
 
-#if (SINGLE_STAR_TIMESTEPPING > 0) /* Subtract component of force from companion if in binary, because we will operator-split this */
-#ifdef KETJU_REGULARIZATION
-        if((P[i].Type == 5) && (P[i].is_in_a_binary == 1) && !P[i].KetjuIntegrated) {subtract_companion_gravity(i);}
-#else
-        if((P[i].Type == 5) && (P[i].is_in_a_binary == 1)) {subtract_companion_gravity(i);}
-#endif
-#endif
 
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* final operations to compute the tidal tensor and related quantities */
         P[i].tidal_tensorps *= All.G; /* give this the proper units */
@@ -1004,15 +967,29 @@ void gravity_tree(void)
 #endif /* end tree walk (guarded by SELFGRAVITY_OFF unless non-gravity tree features are active) */
 
 
-#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
-    /* a skipped element's GravAccel, extrapolated from its last walk, already holds the analytic terms added then:
-       keep it, rather than stack another copy on every skipped step */
-    std::vector<Vec3<MyDouble>> skipped_accel;
-    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {if(treeforce_skip_flag[ii]) {skipped_accel.push_back(P[ActiveParticleList[ii]].GravAccel);}}
+    /* The analytic terms go only onto accelerations this call rebuilt. Kept as they are: a non-Hermite particle in a Hermite pass
+       (not re-evaluated, so its GravAccel still holds them and the forces added after gravity) and a skipped walk's extrapolated
+       GravAccel, which holds the terms from its last walk (unless the tree part is retained apart and they are re-added fresh). */
+#if defined(HERMITE_INTEGRATION) || (defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF))
+    std::vector<int> kept_ii; std::vector<Vec3<MyDouble>> kept_accel;
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++)
+    {
+        int i = ActiveParticleList[ii], keep = 0;
+#ifdef HERMITE_INTEGRATION
+        if(HermiteOnlyFlag && !eligible_for_hermite(i)) {keep = 1;}
+#endif
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF) && !defined(GRAVACCEL_RETAINED_ON_SKIPPED_WALK)
+        if(treeforce_skip_flag[ii]) {keep = 1;}
+#endif
+        if(keep) {kept_ii.push_back(ii); kept_accel.push_back(P[i].GravAccel);}
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+        else {P[i].GravAccel_Retained = P[i].GravAccel;} /* the tree part, walked or extrapolated: what a skipped walk advances next */
+#endif
+    }
 #endif
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
-#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
-    {size_t k = 0; for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {if(treeforce_skip_flag[ii]) {P[ActiveParticleList[ii]].GravAccel = skipped_accel[k++];}}}
+#if defined(HERMITE_INTEGRATION) || (defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF))
+    for(size_t k = 0; k < kept_ii.size(); k++) {P[ActiveParticleList[kept_ii[k]]].GravAccel = kept_accel[k];}
 #endif
 
 
@@ -1274,32 +1251,6 @@ void mysort_dataindex(void *b, size_t n, size_t s, int (*cmp) (const void *, con
     myfree(tmp);
 }
 
-
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-void subtract_companion_gravity(int i)
-{
-    /* Remove contribution to gravitational field and tidal tensor from the stars in the binary to the center of mass */
-    double u, dr, fac, fac2, h, h_inv, h3_inv, u2; SymmetricTensor2<MyFloat> tidal_tensorps; int i1, i2;
-    dr = P[i].comp_dx.norm();
-    h = SinkParticle_GravityKernelRadius;  h_inv = 1.0 / h; h3_inv = h_inv*h_inv*h_inv; u = dr*h_inv; u2=u*u;
-    fac = P[i].comp_Mass / (dr*dr*dr); fac2 = 3.0 * P[i].comp_Mass / (dr*dr*dr*dr*dr); /* no softening nonsense */
-    if(dr < h) /* second derivatives needed -> calculate them from softened potential */
-    {
-	    fac = P[i].comp_Mass * kernel_gravity(u, h_inv, h3_inv, 1);
-        fac2 = P[i].comp_Mass * kernel_gravity(u, h_inv, h3_inv, 2);
-    }
-    P[i].COM_GravAccel = P[i].GravAccel - P[i].comp_dx * (fac * All.G); /* this assumes the 'G' has been put into the units for the grav accel */
-
-    /* Adjusting tidal tensor according to terms above */
-    tidal_tensorps = P[i].tidal_tensorps - fac2 * outer_product(P[i].comp_dx);
-    tidal_tensorps[0][0] += fac; tidal_tensorps[1][1] += fac; tidal_tensorps[2][2] += fac;
-
-#ifdef SINK_OUTPUT_MOREINFO
-    printf("Corrected center of mass acceleration %g %g %g tidal tensor diagonal elements %g %g %g \n", P[i].COM_GravAccel[0], P[i].COM_GravAccel[1], P[i].COM_GravAccel[2], tidal_tensorps[0][0],tidal_tensorps[1][1],tidal_tensorps[2][2]);
-#endif
-    P[i].COM_dt_tidal = sqrt(1.0 / (All.G * tidal_tensorps.frobenius_norm()));
-}
-#endif
 
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int n){

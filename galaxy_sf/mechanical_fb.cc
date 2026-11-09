@@ -15,6 +15,10 @@
 #ifdef GALSF_FB_MECHANICAL
 
 int N_Gas_Couplings_ThisTask; // define variable to use below to record if and how many times a coupling to a cell occurs in a timestep per MPI task
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+static double EnergyBudget_MechFB_dE = 0; /* this rank's cumulative change in gas thermal+kinetic energy applied by mechanical feedback */
+double energy_budget_mechfb_injected_local(void) {return EnergyBudget_MechFB_dE;}
+#endif
 
 int addFB_evaluate_active_check(int i, int fb_loop_iteration);
 int addFB_evaluate_active_check(int i, int fb_loop_iteration)
@@ -98,12 +102,11 @@ void determine_where_SNe_occur(void)
         dtmean += dt;
     } // for (int i : ActiveParticleList) //
 
-    MPI_Reduce(&dtmean, &mpi_dtmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&rmean, &mpi_rmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&ptotal, &mpi_ptotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&nhosttotal, &mpi_nhosttotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&ntotal, &mpi_ntotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&npossible, &mpi_npossible, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    {
+        double sne_loc[6] = {dtmean, rmean, ptotal, nhosttotal, ntotal, npossible}, sne_tot[6];
+        MPI_Reduce(sne_loc, sne_tot, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); /* log-file statistics only */
+        mpi_dtmean = sne_tot[0]; mpi_rmean = sne_tot[1]; mpi_ptotal = sne_tot[2]; mpi_nhosttotal = sne_tot[3]; mpi_ntotal = sne_tot[4]; mpi_npossible = sne_tot[5];
+    }
 
     if(ThisTask == 0)
     {
@@ -162,7 +165,29 @@ void particle2in_addFB(struct addFB_evaluate_data_in_ *in, int i, int loop_itera
     for(k=0;k<AREA_WEIGHTED_SUM_ELEMENTS;k++) {in->Area_weighted_sum[k] = P[i].Area_weighted_sum[k];}
     in->Msne = 0; in->unit_mom_SNe = 0; in->SNe_v_ejecta = 0;
     if((P[i].DensityAroundParticle <= 0)||(P[i].Mass <= 0)) {return;} // events not possible [catch for mass->0]
-    if(loop_iteration < 0) {in->Msne=P[i].Mass; in->unit_mom_SNe=1.e-4; in->SNe_v_ejecta=1.0e-4; return;} // weighting loop
+    if(loop_iteration < 0) /* weighting loops. The second (-1) builds the mass-loading weights mu_inv = 1/(1 + w Msne/m_j), so it needs the
+                              ejecta mass the coupling loop will use, not the star particle's: SNe if any this step, else stellar mass loss */
+    {
+        in->Msne = P[i].Mass;
+        if(loop_iteration == -1)
+        {
+            int channel = -1;
+#if defined(GALSF_FB_MECHANICAL) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+            if(P[i].SNe_ThisTimeStep > 0) {channel = 0;} else if(P[i].MassReturn_ThisTimeStep > 0) {channel = 1;}
+#endif
+            if(channel >= 0)
+            {
+#ifdef SNE_NONSINK_SPAWN
+                double unspawned_0 = P[i].unspawned_wind_mass; /* the SN routine books the spawned fraction: undo it, the coupling loop will */
+#endif
+                particle2in_addFB_fromstars(in, i, channel);
+#ifdef SNE_NONSINK_SPAWN
+                P[i].unspawned_wind_mass = unspawned_0;
+#endif
+            }
+        }
+        in->unit_mom_SNe = 1.e-4; in->SNe_v_ejecta = 1.0e-4; return;
+    }
     particle2in_addFB_fromstars(in,i,loop_iteration); // subroutine that actually deals with the assignment of feedback properties
     in->unit_mom_SNe = in->Msne * in->SNe_v_ejecta;
 }
@@ -181,6 +206,7 @@ void out2particle_addFB(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loo
         } else {
             P[i].dp -= out->M_coupled * P[i].Vel; /* track momentum change from mass loss for tree node update */
             P[i].Mass -= out->M_coupled; if((P[i].Mass<0)||(isnan(P[i].Mass))) {P[i].Mass=0;} if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
+            force_note_mass_change(i);
 #ifdef SINGLE_STAR_FB_WINDS
             P[i].Sink_Mass -= out->M_coupled; if((P[i].Sink_Mass<0)||(isnan(P[i].Sink_Mass))) {P[i].Sink_Mass=0;}
 #endif
@@ -292,6 +318,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     Vel_j[k] = P[j].Vel[k]; // this can get modified below, so we need to read it thread-safe now
                 }
                 double InternalEnergy_j_0 = InternalEnergy_j, Mass_j_0 = Mass_j, rho_j_0 = rho_j, Vel_j_0[3]; for(k=0;k<3;k++) {Vel_j_0[k]=Vel_j[k];} // save initial values to use below
+                double Vel_star_j[3]; {double dv_sj[3]; for(k=0;k<3;k++) {dv_sj[k] = local.Vel[k] - Vel_j[k];} NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dv_sj,1); for(k=0;k<3;k++) {Vel_star_j[k] = Vel_j[k] + dv_sj[k];}} // star velocity in j's frame (differs across shearing-box boundaries)
 #ifdef METALS
                 double Metallicity_j[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION], Metallicity_j_0[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
                 for(k=0;k<NUM_METAL_SPECIES;k++) {
@@ -339,7 +366,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 /* now, add contribution from relative star-gas particle motion to shock energy */
                 for(k=0;k<3;k++)
                 {
-                    v_bw[k] = local.SNe_v_ejecta*pvec[k]/pnorm + (local.Vel[k]-Vel_j[k])/All.cf_atime;
+                    v_bw[k] = local.SNe_v_ejecta*pvec[k]/pnorm + (Vel_star_j[k]-Vel_j[k])/All.cf_atime;
                     e_shock += v_bw[k]*v_bw[k];
                 }
                 double mj_preshock, dM_ejecta_in, massratio_ejecta, mu_j;
@@ -460,6 +487,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     P[j].dp[k] += Mass_j*Vel_j[k] - Mass_j_0*Vel_j_0[k]; // discrete momentum change
                 }
                 force_note_motion_change(j);
+                force_note_mass_change(j);
                 #pragma omp atomic
                 CellP[j].InternalEnergy += InternalEnergy_j - InternalEnergy_j_0; // delta-update
                 #pragma omp atomic
@@ -624,6 +652,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     Vel_j[k] = P[j].Vel[k]; // this can get modified below, so we need to read it thread-safe now
                 }
                 double InternalEnergy_j_0,Mass_j_0,rho_j_0,Vel_j_0[3]; InternalEnergy_j_0=InternalEnergy_j; Mass_j_0=Mass_j; rho_j_0=rho_j; for(k=0;k<3;k++) {Vel_j_0[k]=Vel_j[k];} // save initial values to use below
+                double Vel_star_j[3]; {double dv_sj[3]; for(k=0;k<3;k++) {dv_sj[k] = local.Vel[k] - Vel_j[k];} NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dv_sj,1); for(k=0;k<3;k++) {Vel_star_j[k] = Vel_j[k] + dv_sj[k];}} // star velocity in j's frame (differs across shearing-box boundaries)
 #ifdef METALS
                 double Metallicity_j[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION], Metallicity_j_0[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
                 for(k=0;k<NUM_METAL_SPECIES;k++) {
@@ -671,7 +700,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                         /* now calculate the additional weights that are needed for energy terms */
                         for(k=0;k<3;k++)
                         {
-                            double v_ba = (Vel_j[k] - local.Vel[k]) / All.cf_atime; // relative gas-star velocity (working in physical units here) //
+                            double v_ba = (Vel_j[k] - Vel_star_j[k]) / All.cf_atime; // relative gas-star velocity (working in physical units here) //
                             vel_ba_2 += v_ba*v_ba; // magnitude of velocity vector (for corrected post-shock energies to distribute)
                             cos_vel_ba_pcoupled += v_ba * pvec[k]/pnorm; // direction of ejecta [after correction loop]
                         }
@@ -766,7 +795,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     {
                         for(k=0; k<3; k++)
                         {
-                            double d_vel = mom_prefactor * pvec[k] + massratio_ejecta*(local.Vel[k] - Vel_j[k]); // local.Vel term from extra momentum of moving star, Vel_j term from going from momentum to velocity boost with added mass
+                            double d_vel = mom_prefactor * pvec[k] + massratio_ejecta*(Vel_star_j[k] - Vel_j[k]); // local.Vel term from extra momentum of moving star, Vel_j term from going from momentum to velocity boost with added mass
                             KE_initial += Vel_j_0[k]*Vel_j_0[k]; Vel_j[k] += d_vel; KE_final += Vel_j[k]*Vel_j[k]; // calculate initial and final kinetic energies (here v^2, multiply by mass below)
                         }
                         KE_initial *= 0.5*mj_preshock*All.cf_a2inv; KE_final *= 0.5*Mass_j*All.cf_a2inv;
@@ -827,7 +856,14 @@ void verify_and_assign_local_mechfb_integrals(void)
         if(LocalGasMechFBInfoTemp[j].N_injected <= 0) {continue;} /* all mechanisms deposit non-zero mass, so skip if this is not >0*/
         if(P[j].Type==0 && P[j].Mass>0)
         {
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+            double eb_e0 = P[j].Mass * (CellP[j].InternalEnergy + 0.5*P[j].Vel.norm_sq()*All.cf_a2inv);
+#endif
+#ifdef SNE_BROADCAST_TIMESTEP
+            Vec3<double> sn_v0 = P[j].Vel;
+#endif
             double m0=P[j].Mass, dm=LocalGasMechFBInfoTemp[j].m_injected; P[j].Mass += dm; /* update mass */ if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
+            force_note_mass_change(j);
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             m0=CellP[j].MassTrue; CellP[j].MassTrue += dm; /* update conserved mass */
 #endif
@@ -843,7 +879,17 @@ void verify_and_assign_local_mechfb_integrals(void)
                 double TE_0=m0*CellP[j].InternalEnergy; dTE=DMAX(-TE_0,dTE); /* ensure against non-negative values */
                 double dU = (-dm/mf)*CellP[j].InternalEnergy + (1./mf)*dTE; /* using new mass get updated internal energy */
                 double dt = get_particle_timestep_in_physical(j), implied_heating_cgs=(dU*UNIT_SPECEGY_IN_CGS*PROTONMASS_CGS)/(dt*UNIT_TIME_IN_CGS), typical_cooling_cgs=1.e-23*(CellP[j].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS);
-                if((implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)))) {CellP[j].DtInternalEnergy += dU/dt;} else {CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;}
+#ifdef SNE_BROADCAST_TIMESTEP
+                const int defer_ok = 0; /* inject instantaneously: a rate spread over the next step is not conserved under KDK, and hydro resets DtInternalEnergy */
+#else
+                const int defer_ok = 1;
+#endif
+                if(defer_ok && (implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)))) {
+                    CellP[j].DtInternalEnergy += dU/dt;
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+                    EnergyBudget_MechFB_dE += mf*dU; /* deferred to the kicks; tallied as intended, not as delivered */
+#endif
+                } else {CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU;}
                 //CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU; /* update internal energy; simpler (old) way to do it - less accurate phase diagrams at high density, however */
             }
             double dKE=LocalGasMechFBInfoTemp[j].KE_injected, dp[3];
@@ -863,6 +909,12 @@ void verify_and_assign_local_mechfb_integrals(void)
                 }
                 force_raise_motion_bound(j);
             }
+#ifdef ENERGY_BUDGET_DIAGNOSTIC
+            EnergyBudget_MechFB_dE += P[j].Mass * (CellP[j].InternalEnergy + 0.5*P[j].Vel.norm_sq()*All.cf_a2inv) - eb_e0;
+#endif
+#ifdef SNE_BROADCAST_TIMESTEP /* the next step is chosen from the post-injection signal speed (Durier & Dalla Vecchia 2012) */
+            {double vsig_new = 2.*sqrt(CellP[j].soundspeed2_from_u(CellP[j].InternalEnergy)) + (P[j].Vel - sn_v0).norm()/All.cf_atime; if(vsig_new > CellP[j].MaxSignalVel) {CellP[j].MaxSignalVel = vsig_new;}}
+#endif
             ndone++; /* note another cell accounted for */
             if(ndone >= N_Gas_Couplings_ThisTask) {break;} /* we have done all cells (note is possible if the same cell is hit many times, N_Gas_Couplings_ThisTask can be much larger than ndone after the full loop. but if its smaller, then we -must- be done with this loop */
         }
@@ -896,6 +948,7 @@ void mechanical_fb_calc_toplevel(void)
 #endif
 #ifndef GALSF_USE_SNE_ONELOOP_SCHEME
     verify_and_assign_local_mechfb_integrals();
+    force_raise_noted_motion_bounds();
     myfree(LocalGasMechFBInfoTemp); /* free the structure */
 #endif
 }
@@ -914,5 +967,41 @@ void mechanical_fb_calc(int fb_loop_iteration)
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */
 
+
+#ifdef SNE_BROADCAST_TIMESTEP
+struct sne_event {double pos[3], v;};
+static std::vector<sne_event> SNe_new; /* SNe that went off this step on this rank */
+void sne_broadcast_record(Vec3<MyDouble> pos, double v)
+{
+#ifdef _OPENMP
+#pragma omp critical(sne_broadcast_record)
+#endif
+    {sne_event e = {{pos[0], pos[1], pos[2]}, v}; SNe_new.push_back(e);}
+}
+/*! collective, after this step's SNe: every gas cell learns when the fastest signal from them can reach it, which caps its next
+    step; an inactive cell whose step would outlast that is woken, closing its step now with its pre-SN acceleration. Few SNe go
+    off per step, so each cell checks them all. */
+void sne_causal_wake(void)
+{
+    const int nd = (int)(sizeof(sne_event)/sizeof(double));
+    int n_loc = (int)SNe_new.size() * nd, n_tot = 0; std::vector<int> counts(NTask), offs(NTask);
+    MPI_Allgather(&n_loc, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    for(int t = 0; t < NTask; t++) {offs[t] = n_tot; n_tot += counts[t];}
+    if(n_tot == 0) {SNe_new.clear(); return;}
+    std::vector<sne_event> ev(n_tot / nd);
+    MPI_Allgatherv(SNe_new.data(), n_loc, MPI_DOUBLE, ev.data(), counts.data(), offs.data(), MPI_DOUBLE, MPI_COMM_WORLD);
+    SNe_new.clear();
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        double t_arr = MAX_REAL_NUMBER, rmin = DMAX(P[i].KernelRadius, MIN_REAL_NUMBER); /* comoving, as are positions; times are physical */
+        for(const sne_event &e : ev) {Vec3<double> d = {P[i].Pos[0]-e.pos[0], P[i].Pos[1]-e.pos[1], P[i].Pos[2]-e.pos[2]}; nearest_xyz(d,-1); t_arr = DMIN(t_arr, DMAX(d.norm(), rmin) * All.cf_atime / e.v);}
+        if(t_arr < P[i].SNe_ArrivalTime) {P[i].SNe_ArrivalTime = t_arr;}
+        if(TimeBinActive[P[i].TimeBin]) {continue;} /* choosing its next step now, under the cap */
+        double t_left = (P[i].Ti_begstep + P[i].integertime_step() - All.Ti_Current) * unit_integertime_in_physical(i);
+        if(t_left > 0.5 * All.CourantFac * t_arr) {P[i].wakeup = -4; NeedToWakeupParticles_local = 1; wakeup_list_note(i);}
+    }
+}
+#endif
 
 #endif /* GALSF_FB_MECHANICAL */

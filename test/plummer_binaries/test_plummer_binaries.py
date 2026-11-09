@@ -382,9 +382,7 @@ def _plot_variant_density_evolution(variant_id, snaps):
     # brute-force pass and none through the tree -- the tree's opening error is removed entirely
     # rather than reduced. That makes it the sharpest available check on SINGLE_STAR_DIRECT_GRAVITY,
     # and the pair with starforge_defaults isolates what the tree approximation costs a cluster of
-    # hard binaries. Compatible only because SINGLE_STAR_STARFORGE_DEFAULTS sets
-    # SINGLE_STAR_TIMESTEPPING=0, which leaves SINGLE_STAR_FIND_BINARIES off; the two are a
-    # compile-time #error together (see precompiler_logic.h).
+    # hard binaries.
     pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity"),
     # KETJU/MSTAR integrates each binary as a regularized chain; the tree still sees every star.
     pytest.param(("KETJU_REGULARIZATION",), id="ketju"),

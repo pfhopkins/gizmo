@@ -1,4 +1,4 @@
-"""Driven isothermal turbulence held at Mach 10 by the TURB_DRIVING_TARGET_SIGMA control loop.
+"""Driven isothermal turbulence held at Mach 10 by the TURB_DRIVING_TARGET_VRMS_REGION control loop.
 
 32^3 periodic box, 10 pc, c_s = 0.2 km/s, solenoidal driving with a parabolic spectrum on
 1 <= kL/2pi <= 3, hydro and MHD (uniform B_z, initial plasma beta 1), each with the driving force

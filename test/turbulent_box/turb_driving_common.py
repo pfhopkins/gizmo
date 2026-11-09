@@ -1,6 +1,6 @@
 """Shared procedure for the driven-turbulence tests (turbulent_box, turbsphere): IC writing, run,
 Mach-number measurement from snapshots, plot, and the pass/fail checks on the
-TURB_DRIVING_TARGET_SIGMA control loop.
+TURB_DRIVING_TARGET_VRMS_REGION control loop.
 
 Units are pc - km/s - Msun throughout. Gas is isothermal via EOS_ENFORCE_ADIABAT = CS^2, i.e.
 P = CS^2 rho^GAMMA. Magnetic fields are written in gauss (UnitMagneticField_in_gauss = 1); GIZMO's
@@ -21,7 +21,7 @@ matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 from matplotlib import ticker
 
-from gizmo.test import build_and_run_test, build_gizmo_for_test, default_mpi_ranks, run_test, variant_output_dir, variant_suffix
+from gizmo.test import build_and_run_test, build_gizmo_for_test, default_mpi_ranks, run_test, variant_output_dir
 from gizmo.units import UNIT_LENGTH_IN_CM, UNIT_MASS_IN_G, UNIT_VELOCITY_IN_CM_PER_S
 
 GAMMA = 1.001
@@ -84,9 +84,9 @@ def write_ics(out, pos, mass, box_size, bz_gauss):
         g.create_dataset("MagneticField", data=np.tile([0, 0, bz_gauss], (ngas, 1)).astype(np.float32))
 
 
-def snapshot_stats(snapshot, aperture=None):
+def snapshot_stats(snapshot, r_region=None):
     """Mach number (mass-weighted rms velocity about the mean, over the mass-weighted isothermal sound
-    speed) and plasma beta (volume-weighted P over B^2/2), of gas within `aperture` of the box centre
+    speed) and plasma beta (volume-weighted P over B^2/2), of gas within `r_region` of the box centre
     if given, else of all gas. Also the half-mass radius of all gas about its median position."""
     with h5py.File(snapshot, "r") as f:
         hdr = f["Header"].attrs
@@ -96,7 +96,7 @@ def snapshot_stats(snapshot, aperture=None):
         b = g["MagneticField"][:] * hdr["UnitMagneticField_In_Gauss"] / UNIT_B_IN_GAUSS if "MagneticField" in g else None
     xc = np.median(x, axis=0)
     r_half = np.median(np.linalg.norm(x - xc, axis=1))  # equal-mass particles
-    s = np.linalg.norm(x - box / 2, axis=1) < aperture if aperture else np.ones(len(m), bool)
+    s = np.linalg.norm(x - box / 2, axis=1) < r_region if r_region else np.ones(len(m), bool)
     m, v, u, rho = m[s], v[s], u[s], rho[s]
     vmean = (m[:, None] * v).sum(0) / m.sum()
     v_rms = np.sqrt((m * ((v - vmean) ** 2).sum(1)).sum() / m.sum())
@@ -108,59 +108,78 @@ def snapshot_stats(snapshot, aperture=None):
     return t, mach, beta, r_half
 
 
-def history(output_dir, aperture=None):
+def history(output_dir, r_region=None):
     snaps = sorted(glob.glob(f"{output_dir}/snapshot_*.hdf5"))
-    return np.array([snapshot_stats(s, aperture) for s in snaps]).T
+    return np.array([snapshot_stats(s, r_region) for s in snaps]).T
 
 
 def controller_log(stdout_file):
     """(t, v_rms, gain) at every driving update, from the loop's stdout line."""
-    pat = re.compile(r"TURB_DRIVING_TARGET_SIGMA: t=(\S+) v_rms=(\S+) v_target=\S+ gain=(\S+)")
+    pat = re.compile(r"TURB_DRIVING_TARGET_VRMS_REGION: t=(\S+) v_rms=(\S+) v_target=\S+ gain=(\S+)")
     rows = [m.groups() for m in map(pat.match, open(stdout_file)) if m] if path.isfile(stdout_file) else []
     return np.array(rows, dtype=float).T if rows else np.zeros((3, 0))
 
 
-def plot(t, mach, beta, log, fname, r_half=None):
-    mhd = np.isfinite(beta).any()
-    n = 2 + mhd + (r_half is not None)
+# fixed per run, so rerunning some variants does not repaint the others
+RUN_COLORS = {("hydro", False): "#2a78d6", ("mhd", False): "#eb6834", ("hydro", True): "#1baf7a", ("mhd", True): "#eda100"}
+
+
+def plot_runs(test_name, r_region=None):
+    """Mach number, driving gain, plasma beta (MHD runs) and, for an isolated cloud, the gas r_half, for every run of
+    the test with snapshots on disk, into test/<test_name>/mach_vs_time.png."""
+    runs = []
+    for (variant, lazy), color in RUN_COLORS.items():
+        outdir = variant_output_dir(test_name, VARIANTS[variant] + ((LAZY_FLAG,) if lazy else ()))
+        if glob.glob(f"{outdir}/snapshot_*.hdf5"):
+            runs.append((variant + (" lazy" if lazy else ""), color, history(outdir, r_region),
+                         controller_log(f"{outdir}/test_{test_name}.out")))
+    mhd = any(np.isfinite(h[2]).any() for _, _, h, _ in runs)
+    n = 2 + mhd + bool(r_region)  # r_half means something for an isolated cloud, not for gas filling a periodic box
     fig, axes = plt.subplots(n, 1, sharex=True, figsize=(6, 2 * n + 1))
-    if log.size:
-        axes[0].plot(log[0] / T_EDDY, log[1] / CS, color="0.6", lw=0.8, label="loop measurement")
-        axes[1].plot(log[0] / T_EDDY, log[2], color="k", lw=0.8)
-    axes[0].plot(t / T_EDDY, mach, "o", color="k", ms=3, label="snapshots")
-    axes[0].axhline(MACH_TARGET, color="C3", lw=0.8)
+    axes[0].axhline(MACH_TARGET, color="0.5", lw=0.8, ls="--")
+    handles = []
+    for label, color, (t, mach, beta, r_half), log in runs:
+        dots = dict(marker="o", ms=4, color=color, mec="white", mew=0.5)
+        if log.size:
+            axes[0].plot(log[0] / T_EDDY, log[1] / CS, color=color, lw=1)
+            axes[1].plot(log[0] / T_EDDY, log[2], color=color, lw=1)
+        axes[0].plot(t / T_EDDY, mach, ls="none", **dots)
+        handles.append(plt.Line2D([], [], lw=1, label=label, **dots))
+        if np.isfinite(beta).any():
+            axes[2].semilogy(t / T_EDDY, beta, lw=1, **dots)
+        if r_region:
+            axes[-1].plot(t / T_EDDY, r_half, lw=1, **dots)
     axes[0].set_ylabel("Mach")
-    axes[0].legend(frameon=False)
+    axes[0].legend(handles=handles, frameon=False, loc="lower right", title="dots: snapshots, lines: loop", title_fontsize="small")
     axes[1].set_yscale("log")
-    if log.size and log[2].max() < 10 * log[2].min():  # under a decade, log ticks leave most of the axis unlabeled
+    gains = np.concatenate([log[2] for *_, log in runs if log.size] or [[]])
+    if gains.size and gains.max() < 10 * gains.min():  # under a decade, log ticks leave most of the axis unlabeled
         axes[1].yaxis.set_major_locator(ticker.MaxNLocator(5))
         axes[1].yaxis.set_major_formatter(ticker.ScalarFormatter())
         axes[1].yaxis.set_minor_locator(ticker.NullLocator())
     axes[1].set_ylabel("driving gain")
     if mhd:
-        axes[2].semilogy(t / T_EDDY, beta, "o-", color="k", ms=3, lw=0.8)
         axes[2].set_ylabel(r"plasma $\beta$")
-    if r_half is not None:
-        axes[-1].plot(t / T_EDDY, r_half, "o-", color="k", ms=3, lw=0.8)
+    if r_region:
         axes[-1].set_ylim(0, None)
         axes[-1].set_ylabel(r"gas $r_{\rm half}$ [pc]")
     axes[-1].set_xlabel(r"$t / t_{\rm eddy}$")
-    fig.savefig(fname, bbox_inches="tight", dpi=150)
+    fig.savefig(f"test/{test_name}/mach_vs_time.png", bbox_inches="tight", dpi=150)
     plt.close(fig)
 
 
-def run_and_check(test_name, variant, aperture=None, lazy=False, max_ranks=8):
+def run_and_check(test_name, variant, r_region=None, lazy=False, max_ranks=8):
     """lazy adds the lazy-force flag and update cadence; a test whose Config.sh already has them leaves it False."""
     flags = VARIANTS[variant] + ((LAZY_FLAG,) if lazy else ())
     build_and_run_test(test_name, num_mpi_ranks=default_mpi_ranks(max_ranks=max_ranks), extra_config_flags=flags,
                        param_overrides=LAZY_PARAMS if lazy else None)
 
     outdir = variant_output_dir(test_name, flags)
-    log = f"{outdir}/test_{test_name}.out" if flags else f"test/{test_name}/test_{test_name}.out"
-    t, mach, beta, r_half = history(outdir, aperture)
-    # r_half only means something for an isolated cloud, not for gas filling a periodic box
-    plot(t, mach, beta, controller_log(log), f"test/{test_name}/mach_vs_time{variant_suffix(flags)}.png",
-         r_half=r_half if aperture else None)
+    log = f"test/{test_name}/test_{test_name}.out"
+    if not flags and path.isfile(log):  # the harness keeps a variant's stdout with its output, but not the baseline's
+        shutil.copy(log, outdir)
+    t, mach, beta, r_half = history(outdir, r_region)
+    plot_runs(test_name, r_region)
 
     settled = t >= T_SETTLED
     assert settled.sum() >= 5, f"only {settled.sum()} snapshots after t = {T_SETTLED}"
@@ -181,7 +200,7 @@ MAX_RESTART_INJECTED_ERROR = 0.05  # cumulative injected energy at the first sna
 MAX_RESTART_GAIN_ERROR = 1e-4  # first driving update, which sees the same state in both runs; 6-digit log
 
 
-def run_restart_and_check(test_name, variant, aperture=None, lazy=False, max_ranks=8):
+def run_restart_and_check(test_name, variant, r_region=None, lazy=False, max_ranks=8):
     """The driving state is carried through a snapshot restart: the restarted run continues the same driving
     realization, update schedule and controller state as the uninterrupted run."""
     flags = VARIANTS[variant] + ((LAZY_FLAG,) if lazy else ())
@@ -213,7 +232,7 @@ def run_restart_and_check(test_name, variant, aperture=None, lazy=False, max_ran
     gain_err = log_rst[2, 0] / log_ref[2, 0] - 1 if log_rst.size else np.inf
 
     snap = f"snapshot_{T_RESTART + 1:03d}.hdf5"
-    mach_ref, mach_rst = snapshot_stats(f"{ref}/{snap}", aperture)[1], snapshot_stats(f"{rst}/{snap}", aperture)[1]
+    mach_ref, mach_rst = snapshot_stats(f"{ref}/{snap}", r_region)[1], snapshot_stats(f"{rst}/{snap}", r_region)[1]
     mach_err = mach_rst / mach_ref - 1
     with h5py.File(f"{ref}/{snap}") as a, h5py.File(f"{rst}/{snap}") as b:
         inj_err = b["TurbulentDriving"].attrs["CumulativeInjectedEnergy"] / a["TurbulentDriving"].attrs["CumulativeInjectedEnergy"] - 1

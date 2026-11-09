@@ -262,14 +262,14 @@
 #define CPU_IMPROVDIFFWAIT    44
 #define CPU_IMPROVDIFFCOMM    45
 #define CPU_RTNONFLUXOPS  46
-#define CPU_KETJULIMIT    47 /* KETJU timestep limiter (centre gather, limited/limiting search) */
-#define CPU_KETJUFIND     48 /* KETJU region finding and per-region bookkeeping */
-#define CPU_KETJUEXCH     49 /* KETJU member gather to compute tasks, communicator setup */
-#define CPU_KETJUMSTAR    50 /* KETJU negative kicks + MSTAR integration */
-#define CPU_KETJUSCATTER  51 /* KETJU write-back of MSTAR results */
-#define CPU_KETJUFINISH   52 /* KETJU end-of-step COM quantities, cache, final velocities, stats */
-#define CPU_RUMI          53 /* RUMI++ star integration: common-bin limiter, gather, library calls, scatter (STARS_INTEGRATED_BY_RUMI) */
-#define CPU_DUMMY07       54
+#define CPU_GRADCOMPUTE   47  /* gradient-loop compute (cpu.txt folds it into density compute) */
+#define CPU_KETJULIMIT    48 /* KETJU timestep limiter (centre gather, limited/limiting search) */
+#define CPU_KETJUFIND     49 /* KETJU region finding and per-region bookkeeping */
+#define CPU_KETJUEXCH     50 /* KETJU member gather to compute tasks, communicator setup */
+#define CPU_KETJUMSTAR    51 /* KETJU negative kicks + MSTAR integration */
+#define CPU_KETJUSCATTER  52 /* KETJU write-back of MSTAR results */
+#define CPU_KETJUFINISH   53 /* KETJU end-of-step COM quantities, cache, final velocities, stats */
+#define CPU_RUMI          54 /* RUMI++ star integration: common-bin limiter, gather, library calls, scatter (STARS_INTEGRATED_BY_RUMI) */
 #define CPU_DUMMY08       55
 #define CPU_DUMMY09       56
 #define CPU_DUMMY10       57

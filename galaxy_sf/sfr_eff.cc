@@ -870,12 +870,6 @@ void star_formation_parent_routine(void)
 #endif
                             P[i_star].SinkRadius = DMAX(0.79 * P[i_star].Mass * All.G / (cs * cs), ForceSoftening_KernelRadius(i)); // volume-equivalent particle radius R= (3V/(4PI))^(1/3) at the density where cell length = Jeans length/2
 #endif
-#ifdef SINGLE_STAR_FIND_BINARIES
-                            P[i_star].Min_Sink_OrbitalTime=MAX_REAL_NUMBER; P[i_star].comp_dx = {}; P[i_star].comp_dv = {}; P[i_star].is_in_a_binary = 0;
-#endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-                            P[i_star].SuperTimestepFlag=0; P[i_star].COM_GravAccel = {}; P[i_star].comp_Mass=P[i_star].COM_dt_tidal=0;
-#endif
 #ifdef SINK_ALPHADISK_ACCRETION
                             P[i_star].Sink_Mass_Reservoir = DMAX(DMAX(0, P[i_star].Mass-P[i_star].Sink_Mass), All.SeedReservoirMass);
 #endif
@@ -914,8 +908,15 @@ void star_formation_parent_routine(void)
                             dv2_abs = ((1./2.)*((CellP[i].Gradients.Velocity[1][0]+CellP[i].Gradients.Velocity[0][1])*(CellP[i].Gradients.Velocity[1][0]+CellP[i].Gradients.Velocity[0][1]) // squared norm of the trace-free symmetric [shear] component of the velocity gradient tensor //
                                                 + (CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2])*(CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2]) + (CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])*(CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])) +
                                        (2./3.)*((CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[0][0] + CellP[i].Gradients.Velocity[1][1]*CellP[i].Gradients.Velocity[1][1] + CellP[i].Gradients.Velocity[2][2]*CellP[i].Gradients.Velocity[2][2]) - (CellP[i].Gradients.Velocity[1][1]*CellP[i].Gradients.Velocity[2][2] + CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[1][1] + CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[2][2]))) * All.cf_a2inv*All.cf_a2inv;
-                            // saves at formation sink properties in a table: 0:Time 1:ID 2:Mass 3-5:Position 6-8:Velocity 9-11:Magnetic field 12:Internal energy 13:Density 14:cs_effective 15:particle size 16:local surface density 17:local velocity dispersion 18: distance to closest BH
-                            fprintf(FdSinkFormationDetails,"%.16g %llu %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g \n", All.Time, (unsigned long long)P[i].ID, P[i_star].Mass, P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],  P[i].Vel[0], P[i].Vel[1],P[i].Vel[2], tempB[0], tempB[1], tempB[2], CellP[i].InternalEnergyPred, CellP[i].Density * All.cf_a3inv, CellP[i].effective_soundspeed() , P[i].Get_Particle_Size() * All.cf_atime, NH, dv2_abs, P[i].Min_Distance_to_Sink ); fflush(FdSinkFormationDetails);
+                            struct sink_ledger_formation r; r.time = All.Time;
+                            r.sink_id = P[i_star].ID; r.sink_child = P[i_star].ID_child_number; r.cell_mass = P[i_star].Mass; r.sink_mass = P[i_star].Sink_Mass; r.sink_mass_reservoir = 0;
+#ifdef SINK_ALPHADISK_ACCRETION
+                            r.sink_mass_reservoir = P[i_star].Sink_Mass_Reservoir;
+#endif
+                            r.x = P[i].Pos[0]; r.y = P[i].Pos[1]; r.z = P[i].Pos[2]; r.vx = P[i].Vel[0]; r.vy = P[i].Vel[1]; r.vz = P[i].Vel[2];
+                            r.Bx = tempB[0]; r.By = tempB[1]; r.Bz = tempB[2]; r.u = CellP[i].InternalEnergyPred; r.rho = CellP[i].Density * All.cf_a3inv; r.cs_eff = CellP[i].effective_soundspeed();
+                            r.cell_size = P[i].Get_Particle_Size() * All.cf_atime; r.NH = NH; r.dv2_turb = dv2_abs; r.min_dist_to_sink = P[i].Min_Distance_to_Sink;
+                            sink_ledger_append(SINK_LEDGER_FORMATION, &r, sizeof(r));
 #endif
                         }
 #endif // SINGLE_STAR_SINK_DYNAMICS

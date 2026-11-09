@@ -1,0 +1,47 @@
+% Free-fall collapse of a cold uniform sphere (cf. OpenGadget3 FreefallCollapse, Dolag+ 2026 sec 2.5)
+% Code units G = M = R = 1: t_ff = pi/(2 sqrt(2)) = 1.1107.
+%
+% TimeMax = 1.0 = 0.900 t_ff: radius down 2.85x, density up 23x. Late enough that a force or
+% integration error has compounded into the Lagrange radii; early enough that the fixed
+% softening (support 0.07) is still ~1/5 of the sphere radius (0.35) and the centre has not
+% collapsed below the resolution. OG3 runs to 0.95 t_ff (radius down 4.1x).
+%
+% SofteningGas = 0.025 = 0.5 x the lattice spacing d = 0.0504 (Plummer-equivalent; kernel
+% support 2.8 x 0.025 = 0.07). The ADAPTIVE_GRAVSOFT_FORGAS variant overrides it to 1e-4 (see
+% test_freefall.py): under AGS the tree still floors a gas target's softening at 2.8 x SofteningGas
+% (gravity/forcetree.cc), which would freeze the AGS softening at 0.07 once the collapse shrinks
+% the kernel radius (0.1 at t=0) below it.
+%
+% Cold gas: u0 = 1e-5 is set in the ICs (c_s0 = 3.3e-3). Adiabatic compression to r = 0.35
+% raises c_s by 1/r, so the final sound-crossing time is r^2/c_s0 = 37 >> t_ff, and the edge
+% pressure acceleration ~ c_s^2/(gamma h) stays ~2e-4 of gravity throughout.
+%
+InitCondFile                       freefall_ics
+OutputDir                          output
+TimeBegin                          0
+TimeMax                            1.0
+TimeOfFirstSnapshot                0
+TimeBetSnapshot                    0.05
+TimeBetStatistics                  0.05
+MaxSizeTimestep                    0.005
+MinSizeTimestep                    1e-9
+ErrTolIntAccuracy                  0.005
+CourantFac                         0.1
+MaxRMSDisplacementFac              0.1
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.0025
+TreeDomainUpdateFrequency          0.05
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+PartAllocFactor                    5
+MaxMemSize                         3000
+BufferSize                         100
+ResubmitOn                         0
+ResubmitCommand                    none
+GravityConstantInternal            1
+SofteningGas                       0.025
+SofteningHalo                      0.025
+Softening_Type2                    0.025
+Softening_Type3                    0.025
+Softening_Type4                    0.025
+Softening_Type5                    0.025

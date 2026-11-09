@@ -284,6 +284,9 @@ void init(void)
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         P[i].time_since_last_treeforce = 0;
         P[i].tdyn_step_for_treeforce = 0;
+#endif
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+        P[i].GravAccel_Retained = {};
 #endif        
         
 
@@ -660,9 +663,6 @@ void init(void)
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
 	    P[i].Min_Sink_Approach_Time = P[i].Min_Sink_Freefall_time = MAX_REAL_NUMBER;
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-	    P[i].SuperTimestepFlag = 0;
-#endif
 #endif
         if(P[i].Type == 5)
         {
@@ -739,6 +739,9 @@ void init(void)
         P[i].Particle_DivVel = 0;
         CellP[i].ConditionNumber = 1;
         CellP[i].DtInternalEnergy = 0;
+#ifdef SNE_BROADCAST_TIMESTEP
+        P[i].SNe_ArrivalTime = MAX_REAL_NUMBER;
+#endif
         if(RestartFlag == 0)
         {
             /* first-guess temperature: gamma_eos_value() -- and through it the H2 partition series --
@@ -1238,7 +1241,7 @@ void init(void)
         All.MinMassForParticleMerger = MERGESPLIT_HARDCODE_MIN_MASS;
 #endif
 
-#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT) /* Get mean gas mass, used in various subroutines */
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT) || defined(SNE_BROADCAST_TIMESTEP) /* Get mean gas mass, used in various subroutines */
         double mpi_mass_tot; long mpi_Ngas; long Ngas_l = (long) N_gas;
         MPI_Allreduce(&mass_tot, &mpi_mass_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&Ngas_l, &mpi_Ngas, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);

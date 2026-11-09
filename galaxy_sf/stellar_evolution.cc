@@ -284,6 +284,9 @@ double mechanical_fb_calculate_eventrates_SNe(int i, double dt)
 #ifdef GALSF_SFR_IMF_SAMPLING
     if(star_age<agemax && P[i].IMF_NumMassiveStars<n_sn_0) {n_sn_0=P[i].IMF_NumMassiveStars;} // limit to number of O-stars for SNe //
 #endif
+#ifdef SNE_BROADCAST_TIMESTEP
+    if(n_sn_0 > 0) {sne_broadcast_record(P[i].Pos, sne_broadcast_velocity(i, n_sn_0));} /* gas it can reach before its step ends is woken (sne_causal_wake) */
+#endif
     P[i].SNe_ThisTimeStep = n_sn_0; // assign to particle
     return RSNe;
 }
@@ -481,6 +484,27 @@ void particle2in_addFB_ageTracer(struct addFB_evaluate_data_in_ *in, int i)
 }
 
 
+
+#ifdef SNE_BROADCAST_TIMESTEP
+/*! speed at which star i broadcasts n_sn pending SNe: the fastest the gas can move once they couple, i.e. the ejecta speed, or
+    sqrt(2 E/dm), the speed of a mean-mass gas cell given all of E, if that is lower */
+double sne_broadcast_velocity(int i, double n_sn)
+{
+    double t_gyr = evaluate_stellar_age_Gyr(i); int SNeIaFlag = (t_gyr > 0.03753); double Msne = SNeIaFlag ? 1.4 : 10.5;
+#ifdef METALS
+    double yields[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION]={0}; get_SNe_yields(yields,i,t_gyr,SNeIaFlag,&Msne);
+#endif
+    double SNeEgy = All.SNe_Energy_Renormalization * 1.0e51/UNIT_ENERGY_IN_CGS;
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2 && NUM_METAL_SPECIES>=10)
+    if(SNeIaFlag==0) {double z_eff = P[i].Metallicity[10]/All.SolarAbundances[10]; if(z_eff < 1) {SNeEgy *= pow(z_eff + 1.e-5 , -0.12);}}
+#if (FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT > 1)
+    {double z0 = P[i].Metallicity[0]/All.SolarAbundances[0]; SNeEgy *= pow(z0/0.1 + 1.e-3 , (FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT > 2) ? -0.2 : -0.1);}
+#endif
+#endif
+    double v_ej = sqrt(2.0*SNeEgy/(Msne/UNIT_MASS_IN_SOLAR)), dm = All.MeanGasParticleMass; /* the gas resolution */
+    return (dm > 0) ? DMIN(v_ej, sqrt(2.*n_sn*SNeEgy/dm)) : v_ej;
+}
+#endif
 
 void particle2in_addFB_SNe(struct addFB_evaluate_data_in_ *in, int i)
 {

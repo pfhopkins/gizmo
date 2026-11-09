@@ -511,8 +511,10 @@ void density(void)
     Right = (MyFloat *) mymalloc("Right", NumPart * sizeof(MyFloat));
     
     /* initialize anything we need to about the active particles before their loop */
+    long long pass_work_local = 0, pass_work_global = 0; int density_pass = 0; /* elements this pass evaluates: here and summed in the pass's handshake */
     for (int i : ActiveParticleList) {
         if(density_isactive(i)) {
+            pass_work_local++;
             Left[i] = Right[i] = 0;
 #ifdef SINK_PARTICLES
             P[i].SwallowID = 0;
@@ -536,10 +538,23 @@ void density(void)
 
     /* allocate buffers to arrange communication */
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
-    /* we will repeat the whole thing for those particles where we didn't find enough neighbours */
-    do
+    /* repeat for the particles that did not find enough neighbours. Each pass's handshake also sums over ranks the
+       number of elements the pass evaluates (the previous pass's npleft), so the iteration test needs no reduction of
+       its own: the loop ends after a pass nobody had work for, which costs one handshake. */
+    while(1)
     {
+#define XCHANGE_PASS_WORK_LOCAL pass_work_local
+#define XCHANGE_PASS_WORK_GLOBAL pass_work_global
         #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
+#undef XCHANGE_PASS_WORK_LOCAL
+#undef XCHANGE_PASS_WORK_GLOBAL
+        if(pass_work_global == 0) {break;} /* converged on every rank; this pass evaluated nothing */
+        if(density_pass++ > 0)
+        {
+            ntot = pass_work_global; iter++;
+            if(iter > 10) {PRINT_STATUS("ngb iteration %d: need to repeat for %d%09d particles", iter, (int) (ntot / 1000000000), (int) (ntot % 1000000000));}
+            if(iter > MAXITER) {printf("failed to converge in neighbour iteration in density()\n"); fflush(stdout); endrun(1155);}
+        }
 
         /* do check on whether we have enough neighbors, and iterate for density-rkern solution */
         double tstart = my_second(), tend;
@@ -898,15 +913,8 @@ void density(void)
 
         tend = my_second();
         timecomp += timediff(tstart, tend);
-        sumup_large_ints(1, &npleft, &ntot);
-        if(ntot > 0)
-        {
-            iter++;
-            if(iter > 10) {PRINT_STATUS("ngb iteration %d: need to repeat for %d%09d particles", iter, (int) (ntot / 1000000000), (int) (ntot % 1000000000));}
-            if(iter > MAXITER) {printf("failed to converge in neighbour iteration in density()\n"); fflush(stdout); endrun(1155);}
-        }
+        pass_work_local = npleft; /* every element still density_isactive(), so exactly what the next pass evaluates */
     }
-    while(ntot > 0);
 
     /* iteration is done - de-malloc everything now */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */

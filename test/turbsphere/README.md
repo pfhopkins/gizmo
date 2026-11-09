@@ -1,8 +1,8 @@
 # turbsphere
 
-The STARFORGE stirring setup, held at a target Mach number by the `TURB_DRIVING_TARGET_SIGMA` control
-loop in its aperture mode: the loop measures only the gas within 2R of the box centre. With
-`STARFORGE_GMC_TURBINIT` the aperture `TURB_DRIVING_TARGET_SIGMA=2` is in units of the nominal cloud radius R.
+The STARFORGE stirring setup, held at a target Mach number by the `TURB_DRIVING_TARGET_VRMS_REGION` control
+loop measuring only the gas within 2R of the box centre. With `STARFORGE_GMC_TURBINIT` the region radius
+`TURB_DRIVING_TARGET_VRMS_REGION=2` is in units of the nominal cloud radius R.
 
 | | |
 |-|-|
@@ -28,5 +28,5 @@ has ~1.3e5 modes, which the lazy force makes affordable. Driving this small resp
 so the loop's default Kp=2 alternates from update to update; the test sets `TurbDrive_PID_Kp` to 1.
 
 **What is checked.** As `test/turbulent_box` (see `turb_driving_common.py`), with the Mach number
-measured over the loop's aperture. The printout also reports the median radius of all gas, as a check
+measured over the loop's region. The printout also reports the median radius of all gas, as a check
 that the cloud is held, but it is not asserted on.

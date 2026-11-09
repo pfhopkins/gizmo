@@ -12,6 +12,7 @@
 #include <mpi.h>
 #include <string.h>
 #include <limits.h>
+#include <vector>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
@@ -185,3 +186,85 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
     return 0;
 }
 
+
+
+/* element 0, 1: sum; element 2: min */
+static void mpi_sparse_counts_op(void *in, void *inout, int *len, MPI_Datatype *dt)
+{
+    long long *a = (long long *) in, *b = (long long *) inout;
+    for(int k = 0; k + 3 < *len; k += 4) {b[k] += a[k]; b[k+1] += a[k+1]; if(a[k+2] < b[k+2]) {b[k+2] = a[k+2];} b[k+3] += a[k+3];}
+}
+
+/*! The neighbour loops' per-pass handshake without an Alltoall. Each rank learns recv_count[r] = what rank r
+ *  sends it (send_count[] on r), and flags_out = {sum, sum, min, sum} over ranks of flags_in. The counts travel only
+ *  between ranks that exchange something: synchronous sends to the nonzero destinations, then a nonblocking
+ *  barrier entered once they are matched, receiving whatever arrives until the barrier completes (the NBX
+ *  pattern; Hoefler, Siebert & Lumsdaine 2010). The reduction runs alongside. Results are identical to an
+ *  Alltoall of the counts plus an Allreduce of the flags; the cost is one barrier rather than an all-pairs exchange
+ *  when few ranks export. Consecutive calls alternate tags: a rank can only start call k+1 after every rank has
+ *  entered call k's barrier, so a message of call k+1 is never taken for one of call k.
+ *  The reduction and barrier run on a private duplicate of MPI_COMM_WORLD: OpenMPI's libnbc tags each nonblocking
+ *  collective with the next of a decreasing sequence, and pml/ucx keeps only 24 tag bits, so on a shared communicator
+ *  call 2^23-67 puts the barrier on tag 106, its messages are taken by the probe below and the handshake hangs. On
+ *  their own communicator the collectives can only alias each other, 2^24 operations apart. The counts must stay on
+ *  MPI_COMM_WORLD for the same reason. */
+void mpi_sparse_counts(const int *send_count, int *recv_count, const long long flags_in[4], long long flags_out[4])
+{
+    static MPI_Op op = MPI_OP_NULL; static int parity = 0; static MPI_Comm coll_comm = MPI_COMM_NULL;
+    if(op == MPI_OP_NULL) {MPI_Op_create(mpi_sparse_counts_op, 1, &op);}
+    if(coll_comm == MPI_COMM_NULL) {MPI_Comm_dup(MPI_COMM_WORLD, &coll_comm);} /* collective: every rank makes its first call here at the same point */
+    int tag = parity ? TAG_SPARSE_COUNTS_B : TAG_SPARSE_COUNTS_A; parity ^= 1;
+    MPI_Request red; long long fin[4] = {flags_in[0], flags_in[1], flags_in[2], flags_in[3]};
+    MPI_Iallreduce(fin, flags_out, 4, MPI_LONG_LONG, op, coll_comm, &red);
+    for(int r = 0; r < NTask; r++) {recv_count[r] = 0;}
+    recv_count[ThisTask] = send_count[ThisTask];
+    std::vector<MPI_Request> sreq;
+    for(int r = 0; r < NTask; r++) {if(r != ThisTask && send_count[r] > 0) {sreq.emplace_back(); MPI_Issend(&send_count[r], 1, MPI_INT, r, tag, MPI_COMM_WORLD, &sreq.back());}}
+    MPI_Request bar = MPI_REQUEST_NULL; int in_barrier = 0;
+    while(1)
+    {
+        int flag; MPI_Status st;
+        MPI_Iprobe(MPI_ANY_SOURCE, tag, MPI_COMM_WORLD, &flag, &st);
+        if(flag) {MPI_Recv(&recv_count[st.MPI_SOURCE], 1, MPI_INT, st.MPI_SOURCE, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE); continue;}
+        if(!in_barrier)
+        {
+            int sent = 1; if(!sreq.empty()) {MPI_Testall((int) sreq.size(), sreq.data(), &sent, MPI_STATUSES_IGNORE);}
+            if(sent) {MPI_Ibarrier(coll_comm, &bar); in_barrier = 1;}
+        }
+        else {int done; MPI_Test(&bar, &done, MPI_STATUS_IGNORE); if(done) {break;}}
+    }
+    MPI_Wait(&red, MPI_STATUS_IGNORE);
+}
+
+
+/*! Point-to-point exchange with every partner at once, in place of a loop of blocking MPI_Sendrecv over
+ *  ngrp in [ngrp_lo, ngrp_hi) with partner ThisTask^ngrp. To rank r it sends scount[r] items of ssize bytes
+ *  starting at item soff[r] of sbuf, and receives rcount[r] items of rsize bytes at item roff[r] of rbuf.
+ *  A NULL soff/roff means the items are packed in partner order, as the blocking loop's running offset
+ *  placed them, so buffers are laid out exactly as before. Messages above INT_MAX bytes go in pieces, which
+ *  MPI's per-pair ordering keeps in sequence. */
+void mpi_exchange_with_partners(int ngrp_lo, int ngrp_hi, int tag,
+                                char *sbuf, const int *scount, const int *soff, size_t ssize,
+                                char *rbuf, const int *rcount, const int *roff, size_t rsize)
+{
+    std::vector<MPI_Request> req; req.reserve(4 * NTask);
+    size_t s_seq = 0, r_seq = 0;
+    for(int ngrp = ngrp_lo; ngrp < ngrp_hi; ngrp++)
+    {
+        int r = ThisTask ^ ngrp;
+        if(r >= NTask) {continue;}
+        size_t s_at = soff ? (size_t) soff[r] : s_seq, r_at = roff ? (size_t) roff[r] : r_seq;
+        s_seq += scount[r]; r_seq += rcount[r];
+        for(size_t done = 0, n = (size_t) rcount[r] * rsize; done < n;)
+        {
+            int piece = (int) ((n - done < (size_t) INT_MAX) ? (n - done) : (size_t) INT_MAX);
+            req.emplace_back(); MPI_Irecv(rbuf + r_at * rsize + done, piece, MPI_BYTE, r, tag, MPI_COMM_WORLD, &req.back()); done += piece;
+        }
+        for(size_t done = 0, n = (size_t) scount[r] * ssize; done < n;)
+        {
+            int piece = (int) ((n - done < (size_t) INT_MAX) ? (n - done) : (size_t) INT_MAX);
+            req.emplace_back(); MPI_Isend(sbuf + s_at * ssize + done, piece, MPI_BYTE, r, tag, MPI_COMM_WORLD, &req.back()); done += piece;
+        }
+    }
+    if(!req.empty()) {MPI_Waitall((int) req.size(), req.data(), MPI_STATUSES_IGNORE);}
+}

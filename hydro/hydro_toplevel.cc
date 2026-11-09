@@ -1251,6 +1251,9 @@ void hydro_force_initial_operations_preloop(void)
 void hydro_force(void)
 {
     CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second();
+#ifdef NGB_PAIR_CACHE
+    ngb_pair_cache_begin_replay(); /* replay the pair searches hydro_gradient_calc() recorded */
+#endif
     double t_preloop_start = my_second();
     hydro_force_initial_operations_preloop(); /* do initial pre-processing operations as needed before main hydro force loop */
     double t_preloop = timediff(t_preloop_start, my_second());
@@ -1266,6 +1269,9 @@ void hydro_force(void)
     double t_demalloc = timediff(t_demalloc_start, my_second());
     double t_postloop_start = my_second();
     hydro_final_operations_and_cleanup(); /* do final operations on results */
+#ifdef NGB_PAIR_CACHE
+    ngb_pair_cache_free();
+#endif
 #if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
     turb_diff_metals_budget_log();
 #endif

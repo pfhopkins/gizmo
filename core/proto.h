@@ -231,9 +231,6 @@ inline int ngb_treefind_pairs_threads_targeted(const Vec3<MyDouble>& searchcente
 void do_distortion_tensor_kick(int i, double dt_gravkick);
 void set_predicted_quantities_for_extra_physics(int i);
 void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, double dt_entr);
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-void do_fewbody_kick(int i, double fewbody_kick_dv[3], double dt);
-#endif
 
 void set_eos_pressure(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
 #if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
@@ -309,6 +306,9 @@ int MPI_Check_Sendrecv(void *sendbuf, int sendcount, MPI_Datatype sendtype,
                        int dest, int sendtag, void *recvbufreal, int recvcount,
                        MPI_Datatype recvtype, int source, int recvtag, MPI_Comm comm, MPI_Status * status);
 
+void mpi_sparse_counts(const int *send_count, int *recv_count, const long long flags_in[4], long long flags_out[4]);
+void mpi_exchange_with_partners(int ngrp_lo, int ngrp_hi, int tag, char *sbuf, const int *scount, const int *soff, size_t ssize,
+                                char *rbuf, const int *rcount, const int *roff, size_t rsize);
 int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype sendtype,
                              int dest, int sendtag, void *recvbuf0, size_t recvcount,
                              MPI_Datatype recvtype, int source, int recvtag, MPI_Comm comm,
@@ -507,6 +507,7 @@ double INLINE_FUNC hubble_function_external(double a);
 #endif
 
 void sink_accretion(void);
+#include "../sinks/sink_ledger.h"
 #ifdef SINK_WIND_SPAWN
 void get_random_orthonormal_basis(int i, uint64_t site_salt, uint64_t event, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz);
 void set_spawn_orthonormal_basis(int i, int mode, Vec3<double>& jx, Vec3<double>& jy, Vec3<double>& jz);
@@ -587,6 +588,11 @@ void set_injection_accel(void);
 
 int density_isactive(int n);
 int GasGrad_isactive(int i, struct particle_data *pp, struct gas_cell_data *cell);
+#ifdef NGB_PAIR_CACHE
+void ngb_pair_cache_begin_record(void);
+void ngb_pair_cache_begin_replay(void);
+void ngb_pair_cache_free(void);
+#endif
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
 void cellcorrections_calc(void);
@@ -618,6 +624,11 @@ void find_dt_displacement_constraint(double hfac);
 void process_wake_ups(void);
 #endif
 void wakeup_list_note(int i);
+#ifdef SNE_BROADCAST_TIMESTEP
+double sne_broadcast_velocity(int i, double n_sn);
+void sne_broadcast_record(Vec3<MyDouble> pos, double v);
+void sne_causal_wake(void);
+#endif
 void wakeup_list_invalidate(void);
 void set_units_sfr(void);
 void gravity_forcetest(void);
@@ -1019,6 +1030,11 @@ void ewald_corr(double dx, double dy, double dz, double *fper);
 void ewald_force(int ii, int jj, int kk, double x[3], double force[3]);
 void ewald_force_ni(int iii, int jjj, int kkk, double x[3], double force[3]);
 void ewald_init(void);
+#ifdef GRAVITY_PERIODIC_XY
+void ewald_xy_update(void);
+void ewald_xy_corr(const double dr[3], double acc[3], double *pot);
+void ewald_xy_exact(double dx, double dy, double dz, double s, double Lx, double Ly, double out[4]);
+#endif
 double ewald_psi(double x[3]);
 double ewald_pot_corr(double dx, double dy, double dz);
 int find_ancestor(int i);
@@ -1281,9 +1297,6 @@ void advect_mesh_point(int i, double dt);
 double calculate_face_area_for_cartesian_mesh(const Vec3<double>& dp, double rinv, double l_side, Vec3<double>& Face_Area_Vec);
 #endif
 
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-void subtract_companion_gravity(int i);
-#endif
 
 
 void hydro_gradient_calc(void);
@@ -1360,21 +1373,15 @@ void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_
 #endif
 
 
-#ifdef SINGLE_STAR_TIMESTEPPING
-void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
-void odeint_super_timestep(int i, double dt_super, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
-double binary_relative_speed_bound(int i);
-double gravfac(double r, double mass);
-double gravfac2(double r, double mass);
-void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk);
-double eccentric_anomaly(double mean_anomaly, double ecc);
-#endif
 
 #ifdef ENERGY_BUDGET_DIAGNOSTIC
 /* Total gas energy at full synchronization; see energy_budget_sync_report() in run.cc. The
    per-phase breakdown this once accompanied lives on branch diag/energy-budget-phases. */
 void energy_budget_sync_report(void);
 #define EB_SYNC_REPORT() energy_budget_sync_report()
+#if defined(GALSF_FB_MECHANICAL) && !defined(GALSF_USE_SNE_ONELOOP_SCHEME)
+double energy_budget_mechfb_injected_local(void); /* gas energy deposited by mechanical feedback on this rank, cumulative */
+#endif
 #ifdef EVALPOTENTIAL
 /* Kinetic+gravitational energy over all types at full synchronization -- the conserved quantity
    for a collisionless self-gravitating run, which the gas-only report above cannot see. */

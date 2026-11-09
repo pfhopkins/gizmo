@@ -103,16 +103,9 @@ void sink_end(void)
             fprintf(FdSinks, "%.16g %d %g %g %g %g %g\n", All.Time, All.TotSinks, total_mass_holes, total_mdot, mdot_in_msun_per_year, total_mass_real, total_mdoteddington);
         }
         fflush(FdSinks);
-#ifdef OUTPUT_SINK_ACCRETION_HIST
-        fflush(FdSinkSwallowDetails);
-#endif
-#ifdef OUTPUT_SINK_FORMATION_PROPS
-        fflush(FdSinkFormationDetails);
-#endif
 #if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(SINK_OUTPUT_MOREINFO)
         fflush(FdSinksDetails);
 #ifdef SINK_OUTPUT_MOREINFO
-        fflush(FdSinkMergerDetails);
 #ifdef SINK_WIND_KICK
         fflush(FdSinkWindDetails);
 #endif

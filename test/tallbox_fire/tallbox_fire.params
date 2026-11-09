@@ -1,0 +1,56 @@
+% Stratified shearing box, solar neighbourhood (TIGRESS R8-like), FIRE-3. Units pc, Msun, km/s (t_unit = 0.978 Myr).
+% Resolution-dependent entries are marked [res]; values here are for 1e3 Msun cells.
+InitCondFile                       tallbox_fire_ics
+OutputDir                          output
+BoxSize                            1000
+TimeBegin                          0
+TimeMax                            307          % 300 Myr
+TimeBetSnapshot                    25           % ~24 Myr
+TimeOfFirstSnapshot                0
+TimeBetStatistics                  1
+MaxSizeTimestep                    0.5          % ~0.5 Myr
+MinSizeTimestep                    0
+UnitLength_in_cm                   3.085678e18
+UnitMass_in_g                      1.989e33
+UnitVelocity_in_cm_per_s           1e5
+UnitMagneticField_in_gauss         1
+%---- external vertical gravity (GRAVITY_ANALYTIC_STRATIFIED_DISK): Kim & Ostriker 2017 R8
+StratDisk_SigmaStar                42           % Msun/pc^2
+StratDisk_ZStar                    245          % pc
+StratDisk_RhoDM                    0.0064       % Msun/pc^3
+StratDisk_R0                       8000         % pc
+%---- gas / SF
+InitGasTemp                        0            % from ICs
+MinGasTemp                         10
+InitMetallicity                    1.0          % solar
+InitStellarAge                     10.0         % Gyr (no pre-existing star particles; required tag)
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+%---- softening [res]: gas is adaptive (= kernel radius), Type0 is its floor; stars ~ the gas kernel radius where they form.
+%     1e3 Msun: gas floor 1 (never reached), stars 15. 10 Msun: gas floor 0.25, stars 3 (m^1/3 scaling)
+Softening_Type0                    1
+Softening_Type1                    10
+Softening_Type2                    10
+Softening_Type3                    10
+Softening_Type4                    15
+Softening_Type5                    15
+Softening_Type0_MaxPhysLimit       1
+Softening_Type1_MaxPhysLimit       10
+Softening_Type2_MaxPhysLimit       10
+Softening_Type3_MaxPhysLimit       10
+Softening_Type4_MaxPhysLimit       15
+Softening_Type5_MaxPhysLimit       15
+%---- accuracy
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+TreeDomainUpdateFrequency          0.01
+%---- runtime
+MaxMemSize                         3000
+PartAllocFactor                    3.0
+BufferSize                         100
+TimeLimitCPU                       1e9
+CpuTimeBetRestartFile              3600
+ResubmitOn                         0
+ResubmitCommand                    none
