@@ -563,6 +563,9 @@ struct HydroForceSpec
         MERGE_ADD(DivBDiff);
         for(int kv = 0; kv < 3; kv++) { dst.DtB_PsiCons[kv] += src.DtB_PsiCons[kv]; }
 #endif
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+        MERGE_ADD(DtEB_facevol);
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         MERGE_ADD(DtPhi);

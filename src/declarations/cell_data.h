@@ -98,6 +98,11 @@ extern struct gas_cell_data
     MyDouble DivBDiff;              /*!< V div.B, face operator conjugate to DtB_PsiCons */
     Vec3<MyDouble> DtB_PsiCons;     /*!< -V grad psi, face operator */
 #endif
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+    MyDouble EB_last;               /*!< E_B of this cell after its last B kick (<0: unset) */
+    MyDouble DtEB_booked;           /*!< dE_B/dt the internal-energy equation assumes */
+    MyDouble DtEB_facevol;          /*!< face-estimated B^2/2 dV/dt term */
+#endif
 #ifdef DIVBCLEANING_DEDNER
     Vec3<MyDouble> DtB_PhiCorr;     /*!< correction forces for mid-face update to phi-field */
     MyDouble PhiPred;               /*!< current value of Phi */

@@ -287,6 +287,9 @@ struct hydro_data_out
     MyDouble DivBDiff;
     Vec3<MyDouble> DtB_PsiCons;
 #endif
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+    MyDouble DtEB_facevol;
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     MyFloat DtPhi;

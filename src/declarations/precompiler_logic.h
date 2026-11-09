@@ -1709,6 +1709,15 @@
 #define SPH_TP12_ARTIFICIAL_RESISTIVITY   /* turns on magnetic dissipation ('artificial resistivity'): uses tricco switch =h*|gradB|/|B| */
 #endif
 #endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) && defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+#error "MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE and MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY are alternatives"
+#endif
+#if !defined(MAGNETIC) || defined(HYDRO_SPH) || defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME)
+#error "MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE and MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY need MAGNETIC with a meshless method and the default leapfrog"
+#endif
+#define MHD_TRACK_BOOKED_MAGNETIC_ENERGY /* cell E_B at the last B kick and the dE_B/dt the u equation books */
+#endif
 
 /* constrained gradients (and MHD_MODIFIED_GRADIENT, which turns them on above) fit the cleaning-field gradient at the
    face mid-points; that needs the Dedner field, so it is on exactly when both are, whatever the order they were set in */

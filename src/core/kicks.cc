@@ -338,6 +338,21 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             dEnt_Gravity += dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+            { /* physical E_B = |VB_code|^2 (rho/m)_code / (2a) */
+                double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0;
+                Vec3<double> dVB = CellP[i].DtB * (dt_hydrokick / All.cf_atime), VB_new = CellP[i].B + dVB;
+                double eb_new = 0.5 * VB_new.norm_sq() * rho_over_m / All.cf_atime;
+#ifdef MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY /* rescale |VB| so E_B after this kick is what the u equation booked */
+                double eb_target = CellP[i].EB_last + CellP[i].DtEB_booked * dt_hydrokick;
+                if(CellP[i].EB_last >= 0 && eb_target > 0 && eb_new > 0) {CellP[i].B = VB_new * sqrt(eb_target / eb_new) - dVB; CellP[i].EB_last = eb_target;}
+                else {CellP[i].EB_last = eb_new;}
+#else /* charge u with the actual E_B change (kernel volume since the last kick and this kick's dVB) minus what it booked */
+                if(CellP[i].EB_last >= 0) {du_tot -= (eb_new - CellP[i].EB_last - CellP[i].DtEB_booked * dt_hydrokick) / P[i].Mass;}
+                CellP[i].EB_last = eb_new;
+#endif
+            }
+#endif
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
             if((mode == 1) && (du_tot != 0) && (dt_hydrokick > 0)) { /* if about to consider second-halfstep kick (just after hydro) */
                 CellP[i].CoolingIsOperatorSplitThisTimestep=0; /* default to assume un-split */

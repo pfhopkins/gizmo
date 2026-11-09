@@ -423,6 +423,9 @@ void hydro_accumulate_neighbor(
     {
         double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel + face_vel_i);
         out.DtInternalEnergy += 0.5 * kernel.b2_i * All.cf_a2inv * All.cf_a2inv * wt_face_sum;
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+        out.DtEB_facevol += 0.5 * kernel.b2_i * All.cf_a2inv * All.cf_a2inv * wt_face_sum;
+#endif
     }
 #ifdef DIVBCLEANING_DEDNER
     for(k=0; k<3; k++) {

@@ -236,6 +236,9 @@ void hydro_final_operations_and_cleanup(void)
 #ifndef HYDRO_SPH
             CellP[i].DtInternalEnergy -= dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB);
 #endif
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+            CellP[i].DtEB_booked = dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB) - CellP[i].DtEB_facevol; /* dE_B/dt the u equation assumes */
+#endif
             CellP[i].DtB *= magnorm_closure;
 #ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
             /* conjugate cleaning pair, after the u booking and the closure limiter: exchanges E_B and E_psi only */
@@ -558,6 +561,9 @@ void hydro_force_initial_operations_preloop(void)
             CellP[i].divB = 0; CellP[i].Face_Area = {};
 #ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
             CellP[i].DivBDiff = 0; CellP[i].DtB_PsiCons = {};
+#endif
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+            CellP[i].DtEB_facevol = 0;
 #endif
 #ifdef DIVBCLEANING_DEDNER
             CellP[i].DtB_PhiCorr = {};

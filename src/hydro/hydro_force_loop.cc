@@ -372,6 +372,9 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 #ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
     CellP[i].DivBDiff += out->DivBDiff; CellP[i].DtB_PsiCons += out->DtB_PsiCons;
 #endif
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+    CellP[i].DtEB_facevol += out->DtEB_facevol;
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[i].DtPhi += out->DtPhi;

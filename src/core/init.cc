@@ -1099,6 +1099,9 @@ void init(void)
 #ifdef MAGNETIC
         CellP[i].B = CellP[i].BPred * (P[i].Mass / CellP[i].Density); // convert to the conserved unit V*B //
         CellP[i].BPred = CellP[i].B; CellP[i].DtB = {}; CellP[i].BField_prerefinement = {};
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+        CellP[i].EB_last = -1; CellP[i].DtEB_booked = CellP[i].DtEB_facevol = 0;
+#endif
 #endif
 #ifdef COSMIC_RAY_FLUID
         if(RestartFlag == 0 && (All.CosmicRayInitialAmbient_eVcm3 > 0 || All.CosmicRayInitialCloud_eVcm3 > 0)) { /* initial CR background, split by density; other starts keep what they read */
