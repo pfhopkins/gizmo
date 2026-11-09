@@ -60,6 +60,12 @@ int GasGrad_isactive(int i, struct particle_data *pp, struct gas_cell_data *cell
     return 1;
 }
 
+/* The neighbour-loop gradient of the Eddington-tensor-weighted radiation energy is read only by the flux limiter and by
+   OTVET. Otherwise (M1) the final loop below replaces it with ET.grad(E), so it is neither computed nor communicated. */
+#if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (defined(RT_FLUXLIMITER) || defined(RT_OTVET))
+#define RT_COMPGRAD_ET_IN_NGB_LOOP
+#endif
+
 /* define a common 'gradients' structure to hold
  everything we're going to take derivatives of */
 /* T = storage type: double for the import copy and the local limiter state, MyCommFloat for the
@@ -80,7 +86,9 @@ template<typename T> struct Quantities_for_Gradients_T
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
     T Rad_E_gamma[N_RT_FREQ_BINS];
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
     SymmetricTensor2<T> Rad_E_gamma_ET[N_RT_FREQ_BINS];
+#endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
     T Rad_Flux[N_RT_FREQ_BINS][3];
 #endif
@@ -295,7 +303,9 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
         for(k = 0; k < N_RT_FREQ_BINS; k++)
         {
         	in->GQuant.Rad_E_gamma[k] = CellP[i].Rad_E_gamma_Pred[k];
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
         	in->GQuant.Rad_E_gamma_ET[k] = CellP[i].ET[k];
+#endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
             int k_d; for(k_d = 0; k_d < 3; k_d++) {in->GQuant.Rad_Flux[k][k_d] = CellP[i].Rad_Flux_Pred[k][k_d];}
 #endif
@@ -488,6 +498,7 @@ static inline void out2particle_GasGrad(struct GasGraddata_out *out, int i, int 
             }}
 #endif
         }
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
 		/* the gradient dotted into the Eddington tensor is more complicated: let's handle this below */
         {
         	int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++)
@@ -505,6 +516,7 @@ static inline void out2particle_GasGrad(struct GasGraddata_out *out, int i, int 
         		}
         	}
         }
+#endif
 #endif
         
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
@@ -1708,12 +1720,16 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     }
 #endif
 #ifdef RT_COMPGRAD_EDDINGTON_TENSOR
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
                     SymmetricTensor2<double> dnET[N_RT_FREQ_BINS];
+#endif
                     double dn[N_RT_FREQ_BINS];
                     double V_i_inv = 1/V_i, V_j_inv = CellP[j].Density/P[j].Mass;
                     for(k = 0; k < N_RT_FREQ_BINS; k++)
                     {
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
                         dnET[k] = (CellP[j].Rad_E_gamma_Pred[k]*V_j_inv) * CellP[j].ET[k] - (local.GQuant.Rad_E_gamma[k]*V_i_inv) * local.GQuant.Rad_E_gamma_ET[k];
+#endif
                         dn[k] = CellP[j].Rad_E_gamma_Pred[k]*V_j_inv - local.GQuant.Rad_E_gamma[k]*V_i_inv;
                         MINMAX_CHECK(dn[k],out.Minima.Rad_E_gamma[k],out.Maxima.Rad_E_gamma[k]);
                     }
@@ -1804,7 +1820,9 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                             for(k2=0;k2<N_RT_FREQ_BINS;k2++)
                             {
                             	out.Gradients[k].Rad_E_gamma[k2] += wk_xyz_i * dn[k2];
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
                             	out.Gradients[k].Rad_E_gamma_ET[k2] += wk_xyz_i * dnET[k2];
+#endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
                                 int k_d; for(k_d=0;k_d<3;k_d++) {out.Gradients[k].Rad_Flux[k2][k_d] += wk_xyz_i * dflux_rt[k2][k_d];}
 #endif

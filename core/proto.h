@@ -466,6 +466,7 @@ double INLINE_FUNC hubble_function_external(double a);
 #endif
 
 void sink_accretion(void);
+#include "../sinks/sink_ledger.h"
 #ifdef SINK_WIND_SPAWN
 void get_random_orthonormal_basis(int i, uint64_t site_salt, uint64_t event, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz);
 void set_spawn_orthonormal_basis(int i, int mode, Vec3<double>& jx, Vec3<double>& jy, Vec3<double>& jz);

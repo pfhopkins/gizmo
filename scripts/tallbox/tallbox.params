@@ -22,6 +22,7 @@ StratDisk_R0                       8000         % pc
 %---- gas / SF
 InitGasTemp                        0            % from ICs
 MinGasTemp                         10
+InitRadiationTemp                  2.73         % RT_INFRARED (M1) builds: IR band starts at the CMB; the 20 K default fills the box with a blackbody
 InitMetallicity                    1.0          % solar
 InitStellarAge                     10.0         % Gyr (no pre-existing star particles; required tag)
 DesNumNgb                          32

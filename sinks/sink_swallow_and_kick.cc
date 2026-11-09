@@ -313,9 +313,20 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
                     
                     if(P[j].Type == 5)  /* this is a sink-sink merger */
                     {
-#ifdef SINK_OUTPUT_MOREINFO
-                        fprintf(FdSinkMergerDetails,"%.16g  %llu %llu %llu %g %2.16g %2.16g %2.16g  %llu %llu %llu %g %2.16g %2.16g %2.16g\n",All.Time,(unsigned long long)local.ID,(unsigned long long)local.ID_child_number,(unsigned long long)local.ID_generation,local.Sink_Mass,local.Pos[0],local.Pos[1],local.Pos[2],  (unsigned long long)P[j].ID,(unsigned long long)P[j].ID_child_number,(unsigned long long)P[j].ID_generation,P[j].Sink_Mass,P[j].Pos[0],P[j].Pos[1],P[j].Pos[2]); fflush(FdSinkMergerDetails);
-#elif defined(OUTPUT_ADDITIONAL_RUNINFO)
+#ifdef OUTPUT_SINK_ACCRETION_HIST
+                        {
+                            struct sink_ledger_merger r; r.time = All.Time;
+                            r.id1 = local.ID; r.child1 = local.ID_child_number; r.mass_dyn1 = local.Mass; r.mass1 = local.Sink_Mass; r.mass_reservoir1 = 0;
+                            r.x1 = local.Pos[0]; r.y1 = local.Pos[1]; r.z1 = local.Pos[2]; r.vx1 = local.Vel[0]; r.vy1 = local.Vel[1]; r.vz1 = local.Vel[2];
+                            r.id2 = P[j].ID; r.child2 = P[j].ID_child_number; r.mass_dyn2 = Mass_j; r.mass2 = P[j].Sink_Mass; r.mass_reservoir2 = 0;
+                            r.x2 = P[j].Pos[0]; r.y2 = P[j].Pos[1]; r.z2 = P[j].Pos[2]; r.vx2 = Vel_j[0]; r.vy2 = Vel_j[1]; r.vz2 = Vel_j[2];
+#ifdef SINK_ALPHADISK_ACCRETION
+                            r.mass_reservoir1 = local.Sink_Mass_Reservoir; r.mass_reservoir2 = P[j].Sink_Mass_Reservoir;
+#endif
+                            sink_ledger_append(SINK_LEDGER_MERGER, &r, sizeof(r));
+                        }
+#endif
+#if defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(SINK_OUTPUT_MOREINFO)
                         fprintf(FdSinksDetails,"Sink-Sink Merger Occuring: ThisTask=%d, time=%.16g: id=%llu swallows %llu (%g %g)\n", ThisTask, All.Time, (unsigned long long)local.ID, (unsigned long long)P[j].ID, local.Sink_Mass, P[j].Sink_Mass); fflush(FdSinksDetails);
 #endif
 #ifdef SINK_INCREASE_DYNAMIC_MASS
@@ -421,7 +432,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
 #endif
 #ifdef SINK_OUTPUT_MOREINFO
                         printf(" ..BAL kick: P[j].ID %llu ID %llu Type(j) %d f_acc %g M(j) %g V(j).xyz %g/%g/%g P(j).xyz %g/%g/%g p(i).xyz %g/%g/%g v_out %g \n",(unsigned long long) P[j].ID, (unsigned long long) P[j].SwallowID,P[j].Type, All.Sink_accreted_fraction,Mass_j,Vel_j[0],Vel_j[1],Vel_j[2],P[j].Pos[0],P[j].Pos[1],P[j].Pos[2],local.Pos[0],local.Pos[1],local.Pos[2],v_kick);
-                        fprintf(FdSinkWindDetails,"%.16g  %llu %g  %2.16g %2.16g %2.16g  %2.16g %2.16g %2.16g %g %g %g %llu  %2.16g %2.16g %2.16g\n",All.Time, (unsigned long long)P[j].ID, Mass_j, P[j].Pos[0],P[j].Pos[1],P[j].Pos[2],  Vel_j[0],Vel_j[1],Vel_j[2],dir[0]/norm,dir[1]/norm,dir[2]/norm, (unsigned long long)local.ID, local.Pos[0],local.Pos[1],local.Pos[2]); fflush(FdSinkWindDetails);
+                        fprintf(FdSinkWindDetails,"%.16g  %llu %g  %2.16g %2.16g %2.16g  %2.16g %2.16g %2.16g %g %g %g %llu  %2.16g %2.16g %2.16g\n",All.Time, (unsigned long long)P[j].ID, Mass_j, P[j].Pos[0],P[j].Pos[1],P[j].Pos[2],  Vel_j[0],Vel_j[1],Vel_j[2],dir[0],dir[1],dir[2], (unsigned long long)local.ID, local.Pos[0],local.Pos[1],local.Pos[2]); fflush(FdSinkWindDetails);
 #endif
 #endif // #ifdef SINK_WIND_KICK
                         #pragma omp atomic
@@ -431,7 +442,18 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
 #ifdef MAGNETIC
                         tempB = CellP[j].Bfield(); //use particle magnetic field
 #endif
-                        fprintf(FdSinkSwallowDetails,"%.16g %llu %llu %llu %g %2.16g %2.16g %2.16g %llu %llu %llu %g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g %2.16g\n", All.Time, (unsigned long long)local.ID,(unsigned long long)local.ID_child_number,(unsigned long long)local.ID_generation,local.Mass,local.Pos[0],local.Pos[1],local.Pos[2],  (unsigned long long)P[j].ID, (unsigned long long)P[j].ID_child_number, (unsigned long long)P[j].ID_generation, Mass_initial, (P[j].Pos[0]-local.Pos[0]),(P[j].Pos[1]-local.Pos[1]),(P[j].Pos[2]-local.Pos[2]), (Vel_j[0]-local.Vel[0]),(Vel_j[1]-local.Vel[1]),(Vel_j[2]-local.Vel[2]), CellP[j].InternalEnergy, tempB[0], tempB[1], tempB[2], CellP[j].Density); fflush(FdSinkSwallowDetails);
+                        {
+                            struct sink_ledger_accretion r; r.time = All.Time;
+                            r.sink_id = local.ID; r.sink_child = local.ID_child_number; r.sink_mass_dyn = local.Mass; r.sink_mass = local.Sink_Mass; r.sink_mass_reservoir = 0;
+#ifdef SINK_ALPHADISK_ACCRETION
+                            r.sink_mass_reservoir = local.Sink_Mass_Reservoir;
+#endif
+                            r.sink_x = local.Pos[0]; r.sink_y = local.Pos[1]; r.sink_z = local.Pos[2]; r.sink_vx = local.Vel[0]; r.sink_vy = local.Vel[1]; r.sink_vz = local.Vel[2];
+                            r.gas_id = P[j].ID; r.gas_child = P[j].ID_child_number; r.gas_gen = P[j].ID_generation; r.gas_mass = Mass_initial; r.accreted_mass = f_accreted*Mass_initial;
+                            r.dx = dpos[0]; r.dy = dpos[1]; r.dz = dpos[2]; r.dvx = dvel[0]; r.dvy = dvel[1]; r.dvz = dvel[2];
+                            r.gas_u = CellP[j].InternalEnergy; r.gas_rho = CellP[j].Density; r.gas_Bx = tempB[0]; r.gas_By = tempB[1]; r.gas_Bz = tempB[2];
+                            sink_ledger_append(SINK_LEDGER_ACCRETION, &r, sizeof(r));
+                        }
 #endif
                     }  // if(P[j].Type == 0)
                     //P[j].SwallowID = 0; /* DAA: make sure it is not accreted (or ejected) by the same sink again if inactive in the next timestep [PFH: no longer necessary with the new way we re-initialize the SwallowIDs] */

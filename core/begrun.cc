@@ -335,6 +335,10 @@ void begrun(void)
         All.SinkMaxAccretionRadius = all.SinkMaxAccretionRadius;
         All.SinkRadiativeEfficiency = all.SinkRadiativeEfficiency;
         All.SinkFeedbackFactor = all.SinkFeedbackFactor;
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+        All.SinkMergerMaxMass = all.SinkMergerMaxMass;
+        All.SinkMergerMaxRadiusFactor = all.SinkMergerMaxRadiusFactor;
+#endif
 #if defined(SINK_SEED_FROM_FOF) || defined(SINK_SEED_FROM_LOCALGAS)
         All.SeedSinkMassSigma = all.SeedSinkMassSigma;
         All.SeedSinkMinRedshift = all.SeedSinkMinRedshift;
@@ -638,57 +642,8 @@ void open_outputfiles(void)
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%ssink_details/sink_details_%d.txt", All.OutputDir, ThisTask);
   if(!(FdSinksDetails = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
 #endif
-#ifdef OUTPUT_SINK_ACCRETION_HIST
-  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%ssink_details/sink_swallow_%d.txt", All.OutputDir, ThisTask);
-  if(!(FdSinkSwallowDetails = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
-  else if(RestartFlag == 0 && ThisTask == 0) {
-      fprintf(FdSinkSwallowDetails,"%s Logfiles [1 per MPI task] for sink-gas capture/swallow events. See User Guide for details. Columns represent: \n",prefix_char);
-      fprintf(FdSinkSwallowDetails,"%s   (1) Simulation time [code units] \n",prefix_char);
-      fprintf(FdSinkSwallowDetails,"%s   (2,3,4) Particle ID, child ID number, ID generation number of primary (sink) \n",prefix_char);
-      fprintf(FdSinkSwallowDetails,"%s   (5) Particle mass of primary (sink) [code units] \n",prefix_char);
-      fprintf(FdSinkSwallowDetails,"%s   (6,7,8) Coordinate (x,y,z) position of primary (sink) [code units] \n",prefix_char);
-      fprintf(FdSinkSwallowDetails,"%s   (9,10,11) Particle ID, child ID number, ID generation number of secondary \n",prefix_char);
-      fprintf(FdSinkSwallowDetails,"%s   (12) Initial (pre-swallow) particle mass of secondary [code units] \n",prefix_char);
-      fprintf(FdSinkSwallowDetails,"%s   (13,14,15) Coordinate (x,y,z) position of secondary, relative to primary (Pos[sec]-Pos[prim]) [code units] \n",prefix_char);
-      fprintf(FdSinkSwallowDetails,"%s   (16,17,18) Velocity (x,y,z) difference of secondary, relative to primary (Vel[sec]-Vel[prim]) [code units] \n",prefix_char);
-      fprintf(FdSinkSwallowDetails,"%s   (19) Specific internal energy of secondary gas [code units] \n",prefix_char);
-      fprintf(FdSinkSwallowDetails,"%s   (20,21,22) Magnetic field of secondary gas [code units] \n",prefix_char);
-      fprintf(FdSinkSwallowDetails,"%s   (23) Density of secondary gas [code units] \n",prefix_char);
-  }
-#endif
-#ifdef OUTPUT_SINK_FORMATION_PROPS
-  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%ssink_details/sink_formation_%d.txt", All.OutputDir, ThisTask);
-  if(!(FdSinkFormationDetails = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
-  else if(RestartFlag == 0 && ThisTask == 0) {
-      fprintf(FdSinkFormationDetails,"%s Logfiles [1 per MPI task] for sink-formation events. See User Guide for details. Columns represent: \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (1) Simulation time [code units] \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (2) Particle ID becoming a sink \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (3) Mass [code units] \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (4,5,6) x,y,z Coordinates [code units] \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (7,8,9) x,y,z Velocity [code units] \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (10,11,12) x,y,z Magnetic field [code units] \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (13) Specific internal energy [code units] \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (14) Density [physical code units] \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (15) Effective sound Speed [code units] \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (16) Cell linear size [physical code units] \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (17) Column density [physical code units of mass/area] integrated to infinity \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (18) Turbulent velocity variance dv*dv [physical code units] from deviatoric shear tensor \n",prefix_char);
-      fprintf(FdSinkFormationDetails,"%s   (19) Minimum distance to nearest (other) sink [code units] \n",prefix_char);
-  }
-#endif
+  sink_ledger_open(); /* accretion, formation and merger events: OutputDir/sink_events/ */
 #ifdef SINK_OUTPUT_MOREINFO
-  snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%ssink_details/sink_mergers_%d.txt", All.OutputDir, ThisTask);
-  if(!(FdSinkMergerDetails = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
-  else if(RestartFlag == 0 && ThisTask == 0) {
-      fprintf(FdSinkMergerDetails,"%s Logfiles [1 per MPI task] for sink merger events. See User Guide for details. Columns represent: \n",prefix_char);
-      fprintf(FdSinkMergerDetails,"%s   (1) Simulation time [code units] \n",prefix_char);
-      fprintf(FdSinkMergerDetails,"%s   (2,3,4) Particle ID, child ID number, ID generation number of primary \n",prefix_char);
-      fprintf(FdSinkMergerDetails,"%s   (5) Sink mass of primary [code units] \n",prefix_char);
-      fprintf(FdSinkMergerDetails,"%s   (6,7,8) Coordinate (x,y,z) position of primary (sink) [code units] \n",prefix_char);
-      fprintf(FdSinkMergerDetails,"%s   (9,10,11) Particle ID, child ID number, ID generation number of secondary \n",prefix_char);
-      fprintf(FdSinkMergerDetails,"%s   (12) Sink mass of secondary [code units] \n",prefix_char);
-      fprintf(FdSinkMergerDetails,"%s   (13,14,15) Coordinate (x,y,z) position of secondary [code units] \n",prefix_char);
-  }
 #ifdef SINK_WIND_KICK
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%ssink_details/sink_winds_%d.txt", All.OutputDir, ThisTask);
   if(!(FdSinkWindDetails = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
@@ -700,9 +655,8 @@ void open_outputfiles(void)
       fprintf(FdSinkWindDetails,"%s   (4,5,6) Coordinate (x,y,z) position of kicked element [code units] \n",prefix_char);
       fprintf(FdSinkWindDetails,"%s   (7,8,9) Velocity (x,y,z) of kicked element [code units] \n",prefix_char);
       fprintf(FdSinkWindDetails,"%s   (10,11,12) Directional unit vector (x,y,z) of kick \n",prefix_char);
-      fprintf(FdSinkWindDetails,"%s   (13,14,15) Coordinate (x,y,z) position of secondary [code units] \n",prefix_char);
-      fprintf(FdSinkWindDetails,"%s   (16) ID of kicking sink \n",prefix_char);
-      fprintf(FdSinkWindDetails,"%s   (17,18,19) Coordinate (x,y,z) position of kicking sink [code units] \n",prefix_char);
+      fprintf(FdSinkWindDetails,"%s   (13) ID of kicking sink \n",prefix_char);
+      fprintf(FdSinkWindDetails,"%s   (14,15,16) Coordinate (x,y,z) position of kicking sink [code units] \n",prefix_char);
   }
 #endif
 #endif // output-more-info if
@@ -1681,6 +1635,16 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.SinkFeedbackFactor;
         id[nt++] = REAL;
 
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+        strcpy(tag[nt], "SinkMergerMaxMass");
+        addr[nt] = &All.SinkMergerMaxMass;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "SinkMergerMaxRadiusFactor");
+        addr[nt] = &All.SinkMergerMaxRadiusFactor;
+        id[nt++] = REAL;
+#endif
+
 #if defined(SINK_SEED_FROM_FOF) || defined(SINK_SEED_FROM_LOCALGAS)
         strcpy(tag[nt], "SeedSinkMassSigma");
         addr[nt] = &All.SeedSinkMassSigma;
@@ -2547,6 +2511,10 @@ void read_parameter_file(char *fname)
                 if(strcmp("CosmicRayDiffusionCoeff",tag[i])==0) {*((double *)addr[i])=690.; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored diffusivity ~3e29, assuming units kpc/h and km/s (=%g) \n",tag[i],alternate_tag[i],All.CosmicRayDiffusionCoeff); continue;}
 #endif
                 if(strcmp("CosmicRay_SNeFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored ~10 percent conversion to CRs (=%g) \n",tag[i],alternate_tag[i],All.CosmicRay_SNeFraction); continue;}
+#endif
+#if defined(SINK_PARTICLES) && defined(SINGLE_STAR_SINK_DYNAMICS)
+                if(strcmp("SinkMergerMaxMass",tag[i])==0) {*((double *)addr[i])=0; continue;} /* 0: the ceiling is 10 x the absorbed sink's Sink_Formation_Mass */
+                if(strcmp("SinkMergerMaxRadiusFactor",tag[i])==0) {*((double *)addr[i])=1; continue;}
 #endif
 #if defined(SINGLE_STAR_STARFORGE_DEFAULTS)
                 if(strcmp("SfEffPerFreeFall",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to scaling-default of unity (=%g) \n",tag[i],alternate_tag[i],All.MaxSfrTimescale); continue;}

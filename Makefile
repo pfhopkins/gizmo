@@ -795,7 +795,8 @@ SINK_OBJS = sinks/sink.o \
             sinks/sink_util.o \
             sinks/sink_environment.o \
             sinks/sink_feed.o \
-            sinks/sink_swallow_and_kick.o
+            sinks/sink_swallow_and_kick.o \
+            sinks/sink_ledger.o
 
 RHD_OBJS =  radiation/rt_utilities.o \
 			radiation/rt_CGmethod.o \

@@ -372,17 +372,8 @@ extern FILE *FdSNeFBLogFile;    /*!< file handle for mechanical feedback log-fil
 #ifdef SINK_PARTICLES
 extern FILE *FdSinks;    /*!< file handle for sinks.txt log-file. */
 #endif
-#ifdef OUTPUT_SINK_ACCRETION_HIST
-extern FILE *FdSinkSwallowDetails;
-#endif
-#ifdef OUTPUT_SINK_FORMATION_PROPS
-extern FILE *FdSinkFormationDetails;
-#endif
 #if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(SINK_OUTPUT_MOREINFO)) && defined(SINK_PARTICLES)
 extern FILE *FdSinksDetails;
-#ifdef SINK_OUTPUT_MOREINFO
-extern FILE *FdSinkMergerDetails;
-#endif
 #ifdef SINK_WIND_KICK
 extern FILE *FdSinkWindDetails;
 #endif
@@ -978,6 +969,10 @@ extern struct global_data_all_processes
 #ifdef SINK_PARTICLES
   double SinkAccretionFactor;	/*!< Rescale sink accretion rate normaliation */
   double SinkFeedbackFactor;	/*!< Rescale sink feedback normalization */
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+  double SinkMergerMaxMass;         /*!< most massive sink another sink may absorb (code units); 0 = 10 x its Sink_Formation_Mass */
+  double SinkMergerMaxRadiusFactor; /*!< sinks merge only inside this many sink radii */
+#endif
   double SeedSinkMass;          /*!< Seed sink particle mass */
 #if defined(SINK_SEED_FROM_FOF) || defined(SINK_SEED_FROM_LOCALGAS)
   double SeedSinkMassSigma;     /*!< Standard deviation of initial sink particle masses */

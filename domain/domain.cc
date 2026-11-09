@@ -94,8 +94,22 @@ static struct peano_hilbert_data
 static void domain_insertnode(struct local_topnode_data *treeA, struct local_topnode_data *treeB, int noA, int noB);
 static void domain_add_cost(struct local_topnode_data *treeA, int noA, long long count, double cost, double gascost);
 
-/*! Walk the top tree to find the leaf node for a given Peano-Hilbert key, using bitwise operations instead of 128-bit division */
-static inline int domain_toptree_leaf(peanokey key, struct local_topnode_data *tNodes)
+#ifdef DOMAIN_TOPLEAF_TINY /* opt-in: on tiny problems (top-leaf count limit below DOMAIN_TOPLEAF_TINY_COUNTLIMIT particles) a top node
+                              holding at most DOMAIN_TOPLEAF_TINY_MINSPLIT particles is never split */
+#ifndef DOMAIN_TOPLEAF_TINY_COUNTLIMIT
+#define DOMAIN_TOPLEAF_TINY_COUNTLIMIT 16
+#endif
+#ifndef DOMAIN_TOPLEAF_TINY_MINSPLIT
+#define DOMAIN_TOPLEAF_TINY_MINSPLIT 8
+#endif
+#endif
+static long long TopMinSplitCount = 0; /* a top node with at most this many particles is never split (0: the original rule) */
+#ifdef DOMAIN_TOPLEAF_TINY
+static int TopLeafTinyFallback = 0; /* 1: rebuilding the top tree with the original rule */
+#endif
+
+/*! the top-tree leaf node (index into tNodes) holding a Peano-Hilbert key; walks with bit shifts instead of 128-bit division */
+static inline int domain_toptree_node(peanokey key, struct local_topnode_data *tNodes)
 {
     int no = 0;
     peanokey mask = ((peanokey)7) << (3 * (BITS_PER_DIMENSION - 1));
@@ -106,8 +120,11 @@ static inline int domain_toptree_leaf(peanokey key, struct local_topnode_data *t
         mask >>= 3;
         shift -= 3;
     }
-    return tNodes[no].Leaf;
+    return no;
 }
+
+/*! the top-tree leaf index for a Peano-Hilbert key */
+static inline int domain_toptree_leaf(peanokey key, struct local_topnode_data *tNodes) {return tNodes[domain_toptree_node(key, tNodes)].Leaf;}
 
 static float *particle_total_cost;  /*!< cached per-particle total work cost: (1+multiplier)*costfactor */
 #ifdef DOMAIN_FREQ_WEIGHT
@@ -470,29 +487,38 @@ static int domain_mb_node_needs_refine(int i)
  *  weighted level k, recount, repeat. The local pass above sees only each rank's own particles, so once a decomposition
  *  has spread a core's short-timestep set over many ranks no rank refines it, the next decomposition gets coarse leaves
  *  and re-concentrates the set (the balance alternated decomposition to decomposition). Uses Key[] of the local
- *  particles; every decision is made from reduced data, so the tree stays rank-identical. Returns 1 if out of top nodes. */
+ *  particles; every decision is made from reduced data, so the tree stays rank-identical. Returns 1 if out of top nodes.
+ *  A leaf that a pass leaves unsplit keeps its particles, so only the previous pass's new leaves can still split: each
+ *  pass after the first counts and reduces just those (same splits, in the same node order, as recounting every leaf). */
 static int domain_mb_global_refine(void)
 {
     int K = 0; while(K < MB_K && MB_W[K] <= 0) {K++;} /* first weighted level; all from there on (cumulative) */
     const int k0 = K; K = MB_K - k0; if(K <= 0) {return 0;}
+    std::vector<int> pnode(NumPart, -1); /* the leaf node holding each counted particle */
+    int first = 0; /* candidate leaves are the nodes [first, NTopnodes) */
     for(int iter = 0; iter < 16; iter++)
     {
-        NTopleaves = 0; domain_walktoptree(0);
-        std::vector<int> cnt((size_t) NTopleaves * K, 0);
+        const int nnodes = NTopnodes;
+        std::vector<int> slot(nnodes - first, -1); int ncand = 0;
+        for(int no = first; no < nnodes; no++) {if(topNodes[no].Daughter < 0) {slot[no - first] = ncand++;}}
+        std::vector<int> cnt((size_t) ncand * K, 0);
         for(int i = 0; i < NumPart; i++)
         {
 #ifdef SUBFIND
             if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
 #endif
             int k = MB_LevOfBin[P[i].TimeBin] - k0; if(k >= K) {continue;} if(k < 0) {k = 0;}
-            cnt[(size_t) domain_toptree_leaf(Key[i], topNodes) * K + k]++;
+            int no = pnode[i];
+            if(iter > 0 && topNodes[no].Daughter < 0) {continue;} /* its leaf was not split: not a candidate */
+            no = domain_toptree_node(Key[i], topNodes); pnode[i] = no;
+            if(no >= first) {cnt[(size_t) slot[no - first] * K + k]++;}
         }
-        MPI_Allreduce(MPI_IN_PLACE, cnt.data(), NTopleaves * K, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        int nsplit = 0, nnodes = NTopnodes;
-        for(int no = 0; no < nnodes; no++)
+        MPI_Allreduce(MPI_IN_PLACE, cnt.data(), ncand * K, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        int nsplit = 0;
+        for(int no = first; no < nnodes; no++)
         {
             if(topNodes[no].Daughter >= 0 || topNodes[no].Size < 8) {continue;}
-            const int *c = &cnt[(size_t) topNodes[no].Leaf * K]; long long acc = 0; int need = 0;
+            const int *c = &cnt[(size_t) slot[no - first] * K]; long long acc = 0; int need = 0;
             for(int k = 0; k < K && !need; k++) {acc += c[k]; if(acc > MB_Lim[k0 + k]) {need = 1;}}
             if(!need) {continue;}
             if(NTopnodes + 8 > MaxTopNodes) {return 1;}
@@ -506,6 +532,7 @@ static int domain_mb_global_refine(void)
             NTopnodes += 8; nsplit++;
         }
         if(nsplit == 0) {break;}
+        first = nnodes;
     }
     return 0;
 }
@@ -1245,6 +1272,7 @@ int domain_decompose(void)
 #ifdef DOMAIN_KEEP_BOUNDARIES
     domain_mark_boundary_candidates();
 #endif
+    multipledomains = DomainSegmentsPerTask; /* the top tree may have lowered it */
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
 #ifdef DOMAIN_KEEP_BOUNDARIES
     KeepBoundaryCand.clear(); /* only the main split snaps; the memory-bound fallback below is the plain load split */
@@ -2929,7 +2957,7 @@ int domain_check_for_local_refine(int i, double countlimit, double costlimit)
 #ifdef DOMAIN_MULTIBIN
   if(MB_Active && flag == 0 && topNodes[i].Count > MB_LimMin && topNodes[i].Count <= countlimit && topNodes[i].Cost <= costlimit && topNodes[i].Size >= 8) {flag = domain_mb_node_needs_refine(i);}
 #endif
-  if((topNodes[i].Count > countlimit || topNodes[i].Cost > costlimit || flag == 1) && topNodes[i].Size >= 8)
+  if((topNodes[i].Count > countlimit || topNodes[i].Cost > costlimit || flag == 1) && topNodes[i].Size >= 8 && topNodes[i].Count > TopMinSplitCount)
     {
       if(topNodes[i].Size >= 8)
 	{
@@ -3185,6 +3213,12 @@ int domain_determineTopTree(void)
 
   costlimit = totgravcost / (TOPNODEFACTOR * multipledomains * NTask);
   countlimit = totpartcount / (TOPNODEFACTOR * multipledomains * NTask);
+#ifdef DOMAIN_TOPLEAF_TINY
+  /* With few particles per rank the count limit falls to a few particles, and the cost and 80%-of-parent rules chain
+     nodes of one or a few particles down to the finest key level: M10-core (12.4k cells) reached 56-62k top leaves at
+     96 ranks. Leaves of a few particles are fine enough for the split. */
+  TopMinSplitCount = (countlimit < DOMAIN_TOPLEAF_TINY_COUNTLIMIT && !TopLeafTinyFallback) ? DOMAIN_TOPLEAF_TINY_MINSPLIT : 0;
+#endif
 
   errflag = domain_check_for_local_refine(0, countlimit, costlimit);
 
@@ -3275,7 +3309,7 @@ int domain_determineTopTree(void)
     {
       if(topNodes[i].Daughter < 0)
 	if(topNodes[i].Count > countlimit || topNodes[i].Cost > costlimit)	/* ok, let's add nodes if we can */
-	  if(topNodes[i].Size > 1)
+	  if(topNodes[i].Size > 1 && topNodes[i].Count > TopMinSplitCount)
 	    {
 	      if((NTopnodes + 8) <= MaxTopNodes)
 		{
@@ -3312,7 +3346,23 @@ int domain_determineTopTree(void)
   /* count toplevel leaves */
   domain_sumCost();
 
-  if(NTopleaves < multipledomains * NTask) {endrun(112);}
+#ifdef DOMAIN_TOPLEAF_TINY
+  /* The minimum split count can leave the root unsplit (at most DOMAIN_TOPLEAF_TINY_MINSPLIT particles) or fewer leaves
+     than ranks. The force tree needs a split root (force_create_empty_nodes assigns DomainNodeIndex only to daughters)
+     and every rank needs a leaf: rebuild with the original rule. The top tree is the same on all ranks, so all do. */
+  if(TopMinSplitCount > 0 && (topNodes[0].Daughter < 0 || NTopleaves < NTask))
+  {
+      TopLeafTinyFallback = 1; errflag = domain_determineTopTree(); TopLeafTinyFallback = 0;
+      return errflag;
+  }
+#endif
+
+  if(NTopleaves < multipledomains * NTask) /* tiny problems: fewer segments per rank rather than empty ones */
+  {
+      if(NTopleaves < NTask) {endrun(112);}
+      DomainSegmentsPerTask = NTopleaves / NTask;
+      if(ThisTask == 0) {printf("Domain segments per rank: %d -> %d (only %d top leaves)\n", multipledomains, DomainSegmentsPerTask, NTopleaves);}
+  }
 
   return 0;
 }

@@ -1850,7 +1850,7 @@ These models also involve their own parameterfile settings, in addition to those
 
 **SINK\_WIND\_CONTINUOUS**/**SINK\_WIND\_KICK**/**SINK\_WIND\_SPAWN**: These enable mechanical feedback from BH particles. This corresponds to observed ubiquitous AGN winds with velocities ~500-30,000 km/s, or hydrodynamic jets (if collimated). This is intended to represent the winds not at their initial launching radius, but on larger scales where the winds become hydro-dynamic, and so their basic properties are summarized by two parameters: a mass loading ($\dot{M}_{\rm wind} / \dot{M}_{\rm BH}$) and launch velocity. These are set in the parameterfile, and define the time-dependent mass, momentum, and energy flux. The "notes" document for sink particles/black holes explains in detail how these relate to physical values. The parameterfile must include `SinkFeedbackFactor`, which multiplies the mass and momentum-loading of the wind (so default=1), `Sink_accreted_fraction` (or `Sink_f_accretion` which does the same thing), which determines the "base" mass-loading of the wind (ratio of what goes into the BH versus wind at the accretion disk; this is then multiplied by `SinkFeedbackFactor` to effectively determine the total mass-loading of the wind on coupling scales), and `Sink_outflow_velocity` (or `Sink_v_outflow`), which determines the wind launch velocity. The difference between the modules is in how they operate, algorithmically. 
 
-**SINK\_WIND\_KICK**: Gas in kernel given stochastic "kicks" at fixed velocity. Set <0 for isotropic (radial) kicks, >0 for collimated kicks (all kicks along axis of angular momentum vector of material inside the BH kernel). For historical compatibility, the absolute value of this parameter can be set to an arbitrary value, which sets the momentum-loading of the wind at coupling in units of L/c from the BH -- however this is redundant with the `SinkFeedbackFactor` parameter (do not set both). If you use this module, cite Angles-Alcazar et al., 2017, MNRAS, 464, 2840. 
+**SINK\_WIND\_KICK**: Gas in kernel given stochastic "kicks" at fixed velocity. Set >0 for isotropic (radial) kicks, <0 for collimated kicks (all kicks along axis of angular momentum vector of material inside the BH kernel). For historical compatibility, the absolute value of this parameter can be set to an arbitrary value, which sets the momentum-loading of the wind at coupling in units of L/c from the BH -- however this is redundant with the `SinkFeedbackFactor` parameter (do not set both). If you use this module, cite Angles-Alcazar et al., 2017, MNRAS, 464, 2840. 
 
 **SINK\_WIND\_SPAWN**: This will spawn 'wind' particles to carry BH winds out. This is the most flexible and accurate algorithm, allowing arbitrary collimation (e.g. jets), and allowing particles to carry arbitrary combinations of thermal/kinetic/magnetic/cosmic ray energies, and allowing one to accurately capture reverse shocks (which are otherwise implicitly lost in the continuous and kicking strategies, unless the mass inside the free-streaming radius of the outflow is extremely well-resolved). However it is also numerically the most expensive and requires care in use. In addition to parameters above, user must set `Cell_Spawn_Temperature` (or the alternative variable name `Sink_outflow_temperature` which does the same thing; this determines the internal temperature of the spawned wind, in K) and `Sink_outflow_particlemass` (which sets the mass of the virtual particles, in code units). Note that if the Config flag `SINK_SCALE_SPAWNINGMASS_WITH_INITIALMASS` is set, then the spawned mass of new cells is not fixed to an absolute value, but to a ratio relative to the mass of the particle when the sink particle first formed (useful for simulations with variable resolution): in this case the flag `Sink_outflow_particlemass` should be replaced with `Cell_Spawn_Mass_ratio` which sets the mass of spawned cells in units of the initial sink mass. The value of `SINK_WIND_SPAWN` here is the number of new elements spawned simultaneously. It is recommended this be set to an even number, as the new elements will then be spawned at alternating antipodal points and directions, ensuring that the algorithm conserves center-of-mass position and linear momentum exactly (not simply statistically). The methods were developed in Torrey et al 2020MNRAS.497.5292T, and applied and extensively tested for AGN in Su et al., arXiv:2102.02206 and for protostellar jets in Grudic et al. arXiv:2010.11254. While this is part of the public code, care is needed: arbitrarily spawning cells without special care for how their properties are initialized (especially with additional physics like MHD, cosmic rays, radiation-hydrodynamics) can lead to unphysical values and crashes easily. So users are strongly encouraged to contact one of those authors and discuss the module with them to determine how best to apply it stably to their problems, without causing numerical errors.
 
@@ -2231,8 +2231,8 @@ These flags govern snapshot outputs (what is saved and how it is saved).
 #OUTPUT_DELAY_TIME_HII          # output DelayTimeHII. Requires GALSF_FB_FIRE_RT_HIIHEATING (and corresponding flags/permissions set)
 #OUTPUT_MOLECULAR_FRACTION      # output the code-estimated molecular mass fraction [needs COOLING], for e.g. approximate molecular fraction estimators (as opposed to detailed chemistry modules, which already output this)
 #OUTPUT_TEMPERATURE             # output the in-code gas temperature
-#OUTPUT_SINK_ACCRETION_HIST     # save full accretion histories of sink (BH/star/etc) particles
-#OUTPUT_SINK_FORMATION_PROPS    # save at-formation properties of sink particles
+#OUTPUT_SINK_ACCRETION_HIST     # log every gas accretion and sink merger event to OutputDir/sink_events/{accretion,merger}.npy (NumPy structured arrays; README.txt there documents the columns)
+#OUTPUT_SINK_FORMATION_PROPS    # log every sink formation event with at-formation gas properties to OutputDir/sink_events/formation.npy
 #OUTPUT_SINK_DISTANCES          # saves the distance to the nearest sink, if SINK_CALC_DISTANCES is enabled, to snapshots
 #OUTPUT_RT_RAD_FLUX             # save flux vector for radiation methods that explictly evolve the flux (e.g. M1)
 #OUTPUT_TURB_DIFF_DYNAMIC_ERROR # save error terms from localized dynamic Smagorinsky model to snapshots
@@ -3087,6 +3087,8 @@ Note that *all* of these FIRE parameters have sensible default values (the value
     SinkNgbFactor           3.0	    % multiplier for kernel neighbors for BH 
     SinkMaxAccretionRadius  0.02	    % max radius for BH neighbor search/accretion (code units)
     SinkRadiativeEfficiency 0.1        % radiative efficiency (for accretion and feedback)
+    SinkMergerMaxMass       0          % most massive sink another sink may absorb, code units; 0 = 10x its formation mass (SINGLE_STAR_SINK_DYNAMICS)
+    SinkMergerMaxRadiusFactor 1.0      % sinks merge only inside this many sink radii (SINGLE_STAR_SINK_DYNAMICS)
     %--- feedback 
     SinkFeedbackFactor      1.0	    % generic feedback strength multiplier 
     Sink_Rad_MomentumFactor 1.0	    % multiply radiation pressure (SINK_PHOTONMOMENTUM) 
@@ -3125,6 +3127,10 @@ These parameters control the sub-grid models for super-massive black hole partic
 **SinkRadiativeEfficiency**: Radiative efficiency of the BH (defined in the standard manner, $L =$ SinkRadiativeEfficiency $*\,(dM/dt) * c^{2}$). Used to calculate luminosities for feedback, eddington accretion rates, and correct the actual accreted mass.
 
 **SinkFeedbackFactor**: Multiplier for the strength of all BH feedback mechanisms (whatever is enabled, the energy/momentum will be scaled by this factor relative to its 'default' which corresponds to values =1). You can set this =0 to turn off BH feedback.
+
+**SinkMergerMaxMass**: With `SINGLE_STAR_SINK_DYNAMICS`, the most massive sink (code mass units) that another sink may absorb in a sink-sink merger. Default =0, which uses 10 times the absorbed sink's formation mass (`SinkInitialMass` in snapshots). Set it to permit mergers where that mass is zero or unrepresentative, e.g. sinks from the initial conditions of a gas-free run. `SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES` overrides it.
+
+**SinkMergerMaxRadiusFactor**: With `SINGLE_STAR_SINK_DYNAMICS`, two sinks merge only inside this many sink radii of each other (the other merger criteria still apply). Default =1.
 
 **SINK\_FluxMomentumFactor** or **SINK\_Rad_MomentumFactor**: (Either name here produces the same functionality). This serves the same role as SinkFeedbackFactor, specific to the radiation pressure terms from the BH. Currently this is separated just for de-bugging purposes.
 
@@ -3864,6 +3870,42 @@ Models with black holes or stars or sink particles active (`SINK_PARTICLES`) wil
     0.16714 33 0.000221363 0.000365694 0.00373909 0.00103651 0.336703
 
 Columns are (1) simulation time, (2) total number of sink particles/sinks (BHs) in the simulation, (3) total mass (in code units) of all BHs (note this uses the `Sink_Mass` flag, not the total dynamical mass or the reservoir mass for BH particles, but the mass nominally fully associated with the sink/BH itself), (4 ) total accretion rate (code units) summed over all BHs (again, this uses the accretion rate onto the BHs themselves, if the alpha-disk or reservoir model is turned on, not the accretion rate into said reservoir, which can be a series of delta functions depending on the accretion model employed), (5) total accretion rate in solar masses per year, (6) total of all the dynamical masses of all BH particles (i.e. including the full particle dynamical mass, plus reservoir, plus BH, which can in principle be larger than the BH by a large margin), (7) mean Eddington ratio $\langle \dot{M}_{\rm BH} / \dot{M}_{\rm Edd}(M_{\rm BH}) \rangle$ of all the BHs (note that the mean weighted by mass, or $\langle \dot{M}_{\rm BH} \rangle / \langle \dot{M}_{\rm Edd}(M_{\rm BH}) \rangle$ can be directly calculated from the information in the other columns here).
+
+
+### sink_events/
+
+Models with sink particles and `OUTPUT_SINK_ACCRETION_HIST` and/or `OUTPUT_SINK_FORMATION_PROPS` (both on by default for STARFORGE runs) log every individual sink event to the directory `sink_events/` in the output directory:
+
+| file | written with | one record per |
+|---|---|---|
+| `accretion.npy` | `OUTPUT_SINK_ACCRETION_HIST` | gas element captured (fully or partially) by a sink |
+| `merger.npy` | `OUTPUT_SINK_ACCRETION_HIST` | sink-sink merger |
+| `formation.npy` | `OUTPUT_SINK_FORMATION_PROPS` | sink formed |
+| `README.txt` | always | description of the files, their columns and the code units of the run |
+| `restarts.log` | on restart | one line per restart: restart flag, restart time, and how many records of each type were removed |
+
+**Format.** Each `.npy` file is a standard [NumPy array file](https://numpy.org/doc/stable/reference/generated/numpy.lib.format.html) holding a one-dimensional structured array, one element per event. Every field is an 8-byte float or unsigned integer in the byte order of the machine that wrote it (recorded in the file header). Read it with
+
+    import numpy as np
+    acc = np.load("output/sink_events/accretion.npy")              # mmap_mode="r" for very large files
+    acc["time"], acc["sink_id"], acc["accreted_mass"]               # columns by name
+    acc = np.sort(acc, order="time")                                # see "Ordering" below
+
+ Everything is in code units (comoving, in cosmological runs) except where marked physical; `README.txt` gives the unit system of the run.
+
+A sink is identified by the pair (ID, child number): sinks formed from split cells share an ID. Mass columns follow one convention throughout: `*_mass_dyn` is the dynamical (particle) mass, `*_mass` the sink mass (`Sink_Mass`), and `*_reservoir` the alpha-disk reservoir (0 when that model is off).
+
+*accretion.npy:* (1) `time`; (2,3) `sink_id`, `sink_child`; (4-6) `sink_mass_dyn`, `sink_mass`, `sink_mass_reservoir`; (7-9) `sink_x`, `sink_y`, `sink_z` position; (10-12) `sink_vx`, `sink_vy`, `sink_vz` velocity; (13-15) `gas_id`, `gas_child`, `gas_gen` of the captured element; (16) `gas_mass` before capture; (17) `accreted_mass`, the part moved into the sink and its reservoir; (18-20) `dx`, `dy`, `dz` and (21-23) `dvx`, `dvy`, `dvz`, gas position and velocity relative to the sink (nearest periodic image); (24) `gas_u` specific internal energy; (25) `gas_rho` density (code units, not converted to physical); (26-28) `gas_Bx`, `gas_By`, `gas_Bz`. Sink properties are those at the start of the accretion pass, before this pass's accretion. The gas velocity is the element's velocity before any kick applied in the same pass; for an inactive element it is half a step behind.
+
+*formation.npy:* (1) `time`; (2,3) `sink_id`, `sink_child`; (4) `cell_mass`, mass of the converted cell; (5,6) `sink_mass`, `sink_mass_reservoir`, the initial split of that mass; (7-9) `x`, `y`, `z`; (10-12) `vx`, `vy`, `vz`; (13-15) `Bx`, `By`, `Bz`; (16) `u`; (17) `rho` (physical); (18) `cs_eff`, effective sound speed; (19) `cell_size` (physical); (20) `NH`, column density to infinity (physical, mass per area); (21) `dv2_turb`, velocity dispersion squared from the trace-free shear tensor (physical); (22) `min_dist_to_sink`, distance to the nearest existing sink. All gas properties are those of the converted cell.
+
+*merger.npy:* (1) `time`; then for the surviving sink (2,3) `id1`, `child1`, (4-6) `mass_dyn1`, `mass1`, `mass_reservoir1`, (7-9) `x1`, `y1`, `z1`, (10-12) `vx1`, `vy1`, `vz1`; and the same 11 fields (13-23) for the absorbed sink, suffix `2`. The surviving sink is active; the absorbed sink's velocity is half a step behind if it was inactive.
+
+**Ordering and timing.** Each MPI rank buffers the events it records; they are gathered and written by the root process about every minute of wall-clock time (`SINK_LEDGER_FLUSH_INTERVAL_SEC`, default 60), and always before every restart file and snapshot is written. A running simulation's files are therefore at most about a minute behind. Records are in time order between flushes but not within one, so sort by `time` if order matters.
+
+**Restarts.** When the code restarts (flag 1 or 2), every record later than the restart time is removed from the files before the run continues, since that part of the trajectory is about to be recomputed; the files never contain duplicate events. Each restart is noted in `restarts.log`. If a run is killed outright (e.g. by the queue system), events from at most the last minute are lost, but these all follow the last restart point and are recomputed when the run is restarted. A restart stops with an error if an existing file's record layout differs from the running code's, so move the old ledger aside when restarting with a code version that changed it.
+
+**What this is not.** These files record discrete events, not sink trajectories: sinks also gain mass continuously from their reservoir and lose it through feedback channels that are not logged here, so summing `accreted_mass` does not reproduce a sink's mass history. For sink mass, position and velocity histories use snapshots, e.g. at higher cadence with `IO_SINKS_ONLY_SNAPSHOT_FREQUENCY`.
 
 ***
 

@@ -72,6 +72,7 @@ void restart(int modus)
     int partIndex, abunIndex; 
 #endif 
     
+    if(modus == 0) {sink_ledger_flush();} /* so the sink ledger holds every event up to this restart point */
     if(ThisTask == 0 && modus == 0) // writing re-start files: move old files to .bak
     {
         snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/restartfiles", All.OutputDir);
