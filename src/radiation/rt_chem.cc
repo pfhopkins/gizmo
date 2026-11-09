@@ -256,30 +256,30 @@ void rt_get_sigma(void)
             }
 #endif
         }
-        All.rt_nu_eff_eV[i] = sum_energy / n_photon_sum;
+        All.rt_nu_eff_eV[i] = (n_photon_sum > 0) ? (sum_energy / n_photon_sum) : All.rt_ion_nu_min[i]; /* a band the blackbody puts no photons into keeps its edge energy */
         All.rt_ion_precalc_stellar_luminosity_fraction[i] = sum_energy;
 
         if(All.rt_ion_nu_min[i] >= 13.6)
         {
-            All.rt_ion_sigma_HI[i] *= fac / sum_HI_sigma;
-            All.rt_ion_G_HI[i] *= fac_two / sum_HI_G;
+            if(sum_HI_sigma > 0) {All.rt_ion_sigma_HI[i] *= fac / sum_HI_sigma;} else {All.rt_ion_sigma_HI[i] = 0;}
+            if(sum_HI_G > 0) {All.rt_ion_G_HI[i] *= fac_two / sum_HI_G;} else {All.rt_ion_G_HI[i] = 0;}
         }
 #ifdef RT_CHEM_PHOTOION_HE
         if(All.rt_ion_nu_min[i] >= 24.6)
         {
-            All.rt_ion_sigma_HeI[i] *= fac / sum_HeI_sigma;
-            All.rt_ion_G_HeI[i] *= fac_two / sum_HeI_G;
+            if(sum_HeI_sigma > 0) {All.rt_ion_sigma_HeI[i] *= fac / sum_HeI_sigma;} else {All.rt_ion_sigma_HeI[i] = 0;}
+            if(sum_HeI_G > 0) {All.rt_ion_G_HeI[i] *= fac_two / sum_HeI_G;} else {All.rt_ion_G_HeI[i] = 0;}
         }
         if(All.rt_ion_nu_min[i] >= 54.4)
         {
-            All.rt_ion_sigma_HeII[i] *= fac / sum_HeII_sigma;
-            All.rt_ion_G_HeII[i] *= fac_two / sum_HeII_G;
+            if(sum_HeII_sigma > 0) {All.rt_ion_sigma_HeII[i] *= fac / sum_HeII_sigma;} else {All.rt_ion_sigma_HeII[i] = 0;}
+            if(sum_HeII_G > 0) {All.rt_ion_G_HeII[i] *= fac_two / sum_HeII_G;} else {All.rt_ion_G_HeII[i] = 0;}
         }
 #endif
          sum_egy_allbands += sum_energy;
     }
 
-    for(i = 0; i < N_RT_FREQ_BINS; i++) {All.rt_ion_precalc_stellar_luminosity_fraction[i] /= sum_egy_allbands;}
+    if(sum_egy_allbands > 0) {for(i = 0; i < N_RT_FREQ_BINS; i++) {All.rt_ion_precalc_stellar_luminosity_fraction[i] /= sum_egy_allbands;}}
 
     if(ThisTask == 0) {for(i = 0; i < N_RT_FREQ_BINS; i++) {printf("%g %g | %g %g | %g %g\n",All.rt_ion_sigma_HI[i]/fac, All.rt_ion_G_HI[i]/fac_two,All.rt_ion_sigma_HeI[i]/fac, All.rt_ion_G_HeI[i]/fac_two,All.rt_ion_sigma_HeII[i]/fac, All.rt_ion_G_HeII[i]/fac_two);}}
 #pragma pop_macro("All")

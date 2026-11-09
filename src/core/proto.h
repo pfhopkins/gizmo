@@ -135,6 +135,29 @@ void powerspec_turb_save(char *fname, double *disp);
 void powerspec_turb_collect(void);
 void powerspec_turb(int filenr);
 void compute_additional_forces_for_all_particles(void);
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT /* gas energy ledger (diagnostic): kick terms booked per cell, source terms bracketed by the gas energy sum */
+enum {LG_HYDRO_W, LG_HYDRO_Q, LG_GRAV_W, LG_RADP_LONG_W, LG_TURB_W, LG_FB_SN, LG_FB_OTHER, LG_PHOTOION, LG_COOL, LG_FLOORS, LG_SF, LG_MERGE_SPLIT, LG_N_CLOSURE,
+      LG_FB_DEFERRED = LG_N_CLOSURE, LG_WAKE_N, LG_N};
+extern double EnergyLedger[LG_N];
+#ifdef _OPENMP
+#define LEDGER_ADD(c, dE) do {double ledger_tmp_ = (dE); _Pragma("omp atomic") EnergyLedger[(c)] += ledger_tmp_;} while(0)
+#else
+#define LEDGER_ADD(c, dE) (EnergyLedger[(c)] += (dE))
+#endif
+double ledger_local_gas_energy(void);
+#define LEDGER_NEL 27 /* table elements H..Zn */
+extern double LedgerOffered[LEDGER_NEL+2]; /* cumulative, at the star: element masses, then mass, then SN energy [code] */
+extern int LedgerNSN; /* SNe fired on this rank, cumulative */
+void ledger_fb_begin(void);
+void ledger_fb_end(void);
+void energy_ledger_report(void);
+void ledger_log_hydro_event(int i, double dQ, double dW, double dt, int mode);
+#define LEDGER_FB(stmt) {ledger_fb_begin(); stmt; ledger_fb_end();}
+#define LEDGER_BRACKET(c, stmt) {double ledger_e0_ = ledger_local_gas_energy(); stmt; LEDGER_ADD(c, ledger_local_gas_energy() - ledger_e0_);}
+#else
+#define LEDGER_BRACKET(c, stmt) {stmt;}
+#define LEDGER_FB(stmt) {stmt;}
+#endif
 
 
 void set_cosmo_factors_for_current_time(void);
@@ -498,6 +521,9 @@ enum {
   GIZMO_MEM_PARTICLE_SOA = 0,   /* P / CellP / WakeupDirty persistent particle storage (UVM) */
   GIZMO_MEM_TREE_NODES,         /* local + foreign tree-node arrays (UVM) */
   GIZMO_MEM_STL_TIMEBIN,        /* ActiveParticleList / Next- / PrevInTimeBin (host STL) */
+#if defined(SINGLE_STAR_RECORDS) || defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+  GIZMO_MEM_SINGLE_STARS,       /* single-star records, gas-collection sums, stellar-evolution tables (galaxy_sf/) */
+#endif
   GIZMO_MEM_NFAMILY
 };
 void gizmo_mem_account_add(int family, long long delta_bytes);
@@ -1064,6 +1090,19 @@ void begrun(void);
 void check_omega(void);
 void compute_global_quantities_of_system(void);
 void star_formation_parent_routine(void);
+int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned);
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+double single_stars_collect_gas(long long tot_spawned);
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+void recent_sfr_young_mass_add(double t_birth, double dm);
+double sgchem_recent_sfr_g0(void);
+double sgchem_cr_ion_rate(int i, double G0);
+#endif
+void single_star_attach_to_new_star(int i_star, int i, double M_drawn);
+#ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
+int single_star_test_births(int stars_spawned);
+#endif
+#endif
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
 void grain_promotion_parent_routine(void);
 #endif
@@ -1091,6 +1130,50 @@ double calculate_individual_stellar_luminosity(double mdot, double mass, long i)
 double return_probability_of_this_forming_sink_from_seed_model(int i);
 
 void particle2in_addFB_fromstars(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+double single_star_ionizing_luminosity_cgs(int i);
+double single_star_ionizing_photon_rate(int i);
+double single_star_ionizing_onset_yr(int i);
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+void photoionization_per_direction(void);
+double photoion_max_timestep(int p);
+long long photoion_new_sources_local(void);
+void photoion_add_new_sources(long long n);
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+double single_star_eventrates(int i, double dt);
+double single_star_max_timestep(int p);
+void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
+double single_star_ejecta_mass_this_step(int i);
+void single_star_feedback_prepare(const int *list, int n);
+void single_star_feedback_finalize(const int *list, int n);
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+void single_star_event_logs_write(void);
+#endif
+#endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
+enum {SINGLE_STAR_BAND_PE, SINGLE_STAR_BAND_LW, SINGLE_STAR_BAND_68, SINGLE_STAR_BAND_NUV, SINGLE_STAR_BAND_OPT, SINGLE_STAR_BAND_ION_H0, SINGLE_STAR_BAND_ION_HE0, SINGLE_STAR_BAND_ION_HE1, SINGLE_STAR_BAND_ION_HE2, SINGLE_STAR_BAND_Q, SINGLE_STAR_NBANDS}; /* Q: photons/s */
+int single_star_band_luminosities_cgs(int i, double *L, double *L_bol); /* host only */
+#endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
+int single_star_rt_band_luminosities(int i, int mode, double *lum, struct particle_data *pp); /* host only */
+#endif
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+double sgchem_radiation_field_for_snapshot(int i, int blocknr);
+#endif
+#ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
+void single_star_radpressure_per_cell(double *dp_total_code);
+#endif
+#ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
+double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR); /* host only */
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS
+void treecol_shells_photon_cap(void);
+#endif
+#ifdef TEST_DUMP_TREECOL_PIXELS_AND_EXIT
+void test_dump_treecol_pixels_and_exit(void);
+#endif
 double mechanical_fb_calculate_eventrates(int i, double dt);
 double Z_for_stellar_evol(int i);
 #ifdef METALS
@@ -1287,6 +1370,89 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #endif
 
 
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+/* rows X(id, name in ledger.txt, code unit -> output unit, state): state rows are sums over the particles at output, the
+   others cumulative bookings; each row is compiled with its module */
+#ifdef SGCHEM
+#define LEDGER_ROWS_SGCHEM(X) X(LEDGER_CHEM_HEATING, "E_chem_heating_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_CHEM_COOLING, "E_chem_cooling_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_SGCHEM(X)
+#endif
+#ifdef GALSF
+#define LEDGER_ROWS_STARS(X) X(LEDGER_M_GAS, "M_gas_Msun", UNIT_MASS_IN_SOLAR, 1) X(LEDGER_M_STARS, "M_stars_Msun", UNIT_MASS_IN_SOLAR, 1) \
+    X(LEDGER_MZ_GAS, "MZ_gas_Msun", UNIT_MASS_IN_SOLAR, 1) X(LEDGER_MZ_STARS, "MZ_stars_Msun", UNIT_MASS_IN_SOLAR, 1) \
+    X(LEDGER_M_STARS_FORMED, "M_stars_formed_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_MZ_STARS_FORMED, "MZ_stars_formed_Msun", UNIT_MASS_IN_SOLAR, 0)
+#else
+#define LEDGER_ROWS_STARS(X)
+#endif
+#if defined(GALSF_FB_MECHANICAL)
+#define LEDGER_ROWS_FB(X) X(LEDGER_M_FB_TO_GAS, "M_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_MZ_FB_TO_GAS, "MZ_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0) \
+    X(LEDGER_E_FB_THERMAL_NOW, "E_fb_thermal_now_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_FB_THERMAL_DEFERRED, "E_fb_thermal_deferred_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_FB_KINETIC, "E_fb_kinetic_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_FB(X)
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+#define LEDGER_ROWS_SINGLE_STARS(X) X(LEDGER_M_EJECTA, "M_single_star_ejecta_Msun", UNIT_MASS_IN_SOLAR, 0) \
+    X(LEDGER_MZ_EJECTA, "MZ_single_star_ejecta_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_M_REMNANT_RESET, "M_remnant_reset_Msun", UNIT_MASS_IN_SOLAR, 0) \
+    X(LEDGER_MZ_STARS_LOST, "MZ_stars_lost_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_E_EJECTA, "E_single_star_ejecta_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_SINGLE_STARS(X)
+#endif
+#if defined(SGCHEM) && defined(COSMIC_RAY_FLUID)
+#define LEDGER_ROWS_CR_SGCHEM(X) X(LEDGER_E_CR_LOSSES, "E_cr_losses_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_IONISATION_FROM_FLUID, "E_cr_ionisation_from_fluid_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CHEM_CR_IONISATION, "E_chem_cr_ionisation_heating_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_CR_SGCHEM(X)
+#endif
+#ifdef COSMIC_RAY_FLUID /* every change of the CR energy has its row: E_CR - E_CR(0) = injected_sn + injected_wind + shock + clip + exchange + transport - streaming - collected - losses - ionisation_from_fluid */
+#define LEDGER_ROWS_CR(X) X(LEDGER_E_CR, "E_CR_erg", UNIT_ENERGY_IN_CGS, 1) LEDGER_ROWS_CR_SGCHEM(X) \
+    X(LEDGER_E_CR_OFFERED, "E_cr_offered_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_INJECTED_SN, "E_cr_injected_sn_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_INJECTED_WIND, "E_cr_injected_wind_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_SHOCK, "E_cr_shock_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_CLIP, "E_cr_clip_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_EXCHANGE, "E_cr_exchange_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_TRANSPORT, "E_cr_transport_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CR_STREAMING, "E_cr_streaming_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_COLLECTED, "E_cr_collected_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_CR(X)
+#endif
+#if defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION) && defined(SGCHEM)
+#define LEDGER_ROWS_PI(X) X(LEDGER_PI_HEATING, "E_photoionisation_heating_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_PI(X)
+#endif
+#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X) LEDGER_ROWS_PI(X)
+#define LEDGER_ROW_ENUM(id, name, unit, state) id,
+enum ledger_rows {LEDGER_ROWS(LEDGER_ROW_ENUM) LEDGER_NROWS};
+void ledger_init(void);
+void ledger_add(int row, double x);
+void ledger_output(void);
+void ledger_restart_io(void (*io)(void *, size_t, int), int modus);
+#ifdef OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS
+void ledger_step_checkpoint(const char *tag);
+#define LEDGER_STEP(tag) ledger_step_checkpoint(tag)
+#endif
+#endif
+#ifndef LEDGER_STEP
+#define LEDGER_STEP(tag)
+#endif
+#ifdef SGCHEM
+void sgchem_init(void);
+void sgchem_init_cell_state(int i);
+double sgchem_startup_electrons(int i);
+double sgchem_docooling(int i, double u_old, double dt, double *ne_eval);
+#ifdef RADTRANSFER
+struct ChemFUVField sgchem_rt_field(int i, double *fac_uv, double *pix_att); /* host only */
+#ifdef RT_INFRARED
+void sgchem_rt_cooling_to_infrared(int i, const double *lambda, double temp); /* host only */
+#endif
+#ifdef RT_CHEM_PHOTOION
+void sgchem_rt_init(void);
+struct ChemInputs;
+void sgchem_rt_ionising_rates(int i, struct ChemInputs *in); /* host only */
+void sgchem_rt_absorbers(int i, const double *ab); /* host only */
+#endif
+#endif
+#endif
 #ifdef CHIMES
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cell_data *cell);
@@ -1709,3 +1875,10 @@ void gizmo_kokkos_finalize(void);
 void gizmo_kokkos_fence(void);   /* best-effort device drain for normal (non-fatal) sync points */
 int  gizmo_gpu_device_memory(size_t *free_bytes, size_t *total_bytes);   /* advisory free/total device memory; 0 = unknown */
 void gizmo_gpu_sync_all(void);
+#ifdef KETJU_REGULARIZATION
+#include "../gravity/ketju/ketju_proto.h"
+#endif
+#ifdef TEST_TREE_NODE_MOMENTUM_AUDIT
+void tree_node_momentum_audit(void);
+void tree_node_momentum_audit_report(void);
+#endif

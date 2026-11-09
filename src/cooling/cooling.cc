@@ -233,9 +233,9 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
    KOKKOS_FUNCTION marks them __device__ __host__ so nvcc recognizes them as device-callable
    when they appear in call expressions within other KOKKOS_FUNCTION bodies in this TU.
    nvcc may issue advisory warning #20040 (consistent redeclaration) but this is harmless. */
-/* CHIMES and Grackle solve the cooling in host-only external libraries. Their builds cool on the host loop alone, and the
+/* CHIMES, Grackle and SGChem solve the cooling in host-only external libraries. Their builds cool on the host loop alone, and the
    entry points that reach the library are compiled for the host only; every other build keeps them device-callable. */
-#if defined(CHIMES) || defined(COOL_GRACKLE)
+#if defined(CHIMES) || defined(COOL_GRACKLE) || defined(SGCHEM)
 #define COOLING_SOLVE_IN_HOST_LIBRARY
 #define COOLING_SOLVE_FUNCTION
 #else
@@ -684,7 +684,13 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
 
 #if defined(COSMIC_RAY_FLUID) && !defined(CRFLUID_ALT_DISABLE_LOSSES)
+#if defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+        {double e0 = 0, e1 = 0; for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) {e0 += cell[i].CosmicRayEnergy[kb];}
+#endif
         CR_cooling_and_losses(i, cell[i].Ne, cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, dtime*UNIT_TIME_IN_CGS , pp, cell);
+#if defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+         for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) {e1 += cell[i].CosmicRayEnergy[kb];} ledger_add(LEDGER_E_CR_LOSSES, e0 - e1);}
+#endif
 #endif
         
 
@@ -881,6 +887,10 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     return DMAX(u,All.MinEgySpec);
 #endif
 
+#ifdef SGCHEM
+    if(cell != CellP || pp != P) {endrun(78002);} /* SGChem reads the global P/CellP; its builds cool them in place on the host loop */
+    return sgchem_docooling(target, u_old, dt, ne_eval);
+#endif
 #ifdef CHIMES
     chimes_update_gas_vars(target, pp, cell);
 
@@ -1472,7 +1482,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
 
 
-#if defined(RT_NUV)
+#if defined(RT_NUV) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) /* tree band fluxes only: no radiation bins to cool into */
     double Lambda_rad_NUV = LambdaMetal; // most of LambdaMetal coming out in the NUV, as we define it
     Lambda_rad_NUV += LambdaNeb; // the nebular forbidden lines of photoionized gas, handed over from the metal tables above: they come out with the rest of LambdaMetal
     Lambda_rad_NUV += LambdaExc; // this represents gas kinetic energy lost to collisional excitation. but each is assumed to produce a cascade back to the ground state, which should emit. note collisional ionization is not included here since the thermal energy is lost to the ionization energy, not to radiation, and the recombination luminosity is tallied separately.
@@ -1858,6 +1868,17 @@ void SetZeroIonization(void)
 }
 
 
+void get_uvb_rates(double *gJH0, double *gJHe0, double *gJHep, double *epsH0, double *epsHe0, double *epsHep)
+{
+    if(gJH0) {*gJH0 = CoolTables.gJH0;}
+    if(gJHe0) {*gJHe0 = CoolTables.gJHe0;}
+    if(gJHep) {*gJHep = CoolTables.gJHep;}
+    if(epsH0) {*epsH0 = CoolTables.epsH0;}
+    if(epsHe0) {*epsHe0 = CoolTables.epsHe0;}
+    if(epsHep) {*epsHep = CoolTables.epsHep;}
+}
+
+
 void IonizeParamsFunction(void)
 {
     int i, nint;
@@ -1980,6 +2001,10 @@ void InitCool(void)
 
 #ifdef COOL_GRACKLE
     InitGrackle();
+#endif
+
+#ifdef SGCHEM
+    sgchem_init();
 #endif
 
 #ifdef CHIMES
@@ -2197,7 +2222,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
     double T=1, f_dustgas_solar=1, urad_G0=1, xH0=1, x_e=0, nH_cgs=rho*UNIT_DENSITY_IN_NHCGS; // initialize definitions of some variables used below to prevent compiler warnings
     f_dustgas_solar=1; urad_G0=1; // initialize metal/dust and radiation fields. will assume solar-Z and spatially-uniform Habing field for incident FUV radiation unless reset below.
 #ifdef RT_ISRF_BACKGROUND
-    urad_G0 = All.InterstellarRadiationFieldStrength;
+    urad_G0 = ISRF_BACKGROUND_STRENGTH;
 #endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
     if(cell[i].DelayTimeHII > 0) {cell[i].MolecularMassFraction_perNeutralH=cell[i].MolecularMassFraction=0; return;} // force gas flagged as in HII regions to have zero molecular fraction
@@ -2418,11 +2443,11 @@ KOKKOS_FUNCTION MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, stru
     if(CoolTables.gJH0 > 0 && shieldfac > 0) {G0 += sqrt(shieldfac) * (CoolTables.gJH0 / 2.29e-10);} // uvb contribution //
 #endif
     double column = evaluate_NH_from_GradRho(pp[target].GradRho, pp[target].KernelRadius, cell[target].Density, pp[target].NumNgb, 1, target, pp) * UNIT_SURFDEN_IN_CGS; // converts to cgs
-#ifdef RT_PHOTOELECTRIC
+#if defined(RT_PHOTOELECTRIC) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) /* tree band fluxes go to SGChem, not here */
     G0 += cell[target].Rad_E_gamma[RT_FREQ_BIN_PHOTOELECTRIC] * (cell[target].Density * All.cf_a3inv / cell[target].Mass) * UNIT_EGY_DENSITY_IN_HABING; // convert to Habing field //
 #endif
 #if defined(RT_ISRF_BACKGROUND) && (!defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))                                                                        // latter flag decides whether we do treecol/sobolev here to get the background intensity // add a constant assumed FUV background, for isolated ISM simulations that don't get FUV from local sources self-consistently    
-    G0 += All.InterstellarRadiationFieldStrength * 1.7 * exp(-DMAX(pp[target].Metallicity[0] / All.SolarAbundances[0], 1e-4) * column * 500.);                 // RT_ISRF_BACKGROUND rescales the overal ISRF, factor of 1.7 gives Draine 1978 field in Habing units, extinction factor assumes the same FUV band-integrated dust opacity as RT module
+    G0 += ISRF_BACKGROUND_STRENGTH * 1.7 * exp(-DMAX(pp[target].Metallicity[0] / All.SolarAbundances[0], 1e-4) * column * 500.);                 // RT_ISRF_BACKGROUND rescales the overal ISRF, factor of 1.7 gives Draine 1978 field in Habing units, extinction factor assumes the same FUV band-integrated dust opacity as RT module
 #endif
 #ifdef SIMPLE_STEADYSTATE_CHEMISTRY
     if(mode == 1){ // Gong 2017 Eq. 9

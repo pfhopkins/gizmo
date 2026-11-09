@@ -17,6 +17,9 @@ extern ALIGN(32) struct particle_data
 #else
     MyIDType ID_generation;
 #endif
+#ifdef SINGLE_STAR_RECORDS
+    int StarIdx;                    /*!< single-star record slot + 1, 0 = none (galaxy_sf/single_star_record.h); in the padding after ID_generation */
+#endif
     
     integertime Ti_begstep;         /*!< marks start of current timestep of particle on integer timeline */
     integertime Ti_current;         /*!< current time of the particle */
@@ -129,7 +132,7 @@ extern ALIGN(32) struct particle_data
     
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
     MyFloat SNe_ThisTimeStep; /* flag that indicated number of SNe for the particle in the timestep */
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
     MyFloat MassReturn_ThisTimeStep; /* gas return from stellar winds */
 #ifdef GALSF_FB_FIRE_RPROCESS
     MyFloat RProcessEvent_ThisTimeStep; /* R-process event tracker */
@@ -140,7 +143,12 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
 #ifdef GALSF_FB_MECHANICAL
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+#define AREA_WEIGHTED_SUM_PIXELS 12 /* slot of the first of the 12 pixel cell counts */
+#define AREA_WEIGHTED_SUM_ELEMENTS 24 /* the 12 weights below plus the cell counts */
+#else
 #define AREA_WEIGHTED_SUM_ELEMENTS 12 /* number of weights needed for full momentum-and-energy conserving system */
+#endif
     MyFloat Area_weighted_sum[AREA_WEIGHTED_SUM_ELEMENTS]; /* normalized weights for particles in kernel weighted by area, not mass */
 #endif
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
@@ -453,6 +461,9 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
 
+#ifdef KETJU_REGULARIZATION
+#include "../gravity/ketju/ketju_particle_fields.h"
+#endif
     /* member functions */
     GIZMO_GPU_FUNCTION inline integertime integertime_step() const { /*!< integer timestep for this particle */
         return dt_step;

@@ -892,3 +892,36 @@ void force_update_hmax(void)
   force_bump_hmax_refresh_generation();   /* ancestor boxes re-drifted + per-type bands re-seeded */
   CPU_Step[CPU_TREEHMAXUPDATE] += measure_time();
 }
+
+#ifdef TEST_TREE_NODE_MOMENTUM_AUDIT
+/* Test-only: each local node's bulk velocity, its pending kick included, against its particles (momentum still in P.dp has not reached the nodes). */
+static double audit_vel_err; static long long audit_calls;
+void tree_node_momentum_audit(void)
+{
+    const int base = All.TreeNodeIndexBase, nn = Numnodestree;
+    std::vector<double> m(nn, 0.), mv(3 * nn, 0.);
+    for(int i = 0; i < NumPart && i < All.TreeParticleSlots; i++)
+    {
+        if(P[i].Mass <= 0 || Father[i] < 0) {continue;}
+        for(int no = Father[i]; no >= 0; no = Nodes[no].u.d.father)
+        {
+            const int k = no - base; if(k < 0 || k >= nn) {continue;}
+            m[k] += P[i].Mass;
+            for(int j = 0; j < 3; j++) {mv[3*k+j] += P[i].Mass * (double)P[i].Vel[j] - (double)P[i].dp[j];}
+        }
+    }
+    for(int k = 0; k < nn; k++)
+    {
+        const int no = base + k; if(m[k] <= 0 || (Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))) {continue;}
+        const int kicked = (Nodes[no].u.d.bitflags & (1 << BITFLAG_NODEHASBEENKICKED)) ? 1 : 0; double dv2 = 0;
+        for(int j = 0; j < 3; j++) {const double dv = (double)Extnodes[no].vs[j] + (kicked ? (double)Extnodes[no].dp[j] / m[k] : 0.) - mv[3*k+j] / m[k]; dv2 += dv * dv;}
+        if(sqrt(dv2) > audit_vel_err) {audit_vel_err = sqrt(dv2);}
+    }
+    audit_calls++;
+}
+void tree_node_momentum_audit_report(void)
+{
+    double e = 0; long long c = 0; MPI_Reduce(&audit_vel_err, &e, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD); MPI_Reduce(&audit_calls, &c, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask == 0) {printf("TREE_NODE_MOMENTUM_AUDIT calls %lld vel_err %.4e\n", c, e); fflush(stdout);}
+}
+#endif

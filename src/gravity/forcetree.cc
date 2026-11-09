@@ -9,6 +9,9 @@
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#if defined(KETJU_REGULARIZATION)
+#include "ketju/ketju_tree.h"
+#endif
 #include "forcetree.h"               /* GIZMO_EWALD_EN + Ewald-table accessor decls */
 #include "gravtree_force_kernel.h"   /* shared CPU/GPU accepted-source contribution physics (SSOT) */
 #include "gravtree_moment_kernel.h"  /* shared node moment/payload construction physics (SSOT); plain primitives only here */
@@ -233,6 +236,7 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
  * macros below are thin wrappers so the existing call sites are unchanged. */
 #include "gravity_box_distance.h"
 #include "gravtree_opening.h"
+#include "gravtree_treecol_pixels.h"
 #define GRAVITY_NEAREST_XYZ(x,y,z,sign)             gravity_box_nearest_image(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_X(x,y,z,sign) gravity_box_long_abs_x(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign) gravity_box_long_abs_y(x,y,z,sign)
@@ -589,6 +593,7 @@ let_build_attempt:
      * host loop over Numnodestree -- the worst sparse-active scaling. */
     if(gpu_node_reset_ephemeral(Numnodestree) != 0) {endrun(90000067);}
     if(gpu_moment_refresh(-1) != 0) {endrun(90000068);}
+    if(mp == NULL && npart == NumPart) {for(int i = 0; i < NumPart; i++) {if(P[i].dp[0] != 0 || P[i].dp[1] != 0 || P[i].dp[2] != 0) {P[i].dp = {};}}} /* the nodes hold the current velocities, so pending kicks are in them; conditional store: a dirty cache line per particle costs 14 % of the build (#103) */
     if(gpu_nextnode_thread() != 0) {endrun(90000069);}
     /* Link each multi-particle leaf's members now that its successor is known. ⛔ Must run BEFORE the
      * writeback and the tree export below: the export enumerates a leaf by following these links, so
@@ -1060,6 +1065,9 @@ struct DomainNODE
         MyFloat mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
         MyFloat gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+        MyFloat treecol_species_mass[TREECOL_PIXELS_NSPECIES];
+#endif
 #endif
         MyFloat hmax;
         MyFloat hmax_per_type[6];   /* cross-rank per-type h band (mirror of Extnodes.hmax_per_type) */
@@ -1151,6 +1159,9 @@ void force_exchange_pseudodata_issue(void)
             DomainMoment[i].mass = Nodes[no].u.d.mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
             DomainMoment[i].gasmass = Nodes[no].gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+            for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {DomainMoment[i].treecol_species_mass[ks] = Nodes[no].treecol_species_mass[ks];}
+#endif
 #endif
             DomainMoment[i].hmax = Extnodes[no].hmax;
             for(int t = 0; t < 6; t++) DomainMoment[i].hmax_per_type[t] = Extnodes[no].hmax_per_type[t];
@@ -1294,6 +1305,9 @@ int force_exchange_pseudodata_complete(void)
                     Nodes[no].u.d.mass = DomainMoment[i].mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
                     Nodes[no].gasmass = DomainMoment[i].gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+                    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {Nodes[no].treecol_species_mass[ks] = DomainMoment[i].treecol_species_mass[ks];}
+#endif
 #endif
                     Extnodes[no].hmax = DomainMoment[i].hmax;
                     for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = DomainMoment[i].hmax_per_type[t];
@@ -1385,6 +1399,9 @@ void force_treeupdate_pseudos(int no)
     Vec3<MyFloat> s, vs; MyFloat mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     MyFloat gasmass = 0;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    MyFloat treecol_species_mass[TREECOL_PIXELS_NSPECIES] = {0};
+#endif
 #endif
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -1452,6 +1469,9 @@ void force_treeupdate_pseudos(int no)
             mass += (Nodes[p].u.d.mass);
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
             gasmass += Nodes[p].gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+            for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {treecol_species_mass[ks] += Nodes[p].treecol_species_mass[ks];}
+#endif
 #endif
             s += Nodes[p].u.d.mass * Nodes[p].u.d.s;
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -1579,6 +1599,9 @@ void force_treeupdate_pseudos(int no)
     Nodes[no].u.d.mass = mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     Nodes[no].gasmass = gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {Nodes[no].treecol_species_mass[ks] = treecol_species_mass[ks];}
+#endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     Nodes[no].cr_injection = cr_injection;
@@ -1991,6 +2014,9 @@ struct grav_walk_open_inputs_t {
 #ifdef PMGRID
     double rcut, rcut2;
 #endif
+#ifdef KETJU_REGULARIZATION
+    double ketju_open_radius;   /* nodes within this distance of a chain member are opened; 0 = none */
+#endif
 };
 struct grav_walk_member_t {
     int target;                 /* particle index */
@@ -2014,6 +2040,9 @@ struct grav_walk_member_t {
     grav_pair_acc_t out;
 #ifdef RT_USE_TREECOL_FOR_NH
     double treecol_angular_bins[RT_USE_TREECOL_FOR_NH];
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_sums_t tcpix;
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     MyFloat tree_mass;
@@ -2105,6 +2134,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     double gasmass;
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    double tcpix_species[TREECOL_PIXELS_NSPECIES];
+#endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
     double center[3]={0};
 #ifdef BOX_PERIODIC
@@ -2176,6 +2208,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
         mem.open.ptype = P[tm].Type;
         mem.open.soft = ForceSoftening_KernelRadius(tm);
         mem.open.aold = All.ErrTolForceAcc * P[tm].OldAcc;
+#if defined(KETJU_REGULARIZATION)
+        mem.open.ketju_open_radius = P[tm].KetjuOpenRadius;
+#endif
         mem.pmass = P[tm].Mass;
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
         mem.vel = P[tm].Vel;
@@ -2241,6 +2276,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
         grav_pair_acc_init(mem.out);
 #ifdef RT_USE_TREECOL_FOR_NH
         {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {mem.treecol_angular_bins[k] = 0;}}
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+        treecol_pixels_zero(mem.tcpix);
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
         mem.tree_mass = 0;
@@ -2362,6 +2400,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                             * dark-matter/star particles. Nodes assign unconditionally below; only gas leaves
                             * (and the sink alpha-disk reservoir, where enabled) carry gas mass. */
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+                for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {tcpix_species[ks] = 0;}
+#endif
                 if(no < treeSlots) /* this is a particle, we will use it */
                 {
                     if(P[no].Ti_current != ti_Current) {endrun(90001051);}   /* accepted during traversal, which drifted it */
@@ -2396,6 +2437,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
                     if(P[no].Type == 0) {gasmass = P[no].Mass;}
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+                    treecol_pixels_species_masses(P, CellP, no, tcpix_species);
+#endif
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
                     if(P[no].Type == 5) {gasmass = P[no].Sink_Mass_Reservoir;} // gas at the inner edge of a disk should not see a hole due to the sink
 #endif
@@ -2415,6 +2459,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                         prox_target.vel = vel;
 #endif
                         grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P[no].Type; prox_src.src_mass = P[no].Mass; prox_src.motion.vel = src_vel;   /* the state this interaction was evaluated at, so the pair (dr, vel) feeding Min_Sink_Approach_Time stays mutually consistent on a Hermite pass */
+#ifdef KETJU_REGULARIZATION
+                        prox_target.ketju_chain = P[mem.target].KetjuChainID; prox_src.ketju_chain = P[no].KetjuChainID;
+#endif
 #if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
                         prox_src.motion.acc = P[no].Acc_Total_PrevStep;
 #endif
@@ -2529,6 +2576,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                     if(fl_tag == 1) { grav_apply_foreign_leaf_identity(fl_tag, fl_type, fl_zeta, fl_soft, &ptype_sec, &zeta_sec, &h_p); }
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
                     gasmass = nop->gasmass;
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+                    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {tcpix_species[ks] = nop->treecol_species_mass[ks];}
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
                     r_source = grav_spherical_symmetry_r_from_center(nop->u.d.s[0],nop->u.d.s[1],nop->u.d.s[2],center[0],center[1],center[2]);
@@ -2655,6 +2705,16 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
                     grav_treecol_accumulate(dr, r, fac_accel, gasmass, mass, angular_bin_size, mem.treecol_angular_bins);
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+                    if(grav_target_valid_gas_for_rt(ptype, soft, pmass))
+                    {
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+                        treecol_pixels_accumulate(mem.tcpix, dr, r, fac_accel, mass, gasmass, tcpix_species, d_stellarlum, mass_stellarlum, KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER * soft);
+#else
+                        treecol_pixels_accumulate(mem.tcpix, dr, r, fac_accel, mass, gasmass, tcpix_species, dr, NULL, 0);
+#endif
+                    }
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                     grav_cr_lebron_accumulate(ptype, r, soft, cr_injection, cr_active_gate, cr_t_max, tgt.pm, SubGrid_CosmicRayEnergyDensity);
@@ -2972,6 +3032,13 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                     r2, cen0, cen1, cen2, soft, h, aold, ptype,
                     nop->len, mass, nop->maxsoft,
                     pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
+#if defined(KETJU_REGULARIZATION)
+                if(pred == GRAV_ACCEPT_MULTIPOLE && (open.ketju_open_radius > 0 || (open.ketju_open_radius < 0 && !node_is_terminal))) { /* chain member: same-chain partners are leaf pairs; a chain on one rank has none in a terminal foreign node */
+                    double dks0 = nop->center[0] - open.pos[0], dks1 = nop->center[1] - open.pos[1], dks2 = nop->center[2] - open.pos[2];
+                    gravity_box_nearest_image(dks0, dks1, dks2, -1);
+                    if(ketju_node_overlaps_chain_sphere(dks0, dks1, dks2, fabs(open.ketju_open_radius), nop->len)) {pred = GRAV_OPEN_NODE; KETJU_WALK_OPENING_NOTE;}
+                }
+#endif
                 /* Foreign LET policy (mirrors the GPU walk exactly).  A terminal foreign node --
                  * a tagged single-particle leaf, or an aggregate the sender shipped multipole-only --
                  * has no children here: its nextnode is the continuation PAST the subtree, not a
@@ -3049,6 +3116,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
         P[target_m].GravAccel = out.core.acc;
 #ifdef RT_USE_TREECOL_FOR_NH
         int k; for(k=0; k < RT_USE_TREECOL_FOR_NH; k++) P[target_m].ColumnDensityBins[k] = mem.treecol_angular_bins[k];
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+        if(P[target_m].Type == 0) {treecol_pixels_write_cell(CellP[target_m], mem.tcpix);}
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
         P[target_m].TreeMass = mem.tree_mass;
@@ -4363,6 +4433,14 @@ void force_refresh_node_moments(void)
          * fall through force_exchange_pseudodata (matched, topology-driven);
          * the gravtree:after_refresh_moments poll drains before the walk. */
         if(gpu_moment_refresh(-1) != 0)          {endrun(90000086);}
+        { /* each member just entered its node with its current velocity, kicks still pending in dp included */
+            const int n_slots = (NumPart < All.TreeParticleSlots) ? NumPart : All.TreeParticleSlots;
+            for(i = 0; i < n_slots; i++) {
+                no = Father[i];
+                if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + Numnodestree) {continue;}
+                if(P[i].dp[0] != 0 || P[i].dp[1] != 0 || P[i].dp[2] != 0) {P[i].dp = {};}
+            }
+        }
         /* Mode B: re-seed per-type bands; gpu_moment_refresh wrote scalar
          * hmax to AoS but not per-type. Without this, hmax_per_type[] are
          * left at zero by the GPU bypass and Mode B's SYMMETRIC walker

@@ -28,6 +28,9 @@
    rt_kappa, rt_absorb_frac_albedo and rt_update_driftkick. Defined inline there
    so the device pass has a definition rather than an unresolvable extern call. */
 #include "../nuclear/nuclear_physics_functions.h"
+#if defined(SGCHEM) && defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
+#include "../cooling/sgchem/sgchem_dust_to_gas.h"
+#endif
 
 /* Forward decl: rt_kappa is defined at ~L522, but called earlier in this
  * file from rt_eqm_dust_temp (under SINGLE_STAR_SINK_DYNAMICS + RADTRANSFER,
@@ -418,7 +421,7 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
     double e_IR=0.31, Tdust_ext=DMAX(30.,T_cmb); // Milky way ISRF from Draine (2011), assume peak of dust emission at ~100 microns
     double e_HiEgy=0.66, T_hiegy=5800.; // Milky way ISRF from Draine (2011), assume peak of stellar emission at ~0.6 microns [can still have hot dust, this effect is pretty weak]
 #ifdef RT_ISRF_BACKGROUND
-    e_IR *= All.InterstellarRadiationFieldStrength; e_HiEgy *= All.InterstellarRadiationFieldStrength; // need to re-scale the assumed ISRF components
+    e_IR *= ISRF_BACKGROUND_STRENGTH; e_HiEgy *= ISRF_BACKGROUND_STRENGTH; // need to re-scale the assumed ISRF components
     if(!All.ComovingIntegrationOn){
 	e_CMB *= pow(1.+All.RadiationBackgroundRedshift,4);
  	T_cmb *= (1.+All.RadiationBackgroundRedshift);
@@ -615,6 +618,13 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
     if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return (180.)  * fac;}
     if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return (10.) * fac * (0.1 + Zfac);}
 #endif
+#if defined(SGCHEM) && defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) /* the chemistry's dust cross sections per H (MW dust) with its dust-to-gas ratio; tree radiation pressure uses the same */
+    if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC || k_freq==RT_FREQ_BIN_LYMAN_WERNER || k_freq==RT_FREQ_BIN_NUV) {
+        double sig_H = (k_freq==RT_FREQ_BIN_LYMAN_WERNER) ? 2.0e-21 : 1.337e-21;
+        double dgr = (i>=0) ? sgchem_dust_to_gas_ratio(pp[i].Metallicity[0]) : All.SGChemDustToGasRatio;
+        return DMAX(kappa_HHe, sig_H * dgr * HYDROGEN_MASSFRAC / PROTONMASS_CGS) * fac;
+    }
+#endif
 #ifdef RT_PHOTOELECTRIC
     if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC) {return DMAX(kappa_HHe, 720.*DMAX(1.e-4,Zfac*dust_to_metals_vs_standard)) * fac;}
 #endif
@@ -662,6 +672,9 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
 KOKKOS_INLINE_FUNCTION
 double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#if defined(SGCHEM) && defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) /* the chemistry's attenuation laws are extinction: no separate scattering */
+    if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC || k_freq==RT_FREQ_BIN_LYMAN_WERNER || k_freq==RT_FREQ_BIN_NUV) {return 1.-1.e-6;}
+#endif
 #if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS) && defined(RT_GENERIC_USER_FREQ)
     if(k_freq==RT_FREQ_BIN_GENERIC_USER_FREQ) {return DMAX(1.e-6, DMIN(1.0 - 1.e-6, All.Grain_Absorbed_Fraction_vs_Total_Extinction));}
 #endif
@@ -972,7 +985,7 @@ void rt_eddington_update_calculation(int j, struct particle_data *pp, struct gas
 #if defined(RT_ISRF_BACKGROUND) && defined(RADTRANSFER)
 /* ========================================================================
  * get_background_isrf_urad — ISRF energy density per band, code units.
- * Reads All.RadiationBackgroundRedshift, All.InterstellarRadiationFieldStrength.
+ * Reads All.RadiationBackgroundRedshift, All.InterstellarRadiationFieldStrength (ISRF_BACKGROUND_STRENGTH).
  * ======================================================================== */
 KOKKOS_INLINE_FUNCTION
 void get_background_isrf_urad(int i, double *urad){
@@ -983,16 +996,16 @@ void get_background_isrf_urad(int i, double *urad){
 #ifdef RT_INFRARED
 	double fac_uCMB = 1.;
 	fac_uCMB = pow(1+All.RadiationBackgroundRedshift, 4);
-        if(k==RT_FREQ_BIN_INFRARED){urad[k] = (All.InterstellarRadiationFieldStrength * 0.39 + fac_uCMB * 0.26) * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // 0.33 eV/cm^3 is dust emission peak, 0.26 is CMB - note how this bin actually lumps the two together
+        if(k==RT_FREQ_BIN_INFRARED){urad[k] = (ISRF_BACKGROUND_STRENGTH * 0.39 + fac_uCMB * 0.26) * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // 0.33 eV/cm^3 is dust emission peak, 0.26 is CMB - note how this bin actually lumps the two together
 #endif
 #ifdef RT_OPTICAL_NIR
-        if(k==RT_FREQ_BIN_OPTICAL_NIR){urad[k] = All.InterstellarRadiationFieldStrength * 0.54 * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // stellar emission
+        if(k==RT_FREQ_BIN_OPTICAL_NIR){urad[k] = ISRF_BACKGROUND_STRENGTH * 0.54 * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // stellar emission
 #endif
 #ifdef RT_NUV
-        if(k==RT_FREQ_BIN_NUV){urad[k] = All.InterstellarRadiationFieldStrength * 0.024 * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // stellar emission
+        if(k==RT_FREQ_BIN_NUV){urad[k] = ISRF_BACKGROUND_STRENGTH * 0.024 * ELECTRONVOLT_IN_ERGS / UNIT_PRESSURE_IN_CGS;} // stellar emission
 #endif
 #ifdef RT_PHOTOELECTRIC
-        if(k==RT_FREQ_BIN_PHOTOELECTRIC){urad[k] = All.InterstellarRadiationFieldStrength * 1.7  / UNIT_EGY_DENSITY_IN_HABING;} // Draine 1978 value = 1.7 Habing
+        if(k==RT_FREQ_BIN_PHOTOELECTRIC){urad[k] = ISRF_BACKGROUND_STRENGTH * 1.7  / UNIT_EGY_DENSITY_IN_HABING;} // Draine 1978 value = 1.7 Habing
 #endif
     }
 }
@@ -1006,7 +1019,7 @@ KOKKOS_INLINE_FUNCTION
 double background_isrf_cmb_Teff(void){
     // Returns the energy-weighted effective temperature of the background ISRF that has equivalent average photon energy to the sum of the ISRF and CMB
     // Necessary because current IR band treatment lumps both radiation fields together
-    double urad_ISRF_CGS_eV = All.InterstellarRadiationFieldStrength * 0.39, Trad_ISRF = 100.;
+    double urad_ISRF_CGS_eV = ISRF_BACKGROUND_STRENGTH * 0.39, Trad_ISRF = 100.;
 #ifdef RT_INFRARED
     Trad_ISRF = DMIN(All.InitRadiationTemp, 100.);
 #endif
@@ -1421,21 +1434,11 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
  * truth; host externals emitted by radiation/rt_utilities.cc.
  * ====================================================================== */
 #if defined(GRAVTREE_SOURCE_HOST_OWNER_TU) || (defined(GRAVTREE_SOURCE_DEVICE_TU) && defined(GRAVTREE_SOURCE_LAZY_SUPPORTED))
-#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
-
+#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE) || defined(GALSF_FB_FIRE_RT_HIIHEATING)
 #include "../galaxy_sf/stellar_evolution_functions.h"
 #include "../sinks/sink_functions.h"
 #include "../core/predict_functions.h"
-
-#define SET_ACTIVE_RT_CHECK() if(mode<0) {return 1;} else {active_check=1;}
-
-/* forward declarations so the dispatcher can call the band helpers below */
-KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION void rt_get_lum_gas(int target, double *je, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell);
+#endif
 
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING) || (defined(RT_CHEM_PHOTOION) && defined(GALSF))
 KOKKOS_INLINE_FUNCTION double particle_ionizing_luminosity_in_cgs_core(long i, struct particle_data *pp)
@@ -1472,12 +1475,31 @@ KOKKOS_INLINE_FUNCTION double particle_ionizing_luminosity_in_cgs_core(long i, s
 }
 #endif /* GALSF_FB_FIRE_RT_HIIHEATING || (RT_CHEM_PHOTOION && GALSF) */
 
+#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
+
+#define SET_ACTIVE_RT_CHECK() if(mode<0) {return 1;} else {active_check=1;}
+
+/* forward declarations so the dispatcher can call the band helpers below */
+KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION void rt_get_lum_gas(int target, double *je, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell);
+
+
 KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
     {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {lum[k]=0;}} // bands below only set what applies to this source
     if(!((1 << pp[i].Type) & (RT_SOURCES))) {return 0;}; // boolean test of whether i is a source or not - end if not a valid source particle
     if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion (P[].Mass is the SSOT for particle mass; CellP[].Mass is gas-only and is uninitialized for non-gas types, which would silently filter Type 4/5 sources)
     int active_check = 0; // default to inactive //
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+    if(pp[i].Type == 4) {return single_star_rt_band_luminosities(i, mode, lum, pp);} /* single stars: table bands only */
+#endif
+#ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS
+    if(pp[i].Type == 4) {return single_star_rt_band_luminosities(i, mode, lum, pp);} /* single stars: table bands in the transported bins */
+#endif
 
 #if defined(GALSF)
 #if defined(SINGLE_STAR_SINK_DYNAMICS)

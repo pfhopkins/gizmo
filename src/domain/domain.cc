@@ -10,6 +10,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "domain_key_functions.h"
+#include "../galaxy_sf/single_star_record.h"
 #include "../declarations/gpu_rng.h"
 #include "../core/wakeup_sidecar.h"
 #include "../system/gpu_particles_arena.h"
@@ -540,6 +541,9 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
      * t1, so without this the interval preceding t0 is charged to nobody. */
     CPU_Step[CPU_DOMAIN] += measure_time();
     const double child0_drift = CPU_ChildCharged;
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+    double ledger_e_ms = ledger_local_gas_energy();
+#endif
     double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
     {
@@ -548,6 +552,9 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     t_mergesplit = timediff(t_drift_start, my_second());
     double t_tmp = my_second();
     rearrange_particle_sequence(1); /* must be called after merge_and_split_particles, and should always be called before new domains are built; the tree is freed below */
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+    LEDGER_ADD(LG_MERGE_SPLIT, ledger_local_gas_energy() - ledger_e_ms);
+#endif
     t_rearrange = timediff(t_tmp, my_second());
 
     UseAllParticles = UseAllTimeBins;
@@ -2007,6 +2014,9 @@ void domain_exchange(void)
   tempAbundanceArray = (ChimesFloat *) malloc(ChimesGlobalVars.totalNumberOfSpecies * sizeof(ChimesFloat));
 #endif
   keyBuf = (peanokey *) mymalloc("keyBuf", count_togo * sizeof(peanokey));
+#ifdef SINGLE_STAR_RECORDS
+  std::vector<std::vector<struct single_star_record>> ssr_send(NTask), ssr_recv(NTask); /* records travel with their stars, in send order */
+#endif
 
   for(i = 0; i < NTask; i++) {count[i] = count_gas[i] = 0;}
 
@@ -2041,6 +2051,9 @@ void domain_exchange(void)
 	    {
 	      partBuf[offset[target] + count[target]] = P[n];
 	      keyBuf[offset[target] + count[target]] = Key[n];
+#ifdef SINGLE_STAR_RECORDS
+	      if(P[n].StarIdx > 0) {struct single_star_record r; single_star_record_get(P[n].StarIdx, &r); single_star_record_free(P[n].StarIdx); ssr_send[target].push_back(r);}
+#endif
 	      count[target]++;
 	    }
 
@@ -2179,6 +2192,15 @@ void domain_exchange(void)
 			   MPI_BYTE, target, TAG_KEY,
 			   Key + offset_recv[target], count_recv[target] * sizeof(peanokey),
 			   MPI_BYTE, target, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+#ifdef SINGLE_STAR_RECORDS
+	      {
+	        int n_send = (int) ssr_send[target].size(), n_recv = 0; /* the receiver counts the stars with records it just received */
+	        for(int q = 0; q < count_recv[target]; q++) {if(P[offset_recv[target] + q].StarIdx > 0) {n_recv++;}}
+	        ssr_recv[target].resize(n_recv);
+	        MPI_Sizelimited_Sendrecv(ssr_send[target].data(), n_send * sizeof(struct single_star_record), MPI_BYTE, target, TAG_SINGLESTAR_DATA,
+			   ssr_recv[target].data(), n_recv * sizeof(struct single_star_record), MPI_BYTE, target, TAG_SINGLESTAR_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	      }
+#endif
 	    }
 	}
     }
@@ -2199,6 +2221,19 @@ void domain_exchange(void)
     }
 #endif 
 
+#ifdef SINGLE_STAR_RECORDS
+  /* received stars take new local slots, in the order their records were sent */
+  for(target = 0; target < NTask; target++)
+    {
+      size_t k = 0;
+      for(i = 0; i < count_recv[target]; i++)
+        {
+          struct particle_data *p = &P[offset_recv[target] + i];
+          if(p->StarIdx > 0) {p->StarIdx = (k < ssr_recv[target].size()) ? single_star_record_new(&ssr_recv[target][k]) : 0; k++;}
+        }
+      if(k != ssr_recv[target].size()) {endrun(7822);} /* records and stars out of step */
+    }
+#endif
   NumPart += count_get;
   N_gas += count_get_gas;
 

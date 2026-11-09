@@ -694,6 +694,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     for(j = NumPart + num_already_spawned; j < NumPart + num_already_spawned + n_particles_split; j++)
     {   /* first, clone the 'dummy' particle so various fields are set appropriately */
         P[j] = P[dummy_cell_i_to_clone]; CellP[j] = CellP[dummy_cell_i_to_clone]; /* set the pointers equal to one another -- all quantities get copied, we only have to modify what needs changing */
+        P[j].dp = {}; /* the template's pending kick stays with the template; the new cell's momentum enters the tree when its node is re-derived */
         domain_clear_work_history(j);   /* a new cell, not a copy of the template's work */
         wakeup_sidecar_mark(j);   /* whole-struct clone inherits the template particle's wakeup into the spawned slot */
 #ifdef MHD_MODIFIED_GRADIENT
@@ -818,6 +819,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #if defined(SINK_THERMALFEEDBACK)
         CellP[j].Injected_Sink_Energy = 0;
 #endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[j].Dyield_pending[k] = 0;} /* the template's pending exchange stays with the template */
+#endif
 #ifdef RADTRANSFER
         for(k=0;k<N_RT_FREQ_BINS;k++)
         {
@@ -928,7 +932,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         int k_CRegy; for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++) /* initialize CR energy and other related terms to nil */
         {
             CellP[j].CosmicRayEnergyPred[k_CRegy]=CellP[j].CosmicRayEnergy[k_CRegy]=CellP[j].DtCosmicRayEnergy[k_CRegy]=0;
-#if defined(TRANSPORT_SUBCYCLE) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) && !defined(CRFLUID_EVOLVE_SPECTRUM)
+#if (defined(TRANSPORT_SUBCYCLE) || defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) && !defined(CRFLUID_EVOLVE_SPECTRUM)
             CellP[j].DtCosmicRayEnergy_StreamingLoss[k_CRegy]=0;
 #endif
 #ifdef CRFLUID_EVOLVE_SPECTRUM

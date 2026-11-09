@@ -387,6 +387,9 @@ integertime get_timestep(int p,		/*!< particle index */
         ax = All.cf_a2inv * P[p].GravAccel[0];
         ay = All.cf_a2inv * P[p].GravAccel[1];
         az = All.cf_a2inv * P[p].GravAccel[2];
+#ifdef KETJU_REGULARIZATION
+        if(KETJU_DT_MEMBER(p)) {ax = All.cf_a2inv * ketju_member(p).com_accel[0]; ay = All.cf_a2inv * ketju_member(p).com_accel[1]; az = All.cf_a2inv * ketju_member(p).com_accel[2];} /* chain member: the field external to its chain */
+#endif
 #ifdef PMGRID
         ax += All.cf_a2inv * P[p].GravPM[0];
         ay += All.cf_a2inv * P[p].GravPM[1];
@@ -394,7 +397,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
         
 #if defined(TIDAL_TIMESTEP_CRITERION)
-#if defined(RT_USE_GRAVTREE) && !defined(SINGLE_STAR_FB_RT_HEATING)
+#if defined(RT_USE_GRAVTREE) && !defined(SINGLE_STAR_FB_RT_HEATING) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) /* the band fluxes add no force on gas */
         if(P[p].Type>0) // strictly this is better for accuracy, but not necessary
 #endif
         ax = ay = az = 0.0; // we're getting our gravitational timestep criterion from the tidal tensor, but still want to do the accel criterion for other forces
@@ -496,6 +499,9 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
 
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion
     double tidal_mag_dt = P[p].tidal_tensorps.frobenius_norm_sq();
+#ifdef KETJU_REGULARIZATION
+    if(KETJU_DT_MEMBER(p)) {double t2 = ketju_member(p).com_dt_tidal * ketju_member(p).com_dt_tidal; tidal_mag_dt = 1. / (t2 * t2);} /* |T_external|_F^2 */
+#endif
     double dt_dynamical = sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
     double dt_tidal = (TIDAL_TIMESTEP_PREFAC) * dt_dynamical;
     if(P[p].Type == 0) { // gas self-gravity timescale as a bare minimum
@@ -1160,6 +1166,12 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
         if(dt_stellar_evol>0) {if(dt_stellar_evol<dt) {dt = dt_stellar_evol;}}
     }
 #endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+    if(P[p].StarIdx > 0) {double dt_star = single_star_max_timestep(p); if(dt_star > 0 && dt_star < dt) {dt = dt_star;}} /* next stellar-evolution event of a single star */
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    if(P[p].StarIdx > 0) {double dt_pi = photoion_max_timestep(p); if(dt_pi > 0 && dt_pi < dt) {dt = dt_pi;}} /* ionising sources: the photoionisation cadence */
+#endif
 
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
@@ -1273,6 +1285,7 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
 
     if(dt >= dt_displacement) {dt = dt_displacement;}
 
+    if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* before the integer conversion below: dt/Timebase_interval must not overflow */
     if((dt < All.MinSizeTimestep)||(((integertime) (dt / All.Timebase_interval)) <= 1))
     {
         PRINT_WARNING("Timestep wants to be below the limit `MinSizeTimestep'");
@@ -1322,7 +1335,6 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
         dt = All.MinSizeTimestep;
     }
 
-    if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* prevent integer timeline overflow */
     ti_step = (integertime) (dt / All.Timebase_interval);
     /* Floor the step on the integer timeline. This is not the MinSizeTimestep policy: a run that
        has asked for a controlled stop still has to reach the next phase boundary to take it, and a
@@ -1499,6 +1511,10 @@ static std::vector<int> WokenParticles;
 void process_wake_ups(void)
 {
     WokenParticles.clear();
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+    {static int ledger_wake_off = -1; if(ledger_wake_off < 0) {ledger_wake_off = (getenv("LEDGER_WAKEUP_OFF") != NULL);} /* drop every wake-up request: sensitivity runs only */
+    if(ledger_wake_off) {for(int ii = 0; ii < NumPart; ii++) {P[ii].wakeup = 0;} NeedToWakeupParticles_local = 0; NeedToWakeupParticles = 0; return;}}
+#endif
 #ifdef FORCE_EQUAL_TIMESTEPS
     return; /* no wakeups if all particles are on the same timestep */
 #endif
@@ -1585,6 +1601,9 @@ void process_wake_ups(void)
 		/* Floor at the lowest-currently-occupied-and-active bin (see comment
 		 * above the i-loop). Prevents the multiplicative wakeup cascade. */
 		if(bin < lowest_occupied_active_bin) bin = lowest_occupied_active_bin;
+#ifdef WAKEUP_TARGET_BIN_PARAMETER
+		if(All.WakeupTargetBin == 1) {bin = waker_bin;} else if(All.WakeupTargetBin == 2) {bin = max_time_bin_active;}
+#endif
 #ifdef STOP_WHEN_BELOW_MINTIMESTEP
 		/* If wakeup assigns a bin whose physical timestep is below MinSizeTimestep, abort with full
 		 * context. Without this, the wakeup-application path silently floors at bin 0 (dt ~ Timebase_interval) bypassing the get_timestep() warning. */
@@ -1696,6 +1715,9 @@ void process_wake_ups(void)
 	}
     }
 
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+    EnergyLedger[LG_WAKE_N] += n;
+#endif
     sumup_large_ints(1, &n, &ntot);
     if(ThisTask == 0) {if(ntot > 0) {printf("%d%09d particles activated (in wakeup check).\n", (int) (ntot / 1000000000), (int) (ntot % 1000000000));}}
     NeedToWakeupParticles = 0;

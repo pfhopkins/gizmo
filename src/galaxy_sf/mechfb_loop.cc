@@ -27,6 +27,9 @@
 #include "../mesh/ghost_symlist_lifecycle.h"   /* gizmo_ghost_safety_factor() */
 
 #include "mechfb_loop.h"
+#ifdef MECHFB_BALANCED_SHARES
+#include "../mesh/gpu_neighbor_list.h"         /* gizmo_motion_bound_raise */
+#endif
 
 #ifdef GALSF_FB_MECHANICAL
 
@@ -41,7 +44,7 @@ int addFB_evaluate_active_check(int i, int fb_loop_iteration);
  * ========================================================================== */
 int mechfb_compute_num_modes(void) {
     int num_modes = 3;
-#if defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#if defined(GALSF_FB_MASS_RETURN_EVENTS)
     num_modes = 4;
 #if defined(GALSF_FB_FIRE_RPROCESS)
     num_modes = 5;
@@ -49,6 +52,9 @@ int mechfb_compute_num_modes(void) {
 #if defined(GALSF_FB_FIRE_AGE_TRACERS)
     num_modes = 6;
 #endif
+#endif
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+    num_modes += 1; /* the pixel counts */
 #endif
     return num_modes;
 }
@@ -62,8 +68,13 @@ void mechfb_populate_aux_initial(MechFBSpec::Aux& aux,
                                  struct MechFBGasDelta *LocalGasMechFBInfoTemp,
                                  int num_local_gas) {
     aux.num_modes = mechfb_compute_num_modes();
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+    const int modes_canonical[7] = {-3, -2, -1, 0, 1, 2, 3};
+    for (int k = 0; k < 7; ++k) aux.modes[k] = modes_canonical[k];
+#else
     const int modes_canonical[6] = {-2, -1, 0, 1, 2, 3};
     for (int k = 0; k < 6; ++k) aux.modes[k] = modes_canonical[k];
+#endif
     aux.mode_idx = 0;
     aux.host_locals_scratch.assign(num_active > 0 ? num_active : 0, MechFBLocalIn{});
     aux.LocalGasMechFBInfoTemp = LocalGasMechFBInfoTemp;
@@ -131,6 +142,9 @@ void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
             fb.unit_mom_SNe = fb.Msne * fb.SNe_v_ejecta;
         }
     }
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    if (loop_iteration == -1 && fb.Msne > 0) {double M_ej = single_star_ejecta_mass_this_step(i); if (M_ej > 0) {fb.Msne = M_ej;}} /* the sums of this pass use the ejecta mass, not the star's */
+#endif
 
     loc->Pos = fb.Pos;
     loc->Vel = fb.Vel;
@@ -148,7 +162,12 @@ void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
 void mech_fb_apply_aws_out(const struct MechFBOut *out, int i, int loop_iteration) {
     if (P[i].Mass <= 0) return;
     int kmin = 0, kmax = 7;
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+    if (loop_iteration == -1) { kmin = 7; kmax = AREA_WEIGHTED_SUM_PIXELS; }
+    if (loop_iteration == -3) { kmin = AREA_WEIGHTED_SUM_PIXELS; kmax = AREA_WEIGHTED_SUM_ELEMENTS; }
+#else
     if (loop_iteration == -1) { kmin = 7; kmax = AREA_WEIGHTED_SUM_ELEMENTS; }
+#endif
     for (int k = kmin; k < kmax; ++k) P[i].Area_weighted_sum[k] = out->Area_weighted_sum[k];
 }
 
@@ -252,7 +271,7 @@ void mechfb_fill_call_scalars(struct MechFBCallScalars *scalars) {
      * COSMIC_RAY_FLUID || COSMIC_RAY_SUBGRID_LEBRON). */
     scalars->CosmicRay_SNeFraction = host_all->CosmicRay_SNeFraction;
 #endif
-#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && defined(CRFLUID_EVOLVE_SPECTRUM)
+#if defined(MECHFB_CR_INJECTION) && defined(CRFLUID_EVOLVE_SPECTRUM)
     for (int k = 0; k < N_CR_PARTICLE_BINS; ++k) {
         scalars->CR_global_min_rigidity_in_bin   [k] = host_all->CR_global_min_rigidity_in_bin   [k];
         scalars->CR_global_max_rigidity_in_bin   [k] = host_all->CR_global_max_rigidity_in_bin   [k];
@@ -429,6 +448,12 @@ void MechFBSpec::after_iter_global(const neighbor_loop_args& args,
             mech_fb_apply_aws_out(&accum, i, mode);
         } else if (accum.M_coupled > 0) {
             mech_fb_apply_source_mass_out(P, CellP, i, accum.M_coupled);
+#ifdef MECHFB_BALANCED_SHARES
+            if (P[i].Mass > 0) { /* what the gas took unbalanced: rounding, or the whole momentum when all gas lies along one ray */
+                for (int k = 0; k < 3; ++k) {P[i].Vel[k] -= accum.p_to_gas[k] * nlr_host_all_ptr()->cf_atime / P[i].Mass;}
+                gizmo_motion_bound_raise(&i, 1);
+            }
+#endif
         }
     }
 }
@@ -495,6 +520,9 @@ static void mechfb_gas_delta_zero(struct MechFBGasDelta *d) {
     for (int k = 0; k < N_CR_PARTICLE_BINS; ++k) d->CR_number_injected[k] = 0;
 #endif
     for (int k = 0; k < 3; ++k) d->CR_dir_weighted[k] = 0;
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    d->CR_energy_from_sn = 0;
+#endif
 #endif
 }
 
@@ -517,6 +545,9 @@ static void mechfb_gas_delta_add(struct MechFBGasDelta *dst,
     for (int k = 0; k < N_CR_PARTICLE_BINS; ++k) dst->CR_number_injected[k] += src->CR_number_injected[k];
 #endif
     for (int k = 0; k < 3; ++k) dst->CR_dir_weighted[k] += src->CR_dir_weighted[k];
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    dst->CR_energy_from_sn += src->CR_energy_from_sn;
+#endif
 #endif
 }
 

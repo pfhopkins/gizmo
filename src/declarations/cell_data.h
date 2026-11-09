@@ -69,6 +69,9 @@ extern struct gas_cell_data
 #if (!defined(RADTRANSFER) && !defined(RT_INFRARED)) && (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
     MyFloat Dust_Temperature;
 #endif
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+    MyFloat ISMDustChem_Hu_Vrel[GALSF_ISMDUSTCHEM_HU_SIZE_BINS][3]; /*!< dust-gas relative velocity per size bin [km/s] */
+#endif
 #ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
     MyDouble ISMDustChem_Dust_NumberInBin[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS];
     MyDouble ISMDustChem_Dust_SlopeInBin[NUM_ISMDUSTCHEM_SPECIES][NUM_ISMDUSTCHEM_SIZE_BINS];
@@ -200,6 +203,9 @@ extern struct gas_cell_data
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     MyFloat Dyield[NUM_METAL_SPECIES];
 #endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+    MyDouble Dyield_pending[NUM_METAL_SPECIES]; /*!< diffusive metal exchange received from neighbours, applied at this cell's next active step */
+#endif
     
 #ifdef HYDRO_SPH
     MyDouble DrkernHydroSumFactor;   /* for 'traditional' SPH, we need the SPH hydro-element volume estimator */
@@ -289,8 +295,15 @@ extern struct gas_cell_data
     MyDouble DM_Rho;                  /*!< kernel-weighted DM mass density at gas cell (physical) */
 #endif
     
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    integertime PhotoionizedUntil;    /*!< photoionised while Ti_Current is below this (set at each solve) */
+#endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
     MyFloat DelayTimeHII;             /*!< flag indicating particle is ionized by nearby star */
+#endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+    MyFloat SingleStarSFCooldown;     /*!< remaining time [physical] in which this cell forms no star after a birth */
+    unsigned char SingleStarSpawnBlock; /*!< 1 after a birth until the cell's density is recomputed */
 #endif
 #ifdef GALSF_FB_TURNOFF_COOLING
     MyFloat DelayTimeCoolingSNe;      /*!< flag indicating cooling is suppressed b/c heated by SNe */
@@ -441,6 +454,8 @@ extern struct gas_cell_data
 #ifdef TRANSPORT_SUBCYCLE_COOLING
     MyFloat Dt_Transport_Subcycle_Saved; /*!< saved DtInternalEnergy (code units) before cooling, restored each sub-step */
 #endif
+#endif
+#if defined(TRANSPORT_SUBCYCLE) || defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
 #if defined(COSMIC_RAY_FLUID) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) && !defined(CRFLUID_EVOLVE_SPECTRUM)
     MyFloat DtCosmicRayEnergy_StreamingLoss[N_CR_PARTICLE_BINS]; /*!< hydro-pass streaming-loss contribution to DtCosmicRayEnergy (its gas-heating counterpart is applied once per hydro step), added back each sub-step */
 #endif
@@ -460,6 +475,37 @@ extern struct gas_cell_data
     
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     MyFloat SubGrid_CosmicRayEnergyDensity;
+#endif
+#ifdef SGCHEM
+    MyFloat TracAbund[SGCHEM_NUM_TRACKED_SPECIES]; /*!< SGChem tracked species, number per H nucleus */
+    MyFloat DustTemp;                     /*!< dust temperature from the chemistry [K] */
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+    float SGChemLambda[28], SGChemLambdaChem[6]; /*!< cooling and chemistry rates of the last solve / n_H^2 [erg cm^3 / s] */
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+    float SGChemPhotoRates[6];                   /*!< photorates of the last solve */
+#endif
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+    float ShieldFacDust;                  /*!< dust shielding factor of the last solve, for snapshots */
+#endif
+    MyFloat Temp;                         /*!< gas temperature from the chemistry [K] */
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    TREECOL_PIXEL_STORAGE_T TreeColColumn[TREECOL_PIXELS_NCOLUMNS][GALSF_RESOLVEDISM_TREECOL_PIXELS]; /*!< per-pixel dust-weighted gas, H2, CO columns from the gravity walk [code mass/length^2]; read with TREECOL_PIXELS_COLUMN */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+    TREECOL_PIXEL_STORAGE_T TreeColEgyUV[GALSF_RESOLVEDISM_TREECOL_PIXELS]; /*!< per-pixel unattenuated stellar 6-13.6 eV energy density [erg/cm^3]; read with TREECOL_PIXELS_EGY_UV */
+    float TreeColEgyLW, TreeColEgyNUV, TreeColEgyOPT, TreeColEgy68; /*!< totals: 11.2-13.6 (per-pixel floored), 3.444-6, 0.4133-3.444, 6-8 eV [erg/cm^3] */
+#ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
+    float TreeColRadpFlux[4];  /*!< sum over pixels of sigma_b F_b: vector along the pixel centres toward the sources, then the scalar [1e-21 cm^2 x code lum / code length^2] */
+    float RadpAbsorbedLum;     /*!< luminosity this cell absorbed at its last update [code]: its share of the photon cap */
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
+    float TreeRayIonPhotonFlux[TREECOL_SHELLS_ION_NBANDS], TreeRayIonEnergyFlux[TREECOL_SHELLS_ION_NBANDS]; /*!< attenuated ionising flux per band summed over pixels [1/s/cm^2, erg/s/cm^2] */
+#endif
+#endif
+#ifdef CR_BACKGROUND_IONRATE_ATTENUATED
+    float TreeColCRAttenuation; /*!< background cosmic-ray rate attenuation by the gas column (STARFORGE), pixel mean */
+#endif
 #endif
     
     /* Temperature, Gamma and MeanMolecularWeight are the cached thermodynamic state. Gamma and

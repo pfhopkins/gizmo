@@ -164,7 +164,7 @@ void cosmic_ray_diffusion_compute_pair(
     {
         double min_shockvel_for_accel = 100., min_machnum_for_accel = 5.;
         double min_machnum_for_pressurecrit = 1.3;
-        double saturation_fraction_for_craccel = (double)(CRFLUID_INJECTION_AT_SHOCKS);
+        double saturation_fraction_for_craccel = All.CosmicRay_ShockAccelEfficiency;
         double vdotf2_phys = face_vel_i - face_vel_j;
         double vdotr2_phys = kernel.vdotr2 / (kernel.r * All.cf_atime);
         if(All.ComovingIntegrationOn) { vdotr2_phys -= All.cf_hubble_a2 * kernel.r / All.cf_atime; }

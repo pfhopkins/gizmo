@@ -136,13 +136,15 @@ KOKKOS_INLINE_FUNCTION void grav_target_select_soft_and_zeta(int ptype, double a
 }
 #endif
 
-#ifdef RT_USE_GRAVTREE
+#if defined(RT_USE_GRAVTREE) || defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
 /* Valid-gas gate for every RT payload load/accumulate (both walks store the result; the GPU
  * walk keeps it in a volatile int — nvc++ constant-propagates plain int gates in device code). */
 KOKKOS_INLINE_FUNCTION int grav_target_valid_gas_for_rt(int ptype, double soft, double pmass)
 {
     return (ptype==0 && soft>0 && pmass>0) ? 1 : 0;
 }
+#endif
+#ifdef RT_USE_GRAVTREE
 #if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
 /* RT_LEBRON on-the-spot radiation-pressure coupling factor, once per target. kappa_eff[kf] is
  * rt_kappa(-1,kf,...) evaluated caller-side (rt_kappa needs the walk's particle pointers). */
@@ -705,6 +707,38 @@ KOKKOS_INLINE_FUNCTION void grav_pair_optional_acc_combine(grav_pair_optional_ac
     (void) a; (void) b;
 }
 
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+/* GRAVITY_PERIODIC_XY_IMAGES: the (2N+1)^2-1 further x/y images of a source, N = All.GravityPeriodicXYImages, around its nearest image
+ * (src.dr). The box is open in z, so the images are shifted in x and y only. */
+KOKKOS_INLINE_FUNCTION void
+grav_pair_xy_images(const grav_pair_tgt_t &tgt, const grav_pair_src_t &src, grav_pair_core_acc_t &core, grav_pair_optional_acc_t &optional)
+{
+    (void) optional;
+    const int n = All.GravityPeriodicXYImages;
+    for(int a = -n; a <= n; a++)
+    {
+        for(int b = -n; b <= n; b++)
+        {
+            if(a == 0 && b == 0) {continue;}
+            Vec3<double> d = {src.dr[0] + a * boxSize_X, src.dr[1] + b * boxSize_Y, src.dr[2]};
+            const double r2 = d.norm_sq();
+            grav_force_pair_t im = grav_force_pair(sqrt(r2), r2, src.mass, tgt.h, src.h_p, tgt.ptype, src.ptype_sec, tgt.pmass,
+                                                   tgt.zeta, src.zeta_sec, tgt.ags_bitflag);
+            core.acc += im.fac_accel * d;
+#ifdef EVALPOTENTIAL
+            core.pot += im.fac_pot;
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+            grav_tidal_tensor_accumulate(d, im.fac_tidal, im.fac2_tidal, tgt.pm, 0, optional.tidal_tensorps);
+#endif
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+            grav_jerk_accumulate(src.dv, d, im.fac_accel, im.fac2_tidal, tgt.ptype, optional.jerk);
+#endif
+        }
+    }
+}
+#endif /* GRAVITY_PERIODIC_XY_IMAGES */
+
 /* What the walker's payload blocks consume after the evaluation: the separation and the
  * acceleration prefactor as accumulated (PM-truncated when the source was in range of the
  * short-range table, raw otherwise -- the column-integral payloads have no PM completion). */
@@ -760,6 +794,9 @@ grav_pair_evaluate_core(const grav_pair_tgt_t &tgt, grav_pair_src_t &src, grav_p
                                                tgt.pos[0],tgt.pos[1],tgt.pos[2], src.dr, fac_accel);
 #endif
         core.acc += fac_accel * src.dr;
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+        grav_pair_xy_images(tgt, src, core, optional);
+#endif
 #ifdef SINK_DYNFRICTION_FROMTREE
         grav_sink_dynfriction_accumulate(src.dr, src.dv, fac_accel, src.mass, tgt.sink_mass, src.m_j_eff_for_df, tgt.ptype, core.acc);
 #endif
@@ -1083,6 +1120,9 @@ struct grav_sink_prox_target_t {
 #ifdef SINGLE_STAR_TIMESTEPPING
     Vec3<double> vel;
 #endif
+#ifdef KETJU_REGULARIZATION
+    MyIDType ketju_chain;   /* KETJU chain of the target (0 = none) */
+#endif
 };
 
 /* Source kinematics shared by the leaf + node sink-proximity helpers. Field set is the union
@@ -1101,6 +1141,9 @@ struct grav_sink_source_motion_t {
 struct grav_sink_prox_leaf_src_t {
     int src_type; double src_mass;
     grav_sink_source_motion_t motion;
+#ifdef KETJU_REGULARIZATION
+    MyIDType ketju_chain;   /* KETJU chain of the source (0 = none) */
+#endif
 };
 
 /* Node (aggregate) source. */
@@ -1155,8 +1198,15 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_leaf_accumulate(double r2, const Vec3
 #endif
         double tSqr = r2soft/(vSqr + MIN_REAL_NUMBER), tff4 = r2soft*r2soft*r2soft/(M_total*M_total);
 
+#ifdef KETJU_REGULARIZATION
+        /* MSTAR integrates a same-chain pair inside the region radius over the next step: it does not set the host step */
+        if((target.ketju_chain == 0) || (src.ketju_chain != target.ketju_chain) || (r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius)) {
+#endif
         if(tSqr < prox.Min_Sink_Approach_Time) {prox.Min_Sink_Approach_Time = tSqr;}
         if(tff4 < prox.Min_Sink_Freefall_time) {prox.Min_Sink_Freefall_time = tff4;}
+#ifdef KETJU_REGULARIZATION
+        }
+#endif
 #ifdef SINGLE_STAR_FIND_BINARIES
         if(target.ptype == 5) // only for BH particles and for non center of mass calculation
         {

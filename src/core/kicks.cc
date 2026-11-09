@@ -254,6 +254,9 @@ void apply_long_range_kick(integertime tstart, integertime tend)
 #endif
     for(i = 0; i < NumPart; i++)
     {
+#ifdef KETJU_REGULARIZATION
+        if(P[i].KetjuIntegrated) {continue;} /* MSTAR integrates it */
+#endif
         if(P[i].Mass > 0)
         {
             Vec3<double> dvel = P[i].GravPM * dt_gravkick; /* do the kick, only collisionless particles */
@@ -344,6 +347,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             if(CellP[i].CoolingIsOperatorSplitThisTimestep==0) {du_tot=0;} /* cooling in unsplit, so zero contribution here */
 #endif
             double dEnt = CellP[i].InternalEnergy + du_tot;
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+            double ledger_u0 = CellP[i].InternalEnergy;
+#endif
             
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
             /* if we're using a Riemann solver, we include an energy/entropy-type switch to ensure
@@ -441,6 +447,10 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #endif
             EOS_LIMIT_RECORD_KICK_MIN_ENERGY(CellP[i].CompositionType, CellP[i].InternalEnergy, P[i].Mass);
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+            LEDGER_ADD(LG_HYDRO_Q, P[i].Mass * (dEnt - ledger_u0)); ledger_log_hydro_event(i, P[i].Mass * (dEnt - ledger_u0), 0, dt_hydrokick, mode);
+            LEDGER_ADD(LG_FLOORS, P[i].Mass * (CellP[i].InternalEnergy - dEnt));
+#endif
         }
         
         /* now, kick for non-gas/fluid quantities (accounting for momentum conservation if masses are changing) */
@@ -472,6 +482,20 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                 P[i].OldJerk = P[i].GravJerk;
                 P[i].Hermite_OldAcc = P[i].GravAccel; // this is the value from the first Hermite tree pass for this timestep
             }
+        }
+#endif
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+        if(P[i].Type == 0) /* kinetic work by each force over this kick: sums exactly to the kinetic energy change */
+        {
+            Vec3<double> vmid = P[i].Vel / All.cf_atime + dp * (0.5 / (mass_new*All.cf_atime)); double fh = mass_new*All.cf_atime*dt_hydrokick, fg = mass_new*dt_gravkick;
+            LEDGER_ADD(LG_HYDRO_W, fh*dot(vmid, CellP[i].HydroAccel)/All.cf_atime); ledger_log_hydro_event(i, 0, fh*dot(vmid, CellP[i].HydroAccel)/All.cf_atime, dt_hydrokick, mode+10);
+            LEDGER_ADD(LG_GRAV_W, fg*dot(vmid, P[i].GravAccel)/All.cf_atime);
+#ifdef TURB_DRIVING
+            LEDGER_ADD(LG_TURB_W, fg*dot(vmid, CellP[i].TurbAccel)/All.cf_atime);
+#endif
+#ifdef RT_RAD_PRESSURE_OUTPUT
+            LEDGER_ADD(LG_RADP_LONG_W, fh*dot(vmid, CellP[i].Rad_Accel)/All.cf_atime);
+#endif
         }
 #endif
         P[i].Vel += dp * (1.0 / mass_new); /* correctly accounts for mass change if its allowed */

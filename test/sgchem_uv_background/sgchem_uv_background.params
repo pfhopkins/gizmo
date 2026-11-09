@@ -1,0 +1,42 @@
+InitCondFile                sgchem_uv_background_ics
+OutputDir                   output
+ICFormat                    3
+SnapFormat                  3
+TimeBegin                   0.25        % z = 3
+TimeMax                     0.2500143   % 125 kyr: Delta ln a = H dt = 5.7e-5
+TimeOfFirstSnapshot         0.25
+TimeBetSnapshot             1.00003     % comoving runs need a factor > 1
+MaxSizeTimestep             2.0e-6      % Delta ln a, about 28 steps
+MinSizeTimestep             1.0e-15
+UnitLength_in_cm            3.086e18    % pc
+UnitMass_in_g               1.989e33    % Msun
+UnitVelocity_in_cm_per_s    1.0e5       % km/s
+ComovingIntegrationOn       1
+BoxSize                     40.0
+Omega0                      0.3
+OmegaLambda                 0.7
+OmegaBaryon                 0.05
+HubbleParam                 1.
+InitGasTemp                 0           % from the IC
+MinGasTemp                  2.73
+InitMetallicity             1.0
+DesNumNgb                   32
+SofteningGas                0.4
+SofteningHalo               0.4
+SofteningDisk               0.4
+SofteningBulge              0.4
+SofteningStars              0.4
+SofteningBndry              0.4
+SofteningGasMaxPhys         0.1         % physical, as the comoving softenings are capped
+SofteningHaloMaxPhys        0.1
+SofteningDiskMaxPhys        0.1
+SofteningBulgeMaxPhys       0.1
+SofteningStarsMaxPhys       0.1
+SofteningBndryMaxPhys       0.1
+SGChemTablesPath            sgchem_tables          % overridden by the test
+SGChemCosmicRayIonRate      2.0e-16
+SGChemDustToGasRatio        1.0
+SGChemDeuteriumAbundance    2.6e-5
+SGChemG0                    0
+SGChemG0_LW                 0
+SGChemBackgroundG0          0

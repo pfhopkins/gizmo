@@ -53,6 +53,9 @@ void compute_grav_accelerations(void)
        so the repeat pass has to rebuild -- otherwise it walks the first pass's tree and seeds nothing. */
     if(All.TypeOfOpeningCriterion == 1 && All.Ti_Current == 0) {TreeReconstructFlag = 1; gravity_tree();}
   }
+#ifdef TEST_DUMP_TREECOL_PIXELS_AND_EXIT
+  test_dump_treecol_pixels_and_exit();
+#endif
 
   PRINT_STATUS(" ..gravity force computation done");
 }
@@ -89,7 +92,7 @@ void compute_hydro_densities_and_forces(void)
         CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif
 #ifdef GALSF /* PFH set of feedback routines (thermal, photo-ionization, radiation pressure), coupled discretely just -before- the hydro force is computed; mechanical feedback is coupled after the closing kick (run.cc) */
-        compute_stellar_feedback();
+        LEDGER_FB(compute_stellar_feedback());
 #endif
 
         /* Hydro corridor begin: in Mode A (any rank count) imports the gas
@@ -282,6 +285,10 @@ void compute_stellar_feedback(void)
     gizmo_exit_bad_stop_if_requested("accel:after_thermal_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
 
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    photoionization_per_direction(); /* per-direction Stromgren photoionisation around single stars */
+    gizmo_exit_bad_stop_if_requested("accel:after_photoionization"); CPU_Step[CPU_HIIHEATING] += measure_time();
+#endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
     HII_heating_singledomain(); /* local photo-ionization heating */
     gizmo_exit_bad_stop_if_requested("accel:after_hii_heating"); CPU_Step[CPU_HIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */

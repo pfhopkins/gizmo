@@ -116,6 +116,13 @@ extern struct global_data_all_processes All;
 #define boxHalf_Z boxHalf
 #endif
 
+/* the uniform background field (RT_ISRF_BACKGROUND), scaled with the recent star formation rate under ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR (floored at G0 = 0.324e-2 Habing) */
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+#define ISRF_BACKGROUND_STRENGTH (DMAX(All.FactorG0 * All.InterstellarRadiationFieldStrength, 0.324e-2/1.7))
+#else
+#define ISRF_BACKGROUND_STRENGTH (All.InterstellarRadiationFieldStrength)
+#endif
+
 #ifdef BOX_SHEARING
 #define Shearing_Box_Vel_Offset (All.Shearing_Box_Vel_Offset)
 #define Shearing_Box_Pos_Offset (All.Shearing_Box_Pos_Offset)
@@ -330,7 +337,7 @@ extern FILE *FdSfr;        /*!< file handle for star formation log-file. */
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 extern FILE *FdMomWinds;    /*!< file handle for local photon-momentum subgrid model log-file */
 #endif
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
 extern FILE *FdHIIHeating;    /*!< file handle for local HII model log-file */
 #endif
 #ifdef GALSF_FB_MECHANICAL
@@ -648,6 +655,17 @@ enum iofields
   IO_R_PROTOSTAR,
   IO_MASS_D_PROTOSTAR,
   IO_ZAMS_MASS,
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+  IO_SINGLE_STAR_DRAWN_MASS,
+  IO_SINGLE_STAR_BIRTH_Z,
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+  IO_SINGLE_STAR_BIRTH_DENSITY,
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+  IO_SINGLE_STAR_EVENT_BITS,
+  IO_SINGLE_STAR_LAST_WIND_LOG_AGE,
+#endif
+#endif
   IO_STAGE_PROTOSTAR,
   IO_AGE_PROTOSTAR,
   IO_LUM_SINGLESTAR,
@@ -766,6 +784,29 @@ enum iofields
   IO_DAMAGE_POROSITY_ACTVCRACKS,  /* Grady-Kipp active-crack radius */
   IO_DAMAGE_POROSITY_FLAWSPERMASS, /* tensile flaws per unit mass of the element's body */
   IO_FLUIDTYPE,
+#ifdef SGCHEM
+  IO_SGCHEM_TRACABUND,          /* last, so that builds without SGCHEM keep every block number */
+  IO_SGCHEM_DUSTTEMP,
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+  IO_SGCHEM_COOLRATES,
+  IO_SGCHEM_CHEMRATES,
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+  IO_CHEM_PHOTORATES,
+#endif
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+  IO_SGCHEM_G0_FUV,
+  IO_SGCHEM_G0_LW,
+  IO_SGCHEM_G0_FUV_ATTEN,
+  IO_SGCHEM_SHIELDFAC_DUST,
+  IO_SGCHEM_G0_NUV,
+  IO_SGCHEM_G0_OPT,
+  IO_SGCHEM_CR_ZETA,
+  IO_SINGLE_STAR_LOG_UV_LUM,
+  IO_SINGLE_STAR_LOG_LW_LUM,
+  IO_SINGLE_STAR_LOG_LYMAN_Q,
+#endif
+#endif
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 
@@ -852,6 +893,9 @@ extern ALIGN(32) struct NODE
     MyFloat maxsoft;        /*!< hold the maximum gravitational softening of particle in the node */
 #if defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
   MyFloat gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+  MyFloat treecol_species_mass[TREECOL_PIXELS_NSPECIES]; /*!< dust-weighted gas, H2 and CO masses (gravity/gravtree_treecol_pixels.h) */
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
   MyFloat stellar_lum[N_RT_FREQ_BINS]; /*!< luminosity in the node*/

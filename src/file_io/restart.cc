@@ -12,6 +12,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../galaxy_sf/single_star_record.h"
 #include "../domain/domain.h"
 #include "../gravity/let_data.h"
 
@@ -171,6 +172,9 @@ void restart(int modus)
     if(modus == 0) {eos_limits_emit(0);} /* every restart write (periodic, stop file, wall time, final time) flushes the interval so far */
 #endif
     
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+    if(modus == 0) {single_star_event_logs_write();}
+#endif
     if(ThisTask == 0 && modus == 0) // writing re-start files: move old files to .bak
     {
         snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/restartfiles", All.OutputDir);
@@ -477,6 +481,9 @@ void restart(int modus)
 
 	  /* Particle data  */
 	  byten(&P[0], NumPart * sizeof(struct particle_data), modus);
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+	  ledger_restart_io(byten, modus); /* this rank's cumulative ledger rows */
+#endif
 
 	  in(&N_gas, modus);
 	  if(N_gas > 0)
@@ -530,6 +537,20 @@ void restart(int modus)
 #endif
 	    }
 
+#ifdef SINGLE_STAR_RECORDS
+	  { /* single-star records, slot by slot (P[].StarIdx above points into them) */
+	      int cap = SingleStars.capacity;
+	      in(&cap, modus);
+	      if(modus) {single_star_record_reset(cap);}
+	      if(cap > 0) {
+#define SSR_IO(type, name, comment) byten(SingleStars.name, cap * sizeof(type), modus);
+	          SINGLE_STAR_RECORD_FIELDS(SSR_IO)
+#undef SSR_IO
+	          byten(SingleStars.used, cap * sizeof(uint8_t), modus);
+	      }
+	      if(modus) {single_star_record_rebuild_free_list();}
+	  }
+#endif
 	  byten(&SelRnd, sizeof(SelRnd), modus);
 
 #ifdef TURB_DRIVING

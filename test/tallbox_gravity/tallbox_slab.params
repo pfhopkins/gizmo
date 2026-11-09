@@ -1,0 +1,43 @@
+% tallbox_gravity, 'slab' IC: x/y-periodic image-sum gravity in a box 1 x 1 x 8, open in z.
+% Run by test_tallbox_gravity.py: once with this opening criterion and once with the walk tightened
+% towards direct summation (ErrTolTheta=0.15, ErrTolForceAcc=1e-6, set by the test).
+InitCondFile                       tallbox_slab_ics
+OutputDir                          output_slab
+TimeMax                            0.004
+BoxSize                            1
+TimeBetSnapshot                    0.002
+TimeOfFirstSnapshot                0
+TimeBegin                          0
+TimeBetStatistics                  1
+MaxSizeTimestep                    0.001
+MinSizeTimestep                    1e-9
+ErrTolIntAccuracy                  0.01
+ErrTolTheta                        0.5
+ErrTolForceAcc                     0.0025
+CourantFac                         0.4
+MaxRMSDisplacementFac              0.125
+TreeDomainUpdateFrequency          0.1
+DesNumNgb                          32
+MaxNumNgbDeviation                 1
+PartAllocFactor                    3
+ResubmitOn                         0
+ResubmitCommand                    none
+UnitLength_in_cm                   1
+UnitMass_in_g                      1
+UnitVelocity_in_cm_per_s           1
+GravityConstantInternal            1
+GravityPeriodicXYImages            8
+Softening_Type0                    0.001
+Softening_Type1                    0.001
+Softening_Type2                    0.001
+Softening_Type3                    0.001
+Softening_Type4                    0.001
+Softening_Type5                    0.001
+Softening_Type0_MaxPhysLimit       0.001
+Softening_Type1_MaxPhysLimit       0.001
+Softening_Type2_MaxPhysLimit       0.001
+Softening_Type3_MaxPhysLimit       0.001
+Softening_Type4_MaxPhysLimit       0.001
+Softening_Type5_MaxPhysLimit       0.001
+AGS_DesNumNgb                      32
+AGS_MaxNumNgbDeviation             1

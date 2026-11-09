@@ -56,6 +56,17 @@
 
 
 
+/* host external wrapper for the ionizing-luminosity core (body in rt_functions.h) */
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || (defined(RT_CHEM_PHOTOION) && defined(GALSF))
+double particle_ionizing_luminosity_in_cgs(long i)
+{
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+    if(P[i].StarIdx > 0) {return single_star_ionizing_luminosity_cgs((int)i);} /* single star: table ionising luminosity */
+#endif
+    return particle_ionizing_luminosity_in_cgs_core(i, P);
+}
+#endif
+
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
 
 
@@ -74,13 +85,6 @@
 /* rt_get_source_luminosity, rt_get_lum_band_{stellarpopulation,agn,singlestar}:
    bodies now in rt_functions.h (single source for host + device). */
 
-/* host external wrapper for the ionizing-luminosity core (body in rt_functions.h) */
-#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || (defined(RT_CHEM_PHOTOION) && defined(GALSF))
-double particle_ionizing_luminosity_in_cgs(long i)
-{
-    return particle_ionizing_luminosity_in_cgs_core(i, P);
-}
-#endif
 
 
 
@@ -118,6 +122,13 @@ void rt_define_effective_frequencies_in_bands(void)
 #endif
 #ifdef RT_GENERIC_USER_FREQ
     k=RT_FREQ_BIN_GENERIC_USER_FREQ; rhd_bins_nu_min_ev[k]=0; rhd_bins_nu_max_ev[k]=MAX_REAL_NUMBER;
+#endif
+#ifdef RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND
+    k=RT_FREQ_BIN_NUV; rhd_bins_nu_max_ev[k]=6.; /* disjoint bands: 6-8 eV is carried by the generic bin */
+    k=RT_FREQ_BIN_GENERIC_USER_FREQ; rhd_bins_nu_min_ev[k]=6.; rhd_bins_nu_max_ev[k]=8.;
+#endif
+#ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS
+    k=RT_FREQ_BIN_NUV; rhd_bins_nu_min_ev[k]=6.; rhd_bins_nu_max_ev[k]=8.; /* with the photoelectric bin the 6-13.6 eV of G0 */
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     k=RT_FREQ_BIN_FIRE_UV; rhd_bins_nu_min_ev[k]=3.444; rhd_bins_nu_max_ev[k]=13.6;
@@ -232,6 +243,9 @@ void rt_set_simple_inits(int RestartFlag)
 #ifdef RT_CHEM_PHOTOION
             if(flag_to_reset_values_on_startup)
             {
+#ifdef SGCHEM
+                CellP[i].Ne = sgchem_startup_electrons(i); sgchem_rt_absorbers(i, CellP[i].TracAbund); CellP[i].HII = DMAX(CellP[i].HII, MIN_REAL_NUMBER); /* the chemistry's start, not fully neutral */
+#else
                 CellP[i].HII = MIN_REAL_NUMBER;
                 CellP[i].HI = 1.0 - CellP[i].HII;
                 CellP[i].Ne = CellP[i].HII;
@@ -241,6 +255,7 @@ void rt_set_simple_inits(int RestartFlag)
                 CellP[i].HeII = MIN_REAL_NUMBER * fac;
                 CellP[i].HeI = (1.0 - CellP[i].HeII - CellP[i].HeIII) * fac;
                 CellP[i].Ne += CellP[i].HeII + 2.0 * CellP[i].HeIII;
+#endif
 #endif
             } else {
 #ifdef RT_CHEM_PHOTOION_HE

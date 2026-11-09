@@ -78,6 +78,7 @@
 
 #include "../core/timestep_functions.h"   /* kernel_radius_drift_factor, for node_hmax_drift */
 #include "ags_functions.h"                 /* particle_radius_drifts_with_divergence_P, for the sources' radius_drifts */
+#include "gravtree_treecol_pixels.h"           /* GALSF_RESOLVEDISM_TREECOL_PIXELS species masses */
 
 
 /* ==========================================================================================
@@ -119,6 +120,9 @@ struct moment_node_accum {
     AccT       maxsoft;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     AccT       gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    AccT       treecol_species_mass[TREECOL_PIXELS_NSPECIES];
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     AccT       stellar_lum[N_RT_FREQ_BINS];
@@ -175,6 +179,9 @@ struct moment_node_ref {
     unsigned int  *bitflags;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     AccT          *gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    AccT          *treecol_species_mass;   /* base of TREECOL_PIXELS_NSPECIES */
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     AccT          *stellar_lum;   /* base of N_RT_FREQ_BINS */
@@ -280,6 +287,9 @@ struct moment_particle_src {
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
     double        sink_mass_reservoir;
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    double        treecol_species_mass[TREECOL_PIXELS_NSPECIES];
+#endif
 #ifdef RT_USE_GRAVTREE
     double        src_lum[N_RT_FREQ_BINS];
 #ifdef CHIMES_STELLAR_FLUXES
@@ -332,6 +342,9 @@ KOKKOS_INLINE_FUNCTION static moment_node_accum<AccT> moment_source_from_particl
 
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     if(p.type == 0) { a.gasmass = (AccT) p.mass; }
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    if(p.type == 0) { for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {a.treecol_species_mass[ks] = (AccT) p.treecol_species_mass[ks];} }
+#endif
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
     if(p.type == 5) { a.gasmass = (AccT) p.sink_mass_reservoir; }
 #endif
@@ -426,6 +439,9 @@ KOKKOS_INLINE_FUNCTION static moment_node_accum<AccT> moment_source_from_child_n
     a.maxsoft = c.maxsoft;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     a.gasmass = c.gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {a.treecol_species_mass[ks] = c.treecol_species_mass[ks];}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     for(int b = 0; b < N_RT_FREQ_BINS; b++) { a.stellar_lum[b] = c.stellar_lum[b]; }
@@ -498,6 +514,9 @@ KOKKOS_INLINE_FUNCTION static void moment_accum_zero(const moment_node_ref<AccT>
                                      (1u << BITFLAG_INTERNAL_TOPLEVEL));
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     *r.gasmass = (AccT) 0;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {r.treecol_species_mass[ks] = (AccT) 0;}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     for(int b = 0; b < N_RT_FREQ_BINS; b++) { r.stellar_lum[b] = (AccT) 0; }
@@ -562,6 +581,9 @@ KOKKOS_INLINE_FUNCTION static void moment_accum_apply(const moment_node_ref<AccT
     Ops::fmax(r.divVmax, a.divVmax);
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     Ops::add(r.gasmass, a.gasmass);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {Ops::add(&r.treecol_species_mass[ks], a.treecol_species_mass[ks]);}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     for(int b = 0; b < N_RT_FREQ_BINS; b++) { Ops::add(&r.stellar_lum[b], a.stellar_lum[b]); }

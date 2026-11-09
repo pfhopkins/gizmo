@@ -535,6 +535,9 @@ static void let_refresh_open_constants(void)
  * one's storage instead of reallocating. */
 struct LETPackContext {
     struct LETCoverNode *cover;          /* AABB-tree nodes, root at index 0 */
+#if defined(KETJU_REGULARIZATION)
+    int ketju_dest;                      /* destination rank: its KETJU chain spheres open the nodes they overlap */
+#endif
     int                  cover_cap;
     int                  cover_n;        /* nodes used by the current build */
     struct LETCoverLeaf *cover_leaves;   /* this destination's cover leaves (clusters + orphans),
@@ -685,6 +688,9 @@ static int cover_build(struct LETPackContext *pk, int lo, int hi)
 static void let_build_cover_tree(struct LETPackContext *pk, int R)
 {
     pk->cover_n = 0;
+#if defined(KETJU_REGULARIZATION)
+    pk->ketju_dest = R;
+#endif
     /* Cover leaves = R's rule-1 clusters (bbox + scalars, straight from the exchange) + R's drift-orphan
      * records (extra leaves at foreign-topleaf boxes). An empty owned topleaf produced no clusters, so it
      * contributes nothing -- the old populated=0 exclusion is now structural. */
@@ -788,6 +794,9 @@ static int let_node_essential_for_rank(struct LETPackContext *pk, double cx, dou
      * per-cover scalar bounds refine the whole-rank worst case (which spanned ~the whole
      * domain / rank-wide scalar extrema and so never let the PM/theta/relative cull prune);
      * the opening predicate itself is untouched. */
+#if defined(KETJU_REGULARIZATION)
+    if(ketju_let_sphere_opens(pk->ketju_dest, cx, cy, cz, len)) {return 1;} /* a chain member on R takes its partners as leaves */
+#endif
     return let_cover_opens(pk, cx, cy, cz, sx, sy, sz, len, mass, maxsoft, n_sink,
                            g_let_rcut, g_let_rcut2, g_let_is_first_step);
 }
@@ -843,6 +852,9 @@ static void let_wire_moment_ref(struct LETNodeWire *w, moment_node_ref<MyFloat> 
     ref.bitflags = NULL;   /* multiple-particles bit forced below, after finalize */
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     ref.gasmass  = &w->node.gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    ref.treecol_species_mass = &w->node.treecol_species_mass[0];
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     ref.stellar_lum = &w->node.stellar_lum[0];
@@ -903,6 +915,9 @@ static void let_fill_particle_src(int p_idx, moment_particle_src<MyFloat> *src_o
     src.mass              = (double) pa->Mass;
     src.pos[0] = (double) pa->Pos[0]; src.pos[1] = (double) pa->Pos[1]; src.pos[2] = (double) pa->Pos[2];
     src.vel[0] = (double) pa->Vel[0]; src.vel[1] = (double) pa->Vel[1]; src.vel[2] = (double) pa->Vel[2];
+#if defined(KETJU_REGULARIZATION)
+    if(pa->KetjuIntegrated) {for(int k = 0; k < 3; k++) {src.vel[k] = ketju_member(p_idx).chain_vel[k];}} /* it orbits inside MSTAR: a copy moved at its own speed would leave the chain */
+#endif
     src.motion_bound      = particle_motion_speed_bound(p_idx, P, CellP);
     src.type              = pa->Type;
     src.kernel_radius     = (double) pa->KernelRadius;
@@ -910,6 +925,9 @@ static void let_fill_particle_src(int p_idx, moment_particle_src<MyFloat> *src_o
     src.force_softening   = ForceSoftening_KernelRadius(p_idx);
     src.particle_divvel   = particle_radius_growth_rate(p_idx, P);
     src.radius_drifts     = particle_radius_drifts_with_divergence_P(p_idx, P);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_species_masses(P, CellP, p_idx, src.treecol_species_mass);
+#endif
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
     src.sink_mass_reservoir = (double) pa->Sink_Mass_Reservoir;
 #endif
@@ -1791,6 +1809,9 @@ static void let_wire_fields(C &c, R &w, int kind)
     c.field(w.node.maxsoft);
 #if defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
     c.field(w.node.gasmass);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    c.field(w.node.treecol_species_mass);
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     c.field(w.node.stellar_lum);
@@ -2879,6 +2900,9 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
      * (conservative + walk-consistent) + the self-sizing foreign arena keep it safe. */
     struct LETPerRankPayload my_payload;
     let_compute_local_payload(&my_payload);
+#if defined(KETJU_REGULARIZATION)
+    ketju_let_gather_spheres(); /* collective: every rank's chain spheres, for the essential-node test */
+#endif
 
     struct LETPerRankPayload *all_payloads =
         (struct LETPerRankPayload *) mymalloc("LET_payloads", NTask * sizeof(struct LETPerRankPayload));

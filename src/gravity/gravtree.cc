@@ -355,7 +355,13 @@ void gravity_tree(void)
        all-node pass on the smallest steps. A build is forced once insertions pass 1% of the particles. */
     {
         int TreeMomentsStaleFlag_global;
+#ifdef KETJU_REGULARIZATION
+        int ketju_loc[2] = {TreeMomentsStaleFlag, ketju_active_candidates()}, ketju_glob[2]; /* no collective of its own on steps without a chain candidate */
+        MPI_Allreduce(ketju_loc, ketju_glob, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        TreeMomentsStaleFlag_global = ketju_glob[0]; ketju_note_candidates(ketju_glob[1]);
+#else
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+#endif
         if(TreeMomentsStaleFlag_global)
         {
             CPU_Step[CPU_MISC] += measure_time();
@@ -681,6 +687,9 @@ gravity_walk_attempt:
 
     myfree(DataNodeList); myfree(DataIndexTable);
 
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS
+    treecol_shells_photon_cap();
+#endif
     /* now perform final operations on results [communication loop is done] */
 #ifndef GRAVITY_HYBRID_OPENING_CRIT  // in collisional systems we don't want to rely on the relative opening criterion alone, because aold can be dominated by a binary companion but we still want accurate contributions from distant nodes. Thus we combine BH and relative criteria. - MYG
     /* Switch to the relative opening criterion for the following force computations.
@@ -1176,6 +1185,9 @@ void subtract_companion_gravity(int i)
 int needs_new_treeforce(int n){
 #ifdef SINGLE_STAR_SINK_DYNAMICS
     if(P[n].Type == 5) {return 1;} // single-star sinks take a full tree force every step: their dynamics are followed more carefully
+#endif
+#if defined(KETJU_REGULARIZATION)
+    if(P[n].Type == 4 || P[n].Type == 5) {return 1;} /* KETJU subtracts the exact pair force from this step's tree force */
 #endif
     if(P[n].time_since_last_treeforce >= P[n].tdyn_step_for_treeforce * ADAPTIVE_TREEFORCE_UPDATE) {return 1;}
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT

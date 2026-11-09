@@ -41,6 +41,9 @@
  */
 struct global_data_all_processes
 {
+#ifdef KETJU_REGULARIZATION
+#include "../gravity/ketju/ketju_global_fields.h"
+#endif
   long long TotNumPart;		/*!<  total particle numbers (global value) */
   long long TotN_gas;		/*!<  total gas particle number (global value) */
 
@@ -86,6 +89,13 @@ struct global_data_all_processes
 				  particle count and the number of ranks (domain_segments_per_rank_for_particles), and
 				  constant for the run thereafter.  Unrelated to TopNodeAllocFactor below, which is
 				  only a capacity for the top-tree arrays. */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS)
+  double CosmicRay_ShockAccelEfficiency; /*!< fraction of the dissipated shock energy flux into CRs; default: the value of CRFLUID_INJECTION_AT_SHOCKS */
+#endif
+#ifdef COSMIC_RAY_FLUID
+  double CosmicRayInitialAmbient_eVcm3, CosmicRayInitialCloud_eVcm3, CosmicRayInitialCloudThreshold_nH; /*!< initial CR energy density [eV cm^-3] below/above the n_H threshold [cm^-3] on fresh starts (0: none) */
+#endif
+
   double TopNodeAllocFactor;	/*!< Sizes the TOP-level (domain-decomposition) tree, not the full local tree: MaxTopNodes = TopNodeAllocFactor * MaxPart + 1.  Much smaller than TreeAllocFactor (default ~0.008 vs ~0.45) because the top-tree holds one node per top-level domain cell, not one per particle; auto-ratchets on top-node overflow. */
 
 #ifdef DM_SCALARFIELD_SCREENING
@@ -142,6 +152,26 @@ struct global_data_all_processes
   double Chimes_f_esc_G0;
 #endif
 #endif // CHIMES
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+  double Mgas0;                 /*!< gas mass at the start (fresh start or snapshot) [code units] */
+  double FactorG0;              /*!< [M(stars < 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr], set at every star-formation call */
+#endif
+#ifdef SGCHEM
+  char SGChemTablesPath[256];   /*!< directory of the installed SGChem tables (scripts/get_stella_tables.sh) */
+  double SGChemCosmicRayIonRate;/*!< cosmic-ray ionisation rate per H [s^-1] */
+  double SGChemDustToGasRatio;  /*!< dust-to-gas ratio relative to the Milky Way at solar metallicity, scaled with the cell Z */
+  double SGChemDeuteriumAbundance; /*!< D/H by number */
+  double SGChemG0;              /*!< uniform ISRF-shaped field, 6-13.6 eV [Habing units, Draine 1978 / 1.7] */
+  double SGChemG0_LW;           /*!< its Lyman-Werner part, 11.2-13.6 eV [Habing units] */
+  double SGChemBackgroundG0;    /*!< scales the background floors (0.324e-2 x this), never the field (stella_dev G0) */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+  double TreeColShieldingLength; /*!< pixel columns only from mass closer than this [code length, physical]; 0 = no limit */
+#ifdef TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS
+  double TestTreeRayFixedRate;   /*!< test: every shining star emits this photon rate [1/s] */
+  double TestTreeRayNeutralTemp; /*!< test: SGChem holds gas at T(x) from this neutral temperature [K] */
+#endif
+#endif
+#endif
 
   double MinEgySpec;		/*!< the minimum allowed temperature expressed as energy per unit mass */
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
@@ -196,6 +226,9 @@ struct global_data_all_processes
 
   int HighestActiveTimeBin;
   int HighestOccupiedTimeBin;
+#ifdef WAKEUP_TARGET_BIN_PARAMETER
+  int WakeupTargetBin; /*!< woken cell goes to: 0 = waker bin - log2(WAKEUP), 1 = waker bin, 2 = highest active bin */
+#endif
 
   /* parameters determining output frequency */
   int SnapshotFileCount;	/*!< number of snapshot that is written next */
@@ -233,6 +266,10 @@ struct global_data_all_processes
   /* variables that keep track of cumulative CPU consumption */
   double TimeLimitCPU;
   double CPU_Sum[CPU_PARTS];    /*!< sums wallclock time/CPU consumption in whole run */
+
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+  int GravityPeriodicXYImages;	/*!< rings of x/y images summed per interaction: (2N+1)^2-1 images */
+#endif
 
   /* tree code opening criterion */
   double ErrTolTheta;		/*!< Barnes-Hut tree opening angle */
@@ -452,6 +489,21 @@ struct global_data_all_processes
   double OverDensThresh;
   double PhysDensThresh;
   double MaxSfrTimescale;
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+  double IMFSampleMinMass;           /*!< lower end of the sampled IMF [Msun] (0.08 = full IMF) */
+  int SingleStarsRNGRealisation;     /*!< folded into the keys of the IMF draws: another value gives another realisation */
+#endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
+  double IMFSampleStellarMassCut;    /*!< single stars at or below this drawn mass [Msun] emit no radiation */
+#endif
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+  double DustGrowthTimescaleGyr;     /*!< dust growth time at n=1, T=100 K, solar metallicity [Gyr] */
+  double DustGrowthCoulombFactor;    /*!< Coulomb enhancement of growth (1 = none) */
+#endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+  double FacSfThreshMJ;              /*!< SF only where the Jeans mass is below FacSfThreshMJ x DesNumNgb x cell mass */
+  double SFCooldownFreeFallFraction; /*!< after a birth the parent cell forms no star for this fraction of its free-fall time */
+#endif
 
 #ifdef GALSF_EFFECTIVE_EQS
   double EgySpecSN;
@@ -482,6 +534,10 @@ struct global_data_all_processes
 #endif
 #endif // GALSF_SUBGRID_WINDS //
 
+#if defined(MECHFB_CR_INJECTION) && !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+    double CosmicRay_SNeFraction; /*!< fraction of the energy of fast ejecta given to CRs */
+#endif
+
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
     double SNe_Energy_Renormalization;
     double StellarMassLoss_Rate_Renormalization;
@@ -491,8 +547,17 @@ struct global_data_all_processes
     double CosmicRay_SNeFraction;
 #endif
 #endif
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
     double HIIRegion_fLum_Coupled;
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    double PhotoionMaxSearchRadius; /*!< largest search radius of a source [physical kpc] */
+#ifdef TEST_PHOTOIONIZATION_FIXED_RATE_TWO_TEMPERATURE_GAS
+    double TestPhotoionFixedRate;   /*!< test: every ionising star emits this photon rate [1/s] */
+    double TestPhotoionNeutralTemp; /*!< test: SGChem holds neutral gas at this temperature [K], ionised gas at 1e4 K, no network */
+#endif
+    int PhotoionMaxRounds;          /*!< largest number of sharing rounds per solve */
+    double PhotoionMaxTimestep;     /*!< largest timestep of an ionising source, and the photoionisation cadence [yr] */
 #endif
 
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
@@ -782,6 +847,16 @@ struct global_data_all_processes
   double Sink_jet_precess_degree;
   double Sink_jet_precess_period;
 #endif
+#ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
+    char TestSingleStarBirths[256]; /*!< test only: "ID:M_drawn,..." single stars formed at these gas cells at the first star-formation step */
+#endif
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+    char StellarTablesFile[256]; /*!< stella-tables main table (scripts/get_stella_tables.sh); the wind table is read from the same directory */
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+    double MaxStellarTimestep; /*!< largest timestep of a single star [yr] */
+#endif
+#endif
+
 #ifdef NUCLEAR_NETWORK
     char NuclearNetworkDataFile[DEFAULT_PATH_BUFFERSIZE_TOUSE];
     double NuclearBurningFloor_T;

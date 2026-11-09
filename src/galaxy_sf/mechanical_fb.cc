@@ -28,7 +28,7 @@ int addFB_evaluate_active_check(int i, int fb_loop_iteration)
     if(P[i].Type == 5 && !P[i].do_gas_search_this_timestep) {return 0;}
 #endif
     if(P[i].SNe_ThisTimeStep>0) {if(fb_loop_iteration<0 || fb_loop_iteration==0) {return 1;}}
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
     if(P[i].MassReturn_ThisTimeStep>0) {if(fb_loop_iteration<0 || fb_loop_iteration==1) {return 1;}}
 #ifdef GALSF_FB_FIRE_RPROCESS
     if(P[i].RProcessEvent_ThisTimeStep>0) {if(fb_loop_iteration<0 || fb_loop_iteration==2) {return 1;}}
@@ -55,7 +55,7 @@ void determine_where_SNe_occur(void)
     for (int i : ActiveParticleList)
     {
         P[i].SNe_ThisTimeStep=0;
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
         P[i].MassReturn_ThisTimeStep=0;
 #ifdef GALSF_FB_FIRE_RPROCESS
         P[i].RProcessEvent_ThisTimeStep=0;
@@ -149,6 +149,9 @@ void verify_and_assign_local_mechfb_integrals(void)
             kicked.push_back(j);
             const Vec3<MyDouble> vel_before_deposit = P[j].Vel;
             double m0=P[j].Mass, dm=LocalGasMechFBInfoTemp[j].m_injected; P[j].Mass += dm; /* update mass */ if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+            ledger_add(LEDGER_M_FB_TO_GAS, dm); ledger_add(LEDGER_MZ_FB_TO_GAS, LocalGasMechFBInfoTemp[j].Z_injected[0]);
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             m0=CellP[j].MassTrue; CellP[j].MassTrue += dm; /* update conserved mass */
 #endif
@@ -157,12 +160,27 @@ void verify_and_assign_local_mechfb_integrals(void)
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
             update_ISMDustChem_after_mechanical_injection(j, LocalGasMechFBInfoTemp[j].Mass_Where_Dust_Shocked, m0, mf, LocalGasMechFBInfoTemp[j].Z_injected); /* update dust chemistry quantities */
 #endif
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+            double TE_cell_0 = m0*CellP[j].InternalEnergy; /* the heat row is the change of the cell's energy over this step */
+#endif
             CellP[j].Density *= mf/m0; /* update density [semi-drift] */
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+            CellP[j].InternalEnergy *= m0/mf; CellP[j].InternalEnergyPred *= m0/mf; /* cold ejecta dilute u at once, whatever the energy of the event */
+#endif
             double dTE=LocalGasMechFBInfoTemp[j].TE_injected;
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+            { /* sources overlapping in a cell: all their momentum lands, the kinetic energy the vector sum does not take stays as heat */
+                double p0_2=0, pf_2=0; for(k=0;k<3;k++) {double p0_k=m0*P[j].Vel[k]/All.cf_atime, pf_k=p0_k+LocalGasMechFBInfoTemp[j].p_injected[k]; p0_2+=p0_k*p0_k; pf_2+=pf_k*pf_k;}
+                dTE += LocalGasMechFBInfoTemp[j].KE_injected - (pf_2/(2.*mf) - p0_2/(2.*m0));
+            }
+#endif
             if(dTE > 0)
             {
                 double TE_0=m0*CellP[j].InternalEnergy; dTE=DMAX(-TE_0,dTE); /* ensure against non-negative values */
                 double dU = (-dm/mf)*CellP[j].InternalEnergy + (1./mf)*dTE; /* using new mass get updated internal energy */
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+                dU = (1./mf)*dTE; /* the dilution is done above */
+#endif
                 double dt = get_particle_timestep_in_physical(j, P), implied_heating_cgs=(dU*UNIT_SPECEGY_IN_CGS*PROTONMASS_CGS)/(dt*UNIT_TIME_IN_CGS), typical_cooling_cgs=1.e-23*(CellP[j].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS);
                 int weak_heating = (implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)));
                 CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU; /* always injected now: a heating rate here would be reset by the hydro pass before any kick applied it */
@@ -189,6 +207,9 @@ void verify_and_assign_local_mechfb_integrals(void)
                     }
                 }
             }
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+            ledger_add(LEDGER_E_FB_THERMAL_NOW, mf*CellP[j].InternalEnergy - TE_cell_0); /* what reached u; deferred heat is only in the rate */
+#endif
             double dKE=LocalGasMechFBInfoTemp[j].KE_injected, dp[3];
             if(dKE != 0 || LocalGasMechFBInfoTemp[j].p_injected[0] != 0 || LocalGasMechFBInfoTemp[j].p_injected[1] != 0 || LocalGasMechFBInfoTemp[j].p_injected[2] != 0 )
             {
@@ -200,6 +221,12 @@ void verify_and_assign_local_mechfb_integrals(void)
                     else {if((b0>0) && fabs(4.*a0*c0)<1.e-3*b0*b0) {f0=c0/b0;} // catches for floating-point error
                     else {if(fabs(a0)<1.e-40 || !isfinite(a0)) {f0=0;} else {f0=(-b0+sqrt(b0*b0+4.*a0*c0))/(2.*a0);}}} // catches for floating-point error, if pass all of them, use exact solution for desired KE
                 if(f0<0 || !isfinite(f0)) {f0=0;} else {if(f0>1.) {f0=1.;}} /* limit to physical values (should never be an issue but again because of float error it could be) */
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+                f0=1.;
+#endif
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+                {double p2f = 0; for(k=0;k<3;k++) {p2f += (p0[k]+f0*dp[k])*(p0[k]+f0*dp[k]);} ledger_add(LEDGER_E_FB_KINETIC, p2f/(2.*mf) - KE_0);} /* as applied below */
+#endif
                 for(k=0;k<3;k++) {
                     double dv = (-dm/mf)*P[j].Vel[k] + f0*(1./mf)*dp[k]*All.cf_atime; /* calculate total momentum change and mass change and therefore final velocity (in code units) */
                     P[j].Vel[k] += dv; CellP[j].VelPred[k] += dv; P[j].dp[k] += f0*dp[k]; /* update velocities */
@@ -214,6 +241,9 @@ void verify_and_assign_local_mechfb_integrals(void)
                 double cr_tot = 0;
                 for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) cr_tot += LocalGasMechFBInfoTemp[j].CR_energy_injected[kb];
                 if(cr_tot > 0) {
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+                    ledger_add(LEDGER_E_CR_INJECTED_SN, LocalGasMechFBInfoTemp[j].CR_energy_from_sn); ledger_add(LEDGER_E_CR_INJECTED_WIND, cr_tot - LocalGasMechFBInfoTemp[j].CR_energy_from_sn);
+#endif
                     /* compute unit injection direction from weighted sum */
                     double dmag_sq = 0;
                     for(int c = 0; c < 3; c++) dmag_sq += LocalGasMechFBInfoTemp[j].CR_dir_weighted[c] * LocalGasMechFBInfoTemp[j].CR_dir_weighted[c];
@@ -316,8 +346,14 @@ void mechanical_fb_calc_toplevel(void)
         {int aa = 0; for(int ii : ActiveParticleList) {
             if(addFB_evaluate_active_check(ii, -2)) nl_active[aa++] = ii;
         }}
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+        single_star_feedback_prepare(nl_active, num_active);
+#endif
         mechfb_run_iterative(nl_active, num_active,
                               LocalGasMechFBInfoTemp, N_gas);
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+        single_star_feedback_finalize(nl_active, num_active); /* remnant = table, or the event stays pending */
+#endif
         myfree(nl_active);
     }
 

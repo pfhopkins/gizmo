@@ -809,6 +809,7 @@ GRAVITY_OBJS  = gravity/forcetree.o \
                 gravity/longrange.o \
                 gravity/ags_rkern.o \
                 gravity/star_direct_gravity.o \
+                gravity/treecol_shells.o \
                 gravity/let_pack.o
 
 HYDRO_OBJS = 	hydro/hydro_toplevel.o \
@@ -824,7 +825,7 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
-GPU_OBJS = core/gpu_drift.o cooling/cooling.o eos/eos.o hydro/density_gpu.o hydro/density_loop.o hydro/cellcorrections_loop.o hydro/gradients_loop.o hydro/hydro_force_loop.o hydro/mg_gradient_correction.o mesh/gpu_neighbor_list.o mesh/neighbor_loop_runner.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_loop.o solids/grain_drag.o galaxy_sf/dm_dispersion.o galaxy_sf/dm_dispersion_loop.o gravity/ags_density_loop.o gravity/ags_force_loop.o sidm/dm_fuzzy_loop.o sidm/cbe_integrator_gpu.o sidm/cbe_integrator_gradients.o radiation/rt_source_injection_loop.o galaxy_sf/thermal_fb.o galaxy_sf/thermal_fb_loop.o sinks/sink_feed.o sinks/sink_feed_loop.o sinks/sink_environment.o sinks/sink_env1_loop.o sinks/sink_env2_loop.o galaxy_sf/mechfb_loop.o solids/grain_physics_loop.o sinks/sink_swallow_and_kick.o sinks/sink_swk_loop.o galaxy_sf/radfb_rp_loop.o system/gpu_particles_arena.o system/kokkos_mem_telemetry.o gravity/gpu_gravity_tree.o gravity/gpu_gravtree.o gravity/gpu_moment_refresh.o gravity/gpu_nextnode_thread.o gravity/gpu_morton.o gravity/gpu_peano_walk.o gravity/gpu_topology_build.o gravity/gpu_topology_finalize.o gravity/gpu_pseudo_update.o gravity/gpu_force_drift.o gravity/gpu_force_update.o
+GPU_OBJS = core/gpu_drift.o cooling/cooling.o eos/eos.o hydro/density_gpu.o hydro/density_loop.o hydro/cellcorrections_loop.o hydro/gradients_loop.o hydro/hydro_force_loop.o hydro/mg_gradient_correction.o mesh/gpu_neighbor_list.o mesh/neighbor_loop_runner.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_loop.o solids/grain_drag.o galaxy_sf/dm_dispersion.o galaxy_sf/dm_dispersion_loop.o gravity/ags_density_loop.o gravity/ags_force_loop.o sidm/dm_fuzzy_loop.o sidm/cbe_integrator_gpu.o sidm/cbe_integrator_gradients.o radiation/rt_source_injection_loop.o galaxy_sf/thermal_fb.o galaxy_sf/thermal_fb_loop.o galaxy_sf/sfr_collect_gas.o galaxy_sf/photoion_per_direction.o sinks/sink_feed.o sinks/sink_feed_loop.o sinks/sink_environment.o sinks/sink_env1_loop.o sinks/sink_env2_loop.o galaxy_sf/mechfb_loop.o solids/grain_physics_loop.o sinks/sink_swallow_and_kick.o sinks/sink_swk_loop.o galaxy_sf/radfb_rp_loop.o system/gpu_particles_arena.o system/kokkos_mem_telemetry.o gravity/gpu_gravity_tree.o gravity/gpu_gravtree.o gravity/gpu_moment_refresh.o gravity/gpu_nextnode_thread.o gravity/gpu_morton.o gravity/gpu_peano_walk.o gravity/gpu_topology_build.o gravity/gpu_topology_finalize.o gravity/gpu_pseudo_update.o gravity/gpu_force_drift.o gravity/gpu_force_update.o
 ## Nuclear network files are added to GPU_OBJS below (conditional on NUCLEAR_NETWORK)
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
@@ -838,9 +839,18 @@ EOSCOOL_OBJS =  \
 
 STARFORM_OBJS = galaxy_sf/sfr_eff.o \
                 galaxy_sf/stellar_evolution.o \
+                galaxy_sf/stellar_evolution_tables.o \
+                galaxy_sf/stellar_tables_check.o \
+                galaxy_sf/single_star_feedback.o \
+                galaxy_sf/single_star_record.o \
+                galaxy_sf/single_star_luminosity.o \
+                gravity/treecol_pixels_test_dump.o \
                 galaxy_sf/mechanical_fb.o \
                 galaxy_sf/radfb_local.o \
                 galaxy_sf/dm_heating.o
+ifeq (GALSF_SINGLE_STARS_EVENT_LOGS,$(findstring GALSF_SINGLE_STARS_EVENT_LOGS,$(CONFIGVARS)))
+STARFORM_OBJS += galaxy_sf/single_star_event_logs.o
+endif
 # galaxy_sf/thermal_fb.o is in GPU_OBJS (3e.2): the runner-template caller
 # transitively includes thermal_fb_loop.h → Kokkos_Core.hpp, so the TU must
 # build with $(GPU_CC) (nvcc_wrapper on Vista) like sinks/sink_feed.o.
@@ -920,6 +930,7 @@ OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) \
 INCL    += 	declarations/allvars.h \
 			core/proto.h \
 			gravity/forcetree.h \
+			gravity/gravtree_treecol_pixels.h cooling/sgchem/sgchem_dust_to_gas.h \
 			gravity/myfftw3.h \
 			domain/domain.h \
 			system/myqsort.h \
@@ -982,6 +993,25 @@ OBJS    += cooling/chimes/chimes.o cooling/chimes/chimes_cooling.o cooling/chime
 INCL    += cooling/chimes/chimes_interpol.h cooling/chimes/chimes_proto.h cooling/chimes/chimes_vars.h 
 endif
 
+# SGChem chemistry (cooling/sgchem/, C++ on SUNDIALS CVODE 6.x or 7.x): SUNDIALS_DIR from the system file or the environment
+SGCHEMINCL = # default to empty, will only be used below if called
+SGCHEMLIBS = # default to empty, will only be used below if called
+ifneq (,$(filter SGCHEM,$(CONFIGVARS)))
+ifeq (,$(strip $(SUNDIALS_DIR)))
+$(error SGCHEM needs SUNDIALS_DIR, a SUNDIALS 6.x or 7.x install)
+endif
+SGCHEM_SUNLIB = $(firstword $(wildcard $(SUNDIALS_DIR)/lib64 $(SUNDIALS_DIR)/lib))
+SGCHEMINCL = -I$(SUNDIALS_DIR)/include -I.
+SGCHEMLIBS = -L$(SGCHEM_SUNLIB) -Wl,-rpath,$(SGCHEM_SUNLIB) -lsundials_cvode -lsundials_nvecserial -lsundials_sunmatrixdense \
+             -lsundials_sunlinsoldense -lsundials_sunnonlinsolnewton $(if $(wildcard $(SGCHEM_SUNLIB)/libsundials_core.*),-lsundials_core,-lsundials_generic)
+OBJS    += cooling/sgchem/sgchem.o cooling/sgchem/sgchem_cell.o cooling/sgchem/sgchem_rt.o $(patsubst %.cc,%.o,$(wildcard cooling/sgchem/cxx/*.cc))
+INCL    += $(wildcard cooling/sgchem/*.h cooling/sgchem/cxx/*.h)
+endif
+
+ifneq (,$(filter OUTPUT_MASS_METAL_ENERGY_LEDGER,$(CONFIGVARS)))
+OBJS    += system/ledger.o
+endif
+
 comma := ,
 # Grackle (>= 3), built with Grackle's CMake build, which installs a grackle.pc file: pkg-config then gives the compile and link
 #   flags, including the Fortran/HDF5 dependencies of a static libgrackle.a. grackle.pc is looked up as
@@ -1008,7 +1038,7 @@ endif
 
 # linking libraries (includes machine-dependent options above)
 CFLAGS = $(OPTIONS) $(FFTW_INCL) $(HDF5INCL) \
-         $(GRACKLEINCL) $(CHIMESINCL) $(SKYNETINCL) $(HYPRE_INCL) $(MKL_INCL) $(KOKKOS_CPPFLAGS)
+         $(GRACKLEINCL) $(CHIMESINCL) $(SKYNETINCL) $(SGCHEMINCL) $(HYPRE_INCL) $(MKL_INCL) $(KOKKOS_CPPFLAGS)
 
 
 
@@ -1034,8 +1064,12 @@ endif
 
 
 LIBS = $(HDF5LIB) -g $(MPICHLIB) \
-	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(SKYNETLIBS) $(TORCHLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
+	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(SGCHEMLIBS) $(SKYNETLIBS) $(TORCHLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
 
+
+ifneq ($(filter KETJU_REGULARIZATION,$(CONFIGVARS)),)
+include gravity/ketju/Makefile.ketju
+endif
 
 $(EXEC): $(OBJS) $(GPU_OBJS)
 	$(CXX) $(OPTIMIZE) $(GPU_LDFLAGS) $(OBJS) $(GPU_OBJS) $(KOKKOS_LIBS) $(LIBS) -o $(EXEC)
@@ -1099,6 +1133,10 @@ radiation/rt_source_injection_loop.o: radiation/rt_source_injection_loop.cc $(IN
 galaxy_sf/thermal_fb.o: galaxy_sf/thermal_fb.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 galaxy_sf/thermal_fb_loop.o: galaxy_sf/thermal_fb_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+galaxy_sf/sfr_collect_gas.o: galaxy_sf/sfr_collect_gas.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+galaxy_sf/photoion_per_direction.o: galaxy_sf/photoion_per_direction.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 ## sinks/sink_feed_gpu.o retired; legacy `sink_feed_gpu.cc` out of build,
 ## file deletion deferred to cleanup commit.

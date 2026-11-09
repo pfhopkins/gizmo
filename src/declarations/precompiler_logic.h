@@ -10,6 +10,56 @@
 #define EXPAND_PREPROCESSOR_(VAL)     DO_PREPROCESSOR_EXPAND_(VAL) /* checks for a NON-ZERO value of this parameter */
 #define CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(VAL) !(EXPAND_PREPROCESSOR_(VAL) == 1) /* returns True if a non-zero int value of VAL is set */
 
+/* the usual Stella set; each flag still works alone (scripts/stella holds the production configs). the flags the chemistry sources read stay in Config.sh, they see no other header */
+#ifdef STELLA_DEFAULTS
+#if !defined(SGCHEM) || !defined(METALS) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS) || (!defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS))
+#error "STELLA_DEFAULTS: set SGCHEM, CHEMISTRYNETWORK, METALS, GALSF_RESOLVEDISM_TREECOL_PIXELS=12 and GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES in Config.sh"
+#endif
+#ifndef COOLING
+#define COOLING
+#endif
+#ifndef COOLING_OPERATOR_SPLIT
+#define COOLING_OPERATOR_SPLIT
+#endif
+#ifndef COOL_METAL_LINES_BY_SPECIES
+#define COOL_METAL_LINES_BY_SPECIES
+#endif
+#ifndef GALSF
+#define GALSF
+#endif
+#ifndef GALSF_SINGLE_STARS_FROM_IMF
+#define GALSF_SINGLE_STARS_FROM_IMF
+#endif
+#ifndef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+#define GALSF_SINGLE_STARS_EVOLUTION_TABLES
+#endif
+#ifndef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+#define GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+#endif
+#ifndef GALSF_SINGLE_STARS_SF_CRITERION
+#define GALSF_SINGLE_STARS_SF_CRITERION
+#endif
+#ifndef GALSF_SINGLE_STARS_TYPE_IA
+#define GALSF_SINGLE_STARS_TYPE_IA
+#endif
+#ifndef GALSF_FB_MECHANICAL
+#define GALSF_FB_MECHANICAL
+#endif
+#if !defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS) && !defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS) && !defined(GALSF_FB_MECHANICAL_FACE_AREA_WEIGHTS)
+#define GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+#endif
+#if !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) /* with the moment solver its bins push */
+#define GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
+#endif
+#ifndef TIDAL_TIMESTEP_CRITERION
+#define TIDAL_TIMESTEP_CRITERION
+#endif
+#ifndef DO_DENSITY_AROUND_NONGAS_PARTICLES
+#define DO_DENSITY_AROUND_NONGAS_PARTICLES
+#endif
+#endif
+
+
 /* set default slope limiters */
 #if !defined(SLOPE_LIMITER_TOLERANCE)
 #define SLOPE_LIMITER_TOLERANCE 1
@@ -446,6 +496,9 @@
 
 /* set default modules for different cosmic ray transport settings/packages */
 #ifdef COSMIC_RAY_FLUID
+#if !defined(CRFLUID_SPEEDOFLIGHT_REDUCTION) && (defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS))
+#define CRFLUID_SPEEDOFLIGHT_REDUCTION (3.e7/C_LIGHT_CGS) /* single stars: 300 km/s CR transport speed */
+#endif
 #if !defined(CRFLUID_SPEEDOFLIGHT_REDUCTION)
 #define CRFLUID_SPEEDOFLIGHT_REDUCTION (1.0)
 #endif
@@ -1018,6 +1071,31 @@
 #define  GALSF_GENERATIONS     1    /*!< Number of star particles that may be created per gas particle */
 #endif
 
+#if defined(GALSF_SINGLE_STARS_SF_CRITERION) && !defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS)
+#define GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* the single-star criterion forms stars that collect their drawn mass */
+#endif
+#if defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS) && !defined(GALSF_SINGLE_STARS_FROM_IMF)
+#define GALSF_SINGLE_STARS_FROM_IMF /* the collected stars carry their drawn mass in the single-star record */
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(CRFLUID_EXCHANGE_PDV_ONLY)
+#define CRFLUID_EXCHANGE_PDV_ONLY /* single stars: CRs take only their own P dV work, no share of shock heating */
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(CRFLUID_STREAMING_LOSS_CAPPED_AT_CR_SPEED)
+#define CRFLUID_STREAMING_LOSS_CAPPED_AT_CR_SPEED /* single stars: the Alfven speed in the streaming loss is at most the CR speed */
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_MECHANICAL) && (defined(GALSF_FB_FIRE_STELLAREVOLUTION) || (defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)))
+#define MECHFB_CR_INJECTION /* the mechanical feedback loop injects CRs (supernovae and fast winds) */
+#endif
+#if defined(MECHFB_CR_INJECTION) && !defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+#define CR_DYNAMICAL_INJECTION_IN_SNE /* CosmicRay_SNeFraction of the fast-ejecta energy goes to CRs */
+#endif
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL) && !defined(GALSF_SINGLE_STARS_SNE_MECHANICAL_COUPLING) && !defined(GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY)
+#define GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY /* single stars: pure-thermal supernovae by default */
+#endif
+#if defined(GALSF_FB_FIRE_STELLAREVOLUTION) || (defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL))
+#define GALSF_FB_MASS_RETURN_EVENTS /* the mechanical feedback loop also returns stellar mass (mode 1) */
+#endif
+
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 #define OUTPUT_SOFTENING  /*! output softening to snapshots */
@@ -1057,6 +1135,163 @@
    and sink capture both ask this one question (after every block above that can switch on one of its inputs) */
 #if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY)) || defined(RT_INFRARED) || defined(EOS_GMC_BAROTROPIC)
 #define SINK_OPACITY_LIMIT_THERMODYNAMICS
+#endif
+#if defined(OUTPUT_SGCHEM_RADIATION_FIELDS) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES)
+#error "OUTPUT_SGCHEM_RADIATION_FIELDS writes the band fluxes of the gravity walk"
+#endif
+#if defined(OUTPUT_SGCHEM_RADIATION_FIELDS) && !defined(OUTPUT_SHIELD_FAC)
+#define OUTPUT_SHIELD_FAC
+#endif
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
+#define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
+#endif
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS /* one weighting per build; the cell closes the energy of a deposit only for single stars from the tables */
+#if defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS) || defined(GALSF_FB_MECHANICAL_FACE_AREA_WEIGHTS)
+#error "GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS, GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS and GALSF_FB_MECHANICAL_FACE_AREA_WEIGHTS exclude each other"
+#endif
+#if !defined(GALSF_FB_MECHANICAL) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS needs GALSF_FB_MECHANICAL, GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#endif
+#ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS /* single stars: band-resolved photon momentum at the star, in the local radiation-pressure loop */
+#if !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS needs GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#ifndef GALSF_FB_FIRE_RT_LOCALRP
+#define GALSF_FB_FIRE_RT_LOCALRP
+#endif
+#endif
+#if defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) && defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(GALSF_FB_RADPRESSURE_DIRECT_TERM_AT_STAR)
+#define GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL /* direct term per gas cell from the pixel fluxes; IR boost stays at the star */
+#endif
+#if defined(GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE) && !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+#error "GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE is an option of GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS"
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS /* per-direction columns and band fluxes in the gravity walk (gravity/gravtree_treecol_pixels.h) */
+#if GALSF_RESOLVEDISM_TREECOL_PIXELS == 12
+#define TREECOL_PIXELS_NSIDE 1
+#elif GALSF_RESOLVEDISM_TREECOL_PIXELS == 48
+#define TREECOL_PIXELS_NSIDE 2
+#elif GALSF_RESOLVEDISM_TREECOL_PIXELS == 192
+#define TREECOL_PIXELS_NSIDE 4
+#else
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS must be 12, 48 or 192 (HEALPix NSIDE 1, 2, 4)"
+#endif
+#ifndef SGCHEM
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS feeds the SGChem chemistry: set SGCHEM"
+#endif
+#define TREECOL_PIXELS_NCOLUMNS 3 /* per-pixel columns: dust-weighted gas, H2, CO */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
+#if CHEMISTRYNETWORK == 17
+#define TREECOL_SHELLS_ION_HELIUM /* two ionising bands split at 24.6 eV, absorbers HI and HeI (net 17 tracks He) */
+#define TREECOL_PIXELS_NSPECIES 5 /* node masses: + HI, HeI */
+#else
+#define TREECOL_PIXELS_NSPECIES 4 /* node masses: + H-ionising absorbers */
+#endif
+#else
+#define TREECOL_PIXELS_NSPECIES TREECOL_PIXELS_NCOLUMNS
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STORED_AS_FLOAT
+#define TREECOL_PIXEL_STORAGE_T float /* parity builds */
+#else
+#define TREECOL_PIXELS_LOG16 /* per-pixel cell values as 16-bit log10 fixed point (gravtree_treecol_pixels.h) */
+#define TREECOL_PIXEL_STORAGE_T uint16_t
+#endif
+#ifndef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+#define GRAVTREE_CALCULATE_GAS_MASS_IN_NODE /* the species masses ride the gas-mass node paths */
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS /* bands attenuated per (pixel, log-radial shell) in the walk (TreeRay) */
+#ifndef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS attenuates the band fluxes of GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES"
+#endif
+#define TREECOL_SHELLS_NSHELL GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS
+#define TREECOL_SHELLS_N (GALSF_RESOLVEDISM_TREECOL_PIXELS * TREECOL_SHELLS_NSHELL)
+#define TREECOL_SHELL_UV 0
+#define TREECOL_SHELL_LW 1
+#define TREECOL_SHELL_NUV 2
+#define TREECOL_SHELL_OPT 3
+#define TREECOL_SHELL_DUST 4
+#define TREECOL_SHELLS_NFIELD 5
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION /* =NSIDE of the ionising shells; TreeRay photoionisation, gravtree_treecol_pixels.h */
+#ifndef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION needs GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS"
+#endif
+#if GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION < 2
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION is an NSIDE >= 2: at NSIDE 1 the front quenches itself"
+#endif
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION replaces the other photoionisation loops"
+#endif
+#define TREECOL_SHELLS_ION_NPIX (12 * GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION * GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION)
+#define TREECOL_SHELLS_ION_N (TREECOL_SHELLS_ION_NPIX * TREECOL_SHELLS_NSHELL)
+#ifdef TREECOL_SHELLS_ION_HELIUM
+#define TREECOL_SHELLS_ION_NBANDS 2
+#define TREECOL_SHELL_ION_PHOTONS 0
+#define TREECOL_SHELL_ION_HE_PHOTONS 1
+#define TREECOL_SHELL_ION_HI 2
+#define TREECOL_SHELL_ION_HEI 3
+#define TREECOL_SHELLS_ION_NFIELD 4
+#else
+#define TREECOL_SHELLS_ION_NBANDS 1
+#define TREECOL_SHELL_ION_PHOTONS 0
+#define TREECOL_SHELL_ION_ENERGY 1
+#define TREECOL_SHELL_ION_HI 2
+#define TREECOL_SHELLS_ION_NFIELD 3
+#endif
+#endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STORED_AS_FLOAT) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_STORED_AS_FLOAT is a storage option of GALSF_RESOLVEDISM_TREECOL_PIXELS"
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES /* single stars shine in disjoint table bands through the gravity-tree source arrays */
+#if !defined(SGCHEM) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES needs SGCHEM, GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#ifndef GALSF_RESOLVEDISM_TREECOL_PIXELS
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES is part of GALSF_RESOLVEDISM_TREECOL_PIXELS (the chemistry reads the fluxes from the pixel cell fields)"
+#endif
+#if (defined(RADTRANSFER) || defined(RT_LEBRON) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RT_USE_GRAVTREE)) && !defined(RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND) /* this file is read twice */
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES excludes RADTRANSFER, RT_LEBRON, GALSF_FB_FIRE_RT_LONGRANGE and other gravity-tree radiation (own band meanings)"
+#endif
+#define RT_USE_GRAVTREE
+#define RT_SEPARATELY_TRACK_LUMPOS
+#define RT_PHOTOELECTRIC      /* 8-13.6 eV */
+#define RT_LYMAN_WERNER       /* 11.2-13.6 eV, inside the photoelectric band */
+#define RT_NUV                /* 3.444-6 eV with the split below */
+#define RT_OPTICAL_NIR        /* 0.4133-3.444 eV */
+#define RT_GENERIC_USER_FREQ  /* 6-8 eV with the split below */
+#define RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND
+#ifndef RT_SOURCES
+#define RT_SOURCES 16
+#endif
+#endif
+
+#ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS /* single stars source the moment solver's bins from the tables (disjoint bins, radiation-pressure and band energy counted once) */
+#if !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_SINGLE_STARS_RT_TABLE_BANDS needs GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#if !defined(RT_M1)
+#error "GALSF_SINGLE_STARS_RT_TABLE_BANDS is for the moment solver: set RT_M1"
+#endif
+#if defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_FB_FIRE_RT_LOCALRP) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
+#error "GALSF_SINGLE_STARS_RT_TABLE_BANDS: radiation pressure and photoionisation are counted once, in the moment bins: no star-side channels"
+#endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES)
+#error "GALSF_SINGLE_STARS_RT_TABLE_BANDS replaces GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES (the field comes from the bins)"
+#endif
+#ifndef RT_PHOTOELECTRIC
+#define RT_PHOTOELECTRIC      /* 8-13.6 eV */
+#endif
+#ifndef RT_LYMAN_WERNER
+#define RT_LYMAN_WERNER       /* 11.2-13.6 eV, inside the photoelectric bin as stella_dev */
+#endif
+#ifndef RT_NUV
+#define RT_NUV                /* carries 6-8 eV here: with the photoelectric bin it spans the 6-13.6 eV of G0, as stella_dev */
+#endif
+#ifndef RT_SOURCES
+#define RT_SOURCES 16
+#endif
 #endif
 
 
@@ -1350,12 +1585,26 @@
 #define RT_FREQ_BIN_NU_X (RT_FREQ_BIN_NU_EBAR+1)
 #endif
 
+/* single-star ionising light in the tree source arrays only: energy, and photons (rate x 13.6 eV) */
+#ifndef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
+#define RT_FREQ_BIN_ION_PHOTONS (RT_FREQ_BIN_NU_X+0)
+#else
+#define RT_FREQ_BIN_ION_ENERGY (RT_FREQ_BIN_NU_X+1)
+#define RT_FREQ_BIN_ION_PHOTONS (RT_FREQ_BIN_NU_X+2)
+#endif
+#ifndef TREECOL_SHELLS_ION_HELIUM
+#define RT_FREQ_BIN_ION_HE_PHOTONS (RT_FREQ_BIN_ION_PHOTONS+0)
+#else
+#define RT_FREQ_BIN_ION_HE_ENERGY (RT_FREQ_BIN_ION_PHOTONS+1)
+#define RT_FREQ_BIN_ION_HE_PHOTONS (RT_FREQ_BIN_ION_PHOTONS+2)
+#endif
+
 /* be sure to add all new wavebands to these lists, or else we will run into problems */
 /* ALSO, the IR bin here should be the last bin: add additional bins ABOVE this line */
 #ifndef RT_INFRARED
-#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_NU_X+0)
+#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_ION_HE_PHOTONS+0)
 #else
-#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_NU_X+1)
+#define RT_FREQ_BIN_INFRARED (RT_FREQ_BIN_ION_HE_PHOTONS+1)
 #endif
 
 #define N_RT_FREQ_BINS (RT_FREQ_BIN_INFRARED+1)
@@ -1405,6 +1654,17 @@
 #undef MHD_CONSTRAINED_GRADIENT_MIDPOINT
 #endif
 
+#if defined(TURB_DIFF_METALS) && defined(GALSF_SINGLE_STARS_FROM_IMF) /* defaults of the single-star model */
+#ifndef TURB_DIFF_METALS_EXACT_CONSERVATION
+#define TURB_DIFF_METALS_EXACT_CONSERVATION
+#endif
+#ifndef TURB_DIFF_METALS_MAX_DONOR_FRACTION_PER_PAIR
+#define TURB_DIFF_METALS_MAX_DONOR_FRACTION_PER_PAIR 0.01
+#endif
+#endif
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
+#error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
+#endif
 #if defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(TURB_DIFF_MASS) || defined(TURB_DIFF_METALS)
 #define TURB_DIFFUSION /* top-level switch to calculate properties needed for scalar turbulent diffusion/mixing: must enable with any specific version */
 #if defined(TURB_DIFF_VELOCITY) && !defined(VISCOSITY)
@@ -1495,6 +1755,23 @@
 #define GRAVITY_NOT_PERIODIC
 #endif
 #endif // BOX_SHEARING
+
+/* GRAVITY_PERIODIC_XY_IMAGES: self-gravity periodic in x and y by explicit image sums, open in z (tall boxes). No Ewald and no PM, so
+ * the cubic-box solvers are switched off; the tree wraps separations in x and y only (z is non-periodic) and adds the images itself. */
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+#if !defined(BOX_PERIODIC) || defined(BOX_OUTFLOW_X) || defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_REFLECT_Y)
+#error "GRAVITY_PERIODIC_XY_IMAGES requires BOX_PERIODIC with periodic x and y boundaries"
+#endif
+#if !defined(BOX_OUTFLOW_Z) && !defined(BOX_REFLECT_Z)
+#error "GRAVITY_PERIODIC_XY_IMAGES requires a non-periodic z boundary (BOX_OUTFLOW_Z or BOX_REFLECT_Z)"
+#endif
+#if defined(BOX_SHEARING) || defined(PMGRID) || defined(GRAVITY_SPHERICAL_SYMMETRY) || defined(SINGLE_STAR_DIRECT_GRAVITY)
+#error "GRAVITY_PERIODIC_XY_IMAGES is not compatible with BOX_SHEARING, PMGRID, GRAVITY_SPHERICAL_SYMMETRY or SINGLE_STAR_DIRECT_GRAVITY"
+#endif
+#ifndef GRAVITY_NOT_PERIODIC
+#define GRAVITY_NOT_PERIODIC
+#endif
+#endif
 
 
 #ifdef DISK_BETA_COOL
@@ -1608,6 +1885,17 @@
 #define OUTPUT_MOLECULAR_FRACTION // useful since we track dense molecular fraction
 #endif
 
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+#if !defined(SGCHEM) || (GALSF_ISMDUSTCHEM_MODEL & 12) || defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#error "GALSF_ISMDUSTCHEM_HU_MODEL needs SGCHEM and GALSF_ISMDUSTCHEM_MODEL=(1) or (1+2), without GALSF_ISMDUSTCHEM_GRAINSIZEEVO"
+#endif
+#ifndef GALSF_ISMDUSTCHEM_HU_SIZE_BINS
+#define GALSF_ISMDUSTCHEM_HU_SIZE_BINS 1
+#endif
+#ifndef GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION
+#define GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION (16) /* FeMgSiO4 */
+#endif
+#endif
 #ifndef GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION
 #define GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION (1) /* default: olivine-pyroxene mix; the module reads this as a plain integer, so it must always be defined when GALSF_ISMDUSTCHEM_MODEL is active */
 #endif
@@ -1646,10 +1934,29 @@
 #endif
 
 /* NUM_METAL_SPECIES: total size of Metallicity[] array, including ALL passive scalars.
-   Layout: [total_Z, cooling_species..., rprocess..., age_tracers..., starforge_tracers..., dustchem..., nuclear...]
+   Layout: [total_Z, cooling_species..., rprocess..., age_tracers..., starforge_tracers..., dustchem..., nuclear..., extra passive species...]
    Every module that adds fields must add its count here so that all loops, I/O, diffusion,
    merge/split, and MPI exchange automatically handle the correct number of species. */
-#define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS+NUM_ISMDUSTCHEM_PASSIVE_SCALARS+NUM_NUCLEAR_PASSIVE_SCALARS)
+/* passive species appended at the end of Metallicity[] (carried, diffused, merged/split and written; not used by cooling) */
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS /* the 16 table elements outside the FIRE slots go into the first 16 extra passive slots */
+#if !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || !defined(COOL_METAL_LINES_BY_SPECIES)
+#error "GALSF_SINGLE_STARS_27_ELEMENT_YIELDS needs GALSF_SINGLE_STARS_EVOLUTION_TABLES and COOL_METAL_LINES_BY_SPECIES"
+#endif
+#ifndef METALS_EXTRA_PASSIVE_SPECIES
+#define METALS_EXTRA_PASSIVE_SPECIES 16
+#elif (METALS_EXTRA_PASSIVE_SPECIES < 16)
+#error "GALSF_SINGLE_STARS_27_ELEMENT_YIELDS needs METALS_EXTRA_PASSIVE_SPECIES >= 16"
+#endif
+#endif
+#ifndef METALS_EXTRA_PASSIVE_SPECIES
+#define METALS_EXTRA_PASSIVE_SPECIES 0
+#endif
+#if (METALS_EXTRA_PASSIVE_SPECIES > 0) && !defined(METALS)
+#error "METALS_EXTRA_PASSIVE_SPECIES requires METALS"
+#endif
+#define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS+NUM_ISMDUSTCHEM_PASSIVE_SCALARS+NUM_NUCLEAR_PASSIVE_SCALARS+METALS_EXTRA_PASSIVE_SPECIES)
+#define METALS_EXTRA_PASSIVE_SPECIES_OFFSET (NUM_METAL_SPECIES-METALS_EXTRA_PASSIVE_SPECIES) /* first appended slot */
+#define NUM_METAL_SPECIES_BASE (NUM_METAL_SPECIES-METALS_EXTRA_PASSIVE_SPECIES) /* species count without the appended slots, for the checks on the cooling-species layout */
 
 /* offset of ISM dustchem species within Metallicity array */
 #define AGE_TRACER_OFFSET (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES) /* first enrichment-age-tracer slot in Metallicity[]; other tracers and scalars follow */
@@ -1710,6 +2017,66 @@
 #endif
 
 
+#if (defined(CR_SCALE_WITH_G0) || defined(CR_BACKGROUND_IONRATE_ATTENUATED)) && !defined(SGCHEM)
+#error "CR_SCALE_WITH_G0 and CR_BACKGROUND_IONRATE_ATTENUATED set the SGChem cosmic-ray rate: set SGCHEM"
+#endif
+#if defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR) && !defined(SGCHEM) && !defined(RT_ISRF_BACKGROUND)
+#error "ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR scales the SGChem field or the RT_ISRF_BACKGROUND field: set SGCHEM or RT_ISRF_BACKGROUND"
+#endif
+#if defined(OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS) && (!defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) || !defined(GALSF))
+#error "OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS needs OUTPUT_MASS_METAL_ENERGY_LEDGER and GALSF"
+#endif
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(GALSF) && !defined(METALS)
+#error "OUTPUT_MASS_METAL_ENERGY_LEDGER: the star-formation and feedback rows need METALS"
+#endif
+#if defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY) && !defined(SGCHEM)
+#error "SGCHEM_DGR_INDEPENDENT_OF_METALLICITY needs SGCHEM"
+#endif
+#if defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY) && defined(GALSF_ISMDUSTCHEM_MODEL)
+#error "SGCHEM_DGR_INDEPENDENT_OF_METALLICITY has no effect with GALSF_ISMDUSTCHEM_MODEL (live dust sets the dust-to-gas ratio)"
+#endif
+#ifdef SGCHEM /* SGChem chemistry (cooling/sgchem/) */
+#if defined(CHIMES)
+#error "SGCHEM and CHIMES are exclusive (one SUNDIALS per build)"
+#endif
+#if !defined(COOLING) || !defined(METALS) || defined(COOL_GRACKLE)
+#error "SGCHEM needs COOLING and METALS, and excludes COOL_GRACKLE"
+#endif
+#if defined(RT_CHEM_PHOTOION) && (CHEMISTRYNETWORK != 5) && (CHEMISTRYNETWORK != 17)
+#error "SGCHEM: the ionising bins couple to networks 5 and 17"
+#endif
+#if defined(RADTRANSFER) && (!defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS))
+#error "SGCHEM with RT_M1 reads the field from the bins of GALSF_SINGLE_STARS_RT_TABLE_BANDS and takes its H2, CO and floor-pixel shielding from GALSF_RESOLVEDISM_TREECOL_PIXELS"
+#endif
+#if defined(COSMIC_RAY_FLUID) && (defined(CR_SCALE_WITH_G0) || defined(CR_BACKGROUND_IONRATE_ATTENUATED))
+#error "CR_SCALE_WITH_G0 and CR_BACKGROUND_IONRATE_ATTENUATED set the SGChem cosmic-ray rate without the CR fluid; with COSMIC_RAY_FLUID it comes from the fluid"
+#endif
+#if !defined(COOL_METAL_LINES_BY_SPECIES)
+#error "SGCHEM reads the element slots: set COOL_METAL_LINES_BY_SPECIES"
+#endif
+#if defined(CR_SCALE_WITH_G0) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
+#error "CR_SCALE_WITH_G0 scales the SGChem cosmic-ray rate with the stars' field (GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) or the recent SFR (ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)"
+#endif
+#if defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR) && (!defined(GALSF) || defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES))
+#error "ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR scales the uniform SGChem field: needs GALSF, excludes the stars' field GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES"
+#endif
+#if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
+#error "CR_BACKGROUND_IONRATE_ATTENUATED attenuates by the gas column of the pixel walk: set GALSF_RESOLVEDISM_TREECOL_PIXELS"
+#endif
+#if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 20 /* tracked species per cell (= TRAC_NUM of cooling/sgchem/sgchem_consts.h) */
+#define SGCHEM_NUM_TRACKED_SPECIES 3
+#elif CHEMISTRYNETWORK == 17
+#define SGCHEM_NUM_TRACKED_SPECIES 7
+#elif CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
+#define SGCHEM_NUM_TRACKED_SPECIES 9
+#elif CHEMISTRYNETWORK == 3
+#define SGCHEM_NUM_TRACKED_SPECIES 19
+#elif CHEMISTRYNETWORK == 18
+#define SGCHEM_NUM_TRACKED_SPECIES 113
+#else
+#error "SGCHEM: set CHEMISTRYNETWORK to 3, 5, 15, 16, 17, 18 or 20"
+#endif
+#endif
 #ifdef CHIMES_STELLAR_FLUXES /* The following defines the stellar age bins that we will use to define the UV spectra from stars used in CHIMES. */
 #define CHIMES_LOCAL_UV_NBINS 8
 #define CHIMES_LOCAL_UV_AGE_LOW 0.0
@@ -1823,7 +2190,8 @@
  * This is a COMPILE-TIME capability predicate; the eager-vs-lazy choice at
  * runtime is made by a separate structural (num_active) threshold. */
 #if !defined(GR_TABULATED_COSMOLOGY) && !defined(GR_TABULATED_COSMOLOGY_W) \
- && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H)
+ && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H) \
+ && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) /* single-star bands: host-only table lookups */
 #define GRAVTREE_SOURCE_LAZY_SUPPORTED
 #endif
 
@@ -1912,6 +2280,15 @@
 #error "EOS_SUBSTELLAR_ISM anchors the cached energy-to-temperature conversion, which requires every writer of the cached temperature to update its anchor alongside. Grackle, Helmholtz, ANEOS, Tillotson, elastic and mixed gas/solid equations of state each set that temperature from a solver the cache cannot follow, and the table dispatch is per-cell, so the combination is refused rather than reading a stale anchor. CHIMES is excluded by the gate above rather than here."
 #endif
 #define EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+#endif
+#if defined(GALSF_SINGLE_STARS_BH_PROMOTION) && !defined(SINK_PARTICLES)
+#error "GALSF_SINGLE_STARS_BH_PROMOTION needs the sink framework: switch on SINK_PARTICLES (and SINK_GRAVCAPTURE_GAS)"
+#endif
+#ifdef KETJU_REGULARIZATION
+#include "../gravity/ketju/ketju_precompiler_logic.h"
+#endif
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(KETJU_REGULARIZATION)
+#define SINGLE_STAR_RECORDS /* compact star records and P[i].StarIdx */
 #endif
 
 /* last, after every block that can switch on an equation of state (GRAIN_FLUID_PROMOTION turns on EOS_TILLOTSON above) */

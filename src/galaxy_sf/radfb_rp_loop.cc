@@ -309,12 +309,20 @@ int radfb_rp_local_fill(int i,
     if (P_host[i].Mass <= 0 || !isfinite((double)P_host[i].Mass)) return 0;
     if (P_host[i].DensityAroundParticle <= 0) return 0;
 
+#ifndef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
     double star_age = evaluate_stellar_age_Gyr(i);
     if (star_age >= radfb_rp_age_threshold_value()) return 0;
+#endif
 
     double dt = get_particle_feedback_timestep_in_physical(i, P);
     if (dt <= 0 || !isfinite(dt)) return 0;
 
+#ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
+    /* single stars: absorbed band luminosity and IR boost at the star; momentum on the absorbed light only */
+    double tau_IR = 0, f_lum_ion = 0;
+    double dE_over_c = single_star_radpressure_momentum_cgs(i, dt * unit_time_in_cgs, &tau_IR) / (unit_mass_in_cgs * unit_vel_in_cgs);
+    if (!(dE_over_c > 0)) return 0;
+#else
     /* luminosity */
     double lm_ssp    = evaluate_light_to_mass_ratio(star_age, i);
     double lum_cgs   = lm_ssp * SOLAR_LUM_CGS * (P_host[i].Mass * unit_mass_in_solar);
@@ -324,6 +332,7 @@ int radfb_rp_local_fill(int i,
     double dE_over_c = HostAll->RP_Local_Momentum_Renormalization * lum_cgs
                      * (dt * unit_time_in_cgs) / C_LIGHT_CGS;
     dE_over_c /= (unit_mass_in_cgs * unit_vel_in_cgs);
+#endif
 
     /* Radius over which this star hands its momentum to the gas around it.
      *
@@ -347,11 +356,16 @@ int radfb_rp_local_fill(int i,
      * values are not appropriate to it. */
     double rho_phys = P_host[i].DensityAroundParticle * HostAll->cf_a3inv;
     double h_phys   = P_host[i].KernelRadius * HostAll->cf_atime;
+#ifndef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
     double tau_IR   = rt_kappa(i, RT_FREQ_BIN_FIRE_IR, P_host, CellP_host)
                     * rho_phys * h_phys;
+#endif
     double RtauMax  = P_host[i].KernelRadius * (2.0 + tau_IR);
     RtauMax = DMAX(1.0e-3 / (unit_length_in_kpc * HostAll->cf_atime),
                    DMIN(1.0 / (unit_length_in_kpc * HostAll->cf_atime), RtauMax));
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+    RtauMax = P_host[i].KernelRadius; /* the star's own kernel, as the mechanical feedback */
+#endif
 
     /* stochastic gate */
     double v_wind_threshold = 15.0 / unit_vel_in_kms;
@@ -381,7 +395,11 @@ int radfb_rp_local_fill(int i,
 
     static constexpr uint64_t RP_SOURCE_GATE_RNG_SALT = gizmo_loop_rng_salt("radiation_pressure_source_gate");
     double p_random = gizmo_gpu_rand_double(gizmo_rng_particle_event_key(P_host[i]), gizmo_rng_event_counter(RP_SOURCE_GATE_RNG_SALT, (uint64_t)HostAll->Ti_Current, 0));
+#ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
+    (void) p_random; /* single stars: every step, the full budget */
+#else
     if (p_random > prob) return 0;     /* doesn't fire this step */
+#endif
 
     /* fill struct */
     loc->Pos          = P_host[i].Pos;
@@ -555,6 +573,9 @@ void radiation_pressure_winds_consolidated(void)
     radfb_rp_log_sum_radius  = 0; radfb_rp_log_n_touched   = 0;
     radfb_rp_log_mom_coupled = 0; radfb_rp_log_sum_v_kick  = 0;
     radfb_rp_log_sum_taufac  = 0;
+#ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
+    {double dp_cells = 0; single_star_radpressure_per_cell(&dp_cells); radfb_rp_log_mom_supply += dp_cells; radfb_rp_log_mom_coupled += dp_cells;}
+#endif
 
     std::vector<int>             active_src;
     std::vector<RadFBRPLocalIn>  host_locals;

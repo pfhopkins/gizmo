@@ -13,6 +13,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "../galaxy_sf/single_star_record.h"
 #include "../declarations/gpu_rng.h"
 #include "ghost_writeback.h"   /* ghost_get_num_local/num_ghosts */
 #include "../core/wakeup_sidecar.h"
@@ -85,6 +86,9 @@ int does_particle_need_to_be_merged(int i)
     /* no merging, splitting still allowed (PREVENT_PARTICLE_MERGE_SPLIT disables both): the
        diffusion-free, finest-resolution reference case. */
     return 0;
+#endif
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    if(P[i].Type == 4 && P[i].StarIdx > 0) {return 0;} /* an IMF-sampled star is one physical star, never merged */
 #endif
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
     return 0;
@@ -602,6 +606,9 @@ void merge_and_split_particles(void)
 #endif
 #endif
                     if ((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+                    if ((j>=0) && (P[j].Type==4) && (P[j].StarIdx>0)) {do_allow_merger=0;} /* nor the target of a merger */
+#endif
 #ifdef HYDRO_MULTIFLUID
                     if (do_allow_merger && !same_lagrangian_fluid_id(P[i].FluidType, P[j].FluidType)) {do_allow_merger = 0;}
 #endif
@@ -796,6 +803,7 @@ int split_particle_i(int i, int n_particles_split, double r_near)
     double mass_before_split = 0, density_before_split = 0, volume_before_split = 0; mass_before_split = P[i].Mass; // save for use below
     if(P[i].Type==0) {density_before_split = CellP[i].Density; volume_before_split = mass_before_split/density_before_split;} // save for use below
     P[j].Mass = mass_of_new_particle * P[i].Mass;
+    P[j].dp = mass_of_new_particle * P[i].dp; P[i].dp -= P[j].dp; /* the copy took the parent's pending kick: share it, or the tree gets it twice */
     P[i].Mass -= P[j].Mass;
     if(P[i].Type==0) {CellP[j].Mass = P[j].Mass; CellP[i].Mass = P[i].Mass;} // CellP[] is sized All.MaxPartGas; only gas splits get CellP writes
 #ifdef BOX_BND_PARTICLES
@@ -883,6 +891,9 @@ int split_particle_i(int i, int n_particles_split, double r_near)
 #endif
 #if defined(SINK_THERMALFEEDBACK)
         CellP[j].Injected_Sink_Energy = mass_of_new_particle * CellP[i].Injected_Sink_Energy; CellP[i].Injected_Sink_Energy -= CellP[j].Injected_Sink_Energy; /* pending energy (not specific): partition with the mass */
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[j].Dyield_pending[k] = 0;} /* pending exchange (a mass, not a fraction) stays with the parent */
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
@@ -1032,6 +1043,11 @@ int merge_particles_ij(int i, int j)
     if(((P[i].Type==0)||(P[j].Type==0)) && (P[j].Type!=P[i].Type)) {printf("WARNING: code is trying to merge a gas cell with a non-gas particle. I dont know how to do this. Exiting the merge subroutine."); fflush(stdout); return 0;}
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
     if((P[i].Type==0) && (CellP[i].CompositionType != CellP[j].CompositionType)) {printf("WARNING: code is trying to merge cells of two different materials (CompositionType %d and %d). Exiting the merge subroutine.\n", (int)CellP[i].CompositionType, (int)CellP[j].CompositionType); fflush(stdout); return 0;}
+#endif
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    if((P[i].Type==4 && P[i].StarIdx>0) || (P[j].Type==4 && P[j].StarIdx>0)) { /* IMF-sampled stars are never merged */
+        static int warned = 0; if(!warned) {warned = 1; printf("WARNING: merge of IMF-sampled star refused (ID %llu, %llu) on task %d\n", (unsigned long long)P[i].ID, (unsigned long long)P[j].ID, ThisTask); fflush(stdout);}
+        return 0;}
 #endif
 
     int swap_ids = 0; if(P[i].Mass > P[j].Mass) {swap_ids = 1;} /* retain the IDs of the more massive progenitor */
@@ -1205,6 +1221,12 @@ int merge_particles_ij(int i, int j)
     CellP[j].HeIII = wt_j*CellP[j].HeIII + wt_i*CellP[i].HeIII;
 #endif
 #endif
+#ifdef SGCHEM
+    /* abundances per H nucleus at one H fraction mix by mass; dust and gas temperature as stella_dev */
+    for(k=0;k<SGCHEM_NUM_TRACKED_SPECIES;k++) {CellP[j].TracAbund[k] = wt_j*CellP[j].TracAbund[k] + wt_i*CellP[i].TracAbund[k];}
+    CellP[j].DustTemp = wt_j*CellP[j].DustTemp + wt_i*CellP[i].DustTemp;
+    CellP[j].Temp = wt_j*CellP[j].Temp + wt_i*CellP[i].Temp;
+#endif
 #if defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY > 0)
     /* grackle's species are fractions of the total mass, so they mix by mass */
     CellP[j].grHI = wt_j*CellP[j].grHI + wt_i*CellP[i].grHI; CellP[j].grHII = wt_j*CellP[j].grHII + wt_i*CellP[i].grHII; CellP[j].grHM = wt_j*CellP[j].grHM + wt_i*CellP[i].grHM;
@@ -1356,6 +1378,10 @@ int merge_particles_ij(int i, int j)
 #ifdef METALS
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving (includes nuclear species) */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+    {double dj = wt_j * CellP[j].ISMDustChem_Dust_Metal[0], di = wt_i * CellP[i].ISMDustChem_Dust_Metal[0]; /* drift: dust-mass weighted */
+     for(int b = 0; b < GALSF_ISMDUSTCHEM_HU_SIZE_BINS; b++) {for(k = 0; k < 3; k++) {CellP[j].ISMDustChem_Hu_Vrel[b][k] = (dj + di > 0) ? (dj * CellP[j].ISMDustChem_Hu_Vrel[b][k] + di * CellP[i].ISMDustChem_Hu_Vrel[b][k]) / (dj + di) : 0;}}}
+#endif
     for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k] = wt_j*CellP[j].ISMDustChem_Dust_Metal[k] + wt_i*CellP[i].ISMDustChem_Dust_Metal[k];} /* dust-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[j].ISMDustChem_Dust_Source[k] = wt_j*CellP[j].ISMDustChem_Dust_Source[k] + wt_i*CellP[i].ISMDustChem_Dust_Source[k];} /* dust source-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[j].ISMDustChem_Dust_Species[k] = wt_j*CellP[j].ISMDustChem_Dust_Species[k] + wt_i*CellP[i].ISMDustChem_Dust_Species[k];} /* dust species-mass conserving */
@@ -1382,6 +1408,9 @@ int merge_particles_ij(int i, int j)
 #endif
 #if defined(SINK_THERMALFEEDBACK)
     CellP[j].Injected_Sink_Energy += CellP[i].Injected_Sink_Energy; /* pending energy (not specific): the survivor keeps both */
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+    for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[j].Dyield_pending[k] += CellP[i].Dyield_pending[k];} /* pending exchange (a mass) adds */
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
@@ -1640,6 +1669,9 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
     for(i = 0; i < numpart_local; i++)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
+#ifdef SINGLE_STAR_RECORDS
+            if(P[i].StarIdx > 0) {single_star_record_free(P[i].StarIdx); P[i].StarIdx = 0;}
+#endif
             P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
             TimeBinCount[P[i].TimeBin]--;
             if(TimeBinActive[P[i].TimeBin]) {NumForceUpdate--;}

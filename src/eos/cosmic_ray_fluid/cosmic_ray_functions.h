@@ -169,6 +169,9 @@ KOKKOS_INLINE_FUNCTION double CR_get_streaming_loss_rate_coefficient(int target,
     double streamfac = 0;
     if((cell[target].CosmicRayEnergy[k_CRegy] <= MIN_REAL_NUMBER) || (cell[target].CosmicRayEnergy[k_CRegy] <= MIN_REAL_NUMBER)) {return 0;}
     double vA = Get_Gas_ion_Alfven_speed_i(target, pp, cell); /* define Alfven speed, which is what appears in the proper formulation here */
+#ifdef CRFLUID_STREAMING_LOSS_CAPPED_AT_CR_SPEED
+    vA = DMIN(vA, CRFLUID_REDUCED_C_CODE(k_CRegy)); /* streaming losses cannot outrun the CR transport speed */
+#endif
     double v_flux_eff=cell[target].CosmicRayFluxPred[k_CRegy].norm_sq(); int k; // need magnitude of flux vector
     if(v_flux_eff > 0) {v_flux_eff=sqrt(v_flux_eff) / (MIN_REAL_NUMBER + cell[target].CosmicRayEnergyPred[k_CRegy]);} else {v_flux_eff=0;} // effective speed of CRs = |F|/E
     int target_for_cr_gamma = target; // if this = -1, use the gamma factor at the bin-center for evaluating this, if this = target, use the mean gamma of the bin, weighted by the CR energy -- won't give exactly the same result here
@@ -837,8 +840,13 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
 #if !defined(CRFLUID_EVOLVE_SPECTRUM)
 KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell) {
     if(dtime_cgs <= 0) {return;}
-    int k_CRegy; double f_ion = DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell), 1.), 0.);
+    int k_CRegy;
+#ifdef SGCHEM
+    double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*n_elec*HYDROGEN_MASSFRAC; /* Coulomb on free electrons only: the ionisation loss is the chemistry's ionisation heating, taken out of e_CR there (as stella_dev) */
+#else
+    double f_ion = DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell), 1.), 0.);
     double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*(n_elec + 0.57*(1.-f_ion))*HYDROGEN_MASSFRAC;
+#endif
     for(k_CRegy=0; k_CRegy<N_CR_PARTICLE_BINS; k_CRegy++) {
         double CR_coolrate, Z, species_ID; CR_coolrate=0; Z=fabs(return_CRbin_CR_charge_in_e(target,k_CRegy)); species_ID=return_CRbin_CR_species_ID(k_CRegy);
         if(species_ID > 0) {
@@ -954,6 +962,14 @@ KOKKOS_INLINE_FUNCTION void cosmic_ray_inject_from_resolved_shocks(int i, double
 #endif
 }
 
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && !defined(__CUDA_ARCH__) && !defined(__HIP_DEVICE_COMPILE__)
+#define CR_LEDGER_ON_HOST(...) __VA_ARGS__
+void ledger_cr_kick(int i, int k, double dt, double eCR_new); /* ledger.cc: this header comes before the row names */
+void ledger_cr_exchange(double dCR_div);
+void ledger_cr_shock(double dE);
+#else
+#define CR_LEDGER_ON_HOST(...)
+#endif
 /* routine to do the drift/kick operations for CRs: mode=0 is kick, mode=1 is drift */
 #if !defined(CRFLUID_EVOLVE_SCATTERINGWAVES)
 KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell)
@@ -1052,6 +1068,9 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         if(dCR > dCRmax) {dCR=dCRmax;} // don't allow excessively large values
         if(dCR < -eCR_tmp) {dCR=-eCR_tmp;} // don't allow it to go negative
         double eCR_0, eCR_00; eCR_00 = eCR_tmp; eCR_tmp += dCR; if((eCR_tmp<0)||(isnan(eCR_tmp))) {eCR_tmp=0;} // check against energy going negative or nan
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+        CR_LEDGER_ON_HOST(if(mode==0) {ledger_cr_kick(i, k_CRegy, dt_entr, eCR_tmp);})
+#endif
         if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy]=eCR_tmp;} else {cell[i].CosmicRayEnergyPred[k_CRegy]=eCR_tmp;} // updated energy
         eCR_0 = eCR_tmp; // save this value for below
 
@@ -1076,12 +1095,21 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         if(mode==0) {cell[i].InternalEnergy = uf;} else {cell[i].InternalEnergyPred = uf;} // update gas
 #if !defined(CRFLUID_EVOLVE_SPECTRUM)
         if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy] += dCR_div;} else {cell[i].CosmicRayEnergyPred[k_CRegy] += dCR_div;} // update CRs: note if explicitly evolving spectrum, this is done separately below //
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+        CR_LEDGER_ON_HOST(if(mode==0) {ledger_cr_exchange(dCR_div);})
+#endif
 #endif
 #endif
 
     } // loop over CR bins complete
 
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(CRFLUID_INJECTION_AT_SHOCKS)
+    double e_cr_before_shock = 0; for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) {e_cr_before_shock += cell[i].CosmicRayEnergy[kb];}
+#endif
     cosmic_ray_inject_from_resolved_shocks(i, dt_entr, mode, pp, cell);
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(CRFLUID_INJECTION_AT_SHOCKS)
+    CR_LEDGER_ON_HOST(if(mode==0) {double e1 = -e_cr_before_shock; for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) {e1 += cell[i].CosmicRayEnergy[kb];} ledger_cr_shock(e1);})
+#endif
 #if defined(SINK_CR_INJECTION_AT_TERMINATION)
     if(cell[i].Sink_CR_Energy_Available_For_Injection > 0) {
         /* need to determine whether or not sufficient deceleration has occurred in order to inject CRs from our 'reservoir */
@@ -1460,9 +1488,12 @@ KOKKOS_INLINE_FUNCTION double Get_CosmicRayEnergyDensity_cgs(int i, struct parti
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     return cell[i].SubGrid_CosmicRayEnergyDensity*All.cf_a3inv * UNIT_PRESSURE_IN_CGS;
 #endif
+#if defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR) && !defined(SGCHEM) /* SGCHEM sets its own rate */
+    return All.FactorG0 * sqrt(All.InterstellarRadiationFieldStrength) * 1.6e-12; /* uniform, linear in FactorG0, as stella_dev GHOSDT_G0_CR */
+#endif
 #ifdef RT_ISRF_BACKGROUND
     double column = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp) * UNIT_SURFDEN_IN_CGS, sigma_0=2.23e-3;
-    double u_cr_0 = sqrt(All.InterstellarRadiationFieldStrength) * 1.6e-12;
+    double u_cr_0 = sqrt(ISRF_BACKGROUND_STRENGTH) * 1.6e-12;
     if(column < sigma_0) {return u_cr_0;} else {
         double atten_fac = exp(DMAX(-column/100.,-90)) * (sigma_0/(column+MIN_REAL_NUMBER));
         return atten_fac * u_cr_0;
@@ -1490,7 +1521,7 @@ KOKKOS_INLINE_FUNCTION double Get_CosmicRayIonizationRate_cgs(int i, struct part
 #endif
 #ifdef METALS
     zeta_cr += 1.e-21 * pp[i].Metallicity[0]/All.SolarAbundances[0]; // include radioactive decay of K-40 and other species, which scales with metallicity
-#if (NUM_METAL_SPECIES > 10)
+#if (NUM_METAL_SPECIES_BASE > 10)
     zeta_cr += 1.e-19 * pp[i].Metallicity[10]/All.SolarAbundances[10]; // Contribution from short-lived radioisotopes, here scaling to Fe abundance - Adams et al 2014 Apj 789 86
 #endif
 #endif
@@ -1631,7 +1662,9 @@ KOKKOS_INLINE_FUNCTION double CR_calculate_adiabatic_gasCR_exchange_term(int i, 
         if(divv_p*divv_f > 0) {if(fabs(divv_p) > fabs(divv_f)) {divv_u=divv_p;} else {divv_u=divv_f;}} // if both agree in sign here, use -larger- since more accurately captures CR-dominated limit
         d_CR = gamma_minus_eCR_tmp * divv_u; // expected PdV CR energy change
         if(fabs(d_CR) > fabs(dtI_hydro)) {d_CR = dtI_hydro;} // do not allow this to exceed the sum (since all terms have the same sign here, in a well-ordered smooth flow)
+#if !defined(CRFLUID_EXCHANGE_PDV_ONLY) /* with it, the CRs take only their own P dV work: shock heating stays in the gas */
         if(fabs(d_CR) < fac_P*fabs(dtI_hydro)) {d_CR = fac_P*dtI_hydro;} // but also do not allow CR term to be -below- CR pressure fraction times total term, since that should be attributed to the CR (as this is all a quasi-adiabatic term)
+#endif
     } else { // both divv terms agree with each other, but dis-agree with the sign of the total change. can't assume anything about smoothness-of-the-flow
         if(fabs(divv_p) > fabs(divv_f)) {divv_u=divv_f;} else {divv_u=divv_p;} // pick the divv estimator with the smaller absolute magnitude, since it deviates
         d_CR = gamma_minus_eCR_tmp * divv_u; // expected PdV CR energy change

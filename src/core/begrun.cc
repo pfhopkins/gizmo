@@ -12,6 +12,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../galaxy_sf/stellar_evolution_tables.h"
 #include "../sidm/dm_cooling_tables.h"   /* InitCool_dm() declaration only; the full dm_fluid_functions.h chain belongs in GPU_OBJS TUs where Kokkos_Core.hpp is in-scope, not in host TUs like this one */
 
 
@@ -98,6 +99,9 @@ void begrun(void)
 #endif
 
   read_parameter_file(ParameterFile);	/* ... read in parameters for this run */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS
+  if(All.TreeColShieldingLength <= 0) {if(ThisTask == 0) {printf("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS needs TreeColShieldingLength > 0: the shells span 3 dex below it\n");} endrun(9817302);}
+#endif
   particle_receive_staging_init();   /* a failure is a controlled stop, drained by the poll below */
 
   /* Bad-stop poll: parameter/config validation (inside read_parameter_file)
@@ -156,6 +160,9 @@ void begrun(void)
 
 #ifdef COOLING
   InitCool();
+#endif
+#ifdef KETJU_REGULARIZATION
+  ketju_open_output_file();
 #endif
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
   InitCool_dm();
@@ -286,6 +293,16 @@ void begrun(void)
 #ifdef NUCLEAR_NETWORK
     InitNuclearNetwork();
     if(gizmo_poll_controlled_stop()) return; /* a network that failed to load stops the run here */
+#endif
+
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    ledger_init(); /* before the restart files are read */
+#endif
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+    stellar_evolution_tables_init();
+    if(gizmo_poll_controlled_stop()) return;
+    stellar_evolution_tables_load();
+    if(gizmo_poll_controlled_stop()) return;
 #endif
 
 #ifdef TURB_DRIVING
@@ -520,7 +537,7 @@ void begrun(void)
 #if defined(GALSF) && defined(GALSF_FB_FIRE_RT_LOCALRP)
         All.RP_Local_Momentum_Renormalization = all.RP_Local_Momentum_Renormalization;
 #endif
-#if defined(GALSF) && defined(GALSF_FB_FIRE_RT_HIIHEATING)
+#if defined(GALSF) && (defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION))
         All.HIIRegion_fLum_Coupled = all.HIIRegion_fLum_Coupled;
 #endif
 #ifdef RT_LEBRON
@@ -537,6 +554,9 @@ void begrun(void)
 #endif
 #ifdef COSMIC_RAY_FLUID
       All.CosmicRayDiffusionCoeff = all.CosmicRayDiffusionCoeff;
+#if defined(CRFLUID_INJECTION_AT_SHOCKS)
+      All.CosmicRay_ShockAccelEfficiency = all.CosmicRay_ShockAccelEfficiency;
+#endif
 #endif
 #if defined(GALSF) && defined(GALSF_FB_FIRE_AGE_TRACERS)
       All.AgeTracerRateNormalization = all.AgeTracerRateNormalization;
@@ -547,7 +567,7 @@ void begrun(void)
       All.AgeTracerBinEnd = all.AgeTracerBinEnd;
 #endif
 #endif
-#if defined(GALSF) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && (defined(COSMIC_RAY_FLUID) || defined(COSMIC_RAY_SUBGRID_LEBRON)) && defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+#if defined(GALSF) && (defined(GALSF_FB_FIRE_STELLAREVOLUTION) || defined(MECHFB_CR_INJECTION)) && (defined(COSMIC_RAY_FLUID) || defined(COSMIC_RAY_SUBGRID_LEBRON)) && defined(CR_DYNAMICAL_INJECTION_IN_SNE)
         All.CosmicRay_SNeFraction = all.CosmicRay_SNeFraction;
 #endif
 
@@ -1074,6 +1094,15 @@ void open_outputfiles(void)
     }
 #endif
 
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "HIIheating.txt");
+    if(!(FdHIIHeating = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+    else if(RestartFlag == 0) {
+        fprintf(FdHIIHeating,"%s Per-direction photoionisation log [GALSF_FB_PHOTOIONIZATION_PER_DIRECTION], one row per solve. Columns 1-6 as the HII-region loop's log: \n",prefix_char);
+        fprintf(FdHIIHeating,"%s   (1) time [code] (2) ionising sources (3) their photon rate / X_H [1/s] (4) cells newly ionised (5) their mass [Msun] (6) their mass-weighted distance [kpc] \n",prefix_char);
+        fprintf(FdHIIHeating,"%s   (7) recombination rate of the ionised cells / photon rate (8) sharing rounds (9) search passes of the first round (10, 11) smallest and largest pixel front [kpc] (12) reductions and neighbour-loop calls of the photoionisation since the last row (13) wall time of the solve, slowest rank [s] \n",prefix_char);
+    }
+#endif
 #ifdef GALSF_FB_FIRE_RT_HIIHEATING
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "HIIheating.txt");
     if(!(FdHIIHeating = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
@@ -1621,6 +1650,14 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#if defined(CRFLUID_INJECTION_AT_SHOCKS)
+        strcpy(tag[nt], "CosmicRay_ShockAccelEfficiency"); addr[nt] = &All.CosmicRay_ShockAccelEfficiency; id[nt++] = REAL;
+#endif
+#ifdef COSMIC_RAY_FLUID
+        strcpy(tag[nt], "CosmicRayInitialAmbient_eVcm3"); addr[nt] = &All.CosmicRayInitialAmbient_eVcm3; id[nt++] = REAL;
+        strcpy(tag[nt], "CosmicRayInitialCloud_eVcm3"); addr[nt] = &All.CosmicRayInitialCloud_eVcm3; id[nt++] = REAL;
+        strcpy(tag[nt], "CosmicRayInitialCloudThreshold_nH"); addr[nt] = &All.CosmicRayInitialCloudThreshold_nH; id[nt++] = REAL;
+#endif
 #ifdef DEVELOPER_MODE
         strcpy(tag[nt], "ErrTolIntAccuracy");
         addr[nt] = &All.ErrTolIntAccuracy;
@@ -1848,6 +1885,23 @@ void read_parameter_file(char *fname)
 #endif
 #endif
 
+#ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
+        strcpy(tag[nt], "TestSingleStarBirths");
+        addr[nt] = All.TestSingleStarBirths;
+        id[nt++] = STRING;
+#endif
+
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        strcpy(tag[nt], "StellarTablesFile");
+        addr[nt] = All.StellarTablesFile;
+        id[nt++] = STRING;
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+        strcpy(tag[nt], "MaxStellarTimestep");
+        addr[nt] = &All.MaxStellarTimestep;
+        id[nt++] = REAL;
+#endif
+#endif
+
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
         strcpy(tag[nt], "SNeIIEnergyFrac");
         strcpy(alternate_tag[nt], "SNe_Energy_Renormalization");
@@ -1892,9 +1946,28 @@ void read_parameter_file(char *fname)
         id[nt++] = REAL;
 #endif
 
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
         strcpy(tag[nt], "HIIRegion_fLum_Coupled");
         addr[nt] = &All.HIIRegion_fLum_Coupled;
+        id[nt++] = REAL;
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        strcpy(tag[nt], "PhotoionMaxSearchRadius");
+        addr[nt] = &All.PhotoionMaxSearchRadius;
+        id[nt++] = REAL;
+#ifdef TEST_PHOTOIONIZATION_FIXED_RATE_TWO_TEMPERATURE_GAS
+        strcpy(tag[nt], "TestPhotoionFixedRate");
+        addr[nt] = &All.TestPhotoionFixedRate;
+        id[nt++] = REAL;
+        strcpy(tag[nt], "TestPhotoionNeutralTemp");
+        addr[nt] = &All.TestPhotoionNeutralTemp;
+        id[nt++] = REAL;
+#endif
+        strcpy(tag[nt], "PhotoionMaxRounds");
+        addr[nt] = &All.PhotoionMaxRounds;
+        id[nt++] = INT;
+        strcpy(tag[nt], "PhotoionMaxTimestep");
+        addr[nt] = &All.PhotoionMaxTimestep;
         id[nt++] = REAL;
 #endif
 
@@ -2003,6 +2076,11 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.MaxKernelRadius;
         id[nt++] = REAL;
 
+#ifdef WAKEUP_TARGET_BIN_PARAMETER
+      strcpy(tag[nt], "WakeupTargetBin");
+      addr[nt] = &All.WakeupTargetBin;
+      id[nt++] = INT;
+#endif
         strcpy(tag[nt], "MaxSizeTimestep");
         strcpy(alternate_tag[nt], "Maximum_Timestep_Allowed");
         addr[nt] = &All.MaxSizeTimestep;
@@ -2228,6 +2306,12 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.G;
       id[nt++] = REAL;
 
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+      strcpy(tag[nt], "GravityPeriodicXYImages");
+      addr[nt] = &All.GravityPeriodicXYImages;
+      id[nt++] = INT;
+
+#endif
       strcpy(tag[nt], "InitGasTemp");
       strcpy(alternate_tag[nt], "Initial_Gas_Temperature");
       addr[nt] = &All.InitGasTemp;
@@ -2442,6 +2526,38 @@ void read_parameter_file(char *fname)
             defined as the SF timescale in code units at the critical physical
             density given above. use the dimensionless SfEffPerFreeFall
             to calculate this */
+#endif
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+      strcpy(tag[nt], "IMFSampleMinMass");
+      addr[nt] = &All.IMFSampleMinMass;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SingleStarsRNGRealisation");
+      addr[nt] = &All.SingleStarsRNGRealisation;
+      id[nt++] = INT;
+#endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
+      strcpy(tag[nt], "IMFSampleStellarMassCut");
+      addr[nt] = &All.IMFSampleStellarMassCut;
+      id[nt++] = REAL;
+#endif
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+      strcpy(tag[nt], "DustGrowthTimescaleGyr");
+      addr[nt] = &All.DustGrowthTimescaleGyr;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "DustGrowthCoulombFactor");
+      addr[nt] = &All.DustGrowthCoulombFactor;
+      id[nt++] = REAL;
+#endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+      strcpy(tag[nt], "FacSfThreshMJ");
+      addr[nt] = &All.FacSfThreshMJ;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SFCooldownFreeFallFraction");
+      addr[nt] = &All.SFCooldownFreeFallFraction;
+      id[nt++] = REAL;
 #endif
 
 #ifdef GALSF_EFFECTIVE_EQS
@@ -2877,6 +2993,50 @@ void read_parameter_file(char *fname)
          */
 #endif
 
+#ifdef SGCHEM
+      strcpy(tag[nt], "SGChemTablesPath");
+      addr[nt] = All.SGChemTablesPath;
+      id[nt++] = STRING;
+
+      strcpy(tag[nt], "SGChemCosmicRayIonRate");
+      addr[nt] = &All.SGChemCosmicRayIonRate;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SGChemDustToGasRatio");
+      addr[nt] = &All.SGChemDustToGasRatio;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SGChemDeuteriumAbundance");
+      addr[nt] = &All.SGChemDeuteriumAbundance;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SGChemG0");
+      addr[nt] = &All.SGChemG0;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SGChemG0_LW");
+      addr[nt] = &All.SGChemG0_LW;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SGChemBackgroundG0");
+      addr[nt] = &All.SGChemBackgroundG0;
+      id[nt++] = REAL;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+      strcpy(tag[nt], "TreeColShieldingLength");
+      addr[nt] = &All.TreeColShieldingLength;
+      id[nt++] = REAL;
+#ifdef TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS
+      strcpy(tag[nt], "TestTreeRayFixedRate");
+      addr[nt] = &All.TestTreeRayFixedRate;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "TestTreeRayNeutralTemp");
+      addr[nt] = &All.TestTreeRayNeutralTemp;
+      id[nt++] = REAL;
+#endif
+#endif
+#endif
+
 #ifdef CHIMES
       strcpy(tag[nt], "Chimes_data_path");
       addr[nt] = ChimesDataPath;
@@ -3009,6 +3169,9 @@ void read_parameter_file(char *fname)
 #endif
 #endif  // CHIMES
 
+#ifdef KETJU_REGULARIZATION
+      nt = ketju_register_params(tag, addr, id, nt, MAXTAGS, REAL, STRING, INT);
+#endif
         if(nt > MAXTAGS) {printf("Parameter registry overflow: %d tags for room for %d (raise MAXTAGS in begrun.cc)\n", nt, MAXTAGS); errorFlag = 1;}
 
         if((fd = fopen(fname, "r")))
@@ -3186,6 +3349,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("MinGasKernelRadiusFractional",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume no mininum (=%g) \n",tag[i],alternate_tag[i],All.MinGasKernelRadiusFractional); continue;}
 #endif
                 if(strcmp("DomainBuild_ActiveFraction",tag[i])==0) {*((double *)addr[i])=0.05; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-decompose whenever 5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.DomainBuild_ActiveFraction); continue;}
+#ifdef WAKEUP_TARGET_BIN_PARAMETER
+                if(strcmp("WakeupTargetBin",tag[i])==0) {*((int *)addr[i])=2; printf("Tag %s not set in parameter file: defaulting to 2 (woken cells go to the highest active bin)\n",tag[i]); continue;}
+#endif
                 if(strcmp("TreeRebuild_ActiveFraction",tag[i])==0) {*((double *)addr[i])=All.DomainBuild_ActiveFraction; printf("Tag %s (%s) not set in parameter file: defaulting to rebuild the gravity tree on the same active fraction the domain is decomposed on (=%g). A decomposition always brings a new tree with it, so a larger value here has no effect; a smaller one rebuilds the tree on steps that keep the existing decomposition. \n",tag[i],alternate_tag[i],All.TreeRebuild_ActiveFraction); continue;}
 #ifdef MHD_MODIFIED_GRADIENT
                 if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=DMIN(All.TreeRebuild_ActiveFraction, All.DomainBuild_ActiveFraction); printf("Tag %s (%s) not set in parameter file: defaulting to run the MG global solve on steps where at least the fraction of gas is active at which the tree or domain is rebuilt (=%g, the smaller of TreeRebuild_ActiveFraction=%g and DomainBuild_ActiveFraction=%g), i.e. when the step already does work over every element; on smaller steps the retained MG correction plus the local CG correction is used. Set 0 to solve on every step with active gas (much more expensive with a deep timestep hierarchy). \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep,All.TreeRebuild_ActiveFraction,All.DomainBuild_ActiveFraction); continue;}
@@ -3235,8 +3401,26 @@ void read_parameter_file(char *fname)
                 if(strcmp("ShearViscosityCoeff",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: code was compiled with Spitzer-Braginski viscosity, so will default to calculating the physical coefficient without arbitrary re-normalization (i.e. user-specified additional coefficient/multipler=%g) \n",tag[i],alternate_tag[i],All.ShearViscosityCoeff); continue;}
                 if(strcmp("BulkViscosityCoeff",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: code was compiled with Spitzer-Braginski viscosity, so will default to 0 bulk viscosity as defined by those physics (=%g) \n",tag[i],alternate_tag[i],All.BulkViscosityCoeff); continue;}
 #endif
+#if defined(CRFLUID_INJECTION_AT_SHOCKS)
+                if(strcmp("CosmicRay_ShockAccelEfficiency",tag[i])==0) {*((double *)addr[i])=(double)(CRFLUID_INJECTION_AT_SHOCKS); continue;}
+#endif
+#ifdef COSMIC_RAY_FLUID
+                if(strcmp("CosmicRayInitialAmbient_eVcm3",tag[i])==0) {*((double *)addr[i])=0; continue;}
+                if(strcmp("CosmicRayInitialCloud_eVcm3",tag[i])==0) {*((double *)addr[i])=0; continue;}
+                if(strcmp("CosmicRayInitialCloudThreshold_nH",tag[i])==0) {*((double *)addr[i])=10.; continue;}
+#endif
 #ifdef TURB_DIFFUSION
                 if(strcmp("TurbDiffusionCoefficient",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: code was compiled with turbulent diffusion, so will default to calculating the coefficients without arbitrary re-normalization (i.e. user-specified additional coefficient/multipler=%g) \n",tag[i],alternate_tag[i],All.TurbDiffusion_Coefficient); continue;}
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+                if(strcmp("MaxStellarTimestep",tag[i])==0) {*((double *)addr[i])=50000.; printf("Tag %s not set in parameter file: defaulting to 50 kyr\n",tag[i]); continue;}
+#endif
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+                if(strcmp("SingleStarsRNGRealisation",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set in parameter file: defaulting to realisation 0\n",tag[i]); continue;}
+                if(strcmp("IMFSampleMinMass",tag[i])==0) {*((double *)addr[i])=0.08; printf("Tag %s not set in parameter file: defaulting to the full IMF (0.08 Msun)\n",tag[i]); continue;}
+#endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
+                if(strcmp("IMFSampleStellarMassCut",tag[i])==0) {*((double *)addr[i])=0.5; printf("Tag %s not set in parameter file: defaulting to 0.5 Msun (stars at or below emit no radiation)\n",tag[i]); continue;}
 #endif
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED)
                 if(strcmp("InitMetallicity",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (Z=%g) \n",tag[i],alternate_tag[i],All.InitMetallicityinSolar); continue;}
@@ -3245,6 +3429,10 @@ void read_parameter_file(char *fname)
 #ifdef GRAIN_EVOLUTION
                 if(strcmp("GrainEvolution_VelThreshFrag",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g; use the sticking speed)\n",tag[i],alternate_tag[i],All.GrainEvolution_VelThreshFrag); continue;}
                 if(strcmp("GrainEvolution_VelThreshShat",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g; use the species value)\n",tag[i],alternate_tag[i],All.GrainEvolution_VelThreshShat); continue;}
+#endif
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+                if(strcmp("DustGrowthTimescaleGyr",tag[i])==0) {*((double *)addr[i])=1.5; printf("Tag %s not set in parameter file: dust growth time 1.5 Gyr at n=1, T=100 K (Hu+26)\n",tag[i]); continue;}
+                if(strcmp("DustGrowthCoulombFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s not set in parameter file: no Coulomb enhancement of growth (Hu+26)\n",tag[i]); continue;}
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
                 if(strcmp("Initial_ISMDustChem_Depletion",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g) \n",tag[i],alternate_tag[i],All.Initial_ISMDustChem_Depletion); continue;}
@@ -3277,7 +3465,12 @@ void read_parameter_file(char *fname)
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
                 if(strcmp("WindMomentumLoading",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to standard stellar-evolution-defaults (=%g) \n",tag[i],alternate_tag[i],All.RP_Local_Momentum_Renormalization); continue;}
 #endif
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+                if(strcmp("PhotoionMaxSearchRadius",tag[i])==0) {*((double *)addr[i])=0.05; printf("Tag %s not set in parameter file: defaulting to 0.05 kpc\n",tag[i]); continue;}
+                if(strcmp("PhotoionMaxRounds",tag[i])==0) {*((int *)addr[i])=16; printf("Tag %s not set in parameter file: defaulting to 16\n",tag[i]); continue;}
+                if(strcmp("PhotoionMaxTimestep",tag[i])==0) {*((double *)addr[i])=1.e4; printf("Tag %s not set in parameter file: defaulting to 10 kyr\n",tag[i]); continue;}
+#endif
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
                 if(strcmp("HIIRegion_fLum_Coupled",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to standard stellar-evolution-defaults (=%g) \n",tag[i],alternate_tag[i],All.HIIRegion_fLum_Coupled); continue;}
 #endif
 #ifdef RT_LEBRON
@@ -3301,6 +3494,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("CosmicRayDiffusionCoeff",tag[i])==0) {*((double *)addr[i])=690.; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored diffusivity ~3e29, assuming units kpc/h and km/s (=%g) \n",tag[i],alternate_tag[i],All.CosmicRayDiffusionCoeff); continue;}
 #endif
                 if(strcmp("CosmicRay_SNeFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored ~10 percent conversion to CRs (=%g) \n",tag[i],alternate_tag[i],All.CosmicRay_SNeFraction); continue;}
+#endif
+#if defined(MECHFB_CR_INJECTION) && !defined(FIRE_CRS)
+                if(strcmp("CosmicRay_SNeFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to 10 percent of the fast-ejecta energy to CRs (=%g) \n",tag[i],alternate_tag[i],All.CosmicRay_SNeFraction); continue;}
 #endif
 #if defined(SINGLE_STAR_STARFORGE_DEFAULTS)
                 if(strcmp("SfEffPerFreeFall",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to scaling-default of unity (=%g) \n",tag[i],alternate_tag[i],All.MaxSfrTimescale); continue;}
@@ -3403,6 +3599,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("NuclearBurningFloor_T",tag[i])==0) {*((double *)addr[i])=1.0e8; continue;} /* default: 10^8 K */
                 if(strcmp("NuclearBurningFloor_rho",tag[i])==0) {*((double *)addr[i])=0; continue;} /* default: no density floor */
                 if(strcmp("NuclearNSE_T_threshold",tag[i])==0) {*((double *)addr[i])=6.0e9; continue;} /* default: 6 GK */
+#endif
+#ifdef KETJU_REGULARIZATION
+                if(ketju_param_default(tag[i], addr[i])) {continue;}
 #endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;
@@ -3592,6 +3791,9 @@ void read_parameter_file(char *fname)
     {
         if(ThisTask==0) {printf("ErrTolIntAccuracy must be >0 and <0.05 to ensure stability \n");} endrun(1);
     }
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+    if(All.GravityPeriodicXYImages < 0) {if(ThisTask==0) {printf("GravityPeriodicXYImages must be >=0 \n");} endrun(1);}
+#endif
     if((All.ErrTolTheta<=0.1)||(All.ErrTolTheta>=0.9))
     {
         if(ThisTask==0) {printf("ErrTolTheta must be >0.1 and <0.9 to ensure stability \n");} endrun(1);
@@ -3864,6 +4066,7 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
 	{
         P[i].Ti_begstep /= 2;
         P[i].Ti_current /= 2;
+        P[i].dt_step /= 2;
         if(P[i].TimeBin > 0)
 	    {
 	      P[i].TimeBin--;

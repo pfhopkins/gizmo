@@ -165,6 +165,9 @@ static inline void tree_mirror_put_moments(struct gpu_gravity_tree_soa_t *m, lon
     m->node_vs[k] = {(MyGravFloat) e.vs[0], (MyGravFloat) e.vs[1], (MyGravFloat) e.vs[2]};
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     m->gasmass[k] = (MyGravFloat) n.gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {m->treecol_species_mass[k * TREECOL_PIXELS_NSPECIES + ks] = (MyGravFloat) n.treecol_species_mass[ks];}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     for(int b = 0; b < N_RT_FREQ_BINS; b++) {m->stellar_lum[k * N_RT_FREQ_BINS + b] = (MyGravFloat) n.stellar_lum[b];}
@@ -269,6 +272,9 @@ static moment_node_accum<MyFloat> topnode_child_accum_(const struct gpu_gravity_
     c.maxsoft = (MyFloat) soa->maxsoft[pk];
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     c.gasmass = (MyFloat) soa->gasmass[pk];
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {c.treecol_species_mass[ks] = (MyFloat) soa->treecol_species_mass[(long)pk * TREECOL_PIXELS_NSPECIES + ks];}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     for(int b = 0; b < N_RT_FREQ_BINS; b++) {c.stellar_lum[b] = (MyFloat) soa->stellar_lum[(long)pk * N_RT_FREQ_BINS + b];}
@@ -351,6 +357,9 @@ static double topnode_resum_node_(int no_abs,
 
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     MyFloat gasmass = 0;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    MyFloat treecol_species_mass[TREECOL_PIXELS_NSPECIES] = {};
+#endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     double cr_injection = 0;
@@ -408,6 +417,9 @@ static double topnode_resum_node_(int no_abs,
     acc_ref.bitflags = NULL;   /* multiple-particles bit handled at store, not accumulate */
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     acc_ref.gasmass  = &gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    acc_ref.treecol_species_mass = &treecol_species_mass[0];
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     acc_ref.stellar_lum = &stellar_lum[0];
@@ -531,6 +543,9 @@ static double topnode_resum_node_(int no_abs,
                         | (unsigned int) multiple_flag | child_types_field;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     soa->gasmass[no_k] = (MyGravFloat) gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {soa->treecol_species_mass[(long)no_k * TREECOL_PIXELS_NSPECIES + ks] = (MyGravFloat) treecol_species_mass[ks];}
+#endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     soa->cr_injection[no_k] = (MyGravFloat) cr_injection;
@@ -602,6 +617,9 @@ static double topnode_resum_node_(int no_abs,
     Extnodes[no_abs].Flag      = GlobFlag;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     Nodes[no_abs].gasmass      = gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {Nodes[no_abs].treecol_species_mass[ks] = treecol_species_mass[ks];}
+#endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     Nodes[no_abs].cr_injection = (MyFloat) cr_injection;

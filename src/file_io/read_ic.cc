@@ -9,6 +9,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../galaxy_sf/single_star_record.h"
 #include "../domain/domain.h"
 
 /* Particles of each type in the input file whose header was read last. The io_header keeps a 32-bit
@@ -714,6 +715,32 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS: /* a star with a drawn mass > 0 gets a record; the birth metallicity fills it */
+        case IO_SINGLE_STAR_BIRTH_Z:
+            for(n = 0; n < pc; n++) {
+                double v = *fp++;
+                if(blocknr == IO_SINGLE_STAR_DRAWN_MASS) {
+                    if(v > 0 && P[offset + n].StarIdx <= 0) {struct single_star_record r; memset(&r, 0, sizeof(r)); P[offset + n].StarIdx = single_star_record_new(&r);}
+                    if(P[offset + n].StarIdx > 0) {SingleStars.M_drawn[single_star_slot(P[offset + n].StarIdx)] = v;}
+                } else if(P[offset + n].StarIdx > 0) {SingleStars.Z_birth[single_star_slot(P[offset + n].StarIdx)] = v;}
+            }
+            break;
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY: /* fills an existing record */
+            for(n = 0; n < pc; n++) {double v = *fp++; if(P[offset + n].StarIdx > 0) {SingleStars.rho_birth[single_star_slot(P[offset + n].StarIdx)] = (float) v;}}
+            break;
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS: /* fills an existing record */
+            for(n = 0; n < pc; n++) {double v = *fp++; if(P[offset + n].StarIdx > 0) {SingleStars.event_bits[single_star_slot(P[offset + n].StarIdx)] = (uint8_t) v;}}
+            break;
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE: /* fills an existing record */
+            for(n = 0; n < pc; n++) {double v = *fp++; if(P[offset + n].StarIdx > 0) {SingleStars.last_wind_log_age[single_star_slot(P[offset + n].StarIdx)] = v;}}
+            break;
+#endif
+#endif
+
         case IO_STAGE_PROTOSTAR:
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
             for(n = 0; n < pc; n++) {P[offset + n].ProtoStellarStage = *ip_int++;}
@@ -842,6 +869,16 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             for(n = 0; n < pc; n++) {P[offset + n].AGS_zeta = *fp++;}
 #endif
             break;
+
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:
+            for(n = 0; n < pc; n++) {for(k = 0; k < SGCHEM_NUM_TRACKED_SPECIES; k++) {CellP[offset + n].TracAbund[k] = *fp++;}}
+            break;
+
+        case IO_SGCHEM_DUSTTEMP:
+            for(n = 0; n < pc; n++) {CellP[offset + n].DustTemp = *fp++;}
+            break;
+#endif
 
         case IO_CHIMES_ABUNDANCES:
 #if defined(CHIMES) && !defined(CHIMES_INITIALISE_IN_EQM)
@@ -1451,6 +1488,15 @@ int read_file(char *fname, int readTask, int lastTask)
 #ifdef INPUT_READ_EOSTEMP
                    && blocknr != IO_EOSTEMP
 #endif
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+                   && blocknr != IO_SINGLE_STAR_DRAWN_MASS && blocknr != IO_SINGLE_STAR_BIRTH_Z /* initial conditions may carry single stars */
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+                   && blocknr != IO_SINGLE_STAR_BIRTH_DENSITY
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+                   && blocknr != IO_SINGLE_STAR_EVENT_BITS && blocknr != IO_SINGLE_STAR_LAST_WIND_LOG_AGE
+#endif
+#endif
 #ifdef EOS_CARRIES_ABAR
                    && blocknr != IO_EOSABAR
 #endif
@@ -1502,6 +1548,12 @@ int read_file(char *fname, int readTask, int lastTask)
                     * cold-default synthesis quietly overwrites the IC
                     * (CBE_Moments_LoadedFromIC_PType stays 0). */
                    && blocknr != IO_CBE_MOMENTS
+#endif
+#ifdef SGCHEM_KEEP_IC_ABUNDANCES
+                   && blocknr != IO_SGCHEM_TRACABUND
+#endif
+#ifdef INPUT_READ_COSMICRAYENERGY
+                   && blocknr != IO_COSMICRAY_ENERGY
 #endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(INPUT_READ_SINKPROPS)
                    && blocknr != IO_R_PROTOSTAR

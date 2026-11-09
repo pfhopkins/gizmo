@@ -93,6 +93,9 @@ struct gpu_gravity_tree_soa_t {
      *     CHIMES arrays stay double — chemistry tolerances force it. */
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     MyGravFloat    *gasmass;          /* [nnodes] */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    MyGravFloat    *treecol_species_mass; /* flat [nnodes * TREECOL_PIXELS_NSPECIES] */
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     MyGravFloat    *stellar_lum;      /* flat [nnodes * N_RT_FREQ_BINS] */

@@ -279,7 +279,7 @@ KOKKOS_INLINE_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, d
 #ifdef METALS
     if(target >= 0)
     {
-        Z = DMIN(0.25,pp[target].Metallicity[0]); if(NUM_METAL_SPECIES>=10) {Y = DMIN(0.35,pp[target].Metallicity[1]);}
+        Z = DMIN(0.25,pp[target].Metallicity[0]); if(NUM_METAL_SPECIES_BASE>=10) {Y = DMIN(0.35,pp[target].Metallicity[1]);}
         X = 1. - (Y+Z);
     }
 #endif
@@ -335,6 +335,13 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 #ifdef COOLING
 #if defined(EXTERNAL_CHEMISTRY_REPORTS_SPECIES)
   return (double) cell[i].HII;
+#elif defined(SGCHEM)
+    double x_ion = cell[i].Ne; /* ions per H nucleus: the chemistry's electrons */
+#if CHEMISTRYNETWORK == 5
+    x_ion -= cell[i].TracAbund[2]; /* net 5 counts all gas-phase C as C+; carbon in CO (slot 2) is neutral */
+#endif
+    if(!isfinite(x_ion)) {x_ion = 0;}
+    return DMIN(DMAX(x_ion, 1.e-12), 1.);
 #else
     double ne = cell[i].Ne, nh0 = cell[i].HI; // saved by the cooling solver; no need to re-solve the chemistry to answer this
     double f_ion = DMIN(DMAX(DMAX(1-nh0, ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)

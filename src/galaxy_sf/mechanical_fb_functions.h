@@ -31,6 +31,10 @@
 
 #include "../mesh/neighbor_loop_runner.h"  /* NlrCommonScalars */
 
+#if defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS) || defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS)
+#define MECHFB_BALANCED_SHARES /* shares q = w (r - mean of w r) normalised by sum |q|, in place of the face-wise balancing */
+#endif
+
 /* Cosmology + unit-factor + CR-rigidity scalars for mechfb kernel helpers.
  * Built host-side once per call via mechfb_fill_call_scalars (mechfb_loop.cc);
  * threaded into mechanical_fb_per_source_setup, mechanical_fb_pair_kernel, and
@@ -54,7 +58,7 @@ struct MechFBCallScalars {
      * or the LEBRON-subgrid + FIRE_BHS path fails to compile. */
     double CosmicRay_SNeFraction;
 #endif
-#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && defined(CRFLUID_EVOLVE_SPECTRUM)
+#if defined(MECHFB_CR_INJECTION) && defined(CRFLUID_EVOLVE_SPECTRUM)
     double CR_global_min_rigidity_in_bin   [N_CR_PARTICLE_BINS];
     double CR_global_max_rigidity_in_bin   [N_CR_PARTICLE_BINS];
     double CR_global_rigidity_at_bin_center[N_CR_PARTICLE_BINS];
@@ -136,6 +140,9 @@ struct MechFBOut
 {
     MyFloat M_coupled;
     MyFloat Area_weighted_sum[AREA_WEIGHTED_SUM_ELEMENTS];
+#ifdef MECHFB_BALANCED_SHARES
+    MyFloat p_to_gas[3]; /* momentum handed to the gas in the star's frame: the star recoils with it */
+#endif
 };
 
 /* Per-source per-mode precomputed state. Built in the lambda once per star-mode. */
@@ -155,11 +162,14 @@ struct MechFBSourceMode
     int retain_thermal_flag;
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
     double CR_energy_to_inject;  /* total CR energy budget for this source in this mode */
+#if defined(MECHFB_CR_INJECTION) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+    double v_ej_after_cr; /* ejecta speed left after the CR share */
+#endif
 #endif
 };
 
 
-#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#if defined(MECHFB_CR_INJECTION)
 /* Kernel-callable CR injection: writes per-bin CR energy / number / direction
  * deltas into MechFBGasDelta via Kokkos atomics instead of CellP directly.
  * Host scatter (in verify_and_assign_local_mechfb_integrals) normalizes direction and
@@ -215,9 +225,12 @@ static void inject_cosmic_rays_into_delta(
     }
     if(sum_dEcr > 0) {
         for(int c = 0; c < 3; c++) Kokkos::atomic_add(&gd->CR_dir_weighted[c], sum_dEcr * dir[c]);
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+        if(source_type == 0) {Kokkos::atomic_add(&gd->CR_energy_from_sn, sum_dEcr);}
+#endif
     }
 }
-#endif /* COSMIC_RAY_FLUID && GALSF_FB_FIRE_STELLAREVOLUTION */
+#endif /* MECHFB_CR_INJECTION */
 
 
 /* Host-side helpers for the MechFBSpec runner-port.
@@ -248,7 +261,7 @@ static int mechanical_fb_star_active_check(int i, int fb_loop_iteration,
     if(P_arr[i].Type == 5 && !P_arr[i].do_gas_search_this_timestep) return 0;
 #endif
     if(P_arr[i].SNe_ThisTimeStep > 0) { if(fb_loop_iteration < 0 || fb_loop_iteration == 0) return 1; }
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
     if(P_arr[i].MassReturn_ThisTimeStep > 0) { if(fb_loop_iteration < 0 || fb_loop_iteration == 1) return 1; }
 #ifdef GALSF_FB_FIRE_RPROCESS
     if(P_arr[i].RProcessEvent_ThisTimeStep > 0) { if(fb_loop_iteration < 0 || fb_loop_iteration == 2) return 1; }
@@ -262,6 +275,38 @@ static int mechanical_fb_star_active_check(int i, int fb_loop_iteration,
 #endif
     return 0;
 }
+
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+/* HEALPix RING pixel at NSIDE 1 of the direction (x,y,z) */
+KOKKOS_INLINE_FUNCTION int mechfb_hpx_nside1_pixel(double x, double y, double z)
+{
+    z /= sqrt(x * x + y * y + z * z);
+    double tt = atan2(y, x) / (0.5 * M_PI); if(tt < 0) {tt += 4.0;}
+    if(fabs(z) <= 2.0 / 3.0)
+    {
+        int jp = (int)(0.5 + tt - 0.75 * z), jm = (int)(0.5 + tt + 0.75 * z), ir = 2 + jp - jm;
+        return (ir - 1) * 4 + ((jp + jm + 1 - (ir & 1)) / 2) % 4;
+    }
+    double tp = tt - floor(tt), tmp = sqrt(3.0 * (1.0 - fabs(z)));
+    int ir = (int)(tp * tmp) + (int)((1.0 - tp) * tmp) + 1, ip = ((int)(tt * ir)) % (4 * ir);
+    return (z > 0) ? 2 * ir * (ir - 1) + ip : 12 - 2 * ir * (ir + 1) + ip;
+}
+#endif
+
+#ifdef MECHFB_BALANCED_SHARES
+/* share wk of the cell along its direction less the weighted mean direction, so the shares balance exactly */
+KOKKOS_INLINE_FUNCTION void mechfb_balanced_vector(const struct MechFBLocalIn& local, double wk_norm, double wk, const Vec3<double>& dp, double r, double* pvec, double* pnorm)
+{
+    *pnorm = 0;
+    for(int k = 0; k < 3; k++)
+    {
+        double mean_dir = -wk_norm * ((double)local.Area_weighted_sum[2 * k + 1] + (double)local.Area_weighted_sum[2 * k + 2]);
+        pvec[k] = wk * (-dp[k] / r - mean_dir);
+        *pnorm += pvec[k] * pvec[k];
+    }
+    *pnorm = sqrt(*pnorm);
+}
+#endif
 
 /* MechFBCallScalars is defined above (after the #ifdef GALSF_FB_MECHANICAL gate).
  * Helpers below are self-contained: include this header directly. */
@@ -291,13 +336,22 @@ static void mechanical_fb_per_source_setup(
     double f_sedov_kin = 1.0 / (1.0 + thermal_to_kinetic_ratio_universal);
     m.momentum_to_couple_term_units = 0;
     m.U_thermal_residual_tocouple = 0;
-    double Energy_injected_codeunits = 0.5 * (double)local.Msne * (double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta;
-    double v_ejecta_eff_init = (double)local.SNe_v_ejecta;
+    double v_ej = (double)local.SNe_v_ejecta;
+#if defined(MECHFB_CR_INJECTION) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+    m.CR_energy_to_inject = 0;
+    if(v_ej > 0 && (m.feedback_type_is_SNe || v_ej > 1000.0 / scalars.unit_vel_in_kms)) { /* the CRs take f of every explosion and of fast winds; the ejecta go on with the rest */
+        m.CR_energy_to_inject = scalars.CosmicRay_SNeFraction * 0.5 * (double)local.Msne * v_ej * v_ej;
+        v_ej *= sqrt(1.0 - scalars.CosmicRay_SNeFraction);
+    }
+    m.v_ej_after_cr = v_ej;
+#endif
+    double Energy_injected_codeunits = 0.5 * (double)local.Msne * v_ej * v_ej;
+    double v_ejecta_eff_init = v_ej;
 
     if(((double)local.Area_weighted_sum[0] > MIN_REAL_NUMBER) && (loop_iteration >= 0))
     {
         double vba_2_eff = m.pnorm_sum * (double)local.Area_weighted_sum[7];
-        v_ejecta_eff_init = sqrt((double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta + vba_2_eff);
+        v_ejecta_eff_init = sqrt(v_ej * v_ej + vba_2_eff);
         Energy_injected_codeunits = 0.5 * (double)local.Msne * v_ejecta_eff_init * v_ejecta_eff_init;
 
         double p_terminal_multiplier_rhoZE =
@@ -313,12 +367,18 @@ static void mechanical_fb_per_source_setup(
         if((S2_E < 0.01 * S1_2) && (S1 > 0.0)) p0_egycon = egy_0_norm_for_soln / S1 * (1.0 - S2_E / (4.0 * S1_2));
 
         double p_coupled = DMIN(p0_egycon, p_terminal);
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+        if(m.feedback_type_is_SNe == 0) {p_coupled = (double)local.Msne * (double)local.SNe_v_ejecta;} /* the booked momentum whatever the gas does; the cell closes the energy */
+#endif
         double egy_RHS = p_coupled * p_coupled * S2 + p_coupled * S1;
         m.momentum_to_couple_term_units = p_coupled;
         m.U_thermal_residual_tocouple = Energy_injected_codeunits - egy_RHS;
     }
+#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
+    if(m.feedback_type_is_SNe) {m.momentum_to_couple_term_units = 0;} /* pure-thermal SNe: no radial ejecta momentum; the cell's closure below gives the whole energy as heat */
+#endif
 
-#if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+#if defined(CR_DYNAMICAL_INJECTION_IN_SNE) && !(defined(MECHFB_CR_INJECTION) && defined(GALSF_SINGLE_STARS_FROM_IMF))
     /* Mirror CPU lines 548-555 in mechanical_fb.cc: compute CR energy budget
      * for this source at current velocity, subtracting it from the ejecta KE.
      * All.CosmicRay_SNeFraction and UNIT_VEL_IN_KMS routed through
@@ -402,7 +462,20 @@ static void mechanical_fb_pair_kernel(
     if(V_j < 0 || V_j != V_j) V_j = 0;
     double face_area = fabs(V_i * V_i * dwk_self + V_j * V_j * dwk_j);
     double wk = 0.5 * (1 - 1 / sqrt(1 + face_area / (M_PI * r * r)));
+#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+    kernel_main(u, m.hinv3, m.hinv4, &wk_self, &dwk_self, -1);
+    wk = (u < 1) ? Mass_j * wk_self : 0; /* mass x kernel over the star's own kernel */
+#endif
     if(wk <= 0 || wk != wk) return;
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+    if(r2 > m.h2) return; /* the star's own kernel only */
+    {
+        int ipix = mechfb_hpx_nside1_pixel(-dp[0], -dp[1], -dp[2]), n_occupied = 0;
+        if(loop_iteration == -3) {myout.Area_weighted_sum[AREA_WEIGHTED_SUM_PIXELS + ipix] += 1; return;}
+        for(int k = 0; k < 12; k++) {if(local.Area_weighted_sum[AREA_WEIGHTED_SUM_PIXELS + k] > 0) {n_occupied++;}}
+        wk = 1.0 / (n_occupied * (double)local.Area_weighted_sum[AREA_WEIGHTED_SUM_PIXELS + ipix]); /* each occupied pixel the same share, its cells equal */
+    }
+#endif
 
     double wk_vec[AREA_WEIGHTED_SUM_ELEMENTS] = {0};
     wk_vec[0] = wk;
@@ -444,6 +517,9 @@ static void mechanical_fb_pair_kernel(
             pnorm += pvec[k] * pvec[k];
         }
         pnorm = sqrt(pnorm);
+#ifdef MECHFB_BALANCED_SHARES
+        mechfb_balanced_vector(local, m.wk_norm, wk * m.wk_norm, dp, r, pvec, &pnorm);
+#endif
         for(int k = 0; k < 3; k++)
         {
             double v_ba = (Vel_j[k] - (double)local.Vel[k]) / scalars.common.cf_atime;
@@ -491,8 +567,20 @@ static void mechanical_fb_pair_kernel(
         pnorm += pvec[k] * pvec[k];
     }
     pnorm = sqrt(pnorm);
+#ifdef MECHFB_BALANCED_SHARES
+    mechfb_balanced_vector(local, m.wk_norm, wk_local_norm, dp, r, pvec, &pnorm);
+#endif
     pnorm *= m.pnorm_sum;
     for(int k = 0; k < 3; k++) pvec[k] *= m.pnorm_sum;
+#ifdef MECHFB_BALANCED_SHARES
+    if((double)local.Area_weighted_sum[10] < 1.0e-6) { /* all gas along one ray: radial */
+        pnorm = wk_local_norm;
+        for(int k = 0; k < 3; k++) {pvec[k] = -wk_local_norm * dp[k] / r;}
+    }
+#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
+    if(m.feedback_type_is_SNe) {pnorm = wk_local_norm;} /* heat needs no balance: the plain share */
+#endif
+#endif
     double dM_ejecta_in = pnorm * (double)local.Msne;
     double mj_preshock = Mass_j;
     double massratio_ejecta = dM_ejecta_in / (dM_ejecta_in + Mass_j);
@@ -545,7 +633,7 @@ static void mechanical_fb_pair_kernel(
     double KE_initial = 0, KE_final = 0;
     if(couple_anything_but_scalar_mass_and_metals)
     {
-#if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#if defined(MECHFB_CR_INJECTION)
         /* CR injection via delta struct (host scatter applies in
          * verify_and_assign_local_mechfb_integrals). */
         double crdir[3] = { -dp[0] / r, -dp[1] / r, -dp[2] / r };
@@ -560,7 +648,14 @@ static void mechanical_fb_pair_kernel(
                                        home_gas_delta, ghost_gas_delta);
 #endif
         double mom_prefactor = scalars.common.cf_atime * m.momentum_to_couple_term_units / Mass_j;
+#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
+        if(mom_prefactor > 0 || m.feedback_type_is_SNe) { /* pure-thermal SNe: the ejecta carry the star's velocity */
+#else
         if(mom_prefactor > 0) {
+#endif
+#ifdef MECHFB_BALANCED_SHARES
+            for(int k = 0; k < 3; k++) {myout.p_to_gas[k] += (MyFloat)(m.momentum_to_couple_term_units * pvec[k]);}
+#endif
             for(int k = 0; k < 3; k++) {
                 double d_vel = mom_prefactor * pvec[k] + massratio_ejecta * ((double)local.Vel[k] - Vel_j[k]);
                 KE_initial += Vel_j_0[k] * Vel_j_0[k];
@@ -572,6 +667,20 @@ static void mechanical_fb_pair_kernel(
         }
         double d_Egy_internal = pnorm * m.U_thermal_residual_tocouple;
         if(m.retain_thermal_flag == 0) d_Egy_internal = 0;
+#if (defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)) || defined(GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY)
+        if(m.retain_thermal_flag) { /* the cell closes its own share in the star's frame: its share of the ejecta energy less the kinetic energy it gained */
+            double dKE_star_frame = 0;
+            for(int k = 0; k < 3; k++) {
+                double v0 = (Vel_j_0[k] - (double)local.Vel[k]) / scalars.common.cf_atime, vf = (Vel_j[k] - (double)local.Vel[k]) / scalars.common.cf_atime;
+                dKE_star_frame += 0.5 * (Mass_j * vf * vf - mj_preshock * v0 * v0);
+            }
+#ifdef MECHFB_CR_INJECTION
+            d_Egy_internal = pnorm * 0.5 * (double)local.Msne * m.v_ej_after_cr * m.v_ej_after_cr - dKE_star_frame;
+#else
+            d_Egy_internal = pnorm * 0.5 * (double)local.Msne * (double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta - dKE_star_frame;
+#endif
+        }
+#endif
         d_Egy_internal /= Mass_j;
         if(d_Egy_internal > 0) InternalEnergy_j += d_Egy_internal;
     }
@@ -587,7 +696,11 @@ static void mechanical_fb_pair_kernel(
      * convention encoding: wakeup_val = source.TimeBin + 1. */
     Kokkos::atomic_max(&gd->max_source_wakeup, wakeup_flag_from_timebin(local.TimeBin));
     Kokkos::atomic_add(&gd->m_injected, Mass_j - Mass_j_0);
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    Kokkos::atomic_add(&gd->TE_injected, Mass_j * (InternalEnergy_j - InternalEnergy_j_0)); /* cold ejecta: the added mass carries no ambient u */
+#else
     Kokkos::atomic_add(&gd->TE_injected, Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0);
+#endif
     Kokkos::atomic_add(&gd->KE_injected, KE_final - KE_initial);
 #ifdef METALS
     for(int k = 0; k < NUM_METAL_SPECIES; k++) {

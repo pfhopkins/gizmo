@@ -9,6 +9,94 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+double EnergyLedger[LG_N];
+int ledger_met_slot(int k);
+double LedgerOffered[LEDGER_NEL+2]; int LedgerNSN = 0;
+#define LEDGER_STK (LEDGER_NEL+3)
+/* E, M_gas, M_stars(non-gas), gas element masses */
+static void ledger_stocks(double *s)
+{
+    for(int k=0;k<LEDGER_STK;k++) {s[k]=0;}
+    for(int i=0;i<NumPart;i++) {
+        if(P[i].Mass<=0) {continue;}
+        if(P[i].Type!=0) {s[2]+=P[i].Mass; continue;}
+        s[0]+=P[i].Mass*(0.5*P[i].Vel.norm_sq()*All.cf_a2inv + CellP[i].InternalEnergy); s[1]+=P[i].Mass;
+        for(int k=0;k<LEDGER_NEL;k++) {int sl=ledger_met_slot(k); if(sl>=0) {s[3+k]+=P[i].Mass*P[i].Metallicity[sl];}}
+    }
+}
+static double ledger_fb0[LEDGER_STK], ledger_off0[LEDGER_NEL+2]; static int ledger_nsn0;
+void ledger_fb_begin(void) {ledger_stocks(ledger_fb0); for(int k=0;k<LEDGER_NEL+2;k++) {ledger_off0[k]=LedgerOffered[k];} ledger_nsn0=LedgerNSN;}
+/* one integer reduction per feedback call; on a step with an SN one line per step to ledger_sn_events.txt: deposited (stocks) and offered (at the star) */
+void ledger_fb_end(void)
+{
+    double s1[LEDGER_STK]; ledger_stocks(s1); int dn=LedgerNSN-ledger_nsn0, dng=0;
+    MPI_Allreduce(&dn,&dng,1,MPI_INT,MPI_SUM,MPI_COMM_WORLD);
+    LEDGER_ADD((dng>0)?LG_FB_SN:LG_FB_OTHER, s1[0]-ledger_fb0[0]);
+    if(dng<=0) {return;}
+    double d[2*LEDGER_NEL+5], g[2*LEDGER_NEL+5]; for(int k=0;k<LEDGER_STK;k++) {d[k]=s1[k]-ledger_fb0[k];} for(int k=0;k<LEDGER_NEL+2;k++) {d[LEDGER_STK+k]=LedgerOffered[k]-ledger_off0[k];}
+    MPI_Reduce(d,g,2*LEDGER_NEL+5,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
+    if(ThisTask) {return;}
+    static FILE *fd=NULL; if(!fd) {char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(fn,DEFAULT_PATH_BUFFERSIZE_TOUSE,"%sledger_sn_events.txt",All.OutputDir); fd=fopen(fn,"a");}
+    if(!fd) {return;}
+    double e51=1.e51/UNIT_ENERGY_IN_CGS; fprintf(fd,"%.12g %d %.12g %.12g %.12g",All.Time,dng,g[0]/e51,g[1],g[2]);
+    for(int k=0;k<LEDGER_NEL;k++) {fprintf(fd," %.12g",g[3+k]);} fprintf(fd," %.12g %.12g",g[LEDGER_STK+LEDGER_NEL]*1.,g[LEDGER_STK+LEDGER_NEL+1]/e51);
+    for(int k=0;k<LEDGER_NEL;k++) {fprintf(fd," %.12g",g[LEDGER_STK+k]);} fprintf(fd,"\n"); fflush(fd);
+}
+/* at full syncs: masses, gas element masses and everything offered so far, code units, to ledger_mass.txt */
+static void ledger_mass_report(void)
+{
+    double s[LEDGER_STK], o[LEDGER_NEL+3], go[LEDGER_NEL+3], gs[LEDGER_STK]; ledger_stocks(s);
+    for(int k=0;k<LEDGER_NEL+2;k++) {o[k]=LedgerOffered[k];} o[LEDGER_NEL+2]=LedgerNSN;
+    MPI_Reduce(s,gs,LEDGER_STK,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD); MPI_Reduce(o,go,LEDGER_NEL+3,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD);
+    if(ThisTask) {return;}
+    static FILE *fd=NULL; if(!fd) {char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(fn,DEFAULT_PATH_BUFFERSIZE_TOUSE,"%sledger_mass.txt",All.OutputDir); fd=fopen(fn,"a");}
+    if(!fd) {return;}
+    fprintf(fd,"%.12g %.0f %.17g %.17g %.17g",All.Time,go[LEDGER_NEL+2],go[LEDGER_NEL],gs[1],gs[2]);
+    for(int k=0;k<LEDGER_NEL;k++) {fprintf(fd," %.17g %.17g",gs[3+k],go[k]);} fprintf(fd,"\n"); fflush(fd);
+}
+static const char *LedgerNames[LG_N] = {"hydro_W","hydro_Q","grav_W","radP_long_W","turb_W","fb_SN","fb_other","photoion","cool","floors","SF","merge_split","fb_deferred","n_wake"};
+double ledger_local_gas_energy(void) {double e=0; for(int i=0;i<NumPart;i++) {if(P[i].Type==0 && P[i].Mass>0) {e += P[i].Mass*(0.5*P[i].Vel.norm_sq()*All.cf_a2inv + CellP[i].InternalEnergy);}} return e;}
+void ledger_log_hydro_event(int i, double dQ, double dW, double dt, int mode)
+{
+    double u51 = 1.0e51/UNIT_ENERGY_IN_CGS;
+    if(fabs(dQ + dW) < 0.01*u51) {return;}
+    static FILE *fd = NULL;
+    if(!fd) {char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(fn, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sledger_events_%d.txt", All.OutputDir, ThisTask); fd = fopen(fn, "a");}
+    if(!fd) {return;}
+    fprintf(fd, "%.10g %d %llu %.6g %.6g %.6g %.4g %.4g %.4g %.4g %.4g %.4g %d %.4g\n", All.Time, mode, (unsigned long long) P[i].ID, P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],
+        P[i].Mass, CellP[i].Density, CellP[i].InternalEnergy, dQ/u51, dW/u51, dt, P[i].TimeBin, CellP[i].MaxSignalVel);
+    fflush(fd);
+}
+/* at full syncs: E_kin, E_th, E_B (1e51 erg), cumulative channels since the first report, residual = d(E_kin+E_th) - sum(closure channels) */
+void energy_ledger_report(void)
+{
+    if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;}
+    ledger_mass_report();
+    double loc[LG_N+3], glob[LG_N+3]; int i;
+    for(i=0;i<LG_N;i++) {loc[i] = EnergyLedger[i];}
+    loc[LG_N] = loc[LG_N+1] = loc[LG_N+2] = 0;
+    for(i=0;i<NumPart;i++) {if(P[i].Type==0 && P[i].Mass>0) {loc[LG_N] += 0.5*P[i].Mass*P[i].Vel.norm_sq()*All.cf_a2inv; loc[LG_N+1] += P[i].Mass*CellP[i].InternalEnergy;
+        if(CellP[i].Density>0) {loc[LG_N+2] += 0.5*CellP[i].B.norm_sq()*(CellP[i].Density/P[i].Mass)/All.cf_atime;}}}
+    MPI_Reduce(loc, glob, LG_N+3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask != 0) {return;}
+    static FILE *fd = NULL; static double E0 = -1, EB0 = 0, L0[LG_N];
+    double u51 = 1.0e51/UNIT_ENERGY_IN_CGS, E = glob[LG_N]+glob[LG_N+1];
+    if(E0 < 0) {E0 = E; EB0 = glob[LG_N+2]; for(i=0;i<LG_N;i++) {L0[i] = glob[i];}}
+    if(!fd)
+    {
+        char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(fn, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%senergy_ledger.txt", All.OutputDir);
+        fd = fopen(fn, "a");
+        if(fd) {fprintf(fd, "# time step E_kin E_th E_B dE dE_B residual"); for(i=0;i<LG_N;i++) {fprintf(fd, " %s", LedgerNames[i]);} fprintf(fd, "\n");}
+    }
+    if(!fd) {return;}
+    double sum = 0; for(i=0;i<LG_N_CLOSURE;i++) {sum += glob[i]-L0[i];}
+    fprintf(fd, "%.10g %lld %.8g %.8g %.8g %.8g %.8g %.8g", All.Time, (long long)All.NumCurrentTiStep, glob[LG_N]/u51, glob[LG_N+1]/u51, glob[LG_N+2]/u51, (E-E0)/u51, (glob[LG_N+2]-EB0)/u51, ((E-E0)-sum)/u51);
+    for(i=0;i<LG_WAKE_N;i++) {fprintf(fd, " %.8g", (glob[i]-L0[i])/u51);}
+    fprintf(fd, " %.0f\n", glob[LG_WAKE_N]-L0[LG_WAKE_N]); fflush(fd);
+}
+#endif
+
 #include "../gravity/gpu_gravity_tree.h"   /* gpu_gravity_tree_mark_born_current */
 #include "../mesh/neighbor_list.h"
 #include "../mesh/gpu_neighbor_list.h"
@@ -203,6 +291,9 @@ void run(void)
 
     while(1)			/* main timestep iteration loop */
     {
+#if defined(KETJU_REGULARIZATION) && defined(OUTPUT_STAR_ENERGY_DIRECT_SUM)
+        ketju_energy_diagnostic(); /* ETOT_INCODE: direct-sum star energy, printed at synchronised snapshot times */
+#endif
         compute_statistics();	/* regular statistics outputs (like total energy) */
         CPU_Step[CPU_LOGMSG] += measure_time();
 
@@ -215,12 +306,24 @@ void run(void)
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
             rearrange_particle_sequence(); /* fold the last step's promoted grains into the gas block, so the restart carries their cells */
 #endif
+#ifdef KETJU_REGULARIZATION
+            ketju_report_stats(1);
+#endif
+#ifdef TEST_KETJU_TREE_MOTION_AUDIT
+            ketju_tree_audit_report();
+#endif
+#ifdef TEST_TREE_NODE_MOMENTUM_AUDIT
+            tree_node_momentum_audit_report();
+#endif
             restart(0); /* write a restart file to allow continuation of the run for a larger value of TimeMax */
             if(All.Ti_lastoutput != All.Ti_Current) {savepositions(All.SnapshotFileCount++);} /* make a snapshot at the final time in case none has produced at this time; this will be overwritten if All.TimeMax is increased and the run is continued */
             break;
         }
 
         find_timesteps();		/* find-timesteps */
+#ifdef KETJU_REGULARIZATION
+        ketju_limit_timesteps(); /* chain particles to a shared timebin */
+#endif
 
         /* Controlled-stop check (Wave-CBE 2026-05-28). find_timesteps()
          * just ran gizmo_collect_controlled_stop() on every rank; if any
@@ -272,6 +375,11 @@ void run(void)
         HermiteOnlyFlag = 0;
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+#ifdef KETJU_REGULARIZATION
+        ketju_find_regions();    /* chain regions around massive stars/BHs */
+        ketju_run_integration(); /* subtract tree pair force, run MSTAR, velocity trick; raises motion bounds */
+        ketju_write_output();
+#endif
         /* The kept neighbour index follows the kicked velocities before anything drifts on them. Every
            velocity change since the last kick -- the second half-kick and the end-of-step writers (winds,
            cooling back-reaction, sink drag) -- was to these same synchronous particles. */
@@ -291,6 +399,9 @@ void run(void)
            next step reaches this rank's own tree and tile indexes at once, but the other ranks' copies only
            here: a loop later in that same step decides its exports against the older bound. */
         gravity_flush_pending_motion_bounds();
+#ifdef TEST_KETJU_TREE_MOTION_AUDIT
+        ketju_tree_audit_bounds();
+#endif
         CPU_Step[CPU_KICKS] += measure_time();
 
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
@@ -435,7 +546,19 @@ void run(void)
            drain the request here instead of carrying a broken tree into the force computation. */
         gizmo_exit_bad_stop_if_requested("run:after_tree_update");
 
+#ifdef TEST_KETJU_TREE_MOTION_AUDIT
+        if(!reconstructed_tree && !TreeMomentsStaleFlag) {ketju_tree_audit_nodes();} /* a refresh pending rewrites the nodes in this gravity call */
+#endif
+#ifdef TEST_TREE_NODE_MOMENTUM_AUDIT
+#if (TEST_TREE_NODE_MOMENTUM_AUDIT > 1)
+        if(!reconstructed_tree && (All.NumCurrentTiStep % 3 == 1)) {TreeMomentsStaleFlag = 1;} /* mode 2: a moment refresh every third step */
+#endif
+        if(!reconstructed_tree && !TreeMomentsStaleFlag) {tree_node_momentum_audit();} /* a build or refresh due rewrites the nodes in this gravity call */
+#endif
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
+#ifdef TEST_KETJU_TREE_MOTION_AUDIT
+        ketju_tree_audit_imports();
+#endif
 
 #ifdef DM_DISPERSION_LOOP_ACTIVE
 /*
@@ -460,7 +583,9 @@ void run(void)
         CPU_Step[CPU_SNIIHEATING] += measure_time();
 #endif
 
+        LEDGER_STEP("pre_hydro_fb");
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+        LEDGER_STEP("post_hydro_fb");
 #ifdef DM_HEATING
         apply_dm_heating();  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
         CPU_Step[CPU_COOLINGSFR] += measure_time();
@@ -485,6 +610,9 @@ void run(void)
 #endif
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
+#ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
+        energy_ledger_report();
+#endif
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();
@@ -494,6 +622,12 @@ void run(void)
         HermiteOnlyFlag = 0;
         do_hermite_correction();
         CPU_Step[CPU_KICKS] += measure_time();
+#endif
+#ifdef KETJU_REGULARIZATION
+        ketju_finish_step(); /* chain-external field for the next find_timesteps */
+#endif
+#ifdef TEST_RESTART_AT_STEP
+        if(RestartFlag == 0 && getenv("GIZMO_TEST_RESTART_AT_STEP") && All.NumCurrentTiStep == atoll(getenv("GIZMO_TEST_RESTART_AT_STEP"))) {restart(0); endrun(0);} /* restart files part-way through the long steps */
 #endif
         /* Check whether we need to interrupt the run */
         int stopflag = 0;
@@ -755,7 +889,7 @@ void calculate_non_standard_physics(void)
 #endif
 
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
-    cooling_parent_routine(); // top-level cooling and chemistry subroutine //
+    LEDGER_BRACKET(LG_COOL, cooling_parent_routine()); // top-level cooling and chemistry subroutine //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
 #ifdef DISK_BETA_COOL
@@ -776,7 +910,9 @@ void calculate_non_standard_physics(void)
     grain_promotion_parent_routine();
 #endif
 #ifdef GALSF /* star/sink particle formation */
-    star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
+    LEDGER_STEP("pre_star_formation");
+    LEDGER_BRACKET(LG_SF, star_formation_parent_routine()); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
+    LEDGER_STEP("post_star_formation");
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
 
@@ -889,7 +1025,13 @@ void find_next_sync_point_and_drift(void)
          * legacy compute_potential() (gravity/potential.cc) and
          * OUTPUT_RECOMPUTE_POTENTIAL flag are retired. */
         gizmo_full_drift_to(All.Ti_Current); /* lazy-drift sync: snapshot writes all-particle predicted state */
+#ifdef KETJU_REGULARIZATION
+        ketju_swap_output_velocities(); /* members ending their step here: write the MSTAR velocity */
+#endif
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
+#ifdef KETJU_REGULARIZATION
+        ketju_swap_output_velocities();
+#endif
         All.Ti_nextoutput = find_next_outputtime(All.Ti_nextoutput + 1);
     }
 
@@ -970,6 +1112,9 @@ void find_next_sync_point_and_drift(void)
   if(!_drift_marked.empty()) {
       gizmo_mark_kernel_radius_dirty_indices(_drift_marked.data(), (int)_drift_marked.size());
   }
+#ifdef KETJU_REGULARIZATION
+  ketju_set_final_velocities(); /* MSTAR velocities after the drift (velocity trick) */
+#endif
 
 }
 

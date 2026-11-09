@@ -193,7 +193,11 @@ struct MechFBSpec {
      * + refills host_locals_scratch). */
     struct Aux {
         int                          num_modes;                 /* 3..6 per FIRE flags */
+#ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
+        int                          modes[7];                  /* {-3, -2, -1, 0, 1, 2, 3}: -3 counts the cells per pixel */
+#else
         int                          modes[6];                  /* {-2, -1, 0, 1, 2, 3} */
+#endif
         int                          mode_idx;                  /* 0..num_modes-1 */
         std::vector<MechFBLocalIn>   host_locals_scratch;       /* [num_active]; repacked each iter */
         struct MechFBGasDelta       *LocalGasMechFBInfoTemp;    /* SharedSpace ptr; owned by toplevel */
@@ -243,6 +247,9 @@ struct MechFBSpec {
         for (int k = 0; k < AREA_WEIGHTED_SUM_ELEMENTS; ++k) {
             local.Area_weighted_sum[k] += peer.Area_weighted_sum[k];
         }
+#ifdef MECHFB_BALANCED_SHARES
+        for (int k = 0; k < 3; ++k) {local.p_to_gas[k] += peer.p_to_gas[k];}
+#endif
     }
 
     /* Per-active post-iter hook — STATUS-ONLY.
@@ -298,6 +305,9 @@ struct MechFBSpec {
         for (int k = 0; k < AREA_WEIGHTED_SUM_ELEMENTS; ++k) {
             accum.Area_weighted_sum[k] = 0;
         }
+#ifdef MECHFB_BALANCED_SHARES
+        for (int k = 0; k < 3; ++k) {accum.p_to_gas[k] = 0;}
+#endif
     }
 
     KOKKOS_INLINE_FUNCTION

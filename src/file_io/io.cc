@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../galaxy_sf/single_star_record.h"
 #include "../mesh/kernel.h"
 #include "../core/timestep_functions.h"   /* the Hermite predicted state written by IO_HERMITE_SYNC */
 #include "../core/predict_functions.h"    /* box_wrap_position_to_primary_image: the shear-periodic image a snapshot writes */
@@ -101,6 +102,12 @@ void savepositions(int num)
     int n, filenr, gr, ngroups, primaryTask, lastTask;
 
     CPU_Step[CPU_MISC] += measure_time();
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    ledger_output(); /* the ledger's only reduction */
+#endif
+#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+    single_star_event_logs_write();
+#endif
 
 #ifdef CHIMES_REDUCED_OUTPUT
     if (num % N_chimes_full_output_freq == 0) {Chimes_incl_full_output = 1;} else {Chimes_incl_full_output = 0;}
@@ -838,6 +845,51 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
         break;
 
+#ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {for(k = 0; k < 28; k++) {*fp++ = (MyOutputFloat) CellP[pindex].SGChemLambda[k];} n++;}
+            break;
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {for(k = 0; k < 6; k++) {*fp++ = (MyOutputFloat) CellP[pindex].SGChemLambdaChem[k];} n++;}
+            break;
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {for(k = 0; k < 6; k++) {*fp++ = (MyOutputFloat) CellP[pindex].SGChemPhotoRates[k];} n++;}
+            break;
+#endif
+        case IO_SGCHEM_TRACABUND:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {for(k = 0; k < SGCHEM_NUM_TRACKED_SPECIES; k++) {*fp++ = (MyOutputFloat) CellP[pindex].TracAbund[k];} n++;}
+            break;
+
+        case IO_SGCHEM_DUSTTEMP:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {*fp++ = (MyOutputFloat) CellP[pindex].DustTemp; n++;}
+            break;
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+        case IO_SGCHEM_G0_LW:
+        case IO_SGCHEM_G0_FUV_ATTEN:
+        case IO_SGCHEM_SHIELDFAC_DUST:
+        case IO_SGCHEM_G0_NUV:
+        case IO_SGCHEM_G0_OPT:
+        case IO_SGCHEM_CR_ZETA:
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {*fp++ = (MyOutputFloat) sgchem_radiation_field_for_snapshot(pindex, blocknr); n++;}
+            break;
+#endif
+#endif
+
         case IO_CHIMES_ABUNDANCES:
 #ifdef CHIMES
             for (n = 0; n < pc; pindex++)
@@ -1472,6 +1524,34 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+        case IO_SINGLE_STAR_BIRTH_Z:
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+#endif
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    struct single_star_record r; single_star_record_get(P[pindex].StarIdx, &r); /* zeros without a record */
+                    double v = (blocknr == IO_SINGLE_STAR_DRAWN_MASS) ? r.M_drawn : r.Z_birth;
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+                    if(blocknr == IO_SINGLE_STAR_BIRTH_DENSITY) {v = r.rho_birth;}
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+                    if(blocknr == IO_SINGLE_STAR_EVENT_BITS) {v = r.event_bits;}
+                    if(blocknr == IO_SINGLE_STAR_LAST_WIND_LOG_AGE) {v = r.last_wind_log_age;}
+#endif
+                    *fp++ = (MyOutputFloat) v;
+                    n++;
+                }
+            break;
+#endif
+
         case IO_STAGE_PROTOSTAR:
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
             for(n = 0; n < pc; pindex++)
@@ -1611,7 +1691,11 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
+#ifdef SGCHEM
+                    *fp++ = (MyOutputFloat) CellP[pindex].Temp; /* the chemistry's temperature */
+#else
                     *fp++ = (MyOutputFloat) CellP[pindex].Temperature;
+#endif
                     n++;
                 }
             break;
@@ -2226,6 +2310,21 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_RHO:
         case IO_NE:
         case IO_NH:
+#ifdef SGCHEM
+        case IO_SGCHEM_DUSTTEMP:
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+        case IO_SGCHEM_G0_LW:
+        case IO_SGCHEM_G0_FUV_ATTEN:
+        case IO_SGCHEM_SHIELDFAC_DUST:
+        case IO_SGCHEM_G0_NUV:
+        case IO_SGCHEM_G0_OPT:
+        case IO_SGCHEM_CR_ZETA:
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
+#endif
+#endif
         case IO_HII:
         case IO_HeI:
         case IO_HeII:
@@ -2269,6 +2368,17 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_R_PROTOSTAR:
         case IO_MASS_D_PROTOSTAR:
         case IO_ZAMS_MASS:
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+        case IO_SINGLE_STAR_BIRTH_Z:
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+#endif
+#endif
         case IO_LUM_SINGLESTAR:
         case IO_EOSTEMP:
 #ifdef TWO_TEMPERATURE_PLASMA
@@ -2457,6 +2567,27 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
             
+#ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+            bytes_per_blockelement = 28 * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+            bytes_per_blockelement = 6 * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+            bytes_per_blockelement = 6 * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
+        case IO_SGCHEM_TRACABUND:
+            bytes_per_blockelement = SGCHEM_NUM_TRACKED_SPECIES * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
+
         case IO_CHIMES_ABUNDANCES:
 #ifdef CHIMES
             if(mode)
@@ -2615,6 +2746,21 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_RHO:
         case IO_NE:
         case IO_NH:
+#ifdef SGCHEM
+        case IO_SGCHEM_DUSTTEMP:
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+        case IO_SGCHEM_G0_LW:
+        case IO_SGCHEM_G0_FUV_ATTEN:
+        case IO_SGCHEM_SHIELDFAC_DUST:
+        case IO_SGCHEM_G0_NUV:
+        case IO_SGCHEM_G0_OPT:
+        case IO_SGCHEM_CR_ZETA:
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
+#endif
+#endif
         case IO_HII:
         case IO_HeI:
         case IO_HeII:
@@ -2663,6 +2809,17 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_R_PROTOSTAR:
         case IO_MASS_D_PROTOSTAR:
         case IO_ZAMS_MASS:
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+        case IO_SINGLE_STAR_BIRTH_Z:
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+#endif
+#endif
         case IO_STAGE_PROTOSTAR:
         case IO_AGE_PROTOSTAR:
         case IO_LUM_SINGLESTAR:
@@ -2809,6 +2966,27 @@ int get_values_per_blockelement(enum iofields blocknr)
 #endif
             break; 
 
+#ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+            values = 28;
+            break;
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+            values = 6;
+            break;
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+            values = 6;
+            break;
+#endif
+        case IO_SGCHEM_TRACABUND:
+            values = SGCHEM_NUM_TRACKED_SPECIES;
+            break;
+#endif
+
         case IO_CHIMES_ABUNDANCES:
 #ifdef CHIMES
             values = ChimesGlobalVars.totalNumberOfSpecies;
@@ -2949,6 +3127,18 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_RHO:
         case IO_NE:
         case IO_NH:
+#ifdef SGCHEM
+        case IO_SGCHEM_DUSTTEMP:
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+        case IO_SGCHEM_G0_LW:
+        case IO_SGCHEM_G0_FUV_ATTEN:
+        case IO_SGCHEM_SHIELDFAC_DUST:
+        case IO_SGCHEM_G0_NUV:
+        case IO_SGCHEM_G0_OPT:
+        case IO_SGCHEM_CR_ZETA:
+#endif
+#endif
         case IO_HII:
         case IO_HeI:
         case IO_HeII:
@@ -3016,6 +3206,18 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_DELAY_TIME_HII:
         case IO_MOLECULARFRACTION:
         case IO_CHIMES_ABUNDANCES:
+#ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+#endif
+        case IO_SGCHEM_TRACABUND:
+#endif
         case IO_CHIMES_MU:
         case IO_CHIMES_REDUCED:
         case IO_CHIMES_NH:
@@ -3053,6 +3255,11 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_OSTAR:
         case IO_DTOSTAR:
         case IO_STAR_EFFECTIVE_SIZE:
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
+#endif
         case IO_HSMS:
             for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
             return nstars;
@@ -3101,6 +3308,21 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_SINKMDOT:
         case IO_R_PROTOSTAR:
         case IO_MASS_D_PROTOSTAR:
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+        case IO_SINGLE_STAR_BIRTH_Z:
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+#endif
+            for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
+            return nstars;
+            break;
+#endif
+
         case IO_ZAMS_MASS:
         case IO_STAGE_PROTOSTAR:
         case IO_AGE_PROTOSTAR:
@@ -3267,6 +3489,33 @@ int blockpresent(enum iofields blocknr)
             return 1;
 #endif
             break;
+
+#ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+#endif
+        case IO_SGCHEM_TRACABUND:
+        case IO_SGCHEM_DUSTTEMP:
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+        case IO_SGCHEM_G0_LW:
+        case IO_SGCHEM_G0_FUV_ATTEN:
+        case IO_SGCHEM_SHIELDFAC_DUST:
+        case IO_SGCHEM_G0_NUV:
+        case IO_SGCHEM_G0_OPT:
+        case IO_SGCHEM_CR_ZETA:
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
+#endif
+            return 1;
+#endif
 
         case IO_CHIMES_ABUNDANCES:
 #if defined(CHIMES_REDUCED_OUTPUT)
@@ -3645,6 +3894,20 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+        case IO_SINGLE_STAR_BIRTH_Z:
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+#endif
+            return 1;
+            break;
+#endif
+
         case IO_STAGE_PROTOSTAR:
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
             return 1;
@@ -3985,6 +4248,61 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_DUSTCHEMGRAINBINMASS:
             strncpy(label, "DBMA", 4);
             break;
+#ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+            strncpy(label, "SCRT", 4);
+            break;
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+            strncpy(label, "SCCR", 4);
+            break;
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+            strncpy(label, "SCPR", 4);
+            break;
+#endif
+        case IO_SGCHEM_TRACABUND:
+            strncpy(label, "CCTA", 4);
+            break;
+        case IO_SGCHEM_DUSTTEMP:
+            strncpy(label, "CCDT", 4);
+            break;
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+            strncpy(label, "SG0F", 4);
+            break;
+        case IO_SGCHEM_G0_LW:
+            strncpy(label, "SG0L", 4);
+            break;
+        case IO_SGCHEM_G0_FUV_ATTEN:
+            strncpy(label, "SG0A", 4);
+            break;
+        case IO_SGCHEM_SHIELDFAC_DUST:
+            strncpy(label, "SSHD", 4);
+            break;
+        case IO_SGCHEM_G0_NUV:
+            strncpy(label, "SG0N", 4);
+            break;
+        case IO_SGCHEM_G0_OPT:
+            strncpy(label, "SG0O", 4);
+            break;
+        case IO_SGCHEM_CR_ZETA:
+            strncpy(label, "SCRZ", 4);
+            break;
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+            strncpy(label, "SLUV", 4);
+            break;
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+            strncpy(label, "SLLW", 4);
+            break;
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
+            strncpy(label, "SLLQ", 4);
+            break;
+#endif
+#endif
         case IO_CHIMES_ABUNDANCES:
             strncpy(label, "CHIM", 4);
             break;
@@ -4150,6 +4468,27 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_ZAMS_MASS:
             strncpy(label, "PSMS", 4);
             break;
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+            strncpy(label, "SSMD", 4);
+            break;
+        case IO_SINGLE_STAR_BIRTH_Z:
+            strncpy(label, "SSZB", 4);
+            break;
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+            strncpy(label, "SSRB", 4);
+            break;
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+            strncpy(label, "SSEB", 4);
+            break;
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+            strncpy(label, "SSWA", 4);
+            break;
+#endif
+#endif
         case IO_LUM_SINGLESTAR:
             strncpy(label, "LUMS", 4);
             break;
@@ -4464,6 +4803,61 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_DUSTCHEMGRAINBINMASS:
             strcpy(buf, "DustBinMasses");
             break;
+#ifdef SGCHEM
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_COOLRATES:
+            strcpy(buf, "SGChemCoolRates");
+            break;
+#endif
+#ifdef OUTPUT_INDIVIDUAL_COOLRATES
+        case IO_SGCHEM_CHEMRATES:
+            strcpy(buf, "SGChemChemCoolRates");
+            break;
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        case IO_CHEM_PHOTORATES:
+            strcpy(buf, "ChemPhotoRates");
+            break;
+#endif
+        case IO_SGCHEM_TRACABUND:
+            strcpy(buf, "SGChemTracAbund");
+            break;
+        case IO_SGCHEM_DUSTTEMP:
+            strcpy(buf, "SGChemDustTemp");
+            break;
+#ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
+        case IO_SGCHEM_G0_FUV:
+            strcpy(buf, "G0_FUV");
+            break;
+        case IO_SGCHEM_G0_LW:
+            strcpy(buf, "G0_LW");
+            break;
+        case IO_SGCHEM_G0_FUV_ATTEN:
+            strcpy(buf, "G0_FUV_atten");
+            break;
+        case IO_SGCHEM_SHIELDFAC_DUST:
+            strcpy(buf, "ShieldFac_Dust");
+            break;
+        case IO_SGCHEM_G0_NUV:
+            strcpy(buf, "G0_NUV");
+            break;
+        case IO_SGCHEM_G0_OPT:
+            strcpy(buf, "G0_OPT");
+            break;
+        case IO_SGCHEM_CR_ZETA:
+            strcpy(buf, "CR_IonizationRate");
+            break;
+        case IO_SINGLE_STAR_LOG_UV_LUM:
+            strcpy(buf, "UV_Luminosity");
+            break;
+        case IO_SINGLE_STAR_LOG_LW_LUM:
+            strcpy(buf, "LW_Luminosity");
+            break;
+        case IO_SINGLE_STAR_LOG_LYMAN_Q:
+            strcpy(buf, "Lyman_PhotonRate");
+            break;
+#endif
+#endif
         case IO_CHIMES_ABUNDANCES:
             strcpy(buf, "ChimesAbundances");
             break;
@@ -4623,6 +5017,27 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_ZAMS_MASS:
             strcpy(buf, "ZAMS_Mass");
             break;
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        case IO_SINGLE_STAR_DRAWN_MASS:
+            strcpy(buf, "SingleStarDrawnMass");
+            break;
+        case IO_SINGLE_STAR_BIRTH_Z:
+            strcpy(buf, "SingleStarBirthMetallicity");
+            break;
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+            strcpy(buf, "SingleStarBirthDensity");
+            break;
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS:
+            strcpy(buf, "SingleStarEventBits");
+            break;
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+            strcpy(buf, "SingleStarLastWindLogAge");
+            break;
+#endif
+#endif
         case IO_STAGE_PROTOSTAR:
             strcpy(buf, "ProtoStellarStage");
             break;
@@ -4779,6 +5194,10 @@ void get_dataset_name_legacy_alias(enum iofields blocknr, char *buf)
         case IO_ACRB:           strcpy(buf, "BH_AccretionLength");    break;
         case IO_SINKRAD:        strcpy(buf, "SinkRadius");            break;
         case IO_SINK_FORM_MASS: strcpy(buf, "SinkInitialMass");       break;
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:   strcpy(buf, "ChemcoolTracAbund");     break;   /* SGChem datasets before the rename */
+        case IO_SGCHEM_DUSTTEMP:    strcpy(buf, "ChemcoolDustTemp");      break;
+#endif
         case IO_SINKMDOT:       strcpy(buf, "BH_Mdot");               break;
         case IO_SINKPROGS:      strcpy(buf, "BH_NProgs");             break;
         case IO_SINK_DIST:      strcpy(buf, "BH_Dist");               break;

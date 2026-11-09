@@ -10,6 +10,9 @@
 #include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 #include "../eos/composition_registry.h"
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#include "../galaxy_sf/stellar_solar_abundances.h"
+#endif
 
 
 /*! \file init.c
@@ -201,10 +204,13 @@ void init(void)
     All.SolarAbundances[9]=1.01e-4; // Ca  (6.34 -> 0.65e-4, AG=0.67e-4); PS=6.38->6.87e-5
     All.SolarAbundances[10]=1.73e-3; // Fe (7.50 -> 1.31e-3, AG=1.92e-3); PS=7.54->1.38e-3
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) // new default abundances; using Asplund et al. 2009 proto-solar abundances
-    All.SolarAbundances[0]=0.0142; if(NUM_METAL_SPECIES>=10) {
+    All.SolarAbundances[0]=0.0142; if(NUM_METAL_SPECIES_BASE>=10) {
         All.SolarAbundances[1]=0.27030; All.SolarAbundances[2]=2.53e-3; All.SolarAbundances[3]=7.41e-4; All.SolarAbundances[4]=6.13e-3; All.SolarAbundances[5]=1.34e-3;
         All.SolarAbundances[6]=7.57e-4; All.SolarAbundances[7]=7.12e-4; All.SolarAbundances[8]=3.31e-4; All.SolarAbundances[9]=6.87e-5; All.SolarAbundances[10]=1.38e-3;}
 #endif
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    stellar_solar_abundances_fire_slots(All.SolarAbundances, NUM_LIVE_SPECIES_FOR_COOLTABLES); /* the stellar tables' solar composition (Z = 0.014), as stella_dev */
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     Initialize_ISMDustChem_Global_Variables();
@@ -232,6 +238,9 @@ void init(void)
         P[i].Grain_CoagClaim = 0;   /* no claim is open outside a force pass, so every start begins with none */
 #endif
 
+#ifdef KETJU_REGULARIZATION
+        ketju_init_particle(i);
+#endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* init tidal tensor for first output (not used for calculation) */
         for(j=0;j<3;j++) {int kt; for(kt=0;kt<3;kt++) {P[i].tidal_tensorps[j][kt]=0;}}
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
@@ -340,7 +349,7 @@ void init(void)
 #endif
 #ifdef GALSF_FB_MECHANICAL
             int k; for(k=0;k<AREA_WEIGHTED_SUM_ELEMENTS;k++) {P[i].Area_weighted_sum[k] = 0;}
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
             P[i].MassReturn_ThisTimeStep = 0;
 #ifdef GALSF_FB_FIRE_RPROCESS
             P[i].RProcessEvent_ThisTimeStep = 0;
@@ -459,6 +468,9 @@ void init(void)
             /* need to allow for a primordial He abundance */
             if(NUM_LIVE_SPECIES_FOR_COOLTABLES>=10) P[i].Metallicity[1]=(1.-HYDROGEN_MASSFRAC)+(All.SolarAbundances[1]-(1.-HYDROGEN_MASSFRAC))*P[i].Metallicity[0]/All.SolarAbundances[0];
             }
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
+            for(j=0;j<STELLAR_EXTRA_NELEM;j++) {P[i].Metallicity[METALS_EXTRA_PASSIVE_SPECIES_OFFSET+j]=stellar_solar_massfrac[stellar_extra_slot_elem[j]]*(P[i].Metallicity[0]/All.SolarAbundances[0]);} /* the other 16 elements, solar */
+#endif
         } // if(RestartFlag == 0)
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
@@ -733,6 +745,9 @@ void init(void)
 #ifdef CHIMES_STELLAR_FLUXES
 	    int kc; for (kc = 0; kc < CHIMES_LOCAL_UV_NBINS; kc++) {CellP[i].Chimes_fluxPhotIon[kc] = 0; CellP[i].Chimes_G0[kc] = 0;}
 #endif
+#ifdef SGCHEM
+            sgchem_init_cell_state(i); /* fresh start: start abundances and temperatures */
+#endif
 #ifdef SINK_COMPTON_HEATING
             CellP[i].Rad_Flux_AGN = 0;
 #endif
@@ -766,6 +781,9 @@ void init(void)
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
         CellP[i].DelayTimeHII = 0;
 #endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        if(RestartFlag != 1) {CellP[i].PhotoionizedUntil = 0;}
+#endif
 #ifdef GALSF_FB_TURNOFF_COOLING
         CellP[i].DelayTimeCoolingSNe = 0;
 #endif
@@ -776,7 +794,9 @@ void init(void)
 #endif
 #endif
 #ifdef COSMIC_RAY_FLUID
+#ifndef INPUT_READ_COSMICRAYENERGY /* with it, fresh starts keep the CosmicRayEnergy of the ICs */
         if(RestartFlag == 0) {for(j=0;j<N_CR_PARTICLE_BINS;j++) {CellP[i].CosmicRayEnergy[j] = 0;}}
+#endif
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
         if(RestartFlag != 1) {CellP[i].DtCREgyNewInjectionFromShocks = 0;}
 #endif
@@ -853,6 +873,9 @@ void init(void)
 #endif
 #if defined(SINK_THERMALFEEDBACK)
         CellP[i].Injected_Sink_Energy = 0;
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        for(j=0;j<NUM_METAL_SPECIES;j++) {CellP[i].Dyield_pending[j] = 0;}
 #endif
     }
 #if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
@@ -1026,6 +1049,10 @@ void init(void)
 
 
     /* HELLO! This here is where you should insert custom code for hard-wiring the ICs of various test problems */
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+    {double m_gas = 0; for(i = 0; i < N_gas; i++) {m_gas += P[i].Mass;} /* as stella_dev GHOSDT_G0_CR */
+     MPI_Allreduce(&m_gas, &All.Mgas0, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); All.FactorG0 = 0;}
+#endif
 
 
 
@@ -1060,6 +1087,11 @@ void init(void)
         CellP[i].BPred = CellP[i].B; CellP[i].DtB = {}; CellP[i].BField_prerefinement = {};
 #endif
 #ifdef COSMIC_RAY_FLUID
+        if(RestartFlag == 0 && (All.CosmicRayInitialAmbient_eVcm3 > 0 || All.CosmicRayInitialCloud_eVcm3 > 0)) { /* initial CR background, split by density; other starts keep what they read */
+            double e_eVcm3 = (CellP[i].nHcgs() >= All.CosmicRayInitialCloudThreshold_nH) ? All.CosmicRayInitialCloud_eVcm3 : All.CosmicRayInitialAmbient_eVcm3;
+            double e_code = e_eVcm3 * 1.602e-12 / UNIT_PRESSURE_IN_CGS * P[i].Mass / (CellP[i].Density * All.cf_a3inv);
+            for(k=0;k<N_CR_PARTICLE_BINS;k++) {CellP[i].CosmicRayEnergy[k] = e_code / N_CR_PARTICLE_BINS;}
+        }
         for(k=0;k<N_CR_PARTICLE_BINS;k++)
         {
             CellP[i].CosmicRayEnergyPred[k]=CellP[i].CosmicRayEnergy[k]; CellP[i].CosmicRayDiffusionCoeff[k]=0; CellP[i].DtCosmicRayEnergy[k]=0;
@@ -1190,7 +1222,11 @@ void init(void)
             All.MinMassForParticleMerger /= (float)GALSF_GENERATIONS;
 #endif
         } else {All.MinMassForParticleMerger = mpi_splitmerge_readmin;} /* use the version from the ICs */
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        if(mpi_splitmerge_readmax <= 0) {All.MaxMassForParticleSplit  = 2.01 * mpi_mass_max;} else {All.MaxMassForParticleSplit = mpi_splitmerge_readmax;}
+#else
         if(mpi_splitmerge_readmax <= 0) {All.MaxMassForParticleSplit  = 3.01 * mpi_mass_max;} else {All.MaxMassForParticleSplit = mpi_splitmerge_readmax;}
+#endif
 #ifdef MERGESPLIT_HARDCODE_MAX_MASS
         All.MaxMassForParticleSplit = MERGESPLIT_HARDCODE_MAX_MASS;
 #endif

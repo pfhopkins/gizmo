@@ -23,6 +23,9 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+#include "../galaxy_sf/stellar_evolution_tables.h"
+#endif
 /* Kokkos lifecycle wrappers declared in proto.h, defined in cooling/cooling.cc */
 
 static unsigned long long ExecutableFNV1a64 = 0; /*!< 64-bit FNV-1a hash of the running executable (0 if it could not be read) */
@@ -253,6 +256,9 @@ int main(int argc, char **argv)
    * exit statuses). Node still releases cleanly: MPI_Finalize, not MPI_Abort. */
   int badstop_exit = (gizmo_controlled_stop_code() != 0) ? 1 : 0;
 
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+  stellar_evolution_tables_free();
+#endif
   gizmo_kokkos_finalize();  /* must come before MPI_Finalize */
   MPI_Finalize();		/* clean up & finalize MPI */
 

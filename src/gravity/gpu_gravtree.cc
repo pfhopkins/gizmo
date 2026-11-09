@@ -43,6 +43,9 @@
 #include "gpu_gravity_tree.h"
 #include "../mesh/gpu_neighbor_list.h"            /* the particle touched set's epoch lifecycle (host side) */
 #include "gpu_gravtree.h"
+#if defined(KETJU_REGULARIZATION)
+#include "ketju/ketju_tree.h"
+#endif
 #include "forcetree.h"
 #include "gravity_box_distance.h"   /* shared CPU/GPU gravity box-distance SSOT */
 #include "gravtree_opening.h"       /* shared CPU/GPU primary-walk acceptance-geometry predicate (SSOT) */
@@ -431,6 +434,9 @@ struct gpu_grav_open_inputs_t {
     double rcut, rcut2;
 #endif
     int alive;   /* 0 for a massless target, which takes part in nothing */
+#if defined(KETJU_REGULARIZATION)
+    double ketju_open_radius;   /* nodes within this distance of a chain member are opened; < 0: chain on one rank, foreign nodes left alone; 0 = none */
+#endif
 };
 
 /* A member is split in two.  The INPUTS are fixed for the walk: what the opening decision and the
@@ -465,6 +471,12 @@ struct gpu_grav_member_inputs_t {
 #endif
 };
 
+/* the per-member pixel sums (GALSF_RESOLVEDISM_TREECOL_PIXELS, ~75 doubles) go to team scratch, as the tidal state does */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+static constexpr bool grav_walk_carries_treecol_pixels = true;
+#else
+static constexpr bool grav_walk_carries_treecol_pixels = false;
+#endif
 struct gpu_grav_member_optional_sums_t {
 #ifdef COUNT_MASS_IN_GRAVTREE
     double tree_mass;
@@ -474,6 +486,9 @@ struct gpu_grav_member_optional_sums_t {
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
     double treecol_angular_bins[RT_USE_TREECOL_FOR_NH];
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_sums_t tcpix;
 #endif
 #ifdef SINK_COMPTON_HEATING
     double incident_flux_agn;
@@ -530,6 +545,9 @@ KOKKOS_INLINE_FUNCTION void gpu_grav_member_sums_combine(gpu_grav_member_sums_t 
 #ifdef RT_USE_TREECOL_FOR_NH
     for(int k = 0; k < RT_USE_TREECOL_FOR_NH; k++) {a.treecol_angular_bins[k] += b.treecol_angular_bins[k];}
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_add(a.tcpix, b.tcpix);
+#endif
 #ifdef SINK_COMPTON_HEATING
     a.incident_flux_agn += b.incident_flux_agn;
 #endif
@@ -564,6 +582,9 @@ struct gpu_grav_src_payload_t {
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     double gasmass;
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    double tcpix_species[TREECOL_PIXELS_NSPECIES];
+#endif
 #ifdef DM_SCALARFIELD_SCREENING
     Vec3<double> d_dm;   /* displacement to the DM mass centre (= the total CoM only for a pure-DM leaf) */
     double mass_dm_local;
@@ -597,6 +618,9 @@ gpu_grav_open_inputs_init(const gpu_grav_walk_ctx_t &ctx, int target,
     open.pos = P_dev[target].Pos;
     open.ptype = P_dev[target].Type;
     open.alive = 0;
+#if defined(KETJU_REGULARIZATION)
+    open.ketju_open_radius = P_dev[target].KetjuOpenRadius;
+#endif
     pmass = P_dev[target].Mass;
     zeta = 0.0;
     pm = ctx.pm;
@@ -653,6 +677,9 @@ gpu_grav_member_optional_sums_init(gpu_grav_member_optional_sums_t &optional)
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
     {int kb; for(kb=0; kb<RT_USE_TREECOL_FOR_NH; kb++) {optional.treecol_angular_bins[kb]=0.0;}}
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_zero(optional.tcpix);
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
     optional.m_enc_in_rcrit = 0.0;
@@ -989,6 +1016,13 @@ gpu_grav_node_member_decide(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_
         r2, cen0, cen1, cen2, open.soft, open.soft, open.aold, open.ptype,
         (double)nd.len_node, (double)mass_node, (double)nd.msoft_node,
         pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
+#if defined(KETJU_REGULARIZATION)
+    if(pred == GRAV_ACCEPT_MULTIPOLE && (open.ketju_open_radius > 0 || (open.ketju_open_radius < 0 && !grav_node_is_terminal(nd.node_kind)))) { /* chain member: same-chain partners are leaf pairs; a chain on one rank has none in a terminal foreign node */
+        double dks0 = (double)nd.center_node[0] - open.pos[0], dks1 = (double)nd.center_node[1] - open.pos[1], dks2 = (double)nd.center_node[2] - open.pos[2];
+        gravity_box_nearest_image(dks0, dks1, dks2, -1);
+        if(ketju_node_overlaps_chain_sphere(dks0, dks1, dks2, fabs(open.ketju_open_radius), (double)nd.len_node)) {pred = GRAV_OPEN_NODE; KETJU_WALK_OPENING_NOTE;}
+    }
+#endif
     if(pred == GRAV_SKIP_NODE) {return GRAV_SKIP_NODE;}
     if(pred == GRAV_OPEN_NODE && !grav_node_is_terminal(nd.node_kind)) {return GRAV_OPEN_NODE;}
     if(pred == GRAV_OPEN_NODE && nd.node_kind == GRAV_NODE_FOREIGN_TRUNCATED)   {note = GPU_GRAV_NOTE_TRUNCATED;}
@@ -1057,6 +1091,19 @@ gpu_grav_evaluate_pair(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
     {
         const double angular_bin_size = 4.0 * M_PI / RT_USE_TREECOL_FOR_NH;
         grav_treecol_accumulate(src.dr, r, fac_accel, pl.gasmass, src.mass, angular_bin_size, optional_sums.treecol_angular_bins);
+    }
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    {
+        volatile int valid_gas_target = grav_target_valid_gas_for_rt(in.open.ptype, in.open.soft, in.tgt.pmass);
+        if(valid_gas_target)
+        {
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+            treecol_pixels_accumulate(optional_sums.tcpix, src.dr, r, fac_accel, src.mass, pl.gasmass, pl.tcpix_species, pl.d_stellarlum, pl.mass_stellarlum, KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER * in.open.soft);
+#else
+            treecol_pixels_accumulate(optional_sums.tcpix, src.dr, r, fac_accel, src.mass, pl.gasmass, pl.tcpix_species, src.dr, NULL, 0);
+#endif
+        }
     }
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
@@ -1195,6 +1242,9 @@ gpu_grav_evaluate_leaf(const gpu_grav_walk_ctx_t &ctx, int no, const gpu_grav_me
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     pl.gasmass = (P_dev[no].Type == 0) ? motion.mass : 0.0;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_species_masses(P_dev, ctx.CellP_dev, no, pl.tcpix_species);
+#endif
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
     /* gas at the inner edge of a sink's alpha-disk should not see a hole due to
      * the sink (mirrors forcetree.cc leaf branch + the node-moment kernel). */
@@ -1277,6 +1327,9 @@ gpu_grav_evaluate_leaf(const gpu_grav_walk_ctx_t &ctx, int no, const gpu_grav_me
         prox_target.vel = in.vel;
 #endif
         grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P_dev[no].Type; prox_src.src_mass = motion.mass; prox_src.motion.vel = src_vel;   /* the state this interaction was evaluated at, mirroring forcetree.cc, so (dr, vel) stays a consistent pair on a Hermite pass */
+#ifdef KETJU_REGULARIZATION
+        prox_target.ketju_chain = P_dev[in.target].KetjuChainID; prox_src.ketju_chain = P_dev[no].KetjuChainID;
+#endif
 #if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
         prox_src.motion.acc = P_dev[no].Acc_Total_PrevStep;
 #endif
@@ -1371,6 +1424,9 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     pl.gasmass = tree_soa->gasmass[idx];
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {pl.tcpix_species[ks] = tree_soa->treecol_species_mass[(long)idx * TREECOL_PIXELS_NSPECIES + ks];}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     /* Load node stellar luminosity only for valid gas targets (mirrors forcetree.cc; the RT
@@ -1479,6 +1535,9 @@ gpu_grav_member_finish(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
     {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {P_dev[target].ColumnDensityBins[k] = optional.treecol_angular_bins[k];}}
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    if(P_dev[target].Type == 0) {treecol_pixels_write_cell(ctx.CellP_dev[target], optional.tcpix);}
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
     P_dev[target].MencInRcrit = optional.m_enc_in_rcrit;
@@ -1825,7 +1884,7 @@ struct GravPacketMaskedPolicy {
        tidal tensor and the jerk, whose per-member state otherwise spills from registers to slower
        thread-private memory; in registers otherwise, which measured faster for the smaller state.
        Compile-time, for the layout reason given at GravPacketMaskedTeamPolicy. */
-    static constexpr bool sums_in_scratch  = grav_pair_carries_tidal_tensor_and_jerk;
+    static constexpr bool sums_in_scratch  = grav_pair_carries_tidal_tensor_and_jerk || grav_walk_carries_treecol_pixels;
     /* Compile-time so the walker's ring index stays a mask rather than a division. */
     static constexpr int  local_stack      = GRAV_PACKET_LOCAL_STACK;
     /* Members share one traversal and then evaluate its records in parallel, so the packet is
@@ -3045,6 +3104,9 @@ extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
              * but kept explicit for correctness on non-UVM targets. */
 #ifdef RT_USE_TREECOL_FOR_NH
             {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {P[i].ColumnDensityBins[k] = P_dev[i].ColumnDensityBins[k];}}
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+            if(P[i].Type == 0 && CellP != CellP_dev) {treecol_pixels_copy_cell(CellP[i], CellP_dev[i]);}
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
             P[i].MencInRcrit = P_dev[i].MencInRcrit;
