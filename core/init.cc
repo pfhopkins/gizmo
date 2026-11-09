@@ -302,7 +302,7 @@ void init(void)
             P[i].GradRho[1]=0;
             P[i].GradRho[2]=1;
 #endif
-#ifdef SINK_WIND_SPAWN
+#if defined(SINK_PARTICLES) && defined(SINK_WIND_SPAWN) /* the guard the reservoirs are declared under */
             /* spawn reservoirs for sinks read from a fresh IC rather than formed in-run, which would
                otherwise hold whatever was in the malloc slot: fresh-IC reads skip every block above
                IO_U, so nothing has assigned these. Any snapshot-reading mode (RestartFlag >= 2) reads
