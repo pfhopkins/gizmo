@@ -514,9 +514,6 @@ void begrun(void)
 #endif
 
 
-#ifdef PRECISION_DIET
-  if(All.ComovingIntegrationOn) {if(ThisTask == 0) {printf("PRECISION_DIET has not been validated for cosmological (comoving) runs: build without it.\n");} endrun(8611);}
-#endif
   if(All.ComovingIntegrationOn) {init_drift_table();}
 
   if(RestartFlag == 2)
