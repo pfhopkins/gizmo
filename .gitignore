@@ -200,3 +200,4 @@ test/single_stars_sf_instant_above_density/run_*/
 test/treecol_pixel_columns_output/run_*/
 test/sgchem_input_pool_violations/*_override.params
 test/sgchem_threaded_cooling_crosscheck/*_override.params
+test/mechfb_energy/*_override.params*

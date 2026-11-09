@@ -16,7 +16,7 @@ only dynamics are wind injection and hydro.
   solve both regimes and only the coefficient differs: alpha = 0.88 adiabatic, 0.76 radiative. Both
   to 10%.
 - Growth index R ~ t^(3/5), and constancy of the similarity coefficient in time.
-- Adiabatic only: E_kin + E_th = L_w t exactly, to 10% for spawning.
+- Adiabatic only: E_kin + E_th = L_w t exactly, to 10% in both wind modes.
 
 ## Why this is a test of spawned-wind merging criteria
 

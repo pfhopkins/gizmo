@@ -100,6 +100,24 @@ void mechfb_populate_aux_initial(MechFBSpec::Aux& aux,
  * of truth, used only by the MechFBSpec runner-port.
  * ========================================================================== */
 
+/* ejecta mass [code] this source returns this step, over every mode it is active in: the one pass of neighbour weights serves them all */
+static double mech_fb_ejecta_mass_this_step(int i) {
+    double M_ej = 0;
+#ifdef SNE_NONSINK_SPAWN
+    MyFloat unspawned = P[i].unspawned_wind_mass; /* the SN routine books its reservoir; only the injection pass may */
+#endif
+    for(int mode = 0; mode < 4; mode++) {
+        if(!addFB_evaluate_active_check(i, mode)) {continue;}
+        struct addFB_evaluate_data_in_ ev; ev.Msne = 0; ev.SNe_v_ejecta = 0;
+        particle2in_addFB_fromstars(&ev, i, mode);
+        M_ej += ev.Msne;
+    }
+#ifdef SNE_NONSINK_SPAWN
+    P[i].unspawned_wind_mass = unspawned;
+#endif
+    return M_ej;
+}
+
 void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
     struct addFB_evaluate_data_in_ fb;
     fb.Pos = P[i].Pos;
@@ -115,26 +133,8 @@ void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
 
     if ((P[i].DensityAroundParticle > 0) && (P[i].Mass > 0)) {
         if (loop_iteration < 0) {
-            fb.Msne = P[i].Mass;
-            if (loop_iteration == -1) {
-                /* this pass builds the mass-loading weights 1/(1 + w Msne/m_j), so it needs the ejecta mass the
-                 * coupling pass will use: SNe if any this step, else stellar mass loss. A star with both shares
-                 * these weights between them; separate ones would cost a neighbour pass per channel. */
-                int channel = 0;
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
-                channel = (P[i].SNe_ThisTimeStep > 0) ? 0 : ((P[i].MassReturn_ThisTimeStep > 0) ? 1 : -1);
-#endif
-                if (channel >= 0) {
-#ifdef SNE_NONSINK_SPAWN
-                    const MyFloat unspawned_before = P[i].unspawned_wind_mass; /* the SN routine books the spawned fraction; the coupling pass does that */
-#endif
-                    particle2in_addFB_fromstars(&fb, i, channel);
-#ifdef SNE_NONSINK_SPAWN
-                    P[i].unspawned_wind_mass = unspawned_before;
-#endif
-                    if (fb.Msne <= 0) {fb.Msne = P[i].Mass;}
-                }
-            }
+            fb.Msne = P[i].Mass; /* any positive number: this pass only needs a source */
+            if (loop_iteration == -1) {double M_ej = mech_fb_ejecta_mass_this_step(i); if (M_ej > 0) {fb.Msne = M_ej;}} /* the sums of this pass use the ejecta mass */
             fb.unit_mom_SNe = 1.0e-4;
             fb.SNe_v_ejecta = 1.0e-4;
         } else {
