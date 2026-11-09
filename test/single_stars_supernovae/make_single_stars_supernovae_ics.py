@@ -12,7 +12,7 @@ STARS = [(20.0, (0.25, 0.25, 0.25)), (40.0, (0.75, 0.25, 0.75)), (150.0, (0.25, 
 
 
 def make_single_stars_supernovae_ics(fname, tables_file, n=32, n_H=10.0, T=100.0, stars=STARS, z=0.014, n_metals=1, before_death_yr=None,
-                                     star_mass_factor=1.0):
+                                     star_mass_factor=1.0, winds_owed_dex=0.0):
     rho = n_H * 1.6726e-24 / 0.7 * 3.0857e18 ** 3 / 1.989e33  # Msun / pc^3
     dx = (1.0 / rho) ** (1.0 / 3.0)
     L = n * dx
@@ -49,5 +49,5 @@ def make_single_stars_supernovae_ics(fname, tables_file, n=32, n_H=10.0, T=100.0
         Zs = np.tile(SOLAR * z / SOLAR[0], (ns, 1)); Zs[:, 1] = SOLAR[1]
         s["Metallicity"] = Zs[:, :n_metals]; s["SingleStarDrawnMass"] = np.array([m for m, _ in stars]); s["SingleStarBirthMetallicity"] = np.full(ns, z)
         # winds counted as returned up to the end of life (these stars have no history): the deaths come at once
-        s["SingleStarLastWindLogAge"] = np.array([np.log10(np.interp(np.log10(m), np.log10(Mt), ms_life)) for m, _ in stars])
+        s["SingleStarLastWindLogAge"] = np.array([np.log10(np.interp(np.log10(m), np.log10(Mt), ms_life)) - winds_owed_dex for m, _ in stars])
     return L, dx
