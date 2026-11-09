@@ -2037,6 +2037,19 @@ static long long let_wire_encode_destination(struct LETPackContext *pk, const st
     return (long long) units;
 }
 
+/* The essentiality pack_recurse decides for a node, decided for a top leaf before any of it ships. */
+static int let_topleaf_essential(struct LETPackContext *pk, int no)
+{
+    int node_nsink = 0;
+#if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
+    node_nsink = Nodes[no].N_SINK;
+#endif
+    return let_node_essential_for_rank(pk, (double) Nodes[no].center[0], (double) Nodes[no].center[1], (double) Nodes[no].center[2],
+                                       (double) Nodes[no].u.d.s[0], (double) Nodes[no].u.d.s[1], (double) Nodes[no].u.d.s[2],
+                                       let_node_len_over_tree_lifetime(no, (double) Nodes[no].len), (double) Nodes[no].u.d.mass,
+                                       (double) Nodes[no].maxsoft, node_nsink);
+}
+
 extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
                                   const struct LETPerRankPayload *all_ranks,
                                   const int *own_topleaves, int n_own_topleaves,
@@ -2093,6 +2106,22 @@ extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
         int first_child_wire_idx = -1;
         int last_child_wire_idx  = -1;
         int child = subtree_root;
+        /* A multi-particle top leaf that no target in R's cover would open needs none of its children on R: ship the
+           top leaf itself, multipole-only and tagged truncated, as the whole subtree.  R's walk decides on its own copy
+           of the top leaf first and accepts it, exactly as it would with the children present; a walk that opens it
+           anyway is short of the import and repairs, as at any other truncated node. */
+        if((Nodes[topleaf_no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)) && !let_topleaf_essential(pk, topleaf_no))
+        {
+            const int w0 = count;
+            pack_recurse(pk, topleaf_no, sib_term, topleaf_no, out_buf, &count, out_capacity);
+            if(pk->pack_oom) goto pack_oom_bail;
+            if(count > w0)
+            {
+                first_child_wire_idx = last_child_wire_idx = w0;
+                (*out_buf)[w0].node.u.d.bitflags &= ~(1u << BITFLAG_TOPLEVEL);   /* a foreign copy, not R's top tree */
+            }
+            child = sib_term;   /* nothing else ships at this level */
+        }
         while(child != sib_term && child >= 0)
         {
             int next_child;
