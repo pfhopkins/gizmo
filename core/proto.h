@@ -1148,6 +1148,11 @@ void mg_gradient_correction_calc(void);
 inline void construct_gradient(double *grad, int i) { Vec3<MyDouble> v{grad[0],grad[1],grad[2]}; construct_gradient(v,i); grad[0]=v[0]; grad[1]=v[1]; grad[2]=v[2]; }
 void local_slopelimiter(double *grad, double valmax, double valmin, double alim, double h, double shoot_tol, int pos_preserve, double d_max, double val_cen);
 inline void local_slopelimiter(Vec3<double>& grad, double valmax, double valmin, double alim, double h, double shoot_tol, int pos_preserve, double d_max, double val_cen) { local_slopelimiter(grad.data, valmax, valmin, alim, h, shoot_tol, pos_preserve, d_max, val_cen); }
+/* for gradients stored in float (PRECISION_DIET): widen, operate in double, narrow on store. The exact-match
+   double overloads above win otherwise, so default builds never enter these. */
+template<typename T> inline void construct_gradient(Vec3<T>& grad, int i) { Vec3<MyDouble> v; v = grad; construct_gradient(v, i); grad = v; }
+template<typename T> inline void local_slopelimiter(Vec3<T>& grad, double valmax, double valmin, double alim, double h, double shoot_tol, int pos_preserve, double d_max, double val_cen)
+    { Vec3<double> v; v = grad; local_slopelimiter(v.data, valmax, valmin, alim, h, shoot_tol, pos_preserve, d_max, val_cen); grad = v; }
 
 #ifdef TURB_DIFF_DYNAMIC
 void dynamic_diff_vel_calc(void);

@@ -18,7 +18,13 @@
 /* Restartfile layout sentinel (see restart()). The magic distinguishes a sentinel from the leading
    bytes of an All struct written by a pre-sentinel binary. */
 #define RESTARTFILE_MAGIC 0x52535446u
+#if defined(PRECISION_DIET) && (PRECISION_DIET >= 2)
+#define RESTARTFILE_LAYOUT_VERSION 0x10004u /* float storage of derived P/CellP fields: scripts/restart_convert.py converts older files */
+#else
 #define RESTARTFILE_LAYOUT_VERSION 2u
+#endif
+extern const unsigned int RestartfileLayoutVersion; /* external linkage keeps it in the binary for scripts/restart_convert.py */
+const unsigned int RestartfileLayoutVersion = RESTARTFILE_LAYOUT_VERSION;
 struct restart_layout_header {unsigned int magic, layout_version; unsigned long long size_all, size_p, size_cell;};
 
 static FILE *fd;
@@ -181,7 +187,8 @@ void restart(int modus)
 	      else if(modus && (hdr.layout_version != want.layout_version || hdr.size_all != want.size_all || hdr.size_p != want.size_p || hdr.size_cell != want.size_cell))
 		{
 		  printf("Restart file '%s' was written with a different data layout (file/binary: layout version %u/%u, sizeof All %llu/%llu, P %llu/%llu, CellP %llu/%llu). "
-			 "Restartfiles are byte images and do not survive changes to these structures: resume with the binary that wrote them, or restart from a snapshot.\n",
+			 "Restartfiles are byte images and do not survive changes to these structures: resume with the binary that wrote them, restart from a snapshot, "
+			 "or convert the files with scripts/restart_convert.py (e.g. to or from a PRECISION_DIET=2 build).\n",
 			 buf, hdr.layout_version, want.layout_version, hdr.size_all, want.size_all, hdr.size_p, want.size_p, hdr.size_cell, want.size_cell);
 		  fflush(stdout);
 		  endrun(7879);

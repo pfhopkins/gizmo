@@ -1152,7 +1152,7 @@ extern struct gravdata_in
     MyFloat AGS_zeta;
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;
+    SymmetricTensor2<MyScratchFloat> tidal_tensorps_prevstep;
 #endif
     MyFloat OldAcc;
     int NodeList[NODELISTLENGTH];
@@ -1200,7 +1200,7 @@ extern struct gravdata_out
     MyDouble Potential;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    SymmetricTensor2<MyFloat> tidal_tensorps;
+    SymmetricTensor2<MyScratchFloat> tidal_tensorps;
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
     MyFloat tidal_zeta;
 #endif

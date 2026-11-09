@@ -23,8 +23,9 @@
         rho_i = local.Density*All.cf_a3inv; rho_j = CellP[j].Density*All.cf_a3inv; rho_ij = 0.5*(rho_i+rho_j); // physical units
         
         // NOT SPH: Now we use the more accurate finite-volume formulation, with the effective faces we have already calculated //
-        double *grad_i = local.Gradients.InternalEnergy.data_ptr();  // physical u / code length
-        double *grad_j = CellP[j].Gradients.InternalEnergy.data_ptr();
+        Vec3<double> grad_i_d, grad_j_d; grad_i_d = local.Gradients.InternalEnergy; grad_j_d = CellP[j].Gradients.InternalEnergy; // double copies (either may be stored in float)
+        double *grad_i = grad_i_d.data_ptr();  // physical u / code length
+        double *grad_j = grad_j_d.data_ptr();
         
         double flux_wt = rho_ij;
         double diffusion_wt = 0.5*(kappa_i+kappa_j);
