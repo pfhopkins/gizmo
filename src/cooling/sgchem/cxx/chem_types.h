@@ -33,7 +33,11 @@
 #define CHEM_NCRTAB  13
 #define CHEM_NPHTAB  54
 #define CHEM_NRATES  28      /* cool_func radiative rates */
-#define CHEM_NPIX    12      /* RT_USE_TREECOL_FOR_NH=12 HEALPix, as one-zone/production */
+#ifdef NPIX
+#define CHEM_NPIX    NPIX    /* the walk's HEALPix pixels (12, 48, 192) */
+#else
+#define CHEM_NPIX    12      /* one-zone drivers: 12 HEALPix pixels */
+#endif
 #define CHEM_NETAB_X 21      /* energy table blocks in x = abh2/(1+abhe-abh2) (gamma.h netab_x) */
 #define CHEM_ISIZE   (50000 * CHEM_NETAB_X)  /* energy/gamma table rows (gamma.h) */
 #define CHEM_ISIZE2  50000   /* eh2 table rows */

@@ -22,6 +22,7 @@
  *   - winds (drawn mass >= 8 Msun, after the pre-main sequence): every star step returns the table's cumulative wind
  *     ejecta between the age of the last delivery and now, at the table wind speed, with that interval's composition;
  *     the last delivery age advances only when the mass coupled;
+ *     with GALSF_SINGLE_STARS_WINDS_IN_CHUNKS only when the mass owed passes a fraction of the drawn mass;
  *   - death (age > PMS time + table lifetime): first any wind mass still owed up to the end of life, then the death
  *     itself; the star's mass at the death trigger is frozen in the record (M_at_SN_trigger), and every pack of the event
  *     recomputes ejecta, energy and yields from it;
@@ -285,6 +286,9 @@ double single_star_eventrates(int i, double dt)
         double la = single_star_table_log_age(DMIN(age, age_end), logM, logZ);
         if(la > 0) {
             struct single_star_event ev; single_star_wind_owed(s, logM, logZ, la, &ev);
+#ifdef GALSF_SINGLE_STARS_WINDS_IN_CHUNKS
+            if(!dead && ev.Mej <= DMIN(0.01 + 0.19 * (SingleStars.M_drawn[s] - SINGLE_STAR_WIND_MIN_MASS) / 342., 0.2) * SingleStars.M_drawn[s]) {return 0;} /* hold it until the mass owed is 1% (8 Msun) to 20% (350 Msun) of the drawn mass */
+#endif
             if(!dead && ev.Mej > 0) {P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0;}
             if(dead && ev.Mej > SINGLE_STAR_WIND_FLUSH_MIN && SingleStars.no_deposit_count[s] < 2) {
                 P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0; /* winds owed up to the end of life go first */

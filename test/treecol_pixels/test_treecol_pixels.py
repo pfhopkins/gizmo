@@ -14,6 +14,8 @@ stops) and checks them against exact values.
     pixel; 11.2-13.6, 3.444-6, 0.4133-3.444, 6-8 eV totals) against direct sums over all particles: medians and 99th
     percentiles of the relative differences within the tree-error bars below (1 and 2 ranks; 2 ranks = 1 rank to the
     same bars).
+  test_slab_shielding_finer_pixels: the slab through the chemistry with 48 and 192 pixels (bars of test_slab_shielding, and within
+    a factor 1.5 of 12 pixels).
   test_host_equals_device: the device walk (team-scratch sums, fixed fold order) gives the same cell outputs as the
     host walk, and repeats bitwise (2 ranks x 2 threads; 1 rank x 4 threads, where every target takes the device walk).
   test_chemistry_inputs: the SGChem field of every cell from the tree energy densities (pixels floored at
@@ -335,6 +337,30 @@ def test_slab_shielding(tables):
     face, deep = x_h2[axis & (z > z0) & (z < z0 + 0.4)].mean(), x_h2[axis & (z > z0 + 2.0)].mean()
     print(f"t = {t * 0.978:.3f} Myr: x_H2 face {face:.2e}, deep {deep:.2e}")
     assert deep >= 30 * face and deep > 1e-2, (face, deep)
+
+
+@pytest.mark.parametrize("npix", [48, 192])
+def test_slab_shielding_finer_pixels(tables, npix):
+    """the slab of test_slab_shielding through the chemistry with 48 and 192 pixels: the same bars (deep cells molecular, 30 x the
+    lit face), and the deep H2 fraction agrees with the 12-pixel run to a factor 1.5"""
+    tab = Tables(tables["StellarTablesFile"])
+    L, z0 = 8.0, 4.5
+    pos = slab_ics(L, z0)
+    lM, lZ = np.log10(40.0), np.log10(0.0142)
+    star = (40.0, tab._i2(tab.t_pms, lM, lZ) + 0.3 * tab._i2(tab.life, lM, lZ), np.array([4.0, 4.0, 1.5]))
+    over = {"TimeMax": 1.0, "MaxSizeTimestep": 0.01, "SGChemBackgroundG0": 1.7, "SGChemCosmicRayIonRate": 3.0e-17}
+    res = {}
+    for n in (12, npix):
+        exe = build(f"pix{n}_step20", (f"GALSF_RESOLVEDISM_TREECOL_PIXELS={n}", "TEST_DUMP_TREECOL_PIXELS_AT_STEP=20"))
+        cells = load(run(exe, f"slab{n}", tables, L, pos, [star], gas_mass=1.0, hsml=0.6, overrides=over), "cells")
+        z = cells[:, -1]
+        axis = (np.abs(cells[:, -3] - 4.0) < 1.2) & (np.abs(cells[:, -2] - 4.0) < 1.2)
+        x_h2 = cells[:, 2] * 1.4 / 2.0
+        res[n] = x_h2[axis & (z > z0) & (z < z0 + 0.4)].mean(), x_h2[axis & (z > z0 + 2.0)].mean()
+    print(f"x_H2 face, deep: 12 pixels {res[12]}, {npix} pixels {res[npix]}")
+    face, deep = res[npix]
+    assert deep >= 30 * face and deep > 1e-2
+    assert 1 / 1.5 < deep / res[12][1] < 1.5
 
 
 LOG16_STEP = 20.0 / 65535  # dex per step of the 16-bit storage
