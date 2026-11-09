@@ -22,9 +22,9 @@
  *   - winds (drawn mass >= 8 Msun, after the pre-main sequence): every star step returns the table's cumulative wind
  *     ejecta between the age of the last delivery and now, at the table wind speed, with that interval's composition;
  *     the last delivery age advances only when the mass coupled;
- *   - death (age > PMS time + table lifetime): first any wind mass still owed up to the end of life, then the death
- *     itself; the star's mass at the death trigger is frozen in the record (M_at_SN_trigger), and every pack of the event
- *     recomputes ejecta, energy and yields from it;
+ *   - death: at the first star step past PMS time + table lifetime (as gizmo2017), with the wind mass still owed up to the
+ *     end of life in its ejecta; the star's mass at the death trigger is frozen in the record (M_at_SN_trigger), and every
+ *     pack of the event recomputes ejecta, energy and yields from it;
  *   - supernova classes (table remnant type): CCSN, ECSN, PPISN and PISN 1e51 erg; failed SN and direct BH no energy;
  *     ejecta = frozen mass - table remnant, composition from the table's SN element ejecta scaled to that mass;
  *   - white-dwarf remnants (AGB death): ejecta = frozen mass - table remnant at 30 km/s, AGB element ejecta scaled;
@@ -101,7 +101,6 @@ double single_star_ionizing_photon_rate(int i)
 
 #define SINGLE_STAR_NO_DEPOSIT_MAX 1000  /* steps an event may wait for neighbour weight */
 #define SINGLE_STAR_WIND_MIN_MASS 8.0    /* drawn mass [Msun] above which winds are returned during the star's life */
-#define SINGLE_STAR_WIND_FLUSH_MIN 1.e-6 /* wind mass [Msun] still owed at death that is returned before the death event */
 #define SINGLE_STAR_AGB_SPEED_KMS 30.0   /* planetary-nebula ejection speed */
 #ifdef GALSF_SINGLE_STARS_TYPE_IA
 #define IA_T_MIN_GYR 0.04     /* minimum delay [Gyr] */
@@ -164,14 +163,26 @@ static void single_star_wind_owed(int s, double logM, double logZ, double la_to,
     ev->log_age_to = la_to;
 }
 
-/* add the winds not returned during the life (below 8 Msun, or not coupled), with their composition, to the death ejecta */
-static void single_star_add_owed_winds(int s, double logM, double logZ, double *y)
+/* element ejecta of a death, sum Mej, from the table's y[]: below 8 Msun with the winds not returned during the life, scaled
+   together; above, the winds still owed up to the end of life as a wind delivery would return them, the table ejecta
+   scaled to the rest */
+static void single_star_death_ejecta(int s, double logM, double logZ, struct single_star_event *ev)
 {
-    double la_end = log10(DMAX(stellar_lifetime(logM, logZ), 100.)), la_from = SingleStars.last_wind_log_age[s];
-    for(int k = 0; k < STBL_NELEM; k++) {
-        double owed = stellar_elem_ej_wind_cumulative(logM, logZ, la_end, k) - ((la_from > 0) ? stellar_elem_ej_wind_cumulative(logM, logZ, la_from, k) : 0);
-        y[k] += DMAX(owed, 0);
+    if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS) {
+        struct single_star_event w; memset(&w, 0, sizeof(w));
+        single_star_wind_owed(s, logM, logZ, log10(DMAX(stellar_lifetime(logM, logZ), 100.)), &w);
+        if(w.Mej < ev->Mej) {
+            single_star_scale(ev->y, ev->Mej - w.Mej);
+            for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] += w.y[k];}
+            return;
+        }
+        for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = w.y[k];}
+        single_star_scale(ev->y, ev->Mej);
+        return;
     }
+    double la_end = log10(DMAX(stellar_lifetime(logM, logZ), 100.)), la_from = SingleStars.last_wind_log_age[s];
+    for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] += DMAX(stellar_elem_ej_wind_cumulative(logM, logZ, la_end, k) - ((la_from > 0) ? stellar_elem_ej_wind_cumulative(logM, logZ, la_from, k) : 0), 0);}
+    single_star_scale(ev->y, ev->Mej);
 }
 
 /* the event of star i this step (the kind set by single_star_eventrates), all from the record and the tables */
@@ -198,15 +209,13 @@ static void single_star_event_of(int i, int kind, struct single_star_event *ev)
     if(kind == SSE_AGB) {
         ev->v_kms = SINGLE_STAR_AGB_SPEED_KMS;
         for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_elem_ej_AGB(logM, logZ, k);}
-        single_star_add_owed_winds(s, logM, logZ, ev->y);
     } else {
         ev->E = 1.e51;
         if(ev->remnant_type == REM_PISN) {ev->M_rem = 0; ev->Mej = ev->M_trigger;}
         if(ev->remnant_type == REM_FSN || ev->remnant_type == REM_DBH) {ev->E = 0;}
         for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_elem_ej_SN(logM, logZ, k);}
-        single_star_add_owed_winds(s, logM, logZ, ev->y);
     }
-    single_star_scale(ev->y, ev->Mej);
+    single_star_death_ejecta(s, logM, logZ, ev);
 }
 
 static inline int single_star_kind_this_step(int i)
@@ -217,18 +226,8 @@ static inline int single_star_kind_this_step(int i)
     return SSE_NONE;
 }
 
-/* largest timestep of single star p [code]: MaxStellarTimestep, 1/50 of the time to death within 100 of those, and never
-   past the death (as the reference implementation, floor 10 yr) */
-double single_star_max_timestep(int p)
-{
-    int s = single_star_slot(P[p].StarIdx);
-    double logM, logZ; single_star_logMZ(s, &logM, &logZ);
-    double to_death = single_star_death_age_yr(logM, logZ) - single_star_age_yr(p), dt_yr = All.MaxStellarTimestep;
-    if(to_death > 0 && to_death < 100. * dt_yr) {dt_yr = DMIN(dt_yr, to_death / 50.);}
-    if(to_death > 0 && to_death < 2. * dt_yr) {dt_yr = DMIN(dt_yr, 0.9 * to_death);}
-    if(dt_yr < 10.) {dt_yr = 10.;}
-    return dt_yr / UNIT_TIME_IN_YR;
-}
+/* largest timestep of a single star [code], as gizmo2017: the death needs no step of its own */
+double single_star_max_timestep(int p) {(void) p; return All.MaxStellarTimestep / UNIT_TIME_IN_YR;}
 
 /* single-star branch of mechanical_fb_calculate_eventrates: sets SNe_ThisTimeStep (supernova, Type Ia) or
    MassReturn_ThisTimeStep (wind, AGB death; the fraction of the star's mass) */
@@ -260,17 +259,14 @@ double single_star_eventrates(int i, double dt)
         return 1;
     }
     double age = single_star_age_yr(i), age_end = single_star_death_age_yr(logM, logZ);
-    if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS) {
-        double la = single_star_table_log_age(DMIN(age, age_end), logM, logZ);
+    if(age <= age_end) {
+        double la = (SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS) ? single_star_table_log_age(age, logM, logZ) : -1;
         if(la > 0) {
             struct single_star_event ev; single_star_wind_owed(s, logM, logZ, la, &ev);
-            if(age <= age_end && ev.Mej > 0) {P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0;}
-            if(age > age_end && ev.Mej > SINGLE_STAR_WIND_FLUSH_MIN && SingleStars.no_deposit_count[s] < 2) {
-                P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass; return 0; /* winds owed up to the end of life go first */
-            }
+            if(ev.Mej > 0) {P[i].MassReturn_ThisTimeStep = ev.Mej / UNIT_MASS_IN_SOLAR / P[i].Mass;}
         }
+        return 0;
     }
-    if(age <= age_end) {return 0;}
     SingleStars.M_at_SN_trigger[s] = P[i].Mass; /* death: freeze the mass for every pack of the event */
     SingleStars.no_deposit_count[s] = 0;
     if(is_wd) {P[i].MassReturn_ThisTimeStep = 1;} else {P[i].SNe_ThisTimeStep = 1;}
