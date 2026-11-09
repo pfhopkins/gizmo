@@ -773,7 +773,16 @@
 #define HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
 #endif
 #if defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
-#define MAINTAIN_TREE_IN_REARRANGE /* spawning winds is the one thing that re-sequences the particles while the tree is still standing, and the Hermite pass walks that tree after the source terms have run, deliberately skipping the rebuild they asked for.  Together they need a tree whose links are repaired as particles move rather than one waiting to be rebuilt.  Every other caller re-sequences either inside a decomposition or immediately before a build, so this asks nothing of a run that does not spawn. */
+#define MAINTAIN_TREE_IN_REARRANGE /* spawning winds is the one thing that re-sequences the particles while the tree is still standing, and the Hermite pass walks that tree after the source terms have run, deliberately skipping the rebuild they asked for.  Together they need a tree whose links are repaired as particles move rather than one waiting to be rebuilt. */
+#endif
+#if defined(SINK_PARTICLES) && !defined(MAINTAIN_TREE_IN_REARRANGE) && (defined(HERMITE_INTEGRATION) || !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM))
+/* The swallow cleanup rearrange (run.cc, calculate_non_standard_physics) re-sequences a standing tree
+   too, spawning or not. Without walk-link repair it only condemns the tree, and the Hermite passes
+   later in the same step walk it without rebuilding (gravtree.cc skips the build when HermiteOnlyFlag
+   is set), seeing the vacated slots. Every sink run therefore repairs the links per swap. This also
+   spares the rebuild (and, under RANDOMIZE_GRAVTREE, the domain decomposition) each swallow requested.
+   Nuclear zoom keeps its exclusion above unless Hermite is on. Matches legacy starforge_dev abd5e309. */
+#define MAINTAIN_TREE_IN_REARRANGE
 #endif
 #ifndef TIDAL_TIMESTEP_CRITERION
 #define TIDAL_TIMESTEP_CRITERION // use tidal tensor timestep criterion -- otherwise won't effectively leverage the Hermite integrator timesteps

@@ -141,6 +141,26 @@ def test_shu_M120(num_mpi_ranks, num_omp_threads, extra_config_flags):
     assert m_test[0] == pytest.approx(m_bench[0], rel=0.1)
 
 
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_shu_M120_no_condemned_hermite_walk(num_mpi_ranks, num_omp_threads):
+    """Sink accretion without wind spawning: the swallow cleanup rearrange must leave the standing tree walkable,
+    because the Hermite passes later in the step walk it without rebuilding. TREE_WALK_GUARD_FATAL makes any Hermite
+    pass on a tree condemned by a rearrange fatal (gravtree.cc), so the run only completes if the links are repaired
+    (MAINTAIN_TREE_IN_REARRANGE). The central sink starts swallowing within the first steps. TimeMax is not shortened:
+    it sets the integer timebase."""
+    test_name = "shu_M120"
+    get_cooling_tables("test/shu_M120")
+    flags = ("TREE_WALK_GUARD_FATAL",)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, flags)
+    final_snap = get_final_snapshot(test_name, flags)
+    assert_final_time(final_snap, test_name)
+    from gizmo.test import variant_output_dir
+    with h5py.File(variant_output_dir(test_name, flags) + "/snapshot_000.hdf5", "r") as F0, h5py.File(final_snap, "r") as F1:
+        n0, n1 = F0["Header"].attrs["NumPart_Total"][0], F1["Header"].attrs["NumPart_Total"][0]
+    assert n1 < n0, f"no gas was swallowed ({n0} -> {n1}): the window does not exercise the rearrange"
+
+
 def test_shu_M120_snapshot_restart():
     """Snapshot (flag-2) restart of the baseline run's final state with a real MinSizeTimestep.
 

@@ -292,6 +292,19 @@ void gravity_tree(void)
         All.NumForcesSinceLastTreeBuild = 0;   /* the counter this build answers */
         PRINT_STATUS(" ..Tree construction done.");
     }
+#ifdef HERMITE_INTEGRATION
+    /* A Hermite pass never rebuilds, so a tree condemned since the last build (a rearrange that moved slots without
+       repairing the walk links) is walked as it stands, seeing vacated and duplicated slots. TreeReconstructFlag is
+       rank-uniform. Counted and reported once; fatal under TREE_WALK_GUARD_FATAL (used by test/shu_M120). */
+    if(HermiteOnlyFlag && TreeReconstructFlag)
+    {
+        static long n_condemned_hermite_walks = 0;
+        if(n_condemned_hermite_walks++ == 0 && ThisTask == 0) {printf("WARNING: Hermite pass walking a tree condemned by a rearrange (t=%g)\n", All.Time); fflush(stdout);}
+#ifdef TREE_WALK_GUARD_FATAL
+        endrun(91575);
+#endif
+    }
+#endif
 
     /* refresh tree moments if stale (e.g. after star formation or sink mass change).
        This must run before ANY gravity evaluation including Hermite calls, since
