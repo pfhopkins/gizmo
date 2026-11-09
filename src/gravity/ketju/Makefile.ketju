@@ -1,4 +1,7 @@
 # KETJU (MSTAR chain regularisation) build additions; included by src/Makefile when KETJU_REGULARIZATION is set
+# KETJU_PATH = install prefix of MSTAR (ketju-integrator: include/mstar, lib/libmstar.a, built against the same Kokkos as
+# GIZMO) and of the ketju-integrator-c headers (include/ketju_integrator); set it in your SYSTYPE block, the environment or
+# on the make line. Both are separate installs, not part of this repository.
 KETJU_DIR = gravity/ketju
 OBJS += $(KETJU_DIR)/ketju_coupling.o $(KETJU_DIR)/ketju_params.o
 INCL += $(KETJU_DIR)/ketju_coupling.h $(KETJU_DIR)/ketju_proto.h $(KETJU_DIR)/ketju_particle_fields.h $(KETJU_DIR)/ketju_global_fields.h $(KETJU_DIR)/ketju_member_state.h
@@ -10,18 +13,9 @@ OBJS += $(KETJU_DIR)/ketju_tree_audit.o
 OBJS += $(KETJU_DIR)/ketju_star_mergers.o
 INCL += $(KETJU_DIR)/ketju_star_mergers.h
 OBJS += $(KETJU_DIR)/ketju_energy_diag.o
-$(if $(wildcard $(KETJU_DIR)/ketju-integrator-c/include/ketju_integrator/ketju_integrator.h),,$(error KETJU: run git submodule update --init src/gravity/ketju/ketju-integrator-c))
-$(if $(wildcard $(KETJU_DIR)/ketju-integrator/include/mstar/mstar.hpp),,$(error KETJU: run git submodule update --init src/gravity/ketju/ketju-integrator))
-KETJU_INCL = -I$(KETJU_DIR)/ketju-integrator/include -I$(KETJU_DIR)/ketju-integrator-c/include
-KETJU_LIBS = $(KETJU_DIR)/ketju-integrator/build-kokkos/libmstar.a $(KOKKOS_LIBS_PATH) $(KOKKOS_LIBS)
-KETJU_LIB_DEP = $(KETJU_DIR)/ketju-integrator/build-kokkos/libmstar.a
-# same Kokkos as GIZMO: the install the systype points at
-KETJU_KOKKOS_ROOT ?= $(firstword $(KOKKOS_HOME_ORION) $(KOKKOS_PATH) $(TACC_KOKKOS_DIR))
-CFLAGS += $(KETJU_INCL)
-LIBS += $(KETJU_LIBS)
-$(EXEC): | $(KETJU_LIB_DEP)
-$(OBJS): | $(KETJU_LIB_DEP)
-$(KETJU_DIR)/ketju-integrator/build-kokkos/libmstar.a:
-	MAKEFLAGS= cmake -S $(KETJU_DIR)/ketju-integrator -B $(KETJU_DIR)/ketju-integrator/build-kokkos -DCMAKE_CXX_COMPILER=$(firstword $(CXX)) -DCMAKE_BUILD_TYPE=Release -DMSTAR_TESTS=OFF -DKokkos_ROOT=$(KETJU_KOKKOS_ROOT)
-	MAKEFLAGS= cmake --build $(KETJU_DIR)/ketju-integrator/build-kokkos --target mstar -j 4
-.DEFAULT_GOAL := $(EXEC)
+$(if $(KETJU_PATH),,$(error KETJU_REGULARIZATION: set KETJU_PATH to the install prefix of MSTAR and the ketju-integrator-c headers))
+$(if $(wildcard $(KETJU_PATH)/include/mstar/mstar.hpp),,$(error KETJU: no include/mstar/mstar.hpp under KETJU_PATH=$(KETJU_PATH)))
+$(if $(wildcard $(KETJU_PATH)/include/ketju_integrator/ketju_integrator.h),,$(error KETJU: no include/ketju_integrator/ketju_integrator.h under KETJU_PATH=$(KETJU_PATH)))
+$(if $(wildcard $(KETJU_PATH)/lib/libmstar.a $(KETJU_PATH)/lib64/libmstar.a),,$(error KETJU: no lib/libmstar.a under KETJU_PATH=$(KETJU_PATH)))
+CFLAGS += -I$(KETJU_PATH)/include
+LIBS += -L$(KETJU_PATH)/lib -L$(KETJU_PATH)/lib64 -lmstar $(KOKKOS_LIBS_PATH) $(KOKKOS_LIBS)

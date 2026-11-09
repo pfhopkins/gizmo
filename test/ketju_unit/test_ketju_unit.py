@@ -1,5 +1,5 @@
-"""KETJU integrator (MSTAR) unit tests against GIZMO's submodules ketju-integrator (C++/Kokkos, fork main) and
-ketju-integrator-c (C library, fork branch ketju-c).
+"""KETJU integrator (MSTAR) unit tests against the ketju-integrator sources (separate installs, KETJU_SOURCE_DIR, (C++/Kokkos, fork main) and
+KETJU_C_SOURCE_DIR): ketju-integrator-c (C library, fork branch ketju-c).
 
 Default: the C++/Kokkos library's tests (tests/, ctest): KETJU's unit tests and the GIZMO additions on mstar::mstar,
 C vs Kokkos against stored C results (mstar_compare_c), extra forces, embedded tide, driver.
@@ -17,8 +17,10 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-KETJU_SRC = REPO_ROOT / "src" / "gravity" / "ketju" / "ketju-integrator"
-KETJU_C_SRC = REPO_ROOT / "src" / "gravity" / "ketju" / "ketju-integrator-c"
+KETJU_SRC = Path(os.environ.get("KETJU_SOURCE_DIR", "/nonexistent"))  # source checkout of ketju-integrator (branch main), a separate install
+KETJU_C_SRC = Path(os.environ.get("KETJU_C_SOURCE_DIR", "/nonexistent"))  # source checkout of ketju-integrator (branch ketju-c)
+if not (KETJU_SRC.is_dir() and KETJU_C_SRC.is_dir()):
+    pytest.skip("set KETJU_SOURCE_DIR and KETJU_C_SOURCE_DIR to the ketju-integrator source checkouts", allow_module_level=True)
 EXE = "ketju-integrator-unit-tests"
 NUM_MAKE_JOBS = 4
 

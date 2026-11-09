@@ -1,5 +1,5 @@
 /* KETJU default: the KETJU C interface used by ketju_coupling.cc, mapped onto the C++/Kokkos MSTAR library mstar::mstar
- * (submodule ketju-integrator, Steinwandel 2026; physics and options of the C library, Rantala+ 2020, Mannerkoski+ 2023). */
+ * (ketju-integrator, a separate install at KETJU_PATH, Steinwandel 2026; physics and options of the C library, Rantala+ 2020, Mannerkoski+ 2023). */
 #include <mpi.h>
 #include <cstdio>
 #include <cstdlib>
