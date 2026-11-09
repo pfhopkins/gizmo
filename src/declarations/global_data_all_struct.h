@@ -556,8 +556,11 @@ struct global_data_all_processes
     double TestPhotoionFixedRate;   /*!< test: every ionising star emits this photon rate [1/s] */
     double TestPhotoionNeutralTemp; /*!< test: SGChem holds neutral gas at this temperature [K], ionised gas at 1e4 K, no network */
 #endif
+#ifdef TEST_PHOTOIONIZATION_ONE_STAR_ON_QUARTER_STEP
+    int TestPhotoionQuarterStepStarID; /*!< test: the star of this ID steps at most PhotoionMaxTimestep / 4 (0: none) */
+#endif
     int PhotoionMaxRounds;          /*!< largest number of sharing rounds per solve */
-    double PhotoionMaxTimestep;     /*!< largest timestep of an ionising source, and the photoionisation cadence [yr] */
+    double PhotoionMaxTimestep;     /*!< largest timestep of an ionising source [yr]; it solves on its active steps */
 #endif
 
 #ifdef GALSF_FB_FIRE_AGE_TRACERS

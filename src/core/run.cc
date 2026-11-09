@@ -1076,7 +1076,15 @@ void find_next_sync_point_and_drift(void)
 
   sumup_large_ints(1, &NumForceUpdate, &GlobNumForceUpdate);
   All.NumForcesSinceLastTreeBuild += GlobNumForceUpdate;
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+  { /* any ionising source active on this step rides this reduction */
+    int mine[2] = {highest_active_bin, photoion_active_sources_local()}, most[2];
+    MPI_Allreduce(mine, most, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    All.HighestActiveTimeBin = most[0]; photoion_set_any_active(most[1]);
+  }
+#else
   MPI_Allreduce(&highest_active_bin, &All.HighestActiveTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+#endif
   MPI_Allreduce(&highest_occupied_bin, &All.HighestOccupiedTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
 
   if(GlobNumForceUpdate == All.TotNumPart)

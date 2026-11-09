@@ -1,5 +1,5 @@
 """Lattice of 1 Msun gas cells at n_H = 10 cm^-3, T = 100 K, Z = 0.014, at rest, with single stars at rest (units pc, Msun,
-km/s). Each star: (drawn mass, age [yr], position in box units). Written as a snapshot (start flag 2)."""
+km/s). Each star: (drawn mass, age [yr], position in box units[, velocity km/s]). Written as a snapshot (start flag 2)."""
 import numpy as np
 import h5py
 
@@ -35,9 +35,9 @@ def make_photoion_per_direction_ics(fname, stars, n=32, n_H=10.0, T=100.0, z=0.0
         p["Metallicity"] = Zg[:, :n_metals] if n_metals > 1 else np.full((N, 1), z)
         p["SmoothingLength"] = np.full(N, 2.0 * dx)
         s = F.create_group("PartType4")
-        s["Coordinates"] = np.array([np.asarray(x) * L + 0.37 * dx for _, _, x in stars])
-        s["Velocities"] = np.zeros((ns, 3)); s["ParticleIDs"] = np.arange(N + 1, N + ns + 1, dtype=np.uint32)
-        s["Masses"] = np.array([m for m, _, _ in stars]); s["StellarFormationTime"] = -np.array([a for _, a, _ in stars]) / PC_KMS_IN_YR
-        s["Metallicity"] = Zg[:ns, :n_metals] if n_metals > 1 else np.full((ns, 1), z); s["SingleStarDrawnMass"] = np.array([m for m, _, _ in stars])
+        s["Coordinates"] = np.array([np.asarray(x[2]) * L + 0.37 * dx for x in stars])
+        s["Velocities"] = np.array([x[3] if len(x) > 3 else (0.0, 0.0, 0.0) for x in stars]); s["ParticleIDs"] = np.arange(N + 1, N + ns + 1, dtype=np.uint32)
+        s["Masses"] = np.array([x[0] for x in stars]); s["StellarFormationTime"] = -np.array([x[1] for x in stars]) / PC_KMS_IN_YR
+        s["Metallicity"] = Zg[:ns, :n_metals] if n_metals > 1 else np.full((ns, 1), z); s["SingleStarDrawnMass"] = np.array([x[0] for x in stars])
         s["SingleStarBirthMetallicity"] = np.full(ns, z)
     return L, dx, n_H * 1.6726e-24 / 0.7 * 0.76 / 1.6726e-24

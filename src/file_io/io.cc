@@ -1524,6 +1524,17 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        case IO_PHOTOIONIZED_UNTIL: /* the time a cell stays ionised until */
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    double ti = CellP[pindex].PhotoionizedUntil * All.Timebase_interval;
+                    *fp++ = (MyOutputFloat) (All.ComovingIntegrationOn ? All.TimeBegin * exp(ti) : All.TimeBegin + ti);
+                    n++;
+                }
+            break;
+#endif
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
         case IO_SINGLE_STAR_BIRTH_Z:
@@ -2368,6 +2379,9 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_R_PROTOSTAR:
         case IO_MASS_D_PROTOSTAR:
         case IO_ZAMS_MASS:
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        case IO_PHOTOIONIZED_UNTIL:
+#endif
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
         case IO_SINGLE_STAR_BIRTH_Z:
@@ -2809,6 +2823,9 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_R_PROTOSTAR:
         case IO_MASS_D_PROTOSTAR:
         case IO_ZAMS_MASS:
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        case IO_PHOTOIONIZED_UNTIL:
+#endif
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
         case IO_SINGLE_STAR_BIRTH_Z:
@@ -3308,6 +3325,12 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_SINKMDOT:
         case IO_R_PROTOSTAR:
         case IO_MASS_D_PROTOSTAR:
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        case IO_PHOTOIONIZED_UNTIL:
+            for(i = 1; i < 6; i++) {typelist[i] = 0;}
+            return ngas;
+            break;
+#endif
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
         case IO_SINGLE_STAR_BIRTH_Z:
@@ -3894,6 +3917,11 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        case IO_PHOTOIONIZED_UNTIL:
+            return 1;
+            break;
+#endif
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
         case IO_SINGLE_STAR_BIRTH_Z:
@@ -4468,6 +4496,11 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_ZAMS_MASS:
             strncpy(label, "PSMS", 4);
             break;
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        case IO_PHOTOIONIZED_UNTIL:
+            strncpy(label, "PIUT", 4);
+            break;
+#endif
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
             strncpy(label, "SSMD", 4);
@@ -5017,6 +5050,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_ZAMS_MASS:
             strcpy(buf, "ZAMS_Mass");
             break;
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        case IO_PHOTOIONIZED_UNTIL:
+            strcpy(buf, "PhotoionizedUntilTime");
+            break;
+#endif
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
             strcpy(buf, "SingleStarDrawnMass");

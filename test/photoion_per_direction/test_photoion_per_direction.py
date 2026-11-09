@@ -197,9 +197,10 @@ def test_sgchem_reads_the_ionised_cells(built_sgchem):
 
 def test_quiet_steps(built):
     """a 35 Msun star 10 kyr old turns on at its onset (15.3 kyr, the pre-main sequence of the tables). Before, the
-    photoionisation does no work and no collective on its ~5 steps, except one count at start-up (unknown sources);
-    it solves from the first photoionisation step after the onset. Log column 12: the module's reductions and
-    neighbour-loop calls since the previous row; a solve with one source and p search passes makes 7 + 5 p."""
+    photoionisation does no work and no collective on its ~5 steps; it solves from the first active step after the
+    onset. Log column 12: the module's reductions and neighbour-loop calls since the previous row; a solve with one
+    source and p search passes makes 8 + 5 p (9 + 5 p off the cap step), and nothing else counts: no collective on
+    the steps between."""
     import h5py
     d, _, _ = run("quiet", built, stars=[(35.0, 1.0e4, (0.5, 0.5, 0.5))],
                   overrides={"MaxSizeTimestep": "1e-3", "PhotoionMaxTimestep": "1000", "TimeMax": "0.03", "TimeBetSnapshot": "0.03", "TimeBetStatistics": "0.03"})
@@ -209,9 +210,126 @@ def test_quiet_steps(built):
         onset = F["t_PMS"][()].reshape(len(Zt), len(Mt))[int(np.argmin(np.abs(Zt - 0.014))), int(np.argmin(np.abs(Mt - 35.0)))]
     t_first = 1.0e4 + rows[0, 0] * PC_KMS_IN_YR
     assert onset <= t_first < onset + 1000.0, (t_first, onset)
-    assert rows[0, 11] == 7 + 5 * rows[0, 8] + 1, rows[0]  # this solve, and the one start-up count
-    assert np.all(rows[1:, 11] == 7 + 5 * rows[1:, 8]), rows[1:, [8, 11]]
-    assert rows.shape[1] == 13 and np.all(rows[:, 12] > 0) and np.all(rows[:, 12] < 10), rows[:, 12]  # wall time of each solve [s]
+    cap = rows[-1, 0] - rows[-2, 0]  # the star is on the cap step by the end
+    off_cap = np.abs(rows[:, 0] / cap - np.round(rows[:, 0] / cap)) > 1e-6  # one more: the partner search
+    off_cap[0] = False  # the table is still empty
+    assert np.all(rows[:, 11] == 8 + 5 * rows[:, 8] + off_cap), rows[:, [0, 8, 11]]
+    assert rows.shape[1] == 15 and np.all(rows[:, 12] > 0) and np.all(rows[:, 12] < 10), rows[:, 12]  # wall time of each solve [s]
+
+
+N_CELLS = 32 ** 3
+STEPS = {"MaxSizeTimestep": "0.02", "TimeMax": "0.06", "TimeBetSnapshot": "0.0123", "TimeBetStatistics": "0.06", "PhotoionMaxTimestep": "1e4",
+         "TestPhotoionQuarterStepStarID": str(N_CELLS + 1)}  # the first star: PhotoionMaxTimestep / 4
+
+
+def ionised_snapshots(d):
+    """per snapshot after the start: time, cell positions, ionised flag, star positions, box"""
+    import h5py
+    out = []
+    for s in sorted((d / "output").glob("snapshot_*.hdf5")):
+        with h5py.File(s, "r") as F:
+            t = F["Header"].attrs["Time"]
+            if t > 0:
+                g = F["PartType0"]
+                c = F["PartType4"]["Coordinates"][()][np.argsort(F["PartType4"]["ParticleIDs"][()])]  # by ID
+                out.append((t, g["Coordinates"][()], g["PhotoionizedUntilTime"][()] > t, c, F["Header"].attrs["BoxSize"]))
+    return out
+
+
+def distance(x, c, L):
+    d = np.abs(x - c)
+    return np.linalg.norm(np.minimum(d, L - d), axis=1)
+
+
+def check_two_cadences(rows):
+    """sources solve together on the long step, the short-step star alone on the three steps between"""
+    both = rows[rows[:, 1] == 2, 0]
+    assert len(both) >= 3 and np.any(rows[:, 1] == 1), rows[:, :2]
+    dt_long = np.diff(both)
+    assert np.allclose(dt_long, dt_long[0], rtol=1e-9), dt_long
+    assert np.allclose(np.diff(rows[:, 0]), dt_long[0] / 4, rtol=1e-9), np.diff(rows[:, 0])  # no row skipped, none extra
+    return dt_long[0]
+
+
+@pytest.mark.parametrize("ranks", [1, 2])
+def test_each_source_solves_on_its_own_step(built, ranks):
+    """a star on a quarter of the long step solves on each of its steps, alone; the inactive star's cells stay ionised
+    through those solves, and every source pays for just its own cells"""
+    far = [(35.0, 1.0e6, (0.25, 0.25, 0.25)), (35.0, 1.0e6, (0.75, 0.75, 0.75))]
+    one = first_row(run(f"own_single_r{ranks}", built, ranks=ranks)[0])
+    d, dx, n_H = run(f"own_step_r{ranks}", built, stars=far, ranks=ranks, overrides=STEPS)
+    rows = log(d)
+    check_two_cadences(rows)
+    assert np.all(rows[:, 13] > 0.98) and np.all(rows[:, 14] < 1.02), rows[:, 13:15]  # recombinations / Q of each source
+    R_S = stromgren_pc(one[2] * X_H, n_H)
+    snaps = ionised_snapshots(d)
+    assert len(snaps) >= 3
+    for t, x, ion, c, L in snaps:
+        for k in (0, 1):  # both regions, whichever star solved last
+            assert np.all(ion[distance(x, c[k], L) < R_S - dx]), (t, k)
+        assert abs(ion.sum() / (2 * one[3]) - 1) < 0.02, (t, ion.sum(), one[3])
+
+
+@pytest.mark.parametrize("kw", [dict(), dict(ranks=2), dict(ranks=2, seed=7)], ids=["r1", "r2", "r2_permuted"])
+def test_overlapping_sources_on_different_steps(built, kw):
+    """the overlapping pair of test_overlapping_sources_share with the two stars on different steps: when one solves,
+    the other's fronts count as claims. The pair ionises 2.0 x one star's cells at every solve, each source pays Q, and
+    ranks and particle order give the same cells and rounds"""
+    d1, dx, n_H = run("ovl2_single", built)
+    one = first_row(d1)
+    R_S = stromgren_pc(one[2] * X_H, n_H)
+    off = 0.25 * R_S / (32 * dx)
+    pair = [(35.0, 1.0e6, (0.5 - off, 0.5, 0.5)), (35.0, 1.0e6, (0.5 + off, 0.5, 0.5))]
+    tag = "_".join(f"{k}{v}" for k, v in kw.items())
+    rows = log(run(f"ovl2_pair_{tag}", built, stars=pair, overrides=STEPS, **kw)[0])
+    check_two_cadences(rows)
+    alone, both = rows[rows[:, 1] == 1], rows[rows[:, 1] == 2]
+    assert np.all(np.abs(both[:, 3] / one[3] - 2.0) < 0.05), both[:, 3] / one[3]
+    assert np.all(np.abs(alone[:, 3] / one[3] - 1.0) < 0.05), alone[:, 3] / one[3]  # its share of the union
+    assert np.all(rows[:, 13] > 0.98) and np.all(rows[:, 14] < 1.02), rows[:, 13:15]
+    if kw:
+        ref = log(run("ovl2_pair_ref", built, stars=pair, overrides=STEPS)[0])
+        assert np.array_equal(rows[:, [1, 3, 7]], ref[:, [1, 3, 7]])
+
+
+def test_source_releases_cells_it_left(built):
+    """a star moving at 1000 km/s on a quarter of the long step: at its own solve it drops the cells it left, so no
+    cell lies further from it than the front plus what it moved in one short step; the region of the star at rest stays"""
+    v = 1000.0
+    stars = [(35.0, 1.0e6, (0.25, 0.5, 0.5), (v, 0.0, 0.0)), (35.0, 1.0e6, (0.75, 0.0, 0.0))]
+    params = dict(STEPS, MaxRMSDisplacementFac="1e6", TimeMax="0.03", TimeBetStatistics="0.03", TimeBetSnapshot="0.0071")
+    one = first_row(run("rel_single", built)[0])
+    d, dx, n_H = run("release", built, stars=stars, overrides=params)
+    rows = log(d)
+    dt_long = check_two_cadences(rows)
+    R_S = stromgren_pc(one[2] * X_H, n_H)
+    assert v * dt_long > 3 * dx  # the star leaves its region within a long step
+    for t, x, ion, c, L in [s for s in ionised_snapshots(d) if s[0] > dt_long]:  # after the first solve of both
+        near = distance(x, c[0], L) < distance(x, c[1], L)
+        assert distance(x[near & ion], c[0], L).max() < R_S + 2 * dx + v * dt_long / 4, t
+        assert np.all(ion[distance(x, c[1], L) < R_S - dx]), t
+
+
+def test_restart_keeps_the_fronts(built):
+    """a pair on different steps stopped halfway and continued from its restart files, with TimeMax raised so the integer
+    timeline is halved: the short-step star still shares with its partner's fronts read back from the restart files
+    (rounds > 0 and its half of the union), and the cells keep expiring at the right time"""
+    d1, dx, n_H = run("rst_single", built)
+    one = first_row(d1)
+    off = 0.25 * stromgren_pc(one[2] * X_H, n_H) / (32 * dx)
+    pair = [(35.0, 1.0e6, (0.5 - off, 0.5, 0.5)), (35.0, 1.0e6, (0.5 + off, 0.5, 0.5))]
+    d, _, _ = run("rst_pair", built, stars=pair, overrides=dict(STEPS, TimeMax="0.03", TimeBetStatistics="0.03", TimeBetSnapshot="0.0123"))
+    n_before = len(log(d))
+    p = d / f"{TEST_NAME}.params"
+    p.write_text("".join(f"TimeMax {0.06}\n" if l.split() and l.split()[0] == "TimeMax" else l + "\n" for l in p.read_text().splitlines()))
+    with open(d / f"test_{TEST_NAME}.out", "a") as out:
+        subprocess.run(mpi_launch_command(1, 1) + [str(TEST_DIR / "GIZMO"), f"{TEST_NAME}.params", "1"], cwd=d, stdout=out, stderr=subprocess.STDOUT, check=True)
+    rows = log(d)[n_before:]
+    alone = rows[rows[:, 1] == 1]
+    assert len(alone) >= 3 and np.all(alone[:, 7] > 0), alone[:, [0, 7]]
+    assert np.all(np.abs(alone[:, 3] / one[3] - 1.0) < 0.05), alone[:, 3] / one[3]
+    for t, x, ion, c, L in ionised_snapshots(d):
+        assert abs(ion.sum() / (2 * one[3]) - 1) < 0.05, (t, ion.sum(), one[3])  # no stale stamps kept cells from expiring
 
 
 def test_compact_exchange(built):

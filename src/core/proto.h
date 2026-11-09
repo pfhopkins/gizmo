@@ -1138,8 +1138,12 @@ double single_star_ionizing_onset_yr(int i);
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
 void photoionization_per_direction(void);
 double photoion_max_timestep(int p);
-long long photoion_new_sources_local(void);
-void photoion_add_new_sources(long long n);
+int photoion_active_sources_local(void);
+void photoion_set_any_active(int any);
+int photoion_front_table_size(void);
+size_t photoion_front_record_bytes(void);
+void *photoion_front_table(int n);
+void photoion_halve_timeline(void);
 #endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
 double single_star_eventrates(int i, double dt);

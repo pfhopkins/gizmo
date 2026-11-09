@@ -1099,8 +1099,8 @@ void open_outputfiles(void)
     if(!(FdHIIHeating = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
     else if(RestartFlag == 0) {
         fprintf(FdHIIHeating,"%s Per-direction photoionisation log [GALSF_FB_PHOTOIONIZATION_PER_DIRECTION], one row per solve. Columns 1-6 as the HII-region loop's log: \n",prefix_char);
-        fprintf(FdHIIHeating,"%s   (1) time [code] (2) ionising sources (3) their photon rate / X_H [1/s] (4) cells newly ionised (5) their mass [Msun] (6) their mass-weighted distance [kpc] \n",prefix_char);
-        fprintf(FdHIIHeating,"%s   (7) recombination rate of the ionised cells / photon rate (8) sharing rounds (9) search passes of the first round (10, 11) smallest and largest pixel front [kpc] (12) reductions and neighbour-loop calls of the photoionisation since the last row (13) wall time of the solve, slowest rank [s] \n",prefix_char);
+        fprintf(FdHIIHeating,"%s   (1) time [code] (2) sources solving now (3) their photon rate / X_H [1/s] (4) their cells, a cell shared with another source by its share (5) their mass [Msun] (6) their mass-weighted distance [kpc] \n",prefix_char);
+        fprintf(FdHIIHeating,"%s   (7) recombination rate of the ionised cells / photon rate (8) sharing rounds (9) search passes of the first round (10, 11) smallest and largest pixel front [kpc] (12) reductions and neighbour-loop calls of the photoionisation since the last row (13) wall time of the solve, slowest rank [s] (14, 15) smallest and largest recombination rate of a source's cells / its photon rate \n",prefix_char);
     }
 #endif
 #ifdef GALSF_FB_FIRE_RT_HIIHEATING
@@ -1962,6 +1962,11 @@ void read_parameter_file(char *fname)
         strcpy(tag[nt], "TestPhotoionNeutralTemp");
         addr[nt] = &All.TestPhotoionNeutralTemp;
         id[nt++] = REAL;
+#endif
+#ifdef TEST_PHOTOIONIZATION_ONE_STAR_ON_QUARTER_STEP
+        strcpy(tag[nt], "TestPhotoionQuarterStepStarID");
+        addr[nt] = &All.TestPhotoionQuarterStepStarID;
+        id[nt++] = INT;
 #endif
         strcpy(tag[nt], "PhotoionMaxRounds");
         addr[nt] = &All.PhotoionMaxRounds;
@@ -3467,6 +3472,9 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
                 if(strcmp("PhotoionMaxSearchRadius",tag[i])==0) {*((double *)addr[i])=0.05; printf("Tag %s not set in parameter file: defaulting to 0.05 kpc\n",tag[i]); continue;}
+#ifdef TEST_PHOTOIONIZATION_ONE_STAR_ON_QUARTER_STEP
+                if(strcmp("TestPhotoionQuarterStepStarID",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set in parameter file: defaulting to 0\n",tag[i]); continue;}
+#endif
                 if(strcmp("PhotoionMaxRounds",tag[i])==0) {*((int *)addr[i])=16; printf("Tag %s not set in parameter file: defaulting to 16\n",tag[i]); continue;}
                 if(strcmp("PhotoionMaxTimestep",tag[i])==0) {*((double *)addr[i])=1.e4; printf("Tag %s not set in parameter file: defaulting to 10 kyr\n",tag[i]); continue;}
 #endif
@@ -4060,6 +4068,9 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
 #ifdef TURB_DRIVING
       StTPrev /= 2;
       StTUpdatedAt /= 2;
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+      photoion_halve_timeline();
 #endif
 
     for(i = 0; i < NumPart; i++)

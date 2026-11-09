@@ -826,24 +826,11 @@ void star_formation_parent_routine(void)
     long long young_changed;
 #endif
     {   /* every count this pass changed, in one reduction */
-#if defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
         recent_sfr_expire();
-#endif
-        long long local[5] = {stars_spawned, stars_converted, num_sink_formed, 0, 0}, total[5]; /* + young-star sums changed, ionising onsets */
-#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
-        local[3] = recent_sfr_changed;
-#endif
-#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
-        local[4] = photoion_new_sources_local();
-#endif
-        MPI_Allreduce(local, total, 5, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+        long long local[4] = {stars_spawned, stars_converted, num_sink_formed, recent_sfr_changed}, total[4]; /* + young-star sums changed */
+        MPI_Allreduce(local, total, 4, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         young_changed = total[3];
-#endif
-#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
-        photoion_add_new_sources(total[4]);
-#endif
 #else
         long long local[3] = {stars_spawned, stars_converted, num_sink_formed}, total[3];
         MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
