@@ -142,7 +142,11 @@ void cooling_parent_routine(void)
         if((CellP[i].Density*All.cf_a3inv > All.PhysDensThresh) && ((All.ComovingIntegrationOn==0) || (CellP[i].Density>=All.OverDensThresh))) {continue;} /* no cooling for effective-eos star-forming particles */
 #endif
 #ifdef GALSF_FB_TURNOFF_COOLING
-        if(CellP[i].DelayTimeCoolingSNe > 0) {continue;} /* no cooling for particles marked in delayed cooling */
+        if(CellP[i].DelayTimeCoolingSNe > 0) { /* no cooling for particles marked in delayed cooling */
+#if defined(RT_INFRARED) && !defined(COOLING_OPERATOR_SPLIT)
+            CellP[i].InternalEnergy += CellP[i].InternalEnergy_FromIR_Pending; CellP[i].InternalEnergyPred += CellP[i].InternalEnergy_FromIR_Pending; CellP[i].InternalEnergy_FromIR_Pending = 0; /* nothing to balance the absorbed IR against: heat directly */
+#endif
+            continue;}
 #endif
         cool_indices.push_back(i);
     }
@@ -232,6 +236,9 @@ void set_PdV_work_heatingrate(int i, double dtime, struct particle_data *pp, str
         }
     }
     DtInternalEnergyEffCGS = DMIN(DtInternalEnergyEffCGS ,  1.e4*cell[i].InternalEnergy/dtime );
+#if defined(RT_INFRARED) && !defined(COOLING_OPERATOR_SPLIT)
+    if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {double du_IR = cell[i].InternalEnergy_FromIR_Pending; cell[i].InternalEnergy_FromIR_Pending = 0; DtInternalEnergyEffCGS += du_IR / dtime;} /* IR absorbed since the last cooling call, as a heating rate over this call: a real energy input, not numerical work, so after the limits above */
+#endif
     DtInternalEnergyEffCGS *= (UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC);
     if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy = DtInternalEnergyEffCGS;}
 #endif

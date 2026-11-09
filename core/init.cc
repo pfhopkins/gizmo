@@ -589,6 +589,9 @@ void init(void)
         P[i].Particle_DivVel = 0;
         CellP[i].ConditionNumber = 1;
         CellP[i].DtInternalEnergy = 0;
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+        CellP[i].InternalEnergy_FromIR_Pending = 0;
+#endif
 #ifdef SNE_BROADCAST_TIMESTEP
         P[i].SNe_ArrivalTime = MAX_REAL_NUMBER;
 #endif
@@ -935,6 +938,9 @@ void init(void)
         CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
 #endif
         CellP[i].DtInternalEnergy = 0;
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+        CellP[i].InternalEnergy_FromIR_Pending = 0;
+#endif
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
         CellP[i].CoolingIsOperatorSplitThisTimestep = 1; /* default to more conservative split */
 #endif

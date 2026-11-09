@@ -924,7 +924,15 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             if(kf==RT_FREQ_BIN_INFRARED) {
 #ifdef COOLING
                 ef += de_abs*(1.-IRBand_opacity_fraction_from_gas_absorption); /* update: assume a fraction de_abs * IRBand_opacity_fraction_from_gas_absorption is absorbed by the gas, which will not be instantly re-emitted here, but later in the cooling subroutines */
-                if(mode==0) {double du_gas = de_abs * IRBand_opacity_fraction_from_gas_absorption / cell[i].Mass; cell[i].InternalEnergy += du_gas; cell[i].InternalEnergyPred += du_gas;} /* the gas share heats the gas directly, once per half-kick: as a rate in DtInternalEnergy the hydro pre-loop would zero the opening half-kick's share, and the unsplit cooling solve would apply the closing one's over the whole step */
+                if(mode==0) {
+                    double du_gas = de_abs * IRBand_opacity_fraction_from_gas_absorption / cell[i].Mass;
+#ifdef COOLING_OPERATOR_SPLIT
+                    cell[i].InternalEnergy += du_gas; cell[i].InternalEnergyPred += du_gas; /* split cooling never consumes DtInternalEnergy and the thermal kick has already used it: heat the gas directly */
+#else
+                    if(cell[i].CoolingIsOperatorSplitThisTimestep) {cell[i].InternalEnergy += du_gas; cell[i].InternalEnergyPred += du_gas;} /* a cell split this step has had its kick: heat it directly, as above */
+                    else {cell[i].InternalEnergy_FromIR_Pending += du_gas;} /* held until the cell's next cooling call, which balances it implicitly against cooling (a rate in DtInternalEnergy was reset by hydro or applied over the wrong interval) */
+#endif
+                }
 #else
                 ef = e0 + total_de_dt * dt_entr; // previous version: assumes all self-absorption is re-emitted
 #endif
