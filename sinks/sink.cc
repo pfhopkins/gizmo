@@ -799,9 +799,14 @@ void sink_final_operations(void)
 #ifdef HERMITE_INTEGRATION
             /* Keep the carry state on the post-accretion trajectory. Without this the prediction
                later in the same step recomputes Pos/Vel from the stale base and silently discards
-               the accretion kick (test/shu1977 shows it as COM drift). */
-            P[n].OldVel += P[n].Vel - hermite_pre_vel;
-            P[n].OldPos += P[n].Pos - hermite_pre_pos;
+               the accretion kick (test/shu1977 shows it as COM drift). The predictor and corrector
+               rebuild this step's end state from the start state, and the jump was applied at the
+               end: shift the start velocity by the velocity jump, and the start position by the
+               position jump less the distance that velocity jump would otherwise add over the step. */
+            const double dt_grav = get_gravkick_factor(P[n].Ti_begstep, P[n].Ti_begstep + P[n].integertime_step(), n, 0);
+            const Vec3<double> dvel = P[n].Vel - hermite_pre_vel;
+            P[n].OldVel += dvel;
+            P[n].OldPos += (P[n].Pos - hermite_pre_pos) - dvel * dt_grav;
 #endif
             force_raise_motion_bound(n); /* accretion moved this sink's velocity outside the kick */
         } // if(masses > 0) check
