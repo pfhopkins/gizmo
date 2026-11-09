@@ -9,6 +9,9 @@
 #ifdef MHD_NON_IDEAL_EVOLVED_FLUX
 #include "nonideal_mhd_functions.h"
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+#include "../core/predict_functions.h" /* Get_Gas_CleaningSpeed_P */
+#endif
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
 #include "../mesh/kernel.h"
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
@@ -199,6 +202,9 @@ void hydro_final_operations_and_cleanup(void)
             if((!isnan(CellP[i].divB))&&(P[i].KernelRadius>0)&&(CellP[i].divB!=0)&&(CellP[i].Density>0))
             {
                 double tmp_ded = 0.5 * CellP[i].MaxSignalVel / (fac_mu*All.cf_atime); // has units of v_physical now
+#ifdef TEST_DIVBCLEANING_ALTERNATING_CLEANING_SPEED
+                if(((long)(All.Time / 0.05)) % 2) {tmp_ded *= 2;} /* test only: c_h doubles every other 0.05 code time */
+#endif
                 /* do a check to make sure divB isn't something wildly divergent (owing to particles being too close) */
                 Vec3<double> Bfield_i = CellP[i].BPred * (CellP[i].Density / P[i].Mass);
                 double b2_max = Bfield_i.norm_sq();
@@ -231,6 +237,12 @@ void hydro_final_operations_and_cleanup(void)
             CellP[i].DtInternalEnergy -= dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB);
 #endif
             CellP[i].DtB *= magnorm_closure;
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+            /* conjugate cleaning pair, after the u booking and the closure limiter: exchanges E_B and E_psi only */
+            CellP[i].DtB += CellP[i].DtB_PsiCons;
+            {double V_phys = P[i].Mass / (CellP[i].Density * All.cf_a3inv);
+             CellP[i].DtPsiZ = (V_phys > 0) ? -Get_Gas_CleaningSpeed_P(i, P, CellP) * CellP[i].DivBDiff / sqrt(V_phys) : 0;}
+#endif
 #endif
             CellP[i].DtInternalEnergy /= P[i].Mass;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -421,6 +433,9 @@ void hydro_final_operations_and_cleanup(void)
                 CellP[i].HydroAccel = {};
 #ifdef MAGNETIC
                 CellP[i].DtB = {};
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+                CellP[i].DivBDiff = 0; CellP[i].DtB_PsiCons = {}; CellP[i].DtPsiZ = 0;
+#endif
 #ifdef DIVBCLEANING_DEDNER
                 CellP[i].DtB_PhiCorr = {};
                 CellP[i].DtPhi = 0;
@@ -541,6 +556,9 @@ void hydro_force_initial_operations_preloop(void)
 #endif
 #ifdef MAGNETIC
             CellP[i].divB = 0; CellP[i].Face_Area = {};
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+            CellP[i].DivBDiff = 0; CellP[i].DtB_PsiCons = {};
+#endif
 #ifdef DIVBCLEANING_DEDNER
             CellP[i].DtB_PhiCorr = {};
 #endif

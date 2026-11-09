@@ -15,6 +15,9 @@
 #ifdef MHD_NON_IDEAL_EVOLVED_FLUX
 #include "../hydro/nonideal_mhd_functions.h"
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+#include "predict_functions.h" /* Get_Gas_Psi_Damping_Factor_P */
+#endif
 
 /*!
  * This file was originally part of the GADGET3 code developed by
@@ -568,6 +571,9 @@ void set_predicted_quantities_for_extra_physics(int i)
     {
         int k, kf; k=0, kf=0;
 #if defined(MAGNETIC)
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+        CellP[i].PsiZPred = CellP[i].PsiZ;
+#endif
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
         CellP[i].BPred = CellP[i].B;
 #if defined(DIVBCLEANING_DEDNER)
@@ -623,6 +629,15 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
     CellP[i].B += CellP[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    { /* hyperbolic update, then parabolic damping; the damped E_psi goes to heat unless _NO_DAMPING_HEAT */
+        CellP[i].PsiZ += sqrt(All.cf_atime) * CellP[i].DtPsiZ * dt_entr;
+        double z0 = CellP[i].PsiZ; CellP[i].PsiZ *= Get_Gas_Psi_Damping_Factor_P(i, dt_entr, P, CellP);
+#ifndef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_NO_DAMPING_HEAT
+        if(P[i].Mass > 0) {CellP[i].InternalEnergy += 0.5 * (z0*z0 - CellP[i].PsiZ*CellP[i].PsiZ) / (All.cf_atime * P[i].Mass);}
+#endif
+    }
+#endif
 #ifdef DIVBCLEANING_DEDNER
     double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi-fluxes (otherwise is just "1")
     /* phi units are [vcode][Bcode]=a^3 * vphys*Bphys */

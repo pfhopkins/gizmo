@@ -369,6 +369,9 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     CellP[i].DtB       += out->DtB;
     CellP[i].Face_Area += out->Face_Area;
     CellP[i].divB      += out->divB;
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    CellP[i].DivBDiff += out->DivBDiff; CellP[i].DtB_PsiCons += out->DtB_PsiCons;
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[i].DtPhi += out->DtPhi;

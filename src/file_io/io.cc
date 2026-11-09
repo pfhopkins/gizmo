@@ -1385,6 +1385,14 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     n++;
                 }
 #endif
+#if defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) (Get_Gas_Psi_Conservative_P(pindex, P, CellP) * gizmo2gauss); /* physical psi */
+                    n++;
+                }
+#endif
             break;
 
         case IO_GRADPHI:		/* divBcleaning fuction of particle  */
@@ -3895,6 +3903,9 @@ int blockpresent(enum iofields blocknr)
             break;
 
         case IO_PHI:
+#if defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+            return 1;
+#endif
         case IO_GRADPHI:
 #if defined(DIVBCLEANING_DEDNER) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
             return 1;

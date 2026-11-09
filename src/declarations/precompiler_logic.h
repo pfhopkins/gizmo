@@ -1688,7 +1688,21 @@
 #endif
 
 #ifdef MAGNETIC /* recommended MHD switches -- only turn these off for de-bugging */
-#ifndef TEST_MHD_NO_DEDNER_CLEANING /* test only: disables div-cleaning */
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH /* constrained psi/c_h cleaning (Tricco & Price 2012; Tricco, Price & Bate 2016) in place of Dedner */
+#ifndef HYDRO_MESHLESS_FINITE_MASS
+#error "DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH requires HYDRO_MESHLESS_FINITE_MASS"
+#endif
+#ifdef DIVBCLEANING_DEDNER
+#error "DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH replaces DIVBCLEANING_DEDNER: do not set both"
+#endif
+#ifndef DIVBCLEANING_CONSERVATIVE_SIGMA
+#if !defined(BOX_SPATIAL_DIMENSION) || (BOX_SPATIAL_DIMENSION == 3)
+#define DIVBCLEANING_CONSERVATIVE_SIGMA 1.0 /* TPB16 optimum in 3D */
+#else
+#define DIVBCLEANING_CONSERVATIVE_SIGMA 0.3 /* TPB16 optimum in 2D */
+#endif
+#endif
+#elif !defined(TEST_MHD_NO_DEDNER_CLEANING) /* test only: disables div-cleaning */
 #define DIVBCLEANING_DEDNER         /* hyperbolic/parabolic div-cleaing (Dedner 2002), with TP improvements */
 #endif
 #ifdef HYDRO_SPH /* MHD switches specific to SPH MHD */

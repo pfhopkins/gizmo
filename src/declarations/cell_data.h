@@ -91,6 +91,13 @@ extern struct gas_cell_data
     Vec3<MyDouble> B;               /*!< actual B (conserved variable used for integration; can be B*V for flux schemes) */
     Vec3<MyDouble> DtB;             /*!< time derivative of B-field (of -conserved- B-field) */
     MyFloat divB;                   /*!< storage for the 'effective' divB used in div-cleaning procedure */
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    MyDouble PsiZ;                  /*!< (psi/c_h) sqrt(V): E_psi = PsiZ^2/(2a) */
+    MyDouble PsiZPred;              /*!< drifted PsiZ */
+    MyDouble DtPsiZ;                /*!< physical rate of PsiZ */
+    MyDouble DivBDiff;              /*!< V div.B, face operator conjugate to DtB_PsiCons */
+    Vec3<MyDouble> DtB_PsiCons;     /*!< -V grad psi, face operator */
+#endif
 #ifdef DIVBCLEANING_DEDNER
     Vec3<MyDouble> DtB_PhiCorr;     /*!< correction forces for mid-face update to phi-field */
     MyDouble PhiPred;               /*!< current value of Phi */

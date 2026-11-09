@@ -865,6 +865,9 @@ void init(void)
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
         CellP[i].Balpha = 0.0;
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+        CellP[i].PsiZ = CellP[i].PsiZPred = CellP[i].DtPsiZ = 0;
+#endif
 #ifdef DIVBCLEANING_DEDNER
         CellP[i].Phi = CellP[i].PhiPred = CellP[i].DtPhi = 0;
 #endif

@@ -434,6 +434,18 @@ void hydro_accumulate_neighbor(
 #if defined(MHD_NON_IDEAL) || defined(MHD_BATTERY_MECHANISMS)
     out.DtInternalEnergy += dot(local.BPred, bflux_from_nonideal_effects) * All.cf_a2inv;
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    { /* outward area of i is -Face_Area_Vec; the pair is antisymmetric, so each side's own evaluation conserves E_B + E_psi */
+        double psi_j = Get_Gas_Psi_Conservative_P(j, P, CellP);
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_SYMMETRIC_DIVB
+        out.DtB_PsiCons += Face_Area_Vec * (-0.5 * (local.PsiCons - psi_j)); /* TP12 sec. 4.2.2: symmetric V div.B, difference grad psi */
+        out.DivBDiff += -0.5 * dot(Face_Area_Vec, BPred_j + local.BPred) * All.cf_a2inv;
+#else
+        out.DtB_PsiCons += Face_Area_Vec * (0.5 * (local.PsiCons + psi_j)); /* symmetric -V grad psi, difference V div.B */
+        out.DivBDiff += -0.5 * dot(Face_Area_Vec, BPred_j - local.BPred) * All.cf_a2inv;
+#endif
+    }
+#endif
 #endif
 #endif
 #endif
