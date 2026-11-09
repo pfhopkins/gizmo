@@ -159,7 +159,7 @@ void verify_and_assign_local_mechfb_integrals(void)
 #endif
             CellP[j].Density *= mf/m0; /* update density [semi-drift] */
             double dTE=LocalGasMechFBInfoTemp[j].TE_injected;
-            if(dTE > 0)
+            if(dTE > 0 || dm > 0)
             {
                 double TE_0=m0*CellP[j].InternalEnergy; dTE=DMAX(-TE_0,dTE); /* ensure against non-negative values */
                 double dU = (-dm/mf)*CellP[j].InternalEnergy + (1./mf)*dTE; /* using new mass get updated internal energy */
