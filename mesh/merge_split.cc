@@ -1447,6 +1447,13 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
 #endif
 
     int do_loop_check = 0;
+    /* the gas block was ordered at the last rearrange, so with spawned/split cells as the only change its non-gas
+       slots are exactly the ones the new cells push into it, [N_gas, N_gas+Gas_split): scan only those */
+    int gas_scan_lo = 0;
+    if(Gas_split > 0) {gas_scan_lo = N_gas;}
+#ifdef GALSF
+    if(Stars_converted) {gas_scan_lo = 0;} /* conversions can sit anywhere in the block */
+#endif
     if(Gas_split>0)
     {
         N_gas += Gas_split;
@@ -1469,7 +1476,7 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
     if(do_loop_check)
     {
         j_next = N_gas;
-        for(i = 0; i < N_gas; i++) /* loop over the gas block */
+        for(i = gas_scan_lo; i < N_gas; i++) /* loop over the gas block */
             if(P[i].Type != 0) /* and look for a particle converted to non-gas */
             {
                 /* ok found a non-gas particle: */
