@@ -4462,7 +4462,7 @@ static void force_refresh_node_moments_incremental(void)
     TreeOpsCount[TREEOPS_REFRESH]++;
     int i, n, no, p;
     if(MomentsDirtyBuild != TreeOpsCount[TREEOPS_BUILD]) {MomentsDirtyNodes.clear(); MomentsDirtyBuild = TreeOpsCount[TREEOPS_BUILD];}
-    for(i = 0; i < NumPart; i++) {if(P[i].Type == 5) {force_mark_moments_dirty(i);}}
+    for(i = N_gas; i < NumPart; i++) {if(P[i].Type == 5) {force_mark_moments_dirty(i);}} /* the gas block [0,N_gas) holds no sinks */
     /* 1. re-derive the marked local nodes, children (higher indices) before parents */
     std::vector<int> &D = MomentsDirtyNodes;
     std::sort(D.begin(), D.end(), [](int a, int b) {return a > b;});

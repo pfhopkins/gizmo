@@ -1368,6 +1368,52 @@ void remove_particle_from_treewalk(int i){
     'deletion', the standard procedure should be to set the deleted particle mass to zero, and then let this routine
     (when it is called in standard sequence) do its job and 'clean up' the particle
  */
+#ifdef REARRANGE_INCREMENTAL_TIMEBINS
+/* Timebin-list edits for a rearrange that moves only a few slots, in place of rebuilding every list from
+   all NumPart particles. Each keeps a particle's position in its list and only renames its slot, so the
+   lists stay what they were; the full rebuild instead leaves every list in ascending slot order. */
+static void timebin_unlink(int i, int bin)
+{
+    int prev = PrevInTimeBin[i], next = NextInTimeBin[i];
+    if(prev >= 0) {NextInTimeBin[prev] = next;} else {FirstInTimeBin[bin] = next;}
+    if(next >= 0) {PrevInTimeBin[next] = prev;} else {LastInTimeBin[bin] = prev;}
+}
+/* the particle linked at slot 'from' moves to the unlinked slot 'to' */
+static void timebin_relabel(int from, int to, int bin)
+{
+    int prev = PrevInTimeBin[from], next = NextInTimeBin[from];
+    PrevInTimeBin[to] = prev; NextInTimeBin[to] = next;
+    if(prev >= 0) {NextInTimeBin[prev] = to;} else {FirstInTimeBin[bin] = to;}
+    if(next >= 0) {PrevInTimeBin[next] = to;} else {LastInTimeBin[bin] = to;}
+}
+/* exchange two linked slots; 'spare' is any slot outside the lists */
+static void timebin_swap(int i, int j, int spare)
+{
+    int bi = P[i].TimeBin, bj = P[j].TimeBin;
+    timebin_relabel(i, spare, bi); timebin_relabel(j, i, bj); timebin_relabel(spare, j, bi);
+}
+/* what reconstruct_timebins derives besides the lists, for a call that only moved or removed slots: the
+   counts were kept by the caller, the sink sums are re-derived from the non-gas block (in the same order,
+   so they are bitwise what the full pass gives), then the active list and its global count */
+static void timebin_finish_incremental(void)
+{
+#ifdef SINK_PARTICLES
+    for(int bin = 0; bin < TIMEBINS; bin++) {TimeBin_Sink_mass[bin] = 0; TimeBin_Sink_dynamicalmass[bin] = 0; TimeBin_Sink_Mdot[bin] = 0; TimeBin_Sink_Medd[bin] = 0;}
+    for(int i = N_gas; i < NumPart; i++)
+        if(P[i].Type == 5)
+        {
+            int bin = P[i].TimeBin;
+            TimeBin_Sink_mass[bin] += P[i].Sink_Mass; TimeBin_Sink_dynamicalmass[bin] += P[i].Mass;
+            TimeBin_Sink_Mdot[bin] += P[i].Sink_Mdot; TimeBin_Sink_Medd[bin] += P[i].Sink_Mdot / P[i].Sink_Mass;
+        }
+#endif
+    make_list_of_active_particles();
+    NumForceUpdate = (int) ActiveParticleList.size();
+    long long glob_sum; sumup_large_ints(1, &NumForceUpdate, &glob_sum);
+    GlobNumForceUpdate = glob_sum;
+}
+#endif
+
 void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
 {
     /* Under MAINTAIN_TREE_IN_REARRANGE every slot move repairs the standing tree's walk links, and
@@ -1381,6 +1427,13 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
 #endif
     TreeOpsCount[TREEOPS_REARRANGE]++;
     double _t0_rearr = my_second();
+#ifdef REARRANGE_INCREMENTAL_TIMEBINS
+    /* mid-step calls (sink cleanup, per-step merge/split) move a handful of slots; decomposition-path calls are
+       followed by a full rebuild of the lists anyway */
+    const int incr_bins = !tree_rebuilt_before_next_walk;
+#else
+    const int incr_bins = 0;
+#endif
     int i, j, flag = 0, flag_sum, j_next;
     int count_elim, count_gaselim, count_sink_elim, tot_elim, tot_gaselim, tot_sink_elim;
     struct particle_data psave;
@@ -1421,6 +1474,9 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
                 if(j >= NumPart) endrun(181170); /* if that j is too large, exit with error */
                 
                 if(j < NumPart-1) {j_next = j + 1;} else {j_next = NumPart - 1;}
+#ifdef REARRANGE_INCREMENTAL_TIMEBINS
+                if(incr_bins) {timebin_swap(i, j, NumPart);} /* slot NumPart is past every list */
+#endif
                 psave = P[i]; /* otherwise, save the old pointer */
                 P[i] = P[j]; /* now set the pointer equal to this new P[j] */
                 P[j] = psave; /* now set the P[j] equal to the old, saved pointer */
@@ -1454,6 +1510,21 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
 #endif
             TimeBinCount[P[i].TimeBin]--;
             if(TimeBinActive[P[i].TimeBin]) {NumForceUpdate--;}
+#ifdef REARRANGE_INCREMENTAL_TIMEBINS
+            if(incr_bins)
+            {
+                timebin_unlink(i, P[i].TimeBin);
+#ifdef GALSF
+                if(P[i].Type == 0) {TimeBinSfr[P[i].TimeBin] -= CellP[i].Sfr;}
+#endif
+                if(P[i].Type == 0)
+                {
+                    if(N_gas - 1 != i) {timebin_relabel(N_gas - 1, i, P[N_gas - 1].TimeBin);}
+                    if(NumPart - 1 != N_gas - 1) {timebin_relabel(NumPart - 1, N_gas - 1, P[NumPart - 1].TimeBin);}
+                }
+                else if(NumPart - 1 != i) {timebin_relabel(NumPart - 1, i, P[NumPart - 1].TimeBin);}
+            }
+#endif
 
             if(P[i].Type == 0)
             {
@@ -1504,7 +1575,11 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
 #endif
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+#ifdef REARRANGE_INCREMENTAL_TIMEBINS
+    if(flag_sum) {if(incr_bins) {timebin_finish_incremental();} else {reconstruct_timebins();}}
+#else
     if(flag_sum) {reconstruct_timebins();}
+#endif
     if(!repair_walk_links)
     {
         /* Slots moved and nothing above repaired the tree's walk links: the standing tree no longer
