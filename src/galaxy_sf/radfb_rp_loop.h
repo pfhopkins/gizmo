@@ -318,10 +318,10 @@ static void radfb_rp_pair_kick(
 #endif
 
 #if defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
-    /* single stars: every neighbour takes its weight's share of the budget, radially outward (stella_dev); dp_ij points at the star */
+    /* single stars: every neighbour takes its weight's share of the budget, radially outward (stella_dev); dp_ij is gas minus star */
     Vec3<double> dv_kick = dp_ij;
     {
-        double norm = sqrt(dv_kick.norm_sq()), scale = (norm > 0) ? -dv_ss * scalars.common.cf_atime / norm : 0;
+        double norm = sqrt(dv_kick.norm_sq()), scale = (norm > 0) ? dv_ss * scalars.common.cf_atime / norm : 0;
         dv_kick[0] *= scale; dv_kick[1] *= scale; dv_kick[2] *= scale;
 #ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
         for(int k = 0; k < 3; k++) {dv_kick[k] -= dv_ss * scalars.common.cf_atime * loc.mean_dir[k];} /* no net momentum */
@@ -694,7 +694,7 @@ struct RadFBRPSpec {
 #ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
             double w_mk = radfb_rp_mass_kernel_weight((double)Pj.Mass, r2, sqrt(h2)), r_inv = 1.0 / sqrt(r2);
             accum.wt_sum += w_mk;
-            for(int k = 0; k < 3; k++) {accum.wt_dir[k] -= w_mk * dp[k] * r_inv;}
+            for(int k = 0; k < 3; k++) {accum.wt_dir[k] += w_mk * dp[k] * r_inv;}
 #else
             double eps   = (double)active.local.SourceKernelRadius;
             accum.wt_sum  += radfb_rp_kernel_weight(h_j, r2, h2, eps * eps);
