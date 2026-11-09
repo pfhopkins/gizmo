@@ -38,5 +38,7 @@ void   IonizeParamsTable(void);
 void   MakeCoolingTable(void);
 void   ReadIonizeParams(const char *fname);
 void   SetZeroIonization(void);
+#ifdef SGCHEM
 void   get_uvb_rates(double *gJH0, double *gJHe0, double *gJHep, double *epsH0, double *epsHe0, double *epsHep); /* UV background rates of the current redshift (from TREECOOL) */
+#endif
 #endif

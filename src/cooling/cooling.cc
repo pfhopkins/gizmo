@@ -1868,6 +1868,7 @@ void SetZeroIonization(void)
 }
 
 
+#ifdef SGCHEM
 void get_uvb_rates(double *gJH0, double *gJHe0, double *gJHep, double *epsH0, double *epsHe0, double *epsHep)
 {
     if(gJH0) {*gJH0 = CoolTables.gJH0;}
@@ -1877,6 +1878,7 @@ void get_uvb_rates(double *gJH0, double *gJHe0, double *gJHep, double *epsH0, do
     if(epsHe0) {*epsHe0 = CoolTables.epsHe0;}
     if(epsHep) {*epsHep = CoolTables.epsHep;}
 }
+#endif
 
 
 void IonizeParamsFunction(void)
