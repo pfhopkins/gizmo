@@ -116,6 +116,8 @@ struct SinkEnv1DeviceContext : NeighborLoopDeviceContextBase {
  *     bundle in sinks/sink_env1_loop.cc.
  *   - SINK_GRAVCAPTURE_GAS (without SINGLE_STAR_SINK_DYNAMICS):
  *     accum.mass_to_swallow_edd accumulates i-side; no j-write.
+ *   - SINGLE_STAR_SINK_FORMATION & 8: atomic max of neighbor_particle.Sink_Ngb_Flag
+ *     (GHOST_WRITEBACK_PARTICLE_MAX(Sink_Ngb_Flag)).
  * ========================================================================== */
 
 KOKKOS_INLINE_FUNCTION
@@ -165,6 +167,16 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
 #endif
 
     if(neighbor_particle.Type == 0) {
+#if (SINGLE_STAR_SINK_FORMATION & 8)
+        /* sink-formation veto (sfr_eff.cc): gas inside this sink's kernel and within max(h_j, sink softening)
+           may not form a new sink. The flag is cleared for active gas in the density loop. */
+        {
+            const double r_j = dP.norm();
+            if(r_j < h_i && r_j < DMAX((double)neighbor_particle.KernelRadius, scalars.sink_radius_grav)) {
+                Kokkos::atomic_max(&neighbor_particle.Sink_Ngb_Flag, 1);
+            }
+        }
+#endif
         accum.Mgas_in_Kernel += wt;
         if(neighbor_cell) { accum.Sink_SurroudingGasInternalEnergy += wt * neighbor_cell->InternalEnergy; }
         Vec3<double> J_gas = cross(dP, dv);
@@ -298,7 +310,7 @@ struct SinkEnv1Spec {
 
     /* (1) Loop identity. Supplies the PHASE0_NLR `loop=` field. */
     static constexpr const char *loop_name = "sink_env1";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: sole j-write gated atomic_min(SwallowTime) (order-invariant), no read-back; tiny-N usually below threshold */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: j-writes are atomic_min(SwallowTime) and atomic_max(Sink_Ngb_Flag) (order-invariant), no read-back; tiny-N usually below threshold */
     /* Legacy detector label preserved; differs from loop_name. Predates the
      * runner-template loop_name convention. Without this, the runner default
      * would label this Spec's detector "sink_env1" instead of the historical
@@ -329,7 +341,7 @@ struct SinkEnv1Spec {
     using DeviceContext = SinkEnv1DeviceContext;        /* file-scope struct above */
 
     struct NeighborData {
-        struct particle_data       *neighbor_particle;  /* non-const: pair body atomic-min's SwallowTime */
+        struct particle_data       *neighbor_particle;  /* non-const: pair body writes SwallowTime, Sink_Ngb_Flag */
         const struct gas_cell_data *neighbor_cell;      /* nullptr for non-gas / when no CellP */
     };
 

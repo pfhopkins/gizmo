@@ -613,6 +613,9 @@ void star_formation_parent_routine(void)
                             if(P[i_star].FluidType == FLUID_DM) { P[i_star].Type = 3; } else /* dark fluid -> inert collisionless Type=3 */
 #endif
                             { P[i_star].Type = 5; }
+                            /* ForceSoftening_KernelRadius reads the per-particle cache, which still holds the gas softening; the sink
+                               radius below must see the new type's softening, as legacy's live evaluation does */
+                            P[i_star].ForceSoftening = compute_force_softening_kernel_radius(i_star);
                             force_tree_note_type_presence(i_star);  /* the element's type is final here, so tell the standing tree before anything walks it looking for that type */
                             num_sink_formed++;
                             P[i_star].Sink_Mass = DMAX(All.SeedSinkMass, DMIN(0.5*P[i_star].Mass , 0.01/UNIT_MASS_IN_SOLAR)); // if desired to make this appreciable fraction of particle mass, please do so in params file

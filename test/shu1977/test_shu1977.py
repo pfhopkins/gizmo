@@ -46,3 +46,19 @@ def test_shu1977(num_mpi_ranks, num_omp_threads):
         rho = F["PartType0/Density"][:]
         boxsize = F["Header"].attrs["BoxSize"]
     plot_shu1977_density_slice(coords, rho, boxsize, output_dir=f"test/{test_name}")
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (8,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_shu1977_newborn_sink_radius(num_mpi_ranks, num_omp_threads):
+    """A sink formed from a cell takes the sink softening as the floor of its radius (sfr_eff.cc), not the cell's
+    softening: the per-particle softening cache must follow the type change. SofteningBndry is raised so this floor
+    (kernel radius = 2.8 x softening) exceeds the 0.79 G M / cs^2 term and sets the radius."""
+    soft = 3.66e-5
+    build_and_run_test("shu1977", num_mpi_ranks, num_omp_threads,
+                       param_overrides={"SofteningBndry": soft, "OutputDir": "output_sinkradius"})
+    snaps = sorted(glob.glob("test/shu1977/output_sinkradius/snapshot_*.hdf5"))
+    with h5py.File(snaps[-1], "r") as f:
+        r_sink = f["PartType5/Sink_Radius"][:]
+    assert len(r_sink) >= 1, "no sink formed"
+    assert np.all(r_sink >= 2.8 * soft * (1 - 1e-6)), f"sink radius {r_sink} below the sink softening {2.8 * soft:.4e}"
