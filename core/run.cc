@@ -247,7 +247,7 @@ void energy_budget_sync_report(void)
     if(ThisTask == 0)
     {
         /* E_fb: cumulative energy mechanical feedback has written into gas Vel/InternalEnergy (0 without it) */
-        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e P_gas=%.16e %.16e %.16e E_fb=%.10e\n",
+        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e Px_gas=%.16e Py_gas=%.16e Pz_gas=%.16e E_fb=%.10e\n",
                All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2], glob[3], glob[4], glob[5], glob[6]); fflush(stdout);
     }
 }

@@ -33,7 +33,7 @@ def generate_ics():
 
 def synced_momentum(logfile):
     """(t, M, P_y) from the ENERGY_BUDGET_DIAGNOSTIC full-synchronisation lines."""
-    pat = re.compile(r"Energy \(synced\) t=(\S+) .* M_gas=(\S+) P_gas=(\S+) (\S+) (\S+)")
+    pat = re.compile(r"Energy \(synced\) t=(\S+) .* M_gas=(\S+) Px_gas=(\S+) Py_gas=(\S+) Pz_gas=(\S+)")
     rows = [m.groups() for m in map(pat.search, open(logfile)) if m]
     t, M, _, Py, _ = np.array(rows, dtype=float).T
     return t, M, Py
