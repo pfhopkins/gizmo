@@ -28,7 +28,7 @@ extern "C" void sgchem_fatal_(int* code);
 
 
 #if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
-static_assert(NPIX <= CHEM_NPIX, "ChemCell pixel arrays are sized for RT_USE_TREECOL_FOR_NH=12");
+static_assert(NPIX == CHEM_NPIX, "ChemCell pixel arrays are sized by NPIX");
 #endif
 
 static ChemCell g_tmpl;                                   // init-time constants of every cell

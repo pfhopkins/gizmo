@@ -26,7 +26,7 @@
 #endif
 
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
-#define NPIX GALSF_RESOLVEDISM_TREECOL_PIXELS /* the chemistry's pixel arrays hold 12 (static_assert in the backend) */
+#define NPIX GALSF_RESOLVEDISM_TREECOL_PIXELS /* the chemistry's pixel arrays are sized by it */
 #define RT_TREECOL_DUST_WEIGHTED        /* per-pixel dust column */
 #define RT_TREECOL_H2_CO                /* per-pixel H2 and CO columns */
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
