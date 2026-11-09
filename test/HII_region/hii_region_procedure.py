@@ -340,7 +340,7 @@ def make_ifront_evolution_plot(all_evo, test_dir):
 # --------------------------------------------------------------------------------------
 # Build + run + check driver
 # --------------------------------------------------------------------------------------
-def run_variant(test_name, test_dir, num_mpi_ranks, num_omp_threads, extra_config_flags=()):
+def run_variant(test_name, test_dir, num_mpi_ranks, num_omp_threads, extra_config_flags=(), t_hii_max=T_HII_MAX):
     """Build+run one variant, validate the final snapshot, compute profiles, assert the
     HII-region temperature, and emit the per-snapshot T(r) plot plus the I-front-position-
     vs-time plot for this variant. Returns (profiles, label, ifront_evolution), where
@@ -353,7 +353,7 @@ def run_variant(test_name, test_dir, num_mpi_ranks, num_omp_threads, extra_confi
         assert "PartType5" in F, "Star particle missing from final snapshot"
 
     profiles = compute_profiles(final_snap)
-    assert_hii_temperature(profiles)
+    assert_hii_temperature(profiles, hi=t_hii_max)
 
     label = "+".join(extra_config_flags) if extra_config_flags else "baseline"
     make_temperature_snapshot_plot(label, variant_output_dir(test_name, extra_config_flags), test_dir)
