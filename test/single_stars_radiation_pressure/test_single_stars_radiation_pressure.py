@@ -10,6 +10,7 @@ lattice at n_H ~ 100 cm^-3 (dust optical depths 0.2-0.8 over the kernel column),
   test_sources: stars of 40 and 3 Msun push, a 1.5 Msun star does not (stella_dev: sources from 2 Msun) and neither does
     a 40 Msun star particle without a single-star record: two sources every step, offered momentum = the sum of the two
     estimators (2 %).
+  test_outward: the gas around the star gains radial momentum away from it, over half the momentum coupled.
 """
 import os
 import shutil
@@ -128,3 +129,17 @@ def test_sources(tables):
     age = {M: tab._i2(tab.t_pms, np.log10(M), lZ) + F_LIFE * tab._i2(tab.life, np.log10(M), lZ) for M in (40.0, 3.0)}
     want = np.array([sum(expected_per_time(tab, age[M] + ti * YR_PER_TIME_UNIT, rho, M=M) for M in (40.0, 3.0)) for ti in t])
     np.testing.assert_allclose(offered, want, rtol=2e-2)
+
+
+def test_outward(tables):
+    """the star-side kick points away from the star: gas radial momentum about the star at the end over half the
+    momentum coupled (bar as single_stars_radpressure_cells::test_outward); no other source of radial momentum here"""
+    rows, _, _, _ = run(build("default"), "outward", tables)
+    d = TEST_DIR / "run_outward"
+    with h5py.File(sorted((d / "output").glob("snapshot_*.hdf5"))[-1]) as F:
+        g = F["PartType0"]; L = F["Header"].attrs["BoxSize"]
+        x = g["Coordinates"][:] - F["PartType4/Coordinates"][0]; v = g["Velocities"][:]; m = g["Masses"][:]
+    x = (x + L / 2) % L - L / 2
+    pr = (m * (v * x).sum(1) / np.sqrt((x ** 2).sum(1))).sum()
+    print(f"radial momentum {pr:.4g}, coupled {rows[:, 6].sum():.4g}")
+    assert pr > 0.5 * rows[:, 6].sum(), "pushed away from the star"
