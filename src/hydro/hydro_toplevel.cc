@@ -150,6 +150,9 @@ static void turb_diff_metals_budget_log(void)
 
 void hydro_final_operations_and_cleanup(void)
 {
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && defined(OUTPUT_MASS_BALANCE_BREAKDOWN)
+    double diff_mz_pair = 0, diff_mz_clamp = 0, diff_mz_gross = 0;
+#endif
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -319,6 +322,11 @@ void hydro_final_operations_and_cleanup(void)
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)) /* update the metal masses from exchange */
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION /* add the exchange received while inactive; floor at 0 (a fractional floor creates metal) */
             for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] += CellP[i].Dyield_pending[k]; CellP[i].Dyield_pending[k] = 0;}
+#ifdef OUTPUT_MASS_BALANCE_BREAKDOWN
+            {double mz_new = P[i].Metallicity[0] + CellP[i].Dyield[0] / P[i].Mass, floor_add = (mz_new < 0) ? -mz_new * P[i].Mass : 0;
+            #pragma omp critical(mass_balance_diff)
+            {diff_mz_pair += CellP[i].Dyield[0]; diff_mz_clamp += floor_add; diff_mz_gross += fabs(CellP[i].Dyield[0]);}}
+#endif
             for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.);}
 #else
             for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
@@ -448,6 +456,9 @@ void hydro_final_operations_and_cleanup(void)
 
 #if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
     turb_diff_metals_budget_log();
+#endif
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && defined(OUTPUT_MASS_BALANCE_BREAKDOWN)
+    ledger_diffusion_breakdown(diff_mz_pair, diff_mz_clamp, diff_mz_gross);
 #endif
     
 #ifdef TURB_DRIVING

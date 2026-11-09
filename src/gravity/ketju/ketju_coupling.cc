@@ -43,8 +43,8 @@
 #include "../../mesh/gpu_neighbor_list.h"   /* gizmo_motion_bound_raise */
 #include "../../system/gpu_particles_arena.h"
 #include "ketju_mstar_kokkos.h"
-#ifdef KETJU_PN_REMNANT_TAG
-#include "../../galaxy_sf/stellar_evolution_tables.h" /* remnant types */
+#if defined(KETJU_PN_REMNANT_TAG) || defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#include "../../galaxy_sf/stellar_evolution_tables.h" /* remnant types, radii */
 #endif
 #include "ketju_star_mergers.h"
 
@@ -1016,8 +1016,19 @@ static double ketju_star_contact_radius(int i)
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
     if(P[i].StarIdx > 0 && SingleStars.event_bits[single_star_slot(P[i].StarIdx)] != 0) {return 0;} /* a remnant */
 #endif
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    if(P[i].StarIdx <= 0 || SingleStars.M_drawn[single_star_slot(P[i].StarIdx)] <= 0) {return 0;}
+    {
+        int s = single_star_slot(P[i].StarIdx);
+        double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
+        double age_tab = evaluate_stellar_age_Gyr(i) * 1.e9 - stellar_t_PMS(logM, logZ);
+        if(age_tab >= stellar_lifetime(logM, logZ)) {return 0;}
+        R_cm = pow(10.0, stellar_log_R_cm(logM, logZ, log10(DMAX(age_tab, 100.0))));
+    }
+#else
     double M = P[i].Mass * UNIT_MASS_IN_SOLAR;
     R_cm = 6.957e10 * ((M < 1) ? pow(M, 0.8) : pow(M, 0.57));
+#endif
     return R_cm / UNIT_LENGTH_IN_CGS; /* physical */
 }
 #endif

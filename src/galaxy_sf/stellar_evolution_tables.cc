@@ -208,18 +208,29 @@ void stellar_evolution_tables_load(void)
 {
     const size_t n2d = (size_t)STBL_NZ * STBL_NM, n3d = n2d * STBL_NAGE, n4d = n3d * STBL_NELEM;
 #ifdef TREECOL_SHELLS_ION_HELIUM
-    enum {N3 = 14};
+    enum {N3_HE = 1};
 #else
-    enum {N3 = 13};
+    enum {N3_HE = 0};
+#endif
+#ifdef KETJU_MERGE_STARS
+    enum {N3 = 14 + N3_HE};
+#else
+    enum {N3 = 13 + N3_HE};
 #endif
     float **f3[N3] = {&StellarTbl.v_wind, &StellarTbl.log_L_LW, &StellarTbl.log_L_FUV_total, &StellarTbl.log_L_FUV_M1, &StellarTbl.log_L_NUV, &StellarTbl.log_L_OPT_NIR, &StellarTbl.log_L_bol, &StellarTbl.log_Q_ion, &StellarTbl.log_L_ion_tot, &StellarTbl.log_L_ion_H0, &StellarTbl.log_L_ion_He0, &StellarTbl.log_L_ion_He1, &StellarTbl.log_L_ion_He2
 #ifdef TREECOL_SHELLS_ION_HELIUM
         , &StellarTbl.log_Q_ion_H0
 #endif
+#ifdef KETJU_MERGE_STARS
+        , &StellarTbl.logR_cm
+#endif
     };
     const char *n3[N3] = {"v_wind", "log_L_LW", "log_L_FUV_total", "log_L_FUV_M1", "log_L_NUV", "log_L_OPT_NIR", "log_L_bol", "log_Q_ion", "log_L_ion_tot", "log_L_ion_H0", "log_L_ion_He0", "log_L_ion_He1", "log_L_ion_He2"
 #ifdef TREECOL_SHELLS_ION_HELIUM
         , "log_Q_ion_H0"
+#endif
+#ifdef KETJU_MERGE_STARS
+        , "logR_cm"
 #endif
     };
     const size_t nfloat = N3 * n3d + 2 * n4d;
@@ -252,6 +263,10 @@ void stellar_evolution_tables_load(void)
         err |= stbl_read(f, "remnant_mass", H5T_NATIVE_DOUBLE, StellarTbl.remnant_mass, n2d);
         err |= stbl_read(f, "remnant_type", H5T_NATIVE_INT, StellarTbl.remnant_type, n2d);
         err |= stbl_read(f, "t_PMS", H5T_NATIVE_DOUBLE, StellarTbl.t_PMS, n2d);
+#ifdef KETJU_MERGE_STARS
+        err |= stbl_read(f, "phase_transitions/t_MS_start", H5T_NATIVE_DOUBLE, StellarTbl.t_MS_start, n2d);
+        err |= stbl_read(f, "phase_transitions/t_MS_end", H5T_NATIVE_DOUBLE, StellarTbl.t_MS_end, n2d);
+#endif
         for(int k = 0; k < N3; k++) {err |= stbl_read(f, n3[k], H5T_NATIVE_FLOAT, *f3[k], n3d);}
         err |= stbl_read(f, "surface_abundances", H5T_NATIVE_FLOAT, StellarTbl.surface_abundances, n4d);
         err |= stbl_read(f, "elem_ej_SN_mass", H5T_NATIVE_DOUBLE, StellarTbl.elem_ej_SN_mass, n2d * STBL_NELEM);
@@ -313,6 +328,11 @@ double stellar_t_PMS(double logM, double logZ)
     return interp2d(StellarTbl.t_PMS, logM, logZ);
 }
 
+#ifdef KETJU_MERGE_STARS
+double stellar_t_MS_start(double logM, double logZ) {return interp2d(StellarTbl.t_MS_start, logM, logZ);}
+double stellar_t_MS_end(double logM, double logZ) {return interp2d(StellarTbl.t_MS_end, logM, logZ);}
+#endif
+
 /* --- 3D trilinear (logM, logZ, log_age) --- */
 
 double stellar_v_wind(double logM, double logZ, double log_age)
@@ -345,6 +365,9 @@ double stellar_log_L_OPT_NIR(double logM, double logZ, double log_age)
     return interp3d(StellarTbl.log_L_OPT_NIR, logM, logZ, log_age);
 }
 
+#ifdef KETJU_MERGE_STARS
+double stellar_log_R_cm(double logM, double logZ, double log_age) {return interp3d(StellarTbl.logR_cm, logM, logZ, log_age);}
+#endif
 double stellar_log_L_bol(double logM, double logZ, double log_age)
 {
     return interp3d(StellarTbl.log_L_bol, logM, logZ, log_age);

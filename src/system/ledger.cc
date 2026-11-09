@@ -12,6 +12,7 @@
 #endif
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../mesh/ghost_writeback.h"
 
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
 
@@ -151,15 +152,18 @@ void ledger_restart_io(void (*io)(void *, size_t, int), int modus) /* modus 0 wr
 #ifdef OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS
 /* mass_balance_steps.txt: at a checkpoint inside the step, baryon mass (gas + stars) and gas, star and ledger-corrected metal
    mass; a line only when one of M_bary, M_Z_gas, M_Z_ledger changed by more than 1e-14 since the previous checkpoint, so a leak
-   is found between the two checkpoints that bracket it. M_Z_ledger = gas + star metals - (metals delivered to gas - metals taken
-   from stars), constant when the books close. One MPI_Allreduce per call; code units. */
+   is found between the two checkpoints that bracket it. M_Z_ledger = gas + star metals + diffusion exchange not yet applied -
+   (metals delivered to gas - metals taken from stars), constant when the books close. One MPI_Allreduce per call; code units. */
 void ledger_step_checkpoint(const char *tag)
 {
     static double last[3] = {-1., -1., -1.};
     static long long calls = 0;
-    double loc[5] = {0, 0, 0, 0, 0}, glob[5]; /* M_gas, M_stars, MZ_gas, MZ_stars, net yield (cumulative rows of this rank) */
-    for(int i = 0; i < NumPart; i++) {
+    double loc[6] = {0, 0, 0, 0, 0, 0}, glob[6]; /* M_gas, M_stars, MZ_gas, MZ_stars, net yield (cumulative rows of this rank), diffusion exchange in flight */
+    for(int i = 0, n_local = ghost_get_num_local(); i < n_local; i++) { /* imported ghost copies sit above the local cells */
         if(P[i].Mass <= 0) {continue;}
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        if(P[i].Type == 0) {loc[5] += CellP[i].Dyield_pending[0];}
+#endif
         if(P[i].Type == 0) {loc[0] += P[i].Mass; loc[2] += P[i].Mass * P[i].Metallicity[0];}
         else if(P[i].Type == 4) {loc[1] += P[i].Mass; loc[3] += P[i].Mass * P[i].Metallicity[0];}
     }
@@ -169,9 +173,9 @@ void ledger_step_checkpoint(const char *tag)
         loc[4] = ledger_value(&ledger_total[LEDGER_MZ_FB_TO_GAS]) - ledger_value(&ledger_total[LEDGER_MZ_STARS_LOST]);
     }
 #endif
-    MPI_Allreduce(loc, glob, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(loc, glob, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
-    double now[3] = {glob[0] + glob[1], glob[2], glob[2] + glob[3] - glob[4]}, d[3] = {0, 0, 0};
+    double now[3] = {glob[0] + glob[1], glob[2], glob[2] + glob[3] + glob[5] - glob[4]}, d[3] = {0, 0, 0};
     int log_it = (calls == 0);
     for(int k = 0; k < 3; k++) {
         if(last[k] >= 0) {d[k] = now[k] - last[k]; if(last[k] > 0 && fabs(d[k]) / last[k] > 1.0e-14) {log_it = 1;}}
@@ -182,13 +186,53 @@ void ledger_step_checkpoint(const char *tag)
         snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%smass_balance_steps.txt", All.OutputDir);
         FILE *f = fopen(buf, "a");
         if(f) {
-            if(ftell(f) == 0) {fprintf(f, "# call tag time M_bary dM_bary M_Z_gas dM_Z_gas M_Z_stars M_Z_netyield_cumulative M_Z_ledger dM_Z_ledger  (code units; lines only where a change exceeds 1e-14)\n");}
-            fprintf(f, "%lld %s %.10e %.16e %+.16e %.16e %+.16e %.16e %+.16e %.16e %+.16e\n", calls, tag, All.Time, now[0], d[0], now[1], d[1], glob[3], glob[4], now[2], d[2]);
+            if(ftell(f) == 0) {fprintf(f, "# call tag time M_bary dM_bary M_Z_gas dM_Z_gas M_Z_stars M_Z_netyield_cumulative M_Z_ledger dM_Z_ledger M_Z_inflight (code units; lines only where a change exceeds 1e-14)\n");}
+            fprintf(f, "%lld %s %.10e %.16e %+.16e %.16e %+.16e %.16e %+.16e %.16e %+.16e %+.16e\n", calls, tag, All.Time, now[0], d[0], now[1], d[1], glob[3], glob[4], now[2], d[2], glob[5]);
             fclose(f);
         }
     }
     calls++;
 }
+
+#ifdef OUTPUT_MASS_BALANCE_BREAKDOWN
+/* diff_unpack_breakdown.txt, per hydro step: sum over the cells of the diffusive exchange applied (0 for a conservative solver), of
+   what the floor at zero added on top (0 unless the floor fired) and of the absolute exchange. One MPI_Allreduce per call; code units. */
+void ledger_diffusion_breakdown(double dMZ_pair, double dMZ_clamp, double dMZ_gross)
+{
+    double loc[3] = {dMZ_pair, dMZ_clamp, dMZ_gross}, glob[3];
+    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask != 0) {return;}
+    char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sdiff_unpack_breakdown.txt", All.OutputDir);
+    FILE *f = fopen(buf, "a");
+    if(f) {
+        if(ftell(f) == 0) {fprintf(f, "# time dM_Z_pair_flux dM_Z_clamp dM_Z_gross (code units)\n");}
+        fprintf(f, "%.10e %+.16e %+.16e %.16e\n", All.Time, glob[0], glob[1], glob[2]);
+        fclose(f);
+    }
+}
+
+/* MCBAL lines on stdout at each checkpoint: masses in Msun, gas mass in every metal slot, range and count of cells whose
+   sum(Met[1..]) leaves one by more than 1e-6 (only the full table layout closes to one). Four reductions per call. */
+void ledger_element_balance(const char *tag)
+{
+    double loc[2 + NUM_METAL_SPECIES] = {0}, glob[2 + NUM_METAL_SPECIES], smin = 1e30, smax = -1e30, gmin, gmax; long nviol = 0, gviol;
+    for(int i = 0, n_local = ghost_get_num_local(); i < n_local; i++) { /* imported ghost copies sit above the local cells */
+        if(P[i].Mass <= 0) {continue;}
+        if(P[i].Type == 4) {loc[1] += P[i].Mass;}
+        if(P[i].Type != 0) {continue;}
+        loc[0] += P[i].Mass; double sum = 0;
+        for(int k = 0; k < NUM_METAL_SPECIES; k++) {loc[2 + k] += P[i].Mass * P[i].Metallicity[k]; if(k > 0) {sum += P[i].Metallicity[k];}}
+        smin = DMIN(smin, sum); smax = DMAX(smax, sum); if(fabs(sum - 1.) > 1.e-6) {nviol++;}
+    }
+    MPI_Reduce(loc, glob, 2 + NUM_METAL_SPECIES, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&smin, &gmin, 1, MPI_DOUBLE, MPI_MIN, 0, MPI_COMM_WORLD); MPI_Reduce(&smax, &gmax, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&nviol, &gviol, 1, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask != 0) {return;}
+    printf("MCBAL %s t=%.6e M_tot=%.10e M_gas=%.10e M_star=%.10e sumMet: min=%.9e max=%.9e #viol=%ld\n", tag, All.Time, (glob[0] + glob[1]) * UNIT_MASS_IN_SOLAR, glob[0] * UNIT_MASS_IN_SOLAR, glob[1] * UNIT_MASS_IN_SOLAR, gmin, gmax, gviol);
+    printf("MCBAL %s per-element:", tag); for(int k = 0; k < NUM_METAL_SPECIES; k++) {printf(" %.6e", glob[2 + k] * UNIT_MASS_IN_SOLAR);} printf("\n"); fflush(stdout);
+}
+#endif
 #endif /* OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS */
 
 #endif /* OUTPUT_MASS_METAL_ENERGY_LEDGER */

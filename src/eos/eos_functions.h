@@ -55,6 +55,9 @@ KOKKOS_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double s
 KOKKOS_INLINE_FUNCTION double return_dust_to_metals_ratio_vs_solar(int i, double T_dust_manual_override, struct particle_data *pp, struct gas_cell_data *cell);
 
 #include "../declarations/multifluid_helpers.h"
+#ifdef SGCHEM
+#include "../cooling/sgchem/sgchem_consts.h" /* ABHE */
+#endif
 
 /* return an estimate of the Hydrogen molecular fraction of gas */
 KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell)
@@ -279,7 +282,11 @@ KOKKOS_INLINE_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, d
 #ifdef METALS
     if(target >= 0)
     {
+#if defined(SGCHEM) && !defined(GALSF_SGCHEM_VARIABLE_XH_AND_ABHE)
+        Z = 0; Y = 4.*ABHE/(1.+4.*ABHE); /* the H/He mix of the chemistry, metals not counted */
+#else
         Z = DMIN(0.25,pp[target].Metallicity[0]); if(NUM_METAL_SPECIES_BASE>=10) {Y = DMIN(0.35,pp[target].Metallicity[1]);}
+#endif
         X = 1. - (Y+Z);
     }
 #endif
@@ -405,6 +412,18 @@ KOKKOS_INLINE_FUNCTION
 double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(target < 0) {*ne_guess = 0; *nH0_guess = 0; *nHp_guess = 0; *mu_guess = 1; return 0;}
+#if defined(SGCHEM) /* the stored chemistry state: atomic H, electrons from H+, temperature of the last solve (slots H2 = 0, H+ = 1 in every network) */
+    {
+        double abh2 = cell[target].TracAbund[0], abe = cell[target].TracAbund[1], temp_chem = cell[target].Temp;
+        *nH0_guess = DMAX(0, 1. - 2.*abh2 - abe); *nHp_guess = abe; *ne_guess = abe;
+        if(temp_chem <= 0) { /* before the first solve: u to T with the weight of the stored abundances */
+            double y = yhelium(target, pp), gam = cell[target].gamma_eos_value();
+            temp_chem = u * (1. + 4.*y) / (1. - abh2 + y + abe) * (gam - 1.) * U_TO_TEMP_UNITS;
+        }
+        *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp_chem, rho, nH0_guess, ne_guess, 0., target, pp, cell);
+        return temp_chem;
+    }
+#endif
 #ifdef HYDRO_MULTIFLUID_DM
     /* dark-fluid short-circuit: trivial adiabat T(u), no chemistry call-stack. */
     if(pp[target].FluidType == FLUID_DM) {

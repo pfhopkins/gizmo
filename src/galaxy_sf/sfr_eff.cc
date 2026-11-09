@@ -855,7 +855,9 @@ void star_formation_parent_routine(void)
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
     } //(tot_spawned > 0 || tot_converted > 0)
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+    LEDGER_STEP_BREAKDOWN("pre_collect_gas");
     sum_mass_stars += single_stars_collect_gas(tot_spawned); /* new single stars take their drawn mass from the gas around them */
+    LEDGER_STEP_BREAKDOWN("post_collect_gas");
 #endif
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
     recent_sfr_young_mass_add(All.Time, sum_mass_stars); /* this call's births */

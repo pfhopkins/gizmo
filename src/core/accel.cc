@@ -92,7 +92,9 @@ void compute_hydro_densities_and_forces(void)
         CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif
 #ifdef GALSF /* PFH set of feedback routines (thermal, photo-ionization, radiation pressure), coupled discretely just -before- the hydro force is computed; mechanical feedback is coupled after the closing kick (run.cc) */
+        LEDGER_STEP_BREAKDOWN("pre_feedback");
         LEDGER_FB(compute_stellar_feedback());
+        LEDGER_STEP_BREAKDOWN("post_feedback");
 #endif
 
         /* Hydro corridor begin: in Mode A (any rank count) imports the gas

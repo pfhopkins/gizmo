@@ -5,6 +5,9 @@
 #if defined(KETJU_REGULARIZATION) && (defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH))
 #define STAR_MERGERS_SHARED
 #endif
+#if defined(KETJU_REGULARIZATION) && defined(KETJU_MERGE_STARS) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+#define SINGLE_STAR_MERGER_PRODUCT /* collision products get table state (Hurley+2002 rejuvenation) */
+#endif
 #ifdef STAR_MERGERS_SHARED
 /* one merger: the victim (merged away) and the survivor that takes its mass and metals */
 struct star_merger_action {

@@ -41,6 +41,10 @@ struct StellarEvolutionTables {
     double lifetime_yr[STBL_NZ * STBL_NM], remnant_mass[STBL_NZ * STBL_NM];
     int    remnant_type[STBL_NZ * STBL_NM];
     double t_PMS[STBL_NZ * STBL_NM];   /* pre-main-sequence duration (feedback delay) [yr] */
+#ifdef KETJU_MERGE_STARS
+    double t_MS_start[STBL_NZ * STBL_NM], t_MS_end[STBL_NZ * STBL_NM]; /* table age of the main sequence [yr] */
+    float *logR_cm;                                                    /* log10 stellar radius [cm], node-shared */
+#endif
     /* [NZ * NM * NAGE], node-shared */
     float *v_wind, *log_L_LW, *log_L_FUV_total, *log_L_FUV_M1, *log_L_NUV, *log_L_OPT_NIR, *log_L_bol, *log_Q_ion, *log_L_ion_tot, *log_L_ion_H0, *log_L_ion_He0, *log_L_ion_He1, *log_L_ion_He2;
 #ifdef TREECOL_SHELLS_ION_HELIUM
@@ -65,6 +69,11 @@ double stellar_lifetime(double logM, double logZ);          /* [yr] */
 double stellar_remnant_mass(double logM, double logZ);      /* [Msun] */
 int    stellar_remnant_type(double logM, double logZ);      /* enum StellarRemnantType */
 double stellar_t_PMS(double logM, double logZ);             /* [yr] */
+#ifdef KETJU_MERGE_STARS
+double stellar_t_MS_start(double logM, double logZ);        /* [yr] */
+double stellar_t_MS_end(double logM, double logZ);          /* [yr] */
+double stellar_log_R_cm(double logM, double logZ, double log_age);
+#endif
 /* (logM, logZ, log10 age [yr]) */
 double stellar_v_wind(double logM, double logZ, double log_age);     /* [km/s] */
 double stellar_log_L_LW(double logM, double logZ, double log_age);

@@ -405,6 +405,10 @@ double sgchem_docooling(int i, double u_old, double dt, double *ne_eval)
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
     CellP[i].u_anchor = u;
 #endif
+#ifdef TEST_SGCHEM_PRINT_THERMAL_PROPERTIES
+    {double mu, ne, nh0, nhp, T = ThermalProperties(u, CellP[i].Density * All.cf_a3inv, i, &mu, &ne, &nh0, &nhp, P, CellP), fmol = Get_Gas_Molecular_Mass_Fraction(i, T, nh0, ne, 0., P, CellP);
+    printf("THERMALPROPS %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g %.17g\n", T, mu, ne, nh0, nhp, CellP[i].Temp, CellP[i].TracAbund[IH2], CellP[i].TracAbund[IHP], fmol);}
+#endif
     return u;
 }
 

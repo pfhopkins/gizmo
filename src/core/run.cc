@@ -604,7 +604,9 @@ void run(void)
 #endif
         if(mechanical_fb_this_step)
         {
+            LEDGER_STEP_BREAKDOWN("pre_mechanical_feedback");
             LEDGER_FB(mechanical_fb_calc_toplevel());
+            LEDGER_STEP_BREAKDOWN("post_mechanical_feedback");
             gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
         }
 #endif
