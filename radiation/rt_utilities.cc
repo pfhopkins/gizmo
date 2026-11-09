@@ -1513,14 +1513,20 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
 
     // error estimate of the fixed-point guesses, used for bracketing below
     double fixedpoint_error = DMIN(fabs(Tdust-Tdust_fixedpoint_2), fabs(Tdust-Tdust_fixedpoint_1))/Tdust; 
-    if(fabs(dE1) < fabs(dE)){Tdust = Tdust_fixedpoint_1; dE=dE_guess=dE1;}
-    if(fabs(dE2) < fabs(dE)){Tdust = Tdust_fixedpoint_2; dE=dE_guess=dE2;}
+    /* a guess is admitted only on the side of the entry temperature toward which the dust is moving (net heating: above it;
+       net cooling: below it). The equilibrium solve stands in for a dust temperature evolving with finite heat capacity, which
+       reaches the first equilibrium in its direction and cannot cross it; a radiative-equilibrium guess sitting at the unstable
+       root between the dusty and the sublimated branches would otherwise capture a cell entering from the sublimated side. */
+    const double Td_entry = Tdust, dE_entry = dE;
+    auto on_entry_branch = [&](double Tg) {return (dE_entry > 0) ? (Tg > Td_entry) : (Tg < Td_entry);};
+    if(on_entry_branch(Tdust_fixedpoint_1) && fabs(dE1) < fabs(dE)){Tdust = Tdust_fixedpoint_1; dE=dE_guess=dE1;}
+    if(on_entry_branch(Tdust_fixedpoint_2) && fabs(dE2) < fabs(dE)){Tdust = Tdust_fixedpoint_2; dE=dE_guess=dE2;}
     
     /* bracketing the dust temperature. Both directions are bounded: unbounded, the cooling-side
        loop underflows Tdust to zero and spins forever when dE never crosses zero -- a hung rank.
        The floor is also physical: dust cannot radiatively cool below the ambient radiation bath. */
     int n_iter = 0;
-    double Tdust_floor = get_min_allowed_dustIRrad_temperature(), T_start = Tdust, dE_start = dE;
+    double Tdust_floor = get_min_allowed_dustIRrad_temperature();
     if(dE < 0)
     {
         double scalefac = DMAX(0.9, 1-fixedpoint_error);
@@ -1554,32 +1560,15 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
             PRINT_WARNING("Dust temperature bracketing (heating side) failed to converge: i=%d iter=%d T=%g Tdust=%g dE=%g\n",i,n_iter,T,Tdust,dE);
             cell[i].Dust_Temperature = DMIN(Tdust,MAX_DUST_TEMP); return 0;
         }
+        if(dE > 0 && Tdust >= MAX_DUST_TEMP) {cell[i].Dust_Temperature = MAX_DUST_TEMP; return 0;} /* net heating up to the ceiling: the dust is sublimated, and stays so
+            until the residual turns negative there. Without this the root solve below ran unbracketed and could land on the unstable root between the branches. */
         T_upper = Tdust, dE_upper = dE;
-    }
-    if(T_upper>=MAX_DUST_TEMP && dE_upper > 0)
-    {
-        /* dE>0 at the ceiling happens when the dust really sublimates, but also when the climb started above the
-           unstable upper root of a two-root residual (emission collapses with sublimation faster than absorption).
-           Walk down from the start point: the first sign change is the unstable root, the next one the stable
-           root we want. Only if the residual stays positive all the way down is the dust really sublimated. */
-        double Tk = T_start, fk = dE_start, Tprev = T_start, fprev = dE_start; int phase = (fk < 0) ? 1 : 0;
-        while(Tk > Tdust_floor && n_iter < MAXITER) {
-            Tprev = Tk; fprev = fk; Tk = DMAX(0.8*Tk, Tdust_floor);
-            fk = dE_of_dTdust(Tk-T); n_iter++;
-            if(fk == 0) {break;}
-            if(phase == 0 && fk < 0) {phase = 1; continue;}
-            if(phase == 1 && fk > 0) {phase = 2; break;}
-        }
-        if(fk == 0) {T_lower = T_upper = Tk; dE_lower = dE_upper = 0; Tdust = Tk; dE = 0;}
-        else if(phase == 2) {T_lower = Tk; dE_lower = fk; T_upper = Tprev; dE_upper = fprev; Tdust = T_upper; dE = dE_upper;}
-        else if(phase == 1) {cell[i].Dust_Temperature = DMAX(Tk,Tdust_floor); return 0;} /* negative down to the floor: as the cooling-side floor exit */
-        else {cell[i].Dust_Temperature = MAX_DUST_TEMP; return 0;} /* positive everywhere: sublimated */
     }
 
     if(dE_lower * dE_upper > 0) {PRINT_WARNING("Failed to bracket Tdust solution for ID=%lld T=%g T_lower=%g T_upper=%g dE_lower=%g dE_upper=%g\n", (long long)(long long)i /* particle index */, T, T_lower,T_upper, dE_lower, dE_upper);}
 
     if(dE!=0){  // root-solve for Tdust
-        Tdust = brent_rootfind(dE_of_dTdust, T_lower-T, T_upper-T, dE_lower, dE_upper, dTdust_tol, 0., MAXITER).x + T;
+        Tdust = brent_rootfind(dE_of_dTdust, T_lower-T, T_upper-T, dE_lower, dE_upper, dTdust_tol, 1.e-12*T, MAXITER).x + T; /* the absolute tolerance, on the temperature scale, ends the solve when the root is at Tdust = T, where a relative one is zero */
     }
     double LambdaDust = gas_dust_heating_coeff(i,T,Tdust, pp, cell) * (T-Tdust);
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(COOLING)

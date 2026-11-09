@@ -13,9 +13,13 @@
        Tdprev the cell's previous Dust_Temperature (the solvers' initial guess), LamIRgas/LamNUV gas-phase
        cooling already deposited in those bins [erg s^-1 cm^3]
    Output, one line per case on stdout:
-     id T TdA nrootA rootAlo rootAhi TdB nrootB rootBlo rootBhi
+     id T TdA nrootA rootAlo rootAhi TdB nrootB rootBlo rootBhi rootBcont
    where nroot/rootlo/roothi are the number of sign changes of the residual on a log grid in Tdust and the
-   lowest/highest bisected root (-1 if none). GIZMO's own stdout chatter is diverted to a temp file.
+   lowest/highest bisected root (-1 if none), and rootBcont is the continuation reference for B: from Tdprev,
+   follow the sign of the net dust heating (the residual) to the first equilibrium, MAX_DUST_TEMP if none above
+   (sublimated), the radiation-bath floor if none below. The equilibrium solve stands in for a dust temperature
+   evolving with finite heat capacity, so a cell keeps the branch it is on. GIZMO's own stdout chatter is
+   diverted to a temp file.
 
    Built without -ffast-math so the scan's isfinite() checks work. */
 #include <mpi.h>
@@ -51,6 +55,28 @@ template <class F> static Roots scan_roots(F f)
         x_prev = x; f_prev = fx;
     }
     return r;
+}
+
+/* continuation reference: from Td0, march in the direction of the residual's sign to the first sign change and bisect it;
+   none above -> ceiling (sublimated), none below -> floor */
+template <class F> static double continuation_root(F f, double Td0, double Td_floor)
+{
+    Td0 = DMIN(DMAX(Td0, TD_LO), TD_HI);
+    double f0 = f(Td0); if(!(f0 != 0)) {return Td0;}
+    const int up = (f0 > 0); const double step = pow(TD_HI/TD_LO, 1./NGRID), bound = up ? TD_HI : DMAX(Td_floor, TD_LO);
+    double x_prev = Td0, f_prev = f0;
+    for(int j = 0; j <= NGRID && (up ? x_prev < bound : x_prev > bound); j++)
+    {
+        double x = up ? DMIN(x_prev * step, bound) : DMAX(x_prev / step, bound), fx = f(x);
+        if(std::isfinite(fx) && ((f_prev < 0 && fx > 0) || (f_prev > 0 && fx < 0)))
+        {
+            double a = x_prev, b = x, fa = f_prev;
+            for(int it = 0; it < 60; it++) {double m = sqrt(a*b), fm = f(m); if((fm < 0) == (fa < 0)) {a = m; fa = fm;} else {b = m;}}
+            return sqrt(a*b);
+        }
+        x_prev = x; f_prev = fx;
+    }
+    return bound; /* no equilibrium in the direction the dust is moving: sublimated above, the radiation bath below */
 }
 
 int main(int argc, char **argv)
@@ -133,12 +159,14 @@ int main(int argc, char **argv)
 
         /* B: the residual is scanned with the pre-solve cell state, which is what the solver starts from */
         cell[0].Dust_Temperature = Tdprev;
-        Roots rB = scan_roots([&](double Td) {double d1, d2; return dust_dE_cooling(0, T, Td, &d1, &d2, pp, cell);});
+        auto fB = [&](double Td) {double d1, d2; return dust_dE_cooling(0, T, Td, &d1, &d2, pp, cell);};
+        Roots rB = scan_roots(fB);
+        double rootBcont = continuation_root(fB, Tdprev, get_min_allowed_dustIRrad_temperature());
         cell[0].Dust_Temperature = Tdprev;
         rt_ir_lambdadust(0, T, pp, cell);
         double TdB = cell[0].Dust_Temperature;
 
-        fprintf(out, "%ld %.17g %.17g %d %.17g %.17g %.17g %d %.17g %.17g\n", id, T, TdA, rA.n, rA.lo, rA.hi, TdB, rB.n, rB.lo, rB.hi);
+        fprintf(out, "%ld %.17g %.17g %d %.17g %.17g %.17g %d %.17g %.17g %.17g\n", id, T, TdA, rA.n, rA.lo, rA.hi, TdB, rB.n, rB.lo, rB.hi, rootBcont);
         fflush(out);
     }
     MPI_Finalize();
