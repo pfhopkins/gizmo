@@ -671,9 +671,9 @@ struct RadFBRPSpec {
                         * (double)active.local.KernelRadius;
 
         Vec3<double> dp;
-        dp[0] = (double)Pj.Pos[0] - (double)active.local.Pos[0]; /* gas minus star: the UV kick along dp points away from the star */
-        dp[1] = (double)Pj.Pos[1] - (double)active.local.Pos[1];
-        dp[2] = (double)Pj.Pos[2] - (double)active.local.Pos[2];
+        dp[0] = (double)active.local.Pos[0] - (double)Pj.Pos[0];
+        dp[1] = (double)active.local.Pos[1] - (double)Pj.Pos[1];
+        dp[2] = (double)active.local.Pos[2] - (double)Pj.Pos[2];
         nearest_xyz(dp);
         const double r2 = dp.norm_sq();
         if (r2 >= h2 || r2 <= 0) return;
