@@ -137,7 +137,7 @@ void powerspec_turb(int filenr);
 void compute_additional_forces_for_all_particles(void);
 #ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT /* gas energy ledger (diagnostic): kick terms booked per cell, source terms bracketed by the gas energy sum */
 enum {LG_HYDRO_W, LG_HYDRO_Q, LG_GRAV_W, LG_RADP_LONG_W, LG_TURB_W, LG_FB_SN, LG_FB_OTHER, LG_PHOTOION, LG_COOL, LG_FLOORS, LG_SF, LG_MERGE_SPLIT, LG_N_CLOSURE,
-      LG_FB_DEFERRED = LG_N_CLOSURE, LG_WAKE_N, LG_N};
+      LG_WAKE_N = LG_N_CLOSURE, LG_N};
 extern double EnergyLedger[LG_N];
 #ifdef _OPENMP
 #define LEDGER_ADD(c, dE) do {double ledger_tmp_ = (dE); _Pragma("omp atomic") EnergyLedger[(c)] += ledger_tmp_;} while(0)
@@ -1387,7 +1387,7 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #endif
 #if defined(GALSF_FB_MECHANICAL)
 #define LEDGER_ROWS_FB(X) X(LEDGER_M_FB_TO_GAS, "M_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_MZ_FB_TO_GAS, "MZ_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0) \
-    X(LEDGER_E_FB_THERMAL_NOW, "E_fb_thermal_now_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_FB_THERMAL_DEFERRED, "E_fb_thermal_deferred_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_FB_THERMAL_NOW, "E_fb_thermal_now_erg", UNIT_ENERGY_IN_CGS, 0) \
     X(LEDGER_E_FB_KINETIC, "E_fb_kinetic_erg", UNIT_ENERGY_IN_CGS, 0)
 #else
 #define LEDGER_ROWS_FB(X)

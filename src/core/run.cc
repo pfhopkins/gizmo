@@ -55,7 +55,7 @@ static void ledger_mass_report(void)
     fprintf(fd,"%.12g %.0f %.17g %.17g %.17g",All.Time,go[LEDGER_NEL+2],go[LEDGER_NEL],gs[1],gs[2]);
     for(int k=0;k<LEDGER_NEL;k++) {fprintf(fd," %.17g %.17g",gs[3+k],go[k]);} fprintf(fd,"\n"); fflush(fd);
 }
-static const char *LedgerNames[LG_N] = {"hydro_W","hydro_Q","grav_W","radP_long_W","turb_W","fb_SN","fb_other","photoion","cool","floors","SF","merge_split","fb_deferred","n_wake"};
+static const char *LedgerNames[LG_N] = {"hydro_W","hydro_Q","grav_W","radP_long_W","turb_W","fb_SN","fb_other","photoion","cool","floors","SF","merge_split","n_wake"};
 double ledger_local_gas_energy(void) {double e=0; for(int i=0;i<NumPart;i++) {if(P[i].Type==0 && P[i].Mass>0) {e += P[i].Mass*(0.5*P[i].Vel.norm_sq()*All.cf_a2inv + CellP[i].InternalEnergy);}} return e;}
 void ledger_log_hydro_event(int i, double dQ, double dW, double dt, int mode)
 {
@@ -604,7 +604,7 @@ void run(void)
 #endif
         if(mechanical_fb_this_step)
         {
-            mechanical_fb_calc_toplevel();
+            LEDGER_FB(mechanical_fb_calc_toplevel());
             gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
         }
 #endif

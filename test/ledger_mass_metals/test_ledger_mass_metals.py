@@ -141,21 +141,21 @@ def test_ledger_books_what_reached_the_gas(ledger):
     head = [t for t in lines[0].split()[2:] if t.endswith(("_Msun", "_erg"))]
     b = {k: rows[0, j + 1] for j, k in enumerate(head)}
     gain = (energy(run) - energy(twin)) * 1.989e33 * 1.0e10
-    print(f"gain {gain:.4e} erg, heat {b['E_fb_thermal_now_erg']:.4e}, kinetic {b['E_fb_kinetic_erg']:.4e}, deferred {b['E_fb_thermal_deferred_erg']:.4e}, ejecta {b['E_single_star_ejecta_erg']:.4e}")
+    print(f"gain {gain:.4e} erg, heat {b['E_fb_thermal_now_erg']:.4e}, kinetic {b['E_fb_kinetic_erg']:.4e}, ejecta {b['E_single_star_ejecta_erg']:.4e}")
     assert abs(b["E_fb_thermal_now_erg"] + b["E_fb_kinetic_erg"] - gain) < 0.02 * b["E_single_star_ejecta_erg"]  # of what was offered: the gain can be near zero
 
 
 def test_ledger_feedback_energy(ledger):
     """the energy the single stars' ejecta carry (1/2 dm v_ej^2 per coupled event, as the loop is asked to couple)
-    against what the feedback loop gives the gas: heat now, heat sent to the deferred DtInternalEnergy branch, kinetic"""
+    against what the feedback loop gives the gas: heat (always injected) and kinetic"""
     b, _, _ = ledger
-    need = ("E_single_star_ejecta_erg", "E_fb_thermal_now_erg", "E_fb_thermal_deferred_erg", "E_fb_kinetic_erg")
+    need = ("E_single_star_ejecta_erg", "E_fb_thermal_now_erg", "E_fb_kinetic_erg")
     assert all(k in b for k in need), f"ledger columns: {sorted(b)}"
     booked = b["E_single_star_ejecta_erg"]
-    coupled = b["E_fb_thermal_now_erg"] + b["E_fb_thermal_deferred_erg"] + b["E_fb_kinetic_erg"]
+    coupled = b["E_fb_thermal_now_erg"] + b["E_fb_kinetic_erg"]
     for k in range(len(booked)):
         print(f"t = {b['time'][k]:.2f}: ejecta {booked[k]:.6e} erg; to gas: heat now {b['E_fb_thermal_now_erg'][k]:.4e}, "
-              f"deferred {b['E_fb_thermal_deferred_erg'][k]:.4e}, kinetic {b['E_fb_kinetic_erg'][k]:.4e}; "
+              f"kinetic {b['E_fb_kinetic_erg'][k]:.4e}; "
               f"residual (gas - ejecta) / ejecta {coupled[k] / booked[k] - 1:+.3e}")
     assert booked[-1] > 0 and np.all(np.diff(booked) >= 0)
     assert np.all(np.abs(coupled / booked - 1) < 0.05)  # the loop's relative-velocity and momentum terms, not a gap

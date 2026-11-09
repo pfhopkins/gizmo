@@ -15,6 +15,6 @@ real SN path fires; winds and radiation of those stars are on and booked as thei
 - `ledger_events_<task>.txt`: cells with a single kick above 0.01e51 erg.
 
 The environment variable `LEDGER_WAKEUP_OFF` drops all wake-up requests in such a build, to show the test can see the
-hydro energy gain after an SN. `fb_deferred` is booked heat handed to `DtInternalEnergy`, not energy known to have arrived.
+hydro energy gain after an SN.
 
 Run: `pytest test/sn_driven_box`, ranks from `GIZMO_TEST_SN_BOX_RANKS` (default 32).
