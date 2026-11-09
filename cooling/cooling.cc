@@ -139,7 +139,11 @@ void cooling_parent_routine(void)
     {
         if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
 #ifdef GALSF_EFFECTIVE_EQS
-        if((CellP[i].Density*All.cf_a3inv > All.PhysDensThresh) && ((All.ComovingIntegrationOn==0) || (CellP[i].Density>=All.OverDensThresh))) {continue;} /* no cooling for effective-eos star-forming particles */
+        if((CellP[i].Density*All.cf_a3inv > All.PhysDensThresh) && ((All.ComovingIntegrationOn==0) || (CellP[i].Density>=All.OverDensThresh))) {
+#if defined(RT_INFRARED) && !defined(COOLING_OPERATOR_SPLIT)
+            CellP[i].InternalEnergy += CellP[i].InternalEnergy_FromIR_Pending; CellP[i].InternalEnergyPred += CellP[i].InternalEnergy_FromIR_Pending; CellP[i].InternalEnergy_FromIR_Pending = 0; /* no cooling call will take it: heat directly */
+#endif
+            continue;} /* no cooling for effective-eos star-forming particles */
 #endif
 #ifdef GALSF_FB_TURNOFF_COOLING
         if(CellP[i].DelayTimeCoolingSNe > 0) { /* no cooling for particles marked in delayed cooling */
