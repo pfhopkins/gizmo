@@ -38,8 +38,8 @@ T_HII_MAX_SUBCYCLE = 12000.0
     ids=["baseline", "subcycle_rt", "subcycle_rt_cooling"],
 )
 def test_HII_region_subcycle(num_mpi_ranks, num_omp_threads, extra_config_flags):
-    profiles, label, evo = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads, extra_config_flags)
-    hii.assert_hii_temperature(profiles, hi=T_HII_MAX_SUBCYCLE)
+    profiles, label, evo = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads, extra_config_flags,
+                                           t_hii_max=T_HII_MAX_SUBCYCLE)
 
     _all_profiles[label] = profiles
     _all_ifront[label] = evo
