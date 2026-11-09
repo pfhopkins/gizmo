@@ -485,6 +485,9 @@ struct global_data_all_processes
   double FacSfThreshMJ;              /*!< SF only where the Jeans mass is below FacSfThreshMJ x DesNumNgb x cell mass */
   double SFCooldownFreeFallFraction; /*!< after a birth the parent cell forms no star for this fraction of its free-fall time */
 #endif
+#ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY
+  double nHcutoffSF;                 /*!< hydrogen number density [cm^-3] above which an eligible cell forms its star at once */
+#endif
 
 #ifdef GALSF_EFFECTIVE_EQS
   double EgySpecSN;

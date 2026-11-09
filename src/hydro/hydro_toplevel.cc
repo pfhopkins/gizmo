@@ -171,12 +171,14 @@ void hydro_final_operations_and_cleanup(void)
             /* need to subtract out the source terms proportional to the (non-zero) B-field divergence; to stabilize the scheme */
             {
                 Vec3<double> Bi = CellP[i].Bfield() * All.cf_a2inv;
+#ifndef TEST_MHD_NO_POWELL_SOURCE_TERMS /* test only: leave the div-B source terms out */
 #ifndef HYDRO_SPH
                 /* this part of the induction equation has to do with advection of div-B, it is not present in SPH */
                 CellP[i].DtB -= CellP[i].divB * (CellP[i].VelPred/All.cf_atime);
 #endif
                 CellP[i].HydroAccel -= CellP[i].divB * Bi;
                 CellP[i].DtInternalEnergy -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
+#endif
             }
 
             double magnorm_closure = Get_DtB_FaceArea_Limiter(i, P, CellP);

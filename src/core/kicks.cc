@@ -270,6 +270,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
     Vec3<double> dp; double dt_entr, dt_gravkick, dt_hydrokick;
     double mass_old, mass_pred, mass_new;
     mass_old = mass_pred = mass_new = P[i].Mass;    
+#ifdef TEST_FROZEN_STARS_ZERO_VELOCITY_AND_ACCELERATION
+    if(P[i].Type == 4) {P[i].GravAccel = {}; P[i].Vel = {}; return;} /* stars stay where they are while the gravity tree runs for the radiation */
+#endif
     
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     /* need to do the slightly more complicated update scheme to maintain exact mass conservation */

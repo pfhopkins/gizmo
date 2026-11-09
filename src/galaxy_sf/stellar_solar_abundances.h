@@ -29,4 +29,25 @@ static inline void stellar_solar_abundances_fire_slots(double *solar, int n_cool
     if(n_cooling_species >= 10) {for(int k = 1; k <= 10; k++) {solar[k] = stellar_solar_massfrac[stellar_fire_slot_elem[k]];}}
 }
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+/* the 27 element mass fractions (H..Zn) of a particle's metal slots, H = 1 minus the rest; and back (H is implicit, slot 0 = metals C..Zn) */
+static inline void stellar_element_abundance_from_slots(const MyFloat *Z, double *x)
+{
+    double sum = 0;
+    for(int k = 0; k < STELLAR_SOLAR_NELEM; k++) {x[k] = 0;}
+    for(int s = 1; s <= 10; s++) {x[stellar_fire_slot_elem[s]] = Z[s];}
+    for(int e = 0; e < STELLAR_EXTRA_NELEM; e++) {x[stellar_extra_slot_elem[e]] = Z[METALS_EXTRA_PASSIVE_SPECIES_OFFSET + e];}
+    for(int k = 1; k < STELLAR_SOLAR_NELEM; k++) {sum += x[k];}
+    x[0] = 1.0 - sum;
+}
+static inline void stellar_element_abundance_to_slots(const double *x, MyFloat *Z)
+{
+    double sum = 0;
+    for(int k = 2; k < STELLAR_SOLAR_NELEM; k++) {sum += x[k];}
+    Z[0] = sum;
+    for(int s = 1; s <= 10; s++) {Z[s] = x[stellar_fire_slot_elem[s]];}
+    for(int e = 0; e < STELLAR_EXTRA_NELEM; e++) {Z[METALS_EXTRA_PASSIVE_SPECIES_OFFSET + e] = x[stellar_extra_slot_elem[e]];}
+}
+#endif
+
 #endif

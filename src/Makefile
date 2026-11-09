@@ -401,6 +401,31 @@ endif
 
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Orion_Kokkos")
+## MPCDF Orion, CPU nodes, Kokkos OpenMP backend. Modules: module load gcc openmpi gsl hwloc fftw-mpi hdf5-mpi
+KOKKOS_HOME_ORION ?= /u/uli/sw/kokkos/5.0.0-openmp-gcc13
+CC       =  mpicc
+CXX      =  mpicxx -std=c++20
+OPTIMIZE = -O3 -funroll-loops -march=native -fopenmp
+KOKKOS_CPPFLAGS = -I$(KOKKOS_HOME_ORION)/include
+KOKKOS_LIBS_PATH = -L$(KOKKOS_HOME_ORION)/lib64
+KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers -ldl
+GPU_CXX    = mpicxx -std=c++20
+GPU_CFLAGS = -I$(KOKKOS_HOME_ORION)/include
+GPU_LDFLAGS = -L$(KOKKOS_HOME_ORION)/lib64 -Wl,-rpath,$(KOKKOS_HOME_ORION)/lib64
+MKL_INCL = #
+MKL_LIBS = #
+FFTW_INCL= -I$(FFTW_HOME)/include
+FFTW_LIBS= -L$(FFTW_HOME)/lib
+GSL_INCL = -I$(GSL_HOME)/include
+GSL_LIBS = -L$(GSL_HOME)/lib
+HDF5INCL = -I$(HDF5_HOME)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_HOME)/lib -lhdf5 -lz
+MPICHLIB = #
+endif
+
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Lonestar6")
 ## Lonestar6 (TACC), NVIDIA A100 GPU nodes (sm_80; 3 per node on 2x AMD EPYC 7763 "Milan"), Kokkos
 ## CUDA backend. Device TUs (GPU_OBJS) are compiled by nvcc_wrapper with gcc as host compiler,

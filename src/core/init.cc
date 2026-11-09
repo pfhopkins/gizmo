@@ -1025,6 +1025,13 @@ void init(void)
        Here we only need the post-density cleanup since no gradients/hydro follow. */
     density();
     if(NTask > 1) {ghost_exchange_cleanup();}
+#ifdef SGCHEM_TEMPERATURE_FROM_CHEMISTRY_AT_SNAPSHOT_RESTART
+    if(RestartFlag == 2) {for(i = 0; i < N_gas; i++) {if(P[i].Type == 0) {CellP[i].Temp = sgchem_startup_temperature(i);
+#ifdef TEST_SGCHEM_PRINT_THERMAL_PROPERTIES
+        printf("RESTARTTEMP %llu %.17g\n", (unsigned long long) P[i].ID, (double) CellP[i].Temp);
+#endif
+    }}} /* snapshots carry no Temp: derive it before the first force pass reads it */
+#endif
 
     /* Seed the per-particle ForceSoftening cache for ALL particles loaded from
      * the IC.  This populates the single-source-of-truth value read by both CPU

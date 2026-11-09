@@ -2563,6 +2563,11 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.SFCooldownFreeFallFraction;
       id[nt++] = REAL;
 #endif
+#ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY
+      strcpy(tag[nt], "nHcutoffSF");
+      addr[nt] = &All.nHcutoffSF;
+      id[nt++] = REAL;
+#endif
 
 #ifdef GALSF_EFFECTIVE_EQS
       strcpy(tag[nt], "FactorSN");

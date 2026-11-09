@@ -13,6 +13,12 @@
 #include "../mesh/kernel.h"
 #include "../core/timestep_functions.h"   /* the Hermite predicted state written by IO_HERMITE_SYNC */
 #include "../core/predict_functions.h"    /* box_wrap_position_to_primary_image: the shear-periodic image a snapshot writes */
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+#include "../gravity/gravtree_treecol_pixels.h"
+#endif
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+#include "../galaxy_sf/stellar_solar_abundances.h"
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 /* get_ISMDustChemEvo_bin_mass is KOKKOS_INLINE_FUNCTION (Chunk 1, 2026-05-26). */
 #include "../solids/ism_dust_chemistry_functions.h"
@@ -720,6 +726,12 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE: /* 27 element mass fractions H..Zn from the metal slots */
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {double x[STELLAR_SOLAR_NELEM]; stellar_element_abundance_from_slots(P[pindex].Metallicity, x); for(k = 0; k < STELLAR_SOLAR_NELEM; k++) {*fp++ = (MyOutputFloat) x[k];} n++;}
+            break;
+#endif
         case IO_Z:			/* gas and star metallicity */
 #ifdef METALS
             for(n = 0; n < pc; pindex++)
@@ -860,6 +872,12 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
         case IO_CHEM_PHOTORATES:
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type) {for(k = 0; k < 6; k++) {*fp++ = (MyOutputFloat) CellP[pindex].SGChemPhotoRates[k];} n++;}
+            break;
+#endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS: /* [column][pixel] in g/cm^2 */
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {for(k = 0; k < TREECOL_PIXELS_NCOLUMNS * GALSF_RESOLVEDISM_TREECOL_PIXELS; k++) {*fp++ = (MyOutputFloat) (TREECOL_PIXELS_COLUMN(CellP[pindex], k / GALSF_RESOLVEDISM_TREECOL_PIXELS, k % GALSF_RESOLVEDISM_TREECOL_PIXELS) * UNIT_SURFDEN_IN_CGS);} n++;}
             break;
 #endif
         case IO_SGCHEM_TRACABUND:
@@ -2480,6 +2498,11 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             break;
 #endif
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            bytes_per_blockelement = STELLAR_SOLAR_NELEM * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
         case IO_Z:
 #ifdef METALS
             if(mode)
@@ -2558,6 +2581,11 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #ifdef OUTPUT_CHEM_PHOTORATES
         case IO_CHEM_PHOTORATES:
             bytes_per_blockelement = 6 * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
+            bytes_per_blockelement = TREECOL_PIXELS_NCOLUMNS * GALSF_RESOLVEDISM_TREECOL_PIXELS * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
             break;
 #endif
         case IO_SGCHEM_TRACABUND:
@@ -2895,6 +2923,11 @@ int get_values_per_blockelement(enum iofields blocknr)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            values = STELLAR_SOLAR_NELEM;
+            break;
+#endif
         case IO_Z:
 #ifdef METALS
             values = NUM_METAL_SPECIES;
@@ -2952,6 +2985,11 @@ int get_values_per_blockelement(enum iofields blocknr)
 #ifdef OUTPUT_CHEM_PHOTORATES
         case IO_CHEM_PHOTORATES:
             values = 6;
+            break;
+#endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
+            values = TREECOL_PIXELS_NCOLUMNS * GALSF_RESOLVEDISM_TREECOL_PIXELS;
             break;
 #endif
         case IO_SGCHEM_TRACABUND:
@@ -3188,6 +3226,9 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
 #ifdef OUTPUT_CHEM_PHOTORATES
         case IO_CHEM_PHOTORATES:
 #endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
+#endif
         case IO_SGCHEM_TRACABUND:
 #endif
         case IO_CHIMES_MU:
@@ -3250,6 +3291,12 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
             return nstars + npart_in_file[5];
             break;
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            for(i = 0; i < 6; i++) {if(i != 0 && i != 4) {typelist[i] = 0;}}
+            return ngas + nstars;
+            break;
+#endif
         case IO_Z:
             for(i = 0; i < 6; i++) {if(i != 0 && i != 4 && i != 5) {typelist[i] = 0;}}
             return ngas + nstars + npart_in_file[5];
@@ -3418,6 +3465,11 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            return 1;
+            break;
+#endif
         case IO_Z:
 #ifdef METALS
             return 1;
@@ -3470,6 +3522,9 @@ int blockpresent(enum iofields blocknr)
 #endif
 #ifdef OUTPUT_CHEM_PHOTORATES
         case IO_CHEM_PHOTORATES:
+#endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
 #endif
         case IO_SGCHEM_TRACABUND:
         case IO_SGCHEM_DUSTTEMP:
@@ -4171,6 +4226,11 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_HSMS:
             strncpy(label, "HSMS", 4);
             break;
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            strncpy(label, "EABU", 4);
+            break;
+#endif
         case IO_Z:
             strncpy(label, "Z   ", 4);
             break;
@@ -4224,6 +4284,11 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
 #ifdef OUTPUT_CHEM_PHOTORATES
         case IO_CHEM_PHOTORATES:
             strncpy(label, "SCPR", 4);
+            break;
+#endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
+            strncpy(label, "TCPC", 4);
             break;
 #endif
         case IO_SGCHEM_TRACABUND:
@@ -4723,6 +4788,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_HSMS:
             strcpy(buf, "StellarKernelMaxRadius");
             break;
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE:
+            strcpy(buf, "ElementAbundance");
+            break;
+#endif
         case IO_Z:
             strcpy(buf, "Metallicity");
             break;
@@ -4776,6 +4846,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
 #ifdef OUTPUT_CHEM_PHOTORATES
         case IO_CHEM_PHOTORATES:
             strcpy(buf, "ChemPhotoRates");
+            break;
+#endif
+#ifdef OUTPUT_TREECOL_PIXEL_COLUMNS
+        case IO_TREECOL_PIXEL_COLUMNS:
+            strcpy(buf, "TreeColumnPixels");
             break;
 #endif
         case IO_SGCHEM_TRACABUND:

@@ -539,6 +539,12 @@ void cooling_parent_routine(void)
      * first: the copy in and the copy back are pure overhead here. The device path
      * above still stages, because there the compaction is what puts the elements
      * somewhere the kernel can read. */
+#ifdef TEST_COOLING_COMPARE_THREADED_PASS_WITH_SERIAL_PASS /* serial reference on copies of the same inputs, then the threaded pass must reproduce it byte for byte */
+    std::vector<struct particle_data> xin_P(N_active), xref_P(N_active); std::vector<struct gas_cell_data> xin_C(N_active), xref_C(N_active);
+    for(int j = 0; j < N_active; j++) {xin_P[j] = P[cool_indices[j]]; xin_C[j] = CellP[cool_indices[j]];}
+    for(int j = 0; j < N_active; j++) {do_the_cooling_for_particle(cool_indices[j], P, CellP);}
+    for(int j = 0; j < N_active; j++) {int i = cool_indices[j]; xref_P[j] = P[i]; xref_C[j] = CellP[i]; P[i] = xin_P[j]; CellP[i] = xin_C[j];}
+#endif
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -546,6 +552,18 @@ void cooling_parent_routine(void)
     {
         do_the_cooling_for_particle(cool_indices[j], P, CellP);
     }
+#ifdef TEST_COOLING_COMPARE_THREADED_PASS_WITH_SERIAL_PASS
+    {
+        int n_bad = 0, j_bad = -1;
+        for(int j = 0; j < N_active; j++) {int i = cool_indices[j];
+            if(memcmp(&xref_P[j], &P[i], sizeof(struct particle_data)) || memcmp(&xref_C[j], &CellP[i], sizeof(struct gas_cell_data))) {if(n_bad++ == 0) {j_bad = j;}}}
+        if(n_bad > 0) {int i = cool_indices[j_bad];
+            PRINT_WARNING("cooling: %d of %d cells differ between the serial and the threaded pass; first ID=%llu InternalEnergy %.17g (threaded) vs %.17g (serial)",
+                          n_bad, N_active, (unsigned long long) P[i].ID, CellP[i].InternalEnergy, xref_C[j_bad].InternalEnergy);
+            endrun(8859);}
+        if(ThisTask == 0) {printf("COOLING_CROSSCHECK: %d cells on task 0, threaded pass equals the serial pass\n", N_active); fflush(stdout);}
+    }
+#endif
     for(int j = 0; j < N_active; j++)
     {
         int i = cool_indices[j];

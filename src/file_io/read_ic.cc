@@ -9,6 +9,9 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+#include "../galaxy_sf/stellar_solar_abundances.h"
+#endif
 #include "../galaxy_sf/single_star_record.h"
 #include "../domain/domain.h"
 
@@ -715,6 +718,11 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+#ifdef GALSF_SINGLE_STARS_ELEMENT_ABUNDANCE_BLOCK
+        case IO_ELEMENT_ABUNDANCE: /* snapshot restart: the 27 element mass fractions fill the metal slots (H is implicit) */
+            for(n = 0; n < pc; n++) {double x[STELLAR_SOLAR_NELEM]; for(k = 0; k < STELLAR_SOLAR_NELEM; k++) {x[k] = *fp++;} stellar_element_abundance_to_slots(x, P[offset + n].Metallicity);}
+            break;
+#endif
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS: /* a star with a drawn mass > 0 gets a record; the birth metallicity fills it */
         case IO_SINGLE_STAR_BIRTH_Z:
