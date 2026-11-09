@@ -12,6 +12,7 @@ import sys
 import subprocess
 from pathlib import Path
 import numpy as np
+import h5py
 import pytest
 from gizmo.test import build_gizmo_for_test, mpi_launch_command
 
@@ -19,6 +20,19 @@ TEST_NAME = "mhd_kernel_volume_energy"
 TEST_DIR = Path(__file__).parent
 sys.path.insert(0, str(TEST_DIR))
 from make_mhd_box_ics import write_ics  # noqa: E402
+
+
+UM, UL, UV = 1.989e43, 3.085678e21, 1.0e5
+
+
+def energies(fn):
+    """E_kin, E_th, E_B [erg] from a snapshot (code units kpc, 1e10 Msun, km/s; B in gauss)"""
+    with h5py.File(fn, "r") as f:
+        p = f["PartType0"]
+        m = p["Masses"][:] * UM; v2 = np.sum(p["Velocities"][:] ** 2, axis=1) * UV ** 2
+        u = p["InternalEnergy"][:] * UV ** 2; V = p["Masses"][:] / p["Density"][:] * UL ** 3
+        B2 = np.sum(p["MagneticField"][:] ** 2, axis=1)
+    return 0.5 * np.sum(m * v2), np.sum(m * u), np.sum(B2 / (8 * np.pi) * V)
 
 
 def run(tag, flags=()):
@@ -31,11 +45,14 @@ def run(tag, flags=()):
     shutil.copy(TEST_DIR / f"{TEST_NAME}.params", d / "run.params")
     with open(d / "run.out", "w") as out:
         subprocess.run(mpi_launch_command(2, 1) + [str(d / "GIZMO"), "run.params"], cwd=d, stdout=out, stderr=subprocess.STDOUT, check=True)
-    a = np.loadtxt(d / "output" / "energy_ledger.txt", ndmin=2)
-    E = a[:, 2] + a[:, 3] + a[:, 4]
-    drift = (E[-1] - E[0]) / E[0]
-    print(f"{tag}: {len(a)} synchronised rows to t = {a[-1, 0]:.5g}, E_B {a[0, 4]:.5g} -> {a[-1, 4]:.5g}, E_th {a[0, 3]:.5g} -> {a[-1, 3]:.5g} (1e51 erg), end drift {drift:+.5f}, largest {np.max(np.abs(E - E[0])) / E[0]:.5f}")
-    assert a[-1, 0] > 0.0019
+    snaps = sorted((d / "output").glob("snapshot_*.hdf5"))
+    t, E = [], []
+    for s in snaps:
+        t.append(h5py.File(s, "r")["Header"].attrs["Time"]); E.append(energies(s))
+    E = np.array(E); Et = E.sum(axis=1)
+    drift = (Et[-1] - Et[0]) / Et[0]
+    print(f"{tag}: {len(snaps)} snapshots to t = {t[-1]:.5g}, E_B {E[0, 2]:.4e} -> {E[-1, 2]:.4e}, E_th {E[0, 1]:.4e} -> {E[-1, 1]:.4e} erg, end drift {drift:+.5f}, largest {np.max(np.abs(Et - Et[0])) / Et[0]:.5f}")
+    assert t[-1] > 0.0019
     return drift
 
 

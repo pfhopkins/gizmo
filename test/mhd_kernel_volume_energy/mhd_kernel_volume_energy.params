@@ -3,8 +3,8 @@ InitCondFile                       snapshot_000
 OutputDir                          output
 ICFormat                           3
 SnapFormat                         3
-TimeBetSnapshot                    0.002
-TimeOfFirstSnapshot                0.002
+TimeBetSnapshot                    0.0005
+TimeOfFirstSnapshot                0
 TimeBegin                          0.0
 TimeMax                            0.002
 BoxSize                            0.07
