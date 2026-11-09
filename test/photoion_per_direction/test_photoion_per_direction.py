@@ -26,7 +26,7 @@ def built():
     return tables
 
 
-def run(tag, tables, stars=CENTRE, ranks=1, threads=1, seed=None, overrides=None, exe="GIZMO", extra="", n_metals=1):
+def run(tag, tables, stars=CENTRE, ranks=1, threads=1, seed=None, overrides=None, exe="GIZMO", extra="", n_metals=1, timeout=None):
     """the run directory and the lattice (cell size, n_H)"""
     import sys
     sys.path.insert(0, str(TEST_DIR))
@@ -45,7 +45,7 @@ def run(tag, tables, stars=CENTRE, ranks=1, threads=1, seed=None, overrides=None
     (d / f"{TEST_NAME}.params").write_text(params + extra)
     with open(d / f"test_{TEST_NAME}.out", "w") as out:
         subprocess.run(mpi_launch_command(ranks, threads) + [str(TEST_DIR / exe), f"{TEST_NAME}.params", "2", "0"],
-                       cwd=d, stdout=out, stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": str(threads)}, check=True)
+                       cwd=d, stdout=out, stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": str(threads)}, check=True, timeout=timeout)
     return d, dx, n_H
 
 
@@ -342,3 +342,21 @@ def test_compact_exchange(built):
     rows = log(d)
     assert "cap ineffective" not in (d / f"test_{TEST_NAME}.out").read_text()
     assert np.array_equal(rows[:, [1, 3, 8]], ref[:, [1, 3, 8]]) and np.allclose(rows[:, [9, 10]], ref[:, [9, 10]], rtol=1e-6, atol=0)
+
+
+def test_run_shorter_than_the_photoionisation_step(built):
+    """a run window (TimeMax - TimeBegin) much shorter than PhotoionMaxTimestep: the cap bin is the largest step of the
+    timeline, not an overflow; the ionising star does not step at the timeline's smallest bin (run ends within 1000 steps) and
+    the cells it ionises stay ionised to the stamp of its step, past the end of the run"""
+    d, _, _ = run("short_window", built, overrides={"TimeMax": "1e-4", "MaxSizeTimestep": "0.02", "PhotoionMaxTimestep": "1e4",
+                  "TimeBetSnapshot": "1e-4", "TimeBetStatistics": "1e-4"}, timeout=600)
+    text = (d / f"test_{TEST_NAME}.out").read_text()
+    assert "Final time" in text
+    steps = text.count("Sync-Point")
+    print("steps", steps)
+    assert steps < 1000, steps
+    import h5py
+    with h5py.File(sorted((d / "output").glob("snapshot_*.hdf5"))[-1], "r") as F:  # the cells the last solve ionised stay ionised to its stamp
+        t, until = F["Header"].attrs["Time"], F["PartType0/PhotoionizedUntilTime"][()]
+    print("cells ionised past the end", int((until >= t).sum()), "of", int((until > 0).sum()))
+    assert (until >= t).sum() > 0
