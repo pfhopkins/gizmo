@@ -46,3 +46,4 @@ CosmicRayDiffusionCoeff 690
 CosmicRayInitialAmbient_eVcm3 1.0
 InitRadiationTemp 10
 InitRadiationTemp 10
+UnitMagneticField_in_gauss 1.0
