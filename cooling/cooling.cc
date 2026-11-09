@@ -1185,6 +1185,27 @@ extern FILE *fd;
 #ifndef CHIMES
 /*  Calculates (heating rate-cooling rate)/n_h^2 in cgs units
  */
+#if defined(RT_CHEM_PHOTOION)
+/* HI photoionization rate per neutral hydrogen atom (1/s) from the explicitly-transported ionizing radiation in a cell: sum over the
+   ionizing bands of sigma_HI * c * n_photons, the same expression find_abundances_and_rates adds to the chemistry's gJH0ne */
+static double rt_local_HI_photoionization_rate(int target, struct gas_cell_data *cell)
+{
+    double rate = 0; const double c_code = C_LIGHT_CGS / UNIT_LENGTH_IN_CGS;
+    for(int k = 0; k < N_RT_FREQ_BINS; k++)
+    {
+        if(RT_BAND_IS_IONIZING(k) && (rt_ion_G_HI[k] > 0))
+        {
+            double n_gamma_tot = cell[target].rt_photon_number_density(k);
+#ifdef RT_INFRARED
+            n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
+#endif
+            rate += rt_ion_sigma_HI[k] * c_code * n_gamma_tot;
+        }
+    }
+    return rate;
+}
+#endif
+
 double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double n_elec=n_elec_guess, nH0, nHe0, nHp, nHep, nHepp, mu; /* ionization states [computed below] */
@@ -1241,24 +1262,41 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
 
-        double metal_table_weight = 1; /* weight of the tabulated metal lines, reduced below only in the photoionized fraction the nebular term covers */
+        double metal_table_weight = 1; /* share of the tabulated metal-line cooling kept, after the handover to the nebular term below */
 #if defined(RT_CHEM_PHOTOION) && defined(METALS)   /* reads Metallicity[], which only exists under METALS */
         /* nebular (photoionized forbidden-line) cooling from O+, O++, N+, S+, Ne+ : Kim, Gong, Kim & Ostriker 2023 (ApJS 264, 10), Eq. 47.
-           GIZMO's tabulated metal-line cooling below (Wiersma+08: UV-background photoionization equilibrium) under-predicts the forbidden-line
-           cooling of gas photoionized by stars; this fit supplies the missing coolant that sets the ~1e4 K equilibrium of HII regions. Lambda_neb is a per-nH^2
-           coefficient in erg cm^3 s^-1 (= Zg * x_e * x_H+ * C(T,n_e); the volumetric rate ~ n_e*n_H+, so it is n^2 like the other channels --
-           it lowers the equilibrium T by raising Lambda(T), not by any density-independence). Valid for photoionized gas (nHp>0, free electrons). */
+           Two models of the metal-line cooling: the tables (Wiersma+08) assume every species is ionized by the UV background and
+           collisions; in gas ionized by the local radiation followed here that is wrong for all of them, and this term (dominated by
+           N, O, Ne, S, which set its normalization) gives the ~1e4 K equilibrium of an HII region instead. The share of the hydrogen
+           ionization owed to the local radiation selects between them: that share, times the ionized fraction, of the table cooling
+           hands over to this term, and gas ionized by the background or by collisions keeps the tables (an ionized-fraction blend alone
+           halved the net cooling of background-ionized gas at 1e4 K). Lambda_neb is a per-nH^2 coefficient in erg cm^3 s^-1 like the
+           other channels (the volumetric rate goes as n_e*n_H+). */
         if(T > 2.0e3 && T < 5.0e4 && n_elec > 0 && nHp > 0 && target >= 0) {
             double T4 = T * 1.0e-4, lnT4 = log(T4), ne_2 = nHcgs * n_elec / 100.; /* n_e in units of 100 cm^-3 */
             double log10_fneb = 0.692 + lnT4*(-0.586 + lnT4*(0.816 + lnT4*(-0.505 + lnT4*(0.118 + lnT4*(0.00766 - 0.00508*lnT4)))));
-            LambdaNeb = n_elec * nHp * (pp[target].Metallicity[0] / All.SolarAbundances[0])
+            double neb_metals = pp[target].Metallicity[0] / All.SolarAbundances[0]; /* the fit's ions (N, O, Ne, S) relative to solar: total metallicity, or the species themselves where tracked */
+#ifdef COOL_METAL_LINES_BY_SPECIES
+            neb_metals = (Z[3] + Z[4] + Z[5] + Z[8]) / (All.SolarAbundances[3] + All.SolarAbundances[4] + All.SolarAbundances[5] + All.SolarAbundances[8]);
+#endif
+            LambdaNeb = n_elec * nHp * neb_metals
                 * 3.68e-23 * exp(-DMIN(3.86/T4, 100.)) / sqrt(T4) * pow(10., log10_fneb)
                 / (1. + 0.12*pow(ne_2, 0.38 - 0.12*lnT4)); /* collisional de-excitation: multi-line, T-dependent power per Kim+23 Eq.47 (not a single critical density) */
-            double neb_weight = 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* (1-S): Kim+23 sigmoid taper (a=10) over T_t1=2e4..T_t2=3.5e4 K */
-            LambdaNeb *= neb_weight;
-            /* the fit replaces the tables only in the ionized fraction, or both would count the same forbidden lines there. Below ~2e4 K the
-               tables then go as n_e*n_HI: electron-excited lines of the singly ionized metals in neutral gas (Fe, Si, S, O, ...), its main coolant */
-            metal_table_weight = 1. - neb_weight * DMAX(0., DMIN(1., nHp));
+            double neb_weight = 1. / ((1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))) * (1. + exp(DMIN(10.*(3.e3 - T)/2.e3, 60.)))); /* Kim+23 sigmoid taper (a=10) over 2e4-3.5e4 K, and over 4e3-2e3 K where the fit no longer applies */
+            /* HI photoionization rate per neutral atom from the local radiation (the chemistry's own expression, find_abundances_and_rates),
+               against collisions and the UV background (the long-range local flux multiplies the background: that excess counts as local) */
+            double ionization_rate_local = rt_local_HI_photoionization_rate(target, cell), ionization_rate_other = 0;
+            {
+                double t_tab = (logT - Tmin) / deltaT; int j_tab = (int)t_tab; if(j_tab < 0) {j_tab = 0;} if(j_tab > NCOOLTAB - 1) {j_tab = NCOOLTAB - 1;}
+                double f_tab = DMIN(1., DMAX(0., t_tab - j_tab));
+                ionization_rate_other = n_elec * nHcgs * ((1.-f_tab) * GammaeH0[j_tab] + f_tab * GammaeH0[j_tab+1]); /* collisions */
+#if !defined(RT_DISABLE_UV_BACKGROUND)
+                if(J_UV != 0) {ionization_rate_other += gJH0 * shieldfac; ionization_rate_local += gJH0 * (local_gammamultiplier - 1.) * shieldfac;}
+#endif
+            }
+            double local_share = neb_weight * ionization_rate_local / (ionization_rate_local + ionization_rate_other + MIN_REAL_NUMBER);
+            LambdaNeb *= local_share;
+            metal_table_weight = 1. - local_share * DMAX(0., DMIN(1., nHp)); /* the tables count the same lines: hand them over only where the local radiation did the ionizing */
             if(LambdaNeb > 0) { Lambda += LambdaNeb; }
         }
 #endif
@@ -1470,7 +1508,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     if(target >= 0) { /* attempt to account for gas-phase absorption self-opacity to cooling radiation here in limit where optically-thick regions are poorly resolved: only valid in some limits, so not really general here */
         double gas_self_absorption_opacity = rt_kappa_adaptive_IR_band(target,T,T,-1,-1, pp, cell), surface_density_fromcenter = 0.5 * (cell[target].Density*All.cf_a3inv) * (pp[target].Get_Particle_Size()*All.cf_atime);
         double tau_self = gas_self_absorption_opacity * surface_density_fromcenter, fcorr = 1./(1.+tau_self*tau_self);
-        Heat*=fcorr; Lambda*=fcorr; LambdaMetal*=fcorr; LambdaExc*=fcorr; LambdaRec*=fcorr; LambdaIon*=fcorr; LambdaPElec*=fcorr; LambdaFF*=fcorr; LambdaMol*=fcorr; LambdaDust*=fcorr; LambdaCompton*=fcorr;
+        Heat*=fcorr; Lambda*=fcorr; LambdaMetal*=fcorr; LambdaNeb*=fcorr; LambdaExc*=fcorr; LambdaRec*=fcorr; LambdaIon*=fcorr; LambdaPElec*=fcorr; LambdaFF*=fcorr; LambdaMol*=fcorr; LambdaDust*=fcorr; LambdaCompton*=fcorr;
 #ifdef RT_DIAG_IR_DOUBLE_COUNT
         rt_diag_cr.fcorr = fcorr;
 #endif
