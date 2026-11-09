@@ -32,9 +32,9 @@ static void byten(void *x, size_t n, int modus);
    rank count, the CHIMES species count, the turbulent-driving mode count) is in the table. A reordering or a same-size type change cannot be seen from here: bump RESTARTFILE_LAYOUT_VERSION for those,
    and whenever an item is added to or removed from restart() without a size below changing. Add every new raw structure to this table. */
 #define RESTARTFILE_MAGIC 0x52535446u
-#define RESTARTFILE_LAYOUT_VERSION 3u
-enum {RESTART_ITEM_ALL, RESTART_ITEM_P, RESTART_ITEM_CELL, RESTART_ITEM_NODE, RESTART_ITEM_EXTNODE, RESTART_ITEM_TOPNODE, RESTART_ITEM_TIMEBINS, RESTART_ITEM_CHIMES_GAS, RESTART_ITEM_CHIMES_FLOAT, RESTART_ITEM_CHIMES_SPECIES, RESTART_ITEM_TURB_MODES, RESTART_N_ITEMS};
-static const char *restart_item_names[RESTART_N_ITEMS] = {"All", "P", "CellP", "tree node", "tree node extension", "top node", "timebin count", "Chimes gas state", "Chimes abundance", "Chimes species", "turbulent driving modes"};
+#define RESTARTFILE_LAYOUT_VERSION 4u
+enum {RESTART_ITEM_ALL, RESTART_ITEM_P, RESTART_ITEM_CELL, RESTART_ITEM_NODE, RESTART_ITEM_EXTNODE, RESTART_ITEM_TOPNODE, RESTART_ITEM_TIMEBINS, RESTART_ITEM_CHIMES_GAS, RESTART_ITEM_CHIMES_FLOAT, RESTART_ITEM_CHIMES_SPECIES, RESTART_ITEM_TURB_MODES, RESTART_ITEM_SINGLE_STAR, RESTART_ITEM_PHOTOION_FRONT, RESTART_ITEM_LEDGER_ROWS, RESTART_N_ITEMS};
+static const char *restart_item_names[RESTART_N_ITEMS] = {"All", "P", "CellP", "tree node", "tree node extension", "top node", "timebin count", "Chimes gas state", "Chimes abundance", "Chimes species", "turbulent driving modes", "single-star record", "photoionisation front", "ledger rows"};
 struct restart_layout_header {unsigned int magic, layout_version; unsigned long long n_tasks, item_size[RESTART_N_ITEMS];};
 
 static struct restart_layout_header restart_layout_header_of_this_run(void)
@@ -55,6 +55,17 @@ static struct restart_layout_header restart_layout_header_of_this_run(void)
 #endif
 #ifdef TURB_DRIVING
     hdr.item_size[RESTART_ITEM_TURB_MODES] = (unsigned long long) StNModes; /* set by init_turb from the parameters, before any restart read; the mode arrays are allocated at it */
+#endif
+#ifdef SINGLE_STAR_RECORDS
+#define SSR_BYTES(type, name, comment) + sizeof(type)
+    hdr.item_size[RESTART_ITEM_SINGLE_STAR] = 0 SINGLE_STAR_RECORD_FIELDS(SSR_BYTES) + sizeof(uint8_t); /* bytes per record slot */
+#undef SSR_BYTES
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    hdr.item_size[RESTART_ITEM_PHOTOION_FRONT] = (unsigned long long) photoion_front_record_bytes();
+#endif
+#endif
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    hdr.item_size[RESTART_ITEM_LEDGER_ROWS] = LEDGER_NROWS;
 #endif
     return hdr;
 }
