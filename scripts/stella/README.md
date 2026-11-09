@@ -16,3 +16,4 @@ Set `InitCondFile`, `StellarTablesFile` and `SGChemTablesPath` (and `BoxSize` fo
 `MULTIPLEDOMAINS`, `NO_ISEND_IRECV_IN_DOMAIN`, `MaxMemSize` and `BufferSize` are not read in this tree and are not set; `TimeBetStatistics` is read only with `DEVELOPER_MODE` (ledger.txt replaces the energy statistics).
 Not ported, so absent from the params: `TimeInstantSN`, `MaxMassForParticleSplit` (derived from the IC), `CritOverDensity` (fixed 1000).
 `PhotoionMaxTimestep` is not set: the default of 10 kyr differs from stella_dev, which solves every step (inventory H2).
+`MaxStellarTimestep` 1e4 yr (code default 50 kyr) is the whole single-star step rule, as gizmo2017: a star dies at its first step past its lifetime, at most one step late. stella_dev also steps down to the death; that made 250-300 global steps per death.

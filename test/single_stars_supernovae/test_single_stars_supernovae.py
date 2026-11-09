@@ -2,6 +2,7 @@
 from the stellar-evolution tables (GALSF_SINGLE_STARS_EVOLUTION_TABLES + GALSF_SINGLE_STARS_FROM_IMF +
 GALSF_FB_MECHANICAL, pure-thermal coupling). See README.md."""
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -118,15 +119,40 @@ def test_ranks_and_threads(built):
         assert abs(t["M"] / t2["M"] - 1) < 1e-13 and abs(t["E"] / t2["E"] - 1) < 1e-5, tag
 
 
-def test_deaths_on_time_with_long_steps(built):
-    """the stars are 37 kyr from death and the largest allowed step is the whole 60 kyr run: each dies within 1 kyr of its table death
-    time (a single star's step is limited by the time to its next stellar-evolution event, not by the population rule)"""
+@pytest.mark.parametrize("cap_kyr", [10.0, 50.0])
+def test_death_step_as_gizmo2017(built, cap_kyr):
+    """stars 37 kyr from death and a long largest step: no step before the first death falls below the bin of
+    MaxStellarTimestep, and each star dies at its first step past the table death time, at most one cap later"""
     kyr = 1e3 / (3.085678e13 / 3.155e7)  # code time per kyr, with the code's year
-    _, _, rows = run("long_steps", built, before_death_yr=37e3,
-                     overrides=dict(MaxSizeTimestep=60 * kyr, TimeMax=60 * kyr, TimeBetSnapshot=60 * kyr, TimeBetStatistics=60 * kyr))
+    _, _, rows = run(f"death_step_{cap_kyr:.0f}", built, before_death_yr=37e3,
+                     overrides=dict(MaxStellarTimestep=cap_kyr * 1e3, MaxSizeTimestep=120 * kyr, TimeMax=120 * kyr, TimeBetSnapshot=120 * kyr, TimeBetStatistics=120 * kyr))
     assert len(rows) == 4
     t_kyr = rows[:, 0] / kyr
-    assert np.all((t_kyr >= 37.0) & (t_kyr <= 38.0)), t_kyr
+    assert np.all((t_kyr > 37.0) & (t_kyr <= 37.0 + cap_kyr)), t_kyr
+    steps = [(float(m.group(1)), float(m.group(2))) for m in re.finditer(r"Sync-Point \d+, Time: (\S+), Systemstep: (\S+)", (TEST_DIR / f"run_death_step_{cap_kyr:.0f}" / f"test_{TEST_NAME}.out").read_text())]
+    before = [dt / kyr for t, dt in steps if 0 < t < rows[:, 0].min()]
+    assert len(before) <= 37.0 / (0.5 * cap_kyr) + 3, len(before)
+    assert min(before) >= 0.5 * cap_kyr, min(before)
+
+
+def test_death_with_winds_owed(built):
+    """stars past death with the winds of the last 5 % of their life not returned: the death fires in the first step, as one
+    event of the whole star, and the owed winds leave with its ejecta"""
+    ic, snap, rows = run("winds_owed", built, ic_args={"winds_owed_dex": np.log10(1 / 0.95)})
+    a, b = totals(ic), totals(snap)
+    assert len(rows) == 4 and np.all(rows[:, 2] == 1)
+    assert np.ptp(rows[:, 0]) == 0 and rows[0, 0] <= 1e-5  # the first step
+    assert np.all(rows[:, 5] == rows[:, 4])  # nothing left the star before the death
+    assert abs(b["M"] - a["M"] - rows[:, 6].sum()) <= 1e-12 * b["M"]
+    assert abs(b["MZ"][0] - a["MZ"][0] - rows[:, 9].sum()) <= 1e-10 * rows[:, 9].sum()
+    # the owed winds keep their mass and composition: the failed SN has no table yields, so its metals are theirs alone
+    with h5py.File(built["StellarTablesFile"], "r") as T, h5py.File(Path(built["StellarTablesFile"]).parent / "stellar_wind_cumulative.hdf5", "r") as W:
+        Zt, Mt, la = T["Z"][()], T["M_init"][()], T["log_age_yr"][()]
+        iz, im = int(np.argmin(np.abs(Zt - 0.014))), int(np.argmin(np.abs(Mt - 40.0)))
+        cum = W["elem_ej_wind_cumulative"][()].reshape(len(Zt), len(Mt), len(la), -1)[iz, im, :, 2:].sum(1)
+        life = T["lifetime_yr"][()].reshape(len(Zt), len(Mt))[iz, im]
+    owed = np.interp(np.log10(life), la, cum) - np.interp(np.log10(0.95 * life), la, cum)
+    assert owed > 0 and abs(rows[rows[:, 4] == 40.0, 9][0] / owed - 1) < 1e-4, (rows[rows[:, 4] == 40.0, 9], owed)
 
 
 def test_element_yields(built):

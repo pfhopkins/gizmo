@@ -23,3 +23,4 @@ DomainBuild_ActiveFraction         0.5
 CritPhysDensity                    1e30
 SfEffPerFreeFall                   0.01
 StellarTablesFile                  SET_BY_TEST
+MaxStellarTimestep                 10000.0
