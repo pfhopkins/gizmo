@@ -63,7 +63,8 @@ def read(fname):
         n = len(ids)
         x = np.zeros((n, 3)); x[inv] = g["Coordinates"][()]
         return dict(id=ids, x=x, m=np.bincount(inv, m, n), E=np.bincount(inv, m * (u + 0.5 * (v ** 2).sum(1)), n),
-                    p=np.stack([np.bincount(inv, m * v[:, k], n) for k in range(3)], 1), star=F["PartType4/Coordinates"][0], box=F["Header"].attrs["BoxSize"])
+                    p=np.stack([np.bincount(inv, m * v[:, k], n) for k in range(3)], 1), star=F["PartType4/Coordinates"][0], box=F["Header"].attrs["BoxSize"],
+                    sm=float(F["PartType4/Masses"][0]), sv=F["PartType4/Velocities"][0].astype(float))
 
 
 def deposit(a, b):
@@ -96,3 +97,21 @@ def test_wind_shares_and_balance(tables, ranks):
     pn = np.linalg.norm(dp, axis=1)
     assert np.linalg.norm(sum_p) / pn.sum() < 1e-6  # momentum balanced, over all gas: the hot receivers push on their neighbours
     assert np.abs((dp * q).sum(1) / (pn * qn) - 1).max() < 1e-4  # along q
+
+
+def energy_gained(a, b):
+    """Energy of all gas plus the star's kinetic energy, end minus start; and the gas mass gained."""
+    i = np.searchsorted(b["id"], a["id"])
+    return (b["E"][i] - a["E"]).sum() + 0.5 * b["sm"] * (b["sv"] ** 2).sum() - 0.5 * a["sm"] * (a["sv"] ** 2).sum(), (b["m"][i] - a["m"]).sum()
+
+
+@pytest.mark.parametrize("ranks", [1, 2])
+@pytest.mark.parametrize("event", ["wind", "slow"])
+def test_wind_energy_moving_star(tables, event, ranks):
+    """The wind star moving at 300 km/s through gas at rest gives the gas plus itself the energy it gives at rest. Bar set before the
+    first run: 1e-9, same mass returned to 1e-12."""
+    E0, M0 = energy_gained(*run(tables, event, ranks))
+    E1, M1 = energy_gained(*run(tables, event + "_moving", ranks))
+    print(f"{event} wind, star at 300 km/s: energy / energy at rest = {E1 / E0:.12f}, v_w at rest {np.sqrt(2 * E0 / M0):.2f} km/s")
+    assert M0 > 0 and abs(M1 / M0 - 1) < 1e-12
+    assert abs(E1 / E0 - 1) < 1e-9

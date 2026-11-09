@@ -168,7 +168,7 @@ void verify_and_assign_local_mechfb_integrals(void)
             CellP[j].InternalEnergy *= m0/mf; CellP[j].InternalEnergyPred *= m0/mf; /* cold ejecta dilute u at once, whatever the energy of the event */
 #endif
             double dTE=LocalGasMechFBInfoTemp[j].TE_injected;
-#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+#if defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS) || defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS)
             { /* sources overlapping in a cell: all their momentum lands, the kinetic energy the vector sum does not take stays as heat */
                 double p0_2=0, pf_2=0; for(k=0;k<3;k++) {double p0_k=m0*P[j].Vel[k]/All.cf_atime, pf_k=p0_k+LocalGasMechFBInfoTemp[j].p_injected[k]; p0_2+=p0_k*p0_k; pf_2+=pf_k*pf_k;}
                 dTE += LocalGasMechFBInfoTemp[j].KE_injected - (pf_2/(2.*mf) - p0_2/(2.*m0));
@@ -221,7 +221,7 @@ void verify_and_assign_local_mechfb_integrals(void)
                     else {if((b0>0) && fabs(4.*a0*c0)<1.e-3*b0*b0) {f0=c0/b0;} // catches for floating-point error
                     else {if(fabs(a0)<1.e-40 || !isfinite(a0)) {f0=0;} else {f0=(-b0+sqrt(b0*b0+4.*a0*c0))/(2.*a0);}}} // catches for floating-point error, if pass all of them, use exact solution for desired KE
                 if(f0<0 || !isfinite(f0)) {f0=0;} else {if(f0>1.) {f0=1.;}} /* limit to physical values (should never be an issue but again because of float error it could be) */
-#ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+#if defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS) || defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS)
                 f0=1.;
 #endif
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER

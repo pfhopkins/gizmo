@@ -13,4 +13,7 @@ Checks:
 2. a wind deposit: mass shares |q| / sum |q| to 1e-9 with q = w (r - mean of w r), r the unit vector to the cell, kicks along q to 1e-4,
    total momentum of the gas zero to 1e-6 of the summed kicks.
 
+3. a wind star moving at 300 km/s through gas at rest (the 35 Msun star, and a 20 Msun star in its slow, about 100 km/s, wind): energy of
+   all gas plus the star's kinetic energy gained equal to that of the same star at rest to 1e-9.
+
 Reference: the weights themselves, from the positions in the initial snapshot.
