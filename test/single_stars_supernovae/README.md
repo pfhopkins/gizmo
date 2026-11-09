@@ -24,9 +24,8 @@ Checks:
 6. the events are identical on 1, 2 and 4 ranks and with 2 threads; gas totals agree to rounding;
 7. FIRE metal layout (a second build with `COOLING` and `COOL_METAL_LINES_BY_SPECIES`): every metal slot of the gas gains
    exactly the table SN element ejecta scaled to the ejecta mass (1e-9); slot 0 all table metals C..Zn.
-8. timing with long steps: stars 37 kyr from death, the largest allowed step the whole 60 kyr run: each dies within
-   1 kyr of its table death time (the single-star step limit: `MaxStellarTimestep`, default 50 kyr, 1/50 of the time to
-   death close to it, never past it; as the reference implementation). Without the limit no star died in the run.
+8. the death step (`test_death_step_as_gizmo2017`), caps 10 and 50 kyr: stars 37 kyr from death, a long largest step. A single star's step is `MaxStellarTimestep` (default 50 kyr; 1e4 yr in the production params) and no less: every step before the first death stays in that bin, and each star dies at its first step past its table death time, at most one cap late (the rule of gizmo2017, timestep.c and update_weights.c). With the former rule of 1/50 of the time to death: 377 steps before the first death, down to 0.47 kyr.
+   A death with winds owed (`test_death_with_winds_owed`, the last 5 % of life not returned): one event in the first step, the owed winds in its ejecta as a wind delivery would return them and the table ejecta scaled to the rest, whole mass and metals in the gas; no wind delivery before it. The failed SN (no table ejecta) gives exactly the table wind metals owed (1e-4).
 9. stars started below their table remnant mass: no star grows at death and the total mass is conserved (1e-12).
 10. in 1e7 K gas the total energy still rises by the explosion energies to 1e-3: the ejecta carry no ambient `u`. The failed SN gives mass with no energy, so the dilution of `u` is applied at once, not through the deferred heating (measured 1 - 1.3e-8 after the deposit, 1 + 3.9e-5 at the end of the run).
 
