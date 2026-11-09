@@ -1758,23 +1758,12 @@ static int nheattab;		/* length of table */
 
 void ReadIonizeParams(const char *fname)
 {
-    int i, nrows = 0, lineno = 0; FILE *fdcool; char line[1024], extra;
-    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory.\n", fname); endrun(456); return;}
+    int i; FILE *fdcool;
+    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456); return;}
     for(i=0; i<TABLESIZE; i++) {inlogz[i]=100; gH0[i]=0; gHe[i]=0; gHep[i]=0; eH0[i]=0; eHe[i]=0; eHep[i]=0;}
-    while(fgets(line, sizeof(line), fdcool)) /* blank lines and '#' comments are skipped, as starforge_dev */
-    {
-        lineno++;
-        char *p = line + strspn(line, " \t\r\n");
-        if(*p == '\0' || *p == '#') {continue;}
-        p[strcspn(p, "\r\n")] = '\0';
-        if(nrows >= TABLESIZE-1) {printf(" ionization table `%s' has more than %d data rows (line %d); raise TABLESIZE in cooling.cc\n", fname, TABLESIZE-1, lineno); endrun(456); return;}
-        if(sscanf(p, "%g %lg %lg %lg %lg %lg %lg %c", &inlogz[nrows], &gH0[nrows], &gHe[nrows], &gHep[nrows], &eH0[nrows], &eHe[nrows], &eHep[nrows], &extra) != 7)
-            {printf(" ionization table `%s' line %d is not blank, a '#' comment, or 7 numbers: \"%.200s\"\n", fname, lineno, p); endrun(456); return;}
-        nrows++;
-    }
+    for(i=0; i<TABLESIZE; i++) {if(fscanf(fdcool, "%g %lg %lg %lg %lg %lg %lg", &inlogz[i], &gH0[i], &gHe[i], &gHep[i], &eH0[i], &eHe[i], &eHep[i]) == EOF) {break;}}
     fclose(fdcool);
     for(i=0, nheattab=0; i<TABLESIZE; i++) {if(gH0[i] != 0.0) {nheattab++;} else {break;}} /*  nheattab is the number of entries in the table */
-    if(nheattab <= 0) {printf(" ionization table `%s' has no rows with a non-zero HI photoionization rate (%d data rows read), so the run would have no UV background\n", fname, nrows); endrun(456); return;}
     if(ThisTask == 0) printf(" ..read ionization table [TREECOOL] with %d non-zero UVB entries in file `%s'. Make sure to cite the authors from which the UV background was compiled! (See user guide for the correct references).\n", nheattab, fname);
 }
 
