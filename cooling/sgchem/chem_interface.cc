@@ -716,7 +716,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
     in->NH_cell = 0;
 #if defined(RADTRANSFER)
-    in->NH_cell = 0.5 * yn * cbrt(P[target].Mass / (CellP[target].Density * All.cf_a3inv)) * All.cf_atime * UNIT_LENGTH_IN_CGS; /* half-cell column: unresolved in-cell attenuation */
+    in->NH_cell = 0.5 * yn * cbrt(P[target].Mass / (CellP[target].Density * All.cf_a3inv)) * UNIT_LENGTH_IN_CGS; /* half-cell column: unresolved in-cell attenuation */
 #endif
 #endif
 
