@@ -23,6 +23,9 @@ extern ALIGN(32) struct particle_data
     
     integertime Ti_begstep;         /*!< marks start of current timestep of particle on integer timeline */
     integertime Ti_current;         /*!< current time of the particle */
+#ifdef SNE_BROADCAST_TIMESTEP
+    MyFloat SNe_ArrivalTime;        /*!< earliest physical time after an SN of this step that its ejecta can reach this cell */
+#endif
 #if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
     MyDouble TimestepDilationFactor; /*!< timestep dilation factor, frozen when this particle's timestep was assigned */
 #endif

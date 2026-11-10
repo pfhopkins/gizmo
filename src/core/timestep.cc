@@ -1255,6 +1255,9 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
     if(P[p].StarIdx > 0) {double dt_pi = photoion_max_timestep(p); if(dt_pi > 0 && dt_pi < dt) {dt = dt_pi;}} /* ionising sources: the photoionisation cadence */
 #endif
+#ifdef SNE_BROADCAST_TIMESTEP
+    if(P[p].Type == 0 && P[p].SNe_ArrivalTime < MAX_REAL_NUMBER) {dt = DMIN(dt, 0.5 * All.CourantFac * P[p].SNe_ArrivalTime); if(flag == 0) {P[p].SNe_ArrivalTime = MAX_REAL_NUMBER;}} /* the step after an SN ends before its ejecta can arrive */
+#endif
 
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
@@ -1706,6 +1709,11 @@ void process_wake_ups(void)
 		    }
 		}
 #endif
+#ifdef SNE_BROADCAST_TIMESTEP
+	    } else if(P[i].wakeup == -4) { /* a supernova reaches it before its step ends: start now on the step its arrival time allows */
+		double aphys_sn; integertime ti_sn = get_timestep(i, &aphys_sn, 0), ti_p2 = TIMEBASE; while(ti_p2 > ti_sn) {ti_p2 >>= 1;}
+		bin = get_timestep_bin(ti_p2);
+#endif
 	    } else {
 		/* generic wakeup (sinks, merge, etc.): use highest active bin */
 		bin = max_time_bin_active;
@@ -1910,3 +1918,33 @@ double get_particle_feedback_timestep_in_physical(int i, struct particle_data *p
     return get_particle_timestep_in_physical(i, pp);
 #endif
 }
+
+#ifdef SNE_BROADCAST_TIMESTEP
+/* causal wake, from starforge_dev (Mike Grudic, #107): the supernovae of this step, and when their ejecta can reach each gas cell */
+struct sne_event {double pos[3], v;};
+static std::vector<sne_event> SNe_new;
+void sne_broadcast_record(Vec3<MyDouble> pos, double v) {sne_event e = {{pos[0], pos[1], pos[2]}, v}; SNe_new.push_back(e);}
+/* collective, after the feedback of every step: each gas cell caps its next step at 0.5 CourantFac of the time the fastest signal
+   from this step's supernovae needs to reach it; an inactive cell whose step would outlast that is woken now (pre-SN forces) */
+void sne_causal_wake(void)
+{
+    const int nd = (int)(sizeof(sne_event)/sizeof(double));
+    int n_loc = (int)SNe_new.size() * nd, n_tot = 0; std::vector<int> counts(NTask), offs(NTask);
+    MPI_Allgather(&n_loc, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    for(int t = 0; t < NTask; t++) {offs[t] = n_tot; n_tot += counts[t];}
+    if(n_tot == 0) {SNe_new.clear(); return;}
+    std::vector<sne_event> ev(n_tot / nd);
+    MPI_Allgatherv(SNe_new.data(), n_loc, MPI_DOUBLE, ev.data(), counts.data(), offs.data(), MPI_DOUBLE, MPI_COMM_WORLD);
+    SNe_new.clear();
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        double t_arr = MAX_REAL_NUMBER, rmin = DMAX(P[i].KernelRadius, MIN_REAL_NUMBER);
+        for(const sne_event &e : ev) {Vec3<double> d = {P[i].Pos[0]-e.pos[0], P[i].Pos[1]-e.pos[1], P[i].Pos[2]-e.pos[2]}; nearest_xyz(d,-1); t_arr = DMIN(t_arr, DMAX(d.norm(), rmin) * All.cf_atime / e.v);}
+        if(t_arr < P[i].SNe_ArrivalTime) {P[i].SNe_ArrivalTime = t_arr;}
+        if(TimeBinActive[P[i].TimeBin]) {continue;}
+        double t_left = (P[i].Ti_begstep + P[i].integertime_step() - All.Ti_Current) * unit_integertime_in_physical(i, P);
+        if(t_left > 0.5 * All.CourantFac * t_arr && P[i].wakeup <= 0) {P[i].wakeup = -4; NeedToWakeupParticles_local = 1; wakeup_sidecar_mark(i);}
+    }
+}
+#endif
