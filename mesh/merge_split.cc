@@ -1149,6 +1149,9 @@ int merge_particles_ij(int i, int j)
 
 
     CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+    CellP[j].InternalEnergy_FromIR_Pending = wt_j*CellP[j].InternalEnergy_FromIR_Pending + wt_i*CellP[i].InternalEnergy_FromIR_Pending; /* IR energy not yet given to the cooling solve, mass-weighted like the internal energy */
+#endif
     CellP[j].InternalEnergyPred = wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred;
     Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
     Vec3<double> p_old_j = P[j].Vel * P[j].Mass;

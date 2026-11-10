@@ -51,6 +51,29 @@ struct INPUT_STRUCT_NAME
 *DATAIN_NAME, *DATAGET_NAME; /* dont mess with these names, they get filled-in by your definitions automatically */
 
 /* this subroutine assigns the values to the variables that need to be sent -from- the 'searching' element */
+
+/* Which of two sinks swallows the other, decided the same way from either side so a pair has exactly one candidate unless
+   the two mass measures disagree: the larger Sink_Mass, or the larger total Mass where Sink_Mass ties; with sink dynamics a
+   sink larger in Sink_Mass but smaller in total Mass swallows nothing, and neither does its partner (the legacy rule). Both
+   measures equal (two sinks born from cells of one glass IC that have not yet accreted) the wrapped separation j - i decides:
+   it is antisymmetric, so the first axis on which it is nonzero is negative for exactly one of the pair. All three zero is
+   r2 == 0, which the caller excludes. A tie on ID cannot do this when IDs repeat. A NaN mass never merges. */
+static inline int sink_swallows_sink_neighbor(double sink_mass_i, double mass_i, double sink_mass_j, double mass_j, const Vec3<double>& dpos)
+{
+    if(!(sink_mass_i == sink_mass_i) || !(sink_mass_j == sink_mass_j) || !(mass_i == mass_i) || !(mass_j == mass_j)) {return 0;}
+    if(sink_mass_j != sink_mass_i)
+    {
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+        if((mass_j != mass_i) && ((mass_j < mass_i) != (sink_mass_j < sink_mass_i))) {return 0;}
+#endif
+        return sink_mass_j < sink_mass_i;
+    }
+    if(mass_j != mass_i) {return mass_j < mass_i;}
+    if(dpos[0] != 0) {return dpos[0] < 0;}
+    if(dpos[1] != 0) {return dpos[1] < 0;}
+    return dpos[2] < 0;
+}
+
 static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
     int k, j_tempinfo; j_tempinfo=P[i].IndexMapToTempStruc; /* link to the location in the shared structure where this is stored */
@@ -205,14 +228,8 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                         
                         if(P[j].Type == 5)  /* we may have a sink particle merger -- check below if allowed */
                         {
-                            /* most massive sink swallows the other, which keeps the result unique and order-independent. The
-                                comparison must break exact ties: with a strict '<' neither direction passes, so the block
-                                below -- including its own equal-mass tie-breaker on ID -- is unreachable and the pair can
-                                never merge. Ties are not exotic; every cell in a glass/grid IC has identical mass, so two
-                                sinks that have not yet accreted have bit-identical Sink_Mass. Break on ID in the same sense
-                                as the inner check (higher ID swallows) so the two agree. */
                             if(((local.ID != P[j].ID) || (r2>0)) && (SwallowID_j == 0) &&
-                               ((P[j].Sink_Mass < local.Sink_Mass) || ((P[j].Sink_Mass == local.Sink_Mass) && (P[j].ID < local.ID))))
+                               sink_swallows_sink_neighbor(local.Sink_Mass, local.Mass, P[j].Sink_Mass, P[j].Mass, dpos))
                             {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
                                 int allow_sink_merger = 1; /* flag here b/c we have different options */
@@ -221,8 +238,6 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                                 if(r >= 1.0001*P[j].Min_Distance_to_Sink) {allow_sink_merger = 0;} // not the closest sink!
                                 if(r >= heff_j) {allow_sink_merger = 0;} // beyond MAX[search/kernel/softening] radius: heff_j = DMAX( P[j].KernelRadius , ForceSoftening_KernelRadius(j) )
-                                if(P[j].Mass > local.Mass) {allow_sink_merger = 0;} // always merge from more massive eating lower
-                                if((P[j].Mass == local.Mass) && (P[j].ID > local.ID)) {allow_sink_merger = 0;} // randomly pick for equal masses which way the merger goes
                                 double max_rmerge = All.SinkMergerMaxRadiusFactor*sink_radius; // default (factor 1) STARFORGE behavior: only merge away stuff that is within the softening radius; sink_radius=SinkParticle_GravityKernelRadius
                                 double max_mmerge = (All.SinkMergerMaxMass > 0) ? All.SinkMergerMaxMass : 10.*P[j].Sink_Formation_Mass; // default STARFORGE behavior: only merge away stuff no more massive than a few gas cells
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES

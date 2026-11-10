@@ -172,12 +172,12 @@ struct INPUT_STRUCT_NAME
     MyFloat Mass;
     MyFloat Density;
     MyFloat Pressure;
-    MyFloat ConditionNumber;
-    MyFloat FaceClosureError;
+    MyCommFloat ConditionNumber;
+    MyCommFloat FaceClosureError;
     MyFloat InternalEnergyPred;
     MyFloat SoundSpeed;
     MyFloat dt_hydrostep_i;
-    MyFloat DrkernNgbFactor;
+    MyCommFloat DrkernNgbFactor;
 #ifdef EOS_ANEOS
     MyFloat Temperature; /* orders the two sides of a face in the MFM entropic energy switch */
 #endif
@@ -189,30 +189,30 @@ struct INPUT_STRUCT_NAME
     /* matrix of the conserved variable gradients: rho, u, vx, vy, vz */
     struct
     {
-        Vec3<MyDouble> Density;
-        Vec3<MyDouble> Pressure;
-        Mat3<MyDouble> Velocity;
+        Vec3<MyCommFloat> Density;
+        Vec3<MyCommFloat> Pressure;
+        Mat3<MyCommFloat> Velocity;
 #ifdef MAGNETIC
-        Mat3<MyDouble> B;
+        Mat3<MyCommFloat> B;
 #ifdef DIVBCLEANING_DEDNER
-        Vec3<MyDouble> Phi;
+        Vec3<MyCommFloat> Phi;
 #endif
 #endif
 #if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-        Vec3<MyDouble> Metallicity[NUM_METAL_SPECIES];
+        Vec3<MyCommFloat> Metallicity[NUM_METAL_SPECIES];
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
-        Vec3<MyDouble> InternalEnergy;
+        Vec3<MyCommFloat> InternalEnergy;
 #endif
 #ifdef DOGRAD_SOUNDSPEED
-        Vec3<MyDouble> SoundSpeed;
+        Vec3<MyCommFloat> SoundSpeed;
 #endif
 #if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR)
-        Vec3<MyDouble> Rad_E_gamma_ET[N_RT_FREQ_BINS];
+        Vec3<MyCommFloat> Rad_E_gamma_ET[N_RT_FREQ_BINS];
 #endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
-        MyFloat Rad_E_gamma_Grad[N_RT_FREQ_BINS][3];
-        MyFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
+        MyCommFloat Rad_E_gamma_Grad[N_RT_FREQ_BINS][3];
+        MyCommFloat Rad_Flux_Grad[N_RT_FREQ_BINS][3][3];
 #endif
     } Gradients;
     SymmetricTensor2<MyDouble> NV_T;
@@ -234,10 +234,10 @@ struct INPUT_STRUCT_NAME
     
 #ifdef RT_SOLVER_EXPLICIT
     MyDouble Rad_E_gamma[N_RT_FREQ_BINS];
-    MyDouble Rad_Kappa[N_RT_FREQ_BINS];
-    MyDouble RT_DiffusionCoeff[N_RT_FREQ_BINS];
+    MyCommFloat Rad_Kappa[N_RT_FREQ_BINS];
+    MyCommFloat RT_DiffusionCoeff[N_RT_FREQ_BINS];
 #if defined(RT_EVOLVE_FLUX) || defined(HYDRO_SPH)
-    SymmetricTensor2<MyDouble> ET[N_RT_FREQ_BINS];
+    SymmetricTensor2<MyCommFloat> ET[N_RT_FREQ_BINS];
 #endif
 #ifdef RT_EVOLVE_FLUX
     Vec3<MyDouble> Rad_Flux[N_RT_FREQ_BINS];
@@ -251,11 +251,11 @@ struct INPUT_STRUCT_NAME
 #endif
     
 #ifdef TURB_DIFFUSION
-    MyFloat TD_DiffCoeff;
+    MyCommFloat TD_DiffCoeff;
 #endif
     
 #ifdef CONDUCTION
-    MyFloat Kappa_Conduction;
+    MyCommFloat Kappa_Conduction;
 #endif
     
 #ifdef MHD_NON_IDEAL
@@ -265,8 +265,8 @@ struct INPUT_STRUCT_NAME
 #endif
     
 #ifdef VISCOSITY
-    MyFloat Eta_ShearViscosity;
-    MyFloat Zeta_BulkViscosity;
+    MyCommFloat Eta_ShearViscosity;
+    MyCommFloat Zeta_BulkViscosity;
 #endif
     
 #ifdef MAGNETIC
@@ -326,7 +326,7 @@ struct OUTPUT_STRUCT_NAME
     //MyDouble dMomentum[3]; //manifest-indiv-timestep-debug//
     MyDouble DtInternalEnergy;
     //MyDouble dInternalEnergy; //manifest-indiv-timestep-debug//
-    MyFloat MaxSignalVel;
+    MyScratchFloat MaxSignalVel;
 #ifdef OUTPUT_SHOCK_MACH_NUMBER
     MyFloat MaxShockMachNumber;
 #endif

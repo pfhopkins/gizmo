@@ -20,6 +20,24 @@ typedef unsigned long long MyIDType;
 typedef double   MyFloat;
 typedef double  MyDouble;
 
+/* PRECISION_DIET: storage-only narrowing to float of fields that do not need double (arithmetic stays in
+   double locals). =1: neighbour-loop exchange buffers (hydro and gradient import/export structs).
+   =2: also derived per-cell fields of P/CellP (gradients, Eddington tensors, opacities, transport
+   coefficients, kernel-sum diagnostics), and the tidal tensor, MaxSignalVel and Ne, in P/CellP and in
+   the buffers that ship them; changes the restartfile layout. NV_T and NumNgb stay double: in float they
+   break exact preservation of linear fields (shearing-box equilibrium, MHD wind-up, mhd_wave) at ~1e-6.
+   Never positions, masses, conserved/evolved state, or neighbour-sum accumulators. */
+#if defined(PRECISION_DIET)
+typedef float MyCommFloat;
+#else
+typedef double MyCommFloat;
+#endif
+#if defined(PRECISION_DIET) && (PRECISION_DIET >= 2)
+typedef float MyScratchFloat;
+#else
+typedef double MyScratchFloat;
+#endif
+
 #ifdef OUTPUT_IN_DOUBLEPRECISION
 typedef double MyOutputFloat;
 #else

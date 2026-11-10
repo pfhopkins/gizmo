@@ -153,6 +153,20 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 dt_hydrostep = DMAX(dt_hydrostep_i , dt_hydrostep_j); // this is used for flux-limiting, so we always want to be more conservative and use the larger timestep //
                 double FluxCorrectionFactor_to_i = 1, FluxCorrectionFactor_to_j = 1; // these, by default, won't do anything, but will be used below in final flux assignment
                 int j_is_active_for_fluxes = 0;
+#ifdef HYDRO_PAIR_ONCE
+                /* both active: evaluate the pair once, from the element with the smaller timestep (ties: position order), and hand j
+                   the opposite rates through the j_is_active_for_fluxes blocks; j's own evaluation skips i by the same rule */
+                if(TimeBinActive[P[j].TimeBin])
+                {
+                    if(dt_hydrostep_i > dt_hydrostep_j) {continue;}
+                    if(dt_hydrostep_i == dt_hydrostep_j)
+                    {
+                        int n0=0; if(local.Pos[n0] == P[j].Pos[n0]) {n0++; if(local.Pos[n0] == P[j].Pos[n0]) {n0++;}}
+                        if(local.Pos[n0] < P[j].Pos[n0]) {continue;}
+                    }
+                    j_is_active_for_fluxes = 1;
+                }
+#endif
                 kernel.dp = local.Pos - P[j].Pos;
                 nearest_xyz(kernel.dp); /* find the closest image in the given box size  */
                 r2 = kernel.dp.norm_sq();
@@ -225,6 +239,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                     kernel.vsig -= fac_mu * kernel.vdotr2 * rinv;
 #endif
                 }
+                double vsig_j = kernel.vsig; /* the signal velocity as j sees it: equal to vsig unless the core below replaces it with a one-sided form */
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
                 double KE = kernel.dv.norm_sq();
                 if(KE > out.MaxKineticEnergyNgb) {out.MaxKineticEnergyNgb = KE;}
@@ -505,7 +520,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 /* don't forget to save the signal velocity for time-stepping! */
                 /* --------------------------------------------------------------------------------- */
                 if(kernel.vsig > out.MaxSignalVel) {out.MaxSignalVel = kernel.vsig;}
-                if(j_is_active_for_fluxes) {if(kernel.vsig > CellP[j].MaxSignalVel) CellP[j].MaxSignalVel = kernel.vsig;}
+                if(j_is_active_for_fluxes) {if(vsig_j > CellP[j].MaxSignalVel) CellP[j].MaxSignalVel = vsig_j;}
 #ifdef WAKEUP
                 if(!(TimeBinActive[P[j].TimeBin]))
                 {

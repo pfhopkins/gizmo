@@ -253,6 +253,7 @@
 
 #if defined(HYDRO_MESHLESS_FINITE_MASS) && defined(GALSF) // for now this is experimental so restricting it to our experiments, but should be merged into all mfm-level code //
             kernel.vsig = 2.*Riemann_out.S_M + DMAX(0,face_vel_j-face_vel_i); /* replace more conservative signal velocity calculation previously with the contact wave speed update here */
+            vsig_j = -2.*Riemann_out.S_M + DMAX(0,face_vel_j-face_vel_i); /* the same seen from j: the contact speed flips sign with the face normal, the face-velocity jump does not */
 #endif
             
             /* the fluxes have been calculated in the rest frame of the interface: we need to de-boost to the 'simulation frame' which we do following Pakmor et al. 2011 */

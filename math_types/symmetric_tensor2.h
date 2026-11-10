@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cmath>
+#include <type_traits>
 #include "vec3.h"
 #include "mat3.h"
 
@@ -37,8 +38,21 @@ struct SymmetricTensor2 {
     Row operator[](int i) noexcept { return {*this, i}; }
     ConstRow operator[](int i) const noexcept { return {*this, i}; }
 
+    // Cross-precision conversion, assignment and accumulation; see the note in vec3.h.
+    template<typename U> operator SymmetricTensor2<U>() const noexcept {
+        SymmetricTensor2<U> r; for(int k = 0; k < 6; k++) { r.data[k] = static_cast<U>(data[k]); } return r;
+    }
+    template<typename U> SymmetricTensor2& operator=(const SymmetricTensor2<U>& o) noexcept {
+        for(int k = 0; k < 6; k++) { data[k] = static_cast<T>(o.data[k]); } return *this;
+    }
+    template<typename U> SymmetricTensor2& operator+=(const SymmetricTensor2<U>& o) noexcept {
+        for(int k = 0; k < 6; k++) { data[k] = static_cast<T>(data[k] + o.data[k]); } return *this;
+    }
+
+    using W = MathWideT<T>; /* arithmetic type; see vec3.h */
+
     // Trace: sum of diagonal elements.
-    T trace() const noexcept { return data[0] + data[1] + data[2]; }
+    W trace() const noexcept { return W(data[0]) + W(data[1]) + W(data[2]); }
 
     // Scalar multiply in-place.
     SymmetricTensor2& operator*=(T s) noexcept {
@@ -59,14 +73,14 @@ struct SymmetricTensor2 {
     }
 
     // Squared Frobenius norm: sum of squares of all 9 entries (off-diagonal count twice).
-    T frobenius_norm_sq() const noexcept {
-        const T diag    = data[0]*data[0] + data[1]*data[1] + data[2]*data[2];
-        const T offdiag = data[3]*data[3] + data[4]*data[4] + data[5]*data[5];
-        return diag + T(2) * offdiag;
+    W frobenius_norm_sq() const noexcept {
+        const W diag    = W(data[0])*W(data[0]) + W(data[1])*W(data[1]) + W(data[2])*W(data[2]);
+        const W offdiag = W(data[3])*W(data[3]) + W(data[4])*W(data[4]) + W(data[5])*W(data[5]);
+        return diag + W(2) * offdiag;
     }
 
     // Frobenius norm: sqrt(sum of squares of all 9 entries).
-    T frobenius_norm() const noexcept { return std::sqrt(frobenius_norm_sq()); }
+    W frobenius_norm() const noexcept { return std::sqrt(frobenius_norm_sq()); }
 
     // Scalar divide in-place.
     SymmetricTensor2& operator/=(T s) noexcept {
@@ -76,18 +90,21 @@ struct SymmetricTensor2 {
     }
 
     // Matrix-vector product: returns this * v.  xx=0 yy=1 zz=2 xy=3 yz=4 xz=5
-    Vec3<T> matvec(const Vec3<T>& v) const noexcept {
-        return Vec3<T>{data[0]*v[0] + data[3]*v[1] + data[5]*v[2],
-                       data[3]*v[0] + data[1]*v[1] + data[4]*v[2],
-                       data[5]*v[0] + data[4]*v[1] + data[2]*v[2]};
+    Vec3<W> matvec(const Vec3<T>& v) const noexcept { return matvec<T>(v); }
+    template<typename U> Vec3<Vec3Promote<T,U>> matvec(const Vec3<U>& v) const noexcept {
+        using R = Vec3Promote<T,U>;
+        return Vec3<R>{R(data[0])*R(v[0]) + R(data[3])*R(v[1]) + R(data[5])*R(v[2]),
+                       R(data[3])*R(v[0]) + R(data[1])*R(v[1]) + R(data[4])*R(v[2]),
+                       R(data[5])*R(v[0]) + R(data[4])*R(v[1]) + R(data[2])*R(v[2])};
     }
 
     // Double contraction with a general 3x3 matrix: sum_ij S_ij * M_ij
     // For symmetric S, this equals S_ii*M_ii + S_ij*(M_ij+M_ji) for i<j
     template<typename U>
-    T double_contract(const Mat3<U>& M) const noexcept {
-        return data[0]*M[0][0] + data[1]*M[1][1] + data[2]*M[2][2]
-             + data[3]*(M[0][1]+M[1][0]) + data[4]*(M[1][2]+M[2][1]) + data[5]*(M[0][2]+M[2][0]);
+    Vec3Promote<T,U> double_contract(const Mat3<U>& M) const noexcept {
+        using R = Vec3Promote<T,U>;
+        return R(data[0])*R(M[0][0]) + R(data[1])*R(M[1][1]) + R(data[2])*R(M[2][2])
+             + R(data[3])*(R(M[0][1])+R(M[1][0])) + R(data[4])*(R(M[1][2])+R(M[2][1])) + R(data[5])*(R(M[0][2])+R(M[2][0]));
     }
 
     // Set to scalar multiple of identity: diag = val, off-diag = 0
@@ -97,25 +114,44 @@ struct SymmetricTensor2 {
     }
 };
 
-template<typename T>
-inline SymmetricTensor2<T> operator*(T s, SymmetricTensor2<T> t) noexcept { t *= s; return t; }
+// Promote to the common type of the operands; see the note on the free operators in vec3.h.
+template<typename T, typename U> using SymT2Promote = MathWideT<typename std::common_type<T,U>::type>;
 
-template<typename T>
-inline SymmetricTensor2<T> operator*(SymmetricTensor2<T> t, T s) noexcept { t *= s; return t; }
+template<typename T, typename U>
+inline SymmetricTensor2<SymT2Promote<T,U>> operator*(U s, const SymmetricTensor2<T>& t) noexcept {
+    using R = SymT2Promote<T,U>; SymmetricTensor2<R> r;
+    for(int k = 0; k < 6; k++) { r.data[k] = R(s) * R(t.data[k]); } return r;
+}
 
-template<typename T>
-inline SymmetricTensor2<T> operator+(SymmetricTensor2<T> a, const SymmetricTensor2<T>& b) noexcept { a += b; return a; }
+template<typename T, typename U>
+inline SymmetricTensor2<SymT2Promote<T,U>> operator*(const SymmetricTensor2<T>& t, U s) noexcept {
+    using R = SymT2Promote<T,U>; SymmetricTensor2<R> r;
+    for(int k = 0; k < 6; k++) { r.data[k] = R(t.data[k]) * R(s); } return r;
+}
 
-template<typename T>
-inline SymmetricTensor2<T> operator-(SymmetricTensor2<T> a, const SymmetricTensor2<T>& b) noexcept { a -= b; return a; }
+template<typename T, typename U>
+inline SymmetricTensor2<SymT2Promote<T,U>> operator+(const SymmetricTensor2<T>& a, const SymmetricTensor2<U>& b) noexcept {
+    using R = SymT2Promote<T,U>; SymmetricTensor2<R> r;
+    for(int k = 0; k < 6; k++) { r.data[k] = R(a.data[k]) + R(b.data[k]); } return r;
+}
 
-template<typename T>
-inline SymmetricTensor2<T> operator/(SymmetricTensor2<T> t, T s) noexcept { t /= s; return t; }
+template<typename T, typename U>
+inline SymmetricTensor2<SymT2Promote<T,U>> operator-(const SymmetricTensor2<T>& a, const SymmetricTensor2<U>& b) noexcept {
+    using R = SymT2Promote<T,U>; SymmetricTensor2<R> r;
+    for(int k = 0; k < 6; k++) { r.data[k] = R(a.data[k]) - R(b.data[k]); } return r;
+}
+
+template<typename T, typename U>
+inline SymmetricTensor2<SymT2Promote<T,U>> operator/(const SymmetricTensor2<T>& t, U s) noexcept {
+    using R = SymT2Promote<T,U>; SymmetricTensor2<R> r; R inv = R(1)/R(s);
+    for(int k = 0; k < 6; k++) { r.data[k] = R(t.data[k]) * inv; } return r;
+}
 
 // Symmetric outer product v ⊗ v
 // Storage: [0]=xx [1]=yy [2]=zz [3]=xy [4]=yz [5]=xz
 template<typename T>
-inline SymmetricTensor2<T> outer_product(const Vec3<T>& v) noexcept {
-    return { v[0]*v[0], v[1]*v[1], v[2]*v[2],
-             v[0]*v[1], v[1]*v[2], v[0]*v[2] };
+inline SymmetricTensor2<MathWideT<T>> outer_product(const Vec3<T>& v) noexcept {
+    using W = MathWideT<T>;
+    return { W(v[0])*W(v[0]), W(v[1])*W(v[1]), W(v[2])*W(v[2]),
+             W(v[0])*W(v[1]), W(v[1])*W(v[2]), W(v[0])*W(v[2]) };
 }

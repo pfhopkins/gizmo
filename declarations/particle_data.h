@@ -14,13 +14,16 @@ extern ALIGN(32) struct particle_data
     
     integertime Ti_begstep;         /*!< marks start of current timestep of particle on integer timeline */
     integertime Ti_current;         /*!< current time of the particle */
+#if defined(PRECISION_DIET) && (PRECISION_DIET >= 2)
+    MyFloat KernelRadius;           /*!< search radius around particle for neighbors/interactions (=2 layout: in the alignment hole before Pos, so a neighbour-search candidate touches one cache line less) */
+#endif
     
     ALIGN(32) Vec3<MyDouble> Pos;   /*!< particle position at its current time */
     MyDouble Mass;                  /*!< particle mass */
 
     Vec3<MyDouble> Vel;             /*!< particle velocity at its current time */
     Vec3<MyDouble> dp;
-    MyFloat Particle_DivVel;        /*!< velocity divergence of neighbors (for predict step) */
+    MyScratchFloat Particle_DivVel;        /*!< velocity divergence of neighbors (for predict step) */
     
     Vec3<MyDouble> GravAccel;       /*!< particle acceleration due to gravity */
 #ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
@@ -29,7 +32,7 @@ extern ALIGN(32) struct particle_data
 #ifdef PMGRID
     Vec3<MyFloat> GravPM;           /*!< particle acceleration due to long-range PM gravity force */
 #endif
-    MyFloat OldAcc;                    /*!< magnitude of old gravitational force. Used in relative opening criterion */
+    MyScratchFloat OldAcc;                    /*!< magnitude of old gravitational force. Used in relative opening criterion */
 #ifdef SPECIAL_POINT_MOTION
     Vec3<MyFloat> Acc_Total_PrevStep;  /*!< old total acceleration on a given cell/particle */
 #endif
@@ -53,21 +56,21 @@ extern ALIGN(32) struct particle_data
     MyFloat TreeMass;  /*!< Mass seen by the particle as it sums up the gravitational force from the tree - should be equal to total mass, a useful debug diagnostic  */
 #endif
 #if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL)
-    MyFloat Potential;        /*!< gravitational potential */
+    MyScratchFloat Potential;        /*!< gravitational potential */
 #if defined(EVALPOTENTIAL) && defined(PMGRID)
     MyFloat PM_Potential;
 #endif
 #endif
 #if defined(GALSF_SFR_TIDAL_HILL_CRITERION) || defined(TIDAL_TIMESTEP_CRITERION) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(OUTPUT_TIDAL_TENSOR) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
 #define COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    SymmetricTensor2<MyFloat> tidal_tensorps;            /*!< tidal tensor (=second derivatives of grav. potential) */
+    SymmetricTensor2<MyScratchFloat> tidal_tensorps;     /*!< tidal tensor (=second derivatives of grav. potential) */
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    MyFloat tidal_tensor_mag_prev;                       /*!< saved frobenius norm of the tidal tensor, from the previous timestep >*/
-    SymmetricTensor2<MyFloat> tidal_tensorps_prevstep;   /*!< save the entire tensor if this is active >*/
+    MyScratchFloat tidal_tensor_mag_prev;                /*!< saved frobenius norm of the tidal tensor, from the previous timestep >*/
+    SymmetricTensor2<MyScratchFloat> tidal_tensorps_prevstep; /*!< save the entire tensor if this is active >*/
     MyFloat tidal_zeta;                                  /*!< also need to calculate an analog of the ags zeta variable here >*/
 #endif
 #ifdef PMGRID
-    SymmetricTensor2<MyFloat> tidal_tensorpsPM;          /*!< for TreePM simulations, long range tidal field */
+    SymmetricTensor2<MyScratchFloat> tidal_tensorpsPM;   /*!< for TreePM simulations, long range tidal field */
 #endif
 #endif
     
@@ -104,14 +107,16 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
     
+#if !(defined(PRECISION_DIET) && (PRECISION_DIET >= 2))
     MyFloat KernelRadius;           /*!< search radius around particle for neighbors/interactions */
+#endif
     MyFloat NumNgb;                 /*!< neighbor number around particle */
-    MyFloat DrkernNgbFactor;        /*!< correction factor needed for varying kernel lengths */
+    MyScratchFloat DrkernNgbFactor;        /*!< correction factor needed for varying kernel lengths */
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    MyFloat DensityAroundParticle;         /*!< gas density in the neighborhood of the collisionless particle (evaluated from neighbors) */
+    MyScratchFloat DensityAroundParticle;         /*!< gas density in the neighborhood of the collisionless particle (evaluated from neighbors) */
 #endif
 #if defined(DO_DENSITY_AROUND_NONGAS_PARTICLES) || defined(COOLING)
-    Vec3<MyFloat> GradRho;          /*!< gas density gradient evaluated simply from the neighboring particles, for collisionless centers */
+    Vec3<MyScratchFloat> GradRho;          /*!< gas density gradient evaluated simply from the neighboring particles, for collisionless centers */
 #endif
 #if defined(RT_USE_TREECOL_FOR_NH) && !defined(RT_TREECOL_GAS_TARGETS_ONLY)
     MyFloat ColumnDensityBins[TREECOL_NSPECIES][RT_USE_TREECOL_FOR_NH];     /*!< angular bins for column density, per column species */
@@ -209,7 +214,7 @@ extern ALIGN(32) struct particle_data
     MyFloat Mstar;                        /*!< single massive-star mass assigned to particle */
 #endif
 #if defined(RT_SOURCE_INJECTION)
-    MyFloat KernelSum_Around_RT_Source; /*!< kernel summation around sources for radiation injection (save so can be different from 'density') */
+    MyScratchFloat KernelSum_Around_RT_Source; /*!< kernel summation around sources for radiation injection (save so can be different from 'density') */
 #endif
     
 #ifdef GALSF_RESOLVEDISM_FB
@@ -456,7 +461,7 @@ extern ALIGN(32) struct particle_data
 #endif
     
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
-    MyFloat AGS_zeta;               /*!< correction term for adaptive gravitational softening lengths */
+    MyScratchFloat AGS_zeta;               /*!< correction term for adaptive gravitational softening lengths */
 #endif
     
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE

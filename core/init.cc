@@ -341,7 +341,7 @@ void init(void)
             P[i].GradRho[1]=0;
             P[i].GradRho[2]=1;
 #endif
-#ifdef SINK_WIND_SPAWN
+#if defined(SINK_PARTICLES) && defined(SINK_WIND_SPAWN) /* the guard the reservoirs are declared under */
             /* spawn reservoirs for sinks read from a fresh IC rather than formed in-run, which would
                otherwise hold whatever was in the malloc slot: fresh-IC reads skip every block above
                IO_U, so nothing has assigned these. Any snapshot-reading mode (RestartFlag >= 2) reads
@@ -739,6 +739,9 @@ void init(void)
         P[i].Particle_DivVel = 0;
         CellP[i].ConditionNumber = 1;
         CellP[i].DtInternalEnergy = 0;
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+        CellP[i].InternalEnergy_FromIR_Pending = 0;
+#endif
 #ifdef SNE_BROADCAST_TIMESTEP
         P[i].SNe_ArrivalTime = MAX_REAL_NUMBER;
 #endif
@@ -1134,6 +1137,9 @@ void init(void)
         CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
 #endif
         CellP[i].DtInternalEnergy = 0;
+#if defined(RT_INFRARED) && defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
+        CellP[i].InternalEnergy_FromIR_Pending = 0;
+#endif
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
         CellP[i].CoolingIsOperatorSplitThisTimestep = 1; /* default to more conservative split */
 #endif

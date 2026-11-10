@@ -1158,7 +1158,7 @@ integertime get_timestep(int p,		/*!< particle index */
             dt_accr = DMIN(dt_accr, target_mass_for_wind_spawning(p) / P[p].Sink_Mdot); 
 #endif
         } // if(P[p].Sink_Mdot > 0 && P[p].Sink_Mass > 0)
-#if defined(SINK_SEED_GROWTH_TESTS) || defined(FIRE_BHS)
+#if defined(FIRE_BHS)
         double dt_evol = 4.2e5 / UNIT_TIME_IN_YR; // totally arbitrary hard-coding here //
 #ifdef TURB_DRIVING
         if(dt_evol > 1.e-3*st_return_mode_correlation_time()) {dt_evol=1.e-3*st_return_mode_correlation_time();}
@@ -1551,6 +1551,15 @@ void process_wake_ups(void)
 #endif
     if(NeedToWakeupParticles)
     {
+	/* Floor for hydro (relative) wakeups: the lowest bin that is both occupied and active, over all ranks.
+	   A woken cell placed below every occupied bin forces sync points of its own until the bin-alignment
+	   rule lets it climb back, and as a waker it pushes its neighbours lower still (a cascade). The cell's
+	   own criterion is evaluated at its next active step anyway. Collective: this branch is taken on every
+	   rank, since NeedToWakeupParticles is a global reduction. */
+	int local_lowest_occupied_active_bin = TIMEBINS, lowest_occupied_active_bin = TIMEBINS;
+	for(int nb = 0; nb < TIMEBINS; nb++) {if(TimeBinActive[nb] && TimeBinCount[nb] > 0) {local_lowest_occupied_active_bin = nb; break;}}
+	MPI_Allreduce(&local_lowest_occupied_active_bin, &lowest_occupied_active_bin, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+
 	/* Candidates in ascending index order, as the full scan visits them (the timebin splices below depend on it). */
 	const int use_list = WakeupListValid && (NumPart >= WakeupListNumPart);
 	std::vector<int> cand;
@@ -1583,6 +1592,7 @@ void process_wake_ups(void)
 		/* hydro wakeup: target timestep = dt_waker / WAKEUP */
 		int waker_bin = P[i].wakeup - 1;
 		if(All.WakeupTargetBin == 1) {bin = waker_bin;} else if(All.WakeupTargetBin == 2) {bin = max_time_bin_active;} else {bin = IMAX(0, waker_bin - wakeup_bin_offset);}
+		if(bin < lowest_occupied_active_bin) {bin = lowest_occupied_active_bin;}
 	    } else if(P[i].wakeup == -4) {
 		/* an SN can reach it before its step ends (sne_causal_wake): start now on the step the arrival time allows */
 		double aphys_sn; integertime ti_sn = get_timestep(i, &aphys_sn, 0), ti_p2 = TIMEBASE; while(ti_p2 > ti_sn) {ti_p2 >>= 1;}

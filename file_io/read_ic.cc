@@ -1211,8 +1211,8 @@ void read_file(char *fname, int readTask, int lastTask)
                    && blocknr != IO_AGE_PROTOSTAR
                    && blocknr != IO_LUM_SINGLESTAR
 #endif
-#if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(INPUT_READ_SINKPROPS)
-                   /* age is not a protostellar-evolution property: eligible_for_hermite()'s
+#if (defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)) && defined(INPUT_READ_SINKPROPS)
+                   /* age is not only a protostellar-evolution property: eligible_for_hermite()'s
                       settling window keys on it, so a pure-gravity sink build must be able to
                       read a mature age from the IC too. Same gate init.cc uses to preserve the
                       read value for type 5. Absent datasets zero-fill (= formed at t=0). */

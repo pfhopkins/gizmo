@@ -579,6 +579,8 @@
    - DOMAIN_FREQ_WEIGHT_SPLIT_ONLY (opt out: DOMAIN_FREQ_WEIGHT_SPLIT_ONLY_OFF): that weight enters the split and the
      assignment only; the top tree is refined on the unweighted cost. Without it the weighted refinement doubles the top
      tree on Bate-type runs (deep-bin disks around sinks) and the bundle regresses there (1.02-1.04x). Changes the layout.
+   - HYDRO_PAIR_ONCE (opt out: HYDRO_PAIR_ONCE_OFF), pure-MPI MFM builds only: see its definition below (after the hydro
+     and threading flags are final).
    Measured: wall over one full top-level timestep cycle, time-matched, vs the same code with STARFORGE_OPTIMIZATIONS_OFF
    on the same nodes; pairs repeated with the order swapped.
      one Genoa node, 48x1 per socket:  STARFORGE M2e4 stress case 0.810/0.805; M2e4 production without RT 0.858/0.862;
@@ -965,6 +967,13 @@
 
 #ifdef RT_INFRARED
 #define COOL_LOWTEMP_THIN_ONLY // don't want to double-count trapping of radiation if we're doing it self-consistently
+#endif
+
+/* the thermodynamics follows gas into the optically thick regime (cooling not restricted to optically thin gas, the infrared
+   radiation that traps it, or a barotropic equation of state), so a collapsing core stalls at the opacity limit: sink formation
+   (sfr_eff.cc) and sink capture (sink.cc) both ask this one question, after every block above that can switch on one of its inputs */
+#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY)) || defined(RT_INFRARED) || defined(EOS_GMC_BAROTROPIC)
+#define SINK_OPACITY_LIMIT_THERMODYNAMICS
 #endif
 
 
@@ -2008,6 +2017,18 @@
    neighbour of every active cell. Off where something between those loops could change a search: NGB_PAIR_CACHE_OFF opts out */
 #if !defined(NGB_PAIR_CACHE_OFF) && !defined(TURB_DIFF_DYNAMIC) && !defined(MHD_MODIFIED_GRADIENT) && !(defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES) && (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4))
 #define NGB_PAIR_CACHE
+#endif
+
+/* STARFORGE_OPTIMIZATIONS component, defined here because it needs the final hydro-method and threading flags: each active
+   pair's hydro flux is evaluated once, from the smaller-timestep side (opt out: HYDRO_PAIR_ONCE_OFF). Pure-MPI MFM only, so
+   OpenMP builds keep the two-sided evaluation. Not bitwise: results differ at about the level of a rank-count change (one-sided
+   face fallbacks and RT clamps are taken from the evaluating side). M2e4 96x1 one node, full cycle: 0.93x wall, same step count;
+   fb_norad 0.96-0.97x; Bate neutral. */
+#if defined(STARFORGE_OPTIMIZATIONS) && !defined(HYDRO_PAIR_ONCE) && !defined(HYDRO_PAIR_ONCE_OFF) && defined(HYDRO_MESHLESS_FINITE_MASS) && !(defined(_OPENMP) || defined(OPENMP) || defined(BOX_SHEARING) || defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#define HYDRO_PAIR_ONCE
+#endif
+#if defined(HYDRO_PAIR_ONCE) && (defined(_OPENMP) || defined(OPENMP) || defined(BOX_SHEARING) || defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#error "HYDRO_PAIR_ONCE: pure-MPI MFM only (j-side writes are not thread-safe; shearing, dilation, SPH and MFV fluxes are not handled)"
 #endif
 
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
