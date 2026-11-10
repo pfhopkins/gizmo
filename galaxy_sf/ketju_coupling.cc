@@ -63,8 +63,8 @@
 
 /* MSTAR is integrated in natural N-body units (pc, Msun, km/s) whatever the host units: its GBS convergence degrades
  * badly for e.g. kpc / 1e10 Msun states. Converted in place around ketju_run_integrator only; identity for pc/Msun/km/s hosts. */
-#define KJ_LEN_TO_NAT  (All.UnitLength_in_cm / 3.085678e18)      /* host length unit in pc */
-#define KJ_MASS_TO_NAT (All.UnitMass_in_g / 1.989e33)            /* host mass unit in Msun */
+#define KJ_LEN_TO_NAT  (UNIT_LENGTH_IN_CGS / 3.085678e18)        /* host length unit in pc (includes 1/h) */
+#define KJ_MASS_TO_NAT (UNIT_MASS_IN_CGS / 1.989e33)             /* host mass unit in Msun (includes 1/h) */
 #define KJ_VEL_TO_NAT  (All.UnitVelocity_in_cm_per_s / 1.0e5)    /* host velocity unit in km/s */
 #define KJ_TIME_TO_NAT (KJ_LEN_TO_NAT / KJ_VEL_TO_NAT)           /* host time unit in pc/(km/s) */
 static void kj_state_change_units(struct ketju_system_physical_state *ps, int n, int to_natural)
