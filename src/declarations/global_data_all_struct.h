@@ -854,6 +854,9 @@ struct global_data_all_processes
 #ifdef TEST_SINGLE_STARS_LUMINOSITY_PINNED
     double TestFixedLbol; /*!< test only: bolometric luminosity of every single star [erg/s] */
 #endif
+#ifdef TEST_SINGLE_STARS_FEEDBACK_KERNEL_AT_MOST
+    double TestFBKernelAtMost; /*!< test only: single-star feedback kernels start at most this large [code length] */
+#endif
 #ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
     double TestFBNoGasUntilTime; /*!< test only: before this code time single-star feedback couples to no gas */
 #endif
