@@ -41,7 +41,7 @@ void stellar_evolution_tables_init(void)
 }
 
 
-/* Interpolation and accessors: as the reference implementation (stella_dev galaxy_sf/resolvedism_stellar_tables.cc) */
+/* Interpolation and accessors */
 struct StellarEvolutionTables StellarTbl;
 
 /* ========================================================================

@@ -10,7 +10,7 @@
 
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS
 /* Each target integrates its rays alone, so the implied absorption sum_cells sigma N_H F can exceed what the stars emit.
-   Above the emission (root node, 6-13.6 eV) the active cells' bands scale down; never up (stella_dev, per band set) */
+   Above the emission (root node, 6-13.6 eV) the active cells' bands scale down; never up (per band set) */
 void treecol_shells_photon_cap(void)
 {
     const double L_emit = (Nodes[All.TreeNodeIndexBase].stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC] + Nodes[All.TreeNodeIndexBase].stellar_lum[RT_FREQ_BIN_GENERIC_USER_FREQ]) * UNIT_LUM_IN_CGS;

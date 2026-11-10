@@ -22,19 +22,18 @@
  *   - winds (drawn mass >= 8 Msun, after the pre-main sequence): every star step returns the table's cumulative wind
  *     ejecta between the age of the last delivery and now, at the table wind speed, with that interval's composition;
  *     the last delivery age advances only when the mass coupled;
- *   - death: at the first star step past PMS time + table lifetime (as gizmo2017), with the wind mass still owed up to the
- *     end of life in its ejecta; the star's mass at the death trigger is frozen in the record (M_at_SN_trigger), and every
+ *   - death: at the first star step past PMS time + table lifetime, with the wind mass still owed up to the
+ *     end of life in its ejecta; the star's mass at the death trigger is stored in the record (M_at_SN_trigger), and every
  *     pack of the event recomputes ejecta, energy and yields from it;
  *   - supernova classes (table remnant type): CCSN, ECSN, PPISN and PISN 1e51 erg; failed SN and direct BH no energy;
- *     ejecta = frozen mass - table remnant, composition from the table's SN element ejecta scaled to that mass;
- *   - white-dwarf remnants (AGB death): ejecta = frozen mass - table remnant at 30 km/s, AGB element ejecta scaled;
- *   - with GALSF_SINGLE_STARS_TYPE_IA a white dwarf explodes with the per-step hazard of the reference implementation
+ *     ejecta = stored mass - table remnant, composition from the table's SN element ejecta scaled to that mass;
+ *   - white-dwarf remnants (AGB death): ejecta = stored mass - table remnant at 30 km/s, AGB element ejecta scaled;
+ *   - with GALSF_SINGLE_STARS_TYPE_IA a white dwarf explodes with the per-step hazard
  *     (t^-1 delay-time distribution normalised to the dead-progenitor fraction, keyed random number): the whole mass at
  *     1e51 erg with the table's Type Ia yields, no remnant;
  *   - after the loop the star keeps exactly the table remnant mass; the difference to what the loop removed (rounding
  *     of the weight sums) is booked in the event log. An event that found no neighbour weight stays pending and fires
- *     again next step (counted).
- * Reference: stella_dev resolvedism_fb.cc, resolvedism_fb_thermal.cc, resolvedism_fb_momentum.cc. */
+ *     again next step (counted). */
 
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
 
@@ -235,7 +234,7 @@ static inline int single_star_kind_this_step(int i)
     return SSE_NONE;
 }
 
-/* largest timestep of a single star [code], as gizmo2017: the death needs no step of its own */
+/* largest timestep of a single star [code]: the death needs no step of its own */
 double single_star_max_timestep(int p) {(void) p; return All.MaxStellarTimestep / UNIT_TIME_IN_YR;}
 
 /* single-star branch of mechanical_fb_calculate_eventrates: sets SNe_ThisTimeStep (supernova, Type Ia) or
@@ -288,14 +287,14 @@ double single_star_eventrates(int i, double dt)
         }
         return 0;
     }
-    SingleStars.M_at_SN_trigger[s] = P[i].Mass; /* death: freeze the mass for every pack of the event */
+    SingleStars.M_at_SN_trigger[s] = P[i].Mass; /* death: store the mass for every pack of the event */
     SingleStars.no_deposit_count[s] = 0;
     if(is_wd) {P[i].MassReturn_ThisTimeStep = 1;} else {P[i].SNe_ThisTimeStep = 1;}
     return 1;
 }
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (NUM_LIVE_SPECIES_FOR_COOLTABLES >= 10)
-/* dust condensed in the event's ejecta, as stella_dev resolvedism_dust.cc (Choban+22 efficiencies), in the species of
+/* dust condensed in the event's ejecta (Choban+22 efficiencies), in the species of
    GALSF_ISMDUSTCHEM_MODEL: SN carbon 0.15 of C, silicate 3.5e-4 and iron 1e-3 of the key element; Type Ia iron 5e-3;
    AGB deaths and slow winds (< 100 km/s) by C/O: carbon = C not in CO, else silicate 0.8 with the O not in CO */
 static void single_star_dust_yields(const struct single_star_event *ev, double *yields)

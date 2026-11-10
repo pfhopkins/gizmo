@@ -8,7 +8,7 @@
 #include "../core/proto.h"
 #include "single_star_record.h"
 
-/* Per-event logs of single stars (GALSF_SINGLE_STARS_EVENT_LOGS), in the columns of stella_dev: SNinfo.txt, AGBinfo.txt and
+/* Per-event logs of single stars (GALSF_SINGLE_STARS_EVENT_LOGS): SNinfo.txt, AGBinfo.txt and
  * WINDinfo.txt. A rank keeps its rows until the next snapshot or restart file, where rank 0 gathers them and writes them
  * sorted by time and ID, so the files do not depend on the rank count and no step between outputs has a collective. */
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
@@ -65,7 +65,7 @@ void single_star_event_logs_write(void)
     for(int f = 0; f < 3; f++) {if(ssl_fd[f]) {fflush(ssl_fd[f]);}}
 }
 
-/* sfr_rism.txt (stella_dev): star-formation rate [Msun/yr] of the stars younger than 50, 40, 30, 20, 5 and 1 Myr (drawn masses) and the
+/* sfr_rism.txt: star-formation rate [Msun/yr] of the stars younger than 50, 40, 30, 20, 5 and 1 Myr (drawn masses) and the
    number of stars; collective with one reduction, called in the steps that build the tree only */
 void single_star_sfr_windows_write(void)
 {

@@ -1574,7 +1574,7 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.CpuTimeBetRestartFile;
       id[nt++] = REAL;
 
-#if defined(DEVELOPER_MODE) || defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) /* with the ledger the cadence is read (stella_dev) */
+#if defined(DEVELOPER_MODE) || defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) /* with the ledger the cadence is read */
       strcpy(tag[nt], "TimeBetStatistics");
       strcpy(alternate_tag[nt], "Time_Between_Internal_Diagnostic_Statistics");
       addr[nt] = &All.TimeBetStatistics;

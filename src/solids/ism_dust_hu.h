@@ -3,7 +3,7 @@
 /* Dust processes of Hu et al. 2019, 2023, 2026 (GALSF_ISMDUSTCHEM_HU_MODEL) on the fields of the ISM dust model, which keep
    their transport, snapshots and restart: thermal and nonthermal sputtering per MRN size bin with the dust-gas drift of the
    cell, growth below 300 K, operator-split after the chemistry; replaces update_dust_processes. Only dust fields change,
-   never the metals. Reference: stella_dev resolvedism_dust_hu.cc. Host and device. */
+   never the metals. Host and device. */
 #ifndef ISM_DUST_HU_H
 #define ISM_DUST_HU_H
 #ifdef GALSF_ISMDUSTCHEM_HU_MODEL

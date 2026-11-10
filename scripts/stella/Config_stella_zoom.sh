@@ -1,6 +1,6 @@
-# Stella cosmological zoom of a small dwarf galaxy (no stella_dev counterpart: its zoom path was only audited, never run)
+# Stella cosmological zoom of a small dwarf galaxy
 # ComovingIntegrationOn 1 in the parameter file; the UV background (TREECOOL, copied from data/cooling if the run
-# directory has none) reaches the chemistry only with final/01-sgchem-uv-background; the tree is built on the
+# directory has none) reaches the chemistry only where SGChem reads the UV background; the tree is built on the
 # periodic box with the PM grid and a nested PM grid around the zoom region.
 STELLA_DEFAULTS
 SGCHEM

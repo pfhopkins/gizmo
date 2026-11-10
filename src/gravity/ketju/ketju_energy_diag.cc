@@ -1,4 +1,4 @@
-/* ETOT_INCODE: direct-sum total energy of the star particles (as stella_dev core/run.cc incode_total_energy) */
+/* ETOT_INCODE: direct-sum total energy of the star particles */
 #include <mpi.h>
 #include <math.h>
 #include <stdio.h>

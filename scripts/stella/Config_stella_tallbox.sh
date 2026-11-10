@@ -1,4 +1,4 @@
-# Stella tall box (stella_dev Config_stella_tallbox.sh): no band fluxes, radiation pressure at the star; needs the tall-box port (GRAVITY_PERIODIC_XY_IMAGES)
+# Stella tall box: no band fluxes, radiation pressure at the star; needs the tall-box port (GRAVITY_PERIODIC_XY_IMAGES)
 HYDRO_MESHLESS_FINITE_MASS
 MAGNETIC
 MHD_B_SET_IN_PARAMS

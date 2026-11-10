@@ -1,12 +1,12 @@
 /* Copyright (c) 2026 Ulrich Steinwandel
  * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 /* galaxy_sf/photoion_per_direction.cc -- host side of the per-direction photoionisation (Specs in photoion_per_direction.h).
- * Each ionising single star solves on its own active steps, as gizmo2017 (step at most PhotoionMaxTimestep, no floor). At a
- * solve every solving source finds its fronts alone (search sphere grown or refined as stella_dev) and claims its cells;
+ * Each ionising single star solves on its own active steps (step at most PhotoionMaxTimestep, no floor). At a
+ * solve every solving source finds its fronts alone (search sphere grown or refined) and claims its cells;
  * then, in rounds, sources share the bills of cells claimed by several (fronts only advance), until no front moves. Sources
  * not solving now keep their last fronts (front table) and count as claims; those fronts do not move. Cells stay ionised
  * until the next multiple of the cap step, where every source solves, so an inactive source's region cannot drop out;
- * a solving source releases cells it left. Reference: stella_dev galaxy_sf/resolvedism_photoion.cc. */
+ * a solving source releases cells it left. */
 #include <mpi.h>
 #include <cstdio>
 #include <cstdlib>
@@ -239,7 +239,7 @@ static void pi_run(std::vector<int>& list, std::vector<PiSourceIn>& in, PiSpecBa
 struct pi_src {int i, g, prev, f0, nf; double Q, R; int refine, open; double front[PI_NPIX], mark[PI_NPIX], held[PI_NPIX];};
 
 /* per pixel, where the summed bills cross the budget (fractional front, for diagnostics and refinement) and the marking
-   front, rounded up through the innermost cell of the crossing bin (stella_dev v6). Returns 1 if the source searches
+   front, rounded up through the innermost cell of the crossing bin. Returns 1 if the source searches
    again (sphere grown, or refined if allow_shrink), 0 if its fronts are final. */
 static int pi_analyse(pi_src& s, const PiHistOut& h, int allow_iter, int allow_shrink, double max_r)
 {

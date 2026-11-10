@@ -191,7 +191,7 @@ void init(void)
 #ifdef METALS
     for(j=0;j<NUM_METAL_SPECIES;j++) {All.SolarAbundances[j]=0;} // initialize all to zero
 #ifdef SGCHEM
-    All.SolarAbundances[0]=0.014;       // SGChem: Asplund+ 2009 present-day solar Z, as stella_dev
+    All.SolarAbundances[0]=0.014;       // SGChem: Asplund+ 2009 present-day solar Z
 #else
     All.SolarAbundances[0]=0.02;        // all metals (by mass); present photospheric abundances from Asplund et al. 2009 (Z=0.0134, proto-solar=0.0142) in notes;
 #endif
@@ -214,7 +214,7 @@ void init(void)
 #endif
 #endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
-    stellar_solar_abundances_fire_slots(All.SolarAbundances, NUM_LIVE_SPECIES_FOR_COOLTABLES); /* the stellar tables' solar composition (Z = 0.014), as stella_dev */
+    stellar_solar_abundances_fire_slots(All.SolarAbundances, NUM_LIVE_SPECIES_FOR_COOLTABLES); /* the stellar tables' solar composition (Z = 0.014) */
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     Initialize_ISMDustChem_Global_Variables();
@@ -1057,7 +1057,7 @@ void init(void)
 
     /* HELLO! This here is where you should insert custom code for hard-wiring the ICs of various test problems */
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
-    {double m_gas = 0; for(i = 0; i < N_gas; i++) {m_gas += P[i].Mass;} /* as stella_dev GHOSDT_G0_CR */
+    {double m_gas = 0; for(i = 0; i < N_gas; i++) {m_gas += P[i].Mass;} /* initial gas mass, the reference of the SFR scaling */
      MPI_Allreduce(&m_gas, &All.Mgas0, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); All.FactorG0 = 0;}
 #endif
 

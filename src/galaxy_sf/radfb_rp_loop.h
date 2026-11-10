@@ -318,7 +318,7 @@ static void radfb_rp_pair_kick(
 #endif
 
 #if defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
-    /* single stars: every neighbour takes its weight's share of the budget, radially outward (stella_dev); dp_ij is gas minus star */
+    /* single stars: every neighbour takes its weight's share of the budget, radially outward; dp_ij is gas minus star */
     Vec3<double> dv_kick = dp_ij;
     {
         double norm = sqrt(dv_kick.norm_sq()), scale = (norm > 0) ? dv_ss * scalars.common.cf_atime / norm : 0;

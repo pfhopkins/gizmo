@@ -1,4 +1,4 @@
-# Stella molecular cloud (stella_dev Config_stella_cloud.sh)
+# Stella molecular cloud
 STELLA_DEFAULTS
 SGCHEM
 CHEMISTRYNETWORK=5

@@ -2,7 +2,7 @@
    Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 /* galaxy_sf/sfr_collect_gas.cc -- host side of the single-star gas collection (Specs in sfr_collect_gas_loop.h).
  * New stars are spawned with zero mass (spawn_star_from_gas, single_star_attach_to_new_star) and then collect their drawn IMF mass from the gas
- * around them, in passes with a growing radius, as in stella_dev (galaxy_sf/resolvedism_imf_sampling.cc): pass 0 uses
+ * around them, in passes with a growing radius: pass 0 uses
  * the parent cell's kernel radius, widened so it holds twice the mass still missing at the formation density; each
  * later pass widens the last radius by 1.5. A star is done when it holds its drawn mass to within 1%. A star still
  * short after 10 passes is a failed draw: everything granted to it goes back to its donors (exact integer quanta) and
@@ -364,7 +364,7 @@ void single_star_attach_to_new_star(int i_star, int i, double M_drawn)
     force_tree_note_type_presence(i_star);
     struct single_star_record r; memset(&r, 0, sizeof(r)); r.M_drawn = M_drawn;
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
-    r.rho_birth = (float)(CellP[i].Density * All.cf_a3inv); /* physical, as stella_dev FormationDensity */
+    r.rho_birth = (float)(CellP[i].Density * All.cf_a3inv); /* physical */
 #endif
     P[i_star].StarIdx = single_star_record_new(&r);
     ssc_births.push_back({i_star, i, CellP[i].Density});

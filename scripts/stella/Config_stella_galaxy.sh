@@ -1,4 +1,4 @@
-# Stella isolated galaxy (stella_dev Config_stella_default.sh with the galaxy run parameters of stella_galaxy.params)
+# Stella isolated galaxy (default model with the galaxy run parameters of stella_galaxy.params)
 # no box flags: open boundaries, tree gravity, the halo inside the box. Cosmic-ray rate fixed from the parameter file
 # (SGChemCosmicRayIonRate); for the CR fluid or the rate scaled with the stars' field see the options at the end.
 STELLA_DEFAULTS
@@ -23,7 +23,7 @@ OUTPUT_COOLRATE
 OUTPUT_INDIVIDUAL_COOLRATES
 OUTPUT_SGCHEM_RADIATION_FIELDS
 OUTPUT_MASS_METAL_ENERGY_LEDGER
-# options, each off in stella_dev production
+# options, each off by default
 #CR_SCALE_WITH_G0                       # cosmic-ray rate scaled with the stars' field
 #COSMIC_RAY_FLUID                       # CR fluid: also CRFLUID_DIFFUSION_MODEL=7 and the CosmicRay* parameters
 #CRFLUID_DIFFUSION_MODEL=7

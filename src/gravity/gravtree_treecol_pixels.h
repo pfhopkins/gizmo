@@ -29,7 +29,7 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_species_masses(const struct particle_
     m[TREECOL_PIXELS_H2] = 2.0 * cell[i].TracAbund[IH2] * m_H;
     m[TREECOL_PIXELS_CO] = 28.0 * cell[i].TracAbund[ICO] * m_H;
 #ifdef TREECOL_SHELLS_ION_HELIUM
-    m[TREECOL_PIXELS_HI] = fmax(0., 1.0 - cell[i].TracAbund[IHP]) * HYDROGEN_MASSFRAC * pp[i].Mass; /* H2 as two atoms, as stella_dev at net 17 */
+    m[TREECOL_PIXELS_HI] = fmax(0., 1.0 - cell[i].TracAbund[IHP]) * HYDROGEN_MASSFRAC * pp[i].Mass; /* H2 as two atoms (net 17) */
     m[TREECOL_PIXELS_HEI] = fmax(0., ABHE - cell[i].TracAbund[IHEP] - cell[i].TracAbund[IHEPP]) * HYDROGEN_MASSFRAC * pp[i].Mass; /* in H-equivalent atoms: the chemistry's He, not 1 - X - Z */
 #elif defined(TREECOL_SHELLS_ION_N)
     m[TREECOL_PIXELS_HI] = (fmax(0., 1.0 - cell[i].TracAbund[IHP] - 2.0 * cell[i].TracAbund[IH2]) + TREECOL_SHELLS_H2_PER_HI * cell[i].TracAbund[IH2]) * HYDROGEN_MASSFRAC * pp[i].Mass;
@@ -109,7 +109,7 @@ KOKKOS_INLINE_FUNCTION int treecol_hpx_pixel_nside(const Vec3<double> &d, int ns
 KOKKOS_INLINE_FUNCTION int treecol_hpx_pixel(const Vec3<double> &d) {return treecol_hpx_pixel_nside(d, TREECOL_PIXELS_NSIDE);}
 
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
-/* band luminosity times its dust cross-section [1e-21 cm^2 per H at solar DGR] (stella_dev). Counted twice: LW and 6-8 eV, as production */
+/* band luminosity times its dust cross-section [1e-21 cm^2 per H at solar DGR]. Counted twice: LW and 6-8 eV */
 KOKKOS_INLINE_FUNCTION double treecol_radp_sigma_lum(const double *lum)
 {
     double s = 2.0 * (lum[RT_FREQ_BIN_PHOTOELECTRIC] + lum[RT_FREQ_BIN_GENERIC_USER_FREQ]) + 1.3 * lum[RT_FREQ_BIN_NUV] + 0.5 * lum[RT_FREQ_BIN_OPTICAL_NIR];
@@ -231,7 +231,7 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, 
     const int ip = treecol_hpx_pixel(dr);
     if(All.TreeColShieldingLength <= 0 || r < All.TreeColShieldingLength / All.cf_atime)
     {
-        const double w = 1.0 / ((4.0 * M_PI / TREECOL_PIXELS_N) * r * r); /* unsoftened, as stella_dev */
+        const double w = 1.0 / ((4.0 * M_PI / TREECOL_PIXELS_N) * r * r); /* unsoftened */
         for(int s = 0; s < TREECOL_PIXELS_NCOLUMNS; s++) {a.col[s][ip] += w * species[s];}
 #ifdef CR_BACKGROUND_IONRATE_ATTENUATED
         a.gas[ip] += w * gasmass;
@@ -349,7 +349,7 @@ KOKKOS_INLINE_FUNCTION void treecol_shells_sweep(const treecol_pixels_sums_t &a,
 #ifdef TREECOL_SHELLS_ION_N
 /* ionising light outward through the HI column of each pixel, one band at sigma_HI; attenuated photon and energy flux summed over pixels */
 #define TREECOL_SHELLS_SIGMA_HI 6.3e-18
-/* with helium: photon-weighted means of a 4e4 K blackbody [cm^2], as stella_dev; band 0 13.6-24.6, band 1 24.6-54.4 eV */
+/* with helium: photon-weighted means of a 4e4 K blackbody [cm^2]; band 0 13.6-24.6, band 1 24.6-54.4 eV */
 #define TREECOL_SHELLS_SIGMA_HI_B0 3.658e-18
 #define TREECOL_SHELLS_SIGMA_HI_B1 8.482e-19
 #define TREECOL_SHELLS_SIGMA_HEI_B1 5.460e-18
@@ -399,7 +399,7 @@ KOKKOS_INLINE_FUNCTION void treecol_shells_ion_sweep(const treecol_pixels_sums_t
 #endif
 
 /* walk end: write a gas cell's columns and band energy densities [erg/cm^3]; Lyman-Werner floored per pixel at
-   0.1 x the 6-13.6 eV background floor 0.324e-2 SGChemBackgroundG0 / N (stella_dev), then summed */
+   0.1 x the 6-13.6 eV background floor 0.324e-2 SGChemBackgroundG0 / N, then summed */
 KOKKOS_INLINE_FUNCTION void treecol_pixels_write_cell(struct gas_cell_data &c, const treecol_pixels_sums_t &a)
 {
     for(int s = 0; s < TREECOL_PIXELS_NCOLUMNS; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {c.TreeColColumn[s][k] = treecol_pixel_store(a.col[s][k], UNIT_SURFDEN_IN_CGS, TREECOL_PIXELS_LOG16_MIN_COLUMN);}}
@@ -420,7 +420,7 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_write_cell(struct gas_cell_data &c, c
 #endif
 #endif
 #ifdef CR_BACKGROUND_IONRATE_ATTENUATED
-    { /* STARFORGE, as stella_dev: 1 below N_H = 1e21 cm^-2 (2.23e-3 g cm^-2), then exp(-Sigma / 100 g cm^-2) (1e21 cm^-2 / N_H), pixel mean */
+    { /* STARFORGE: 1 below N_H = 1e21 cm^-2 (2.23e-3 g cm^-2), then exp(-Sigma / 100 g cm^-2) (1e21 cm^-2 / N_H), pixel mean */
         double f = 0, sigma_0 = 2.23e-3;
         for(int k = 0; k < TREECOL_PIXELS_N; k++) {
             double sigma = a.gas[k] * UNIT_SURFDEN_IN_CGS * All.cf_a2inv;

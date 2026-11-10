@@ -19,7 +19,7 @@
 static inline double single_star_band_lum_cgs(double log_l) {double l = pow(10., log_l); return (isfinite(l) && l > 0) ? l : 0;}
 
 /* L[SINGLE_STAR_BAND_*] [erg/s] and the bolometric luminosity; returns 0 (all zero) before the main sequence, after death
-   without a record or at or below IMFSampleStellarMassCut. 6-8 eV = L(6-13.6) - L(8-13.6), unclipped as stella_dev */
+   without a record or at or below IMFSampleStellarMassCut. 6-8 eV = L(6-13.6) - L(8-13.6), unclipped */
 int single_star_band_luminosities_cgs(int i, double *L, double *L_bol)
 {
     for(int b = 0; b < SINGLE_STAR_NBANDS; b++) {L[b] = 0;}
@@ -137,11 +137,11 @@ int single_star_rt_band_luminosities(int i, int mode, double *lum, struct partic
 #endif
 
 #ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
-/* photon momentum a single star hands to the gas this step [g cm/s] (stella_dev estimator): band luminosities absorbed
+/* photon momentum a single star hands to the gas this step [g cm/s]: band luminosities absorbed
    over the kernel column at the star, f_b = 1 - exp(-sigma_b DGR N_H) with sigma = 2.0 (PE + 6-8), 1.3 (NUV), 0.5 (OPT)
    x 1e-21 cm^2, LW not counted (inside PE), capped at L_bol; plus the IR boost tau_IR = 5 DGR Sigma [cm^2/g] on the
-   absorbed light. GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE adds 6-8 eV to the NUV term as stella_dev production.
-   Stars below SINGLE_STAR_RADPRESSURE_MIN_MASS push nothing (stella_dev) */
+   absorbed light. GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE adds 6-8 eV to the NUV term.
+   Stars below SINGLE_STAR_RADPRESSURE_MIN_MASS push nothing */
 #define SINGLE_STAR_RADPRESSURE_MIN_MASS 2.0 /* [Msun] drawn mass */
 double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR)
 {
@@ -173,7 +173,7 @@ double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR
 
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
 /* direct radiation pressure in the absorbing cell: L_abs = sum_b sigma_b F_b DGR N_H(cell) / 4 pi, pushed away from the pixel
-   centres, all deposits scaled by L_emit / sum(L_abs) when above 1 (stella_dev photon cap). The sum over cells is kept running:
+   centres, all deposits scaled by L_emit / sum(L_abs) when above 1 (photon cap). The sum over cells is kept running:
    an active cell swaps its share, full recount on all-active steps. L_emit is the root node, so no star loop. One Allreduce per call. */
 void single_star_radpressure_per_cell(double *dp_total_code)
 {

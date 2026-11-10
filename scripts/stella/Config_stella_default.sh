@@ -1,4 +1,4 @@
-# Stella default model (stella_dev Config_stella_default.sh)
+# Stella default model
 STELLA_DEFAULTS
 SGCHEM
 CHEMISTRYNETWORK=5

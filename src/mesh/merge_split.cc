@@ -1309,7 +1309,7 @@ int merge_particles_ij(int i, int j)
 #endif
 #endif
 #ifdef SGCHEM
-    /* abundances per H nucleus at one H fraction mix by mass; dust and gas temperature as stella_dev */
+    /* abundances per H nucleus at one H fraction mix by mass, as do dust and gas temperature */
     for(k=0;k<SGCHEM_NUM_TRACKED_SPECIES;k++) {CellP[j].TracAbund[k] = wt_j*CellP[j].TracAbund[k] + wt_i*CellP[i].TracAbund[k];}
     CellP[j].DustTemp = wt_j*CellP[j].DustTemp + wt_i*CellP[i].DustTemp;
     CellP[j].Temp = wt_j*CellP[j].Temp + wt_i*CellP[i].Temp;

@@ -1920,7 +1920,7 @@ double get_particle_feedback_timestep_in_physical(int i, struct particle_data *p
 }
 
 #ifdef SNE_BROADCAST_TIMESTEP
-/* causal wake, from starforge_dev (Mike Grudic, #107): the supernovae of this step, and when their ejecta can reach each gas cell */
+/* causal wake (starforge_dev #107): the supernovae of this step, and when their ejecta can reach each gas cell */
 struct sne_event {double pos[3], v;};
 static std::vector<sne_event> SNe_new;
 void sne_broadcast_record(Vec3<MyDouble> pos, double v) {sne_event e = {{pos[0], pos[1], pos[2]}, v}; SNe_new.push_back(e);}

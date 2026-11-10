@@ -17,13 +17,13 @@ REF="$(sed -n 's/^#define STELLA_TABLES_REF "\([0-9a-f]*\)".*/\1/p' "$HDR")"
 PREFIX="${1:-${STELLA_TABLES_PREFIX:-$HOME/.stella-tables/$REF}}"
 REPO="${STELLA_TABLES_REPO:-https://github.com/Ulli1991/stella-tables.git}"
 # python with numpy and h5py (hash check and the stella-tables build): PYTHON if set, else python3 if it has h5py, else
-# the MPCDF module python-waterboa where a module system exists
+# a python module where a module system exists
 if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"
 elif python3 -I -c 'import h5py' 2> /dev/null; then PY=python3
 else
     set +u; [ -z "$(type -t module)" ] && [ -f /etc/profile.d/modules.sh ] && source /etc/profile.d/modules.sh
     { [ -n "$(type -t module)" ] && module load python-waterboa > /dev/null 2>&1; } || true; set -u
-    python3 -I -c 'import h5py' 2> /dev/null || { echo "get_stella_tables: no python with numpy and h5py found; set PYTHON (on MPCDF machines: module load python-waterboa)" >&2; exit 1; }
+    python3 -I -c 'import h5py' 2> /dev/null || { echo "get_stella_tables: no python with numpy and h5py found; set PYTHON" >&2; exit 1; }
     PY=python3
 fi
 PATH="$(dirname "$(command -v "$PY")"):$PATH"   # the stella-tables build calls python3: use the same interpreter

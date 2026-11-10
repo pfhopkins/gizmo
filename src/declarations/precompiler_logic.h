@@ -1327,10 +1327,10 @@
 #define RT_PHOTOELECTRIC      /* 8-13.6 eV */
 #endif
 #ifndef RT_LYMAN_WERNER
-#define RT_LYMAN_WERNER       /* 11.2-13.6 eV, inside the photoelectric bin as stella_dev */
+#define RT_LYMAN_WERNER       /* 11.2-13.6 eV, inside the photoelectric bin */
 #endif
 #ifndef RT_NUV
-#define RT_NUV                /* carries 6-8 eV here: with the photoelectric bin it spans the 6-13.6 eV of G0, as stella_dev */
+#define RT_NUV                /* carries 6-8 eV here: with the photoelectric bin it spans the 6-13.6 eV of G0 */
 #endif
 #ifndef RT_SOURCES
 #define RT_SOURCES 16

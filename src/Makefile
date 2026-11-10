@@ -402,8 +402,7 @@ endif
 
 #----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Orion_Kokkos")
-## MPCDF Orion, CPU nodes, Kokkos OpenMP backend. Modules: module load gcc openmpi gsl hwloc fftw-mpi hdf5-mpi
-KOKKOS_HOME_ORION ?= /u/uli/sw/kokkos/5.0.0-openmp-gcc13
+## MPCDF Orion CPU nodes, Kokkos OpenMP backend; set KOKKOS_HOME_ORION (environment, Makefile.systype or make line)
 CC       =  mpicc
 CXX      =  mpicxx -std=c++20
 OPTIMIZE = -O3 -funroll-loops -march=native -fopenmp
