@@ -625,6 +625,7 @@
 # --------------------
 # ----- Particle IDs
 #TEST_FOR_IDUNIQUENESS             # explicitly check if particles have unique id numbers (only use for special behaviors)
+#TEST_RESTART_AT_STEP             # test hook: with env GIZMO_TEST_RESTART_AT_STEP=N write restart files after sync-point N and stop
 #ASSIGN_NEW_IDS                    # assign IDs on startup instead of reading from ICs
 #NO_CHILD_IDS_IN_ICS               # IC file does not have child IDs: do not read them (used for compatibility with snapshot restarts from old versions of the code)
 # --------------------

@@ -768,6 +768,9 @@ void run(void)
         ketju_finish_step();        /* clean up KETJU region data (flags persist for next step's guards) */
 #endif
         EB_GRAV_REPORT(); /* after Hermite, so Vel is the corrected end-of-step velocity */
+#ifdef TEST_RESTART_AT_STEP
+        if(RestartFlag == 0 && getenv("GIZMO_TEST_RESTART_AT_STEP") && All.NumCurrentTiStep == atoll(getenv("GIZMO_TEST_RESTART_AT_STEP"))) {restart(0); endrun(0);} /* restart files part-way through the long steps */
+#endif
         /* Check whether we need to interrupt the run */
         int stopflag = 0;
         if(ThisTask == 0)
