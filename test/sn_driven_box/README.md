@@ -21,6 +21,6 @@ Energy: `test_energy_conserved_over_the_events` holds the gas gain over the 12 e
 (driving, gravity, winds and cooling booked out). `test_single_sn_energy` puts one 20 Msun star in uniform gas at n_H = 100,
 no driving, at 10, 1 and 0.1 Msun cells, dying 10 kyr before the 50 kyr step boundary: from the first full sync after the
 explosion the gas holds the explosion energy within 10 %. Without the causal wake (`SNE_BROADCAST_TIMESTEP`) the long gas
-steps around the explosion make the hydro create or remove energy: 2.27, 1.75 and 0.81 at the three resolutions, G_cum 0.96.
+steps around the explosion make the hydro create or remove energy. Bar: with the wake on, the cumulative ratio G_cum of gas energy gain to explosion energy is within 2 % of 1; with it off, G_cum is at least 0.1 higher than with it on.
 
 Run: `pytest test/sn_driven_box`, ranks from `GIZMO_TEST_SN_BOX_RANKS` (default 32).

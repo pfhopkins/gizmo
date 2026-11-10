@@ -1,6 +1,6 @@
 # KETJU integrator unit tests
 
-Tests of the two source checkouts of github.com/Ulli1991/ketju-integrator, separate from this repository: `KETJU_SOURCE_DIR` (branch `main`,
+Tests of the two source checkouts of the ketju-integrator repository, separate from this repository: `KETJU_SOURCE_DIR` (branch `main`,
 the C++/Kokkos MSTAR library) and `KETJU_C_SOURCE_DIR` (branch `ketju-c`, the C library; its header is also GIZMO's data model).
 Without both variables the tests are skipped. GIZMO itself builds against the install at `KETJU_PATH`. No GIZMO build or simulation is involved.
 
@@ -46,16 +46,15 @@ where feasible, a check that fails without the feature or fix:
 `Softening_kink.*` (`unit-tests/softening_kink.cpp`): GBS steps landed on the softening kernel's break points (two-body
 orbit, collision with tide and softening converge; off without softening).
 
-Negative checks run by hand (reverting each fix): init, pericentre guard, dE_others and the tide's work in B each make
+Negative checks run by hand (reverting each fix): init, pericentre guard, dE_others and the tide's work each make
 their test fail.
 
 ## Running
 
-    module load gcc/13; module load openmpi; module load cmake/3.30
     pytest test/ketju_unit/test_ketju_unit.py                                              # Kokkos ctests
     GIZMO_EXTRA_CONFIG_FLAGS=KETJU_LEGACY_C_LIBRARY pytest test/ketju_unit/test_ketju_unit.py  # + C googletests on MPI
 
 The legacy test copies `KETJU_C_SOURCE_DIR` to a pytest temporary directory (its CMake writes `bin/` and
 `lib/` into the source tree), builds with `-DUNIT_TESTS=ON -DBUILD_GMOCK=OFF` and the googletest
-submodule in `src/stella/ketju/ketju-integrator-c/thirdparty/googletest/`, and runs with
+sources in the checkout (`thirdparty/googletest/` of `KETJU_C_SOURCE_DIR`), and runs with
 `mpiexec --oversubscribe`. Build ~1 min with 4 make jobs; the runs take seconds.

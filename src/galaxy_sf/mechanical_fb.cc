@@ -214,7 +214,7 @@ void verify_and_assign_local_mechfb_integrals(void)
                 }
             }
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
-            ledger_add(LEDGER_E_FB_THERMAL_NOW, mf*CellP[j].InternalEnergy - TE_cell_0); /* what reached u; deferred heat is only in the rate */
+            ledger_add(LEDGER_E_FB_THERMAL_NOW, mf*CellP[j].InternalEnergy - TE_cell_0); /* what reached u */
 #endif
             double dKE=LocalGasMechFBInfoTemp[j].KE_injected, dp[3];
             if(dKE != 0 || LocalGasMechFBInfoTemp[j].p_injected[0] != 0 || LocalGasMechFBInfoTemp[j].p_injected[1] != 0 || LocalGasMechFBInfoTemp[j].p_injected[2] != 0 )
@@ -396,7 +396,7 @@ void mechanical_fb_calc_toplevel(void)
         mechfb_run_iterative(nl_loop, n_loop,
                               LocalGasMechFBInfoTemp, N_gas);
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
-        for(int retry = 0; retry < 3; retry++) { /* an event that reached no gas widens its kernel x1.4 and tries again this step (stella_dev bubble retry) */
+        for(int retry = 0; retry < 3; retry++) { /* an event that reached no gas widens its kernel x1.4 and tries again this step */
 #ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
             if(All.Time < All.TestFBNoGasUntilTime) {break;}
 #endif

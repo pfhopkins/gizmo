@@ -3,7 +3,7 @@
 One star in a uniform periodic lattice, adiabatic, no gravity. Total gas energy (thermal + kinetic) from the snapshots.
 Supernovae (example model, GALSF_FB_MECHANICAL alone): 14.8 Msun at 1e51 erg each, whatever the star's mass, so energy per event = 1e51 erg
 at star:cell mass 1:1, 100:1, 1000:1. Stellar mass return (FIRE-3 winds, young star, no supernovae yet): gas energy gained = sum of
-mass returned x v_wind^2 / 2. n_H = 0.1 cm^-3 keeps nearly all the energy on the direct heating branch of the apply step.
+mass returned x v_wind^2 / 2. n_H = 0.1 cm^-3.
 A star moving through the gas delivers the same energy in its own frame, where the ejecta start at rest.
 Bars fixed before the first run: 3 % per supernova (hydro drift of a blast ~1.5 %), 2 % for the winds; the same bars for a moving star.
 """

@@ -74,7 +74,7 @@ def _kokkos_root():
 def test_ketju_kokkos_ctests(tmp_path):
     for tool in ("cmake", "make", "g++"):
         assert shutil.which(tool), f"{tool} not on PATH (load the gcc and cmake modules)"
-    assert (KETJU_SRC / "include" / "mstar" / "mstar.hpp").is_file(), "ketju-integrator not at the pinned commit (git submodule update --init)"
+    assert (KETJU_SRC / "include" / "mstar" / "mstar.hpp").is_file(), "mstar.hpp not found in the KETJU_SOURCE_DIR checkout"
     build = tmp_path / "build"
     _run(["cmake", "-S", str(KETJU_SRC), "-B", str(build), "-DCMAKE_CXX_COMPILER=g++",
           f"-DKokkos_ROOT={_kokkos_root()}", "-DCMAKE_BUILD_TYPE=Release"], tmp_path, 600)
@@ -89,7 +89,7 @@ def test_ketju_kokkos_ctests(tmp_path):
 def unit_test_exe(tmp_path_factory):
     for tool in ("cmake", "make", "mpicc", "mpicxx", "mpiexec"):
         assert shutil.which(tool), f"{tool} not on PATH (load the gcc, openmpi and cmake modules)"
-    assert (KETJU_C_SRC / "thirdparty" / "googletest" / "CMakeLists.txt").is_file(), "vendored googletest missing (git submodule update --init --recursive ketju-integrator-c)"
+    assert (KETJU_C_SRC / "thirdparty" / "googletest" / "CMakeLists.txt").is_file(), "vendored googletest missing (expected in the KETJU_C_SOURCE_DIR checkout)"
     work = tmp_path_factory.mktemp("ketju_unit")
     src = work / "ketju-integrator-c"
     shutil.copytree(KETJU_C_SRC, src, ignore=shutil.ignore_patterns("bin", "lib", "build*", "*.so", "*.a"))
