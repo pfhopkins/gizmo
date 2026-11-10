@@ -846,7 +846,7 @@ void assign_stellar_masses(void)
         iter++;
 
         if(ThisTask == 0 && incomplete_total > 0)
-            printf("IMF accretion pass %d: %d stars with >5%% mass deficit, iterating\n", iter, incomplete_total);
+            printf("IMF accretion pass %d: %d stars with >1%% mass deficit, iterating\n", iter, incomplete_total);
     } while(incomplete_total > 0 && iter < max_iter);
 
     if(ThisTask == 0 && iter >= max_iter && incomplete_total > 0)
