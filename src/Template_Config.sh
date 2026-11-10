@@ -286,6 +286,7 @@
 #TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE # TESTING ONLY: a single star is born with the age TestStarInitAgeYr [yr] (formation time back-dated), so its evolution starts there
 #TEST_SINGLE_STARS_SN_AT_FORCED_TIMES # TESTING ONLY: star ID k of the first TestNumStars (first generation) explodes at TestSNTime0 + (k-1) TestSNSpacing [code time], whatever its table lifetime
 #TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME # TESTING ONLY: before the code time TestFBNoGasUntilTime single-star feedback couples to no gas; events stay pending and are retried
+#TEST_SINGLE_STARS_FEEDBACK_KERNEL_AT_MOST # test only: single-star feedback kernels start at most TestFBKernelAtMost [code length] (a star in an evacuated bubble)
 #TEST_SINGLE_STARS_LUMINOSITY_PINNED # TESTING ONLY: every single star shines at the constant bolometric luminosity TestFixedLbol [erg/s] from birth: FUV 0.5, NUV 0.2, optical 0.3, Lyman-Werner 0.15, no ionising photons
 #TEST_SINGLE_STARS_RADIATION_OFF # TESTING ONLY: single stars emit no radiation (all bands, bolometric and ionising are zero); TEST_SINGLE_STARS_LUMINOSITY_PINNED takes precedence
 #TEST_SKIP_COOLING_AND_CHEMISTRY_UPDATE # TESTING ONLY (needs COOLING_OPERATOR_SPLIT, no TRANSPORT_SUBCYCLE_COOLING): the cooling and chemistry update is not called, so the energy follows the hydro work alone (adiabatic twin of a cooling run)
