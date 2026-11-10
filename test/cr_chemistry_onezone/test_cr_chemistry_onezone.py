@@ -1,7 +1,7 @@
 """Cosmic-ray heating, ionisation and losses in SGCHEM network 5 with the CR fluid (Stella cloud Config + COSMIC_RAY_FLUID).
 The driver evolves a real cell to equilibrium at fixed nH and fixed CR energy density for (nH, zeta) points and the test checks:
 zeta in the cell = 3e-17 e_CR / (1.8 eV cm^-3) (SGChem); chemistry CR heating = 20 eV per ionisation x (n_HI + n_H2) (Goldsmith & Langer 1978,
-as SGChem) plus hadronic and free-electron Coulomb heating (ionisation is in the zeta term); CR fluid loss per step = the hadronic + Coulomb rate; equilibrium T in the dark-cloud range.
+as SGChem) plus hadronic and free-electron Coulomb heating (ionisation is in the zeta term); CR fluid loss per step = the hadronic + Coulomb rate plus the ionisation heating the gas received; equilibrium T in the dark-cloud range.
 """
 
 import os
@@ -67,6 +67,9 @@ def check_rows(rows):
             fails.append("%s: CR heating %g, expected %g" % (tag, d["gamCR"], gam))
         # CR_cooling_and_losses: (0.87 a + 0.53 b) n_nucleon, b = 3.09e-16 (x_e + 0.57 (1 - f_ion)) X_H; neutral gas, f_ion << 1
         rate = (0.87 * 6.37e-16 + 0.53 * 3.09e-16 * 0.76 * (ne + 0.57)) * n * (1 + 4 * ABHE)
+        # the chemistry's CR ionisation heating (gamCR less its hadronic + Coulomb part) is paid by the fluid, as far as zeta is the fluid's (zeta_cr / zeta_cell)
+        gam_ion = max(d["gamCR"] - (0.87 * 6.37e-16 / 6 + 0.53 * 3.09e-16 * ne / (1 + 4 * ABHE)) * ecr * n, 0.0)
+        rate += min(z / zc, 1.0) * gam_ion / ecr
         loss = 1 - exp(-rate * d["dt_s"])
         if abs(d["lossfrac"] / loss - 1) > 5e-2:
             fails.append("%s: CR loss per step %g, expected %g" % (tag, d["lossfrac"], loss))

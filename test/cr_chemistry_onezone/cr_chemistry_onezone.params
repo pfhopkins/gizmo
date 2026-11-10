@@ -118,3 +118,6 @@ MaxPISearchRadius               0.05              % maximum PI search radius [kp
 CosmicRayDiffusionCoeff         97.2              % 3e28 cm^2/s in kpc*km/s (GALPROP-like parallel kappa at ~GeV)
 CosmicRay_SNeFraction           0.1               % 10% of each SN energy into CRs
 MaxMemSize                      8000
+CosmicRayInitialAmbient_eVcm3   0                 % unused: the driver sets e_CR per row
+CosmicRayInitialCloud_eVcm3     0
+CosmicRayInitialCloudThreshold_nH 10
