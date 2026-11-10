@@ -334,13 +334,8 @@ void hydro_accumulate_neighbor(
     viscosity_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
                            Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
                            dt_hydrostep, Fluxes);
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-    turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
-                                  face_density_for_diffusion, v_hll, dt_hydrostep, dt_hydrostep_i, mdot_estimated, out, CellP[j].Dyield_pending);
-#else
     turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
                                   face_density_for_diffusion, v_hll, dt_hydrostep, dt_hydrostep_i, mdot_estimated, out);
-#endif
     chimes_turb_diff_ions_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
                                        face_density_for_diffusion, v_hll, dt_hydrostep, dt_hydrostep_i, mdot_estimated, out);
     {

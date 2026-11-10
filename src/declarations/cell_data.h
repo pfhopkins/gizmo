@@ -206,9 +206,6 @@ extern struct gas_cell_data
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     MyFloat Dyield[NUM_METAL_SPECIES];
 #endif
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-    MyDouble Dyield_pending[NUM_METAL_SPECIES]; /*!< diffusive metal exchange received from neighbours, applied at this cell's next active step */
-#endif
     
 #ifdef HYDRO_SPH
     MyDouble DrkernHydroSumFactor;   /* for 'traditional' SPH, we need the SPH hydro-element volume estimator */

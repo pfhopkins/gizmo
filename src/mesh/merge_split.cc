@@ -787,9 +787,6 @@ static int make_sn_ejecta_cell(int i, int n_particles_split)
 #ifdef TURB_DIFF_METALS
     for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP[j].Dyield[k] = 0;}
 #endif
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-    for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP[j].Dyield_pending[k] = 0;}
-#endif
 #ifdef RADTRANSFER /* the copy took no radiation or cosmic rays with it: none created */
     for(int k = 0; k < N_RT_FREQ_BINS; k++) {
         CellP[j].Rad_E_gamma[k] = 0;
@@ -978,9 +975,6 @@ int split_particle_i(int i, int n_particles_split, double r_near)
 #endif
 #if defined(SINK_THERMALFEEDBACK)
         CellP[j].Injected_Sink_Energy = mass_of_new_particle * CellP[i].Injected_Sink_Energy; CellP[i].Injected_Sink_Energy -= CellP[j].Injected_Sink_Energy; /* pending energy (not specific): partition with the mass */
-#endif
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-        for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[j].Dyield_pending[k] = 0;} /* pending exchange (a mass, not a fraction) stays with the parent */
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
@@ -1502,9 +1496,6 @@ int merge_particles_ij(int i, int j)
 #endif
 #if defined(SINK_THERMALFEEDBACK)
     CellP[j].Injected_Sink_Energy += CellP[i].Injected_Sink_Energy; /* pending energy (not specific): the survivor keeps both */
-#endif
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-    for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[j].Dyield_pending[k] += CellP[i].Dyield_pending[k];} /* pending exchange (a mass) adds */
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)

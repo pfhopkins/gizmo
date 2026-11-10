@@ -878,9 +878,6 @@ void init(void)
 #if defined(SINK_THERMALFEEDBACK)
         CellP[i].Injected_Sink_Energy = 0;
 #endif
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-        for(j=0;j<NUM_METAL_SPECIES;j++) {CellP[i].Dyield_pending[j] = 0;}
-#endif
     }
 #if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
     /* a cell whose CompositionType names no material of this build stops the run here, before anything looks up its equation
