@@ -139,7 +139,7 @@ void resolvedism_dust_evolve(void)
         {
             double cs_kms   = CellP[i].effective_soundspeed() * UNIT_VEL_IN_KMS;
             double vsig_kms = CellP[i].MaxSignalVel * UNIT_VEL_IN_KMS;
-            double divv     = P[i].Particle_DivVel;   /* code 1/time; <0 = compression */
+            double divv     = P[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3*All.cf_hubble_a : 0);   /* physical 1/time, Hubble flow included; <0 = compression */
             double v_shock  = 0.5 * (vsig_kms - 2.0 * cs_kms); /* pairwise approach speed */
             if(divv < 0 && v_shock > 50.0)
             {

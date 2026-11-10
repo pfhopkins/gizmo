@@ -331,12 +331,12 @@ double get_starformation_rate(int i, int mode)
 
 #if (SINGLE_STAR_SINK_FORMATION & 2) /* restrict to convergent flows */
 #if defined(GALSF_RESOLVEDISM) && !defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL)
-    if(P[i].Particle_DivVel * All.cf_a2inv >= 0) {rateOfSF=0;} /* resolved ISM: simple div(v) < 0 check using existing Particle_DivVel */
+    if(P[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3*All.cf_hubble_a : 0) >= 0) {rateOfSF=0;} /* resolved ISM: simple div(v) < 0 check using existing Particle_DivVel */
 #elif defined(SINGLE_STAR_SINK_DYNAMICS)
     if(divv >= 0) {rateOfSF=0;} /* diverging flow, no SF [simplest version of this] */
 #else
 #ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
-    if(sf_channel == SF_CHANNEL_STELLA) {if((GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION & 2) && (P[i].Particle_DivVel * All.cf_a2inv >= 0)) {rateOfSF=0;}} else /* Stella version on Stella cells */
+    if(sf_channel == SF_CHANNEL_STELLA) {if((GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION & 2) && (P[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3*All.cf_hubble_a : 0) >= 0)) {rateOfSF=0;}} else /* Stella version on Stella cells */
 #endif
     if(divv < 0) { // here need to more carefully account for the fact that we are not trying to capture laminar collapse, but whether a patch should or should not -fragment-
         /* double t_compression = -1./divv; if(t_compression < tsfr) {rateOfSF *= tsfr/t_compression;} // if you are collapsing or being externally compressed faster than the local dynamical time, allow SF to characteristically follow -that- timescale, to prevent runaway densities from appearing spuriously (will have no effect in single star runs since sf is deterministic and this normalization is set to infinity at the end) */
