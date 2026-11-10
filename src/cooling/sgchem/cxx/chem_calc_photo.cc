@@ -1,13 +1,13 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_calc_photo.cc -- Gate-3 port of calc_photo.F.
+// chem_calc_photo.cc -- C++ version of calc_photo.F.
 //
 //   chi                         (calc_photo.F:683-735)
 //   calc_H2_shielding_factor    (calc_photo.F:745-823)  DB96 curve of growth
 //   calc_HD_shielding_factor    (calc_photo.F:825-914)
 //   calc_photo (+ wrapper)      (calc_photo.F:73-808)
 //
-// Effective-column convention (2026-07-28 variable-DGR work, preserved here):
+// Effective-column convention (variable per-cell dust-to-gas ratio):
 //   * AV is built from AV_conversion_factor * dust_to_gas_ratio * N_H, i.e. the
 //     DGR rides on the *conversion*, so a variable per-cell DGR changes AV but
 //     NOT the column; and
@@ -16,11 +16,10 @@
 //     is the same product written the other way round.  The two must stay
 //     consistent -- writing f_dust = exp(-3.5 AV) in
 //     the non-pixel branch is the SAME number, and that is exactly what the
-//     Fortran does at line 203 (SGChem exp(-3.5 AV), D-49).  Reproduced literally, both branches.
+//     Fortran does at line 203 (SGChem exp(-3.5 AV)).  Reproduced literally, both branches.
 //
 // H2 self-shielding is applied ONCE, in the RHS (ykdis = phrates(1)*fshield),
-// for nets != 1 -- NOT baked into phrates(1) here (h2_double_shield_bug,
-// 2026-07-07).  phrates(1) below therefore carries only the dust factor.
+// for nets != 1 -- NOT baked into phrates(1) here.  phrates(1) below therefore carries only the dust factor.
 
 #include "../../../GIZMO_config.h"
 #include "chem_types.h"
@@ -42,7 +41,7 @@ double cxx_chi(const ChemTables& T, double AV, int isrf_option)
 
     int index = (int)AV;
     if (index == 200) {
-        // The Fortran has a bare `stop` here (DEVIATIONS D-4: not ported --
+        // The Fortran has a bare `stop` here (not included --
         // a bare stop kills one MPI rank and deadlocks the job).  Unreachable:
         // AV > 200 returned above and AV == 200.0 exactly gives index 200 only
         // if AV == 200, which the `AV > 2e2` test lets through -- so guard.
@@ -57,7 +56,7 @@ double cxx_chi(const ChemTables& T, double AV, int isrf_option)
 
 // ===========================================================================
 // calc_H2_shielding_factor (calc_photo.F:745-823)
-// Evaluated at EVERY RHS call with the live abh2 and T (audit R5).
+// Evaluated at EVERY RHS call with the live abh2 and T.
 // ===========================================================================
 double cxx_calc_H2_shielding_factor(double temp, double abh2, double NH,
                                     ChemCell& c)
@@ -82,7 +81,7 @@ double cxx_calc_H2_shielding_factor(double temp, double abh2, double NH,
         return 1.0;
 #else
         // nray MUST be NPIX for the pixel average -- this holds for the
-        // H2/CO-only (M1) path too (Uli, 2026-07-08).
+        // H2/CO-only (M1) path too.
         int nray = c.npix;
         for (int I = 0; I < nray; I++) {
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED)
@@ -229,7 +228,7 @@ static double co_shielding_visser(double NCO, double NH2)
 }
 // ===========================================================================
 // calc_photo (calc_photo.F:73-666).  Fills c.phrates / c.G_dust / c.chi_isrf /
-// c.fshield_CO.  Called once per cell call (audit R5).
+// c.fshield_CO.  Called once per cell call.
 // ===========================================================================
 void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
                     ChemCell& c)
@@ -488,7 +487,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
         c.phrates[9] = T.phtab[9] * c.G0 * f_simp;
 #endif
 #endif
-        // M1 RT: HI photoionization + heating for net 5/6 (2026-07-04).  The
+        // M1 RT: HI photoionization + heating for net 5/6.  The
         // shared HI block below is skipped by this early exit, so replicate it.
         c.phrates[37] = T.phtab[37] * c.G0 + c.rt_phot_HI;
         c.phrates[41] = T.phtab[41] * c.G0 + c.rt_heat_HI;

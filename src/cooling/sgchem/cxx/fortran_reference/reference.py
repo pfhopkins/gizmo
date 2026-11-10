@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Frozen chemistry reference: freeze a reference_dump output, or compare a new dump against it.
+"""Chemistry reference: save a reference_dump output (command "freeze"), or compare a new dump against it.
 
   reference.py freeze  <dump data dir> <ref dir>   # writes manifest.json, tables.npz, cool_func.npz, onezone.csv
   reference.py compare <ref dir> <dump data dir>   # report + exit 1 on failure
@@ -7,7 +7,7 @@
 Tables up to MAXFULL entries are stored in full; larger ones as a fixed-stride subsample
 (stride in manifest, last entry always kept). Every table carries the SHA-256 of its full bytes.
 Pass criteria: tables at stored indices within TAB_REL; cool_func ylam/rates within KER_REL;
-one-zone final T within ONEZONE_T_REL (Gate 2/3 criterion); the trajectory maximum is reported
+one-zone final T within ONEZONE_T_REL; the trajectory maximum is reported
 (DVODE vs CVODE step timing gives a few % mid-cooling from 1e6 K). Bitwise counts are always reported.
 """
 import hashlib, json, os, sys

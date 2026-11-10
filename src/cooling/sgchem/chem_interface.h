@@ -2,9 +2,7 @@
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 /* cooling/sgchem/chem_interface.h
  *
- * GATE 0 of the SGCHEM C++/CVODE migration (strangler plan; see
- * /orion/ptmp/uli/orion/stella/SGCHEM_CXX_CVODE_ASSESSMENT.md, section 5):
- * freeze the chemistry seam between GIZMO and the Fortran chemistry.
+ * The seam between GIZMO and the chemistry (Fortran or C++ backend).
  *
  * ChemInputs holds EVERY per-cell quantity that do_sgchem_step() used to
  * write directly into the Fortran COMMON blocks (COOLR / COOLI / CHEM_COMP /
@@ -89,8 +87,8 @@ static inline struct ChemFUVField chem_fuv_field_from_band_energy(double u_g0ban
 /* ------------------------------------------------------------------------
  * Fortran COMMON block declarations - these map to the Fortran COMMON
  * /coolr/, /cooli/, /chem_comp/ and /project/ blocks (Fortran side declared
- * in cool.h).  MOVED VERBATIM from sgchem.cc:13-81 (pre-Gate-0).  The
- * conditional members MUST track the Fortran cool.h layout exactly.
+ * in cool.h).  The conditional members MUST
+ * track the Fortran cool.h layout exactly.
  * ---------------------------------------------------------------------- */
 
 /* one-time chemistry settings, filled by sgchem_init for either backend */

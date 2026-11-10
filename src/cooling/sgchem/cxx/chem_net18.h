@@ -1,7 +1,7 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_net18.h -- network 18: non-equilibrium ions of H, He, C, N, O, Ne, Mg, Si, S, Fe with RTZ rates and
-// cooling, all stages and the temperature integrated together in CVODE.  Provenance: DEVIATIONS.md D-51.
+// cooling, all stages and the temperature integrated together in CVODE.
 #ifndef CHEM_NET18_H
 #define CHEM_NET18_H
 
@@ -10,8 +10,8 @@
 
 // ChemCell::n18_flags
 #define N18_FIXT 1      // hold T at n18_fixT (energy not evolved)
-#define N18_NOH2 2      // H2 frozen
-#define N18_NOCO 4      // CO frozen
+#define N18_NOH2 2      // H2 held fixed
+#define N18_NOCO 4      // CO held fixed
 #define N18_UVB  8      // HM12 UV background at c.redshift (RTZ self-shielding exp(-n_H/0.01))
 #define N18_EXACT 16    // ionization/recombination/charge-exchange coefficients evaluated exactly (default: log-log table)
 

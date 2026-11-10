@@ -1,14 +1,14 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_rhs_net15.cc -- verbatim-in-structure port of rate_eq_nl99.F
-// (CHEMISTRYNETWORK=15, Nelson & Langer 1999 CO network; KOYAMA branch not ported).
+// chem_rhs_net15.cc -- C++ version of rate_eq_nl99.F, same structure
+// (CHEMISTRYNETWORK=15, Nelson & Langer 1999 CO network; KOYAMA branch not included).
 //
 // ODE vector (0-based): y[0]=H2, y[1]=H+, y[2]=C+, y[3]=CHx, y[4]=OHx, y[5]=CO,
 // y[6]=HCO+, y[7]=He+, y[8]=M+, y[9]=energy density.
-// Deviations (DEVIATIONS.md D-22):
-//  - validate_input on a local copy (R3).  Unlike nets 5/17 the Fortran does
+// Differences from the Fortran:
+//  - validate_input on a local copy.  Unlike nets 5/17 the Fortran does
 //    not return early on a flag: ydot is still built from the clipped copy, so
-//    the port builds it too and returns CHEM_RHS_RECOVERABLE at the end (same
+//    this code builds it too and returns CHEM_RHS_RECOVERABLE at the end (same
 //    for the temp<=0 path).  NaN input returns at once with ydot = 0.
 //  - NaN ydot: recoverable return (the Fortran has no validate_output here).
 //  - default-REAL literals (PI, 1.4) are float32, as compiled.
@@ -28,7 +28,7 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     const double yn = c.yn, dl = c.dl, divv = c.divv;
     const double NH = 0.5 * yn * dl;                         // .F:77
 
-    // --- validate_input on a local copy (R3) ---
+    // --- validate_input on a local copy ---
     double y[10];
     for (int i = 0; i < nspec; i++) { y[i] = y_in[i]; ydot[i] = 0.0; }
     int flagged = chem_validate_input_full(y, nspec, itmp, ih2, c.id_current);

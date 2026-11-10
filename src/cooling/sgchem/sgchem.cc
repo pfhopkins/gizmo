@@ -64,7 +64,7 @@ void sgchem_init(void)
     p.iflag_3bh2b = 4;   /* H2 + H2: 1/8 of the H2 + H rates */
     p.iflag_h3pra = 1;   /* H3+ dissociative recombination (GP98) */
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
-    p.iphoto      = 6;   /* per-pixel columns from the gravity walk: dust, H2 and CO shielding (as stella_dev) */
+    p.iphoto      = 6;   /* per-pixel columns from the gravity walk: dust, H2 and CO shielding */
 #else
     p.iphoto      = 0;   /* no columns: optically thin */
 #endif
@@ -102,7 +102,7 @@ void sgchem_init(void)
     if(ThisTask == 0) {printf("SGCHEM: hydrogen mass fraction %g, MinEgySpec %.8g\n", (double) HYDROGEN_MASSFRAC, All.MinEgySpec); fflush(stdout);}
 }
 
-/* fresh-start cell state, as stella_dev init.cc: no H2 or CO, x(H+) = 1e-4, dust at 10 K, gas at 100 K until the first solve */
+/* fresh-start cell state: no H2 or CO, x(H+) = 1e-4, dust at 10 K, gas at 100 K until the first solve */
 void sgchem_init_cell_state(int i)
 {
 #ifndef SGCHEM_KEEP_IC_ABUNDANCES /* opt-in: keep the abundances read from the IC */

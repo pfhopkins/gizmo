@@ -1,6 +1,6 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_calc_temp.cc -- Gate-3 port of calc_temp.F and compute_gamma.F.
+// chem_calc_temp.cc -- C++ version of calc_temp.F and compute_gamma.F.
 //
 //   lookup_temp_gamma  (calc_temp.F:159-211)  -- the T/gamma table lookup used
 //                                                by rate_eq_* and the driver
@@ -11,7 +11,7 @@
 //
 // The tables themselves (temp_table / gamma_table / eh2_table, from
 // energy-table.txt and eh2-table.txt) are loaded in chem_tables_build.cc,
-// which is the port of init_temperature_lookup.
+// which does what init_temperature_lookup does.
 
 #include "chem_types.h"
 #include <cmath>

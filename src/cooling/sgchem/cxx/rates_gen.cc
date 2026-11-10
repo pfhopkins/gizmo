@@ -25,7 +25,7 @@ static inline int f_itemp(double temp, const ChemGlobals& g) {
 // REAL**INTEGER (gfc_conv_cst_int_power):  powi(n) = powi(n/2)*powi(n-n/2)
 // -- e.g. x**5 = x2*x3, x**7 = x3*x4.  This differs from gcc's C-side
 // powi_as_mults (odd n: x*powi(n-1)) for n = 5, 7, 9..., and the last-ulp
-// association difference is resolvable by the 1e-12 golden tolerance in
+// association difference is resolvable at 1e-12 relative tolerance in
 // cancellation-heavy polynomials (verified against the disassembly of the
 // production cheminmo.o).
 static inline double fpowi(double x, int n) {

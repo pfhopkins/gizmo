@@ -2,7 +2,6 @@
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_net20.h -- network 20: TIGRESS-NCR thermochemistry (ApJS 264, 10; arXiv:2210.08024).
 // Time-dependent H2 and H+ (+ energy); C+, CO, C, O, O+, MH+ and e- in equilibrium.
-// Provenance and simplifications: DEVIATIONS.md D-29.
 #ifndef CHEM_NET20_H
 #define CHEM_NET20_H
 

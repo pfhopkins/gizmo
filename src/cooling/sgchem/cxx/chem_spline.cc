@@ -1,30 +1,23 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_spline.cc -- port of the SGCHEM spline layer (spline.F) and of the
-// four genuinely table/spline-driven cooling entries cl1, cl2, cl3, cl6.
+// chem_spline.cc -- C++ version of the SGCHEM spline layer (spline.F) and of the
+// four spline-driven cooling entries cl1, cl2, cl3, cl6.
 //
-// Gate-1 completion: RATE_AUDIT.md classified 8 cltab entries as kind=TABLE
-// (cl1-3, cl6, cl52, cl59, cl60, cl61) because the extractor saw them assigned
-// both in coolinmo's analytic temperature loop AND in a later residual loop.
-// Reading the residual loop (coolinmo.F:1520-1590) resolves that:
+// cltab entries assigned both in coolinmo's analytic temperature loop and in the
+// later residual loop (coolinmo.F:1520-1590):
 //
 //   cl1, cl2, cl3 : analytic below 100 K and above 1e4 K; a natural-cubic
 //                   spline over the 41 mol_data.h points INSIDE [1e2, 1e4] K
-//                   overwrites the (unassigned) interior.  Genuinely TABLE.
-//   cl6           : iflag_atom=2 (the production setting, sgchem.cc /
-//                   onezone drivers) -> spline over the 76-point ca2 DATA
-//                   array, zero below 10^4.3 K.  Genuinely TABLE.
+//                   overwrites the (unassigned) interior.
+//   cl6           : iflag_atom=2 (the production setting) -> spline over the
+//                   76-point ca2 DATA array, zero below 10^4.3 K.
 //   cl52, cl59,   : zeroed by the residual loop ONLY under iflag_atom==1
 //   cl60, cl61      (coolinmo.F:1541-1554).  Under iflag_atom==2 the zeroing
 //                   is additionally #ifndef WSS_CIE_COOL, and WSS_CIE_COOL is
-//                   ON in every Stella build.  => in the production config
-//                   these four keep their ANALYTIC main-loop values and are
-//                   NOT table-driven at all.  Their formulas are already in
-//                   RATE_AUDIT.md and are covered by the Gate-1 rate goldens.
-//                   Nothing to port; see DEVIATIONS.md D-9.
+//                   ON in every build.  So with that setting these four keep
+//                   their analytic main-loop values and are not table-driven.
 //
-// So the "8 TABLE splines" are 4 spline ports + 4 audit-classification
-// artifacts.  This file implements the 4 and the shared spline machinery.
+// This file implements cl1, cl2, cl3, cl6 and the shared spline machinery.
 
 #include "chem_types.h"
 #include "chem_tables_data.h"
@@ -34,7 +27,7 @@
 #include <vector>
 
 // ---------------------------------------------------------------------------
-// spline.F port.  Note the exact parameterisation: the cubic is evaluated in
+// C++ version of spline.F.  Note the exact parameterisation: the cubic is evaluated in
 // the NORMALIZED local coordinate dpt = (x - x_i)/(x_{i+1} - x_i), and the
 // derivatives are those of the uniform-knot Bartels formulation -- i.e. the
 // knot SPACING does not enter spline_derivatives at all.  That is not a

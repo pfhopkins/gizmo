@@ -1,13 +1,13 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_rhs_net3.cc -- verbatim-in-structure port of rate_eq_mol.F
+// chem_rhs_net3.cc -- C++ version of rate_eq_mol.F, same structure
 // (CHEMISTRYNETWORK=3, Glover+10 molecular network) + comp_equilib.
 //
 // ODE vector (0-based, sgchem_consts.h): y[0]=H2, y[1]=H+, y[2]=C+, y[3]=Si+,
 // y[4]=O+, y[5]=D+, y[6]=HD, y[7]=He+, y[8]=He++, y[9]=CO, y[10]=C2, y[11]=OH,
 // y[12]=H2O, y[13]=O2, y[14]=HCO+, y[15]=CH, y[16]=CH2, y[17]=Si++, y[18]=CH3+,
 // y[19]=energy density.
-// Deviations (DEVIATIONS.md D-28):
+// Differences from the Fortran:
 //  - validate_input on a local copy; a flagged input returns ydot = 0 and
 //    CHEM_RHS_RECOVERABLE.  temp <= 0 builds ydot at tmin and returns recoverable.
 //  - comp_equilib / bad temperature index ABORTs return CHEM_RHS_FATAL with
@@ -15,7 +15,7 @@
 //  - NaN ydot returns recoverable (no validate_output in the Fortran).
 //  - calc_photo runs inside every evaluation, as in the Fortran (writes c.phrates,
 //    c.G_dust, c.chi_isrf, c.fshield_CO).
-//  - not ported: ADIABATIC_DENSITY_THRESHOLD, FF_COLLAPSE_TEST, COLLECT_EQB_DATA,
+//  - not included: ADIABATIC_DENSITY_THRESHOLD, FF_COLLAPSE_TEST, COLLECT_EQB_DATA,
 //    DEBUG_RATE_EQ (all off in production).
 
 #include "chem_types.h"
@@ -98,7 +98,7 @@ int chem_rhs_net3(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double abHI = 1.0 - 2.0 * abh2 - abhp - abhd - aboh
                 - 2.0 * abh2o - abhcop - abch - 2.0 * abch2 - 3.0 * abch3p;
     if (abHI < 0.0) abHI = 0.0;
-    // H+ above 1 (clipped by validate_input) still sees photoionization as a restoring sink (D-30)
+    // H+ above 1 (clipped by validate_input) still sees photoionization as a restoring sink
     const double abHI_ph = 1.0 - 2.0 * abh2 - ((y_in[ihp] > abhp) ? y_in[ihp] : abhp) - abhd - aboh
                          - 2.0 * abh2o - abhcop - abch - 2.0 * abch2 - 3.0 * abch3p;
     double abDI = abundD - abdp - abhd;

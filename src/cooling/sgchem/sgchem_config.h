@@ -4,7 +4,7 @@
    With GALSF_RESOLVEDISM_TREECOL_PIXELS the gravity walk gives per-pixel dust, H2 and CO columns (and, with
    ..._STELLAR_BAND_FLUXES, the stellar field per pixel); without it the chemistry is optically thin (no dust, H2 or CO
    shielding) under a uniform field. TEST_SGCHEM_ONEZONE_WITH_12_PIXEL_COLUMNS gives the standalone
-   one-zone drivers the 12-pixel input layout of the frozen references; GIZMO builds reject it (sgchem.cc). */
+   one-zone drivers the 12-pixel input layout of the Fortran reference; GIZMO builds reject it (sgchem.cc). */
 #ifndef SGCHEM_CONFIG_H
 #define SGCHEM_CONFIG_H
 
@@ -18,7 +18,7 @@
 #ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS
 #define RT_TREECOL_STELLAR_PIXELS_PREATTENUATED /* transported stellar field arrives attenuated: the chemistry attenuates only the floor pixels (all chemistry files read this header) */
 #endif
-#define SGCHEM_SOLAR_Z  0.014  /* Asplund+09 present-day solar Z: the chemistry's metallicity unit, as stella_dev */
+#define SGCHEM_SOLAR_Z  0.014  /* Asplund+09 present-day solar Z: the chemistry's metallicity unit */
 #define SGCHEM_DEPL_C   0.50   /* grain-locked fractions at the Milky Way dust-to-gas ratio, scaled with SGChemDustToGasRatio */
 #define SGCHEM_DEPL_SI  0.82
 #define SGCHEM_DEPL_O   0.217

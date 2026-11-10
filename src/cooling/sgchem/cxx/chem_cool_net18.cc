@@ -2,7 +2,7 @@
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_cool_net18.cc -- network 18: RTZ (mem_opt) ion rates, H2/CO, heating and cooling as a CVODE system.
 // Species per H; neutral stages from the element pools and n_e from the ion charges, so every element and the
-// charge are conserved by construction.  Provenance and changes: DEVIATIONS.md D-51.
+// charge are conserved by construction.
 
 #include "chem_net18.h"
 #include "chem_net18_tables.h"
@@ -671,7 +671,7 @@ int cv_rhs(sunrealtype, N_Vector yy, N_Vector yp, void* ud)
     return n18_rhs(N_VGetArrayPointer(yy), N_VGetArrayPointer(yp), *(ChemCell*)ud);
 }
 
-// Jacobian: species columns by differences at frozen rate coefficients, plus the T column through dT/dy
+// Jacobian: species columns by differences at fixed rate coefficients, plus the T column through dT/dy
 int cv_jac(sunrealtype, N_Vector yy, N_Vector fy, SUNMatrix J, void* ud, N_Vector, N_Vector, N_Vector)
 {
     st_jac++;
@@ -687,7 +687,7 @@ int cv_jac(sunrealtype, N_Vector yy, N_Vector fy, SUNMatrix J, void* ud, N_Vecto
     std::memcpy(lam0, c.lambda, sizeof(lam0)); std::memcpy(lamc0, c.lambda_chem, sizeof(lamc0));
     double fa[N18_NODE + 1], fb[N18_NODE + 1];
     tl_fsh = (c.iphoto == 0) ? 1.0 : cxx_calc_H2_shielding_factor(Tr, h2_of(y, c), c.dl * c.yn, c);
-    assemble(y, Tr, k, c, fa);   // f at frozen T (equals f0 up to the clamp)
+    assemble(y, Tr, k, c, fa);   // f at fixed T (equals f0 up to the clamp)
 
     // d f / d T at fixed composition
     double vT[N18_NODE + 1];

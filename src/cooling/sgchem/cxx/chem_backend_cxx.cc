@@ -1,23 +1,22 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_backend_cxx.cc -- the PURE C++ SGCHEM backend (Gate 3).
+// chem_backend_cxx.cc -- the pure C++ SGCHEM backend.
 //
-// This translation unit is what replaces chem_backend_fortran.cc on the
-// SGCHEM C++ path.  It links NO Fortran: the tables are built by
+// This translation unit is the SGCHEM C++ path.  It links NO Fortran: the tables are built by
 // chem_tables_build.cc, the kernels are chem_cool_func.cc / chem_cool_util.cc /
 // chem_calc_photo.cc / chem_calc_temp.cc, the RHS is chem_rhs_net{5,17}.cc and
 // the driver is cvode_driver.cc.  There is no /coolr/, no COMMON view and no
 // libgfortran dependency anywhere in that set.
 //
-// THREAD SAFETY (audit R2).  Two kinds of state exist and they are separated:
+// THREAD SAFETY.  Two kinds of state exist and they are separated:
 //   * ChemTables -- built once in chem_cxx_tables_init(), read-only thereafter,
 //     safe to share across threads.  Every kernel takes it by const reference.
-//   * ChemCell   -- one per cell, carrying yn/dl/divv, the frozen photorates,
+//   * ChemCell   -- one per cell, carrying yn/dl/divv, the fixed photorates,
 //     tdust and the lambda diagnostics.  Nothing is global: the C++ API takes
 //     it by reference, and the plain-C convenience API keeps ONE PER THREAD
 //     (thread_local), so an OpenMP loop over cells is race-free.
 // The remaining shared-mutable object is the CVODE workspace cache in
-// cvode_driver.cc, which is likewise thread_local (see DEVIATIONS D-7/D-15).
+// cvode_driver.cc, which is likewise thread_local (one workspace per thread).
 
 #include "chem_types.h"
 #include "chem_net20.h"
@@ -68,7 +67,7 @@ void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net)
     c.trac_num = (net == 18) ? N18_NTRAC : chem_trac_num(net);
     c.nspec = (net == 18) ? N18_NODE + 1 : c.trac_num + 1;
     c.abhe = 0.1;                            // sgchem_consts.h ABHE (nets 3/5/15/16/17)
-    c.no_dchem = 0;                          // audit sec 3.1 item 4: explicit
+    c.no_dchem = 0;                          // explicit
     c.iflag_mn = 4; c.iflag_ad = 6; c.iflag_atom = 2;
     c.iflag_3bh2a = 5; c.iflag_3bh2b = 4; c.iflag_h3pra = 1;
     c.iflag_h2opc = 0;
@@ -92,7 +91,7 @@ void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net)
 }
 
 // ---------------------------------------------------------------------------
-// plain-C convenience API.  One ChemCell per THREAD (audit R2): an OpenMP
+// plain-C convenience API.  One ChemCell per THREAD: an OpenMP
 // loop over cells can call these without any cross-thread interference.
 // A caller that wants full control should use the C++ API above and own its
 // ChemCell explicitly.
@@ -133,8 +132,8 @@ void chemcxx_pure_reset_cell(int net)
     tl_ready = 1;
 }
 
-/* calc_photo_wrapper equivalent -- freezes phrates/G_dust/chi_isrf for the
-   whole cell call (audit R5). */
+/* calc_photo_wrapper equivalent -- fixes phrates/G_dust/chi_isrf for the
+   whole cell call. */
 void chemcxx_pure_calc_photo(double temp, double abh2, double abhd, double abco)
 {
     cxx_calc_photo(temp, abh2, abhd, abco, tl_cell);

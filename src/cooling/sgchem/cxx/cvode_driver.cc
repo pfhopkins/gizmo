@@ -1,28 +1,28 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// cvode_driver.cc -- port of evolve_abundances.F (driver loop, TNOCHEM bypass,
+// cvode_driver.cc -- C++ version of evolve_abundances.F (driver loop, TNOCHEM bypass,
 // check_abundances, init_tolerances) on SUNDIALS CVODE (BDF + dense internal
 // difference-quotient Jacobian == DVODE mf=22).
 //
-// Port-semantics decisions (audit §7 register; full rationale in DEVIATIONS.md):
-//  R1/R4 KEEP: the OUTER substep loop is kept literally (safety factors 0.1
+// Behaviour relative to the Fortran (see DIFFERENCES.md):
+//  The OUTER substep loop is kept literally (safety factors 0.1
 //    species / 0.3 energy, ctrl_floor pool gating, dt = min(dt_est, remaining)).
 //    One CVode instance per cell call; successful substeps CONTINUE the
 //    integrator (no reinit) == DVODE istate=2, so check_abundances clips do
-//    NOT feed back into the integrator trajectory (clip-no-feedback KEPT).
+//    NOT feed back into the integrator trajectory (clip-no-feedback, as in the Fortran).
 //    Failures restore y/tdust, halve dt, CVodeReInit == istate=1.
-//  R3 REDESIGN: RHS input violations act on a LOCAL COPY of y and signal via a
+//  RHS input violations act on a LOCAL COPY of y and signal via a
 //    positive (recoverable) return instead of the ipar(1)+zero-ydot convention;
 //    CVODE's internal recoverable retry substitutes for some driver halvings.
 //    If CVODE cannot recover it returns a negative flag and the driver's
 //    restore/halve path runs.
-//  A10 KEEP: atol(energy) = 0 (pure relative control).  Legal in CVODE;
+//  atol(energy) = 0 (pure relative control).  Legal in CVODE;
 //    safe because the energy component is strictly positive (floored at
 //    rho*MinEgySpec before entry and physically bounded below by CMB/floor).
-//  R6 KEEP: TNOCHEM hot bypass ported wholesale (molecule zero + hot-CIE ion
+//  TNOCHEM hot bypass as in the Fortran (molecule zero + hot-CIE ion
 //    set + explicit 10%-per-step energy Euler subcycle + mid-step handback +
 //    1e-10 relative completion tolerance + ipar-clear == ignore RHS retval).
-//  R7 KEEP: failure taxonomy: dt < 1e-8 s -> return 100 ("ABORT(100)");
+//  Failure codes: dt < 1e-8 s -> return 100 ("ABORT(100)");
 //    substep budget 9e6 -> return 1 ("ABORT(0)"); negative dt -> return 2.
 //    The one-zone harness maps nonzero to the sgchem_fatal exit path.
 
@@ -50,7 +50,7 @@
 // solver statistics, exposed to the harness for the DVODE/CVODE comparison
 // thread_local for the same reason as the workspace: the counters would
 // otherwise be a data race.  chemcxx_stats() therefore reports the CALLING
-// thread's totals; single-threaded runs (the Gate-2/3 harnesses) are unchanged.
+// thread's totals; single-threaded runs (the one-zone harness) are unchanged.
 thread_local long cxx_stat_calls = 0, cxx_stat_substeps = 0, cxx_stat_retries = 0;
 thread_local long cxx_stat_rhs_evals = 0, cxx_stat_cvode_steps = 0;
 thread_local long chem_nan_states = 0;
@@ -80,7 +80,7 @@ static void chem_print_cell_context(const char* why, double time, double yn, dou
     std::fflush(stderr);
 }
 
-// audit R10 switch: 1 = keep the Fortran "last RHS evaluation wins" semantics
+// switch: 1 = keep the Fortran "last RHS evaluation wins" semantics
 static int chem_legacy_lambda()
 {
     static int cached = -1;
@@ -129,7 +129,7 @@ static void cvode_err_handler(int error_code, const char* module,
         std::fprintf(stderr, "[CVODE] %s::%s: %s\n", module, function, msg);
 }
 
-// init_tolerances port (evolve_abundances.F:757-869, nets 3/5/15/16/17 branches)
+// init_tolerances (evolve_abundances.F:757-869, nets 3/5/15/16/17 branches)
 static void chem_atol(int net, double* atol)
 {
     if (net == 3) {
@@ -160,7 +160,7 @@ static void chem_atol(int net, double* atol)
     }
 }
 
-// clamp_pool_group port: scale species k[0..n-1] (w[j] atoms each) down
+// clamp_pool_group: scale species k[0..n-1] (w[j] atoms each) down
 // proportionally so that together they hold at most pool of the element
 static void chem_clamp_pool_group(double* y, const int* k, const double* w, int n, double pool)
 {
@@ -172,7 +172,7 @@ static void chem_clamp_pool_group(double* y, const int* k, const double* w, int 
     }
 }
 
-// check_abundances port (evolve_abundances.F:499-741, nets 3/5/15/16/17 branches).
+// check_abundances (evolve_abundances.F:499-741, nets 3/5/15/16/17 branches).
 // Returns 0 ok (y possibly clipped), 1 reject.
 static int chem_check_abundances(double* y, ChemCell& c, const double* atol)
 {
@@ -286,10 +286,9 @@ static int chem_check_abundances(double* y, ChemCell& c, const double* atol)
 // Persistent CVODE workspace.
 // DVODE reuses a static rwork/iwork across calls and re-initializes with
 // istate=1; allocating a fresh SUNContext + CVode memory per cell call would
-// charge the port a malloc/free cost DVODE never pays and would make the
+// charge this code a malloc/free cost DVODE never pays and would make the
 // wall-time comparison meaningless.  CVodeReInit on a cached instance is the
-// exact istate=1 equivalent.  NOT thread-safe (neither is the Fortran side --
-// audit R2); one workspace per nspec.
+// exact istate=1 equivalent.  One workspace per nspec and per thread (below).
 // ---------------------------------------------------------------------------
 struct CvWork {
     SUNContext ctx = nullptr;
@@ -299,9 +298,9 @@ struct CvWork {
     SUNLinearSolver LS = nullptr;
     int nspec = 0;
 };
-// Gate 3 / audit R2: ONE workspace cache PER THREAD.  DVODE reuses a static
+// ONE workspace cache PER THREAD.  DVODE reuses a static
 // rwork/iwork and re-initialises with istate=1; caching the CVODE equivalent
-// keeps the wall-time comparison fair (DEVIATIONS D-7), and making the cache
+// avoids per-call allocation, and making the cache
 // thread_local is what makes the C++ path OpenMP-safe -- a shared CVode memory
 // object cannot be entered concurrently.  Cost: one workspace per (thread,net).
 static thread_local CvWork g_work[5];   // [0] nspec 4 (net 5), [1] nspec 8 (net 17), [2] nspec 10 (nets 15/16), [3] nspec 20 (net 3), [4] nspec 3 (net 20)
@@ -337,7 +336,7 @@ static CvWork* cv_get(int nspec, const double* atol, double t0, const double* y)
     return w;
 }
 
-// evolve_abundances port.
+// Driver for one cell call, as evolve_abundances.
 // non_eq_abundances has c.trac_num entries; energy in/out [erg cm^-3].
 // Returns 0 ok; 100 = dt collapse (ABORT(100)); 1 = nstep exceeded (ABORT(0));
 // 2 = negative/zero dt (ABORT(1)/(2)); 3 = CVODE setup failure.
@@ -510,7 +509,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                 c.cr_ion_heat_int += c.cr_ion_heat * dt_byp; // explicit step: exactly the applied heating
                 y[itmp] += dt_byp * ydot[itmp];
                 t_start += dt_byp;
-                if (t_start >= t_end - 1e-10 * t_end) { done = 1; break; }  // WEDGEFIX 3
+                if (t_start >= t_end - 1e-10 * t_end) { done = 1; break; }  // relative completion tolerance
                 temp_byp = bypass_temp();
                 if (temp_byp <= SGCHEM_TNOCHEM) break;    // hand off to stiff path
             }
@@ -638,7 +637,7 @@ out:
     if (retcode == 0 || retcode == 1) {
         for (int i = 0; i < c.trac_num; i++) non_eq_abundances[i] = y[i];
         *energy = y[itmp];
-        // ---- audit R10: state-consistent lambda diagnostics ----
+        // ---- state-consistent lambda diagnostics ----
         // The Fortran leaves lambda/lambda_chem at whatever the LAST RHS
         // evaluation wrote.  With a multistep integrator that evaluation is at
         // an internal stage or, worse, at a REJECTED trial point, so the
@@ -646,9 +645,8 @@ out:
         // that was actually returned -- and it is the breakdown that lands in
         // snapshots and in every "why did this cell cool" post-mortem.
         // One extra RHS evaluation at the ACCEPTED (t_end, y) fixes that.
-        // Cost: one RHS per cell call, ~0.4% of the ~240 evaluations a typical
-        // call already makes.  Set CHEMCXX_LEGACY_LAMBDA=1 to restore the
-        // Fortran semantics for a bit-comparable A/B (DEVIATIONS D-19).
+        // Cost: one extra RHS per cell call.  Set CHEMCXX_LEGACY_LAMBDA=1 to restore the
+        // Fortran semantics.
         if (!chem_legacy_lambda()) {
             double ydot_final[CHEM_NSPEC_MAX];
             (void)rhs_dispatch(t_start, y, ydot_final, c);

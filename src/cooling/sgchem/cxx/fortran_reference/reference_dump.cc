@@ -18,7 +18,7 @@ static const double KB = 1.380649e-16;   // BOLTZMANN_CGS as chem_interface.cc u
 static std::string g_out;
 
 // ---------------------------------------------------------------------------
-// sgchem_init parameters (Stella defaults; All.* values fixed here)
+// sgchem_init parameters (default settings; All.* values fixed here)
 static ChemInitParams init_params()
 {
     ChemInitParams p;

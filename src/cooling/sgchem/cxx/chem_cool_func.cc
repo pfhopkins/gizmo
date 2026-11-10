@@ -1,18 +1,17 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_cool_func.cc -- Gate-3 port of cool_func.F (all 28 radiative
+// chem_cool_func.cc -- C++ version of cool_func.F (all 28 radiative
 // heating/cooling rates) and of get_coolrates_wssCIE (wss_z_collis.F).
 //
 // Convention (unchanged from the Fortran): Lambda is the net COOLING rate,
 // positive, erg s^-1 cm^-3, so heating terms enter NEGATIVE.
 //
-// Faithfulness notes that are easy to get wrong and are load-bearing:
+// Notes that are easy to get wrong and are load-bearing:
 //  * `kboltz` (cool.h <- BOLTZMANN) is a Fortran DEFAULT REAL literal, i.e.
 //    float32-rounded; `kb` in fs_data.h is spelled 1.38066d0-16 and is a true
 //    double.  They are NOT the same number.  CHEM_KBOLTZ / CHEM_FS_KB below.
-//    (Same trap as DEVIATIONS.md D-10.)
 //  * cool_func's temperature index: `temp .gt. tmax -> itemp = nmd, dtemp = 0`
-//    (no extrapolation above 1e8 K, D-39).
+//    (no extrapolation above 1e8 K).
 //  * rates(3) is unconditionally zeroed at cool_func.F:1223 and then (under
 //    WSS_CIE_COOL) overwritten by the WSS metal-line CIE rate.
 //  * integer powers use chem_fpowi (gfortran's association), real powers use
@@ -65,7 +64,7 @@ double cxx_wss_cie_rate(const ChemTables& T, double temp, const double Zm[12])
     // the nine solar reference abundances below are likewise default-REAL
     // literals.  float32(6.98185) is 2.1e-8 away from the decimal, which moves
     // the interpolation index enough to shift the rate by 5e-6 -- exactly the
-    // deviation the Gate-3 golden measured on rates(3) (0/383880 passing).
+    // difference from the Fortran in rates(3).
     const double lT_range = (double)6.98185f;   // logT from 2.0 to 8.98185
     const int NlT = 351;                        // 352 points -> 351 intervals
 

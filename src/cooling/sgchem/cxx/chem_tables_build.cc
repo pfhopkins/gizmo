@@ -1,6 +1,6 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_tables_build.cc -- Gate-3 port of the SGCHEM table layer:
+// chem_tables_build.cc -- C++ version of the SGCHEM table layer:
 //
 //   coolinmo.F              -> cltab / dtcltab, the CO+H2O spline tables,
 //                              the cl6 atomic-cooling spline, HeI/HeII tables
@@ -12,20 +12,15 @@
 //   cool_util.F load_H2_table        -> h2_opac* (SAME data file)
 //   calc_temp.F init_temperature_lookup -> temp/gamma/eh2 (SAME data files)
 //
-// The 346 analytic rate coefficients themselves are NOT re-typed here: they
-// are the machine-extracted rates_gen.cc functions from Gate 1, which are
-// golden-tested 346/346 at 1e-12 against the Fortran-built tables.  This file
-// only reproduces the *table assembly* -- the temperature grid, the spline
-// chains, the residual/zeroing loops and the finite-difference derivatives.
+// The 346 analytic rate coefficients themselves are in rates_gen.cc (machine-
+// extracted from the Fortran).  This file only reproduces the *table assembly*:
+// the temperature grid, the spline chains, the residual/zeroing loops and the
+// finite-difference derivatives.
 //
-// EXCEPTION: cl52, cl59, cl60, cl61 have no rates_gen entry.  RATE_AUDIT.md
-// classified them kind=TABLE (they appear in coolinmo's residual zeroing loop)
-// so the generator skipped them, and DEVIATIONS.md D-9 then established that in
-// the production config (iflag_atom=2 + WSS_CIE_COOL) they are NOT zeroed and
-// keep their ANALYTIC main-loop values.  D-9's parenthetical claim that they
-// are "covered by the Gate-1 rate goldens" was wrong -- they were skipped by
-// the generator, so nothing covered them.  They are written out by hand below
-// from coolinmo.F:1028-1071 and are covered by the Gate-3 table golden.
+// EXCEPTION: cl52, cl59, cl60, cl61 have no rates_gen entry (they appear in
+// coolinmo's residual zeroing loop).  In the production config (iflag_atom=2 +
+// WSS_CIE_COOL) they are not zeroed and keep their analytic main-loop values;
+// they are written out by hand below from coolinmo.F:1028-1071.
 
 #include "../../../GIZMO_config.h"
 #include "chem_types.h"
@@ -38,7 +33,7 @@
 #include <string>
 #include <vector>
 
-// from chem_spline.cc (spline.F port)
+// from chem_spline.cc (spline.F)
 void chem_spline_eval(int nval, const double* positions, const double* values,
                       int nnew, const double* new_positions, double* new_values);
 void chem_build_cl_tables(const double* temptab, int nmd,
@@ -163,8 +158,7 @@ static int read_wss(const std::string& dir, ChemTableStore& S)
         // `1e-20` in wss_z_collis.F:45-47 is a Fortran DEFAULT-REAL literal
         // (no D exponent) -> float32(1e-20) = 1.00000002004e-20.  Using the
         // exact decimal shifts every FLOORED row's log10 by 1.378e-8, which is
-        // precisely the offset the Gate-3 golden measured on 59/352 rows.
-        // Same trap as DEVIATIONS.md D-10.
+        // precisely the float32 offset of the Fortran.
         const double one_em20 = (double)1e-20f;
         if (fac < one_em20) fac = one_em20;
         for (int k = 0; k < 9; k++)
@@ -321,7 +315,7 @@ static void build_co_shielding(ChemTableStore& S)
 }
 
 // ---------------------------------------------------------------------------
-// coolinmo.F:1028-1071 -- the four cl entries the Gate-1 generator skipped.
+// coolinmo.F:1028-1071 -- the four cl entries not in rates_gen.
 // ---------------------------------------------------------------------------
 static double cl52_of(double temp)
 {

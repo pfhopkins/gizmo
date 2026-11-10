@@ -1,20 +1,19 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_rhs_net17.cc -- verbatim-in-structure port of rate_eq_ulli.F
+// chem_rhs_net17.cc -- C++ version of rate_eq_ulli.F, same structure
 // (CHEMISTRYNETWORK=17) + comp_equilib.
 // Source: SGChem rate_eq_ulli.F
-// (canonical, read 2026-07-29 -- includes the 2026-07-28 fixes:
-//  METAL-ELECTRON FIX: abe += abundsi (line 172);
-//  UNINITIALIZED-NH FIX: NH assigned BEFORE the H2-shielding call).
+// (includes metal electrons: abe += abundsi (line 172); NH is assigned
+//  before the H2-shielding call).
 //
 // ODE vector (0-based): y[0]=H2, y[1]=H+, y[2]=CO, y[3]=He+, y[4]=He++,
 // y[5]=D+, y[6]=HD, y[7]=energy density.
-// Deviations (documented in DEVIATIONS.md):
+// Differences from the Fortran:
 //  - validate_input on a local copy; flagged input / NaN guards / temp<=0
-//    return CHEM_RHS_RECOVERABLE (audit R3).
-//  - GALSF_RESOLVEDISM_ISOLATED_FB_TEST debug print not ported.
+//    return CHEM_RHS_RECOVERABLE.
+//  - GALSF_RESOLVEDISM_ISOLATED_FB_TEST debug print not included.
 //  - lambda_chem diagnostic copies are written unconditionally (in the
-//    Fortran they are OUTPUT_INDIVIDUAL_COOLRATES-only; AMBIGUOUS A8 -- the
+//    Fortran they are OUTPUT_INDIVIDUAL_COOLRATES-only; the
 //    diagnostic-only choice does not affect the ODE).
 //  - RT_INFRARED off: calc_dust_temp nocalc=0.
 
@@ -56,7 +55,7 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     const double yn = c.yn, dl = c.dl, divv = c.divv;
     const double ynsq = yn * yn;
 
-    // --- validate_input on a local copy (R3) ---
+    // --- validate_input on a local copy ---
     double y[8];
     for (int i = 0; i < nspec; i++) { y[i] = y_in[i]; ydot[i] = 0.0; }
     if (chem_validate_input(y, nspec, itmp, ih2, c.id_current))
@@ -79,10 +78,10 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     }
 
     double abcp = c.abundc - abco; if (abcp < 0.0) abcp = 0.0;
-    // METAL-ELECTRON FIX (2026-07-28): + abundsi
+    // metal electrons: + abundsi
     double abe  = abhp + abhep + 2.0 * abhepp + abcp + abdp + c.abundsi;
     double abHI = 1.0 - 2.0 * abh2 - abhp - abhd; if (abHI < 0.0) abHI = 0.0;
-    // H+ above 1 (clipped by validate_input) still sees photoionization as a restoring sink (D-30)
+    // H+ above 1 (clipped by validate_input) still sees photoionization as a restoring sink
     const double abHI_ph = 1.0 - 2.0 * abh2 - ((y_in[ihp] > abhp) ? y_in[ihp] : abhp) - abhd;
     double abheI = c.abhe - abhep - abhepp; if (abheI < 0.0) abheI = 0.0;
 
@@ -292,7 +291,7 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
         num   = ch155 * abheI * abhp + ch154 * abheI * abh2p;
         denom = ch156 * abHI + ch153 * abe;
         abhehp = comp_equilib(num, denom, c.abhe, 3);
-        if (abhehp < 0.0) abhehp = 0.0;           // WEDGEFIX 1
+        if (abhehp < 0.0) abhehp = 0.0;           // clamp
         abe   = abe   + (abhehp - abhehp_old); if (abe   < 0.0) abe   = 0.0;
         abHI  = abHI  - (abhehp - abhehp_old); if (abHI  < 0.0) abHI  = 0.0;
         abheI = abheI - (abhehp - abhehp_old); if (abheI < 0.0) abheI = 0.0;
@@ -306,7 +305,7 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
         }
         abhm_old  = abhm;
         abh2p_old = abh2p;
-        abhehp_old = abhehp;                      // WEDGEFIX 2
+        abhehp_old = abhehp;                      // keep the old value for the next pass
     }
 
     // --- protons (.F:717-744) ---
@@ -478,7 +477,7 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double ylam_chem = 0.0;
     for (int i = 0; i < 22; i++) {
         ylam_chem += rc[i];
-        c.lambda_chem[i] = rc[i];   // unconditional in port (A8 choice)
+        c.lambda_chem[i] = rc[i];   // unconditional (diagnostic only)
     }
 
     // --- cool_func abundance vector (.F:994-1007) ---

@@ -1,8 +1,8 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_cool_util.cc -- Gate-3 port of cool_util.F.
+// chem_cool_util.cc -- C++ version of cool_util.F.
 //
-// Ported here, in the order they appear in the Fortran:
+// Included here, in the order they appear in the Fortran:
 //   co_cool                 (cool_util.F:10-152)
 //   h2o_rot_cool            (cool_util.F:168-288)
 //   h2o_vib_cool            (cool_util.F:304-369)
@@ -10,13 +10,13 @@
 //   compute_stim            (cool_util.F:439-456)
 //   compute_h2_opacity      (cool_util.F:506-560)
 //   compute_h2_heating_fraction (cool_util.F:574-680; live in net 15 only)
-//   calc_dust_temp          (cool_util.F:802-1007, incl. the 2026-07 bounded
-//                            Newton fix and the hot/dust-free tdust cap)
+//   calc_dust_temp          (cool_util.F:802-1007, incl. a bounded Newton
+//                            iterate and the hot/dust-free tdust cap)
 //
-// NOT ported (see DEVIATIONS.md D-12): load_H2_table lives in
+// NOT included: load_H2_table lives in
 // chem_tables_build.cc (it is table construction, not a kernel);
 // dma_calc is `#if defined DMA`,
-// which no Stella build sets and whose body returns hard zeros anyway.
+// which no build sets and whose body returns hard zeros anyway.
 //
 // Every integer index below is the Fortran 1-based index; the accessors
 // chem_f2()/[i-1] do the translation, so the code reads like the .F source.
@@ -109,8 +109,7 @@ void cxx_co_cool(const ChemTables& T, double temp, double N_co_eff,
         iN_co = ncdco_vib; dN_co = 0.0;
     } else {
         // NB: the Fortran indexes with N_co_eff (the ROTATIONAL column), not
-        // N_co_eff_vib -- cool_util.F:131.  Reproduced literally; see
-        // DEVIATIONS.md D-13.
+        // N_co_eff_vib -- cool_util.F:131.  Reproduced literally.
         iN_co = f_int((10 * N_co_eff) - 129);
         dN_co = (N_co_eff_vib - T.co_vib_colntab[iN_co - 1]) / 0.1;
     }
@@ -400,7 +399,7 @@ double cxx_compute_h2_heating_fraction(double T, double n, double xh2)
 // ===========================================================================
 // calc_dust_temp (cool_util.F:802-1007)
 //
-// tdust is an in/out algebraic state (audit sec 3.1 item 2) and lives in
+// tdust is an in/out algebraic state and lives in
 // c.tdust; the driver snapshots and restores it on substep retries.
 // ===========================================================================
 void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
@@ -501,7 +500,7 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
             }
 
             tdust_new = c.tdust - F_nr / dF_nr;
-            // Bounded Newton iterate (2026-07-02 fix): grains sublimate above
+            // Bounded Newton iterate: grains sublimate above
             // ~1500 K, and without the cap dust_cool ~ tdust^6 lets the solver
             // run to tdust >> 1e4 K and overstiffen the network.  NaN guard too.
             if (tdust_new != tdust_new) tdust_new = T.tmin;
@@ -521,8 +520,8 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
                         dust_h2_heat);
             std::printf("dust_to_gas_ratio = %g\n", c.dust_to_gas_ratio);
             std::printf("RH2 = %g\nch7 = %g\n", *RH2, ch7);
-            // ABORT(10) in the Fortran.  The port keeps the failure LOUD but
-            // routes it through the driver's recoverable path (DEVIATIONS D-3).
+            // ABORT(10) in the Fortran.  This code keeps the failure LOUD but
+            // routes it through the driver's recoverable path.
             c.dust_iter_failed = 1;
         }
     } else {

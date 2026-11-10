@@ -1,7 +1,7 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_cool_net20.cc -- network 20 (TIGRESS-NCR): rates, equilibrium species, heating, cooling,
-// dust temperature and the frozen per-cell radiation inputs.  Equation map: DEVIATIONS.md D-29.
+// dust temperature and the per-cell radiation inputs.
 
 #include "chem_net20.h"
 #include "chem_net20_cie.h"
@@ -45,7 +45,7 @@ inline double f_shld_c(double NC, double NH2)
     return std::exp(-1.6e-17 * std::max(NC, 0.0)) * std::exp(-y) / (1.0 + y);
 }
 
-// chi_H2 and chi_C from the frozen per-pixel LW weights and the live local H2 column
+// chi_H2 and chi_C from the per-pixel LW weights and the live local H2 column
 void shield(const ChemCell& c, double xH2, double* chi_h2, double* chi_c)
 {
     const int pix = (c.iphoto == 6 && c.npix > 0);

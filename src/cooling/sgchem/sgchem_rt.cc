@@ -67,7 +67,7 @@ static double sgchem_rt_sigma_h2(double e)
 #else
 #define SGCHEM_RT_H0_TOP_EV 500.
 #endif
-/* r over the H0 bin's photons of his 4e4 K blackbody (rt_get_sigma); serial, once */
+/* r over the H0 bin's photons of the 4e4 K blackbody (rt_get_sigma); serial, once */
 void sgchem_rt_init(void)
 {
 #if CHEMISTRYNETWORK == 5
@@ -82,7 +82,7 @@ void sgchem_rt_init(void)
 #endif
 }
 
-/* rates per atom [1/s] and heating [erg/s per atom], as stella_dev: H and H2 from the H0 bin, HeI from He0, HeII from He1, heat = rate x
+/* rates per atom [1/s] and heating [erg/s per atom]: H and H2 from the H0 bin, HeI from He0, HeII from He1, heat = rate x
    (mean photon energy - threshold). With SGCHEM_RT_ABSORBERS_FOLLOW_THE_NETWORK every ionising bin counts, as CoolingRate */
 static inline double sgchem_rt_gamma(int i, int k, double sigma) {return C_LIGHT_CGS / UNIT_LENGTH_IN_CGS * rt_ionizing_band_photon_number_density(i, k, CellP) * sigma;}
 void sgchem_rt_ionising_rates(int i, struct ChemInputs *in)
@@ -117,7 +117,7 @@ void sgchem_rt_ionising_rates(int i, struct ChemInputs *in)
 #endif
 }
 
-/* what rt_kappa reads, as stella_dev: atomic H. With SGCHEM_RT_ABSORBERS_FOLLOW_THE_NETWORK what the network consumes photons on:
+/* what rt_kappa reads: atomic H. With SGCHEM_RT_ABSORBERS_FOLLOW_THE_NETWORK what the network consumes photons on:
    net 5 atomic H plus H2 by the same ratio as its rate and no He, net 17 its He */
 void sgchem_rt_absorbers(int i, const double *ab)
 {

@@ -1,24 +1,23 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_rhs_net5.cc -- verbatim-in-structure port of rate_eq_simple.F
-// (CHEMISTRYNETWORK=5 branch only; nets 4/6 branches not ported).
+// chem_rhs_net5.cc -- C++ version of rate_eq_simple.F, same structure
+// (CHEMISTRYNETWORK=5 branch only; nets 4/6 branches not included).
 // Source: SGChem rate_eq_simple.F
-// (canonical, read 2026-07-29, includes no net-5-relevant fixes pending).
 //
 // ODE vector (0-based): y[0]=H2, y[1]=H+, y[2]=CO, y[3]=energy density.
-// Deviations from the Fortran (all per the audit port-semantics register):
-//  - validate_input works on a local copy (R3); flagged input returns
+// Differences from the Fortran:
+//  - validate_input works on a local copy; flagged input returns
 //    CHEM_RHS_RECOVERABLE instead of zero-ydot+ipar.
 //  - temp<=0 poisoned-input path returns CHEM_RHS_RECOVERABLE immediately
 //    (Fortran computes a tmin-evaluated ydot AND rejects the substep after
-//    the dvode call returns -- same net effect, documented in DEVIATIONS.md).
+//    the dvode call returns -- same net effect).
 //  - validate_output NaN-ydot ABORT(1) is replaced by a loud recoverable
-//    return (unified on the net-17 behavior; DEVIATIONS.md).
+//    return (unified on the net-17 behavior).
 //  - the unreachable temp<0 bare `stop` (rate_eq_simple.F:505-511) is not
-//    ported (audit R7 cleanup item).
+//    included.
 //  - debug/compile-out switches BS19_XH2 / CHEM_EQ_H2 / NO_CO_FORM /
 //    ADIABATIC_DENSITY_THRESHOLD / CONST_NCRIT_UVPUMP are OFF in production
-//    and not ported.
+//    and not included.
 //  - RT_INFRARED is OFF in the one-zone/production-subgrid config: the
 //    calc_dust_temp call uses nocalc=0.
 
@@ -36,7 +35,7 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     const double yn = c.yn, dl = c.dl, divv = c.divv;
     const double NH = yn * dl;                       // rate_eq_simple.F:73
 
-    // --- validate_input on a local copy (R3) ---
+    // --- validate_input on a local copy ---
     double y[4];
     for (int i = 0; i < nspec; i++) { y[i] = y_in[i]; ydot[i] = 0.0; }
     if (chem_validate_input(y, nspec, itmp, ih2, c.id_current))
@@ -227,7 +226,7 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     // pdv_term is hard-zeroed in production (sgchem.cc:721) -- not carried.
     ydot[itmp] = -(ylam + ylam_chem - ylam_floor);
 
-    // --- validate_output: NaN ydot (.F:502; unified recoverable, DEVIATIONS) ---
+    // --- validate_output: NaN ydot (.F:502; unified recoverable) ---
     for (int i = 0; i < nspec; i++) {
         if (ydot[i] != ydot[i]) {
             std::fprintf(stderr,

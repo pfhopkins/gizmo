@@ -1,8 +1,8 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_rhs_common.h -- shared RHS helpers for the net-5 / net-15 / net-17 ports.
+// chem_rhs_common.h -- shared RHS helpers for the net-5 / net-15 / net-17 RHS routines.
 //
-// validate_input (validate_rates.F:9-77) ported per audit R3 REDESIGN:
+// validate_input (validate_rates.F:9-77) implemented here:
 // operates on a LOCAL COPY of the state vector (CVODE forbids mutating y in
 // the RHS).  Semantics preserved exactly:
 //   NaN                -> gross failure (caller returns CHEM_RHS_RECOVERABLE)
@@ -10,7 +10,7 @@
 //   y > 1  (non-H2, non-energy): clip to 1; flag only if > 1+EPS_MAX
 //   H2 > 0.5           : clip to 0.5; flag only if > 0.5+EPS_MAX
 // "flag" == Fortran ipar(1)=1 == the whole evaluation is rejected (the Fortran
-// returns zero ydot and the driver rejects the substep; the CVODE port returns
+// returns zero ydot and the driver rejects the substep; this code returns
 // a recoverable error so CVODE retries with a smaller step).
 #ifndef CHEM_RHS_COMMON_H
 #define CHEM_RHS_COMMON_H

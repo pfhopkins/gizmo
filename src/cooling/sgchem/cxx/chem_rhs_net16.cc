@@ -1,18 +1,18 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_rhs_net16.cc -- verbatim-in-structure port of rate_eq_gong17.F
+// chem_rhs_net16.cc -- C++ version of rate_eq_gong17.F, same structure
 // (CHEMISTRYNETWORK=16, Gong, Ostriker & Wolfire 2017; M is silicon).
 //
 // ODE vector (0-based): y[0]=H2, y[1]=H+, y[2]=C+, y[3]=CHx, y[4]=OHx, y[5]=CO,
 // y[6]=HCO+, y[7]=He+, y[8]=Si+, y[9]=energy density.
-// Deviations (DEVIATIONS.md D-25):
-//  - validate_input on a local copy (R3); a flagged input returns ydot = 0 and
+// Differences from the Fortran:
+//  - validate_input on a local copy; a flagged input returns ydot = 0 and
 //    CHEM_RHS_RECOVERABLE, as the Fortran returns zero ydot with ipar(1) = 1.
 //  - temp <= 0: ydot is still built at tmin (as the Fortran) and the call
 //    returns CHEM_RHS_RECOVERABLE.
 //  - NaN ydot: recoverable return (the Fortran has no validate_output here).
 //  - default-REAL literals (PI, 1.4) are float32, as compiled.
-//  - THERMAL_INFO_DUMP diagnostics not ported.
+//  - THERMAL_INFO_DUMP diagnostics not included.
 
 #include "chem_types.h"
 #include "chem_rhs_common.h"

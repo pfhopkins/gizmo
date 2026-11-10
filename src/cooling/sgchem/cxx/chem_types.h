@@ -1,15 +1,15 @@
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
-// chem_types.h -- Gate-2 shared interface for the SGCHEM C++/CVODE port.
+// chem_types.h -- shared interface of the SGCHEM C++/CVODE chemistry.
 //
-// Design contract (see /orion/ptmp/uli/orion/stella/SGCHEM_CONTROL_FLOW_AUDIT.md §7):
-//  - R2 REDESIGN: all per-cell COMMON state becomes the explicit ChemCell struct,
+// Design:
+//  - All per-cell COMMON state is the explicit ChemCell struct,
 //    passed to every kernel.  Immutable global tables live in ChemTables (built
 //    once at init; thread-safe to share).
 //  - Index conventions: species use the 0-based C macros (IH2, IHP, ...); the ODE
 //    vector is y[0..TRAC_NUM-1] species + y[TRAC_NUM] = internal energy DENSITY
 //    [erg cm^-3].  Rate-table ids keep the Fortran 1-based numbering through the
-//    CH(k)/CL(k) accessors so the port reads like the .F source.
+//    CH(k)/CL(k) accessors so the code reads like the .F source.
 //  - All values are double (Fortran REAL*8 everywhere).
 #ifndef CHEM_TYPES_H
 #define CHEM_TYPES_H
@@ -43,7 +43,7 @@
 #define CHEM_ISIZE2  50000   /* eh2 table rows */
 #define CHEM_NABN    16      /* ABUND_NUM: cool_func abundance vector */
 
-/* ---- Gate 3: molecular-coolant table dimensions (cool.h:267-341) ---- */
+/* ---- molecular-coolant table dimensions (cool.h:267-341) ---- */
 #define CHEM_NTCO        1996
 #define CHEM_NCDCO       46
 #define CHEM_NTCO_VIB    3901
@@ -67,10 +67,8 @@
 // rounded to float32 and only then widened to real*8 -- the build carries no
 // -fdefault-real-8.  What the running Fortran holds is therefore the float32
 // value, up to 5e-8 relative away from the decimal.  Using the exact decimal
-// here would silently "improve" the port and show up later as unexplained A/B
-// drift; the values below are float32(decimal) widened to double, which is
-// bit-exactly what the Fortran uses.  Found 2026-07-29 via the cl1-3 spline
-// goldens (worst relerr was exactly float32(kboltz) = 1.264e-09).
+// here would silently differ from the Fortran; the values below are
+// float32(decimal) widened to double, which is bit-exactly what the Fortran uses.
 // Decimal originals: 1.60219e-12, 1.38066e-16, 1.6726e-24, 6.672e-8.
 #define CHEM_EV         1.6021899518908755e-12
 #define CHEM_KBOLTZ     1.3806599982553653e-16
@@ -142,14 +140,12 @@ static inline int chem_trac_num(int net)
 
 // ---------------------------------------------------------------------------
 // Immutable table state.  This is a *view* over the rate/cooling tables, NOT a
-// copy: at Gate 2 the tables are the ones COOLINMO/CHEMINMO built in the
-// Fortran /coolr/ COMMON (see chem_backend_fortran.cc, chem_bind_tables()).
+// copy: it can point at the tables COOLINMO/CHEMINMO built in the
+// Fortran /coolr/ COMMON (chem_bind_tables()) or at the C++-built ones.
 //
 // LAYOUT (verified against cool.h:244,255):
 //     Fortran  chtab(nchtab, nmd)   -- species index FAST
 //  => C        chtab[itemp-1][k-1]  with row stride CHEM_NCHTAB
-// The Gate-2 scaffold originally declared chtab[NCHTAB][NMD] and indexed
-// [k-1][itemp-1], i.e. TRANSPOSED; fixed here (see DEVIATIONS.md D-8).
 // ---------------------------------------------------------------------------
 struct ChemTables {
     const double* temptab;                       // [CHEM_NMD]
@@ -163,7 +159,7 @@ struct ChemTables {
     const double* cst;                           // [CHEM_NCONST]
     double dtlog, tmin, tmax;
 
-    // ---- Gate 3: everything the leaf kernels used to read from COMMON ----
+    // ---- everything the leaf kernels read from COMMON ----
     // CO rotational cooling (/co_data/).  Fortran co_lte(ncdco,nTco) => column
     // index FAST: element (iN,iT) lives at (iT-1)*CHEM_NCDCO + (iN-1).
     const double* co_temptab;      // [CHEM_NTCO]
@@ -276,7 +272,7 @@ inline double chem_CL(const ChemTables& T, int k, const ChemTIdx& ti)
 
 // ---------------------------------------------------------------------------
 // Per-cell context: everything do_sgchem_step writes into the COMMONs,
-// as one explicit struct (audit R2).  Passed as CVODE user_data.
+// as one explicit struct.  Passed as CVODE user_data.
 // ---------------------------------------------------------------------------
 struct ChemCell {
     int net;               // 3, 5, 15, 16 or 17
@@ -314,14 +310,14 @@ struct ChemCell {
     // WSS metal mass fractions (sgchem.cc Zmass mapping)
     double Zmass[12];
 
-    // frozen photo state (calc_photo output; audit R5)
+    // photo state (calc_photo output, fixed for the cell call)
     double phrates[CHEM_NPHTAB];
     double G_dust, chi_isrf;
-    double fshield_CO;           // calc_photo output, frozen for the cell call
+    double fshield_CO;           // calc_photo output, fixed for the cell call
     double fac_shield_h2, fac_shield_dust;  // calc_photo diagnostics (OUTPUT_SHIELD_FAC)
 
     // TREECOL pixel columns for the LIVE H2 self-shielding evaluated inside
-    // the RHS (calc_H2_shielding_factor); frozen for the cell call.
+    // the RHS (calc_H2_shielding_factor); fixed for the cell call.
     int    npix;                 // 12*NSIDE^2 (0 => no pixel data)
     double col_h2[CHEM_NPIX];    // per-pixel N_H2 [cm^-2]
     double col_tot[CHEM_NPIX];   // per-pixel N_H  [cm^-2] (dust attenuation)
@@ -338,7 +334,7 @@ struct ChemCell {
     double rt_heat_HI, rt_heat_HeI, rt_heat_HeII;
     double rt_phot_H2, rt_heat_H2;   // EUV H2 -> H2+ -> 2H, per H2 (net 5)
 
-    // algebraic state riding outside the ODE vector (audit §3.1 item 2):
+    // algebraic state riding outside the ODE vector:
     // mutated by calc_dust_temp inside every RHS eval; snapshot/restored by
     // the driver on substep retries.
     double tdust;
@@ -351,12 +347,12 @@ struct ChemCell {
     // are recomputed each call from scratch -- kept here only for diagnostics)
     // (not needed for correctness: the fixed-point loop reinitializes each eval)
 
-    // diagnostics: last-RHS-eval rate breakdowns (audit R10; the port keeps the
-    // Fortran "last evaluation wins" semantics for A/B comparability)
+    // diagnostics: last-RHS-eval rate breakdowns (this code keeps the
+    // Fortran "last evaluation wins" semantics)
     double lambda[CHEM_NRATES];
     double lambda_chem[CHEM_NRATES_CHEM_MAX];
 
-    // ---- network 20 (TIGRESS-NCR) inputs and frozen photo state ----
+    // ---- network 20 (TIGRESS-NCR) inputs and fixed photo state ----
     double dvdr;                 // mean |dv_i/dx_i| for the CO LVG column [s^-1]
     double Zg;                   // gas metallicity / solar (nebular, CIE, MH+)
     double col_c[CHEM_NPIX];     // per-pixel N_C [cm^-2] (C self-shielding)
@@ -386,7 +382,7 @@ struct ChemCell {
 // Kernel interfaces
 // ---------------------------------------------------------------------------
 
-// cool_func port (cool_func.F).  abundances[16] slot mapping (1-based Fortran
+// C++ version of cool_func.F.  abundances[16] slot mapping (1-based Fortran
 // slots 1..16 -> C 0..15): 0=H2,1=O,2=OH,3=H2O,4=CO,5=CI,6=C+,7=SiI,8=Si+,
 // 9=e-,10=H+,11=HI,12=HD,13=HeI,14=HeII,15=HeIII.
 // Returns 0 ok; nonzero = the Fortran ABORT cases (bad T index / H2>0.5+eps),
@@ -395,7 +391,7 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
                   const double abundances[16], double* ylam, double rates[CHEM_NRATES],
                   int iflag_cmb, ChemCell& c);
 
-// calc_dust_temp port (cool_util.F:802-1007).  Mutates c.tdust; outputs the H2
+// C++ version of calc_dust_temp (cool_util.F:802-1007).  Mutates c.tdust; outputs the H2
 // grain-formation rates.  nocalc=1 skips the Newton solve (RT_INFRARED path).
 void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
                         double* RH2, double* Rdust, int nocalc, ChemCell& c);
@@ -419,14 +415,14 @@ double cxx_compute_stim(double a10, double e10, double rad_temp);
 double cxx_compute_h2_opacity(const ChemTables& T, double temp, double N_H2_eff);
 double cxx_compute_h2_heating_fraction(double T, double n, double xh2);
 
-// WSS CIE metal-line cooling (wss_z_collis.F get_coolrates_wssCIE port)
+// WSS CIE metal-line cooling (wss_z_collis.F get_coolrates_wssCIE)
 double cxx_wss_cie_rate(const ChemTables& T, double temp, const double Zm[12]);
 
 // ---- calc_photo.F (chem_calc_photo.cc) -----------------------------------
 double cxx_chi(const ChemTables& T, double AV, int isrf_option);
 double cxx_calc_HD_shielding_factor(double temp, double abh2, double abhd,
                                     double NH, ChemCell& c);
-// Fills c.phrates / c.G_dust / c.chi_isrf / c.fshield_CO (audit R5: once per
+// Fills c.phrates / c.G_dust / c.chi_isrf / c.fshield_CO (once per
 // cell call).  yn and dl come from c.
 void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
                     ChemCell& c);
@@ -458,7 +454,7 @@ void chem_tables_free(ChemTables& T);
 
 // ---- pure-C++ backend (chem_backend_cxx.cc) ------------------------------
 // Process-global immutable tables + a per-cell context helper.  No COMMON, no
-// Fortran, no shared mutable state: see the file header for the R2 argument.
+// Fortran, no shared mutable state: see the file header for the thread-safety note.
 const ChemTables& chem_cxx_tables();
 int  chem_cxx_tables_ready();
 int  chem_cxx_tables_init(const ChemBuildConfig& cfg, const char* datadir);
@@ -466,7 +462,7 @@ void chem_cxx_tables_shutdown();
 void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net);
 
 // RHS routines.  y has c.nspec entries (species + energy density LAST).
-// Contract (audit R3 REDESIGN): y is CONST -- validate_input clips act on an
+// Contract: y is CONST -- validate_input clips act on an
 // internal local copy; gross violations return CHEM_RHS_RECOVERABLE instead of
 // mutating the integrator state.
 //   return 0                    -> ydot valid
@@ -482,17 +478,9 @@ int chem_rhs_net3 (double t, const double* y, double* ydot, ChemCell& c);
 int chem_rhs_net20(double t, const double* y, double* ydot, ChemCell& c);
 
 // ---------------------------------------------------------------------------
-// Gate-2 backend binding (chem_backend_fortran.cc).
-//
-// SCOPE DECISION (DEVIATIONS.md D-0): Gate 2 ports the SOLVER LAYER -- the
-// driver (evolve_abundances.F), the RHS assemblies (rate_eq_*.F) and the
-// tolerance/step/retry policy.  The *leaf kernels* below the RHS
-// (cool_func, calc_dust_temp, calc_H2_shielding_factor, lookup_temp_gamma)
-// and the table builders (coolinmo/cheminmo) are still the canonical Fortran,
-// reached through these shims and through the /coolr/ COMMON.  This is
-// deliberate: it makes the benchmark an APPLES-TO-APPLES test of the ported
-// layer (any deviation is attributable to CVODE/RHS/driver, not to a
-// half-ported cooling function).  Gate 3 replaces the leaves.
+// Binding to the Fortran /coolr/ COMMON, for use with the Fortran leaf kernels
+// (cool_func, calc_dust_temp, calc_H2_shielding_factor, lookup_temp_gamma) and
+// table builders (coolinmo/cheminmo).
 // ---------------------------------------------------------------------------
 
 // Point a ChemTables at the Fortran /coolr/ tables (call AFTER COOLINMO/CHEMINMO).

@@ -21,13 +21,13 @@
 
 #ifdef SGCHEM
 
-/* element pools per H from the FIRE-3 metal slots (0 Z, 1 He, 2 C, 3 N, 4 O, 5 Ne, 6 Mg, 7 Si, 8 S, 9 Ca, 10 Fe), as stella_dev chem_fill_gas_abundances */
+/* element pools per H from the FIRE-3 metal slots (0 Z, 1 He, 2 C, 3 N, 4 O, 5 Ne, 6 Mg, 7 Si, 8 S, 9 Ca, 10 Fe) */
 static void sgchem_gas_abundances(int i, struct ChemInputs *in)
 {
     const MyFloat *Z = P[i].Metallicity;
     double X_H = 1.0 / (1.0 + 4.0 * ABHE); /* the H reference of yn below */
 #ifdef GALSF_ISMDUSTCHEM_MODEL
-    const MyDouble *D = CellP[i].ISMDustChem_Dust_Metal; /* gas phase = metals minus the live dust, as stella_dev with its dust model */
+    const MyDouble *D = CellP[i].ISMDustChem_Dust_Metal; /* gas phase = metals minus the live dust */
     in->abundc  = DMAX(Z[2] - D[2], 0) / 12.0 / X_H;
     in->abundo  = DMAX(Z[4] - D[4], 0) / 16.0 / X_H;
     in->abundsi = DMAX(Z[7] - D[7], 0) / 28.0 / X_H;
@@ -80,7 +80,7 @@ static void sgchem_treecol_columns(int i, struct ChemInputs *in)
 #endif
 
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
-/* the unattenuated stellar field of cell i from the gravity walk, as stella_dev: each 6-13.6 eV pixel floored at
+/* the unattenuated stellar field of cell i from the gravity walk: each 6-13.6 eV pixel floored at
    0.324e-2 SGChemBackgroundG0 / NPIX Habing, the pixel weights fac_uv, G0 / G0_LW / band-resolved G0_dust */
 struct ChemFUVField sgchem_treecol_field(int i, double *fac_uv)
 {
@@ -121,30 +121,30 @@ double sgchem_radiation_field_for_snapshot(int i, int blocknr)
 #endif
 
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
-double sgchem_recent_sfr_g0(void) {return DMAX(All.FactorG0 * All.SGChemG0, 0.324e-2);} /* G0 = G0_LW = G0_dust, as stella_dev GHOSDT_G0_CR */
+double sgchem_recent_sfr_g0(void) {return DMAX(All.FactorG0 * All.SGChemG0, 0.324e-2);} /* G0 = G0_LW = G0_dust */
 #endif
 
-/* cosmic-ray ionisation rate per H [s^-1] of cell i under the field G0 [Habing], as stella_dev chem_interface.cc */
+/* cosmic-ray ionisation rate per H [s^-1] of cell i under the field G0 [Habing] */
 double sgchem_cr_ion_rate(int i, double G0)
 {
 #ifdef COSMIC_RAY_FLUID
-    return Get_CosmicRayIonizationRate_cgs(i, P, CellP); /* his rate from the CR fluid (Cummings+16), radioactive terms included */
+    return Get_CosmicRayIonizationRate_cgs(i, P, CellP); /* the rate from the CR fluid (Cummings+16), radioactive terms included */
 #endif
     double zeta = All.SGChemCosmicRayIonRate;
 #if defined(CR_SCALE_WITH_G0) && defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
-    zeta = All.FactorG0 * zeta; /* unclamped, as stella_dev GHOSDT_G0_CR */
+    zeta = All.FactorG0 * zeta; /* unclamped */
 #elif defined(CR_SCALE_WITH_G0)
     zeta = DMAX(1e-21, DMIN(2e-16, (G0 / 1.7) * zeta)); /* with the stars' field */
 #endif
 #ifdef CR_BACKGROUND_IONRATE_ATTENUATED
-    zeta = All.SGChemCosmicRayIonRate * CellP[i].TreeColCRAttenuation; /* replaces the scaling, as stella_dev */
+    zeta = All.SGChemCosmicRayIonRate * CellP[i].TreeColCRAttenuation; /* replaces the scaling */
 #endif
     return zeta;
 }
 
 #ifdef COSMIC_RAY_FLUID
-/* the solve's CR ionisation heating de_heat [code energy], minus the radioactive share of zeta (his terms), comes out of
-   the CR energy of cell i, capped at it (as stella_dev sgchem.cc) */
+/* the solve's CR ionisation heating de_heat [code energy], minus the radioactive share of zeta (those terms), comes out of
+   the CR energy of cell i, capped at it */
 static void sgchem_cr_ionisation_from_fluid(int i, const struct ChemInputs *in, double de_heat)
 {
     double zeta_radio = 0;
@@ -283,7 +283,7 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 
     int skip = 0; out.tdust = in.tdust;
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
-    {  /* photoionised cell (as stella_dev): ionised abundances, no network, energy at least that of 1e4 K ionised gas */
+    {  /* photoionised cell: ionised abundances, no network, energy at least that of 1e4 K ionised gas */
         double e_HII = 1.0e4 * 1.5 * BOLTZMANN_CGS * yn * (2.0 + 2.0 * ABHE + in.abundD + in.abundc);
         int ionised = (All.Ti_Current < CellP[i].PhotoionizedUntil);
         if(ionised) {
@@ -400,8 +400,8 @@ double sgchem_startup_electrons(int i)
 #endif
 }
 
-/* DoCooling branch for SGCHEM (as stella_dev): returns the new u; his cached Ne, HI, Gamma, mean molecular weight and
-   Temperature follow the chemistry, so his Temperature is the chemistry temperature */
+/* DoCooling branch for SGCHEM: returns the new u; its cached Ne, HI, Gamma, mean molecular weight and
+   Temperature follow the chemistry, so its Temperature is the chemistry temperature */
 double sgchem_docooling(int i, double u_old, double dt, double *ne_eval)
 {
     double u_before = CellP[i].InternalEnergy, u, u_solve, u_in;
