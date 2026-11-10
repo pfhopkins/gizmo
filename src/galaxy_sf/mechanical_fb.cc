@@ -356,10 +356,22 @@ void mechanical_fb_calc_toplevel(void)
          * every rank skips the mech_fb path entirely (no allocation, no kernel). */
         int any_local = (num_active > 0) ? 1 : 0, any_active = 0;
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
-        { /* whether any rank may write an event row rides this reduction */
-            int loc_in[2] = {any_local, single_star_feedback_log_rows_local()}, glob_in[2] = {0, 0};
-            MPI_Allreduce(loc_in, glob_in, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        { /* whether any rank may write an event row rides this reduction; slot 2: a supernova this step (gates the causal wake) */
+#ifdef SNE_BROADCAST_TIMESTEP
+            const int n_in = 3;
+#else
+            const int n_in = 2;
+#endif
+            int loc_in[3] = {any_local, single_star_feedback_log_rows_local(), 0}, glob_in[3] = {0, 0, 0};
+#ifdef SNE_BROADCAST_TIMESTEP
+            loc_in[2] = single_star_sn_wake_pending_local();
+            for(int ii : ActiveParticleList) {if(P[ii].Type > 1 && P[ii].StarIdx > 0 && P[ii].SNe_ThisTimeStep > 0) {loc_in[2] = 1; break;}}
+#endif
+            MPI_Allreduce(loc_in, glob_in, n_in, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
             any_active = glob_in[0]; single_star_feedback_set_log_rows(glob_in[1]);
+#ifdef SNE_BROADCAST_TIMESTEP
+            single_star_sn_this_step(glob_in[2]);
+#endif
         }
 #else
         MPI_Allreduce(&any_local, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);

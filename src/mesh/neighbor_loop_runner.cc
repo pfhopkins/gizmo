@@ -93,6 +93,7 @@
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
 #include "../galaxy_sf/photoion_per_direction.h"
+#include "../galaxy_sf/single_star_sn_wake.h"
 #endif
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
@@ -7630,6 +7631,12 @@ template void run_neighbor_loop<PiHistSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<PiStampSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<PiClaimSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<PiDrainSpec>(const neighbor_loop_args&);
+#endif
+
+/* supernova causal wake of single stars: one-way Spec over the supernovae of a step, evaluated where the cells live.
+ * See galaxy_sf/single_star_sn_wake.h. */
+#ifdef SNE_BROADCAST_TIMESTEP
+template void run_neighbor_loop<SnWakeSpec>(const neighbor_loop_args&);
 #endif
 
 /* Cellcorrections corridor: CellcorrectionsSpec — first-pass

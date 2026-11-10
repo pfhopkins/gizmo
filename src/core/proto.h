@@ -776,7 +776,9 @@ void put_symbol(double t0, double t1, char c);
 void write_cpu_log(void);
 int get_timestep_bin(integertime ti_step);
 #ifdef SNE_BROADCAST_TIMESTEP
-void sne_broadcast_record(Vec3<MyDouble> pos, double v);
+void sne_broadcast_record(int i, double v);
+void single_star_sn_this_step(int any);
+int single_star_sn_wake_pending_local(void);
 void sne_causal_wake(void);
 #endif
 void find_particles_and_save_them(int num);

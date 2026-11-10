@@ -545,7 +545,7 @@ void single_star_feedback_finalize(const int *list, int n)
         if(ev.E > 0) { /* broadcast at the fastest speed the coupled gas can reach: the ejecta's, or a mean gas cell given all of E */
             double E = ev.E / UNIT_ENERGY_IN_CGS, v = sqrt(2. * E / (ev.Mej / UNIT_MASS_IN_SOLAR));
             if(All.MeanGasParticleMass > 0) {v = DMIN(v, sqrt(2. * E / All.MeanGasParticleMass));}
-            sne_broadcast_record(P[i].Pos, v);
+            sne_broadcast_record(i, v);
         }
 #endif
         SingleStars.M_at_SN_trigger[s] = 0;
