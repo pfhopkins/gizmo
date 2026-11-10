@@ -384,6 +384,9 @@ void mechanical_fb_calc_toplevel(void)
         if(n_wind_all > 0) {mechfb_test_state_dump(0);}
 #endif
         int *nl_loop = nl_active, n_loop = num_active;
+#ifdef TEST_SINGLE_STARS_FEEDBACK_KERNEL_AT_MOST
+        for(int a = 0; a < num_active; a++) {if(P[nl_active[a]].StarIdx > 0) {P[nl_active[a]].KernelRadius = DMIN(P[nl_active[a]].KernelRadius, All.TestFBKernelAtMost);}} /* test only: a star in a bubble */
+#endif
 #ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
         if(All.Time < All.TestFBNoGasUntilTime) {n_loop = 0;} /* test only: events find no gas, stay pending */
 #endif
