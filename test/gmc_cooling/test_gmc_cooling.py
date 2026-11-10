@@ -187,3 +187,13 @@ def test_gmc_cooling_uvb_table(num_mpi_ranks, num_omp_threads):
                                   num_mpi_ranks, num_omp_threads)
     assert code != 0 and f"line {bad_line} is not blank, a '#' comment, or 7 numbers" in log, \
         f"a malformed TREECOOL row did not stop the run with its line number (exit {code}):\n{log[-3000:]}"
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (2,))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_gmc_cooling_max_timestep_above_run_length(num_mpi_ranks, num_omp_threads):
+    """gmc_cooling.params has MaxSizeTimestep 0.0252: a run of TimeMax 0.001, shorter than the largest step, must still run to TimeMax."""
+    test_name = "gmc_cooling"
+    get_cooling_tables(f"test/{test_name}")
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, param_overrides={"TimeMax": 0.001})  # raises if GIZMO exits nonzero or stops before TimeMax
+    assert_final_time(get_final_snapshot(test_name, ()), test_name, time_max=0.001)

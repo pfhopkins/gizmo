@@ -1240,6 +1240,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
     if(dt >= dt_displacement) {dt = dt_displacement;}
 
+    if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* before the integer conversion below: dt/Timebase_interval must not overflow */
     if((dt < All.MinSizeTimestep)||(((integertime) (dt / All.Timebase_interval)) <= 1))
     {
         PRINT_WARNING("Timestep wants to be below the limit `MinSizeTimestep'");
@@ -1277,7 +1278,6 @@ integertime get_timestep(int p,		/*!< particle index */
         dt = All.MinSizeTimestep;
     }
 
-    if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* prevent integer timeline overflow */
 #ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
     P[p].dt_crit_last = eligible_for_hermite(p) ? dt : 0; /* every factor and cap applied, not yet quantised */
 #endif
