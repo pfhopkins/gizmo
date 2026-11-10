@@ -159,3 +159,11 @@ def test_ledger_feedback_energy(ledger):
               f"residual (gas - ejecta) / ejecta {coupled[k] / booked[k] - 1:+.3e}")
     assert booked[-1] > 0 and np.all(np.diff(booked) >= 0)
     assert np.all(np.abs(coupled / booked - 1) < 0.05)  # the loop's relative-velocity and momentum terms, not a gap
+
+
+def test_energy_statistics_at_their_cadence(ledger):
+    """With the ledger on, TimeBetStatistics is read and kept (stella_dev begrun.cc:1180, :3283): energy.txt has a row every 0.05 up
+    to TimeMax 0.3, 7 rows with the one at t = 0. Narrow."""
+    rows = [l for l in (ledger[2] / "energy.txt").read_text().splitlines() if l.strip() and not l.startswith("#")]
+    print(f"{len(rows)} rows in energy.txt")
+    assert len(rows) >= 7
