@@ -1135,6 +1135,8 @@ double single_star_ionizing_luminosity_cgs(int i);
 double single_star_ionizing_photon_rate(int i);
 double single_star_ionizing_onset_yr(int i);
 void single_star_light_switch_check(void);
+void single_star_tree_lum_store(const double *root_before);
+int force_tree_is_allocated(void);
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
 void photoionization_per_direction(void);

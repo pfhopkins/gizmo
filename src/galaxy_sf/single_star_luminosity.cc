@@ -225,16 +225,21 @@ void single_star_radpressure_per_cell(double *dp_total_code)
 #endif
 
 #if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#define SINGLE_STAR_TREE_LUM_TOL 1.e-2 /* a star's band luminosity may drift this fraction of the root's before the nodes are refreshed */
 /* before a gravity call: refresh the tree node moments (luminosities) if a single star started to shine, started to ionise or went
-   dark since the last call; reduced in gravity_tree, so no collective here */
+   dark since the last call, or its band luminosity moved by more than SINGLE_STAR_TREE_LUM_TOL of the root's since the nodes last
+   saw it; reduced in gravity_tree, so no collective here */
 void single_star_light_switch_check(void)
 {
     static double t_last = -1; double t0 = t_last; t_last = All.Time;
     if(t0 < 0 || All.Time <= t0) {return;}
+    if(!force_tree_is_allocated() || TreeReconstructFlag) {return;} /* a build is due: it sees every star as it is now */
     double dt_yr = evaluate_time_since_t_initial_in_Gyr(t0) * 1.e9;
     for(int i = 0; i < NumPart; i++) {
         if(P[i].Type != 4 || P[i].StarIdx <= 0 || P[i].Mass <= 0) {continue;}
         int s = single_star_slot(P[i].StarIdx);
+        double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, P, CellP);
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) {if(fabs(lum[b] - SingleStars.tree_lum[s].L[b]) > SINGLE_STAR_TREE_LUM_TOL * Nodes[All.TreeNodeIndexBase].stellar_lum[b]) {TreeMomentsStaleFlag = 1; return;}}
         if(SingleStars.M_drawn[s] <= All.IMFSampleStellarMassCut) {continue;}
 #if defined(GALSF_FB_MECHANICAL)
         if(SingleStars.event_bits[s] & (SINGLE_STAR_EVENT_SN_DONE | SINGLE_STAR_EVENT_AGB_DONE)) {continue;}
@@ -243,6 +248,19 @@ void single_star_light_switch_check(void)
         double age = evaluate_stellar_age_Gyr(i) * 1.e9, t_pms = stellar_t_PMS(logM, logZ), t_on = single_star_ionizing_onset_yr(i);
         double t_switch[3] = {t_pms, t_pms + stellar_lifetime(logM, logZ), t_on};
         for(int k = 0; k < 3; k++) {if(t_switch[k] > 0 && age - dt_yr < t_switch[k] && t_switch[k] <= age) {TreeMomentsStaleFlag = 1; return;}}
+    }
+}
+
+/* after a gravity call: if it rebuilt or refreshed the node luminosities (the root changed), they are the stars' current ones */
+void single_star_tree_lum_store(const double *root_before)
+{
+    static int first = 1; int changed = first; first = 0;
+    for(int b = 0; b < N_RT_FREQ_BINS; b++) {if(Nodes[All.TreeNodeIndexBase].stellar_lum[b] != root_before[b]) {changed = 1;}}
+    if(!changed) {return;}
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].Type != 4 || P[i].StarIdx <= 0) {continue;}
+        double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, P, CellP);
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) {SingleStars.tree_lum[single_star_slot(P[i].StarIdx)].L[b] = (float) lum[b];}
     }
 }
 #endif
