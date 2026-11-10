@@ -163,7 +163,8 @@ def test_ledger_feedback_energy(ledger):
 
 def test_energy_statistics_at_their_cadence(ledger):
     """With the ledger on, TimeBetStatistics is read and kept (stella_dev begrun.cc:1180, :3283): energy.txt has a row every 0.05 up
-    to TimeMax 0.3, 7 rows with the one at t = 0. Narrow."""
+    to TimeMax 0.3: rows at 0, 0.05, ..., 0.25, six. Narrow. (The first bar, seven rows, counted one at 0.3, which the run never
+    writes: it stops at TimeMax before the statistics check of that step.)"""
     rows = [l for l in (ledger[2] / "energy.txt").read_text().splitlines() if l.strip() and not l.startswith("#")]
     print(f"{len(rows)} rows in energy.txt")
-    assert len(rows) >= 7
+    assert len(rows) >= 6
