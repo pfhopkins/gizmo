@@ -513,6 +513,13 @@ void single_star_feedback_finalize(const int *list, int n)
 #ifdef KETJU_PN_REMNANT_TAG
         SingleStars.remnant_tag[s] = (int8_t)(ev.remnant_type + 1); /* compact remnants take PN terms in KETJU */
 #endif
+#ifdef SNE_BROADCAST_TIMESTEP
+        if(ev.E > 0) { /* broadcast at the fastest speed the coupled gas can reach: the ejecta's, or a mean gas cell given all of E */
+            double E = ev.E / UNIT_ENERGY_IN_CGS, v = sqrt(2. * E / (ev.Mej / UNIT_MASS_IN_SOLAR));
+            if(All.MeanGasParticleMass > 0) {v = DMIN(v, sqrt(2. * E / All.MeanGasParticleMass));}
+            sne_broadcast_record(P[i].Pos, v);
+        }
+#endif
         SingleStars.M_at_SN_trigger[s] = 0;
 #ifdef GALSF_SINGLE_STARS_BH_PROMOTION
         if(kind != SSE_AGB && (ev.remnant_type == REM_PPISN || ev.remnant_type == REM_FSN || ev.remnant_type == REM_DBH) && P[i].Mass > 0) { /* black hole: a sink from here on */

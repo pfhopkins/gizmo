@@ -772,6 +772,10 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
 void put_symbol(double t0, double t1, char c);
 void write_cpu_log(void);
 int get_timestep_bin(integertime ti_step);
+#ifdef SNE_BROADCAST_TIMESTEP
+void sne_broadcast_record(Vec3<MyDouble> pos, double v);
+void sne_causal_wake(void);
+#endif
 void find_particles_and_save_them(int num);
 void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode);
 void x86_fix(void) ;

@@ -17,4 +17,10 @@ real SN path fires; winds and radiation of those stars are on and booked as thei
 The environment variable `LEDGER_WAKEUP_OFF` drops all wake-up requests in such a build, to show the test can see the
 hydro energy gain after an SN.
 
+Energy: `test_energy_conserved_over_the_events` holds the gas gain over the 12 events to the explosion energy within 2 %
+(driving, gravity, winds and cooling booked out). `test_single_sn_energy` puts one 20 Msun star in uniform gas at n_H = 100,
+no driving, at 10, 1 and 0.1 Msun cells, dying 10 kyr before the 50 kyr step boundary: from the first full sync after the
+explosion the gas holds the explosion energy within 10 %. Without the causal wake (`SNE_BROADCAST_TIMESTEP`) the long gas
+steps around the explosion make the hydro create or remove energy: 2.27, 1.75 and 0.81 at the three resolutions, G_cum 0.96.
+
 Run: `pytest test/sn_driven_box`, ranks from `GIZMO_TEST_SN_BOX_RANKS` (default 32).

@@ -987,6 +987,9 @@ void init(void)
 #endif
 
     Flag_FullStep = 1;		/* to ensure that Peano-Hilbert order is done */
+#ifdef SNE_BROADCAST_TIMESTEP
+    for(int ii = 0; ii < NumPart; ii++) {P[ii].SNe_ArrivalTime = MAX_REAL_NUMBER;}
+#endif
     TreeReconstructFlag = 1;
 
 #ifdef SINK_WIND_SPAWN
@@ -1245,7 +1248,7 @@ void init(void)
         All.MinMassForParticleMerger = MERGESPLIT_HARDCODE_MIN_MASS;
 #endif
 
-#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT) /* Get mean gas mass, used in various subroutines (GravAccel_GMCTurbInit reads it without sinks) */
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT) || defined(SNE_BROADCAST_TIMESTEP) /* Get mean gas mass, used in various subroutines (GravAccel_GMCTurbInit reads it without sinks) */
         double mpi_mass_tot; long mpi_Ngas; long Ngas_l = (long) N_gas;
         MPI_Allreduce(&mass_tot, &mpi_mass_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&Ngas_l, &mpi_Ngas, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);

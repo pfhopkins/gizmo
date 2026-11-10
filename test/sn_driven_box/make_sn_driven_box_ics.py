@@ -64,6 +64,14 @@ def events(tables_file, n_sn, window_yr, seed=11):
     return Mt[idx], life[idx] - t, rng.uniform(0, 1, (n_sn, 3))
 
 
+def death_age(tables_file, M, z=0.014):
+    """table death age [yr] (pre-main sequence + lifetime) at a grid mass and solar Z"""
+    with h5py.File(tables_file) as T:
+        Zt, Mt = T["Z"][()], T["M_init"][()]
+        iz, im = int(np.argmin(abs(Zt - z))), int(np.argmin(abs(Mt - M)))
+        return float((T["lifetime_yr"][()] + T["t_PMS"][()]).reshape(len(Zt), len(Mt))[iz, im])
+
+
 def add_stars(fname, masses, ages_yr, pos_box):
     with h5py.File(fname, "r+") as F:
         h = F["Header"]

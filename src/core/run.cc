@@ -609,6 +609,9 @@ void run(void)
         {
             LEDGER_STEP_BREAKDOWN("pre_mechanical_feedback");
             LEDGER_FB(mechanical_fb_calc_toplevel());
+#ifdef SNE_BROADCAST_TIMESTEP
+            sne_causal_wake(); /* gas the SNe of this step can reach before its step ends is woken */
+#endif
             LEDGER_STEP_BREAKDOWN("post_mechanical_feedback");
             gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
         }
