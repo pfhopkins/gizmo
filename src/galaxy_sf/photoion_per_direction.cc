@@ -148,6 +148,7 @@ int photoion_active_sources_local(void)
 static int photoion_timebin(void)
 {
     double dt = DMIN(All.PhotoionMaxTimestep / UNIT_TIME_IN_YR, All.MaxSizeTimestep) * All.cf_hubble_a;
+    if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* before the integer conversion: a run shorter than the step overflows it */
     integertime ti = (integertime)(dt / All.Timebase_interval);
     int b = 1;
     while(b + 1 < TIMEBINS && ((integertime)1 << (b + 1)) <= ti) {b++;}
