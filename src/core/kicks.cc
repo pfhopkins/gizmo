@@ -294,6 +294,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 
             /* load and update the particle masses : particle mass update here, from hydro fluxes */
             mass_old = CellP[i].MassTrue; mass_pred = P[i].Mass; mass_new = mass_old + dMass; CellP[i].MassTrue = mass_new; // UNITS: remember all time derivatives (DtX, dX) are in -physical- units; as are mass, entropy/internal energy, but -not- velocity //
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+            if(mass_new > 0) {for(int k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] *= mass_old / mass_new;}} /* metal mass moves only through the pair exchange */
+#endif
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
             if(mass_old > 0 && mass_new > 0 && CellP[i].Density_ExplicitInt > 0) {CellP[i].Density_ExplicitInt *= mass_new / mass_old;} /* the integrated density follows -rho div(v) below; the mass a cell exchanges here changes its density at fixed volume */
 #endif

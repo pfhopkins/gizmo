@@ -11,6 +11,8 @@
  * Each side applies the exchange for its own step: the limiters bound the amount
  * over the pair step dt_pair = max(dt_i, dt_j), and cell i receives the fraction
  * dt_i/dt_pair of it.
+ * With METALS_EXACT_PAIRWISE_EXCHANGE the shorter step owns the pair (equal steps: half
+ * each), computes it over its own step and also writes -exchange to CellP[j].Dyield.
  *
  * Requires allvars.h, kernel.h, hydro_structs.h, hydro_pair_types.h.
  *
@@ -44,6 +46,12 @@ void turb_diff_metals_compute_pair(
 {
 #ifdef TURB_DIFF_METALS
     if(!((local.Mass>0) && (Pj.Mass>0) && ((local.TD_DiffCoeff>MIN_REAL_NUMBER) || (CPj.TD_DiffCoeff>MIN_REAL_NUMBER)))) { return; }
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    const double dt_j = get_particle_timestep_in_physical(0, const_cast<struct particle_data *>(&Pj));
+    if(!PAIR_EXCHANGE_I_OWNS(dt_i, dt_j) && !PAIR_EXCHANGE_SPLIT(dt_i, dt_j)) { return; } /* j owns the pair and does it at its own step */
+    const double owner_share = PAIR_EXCHANGE_I_OWNS(dt_i, dt_j) ? 1.0 : 0.5;
+    dt_pair = dt_i; /* the owner's step */
+#endif
 
     double wt_i = 0.5, wt_j = 0.5;
     double diffusion_wt = wt_i*local.TD_DiffCoeff + wt_j*CPj.TD_DiffCoeff;
@@ -119,8 +127,17 @@ void turb_diff_metals_compute_pair(
             /* only cell i is updated, with its own step's share of the pair exchange; j takes its share when it is active.
                So across timebins metal mass is conserved to integration accuracy, as momentum and energy are; only total mass
                has machinery that makes it exact (the MFV mass flux, where the endpoint with the shorter step owns the pair and
-               updates both sides). An opt-in exact form for metals along those lines is described in GitHub issue #35. */
+               updates both sides). METALS_EXACT_PAIRWISE_EXCHANGE does the same for metals (GitHub issue #35). */
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+            /* positivity on the pair: the donor gives at most 1/(2 N_ngb) of its metal mass to one partner per step */
+            double m_donor = (cmag > 0) ? Pj.Mass*Z_j : local.Mass*local.Metallicity[k_species];
+            double m_cap = DMAX(m_donor, 0) / (2.*All.DesNumNgb);
+            if(fabs(cmag) > m_cap) { cmag *= m_cap / fabs(cmag); }
+            out.Dyield[k_species] += owner_share * cmag;
+            Kokkos::atomic_add(const_cast<MyFloat *>(&CPj.Dyield[k_species]), (MyFloat)(-owner_share * cmag)); /* CellP[j] itself */
+#else
             out.Dyield[k_species] += cmag * dt_fraction_i;
+#endif
 #endif
         }
     }

@@ -328,7 +328,7 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 
 
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)) /* update the metal masses from exchange */
+#if (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE) /* update the metal masses from exchange */
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION /* add the exchange received while inactive; floor at 0 (a fractional floor creates metal) */
             for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] += CellP[i].Dyield_pending[k]; CellP[i].Dyield_pending[k] = 0;}
 #ifdef OUTPUT_MASS_BALANCE_BREAKDOWN
@@ -463,6 +463,21 @@ void hydro_final_operations_and_cleanup(void)
         } // closes P[i].Type==0 check and so closes loop over particles i
     } // for (loop over active particles) //
 
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE /* owners wrote to inactive neighbours too: apply every cell's exchange, then clear it */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int i = 0; i < N_gas; i++)
+    {
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        double m_metal_ref = CellP[i].MassTrue; /* metal mass is MassTrue*Z, kept by the kick under mass change */
+#else
+        double m_metal_ref = P[i].Mass;
+#endif
+        for(int k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / m_metal_ref , 0.01*P[i].Metallicity[k]); CellP[i].Dyield[k] = 0;}
+    }
+#endif
 #if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
     turb_diff_metals_budget_log();
 #endif
