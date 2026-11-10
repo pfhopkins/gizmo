@@ -995,7 +995,7 @@ void resolvedism_radpressure_treerad(void)
 {
     const double sig_uv = 2.0e-21, sig_nuv = 1.3e-21, sig_opt = 0.5e-21; /* cm^2 / H, per band */
     const double inv4pi = 1.0 / (4.0 * M_PI);
-    const double area_conv = 1.0 / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS); /* cm^2 -> code_len^2 */
+    const double area_conv = All.cf_a2inv / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS); /* cm^2 -> comoving code_len^2, matching the comoving 1/r^2 fluxes */
     const double p_conv = 1.0 / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s); /* cgs p -> code p */
     int i;
     /* ---- Photon-conservation cap for the tree-flux deposit (2026-07-28) ----
