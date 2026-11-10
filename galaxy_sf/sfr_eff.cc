@@ -363,7 +363,7 @@ double get_starformation_rate(int i, int mode)
 #endif
     { /* resolved ISM Jeans mass: M_J = pi^(5/2)/6 * cs^3 / (G^(3/2) * sqrt(rho)) */
         double rho_phys = CellP[i].Density * All.cf_a3inv;
-        double cs = CellP[i].effective_soundspeed() * All.cf_atime;
+        double cs = CellP[i].effective_soundspeed(); /* already physical */
         double MJ = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)); /* Jeans mass in code units */
         if(MJ >= All.FacSfThreshMJ * All.DesNumNgb * P[i].Mass) {rateOfSF=0;}
     }
