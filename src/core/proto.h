@@ -1168,6 +1168,7 @@ void single_star_ejecta_cell_payload(int i, struct addFB_evaluate_data_in_ *in, 
 void single_star_ejecta_cell_done(int i, double M_ejecta);
 void single_star_ejecta_cells_flush(void);
 #endif
+int single_star_feedback_uncoupled(const int *list, int n, int *out);
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
 void single_star_event_logs_write(void);
 void single_star_sfr_windows_write(void);

@@ -1925,6 +1925,11 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.TestFixedLbol;
         id[nt++] = REAL;
 #endif
+#ifdef TEST_SINGLE_STARS_FEEDBACK_KERNEL_AT_MOST
+      strcpy(tag[nt], "TestFBKernelAtMost");
+      addr[nt] = &All.TestFBKernelAtMost;
+      id[nt++] = REAL;
+#endif
 #ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
         strcpy(tag[nt], "TestFBNoGasUntilTime");
         addr[nt] = &All.TestFBNoGasUntilTime;
