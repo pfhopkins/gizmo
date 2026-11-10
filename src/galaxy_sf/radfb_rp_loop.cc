@@ -574,7 +574,7 @@ void radiation_pressure_winds_consolidated(void)
     radfb_rp_log_mom_coupled = 0; radfb_rp_log_sum_v_kick  = 0;
     radfb_rp_log_sum_taufac  = 0;
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
-    {double dp_cells = 0; single_star_radpressure_per_cell(&dp_cells); radfb_rp_log_mom_supply += dp_cells; radfb_rp_log_mom_coupled += dp_cells;}
+    const double radp_abs_local = single_star_radpressure_absorbed_local();
 #endif
 
     std::vector<int>             active_src;
@@ -614,7 +614,24 @@ void radiation_pressure_winds_consolidated(void)
      * lockstep. The runner accepts num_active=0 as a no-op participant.
      * Short-circuit ONLY if globally zero firing sources. */
     int any_local = (num_active > 0) ? 1 : 0, any_active = 0;
+#ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
+    { /* the per-cell absorption sum rides on the source count: no extra collective */
+        double loc_in[2] = {(double) any_local, radp_abs_local}, glob_in[2] = {0, 0};
+        MPI_Allreduce(loc_in, glob_in, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        any_active = (glob_in[0] > 0);
+        double dp_cells = 0; single_star_radpressure_per_cell(glob_in[1], &dp_cells);
+        double supply = dp_cells; /* the cells first, then the sources, as before */
+        for (const RadFBRPLocalIn &l : host_locals) {
+            supply += (double)l.dE_over_c;
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+            supply += (double)l.jet_momentum_tocouple;
+#endif
+        }
+        radfb_rp_log_mom_supply = supply; radfb_rp_log_mom_coupled += dp_cells;
+    }
+#else
     MPI_Allreduce(&any_local, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+#endif
     if (!any_active) {radfb_rp_write_momwinds_log(num_active); return;}
 
     /* Aux carries non-owning pointers to the toplevel-owned active arrays.

@@ -1188,7 +1188,8 @@ int single_star_rt_band_luminosities(int i, int mode, double *lum, struct partic
 double sgchem_radiation_field_for_snapshot(int i, int blocknr);
 #endif
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
-void single_star_radpressure_per_cell(double *dp_total_code);
+double single_star_radpressure_absorbed_local(void);
+void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code);
 #endif
 #ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
 double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR); /* host only */

@@ -174,11 +174,12 @@ double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
 /* direct radiation pressure in the absorbing cell: L_abs = sum_b sigma_b F_b DGR N_H(cell) / 4 pi, pushed away from the pixel
    centres, all deposits scaled by L_emit / sum(L_abs) when above 1 (photon cap). The sum over cells is kept running:
-   an active cell swaps its share, full recount on all-active steps. L_emit is the root node, so no star loop. One Allreduce per call. */
-void single_star_radpressure_per_cell(double *dp_total_code)
+   an active cell swaps its share, full recount on all-active steps. L_emit is the root node, so no star loop. The sum is reduced
+   with the source count in radiation_pressure_winds_consolidated: no collective here. */
+static std::vector<double> radp_lum_abs; /* per active cell, absorbed_local to per_cell */
+double single_star_radpressure_absorbed_local(void)
 {
     static double abs_sum_local = 0; static int counted = 0;
-    *dp_total_code = 0;
     const double to_L = 1.0e-21 * All.cf_a2inv / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS * 4.0 * M_PI); /* sum x DGR N_H -> code lum */
     const int all_active = (All.HighestActiveTimeBin == All.HighestOccupiedTimeBin);
     if(!counted || all_active)
@@ -186,7 +187,7 @@ void single_star_radpressure_per_cell(double *dp_total_code)
         abs_sum_local = 0; counted = 1;
         for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {abs_sum_local += CellP[i].RadpAbsorbedLum;}}
     }
-    std::vector<double> lum_abs(ActiveParticleList.size(), 0.);
+    std::vector<double> &lum_abs = radp_lum_abs; lum_abs.assign(ActiveParticleList.size(), 0.);
     for(size_t a = 0; a < ActiveParticleList.size(); a++)
     {
         const int i = ActiveParticleList[a];
@@ -197,13 +198,18 @@ void single_star_radpressure_per_cell(double *dp_total_code)
         abs_sum_local += l - CellP[i].RadpAbsorbedLum;
         CellP[i].RadpAbsorbedLum = (float) l;
     }
+    return abs_sum_local;
+}
+
+void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code)
+{
+    *dp_total_code = 0;
+    const std::vector<double> &lum_abs = radp_lum_abs;
     const MyFloat *root = Nodes[All.TreeNodeIndexBase].stellar_lum;
     double L_emit = root[RT_FREQ_BIN_PHOTOELECTRIC] + root[RT_FREQ_BIN_GENERIC_USER_FREQ] + root[RT_FREQ_BIN_NUV] + root[RT_FREQ_BIN_OPTICAL_NIR];
 #ifdef GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE
     L_emit += root[RT_FREQ_BIN_LYMAN_WERNER] + root[RT_FREQ_BIN_GENERIC_USER_FREQ];
 #endif
-    double abs_sum = 0;
-    MPI_Allreduce(&abs_sum_local, &abs_sum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     const double fcons = (abs_sum > L_emit && abs_sum > 0) ? L_emit / abs_sum : 1.0;
     const double to_p = fcons * UNIT_LUM_IN_CGS * UNIT_TIME_IN_CGS / (C_LIGHT_CGS * UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s); /* code lum x code time -> code momentum */
     for(size_t a = 0; a < ActiveParticleList.size(); a++)

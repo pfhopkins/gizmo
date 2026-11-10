@@ -7,8 +7,11 @@ cells, chemistry on, gravity on (the fluxes come from the gravity walk), 2 kyr.
   test_snapshot_fields: OUTPUT_SGCHEM_RADIATION_FIELDS: G0_FUV = L(6-13.6 eV) / (4 pi c r^2) / Habing (3 %, median over cells beyond 3 softenings),
     fields in shape, star lums in log10 erg/s and the Lyman photon rate in log10 1/s from the tables (1e-3 dex).
   test_outward: the gas gains positive radial momentum about the star, at least half of what the log says (pixel centres, n_H = 1).
+  test_no_extra_collectives: MPI collectives counted on rank 0 (test/ketju_quiet_steps interposer) equal those with the direct
+    term at the star (GALSF_FB_RADPRESSURE_DIRECT_TERM_AT_STAR), with no star (quiet steps) and with the star shining.
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -16,7 +19,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
-from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, get_cooling_tables, mpi_launch_command
+from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, get_cooling_tables, mpi_launch_command, mpirun_is_open_mpi
 
 NAME = "single_stars_radpressure_cells"
 HERE = Path(__file__).parent
@@ -48,7 +51,7 @@ def build(tag, extra=()):
     return BUILDS[tag]
 
 
-def run(exe, tag, tables, n_h):
+def run(exe, tag, tables, n_h, star_on=True, preload=None):
     rho = n_h * MP / 0.7065 * PC ** 3 / MSUN  # Msun / pc^3, HYDROGEN_MASSFRAC under SGChem
     dx = (1.0 / rho) ** (1.0 / 3.0); L = NGRID * dx
     tab = Tables(tables["StellarTablesFile"])
@@ -59,7 +62,7 @@ def run(exe, tag, tables, n_h):
         shutil.rmtree(d)
     (d / "output").mkdir(parents=True)
     star = np.full(3, L / 2 + 0.31 * dx)
-    make_treecol_pixels_ics(str(d / "output" / "snapshot_000.hdf5"), L, lattice(NGRID, L), [(M_STAR, age, star)], hsml=2 * dx)
+    make_treecol_pixels_ics(str(d / "output" / "snapshot_000.hdf5"), L, lattice(NGRID, L), [(M_STAR, age, star)] if star_on else [], hsml=2 * dx)
     for f in ("TREECOOL", "spcool_tables"):
         if (HERE / f).exists():
             os.symlink(HERE / f, d / f)
@@ -71,8 +74,10 @@ def run(exe, tag, tables, n_h):
     p = "\n".join([l for l in p.splitlines() if not (l.split() and l.split()[0] in over)] + [f"{k:27s} {v}" for k, v in over.items()]) + "\n"
     (d / f"{NAME}.params").write_text(p)
     with open(d / f"test_{NAME}.out", "w") as out:
-        subprocess.run(mpi_launch_command(2) + [str(exe), f"{NAME}.params", "2", "0"], cwd=d, stdout=out,
-                       stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True)
+        env = {**os.environ, "OMP_NUM_THREADS": "1", **({"LD_PRELOAD": str(preload)} if preload else {})}
+        fwd = ["-x", "LD_PRELOAD"] if preload and mpirun_is_open_mpi() else []
+        subprocess.run(mpi_launch_command(2) + fwd + [str(exe), f"{NAME}.params", "2", "0"], cwd=d, stdout=out,
+                       stderr=subprocess.STDOUT, env=env, check=True)
     rows = np.atleast_2d(np.loadtxt(d / "output" / "MomWinds.txt"))
     return d, rows, tab, age, rho, L, star, dx
 
@@ -148,3 +153,17 @@ def test_outward(tables):
     pr = (m * (v * x).sum(1) / np.sqrt((x ** 2).sum(1))).sum()
     print(f"radial momentum {pr:.4g}, logged {rows[:, 6].sum():.4g}")
     assert pr > 0.5 * rows[:, 6].sum(), "pushed away from the star"
+
+
+@pytest.mark.parametrize("star_on", [False, True], ids=["quiet", "shining"])
+def test_no_extra_collectives(tables, star_on):
+    so = HERE / "mpi_collective_count.so"
+    subprocess.run(["mpicc", "-shared", "-fPIC", "-O1", str(HERE.parent / "ketju_quiet_steps" / "mpi_collective_count.c"), "-o", str(so)], check=True)
+    got = {}
+    for tag, flags in (("disjoint", ()), ("at_star", ("GALSF_FB_RADPRESSURE_DIRECT_TERM_AT_STAR",))):
+        d = run(build(tag, flags), f"collectives_{tag}_{int(star_on)}", tables, 1.0, star_on, so)[0]
+        out = (d / f"test_{NAME}.out").read_text()
+        got[tag] = (int(re.search(r"MPI_COLLECTIVES total (\d+)", out).group(1)), len(re.findall(r"^Sync-Point", out, re.M)))
+    print(f"collectives (total, steps): per cell {got['disjoint']}, at the star {got['at_star']}")
+    assert got["disjoint"][1] == got["at_star"][1]
+    assert got["disjoint"][0] == got["at_star"][0]

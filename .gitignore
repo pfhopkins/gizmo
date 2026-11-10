@@ -164,6 +164,7 @@ test/single_stars_gas_timestep/run/
 test/single_stars_gas_timestep/GIZMO
 test/single_stars_radpressure_cells/run_*/
 test/single_stars_radpressure_cells/GIZMO*
+test/single_stars_radpressure_cells/mpi_collective_count.so
 test/crfluid_exchange_pdv_only/GIZMO_*
 test/crfluid_exchange_pdv_only/output_*/
 test/crfluid_initial_energy/crfluid_initial_energy_ics.hdf5
