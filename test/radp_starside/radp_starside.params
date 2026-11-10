@@ -1,0 +1,128 @@
+% Stella molecular-cloud params (Config_stella_cloud.sh): production stella.params with the GMC overrides commented
+%---- Stella: resolved single-star galaxy formation model
+%---- Config: gizmo-cpp / uli-singlestar-galaxy branch
+%---- Units: kpc, 1e10 Msun, km/s (standard GIZMO galactic)
+
+%---- Files
+InitCondFile                    radp_starside_ics     % MakeCloud IC converted to these units (stella/tests/harness/cases/r26_gmc_molecular.py)
+MaxMemSize                      1800            % MB per task, fixed at startup (auto-detect fails inside memory-limited Slurm steps)
+OutputDir                       output
+
+%---- Output
+TimeBetSnapshot                 3.0e-5
+TimeBetStatistics               1.0e-6         % ~50 kyr
+TimeOfFirstSnapshot             0
+SnapFormat                      3                 % HDF5
+
+%---- Box & simulation time
+BoxSize                         0.006            % 70 pc = MakeCloud 10 R, periodic box (cloud + box-filling warm medium), as STARFORGE
+TimeBegin                       0.0
+TimeMax                         3.0e-5
+ComovingIntegrationOn           0                 % non-cosmological
+
+%---- Timestep control
+MaxSizeTimestep                 2.0e-7         % ~50 kyr
+MinSizeTimestep                 0
+
+%---- Tree & domain
+TreeDomainUpdateFrequency       0.05
+PartAllocFactor                 3.0
+BufferSize                      300
+
+%---- Units
+UnitLength_in_cm                3.085678e21       % 1 kpc
+UnitMass_in_g                   1.989e43          % 1e10 Msun
+UnitVelocity_in_cm_per_s        1.0e5             % 1 km/s
+UnitMagneticField_in_gauss      1.0
+
+%---- Gravity softening (ADAPTIVE_GRAVSOFT_FORALL for gas+stars)
+%---- These are MINIMUM softenings when adaptive softening is on
+SofteningGas                    1.0e-4            % 0.1 pc min for gas (Type 0)
+SofteningHalo                   0.050             % 50 pc DM (Type 1)
+SofteningDisk                   0.020             % 20 pc disk stars (Type 2)
+SofteningBulge                  0.020             % 20 pc bulge (Type 3)
+SofteningStars                  1.0e-4            % 0.1 pc min for spawned stars (Type 4)
+SofteningBndry                  0.005             % 5 pc sink/BH (Type 5)
+
+%---- Kernel
+DesNumNgb                       32
+AGS_DesNumNgb                   32
+MaxKernelRadius                 2000              % must be large enough for halo cells to find neighbors (gizmo2017 used 2000)
+
+%---- Temperature
+InitGasTemp                     0               % use the IC temperature
+MinGasTemp                      10.0              % 10 K floor
+
+%---- CPU
+TimeLimitCPU                    8500000
+CpuTimeBetRestartFile           7200
+
+%---- Cosmology (non-cosmological, but must be set)
+Omega0                          1.0
+OmegaLambda                     0.0
+OmegaBaryon                     0.0
+HubbleParam                     1.0
+
+%---- Star formation (GALSF + GALSF_RESOLVEDISM, Hu & Sternberg 2023)
+CritPhysDensity                 100.              % SF threshold [cm^-3] — Jeans criterion is the binding one
+SfEffPerFreeFall                0.5               % eps_ff = 0.5 (Hu 2023)
+FacSfThreshMJ                   1.0               % M_J < N_ngb * m_gas (kernel mass)
+
+%---- Resolved ISM SF cutoff (GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF) — disabled
+%nHcutoffSF                     1.0e5             % not used with pure Jeans criterion
+
+%---- Instant SN (GALSF_RESOLVEDISM_INSTANT_SN)
+TimeInstantSN                   0.0               % disabled: all stars live their full table lifetime
+
+%---- IMF sampling (GALSF_RESOLVEDISM_SAMPLE_IMF)
+IMFSampleMinMass                0.08              % full IMF: sample down to hydrogen burning limit
+ResolvedISM_SFCooldownFreeFallFraction 0.1         % after a spawn the cell forms no star for this fraction of its t_ff (0: only until its next density update)
+IMFSampleStellarMassCut         0.5               % skip UV/LW computation for M < 0.5 Msun (perf only)
+
+%---- Stellar tables (GALSF_RESOLVEDISM_STELLAR_TABLES)
+StellarTablesFile               gizmo/galaxy_sf/stellar_tables/stellar_tables_unified.hdf5
+MaxStellarTimestep              10000.0           % 50 kyr max stellar evolution timestep [yr]
+
+%---- Initial metallicity (METALS + INIT_STELLAR_METALS_AGES_DEFINED)
+InitMetallicity                 1.0             % solar (0.1 for the low-Z variant)
+InitStellarAge                  10.0              % pre-existing stars: 10 Gyr old
+
+%---- MHD (MAGNETIC + MHD_B_SET_IN_PARAMS)
+BiniX                           0               % [Gauss] uniform B along z as MakeCloud (STARFORGE)
+BiniY                           0
+BiniZ                           6.61e-6         % E_B = 0.1 |E_grav| (MakeCloud default bturb=0.1) for 1e4 Msun, R 7 pc: mu ~ 3.3
+
+%---- TreeRad column density (TREE_RAD)
+ShieldingLength                 0.050             % 50 pc shielding length
+
+%---- SGCHEM (SGCHEM + CHEMISTRYNETWORK=5)
+G0                              1.7               % initial Habing FUV field (Draine 1978)
+CosmicRayIonRate                3.0e-17           % CR ionization rate [s^-1], Milky-Way-like cloud value
+% ---- Stella CR (with COSMIC_RAY_FLUID; CosmicRayIonRate then unused) ----
+%CosmicRay_SNeFraction           0.1               % fraction of SN and fast-wind (>1000 km/s) ejecta energy into CRs
+%CosmicRayDiffusionCoeff         690               % required tag; unused by the variable-kappa model 7 (constant-kappa runs: kpc km/s, 690 = 2.1e29 cm^2/s)
+%CosmicRayInitialAmbient_eVcm3   1.0               % initial CR energy density below the threshold (Fitz Axen+24)
+%CosmicRayInitialCloud_eVcm3     0.1               % initial CR energy density in the cloud
+%CosmicRayInitialCloudThreshold_nH 10.0            % cloud/ambient split [cm^-3] (MakeCloud ambient is 1e-3 of the cloud)
+DGRnormalized                   1.0               % dust-to-metal efficiency (1.0 = MW); DGR scales with local Z per particle
+DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
+InitialMetallicity              1.0             % same as InitMetallicity
+MaxPISearchRadius               0.05              % maximum PI search radius [kpc] (50 pc, matching gizmo2017)
+
+%---- KETJU (KETJU_REGULARIZATION + KETJU_MERGE_STARS, ADAPTIVE_GRAVSOFT_FORALL=1): best set of the N-body matrix (KOf); uncomment all
+%SofteningStars                 1.0e-6            % 1e-3 pc fixed star softening (replaces the 0.1 pc line above)
+%MaxSizeTimestep                6.25e-6           % 1/8 of the default 50 kyr
+%KetjuRegionRadius              5.0e-6            % 1000 AU
+%KetjuMinStarMass               0.5e-11           % 0.05 Msun: every sampled star can be a region centre
+%KetjuIntegrationTolerance      1.0e-9            % GBS relative tolerance for MSTAR
+%KetjuTimestepLimitingFactor    10                % radius factor for timestep limiting
+%KetjuUseStarStarSoftening      0                 % unsoftened chains
+%KetjuRegionMotionCapFactor     0                 % region-step motion caps off
+%KetjuKeplerPairs               1                 % exact Kepler drift for isolated pairs (Type-4 default)
+%KetjuFlybyStepEta              0.2               % fly-by pair step (O(N_star^2) per step: cloud-size runs only)
+
+TestStarMass                    40.0
+TestNumStars                    1
+TestSNTime0                     0
+TestStarMass2                   0
+TestStarMass3                   0
