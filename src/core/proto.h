@@ -55,6 +55,9 @@ long long report_comittable_memory(long long *MemTotal,
                                    long long *SwapTotal,
                                    long long *SwapFree);
 
+#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
+extern int MechFBCellsReceived, MechFBAnyCellReceived, HydroRecomputeAfterFeedback;
+#endif
 void merge_and_split_particles(void);
 int does_particle_need_to_be_merged(int i);
 int does_particle_need_to_be_split(int i);

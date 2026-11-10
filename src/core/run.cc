@@ -77,7 +77,10 @@ void energy_ledger_report(void)
     for(i=0;i<LG_N;i++) {loc[i] = EnergyLedger[i];}
     loc[LG_N] = loc[LG_N+1] = loc[LG_N+2] = 0;
     for(i=0;i<NumPart;i++) {if(P[i].Type==0 && P[i].Mass>0) {loc[LG_N] += 0.5*P[i].Mass*P[i].Vel.norm_sq()*All.cf_a2inv; loc[LG_N+1] += P[i].Mass*CellP[i].InternalEnergy;
-        if(CellP[i].Density>0) {loc[LG_N+2] += 0.5*CellP[i].B.norm_sq()*(CellP[i].Density/P[i].Mass)/All.cf_atime;}}}
+#ifdef MAGNETIC
+        if(CellP[i].Density>0) {loc[LG_N+2] += 0.5*CellP[i].B.norm_sq()*(CellP[i].Density/P[i].Mass)/All.cf_atime;}
+#endif
+        }}
     MPI_Reduce(loc, glob, LG_N+3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
     static FILE *fd = NULL; static double E0 = -1, EB0 = 0, L0[LG_N];
@@ -614,6 +617,13 @@ void run(void)
 #endif
             LEDGER_STEP_BREAKDOWN("post_mechanical_feedback");
             gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
+#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
+            if(MechFBAnyCellReceived) { /* gizmo2017: refresh densities, gradients and forces against the state after the deposit */
+                MechFBAnyCellReceived = 0;
+                if(ThisTask == 0) {printf("HYDRO_RECOMPUTE_AFTER_FEEDBACK: repeating the hydro pass after a deposit\n");}
+                HydroRecomputeAfterFeedback = 1; compute_hydro_densities_and_forces(); HydroRecomputeAfterFeedback = 0;
+            }
+#endif
         }
 #endif
 

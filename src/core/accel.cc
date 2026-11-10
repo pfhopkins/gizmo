@@ -69,6 +69,9 @@ void compute_grav_accelerations(void)
 
 
 
+#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
+int HydroRecomputeAfterFeedback = 0; /* set while the hydro pass is repeated after a feedback deposit */
+#endif
 void compute_hydro_densities_and_forces(void)
 {
   if(All.TotN_gas > 0)
@@ -99,9 +102,14 @@ void compute_hydro_densities_and_forces(void)
         CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif
 #ifdef GALSF /* PFH set of feedback routines (thermal, photo-ionization, radiation pressure), coupled discretely just -before- the hydro force is computed; mechanical feedback is coupled after the closing kick (run.cc) */
+#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
+        if(!HydroRecomputeAfterFeedback) /* the repeat refreshes the hydro state only; this step's feedback is done */
+#endif
+        {
         LEDGER_STEP_BREAKDOWN("pre_feedback");
         LEDGER_FB(compute_stellar_feedback());
         LEDGER_STEP_BREAKDOWN("post_feedback");
+        }
 #endif
 
         /* Hydro corridor begin: in Mode A (any rank count) imports the gas
