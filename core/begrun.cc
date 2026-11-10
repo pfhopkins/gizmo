@@ -3595,6 +3595,8 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
       StTPrev /= 2;
 #endif
 
+    All.Previous_Ti_Current /= 2;
+    if(Nodes_base && Extnodes_base) {for(i = 0; i < Numnodestree; i++) {Nodes_base[i].Ti_current /= 2; Extnodes_base[i].Ti_lastkicked /= 2;}} /* the tree of the restart files */
     for(i = 0; i < NumPart; i++)
 	{
         P[i].Ti_begstep /= 2;
