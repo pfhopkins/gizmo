@@ -1538,7 +1538,7 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.CpuTimeBetRestartFile;
       id[nt++] = REAL;
 
-#ifdef DEVELOPER_MODE
+#if defined(DEVELOPER_MODE) || defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) /* with the ledger the cadence is read (stella_dev) */
       strcpy(tag[nt], "TimeBetStatistics");
       strcpy(alternate_tag[nt], "Time_Between_Internal_Diagnostic_Statistics");
       addr[nt] = &All.TimeBetStatistics;
@@ -3288,6 +3288,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("MinGasKernelRadiusFractional",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume no mininum (=%g) \n",tag[i],alternate_tag[i],All.MinGasKernelRadiusFractional); continue;}
 #endif
                 if(strcmp("DomainBuild_ActiveFraction",tag[i])==0) {*((double *)addr[i])=0.05; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-decompose whenever 5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.DomainBuild_ActiveFraction); continue;}
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+                if(strcmp("TimeBetStatistics",tag[i])==0) {*((double *)addr[i])=1.0e10; printf("Tag %s not set in parameter file: defaulting to 1e10 (one row at the start)\n",tag[i]); continue;}
+#endif
 #ifdef WAKEUP_TARGET_BIN_PARAMETER
                 if(strcmp("WakeupTargetBin",tag[i])==0) {*((int *)addr[i])=2; printf("Tag %s not set in parameter file: defaulting to 2 (woken cells go to the highest active bin)\n",tag[i]); continue;}
 #endif
@@ -3627,7 +3630,9 @@ void read_parameter_file(char *fname)
     All.ErrTolTheta = 0.7;
     All.ErrTolForceAcc = 0.0025;
     All.MaxRMSDisplacementFac = 0.25;
+#ifndef OUTPUT_MASS_METAL_ENERGY_LEDGER /* with the ledger the parsed cadence stays */
     All.TimeBetStatistics = 1.0e10;
+#endif
     strcpy(All.ResubmitCommand,"none");
     All.ResubmitOn = 0;
 #ifdef HYDRO_SPH
