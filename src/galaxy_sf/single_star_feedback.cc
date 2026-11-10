@@ -393,6 +393,20 @@ int ledger_met_slot(int k)
 static std::vector<double> ssfb_rows;
 static FILE *FdSingleStarEvents = NULL;
 static std::vector<double> ssfb_mass_before; /* star masses before the loop, by position in the active list */
+static int ssfb_log_rows_any = 1; /* from the feedback loop's source reduction: some rank may write an event row */
+
+/* local, before the feedback loop: a death or Type Ia among the active stars, or rows not yet written */
+int single_star_feedback_log_rows_local(void)
+{
+    if(!ssfb_rows.empty()) {return 1;}
+    for(int i : ActiveParticleList) {
+        if(P[i].Type <= 1 || P[i].StarIdx <= 0) {continue;}
+        int kind = single_star_kind_this_step(i);
+        if(kind != SSE_NONE && kind != SSE_WIND) {return 1;}
+    }
+    return 0;
+}
+void single_star_feedback_set_log_rows(int any) {ssfb_log_rows_any = any;}
 
 /* collective, from the feedback loop's active steps only (one integer reduction); gathers only if a row exists */
 static void single_star_events_flush(void)
@@ -554,7 +568,7 @@ void single_star_feedback_finalize(const int *list, int n)
 #ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
     if(ssfb_making_ejecta_cell) {return;} /* one rank alone: the row goes out with single_star_ejecta_cells_flush */
 #endif
-    single_star_events_flush();
+    if(ssfb_log_rows_any) {single_star_events_flush();}
 }
 
 #ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
