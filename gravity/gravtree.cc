@@ -798,7 +798,7 @@ void gravity_tree(void)
                 /* per-cell DGR (2026-07-28): the implied absorption of each cell uses ITS
                  * OWN dust content, consistent with the per-cell leaf weighting in the
                  * dust column and the per-cell radp absorber. */
-                double sigma_eff_code = 2.0e-21 * resolvedism_cell_DGR_solar(i) * NH_cell / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS);
+                double sigma_eff_code = 2.0e-21 * resolvedism_cell_DGR_solar(i) * NH_cell * All.cf_a2inv / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS); /* comoving area, as the fluxes */
                 A_abs_uv += F_tot * sigma_eff_code / (4.0 * M_PI); /* flux stored without 1/4pi; restore for luminosity */
             }
             double glob[2], loc[2]; loc[0] = L_emit_uv; loc[1] = A_abs_uv;
