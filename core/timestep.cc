@@ -1131,28 +1131,7 @@ integertime get_timestep(int p,		/*!< particle index */
     if(STELLA_OWNS_STAR(P[p]) && P[p].Mass > 0) {
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
         if(P[p].sampled == 1 && P[p].MstarSampleIMF[0] > 0) {
-            double Mstar = P[p].MstarSampleIMF[0];
-            double star_age_yr = evaluate_stellar_age_Gyr(p) * 1e9;
-            double logM = log10(Mstar);
-            double logZ = log10(DMAX(P[p].BirthMetallicity, 1e-10));
-            double lifetime = stellar_t_PMS(logM, logZ) + stellar_lifetime(logM, logZ); /* age since birth at death */
-            double time_to_death = lifetime - star_age_yr;
-
-            /* Hard cap: never exceed MaxStellarTimestep (~50 kyr default) */
-            double dt_max_yr = All.MaxStellarTimestep;
-
-            /* Adaptive: 1/50 of remaining lifetime when within 100 * MaxStellarTimestep of death */
-            if(time_to_death > 0 && time_to_death < 100.0 * dt_max_yr)
-                dt_max_yr = DMIN(dt_max_yr, time_to_death / 50.0);
-
-            /* Ensure we don't skip over death */
-            if(time_to_death > 0 && time_to_death < 2.0 * dt_max_yr)
-                dt_max_yr = DMIN(dt_max_yr, time_to_death * 0.9);
-
-            /* Floor: never go below 10 yr */
-            if(dt_max_yr < 10.0) dt_max_yr = 10.0;
-
-            double dt_max_code = dt_max_yr / UNIT_TIME_IN_YR;
+            double dt_max_code = All.MaxStellarTimestep / UNIT_TIME_IN_YR; /* cap only, as gizmo2017: the death fires at the first step past the lifetime */
             if(dt_max_code > 0 && dt_max_code < dt) dt = dt_max_code;
         }
 #endif
