@@ -239,8 +239,8 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     if(!get_star_info(i, &Mstar, &logM, &logZ)) return;
 
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
-    /* ---- Radiation pressure (loop_iteration == 1) ---- */
-    if(loop_iteration == 1) {
+    /* ---- Radiation pressure (loop_iteration == 1; -2 is its weighting pre-pass and needs the budget too) ---- */
+    if(loop_iteration == 1 || loop_iteration == -2) {
         in->WindMomentum = resolvedism_radp_starside_dp_code(i);
         return;
     }
