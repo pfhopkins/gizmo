@@ -3,13 +3,14 @@ Bars: reports of the SN energy check; mass and each element to 1e-12, each depos
 ledger residual within 0.01 E_SN at every full sync, whatever the event count."""
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 import numpy as np
 import pytest
-from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, get_cooling_tables, mpi_launch_command
+from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, get_cooling_tables, mpi_launch_command, mpirun_is_open_mpi
 
 TEST_NAME = "sn_driven_box"
 TEST_DIR = Path(__file__).parent
@@ -148,3 +149,29 @@ def test_single_sn_energy(built, m_cell):
     t, i_sn = c["time"], np.searchsorted(c["time"], e[0, 0])
     G = [(c["dE"][k] + c["dE_B"][k] - sum(c[q][k] - c[q][i_sn - 1] for q in ("cool", "grav_W", "turb_W", "fb_other", "photoion")) - c["dE"][i_sn - 1] - c["dE_B"][i_sn - 1]) for k in range(i_sn, len(t))]
     assert 0.9 <= max(G) <= 1.1, G
+
+
+def test_no_wake_collective_without_supernova(built):
+    """a 20 Msun star 1 Myr before its death (winds every step): no MPI collective from the supernova causal wake on rank 0
+    (LD_PRELOAD counter of test/hot_gas_timebin_clamp, callers resolved with addr2line), while the mechanical feedback runs"""
+    tables, cooling = built
+    d = TEST_DIR / "run_wake_quiet"
+    shutil.rmtree(d, ignore_errors=True)
+    (d / "output").mkdir(parents=True)
+    ic = d / "output" / "snapshot_000.hdf5"
+    make_box(ic, LADDER[10.0], 100.0, cell_msun=10.0)
+    add_stars(ic, np.array([20.0]), np.array([death_age(tables, 20.0) - 1.0e6]), np.array([[0.5, 0.5, 0.5]]))
+    params(d, tables, cooling, LADDER[10.0], 5e-5, 5e-5, driving=0.0)
+    so = d / "mpi_collective_callers.so"
+    subprocess.run(["mpicc", "-shared", "-fPIC", "-O1", str(TEST_DIR.parent / "hot_gas_timebin_clamp" / "mpi_collective_callers.c"), "-o", str(so)], check=True)
+    fwd = ["-x", "LD_PRELOAD"] if mpirun_is_open_mpi() else []
+    out = subprocess.run(mpi_launch_command(2) + fwd + [str(TEST_DIR / "GIZMO"), f"{TEST_NAME}.params", "2", "0"], cwd=d, capture_output=True, text=True,
+                         env={**os.environ, "OMP_NUM_THREADS": "1", "LD_PRELOAD": str(so)}, check=True).stdout
+    rows = re.findall(r"^MPI_CALLER (0x[0-9a-f]+) (\d+)", out, re.M)
+    assert rows, out[-500:]
+    names = subprocess.run(["addr2line", "-f", "-C", "-e", str(TEST_DIR / "GIZMO")] + [a for a, _ in rows], capture_output=True, text=True, check=True).stdout.splitlines()[0::2]
+    by = {}
+    for nm, (_, c) in zip(names, rows):
+        by[nm] = by.get(nm, 0) + int(c)
+    assert sum(c for f, c in by.items() if f.startswith("mechanical_fb")) > 0, by  # the feedback ran
+    assert not [f for f in by if "sne_causal_wake" in f or "SnWake" in f], by
