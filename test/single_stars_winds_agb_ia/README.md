@@ -28,4 +28,9 @@ Checks:
    0.9995; 1.045 before each cell closed its own share in the star frame).
 7. (`test_wind_energy_in_outflowing_gas`) a 150 Msun star's steady wind in 1e7 K gas moving out of it at 0.75 v_w, n_H = 1: run minus a twin with no wind owed (the flow's hydro drift cancels) closes to 2 % on 1/2 M v^2. The weighting pass sums use the ejecta mass, not the star's.
 
+8. (`test_wind_elements_independent_of_cadence`, FIRE metal layout) a 40 Msun star from 4.40 to 4.84 Myr in metal-free gas,
+   delivering every 1 kyr and every 20 kyr; from 4.59 Myr one element's table cumulative is flat while the total still rises.
+   In both runs each metal slot gains exactly the table cumulative of its elements between the start and the last delivery age
+   (1e-12), and the star loses what the gas gains (1e-12). Before winds were owed element by element, an interpolation
+   rounding below zero in one element swapped the whole delivery to the surface composition: up to 2.4e-2 off.
 Reference: the tables (cumulative wind ejecta read with h5py at the star's grid node) and conservation laws.

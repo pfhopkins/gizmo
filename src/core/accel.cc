@@ -46,7 +46,14 @@ void compute_grav_accelerations(void)
 #endif
 
   {
+#if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    single_star_light_switch_check(); /* node luminosities follow a star that starts to shine, goes dark or drifts */
+    double root_lum_before[N_RT_FREQ_BINS]; int tree_ok = force_tree_is_allocated() && !TreeReconstructFlag; for(int b = 0; b < N_RT_FREQ_BINS; b++) {root_lum_before[b] = tree_ok ? Nodes[All.TreeNodeIndexBase].stellar_lum[b] : -1.;}
+#endif
     gravity_tree();		/* computes gravity accel. */
+#if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    single_star_tree_lum_store(root_lum_before);
+#endif
 
     /* For the first timestep, we redo it to allow usage of relative opening criterion for consistent accuracy.
        The estimator this seeds is refreshed only when the tree is built, and the import is pruned against it,

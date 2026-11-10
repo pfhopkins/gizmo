@@ -32,8 +32,15 @@
     SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X) \
     SINGLE_STAR_RECORD_KETJU_FIELDS(X)
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+#if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+struct single_star_tree_lum {float L[N_RT_FREQ_BINS];};
+#define SINGLE_STAR_RECORD_TREE_FIELDS(X) X(struct single_star_tree_lum, tree_lum, "band luminosities as the gravity-tree nodes last saw them [code]")
+#else
+#define SINGLE_STAR_RECORD_TREE_FIELDS(X)
+#endif
 #define SINGLE_STAR_RECORD_TABLE_FIELDS(X) \
-    X(float, rho_birth, "physical gas density of the parent cell at birth [code]; 0 = unknown")
+    X(float, rho_birth, "physical gas density of the parent cell at birth [code]; 0 = unknown") \
+    SINGLE_STAR_RECORD_TREE_FIELDS(X)
 #else
 #define SINGLE_STAR_RECORD_TABLE_FIELDS(X)
 #endif

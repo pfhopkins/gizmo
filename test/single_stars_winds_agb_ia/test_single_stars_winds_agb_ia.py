@@ -8,11 +8,12 @@ from pathlib import Path
 import numpy as np
 import h5py
 import pytest
-from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, mpi_launch_command
+from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, get_cooling_tables, mpi_launch_command
 
 TEST_NAME = "single_stars_winds_agb_ia"
 TEST_DIR = Path(__file__).parent
 PC_KMS_IN_YR = 3.085678e13 / 3.155e7
+FIRE_ELEMENTS = [1, 2, 3, 4, 6, 8, 10, 12, 16, 22]  # table element of metal slots 1..10 (slot 0: all metals C..Zn)
 
 
 @pytest.fixture(scope="module")
@@ -23,7 +24,19 @@ def built():
     return tables
 
 
-def run(tag, tables, ranks=2, which=("wind", "agb", "wd"), ic_args={}):
+@pytest.fixture(scope="module")
+def built_elements(built):
+    """the FIRE metal layout (11 slots: total, He, C, N, O, Ne, Mg, Si, S, Ca, Fe); cooling on, metals do not depend on it"""
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_base")
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=("COOLING", "COOL_METAL_LINES_BY_SPECIES"))
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_elements")
+        os.replace(TEST_DIR / "GIZMO_base", TEST_DIR / "GIZMO")
+        get_cooling_tables(str(TEST_DIR))
+    return built
+
+
+def run(tag, tables, ranks=2, which=("wind", "agb", "wd"), ic_args={}, overrides=None, exe="GIZMO"):
     import sys
     sys.path.insert(0, str(TEST_DIR))
     from make_single_stars_winds_agb_ia_ics import make_single_stars_winds_agb_ia_ics
@@ -36,9 +49,15 @@ def run(tag, tables, ranks=2, which=("wind", "agb", "wd"), ic_args={}):
         L = make_single_stars_winds_agb_ia_ics(str(ic), tables["StellarTablesFile"], which=which, **ic_args)
         params = Path(TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SET_BY_TEST", tables["StellarTablesFile"])
         params = params.replace("BoxSize                            45.0", f"BoxSize                            {L}")
+        for k, v in (overrides or {}).items():
+            lines = [l for l in params.splitlines() if not (l.split() and l.split()[0] == k)]
+            params = "\n".join(lines + [f"{k:34s} {v}"]) + "\n"
         (d / f"{TEST_NAME}.params").write_text(params)
+        if exe != "GIZMO":
+            for f in ("TREECOOL", "spcool_tables"):
+                os.symlink(TEST_DIR / f, d / f)
         with open(d / f"test_{TEST_NAME}.out", "w") as out:
-            subprocess.run(mpi_launch_command(ranks) + [str(TEST_DIR / "GIZMO"), f"{TEST_NAME}.params", "2", "0"],
+            subprocess.run(mpi_launch_command(ranks) + [str(TEST_DIR / exe), f"{TEST_NAME}.params", "2", "0"],
                            cwd=d, stdout=out, stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True)
     events = d / "output" / "single_star_events.txt"  # deaths only: winds are not logged
     return ic, sorted((d / "output").glob("snapshot_*.hdf5")), np.atleast_2d(np.loadtxt(events)) if events.exists() else np.zeros((0, 12))
@@ -170,3 +189,35 @@ def test_one_and_four_ranks(built):
             assert abs(a["stars"][k]["m"] - b["stars"][k]["m"]) <= 1e-12 * a["stars"][k]["m"], (r, k)
         key = lambda x: x[np.lexsort((x[:, 1], x[:, 2]))][:, [1, 2, 3, 4, 6, 7, 8]]
         assert np.allclose(key(rows), key(rows_ref), rtol=1e-12, atol=0), r
+
+
+def test_wind_elements_independent_of_cadence(built_elements):
+    """a 40 Msun star from 4.40 to 4.84 Myr, in metal-free gas, delivering every 1 kyr or every 20 kyr; from 4.59 Myr one element's
+    table cumulative is flat while the total still rises. In both runs each metal slot of the gas gains exactly the table's
+    cumulative wind ejecta of its elements between the start and the age of the last delivery (1e-12), and the star loses what the
+    gas gains (1e-12): the winds telescope, so how often a star delivers does not change what it returns"""
+    tf = built_elements["StellarTablesFile"]
+    with h5py.File(tf, "r") as F, h5py.File(str(Path(tf).parent / "stellar_wind_cumulative.hdf5"), "r") as W:
+        Zt, Mt, la = F["Z"][()], F["M_init"][()], F["log_age_yr"][()]
+        iz, im = int(np.argmin(np.abs(Zt - 0.014))), int(np.argmin(np.abs(Mt - 40.0)))
+        assert Mt[im] == 40.0
+        cum = W["elem_ej_wind_cumulative"][iz, im, :, :].astype(np.float64)
+        t_pms = F["t_PMS"][()].reshape(len(Zt), len(Mt))[iz, im]
+    def table(log_age):  # as the code interpolates, at a grid node
+        ia = int(np.searchsorted(la, log_age) - 1); f = (log_age - la[ia]) / (la[ia + 1] - la[ia])
+        y = cum[ia] * (1 - f) + cum[ia + 1] * f
+        return np.r_[y[2:].sum(), y[FIRE_ELEMENTS]], y.sum()
+    def slots(fname):
+        with h5py.File(fname, "r") as G:
+            g = G["PartType0"]
+            return (g["Masses"][()][:, None] * g["Metallicity"][()]).sum(0), g["Masses"][()].sum(), float(G["PartType4/Masses"][0]), float(G["PartType4/SingleStarLastWindLogAge"][0])
+    la0 = np.log10(4.40e6 - t_pms)
+    for cap in (1.0e3, 2.0e4):
+        ic, snaps, _ = run(f"wind_cadence_{cap:.0f}", built_elements, which=("wind",), exe="GIZMO_elements",
+                           ic_args=dict(n_metals=11, M=40.0, wind_age_yr=4.40e6, gas_metals=False, last_wind_log_age=la0),
+                           overrides=dict(MaxStellarTimestep=cap, TimeMax=0.45, MaxSizeTimestep=0.05, TimeBetSnapshot=0.45, TimeBetStatistics=0.45))
+        (z0, m0, _, _), (z1, m1, ms, wa) = slots(ic), slots(snaps[-1])
+        assert 10 ** wa > 4.80e6 - t_pms, wa  # the star delivered through the flat interval
+        (y1, M1), (y0, M0) = table(wa), table(la0)
+        assert np.all(np.abs((z1 - z0) / (y1 - y0) - 1) < 1e-12), (cap, (z1 - z0) / (y1 - y0) - 1)
+        assert abs((m1 - m0) / (40.0 - ms) - 1) < 1e-12 and abs((40.0 - ms) / (M1 - M0) - 1) < 1e-12
