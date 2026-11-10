@@ -77,7 +77,10 @@ void energy_ledger_report(void)
     for(i=0;i<LG_N;i++) {loc[i] = EnergyLedger[i];}
     loc[LG_N] = loc[LG_N+1] = loc[LG_N+2] = 0;
     for(i=0;i<NumPart;i++) {if(P[i].Type==0 && P[i].Mass>0) {loc[LG_N] += 0.5*P[i].Mass*P[i].Vel.norm_sq()*All.cf_a2inv; loc[LG_N+1] += P[i].Mass*CellP[i].InternalEnergy;
-        if(CellP[i].Density>0) {loc[LG_N+2] += 0.5*CellP[i].B.norm_sq()*(CellP[i].Density/P[i].Mass)/All.cf_atime;}}}
+#ifdef MAGNETIC
+        if(CellP[i].Density>0) {loc[LG_N+2] += 0.5*CellP[i].B.norm_sq()*(CellP[i].Density/P[i].Mass)/All.cf_atime;}
+#endif
+        }}
     MPI_Reduce(loc, glob, LG_N+3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
     static FILE *fd = NULL; static double E0 = -1, EB0 = 0, L0[LG_N];
@@ -593,6 +596,28 @@ void run(void)
 
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
         CPU_Step[CPU_KICKS] += measure_time();
+
+#if defined(GALSF) && defined(GALSF_FB_MECHANICAL)
+        /* mechanical feedback after the closing kick: a step ending here closes with the forces of the gas it was taken in, not with a
+           post-feedback pressure over half a step sized for the pre-feedback gas (which creates energy); the receivers' signal speed is
+           raised at deposition, so the next step, which opens with this step's forces, is short */
+        int mechanical_fb_this_step = (All.TotN_gas > 0);
+#ifdef GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW
+        mechanical_fb_this_step = mechanical_fb_this_step && (All.Dt_Since_LastFBCalc_Gyr >= All.Dt_Min_Between_FBCalc_Gyr); /* the cadence decision compute_stellar_feedback made this step */
+#endif
+        if(mechanical_fb_this_step)
+        {
+            mechanical_fb_calc_toplevel();
+            gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
+#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
+            if(MechFBAnyCellReceived) { /* gizmo2017: refresh densities, gradients and forces against the state after the deposit */
+                MechFBAnyCellReceived = 0;
+                if(ThisTask == 0) {printf("HYDRO_RECOMPUTE_AFTER_FEEDBACK: repeating the hydro pass after a deposit\n");}
+                HydroRecomputeAfterFeedback = 1; compute_hydro_densities_and_forces(); HydroRecomputeAfterFeedback = 0;
+            }
+#endif
+        }
+#endif
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
 #ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT

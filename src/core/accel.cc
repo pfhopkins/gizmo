@@ -62,6 +62,9 @@ void compute_grav_accelerations(void)
 
 
 
+#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
+int HydroRecomputeAfterFeedback = 0; /* set while the hydro pass is repeated after a feedback deposit */
+#endif
 void compute_hydro_densities_and_forces(void)
 {
   if(All.TotN_gas > 0)
@@ -91,10 +94,15 @@ void compute_hydro_densities_and_forces(void)
         interpolate_fluxes_opacities_gasgrains(); /* this must be called here for the computation of opacities and radiative quantity gradients below to be correct */
         CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif
-#ifdef GALSF /* PFH set of feedback routines; here because for e.g. strong SNe, obtain better stability if they are coupled discretely just -before- the hydro force is computed */
+#ifdef GALSF /* PFH set of feedback routines (thermal, photo-ionization, radiation pressure), coupled discretely just -before- the hydro force is computed; mechanical feedback is coupled after the closing kick (run.cc) */
+#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
+        if(!HydroRecomputeAfterFeedback) /* the repeat refreshes the hydro state only; this step's feedback is done */
+#endif
+        {
         LEDGER_STEP_BREAKDOWN("pre_feedback");
         LEDGER_FB(compute_stellar_feedback());
         LEDGER_STEP_BREAKDOWN("post_feedback");
+        }
 #endif
 
         /* Hydro corridor begin: in Mode A (any rank count) imports the gas
@@ -280,10 +288,7 @@ void compute_stellar_feedback(void)
     if(All.Dt_Since_LastFBCalc_Gyr < All.Dt_Min_Between_FBCalc_Gyr) {return;}
 #endif
 
-#ifdef GALSF_FB_MECHANICAL /* check the mechanical sources of feedback */
-    mechanical_fb_calc_toplevel();  /* call the parent loop for the different mechanical fb sub-loops */
-    gizmo_exit_bad_stop_if_requested("accel:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
-#endif
+    /* mechanical feedback is coupled after the closing half-kick instead (run.cc), under the same cadence decision made here */
 
 #ifdef GALSF_FB_THERMAL
     thermal_fb_calc(); /* thermal feedback */
