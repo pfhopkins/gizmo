@@ -106,9 +106,9 @@ void compute_hydro_densities_and_forces(void)
         if(!HydroRecomputeAfterFeedback) /* the repeat refreshes the hydro state only; this step's feedback is done */
 #endif
         {
-        LEDGER_STEP_BREAKDOWN("pre_feedback");
+        LEDGER_STEP_BREAKDOWN("pre_local_feedback");
         LEDGER_FB(compute_stellar_feedback());
-        LEDGER_STEP_BREAKDOWN("post_feedback");
+        LEDGER_STEP_BREAKDOWN("post_local_feedback");
         }
 #endif
 

@@ -591,7 +591,6 @@ void run(void)
 
         LEDGER_STEP("pre_hydro_fb");
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
-        LEDGER_STEP("post_hydro_fb");
 #ifdef DM_HEATING
         apply_dm_heating();  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
         CPU_Step[CPU_COOLINGSFR] += measure_time();
@@ -610,12 +609,12 @@ void run(void)
 #endif
         if(mechanical_fb_this_step)
         {
-            LEDGER_STEP_BREAKDOWN("pre_mechanical_feedback");
+            LEDGER_STEP_BREAKDOWN("pre_feedback");
             LEDGER_FB(mechanical_fb_calc_toplevel());
 #ifdef SNE_BROADCAST_TIMESTEP
             sne_causal_wake(); /* gas the SNe of this step can reach before its step ends is woken */
 #endif
-            LEDGER_STEP_BREAKDOWN("post_mechanical_feedback");
+            LEDGER_STEP_BREAKDOWN("post_feedback");
             gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
 #ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
             if(MechFBAnyCellReceived) { /* refresh densities, gradients and forces against the state after the deposit */
@@ -627,6 +626,7 @@ void run(void)
         }
 #endif
 
+        LEDGER_STEP("post_hydro_fb"); /* after the mechanical feedback, which runs after the closing kick */
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
 #ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
         energy_ledger_report();
