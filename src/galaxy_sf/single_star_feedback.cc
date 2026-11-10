@@ -441,6 +441,21 @@ void single_star_feedback_prepare(const int *list, int n)
     for(int a = 0; a < n; a++) {ssfb_mass_before[a] = P[list[a]].Mass;}
 }
 
+/* the stars of the list whose event this step coupled nothing so far (the list given to single_star_feedback_prepare) */
+int single_star_feedback_uncoupled(const int *list, int n, int *out)
+{
+    int m = 0;
+    for(int a = 0; a < n; a++) {
+        int i = list[a];
+        if(P[i].StarIdx <= 0) {continue;}
+        int kind = single_star_kind_this_step(i);
+        if(kind == SSE_NONE) {continue;}
+        struct single_star_event ev; single_star_event_of(i, kind, &ev);
+        if(ev.Mej > 0 && P[i].Mass >= ssfb_mass_before[a]) {out[m++] = i;}
+    }
+    return m;
+}
+
 /* after the feedback loop (all ranks): a death that coupled leaves exactly the table remnant; a wind that coupled
    advances the last delivery age; an event that found no neighbour weight stays pending */
 void single_star_feedback_finalize(const int *list, int n)

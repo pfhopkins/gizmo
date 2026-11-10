@@ -393,6 +393,18 @@ void mechanical_fb_calc_toplevel(void)
         mechfb_run_iterative(nl_loop, n_loop,
                               LocalGasMechFBInfoTemp, N_gas);
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+        for(int retry = 0; retry < 3; retry++) { /* an event that reached no gas widens its kernel x1.4 and tries again this step (stella_dev bubble retry) */
+#ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
+            if(All.Time < All.TestFBNoGasUntilTime) {break;}
+#endif
+            std::vector<int> again(n_loop > 0 ? n_loop : 1); int n_again = single_star_feedback_uncoupled(nl_loop, n_loop, again.data()), n_all = 0;
+            MPI_Allreduce(&n_again, &n_all, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            if(n_all == 0) {break;}
+            for(int a = 0; a < n_again; a++) {P[again[a]].KernelRadius *= 1.4;}
+            mechfb_run_iterative(again.data(), n_again, LocalGasMechFBInfoTemp, N_gas);
+        }
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
         single_star_feedback_finalize(nl_active, num_active); /* remnant = table, or the event stays pending */
 #endif
         myfree(nl_active);

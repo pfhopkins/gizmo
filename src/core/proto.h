@@ -1042,6 +1042,7 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
 double single_star_ejecta_mass_this_step(int i);
 void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);
+int single_star_feedback_uncoupled(const int *list, int n, int *out);
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
 void single_star_event_logs_write(void);
 void single_star_sfr_windows_write(void);
