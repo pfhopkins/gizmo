@@ -1,5 +1,5 @@
 """single_stars_radiation_pinned: test hooks of the single-star radiation. TEST_SINGLE_STARS_LUMINOSITY_PINNED sets the bolometric
-luminosity of every star above the mass cut to TestFixedLbol [erg/s] from birth, as stella_dev: FUV 0.5 L (all in the
+luminosity of every star above the mass cut to TestFixedLbol [erg/s] from birth: FUV 0.5 L (all in the
 8-13.6 eV band), NUV 0.2 L, optical 0.3 L, Lyman-Werner 0.15 L, no ionising photons;
 TEST_SINGLE_STARS_RADIATION_OFF silences every band. Observed through the momentum the local radiation-pressure loop offers
 (MomWinds.txt), same setup as single_stars_radiation_pressure (one 40 Msun star, n_H = 100, 1 Msun cells).
@@ -78,7 +78,7 @@ def run(exe, tag, tables, n=16, stars=((M_STAR, (0.5, 0.5, 0.5), True),)):
 
 
 def expected_pinned(rho, L=1.0e39):
-    """stella_dev estimator for the pinned split, [Msun km/s per code time]"""
+    """the estimator for the pinned split, [Msun km/s per code time]"""
     h = (3 * max(NGB, 64) / (4 * np.pi * rho)) ** (1.0 / 3.0) * PC
     rho_cgs = rho * MSUN / PC ** 3
     NH, Sigma, dgr = rho_cgs / MP * h, rho_cgs * h, 0.0142 / 0.014

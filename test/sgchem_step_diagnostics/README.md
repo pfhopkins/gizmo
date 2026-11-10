@@ -1,7 +1,7 @@
 # sgchem_step_diagnostics
 
 `SGCHEM_PRINT_STEP_COOLING_DIAGNOSTICS`: on each step with a status line, rank 0 prints `SGCHEM_DIAG` with its own active cells: count, energy the
-cooling update removed [code] and its running sum, temperature and hydrogen-density ranges (stella_dev `cooling.cc`). No communication.
+cooling update removed [code] and its running sum, temperature and hydrogen-density ranges. No communication.
 
 Problem: the box of `sgchem_box` (8^3 cells, n_H = 100, 8000 K), 1 rank, 8 steps of 0.004.
 Checks: 9 lines (the call at the start and 8 steps; the last follows the final snapshot), N_active = 512; the first 8 lines add up to the thermal

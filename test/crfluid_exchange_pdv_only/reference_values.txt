@@ -1,0 +1,4 @@
+# reference implementation, same ICs and params, INPUT_IN_DOUBLEPRECISION, 2 ranks, t = 0.01
+# build E_CR E_thermal E_kinetic
+default 2.123862 1.719021 0.154624
+pdv_only 2.004833 1.833258 0.158691

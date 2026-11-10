@@ -12,7 +12,7 @@ TEST_NAME = "single_stars_type_ia_rate"
 TEST_DIR = Path(__file__).parent
 PC_KMS_IN_YR = 3.085678e13 / 3.155e7
 N_WD, M_DRAWN, AGE_YR, MULTIPLIER = 3000, 3.0, 1.0e9, 1.0e6  # MULTIPLIER as in Config.sh
-IA_DTD_NORM, IA_F_WD, IA_T_MIN_GYR = 2.93e-4, 0.76, 0.04  # stella_dev galaxy_sf/resolvedism_fb_shared.h
+IA_DTD_NORM, IA_F_WD, IA_T_MIN_GYR = 2.93e-4, 0.76, 0.04  # galaxy_sf/resolvedism_fb_shared.h
 
 
 @pytest.fixture(scope="module")

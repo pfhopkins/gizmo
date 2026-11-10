@@ -3,7 +3,7 @@
 corners of a periodic box of very thin gas (2 ranks, so each rank holds a star), and one dead star. Periodic and thin, so
 every photon stays in the bins.
   test_band_energy: energy per bin over the box = sum over stars of L_table(band) x t x c_red / c (2 %). Bins PE 8-13.6,
-    LW 11.2-13.6 (inside PE, as stella_dev), 6-8, H0, He0, He1, He2.
+    LW 11.2-13.6 (inside PE), 6-8, H0, He0, He1, He2.
   test_single_ionising_bin: one ionising bin holds the table's photon rate at the bin's mean photon energy (2 %).
   test_excluded_channels: the star-side radiation pressure and photoionisation channels do not build with the moment forces.
 The rates are taken between two snapshots: the first injection arrives two steps after t = 0.

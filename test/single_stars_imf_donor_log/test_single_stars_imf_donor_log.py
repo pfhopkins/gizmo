@@ -1,5 +1,5 @@
 """single_stars_imf_donor_log test: IMFinfo.txt (GALSF_SINGLE_STARS_EVENT_LOGS) lists, in each step that spawned single stars, one row
-per (star, donor cell): time, star ID, donor gas ID, mass taken [Msun], as stella_dev. Lattice and births of single_stars_collect_gas
+per (star, donor cell): time, star ID, donor gas ID, mass taken [Msun]. Lattice and births of single_stars_collect_gas
 (stars of 8 and 40 Msun at neighbouring cells, 2 and 1 ranks). Bars, written before the runs: per star the donor masses add up
 to the star's collected mass of the birth log (single_star_births.txt) to 1e-12; each (star, donor) pair once; every donor
 ID is a gas cell of the lattice, within the star's collection radius of the birth log; the rows (sorted by star and donor)

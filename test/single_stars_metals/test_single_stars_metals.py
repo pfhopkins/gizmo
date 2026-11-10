@@ -79,8 +79,7 @@ def gas_metals(snap):
 
 @pytest.mark.parametrize("z_solar,layout", [(1.0, "fire"), (0.3, "fire"), (0.3, "27")])
 def test_solar_abundances(tables, z_solar, layout):
-    """a fresh start with InitMetallicity: total Z = 0.014 x InitMetallicity and the tables' solar element pattern, as
-    stella_dev (Asplund+09 present day; the tables' initial composition at Z = 0.014); He primordial + scaled excess;
+    """a fresh start with InitMetallicity: total Z = 0.014 x InitMetallicity and the tables' solar element pattern, (Asplund+09 present day; the tables' initial composition at Z = 0.014); He primordial + scaled excess;
     with the 27 elements the other 16 elements too"""
     n = 27 if layout == "27" else 11
     exe = build("elements27", ELEMENTS27) if layout == "27" else build("default")
@@ -147,7 +146,7 @@ def test_27_element_closure(tables):
 
 
 def test_27_element_diffusion(tables):
-    """metal diffusion with single stars, on the defaults of stella_dev: after winds, deaths and diffusion every cell still has
+    """metal diffusion with single stars, on the defaults: after winds, deaths and diffusion every cell still has
     total Z = the sum of the 25 metal slots (1e-10), and each slot's gas metal gain is that of the run without diffusion (1e-6)"""
     a, _ = run_events(tables, build("elements27", ELEMENTS27), "events27", 27)
     d = run(build("diff27", ELEMENTS27 + ("TURB_DIFF_METALS",)), "diff27", tables, solar27(tables["StellarTablesFile"]),
@@ -202,7 +201,7 @@ def test_27_element_supernova_yields(tables):
 
 def test_dust_above_metals_stops(tables):
     """SGCHEM_DGR_INDEPENDENT_OF_METALLICITY on a fresh start: a constant dust-to-gas ratio above the metal mass
-    (SGChemDustToGasRatio 1 = 0.01, InitMetallicity 0.3 = Z 0.0042) stops at start-up with a message, as stella_dev;
+    (SGChemDustToGasRatio 1 = 0.01, InitMetallicity 0.3 = Z 0.0042) stops at start-up with a message;
     at InitMetallicity 1 it runs"""
     exe = build("dgr_const", ("SGCHEM_DGR_INDEPENDENT_OF_METALLICITY",))
     with pytest.raises(subprocess.CalledProcessError):
@@ -219,7 +218,7 @@ ATOMIC = {2: 12.01, 4: 15.99, 6: 24.305, 7: 28.086, 10: 55.845}
 
 
 def stella_dust(y, kind):
-    """dust from an event's ejecta y (FIRE slots, Msun) by stella_dev's condensation (Choban+22 efficiencies), in the
+    """dust from an event's ejecta y (FIRE slots, Msun) by the condensation (Choban+22 efficiencies), in the
     species of GALSF_ISMDUSTCHEM_MODEL: element dust (FIRE slots, slot 0 total) and species (silicate, carbon, iron)"""
     y = np.array(y, dtype=float)
     f_sil = f_c = f_fe = 0.0; carb = None
@@ -244,7 +243,7 @@ def stella_dust(y, kind):
 
 def test_single_star_dust_yields(tables):
     """GALSF_ISMDUSTCHEM_MODEL with single stars: a 20 Msun core collapse, a 3 Msun AGB death and a white dwarf's Type Ia
-    give the gas the dust of stella_dev's condensation of their table ejecta, in the model's element
+    give the gas the dust of the condensation of their table ejecta, in the model's element
     dust, species and sources (1e-10); the model's accretion, sputtering and SN shock destruction off for the test"""
     T = tables["StellarTablesFile"]
     stars = event_stars(T)[:3]
@@ -281,7 +280,7 @@ def test_single_star_dust_yields(tables):
 
 def test_chemistry_gas_phase_from_live_dust(tables):
     """GALSF_ISMDUSTCHEM_MODEL with SGChem: the chemistry's gas-phase C, O, Si are the cell's metals minus its live dust
-    (as stella_dev with its dust model): with all carbon in dust, no CO forms (n_H = 1e3, 100 K, 20 kyr); the
+    (with the dust model): with all carbon in dust, no CO forms (n_H = 1e3, 100 K, 20 kyr); the
     default 50 % carbon depletion would leave half of it in the gas"""
     X = solar_table(tables["StellarTablesFile"])
     Z = np.concatenate([solar27(tables["StellarTablesFile"])[:11], np.zeros(18)])

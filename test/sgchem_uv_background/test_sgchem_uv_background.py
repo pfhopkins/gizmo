@@ -1,4 +1,4 @@
-"""sgchem_uv_background: SGChem in a comoving run takes the UV background from TREECOOL, as stella_dev.
+"""sgchem_uv_background: SGChem in a comoving run takes the UV background from TREECOOL.
 
 The sgchem_box lattice (n_H = 100 cm^-3 physical, 8000 K, solar metals) at a = 0.25 (z = 3), 125 kyr, twice: with the
 default TREECOOL and with every rate in the table set to 1e-40.

@@ -10,4 +10,4 @@ Problem: 24^3 lattice of 1 Msun cells, n_H = 10, 100 K, two 20 Msun stars 1 Myr 
 Checks: each star one supernova row, at its forced time to within one step (1.5e-4); with no gas until 0.004 the first star (forced 0.002)
 fires at 0.004, after at least 10 steps without deposit, the second is not delayed; mass conserved (1e-12), mass residual 0.
 
-Reference: the definitions of the parameters (stella_dev `resolvedism_fb.cc`).
+Reference: the definitions of the parameters.

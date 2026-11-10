@@ -87,7 +87,7 @@ def test_kick_floor_row(box):
     MinGasTemp 2.73 K E_kick_floor_erg is exactly 0. Two bars written first were logically wrong and are dropped: 0.75 to 1.25 of
     the estimate for the floor row, and the closure 'gain of thermal plus kinetic energy = both rows to 2 %'. The rows count the clamps
     of the kicks; the measured gain is 2.4 times the floor row (1.07e47 against 4.5e46 erg), the rest is energy added where the
-    predicted energy is clamped at the synchronisation and in the drift, outside the kicks (the definition of stella_dev's row)."""
+    predicted energy is clamped at the synchronisation and in the drift, outside the kicks (the definition of the row)."""
     unit = 1.989e33 * 1.0e10  # erg per Msun (km/s)^2
     out = {}
     for tag, temp in (("floor", 9000.0), ("nofloor", 2.73)):

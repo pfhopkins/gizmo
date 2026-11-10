@@ -1,4 +1,4 @@
-# reference implementation (stella_dev bafcb531 galaxy_sf/resolvedism_stellar_tables.cc stellar_ia_fdead), stella-tables a4830ab:
+# reference implementation (galaxy_sf/resolvedism_stellar_tables.cc stellar_ia_fdead), from the stella-tables build:
 # dead white-dwarf-progenitor fraction; 8 metallicities x 40 ages (lookup_grid.cc); every value, %.17g
 0
 0

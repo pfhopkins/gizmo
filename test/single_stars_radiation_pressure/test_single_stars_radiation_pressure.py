@@ -1,13 +1,13 @@
 """single_stars_radiation_pressure: photon momentum of single stars in the local radiation-pressure loop
 (GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS; design_feedback_coupling.md 4.6). One 40 Msun main-sequence star in a uniform
 lattice at n_H ~ 100 cm^-3 (dust optical depths 0.2-0.8 over the kernel column), 1 Msun cells, chemistry on, no gravity.
-  test_momentum_budget: the momentum offered per step (MomWinds.txt) equals the stella_dev estimator from the tables:
+  test_momentum_budget: the momentum offered per step (MomWinds.txt) equals the estimator from the tables:
     L_abs = f_UV (L_PE + L_6-8) + f_NUV L_NUV(3.444-6) + f_OPT L_OPT, f_b = 1 - exp(-sigma_b DGR N_H) with
     sigma = 2.0, 1.3, 0.5 x 1e-21 cm^2, N_H = (rho / m_p) h from the uniform density and the star's kernel radius (64 cells),
     times (1 + tau_IR), tau_IR = 5 DGR Sigma, over dt / c (2 %); every neighbour gets its share, so the momentum coupled equals it (5 %).
-  test_count_6_8ev_twice: GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE (stella_dev production) adds f_NUV L_6-8: the ratio of
+  test_count_6_8ev_twice: GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE adds f_NUV L_6-8: the ratio of
     the two budgets equals the table ratio (1e-3, density estimate cancels to first order).
-  test_sources: stars of 40 and 3 Msun push, a 1.5 Msun star does not (stella_dev: sources from 2 Msun) and neither does
+  test_sources: stars of 40 and 3 Msun push, a 1.5 Msun star does not (sources from 2 Msun) and neither does
     a 40 Msun star particle without a single-star record: two sources every step, offered momentum = the sum of the two
     estimators (2 %).
   test_outward: the gas around the star gains radial momentum away from it, over half the momentum coupled.
@@ -84,7 +84,7 @@ def run(exe, tag, tables, n=16, stars=((M_STAR, (0.5, 0.5, 0.5), True),)):
 
 
 def expected_per_time(tab, age_yr, rho, twice=False, M=M_STAR):
-    """stella_dev estimator, L_abs (1 + tau_IR) / c [Msun km/s per code time]: N_H = (rho / m_p) h, Sigma = rho h"""
+    """the estimator, L_abs (1 + tau_IR) / c [Msun km/s per code time]: N_H = (rho / m_p) h, Sigma = rho h"""
     L = tab.bands(M, 0.0142, age_yr)  # PE, LW, 6-8, NUV 3.444-6, OPT
     h = (3 * max(NGB, 64) / (4 * np.pi * rho)) ** (1.0 / 3.0) * PC  # star kernel: max(DesNumNgb, 64) cells of 1 Msun (density_loop.h) [cm]
     rho_cgs = rho * MSUN / PC ** 3

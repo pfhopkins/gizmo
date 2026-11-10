@@ -1,6 +1,6 @@
 """The lattice blast of make_lattice_blast_ics.py (16^3 periodic cells, 8 hot cells at the centre, total blast energy 1) plus a uniform
 CR energy, 2 per unit volume (CR pressure about the gas pressure of the cold gas), and a uniform field of 2 microG along z. Written as
-a snapshot (start flag 2). KernelMaxRadius: the name stella_dev reads, so the reference run uses this file as it is."""
+a snapshot (start flag 2). KernelMaxRadius: the name the reference implementation reads, so one file serves both."""
 import sys
 from pathlib import Path
 

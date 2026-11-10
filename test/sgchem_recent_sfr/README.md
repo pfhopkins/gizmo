@@ -1,7 +1,7 @@
 # sgchem_recent_sfr
 
 SGChem background field and cosmic-ray rate scaled with the recent star formation rate
-(`ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR` with `CR_SCALE_WITH_G0`, as stella_dev `GHOSDT_G0_CR`, Hu+21):
+(`ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR` with `CR_SCALE_WITH_G0`, Hu+21):
 F = [M(stars younger than 30 Myr) / 30 Myr] / [M_gas,0 / 4 Gyr]; G0 = G0_LW = G0_dust = max(F SGChemG0, 0.324e-2);
 zeta = F SGChemCosmicRayIonRate. The young-star mass is a running sum kept per rank by birth time (births, wind and
 death mass changes of young stars, removal at 30 Myr), reduced over ranks only on calls where it changed.

@@ -1,6 +1,6 @@
 """ledger_step_breakdown: OUTPUT_MASS_BALANCE_BREAKDOWN on the box of test/ledger_step_checkpoints with metal diffusion: more
 checkpoints (feedback, gas collection, diffusion apply), the metals of the diffusive exchange not yet applied in M_Z_ledger,
-diff_unpack_breakdown.txt and MCBAL lines per element (stella_dev run.cc).
+diff_unpack_breakdown.txt and MCBAL lines per element.
 
 Bars: post_feedback and post_collect_gas lines appear (the file logs only checkpoints where a number changed; the first version asked
 for post_diff_unpack too, which a conservative exchange can never write, so that tag is checked on the MCBAL lines, which print at

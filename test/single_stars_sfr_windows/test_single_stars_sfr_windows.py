@@ -1,4 +1,4 @@
-"""single_stars_sfr_windows test: sfr_rism.txt (GALSF_SINGLE_STARS_EVENT_LOGS), as stella_dev: in the steps that build the tree,
+"""single_stars_sfr_windows test: sfr_rism.txt (GALSF_SINGLE_STARS_EVENT_LOGS): in the steps that build the tree,
 the star-formation rate [Msun/yr] over the last 50, 40, 30, 20, 5 and 1 Myr from the stars' drawn masses and the number of stars.
 Two 20 Msun stars 3 Myr old (the lattice of single_stars_forced_events), 8 kyr, 2 ranks. Bars, written before the run: at every row
 N_stars = 2; SFR_w = 2 x 20 Msun / (w Myr) to 1e-6 (the file prints 7 digits; the first version of this bar, 1e-12, was logically wrong) for w = 50, 40, 30, 20, 5 and 0 for 1 Myr (3 Myr old: inside the windows

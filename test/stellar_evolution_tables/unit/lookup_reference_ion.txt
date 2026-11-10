@@ -1,4 +1,4 @@
-# reference implementation (stella_dev 83b7ed68 galaxy_sf/resolvedism_stellar_tables.cc), stella-tables a4830ab:
+# reference implementation (galaxy_sf/resolvedism_stellar_tables.cc), from the stella-tables build:
 # every 61st of the 7168 values lookup_grid writes to its .ion file; columns: index, value (%.17g)
 0 15.521513938903809
 61 4.1904827214813798

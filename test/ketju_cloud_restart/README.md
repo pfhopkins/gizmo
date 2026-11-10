@@ -11,5 +11,4 @@ Checks: the split run ends where the straight run ends (stars to 1e-6 pc and 1e-
 masses equal and total mass conserved to 1e-12 (double-precision output), KETJU regions were integrated and
 MSTAR's per-region |dE/E| stays below 1e-6.
 
-Measured (2026-10-29, Orion, Kokkos OpenMP): stars |dx| 2.1e-8 pc, |dv| 4.8e-5 km/s; gas |dx| 1.9e-12 pc;
-MSTAR |dE/E| 1.0e-12. The four binaries keep their semi-major axes to 0.01 AU.
+The four binaries keep their semi-major axes to 0.01 AU.

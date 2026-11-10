@@ -8,5 +8,5 @@ every cell after its cooling step next to the stored chemistry state.
 - `test_species_from_the_stored_abundances`: n(H0) = 1 - 2 x(H2) - x(H+) (atomic H only), n(H+) = n_e = x(H+).
 - `test_mean_weight_of_the_chemistry_mix`: mean weight from X = 1/(1 + 4 ABHE), metals not counted.
 
-The bars are the expressions of stella_dev's ThermalProperties and Get_Gas_Mean_Molecular_Weight_mu.
+The bars are the expressions of ThermalProperties and Get_Gas_Mean_Molecular_Weight_mu.
 Inputs as for `test/sgchem_box`: `SUNDIALS_DIR`, the chemistry tables from `SGCHEM_TABLES_DIR` or `scripts/get_stella_tables.sh`.

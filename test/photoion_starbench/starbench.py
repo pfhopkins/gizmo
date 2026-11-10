@@ -1,6 +1,6 @@
 """Grading of a StarBench D-type run against the combined StarBench solution (Bisbas et al. 2015, eqs 8, 11, 28-29),
 on references measured in the run: ambient n_H, ionised-gas temperature and the ionised and neutral sound speeds (the
-gas holds helium, so the pure-hydrogen c_i = 12.85 km/s does not apply). As stella_dev's pi_set grader."""
+gas holds helium, so the pure-hydrogen c_i = 12.85 km/s does not apply)."""
 import glob
 import os
 import numpy as np

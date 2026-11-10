@@ -1,5 +1,5 @@
 """GALSF_FB_PHOTOIONIZATION_RECOMBINATION_AT_CELL_TEMPERATURE: the recombination bill of a cell scales with the chemistry's case-B
-rate at the stored temperature above 1e4 K (stella_dev resolvedism_photoion.cc). One star in uniform gas at rest, n_H = 1, 100 K and
+rate at the stored temperature above 1e4 K. One star in uniform gas at rest, n_H = 1, 100 K and
 3e4 K. At fixed Q the ionised cells satisfy N <alpha_B(max(T, 1e4 K))> = const. Bar: N <alpha_B> of the two runs agree within 5 %, T from
 the snapshot in the N cells nearest the star, alpha_B of Hui & Gnedin 1997 (chem table k13 is that fit). First version of the bar,
 N(hot) / N(cold) = alpha_B(1e4) / alpha_B(3e4), was wrong: gas at 3e4 K ionises itself and settles near 1.6e4 K within a step."""

@@ -8,7 +8,7 @@ last snapshots, plus recombinations (alpha_B n_e n_p), against the table's photo
   test_radiation_pressure_once: thick gas, production opacities: outward gas momentum 0.7-1.1 of absorbed energy / c.
   test_h0_only_atomic, test_h2_ledger: production RSOL 3e-4, 1e49 photons/s in the H0 bin alone (RT_STARBENCH_TEST), no background G0:
     (new H+ + H2 lost + recombinations + photons added to the bins) / (Q dt) within 0.8-1.2. H2 with SGCHEM_RT_ABSORBERS_FOLLOW_THE_NETWORK.
-  test_h2_as_stella_dev_reported: the same on H2 with production opacity, reported.
+  test_h2_production_opacity_reported: the same on H2 with production opacity, reported.
 """
 import os
 import shutil
@@ -154,11 +154,11 @@ def test_h2_ledger(tables):
     assert 0.8 < x < 1.2
 
 
-def test_h2_as_stella_dev_reported(tables):
+def test_h2_production_opacity_reported(tables):
     """production: rt_kappa does not see H2, the chemistry still takes rt_phot_H2. Reported for the decision on the opt-in"""
     build(*H0_ONLY)
     rows, Q = run("h2_sd", tables, 0.5, fixed_q=1e49, over=H0_OVER)
-    print("H2 as stella_dev, ledger with photons in flight:", ledger_h0("h2_sd", rows, Q, True), "front", rows[-1, 4])
+    print("H2, ledger with photons in flight:", ledger_h0("h2_sd", rows, Q, True), "front", rows[-1, 4])
 
 
 def radial_momentum(tag, box):

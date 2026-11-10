@@ -12,7 +12,7 @@ Checks (10^6 draws each, compiled with the host compiler):
 1. Kolmogorov-Smirnov test against the analytic cumulative distribution, for m_min = 0.08 and 4 Msun;
 2. weighting each draw by 1/M gives the number-weighted Kroupa mean mass to 1%;
 3. the same (key, event) gives bitwise the same masses, another event other masses;
-4. two-sample Kolmogorov-Smirnov test against the reference implementation's rejection sampler (stella_dev
+4. two-sample Kolmogorov-Smirnov test against the reference implementation's rejection sampler (
    `resolvedism_imf_sampling.cc`, same IMF and limits), for m_min = 0.08 and 4 Msun.
 
 Reference: the analytic IMF (checks 1-2) and the reference implementation's sampler, reimplemented in `imf_draws.cc`

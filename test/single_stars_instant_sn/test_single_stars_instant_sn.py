@@ -1,5 +1,5 @@
 """single_stars_instant_sn test: GALSF_SINGLE_STARS_INSTANT_SN_BEFORE_TIME makes every single star of drawn mass >= 8 Msun
-explode at the first feedback step while the code time is below TimeInstantSN, whatever its age (stella_dev: lifetime 0 for
+explode at the first feedback step while the code time is below TimeInstantSN, whatever its age (lifetime 0 for
 such stars). Two 20 Msun stars 1 Myr old (table death ~10 Myr) in the lattice of single_stars_forced_events, run 4 kyr.
 Bars, written before the runs: with TimeInstantSN 0.002 each star has exactly one supernova row, at a time < 3e-4 (the first
 steps; the step is at most 1e-4), and mass (gas + stars) is conserved to 1e-12; with TimeInstantSN 0 (no effect) no

@@ -3,8 +3,8 @@ of 1 Msun cells at n_H ~ 100 cm^-3, a sparse sublattice of 0.3 Msun cells carryi
 dust temperature. The minimum merge mass is fixed at 0.5 Msun (MERGESPLIT_HARDCODE_MIN_MASS), the run takes a few steps of
 1e-10 code time, so the network changes the species totals by less than 1e-6.
   test_chemistry_state_conserved: merges remove light cells; total m x of H2, H+, CO matches the IC to 1e-6 (the survivor
-    takes the mass-weighted abundances, stella_dev merge_split.cc).
-  test_split_threshold: an IC without a saved threshold gets MaxMassForParticleSplit = 2.01 x the largest IC cell (stella_dev).
+    takes the mass-weighted abundances).
+  test_split_threshold: an IC without a saved threshold gets MaxMassForParticleSplit = 2.01 x the largest IC cell.
 """
 import os
 import shutil

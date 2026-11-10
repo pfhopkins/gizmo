@@ -1,7 +1,6 @@
 # ism_dust_hu_kernels
 
-Unit test of `src/solids/ism_dust_hu_kernels.h`, the dust microphysics of Hu et al. 2019, 2023, 2026 (ported unchanged from
-stella_dev `galaxy_sf/resolvedism_dust_kernels.h`, no GIZMO state, host and device).
+Unit test of `src/solids/ism_dust_hu_kernels.h`, the dust microphysics of Hu et al. 2019, 2023, 2026 (no GIZMO state, host and device).
 
 Checks against analytic solutions or fine-step RK4 references:
 - MRN effective size and bin weights;

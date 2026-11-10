@@ -1,10 +1,10 @@
 """sgchem_recent_sfr: SGChem background field and cosmic-ray rate scaled with the recent star formation rate
-(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR, as stella_dev GHOSDT_G0_CR with CR_SCALE_WITH_G0, Hu+21):
+(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR with CR_SCALE_WITH_G0, Hu+21):
 F = [M(stars younger than 30 Myr) / 30 Myr] / [M_gas,0 / 4 Gyr], G0 = max(F SGChemG0, 0.324e-2), zeta = F SGChemCosmicRayIonRate.
 An 8^3 box of 1 Msun cells with SGChem and single stars from the tables; 2 ranks.
   test_recent_sfr_scale: three 1 Msun stars pass 30 Myr during the run, a young 8 Msun star loses wind mass, two stars
     are born at the first step (drawn mass collected from the gas); 0.59 Myr. At every star-formation call F equals a
-    full scan over all particles (stella_dev's sum, 1e-12); F rises with the births, drops as each old star passes
+    full scan over all particles (1e-12); F rises with the births, drops as each old star passes
     30 Myr, falls with the wind mass loss; G0 and zeta the chemistry gets follow F.
   test_quiet_calls_reduce_nothing: no young star loses mass (an 8 Msun star of 31.5 Myr does); 0.29 Myr. The
     young-star mass is reduced over ranks only at the births and when a star passes 30 Myr; the other calls add no

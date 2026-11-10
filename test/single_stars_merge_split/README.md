@@ -1,6 +1,6 @@
 # single_stars_merge_split
 
-Cell merges and the split threshold under single stars, chemistry on, as stella_dev.
+Cell merges and the split threshold under single stars, chemistry on.
 
 | test | checks |
 |---|---|

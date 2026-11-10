@@ -216,7 +216,7 @@ def test_overlapping_winds_close(tables, ranks):
 
 @pytest.mark.parametrize("ranks", [1, 2])
 def test_radiation_kick_is_balanced(tables, ranks):
-    """Star-side radiation pressure: share mass x kernel along r - mean of w r, no net momentum (stella_dev pass 1)."""
+    """Star-side radiation pressure: share mass x kernel along r - mean of w r, no net momentum."""
     a, b, _ = run(tables, "rp", ranks)
     i = np.searchsorted(b["id"], a["id"])
     dp = b["p"][i] - a["p"]; pn = np.linalg.norm(dp, axis=1); rec = pn > 1e-9 * pn.max()

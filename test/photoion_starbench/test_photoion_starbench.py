@@ -1,5 +1,5 @@
 """photoion_starbench test: StarBench D-type expansion of an HII region (Bisbas et al. 2015) with the per-direction
-photoionisation, at three resolutions; must reproduce stella_dev (-28.8 / -16.9 / -6.7 %) within 2 points. See README.md."""
+photoionisation, at three resolutions; must reproduce the reference implementation (-28.8 / -16.9 / -6.7 %) within 2 points. See README.md."""
 import os
 import shutil
 import subprocess
@@ -9,7 +9,7 @@ from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, mpi_l
 
 TEST_NAME = "photoion_starbench"
 TEST_DIR = Path(__file__).parent
-STELLA_DEV = {"m10": -0.288, "m1": -0.169, "m0.1": -0.067}  # D-type median R_IF / R_StarBench - 1
+REFERENCE = {"m10": -0.288, "m1": -0.169, "m0.1": -0.067}  # D-type median R_IF / R_StarBench - 1
 
 
 def chemistry_tables_dir():
@@ -47,7 +47,7 @@ def check(outdir, rung):
     sys.path.insert(0, str(TEST_DIR))
     from starbench import grade
     _, _, _, ref, med = grade(str(outdir))
-    assert abs(med - STELLA_DEV[rung]) <= 0.02, (rung, med, ref)
+    assert abs(med - REFERENCE[rung]) <= 0.02, (rung, med, ref)
 
 
 def test_m10(built):

@@ -1,11 +1,11 @@
-"""single_stars_cr_injection: supernovae and fast winds of IMF-sampled single stars inject cosmic rays (COSMIC_RAY_FLUID), as stella_dev:
+"""single_stars_cr_injection: supernovae and fast winds of IMF-sampled single stars inject cosmic rays (COSMIC_RAY_FLUID):
 every explosion gives the fraction f = CosmicRay_SNeFraction (default 0.1) of its energy to the CR fluid and the rest to heat
 (resolvedism_fb_thermal.cc:406), winds faster than 1000 km/s give f of their kinetic energy (resolvedism_fb_momentum.cc:338).
 The box runs the production path: MAGNETIC, operator-split CR-gas exchange, and a diffusion coefficient of 1e5 pc km/s (3e28 cm^2/s).
 
 An earlier version ran without a magnetic field at coefficient 1 and lost nearly all the CR energy within steps; without a field the
 streaming loss takes the sound speed of the gas as Alfven speed, and at that coefficient it turns the CRs into heat in the hot cells.
-It also cut explosions at 1000 km/s, which stella_dev does not. Hence the new setup.
+It also cut explosions at 1000 km/s, which the model does not. Hence the new setup.
 
 Bars (set before the first run of this version):
 - supernovae (single_stars_supernovae box: core-collapse, failed, PPISN, PISN): ledger rows E_cr_offered and E_cr_injected_sn = f x the

@@ -1,7 +1,7 @@
 """hot_gas_timestep_sync: hydro fluxes are one-sided, so a pair conserves energy only if both partners step together. Around a young blast one bin of
 difference makes or destroys energy. HOT_GAS_TIMESTEP_SYNC keeps everything near hot gas (T > 1e6 K) on a step 4 times finer than the hot gas's own
 Courant step, while hot gas exists. Adiabatic blast (no cooling, so total energy is the bar): a 20 Msun star dies in a 24^3 lattice of 1 Msun cells at
-n_H = 10 as a new ejecta cell (GALSF_SINGLE_STARS_SN_EJECTA_CELL=1000), 3 kyr, 2 ranks. stella_dev at 1 Msun: worst error -5.07 % without, +0.47 % with.
+n_H = 10 as a new ejecta cell (GALSF_SINGLE_STARS_SN_EJECTA_CELL=1000), 3 kyr, 2 ranks.
 
 Bars, written before the first run:
   test_energy_conserved: total energy (heat + kinetic, gas and star) at every snapshot after the explosion = IC + 1e51 erg to 1 %.

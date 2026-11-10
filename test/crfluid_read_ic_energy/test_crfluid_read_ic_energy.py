@@ -1,4 +1,4 @@
-"""INPUT_READ_COSMICRAYENERGY: a fresh start (start flag 0) keeps the CosmicRayEnergy of the ICs, as stella_dev (init.cc:900).
+"""INPUT_READ_COSMICRAYENERGY: a fresh start (start flag 0) keeps the CosmicRayEnergy of the ICs.
 
 Bar (set before the first run): every cell of the first snapshot holds the CR energy of the ICs to 1e-5.
 """

@@ -1,10 +1,10 @@
 """sn_hydro_recompute (narrow, with a measurement): GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK on top of the default deposit after the
-closing half-kick (gpu_kokkos_unified af507c293): a step in which mechanical feedback reached any cell repeats the hydro pass, as
-stella_dev's FB_G17_BOUNDARY_INJECTION. Adiabatic gas (the one test exception to the production model), one 10 Msun star dying 200 yr
+closing half-kick : a step in which mechanical feedback reached any cell repeats the hydro pass, as
+FB_G17_BOUNDARY_INJECTION. Adiabatic gas (the one test exception to the production model), one 10 Msun star dying 200 yr
 in, 20^3 cells of 1 Msun or of 0.1 Msun (same density), 2 ranks, 5 kyr.
 
 Bars: built without the option no repeat; with it at least one repeat. The gas energy excess over start + 1e51 erg at full
-synchronisation is printed for the four runs (the single-SN ladder at 1 and 0.1 Msun), not a bar: stella_dev's study gave +2.0 %
+synchronisation is printed for the four runs (the single-SN ladder at 1 and 0.1 Msun), not a bar: the reference implementation gave +2.0 %
 (default) and +1.2 % (both ingredients) at 1 Msun with its old deposit point."""
 import os
 import shutil

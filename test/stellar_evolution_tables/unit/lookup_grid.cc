@@ -1,5 +1,5 @@
 /* Evaluates every stellar-evolution table accessor on a fixed grid of (M, Z, age) and writes the doubles to a file.
-   Built against galaxy_sf/stellar_evolution_tables.cc (or, for the reference, stella_dev's resolvedism_stellar_tables.cc)
+   Built against galaxy_sf/stellar_evolution_tables.cc (or, for the reference, resolvedism_stellar_tables.cc)
    with allvars_stub.h; usage: lookup_grid TABLE OUT (the wind table is read from TABLE's directory; every rank writes OUT.<rank>).
    GIZMO's build also writes OUT.nodes.<rank>: per (Z, M) grid node lifetime, remnant mass, t_PMS and the SN and
    AGB element ejecta, evaluated exactly at the node. */

@@ -133,7 +133,7 @@ def test_band_sweeps():
 
 
 def test_cross_sections_as_blackbody_integrals():
-    """the band means of stella_dev's integrals (photon-weighted, 4e4 K, Osterbrock fits): the constants in the walk"""
+    """the band means of the integrals (photon-weighted, 4e4 K, Osterbrock fits): the constants in the walk"""
     def sig(e, s0, th):
         f = np.sqrt(np.maximum(e / th - 1, 1e-10))
         return s0 * (th / e) ** 4 * np.exp(4 - 4 * np.arctan(f) / f) / (1 - np.exp(-2 * np.pi / f))

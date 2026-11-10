@@ -1,6 +1,6 @@
 """treecol_shells_photoion: StarBench D-type expansion (Bisbas et al. 2015) with the TreeRay photoionisation
-(GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION). Photon ledger and R_IF of the coarsest rung against stella_dev
-(83b7ed68 net 5 one band NSIDE 2: -25.0 % to 2.5 Myr, ledger 0.9-1.3 Q). See README.md."""
+(GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION). Photon ledger and R_IF of the coarsest rung against the reference implementation
+(net 5 one band NSIDE 2: -25.0 % to 2.5 Myr, ledger 0.9-1.3 Q). See README.md."""
 import glob
 import os
 import shutil
@@ -16,7 +16,7 @@ sys.path.insert(0, str(TEST_DIR))
 from make_treecol_shells_photoion_ics import make_ics, RUNGS  # noqa: E402
 from starbench import grade, photon_ledger  # noqa: E402
 
-STELLA_DEV_M10 = -0.250  # stella_dev, net 5, one band, NSIDE 2; D-type median R_IF / R_StarBench - 1, t < 2.5 Myr
+REFERENCE_M10 = -0.250  # reference implementation, net 5, one band, NSIDE 2; D-type median R_IF / R_StarBench - 1, t < 2.5 Myr
 T_MAX_MYR = 2.5
 
 
@@ -49,7 +49,7 @@ def run_m10():
 
 
 def test_photon_ledger(run_m10):
-    """every D-type snapshot pays for its recombinations with the star's photons: 0.85-1.7 Q (stella_dev net 5 0.9-1.3, net 17 1.0-1.7)"""
+    """every D-type snapshot pays for its recombinations with the star's photons: 0.85-1.7 Q (reference implementation: net 5 0.9-1.3, net 17 1.0-1.7)"""
     snaps = sorted(glob.glob(str(run_m10 / "snapshot_*.hdf5")))
     rows = [photon_ledger(s) for s in snaps]
     rows = [(t, b) for t, b in rows if 0.2 * 3.15576e13 < t < T_MAX_MYR * 3.15576e13]
@@ -58,4 +58,4 @@ def test_photon_ledger(run_m10):
 
 def test_starbench_coarse_rung(run_m10):
     _, _, _, ref, med = grade(str(run_m10), T_MAX_MYR)
-    assert abs(med - STELLA_DEV_M10) <= 0.04, (med, ref)
+    assert abs(med - REFERENCE_M10) <= 0.04, (med, ref)

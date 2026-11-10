@@ -1,7 +1,7 @@
 """wakeup_falling_sedov: WakeupTargetBin. A point blast in cold uniform gas wakes cells on long timesteps while the periodic box
-falls in a uniform field (g = -0.5 in y). stella_dev default 2 sends a woken cell to the highest active bin, 0 to the waker's bin
+falls in a uniform field (g = -0.5 in y). Default 2 sends a woken cell to the highest active bin, 0 to the waker's bin
 minus log2(WAKEUP). With g uniform and pairwise hydro forces v_cm,y = -0.5 t exactly, so a woken cell losing part of its field
-kick shows up as a centre-of-mass error (1e-3, stella_dev test/wakeup_falling_sedov).
+kick shows up as a centre-of-mass error (1e-3).
 """
 import re
 import sys

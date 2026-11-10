@@ -1,5 +1,5 @@
 """single_stars_cr_speed: with the CR fluid and single stars the CR transport speed defaults to 300 km/s (3e7 cm/s) instead of the
-speed of light, as stella_dev. A uniform magnetised box with a CR slab of half-width 2 pc around x = L/2, B along x, large diffusion
+speed of light. A uniform magnetised box with a CR slab of half-width 2 pc around x = L/2, B along x, large diffusion
 coefficient: the CRs free-stream along the field. Two builds: no CR speed flag, and CRFLUID_SPEEDOFLIGHT_REDUCTION=(1.0).
 
 An earlier version counted system steps of the supernova box; the CR timestep did not limit that box, so it could not tell the speeds apart.

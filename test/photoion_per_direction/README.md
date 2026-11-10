@@ -1,7 +1,7 @@
 # photoion_per_direction
 
 Per-direction photoionisation around single stars (`GALSF_FB_PHOTOIONIZATION_PER_DIRECTION`). Design note:
-design_photoionisation_pixelised.md; reference: stella_dev galaxy_sf/resolvedism_photoion.cc.
+design_photoionisation_pixelised.md.
 
 Problem: a 32^3 lattice of 1 Msun cells at n_H = 10 cm^-3, no gravity, no cooling (the gas stays static), with single
 stars from the stellar-evolution tables.
@@ -29,7 +29,7 @@ Checks:
   rate and its cells scale with it (1.146 vs 1.144; without sharing 1.002).
 - `test_sgchem_reads_the_ionised_cells` (second build, SGChem network 5 as the cooling): inside the fronts the cells have
   ionised abundances (H+ 0.9998, molecules destroyed) and at least the energy of 1e4 K ionised gas, with no network solve
-  (as stella_dev). Outside, the photons leave the cells untouched. The heating to 1e4 K is booked in the ledger row
+  Outside, the photons leave the cells untouched. The heating to 1e4 K is booked in the ledger row
   E_photoionisation_heating_erg, within 5% of the thermal energy the ionised cells gained; the chemistry rows hold the
   network only. Without the change the ionised cells stay neutral and cold.
 - `test_quiet_steps`: a 35 Msun star 10 kyr old, onset at 15.3 kyr. Log column 12 counts the module's reductions and
@@ -54,16 +54,11 @@ Checks:
   'cap ineffective' round (before the change: 2 records of 12.6 kB from one source already exceeded a round), and
   give the cells and fronts of 1 rank. All other photoion logs are bitwise unchanged by the change.
 
-Performance (`run_performance.sh`, not part of pytest; Orion, 8 ranks x 8 threads, one source, 10 steps with every cell
-active; log column 13 is the wall time of each solve on the slowest rank):
-
-| cells | solve [ms] | of which runner calls and exchanges | of which source scan | whole run (cpu.txt total), flag on / off |
-|---|---|---|---|---|
-| 1e6 | 3.8 | 1.9 | 1.9 (with the first reduction) | 20.7 / 19.6 s |
-| 8e6 | 18.8 | 1.5 (+2.4 first reduction) | 14.4 | 105.0 / 102.5 s |
+Performance (`run_performance.sh`, not part of pytest): one source, 10 steps with every cell
+active; log column 13 is the wall time of each solve on the slowest rank.
 
 The work of the solve itself does not grow with the cell count. What grows is the scan of the active particles for
-sources, one particle read per active particle (here all 1e6 per rank), about 0.3% of the run at 8e6. Memory: +8 B per gas
+sources, one particle read per active particle. Memory: +8 B per gas
 cell in the cell struct (368 vs 360 B), +8 B per local gas cell in the claim buffer from the first solve, about 200 kB
 per rank of histogram pool; nothing per particle; 4 B per single star (birth density); 160 B per live ionising source on
 every rank (front table).

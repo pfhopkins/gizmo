@@ -1,6 +1,6 @@
 /* writes N single-star IMF draws (doubles): imf_draws N M_MIN EVENT OUT [reference]
    default: GIZMO's draw for keys 1..N at one event; "reference": the rejection sampler of the reference implementation
-   (stella_dev resolvedism_imf_sampling.cc: M^-0.3 envelope, accept with ratio), on std::mt19937_64 seeded with EVENT */
+   (resolvedism_imf_sampling.cc: M^-0.3 envelope, accept with ratio), on std::mt19937_64 seeded with EVENT */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

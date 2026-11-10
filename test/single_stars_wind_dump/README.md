@@ -9,4 +9,4 @@ Problem: one 35 Msun star 1 Myr old in the lattice of `single_stars_winds_agb_ia
 Checks: at least 5 deposits as (0, 1) pairs of equal record, time and size on both ranks; per deposit total mass conserved
 and gas gain = star loss (both to 1e-14 Msun absolute), total momentum change below 5 % of (mass returned x 3000 km/s).
 
-Reference: stella_dev `resolvedism_fb.cc` (`fb_test_state_dump`).
+Reference: the parameter definitions.

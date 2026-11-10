@@ -1,9 +1,9 @@
 """single_stars_no_gas_kernel_growth (narrow): a single-star event whose kernel reaches no gas widens the kernel x1.4 and tries
-again in the same step, at most 3 times (stella_dev resolvedism_fb.cc, bubble retry). Setup of test/single_stars_forced_events (two
+again in the same step, at most 3 times (bubble retry). Setup of test/single_stars_forced_events (two
 20 Msun stars, supernovae forced at 0.002 and 0.005), the first star in an empty sphere of 3.5 pc, its feedback kernel set to 3 pc
 before the loop (TEST_SINGLE_STARS_FEEDBACK_KERNEL_AT_MOST, a star in a bubble; the port gives coupling sources kernels up to 2 kpc,
 so a hole alone never leaves one empty), so it finds no gas until widened once (4.2 pc).
-Bars, written before the runs, from stella_dev's rule: both supernovae couple in the step they are forced, t_forced <= t <
+Bars, written before the runs, from the rule: both supernovae couple in the step they are forced, t_forced <= t <
 t_forced + 1.5e-4, with zero steps without deposit; mass conserved to 1e-12."""
 import os
 import shutil

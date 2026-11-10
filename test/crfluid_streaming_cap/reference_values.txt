@@ -1,0 +1,2 @@
+# reference implementation, same ICs and params, cap on, 2 ranks: fraction of the CR energy lost
+capped 0.006423267

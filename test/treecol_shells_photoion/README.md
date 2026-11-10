@@ -8,5 +8,5 @@ Gravity stays on (the walk carries the rays), so the shell self-collapses after 
 
 | test | checks |
 |---|---|
-| `test_photon_ledger` | sum alpha_B x^2 n_H^2 V / Q in 0.85-1.7 in every D-type snapshot (stella_dev on the same estimator: net 5 0.9-1.3 Q, net 17 1.0-1.7 Q) |
-| `test_starbench_coarse_rung` | m10 (40^3): median R_IF / R_StarBench - 1 for 0.2 < t < 2.5 Myr within 4 points of stella_dev's -25.0 % (net 5, one band, NSIDE 2; its net 17 ladder run -22.3 %) |
+| `test_photon_ledger` | sum alpha_B x^2 n_H^2 V / Q in 0.85-1.7 in every D-type snapshot (reference implementation on the same estimator: net 5 0.9-1.3 Q, net 17 1.0-1.7 Q) |
+| `test_starbench_coarse_rung` | m10 (40^3): median R_IF / R_StarBench - 1 for 0.2 < t < 2.5 Myr within 4 points of the reference implementation's -25.0 % (net 5, one band, NSIDE 2; its net 17 ladder run -22.3 %) |

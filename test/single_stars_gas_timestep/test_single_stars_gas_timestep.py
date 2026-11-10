@@ -1,5 +1,5 @@
 """single_stars_gas_timestep: with the stars' band fluxes in the gravity walk, gas takes its gravitational step from the tidal
-criterion alone (stella_dev timestep.cc). Cold gas around a heavy star, every cell many kernels away, so the acceleration
+criterion alone. Cold gas around a heavy star, every cell many kernels away, so the acceleration
 criterion would be well below the tidal one. The shortest gas step must lie above the acceleration criterion sqrt(2 eta eps / a)
 of the nearest cell by a factor 1.5 (steps are powers of two)."""
 import os

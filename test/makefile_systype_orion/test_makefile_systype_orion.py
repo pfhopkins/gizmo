@@ -4,8 +4,10 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
-KOKKOS_HOME = os.environ.get("KOKKOS_HOME_ORION", "/u/uli/sw/kokkos/5.0.0-openmp-gcc13")
+KOKKOS_HOME = os.environ.get("KOKKOS_HOME_ORION")
 
 
 def dry_run():
@@ -27,6 +29,8 @@ def dry_run():
 def test_orion_kokkos_compile_line():
     """bar (written before the run): the first compile command uses mpicxx with -std=c++20 and -fopenmp and the Kokkos include path of
     the Orion install; the link line has -lkokkoscore and the library path"""
+    if not KOKKOS_HOME:
+        pytest.skip("KOKKOS_HOME_ORION is not set; it names the Kokkos OpenMP install the Orion build links against")
     out = dry_run().splitlines()
     cc = next(l for l in out if " -c core/main.cc" in l)
     assert cc.startswith("mpicxx -std=c++20") and "-fopenmp" in cc and f"-I{KOKKOS_HOME}/include" in cc

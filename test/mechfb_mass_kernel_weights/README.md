@@ -20,4 +20,4 @@ Checks (closure limit 1e-12, relative; a cell's share 1e-9, absolute, since a sh
 7. 7 Msun star, radiation only: kick shares |q| / sum |q|, no net momentum.
 
 The star's kernel radius is not written; the test takes the radius that fits the shares.
-Reference: stella_dev resolvedism_fb_thermal.cc, resolvedism_fb_momentum.cc (passes -1, -4, 0 and -2, 1).
+Reference: resolvedism_fb_thermal.cc, resolvedism_fb_momentum.cc (passes -1, -4, 0 and -2, 1).

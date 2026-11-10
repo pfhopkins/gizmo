@@ -1,4 +1,4 @@
-"""sgchem_cr_fluid_energy: energy exchange between the CR fluid and the SGChem chemistry, as stella_dev (sgchem.cc and
+"""sgchem_cr_fluid_energy: energy exchange between the CR fluid and the SGChem chemistry (sgchem.cc and
 cosmic_ray_utilities.cc): the ionisation heating the chemistry solve applies (the share of zeta from the CR fluid) comes
 out of the CR energy, and the CR fluid's own loss is hadronic plus Coulomb on free electrons only (no ionisation term,
 which the chemistry already heats with). A uniform periodic box of 8^3 cells of 1 Msun (n_H ~ 30 cm^-3, x_H2 = 0.4) with
@@ -6,8 +6,8 @@ which the chemistry already heats with). A uniform periodic box of 8^3 cells of 
   test_cr_energy_closes: the ionisation energy taken from the fluid is the fluid's share (> 0.5, <= 1) of the
     chemistry's CR ionisation heating and at least 1e-3 of E_CR,0; E_CR - E_CR,0 = -(fluid losses + ionisation energy
     taken by the chemistry) up to the CR-gas exchange at the kicks (not booked; reported, below 1e-3 of E_CR,0).
-  test_cr_loss_rate_as_stella_dev: the CR fluid losses between rows = (0.87 x 6.37e-16 + 0.53 x 3.09e-16 n_e X_H)
-    (rho / m_p) integral(E_CR dt) (stella_dev's rate and density argument, n_e from the snapshots, trapezoid; 2 %).
+  test_cr_loss_rate: the CR fluid losses between rows = (0.87 x 6.37e-16 + 0.53 x 3.09e-16 n_e X_H)
+    (rho / m_p) integral(E_CR dt) (the rate and density argument, n_e from the snapshots, trapezoid; 2 %).
 """
 import os
 import shutil
@@ -71,7 +71,7 @@ def test_cr_energy_closes(run):
     assert np.all((share > 0.5) & (share <= 1.0))
 
 
-def test_cr_loss_rate_as_stella_dev(run):
+def test_cr_loss_rate(run):
     b, d = run
     snaps = sorted(d.glob("snapshot_*.hdf5"))[1:]  # the outputs (snapshot_000 is the initial conditions)
     assert len(snaps) == len(b["time"])
@@ -86,5 +86,5 @@ def test_cr_loss_rate_as_stella_dev(run):
     for k in range(1, len(t)):
         want = 0.5 * (rate[k] * b["E_CR_erg"][k] + rate[k - 1] * b["E_CR_erg"][k - 1]) * (t[k] - t[k - 1])
         got = b["E_cr_losses_erg"][k] - b["E_cr_losses_erg"][k - 1]
-        print(f"t = {b['time'][k]:.2f}: n_e {ne[k]:.3e}, losses {got:.4e} erg, stella_dev rate {want:.4e} erg, ratio {got / want:.4f}")
+        print(f"t = {b['time'][k]:.2f}: n_e {ne[k]:.3e}, losses {got:.4e} erg, expected rate {want:.4e} erg, ratio {got / want:.4f}")
         assert abs(got / want - 1) < 0.02

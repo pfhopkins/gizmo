@@ -1,4 +1,4 @@
-# reference implementation (stella_dev 83b7ed68 galaxy_sf/resolvedism_stellar_tables.cc), stella-tables a4830ab:
+# reference implementation (galaxy_sf/resolvedism_stellar_tables.cc), from the stella-tables build:
 # every 61st of the 17920 values lookup_grid writes to its .bands file; columns: index, value (%.17g)
 0 13.544898986816406
 61 21.890016555786133

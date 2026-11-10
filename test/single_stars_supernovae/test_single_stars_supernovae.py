@@ -120,7 +120,7 @@ def test_ranks_and_threads(built):
 
 
 @pytest.mark.parametrize("cap_kyr", [10.0, 50.0])
-def test_death_step_as_gizmo2017(built, cap_kyr):
+def test_death_step_first_step_past_lifetime(built, cap_kyr):
     """stars 37 kyr from death and a long largest step: no step before the first death falls below the bin of
     MaxStellarTimestep, and each star dies at its first step past the table death time, at most one cap later"""
     kyr = 1e3 / (3.085678e13 / 3.155e7)  # code time per kyr, with the code's year
@@ -158,7 +158,7 @@ def test_death_with_winds_owed(built):
 def test_element_yields(built):
     """FIRE metal layout (cooling on; metals do not depend on it): every slot of the gas gains exactly the table SN element
     ejecta of the three stars, scaled to their ejecta mass (the reference implementation's rule; the A9 comparison found
-    the same element masses in stella_dev); slot 0 gains all table metals C..Zn"""
+    the same element masses); slot 0 gains all table metals C..Zn"""
     _, snap, rows = run("elements", built, exe="GIZMO_elements", n_metals=11)
     ic = TEST_DIR / "run_elements" / "output" / "snapshot_000.hdf5"
     with h5py.File(ic) as F, h5py.File(snap) as G:

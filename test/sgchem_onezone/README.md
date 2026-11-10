@@ -10,7 +10,7 @@ for 18/20. Bars: tables 1e-6, rates 1e-10, final one-zone temperature 1e-2 (the 
 For nets 5 and 17, `threads_identity.cc` solves eight cells serially and 64 times concurrently on OpenMP threads; the
 temperatures must be bit-identical.
 
-`test_sgchem_net5_euv_h2[10, 100]` (`euv_h2.cc`, from stella_dev `golden/test_euv_h2.cc`): network 5 with ionising photons
+`test_sgchem_net5_euv_h2[10, 100]` (`euv_h2.cc`, from the reference implementation's `golden/test_euv_h2.cc`): network 5 with ionising photons
 (Gamma_HI = 1e-9 s^-1, <h nu> = 18.6 eV, sigma_H2/sigma_HI = 1.34). The H2 channel adds exactly its rate and heating to
 the right-hand side. A molecular cell (x_H2 = 0.4999) loses its H2 and ionises at G0 = 1.7 and at G0 = 1e-4 (shielded).
 Without the H2 channel the shielded cell stays molecular (x_H2 = 0.45 after 1 Myr). G0 = 0 cannot stand for shielding:

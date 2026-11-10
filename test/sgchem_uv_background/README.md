@@ -9,7 +9,7 @@ The sgchem_box lattice (n_H = 100 cm^-3 physical, 8000 K, solar metals, network 
 - `test_uvb_rates_in_log`: the start-up log names the redshift of the table lookup, and the default TREECOOL (it begins
   with `##` comment lines) is read with its rows: the reader used to find none and the background was zero without a message.
 
-In a comoving run SGChem takes the metagalactic rates of the current redshift from TREECOOL (as stella_dev): they are a floor
+In a comoving run SGChem takes the metagalactic rates of the current redshift from TREECOOL: they are a floor
 under the local H, He photoionisation and photoheating rates (the moment solver's or the tree's, whichever is larger), G0
 is raised to Gamma_HI / 2.29e-10 and G0_LW to a tenth of it, the redshift reaches the network (CMB term). Non-comoving runs
 do not use the background. `ReadIonizeParams` skips blank and `#` lines and stops on a malformed row or an empty table, as starforge_dev.

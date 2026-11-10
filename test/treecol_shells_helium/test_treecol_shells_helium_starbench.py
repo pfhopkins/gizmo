@@ -1,4 +1,4 @@
-"""treecol_shells_helium: StarBench D-type expansion at net 17, coarse rung m10, against stella_dev with the He abundance of
+"""treecol_shells_helium: StarBench D-type expansion at net 17, coarse rung m10, against the reference implementation with the He abundance of
 the chemistry (reports: design_treeray_helium.md). Fixed rate, two-temperature gas, the star's spectrum. See README.md."""
 import glob
 import os
@@ -20,7 +20,7 @@ from starbench import grade, band_ledger, helium_front  # noqa: E402
 FLAGS = ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS")
 T_MAX_MYR = 2.5
 Q1_OVER_Q = 0.1303  # 30 Msun, table
-STELLA_DEV_MEDIAN, STELLA_DEV_RATIO = -0.353, 0.731  # 83b7ed68 net 17 with the He abundance of the chemistry
+REFERENCE_MEDIAN, REFERENCE_RATIO = -0.353, 0.731  # reference implementation, net 17, with the He abundance of the chemistry
 
 
 @pytest.fixture(scope="module")
@@ -75,14 +75,14 @@ def test_helium_fills_the_h_zone(run_m10):
 
 @pytest.mark.xfail(strict=True, reason="bar missed, kept as set: 0.73 Q while the shell collapses after 1.8 Myr, 0.83 Q at 0.45 Myr")
 def test_total_ledger(run_m10):
-    """recombinations 0.85-1.7 Q in every D-type snapshot (stella_dev net 17 on the same estimator: 0.59-1.06)"""
+    """recombinations 0.85-1.7 Q in every D-type snapshot (reference implementation, net 17, on the same estimator: 0.59-1.06)"""
     t = [r["total"] for _, r in dtype_rows(run_m10)]
     assert all(0.85 < x < 1.7 for x in t), t
 
 
-@pytest.mark.xfail(strict=True, reason="bar missed, kept as set: helium fuller and R_IF larger than stella_dev, cause not found")
-def test_against_stella_dev(run_m10):
-    """within 4 points of stella_dev's R_IF and 0.10 of its R_He / R_IF (He abundance as the chemistry: -35.3 %, 0.731)"""
+@pytest.mark.xfail(strict=True, reason="bar missed, kept as set: helium fuller and R_IF larger than the reference implementation, cause not found")
+def test_against_reference(run_m10):
+    """within 4 points of the reference implementation's R_IF and 0.10 of its R_He / R_IF (He abundance as the chemistry: -35.3 %, 0.731)"""
     r = np.median([helium_front(s)["R_he_over_R_if"] for s, _ in dtype_rows(run_m10)])
     med = grade(str(run_m10), T_MAX_MYR)[4]
-    assert abs(r - STELLA_DEV_RATIO) <= 0.10 and abs(med - STELLA_DEV_MEDIAN) <= 0.04, (r, med)
+    assert abs(r - REFERENCE_RATIO) <= 0.10 and abs(med - REFERENCE_MEDIAN) <= 0.04, (r, med)

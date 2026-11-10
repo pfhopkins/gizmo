@@ -14,7 +14,7 @@ Checks:
    to the initial conditions;
 2. a run stopped halfway and continued from its restart files ends with the same records;
 3. a 1-rank run ends with the same records;
-4. built with GALSF_SINGLE_STARS_EVOLUTION_TABLES (GIZMO_tables), the record also holds the birth density (stella_dev's
+4. built with GALSF_SINGLE_STARS_EVOLUTION_TABLES (GIZMO_tables), the record also holds the birth density (
    FormationDensity, a float: the physical parent-cell density at birth, set in single_star_attach_to_new_star); it
    follows the stars as in 1 and 2 on 4 ranks, bitwise.
 
@@ -22,4 +22,4 @@ Reference: the initial conditions (records must be carried, not computed). Negat
 with the record dropped on receipt check 1 fails (so stars do change rank); without the merge guard one star (ID 532)
 is merged and check 1 fails.
 
-`test_split_threshold`: with single stars a cell splits above 2.01 x the largest gas cell of the initial conditions, as stella_dev.
+`test_split_threshold`: with single stars a cell splits above 2.01 x the largest gas cell of the initial conditions.

@@ -11,7 +11,7 @@ receive it, so the bar could not be met; that path is an open item of the base c
 Bars (set before the first run of this version):
 - closure: CR + thermal + kinetic energy at the end within 1e-3 of the start, both builds;
 - flag: final CR energy with the flag <= 0.99 x without;
-- reference: stella_dev on the same ICs (stella_dev_reference.txt): CR energy gain within 10 % (default) or within 1e-3 of the CR
+- reference: the reference implementation on the same ICs (reference_values.txt): CR energy gain within 10 % (default) or within 1e-3 of the CR
   energy (pdV only), thermal and kinetic energy within 1 %.
 """
 import glob
@@ -32,7 +32,7 @@ from make_crfluid_exchange_pdv_only_ics import make_crfluid_exchange_pdv_only_ic
 
 
 def _reference():
-    rows = [line.split() for line in (TEST_DIR / "stella_dev_reference.txt").read_text().splitlines() if line and not line.startswith("#")]
+    rows = [line.split() for line in (TEST_DIR / "reference_values.txt").read_text().splitlines() if line and not line.startswith("#")]
     return {r[0]: np.array([float(x) for x in r[1:]]) for r in rows}
 
 
@@ -65,7 +65,7 @@ def test_crfluid_exchange_pdv_only():
     start_0, end_0 = _run((), "default")
     start_1, end_1 = _run(("CRFLUID_EXCHANGE_PDV_ONLY",), "pdv_only")
     for label, s, e in (("default", start_0, end_0), ("pdv_only", start_1, end_1)):
-        print(f"{label}: E_CR, E_th, E_kin {e}, stella_dev {ref[label]}, total {e.sum() / s.sum() - 1:+.2e}")
+        print(f"{label}: E_CR, E_th, E_kin {e}, reference {ref[label]}, total {e.sum() / s.sum() - 1:+.2e}")
         assert abs(e.sum() / s.sum() - 1) <= 1e-3, f"{label}: CR + gas energy is not conserved"
     assert end_1[0] <= 0.99 * end_0[0], "with the flag the CRs must gain less from the shock heating"
     assert abs((end_0[0] - start_0[0]) / (ref["default"][0] - start_0[0]) - 1) <= 0.1

@@ -1,5 +1,5 @@
 """treecol_nongas test: the TreeCol column density bins (RT_USE_TREECOL_FOR_NH) of a gas cell do not change when a gasless star of
-1e-10 of a cell's mass sits among the gas. stella_dev's walk kept the previous leaf's gas mass for non-gas leaves and added it to
+1e-10 of a cell's mass sits among the gas. an earlier walk kept the previous leaf's gas mass for non-gas leaves and added it to
 the bins. Read from the TREECOL_DIAG print of the first ten gas cells at step 0 (GIZMO_TREECOL_DIAG); 1 rank. See README.md."""
 import re
 import shutil

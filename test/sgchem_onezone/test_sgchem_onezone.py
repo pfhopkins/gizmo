@@ -74,8 +74,8 @@ def test_sgchem_onezone(net, env):
 
 @pytest.mark.parametrize("nH", (10.0, 100.0))
 def test_sgchem_net5_euv_h2(nH, env):
-    """Gamma_HI = 1e-9 s^-1, <h nu> = 18.6 eV, r = sigma_H2/sigma_HI = 1.34 (stella_dev DEVIATIONS D-56), WSS CIE cooling;
-    G0 = 1.7 as stella_dev's test, and G0 = 1e-4 (shielded), where only the H2 channel clears the H2"""
+    """Gamma_HI = 1e-9 s^-1, <h nu> = 18.6 eV, r = sigma_H2/sigma_HI = 1.34 (DEVIATIONS D-56), WSS CIE cooling;
+    G0 = 1.7, and G0 = 1e-4 (shielded), where only the H2 channel clears the H2"""
     tables = chemistry_tables_dir(5)
     out = path.join(HERE, "output", "net5")
     if not path.exists(path.join(out, "euv_h2")):

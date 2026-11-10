@@ -75,8 +75,8 @@ def test_hii_photon_rate(built):
 RHO_UNIT = 1.989e33 / 3.085678e18 ** 3  # g/cm^3 per code density (Msun/pc^3)
 
 
-def stella_dev_onset_yr(tables_file, M, rho_birth, Z=0.014):
-    """stella_dev compute_single_star_S_ly: no ionising photons before min(t_KH, t_ff(birth density)) (at most 1 Myr, only
+def reference_onset_yr(tables_file, M, rho_birth, Z=0.014):
+    """compute_single_star_S_ly: no ionising photons before min(t_KH, t_ff(birth density)) (at most 1 Myr, only
     with a birth density) and during the pre-main sequence"""
     with h5py.File(tables_file, "r") as F:
         Zt, Mt = F["Z"][()], F["M_init"][()]
@@ -90,12 +90,12 @@ def stella_dev_onset_yr(tables_file, M, rho_birth, Z=0.014):
 
 def test_ionising_onset(built):
     """10 Msun stars whose onset is set by the pre-main sequence (no birth density, and a dense birth), by the
-    Kelvin-Helmholtz time and by the free-fall time: each 0.5% before its stella_dev onset is dark, 0.5% after it ionises"""
+    Kelvin-Helmholtz time and by the free-fall time: each 0.5% before its onset is dark, 0.5% after it ionises"""
     n_to_rho = lambda n: n * 1.6726e-24 / 0.76 / RHO_UNIT
     t_kh = 1.5e7 * 10.0 ** -2.1
     rho_ff = 3 * np.pi / (32 * 6.672e-8 * (0.957 * t_kh * 3.155e7) ** 2) / RHO_UNIT  # t_ff between t_PMS and t_KH
     cases = [0.0, n_to_rho(1e7), n_to_rho(1e2), rho_ff]
-    onsets = [stella_dev_onset_yr(built["StellarTablesFile"], 10.0, r) for r in cases]
+    onsets = [reference_onset_yr(built["StellarTablesFile"], 10.0, r) for r in cases]
     assert len({round(t) for t in onsets}) == 3  # the three branches give three onsets
     stars, k = [], 0
     for r, t in zip(cases, onsets):

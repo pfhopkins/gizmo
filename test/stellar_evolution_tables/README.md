@@ -24,7 +24,7 @@ every lookup on a fixed grid of 64 masses x 8 metallicities x 7 ages (226,843 va
 4. at the grid nodes the 2D tables come back exactly (compared with the HDF5 datasets); the pre-SN mass (dataset) equals the
    remnant plus the SN element ejecta (exploding stars) or the AGB element ejecta (white dwarfs) to 1e-12; the lifetime
    falls with mass above 2 Msun; every value of a stored sample (`unit/lookup_reference.txt`, every 61st value)
-   agrees with the reference implementation (stella_dev `resolvedism_stellar_tables.cc`, built the same way) to 1e-12
+   agrees with the reference implementation (built the same way) to 1e-12
    relative; both ranks give the same values. With `GALSF_SINGLE_STARS_TYPE_IA` the dead white-dwarf-progenitor fraction that
    normalises the Type Ia hazard (8 metallicities x 40 ages, past both ends of its table; `unit/lookup_reference_ia.txt`) agrees with
    the reference to 1e-12 relative, lies in [0, 1] and never falls with age.

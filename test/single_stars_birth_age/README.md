@@ -5,4 +5,4 @@ so its evolution (winds, death) starts at that age. Lattice of `single_stars_col
 
 Check: the snapshot's `StellarFormationTime` is earlier by 2e6 yr (in code time) than in a twin with `TestStarInitAgeYr 0`, to 1e-9.
 
-Reference: the definition of the parameter (stella_dev `sfr_eff.cc`: `StellarAge = Time - TestStarInitAgeYr / yr`).
+Reference: the definitions of the parameters.

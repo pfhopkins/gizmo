@@ -1,6 +1,6 @@
 """sgchem_step_diagnostics: SGCHEM_PRINT_STEP_COOLING_DIAGNOSTICS prints, on each step with a status line, one line SGCHEM_DIAG from rank 0
 with its own active cells: count, energy the cooling update removed [code] and its running sum, temperature and hydrogen
-density ranges (stella_dev cooling.cc). The box of sgchem_box (8^3 cells, n_H = 100, 8000 K, SGChem network 5), 1 rank, 8 equal
+density ranges. The box of sgchem_box (8^3 cells, n_H = 100, 8000 K, SGChem network 5), 1 rank, 8 equal
 steps of 0.004. Bars, written before the run: one line per call of the update, 9 with the call at the start (which changes nothing)
 and the one after the last snapshot (the first version of this test expected 8 lines, a falling temperature from the first line on,
 and all lines adding up to the energy lost by the last snapshot: logically wrong, the snapshot at TimeMax is written before the last

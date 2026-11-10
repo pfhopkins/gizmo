@@ -19,7 +19,7 @@ stops) and checks them against exact values.
   test_host_equals_device: the device walk (team-scratch sums, fixed fold order) gives the same cell outputs as the
     host walk, and repeats bitwise (2 ranks x 2 threads; 1 rank x 4 threads, where every target takes the device walk).
   test_chemistry_inputs: the SGChem field of every cell from the tree energy densities (pixels floored at
-    0.324e-2 SGChemBackgroundG0 / 12 Habing): G0, G0_LW and the band-resolved grain-heating G0_dust as stella_dev (1e-6).
+    0.324e-2 SGChemBackgroundG0 / 12 Habing): G0, G0_LW and the band-resolved grain-heating G0_dust (1e-6).
   test_radial_shells_attenuate_bands: with GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS the stored stellar bands are
     dust-attenuated per (pixel, shell) in the walk: 6-13.6, 11.2-13.6, 3.444-6 and 0.4133-3.444 eV against a direct
     sweep over all particles (tree-error bars, 1 and 2 ranks).
@@ -32,13 +32,13 @@ stops) and checks them against exact values.
   test_far_field_g0: after five steps with chemistry, during which one star dies, the tree 6-13.6 eV field of every cell
     equals the direct sum over the stars' current luminosities (median |ratio - 1| <= 1e-2, p99 <= 5e-2): node
     luminosities are refreshed, the dead star is dark (2 ranks).
-  test_cosmic_ray_rate: the SGChem cosmic-ray ionisation rate of every cell as stella_dev: with CR_SCALE_WITH_G0
+  test_cosmic_ray_rate: the SGChem cosmic-ray ionisation rate of every cell: with CR_SCALE_WITH_G0
     (G0 / 1.7) x SGChemCosmicRayIonRate from the stars' field, clamped to [1e-21, 2e-16] (1e-12); with
     CR_BACKGROUND_IONRATE_ATTENUATED SGChemCosmicRayIonRate x the STARFORGE attenuation of the 12-pixel gas column
     within TreeColShieldingLength (1 below 2.23e-3 g cm^-2, else exp(-Sigma / 100) 2.23e-3 / Sigma, pixel mean), against
     the same formula on direct-sum columns to the tree-error bars of the columns (median 1e-2, p99 5e-2).
   test_cosmic_ray_fluid_rate: with COSMIC_RAY_FLUID the SGChem rate of every cell is his Get_CosmicRayIonizationRate_cgs:
-    1e-5 e_CR [erg cm^-3] + 1e-21 Z/Zsun + 1e-19 Fe/Fe_sun with the tables' solar abundances (1e-12); against stella_dev's
+    1e-5 e_CR [erg cm^-3] + 1e-21 Z/Zsun + 1e-19 Fe/Fe_sun with the tables' solar abundances (1e-12); against the reference implementation's
     3e-17 (e_CR / 1.8 eV cm^-3) + 1e-21 Z/0.014 the e_CR term is lower by the stated factor 0.9612 (1e-10).
 """
 import os
@@ -155,7 +155,7 @@ def test_star_band_luminosities(tables, ranks):
 
 
 def test_radiation_mass_cut(tables):
-    """IMFSampleStellarMassCut 0.5 (stella_dev production): main-sequence stars at or below 0.5 Msun are dark in every
+    """IMFSampleStellarMassCut 0.5: main-sequence stars at or below 0.5 Msun are dark in every
     band, the others shine as the tables; the root node holds only the shining stars"""
     tab = Tables(tables["StellarTablesFile"])
     L, cut = 20.0, 0.5
@@ -209,7 +209,7 @@ def test_node_species_masses(tables, ranks, step):
 
 def test_dust_to_gas_independent_of_metallicity(tables):
     """SGCHEM_DGR_INDEPENDENT_OF_METALLICITY: the dust-weighted mass of every cell is SGChemDustToGasRatio x its mass,
-    whatever its metallicity (as stella_dev); the chemistry and radiation pressure read the same function"""
+    whatever its metallicity ; the chemistry and radiation pressure read the same function"""
     L = 20.0
     pos, z, ab = gas_with_species(12, L)
     exe = build("pix12_dgr_const", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "SGCHEM_DGR_INDEPENDENT_OF_METALLICITY"))
@@ -223,7 +223,7 @@ def test_dust_to_gas_independent_of_metallicity(tables):
 
 def test_dust_to_gas_from_live_dust(tables):
     """GALSF_ISMDUSTCHEM_MODEL: the dust-weighted mass of every cell is its live dust mass / 0.01 (Milky Way units, as
-    stella_dev with its dust model), not its metallicity / 0.014"""
+    with the dust model), not its metallicity / 0.014"""
     L = 20.0
     pos, z, ab = gas_with_species(12, L)
     dust = np.random.default_rng(3).uniform(0, 2e-2, len(pos))  # dust mass fraction, up to 2x Milky Way
@@ -552,7 +552,7 @@ UNIT_SURFDEN = 1.989e33 / 3.085678e18 ** 2  # treecol_pixels.params units, g cm^
 
 
 def cr_attenuation(sigma):
-    """stella_dev chem_interface.cc (STARFORGE): per pixel 1 below 2.23e-3 g cm^-2, else exp(-Sigma / 100) 2.23e-3 / Sigma; pixel mean"""
+    """chem_interface.cc (STARFORGE): per pixel 1 below 2.23e-3 g cm^-2, else exp(-Sigma / 100) 2.23e-3 / Sigma; pixel mean"""
     return np.where(sigma < 2.23e-3, 1.0, np.exp(np.maximum(-sigma / 100.0, -90.0)) * 2.23e-3 / np.maximum(sigma, 1e-300)).mean(-1)
 
 
@@ -591,8 +591,8 @@ def test_cosmic_ray_fluid_rate(tables):
     z = np.array([zc[int(i)] for i in cells[:, 0]])
     radio = 1e-21 * z / 0.014 + 1e-19 * (1.38e-3 * z / 0.0142) / 1.3528499188e-03  # All.SolarAbundances from the tables (stellar_solar_abundances.h)
     np.testing.assert_allclose(zeta, 1e-5 * e_cgs + radio, rtol=1e-12, atol=0)
-    stella_dev = 3e-17 * e_cgs / (1.8 * 1.602e-12) + 1e-21 * z / 0.014  # stella_dev: Zsun = 0.014, no Fe term
-    ratio = (zeta - radio) / (stella_dev - 1e-21 * z / 0.014)
-    print(f"e_CR {e_cgs.min() / 1.602e-12:.2g}-{e_cgs.max() / 1.602e-12:.2g} eV cm^-3; zeta / stella_dev: "
-          f"{np.min(zeta / stella_dev):.4f}-{np.max(zeta / stella_dev):.4f}; e_CR term ratio {ratio.mean():.6f}")
+    reference = 3e-17 * e_cgs / (1.8 * 1.602e-12) + 1e-21 * z / 0.014  # reference: Zsun = 0.014, no Fe term
+    ratio = (zeta - radio) / (reference - 1e-21 * z / 0.014)
+    print(f"e_CR {e_cgs.min() / 1.602e-12:.2g}-{e_cgs.max() / 1.602e-12:.2g} eV cm^-3; zeta / reference: "
+          f"{np.min(zeta / reference):.4f}-{np.max(zeta / reference):.4f}; e_CR term ratio {ratio.mean():.6f}")
     np.testing.assert_allclose(ratio, 1e-5 * 1.8 * 1.602e-12 / 3e-17, rtol=1e-10)

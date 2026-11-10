@@ -10,4 +10,4 @@ Static test of the production set in `scripts/stella`: `Config_stella_{default,c
 - `test_setups`: the four setups start from `STELLA_DEFAULTS`; only the zoom is comoving, with `TimeBetSnapshot` > 1.
 
 Limit: a flag read somewhere in `src/` can still be inert in this combination; the check is by name.
-The zoom needs `final/01-sgchem-uv-background` to run (SGChem stops on `ComovingIntegrationOn` without it).
+The zoom needs the SGChem UV background (comoving floor): SGChem stops on `ComovingIntegrationOn` without it.

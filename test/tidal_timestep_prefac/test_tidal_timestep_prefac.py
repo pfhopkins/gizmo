@@ -1,4 +1,4 @@
-"""TIDAL_TIMESTEP_PREFAC (gpu_kokkos_unified c84215640) as the tidal prefactor of stella_dev (TidalTimestepPrefacGas, default 1). Narrow.
+"""TIDAL_TIMESTEP_PREFAC as a tidal prefactor for gas (TidalTimestepPrefacGas, default 1). Narrow.
 Cold gas around a heavy star, factor f: the tidal step of a point mass is f sqrt(eta r^3 / (G M)), and the shortest gas step must lie
 in (1/2, 1] of it at the nearest cell (power-of-two bins); without the factor the step is well above that."""
 import os

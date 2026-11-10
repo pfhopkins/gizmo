@@ -1,6 +1,6 @@
 """ThermalProperties under SGChem hands back the stored chemistry state (7.17) and the mean weight of the chemistry's H/He mix (7.18).
 
-The uniform box of test/sgchem_box with molecular ICs. Bars, from the code on stella_dev (cooling.cc ThermalProperties, eos.cc
+The uniform box of test/sgchem_box with molecular ICs. Bars, from the code (cooling.cc ThermalProperties, eos.cc
 Get_Gas_Mean_Molecular_Weight_mu): T = stored chemistry temperature; n(H0) = 1 - 2 x(H2) - x(H+) (atomic H only);
 n(H+) = n_e = x(H+); mean weight 1 / (X (1 - f_mol/2) + Y/4 + n_e X_universal) with X = 1 / (1 + 4 ABHE), metals not counted.
 """

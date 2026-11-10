@@ -1,6 +1,6 @@
-"""Merger products of table stars inside a KETJU region (stella_dev stella_star_mergers.cc, ketju_coupling.cc contact radius).
+"""Merger products of table stars inside a KETJU region (stella_star_mergers.cc, ketju_coupling.cc contact radius).
 
-Run "young": a 5 + 3 Msun pair at 60 % of the 5 Msun main sequence, head on. Bars, Hurley, Pols & Tout 2002 eq. 80 as on stella_dev:
+Run "young": a 5 + 3 Msun pair at 60 % of the 5 Msun main sequence, head on. Bars, Hurley, Pols & Tout 2002 eq. 80:
 the product is a main-sequence star of 8 Msun, birth Z mass-weighted, main-sequence fraction f = 0.1 sum_i M_i f_i / M, age
 t_PMS(8 Msun) + t_MS_start + f (t_MS_end - t_MS_start), winds restart at that table age.
 

@@ -1,4 +1,4 @@
-// euv_h2.cc -- net 5 one-zone: EUV photons on molecular gas (stella_dev cooling/sgchem/cxx/golden/test_euv_h2.cc).
+// euv_h2.cc -- net 5 one-zone: EUV photons on molecular gas.
 //  1. RHS check: the photo terms add exactly -r*Gamma*xH2 to dxH2/dt and
 //     nH*[Gamma(E-13.6)xHI + r*Gamma(E-15.2)xH2] eV to the heating.
 //  2. Evolution: molecular cell (xH2=0.4999) in a constant EUV field must lose its

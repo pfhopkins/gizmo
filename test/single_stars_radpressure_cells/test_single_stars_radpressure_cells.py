@@ -1,10 +1,9 @@
-"""single_stars_radpressure_cells: with band fluxes the direct radiation pressure goes per gas cell from the pixel fluxes
-(stella_dev resolvedism_radpressure_treerad); the IR boost stays at the star. One 40 Msun star in a uniform 16^3 lattice of 1 Msun
+"""single_stars_radpressure_cells: with band fluxes the direct radiation pressure goes per gas cell from the pixel fluxes; the IR boost stays at the star. One 40 Msun star in a uniform 16^3 lattice of 1 Msun
 cells, chemistry on, gravity on (the fluxes come from the gravity walk), 2 kyr.
   test_thin: n_H = 1, box optically thin: momentum per step = sum over cells of sum_b sigma_b L_b DGR N_H(cell) / (4 pi r^2 c),
     r floored at the softening (3 %), plus the IR term at the star.
   test_thick: n_H = 1e4, photon cap active: momentum per step = L_emit / c + IR term (3 %). Disjoint bands and
-    GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE (stella_dev production: LW and 6-8 eV counted twice in deposit and cap).
+    GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE (: LW and 6-8 eV counted twice in deposit and cap).
   test_snapshot_fields: OUTPUT_SGCHEM_RADIATION_FIELDS: G0_FUV = L(6-13.6 eV) / (4 pi c r^2) / Habing (3 %, median over cells beyond 3 softenings),
     fields in shape, star lums in log10 erg/s and the Lyman photon rate in log10 1/s from the tables (1e-3 dex).
   test_outward: the gas gains positive radial momentum about the star, at least half of what the log says (pixel centres, n_H = 1).

@@ -1,11 +1,11 @@
 // Standalone SGChem cell evolution for test_sgchem_box: the box cells' inputs (FIRE-3 metals, density, energy, the
-// run's timesteps) through the C++ backend directly, written from the stella_dev input recipe (chem_interface.cc), not
+// run's timesteps) through the C++ backend directly, written from the production input recipe (chem_interface.cc), not
 // from the GIZMO glue, so the box run is checked against an independent assembly of the same inputs.
 // Built by the test in the box build's src/ (same GIZMO_config.h), linked with its cooling/sgchem/cxx objects.
-// The radiation input is a uniform Habing-shaped field (G0, G0_LW, floor scale G0_bg) handed in as stella_dev's production
+// The radiation input is a uniform Habing-shaped field (G0, G0_LW, floor scale G0_bg) handed in as the production
 // path does (chem_interface.cc, GALSF_RESOLVEDISM_G0_VARIABLE): 12 equal pixels, per-pixel UV and LW floors, NUV 3.4-6 eV
 // and optical bands; the first output line compares those inputs with this tree's sgchem_uniform_field().
-// stdin: UnitMass UnitLength UnitVelocity HubbleParam zeta DGR D/H MinGasTemp G0_bg G0 G0_LW use_stella_dev_inputs ndt dt[ndt]
+// stdin: UnitMass UnitLength UnitVelocity HubbleParam zeta DGR D/H MinGasTemp G0_bg G0 G0_LW use_production_inputs ndt dt[ndt]
 // / 11 metal slots / then
 // "id rho u T_dust x[0..TRAC_NUM-1]" per cell (start state)
 // stdout: id u T Ne x(H2) x(H+) x(CO) T_dust per cell
@@ -48,7 +48,7 @@ int main(int argc, char **argv)
     base.dust_to_gas_ratio = std::min(dgr * Z[0] / 0.014, 10.0);
     base.abhe = chem_cxx_abhe_default(); base.X_H_chem = chem_cxx_xh_default();
 
-    {   // stella_dev chem_interface.cc:323-372 for an isotropic field: pixel fluxes [luminosity flux units] and floors
+    {   // production recipe (chem_interface.cc) for an isotropic field: pixel fluxes [luminosity flux units] and floors
         const int npix = 12;
         const double uH = HABING_EGY_DENSITY_6_13P6EV_CGS, fac = 1.0 / (4. * M_PI * 2.99792458e10 * L * L);
         double uv_min = 0.324e-2 * G0s / npix / (fac / uH), lw_min = 0.1 * uv_min, uv_tot = 0, lw_tot = 0, nuv = 0, opt = 0;

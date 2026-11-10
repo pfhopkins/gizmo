@@ -6,7 +6,7 @@ test_sgchem_cell_state: SGCHEM network 5 adds 40 B to the gas cell (three tracke
 test_sgchem_snapshot_io: start values in snapshot 0; SGChemTracAbund and SGChemDustTemp equal the standalone run; a
 restart from a snapshot whose datasets carry the old Chemcool* names reads them and continues as the standalone run.
 test_sgchem_restart: a run stopped at half time and continued from its restart files ends identical to the uninterrupted run.
-test_sgchem_habing_field: a uniform Habing-shaped field at G0 = 1, 10, 100 gives the inputs of stella_dev's production
+test_sgchem_habing_field: a uniform Habing-shaped field at G0 = 1, 10, 100 gives the inputs of the production
 path, and the cells equal the standalone run on them.
 test_sgchem_ledger: ledger.txt rows (chemistry heating and cooling) at every snapshot close the box's thermal energy
 budget and are identical with 1 and 4 threads; test_sgchem_restart also checks they survive a restart.
@@ -83,7 +83,7 @@ def test_sgchem_cell_state(box):
     assert grow == 8 * (3 + 2), f"gas cell grows by {grow} B with SGCHEM network 5"
 
 
-def standalone(tables, snap0, times, start=None, field=(0.0, 0.0, 0.0), stella_dev_inputs=False, over={}):
+def standalone(tables, snap0, times, start=None, field=(0.0, 0.0, 0.0), production_inputs=False, over={}):
     """cell_standalone.cc built in the box build's src/ (same config), fed the cells' density and energy and the run's timesteps."""
     src = path.join(ROOT, "src")
     cc = subprocess.run("make -n -W cooling/sgchem/sgchem_cell.cc cooling/sgchem/sgchem_cell.o", shell=True, cwd=src,
@@ -108,7 +108,7 @@ def standalone(tables, snap0, times, start=None, field=(0.0, 0.0, 0.0), stella_d
     assert np.allclose(dts, np.diff(times)[1:], rtol=1e-12, atol=0)
     lines = [f"{p['UnitMass_in_g']!r} {p['UnitLength_in_cm']!r} {p['UnitVelocity_in_cm_per_s']!r} {p['HubbleParam']!r} "
              f"{p['SGChemCosmicRayIonRate']!r} {p['SGChemDustToGasRatio']!r} {p['SGChemDeuteriumAbundance']!r} {p['MinGasTemp']!r} "
-             + " ".join(repr(float(x)) for x in field) + f" {int(stella_dev_inputs)} "
+             + " ".join(repr(float(x)) for x in field) + f" {int(production_inputs)} "
              f"{len(dts)} " + " ".join(repr(float(d)) for d in dts), " ".join(repr(float(z)) for z in g["Metallicity"][0])]
     if start is None:  # fresh start: the start values of the cells
         start = np.tile([10.0, 0.0, 1.0e-4, 0.0], (len(g["ParticleIDs"]), 1))
@@ -220,7 +220,7 @@ def test_sgchem_restart(tables, box):
 
 @pytest.mark.parametrize("g0", [1.0, 10.0, 100.0])
 def test_sgchem_habing_field(tables, box, g0):
-    """uniform Habing-shaped field: inputs as stella_dev's production path (12 pixels, floors, NUV/optical grain heating),
+    """uniform Habing-shaped field: inputs as the production path (12 pixels, floors, NUV/optical grain heating),
     and the box cells equal the standalone run on those inputs"""
     field = (1.7, g0, g0)  # SGChemBackgroundG0, SGChemG0, SGChemG0_LW
     out = path.join(HERE, f"output_g0_{g0:g}")
@@ -234,7 +234,7 @@ def test_sgchem_habing_field(tables, box, g0):
     with h5py.File(path.join(out, "snapshot_000.hdf5")) as s0, h5py.File(path.join(out, "snapshot_002.hdf5")) as s2:
         times = step_times(path.join(out, "cpu.txt"))
         ref = standalone(tables, s0, times, field=field)
-        sd = standalone(tables, s0, times, field=field, stella_dev_inputs=True)
+        sd = standalone(tables, s0, times, field=field, production_inputs=True)
         g = s2["PartType0"]
         ids = [int(i) for i in g["ParticleIDs"][:]]
         got = np.column_stack([g["InternalEnergy"][:], g["Temperature"][:], g["SGChemTracAbund"][:], g["SGChemDustTemp"][:]])
@@ -245,8 +245,8 @@ def test_sgchem_habing_field(tables, box, g0):
     din = np.abs(f[3:] / f[:3] - 1)
     dev = np.max(np.abs(got / want - 1), axis=0)
     dsd = np.abs(one_zone(ref) / one_zone(sd) - 1)
-    print(f"G0 = {g0:g}: inputs (G0, G0_LW, G0_dust) stella_dev path {f[:3]}, this tree {f[3:]}, relative {din}; "
-          f"cells vs standalone (u, T, H2, H+, CO, T_dust) {dev} (density spread {spread:.2g}); one-zone on this tree's vs stella_dev's inputs {dsd}; "
+    print(f"G0 = {g0:g}: inputs (G0, G0_LW, G0_dust) production path {f[:3]}, this tree {f[3:]}, relative {din}; "
+          f"cells vs standalone (u, T, H2, H+, CO, T_dust) {dev} (density spread {spread:.2g}); one-zone on this tree's vs the production inputs {dsd}; "
           f"T = {got[0, 1]:.6g} K, x(H2) = {got[0, 2]:.4g}, x(CO) = {got[0, 4]:.4g}, T_dust = {got[0, 5]:.4g} K")
     assert np.all(din < 1e-14) and np.all(dev < 1e-6) and np.all(dsd < 1e-5)
 
@@ -362,7 +362,7 @@ int main(void) {
 
 
 def test_sgchem_solar_metallicity(tables, box):
-    """InitMetallicity 1 (solar) sets the total metal mass fraction to the stella_dev value 0.014 in a SGChem build without the stellar tables
+    """InitMetallicity 1 (solar) sets the total metal mass fraction to the value 0.014 in a SGChem build without the stellar tables
     (before: 0.02). Bar written before the run: every cell of snapshot 0 has Metallicity[0] = 0.014 to 1e-12."""
     with h5py.File(path.join(HERE, "output", "snapshot_000.hdf5")) as s0:
         z = s0["PartType0/Metallicity"][:, 0]

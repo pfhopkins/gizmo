@@ -1,9 +1,9 @@
 """ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR for the RT_ISRF_BACKGROUND field (no SGCHEM) in the tall-box configuration
-(periodic x/y by image sums, open z), against stella_dev GHOSDT_G0_CR (test/ghosdt_g0_cr there, same IC and parameters).
+(periodic x/y by image sums, open z), with a pure-gas lattice IC.
 
 A 50 pc box of cold gas (n_H ~ 100 cm^-3) forms stars without feedback while 20 pre-existing stars (ages 0-40 Myr from
 InitStellarAge) age through the 30 Myr window. At every star-formation call the printed FactorG0 must equal, to 1e-12,
-[M(type-4 stars younger than 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr] rebuilt from the final snapshot (stella_dev's sum),
+[M(type-4 stars younger than 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr] rebuilt from the final snapshot,
 the running sum equal the full scan, and the background field ISRF_BACKGROUND_STRENGTH = max(F, 0.324e-2 / 1.7)
 (InterstellarRadiationFieldStrength = 1), printed as G0 = 1.7 x that. F must rise with star formation and fall when an
 old star leaves the window.
@@ -24,7 +24,7 @@ LINE = re.compile(r"RECENT_SFR: (\S+) (\S+) (\S+) (\d+) (\S+) (\S+)")
 
 
 def make_ics(out):
-    """as stella_dev test/ghosdt_g0_cr, lifted to the middle of the 4-times-taller box: 4096 gas cells at n_H ~ 100 cm^-3, T ~ 100 K, 20 type-4 stars"""
+    """lifted to the middle of the 4-times-taller box: 4096 gas cells at n_H ~ 100 cm^-3, T ~ 100 K, 20 type-4 stars"""
     rng = np.random.default_rng(1)
     g = (np.arange(16) + 0.5) / 16 * BOX
     xg = np.stack(np.meshgrid(g, g, g, indexing="ij"), -1).reshape(-1, 3) + [0, 0, Z_SHIFT]  # in the middle of the tall box, away from the z faces (stars crossing them are removed)
