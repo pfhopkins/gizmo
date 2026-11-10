@@ -130,27 +130,9 @@ static double fac_magnetic_pressure;
     hydro routines, AFTER the neighbors have all been checked and summed */
 /* --------------------------------------------------------------------------------- */
 /* --------------------------------------------------------------------------------- */
-#if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
-/*! global gas metal budget after each hydro step: sum of M*Z, and the diffusive exchange still pending (0 without TURB_DIFF_METALS_EXACT_CONSERVATION) */
-static void turb_diff_metals_budget_log(void)
-{
-    double loc[2] = {0, 0}, tot[2];
-    for(int i = 0, n_local = ghost_get_num_local(); i < n_local; i++) /* imported ghost copies sit above the local cells here */
-    {
-        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
-        loc[0] += P[i].Mass * P[i].Metallicity[0];
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-        loc[1] += CellP[i].Dyield_pending[0];
-#endif
-    }
-    MPI_Allreduce(loc, tot, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    if(ThisTask == 0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e\n", All.Time, tot[0], tot[1]);}
-}
-#endif
-
 void hydro_final_operations_and_cleanup(void)
 {
-#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && defined(OUTPUT_MASS_BALANCE_BREAKDOWN)
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(OUTPUT_MASS_BALANCE_BREAKDOWN)
     double diff_mz_pair = 0, diff_mz_clamp = 0, diff_mz_gross = 0;
 #endif
 #ifdef _OPENMP
@@ -328,18 +310,8 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 
 
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)) /* update the metal masses from exchange */
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION /* add the exchange received while inactive; floor at 0 (a fractional floor creates metal) */
-            for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] += CellP[i].Dyield_pending[k]; CellP[i].Dyield_pending[k] = 0;}
-#ifdef OUTPUT_MASS_BALANCE_BREAKDOWN
-            {double mz_new = P[i].Metallicity[0] + CellP[i].Dyield[0] / P[i].Mass, floor_add = (mz_new < 0) ? -mz_new * P[i].Mass : 0;
-            #pragma omp critical(mass_balance_diff)
-            {diff_mz_pair += CellP[i].Dyield[0]; diff_mz_clamp += floor_add; diff_mz_gross += fabs(CellP[i].Dyield[0]);}}
-#endif
-            for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.);}
-#else
+#if (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE) /* update the metal masses from exchange */
             for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
-#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange: offsets within Dyield match Metallicity layout */
             {int dc0 = ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY; /* base offset for dustchem in Metallicity/Dyield */
             for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[dc0+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
@@ -463,10 +435,27 @@ void hydro_final_operations_and_cleanup(void)
         } // closes P[i].Type==0 check and so closes loop over particles i
     } // for (loop over active particles) //
 
-#if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
-    turb_diff_metals_budget_log();
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE /* owners wrote to inactive neighbours too: apply every cell's exchange, then clear it */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
 #endif
-#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && defined(OUTPUT_MASS_BALANCE_BREAKDOWN)
+    for(int i = 0; i < N_gas; i++)
+    {
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        double m_metal_ref = CellP[i].MassTrue; /* metal mass is MassTrue*Z, kept by the kick under mass change */
+#else
+        double m_metal_ref = P[i].Mass;
+#endif
+#ifdef OUTPUT_MASS_BALANCE_BREAKDOWN
+        {double mz_new = P[i].Metallicity[0] + CellP[i].Dyield[0] / m_metal_ref, mz_floor = 0.01*P[i].Metallicity[0], floor_add = (mz_new < mz_floor) ? (mz_floor - mz_new) * m_metal_ref : 0;
+        #pragma omp critical(mass_balance_diff)
+        {diff_mz_pair += CellP[i].Dyield[0]; diff_mz_clamp += floor_add; diff_mz_gross += fabs(CellP[i].Dyield[0]);}}
+#endif
+        for(int k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / m_metal_ref , 0.01*P[i].Metallicity[k]); CellP[i].Dyield[k] = 0;}
+    }
+#endif
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(OUTPUT_MASS_BALANCE_BREAKDOWN)
     ledger_diffusion_breakdown(diff_mz_pair, diff_mz_clamp, diff_mz_gross);
 #endif
     

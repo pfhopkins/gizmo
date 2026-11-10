@@ -41,4 +41,9 @@ double hll_correction_fn(double ui, double uj, double wt, double kappa,
     return -1.0 * k_hll * Face_Area_Norm * v_hll * (ui - uj);
 }
 
+/* ownership of a pair exchange (MFV mass flux, METALS_EXACT_PAIRWISE_EXCHANGE): the endpoint with the shorter step
+   applies it to both cells; with equal steps each side applies half; otherwise the other side does it */
+#define PAIR_EXCHANGE_I_OWNS(dt_i, dt_j) ((dt_i) < (dt_j))
+#define PAIR_EXCHANGE_SPLIT(dt_i, dt_j)  ((dt_i) == (dt_j))
+
 #endif /* HYDRO_PAIR_TYPES_H */

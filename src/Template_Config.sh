@@ -119,7 +119,7 @@
 # -------------------------------------- Smagorinsky Turbulent Eddy Diffusion Model
 # --------------------------------------- Users of these modules should cite Hopkins et al. 2017 (arXiv:1702.06148) and Colbrook et al. (arXiv:1610.06590)
 #TURB_DIFF_METALS               # turbulent diffusion of metals (passive scalars); requires METALS
-#TURB_DIFF_METALS_EXACT_CONSERVATION # each side of a pair moves half the metal exchange over its own timestep, the neighbour's share waits in Dyield_pending until its next active step: metal mass conserved to round-off with individual timesteps (metal floor 0). On by default with GALSF_SINGLE_STARS_FROM_IMF, with TURB_DIFF_METALS_MAX_DONOR_FRACTION_PER_PAIR=0.01
+#METALS_EXACT_PAIRWISE_EXCHANGE # metal mass conserved to round-off with individual timesteps: the shorter step owns each pair (diffusion, MFV metal flux) and writes both cells; not with GALSF_ISMDUSTCHEM_MODEL or TRANSPORT_SUBCYCLE
 #TURB_DIFF_ENERGY               # turbulent diffusion of internal energy (conduction with effective turbulent coefficients)
 #TURB_DIFF_VELOCITY             # turbulent diffusion of momentum (viscosity with effective turbulent coefficients)
 #TURB_DIFF_DYNAMIC              # replace Smagorinsky-style eddy diffusion with the 'dynamic localized Smagorinsky' model from Rennehan et al. (arXiv:1807.11509 and 2104.07673): cite those papers for all methods. more accurate but more complex and expensive.
@@ -636,7 +636,6 @@
 #OUTPUT_GRADIENT_VEL            # outputs the full velocity gradient tensor field for the gas
 #OUTPUT_BFIELD_DIVCLEAN_INFO    # outputs the phi, phi-gradient, and numerical div-B fields used for de-bugging MHD simulations
 #OUTPUT_TIMESTEP                # outputs timesteps for each particle
-#OUTPUT_TURB_DIFF_METALS_BUDGET # print sum(M*Z) of the gas and the pending diffusive exchange after every hydro step (TURB_DIFF_METALS)
 #OUTPUT_SOFTENING               # outputs force softening for each particle
 #AGS_OUTPUTZETA                 # outputs the adaptive-softening correction term zeta for each adaptively-softened particle
 #OUTPUT_COOLRATE                # outputs the net cooling rate (negative where gas is net heating), and conduction rate if enabled

@@ -1,0 +1,15 @@
+% IC written by make_ics.py and read as a snapshot restart (RestartFlag 2), so its metallicities are kept
+InitCondFile               ics_000
+OutputDir                  output
+TimeMax                    0.0125             % 4 largest steps
+BoxSize                    0.5                % kpc
+TimeBetSnapshot            0.003125
+TimeBetStatistics          0.05
+MaxSizeTimestep            0.003125           % TimeMax/4: snapshots fall on full synchronisation points
+DesNumNgb                  32
+UnitLength_in_cm           3.085678e21        % 1 kpc
+UnitMass_in_g              1.989e43           % 1e10 Msun
+UnitVelocity_in_cm_per_s   1.0e5              % 1 km/s
+TurbDiffusionCoefficient   1.0
+MaxMemSize                 4000
+PartAllocFactor            3.0

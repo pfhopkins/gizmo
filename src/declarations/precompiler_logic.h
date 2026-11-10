@@ -1700,15 +1700,12 @@
 #endif
 
 #if defined(TURB_DIFF_METALS) && defined(GALSF_SINGLE_STARS_FROM_IMF) /* defaults of the single-star model */
-#ifndef TURB_DIFF_METALS_EXACT_CONSERVATION
-#define TURB_DIFF_METALS_EXACT_CONSERVATION
+#if !defined(METALS_EXACT_PAIRWISE_EXCHANGE) && !defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(TRANSPORT_SUBCYCLE)
+#define METALS_EXACT_PAIRWISE_EXCHANGE
 #endif
 #ifndef TURB_DIFF_METALS_MAX_DONOR_FRACTION_PER_PAIR
 #define TURB_DIFF_METALS_MAX_DONOR_FRACTION_PER_PAIR 0.01
 #endif
-#endif
-#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
-#error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
 #endif
 #if defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(TURB_DIFF_MASS) || defined(TURB_DIFF_METALS)
 #define TURB_DIFFUSION /* top-level switch to calculate properties needed for scalar turbulent diffusion/mixing: must enable with any specific version */
@@ -2365,4 +2362,16 @@
 #define EOS_USES_CGS
 #define EOS_PROVIDES_ENTROPY
 #define EOS_PROVIDES_CV
+#endif
+
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+#if !defined(METALS) || !(defined(TURB_DIFF_METALS) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#error "METALS_EXACT_PAIRWISE_EXCHANGE needs METALS with TURB_DIFF_METALS or HYDRO_MESHLESS_FINITE_VOLUME"
+#endif
+#if defined(GALSF_ISMDUSTCHEM_MODEL) || defined(TRANSPORT_SUBCYCLE)
+#error "METALS_EXACT_PAIRWISE_EXCHANGE is not implemented with GALSF_ISMDUSTCHEM_MODEL or TRANSPORT_SUBCYCLE"
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+#error "TURB_DIFF_METALS_EXACT_CONSERVATION is replaced by METALS_EXACT_PAIRWISE_EXCHANGE"
+#endif
 #endif

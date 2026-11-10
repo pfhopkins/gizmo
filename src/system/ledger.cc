@@ -164,9 +164,6 @@ void ledger_step_checkpoint(const char *tag)
     double loc[6] = {0, 0, 0, 0, 0, 0}, glob[6]; /* M_gas, M_stars, MZ_gas, MZ_stars, net yield (cumulative rows of this rank), diffusion exchange in flight */
     for(int i = 0, n_local = ghost_get_num_local(); i < n_local; i++) { /* imported ghost copies sit above the local cells */
         if(P[i].Mass <= 0) {continue;}
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-        if(P[i].Type == 0) {loc[5] += CellP[i].Dyield_pending[0];}
-#endif
         if(P[i].Type == 0) {loc[0] += P[i].Mass; loc[2] += P[i].Mass * P[i].Metallicity[0];}
         else if(P[i].Type == 4) {loc[1] += P[i].Mass; loc[3] += P[i].Mass * P[i].Metallicity[0];}
     }

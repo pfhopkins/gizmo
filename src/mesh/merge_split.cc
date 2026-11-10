@@ -791,9 +791,6 @@ static int make_sn_ejecta_cell(int i, int n_particles_split)
 #ifdef TURB_DIFF_METALS
     for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP[j].Dyield[k] = 0;}
 #endif
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-    for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP[j].Dyield_pending[k] = 0;}
-#endif
 #ifdef RADTRANSFER /* the copy took no radiation or cosmic rays with it: none created */
     for(int k = 0; k < N_RT_FREQ_BINS; k++) {
         CellP[j].Rad_E_gamma[k] = 0;
@@ -982,9 +979,6 @@ int split_particle_i(int i, int n_particles_split, double r_near)
 #endif
 #if defined(SINK_THERMALFEEDBACK)
         CellP[j].Injected_Sink_Energy = mass_of_new_particle * CellP[i].Injected_Sink_Energy; CellP[i].Injected_Sink_Energy -= CellP[j].Injected_Sink_Energy; /* pending energy (not specific): partition with the mass */
-#endif
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-        for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[j].Dyield_pending[k] = 0;} /* pending exchange (a mass, not a fraction) stays with the parent */
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
@@ -1210,6 +1204,9 @@ int merge_particles_ij(int i, int j)
 
 
     // now we have to deal with gas particle mergers //
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
+    const double mass_true_i = CellP[i].MassTrue, mass_true_j = CellP[j].MassTrue; /* metal mass is MassTrue*Z */
+#endif
     double mass_before_merger_i,mass_before_merger_j,volume_before_merger_i,volume_before_merger_j; mass_before_merger_i=P[i].Mass; mass_before_merger_j=P[j].Mass; volume_before_merger_i=P[i].Mass/CellP[i].Density; volume_before_merger_j=P[j].Mass/CellP[j].Density; // save some numbers for potential use below
     if(P[i].TimeBin < P[j].TimeBin)
     {
@@ -1467,7 +1464,11 @@ int merge_particles_ij(int i, int j)
     for (k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {ChimesGasVars[j].abundances[k] = (ChimesFloat) (((ChimesGasVars[j].abundances[k] * wt_j * wt_h_j) + (ChimesGasVars[i].abundances[k] * wt_i * wt_h_i)) / ((wt_j * wt_h_j) + (wt_i * wt_h_i)));}
 #endif // CHIMES
 #ifdef METALS
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
+    for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = (mass_true_j*P[j].Metallicity[k] + mass_true_i*P[i].Metallicity[k]) / (mass_true_i + mass_true_j);}
+#else
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving (includes nuclear species) */
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 #ifdef GALSF_ISMDUSTCHEM_HU_MODEL
     {double dj = wt_j * CellP[j].ISMDustChem_Dust_Metal[0], di = wt_i * CellP[i].ISMDustChem_Dust_Metal[0]; /* drift: dust-mass weighted */
@@ -1499,9 +1500,6 @@ int merge_particles_ij(int i, int j)
 #endif
 #if defined(SINK_THERMALFEEDBACK)
     CellP[j].Injected_Sink_Energy += CellP[i].Injected_Sink_Energy; /* pending energy (not specific): the survivor keeps both */
-#endif
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-    for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[j].Dyield_pending[k] += CellP[i].Dyield_pending[k];} /* pending exchange (a mass) adds */
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)

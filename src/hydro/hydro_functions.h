@@ -334,13 +334,8 @@ void hydro_accumulate_neighbor(
     viscosity_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
                            Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
                            dt_hydrostep, Fluxes);
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-    turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
-                                  face_density_for_diffusion, v_hll, dt_hydrostep, dt_hydrostep_i, mdot_estimated, out, CellP[j].Dyield_pending);
-#else
     turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
                                   face_density_for_diffusion, v_hll, dt_hydrostep, dt_hydrostep_i, mdot_estimated, out);
-#endif
     chimes_turb_diff_ions_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
                                        face_density_for_diffusion, v_hll, dt_hydrostep, dt_hydrostep_i, mdot_estimated, out);
     {
@@ -390,16 +385,21 @@ void hydro_accumulate_neighbor(
         if(fabs(dmass_holder) > dmass_limiter) {mass_flux_accepted *= dmass_limiter / fabs(dmass_holder); dmass_holder *= dmass_limiter / fabs(dmass_holder);}
         /* Timestep-conditional mass flux for machine-accurate conservation */
         double dt_hydrostep_j_loc = get_particle_timestep_in_physical(j, P);
-        if(local.dt_hydrostep_i < dt_hydrostep_j_loc) {
+        if(PAIR_EXCHANGE_I_OWNS(local.dt_hydrostep_i, dt_hydrostep_j_loc)) {
             out.dMass += dmass_holder;
-        } else if(local.dt_hydrostep_i == dt_hydrostep_j_loc) {
+        } else if(PAIR_EXCHANGE_SPLIT(local.dt_hydrostep_i, dt_hydrostep_j_loc)) {
             out.dMass += 0.5 * dmass_holder; mass_flux_accepted *= 0.5;
         } else {mass_flux_accepted = 0;}
         out.DtMass += Fluxes.rho;
         /* mass dm moved from x_j to x_i changes the potential energy by -dm g.(x_i-x_j); the thermal energy of the cell
            that transfers it repays that, so the pair's total energy is conserved (normalised per unit mass in hydro_toplevel) */
         out.GravWorkTerm += kernel.dp * mass_flux_accepted;
-#ifdef METALS
+#if defined(METALS) && defined(METALS_EXACT_PAIRWISE_EXCHANGE)
+        /* the owner moves the upwind metal mass with the mass it moves, to both sides (the kick keeps metal mass under mass change) */
+        if(PAIR_EXCHANGE_I_OWNS(local.dt_hydrostep_i, dt_hydrostep_j_loc) || PAIR_EXCHANGE_SPLIT(local.dt_hydrostep_i, dt_hydrostep_j_loc)) { for(k=0;k<NUM_METAL_SPECIES;k++) {
+            double dmetal = (PAIR_EXCHANGE_I_OWNS(local.dt_hydrostep_i, dt_hydrostep_j_loc) ? 1.0 : 0.5) * dmass_holder * ((dmass_holder > 0) ? P[j].Metallicity[k] : local.Metallicity[k]);
+            out.Dyield[k] += dmetal; HYDRO_ATOMIC_ADD(&CellP[j].Dyield[k], (MyFloat)(-dmetal)); } }
+#elif defined(METALS)
         if(Fluxes.rho > 0) { for(k=0;k<NUM_METAL_SPECIES;k++) {out.Dyield[k] += (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;} }
 #endif
     }
@@ -472,10 +472,10 @@ void hydro_accumulate_neighbor(
         dmass_limiter *= 0.1;
         if(fabs(dmass_holder) > dmass_limiter) {dmass_holder *= dmass_limiter / fabs(dmass_holder);}
         double dt_hydrostep_j_loc = get_particle_timestep_in_physical(j, P);
-        if(local.dt_hydrostep_i < dt_hydrostep_j_loc) {
+        if(PAIR_EXCHANGE_I_OWNS(local.dt_hydrostep_i, dt_hydrostep_j_loc)) {
             /* i has shorter timestep: both sides get full flux */
             HYDRO_ATOMIC_ADD(&CellP[j].dMass, (MyDouble)(-dmass_holder));
-        } else if(local.dt_hydrostep_i == dt_hydrostep_j_loc) {
+        } else if(PAIR_EXCHANGE_SPLIT(local.dt_hydrostep_i, dt_hydrostep_j_loc)) {
             /* equal timesteps: each side applies half so the pair sums to full */
             HYDRO_ATOMIC_ADD(&CellP[j].dMass, (MyDouble)(-0.5 * dmass_holder));
         }

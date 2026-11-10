@@ -9,7 +9,7 @@
  *
  * Owns:
  *   - GHOST_WRITEBACK_BUNDLE(hydro_force) manifest (PARTICLE_MAX(wakeup) +
- *     MFV GAS_ADD(dMass))
+ *     MFV GAS_ADD(dMass) + METALS_EXACT_PAIRWISE_EXCHANGE GAS_ADD_ARRAY(Dyield))
  *   - DeviceContext extension lifecycle (UVM int[TIMEBINS] for
  *     TimeBinActive, UVM int for need_wakeup)
  *   - Ghost lifecycle (ghost_writeback_begin pre-zeros ghost-region
@@ -76,8 +76,8 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(hydro_force)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     GHOST_WRITEBACK_GAS_ADD(dMass)
 #endif
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-    GHOST_WRITEBACK_GAS_ADD_ARRAY(Dyield_pending, NUM_METAL_SPECIES)
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    GHOST_WRITEBACK_GAS_ADD_ARRAY(Dyield, NUM_METAL_SPECIES)
 #endif
 GHOST_WRITEBACK_BUNDLE_END(hydro_force)
 
@@ -200,8 +200,8 @@ void HydroForceSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[j].dMass = 0;
 #endif
-#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
-            for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP[j].Dyield_pending[k] = 0;} /* the delta sent home is then the exact sum */
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+            for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP[j].Dyield[k] = 0;}
 #endif
             P[j].wakeup = 0;
         }
