@@ -360,6 +360,9 @@ void mechanical_fb_calc_toplevel(void)
 #ifdef HOT_GAS_TIMESTEP_SYNC
         HotGasSyncArmed = 1;
 #endif
+#ifdef RESOLVEDISM_HOTSYNC_CLAMP
+        HotsyncClampArmed = 1;
+#endif
 
         /* persistent grow-only buffer: no per-step alloc or O(N_gas) zero. The
          * buffer is all-zero at entry by the drain-zero invariant below.

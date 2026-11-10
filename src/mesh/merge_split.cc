@@ -704,7 +704,11 @@ void merge_and_split_particles(void)
         MPI_n_particles_merged = total[0]; MPI_n_particles_split = total[1]; MPI_n_particles_gas_split = total[2];
     }
 #ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
-    if(MPI_n_particles_split > 0) {single_star_ejecta_cells_flush(); HotGasSyncArmed = 1;}
+    if(MPI_n_particles_split > 0) {single_star_ejecta_cells_flush(); HotGasSyncArmed = 1;
+#ifdef RESOLVEDISM_HOTSYNC_CLAMP
+        HotsyncClampArmed = 1;
+#endif
+    }
 #endif
     if(ThisTask == 0)
     {
