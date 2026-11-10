@@ -10,6 +10,7 @@ cells, chemistry on, gravity on (the fluxes come from the gravity walk), 2 kyr.
   test_outward: the gas gains positive radial momentum about the star, at least half of what the log says (pixel centres, n_H = 1).
   test_no_extra_collectives: MPI collectives counted on rank 0 (test/ketju_quiet_steps interposer) equal those with the direct
     term at the star (GALSF_FB_RADPRESSURE_DIRECT_TERM_AT_STAR), with no star (quiet steps) and with the star shining.
+  test_radial_shells_quiet_steps: no star: GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS adds no MPI collective.
 """
 import os
 import re
@@ -156,15 +157,25 @@ def test_outward(tables):
     assert pr > 0.5 * rows[:, 6].sum(), "pushed away from the star"
 
 
-@pytest.mark.parametrize("star_on", [False, True], ids=["quiet", "shining"])
-def test_no_extra_collectives(tables, star_on):
+def collectives(builds, star_on, tables):
+    """(MPI collectives on rank 0, steps) per build, counted with the test/ketju_quiet_steps interposer"""
     so = HERE / "mpi_collective_count.so"
     subprocess.run(["mpicc", "-shared", "-fPIC", "-O1", str(HERE.parent / "ketju_quiet_steps" / "mpi_collective_count.c"), "-o", str(so)], check=True)
     got = {}
-    for tag, flags in (("disjoint", ()), ("at_star", ("GALSF_FB_RADPRESSURE_DIRECT_TERM_AT_STAR",))):
+    for tag, flags in builds:
         d = run(build(tag, flags), f"collectives_{tag}_{int(star_on)}", tables, 1.0, star_on, so)[0]
         out = (d / f"test_{NAME}.out").read_text()
         got[tag] = (int(re.search(r"MPI_COLLECTIVES total (\d+)", out).group(1)), len(re.findall(r"^Sync-Point", out, re.M)))
-    print(f"collectives (total, steps): per cell {got['disjoint']}, at the star {got['at_star']}")
-    assert got["disjoint"][1] == got["at_star"][1]
-    assert got["disjoint"][0] == got["at_star"][0]
+    print(f"collectives (total, steps): {got}")
+    return list(got.values())
+
+
+@pytest.mark.parametrize("star_on", [False, True], ids=["quiet", "shining"])
+def test_no_extra_collectives(tables, star_on):
+    a, b = collectives((("disjoint", ()), ("at_star", ("GALSF_FB_RADPRESSURE_DIRECT_TERM_AT_STAR",))), star_on, tables)
+    assert a == b
+
+
+def test_radial_shells_quiet_steps(tables):
+    a, b = collectives((("disjoint", ()), ("shells", ("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",))), False, tables)
+    assert a == b
