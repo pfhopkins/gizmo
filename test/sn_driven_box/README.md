@@ -23,4 +23,7 @@ no driving, at 10, 1 and 0.1 Msun cells, dying 10 kyr before the 50 kyr step bou
 explosion the gas holds the explosion energy within 10 %. Without the causal wake (`SNE_BROADCAST_TIMESTEP`) the long gas
 steps around the explosion make the hydro create or remove energy: 2.27, 1.75 and 0.81 at the three resolutions, G_cum 0.96.
 
+`test_no_wake_collective_without_supernova`: on steps without a supernova the causal wake makes no MPI collective (counted
+per caller on rank 0 with the LD_PRELOAD counter of test/hot_gas_timebin_clamp).
+
 Run: `pytest test/sn_driven_box`, ranks from `GIZMO_TEST_SN_BOX_RANKS` (default 32).
