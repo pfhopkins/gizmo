@@ -355,10 +355,21 @@ void mechanical_fb_calc_toplevel(void)
          * on whether to call it. MPI_Allreduce first; if no rank has any source,
          * every rank skips the mech_fb path entirely (no allocation, no kernel). */
         int any_local = (num_active > 0) ? 1 : 0, any_active = 0;
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+        { /* whether any rank may write an event row rides this reduction */
+            int loc_in[2] = {any_local, single_star_feedback_log_rows_local()}, glob_in[2] = {0, 0};
+            MPI_Allreduce(loc_in, glob_in, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            any_active = glob_in[0]; single_star_feedback_set_log_rows(glob_in[1]);
+        }
+#else
         MPI_Allreduce(&any_local, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+#endif
         if(!any_active) { return; }
 #ifdef HOT_GAS_TIMESTEP_SYNC
         HotGasSyncArmed = 1;
+#endif
+#ifdef RESOLVEDISM_HOTSYNC_CLAMP
+        HotsyncClampArmed = 1;
 #endif
 
         /* persistent grow-only buffer: no per-step alloc or O(N_gas) zero. The

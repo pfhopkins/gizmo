@@ -10,5 +10,6 @@ deposited in the absorbing cell, all deposits scaled to the emitted luminosity w
 | `test_snapshot_fields` | `OUTPUT_SGCHEM_RADIATION_FIELDS`: fields present, G0_FUV = analytic (3 %), star UV, LW luminosities and Lyman photon rate = tables |
 | `test_outward` | the gas gains outward momentum |
 | `test_no_extra_collectives[quiet]`, `[shining]` | MPI collectives per run equal the direct term at the star, no star and one shining |
+| `test_radial_shells_quiet_steps` | no star: `GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS` adds no MPI collective |
 
 Inputs: `SUNDIALS_DIR`; tables from `GIZMO_STELLA_TABLES_DIR` (else `scripts/get_stella_tables.sh`).

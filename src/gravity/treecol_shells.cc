@@ -14,6 +14,7 @@
 void treecol_shells_photon_cap(void)
 {
     const double L_emit = (Nodes[All.TreeNodeIndexBase].stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC] + Nodes[All.TreeNodeIndexBase].stellar_lum[RT_FREQ_BIN_GENERIC_USER_FREQ]) * UNIT_LUM_IN_CGS;
+    if(!(L_emit > 0)) {return;} /* no light: nothing absorbed; the root is the same on every rank */
     const double to_NH = UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
     double abs_loc = 0, abs_glob = 0;
     for(int i : ActiveParticleList)

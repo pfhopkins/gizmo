@@ -69,17 +69,19 @@ static integertime hot_gas_sync_step(Vec3<double> *centre, double *R2)
 #ifdef RESOLVEDISM_HOTSYNC_CLAMP
 static integertime hotsync_ti = TIMEBASE; /* step of everything inside the sphere; TIMEBASE = no hot gas */
 static double hotsync_cen[3], hotsync_R2 = -1;
+int HotsyncClampArmed = 1; /* set by feedback events and new ejecta cells; off when no hot gas is left */
 
 /* gas above 1e6 K: a quarter of its shortest step, and a sphere around it (centroid + farthest hot cell + 3 largest kernels, not wrapped) */
 static void hotsync_clamp_prepare(void)
 {
+    hotsync_ti = TIMEBASE; hotsync_R2 = -1;
+    if(!HotsyncClampArmed) {return;}
     const double u_hot = (1.0e6 * BOLTZMANN_CGS) / ((2./3.) * 0.6 * PROTONMASS_CGS) / UNIT_SPECEGY_IN_CGS;
     std::vector<int> hot;
     for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0 && P[i].Mass > 0 && CellP[i].InternalEnergyPred > u_hot) {hot.push_back(i);}}
     int any_local = hot.empty() ? 0 : 1, any = 0;
     MPI_Allreduce(&any_local, &any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    hotsync_ti = TIMEBASE; hotsync_R2 = -1;
-    if(!any) {return;}
+    if(!any) {HotsyncClampArmed = 0; return;}
     integertime ti_local = TIMEBASE, ti_glob; double aphys, sum_loc[4] = {0,0,0,0}, sum_glob[4], rh_loc[2] = {0,0}, rh_glob[2];
     for(int i : hot) {
         struct particle_data p_keep = P[i]; struct gas_cell_data c_keep = CellP[i];

@@ -202,3 +202,5 @@ test/treecol_pixel_columns_output/run_*/
 test/sgchem_input_pool_violations/*_override.params
 test/sgchem_threaded_cooling_crosscheck/*_override.params
 test/mechfb_energy/*_override.params*
+test/hot_gas_timebin_clamp/output_*/
+test/hot_gas_timebin_clamp/mpi_collective_callers.so

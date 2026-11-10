@@ -7,7 +7,13 @@ A particle takes a new step only when it next becomes active, and the clamp wake
 sync, when every cell has just been active: on such a sync a snapshot still shows the steps before the reassignment (10 %), and 1.1e-3 past
 one (3.0e-3 in the run) gas that entered the growing sphere since then is not clamped yet (75 % with the flag, 6 % without). The first
 choices of snapshot time were logically wrong for that reason; the snapshots moved to 3e-5 after each coarsest sync, the bar did not.
+
+Quiet steps: MPI collectives counted on rank 0 by calling function (LD_PRELOAD, mpi_collective_callers.c, addr2line on the
+non-PIE binary). No star: at most one from the clamp (find_timesteps), its start-up look at the ICs. A young 40 Msun star, winds only: none from the single-star
+feedback (single_star_*), while the mechanical feedback runs.
 """
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -15,7 +21,7 @@ from pathlib import Path
 import h5py
 import numpy as np
 import pytest
-from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, mpi_launch_command
+from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, mpi_launch_command, mpirun_is_open_mpi
 
 TEST_NAME = "hot_gas_timebin_clamp"
 TEST_DIR = Path(__file__).parent
@@ -59,3 +65,48 @@ def test_gas_near_hot_gas_keeps_its_step(run):
         f_in = (dt[inside] <= 2.0001 * dt[hot].min()).mean()
         print(f"{s.name}: {hot.sum()} hot, {inside.sum()} inside R = {R:.2f} pc, shortest hot step {dt[hot].min():.3e}, longest inside {dt[inside].max():.3e}, in step {f_in:.4f}")
         assert f_in >= 0.98
+
+
+@pytest.fixture(scope="module")
+def callers(run):
+    """collectives on rank 0 by calling function, for a run of the test's build with the given star (M, age before death [yr]) or none"""
+    tables = get_stellar_evolution_tables()
+    exe = TEST_DIR / "GIZMO"  # built by the run fixture
+    so = TEST_DIR / "mpi_collective_callers.so"
+    subprocess.run(["mpicc", "-shared", "-fPIC", "-O1", str(TEST_DIR / "mpi_collective_callers.c"), "-o", str(so)], check=True)
+    tab = Tables(tables["StellarTablesFile"])
+
+    def count(tag, star):
+        d = TEST_DIR / f"output_{tag}"
+        shutil.rmtree(d, ignore_errors=True)
+        d.mkdir()
+        stars = []
+        if star:
+            lM, lZ = np.log10(star[0]), np.log10(Z)
+            stars = [(star[0], tab._i2(tab.t_pms, lM, lZ) + tab._i2(tab.life, lM, lZ) - star[1], np.full(3, 0.5 * L + 0.17))]
+        make_treecol_pixels_ics(str(d / "snapshot_000.hdf5"), L, lattice(N_SIDE, L), stars, hsml=2.5)
+        (d / "run.params").write_text((TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SET_BY_TEST", tables["StellarTablesFile"]).replace("OutputDir                          output", f"OutputDir                          output_{tag}"))
+        fwd = ["-x", "LD_PRELOAD"] if mpirun_is_open_mpi() else []
+        out = subprocess.run(mpi_launch_command(2, 1) + fwd + [str(exe), str(d / "run.params"), "2", "0"], cwd=TEST_DIR, capture_output=True, text=True,
+                             env={**os.environ, "LD_PRELOAD": str(so)}, check=True).stdout
+        (d / "run.out").write_text(out)
+        rows = re.findall(r"^MPI_CALLER (0x[0-9a-f]+) (\d+)", out, re.M)
+        assert rows, out[-500:]
+        names = subprocess.run(["addr2line", "-f", "-C", "-e", str(exe)] + [a for a, _ in rows], capture_output=True, text=True, check=True).stdout.splitlines()[0::2]
+        by = {}
+        for nm, (_, c) in zip(names, rows):
+            by[nm] = by.get(nm, 0) + int(c)
+        print(tag, sorted(by.items(), key=lambda x: -x[1])[:12])
+        return by
+    return count
+
+
+def test_quiet_steps_no_clamp_collective(callers):
+    by = callers("quiet", None)
+    assert sum(c for f, c in by.items() if "find_timesteps" in f or "hotsync" in f) <= 1, by  # the start-up look at the ICs
+
+
+def test_wind_steps_no_single_star_collective(callers):
+    by = callers("winds", (40.0, 1.0e6))
+    assert sum(c for f, c in by.items() if f.startswith("mechanical_fb")) > 0, by  # the feedback ran
+    assert not [f for f in by if f.startswith("single_star")], by
