@@ -1,0 +1,51 @@
+<job>
+problem_id = dr1
+<output1>
+data_format = %.12e
+file_type = tab
+variable = prim
+dt = 0.3
+<time>
+cfl_number = 0.4
+nlim = -1
+tlim = 0.3
+integrator = vl2
+xorder = 2
+ncycle_out = 1000
+<mesh>
+nx1 = 8192
+x1min = 0.0
+x1max = 4.0
+ix1_bc = periodic
+ox1_bc = periodic
+nx2 = 1
+x2min = -0.5
+x2max = 0.5
+nx3 = 1
+x3min = -0.5
+x3max = 0.5
+<hydro>
+gamma = 1.6666666666666667
+dfloor = 1e-10
+pfloor = 1e-12
+<problem>
+shock_dir = 1
+xshock = 2.0
+compute_error = false
+dl = 1.0
+ul = -2.0
+vl = 0.0
+wl = 0.0
+byl = 0.5
+bzl = 0.0
+pl = 0.45
+bxl = 0.75
+dr = 1.0
+ur = 2.0
+vr = 0.0
+wr = 0.0
+byr = 0.5
+bzr = 0.0
+pr = 0.45
+bxr = 0.75
+
