@@ -372,6 +372,7 @@ void run(void)
              * Force a full eager drift before either decomp variant fires.
              * In eager mode this is a no-op (g_last_full_drift_Ti cache hit). */
             gizmo_full_drift_to(All.Ti_Current);
+            domain_arm_step_prepay(1);   /* these cost the step they are made for (domain.cc) */
 #ifdef DOMAIN_LIGHTWEIGHT_REPARTITION
             /* Which of the two the step gets is a domain question.  This once keyed on
              * TreeReconstructFlag, so anything that merely wanted a fresh tree also suppressed the
@@ -381,6 +382,7 @@ void run(void)
             else
 #endif
             {domain_Decomposition(0, 0, 1, 1);}  /* full decomposition needed */
+            domain_arm_step_prepay(0);
             /* Cleared here rather than inside the decomposition, because the request is made to
                this loop: group finding raises it and then runs decompositions of its own, which
                would otherwise consume it and leave the tree storage it later frees unclaimed. */
