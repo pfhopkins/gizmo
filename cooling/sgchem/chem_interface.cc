@@ -452,7 +452,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
             G0_tot += g_pix[i];
             G0_LW_tot += DMAX(s_lw, G0_LW_floor_pix);
         }
-        for(i = 0; i < NPIX; i++) {in->fac_uv[i] = g_pix[i] / G0_tot;}
+        for(i = 0; i < NPIX; i++) {in->fac_uv[i] = (G0_tot > 0) ? g_pix[i] / G0_tot : 1. / NPIX;} /* zero field: uniform weights */
         in->G0 = G0_tot;
         in->G0_LW = G0_LW_tot;
 #if defined(RT_OPTICAL_NIR)
@@ -819,7 +819,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         }
 #endif
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(RADTRANSFER)
-        in->fac_uv[i] = CellP[target].UV_flux[i] / UV_flux_tot;
+        in->fac_uv[i] = (UV_flux_tot > 0) ? CellP[target].UV_flux[i] / UV_flux_tot : 1. / NPIX; /* zero field: uniform weights */
 #endif
     }
 #endif
