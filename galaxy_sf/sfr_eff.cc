@@ -592,7 +592,14 @@ void star_formation_parent_routine(void)
                 if(sf_channel == SF_CHANNEL_STELLA)
 #endif
                 {double nH = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
-                if(nH > All.nHcutoffSF && prob < 2.0) { /* instant SF above density cutoff */
+                int cutoff_veto = (P[i].Mass <= 0); /* the vetoes of get_starformation_rate that the forced path would bypass */
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+                if(CellP[i].Ionized > 0) {cutoff_veto = 1;}
+#endif
+#ifdef SINK_WIND_SPAWN
+                if(P[i].ID == All.SpawnedWindCellID) {cutoff_veto = 1;}
+#endif
+                if(nH > All.nHcutoffSF && prob < 2.0 && !cutoff_veto) { /* instant SF above density cutoff */
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
                     /* forced formation skips the 1/M acceptance: redraw by number (accept mass-weighted draw with M_min/M) */
                     double m_lo = DMAX(All.IMFSampleMinMass, 0.08);
