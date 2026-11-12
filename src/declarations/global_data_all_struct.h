@@ -504,6 +504,14 @@ struct global_data_all_processes
   double FacSfThreshMJ;              /*!< SF only where the Jeans mass is below FacSfThreshMJ x DesNumNgb x cell mass */
   double SFCooldownFreeFallFraction; /*!< after a birth the parent cell forms no star for this fraction of its free-fall time */
 #endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+  double PopIII_Zcrit_solar;         /*!< gas below this Z [Zsun] forms Pop III stars */
+  double PopIII_nH_thresh;           /*!< Pop III SF: n_H threshold [cm^-3] */
+  double PopIII_xH2_min;             /*!< Pop III SF: minimum n(H2)/n_H */
+  double PopIII_Mreservoir;          /*!< Pop III SF: Jeans mass below this reservoir [Msun] */
+  int PopIII_IMF_Type;               /*!< 0: characteristic-mass IMF, 1: log-flat */
+  double PopIII_IMF_Mchar, PopIII_IMF_Mmin, PopIII_IMF_Mmax; /*!< Pop III IMF characteristic mass and range [Msun] */
+#endif
 #ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY
   double nHcutoffSF;                 /*!< hydrogen number density [cm^-3] above which an eligible cell forms its star at once */
 #endif

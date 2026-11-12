@@ -2087,6 +2087,9 @@
 #if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(GALSF) && !defined(METALS)
 #error "OUTPUT_MASS_METAL_ENERGY_LEDGER: the star-formation and feedback rows need METALS"
 #endif
+#if defined(GALSF_SINGLE_STARS_POPIII) && (!defined(GALSF_SINGLE_STARS_SF_CRITERION) || !defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS) || !defined(SGCHEM) || !defined(METALS))
+#error "GALSF_SINGLE_STARS_POPIII needs GALSF_SINGLE_STARS_SF_CRITERION, the gas collection, SGCHEM (H2 fraction) and METALS"
+#endif
 #if defined(SGCHEM_UVB_TREECOL_SHIELDING) && (!defined(SGCHEM) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS))
 #error "SGCHEM_UVB_TREECOL_SHIELDING needs SGCHEM and the TreeCol pixel columns (GALSF_RESOLVEDISM_TREECOL_PIXELS)"
 #endif

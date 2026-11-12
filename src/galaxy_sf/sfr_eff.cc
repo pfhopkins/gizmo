@@ -26,6 +26,20 @@ static constexpr uint64_t SINK_SEED_MASS_RNG_SALT = gizmo_loop_rng_salt("sink_se
 #define GRAVTREE_SOURCE_HOST_OWNER_TU  /* expose the source-helper core bodies (host-inline) for the wrappers below */
 #include "stellar_evolution_functions.h"
 #undef GRAVTREE_SOURCE_HOST_OWNER_TU
+#ifdef GALSF_SINGLE_STARS_POPIII
+#include "single_star_popIII.h"
+#include "../cooling/sgchem/sgchem_consts.h" /* IH2 */
+static constexpr uint64_t SINGLE_STAR_POPIII_IMF_RNG_SALT = gizmo_loop_rng_salt("single_star_popIII_imf");
+/* gas below the critical metallicity takes the Pop III channel */
+static inline bool single_star_popIII_cell(int i) {return popIII_gas_is_pristine(P[i].Metallicity[0], All.PopIII_Zcrit_solar * All.SolarAbundances[0]);}
+/* mass-weighted Pop III draw [Msun] on the keyed stream of the event */
+static double single_star_popIII_draw(uint64_t key, uint64_t event)
+{
+    uint64_t k = 0;
+    return popIII_draw_mass_weighted([&]() {return gizmo_gpu_rand_double(key, gizmo_rng_event_counter(SINGLE_STAR_POPIII_IMF_RNG_SALT, event, k++));},
+                                     All.PopIII_IMF_Type, All.PopIII_IMF_Mchar, All.PopIII_IMF_Mmin, All.PopIII_IMF_Mmax);
+}
+#endif
 
 /*!
  *  routines for star formation in cosmological/galaxy/single-star/black hole simulations
@@ -222,6 +236,14 @@ double get_starformation_rate(int i, int mode)
 #endif
         double rho_phys = CellP[i].Density * All.cf_a3inv, cs = CellP[i].effective_soundspeed(); /* physical, from the gas pressure (no magnetic term), as the reference implementation */
         double MJ = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)); /* pi^(5/2)/6 c_s^3 / (G^(3/2) rho^(1/2)) */
+#ifdef GALSF_SINGLE_STARS_POPIII
+        if(single_star_popIII_cell(i)) { /* pristine gas: the Pop III criterion in place of the Jeans test */
+            struct popIII_sf_params p = {All.PopIII_Zcrit_solar * All.SolarAbundances[0], All.PopIII_nH_thresh, All.PopIII_xH2_min, All.PopIII_Mreservoir};
+            double nH = rho_phys * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+            double divv = P[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3 * All.cf_hubble_a : 0);
+            return popIII_sf_allowed(nH, divv, CellP[i].TracAbund[IH2], MJ * UNIT_MASS_IN_SOLAR, 0, &p) ? rateOfSF : 0;
+        }
+#endif
         if(MJ >= All.FacSfThreshMJ * All.DesNumNgb * P[i].Mass) {return 0;}
 #ifdef GALSF_SINGLE_STARS_SF_CONVERGING_FLOW_ONLY
         if(P[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3 * All.cf_hubble_a : 0) >= 0) {return 0;} /* physical flow (Hubble flow included) diverging or static: no SF */
@@ -568,8 +590,15 @@ void star_formation_parent_routine(void)
                 prob = P[i].Mass / mass_of_star * pfac;
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* draw the star's mass first; P = (m_cell / M_star) pfac keeps the SFR on average (LYRA, Gutcke+21; as the reference implementation, P may exceed 1 when M_star < m_cell) */
                 double M_drawn = single_star_imf_draw_massweighted(All.IMFSampleMinMass, gizmo_rng_combine(particle_event_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);
+#ifdef GALSF_SINGLE_STARS_POPIII
+                const bool popIII_draw = single_star_popIII_cell(i);
+                if(popIII_draw) {M_drawn = single_star_popIII_draw(gizmo_rng_combine(particle_event_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);}
+#endif
 #ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY /* above nHcutoffSF the star forms now, its mass drawn number-weighted */
                 bool instant_sf = (CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS > All.nHcutoffSF) && (P[i].Mass > 0);
+#ifdef GALSF_SINGLE_STARS_POPIII
+                if(popIII_draw) {instant_sf = false;} /* pristine cells form only through their own criterion */
+#endif
 #ifdef GALSF_FB_FIRE_RT_HIIHEATING
                 if(CellP[i].DelayTimeHII > 0) {instant_sf = false;} /* the ionised-cell veto of the rate holds here too */
 #endif
