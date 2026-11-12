@@ -31,7 +31,7 @@ KOKKOS_INLINE_FUNCTION void ism_dust_hu_env(int i, const struct particle_data *p
     e->G0 = All.SGChemG0;
 #endif
     for(int k = 0; k < 3; k++) {e->ahyd[k] = cell[i].HydroAccel[k] * accel_to_kms_yr;}
-    e->divv = pp[i].Particle_DivVel * All.cf_a2inv / UNIT_TIME_IN_YR;
+    e->divv = (pp[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3 * All.cf_hubble_a : 0)) / UNIT_TIME_IN_YR; /* physical, Hubble flow included */
 #ifdef GALSF_ISMDUSTCHEM_HU_NO_BETATRON
     e->betatron = 0;
 #else
