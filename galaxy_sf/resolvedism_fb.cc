@@ -16,7 +16,7 @@
 
 /* Death-event log rows (SNinfo/AGBinfo), written when the outcome is known (booking), so failed
  * and no-gas events appear once each with their real (possibly zero) energy and mass return. */
-struct fb_death_row {double t, x, y, z, u, rho, mstar, mej, zej, yC, yO, ySi, yFe, age, life, E; long long id; int remtype, tb, status, agb;};
+struct fb_death_row {double t, x, y, z, u, rho, mstar, mej, zej, yC, yO, ySi, yFe, age, life, E, nH, T, h_pc, nngb, nH_birth, nH_stale; long long id; int remtype, tb, status, agb;};
 static std::vector<fb_death_row> FbDeathRows;
 #define FB_LOG_EXPLODED 0  /* exploded/ejected and deposited */
 #define FB_LOG_FAILED   1  /* failed SN (FSN/DBH): no energy, no ejecta */
@@ -27,6 +27,20 @@ static void fb_death_row_push(int i, int agb, int remtype, int status, double E,
     fb_death_row r; r.t = All.Time; r.x = P[i].Pos[0]; r.y = P[i].Pos[1]; r.z = P[i].Pos[2];
     r.u = P[i].InternalEnergyAroundParticle; r.rho = P[i].DensityAroundParticle; r.mstar = P[i].MstarSampleIMF[0];
     r.mej = y[0]; r.zej = y[1]; r.yC = y[2]; r.yO = y[3]; r.ySi = y[4]; r.yFe = y[5]; r.age = age; r.life = life; r.E = E;
+    { /* ambient state now, birth density, birth-frozen density */
+        const double nH_per_rho = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;
+        r.nH = P[i].DensityAroundParticle * All.cf_a3inv * nH_per_rho;
+        r.T = P[i].InternalEnergyAroundParticle * UNIT_SPECEGY_IN_CGS * (GAMMA_DEFAULT - 1.) * 1.22 * PROTONMASS_CGS / BOLTZMANN_CGS; /* neutral mu=1.22 */
+        r.h_pc = P[i].KernelRadius * All.cf_atime * UNIT_LENGTH_IN_PC;
+        r.nngb = P[i].NumNgb;
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
+        r.nH_birth = P[i].FormationDensity * nH_per_rho;
+#else
+        r.nH_birth = 0;
+#endif
+        double af = (All.ComovingIntegrationOn && P[i].StellarAge > 0) ? P[i].StellarAge / All.Time : 1.;
+        r.nH_stale = r.nH_birth * af * af * af;
+    }
     r.id = (long long)P[i].ID; r.remtype = remtype; r.tb = P[i].TimeBin; r.status = status; r.agb = agb;
     FbDeathRows.push_back(r);
 }
@@ -44,10 +58,10 @@ static void fb_death_rows_flush(void)
     if(ThisTask == 0) {
         for(int k = 0; k < n_tot; k++) {
             const fb_death_row &r = all[k];
-            if(r.agb) fprintf(FdAGBinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %8.3f  %8.3f  %8.4f %8.4f %8.4f %8.4f  %.6e  %.6e  %3d  %d\n",
-                              r.t, r.x, r.y, r.z, r.u, r.rho, r.id, r.mstar, r.mej, r.zej, r.yC, r.yO, r.ySi, r.yFe, r.age, r.life, r.tb, r.status);
-            else fprintf(FdSNinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %d  %8.3f  %8.3f  %8.4f %8.4f %8.4f %8.4f  %.6e  %.6e  %3d  %.4e  %d\n",
-                              r.t, r.x, r.y, r.z, r.u, r.rho, r.id, r.mstar, r.remtype, r.mej, r.zej, r.yC, r.yO, r.ySi, r.yFe, r.age, r.life, r.tb, r.E, r.status);
+            if(r.agb) fprintf(FdAGBinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %8.3f  %8.3f  %8.4f %8.4f %8.4f %8.4f  %.6e  %.6e  %3d  %d  %.4e %.4e %.4e %7.2f %.4e %.4e\n",
+                              r.t, r.x, r.y, r.z, r.u, r.rho, r.id, r.mstar, r.mej, r.zej, r.yC, r.yO, r.ySi, r.yFe, r.age, r.life, r.tb, r.status, r.nH, r.T, r.h_pc, r.nngb, r.nH_birth, r.nH_stale);
+            else fprintf(FdSNinfo, "%12.6f  %10.6f %10.6f %10.6f  %10.3f %12.6e  %10lld  %8.3f  %d  %8.3f  %8.3f  %8.4f %8.4f %8.4f %8.4f  %.6e  %.6e  %3d  %.4e  %d  %.4e %.4e %.4e %7.2f %.4e %.4e\n",
+                              r.t, r.x, r.y, r.z, r.u, r.rho, r.id, r.mstar, r.remtype, r.mej, r.zej, r.yC, r.yO, r.ySi, r.yFe, r.age, r.life, r.tb, r.E, r.status, r.nH, r.T, r.h_pc, r.nngb, r.nH_birth, r.nH_stale);
         }
         fflush(FdSNinfo); fflush(FdAGBinfo); free(dsp); free(cnt);
     }
