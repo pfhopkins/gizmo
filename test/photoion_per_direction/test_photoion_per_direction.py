@@ -360,3 +360,37 @@ def test_run_shorter_than_the_photoionisation_step(built):
         t, until = F["Header"].attrs["Time"], F["PartType0/PhotoionizedUntilTime"][()]
     print("cells ionised past the end", int((until >= t).sum()), "of", int((until > 0).sum()))
     assert (until >= t).sum() > 0
+
+
+SFCUT = ("GALSF_SINGLE_STARS_SF_CRITERION", "GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY")
+
+
+@pytest.fixture(scope="module")
+def built_sfcut(built):
+    """the same build with the single-star SF criterion and the instant-SF density cutoff"""
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=SFCUT)
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_sfcut")
+        build_gizmo_for_test(TEST_NAME)
+    return built
+
+
+def test_no_instant_sf_in_ionised_cells(built_sfcut):
+    """bar (set before the run): every cell is above nHcutoffSF and fails the Jeans test, so a star can only come from the
+    forced path (lattice n_H = 10, cutoff 5); no star is born within R_S - dx of the source (ionised cells), stars are born beyond R_S + dx"""
+    import h5py
+    d, dx, n_H = run("sfcut", built_sfcut, exe="GIZMO_sfcut",
+                     overrides={"CritPhysDensity": "0", "nHcutoffSF": "5", "FacSfThreshMJ": "1e-6",
+                                "IMFSampleMinMass": "0.08", "SFCooldownFreeFallFraction": "0.1", "TimeMax": "5e-4", "TimeBetSnapshot": "5e-4",
+                                "TimeBetStatistics": "5e-4"})
+    R_S = stromgren_pc(log(d)[0, 2] * X_H, n_H)
+    with h5py.File(sorted((d / "output").glob("snapshot_*.hdf5"))[-1], "r") as F:
+        s = F["PartType4"]; L = F["Header"].attrs["BoxSize"]
+        x, ids = s["Coordinates"][()], s["ParticleIDs"][()]
+    born = np.atleast_2d(np.loadtxt(d / "output" / "single_star_births.txt"))[:, 1].astype(np.uint64) if (d / "output" / "single_star_births.txt").stat().st_size > 200 else np.zeros(0, np.uint64)
+    new = np.isin(ids, born)
+    src = x[~new][0]  # the source of the initial conditions
+    r = np.linalg.norm((x[new] - src + L / 2) % L - L / 2, axis=1)
+    print(f"R_S {R_S:.3f} pc, dx {dx:.3f} pc, new stars {len(r)}, closest {r.min() if len(r) else -1:.3f} pc")
+    assert not np.any(r < R_S - dx), np.sort(r)[:5]
+    assert np.any(r > R_S + dx)

@@ -569,7 +569,13 @@ void star_formation_parent_routine(void)
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* draw the star's mass first; P = (m_cell / M_star) pfac keeps the SFR on average (LYRA, Gutcke+21; as the reference implementation, P may exceed 1 when M_star < m_cell) */
                 double M_drawn = single_star_imf_draw_massweighted(All.IMFSampleMinMass, gizmo_rng_combine(particle_event_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);
 #ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY /* above nHcutoffSF the star forms now, its mass drawn number-weighted */
-                const bool instant_sf = (CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS > All.nHcutoffSF);
+                bool instant_sf = (CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS > All.nHcutoffSF) && (P[i].Mass > 0);
+#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+                if(CellP[i].DelayTimeHII > 0) {instant_sf = false;} /* the ionised-cell veto of the rate holds here too */
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+                if(All.Ti_Current < CellP[i].PhotoionizedUntil) {instant_sf = false;}
+#endif
                 if(instant_sf) {M_drawn = single_star_imf_draw_numberweighted(All.IMFSampleMinMass, gizmo_rng_combine(particle_event_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);}
 #endif
                 prob = (P[i].Mass / (M_drawn / UNIT_MASS_IN_SOLAR)) * pfac;
