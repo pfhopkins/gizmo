@@ -923,6 +923,16 @@
 
 /* ----- giant block of options for RHD modules ------ */
 
+/* Stella tree path: the upstream band flags RT_NUV / RT_OPTICAL_NIR switch on the tree band fields, with or without radiation pressure */
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(RADTRANSFER)
+#if defined(RT_NUV) && !defined(GALSF_RESOLVEDISM_NUV_VARIABLE)
+#define GALSF_RESOLVEDISM_NUV_VARIABLE
+#endif
+#if defined(RT_OPTICAL_NIR) && !defined(GALSF_RESOLVEDISM_OPT_VARIABLE)
+#define GALSF_RESOLVEDISM_OPT_VARIABLE
+#endif
+#endif
+
 /* Stella tree bands PE, LW, NUV, OPT plus each source's 6-8 eV share of NUV; G0(6-13.6 eV) = PE + share */
 #ifdef GALSF_RESOLVEDISM_G0_FROM_PE_PLUS_NUV_6_8EV_SHARE
 #if !defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER) || defined(RT_M1) || defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_LOCALRAYGRID)

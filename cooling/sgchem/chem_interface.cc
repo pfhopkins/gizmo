@@ -30,7 +30,7 @@
 #include "../../declarations/resolvedism_dgr.h"
 #include "sgchem_hminus_bands.h"
 #if defined(SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS) && (defined(SGCHEM_FORTRAN) || !defined(GALSF_RESOLVEDISM_G0_VARIABLE) || !defined(GALSF_RESOLVEDISM_OPT_VARIABLE) || !defined(GALSF_RESOLVEDISM_NUV_VARIABLE) || !(defined(EXPERIMENTAL_RADIATION_DISJOINT_BANDS) || defined(GALSF_RESOLVEDISM_CELL_FLUX_6_8EV_TOTAL)) || defined(TREE_RAY) || defined(RADTRANSFER))
-#error "SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS needs the C++ backend and the tree band fields (G0_VARIABLE with OPT/NUV, e.g. via GALSF_RESOLVEDISM_RADPRESSURE), not TREE_RAY/RADTRANSFER"
+#error "SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS needs the C++ backend and the tree band fields: GALSF_RESOLVEDISM_G0_VARIABLE with RT_NUV and RT_OPTICAL_NIR (or GALSF_RESOLVEDISM_RADPRESSURE), not TREE_RAY/RADTRANSFER"
 #endif
 #include "../../declarations/resolvedism_depletion.h"
 #include "../../galaxy_sf/resolvedism_selfcheck.h"

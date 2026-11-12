@@ -3,7 +3,8 @@
 #ifndef SGCHEM_HMINUS_BANDS_H
 #define SGCHEM_HMINUS_BANDS_H
 /* H- photodetachment by the stellar band fields (SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS):
- * k = c sum_b u_b <sigma/(h nu)>_b over 0.4-3.4, 3.4-6 and 6-13.6 eV, cross-section of Shapiro & Kang 1987
+ * k = c sum_b u_b <sigma/(h nu)>_b over the upstream bins RT_FREQ_BIN_OPTICAL_NIR (0.4133-3.444 eV), RT_FREQ_BIN_NUV less
+ * RT_FREQ_BIN_FUV_6_8EV (3.444-6 eV) and FUV_6_8EV + PHOTOELECTRIC (6-13.6 eV, the G0 band), cross-section of Shapiro & Kang 1987
  * (sigma = 7.928e5 (nu - nu0)^1.5 / nu^3 cm^2, h nu0 = 0.755 eV), in-band shape a 3e4 K blackbody. Standalone. */
 #include <math.h>
 
@@ -30,11 +31,11 @@ static inline double sgchem_hminus_band_mean(double E_lo_eV, double E_hi_eV, dou
     return a / w;
 }
 
-/* rate [s^-1] from the band energy densities [erg cm^-3]: optical/NIR 0.4-3.4 eV, NUV 3.4-6 eV, FUV 6-13.6 eV */
+/* rate [s^-1] from the band energy densities [erg cm^-3]: optical/NIR 0.4133-3.444 eV, NUV 3.444-6 eV, FUV 6-13.6 eV */
 static inline double sgchem_hminus_rate_from_bands(double u_opt, double u_nuv, double u_fuv)
 {
-    static const double a_opt = sgchem_hminus_band_mean(0.4, 3.4, SGCHEM_HM_BAND_SED_TEMP_K);
-    static const double a_nuv = sgchem_hminus_band_mean(3.4, 6.0, SGCHEM_HM_BAND_SED_TEMP_K);
+    static const double a_opt = sgchem_hminus_band_mean(0.4133, 3.444, SGCHEM_HM_BAND_SED_TEMP_K);
+    static const double a_nuv = sgchem_hminus_band_mean(3.444, 6.0, SGCHEM_HM_BAND_SED_TEMP_K);
     static const double a_fuv = sgchem_hminus_band_mean(6.0, 13.6, SGCHEM_HM_BAND_SED_TEMP_K);
     return 2.99792458e10 * (u_opt * a_opt + u_nuv * a_nuv + u_fuv * a_fuv);
 }
