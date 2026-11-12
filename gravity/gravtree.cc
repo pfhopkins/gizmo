@@ -12,6 +12,9 @@
 #include "../declarations/resolvedism_dgr.h"
 #include "../mesh/kernel.h"
 #include "./periodic_xy_images.h"
+#ifndef GRAVITY_POSTED_EXCHANGE_MAX_ACTIVE
+#define GRAVITY_POSTED_EXCHANGE_MAX_ACTIVE 10000 /* global active count below which the gravity exchange posts all partners at once (see gravity_tree) */
+#endif
 #include "../declarations/gpu_rng.h"
 #include "./analytic_gravity.h"
 
@@ -395,6 +398,12 @@ void gravity_tree(void)
                 memcpy(GravDataIn[j].NodeList,DataNodeList[DataIndexTable[j].IndexGet].NodeList, NODELISTLENGTH * sizeof(int));
             }
 
+            /* Small steps exchange with all partners at once: their messages are a few hundred bytes, and the
+               ordered pairwise schedule makes every pair wait on the one before it. Larger steps keep that
+               schedule: posting every message at once (KB-MB each to ~all partners) floods the receivers, and
+               was measured 10x slower for the gravity exchange on M2e5 steps with >1e4 active. GlobNumForceUpdate
+               is a global count, so all ranks choose the same path. Bitwise identical either way. */
+            const int posted_exchange = (GlobNumForceUpdate < GRAVITY_POSTED_EXCHANGE_MAX_ACTIVE);
             /* ok now we have to figure out if there is enough memory to handle all the tasks sending us their data, and if not, break it into sub-chunks */
             int N_chunks_for_import, ngrp_initial, ngrp;
             for(ngrp_initial = 1; ngrp_initial < (1 << PTask); ngrp_initial += N_chunks_for_import) /* sub-chunking loop opener */
@@ -420,18 +429,28 @@ void gravity_tree(void)
                 GravDataGet = (struct gravdata_in *) mymalloc("GravDataGet", Nimport * sizeof(struct gravdata_in));
                 GravDataResult = (struct gravdata_out *) mymalloc("GravDataResult", Nimport * sizeof(struct gravdata_out));
 
-                tstart = my_second(); Nimport = 0; /* reset because this will be cycled below to calculate the recieve offsets (Recv_offset) */
-                for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* exchange particle data */
+                tstart = my_second();
+                if(posted_exchange) /* imports land packed in partner order, as the ordered loop places them */
                 {
-                    recvTask = ThisTask ^ ngrp;
-                    if(recvTask < NTask)
+                    mpi_exchange_with_partners(ngrp_initial, ngrp_initial + N_chunks_for_import, TAG_GRAV_A,
+                                               (char *) GravDataIn, Send_count, Send_offset, sizeof(struct gravdata_in),
+                                               (char *) GravDataGet, Recv_count, NULL, sizeof(struct gravdata_in));
+                }
+                else
+                {
+                    Nimport = 0; /* recomputed below as the running receive offset */
+                    for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* exchange particle data */
                     {
-                        if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0) /* get the particles */
+                        recvTask = ThisTask ^ ngrp;
+                        if(recvTask < NTask)
                         {
-                            MPI_Sendrecv(&GravDataIn[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct gravdata_in), MPI_BYTE, recvTask, TAG_GRAV_A,
-                                         &GravDataGet[Nimport], Recv_count[recvTask] * sizeof(struct gravdata_in), MPI_BYTE, recvTask, TAG_GRAV_A,
-                                         MPI_COMM_WORLD, &status);
-                            Nimport += Recv_count[recvTask];
+                            if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0) /* get the particles */
+                            {
+                                MPI_Sendrecv(&GravDataIn[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct gravdata_in), MPI_BYTE, recvTask, TAG_GRAV_A,
+                                             &GravDataGet[Nimport], Recv_count[recvTask] * sizeof(struct gravdata_in), MPI_BYTE, recvTask, TAG_GRAV_A,
+                                             MPI_COMM_WORLD, &status);
+                                Nimport += Recv_count[recvTask];
+                            }
                         }
                     }
                 }
@@ -453,18 +472,28 @@ void gravity_tree(void)
                 }
                 tend = my_second(); timetree2 += timediff(tstart, tend); /* no barrier: the results exchange below waits only for actual partners */
 
-                tstart = my_second(); Nimport = 0;
-                for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* send the results for imported elements back to their host tasks */
+                tstart = my_second(); /* send the results for imported elements back to their host tasks */
+                if(posted_exchange)
                 {
-                    recvTask = ThisTask ^ ngrp;
-                    if(recvTask < NTask)
+                    mpi_exchange_with_partners(ngrp_initial, ngrp_initial + N_chunks_for_import, TAG_GRAV_B,
+                                               (char *) GravDataResult, Recv_count, NULL, sizeof(struct gravdata_out),
+                                               (char *) GravDataOut, Send_count, Send_offset, sizeof(struct gravdata_out));
+                }
+                else
+                {
+                    Nimport = 0;
+                    for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* send the results for imported elements back to their host tasks */
                     {
-                        if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0)
+                        recvTask = ThisTask ^ ngrp;
+                        if(recvTask < NTask)
                         {
-                            MPI_Sendrecv(&GravDataResult[Nimport], Recv_count[recvTask] * sizeof(struct gravdata_out), MPI_BYTE, recvTask, TAG_GRAV_B,
-                                         &GravDataOut[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct gravdata_out), MPI_BYTE, recvTask, TAG_GRAV_B,
-                                         MPI_COMM_WORLD, &status);
-                            Nimport += Recv_count[recvTask];
+                            if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0)
+                            {
+                                MPI_Sendrecv(&GravDataResult[Nimport], Recv_count[recvTask] * sizeof(struct gravdata_out), MPI_BYTE, recvTask, TAG_GRAV_B,
+                                             &GravDataOut[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct gravdata_out), MPI_BYTE, recvTask, TAG_GRAV_B,
+                                             MPI_COMM_WORLD, &status);
+                                Nimport += Recv_count[recvTask];
+                            }
                         }
                     }
                 }

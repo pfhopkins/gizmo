@@ -45,6 +45,7 @@ test/*/output/
 test/*/output_*/
 test/*/GIZMO
 test/*/*_ics.hdf5
+test/*/*_exact.hdf5
 # suites that generate one IC and one params file per problem keep them in subdirectories, which the
 # patterns above miss
 test/*/ics/

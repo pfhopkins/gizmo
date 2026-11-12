@@ -17,6 +17,7 @@
 #ifdef RT_TREECOL_H2_CO
 #include "../cooling/sgchem/sgchem_consts.h"
 #endif
+static void tree_edits_clear(void); /* force_validate_tree_links bookkeeping, defined with it */
 #include <vector>
 #include <algorithm>
 #include <limits>
@@ -226,6 +227,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
     TreeWalkValidatePending = 0; /* fresh tree: nothing pending from pre-build rearranges */
+    tree_edits_clear();
     force_motion_bounds_reset(1); /* every bound is freshly derived here, and the node numbering has changed */
     if(mp == NULL && npart == NumPart) {TreeOpsCount[TREEOPS_BUILD]++; ForceAddElementToTree_CallsSinceBuild = 0; All.NumForcesSinceLastDomainDecomp = 0;} /* whole-tree builds only; subset builds are fof-internal. Both cadence counters measure tree age, so they reset HERE, not at decomposition (every decomposition is followed by a build anyway) */
     if(mp == NULL && npart == NumPart) {for(int i = 0; i < NumPart; i++) {if(P[i].dp[0] != 0 || P[i].dp[1] != 0 || P[i].dp[2] != 0) {P[i].dp = {};}}} /* the nodes hold the current velocities, so the kicks still pending in dp are counted already: flushed later by force_update_tree, they would be counted twice. Conditional: most dp are zero, and an unconditional store dirties a cache line per particle */
@@ -5108,7 +5110,7 @@ static void force_refresh_node_moments_incremental(void)
     TreeOpsCount[TREEOPS_REFRESH]++;
     int i, n, no, p;
     if(MomentsDirtyBuild != TreeOpsCount[TREEOPS_BUILD]) {MomentsDirtyNodes.clear(); MomentsDirtyBuild = TreeOpsCount[TREEOPS_BUILD];}
-    for(i = 0; i < NumPart; i++) {if(P[i].Type == 5) {force_mark_moments_dirty(i);}}
+    for(i = N_gas; i < NumPart; i++) {if(P[i].Type == 5) {force_mark_moments_dirty(i);}} /* the gas block [0,N_gas) holds no sinks */
     /* 1. re-derive the marked local nodes, children (higher indices) before parents */
     std::vector<int> &D = MomentsDirtyNodes;
     std::sort(D.begin(), D.end(), [](int a, int b) {return a > b;});
@@ -5222,11 +5224,70 @@ void force_tree_check_walkable(const char *tag)
  *  (TreeReconstructFlag -- self-healing at the next ladder, whose reduce uniformizes the local
  *  raise); the current step's walk still proceeds, matching the warn-don't-abort philosophy of
  *  the root-count check. Under TREE_INTEGRITY_AUDITS a failure is fatal instead. */
+/* Where the maintained rearranges edited the threading since the last validation: the subtrees each local edit stayed
+   inside, the slots whose particle moved, and whether any edit had to walk the whole tree. */
+static std::vector<int> TreeEditRoots, TreeEditSlots;
+static int TreeEditGlobal = 0;
+void tree_edit_note_local(int root) {TreeEditRoots.push_back(root);}
+void tree_edit_note_slot(int i) {TreeEditSlots.push_back(i);}
+void tree_edit_note_global(void) {TreeEditGlobal = 1;}
+static void tree_edits_clear(void) {TreeEditRoots.clear(); TreeEditSlots.clear(); TreeEditGlobal = 0;}
+
+/* force_validate_tree_links for edits that all stayed inside known subtrees: the same Father-vs-threading check over
+   those subtrees only, plus reachability of every moved slot whose parent lies in one. Returns 0 on failure. */
+static int force_validate_tree_links_local(void)
+{
+    std::vector<int> &R = TreeEditRoots;
+    std::sort(R.begin(), R.end()); R.erase(std::unique(R.begin(), R.end()), R.end());
+    std::vector<int> reached;
+    long long bound = (long long) NumPart + Numnodestree + NTopleaves + 64;
+    std::vector<int> nstack, sstack;
+    for(int r : R)
+    {
+        if(r < All.MaxPart || r >= All.MaxPart + MaxNodes) {return 0;}
+        int end = Nodes[r].u.d.sibling, no = Nodes[r].u.d.nextnode; long long iter = 0;
+        nstack.assign(1, r); sstack.assign(1, end);
+        while(no >= 0 && no != end && iter < bound)
+        {
+            iter++;
+            while(nstack.size() > 1 && no == sstack.back()) {nstack.pop_back(); sstack.pop_back();}
+            if(no < All.MaxPart) {if(Father[no] != nstack.back()) {return 0;} reached.push_back(no); no = Nextnode[no];}
+            else if(no < All.MaxPart + MaxNodes)
+            {
+                if(Nodes[no].u.d.father != nstack.back()) {return 0;}
+                nstack.push_back(no); sstack.push_back(Nodes[no].u.d.sibling);
+                no = Nodes[no].u.d.nextnode;
+            }
+            else {return 0;} /* a pseudo-particle inside a local subtree */
+        }
+        if(iter >= bound) {return 0;}
+    }
+    std::sort(reached.begin(), reached.end());
+    for(int i : TreeEditSlots)
+    {
+        if(i < 0 || i >= NumPart) {continue;} /* vacated */
+        int in_edited = 0;
+        for(int a = Father[i]; a >= All.MaxPart && a < All.MaxPart + MaxNodes; a = Nodes[a].u.d.father)
+            {if(std::binary_search(R.begin(), R.end(), a)) {in_edited = 1; break;}}
+        if(in_edited && !std::binary_search(reached.begin(), reached.end(), i)) {return 0;}
+    }
+    return 1;
+}
+
 void force_validate_tree_links(const char *tag)
 {
     if(!TreeWalkValidatePending) {return;}
     TreeWalkValidatePending = 0;
-    if(Numnodestree <= 0) {return;} /* no standing tree */
+    if(Numnodestree <= 0) {tree_edits_clear(); return;} /* no standing tree */
+    /* every edit stayed inside known subtrees: check those, not the whole tree (the whole-tree walk was a
+       serial cost on the editing rank that every other rank waited for at the next collective) */
+    const int local_ok = !TreeEditGlobal && !TreeEditRoots.empty() && force_validate_tree_links_local();
+    tree_edits_clear();
+#ifdef TREE_INTEGRITY_AUDITS
+    (void) local_ok; /* audits: the whole-tree check below still runs, and is fatal if the local one passed a bad tree */
+#else
+    if(local_ok) {return;}
+#endif
     long long nvisit = 0, iter = 0, bound = (long long) NumPart + Numnodestree + NTopleaves + 64;
     /* parent stack: cross-check Father[]/u.d.father against the threading. The walk links and the
        Father pointers are maintained by the same mutation code but are independent structures --
