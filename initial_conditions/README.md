@@ -14,8 +14,5 @@ Tools for building GIZMO initial-condition files.
   behind one interface. Entry point: `eos_tools/build_layered_body.py`; a
   worked Earth-like example is in `eos_tools/test_hse_earth.py`. The user guide
   (`docs/`) documents the modules and usage in detail.
-  `eos_tools/giant_impact_bodies.py` builds the bodies of a giant-impact
-  campaign (presets, hash-checked tables, graded-zone mixture tables from
-  `eos_tools/mix_tables.py`, the params block) from one place.
 
 For reading and analyzing the snapshots a run produces, see `analysis/`.

@@ -7,7 +7,7 @@ actual axis values; log10 P/u/cs are interpolated bilinearly in (log10 rho, log1
 and entropy (signed) linearly in value. A table that aneos.cc would refuse is refused
 here too.
 
-Table file layout (matches cms_to_sesame.py, convert_stewart_table.py and aneos.cc):
+Table file layout (matches test/cd21_hhe_compression/cms_to_sesame.py, convert_stewart_table.py and aneos.cc):
     line 1:  mat_id  nrho  nT  ncols
     next nrho values: rho [g/cm^3];  next nT values: T [K]
     next nrho*nT rows (outer rho, inner T): rho T P u S [cs] [phase]

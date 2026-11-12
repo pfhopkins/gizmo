@@ -24,10 +24,6 @@ If you just need to load fields out of a snapshot without extra dependencies:
 - `legacy_idl/readsnap.pro` — IDL reader, kept for legacy workflows.
 - `visit/` — plugin for the [VisIt](https://visit-dav.github.io/visit-website/)
   visualization tool.
-- `eos_state_census/` — for runs with tabulated equations of state (`EOS_ANEOS`):
-  classifies every cell of every snapshot against its table (out-of-range,
-  validity floor, folds, plateaus, proximity to each) with GIZMO's own lookup;
-  see the user guide's eos_limits.txt entry.
 
 ## Building initial conditions
 

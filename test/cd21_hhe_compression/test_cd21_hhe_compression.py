@@ -55,7 +55,7 @@ def setup_table_and_ics(test_dir):
         _download_native_table(native, test_dir)
     subprocess.run(
         [sys.executable,
-         join(test_dir, "..", "..", "initial_conditions", "eos_tools", "cms_to_sesame.py"),
+         join(test_dir, "cms_to_sesame.py"),
          "--input", native, "--output", sesame,
          "--y", "0.275", "--mat-id", "2721", "--nrho", "200",
          "--logP-min", "-6.5", "--logP-max", "8"],   # the table's placeholder corners lie outside this range
