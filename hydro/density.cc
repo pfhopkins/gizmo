@@ -74,7 +74,14 @@ int density_isactive(int n)
 #endif
 #endif
 #endif
-        
+#if defined(GALSF_RESOLVEDISM_FB)
+        if(All.ComovingIntegrationOn) /* Stella stars in comoving runs: same refresh as isolated, plus any event star */
+        {
+            if(STELLA_FB_EVENT(P[n]) > 0) return 1;
+            if(evaluate_stellar_age_Gyr(n) < 0.035) return 1;
+        }
+#endif
+
 #if defined(GALSF)
         if(P[n].DensityAroundParticle <= 0) return 1;
         if(All.ComovingIntegrationOn == 0) // only do stellar age evaluation if we have to //
