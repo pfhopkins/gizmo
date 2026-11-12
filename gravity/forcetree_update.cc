@@ -344,6 +344,7 @@ static int MotionChangeMarkAny = 0;
 static std::vector<int> MotionTopStamp;              /* per node: == MotionTopGen while listed below */
 static std::vector<int> MotionTopPending;            /* top-level nodes raised since the last flush */
 static int MotionTopGen = 1;
+static std::vector<int> CoverTopPending;             /* top-level nodes widened by force_cover_position since the last flush */
 static int MotionBoundTreeLive = 0;
 
 /*! Called at every tree build or restart-file tree load (live=1) and teardown (live=0): a build sets
@@ -352,7 +353,7 @@ void force_motion_bounds_reset(int tree_live)
 {
     MotionBoundTreeLive = tree_live;
     MotionChangeMark.assign(tree_live ? All.MaxPart : 0, 0); MotionChangeMarkAny = 0;
-    MotionTopStamp.assign(tree_live ? Numnodestree : 0, 0); MotionTopPending.clear(); MotionTopGen = 1;
+    MotionTopStamp.assign(tree_live ? Numnodestree : 0, 0); MotionTopPending.clear(); MotionTopGen = 1; CoverTopPending.clear();
 }
 
 /*! Raise vmax (and, for a gas member, hmax) from node no up to the root, stopping at a node that
@@ -394,6 +395,27 @@ void force_raise_motion_bound(int i)
     MyFloat vmax = particle_motion_speed_bound(i);
     MyFloat hmax = (P[i].Type == 0) ? DMIN(P[i].KernelRadius, All.MaxKernelRadius) : 0;
     force_raise_chain_bounds(Father[i], vmax, hmax, 1); /* a particle inserted since the build has no node above it; the range check in there covers that */
+}
+
+/*! Particle i's position was set rather than drifted (inserted away from the element it hangs under, or
+ *  re-centred). Node boxes otherwise grow only with their members' motion, so widen those above i to hold it,
+ *  with slack for roundoff. The whole chain is walked: a box widened here need no longer lie inside its
+ *  father's. Top-level boxes are replicated on every rank; those widened reach the other ranks at the next
+ *  force_flush_motion_bounds. */
+void force_cover_position(int i)
+{
+    if(!MotionBoundTreeLive || i < 0 || i >= All.MaxPart) {return;}
+    double xtmp, ytmp, ztmp; (void) xtmp; (void) ytmp; (void) ztmp; /* scratch for the periodic macros */
+    for(int no = Father[i]; no >= All.MaxPart && no < All.MaxPart + Numnodestree; no = Nodes[no].u.d.father)
+    {
+        const int toplevel = (Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) != 0;
+        if(toplevel) {force_drift_node(no, All.Ti_Current);} /* shipped as of now; a lagging lower node only errs wide */
+        double dx = P[i].Pos[0] - Nodes[no].center[0], dy = P[i].Pos[1] - Nodes[no].center[1], dz = P[i].Pos[2] - Nodes[no].center[2];
+        double need = 2 * DMAX(NGB_PERIODIC_BOX_LONG_X(dx,dy,dz,-1), DMAX(NGB_PERIODIC_BOX_LONG_Y(dx,dy,dz,-1), NGB_PERIODIC_BOX_LONG_Z(dx,dy,dz,-1)));
+        if(Nodes[no].len >= need) {continue;}
+        Nodes[no].len = need * 1.000001;
+        if(toplevel) {CoverTopPending.push_back(no);}
+    }
 }
 
 /*! Thread-safe form: marks i, whose chain is then raised by force_raise_noted_motion_bounds. The
@@ -453,13 +475,15 @@ void force_raise_noted_motion_bounds(void)
 void force_flush_motion_bounds(void)
 {
     force_raise_noted_motion_bounds();
-    struct MotionBoundRecord {int no; MyFloat vmax, hmax;};
+    struct MotionBoundRecord {int no; MyFloat vmax, hmax, len;}; /* len > 0: a widened box, as of now */
     std::vector<MotionBoundRecord> loc;
     loc.reserve(MotionTopPending.size());
 #ifdef TREE_REFRESH_INCREMENTAL
     for(int no : MotionTopPending) {force_drift_node(no, All.Ti_Current);} /* ship the bounds as of now: receivers apply them to their copies drifted to now */
 #endif
-    for(int no : MotionTopPending) {loc.push_back({no, Extnodes[no].vmax, Extnodes[no].hmax});}
+    for(int no : MotionTopPending) {loc.push_back({no, Extnodes[no].vmax, Extnodes[no].hmax, 0});}
+    for(int no : CoverTopPending) {force_drift_node(no, All.Ti_Current); loc.push_back({no, 0, 0, Nodes[no].len});}
+    CoverTopPending.clear();
     MotionTopPending.clear(); MotionTopGen++;
     if(MotionTopGen == 0) {MotionTopGen = 1; MotionTopStamp.assign(MotionTopStamp.size(), 0);}
     int nbytes = (int) (loc.size() * sizeof(MotionBoundRecord)), nbytes_tot = 0, ta;
@@ -475,6 +499,7 @@ void force_flush_motion_bounds(void)
            rather than trusted, as the kick exchange does */
         if(r.no < All.MaxPart || r.no >= All.MaxPart + Numnodestree) {continue;}
         if(!(Nodes[r.no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))) {continue;}
+        if(r.len > 0) {force_drift_node(r.no, All.Ti_Current); if(Nodes[r.no].len < r.len) {Nodes[r.no].len = r.len;} continue;}
         force_raise_chain_bounds(r.no, r.vmax, r.hmax, 0);
     }
 }

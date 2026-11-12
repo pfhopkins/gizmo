@@ -809,6 +809,7 @@ void sink_final_operations(void)
             P[n].OldPos += (P[n].Pos - hermite_pre_pos) - dvel * dt_grav;
 #endif
             force_raise_motion_bound(n); /* accretion moved this sink's velocity outside the kick */
+            force_cover_position(n);     /* and, following the accreted centre of mass, its position */
         } // if(masses > 0) check
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
         if(All.ComovingIntegrationOn) {P[n].SinkRadius = DMIN(P[n].SinkRadius, SinkParticle_GravityKernelRadius);} // update sink radius if simulation has it dynamically evolving.
