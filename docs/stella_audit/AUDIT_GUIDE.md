@@ -4,7 +4,7 @@ For Phil Hopkins. One branch to read before any PR is opened. Nothing has been p
 
 ## 1. What the branch is
 
-- Branch `gku_stella_dev`, audit point tag `audit-1` (d8f7d6477), on gpu_kokkos_unified c846fe769 (your head of 2026-11-12, merged in); the branch follows your head and new work continues on it after the tag. Suite on the tip: 739 tests, 678 passed, 37 failed, 24 skipped. 19 of the failures fail on your head as well; one (hernquist with a randomised tree) varies from run to run with code identical to your head's for that build; the other 17 are ours, each with a known cause (section 5); one of them (ejecta cell) is fixed since and passes at the tag.
+- Branch `gku_stella_dev`: the code state to audit is 7165593ba, on gpu_kokkos_unified c846fe769 (your head of 2026-11-12, merged in). The branch follows your head; commits after 7165593ba add new features and are listed in section 8. Suite on the tip: 739 tests, 678 passed, 37 failed, 24 skipped. 19 of the failures fail on your head as well; one (hernquist with a randomised tree) varies from run to run with code identical to your head's for that build; the other 17 are ours, each with a known cause (section 5); one of them (ejecta cell) is fixed since and passes at 7165593ba.
 - The Stella single-star model: stars drawn from an IMF, with lifetimes, winds, AGB deaths, SNe and Ia from installed stellar tables; an SF criterion; SGChem chemistry and cooling as a host branch with its own flag; per-direction columns and band fluxes inside the existing TreeCol walk; band-resolved radiation pressure; per-direction photoionisation; CR rate and CR-fluid exchange; an energy, mass and metal ledger; 27-element yields and ISM dust; M1 and TreeRay variants; tall periodic box; KETJU chains.
 - Each capability sits behind its own compile flag, off by default. `STELLA_DEFAULTS` switches the usual set. Without these flags the code is meant to equal the base (section 4).
 - A staging line to read, not to merge whole: it is the planned PR series applied in order.
@@ -70,3 +70,9 @@ Nothing is fetched at compile time.
 6. Ledger: separate file or rows in your energy file; cadence?
 7. Gas collection: acceptable rule for shared donor mass (design note first)?
 8. Single-star SN energy: keep the causal wake under its own flag in `STELLA_DEFAULTS`, make it opt-in, or is there a form you would rather take?
+
+## 8. Commits after 7165593ba
+
+New features and fixes added on the branch after the audit state, each with its test:
+- Photoionised cells form no star through the instant-SF density cutoff (the rate's ionised-cell veto now holds on that path too); test `photoion_per_direction::test_no_instant_sf_in_ionised_cells`.
+- `GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE` (opt-in): pair-instability SN energy from the He core (Heger & Woosley 2002, Wise+12a fit); default stays 1e51 erg; test `single_stars_supernovae::test_pisn_energy_from_helium_core`.
