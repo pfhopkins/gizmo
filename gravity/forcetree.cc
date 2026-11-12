@@ -1794,7 +1794,8 @@ void force_flag_localnodes(void)
  *  because every caller debits the child's mass from a co-located parent, so
  *  node total mass and COM are conserved. Type-conditioned moments (gasmass,
  *  stellar_lum, sink_*) are NOT updated here and go stale until the next
- *  refresh/rebuild; hmax/vmax are raised over the whole ancestor chain.
+ *  refresh/rebuild; hmax/vmax are raised over the whole ancestor chain, and
+ *  its boxes are widened to hold the child.
  */
 void force_add_element_to_tree(int iparent, int ichild)
 {
@@ -1827,6 +1828,7 @@ void force_add_element_to_tree(int iparent, int ichild)
        both misses a larger gas child and pollutes the gas-hmax bound with sink kernels (the unsafe
        direction for neighbour completeness is the miss). */
     force_raise_motion_bound(ichild);
+    force_cover_position(ichild); /* the child need not sit at its parent's position: spawned and split cells are placed a step away */
 }
 
 
