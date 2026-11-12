@@ -54,7 +54,7 @@ int main(int argc, char** argv)
     c.G0_hm_isrf = 0; c.hm_detach_stellar = 0;
     if (fT > 0 && fG0 > 0) {
         const double h = 6.62607015e-27, kb = 1.380649e-16, eV = 1.602176634e-12, cl = 2.99792458e10;
-        double ub[3] = {0, 0, 0}; const double edge[4] = {0.4133, 3.444, 6.0, 13.6}; // upstream bins OPTICAL_NIR, NUV less 6-8 eV, 6-13.6 eV const int nb = 20000;
+        double ub[3] = {0, 0, 0}; const double edge[4] = {0.4133, 3.444, 6.0, 13.6}; const int nb = 20000; // upstream bins: OPTICAL_NIR, NUV less 6-8 eV, 6-13.6 eV
         for (int b = 0; b < 3; b++) {
             double dnu = (edge[b+1] - edge[b]) * eV / h / nb;
             for (int i = 0; i < nb; i++) {
