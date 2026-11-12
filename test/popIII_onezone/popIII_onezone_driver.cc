@@ -6,6 +6,7 @@
 #include "chem_types.h"
 #include "galaxy_sf/resolvedism_popIII.h"
 #include "declarations/resolvedism_dgr_rr14.h"
+#include "cooling/sgchem/sgchem_hminus_bands.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -45,6 +46,28 @@ int main(int argc, char** argv)
     c.abundM  = c.abundsi;
     c.abundD  = 2.6e-5;
     c.G0 = 0; c.G0_LW = 0; c.G0_dust = 0;
+    // optional stellar blackbody field (HM_FIELD_T [K], HM_FIELD_G0 [Habing, 6-13.6 eV]); LW off to isolate H- detachment.
+    // HM_MODE=bands: H- rate from the band energies (SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS); isrf: 4.2e-7 G0
+    const double fT = getenv("HM_FIELD_T") ? atof(getenv("HM_FIELD_T")) : 0, fG0 = getenv("HM_FIELD_G0") ? atof(getenv("HM_FIELD_G0")) : 0;
+    const int hm_bands = getenv("HM_MODE") && !std::strcmp(getenv("HM_MODE"), "bands");
+    double k_hm_direct = 0;
+    c.G0_hm_isrf = 0; c.hm_detach_stellar = 0;
+    if (fT > 0 && fG0 > 0) {
+        const double h = 6.62607015e-27, kb = 1.380649e-16, eV = 1.602176634e-12, cl = 2.99792458e10;
+        double ub[3] = {0, 0, 0}; const double edge[4] = {0.4, 3.4, 6.0, 13.6}; const int nb = 20000;
+        for (int b = 0; b < 3; b++) {
+            double dnu = (edge[b+1] - edge[b]) * eV / h / nb;
+            for (int i = 0; i < nb; i++) {
+                double nu = edge[b] * eV / h + (i + 0.5) * dnu, unu = nu * nu * nu / std::expm1(h * nu / (kb * fT));
+                ub[b] += unu * dnu; k_hm_direct += cl * unu * sgchem_hminus_sigma(nu) / (h * nu) * dnu;
+            }
+        }
+        double norm = fG0 * 5.257e-14 / ub[2];  // u(6-13.6 eV) = G0 x Habing
+        for (int b = 0; b < 3; b++) ub[b] *= norm;
+        k_hm_direct *= norm;
+        c.G0 = fG0;
+        if (hm_bands) c.hm_detach_stellar = sgchem_hminus_rate_from_bands(ub[0], ub[1], ub[2]); else c.G0_hm_isrf = fG0;
+    }
     c.cosmic_ray_ion_rate = 1e-21;        // CR_SCALE_WITH_G0 floor at G0 = 0
     c.dust_to_gas_ratio = Z * (rr14 ? resolvedism_dgr_rr14_over_linear(Z) : 1.0);   // solar units, DGRnormalized = 1
     c.redshift = zred;
@@ -72,7 +95,7 @@ int main(int argc, char** argv)
     std::fprintf(f, "nH,T,gamma,MJ_Msun,xH2,xHD,xe,tdust,tff_yr,"
                     "L_H2,L_HD,L_CII,L_CI,L_OI,L_SiII,L_dust,L_CO,L_H2CIE,L_atomic,L_compton,G_compress,"
                     "R_H2dust,R_H23b,rc\n");
-    double t = 0; int step = 0, rc = 0;
+    double t = 0; int step = 0, rc = 0, ph3_logged = 0;
     double MJ32 = -1, MJ2048 = -1, n_popIII = -1, T_popIII = 0, Tmin_loiter = 1e30;
     const popIII_sf_params pp = {1e-4 * 0.014, 1e6, 1e-3, 1000.};   // code defaults (PopIII_* parameters)
     const int pristine = popIII_gas_is_pristine(Z * 0.014, pp.Zcrit_abs);
@@ -82,6 +105,7 @@ int main(int argc, char** argv)
         double dt = 0.01 * tff;
         c.yn = n; c.dl = std::cbrt(MSUN / rho); c.divv = -1.0 / tff;
         cxx_calc_photo(Ttemp, ab[CIH2], ab[CIHD], ab[CICO], c);
+        if (!ph3_logged) {std::printf("HMINUS field_T=%g G0=%g mode=%s ph3=%.6e direct=%.6e\n", fT, fG0, hm_bands ? "bands" : "isrf", c.phrates[3], k_hm_direct); ph3_logged = 1;}
         rc = cxx_evolve_abundances(dt, c.dl, n, c.divv, &e, ab.data(), c);
         if (rc) { std::fprintf(stderr, "Z=%g: evolve rc=%d at n=%g T=%g\n", Z, rc, n, Ttemp); break; }
         double gg;

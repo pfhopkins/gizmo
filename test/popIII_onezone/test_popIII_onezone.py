@@ -3,6 +3,7 @@ The driver evaluates the code's Pop III criterion (galaxy_sf/resolvedism_popIII.
 (declarations/resolvedism_dgr_rr14.h) along the track. Checks: Z = 0 loiters at 150-250 K near n = 1e3 (Bromm+02);
 the Pop III criterion first passes at n_H = 1e6-3e6 (the design density), while the Stella Jeans criterion
 (M_J < 32 Msun) only passes above 1e9; gas at 1e-3 Zsun is not pristine and fragments at the CMB floor (n < 1e6).
+With a stellar 3e4 K field the H- photodetachment rate from the band energies matches the direct spectral integral.
 Needs SUNDIALS_DIR (CVODE >= 6) and CHEMCXX_DATADIR (the SGChem tables); skipped without them.
 """
 
@@ -37,7 +38,7 @@ def driver(tmp_path_factory):
     # the chemistry sources include ../../../GIZMO_config.h: build a copy next to the zoom's chemistry flags
     shutil.copytree(REPO / "cooling" / "sgchem", obj / "cooling" / "sgchem")
     shutil.copytree(REPO / "declarations", obj / "declarations")
-    (obj / "GIZMO_config.h").write_text("#define SGCHEM\n#define CHEMISTRYNETWORK 17\n#define CO_SHIELDING\n#define WSS_CIE_COOL\n#define RT_USE_TREECOL_FOR_NH 12\n#define NEED_HEALPIX\n")
+    (obj / "GIZMO_config.h").write_text("#define SGCHEM\n#define CHEMISTRYNETWORK 17\n#define CO_SHIELDING\n#define WSS_CIE_COOL\n#define SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS\n#define RT_USE_TREECOL_FOR_NH 12\n#define NEED_HEALPIX\n")
     cxx = obj / "cooling" / "sgchem" / "cxx"
     flags = ["c++", "-O2", "-std=c++14", f"-I{cxx}", f"-I{REPO}", f"-I{sun / 'include'}"]
     srcs = [s for s in sorted(cxx.glob("*.cc")) if s.stem not in SKIP_SOURCES]
@@ -58,17 +59,20 @@ def driver(tmp_path_factory):
     return exe
 
 
-def run_track(exe, tmp_path, Z, dgr="rr14", n_end=1e10):
+def run_track(exe, tmp_path, Z, dgr="rr14", n_end=1e10, env=None):
     data = _env_dir("CHEMCXX_DATADIR")
     out = tmp_path / f"Z{Z}_{dgr}.csv"
     r = subprocess.run([str(exe), str(data), str(Z), dgr, str(out), "17", str(n_end)], capture_output=True, text=True,
-                       env=dict(os.environ, ABHE="0.079"), timeout=600)
+                       env=dict(os.environ, ABHE="0.079", **(env or {})), timeout=600)
     line = [l for l in r.stdout.splitlines() if l.startswith("RESULT")]
     assert r.returncode == 0 and line, r.stdout + r.stderr
     res = dict(re.findall(r"(\w+)=(\S+)", line[0]))
+    hm = [l for l in r.stdout.splitlines() if l.startswith("HMINUS")]
+    if hm:
+        res.update({"hm_" + k: v for k, v in re.findall(r"(\w+)=(\S+)", hm[0])})
     print(line[0])
     assert int(res["rc"]) == 0, "chemistry solver failed"
-    return {k: float(v) for k, v in res.items() if k not in ("dgr",)}
+    return {k: float(v) for k, v in res.items() if k not in ("dgr", "hm_mode")}
 
 
 def test_pristine_gas_forms_popIII_at_design_density(driver, tmp_path):
@@ -88,3 +92,14 @@ def test_enriched_gas_is_not_popIII(driver, tmp_path):
 def test_linear_dgr_delays_fragmentation_at_1e_3_zsun(driver, tmp_path):
     r = run_track(driver, tmp_path, 1e-3, dgr="lin")
     assert r["n_MJ32"] > 1e7, "linear DGR: grain H2 formation heating keeps 1e-3 Zsun gas warm (design report: 2.7e7)"
+
+
+def test_hminus_detachment_from_stellar_bands(driver, tmp_path):
+    """3e4 K stellar field, G0 = 1 in 6-13.6 eV, LW off: the band rate equals the direct integral over the spectrum,
+    ~1e-2 of the ISRF-calibrated 4.2e-7 G0, and H2 forms early enough for Pop III near 1e6 instead of above 1e7."""
+    field = {"HM_FIELD_T": "3e4", "HM_FIELD_G0": "1"}
+    b = run_track(driver, tmp_path, 0.0, env=dict(field, HM_MODE="bands"))
+    i = run_track(driver, tmp_path, 0.0, env=dict(field, HM_MODE="isrf"))
+    assert abs(b["hm_ph3"] / b["hm_direct"] - 1) < 1e-3
+    assert abs(i["hm_ph3"] / 4.2e-7 - 1) < 1e-6
+    assert b["n_popIII"] < 5e6 and i["n_popIII"] > 1e7
