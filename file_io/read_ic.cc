@@ -684,6 +684,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_POPIII_STAR:
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+            for(n = 0; n < pc; n++) {P[offset + n].PopIIIStar = (signed char) *fp++;}
+#endif
+            break;
+
         case IO_ELEMENT_ABUNDANCE:
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
             /* Read 27-element IC abundances into Metallicity[MET_OF(k)]

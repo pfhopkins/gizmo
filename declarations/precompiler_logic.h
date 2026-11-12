@@ -1538,6 +1538,10 @@
 #error "GALSF_RESOLVEDISM_METALS_INDIVIDUAL puts H in Metallicity[1], FIRE yields/dust write He..Fe into fixed slots 1..10: the layouts clash silently"
 #endif
 
+#if defined(GALSF_RESOLVEDISM_POPIII_STARS) && (!defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || !defined(SGCHEM) || !defined(METALS) || defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL))
+#error "GALSF_RESOLVEDISM_POPIII_STARS needs GALSF_RESOLVEDISM_SAMPLE_IMF, SGCHEM (H2 fraction) and METALS, and not GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL"
+#endif
+
 /* Stella x FIRE-3 coupled mode: allowed and forbidden combinations */
 #ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
 #if !defined(GALSF_RESOLVEDISM_FB) || !defined(GALSF_RESOLVEDISM_SAMPLE_IMF)

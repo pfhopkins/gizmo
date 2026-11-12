@@ -1242,6 +1242,17 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_POPIII_STAR:
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].PopIIIStar;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_KETJU_REMNANT_TYPE:
 #ifdef KETJU_PN_REMNANT_TAG
             for(n = 0; n < pc; pindex++)
@@ -2581,6 +2592,13 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
 
+        case IO_POPIII_STAR:
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+            if(mode) bytes_per_blockelement = sizeof(MyInputFloat);
+            else bytes_per_blockelement = sizeof(MyOutputFloat);
+#endif
+            break;
+
         case IO_KETJU_REMNANT_TYPE:
 #ifdef KETJU_PN_REMNANT_TAG
             if(mode) bytes_per_blockelement = sizeof(MyInputFloat);
@@ -3021,6 +3039,7 @@ int get_values_per_blockelement(enum iofields blocknr)
             values = 3;
             break;
 
+        case IO_POPIII_STAR:
         case IO_KETJU_REMNANT_TYPE:
             values = 1;
             break;
@@ -3411,6 +3430,7 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
             return header.npart[5];
             break;
 
+        case IO_POPIII_STAR:
         case IO_KETJU_REMNANT_TYPE:
             /* Star particles (Type 4) only — that's where the tag lives */
             for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
@@ -3836,6 +3856,12 @@ int blockpresent(enum iofields blocknr)
 
         case IO_KETJU_REMNANT_TYPE:
 #ifdef KETJU_PN_REMNANT_TAG
+            return 1;
+#endif
+            break;
+
+        case IO_POPIII_STAR:
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
             return 1;
 #endif
             break;
@@ -4546,6 +4572,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_KETJU_REMNANT_TYPE:
             strncpy(label, "KRMT", 4);
             break;
+        case IO_POPIII_STAR:
+            strncpy(label, "P3ST", 4);
+            break;
         case IO_WIND_MASS_ACCUM:
             strncpy(label, "WMAC", 4);
             break;
@@ -5081,6 +5110,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_KETJU_REMNANT_TYPE:
             strcpy(buf, "KetjuRemnantType");
+            break;
+        case IO_POPIII_STAR:
+            strcpy(buf, "PopIIIStar");
             break;
         case IO_WIND_MASS_ACCUM:
             strcpy(buf, "WindMassAccum");

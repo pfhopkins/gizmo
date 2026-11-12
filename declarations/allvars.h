@@ -585,6 +585,14 @@ extern struct global_data_all_processes
   double SFCooldownFreeFallFraction; /*!< per-cell SF cooldown after a spawn, in units of the cell's t_ff at spawn (0: off) */
   int RNGRealisation; /*!< Stella random-stream realisation (0: default streams) */
 #endif
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+  double PopIII_Zcrit_solar;    /*!< gas below this Z [Zsun] forms Pop III stars */
+  double PopIII_nH_thresh;      /*!< Pop III SF: n_H threshold [cm^-3] */
+  double PopIII_xH2_min;        /*!< Pop III SF: minimum n(H2)/n_H */
+  double PopIII_Mreservoir;     /*!< Pop III SF: Jeans mass below this reservoir [Msun] */
+  int PopIII_IMF_Type;          /*!< 0: characteristic-mass IMF, 1: log-flat */
+  double PopIII_IMF_Mchar, PopIII_IMF_Mmin, PopIII_IMF_Mmax; /*!< Pop III IMF characteristic mass and range [Msun] */
+#endif
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
   char StellarTablesFile[256];  /*!< path to stellar_tables_unified.hdf5 */
   double MaxStellarTimestep;    /*!< hard cap on Type 4 timesteps [yr] */
@@ -1699,6 +1707,7 @@ enum iofields
   IO_KETJU_FINAL_VEL,
   IO_KETJU_SPIN,
   IO_KETJU_REMNANT_TYPE,
+  IO_POPIII_STAR,
   IO_SHOCKMACHNUM,
   IO_STAR_MODEL,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */

@@ -86,6 +86,10 @@ void begrun(void)
 #endif // CHIMES_TURB_DIFF_IONS
 
   read_parameter_file(ParameterFile);	/* ... read in parameters for this run */
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+  if(All.PopIII_IMF_Type < 0 || All.PopIII_IMF_Type > 1 || All.PopIII_IMF_Mmin < 0.09 || All.PopIII_IMF_Mmax > 500. || All.PopIII_IMF_Mmin >= All.PopIII_IMF_Mmax || All.PopIII_IMF_Mchar <= 0)
+    {if(ThisTask == 0) {printf("PopIII IMF: type %d on [%g, %g] Msun, Mchar %g: type must be 0 or 1 and the range inside the stellar tables (0.09-500 Msun)\n", All.PopIII_IMF_Type, All.PopIII_IMF_Mmin, All.PopIII_IMF_Mmax, All.PopIII_IMF_Mchar);} endrun(6575);}
+#endif
 #if defined(SGCHEM) || defined(GALSF_RESOLVEDISM_STELLAR_TABLES)
   { /* installed tables must be the version these sources expect */
     int bad = 0;
@@ -2694,6 +2698,17 @@ void read_parameter_file(char *fname)
       id[nt++] = INT;
 #endif
 
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+      strcpy(tag[nt], "PopIII_Zcrit_solar"); addr[nt] = &All.PopIII_Zcrit_solar; id[nt++] = REAL;
+      strcpy(tag[nt], "PopIII_nH_thresh"); addr[nt] = &All.PopIII_nH_thresh; id[nt++] = REAL;
+      strcpy(tag[nt], "PopIII_xH2_min"); addr[nt] = &All.PopIII_xH2_min; id[nt++] = REAL;
+      strcpy(tag[nt], "PopIII_Mreservoir"); addr[nt] = &All.PopIII_Mreservoir; id[nt++] = REAL;
+      strcpy(tag[nt], "PopIII_IMF_Type"); addr[nt] = &All.PopIII_IMF_Type; id[nt++] = INT;
+      strcpy(tag[nt], "PopIII_IMF_Mchar"); addr[nt] = &All.PopIII_IMF_Mchar; id[nt++] = REAL;
+      strcpy(tag[nt], "PopIII_IMF_Mmin"); addr[nt] = &All.PopIII_IMF_Mmin; id[nt++] = REAL;
+      strcpy(tag[nt], "PopIII_IMF_Mmax"); addr[nt] = &All.PopIII_IMF_Mmax; id[nt++] = REAL;
+#endif
+
 #ifdef GALSF_RESOLVEDISM_PHOTOION
       strcpy(tag[nt], "MaxPISearchRadius");
       addr[nt] = &All.MaxPISearchRadius;
@@ -3189,6 +3204,16 @@ void read_parameter_file(char *fname)
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
                 if(strcmp("ResolvedISM_RNGRealisation",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (default random streams)\n",tag[i]); continue;}
                 if(strcmp("ResolvedISM_SFCooldownFreeFallFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s not set: defaulting to 0.1 (SF cooldown of 0.1 t_ff after each spawn)\n",tag[i]); continue;}
+#endif
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+                if(strcmp("PopIII_Zcrit_solar",tag[i])==0) {*((double *)addr[i])=1.e-4; printf("Tag %s not set: defaulting to 1e-4 Zsun\n",tag[i]); continue;}
+                if(strcmp("PopIII_nH_thresh",tag[i])==0) {*((double *)addr[i])=1.e6; printf("Tag %s not set: defaulting to 1e6 cm^-3\n",tag[i]); continue;}
+                if(strcmp("PopIII_xH2_min",tag[i])==0) {*((double *)addr[i])=1.e-3; printf("Tag %s not set: defaulting to 1e-3\n",tag[i]); continue;}
+                if(strcmp("PopIII_Mreservoir",tag[i])==0) {*((double *)addr[i])=1000.; printf("Tag %s not set: defaulting to 1000 Msun\n",tag[i]); continue;}
+                if(strcmp("PopIII_IMF_Type",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (characteristic-mass IMF)\n",tag[i]); continue;}
+                if(strcmp("PopIII_IMF_Mchar",tag[i])==0) {*((double *)addr[i])=20.; printf("Tag %s not set: defaulting to 20 Msun\n",tag[i]); continue;}
+                if(strcmp("PopIII_IMF_Mmin",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s not set: defaulting to 1 Msun\n",tag[i]); continue;}
+                if(strcmp("PopIII_IMF_Mmax",tag[i])==0) {*((double *)addr[i])=300.; printf("Tag %s not set: defaulting to 300 Msun\n",tag[i]); continue;}
 #endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;
