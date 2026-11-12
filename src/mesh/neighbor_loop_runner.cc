@@ -93,8 +93,8 @@
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
 #include "../galaxy_sf/photoion_per_direction.h"
-#include "../galaxy_sf/single_star_sn_wake.h"
 #endif
+#include "../galaxy_sf/single_star_sn_wake.h"
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
 #include "../hydro/cellcorrections_loop.h"
