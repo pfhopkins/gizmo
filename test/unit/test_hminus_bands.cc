@@ -20,7 +20,7 @@ static void bb_band(double T, double A, double lo, double hi, double *u, double 
 static double rate_ratio(double T, double *k_per_G0)
 {
     double uo, ko, un, kn, uf, kf;
-    bb_band(T, 1.0, 0.4, 3.4, &uo, &ko); bb_band(T, 1.0, 3.4, 6.0, &un, &kn); bb_band(T, 1.0, 6.0, 13.6, &uf, &kf);
+    bb_band(T, 1.0, 0.4133, 3.444, &uo, &ko); bb_band(T, 1.0, 3.444, 6.0, &un, &kn); bb_band(T, 1.0, 6.0, 13.6, &uf, &kf);
     double k_direct = ko + kn + kf, k_band = sgchem_hminus_rate_from_bands(uo, un, uf);
     *k_per_G0 = k_band / (uf / 5.257e-14); // per Habing G0 in 6-13.6 eV
     return k_band / k_direct;
