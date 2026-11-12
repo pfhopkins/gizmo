@@ -20,12 +20,21 @@ static constexpr uint64_t SINK_SEED_MASS_RNG_SALT = gizmo_loop_rng_salt("sink_se
 #ifdef GALSF_RESOLVEDISM
 #include "resolvedism_rng.h"
 #endif
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+#include "resolvedism_popIII.h"
+#include "../cooling/sgchem/sgchem_consts.h"
+#endif
 
 /* CellP[].Temp exists only under SGCHEM; SFinfo logging stores 0 without it */
 #ifdef SGCHEM
 #define SF_LOG_TEMP(i) (CellP[i].Temp)
 #else
 #define SF_LOG_TEMP(i) (0.)
+#endif
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+#define SF_LOG_IONIZED(i) ((int)CellP[i].Ionized)
+#else
+#define SF_LOG_IONIZED(i) (0)
 #endif
 
 /*!
@@ -53,6 +62,32 @@ int sf_channel_for_cell(int i)
 #endif
     if(m_solar > (GALSF_RESOLVEDISM_HYBRID_M_SSP)) {return SF_CHANNEL_SSP;}
     return SF_CHANNEL_STELLA;
+}
+#endif
+
+
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+/* gas below the critical metallicity takes the Pop III channel */
+int resolvedism_popIII_cell(int i) {return popIII_gas_is_pristine(P[i].Metallicity[0], All.PopIII_Zcrit_solar * All.SolarAbundances[0]);}
+
+/* Pop III criterion of cell i (resolvedism_popIII.h) */
+static int resolvedism_popIII_sf_allowed_cell(int i)
+{
+    struct popIII_sf_params p = {All.PopIII_Zcrit_solar * All.SolarAbundances[0], All.PopIII_nH_thresh, All.PopIII_xH2_min, All.PopIII_Mreservoir};
+    double rho_phys = CellP[i].Density * All.cf_a3inv, cs = CellP[i].effective_soundspeed(); /* as the Stella Jeans test */
+    double MJ_solar = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)) * UNIT_MASS_IN_SOLAR;
+    double divv = P[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3*All.cf_hubble_a : 0);
+    int ionized = 0;
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+    ionized = (CellP[i].Ionized > 0);
+#endif
+    return popIII_sf_allowed(CellP[i].nHcgs(), divv, CellP[i].TracAbund[IH2], MJ_solar, ionized, &p);
+}
+
+/* mass-weighted Pop III draw [Msun] on the per-event stream */
+static double resolvedism_draw_popIII_mass(unsigned long long *rng)
+{
+    return popIII_draw_mass_weighted([rng]() {return resolvedism_rng_uniform(rng);}, All.PopIII_IMF_Type, All.PopIII_IMF_Mchar, All.PopIII_IMF_Mmin, All.PopIII_IMF_Mmax);
 }
 #endif
 
@@ -238,6 +273,9 @@ double get_starformation_rate(int i, int mode)
 #ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
     int sf_channel = sf_channel_for_cell(i);
     if(sf_channel == SF_CHANNEL_SINK) {return 0;} /* STARFORGE tier not implemented */
+#endif
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+    if(resolvedism_popIII_cell(i)) {return resolvedism_popIII_sf_allowed_cell(i) ? rateOfSF : 0;} /* pristine gas: Pop III criterion in place of the Pop II/I ones, after the vetoes above */
 #endif
     
 #if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION)
@@ -568,7 +606,12 @@ void star_formation_parent_routine(void)
                 }
 #else
                 unsigned long long imf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_DRAW_IMF_MASS); /* rank-independent per-event stream */
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+                int popIII_draw = resolvedism_popIII_cell(i);
+                double M_drawn_imf = popIII_draw ? resolvedism_draw_popIII_mass(&imf_rng) : draw_one_mass_from_kroupa_IMF(&imf_rng);
+#else
                 double M_drawn_imf = draw_one_mass_from_kroupa_IMF(&imf_rng);
+#endif
                 double m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
                 prob = (P[i].Mass / m_drawn_code) * pfac;
 #endif
@@ -592,6 +635,9 @@ void star_formation_parent_routine(void)
                 if(sf_channel == SF_CHANNEL_STELLA)
 #endif
                 {double nH = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+                if(popIII_draw) {nH = 0;} /* Pop III cells form only through their own criterion */
+#endif
                 int cutoff_veto = (P[i].Mass <= 0); /* the vetoes of get_starformation_rate that the forced path would bypass */
 #ifdef GALSF_RESOLVEDISM_PHOTOION
                 if(CellP[i].Ionized > 0) {cutoff_veto = 1;}
@@ -740,6 +786,11 @@ void star_formation_parent_routine(void)
                             P[ns].BirthMetallicity = P[ns].Metallicity[0];
 #endif
                             P[ns].sampled = 0; /* needs accretion walk in assign_stellar_masses() */
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+                            P[ns].PopIIIStar = popIII_draw;
+                            if(popIII_draw) {printf("POPIII SF: Task=%d ID=%llu M_drawn=%.2f nH=%.3e xH2=%.3e Z=%.3e ionized=%d T=%.1f\n", ThisTask, (unsigned long long)P[ns].ID, M_drawn_imf,
+                                CellP[i].nHcgs(), CellP[i].TracAbund[IH2], P[i].Metallicity[0], SF_LOG_IONIZED(i), SF_LOG_TEMP(i));}
+#endif
                             P[ns].MstarSampleIMF[0] = M_drawn_imf; /* target mass in solar masses */
                             {int jj; for(jj=1; jj<N_STELLAR_MASS; jj++) P[ns].MstarSampleIMF[jj]=0;}
                             /* Link into active/timebin lists */

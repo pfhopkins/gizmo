@@ -269,6 +269,11 @@
 #SGCHEM_FORTRAN                % legacy Fortran backend of SGCHEM (default: C++/CVODE)
 #SGCHEM_OMP_CROSSCHECK      # test only: each step cools a copy serially and requires the threaded pass to match it byte for byte
 #SGCHEM_KEEP_IC_ABUNDANCES  # keep SGChemTracAbund from the IC on fresh starts (default zeroes it, x_H+ = 1e-4)
+#GALSF_RESOLVEDISM_POPIII_STARS # Stella: Pop III star formation in gas below PopIII_Zcrit_solar (own criterion and IMF; see Template_Config_stella.sh)
+#GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE # Stella: opt-in PISN energy from the He core (Heger & Woosley 2002 via Wise+12a); default flat 1e51 erg
+#SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS # Stella tree bands (RT_NUV + RT_OPTICAL_NIR, with or without radiation pressure): H- photodetachment from the stellar optical/NUV/FUV band fields instead of the ISRF calibration 4.2e-7 G0
+#SGCHEM_PRIMORDIAL_HELIUM       # He/H = 0.079 (Y = 0.24) in the chemistry and HYDROGEN_MASSFRAC = 0.76, for any network (net 1 always uses it)
+#SGCHEM_DGR_REMY_RUYER14        # no live dust: DGR from the Remy-Ruyer+14 broken power law below 0.26 Zsun (linear in Z above); Stella default
 #SGCHEM_DGR_INDEPENDENT_OF_METALLICITY # no live dust: DGR = DGRnormalized (x MW) at every Z; with DGRnormalized 0.01 = gizmo2017. Default scales with local Z
                                 #   of the Fortran DVODE driver. DEFAULT OFF: the Fortran path stays the
                                 #   reference implementation. Networks 5, 15 and 17 only. Replaces the

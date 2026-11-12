@@ -13,6 +13,9 @@
 #include "resolvedism_selfcheck.h"
 #include "resolvedism_fb_shared.h"
 #include "resolvedism_rng.h"
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+#include "resolvedism_popIII.h"
+#endif
 #include "../mesh/kernel.h"
 
 /* LYRA-style single-star IMF sampling (Gutcke+ 2021).
@@ -695,6 +698,30 @@ void assign_stellar_masses_xchange(void)
 #include "../system/code_block_xchange_finalize.h"
 
 
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+/* failed Pop III draw: the gathered mass, momentum and metals go into the parent cell, the star is dropped */
+static void popIII_return_draw_to_parent(int i, int ip, double mass_acc)
+{
+    int k;
+    if(mass_acc > 0) {
+        double m0 = P[ip].Mass, m1 = m0 + mass_acc;
+        for(k = 0; k < 3; k++) {double dv = (IMF_MomAccreted[i*3+k] - mass_acc * P[ip].Vel[k]) / m1; P[ip].Vel[k] += dv; CellP[ip].VelPred[k] += dv;}
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+        double Z_sum = 0;
+        for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
+            P[ip].Metallicity[MET_OF(k)] = (m0 * P[ip].Metallicity[MET_OF(k)] + IMF_ElemAccreted[i*NUM_RESOLVEDISM_ELEMENTS+k]) / m1;
+            if(k >= ELEM_C) {Z_sum += P[ip].Metallicity[MET_OF(k)];}
+        }
+        P[ip].Metallicity[0] = Z_sum;
+#elif defined(METALS)
+        P[ip].Metallicity[0] = (m0 * P[ip].Metallicity[0] + IMF_MetalAccreted[i]) / m1;
+#endif
+        P[ip].Mass = m1; CellP[ip].Mass = m1;
+    }
+    P[i].Mass = 0; P[i].MstarSampleIMF[0] = 0; P[i].MstarSampleIMF[1] = 0; P[i].MstarSampleIMF[2] = 0; P[i].sampled = 1; TreeMomentsStaleFlag = 1;
+}
+#endif
+
 /* =========================================================================== */
 /*  Top-level routine: pre-compute f_acc, run accretion walk, finalize stars    */
 /* =========================================================================== */
@@ -805,6 +832,9 @@ void assign_stellar_masses(void)
             }
             /* Cap at 0.5 per cell */
             if(f_acc > 0.5) f_acc = 0.5;
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+            if(P[i].PopIIIStar && M_enclosed < 2.0 * M_remaining) {f_acc = 0;} /* Pop III: take mass only once the whole remainder is enclosed */
+#endif
 
             P[i].MstarSampleIMF[2] = f_acc;
 
@@ -873,6 +903,15 @@ void assign_stellar_masses(void)
 
         double M_drawn = P[i].MstarSampleIMF[0]; /* solar masses */
         double mass_acc = IMF_MassAccreted[i];
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+        if(P[i].PopIIIStar && M_drawn / UNIT_MASS_IN_SOLAR - mass_acc > 0.01 * M_drawn / UNIT_MASS_IN_SOLAR) {
+            printf("POPIII SF: ID=%llu M_drawn=%.2f gathered %.3f Msun only: returned to the parent cell, no star\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR);
+            int iparent = (int)P[i].MstarSampleIMF[1];
+            popIII_return_draw_to_parent(i, iparent, mass_acc);
+            force_add_element_to_tree(iparent, i); /* zero-mass placeholder until the next rearrange removes it */
+            continue;
+        }
+#endif
 
         if(mass_acc <= 0) {
             printf("WARNING: IMF accretion failed for star ID=%llu M_star=%.2f Msun, using tiny mass\n",
@@ -913,6 +952,12 @@ void assign_stellar_masses(void)
         }
 #endif
         P[i].BirthMetallicity = P[i].Metallicity[0];  /* total Z, slot 0 in both layouts */
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+        if(P[i].PopIIIStar) { /* accreted above Z_crit: keeps its mass, labelled Pop II */
+            if(!popIII_gas_is_pristine(P[i].BirthMetallicity, All.PopIII_Zcrit_solar * All.SolarAbundances[0])) {P[i].PopIIIStar = 0;}
+            printf("POPIII STAR: ID=%llu M_drawn=%.2f M_acc=%.3f Z_birth=%.3e popIII=%d\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR, P[i].BirthMetallicity, (int)P[i].PopIIIStar);
+        }
+#endif
 
         /* Log SF + IMF accretion info */
         imf_x[nimf] = P[i].Pos[0];

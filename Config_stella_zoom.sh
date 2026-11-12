@@ -1,0 +1,128 @@
+# Stella cosmological zoom configuration (the z = 6 zoom chains: net 17, periodic box with PM, G0 floor 0, CR_SCALE_WITH_G0)
+# plus Pop III star formation, the Remy-Ruyer+14 dust-to-gas ratio and primordial helium.
+#!/bin/bash
+# Config.sh for resolved-ISM single-star galaxy formation (gizmo-cpp)
+# Mapped from gizmo2017 configuration
+
+## -- Hydro solver --
+HYDRO_MESHLESS_FINITE_MASS
+
+## -- Star formation & resolved ISM --
+GALSF_RESOLVEDISM
+GALSF_RESOLVEDISM_FB
+GALSF_RESOLVEDISM_PHOTOION       % subgrid photoionization (Stromgren)
+GALSF_RESOLVEDISM_SAMPLE_IMF
+N_STELLAR_MASS=5
+#GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF    % disabled — using pure Jeans criterion (Hu 2023)
+GALSF_RESOLVEDISM_INSTANT_SN
+GALSF_RESOLVEDISM_G0_VARIABLE
+#GALSF_RESOLVEDISM_NUV_VARIABLE
+#GALSF_RESOLVEDISM_OPT_VARIABLE
+GALSF_RESOLVEDISM_STELLAR_TABLES
+GALSF_RESOLVEDISM_WINDS
+GALSF_RESOLVEDISM_WINDS_CONTINUOUS   % ADOPTED 2026-07-05: per-step Mdot dt injection, exact int(Mdot v)dt, one batched walk/step (six-way matrix verdict)
+GALSF_RESOLVEDISM_WINDS_THERMAL      % ADOPTED 2026-07-05: inelastic-residual heating; with CONTINUOUS -> energy-driven bubbles at 1 Msun res (p_r x3.7 vs momentum-only)
+#GALSF_RESOLVEDISM_FB_HEALPIX  % HEALPix FB weighting (candidate default; enable deliberately)
+#RESOLVEDISM_HOTSYNC_CLAMP     % hot-region timebin clamp (validated with spawn; production adoption undecided)
+GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+GALSF_RESOLVEDISM_RADPRESSURE
+GALSF_RESOLVEDISM_TYPE_IA
+#GALSF_RESOLVEDISM_DUST          % off: dust-to-gas ratio fixed from metallicity
+#SGCHEM_DGR_INDEPENDENT_OF_METALLICITY  % off: DGR = DGRnormalized x MW at every Z; with DGRnormalized 0.01 (relative to MW) reproduces gizmo2017
+SGCHEM_DGR_REMY_RUYER14          % DGR: Remy-Ruyer+14 broken power law below 0.26 Zsun (linear in Z above)
+GALSF_RESOLVEDISM_POPIII_STARS   % zoom: Pop III channel in gas below PopIII_Zcrit_solar
+GALSF_SFR_CRITERION=(64)       % Jeans mass only (Hu & Sternberg 2023): M_J < N_ngb * m_gas
+
+## -- Cooling & chemistry --
+COOLING
+COOLING_OPERATOR_SPLIT
+SGCHEM
+CHEMISTRYNETWORK=17               % zoom: primordial H/He + D/HD + CO (Uli 2026-11-10)
+SGCHEM_PRIMORDIAL_HELIUM          % zoom: He/H = 0.079 (Y = 0.24), X_H = 0.76
+SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS  % zoom: H- photodetachment from the stellar band fields, not 4.2e-7 G0
+RT_NUV                            % upstream band flags: keep the tree NUV/optical fields (H- rate) when RADPRESSURE is off
+RT_OPTICAL_NIR
+CO_SHIELDING
+WSS_CIE_COOL
+#GALSF_SGCHEM_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe driven from ElementAbundance[H/He]
+#GALSF_SGCHEM_DEBUG_INPUT      % validate species-vs-pool invariants on DVODE entry, print full context on violation (debug runs)
+#CR_SCALE_WITH_G0                % disabled for testing — using fixed CosmicRayIonRate from params
+TURB_DIFF_METALS
+
+## -- Tree column densities --
+RT_USE_TREECOL_FOR_NH=12         % HEALPix NSIDE=1; gas, dust-weighted, H2, CO columns
+NEED_HEALPIX
+
+## -- Metals & MHD --
+METALS
+MAGNETIC
+MHD_B_SET_IN_PARAMS
+
+## -- M1 Radiation Transport (alternative to subgrid PHOTOION/G0_VARIABLE/RADPRESSURE) --
+## When enabling, comment out: GALSF_RESOLVEDISM_PHOTOION, GALSF_RESOLVEDISM_G0_VARIABLE, GALSF_RESOLVEDISM_RADPRESSURE
+#RT_M1                           % M1 moment method (triggers RT_EVOLVE_FLUX + RADTRANSFER)
+#RT_CHEM_PHOTOION=2              % 4 ionizing bins: H0, He0, He1, He2
+#RT_PHOTOION_MULTIFREQUENCY
+#RT_PHOTOELECTRIC                % 8-13.6 eV (dust PE heating)
+#RT_LYMAN_WERNER                 % 11.2-13.6 eV (H2 photodissociation)
+#RT_INFRARED                     % dust-reprocessed IR
+#RT_SPEEDOFLIGHT_REDUCTION=0.1   % reduced speed of light (10% of c; 0.003 too slow, 0.1 standard)
+#RT_RAD_PRESSURE_FORCES          % radiation pressure on gas
+
+## -- Stella CR: one setting for clouds and galaxies (CR fluid on for production, off for cheap smoke tests) --
+## Fluid on: comment out CR_BACKGROUND_IONRATE_ATTENUATED and CR_SCALE_WITH_G0 (zeta then comes from the CR fluid only) and set the Stella CR params.
+## Sources: subgrid SN and fast-wind (>1000 km/s) injection of CosmicRay_SNeFraction of the ejecta energy; resolved shocks are not relied upon.
+## Transport runs along B (no isotropic fallback at B = 0, setups carry a field); P dV-only CR-gas exchange is automatic.
+## Initial state is per setup: cloud boxes CosmicRayInitialAmbient/Cloud_eVcm3 (Fitz Axen+24: 1 / 0.1), galaxies start at zero.
+#COSMIC_RAY_FLUID
+#CRFLUID_DIFFUSION_MODEL=7       % variable kappa: self-confinement (streaming instability vs ion-neutral damping) + extrinsic turbulence (Hopkins+21), as Fitz Axen+24 DVAR
+#CRFLUID_SPEEDOFLIGHT_REDUCTION=(3.e7/C_LIGHT_CGS) % Stella default with COSMIC_RAY_FLUID: 300 km/s CR transport speed (set here only to override)
+#CR_BACKGROUND_IONRATE_ATTENUATED % CR fluid OFF only: chemistry zeta = CosmicRayIonRate x STARFORGE column attenuation (TreeCol N_H); no CR energy or pressure
+#CRFLUID_INJECTION_AT_SHOCKS=(0.1) % opt-in, not relied upon: resolved shock acceleration (CosmicRay_ShockAccelEfficiency)
+#INPUT_READ_COSMICRAYENERGY      % keep CosmicRayEnergy from the IC on fresh starts (transport tests)
+#SGCHEM_KEEP_IC_ABUNDANCES     % keep SGChemTracAbund from the IC on fresh starts (molecular cloud ICs; default zeroes it)
+
+## -- Turbulent metal diffusion --
+#TURB_DIFF_METALS
+
+## -- SMBH (gravitational capture) --
+#SINK_PARTICLES
+#SINK_GRAVCAPTURE_GAS
+#SINK_CALC_DISTANCES
+
+## -- Stellar-mass BH promotion (dead stars -> accreting Type 5 sinks) --
+#GALSF_RESOLVEDISM_BH_PROMOTION    % auto-enables SINK_PARTICLES + SINK_GRAVCAPTURE_GAS
+
+## -- Box geometry & PM grid (for zoom-ins, molecular clouds) --
+#BOX_PERIODIC
+#PMGRID=256
+#SHIFT_BY_HALF_BOX
+#SHIFTBACK_ON_OUTPUT
+
+## -- Gravity & density --
+ADAPTIVE_GRAVSOFT_FORALL=1+16    % adaptive softening for gas (Type 0) + stars (Type 4)
+TIDAL_TIMESTEP_CRITERION         % tidal tensor timestep (more accurate for few-body, Grudic+2021)
+#ADAPTIVE_TREEFORCE_UPDATE=0.0625 % disabled — stales the tree columns and radiation fields
+DO_DENSITY_AROUND_NONGAS_PARTICLES
+
+## -- KETJU regularized integrator for close encounters --
+#KETJU_REGULARIZATION              % MSTAR chain regularization; needs ADAPTIVE_GRAVSOFT_FORALL=1 (fixed star softening <= KetjuRegionRadius)
+#KETJU_MERGE_STARS                 % enable stellar collision mergers (Type 4+4) in KETJU
+#KETJU_MERGE_BH                    % enable BH mergers (Type 5+5, Type 5+4) in KETJU
+#KETJU_PN_REMNANT_TAG              % stamp StellarRemnantType at SN time + dispatch PN on Type 4 NS/BH remnants (needs GALSF_RESOLVEDISM_FB; no sink/BH_PROMOTION required)
+
+## -- Misc --
+NO_ISEND_IRECV_IN_DOMAIN
+MULTIPLEDOMAINS=16
+EVALPOTENTIAL
+OUTPUT_GRADIENT_VEL
+OUTPUT_TIMESTEP
+OUTPUT_TEMPERATURE
+OUTPUT_COOLRATE
+OUTPUT_INDIVIDUAL_COOLRATES
+
+# ---- cosmological zoom additions (1e8_c / 1e8_a, 2026-11-10) ----
+BOX_PERIODIC
+PMGRID=256
+PM_PLACEHIGHRESREGION=1+2        % gas (type 0) + high-res DM (type 1) on the high-res PM grid
+CR_SCALE_WITH_G0                 % zoom: zeta = clamp(G0/1.7 x CosmicRayIonRate, 1e-21, 2e-16); 1e-21 in pristine gas (Uli 2026-11-10)

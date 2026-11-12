@@ -6,6 +6,7 @@
 #include <string.h>
 #include <math.h>
 #include "../declarations/allvars.h"
+#include "resolvedism_sn_energy.h"
 #include "../core/proto.h"
 #include "resolvedism_star_age.h"
 #include "../mesh/kernel.h"
@@ -828,7 +829,7 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
                         double scl_sp = (Mej_tab_sp > 0) ? Mej_sp/Mej_tab_sp : 0;
                         for(ksp = 0; ksp < STBL_NELEM; ksp++) P[i_owner].SpawnEjZ[ksp] = (MyFloat)(m_k_sp[ksp]*scl_sp/UNIT_MASS_IN_SOLAR);
                         P[i_owner].SpawnEjMass = (MyFloat)(Mej_sp/UNIT_MASS_IN_SOLAR);
-                        P[i_owner].SpawnEjEnergy = (MyFloat)(1.0e51/UNIT_ENERGY_IN_CGS);
+                        P[i_owner].SpawnEjEnergy = (MyFloat)(resolvedism_sn_energy_erg(rt_sp == REM_PISN, 1, Mstar_sp)/UNIT_ENERGY_IN_CGS);
                         P[i_owner].SN_SpawnPending = 1;
                         /* keep STELLA_FB_EVENT==1 and M_at_SN_trigger: the post-walk
                          * conversion must still run for this star (FeedbackBudget entries +
@@ -1233,6 +1234,7 @@ void resolvedism_inject_fb_energy(void)
             double Mej_solar = Mej_actual;
             double Z_ej = Z_ej_table * scale_diag;
             if(channel == 0 && (rem_type == REM_FSN || rem_type == REM_DBH)) {channel = 5;} /* failed SN: recorded, zero energy */
+            double Esne_erg = resolvedism_sn_energy_erg(rem_type == REM_PISN, rem_type != REM_FSN && rem_type != REM_DBH, Mstar);
             {
                 double yl[6] = {Mej_solar, Z_ej, 0, 0, 0, 0}; const int ke[4] = {ELEM_C, ELEM_O, ELEM_Si, ELEM_Fe};
                 for(int q = 0; q < 4; q++) {
@@ -1244,15 +1246,14 @@ void resolvedism_inject_fb_energy(void)
                 }
                 double age_l = resolvedism_star_age_yr(i);
                 fb_death_row_push(i, channel == 1, (channel == 1) ? REM_WD : rem_type, (channel == 5) ? FB_LOG_FAILED : FB_LOG_EXPLODED,
-                                  (channel == 0) ? 1.0e51 : 0.0, yl, age_l, get_star_lifetime(Mstar, logM, logZ));
+                                  (channel == 0) ? Esne_erg : 0.0, yl, age_l, get_star_lifetime(Mstar, logM, logZ));
             }
 
             n_events[channel] += 1;
             M_injected[channel] += Mej_solar;
             M_removed[channel] += Mej_solar;
             Z_injected[channel] += Z_ej;
-            if(channel == 0) { /* SN: has energy. Uniform 1e51 for explosive remnants; 0 for FSN/DBH (no explosion). */
-                double Esne_erg = (rem_type == REM_FSN || rem_type == REM_DBH) ? 0.0 : 1.0e51;
+            if(channel == 0) { /* SN: 1e51 for explosive remnants, the He-core energy for PISN, 0 for FSN/DBH */
                 E_injected[channel] += Esne_erg;
             }
 
@@ -1265,7 +1266,7 @@ void resolvedism_inject_fb_energy(void)
             if(channel != 1) {
                 printf("RESOLVEDISM SN: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f rem_type=%d E=%.2e[erg]\n",
                     ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass, rem_type,
-                    (rem_type==REM_FSN||rem_type==REM_DBH)?0.0:1.0e51);
+                    Esne_erg);
             } else {
                 printf("RESOLVEDISM AGB: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f\n",
                     ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass);

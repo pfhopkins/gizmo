@@ -9,11 +9,16 @@
  * the SAME dust field. Mirrors the sgchem.cc convention exactly (2026-07-28):
  * evolved-dust branch sums Dust[]/0.01; no-dust branch scales the dust-to-metal
  * efficiency DGRnormalized with the LOCAL metallicity (constant DGRnormalized with
- * SGCHEM_DGR_INDEPENDENT_OF_METALLICITY); capped at 10x solar (the
+ * SGCHEM_DGR_INDEPENDENT_OF_METALLICITY; Remy-Ruyer+14 below 0.26 Zsun with SGCHEM_DGR_REMY_RUYER14,
+ * also for the star-side radiation pressure; MW depletions of C/O/Si unchanged); capped at 10x solar (the
  * certified one-zone domain — fresh unmixed ejecta would otherwise reach ~50x). */
 #if defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY) && defined(GALSF_RESOLVEDISM_DUST)
 #error "SGCHEM_DGR_INDEPENDENT_OF_METALLICITY has no effect with GALSF_RESOLVEDISM_DUST (live dust sets the DGR)"
 #endif
+#if defined(SGCHEM_DGR_REMY_RUYER14) && (defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY) || defined(GALSF_RESOLVEDISM_DUST) || !defined(SGCHEM) || !defined(METALS))
+#error "SGCHEM_DGR_REMY_RUYER14 scales the no-dust-model DGR with Z: needs SGCHEM and METALS, not GALSF_RESOLVEDISM_DUST or SGCHEM_DGR_INDEPENDENT_OF_METALLICITY"
+#endif
+#include "resolvedism_dgr_rr14.h"
 #define RESOLVEDISM_DGR_SOLAR_ABS 0.01  /* absolute MW dust-to-gas mass ratio at DGR=1 (solar units) */
 #ifdef EXPERIMENTAL_DUST_HU_MODEL
 /* Hu model: MW anchor = the solar seed, so a seeded solar cell has DGR = 1 */
@@ -22,6 +27,22 @@
 #define RESOLVEDISM_DGR_MW_ABS     (RESOLVEDISM_DGR_MW_C_ABS + RESOLVEDISM_DGR_MW_SIL_ABS) /* = the solar seed */
 #else
 #define RESOLVEDISM_DGR_MW_ABS     RESOLVEDISM_DGR_SOLAR_ABS /* live dust normalised by 0.01 */
+#endif
+
+#ifdef SGCHEM
+/* no-dust-model DGR [solar units] of gas (or a star) with total metallicity Z: linear, or Remy-Ruyer+14 below 0.26 Zsun */
+static inline double resolvedism_DGR_solar_from_Z(double Z)
+{
+#if defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY)
+    return All.DGRnormalized;
+#else
+    double dgr = All.DGRnormalized * Z / All.SolarAbundances[0];
+#ifdef SGCHEM_DGR_REMY_RUYER14
+    dgr *= resolvedism_dgr_rr14_over_linear(Z / All.SolarAbundances[0]);
+#endif
+    return dgr;
+#endif
+}
 #endif
 
 /* raw DGR formula, no cap/gate (chemistry applies its own cap and solve-T sputter gate) */
@@ -35,8 +56,8 @@ static inline double resolvedism_cell_DGR_solar_raw(int p)
         dgr = DGR_actual / RESOLVEDISM_DGR_MW_ABS;
     }
 #elif defined(SGCHEM)
-#if defined(METALS) && !defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY)
-    dgr = All.DGRnormalized * P[p].Metallicity[0] / All.SolarAbundances[0];
+#if defined(METALS)
+    dgr = resolvedism_DGR_solar_from_Z(P[p].Metallicity[0]);
 #else
     dgr = All.DGRnormalized;
 #endif
