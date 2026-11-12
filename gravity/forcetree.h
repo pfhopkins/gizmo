@@ -75,6 +75,7 @@ void force_update_hmax(void);
 void force_update_hmax_of_node(int no, int mode);
 void force_finish_kick_nodes(void);
 void force_motion_bounds_reset(int tree_live);
+void force_cover_position(int i);          /* serial: i's position was set, not drifted */
 void force_raise_motion_bound(int i);       /* serial: a velocity changed outside the kick */
 void force_note_motion_change(int i);       /* thread-safe: same, raised by force_raise_noted_motion_bounds */
 void force_raise_noted_motion_bounds(void);
