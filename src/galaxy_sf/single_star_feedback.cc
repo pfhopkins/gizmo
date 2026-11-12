@@ -219,7 +219,11 @@ static void single_star_event_of(int i, int kind, struct single_star_event *ev)
         for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_elem_ej_AGB(logM, logZ, k);}
     } else {
         ev->E = 1.e51;
-        if(ev->remnant_type == REM_PISN) {ev->M_rem = 0; ev->Mej = ev->M_trigger;}
+        if(ev->remnant_type == REM_PISN) {ev->M_rem = 0; ev->Mej = ev->M_trigger;
+#ifdef GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE /* Heger & Woosley 2002 via the Wise+12a fit: M_He = (13/24)(M - 20), held to 64-133 Msun */
+            double M_He = DMIN(DMAX((13. / 24.) * (SingleStars.M_drawn[s] - 20.), 64.), 133.); ev->E = (5.0 + 1.304 * (M_He - 64.)) * 1.e51;
+#endif
+        }
         if(ev->remnant_type == REM_FSN || ev->remnant_type == REM_DBH) {ev->E = 0;}
         for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_elem_ej_SN(logM, logZ, k);}
     }

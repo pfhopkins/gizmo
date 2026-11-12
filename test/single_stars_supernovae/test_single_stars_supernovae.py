@@ -195,3 +195,19 @@ def test_cold_ejecta(built):
     ic, snap, _ = run("hot", built, ic_args={"T": 1.0e7})
     dE = (totals(snap)["E"] - totals(ic)["E"]) * E_UNIT
     assert abs(dE / 3.0e51 - 1) < 1e-3, dE / 3.0e51
+
+
+def test_pisn_energy_from_helium_core(built):
+    """GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE: the 320 Msun pair-instability SN carries [5 + 1.304 (M_He - 64)] 1e51 erg with
+    M_He = (13/24)(M - 20) held to 64-133 Msun (9.498e52 erg here); the other classes keep 1e51 (or 0 for the failed SN)"""
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=("GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE",))
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_pisn")
+        build_gizmo_for_test(TEST_NAME)
+    _, _, rows = run("pisn", built, exe="GIZMO_pisn")
+    rows = rows[rows[:, 2] == 1]  # supernovae (time ID kind remnant_type M_drawn M_trigger M_ejecta M_remnant E ...)
+    for r in rows:
+        M_He = min(max(13 / 24 * (r[4] - 20), 64), 133)
+        want = (5 + 1.304 * (M_He - 64)) * 1e51 if int(r[3]) == 5 else (0 if int(r[3]) == 3 else 1e51)
+        assert abs(r[8] - want) <= 1e-6 * max(want, 1), (r[4], int(r[3]), r[8], want)
+    assert any(int(r[3]) == 5 for r in rows)
