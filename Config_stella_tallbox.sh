@@ -36,6 +36,7 @@ GALSF_RESOLVEDISM_RADPRESSURE
 GALSF_RESOLVEDISM_TYPE_IA
 #GALSF_RESOLVEDISM_DUST          % off: dust-to-gas ratio fixed from metallicity
 #SGCHEM_DGR_INDEPENDENT_OF_METALLICITY  % off: DGR = DGRnormalized x MW at every Z; with DGRnormalized 0.01 (relative to MW) reproduces gizmo2017
+SGCHEM_DGR_REMY_RUYER14          % DGR: Remy-Ruyer+14 broken power law below 0.26 Zsun (linear in Z above)
 GALSF_SFR_CRITERION=(64)       % Jeans mass only (Hu & Sternberg 2023): M_J < N_ngb * m_gas
 
 ## -- Cooling & chemistry --

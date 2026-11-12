@@ -128,8 +128,8 @@ double resolvedism_radp_starside_dp_code(int i)
          * efficiency x local Z / Zsun, capped at the certified 10x-solar domain. */
 #ifdef SGCHEM
         double DGR = All.DGRnormalized;
-#if defined(METALS) && !defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY)
-        DGR = All.DGRnormalized * P[i].Metallicity[0] / All.SolarAbundances[0];
+#if defined(METALS)
+        DGR = resolvedism_DGR_solar_from_Z(P[i].Metallicity[0]); /* the star's Z, the gas law */
 #endif
 #else
         double DGR = 1.0; /* no SGCHEM: dust-to-metal ratio fixed at solar */
