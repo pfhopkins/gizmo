@@ -790,6 +790,9 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
             calc_fn(-1); /* weighting pre-pass (collective) */
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
             if(i_owner >= 0 && All.Time < All.TestFBNoGasUntilTime) {P[i_owner].FB_Area_weighted_sum = 0;} /* test: no gas in reach */
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+            if(i_owner >= 0 && All.Time < All.TestFBNoGasUntilTime) {P[i_owner].FB_KernelGasMass = 0;}
+#endif
 #endif
             ok_local = 1;
             if(i_owner >= 0 && P[i_owner].FB_Area_weighted_sum <= 0) {ok_local = 0;}

@@ -1,0 +1,64 @@
+InitCondFile                    stella_sn_ejecta_cell_first_ics
+OutputDir                       output
+TimeBetSnapshot                 1.0e-6
+TimeBetStatistics               1.0e-6
+TimeOfFirstSnapshot             0
+SnapFormat                      3                 % HDF5
+BoxSize                         0.02              % 20 pc
+TimeBegin                       0.0
+TimeMax                         5.0e-6            % 4.9 kyr
+ComovingIntegrationOn           0                 % non-cosmological
+MaxSizeTimestep                 1.0e-7
+MinSizeTimestep                 1e-12
+TreeDomainUpdateFrequency       0.05
+PartAllocFactor                 3.0
+BufferSize                      100
+UnitLength_in_cm                3.085678e21       % 1 kpc
+UnitMass_in_g                   1.989e43          % 1e10 Msun
+UnitVelocity_in_cm_per_s        1.0e5             % 1 km/s
+UnitMagneticField_in_gauss      1.0
+SofteningGas                    1.0e-4            % 0.1 pc min for gas (Type 0)
+SofteningHalo                   0.050             % 50 pc DM (Type 1)
+SofteningDisk                   0.020             % 20 pc disk stars (Type 2)
+SofteningBulge                  0.020             % 20 pc bulge (Type 3)
+SofteningStars                  1.0e-4            % 0.1 pc min for spawned stars (Type 4)
+SofteningBndry                  0.005             % 5 pc sink/BH (Type 5)
+DesNumNgb                       32
+AGS_DesNumNgb                   32
+MaxKernelRadius                 2000              % must be large enough for halo cells to find neighbors (gizmo2017 used 2000)
+InitGasTemp                     0               % use the IC temperature
+MinGasTemp                      10.0              % 10 K floor
+TimeLimitCPU                    3600
+CpuTimeBetRestartFile           7200
+Omega0                          1.0
+OmegaLambda                     0.0
+OmegaBaryon                     0.0
+HubbleParam                     1.0
+CritPhysDensity                 100.              % SF threshold [cm^-3] — Jeans criterion is the binding one
+SfEffPerFreeFall                0.5               % eps_ff = 0.5 (Hu 2023)
+FacSfThreshMJ                   1.0               % M_J < N_ngb * m_gas (kernel mass)
+TimeInstantSN                   0.0               % disabled: all stars live their full table lifetime
+IMFSampleMinMass                0.08              % full IMF: sample down to hydrogen burning limit
+IMFSampleStellarMassCut         0.5               % skip UV/LW computation for M < 0.5 Msun (perf only)
+StellarTablesFile               gizmo/galaxy_sf/stellar_tables/stellar_tables_unified.hdf5
+MaxStellarTimestep              10000.0           % 50 kyr max stellar evolution timestep [yr]
+InitMetallicity                 0.1
+InitStellarAge                  10.0              % pre-existing stars: 10 Gyr old
+BiniX                           0
+BiniY                           0
+BiniZ                           2.0e-6          % [Gauss] uniform 2 uG along z
+ShieldingLength                 0.050             % 50 pc shielding length
+G0                              1.7               % initial Habing FUV field (Draine 1978)
+CosmicRayIonRate                3.0e-17           % CR ionization rate [s^-1]
+DGRnormalized                   1.0               % dust-to-metal efficiency (1.0 = MW); DGR scales with local Z per particle
+DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
+InitialMetallicity              0.1
+ResolvedISM_SFCooldownFreeFallFraction 0.1   % SF cooldown after a spawn, fraction of t_ff (0: off)
+ResolvedISM_RNGRealisation      0               % Stella random-stream realisation (0: default)
+MaxMemSize                      3500
+TestStarMass                    12.0              % core-collapse SN star at the box centre
+TestStarMass2                   0
+TestStarMass3                   0
+TestNumStars                    1
+TestSNTime0                     1.0e-6            % forced SN at ~1 kyr
+TestFBNoGasUntilTime            3.0e-6            % weighting walks find no gas until ~3 kyr (empty bubble)
