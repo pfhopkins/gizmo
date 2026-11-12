@@ -1083,8 +1083,11 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
 #endif
 #endif
 
+/* The models below impose a fixed pressure-density curve (for the collapse models, a stand-in for efficient cooling); they are not a
+   variable-gamma or non-ideal EOS. The gas still responds to compression on short times with the adiabatic index gamma_eos_index (EOS_GAMMA, or the
+   molecular/atomic index set below), and that index sets the sound speed the Riemann solver and the timestep use. */
 #ifdef EOS_MHD_CORE_BAROTROPIC
-    press = 0.04*cell[i].Density*sqrt(1.+pow(cell[i].Density/1.47705e8 ,4./3.));
+    press = 0.04*cell[i].Density*sqrt(1.+pow(cell[i].Density/1.47705e8 ,4./3.)); /* isothermal core-collapse test EOS (Hopkins 2015), stiffening to rho^(5/3) */
 #endif
 #ifdef EOS_ENFORCE_ADIABAT
     press = EOS_ENFORCE_ADIABAT * pow(cell[i].Density, gamma_eos_index);
@@ -1096,16 +1099,17 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     cell[i].InternalEnergy = cell[i].InternalEnergyPred = press / (cell[i].Density * (gamma_eos_index-1.));
 #endif
 
-#ifdef EOS_GMC_BAROTROPIC
+#ifdef EOS_GMC_BAROTROPIC /* Masunaga & Inutsuka 2000, as eq. 4 of Federrath 2014: isothermal, then alternating transition and adiabatic segments */
     gamma_eos_index=7./5.; double rho=cell[i].density_for_energy(), nH_cgs=rho*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS;
-    if(nH_cgs > 2.30181e16) {gamma_eos_index=5./3.;}
+    if(nH_cgs > 2.30181e16) {gamma_eos_index=5./3.;} /* 7/5 for molecular gas, 5/3 once dissociated */
     if (nH_cgs < 1.49468e8) {press = 6.60677e-16 * nH_cgs;}
     else if (nH_cgs < 2.30181e11) {press = 1.00585e-16 * pow(nH_cgs, 1.1);}
     else if (nH_cgs < 2.30181e16) {press = 3.92567e-20 * pow(nH_cgs, gamma_eos_index);}
     else if (nH_cgs < 2.30181e21) {press = 3.1783e-15 * pow(nH_cgs, 1.1);}
     else {press = 2.49841e-27 * pow(nH_cgs, gamma_eos_index);}
 #if CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(EOS_GMC_BAROTROPIC)
-#if (EOS_GMC_BAROTROPIC==1)
+#if (EOS_GMC_BAROTROPIC==1) /* Bate, Bonnell & Bromm 2003: isothermal, then rho^(7/5) at all higher densities, with no dissociation */
+    gamma_eos_index = 7./5.;
     if (nH_cgs < 6e10) {press = 6.60677e-16 * nH_cgs;}
     else press = 3.964062e-5 * pow(nH_cgs/6e10,1.4);
 #endif
