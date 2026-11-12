@@ -788,6 +788,15 @@ Differences to Arepo:
   18.6 eV, WSS_CIE_COOL) settles at 2.3-2.6e4 K, cooled by HI Lyman alpha (golden/test_euv_h2.cc).
   Fixed-Q TreeRay-PI cloud (gmc_Z1_m1.0, Q = 1e49 s^-1, table <hnu> 18.8 eV): 13.7 kK with WSS_CIE_COOL, 3-4e4 K without.
 
+## D-57. (2026-11-13) Net 17 without oxygen chemistry
+Net 17 carries O only as the remainder abundo - abCO; there is no O + H2 -> OH + H and no O+ ion chain.
+Ploeckinger (arXiv:2512.13447, 2506.15773) reports an H2 excess for networks without oxygen chemistry.
+Our one-zone test (nets 17, 17+O, 15, 3; 1136 runs; reports/oxygen_h2_net17.md): at 0.01-0.3 Zsun the HI-H2
+transition shifts by <= 0.01-0.04 dex and the cold-phase T by <= 0.005 dex, because the transition sits at 15-180 K,
+where O + H2 -> OH + H (barrier ~3150 K) is dead. The O+ ion chain gives +0.15 dex only at solar Z with MW CR and
+N ~ 1e21 cm^-2, more only at N ~ 1e22. Her large effect needs warm (~1000 K) gas in chemical equilibrium (>~ 100 Myr).
+If needed later (solar Z, MW-like CR): add the ion chain as four algebraic species (reaction list in the report).
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

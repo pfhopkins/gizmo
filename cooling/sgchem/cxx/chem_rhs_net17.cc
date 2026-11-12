@@ -426,6 +426,7 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
 
     // --- CO: NL97 + He+ CT destruction (.F:864-878) ---
     const double k0 = 5e-16, k1 = 5e-10;
+    // no O/OH chemistry (O + H2, O+ ion chain): negligible for our regimes, see DEVIATIONS.md D-57
     double abo = c.abundo - abco; if (abo < 0.0) abo = 0.0;
     double beta;
     if (abo == 0.0)             beta = 0.0;
