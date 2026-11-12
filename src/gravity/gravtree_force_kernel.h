@@ -1200,7 +1200,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_leaf_accumulate(double r2, const Vec3
 
 #ifdef KETJU_REGULARIZATION
         /* MSTAR integrates a same-chain pair inside the region radius over the next step: it does not set the host step */
-        if((target.ketju_chain == 0) || (src.ketju_chain != target.ketju_chain) || (r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius)) {
+        if((target.ketju_chain == 0) || (src.ketju_chain != target.ketju_chain) || (r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius * All.cf_a2inv)) {
 #endif
         if(tSqr < prox.Min_Sink_Approach_Time) {prox.Min_Sink_Approach_Time = tSqr;}
         if(tff4 < prox.Min_Sink_Freefall_time) {prox.Min_Sink_Freefall_time = tff4;}

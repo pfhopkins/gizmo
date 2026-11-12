@@ -1,4 +1,6 @@
-"""ICs for test/ketju_binary (kpc, km/s, 1e10 Msun): a 1 + 1 Msun binary, a = 1000 AU, e = 0.9, starting at apocentre, and a far 1 Msun star; the second file adds a 0.05 Msun field star 100 AU from one member."""
+"""ICs for test/ketju_binary (kpc, km/s, 1e10 Msun): a 1 + 1 Msun binary, a = 1000 AU, e = 0.9, starting at apocentre, and a far 1 Msun star; the second file adds a 0.05 Msun field star 100 AU from one member.
+field/edge: the binary, the far star and a 0.3 Msun field star 50 region radii away (inside the limiting radius, no chain centre), centred in the box
+(field) or on the box edge x = 0 with negative x wrapped (edge, same geometry). comoving: two 1 Msun stars at rest 20 region radii apart (comoving)."""
 import h5py
 import numpy as np
 
@@ -25,3 +27,11 @@ def write(name, x, v, m):
 
 write("ketju_binary_ics.hdf5", x, v, np.full(3, M))
 write("ketju_binary_light_ics.hdf5", np.vstack([x[:2], x[1] - [100 * AU, 0, 0]]), np.vstack([v[:2], v[1]]), np.array([M, M, 0.05 * M]))
+
+R = 5e-6  # KetjuRegionRadius in the params
+xf = np.vstack([x, c - [50 * R, 0, 0]]); vf = np.vstack([v, [0, 0, 0]])
+mf = np.array([M, M, M, 0.3 * M])  # the field star below KetjuMinStarMass: no chain centre, it limits the chain
+write("ketju_binary_field_ics.hdf5", xf, vf, mf)
+xe = xf - [c[0], 0, 0]; xe[:, 0] %= 0.3
+write("ketju_binary_edge_ics.hdf5", xe, vf, mf)
+write("ketju_binary_comoving_ics.hdf5", np.array([c + [10 * R, 0, 0], c - [10 * R, 0, 0]]), np.zeros((2, 3)), np.full(2, M))

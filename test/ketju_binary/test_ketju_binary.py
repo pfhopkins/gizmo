@@ -88,6 +88,39 @@ def test_hubble_param_units():
     assert abs(a - 1) < 1e-6 and abs(e - 0.9) < 1e-6
 
 
+def _elements_pair(flags=()):
+    """a, e of the pair with IDs 1 and 2, nearest image"""
+    sn = sorted(glob.glob(variant_output_dir(TEST_NAME, flags) + "/snapshot_*.hdf5"))[-1]
+    with h5py.File(sn, "r") as f:
+        g = f["PartType4"]; o = np.argsort(g["ParticleIDs"][:])
+        m, x, v = g["Masses"][:][o], g["Coordinates"][:][o], g["Velocities"][:][o]
+    dr, dv = x[0] - x[1], v[0] - v[1]; dr -= 0.3 * np.round(dr / 0.3); r = np.linalg.norm(dr); mu = G * (m[0] + m[1])
+    a = 1 / (2 / r - dv @ dv / mu); e = np.linalg.norm(np.cross(dv, np.cross(dr, dv)) / mu - dr / r)
+    return a / (1000 * AU), e
+
+
+def test_periodic_pair_across_the_edge():
+    """bar (set before the run): the binary on the box edge of a periodic box (periodic gravity) keeps the orbit of the same binary in the open box,
+    a and e within 1e-3; the limiter's wrapped cell grid finds the same limiting star as a full scan (checked every step)"""
+    _run(1, params={"TimeBetSnapshot": 1, "InitCondFile": "ketju_binary_field_ics"})
+    a0, e0 = _elements_pair()
+    flags = ("BOX_PERIODIC", "TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS")  # periodic gravity (Ewald tree), as in zooms
+    log = _run(1, flags, params={"TimeBetSnapshot": 1, "InitCondFile": "ketju_binary_edge_ics"})
+    a, e = _elements_pair(flags)
+    assert abs(a / a0 - 1) < 1e-3 and abs(e - e0) < 1e-3, (a, a0, e, e0)
+    hits = [int(h) for h in re.findall(r"KETJU LIMITER CROSSCHECK: task \d+ groups checked \d+ with limiting stars (\d+)", log)]
+    assert hits and hits[-1] > 0 and "CROSSCHECK FAILED" not in log
+
+
+def test_comoving_region_radius_is_physical():
+    """a = 0.01: two stars at rest 20 region radii apart in comoving units (beyond the 16-radii capture window) are 0.2 physical
+    radii apart and form one region"""
+    log = _run(1, params={"InitCondFile": "ketju_binary_comoving_ics", "ComovingIntegrationOn": 1, "TimeBegin": 0.01, "TimeMax": 0.01000001,
+                          "TimeOfFirstSnapshot": 0.01, "TimeBetSnapshot": 1.0000001, "TimeBetStatistics": 1.0000001, "MaxSizeTimestep": 1e-8,
+                          "Omega0": 0.3, "OmegaLambda": 0.7, "OmegaBaryon": 0.05, "HubbleParam": 1.0})
+    assert re.search(r"Found 1 region\(s\) from 2 center\(s\)", log), re.findall(r"Found \d+ region\(s\) from \d+ center\(s\)", log)[:3]
+
+
 def test_adaptive_treeforce():
     _run(1, ("ADAPTIVE_TREEFORCE_UPDATE=0.1",), params={"TimeBetSnapshot": 1})
     a, e = _elements(("ADAPTIVE_TREEFORCE_UPDATE=0.1",))

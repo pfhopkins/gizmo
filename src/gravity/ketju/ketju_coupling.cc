@@ -750,6 +750,36 @@ static double particle_distance(double *pos1, double *pos2)
     return sqrt(dx*dx + dy*dy + dz*dz);
 }
 
+/* physical distance of two comoving positions: KETJU radii (region, limiting, merge) are physical */
+static double particle_distance_phys(double *pos1, double *pos2) {return particle_distance(pos1, pos2) * All.cf_atime;}
+
+/* cell grid on comoving positions, cells >= size; with BOX_PERIODIC the cells tile the box and neighbours wrap */
+struct KjGrid {
+    double cell[3]; long long n[3]; /* n = 0: open boundaries */
+    explicit KjGrid(double size) {
+        for(int k = 0; k < 3; k++) {cell[k] = size; n[k] = 0;}
+#ifdef BOX_PERIODIC
+        const double box[3] = {boxSize_X, boxSize_Y, boxSize_Z};
+        for(int k = 0; k < 3; k++) {n[k] = (long long)DMAX(floor(box[k] / size), 1.0); cell[k] = box[k] / (double)n[k];}
+#endif
+    }
+    long long index(int k, double x) const {
+        long long c = (long long)floor(x / cell[k]);
+        if(n[k] > 0) {c %= n[k]; if(c < 0) {c += n[k];}}
+        return c;
+    }
+    int neighbours(int k, long long c, long long out[3]) const { /* the distinct cells c-1, c, c+1 */
+        int m = 0;
+        for(int d = -1; d <= 1; d++) {
+            long long v = c + d;
+            if(n[k] > 0) {v %= n[k]; if(v < 0) {v += n[k];} int dup = 0; for(int j = 0; j < m; j++) {if(out[j] == v) {dup = 1;}} if(dup) {continue;}}
+            out[m++] = v;
+        }
+        return m;
+    }
+    static long long key(long long x, long long y, long long z) {return (x & 0x1fffff) | ((y & 0x1fffff) << 21) | ((z & 0x1fffff) << 42);}
+};
+
 
 /* ============================================================
  *  Parse PN terms string (same logic as GADGET4-KETJU)
@@ -873,8 +903,13 @@ static int pair_forms_subsystem(const ketju_mpi_particle &a, const ketju_mpi_par
 {
     const double r_ngb = All.KetjuRegionRadius;
     double dr[3], dv[3]; double r2 = 0, v2 = 0;
-    for(int k = 0; k < 3; k++) {
-        dr[k] = a.Pos[k] - b.Pos[k]; dv[k] = a.Vel[k] - b.Vel[k];
+    for(int k = 0; k < 3; k++) {dr[k] = a.Pos[k] - b.Pos[k];}
+#ifdef BOX_PERIODIC
+    NEAREST_XYZ(dr[0], dr[1], dr[2], -1);
+#endif
+    for(int k = 0; k < 3; k++) { /* physical separation and velocity (peculiar + Hubble flow), as region_step_caps */
+        dr[k] *= All.cf_atime; dv[k] = (a.Vel[k] - b.Vel[k]) / All.cf_atime;
+        if(All.ComovingIntegrationOn) {dv[k] += All.cf_hubble_a * dr[k];}
         r2 += dr[k] * dr[k]; v2 += dv[k] * dv[k];
     }
     double r = sqrt(r2);
@@ -924,20 +959,21 @@ static std::vector<std::vector<ketju_mpi_particle>> build_orbit_regions(
 
     /* only pairs closer than KJ_CAPTURE_K * r_ngb can form a subsystem (bound ones with a < r_ngb lie within 2 r_ngb):
      * test pairs from neighbouring cells of that size, O(n) instead of O(n^2); the partition does not depend on pair order */
-    const double cell = KJ_CAPTURE_K * All.KetjuRegionRadius;
+    const KjGrid g(KJ_CAPTURE_K * All.KetjuRegionRadius / All.cf_atime); /* comoving cell of the physical capture distance */
     std::unordered_map<long long, std::vector<int>> grid;
-    auto key = [](long long x, long long y, long long z) {return (x & 0x1fffff) | ((y & 0x1fffff) << 21) | ((z & 0x1fffff) << 42);};
     std::vector<long long> ci(3 * n);
     for(int i = 0; i < n; i++) {
-        for(int k = 0; k < 3; k++) ci[3*i+k] = (long long)floor(centers[i].Pos[k] / cell);
-        grid[key(ci[3*i], ci[3*i+1], ci[3*i+2])].push_back(i);
+        for(int k = 0; k < 3; k++) ci[3*i+k] = g.index(k, centers[i].Pos[k]);
+        grid[KjGrid::key(ci[3*i], ci[3*i+1], ci[3*i+2])].push_back(i);
     }
-    for(int i = 0; i < n; i++)
-        for(int dx = -1; dx <= 1; dx++) for(int dy = -1; dy <= 1; dy++) for(int dz = -1; dz <= 1; dz++) {
-            auto it = grid.find(key(ci[3*i] + dx, ci[3*i+1] + dy, ci[3*i+2] + dz));
+    for(int i = 0; i < n; i++) {
+        long long nx[3], ny[3], nz[3]; int mx = g.neighbours(0, ci[3*i], nx), my = g.neighbours(1, ci[3*i+1], ny), mz = g.neighbours(2, ci[3*i+2], nz);
+        for(int ax = 0; ax < mx; ax++) for(int ay = 0; ay < my; ay++) for(int az = 0; az < mz; az++) {
+            auto it = grid.find(KjGrid::key(nx[ax], ny[ay], nz[az]));
             if(it == grid.end()) continue;
             for(int j : it->second) if(j > i && pair_forms_subsystem(centers[i], centers[j])) unite(i, j);
         }
+    }
 
     std::vector<std::vector<ketju_mpi_particle>> regions;
     std::vector<int> root_to_region(n, -1);
@@ -961,7 +997,7 @@ static std::set<int> local_members_from_group(const std::vector<ketju_mpi_partic
     return members;
 }
 
-/* Find synchronised local particles within `radius` of any center of a region, with no
+/* Find synchronised local particles within the physical `radius` of any center of a region, with no
  * chain-eligibility filter. Used to gather "limiting particles" — non-chain
  * perturbers whose individual timesteps constrain the chain's macro step.
  * Pass `exclude` to skip members that are already in the chain itself. */
@@ -975,7 +1011,7 @@ __attribute__((unused)) static std::set<int> find_local_particles_in_radius(cons
         if(!is_synchronized(i)) continue;
         if((P[i].Type != 4 && P[i].Type != 5) || is_chain_center(i)) continue; /* only stars outside chains limit a chain; gas and other chains do not */
         for(size_t c = 0; c < centers.size(); c++) {
-            double dist = particle_distance(P[i].Pos.data_ptr(), const_cast<double*>(centers[c].Pos));
+            double dist = particle_distance_phys(P[i].Pos.data_ptr(), const_cast<double*>(centers[c].Pos));
             if(dist < radius) { hits.insert(i); break; }
         }
     }
@@ -1175,13 +1211,24 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
         double total_mass = 0;
         for(int j = 0; j < 3; j++) { reg.com_pos[j] = 0; reg.com_vel[j] = 0; }
         for(int i = 0; i < reg.total_particle_count; i++) {
+#ifdef BOX_PERIODIC
+            double dx[3]; for(int j = 0; j < 3; j++) {dx[j] = reg.all_particles[i].Pos[j] - reg.all_particles[0].Pos[j];}
+            NEAREST_XYZ(dx[0], dx[1], dx[2], -1); /* members can straddle the box edge: CoM of the nearest images */
+#endif
             for(int j = 0; j < 3; j++) {
+#ifdef BOX_PERIODIC
+                reg.com_pos[j] += reg.all_particles[i].Mass * dx[j];
+#else
                 reg.com_pos[j] += reg.all_particles[i].Mass * reg.all_particles[i].Pos[j];
+#endif
                 reg.com_vel[j] += reg.all_particles[i].Mass * reg.all_particles[i].Vel[j];
             }
             total_mass += reg.all_particles[i].Mass;
         }
         for(int j = 0; j < 3; j++) { reg.com_pos[j] /= total_mass; reg.com_vel[j] /= total_mass; }
+#ifdef BOX_PERIODIC
+        for(int j = 0; j < 3; j++) {reg.com_pos[j] += reg.all_particles[0].Pos[j];}
+#endif
 
         /* allocate integrator — use compute_tasks.comm for parallel integration */
         reg.integrator = (struct ketju_system *)calloc(1, sizeof(struct ketju_system));
@@ -1217,9 +1264,13 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
         double a = All.cf_atime; /* scale factor: 1 for non-cosmo */
         for(int i = 0; i < reg.total_particle_count; i++) {
             ps->mass[i] = reg.all_particles[i].Mass;
+            double dxc[3]; for(int j = 0; j < 3; j++) {dxc[j] = reg.all_particles[i].Pos[j] - reg.com_pos[j];}
+#ifdef BOX_PERIODIC
+            NEAREST_XYZ(dxc[0], dxc[1], dxc[2], -1);
+#endif
             for(int j = 0; j < 3; j++) {
                 /* comoving -> physical: pos_phys = (pos_comov - com_comov) * a */
-                ps->pos[i][j] = (reg.all_particles[i].Pos[j] - reg.com_pos[j]) * a;
+                ps->pos[i][j] = dxc[j] * a;
                 /* GIZMO Vel stores canonical momentum p = a^2 * dx_comov/dt_phys.
                  * Peculiar velocity = Vel / a. Physical velocity = v_pec + H*r_phys.
                  * MSTAR needs physical velocity (includes Hubble flow).
@@ -2442,42 +2493,48 @@ void ketju_limit_timesteps(void)
             if(ti > 0 && ti < min_ti[2*r]) min_ti[2*r] = ti;
             if(ti > 0 && ti < min_ti[2*r+1]) min_ti[2*r+1] = ti;
         }
-#if !defined(BOX_PERIODIC)
     }
     { /* limiting particles: one pass over the local particles, each tested only against centres in neighbouring cells of
-       * size limiting_radius (was: a full particle scan per timestep region) */
+       * the (comoving) limiting radius; periodic boxes wrap the cells (was: a full particle scan per timestep region) */
+        const KjGrid g(limiting_radius / All.cf_atime);
         std::unordered_map<long long, std::vector<std::pair<int, int>>> grid; /* cell -> (group, centre in group) */
-        auto key = [](long long x, long long y, long long z) {return (x & 0x1fffff) | ((y & 0x1fffff) << 21) | ((z & 0x1fffff) << 42);};
         for(int r = 0; r < n_tsr; r++)
             for(int c = 0; c < (int)tsr_centers[r].size(); c++) {
                 const double *x = tsr_centers[r][c].Pos;
-                grid[key((long long)floor(x[0] / limiting_radius), (long long)floor(x[1] / limiting_radius), (long long)floor(x[2] / limiting_radius))].push_back({r, c});
+                grid[KjGrid::key(g.index(0, x[0]), g.index(1, x[1]), g.index(2, x[2]))].push_back({r, c});
             }
         std::vector<int> last_group(n_tsr, -1); /* each particle counts once per group */
         for(int i : ActiveParticleList) {
             if(!is_synchronized(i)) continue;
             if((P[i].Type != 4 && P[i].Type != 5) || is_chain_center(i)) continue; /* only stars outside chains limit a chain; gas and other chains do not */
             long long ti = GET_INTEGERTIME_FROM_TIMEBIN(P[i].TimeBin);
-            long long cx = (long long)floor(P[i].Pos[0] / limiting_radius), cy = (long long)floor(P[i].Pos[1] / limiting_radius), cz = (long long)floor(P[i].Pos[2] / limiting_radius);
-            for(int dx = -1; dx <= 1; dx++) for(int dy = -1; dy <= 1; dy++) for(int dz = -1; dz <= 1; dz++) {
-                auto it = grid.find(key(cx + dx, cy + dy, cz + dz));
+            long long nx[3], ny[3], nz[3];
+            int mx = g.neighbours(0, g.index(0, P[i].Pos[0]), nx), my = g.neighbours(1, g.index(1, P[i].Pos[1]), ny), mz = g.neighbours(2, g.index(2, P[i].Pos[2]), nz);
+            for(int ax = 0; ax < mx; ax++) for(int ay = 0; ay < my; ay++) for(int az = 0; az < mz; az++) {
+                auto it = grid.find(KjGrid::key(nx[ax], ny[ay], nz[az]));
                 if(it == grid.end()) continue;
                 for(const std::pair<int, int> &gc : it->second) {
                     int r = gc.first;
                     if(last_group[r] == i || limited[r].count(i)) continue;
-                    if(particle_distance(P[i].Pos.data_ptr(), const_cast<double*>(tsr_centers[r][gc.second].Pos)) >= limiting_radius) continue;
+                    if(particle_distance_phys(P[i].Pos.data_ptr(), const_cast<double*>(tsr_centers[r][gc.second].Pos)) >= limiting_radius) continue;
                     last_group[r] = i;
                     if(ti > 0 && ti < min_ti[2*r]) min_ti[2*r] = ti;
                 }
             }
         }
     }
-#else
-        std::set<int> limiting = find_local_particles_in_radius(tsr_centers[r], limiting_radius, limited[r]);
-        for(int idx : limiting) {
-            long long ti = GET_INTEGERTIME_FROM_TIMEBIN(P[idx].TimeBin);
-            if(ti > 0 && ti < min_ti[2*r]) min_ti[2*r] = ti;
+#ifdef TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS
+    { /* test: the grid must find exactly what the full scan finds */
+        static long long n_checked = 0, n_hit = 0; long long hit_now = 0;
+        for(int r = 0; r < n_tsr; r++) {
+            long long m = TIMEBASE;
+            for(int idx : limited[r]) {long long ti = GET_INTEGERTIME_FROM_TIMEBIN(P[idx].TimeBin); if(ti > 0 && ti < m) m = ti;}
+            std::set<int> limiting = find_local_particles_in_radius(tsr_centers[r], limiting_radius, limited[r]);
+            for(int idx : limiting) {long long ti = GET_INTEGERTIME_FROM_TIMEBIN(P[idx].TimeBin); if(ti > 0 && ti < m) m = ti;}
+            if(m != min_ti[2*r]) {printf("KETJU LIMITER CROSSCHECK FAILED: task %d group %d grid %lld scan %lld\n", ThisTask, r, min_ti[2*r], m); fflush(stdout); endrun(9471);}
+            n_checked++; if(!limiting.empty()) {n_hit++; hit_now++;}
         }
+        if(hit_now || (n_checked & 1023) == 0) {printf("KETJU LIMITER CROSSCHECK: task %d groups checked %lld with limiting stars %lld\n", ThisTask, n_checked, n_hit); fflush(stdout);}
     }
 #endif
     if(All.KetjuFlybyStepEta > 0) { /* fly-by steps: a group's members set its shared bin; stars in no group move directly */
@@ -2872,8 +2929,16 @@ void ketju_set_final_velocities(void)
     for(int i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {
         if(P[i].KetjuIntegrated) {
             { /* land exactly on the MSTAR end position the negative half-kick used (the drift only reaches it to roundoff) */
-                const struct ketju_member_state &km = ketju_member(i); double d2 = 0; for(int j = 0; j < 3; j++) {double d = P[i].Pos[j] - km.target_pos[j]; d2 += d * d;}
-                if(d2 < 1e-12 * All.KetjuRegionRadius * All.KetjuRegionRadius) {for(int j = 0; j < 3; j++) {P[i].Pos[j] = km.target_pos[j];}}
+                const struct ketju_member_state &km = ketju_member(i); double d[3], d2 = 0; for(int j = 0; j < 3; j++) {d[j] = P[i].Pos[j] - km.target_pos[j];}
+#ifdef BOX_PERIODIC
+                NEAREST_XYZ(d[0], d[1], d[2], -1); /* the target may be another image of the drifted position */
+#endif
+                for(int j = 0; j < 3; j++) {d2 += d[j] * d[j];}
+#ifdef BOX_PERIODIC
+                if(d2 < 1e-12 * All.KetjuRegionRadius * All.KetjuRegionRadius * All.cf_a2inv) {for(int j = 0; j < 3; j++) {P[i].Pos[j] -= d[j];}}
+#else
+                if(d2 < 1e-12 * All.KetjuRegionRadius * All.KetjuRegionRadius * All.cf_a2inv) {for(int j = 0; j < 3; j++) {P[i].Pos[j] = km.target_pos[j];}}
+#endif
             }
             for(int j = 0; j < 3; j++) {
                 /* dp correction: the difference between true velocity and trick velocity,
@@ -2963,7 +3028,7 @@ void ketju_compute_com_quantities(void)
                 double fa, fp, ft, ft2;
                 tree_pair_gravity_factors(r, r2, it->mass, me.soft[0], it->soft[1], me.type, it->type, me.zeta[0], it->zeta[1], me.mass, ags_gravity_kernel_shared_BITFLAG(me.type), fa, fp, ft, ft2);
                 for(int j = 0; j < 3; j++) chain_grav_all[j] += All.G * fa * dr[j];
-                if(r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius) continue; /* may leave the chain next step: keep it, as the tree walk does for dt_2body */
+                if(r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius * All.cf_a2inv) continue; /* may leave the chain next step: keep it, as the tree walk does for dt_2body */
                 double ftid = ft, ftid2 = ft2;
 #ifndef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
                 ftid = fa; ftid2 = 3.0 * it->mass / r5;
