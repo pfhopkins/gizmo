@@ -292,6 +292,9 @@ struct ChemCell {
 
     // radiation / grains / CR (per-cell inputs)
     double G0, G0_LW, G0_dust;
+#ifdef SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS
+    double hm_detach_stellar = 0, G0_hm_isrf = 0; // H- photodetachment by the stellar bands [s^-1]; ISRF-shaped part of G0 [Habing]
+#endif
     double dust_to_gas_ratio;
     double cosmic_ray_ion_rate;
     double cr_energy_density;

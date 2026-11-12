@@ -2,6 +2,7 @@
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 /* SGChem in GIZMO: one gas cell over one cooling step (inputs from the cell, CVODE solve, state back), and the
    DoCooling branch. Host only: the solver scratch is thread_local, each cell's result depends only on its inputs. */
+#include "sgchem_hminus_bands.h"
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
@@ -231,6 +232,14 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
         in.redshift = 1. / All.Time - 1.;
     }
     in.G0 = fuv.G0; in.G0_LW = fuv.G0_LW; in.G0_dust = fuv.G0_dust;
+#ifdef SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS
+    { /* stellar 6-13.6 eV = pixel energy above the floor; NUV (3.444-6 eV) and optical (0.4133-3.444 eV) are stellar only */
+        double floor_pix = 0.324e-2 * All.SGChemBackgroundG0 / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS, u_fuv_star = 0;
+        for(int k = 0; k < NPIX; k++) {u_fuv_star += DMAX(TREECOL_PIXELS_EGY_UV(CellP[i], k) - floor_pix, 0.);}
+        in.hm_detach_stellar = sgchem_hminus_rate_from_bands(CellP[i].TreeColEgyOPT, CellP[i].TreeColEgyNUV, u_fuv_star);
+        in.G0_hm_isrf = DMAX(in.G0 - u_fuv_star / HABING_EGY_DENSITY_6_13P6EV_CGS, 0.);
+    }
+#endif
 #if defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION)
     sgchem_rt_ionising_rates(i, &in);
 #endif

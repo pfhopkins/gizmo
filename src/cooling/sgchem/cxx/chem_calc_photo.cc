@@ -509,7 +509,11 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 #endif
 
     // ---- other networks: shared rates ----
+#ifdef SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS
+    c.phrates[3] = (c.hm_detach_stellar + T.phtab[3] * c.G0_hm_isrf) * df05; // stellar bands + ISRF calibration for the rest
+#else
     c.phrates[3] = T.phtab[3] * c.G0 * df05;
+#endif
     c.phrates[4] = T.phtab[4] * c.G0 * df19;
     c.phrates[7] = T.phtab[7] * c.G0 * df05;
     c.phrates[8] = T.phtab[8] * c.G0 * df19;

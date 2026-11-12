@@ -161,6 +161,10 @@ struct ChemInputs {
     double G0;                 /* -> COOLRC.G0    [Habing]                    */
     double G0_LW;              /* -> COOLRC.G0_LW [Habing]                    */
     double G0_dust;            /* -> COOLRC.G0_dust [commit: G0_VARIABLE || GHOSDT_G0_CR || RADTRANSFER] */
+#ifdef SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS
+    double hm_detach_stellar;  /* H- photodetachment by the stellar bands [s^-1] */
+    double G0_hm_isrf;         /* ISRF-shaped part of G0 (floors, UV background) for the 4.2e-7 G0 rate [Habing] */
+#endif
     double rt_phot_HI;         /* -> COOLRC.rt_phot_HI   [s^-1]               */
     double rt_phot_HeI;        /* -> COOLRC.rt_phot_HeI  [s^-1]               */
     double rt_phot_HeII;       /* -> COOLRC.rt_phot_HeII [s^-1]               */

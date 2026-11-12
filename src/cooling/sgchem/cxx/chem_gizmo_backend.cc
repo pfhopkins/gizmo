@@ -113,6 +113,9 @@ void chem_cxx_begin_cell(const struct ChemInputs* in, double temp, double abh2, 
 #endif
     c.abundD = in->abundD; c.abundM = in->abundM;
     c.G0 = in->G0; c.G0_LW = in->G0_LW;
+#ifdef SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS
+    c.hm_detach_stellar = in->hm_detach_stellar; c.G0_hm_isrf = in->G0_hm_isrf;
+#endif
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSDT_G0_CR) || defined(RADTRANSFER) || defined(SGCHEM_CELL_GRAIN_HEATING_FIELD)
     c.G0_dust = in->G0_dust;
 #endif
