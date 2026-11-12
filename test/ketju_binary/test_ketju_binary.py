@@ -81,6 +81,13 @@ def test_hard_binary(ranks):
 
 
 
+def test_hubble_param_units():
+    """h = 0.7 with length and mass units x 0.7: the same physical binary (the code's units carry 1/h), the same orbit"""
+    _run(1, params={"TimeBetSnapshot": 1, "HubbleParam": 0.7, "UnitLength_in_cm": 3.085678e21 * 0.7, "UnitMass_in_g": 1.989e43 * 0.7})
+    a, e = _elements()
+    assert abs(a - 1) < 1e-6 and abs(e - 0.9) < 1e-6
+
+
 def test_adaptive_treeforce():
     _run(1, ("ADAPTIVE_TREEFORCE_UPDATE=0.1",), params={"TimeBetSnapshot": 1})
     a, e = _elements(("ADAPTIVE_TREEFORCE_UPDATE=0.1",))
