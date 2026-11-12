@@ -839,13 +839,13 @@ void open_outputfiles(void)
   if(!(FdSNinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
       fprintf(FdSNinfo,"%s Per-SN/death-event diagnostic log [GALSF_RESOLVEDISM_FB]. Columns:\n",prefix_char);
-      fprintf(FdSNinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) remnant_type [1=ECSN,2=CCSN,3=FSN,4=PPISN,5=PISN,6=DBH,7=TypeIa]  (10) M_ej[Msun]  (11) Z_ej[Msun]  (12) C[Msun]  (13) O[Msun]  (14) Si[Msun]  (15) Fe[Msun]  (16) age_at_death[yr]  (17) lifetime_table[yr]  (18) timebin  (19) E_SN[erg]  (20) status [0=exploded+deposited,1=failed SN (no energy/ejecta),2=no gas reached (nothing booked, retried)]\n",prefix_char);
+      fprintf(FdSNinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) remnant_type [1=ECSN,2=CCSN,3=FSN,4=PPISN,5=PISN,6=DBH,7=TypeIa]  (10) M_ej[Msun]  (11) Z_ej[Msun]  (12) C[Msun]  (13) O[Msun]  (14) Si[Msun]  (15) Fe[Msun]  (16) age_at_death[yr]  (17) lifetime_table[yr]  (18) timebin  (19) E_SN[erg]  (20) status [0=exploded+deposited,1=failed SN (no energy/ejecta),2=no gas reached (nothing booked, retried)]  (21) n_H_ambient[cm^-3, this step]  (22) T_ambient[K, mass-weighted u, mu=1.22]  (23) h_star[pc]  (24) NumNgb  (25) n_H_birth[cm^-3]  (26) n_H_birth_frozen[cm^-3, birth comoving density at current a]\n",prefix_char);
   }
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "AGBinfo.txt");
   if(!(FdAGBinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
       fprintf(FdAGBinfo,"%s Per-AGB-death diagnostic log [GALSF_RESOLVEDISM_FB]. Columns:\n",prefix_char);
-      fprintf(FdAGBinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) M_ej[Msun]  (10) Z_ej[Msun]  (11) C[Msun]  (12) O[Msun]  (13) Si[Msun]  (14) Fe[Msun]  (15) age_at_death[yr]  (16) lifetime_table[yr]  (17) timebin  (18) status [0=ejected+deposited,2=no gas reached (nothing booked, retried)]\n",prefix_char);
+      fprintf(FdAGBinfo,"%s   (1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) M_ej[Msun]  (10) Z_ej[Msun]  (11) C[Msun]  (12) O[Msun]  (13) Si[Msun]  (14) Fe[Msun]  (15) age_at_death[yr]  (16) lifetime_table[yr]  (17) timebin  (18) status [0=ejected+deposited,2=no gas reached (nothing booked, retried)]  (19) n_H_ambient[cm^-3, this step]  (20) T_ambient[K, mass-weighted u, mu=1.22]  (21) h_star[pc]  (22) NumNgb  (23) n_H_birth[cm^-3]  (24) n_H_birth_frozen[cm^-3, birth comoving density at current a]\n",prefix_char);
   }
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "FeedbackBudget.txt");
   if(!(FdFeedbackBudget = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
