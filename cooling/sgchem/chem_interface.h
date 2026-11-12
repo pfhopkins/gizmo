@@ -281,6 +281,9 @@ struct ChemOutputs {
 
 void chem_fill_inputs(int target, struct ChemInputs *in);
 void chem_fill_gas_abundances(int target, struct ChemInputs *in);
+#ifdef SGCHEM_UVB_TREECOL_SHIELDING
+void chem_uvb_shield_factors(const double N[3], double f_gamma[3], double f_heat[3]);
+#endif
 #ifdef SGCHEM_FORTRAN
 void chem_commit_to_fortran(const struct ChemInputs *in);
 void chem_percell_snapshot(void);

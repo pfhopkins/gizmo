@@ -230,6 +230,55 @@ void chem_fill_gas_abundances(int target, struct ChemInputs *in) /* gas-phase C/
 #endif
 }
 
+#ifdef SGCHEM_UVB_TREECOL_SHIELDING
+#if !defined(RT_TREECOL_HEALPIX)
+#error "SGCHEM_UVB_TREECOL_SHIELDING needs HEALPix tree columns: RT_USE_TREECOL_FOR_NH=12*NSIDE^2"
+#endif
+/* FG20 UVB at z=6.5 in 10 bands (13.6-16.3-19.7-24.59-29.9-35.4-40.8-46.3-51-54.42 eV-2 keV): absorber cross sections [cm^2] of HI, HeI, HeII
+   and each band's fraction of the HI, HeI, HeII photoionisation and photoheating rates (Verner+96 cross sections) */
+#define UVB_SHIELD_NBANDS 10
+static const double uvb_band_sigma[UVB_SHIELD_NBANDS][3] = {{5.2758e-18, 0.0000e+00, 0.0000e+00}, {3.1271e-18, 0.0000e+00, 0.0000e+00}, {1.7763e-18, 0.0000e+00, 0.0000e+00}, {9.8995e-19, 6.5297e-18, 0.0000e+00}, {5.8335e-19, 4.7654e-18, 0.0000e+00}, {3.4596e-19, 3.4189e-18, 0.0000e+00}, {2.5052e-19, 2.7632e-18, 0.0000e+00}, {1.7903e-19, 2.1999e-18, 0.0000e+00}, {1.3624e-19, 1.8172e-18, 0.0000e+00}, {1.0888e-19, 1.5396e-18, 1.4188e-18}};
+static const double uvb_band_gamma[UVB_SHIELD_NBANDS][3] = {{5.3842e-01, 0.0000e+00, 0.0000e+00}, {2.3627e-01, 0.0000e+00, 0.0000e+00}, {1.3486e-01, 0.0000e+00, 0.0000e+00}, {5.3904e-02, 5.1599e-01, 0.0000e+00}, {1.8099e-02, 2.1390e-01, 0.0000e+00}, {1.4828e-02, 2.1156e-01, 0.0000e+00}, {3.0618e-03, 4.8662e-02, 0.0000e+00}, {4.8675e-04, 8.6038e-03, 0.0000e+00}, {6.0200e-05, 1.1544e-03, 0.0000e+00}, {6.4644e-06, 1.3281e-04, 1.0000e+00}};
+static const double uvb_band_heat[UVB_SHIELD_NBANDS][3] = {{1.3363e-01, 0.0000e+00, 0.0000e+00}, {2.3477e-01, 0.0000e+00, 0.0000e+00}, {2.6553e-01, 0.0000e+00, 0.0000e+00}, {1.7055e-01, 1.7071e-01, 0.0000e+00}, {8.0709e-02, 2.3742e-01, 0.0000e+00}, {8.8595e-02, 4.2772e-01, 0.0000e+00}, {2.1553e-02, 1.2954e-01, 0.0000e+00}, {4.0258e-03, 2.9265e-02, 0.0000e+00}, {5.6454e-04, 4.6960e-03, 0.0000e+00}, {6.8520e-05, 6.5206e-04, 1.0000e+00}};
+
+/* UVB rate fractions left behind columns N[3] = (HI, HeI, HeII) [cm^-2]: f_gamma, f_heat per channel (HI, HeI, HeII); exactly 1 at N = 0 */
+void chem_uvb_shield_factors(const double N[3], double f_gamma[3], double f_heat[3])
+{
+    double sg[3] = {0}, ng[3] = {0}, sq[3] = {0}, nq[3] = {0};
+    for(int k = 0; k < UVB_SHIELD_NBANDS; k++) {
+        double att = exp(-(uvb_band_sigma[k][0] * N[0] + uvb_band_sigma[k][1] * N[1] + uvb_band_sigma[k][2] * N[2]));
+        for(int c = 0; c < 3; c++) {sg[c] += uvb_band_gamma[k][c] * att; ng[c] += uvb_band_gamma[k][c]; sq[c] += uvb_band_heat[k][c] * att; nq[c] += uvb_band_heat[k][c];}
+    }
+    for(int c = 0; c < 3; c++) {f_gamma[c] = sg[c] / ng[c]; f_heat[c] = sq[c] / nq[c];}
+}
+
+/* pixel mean of the UVB fractions; absorber columns = TreeCol H column x this cell's neutral H, He0, He+ fractions */
+static void chem_uvb_treecol_shielding(int target, double f_gamma[3], double f_heat[3])
+{
+    double h_per_mass = 1.0 / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS), abhe = ABHE;
+#ifdef GALSF_SGCHEM_VARIABLE_XH_AND_ABHE
+    double X_H = DMAX(P[target].Metallicity[MET_OF(ELEM_H)], 1e-10);
+    h_per_mass = X_H / PROTONMASS_CGS; abhe = DMAX(P[target].Metallicity[MET_OF(ELEM_He)], 0.0) / (4.0 * X_H);
+#endif
+    double x_hep = 0, x_hepp = 0;
+#if (IHEP != UNUSED)
+    x_hep = CellP[target].TracAbund[IHEP];
+#endif
+#if defined(IHEPP) && (IHEPP != UNUSED)
+    x_hepp = CellP[target].TracAbund[IHEPP];
+#endif
+    double x[3] = {DMAX(1.0 - CellP[target].TracAbund[IHP], 0.0), DMAX(abhe - x_hep - x_hepp, 0.0), DMAX(x_hep, 0.0)};
+    for(int c = 0; c < 3; c++) {f_gamma[c] = f_heat[c] = 0;}
+    for(int p = 0; p < NPIX; p++) {
+        double NH = TREECOL_BINS(target)[TREECOL_GAS][p] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv * h_per_mass;
+        double N[3] = {x[0] * NH, x[1] * NH, x[2] * NH}, fg[3], fq[3];
+        chem_uvb_shield_factors(N, fg, fq);
+        for(int c = 0; c < 3; c++) {f_gamma[c] += fg[c]; f_heat[c] += fq[c];}
+    }
+    for(int c = 0; c < 3; c++) {f_gamma[c] /= NPIX; f_heat[c] /= NPIX;}
+}
+#endif
+
 void chem_fill_inputs(int target, struct ChemInputs *in)
 {
     /* [orig sgchem.cc:155-170] local working variables (same roles) */
@@ -667,6 +716,14 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     if(All.ComovingIntegrationOn) {
         double uvb_gJH0=0, uvb_gJHe0=0, uvb_gJHep=0, uvb_epsH0=0, uvb_epsHe0=0, uvb_epsHep=0;
         get_uvb_rates(&uvb_gJH0, &uvb_gJHe0, &uvb_gJHep, &uvb_epsH0, &uvb_epsHe0, &uvb_epsHep);
+#ifdef SGCHEM_UVB_TREECOL_SHIELDING
+        {
+            double f_gamma[3], f_heat[3];
+            chem_uvb_treecol_shielding(target, f_gamma, f_heat);
+            uvb_gJH0 *= f_gamma[0]; uvb_gJHe0 *= f_gamma[1]; uvb_gJHep *= f_gamma[2];
+            uvb_epsH0 *= f_heat[0]; uvb_epsHe0 *= f_heat[1]; uvb_epsHep *= f_heat[2];
+        }
+#endif
         /* Photoionization: add UVB as floor (RT may have set higher local values) */
         if(in->rt_phot_HI   < uvb_gJH0)  in->rt_phot_HI   = uvb_gJH0;
         if(in->rt_phot_HeI  < uvb_gJHe0) in->rt_phot_HeI  = uvb_gJHe0;

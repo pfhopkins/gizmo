@@ -1,0 +1,71 @@
+% UVB shielding one-zone driver: zoom parameters (L10, stella_dev zoom branches) in a small comoving box at z = 6.5
+InitCondFile        sgchem_uvb_shielding_ics
+ICFormat            3
+OutputDir           output
+SnapshotFileBase    snapshot
+SnapFormat          3
+NumFilesPerSnapshot 1
+TimeLimitCPU        3600
+CpuTimeBetRestartFile  100000
+ComovingIntegrationOn  1
+TimeBegin           0.133333        % z=6.5
+TimeMax             0.134
+Omega0              0.31
+OmegaLambda         0.69
+OmegaBaryon         0.049
+HubbleParam         0.68
+BoxSize             1.0             % ckpc/h
+OutputListOn        0
+TimeOfFirstSnapshot 0.134
+TimeBetSnapshot     1.1
+TimeBetStatistics   1.01
+MaxMemSize          2000
+PartAllocFactor     2.0
+BufferSize          100
+UnitLength_in_cm            3.085678e21
+UnitMass_in_g               1.989e43
+UnitVelocity_in_cm_per_s    1e5
+UnitMagneticField_in_gauss  1.0
+GravityConstantInternal     0
+MaxSizeTimestep     0.01            % dln(a)
+MinSizeTimestep     0
+TreeDomainUpdateFrequency  0.05
+DesNumNgb           32
+AGS_DesNumNgb       32
+MaxKernelRadius     1.0             % ckpc/h
+InitGasTemp         0               % IC temperature
+MinGasTemp          10.0
+SofteningGas        0.004      % min of adaptive gas softening
+SofteningHalo       0.048      % high-res DM type 1 (~1/30 of spacing)
+SofteningDisk       0.2             % coarse DM type 2 (levels 8-11)
+SofteningBulge      0
+SofteningStars      0.004
+SofteningBndry      0
+SofteningGasMaxPhys    0.0004
+SofteningHaloMaxPhys   0.01
+SofteningDiskMaxPhys   0.2
+SofteningBulgeMaxPhys  0
+SofteningStarsMaxPhys  0.0004
+SofteningBndryMaxPhys  0
+% ---- Stella production parameters (stella_cloud.params, stella_dev 22017b407) ----
+CritPhysDensity                 100.
+SfEffPerFreeFall                0.5
+FacSfThreshMJ                   1.0
+TimeInstantSN                   0.0
+IMFSampleMinMass                0.08
+ResolvedISM_SFCooldownFreeFallFraction 0.1
+IMFSampleStellarMassCut         0.5
+StellarTablesFile               gizmo/galaxy_sf/stellar_tables/stellar_tables_unified.hdf5
+MaxStellarTimestep              10000.0
+InitMetallicity                 0.0             % pristine (net 17), as the zooms
+InitialMetallicity              0.0
+InitStellarAge                  10.0
+BiniX                           0
+BiniY                           0
+BiniZ                           1.0e-12         % physical Gauss at z=50 (seed; first guess)
+ShieldingLength                 0.034           % 50 pc physical in kpc/h
+G0                              0.0             % no FUV floor in the zooms (Uli 2026-11-10); UVB from TREECOOL
+CosmicRayIonRate                3.0e-17         % scaled by G0_local/1.7 (CR_SCALE_WITH_G0), floor 1e-21
+DGRnormalized                   1.0
+DeutAbund                       2.6e-5
+MaxPISearchRadius               0.05            % physical kpc
