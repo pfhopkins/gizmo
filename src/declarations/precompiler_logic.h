@@ -1226,13 +1226,17 @@
 #ifndef SGCHEM
 #error "GALSF_RESOLVEDISM_TREECOL_PIXELS feeds the SGChem chemistry: set SGCHEM"
 #endif
+#ifdef SGCHEM_UVB_TREECOL_SHIELDING
+#define TREECOL_PIXELS_NCOLUMNS 4 /* per-pixel columns: dust-weighted gas, H2, CO, gas (UV-background shielding) */
+#else
 #define TREECOL_PIXELS_NCOLUMNS 3 /* per-pixel columns: dust-weighted gas, H2, CO */
+#endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
 #if CHEMISTRYNETWORK == 17
 #define TREECOL_SHELLS_ION_HELIUM /* two ionising bands split at 24.6 eV, absorbers HI and HeI (net 17 tracks He) */
-#define TREECOL_PIXELS_NSPECIES 5 /* node masses: + HI, HeI */
+#define TREECOL_PIXELS_NSPECIES (TREECOL_PIXELS_NCOLUMNS + 2) /* node masses: + HI, HeI */
 #else
-#define TREECOL_PIXELS_NSPECIES 4 /* node masses: + H-ionising absorbers */
+#define TREECOL_PIXELS_NSPECIES (TREECOL_PIXELS_NCOLUMNS + 1) /* node masses: + H-ionising absorbers */
 #endif
 #else
 #define TREECOL_PIXELS_NSPECIES TREECOL_PIXELS_NCOLUMNS
@@ -2082,6 +2086,9 @@
 #endif
 #if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(GALSF) && !defined(METALS)
 #error "OUTPUT_MASS_METAL_ENERGY_LEDGER: the star-formation and feedback rows need METALS"
+#endif
+#if defined(SGCHEM_UVB_TREECOL_SHIELDING) && (!defined(SGCHEM) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS))
+#error "SGCHEM_UVB_TREECOL_SHIELDING needs SGCHEM and the TreeCol pixel columns (GALSF_RESOLVEDISM_TREECOL_PIXELS)"
 #endif
 #if defined(SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS) && (!defined(SGCHEM) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(RADTRANSFER))
 #error "SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS needs SGCHEM and the TreeCol band fluxes (GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES), not RADTRANSFER"

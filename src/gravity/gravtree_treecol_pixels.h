@@ -14,8 +14,9 @@
 #define TREECOL_PIXELS_DUST 0
 #define TREECOL_PIXELS_H2   1
 #define TREECOL_PIXELS_CO   2
-#define TREECOL_PIXELS_HI   3 /* ionising-photon absorbers: H atoms + 1.34 per H2, the mean sigma_H2/sigma_HI per molecule (at <hnu> 18.6 eV) */
-#define TREECOL_PIXELS_HEI  4 /* with helium: neutral He atoms */
+#define TREECOL_PIXELS_GAS  3 /* SGCHEM_UVB_TREECOL_SHIELDING: gas mass */
+#define TREECOL_PIXELS_HI   (TREECOL_PIXELS_NCOLUMNS) /* ionising-photon absorbers: H atoms + 1.34 per H2, the mean sigma_H2/sigma_HI per molecule (at <hnu> 18.6 eV) */
+#define TREECOL_PIXELS_HEI  (TREECOL_PIXELS_NCOLUMNS + 1) /* with helium: neutral He atoms */
 #define TREECOL_SHELLS_H2_PER_HI 1.34
 
 /* a particle's species masses [code units]; zero for non-gas. H nuclei per mass as the chemistry, 1/((1+4 ABHE) m_p) */
@@ -28,6 +29,9 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_species_masses(const struct particle_
     double m_H = pp[i].Mass / (1.0 + 4.0 * ABHE);
     m[TREECOL_PIXELS_H2] = 2.0 * cell[i].TracAbund[IH2] * m_H;
     m[TREECOL_PIXELS_CO] = 28.0 * cell[i].TracAbund[ICO] * m_H;
+#ifdef SGCHEM_UVB_TREECOL_SHIELDING
+    m[TREECOL_PIXELS_GAS] = pp[i].Mass;
+#endif
 #ifdef TREECOL_SHELLS_ION_HELIUM
     m[TREECOL_PIXELS_HI] = fmax(0., 1.0 - cell[i].TracAbund[IHP]) * HYDROGEN_MASSFRAC * pp[i].Mass; /* H2 as two atoms (net 17) */
     m[TREECOL_PIXELS_HEI] = fmax(0., ABHE - cell[i].TracAbund[IHEP] - cell[i].TracAbund[IHEPP]) * HYDROGEN_MASSFRAC * pp[i].Mass; /* in H-equivalent atoms: the chemistry's He, not 1 - X - Z */

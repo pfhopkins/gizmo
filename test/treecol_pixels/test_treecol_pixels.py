@@ -321,6 +321,21 @@ def test_pixel_columns_and_fluxes(tables, ranks):
         assert med <= bar[0] and p99 <= bar[1], (k, med, p99)
 
 
+def test_gas_column_for_uvb_shielding(tables):
+    """SGCHEM_UVB_TREECOL_SHIELDING: a fourth stored column, the gas mass per pixel, against the direct sum over all cells
+    (bars of test_pixel_columns_and_fluxes); the three other columns unchanged in layout"""
+    cells, _, _ = pixel_run(tables, 2, tag="_uvbshield", build_tag="uvbshield", extra=("SGCHEM_UVB_TREECOL_SHIELDING",))
+    gpos, m_gas = cells[:, -3:], cells[:, 4]  # species masses: dust, H2, CO, gas
+    col = cells[:, 5:53].reshape(-1, 4, 12)
+    assert np.allclose(m_gas, 1.0, rtol=1e-12)  # the lattice's cell mass
+    st = []
+    for i in range(len(cells)):
+        ref = direct_columns(gpos[i], gpos, m_gas, r_max=SHIELD)
+        st.append(rel(col[i, 3].sum(), ref.sum()))
+    print(f"gas column: median {np.median(st):.1e}, p99 {np.percentile(st, 99):.1e}")
+    assert np.median(st) <= 1e-2 and np.percentile(st, 99) <= 5e-2
+
+
 def test_columns_unsoftened(tables):
     """softening of 1 pc on a 1.7 pc lattice: the columns still follow the unsoftened direct sum, m / (4 pi / 12 r^2)"""
     soft = {f"Softening{t}": 1.0 for t in ("Gas", "Halo", "Disk", "Bulge", "Stars", "Bndry")}

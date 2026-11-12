@@ -80,6 +80,32 @@ static void sgchem_treecol_columns(int i, struct ChemInputs *in)
 }
 #endif
 
+#ifdef SGCHEM_UVB_TREECOL_SHIELDING
+#include "sgchem_uvb_shield.h"
+
+/* pixel mean of the UVB fractions; absorber columns = TreeCol gas column x this cell's neutral H, He0, He+ fractions */
+static void sgchem_uvb_treecol_shielding(int i, double f_gamma[3], double f_heat[3])
+{
+    const double h_per_mass = 1.0 / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS);
+    double x_hep = 0, x_hepp = 0;
+#if (IHEP != UNUSED)
+    x_hep = CellP[i].TracAbund[IHEP];
+#endif
+#if defined(IHEPP) && (IHEPP != UNUSED)
+    x_hepp = CellP[i].TracAbund[IHEPP];
+#endif
+    double x[3] = {DMAX(1.0 - CellP[i].TracAbund[IHP], 0.0), DMAX(ABHE - x_hep - x_hepp, 0.0), DMAX(x_hep, 0.0)};
+    for(int c = 0; c < 3; c++) {f_gamma[c] = f_heat[c] = 0;}
+    for(int p = 0; p < TREECOL_PIXELS_N; p++) {
+        double NH = TREECOL_PIXELS_COLUMN(CellP[i], TREECOL_PIXELS_GAS, p) * UNIT_SURFDEN_IN_CGS * All.cf_a2inv * h_per_mass;
+        double N[3] = {x[0] * NH, x[1] * NH, x[2] * NH}, fg[3], fq[3];
+        sgchem_uvb_shield_factors(N, fg, fq);
+        for(int c = 0; c < 3; c++) {f_gamma[c] += fg[c]; f_heat[c] += fq[c];}
+    }
+    for(int c = 0; c < 3; c++) {f_gamma[c] /= TREECOL_PIXELS_N; f_heat[c] /= TREECOL_PIXELS_N;}
+}
+#endif
+
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
 /* the unattenuated stellar field of cell i from the gravity walk: each 6-13.6 eV pixel floored at
    0.324e-2 SGChemBackgroundG0 / NPIX Habing, the pixel weights fac_uv, G0 / G0_LW / band-resolved G0_dust */
@@ -311,6 +337,10 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     if(!skip) {
     if(All.ComovingIntegrationOn) { /* the background is a floor under the local photoionisation and heating rates */
         double *rate[6] = {&in.rt_phot_HI, &in.rt_phot_HeI, &in.rt_phot_HeII, &in.rt_heat_HI, &in.rt_heat_HeI, &in.rt_heat_HeII};
+#ifdef SGCHEM_UVB_TREECOL_SHIELDING
+        {double f_gamma[3], f_heat[3]; sgchem_uvb_treecol_shielding(i, f_gamma, f_heat); /* the G0 floor above stays unshielded */
+         for(int c = 0; c < 3; c++) {uvb[c] *= f_gamma[c]; uvb[3 + c] *= f_heat[c];}}
+#endif
         for(int k = 0; k < 6; k++) {if(*rate[k] < uvb[k]) {*rate[k] = uvb[k];}}
         in.irad_heat = 1;
     }
