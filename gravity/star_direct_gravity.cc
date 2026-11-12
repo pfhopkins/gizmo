@@ -272,7 +272,7 @@ void star_direct_gravity_compute(void)
 #ifdef KETJU_REGULARIZATION
             /* the tree walk's rule (forcetree.cc): MSTAR integrates a same-chain pair closer than the
                region radius, so it does not set the host step */
-            if((chain_i == 0) || (StarDirect[j].KetjuChainID != chain_i) || (r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius))
+            if((chain_i == 0) || (StarDirect[j].KetjuChainID != chain_i) || (r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius * All.cf_a2inv))
 #endif
             {
             if(tSqr < Min_Sink_Approach_Time) {Min_Sink_Approach_Time = tSqr;}

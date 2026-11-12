@@ -93,7 +93,7 @@ static void resolvedism_dust_env(int i, struct dustk_env *e)
 #endif
     double a_conv = UNIT_VEL_IN_KMS * SECONDS_PER_YEAR / UNIT_TIME_IN_CGS; /* code accel -> km/s/yr (non-comoving) */
     for(int k = 0; k < 3; k++) {e->ahyd[k] = CellP[i].HydroAccel[k] * a_conv;}
-    e->divv = P[i].Particle_DivVel * All.cf_a2inv * SECONDS_PER_YEAR / UNIT_TIME_IN_CGS;
+    e->divv = (P[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3*All.cf_hubble_a : 0)) * SECONDS_PER_YEAR / UNIT_TIME_IN_CGS; /* physical, Hubble flow included */
 #ifdef GALSF_RESOLVEDISM_DUST_NO_BETATRON
     e->betatron = 0;
 #else

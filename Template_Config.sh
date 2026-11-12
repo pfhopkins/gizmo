@@ -102,6 +102,7 @@
 #TURB_DIFF_METALS_EXACT_CONSERVATION # conserve metal mass to round-off under adaptive timesteps (pairwise exchange, inactive side buffered to its next step); one extra double per diffused species per cell
 #OUTPUT_TURB_DIFF_METALS_BUDGET # print the global metal budget (sum of M*Z, plus exchange still pending with TURB_DIFF_METALS_EXACT_CONSERVATION) after every hydro step [diagnostic]
 #OUTPUT_STAR_ENERGY_DIRECT_SUM # print direct-sum total energy of star particles (ETOT_INCODE) at every sync; O(N^2), skipped for N>4096; on by default with KETJU_REGULARIZATION [diagnostic]
+#TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS # KETJU: recompute the limiting-particle steps by a full particle scan every step and abort if the cell grid differs [test only, slow]
 #TURB_DIFF_ENERGY               # turbulent diffusion of internal energy (conduction with effective turbulent coefficients)
 #TURB_DIFF_VELOCITY             # turbulent diffusion of momentum (viscosity with effective turbulent coefficients)
 #TURB_DIFF_DYNAMIC              # replace Smagorinsky-style eddy diffusion with the 'dynamic localized Smagorinsky' model from Rennehan et al. (arXiv:1807.11509 and 2104.07673): cite those papers for all methods. more accurate but more complex and expensive.
