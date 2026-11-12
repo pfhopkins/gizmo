@@ -1307,9 +1307,8 @@ struct DensitySpec {
             if (i_active.Type != 0) {
 #if defined(SINK_PARTICLES)
                 if (i_active.Type == 5) {
-                    /* Read-only MIN reductions; the j-side SwallowID/SwallowTime/Sink_Ngb_Flag
-                     * writes from the CPU path are sink_swk/sink_feed responsibilities,
-                     * NOT density. */
+                    /* Read-only MIN reductions. The j-side writes of the CPU density path live in the
+                     * sink loops: SwallowTime and Sink_Ngb_Flag in sink_env1, SwallowID in sink_feed. */
                     short int TimeBin_j = Pj.TimeBin;
                     if (TimeBin_j < 0) { TimeBin_j = -TimeBin_j - 1; }
                     /* A step truncated by a wake-up is shorter than its bin, so the bin over-reports how
