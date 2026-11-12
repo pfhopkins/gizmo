@@ -26,7 +26,7 @@ def built():
     return tables
 
 
-def run(tag, tables, stars=CENTRE, ranks=1, threads=1, seed=None, overrides=None, exe="GIZMO", extra="", n_metals=1, timeout=None):
+def run(tag, tables, stars=CENTRE, ranks=1, threads=1, seed=None, overrides=None, exe="GIZMO", extra="", n_metals=1, timeout=None, post_ic=None):
     """the run directory and the lattice (cell size, n_H)"""
     import sys
     sys.path.insert(0, str(TEST_DIR))
@@ -36,6 +36,8 @@ def run(tag, tables, stars=CENTRE, ranks=1, threads=1, seed=None, overrides=None
         shutil.rmtree(d)  # this run's own directory: no stale logs
     (d / "output").mkdir(parents=True)
     L, dx, n_H = make_photoion_per_direction_ics(str(d / "output" / "snapshot_000.hdf5"), stars, seed=seed, n_metals=n_metals)
+    if post_ic:
+        L = post_ic(d / "output" / "snapshot_000.hdf5")
     params = Path(TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SET_BY_TEST", tables["StellarTablesFile"])
     params = params.replace("BoxSize                            45.0", f"BoxSize                            {L}")
     for k, v in (overrides or {}).items():
@@ -394,3 +396,55 @@ def test_no_instant_sf_in_ionised_cells(built_sfcut):
     print(f"R_S {R_S:.3f} pc, dx {dx:.3f} pc, new stars {len(r)}, closest {r.min() if len(r) else -1:.3f} pc")
     assert not np.any(r < R_S - dx), np.sort(r)[:5]
     assert np.any(r > R_S + dx)
+
+
+@pytest.fixture(scope="module")
+def built_dens(built):
+    """the same build with the stars' neighbour density in the snapshots"""
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=("OUTPUT_DENS_AROUND_NONGAS",))
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_dens")
+        build_gizmo_for_test(TEST_NAME)
+    return built
+
+
+def test_young_star_density_follows_the_gas_in_comoving_runs(built_dens):
+    """bar (set before the run): a 1 Msun star 1 Myr old (no light, winds or death) at a = 0.5 in gas flowing away from it;
+    after the gas thinned around it, the star's stored neighbour density is within 20 % of the gas density there (it used to
+    keep its first value: young stars were refreshed only in non-comoving runs)"""
+    import h5py
+    a = 0.5
+    G, H0 = 6.672e-8 * 1.989e33 / (3.085678e18 * 1e5 * 1e5), (1.0 * 3.2407789e-18) * (3.085678e18 / 1e5)
+
+    def comoving(f):
+        with h5py.File(f, "r+") as F:
+            L = F["Header"].attrs["BoxSize"] / a
+            F["Header"].attrs["Time"] = a; F["Header"].attrs["BoxSize"] = L
+            for t in ("PartType0", "PartType4"):
+                F[f"{t}/Coordinates"][...] = F[f"{t}/Coordinates"][...] / a
+            m_tot = F["PartType0/Masses"][()].sum() + F["PartType4/Masses"][()].sum()
+            omega = m_tot / (L * L * L) / (3 * H0 * H0 / (8 * np.pi * G))
+            H = H0 * np.sqrt(omega / a ** 3)
+            x = F["PartType0/Coordinates"][()]
+            F["PartType0/Velocities"][...] = 1.0 * H * a ** 0.5 * (x - L / 2)  # peculiar outflow from the star at the centre
+            age_code = 1.0e6 / PC_KMS_IN_YR  # matter-dominated t(a): the star's birth a for a 1 Myr age
+            t_now = 2 / (3 * H0 * np.sqrt(omega)) * a ** 1.5
+            F["PartType4/StellarFormationTime"][...] = ((t_now - age_code) * 1.5 * H0 * np.sqrt(omega)) ** (2 / 3)
+            over["Omega0"] = over["OmegaBaryon"] = omega  # the periodic box holds Omega_M (check_omega, its constants), no Lambda
+        return L
+    over = {"ComovingIntegrationOn": 1, "TimeBegin": a, "TimeMax": 0.6, "TimeBetSnapshot": 1.2, "TimeOfFirstSnapshot": 0.6,
+            "TimeBetStatistics": 1.2, "MaxSizeTimestep": 0.01, "OmegaLambda": 0, "HubbleParam": 1.0,
+            **{f"Softening{t}MaxPhys": 0.01 for t in ("Gas", "Halo", "Disk", "Bulge", "Stars", "Bndry")}}
+    d, dx, _ = run("dens_comoving", built_dens, stars=[(1.0, 1.0e6, (0.5, 0.5, 0.5))], exe="GIZMO_dens", post_ic=comoving, overrides=over)
+    with h5py.File(sorted((d / "output").glob("snapshot_*.hdf5"))[-1], "r") as F:
+        assert abs(F["Header"].attrs["Time"] - 0.6) < 1e-6
+        s = F["PartType4"]; g = F["PartType0"]; L = F["Header"].attrs["BoxSize"]
+        xs, rho_star = s["Coordinates"][0], s["DensityAtParticleLocation"][0]
+        r = np.linalg.norm((g["Coordinates"][()] - xs + L / 2) % L - L / 2, axis=1)
+        near = np.argsort(r)[:32]
+        rho_gas = g["Density"][()][near].mean()
+    with h5py.File(d / "output" / "snapshot_000.hdf5", "r") as F:
+        rho0 = F["PartType0/Masses"][()].sum() / F["Header"].attrs["BoxSize"] ** 3
+    print(f"comoving density: start {rho0:.4g}, gas around the star now {rho_gas:.4g}, the star's {rho_star:.4g}")
+    assert rho_gas < 0.7 * rho0  # the gas did thin out
+    assert abs(rho_star / rho_gas - 1) < 0.2, (rho_star, rho_gas)

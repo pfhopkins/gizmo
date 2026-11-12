@@ -25,8 +25,8 @@ static void ssl_open(void)
 {
     static const char *name[3] = {"SNinfo.txt", "AGBinfo.txt", "WINDinfo.txt"};
     static const char *cols[3] = {
-        "(1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) remnant_type [1=ECSN,2=CCSN,3=FSN,4=PPISN,5=PISN,6=DBH,7=TypeIa]  (10) M_ej[Msun]  (11) Z_ej[Msun]  (12) C[Msun]  (13) O[Msun]  (14) Si[Msun]  (15) Fe[Msun]  (16) age_at_death[yr]  (17) lifetime_table[yr]  (18) timebin  (19) E_SN[erg]  (20) status [0=exploded+deposited,1=failed SN (no energy),2=no gas reached (nothing booked, retried)]",
-        "(1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) M_ej[Msun]  (10) Z_ej[Msun]  (11) C[Msun]  (12) O[Msun]  (13) Si[Msun]  (14) Fe[Msun]  (15) age_at_death[yr]  (16) lifetime_table[yr]  (17) timebin  (18) status [0=ejected+deposited,2=no gas reached (nothing booked, retried)]",
+        "(1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) remnant_type [1=ECSN,2=CCSN,3=FSN,4=PPISN,5=PISN,6=DBH,7=TypeIa]  (10) M_ej[Msun]  (11) Z_ej[Msun]  (12) C[Msun]  (13) O[Msun]  (14) Si[Msun]  (15) Fe[Msun]  (16) age_at_death[yr]  (17) lifetime_table[yr]  (18) timebin  (19) E_SN[erg]  (20) status [0=exploded+deposited,1=failed SN (no energy),2=no gas reached (nothing booked, retried)]  (21) n_H_ambient[cm^-3]  (22) T_ambient[K, mu=1.22]  (23) h_star[pc]  (24) NumNgb  (25) n_H_birth[cm^-3]  (26) n_H_birth_frozen[cm^-3, birth comoving density at the current a]",
+        "(1) time  (2) x  (3) y  (4) z  (5) u_ambient  (6) rho_ambient  (7) id  (8) m_star[Msun]  (9) M_ej[Msun]  (10) Z_ej[Msun]  (11) C[Msun]  (12) O[Msun]  (13) Si[Msun]  (14) Fe[Msun]  (15) age_at_death[yr]  (16) lifetime_table[yr]  (17) timebin  (18) status [0=ejected+deposited,2=no gas reached (nothing booked, retried)]  (19) n_H_ambient[cm^-3]  (20) T_ambient[K, mu=1.22]  (21) h_star[pc]  (22) NumNgb  (23) n_H_birth[cm^-3]  (24) n_H_birth_frozen[cm^-3, birth comoving density at the current a]",
         "(1) time  (2) x  (3) y  (4) z  (5) id  (6) M_init[Msun]  (7) dM_wind[Msun]  (8) dp_wind[g*cm/s]  (9) Z_wind[Msun]  (10) timebin"};
     for(int f = 0; f < 3; f++) {
         if(ssl_fd[f]) {continue;}
@@ -42,8 +42,8 @@ static void ssl_print(const struct single_star_log_row *r)
     FILE *fd = ssl_fd[r->file];
     if(!fd) {return;}
     long long id = (long long) r->id;
-    if(r->file == 0) {fprintf(fd, "%.10e  %.8e %.8e %.8e  %.6e %.6e  %lld  %.8g  %d  %.10g  %.10g  %.8e %.8e %.8e %.8e  %.6e  %.6e  %3d  %.4e  %d\n", r->t, r->x[0], r->x[1], r->x[2], r->u, r->rho, id, r->mstar, r->remnant, r->mej, r->zej, r->C, r->O, r->Si, r->Fe, r->age, r->life, r->timebin, r->E, r->status);}
-    if(r->file == 1) {fprintf(fd, "%.10e  %.8e %.8e %.8e  %.6e %.6e  %lld  %.8g  %.10g  %.10g  %.8e %.8e %.8e %.8e  %.6e  %.6e  %3d  %d\n", r->t, r->x[0], r->x[1], r->x[2], r->u, r->rho, id, r->mstar, r->mej, r->zej, r->C, r->O, r->Si, r->Fe, r->age, r->life, r->timebin, r->status);}
+    if(r->file == 0) {fprintf(fd, "%.10e  %.8e %.8e %.8e  %.6e %.6e  %lld  %.8g  %d  %.10g  %.10g  %.8e %.8e %.8e %.8e  %.6e  %.6e  %3d  %.4e  %d  %.4e %.4e %.4e %7.2f %.4e %.4e\n", r->t, r->x[0], r->x[1], r->x[2], r->u, r->rho, id, r->mstar, r->remnant, r->mej, r->zej, r->C, r->O, r->Si, r->Fe, r->age, r->life, r->timebin, r->E, r->status, r->nH, r->T, r->h_pc, r->nngb, r->nH_birth, r->nH_stale);}
+    if(r->file == 1) {fprintf(fd, "%.10e  %.8e %.8e %.8e  %.6e %.6e  %lld  %.8g  %.10g  %.10g  %.8e %.8e %.8e %.8e  %.6e  %.6e  %3d  %d  %.4e %.4e %.4e %7.2f %.4e %.4e\n", r->t, r->x[0], r->x[1], r->x[2], r->u, r->rho, id, r->mstar, r->mej, r->zej, r->C, r->O, r->Si, r->Fe, r->age, r->life, r->timebin, r->status, r->nH, r->T, r->h_pc, r->nngb, r->nH_birth, r->nH_stale);}
     if(r->file == 2) {fprintf(fd, "%.10e  %.8e %.8e %.8e  %lld  %.8g  %.8e  %.6e  %.6e  %3d\n", r->t, r->x[0], r->x[1], r->x[2], id, r->mstar, r->mej, r->E, r->zej, r->timebin);}
 }
 

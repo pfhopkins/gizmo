@@ -56,7 +56,7 @@ def run(tag, tables, case, ranks=2, over=None):
             subprocess.run(mpi_launch_command(ranks) + [str(TEST_DIR / "GIZMO"), "run.params", "2", "0"], cwd=d, stdout=out,
                            stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True)
     o = d / "output"
-    return dict(sn=rows(o / "SNinfo.txt", 20), agb=rows(o / "AGBinfo.txt", 18), wind=rows(o / "WINDinfo.txt", 10),
+    return dict(sn=rows(o / "SNinfo.txt", 26), agb=rows(o / "AGBinfo.txt", 24), wind=rows(o / "WINDinfo.txt", 10),
                 ev=np.loadtxt(o / "single_star_events.txt", ndmin=2), snaps=sorted(o.glob("snapshot_*.hdf5")))
 
 
@@ -93,6 +93,13 @@ def test_supernova_rows(built):
         rho = g["Masses"][()].sum() / F["Header"].attrs["BoxSize"] ** 3
         assert np.all(np.abs(sn[:, 5] / rho - 1) < 0.2), (sn[:, 5], rho)
         assert np.all(np.abs(sn[:, 4] / g["InternalEnergy"][()].mean() - 1) < 1e-3), sn[:, 4]
+    # columns 21-26: ambient n_H and T (from columns 6 and 5), the star's h and neighbour count, birth and birth-frozen n_H
+    nH = sn[:, 5] * 1.989e33 / 3.085678e18 ** 3 * 0.76 / 1.67262192e-24
+    T = sn[:, 4] * 1e10 * (2 / 3) * 1.22 * 1.67262192e-24 / 1.380649e-16
+    assert sn.shape[1] == 26 and r["agb"].shape[1] in (0, 24)
+    assert np.allclose(sn[:, 20], nH, rtol=1e-3) and np.allclose(sn[:, 21], T, rtol=1e-3), (sn[:, 20:22], nH, T)
+    assert np.all(sn[:, 22] > 0) and np.all(sn[:, 23] > 0)
+    assert np.array_equal(sn[:, 25], sn[:, 24])  # a = 1: the birth-frozen density is the birth density
 
 
 def test_agb_type_ia_wind_rows(built):

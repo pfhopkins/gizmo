@@ -454,6 +454,15 @@ static void single_star_log(int i, int s, const struct single_star_event *ev, do
     }
     if(status != 2) {r.mej = ev->Mej; r.zej = z; r.C = ev->y[ELEM_C]; r.O = ev->y[ELEM_O]; r.Si = ev->y[ELEM_Si]; r.Fe = ev->y[ELEM_Fe]; r.E = ev->E;}
     r.age = single_star_age_yr(i); r.file = (ev->kind == SSE_AGB) ? 1 : 0;
+    { /* gas around the star at this step, birth density, birth density held at the birth comoving value */
+        const double nH_per_rho = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS;
+        r.nH = P[i].DensityAroundParticle * All.cf_a3inv * nH_per_rho;
+        r.T = SingleStars.u_ambient[s] * UNIT_SPECEGY_IN_CGS * (GAMMA_DEFAULT - 1.) * 1.22 * PROTONMASS_CGS / BOLTZMANN_CGS; /* neutral, mu = 1.22 */
+        r.h_pc = P[i].KernelRadius * All.cf_atime * UNIT_LENGTH_IN_PC; r.nngb = P[i].NumNgb;
+        r.nH_birth = SingleStars.rho_birth[s] * nH_per_rho;
+        const double af = (All.ComovingIntegrationOn && P[i].StellarAge > 0) ? P[i].StellarAge / All.Time : 1.;
+        r.nH_stale = r.nH_birth * af * af * af;
+    }
     r.remnant = (ev->kind == SSE_IA) ? 7 : ev->remnant_type;
     r.life = (ev->kind == SSE_IA) ? 0 : single_star_death_age_yr(logM, logZ);
     single_star_event_log_push(&r);

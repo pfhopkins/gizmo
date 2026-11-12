@@ -93,6 +93,9 @@ int density_isactive(int n)
             double star_age = evaluate_stellar_age_Gyr(n);
             if(star_age < 0.035) return 1;
         }
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+        else if(P[n].StarIdx > 0 && evaluate_stellar_age_Gyr(n) < 0.035) {return 1;} /* young single stars in comoving runs too: their radiation and wind radii follow the gas */
+#endif
 #endif
 #if (defined(GRAIN_FLUID) || defined(RADTRANSFER)) && (!defined(GALSF) && !(defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)))
         return 1;

@@ -76,7 +76,7 @@ extern struct single_star_records SingleStars;
 
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
 /* one row of SNinfo.txt (file 0), AGBinfo.txt (1) or WINDinfo.txt (2); wind: mstar = M_init, mej = dM, E = dp [g cm/s] */
-struct single_star_log_row {double t, x[3], u, rho, mstar, mej, zej, C, O, Si, Fe, age, life, E; unsigned long long id; int file, remnant, timebin, status;};
+struct single_star_log_row {double t, x[3], u, rho, mstar, mej, zej, C, O, Si, Fe, age, life, E, nH, T, h_pc, nngb, nH_birth, nH_stale; unsigned long long id; int file, remnant, timebin, status;};
 void single_star_event_log_push(const struct single_star_log_row *r);
 #endif
 
