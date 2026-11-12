@@ -76,3 +76,6 @@ Nothing is fetched at compile time.
 New features and fixes added on the branch after the audit state, each with its test:
 - Photoionised cells form no star through the instant-SF density cutoff (the rate's ionised-cell veto now holds on that path too); test `photoion_per_direction::test_no_instant_sf_in_ionised_cells`.
 - `GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE` (opt-in): pair-instability SN energy from the He core (Heger & Woosley 2002, Wise+12a fit); default stays 1e51 erg; test `single_stars_supernovae::test_pisn_energy_from_helium_core`.
+- `SGCHEM_PRIMORDIAL_HELIUM`: He/H = 0.079 and X_H = 0.76 for any network; unit test `test_primordial_helium`.
+- `SGCHEM_DGR_REMY_RUYER14` (in `STELLA_DEFAULTS`): dust-to-gas ratio of Remy-Ruyer+14 below 0.26 Zsun, linear above, so solar runs are unchanged; unit test `test_dgr_rr14` and `treecol_pixels::test_dust_to_gas_remy_ruyer14`.
+- `SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS`: H- photodetachment from the stellar TreeCol bands (optical, NUV, 6-13.6 eV) with the Shapiro & Kang cross-section; unit test `test_hminus_bands`.
