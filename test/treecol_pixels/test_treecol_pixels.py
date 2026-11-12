@@ -222,6 +222,28 @@ def test_dust_to_gas_independent_of_metallicity(tables):
     np.testing.assert_allclose(cells[:, 1], 0.5, rtol=1e-12)
 
 
+def rr14_over_linear(zr):
+    """Remy-Ruyer+14 (Table 1, X_CO,Z broken power law) over the linear law, 1 above 12 + log(O/H) = 8.10"""
+    dx = -np.log10(zr)
+    return np.where(8.69 - dx > 8.10, 1.0, 10.0 ** ((2.21 + dx) - (0.96 + 3.10 * dx)))
+
+
+def test_dust_to_gas_remy_ruyer14(tables):
+    """SGCHEM_DGR_REMY_RUYER14: the dust-weighted mass of every cell (0.1-3 Zsun) is its mass x Z/Zsun x the Remy-Ruyer+14
+    factor (below 0.26 Zsun) of the tables' Z = 0.014; the chemistry and radiation pressure read the same function"""
+    L = 20.0
+    pos, z, ab = gas_with_species(12, L)
+    exe = build("pix12_dgr_rr14", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "SGCHEM_DGR_REMY_RUYER14"))
+    tab = Tables(tables["StellarTablesFile"])
+    out = run(exe, "species_dgr_rr14", tables, L, pos, star_list(tab, L)[:3], ranks=2, z_gas=z, tracabund=ab)
+    cells = load(out, "cells")
+    cells = cells[np.argsort(cells[:, 0])]
+    zr = z / 0.014
+    want = np.minimum(zr * rr14_over_linear(zr), 10.0)
+    assert np.any(zr < 0.2)  # cells on the steep branch
+    np.testing.assert_allclose(cells[:, 1], want, rtol=1e-6)
+
+
 def test_dust_to_gas_from_live_dust(tables):
     """GALSF_ISMDUSTCHEM_MODEL: the dust-weighted mass of every cell is its live dust mass / 0.01 (Milky Way units, as
     with the dust model), not its metallicity / 0.014"""

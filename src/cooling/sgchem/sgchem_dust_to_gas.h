@@ -4,12 +4,17 @@
 #ifndef SGCHEM_DUST_TO_GAS_H
 #define SGCHEM_DUST_TO_GAS_H
 #include "sgchem_config.h"
+#include "sgchem_dgr_rr14.h"
 
 /* relative to the Milky Way at solar metallicity, scaled with the cell metallicity Z, capped at 10 */
 #ifdef SGCHEM_DGR_INDEPENDENT_OF_METALLICITY
 KOKKOS_INLINE_FUNCTION double sgchem_dust_to_gas_ratio(double Z) {return fmin(All.SGChemDustToGasRatio, 10.0);} /* the same at every Z */
 #else
+#ifdef SGCHEM_DGR_REMY_RUYER14 /* Remy-Ruyer+14 below 0.26 Zsun, linear above */
+KOKKOS_INLINE_FUNCTION double sgchem_dust_to_gas_ratio(double Z) {return fmin(All.SGChemDustToGasRatio * Z / SGCHEM_SOLAR_Z * sgchem_dgr_rr14_over_linear(Z / SGCHEM_SOLAR_Z), 10.0);}
+#else
 KOKKOS_INLINE_FUNCTION double sgchem_dust_to_gas_ratio(double Z) {return fmin(All.SGChemDustToGasRatio * Z / SGCHEM_SOLAR_Z, 10.0);}
+#endif
 #endif
 
 #ifdef GALSF_ISMDUSTCHEM_HU_MODEL
