@@ -2,7 +2,7 @@
 % the Chabrier-Debras 2021 (CD21, Y=0.275) tabulated EOS, loaded through
 % the existing ANEOS dispatch (EOS_ANEOS). The native CD21 (logT, logP)
 % ASCII table is converted to SESAME format by
-% python_src/eos_tools/cms_to_sesame.py; the converted file
+% cms_to_sesame.py (in this directory); the converted file
 % cd21_y0275.sesame ships next to this params file.
 %
 % IC built by make_ics.py: 128 particles, uniform rho=1e-2 g/cm^3, T=1000 K,

@@ -24,6 +24,8 @@ Earth-like body:
     write_hdf5("earth_ics.hdf5", placed, prof, box_size=10*prof["R"])
 """
 
+import os
+
 import numpy as np
 import h5py
 
@@ -408,24 +410,34 @@ def validate_snapshot(path, required=()):
     return n
 
 
-def _remove_bulk_motion(d):
-    """recentre a body on its centre of mass and remove its bulk momentum and rigid spin (omega = I^-1 L); returns the removed
-    bulk speed and |omega|"""
+SPIN_POLICIES = ("refuse", "remove", "keep")
+
+
+def _centre_body(d):
+    """recentre a body on its centre of mass and remove its bulk velocity (in place), and fit its rigid spin (omega = I^-1 L);
+    returns the masses, the removed bulk velocity, the fitted angular velocity and the intrinsic angular momentum about the centre"""
     m = d["Masses"].astype(float); x = d["Coordinates"].astype(float); v = d["Velocities"].astype(float)
     xc = x - (m[:, None] * x).sum(0) / m.sum(); v_bulk = (m[:, None] * v).sum(0) / m.sum(); vc = v - v_bulk
     L = (m[:, None] * np.cross(xc, vc)).sum(0)
     I = np.einsum("i,ij,ik->jk", m, xc, xc); I = np.trace(I) * np.eye(3) - I
     w = np.linalg.solve(I, L)
-    d["Coordinates"], d["Velocities"] = xc, vc - np.cross(w, xc)
-    return float(np.linalg.norm(v_bulk)), float(np.linalg.norm(w))
+    d["Coordinates"], d["Velocities"] = xc, vc
+    return m, v_bulk, w, L
 
 
 def assemble_collision(target_snapshot, impactor_snapshot, out, R_target, R_impactor, impact_parameter, v_contact_over_v_esc=None,
                        v_inf=None, separation_in_contact_radii=2.0, time_before_contact=None, required=(), box_size=None, G=6.674e-8,
-                       allow_header_differences=()):
+                       allow_header_differences=(), spin_policy="refuse", spin_tolerance=1e-3):
     """A collision IC from two bodies settled in isolation (GIZMO snapshots): every PartType0 dataset of both is carried (a
-    dataset present in only one body is refused), each body is recentred and its bulk momentum and rigid spin removed (both
-    printed), the bodies are set on collision_orbit (R_target, R_impactor = their reproducible contact surfaces) in the
+    dataset present in only one body is refused), each body is recentred and its bulk velocity removed, and its rigid spin is
+    handled by spin_policy, measured by the rotation speed of the fitted rigid spin at the body's contact radius in units of its own
+    escape speed: "refuse" (default) removes a spin up to spin_tolerance and stops on a larger one (a spin that matters is a choice
+    of the setup, never deleted silently; a body settled in isolation keeps a numerical residual of a few 1e-4 that grows with
+    settling time, so a caller whose bodies are meant not to spin says so with "remove"); "remove" removes it whatever its size; "keep" keeps
+    every centred internal velocity unchanged (for a body spun on purpose). Per body (target, impactor) the removed bulk velocity,
+    the fitted angular velocity, the spin measure, whether the spin was removed and the intrinsic angular momentum about the body's
+    centre of mass before and after are printed, returned in the info under "spin" and written as PartType0 attributes of the output
+    (target_* / impactor_*, and spin_policy). The bodies are set on collision_orbit (R_target, R_impactor = their reproducible contact surfaces) in the
     centre-of-mass frame, and the result is written with Time 0 so that a RestartFlag 2 start continues every evolved field
     (a fresh start would recompute the integrated density and, through it, reset the stress). ParticleIDs are kept as they are
     (they must already be disjoint: give each body its range when it is built); bodies are not rotated (a rotated body would need
@@ -434,14 +446,34 @@ def assemble_collision(target_snapshot, impactor_snapshot, out, R_target, R_impa
     redshift, and the merge / split mass limits (GIZMO sets those from each run's own particle masses and reads them back from an
     IC: the combined file carries the lower merge and the higher split limit, as GIZMO's rule would give over both bodies);
     allow_header_differences names any further attribute allowed to differ (the target's value is kept), e.g. "BoxSize" when
-    box_size is given. Returns the orbit info."""
-    bodies = []
-    for path in (target_snapshot, impactor_snapshot):
+    box_size is given. Returns the orbit info, with the per-body spin record under "spin"."""
+    if spin_policy not in SPIN_POLICIES:
+        raise ValueError(f"assemble_collision: spin_policy must be one of {SPIN_POLICIES}, not {spin_policy!r}")
+    if not (np.isfinite(spin_tolerance) and spin_tolerance >= 0):
+        raise ValueError(f"assemble_collision: spin_tolerance {spin_tolerance!r} is not a finite non-negative number")
+    bodies, spin_record = [], {}
+    for name, path, R_body in (("target", target_snapshot, R_target), ("impactor", impactor_snapshot, R_impactor)):
+        if not (np.isfinite(R_body) and R_body > 0):
+            raise ValueError(f"assemble_collision: the {name}'s contact radius {R_body!r} is not a positive number")
         validate_snapshot(path, required)
         d, hdr = read_snapshot(path)
-        v_b, w = _remove_bulk_motion(d)
-        print(f"  {path}: removed bulk speed {v_b:.4e} cm/s and rigid spin |omega| {w:.4e} rad/s")
+        m, v_b, w, L_in = _centre_body(d)
+        spin = float(np.linalg.norm(w)) * R_body / np.sqrt(2.0 * G * m.sum() / R_body)
+        if spin_policy == "refuse" and spin > spin_tolerance:
+            raise ValueError(f"assemble_collision: the {name} {path} spins (rotation speed at its contact radius {spin:.3e} of its escape speed > "
+                             f"{spin_tolerance:g}); give spin_policy='keep' to keep it or 'remove' to remove it deliberately")
+        removed = spin_policy != "keep"
+        if removed:
+            d["Velocities"] = d["Velocities"] - np.cross(w, d["Coordinates"])
+            L_out = (m[:, None] * np.cross(d["Coordinates"], d["Velocities"])).sum(0)
+        else:
+            L_out = L_in
+        print(f"  {name} {path}: removed bulk speed {np.linalg.norm(v_b):.4e} cm/s; rigid spin |omega| {np.linalg.norm(w):.4e} rad/s "
+              f"(rotation speed at the contact radius {spin:.2e} of its escape speed) {'removed' if removed else 'kept'}; |L| about its centre "
+              f"{np.linalg.norm(L_in):.4e} -> {np.linalg.norm(L_out):.4e}")
         bodies.append((d, hdr))
+        spin_record[name] = dict(bulk_velocity_removed=[float(c) for c in v_b], angular_velocity=[float(c) for c in w], spin_over_escape_speed=spin,
+                                 spin_removed=removed, spin_angular_momentum_in=[float(c) for c in L_in], spin_angular_momentum_out=[float(c) for c in L_out])
     (dt, hdr), (di, hdr_i) = bodies
     differing = []
     for k in sorted(set(hdr) | set(hdr_i)):
@@ -486,7 +518,14 @@ def assemble_collision(target_snapshot, impactor_snapshot, out, R_target, R_impa
         for k, v in comb.items(): g.create_dataset(k, data=v)
         g.attrs["N_target"] = len(dt["ParticleIDs"])
         for k in ("b", "v_contact", "v_inf", "b_inf", "v_esc", "r_contact", "r_start"): g.attrs["collision_" + k] = float(info[k])
-    validate_snapshot(out, required)
+        g.attrs["spin_policy"] = spin_policy; g.attrs["spin_tolerance"] = float(spin_tolerance)
+        for name, rec in spin_record.items():
+            for k, val in rec.items(): g.attrs[f"{name}_{k}"] = np.asarray(val, dtype=float) if isinstance(val, list) else val
+    try:
+        validate_snapshot(out, required)
+    except Exception:
+        os.remove(out); raise
+    info = dict(info, spin=dict(policy=spin_policy, tolerance=spin_tolerance, **spin_record))
     print(f"  assemble_collision -> {out}: {n} particles ({len(dt['ParticleIDs'])} target + {len(di['ParticleIDs'])} impactor), "
           f"{len(comb)} datasets, box {box:.4e}; merge / split mass limits {merge_min} / {split_max}")
     return info
