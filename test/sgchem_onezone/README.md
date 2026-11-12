@@ -23,3 +23,10 @@ Inputs (not in the repository):
 - the frozen reference data: `SGCHEM_REFERENCE_DATA`, checked against `fortran_reference/data.sha256`.
 
 The test is skipped, with the reason, when an input is not set.
+
+Pop III one-zone collapse (`test_popIII_onezone`, driver `popIII_onezone.cc`, built by `build_popIII_onezone.sh` on network 17 with
+`SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS`): free fall at z = 17 with He/H = 0.079. Z = 0 loiters at 150-250 K near
+n = 1e3; the Pop III criterion of `GALSF_SINGLE_STARS_POPIII` (src/galaxy_sf/single_star_popIII.h) first passes at n_H = 1e6-3e6,
+the Stella Jeans test (M_J < 32 Msun) only above 1e9; 1e-3 Zsun gas is not pristine and fragments below 1e6 with the
+Remy-Ruyer+14 dust-to-gas ratio (above 1e7 with the linear law); H- from the stellar bands equals the direct spectral
+integral and lets Pop III form below 5e6 in a 3e4 K, G0 = 1 field (the ISRF-calibrated rate: above 1e7).

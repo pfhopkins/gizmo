@@ -739,6 +739,11 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             for(n = 0; n < pc; n++) {double v = *fp++; if(P[offset + n].StarIdx > 0) {SingleStars.rho_birth[single_star_slot(P[offset + n].StarIdx)] = (float) v;}}
             break;
 #endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+        case IO_SINGLE_STAR_POPIII: /* fills an existing record */
+            for(n = 0; n < pc; n++) {double v = *fp++; if(P[offset + n].StarIdx > 0) {SingleStars.popIII[single_star_slot(P[offset + n].StarIdx)] = (int8_t) v;}}
+            break;
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS: /* fills an existing record */
             for(n = 0; n < pc; n++) {double v = *fp++; if(P[offset + n].StarIdx > 0) {SingleStars.event_bits[single_star_slot(P[offset + n].StarIdx)] = (uint8_t) v;}}
@@ -1500,6 +1505,9 @@ int read_file(char *fname, int readTask, int lastTask)
                    && blocknr != IO_SINGLE_STAR_DRAWN_MASS && blocknr != IO_SINGLE_STAR_BIRTH_Z /* initial conditions may carry single stars */
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
                    && blocknr != IO_SINGLE_STAR_BIRTH_DENSITY
+#endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+                   && blocknr != IO_SINGLE_STAR_POPIII
 #endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
                    && blocknr != IO_SINGLE_STAR_EVENT_BITS && blocknr != IO_SINGLE_STAR_LAST_WIND_LOG_AGE

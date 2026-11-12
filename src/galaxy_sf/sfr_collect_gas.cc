@@ -26,6 +26,9 @@
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h"
 #include "single_star_imf.h"
+#ifdef GALSF_SINGLE_STARS_POPIII
+#include "single_star_popIII.h"
+#endif
 #include "single_star_record.h"
 #include "sfr_collect_gas_loop.h"
 
@@ -195,6 +198,9 @@ double single_stars_collect_gas(long long tot_spawned)
         for(size_t a = 0; a < in.size(); a++) {
             const ssc_star& t = S[which[a]];
             in[a].f = (E[a] > 0) ? DMIN((double)(t.N_drawn - t.N_got) / (double)E[a], 0.5) : 0;
+#ifdef GALSF_SINGLE_STARS_POPIII
+            if(SingleStars.popIII[single_star_slot(P[t.i].StarIdx)] && 2 * (t.N_drawn - t.N_got) > E[a]) {in[a].f = 0;} /* Pop III: take mass only once the whole remainder is in reach (the radius grows meanwhile); a draw still short after the last pass returns its gas */
+#endif
         }
         /* request, then grant (records sized by the pairs requested on this rank), then clear */
         counters[0] = counters[1] = 0;
@@ -302,6 +308,9 @@ double single_stars_collect_gas(long long tot_spawned)
 #ifdef METALS
             for(int k = 0; k < NUM_METAL_SPECIES; k++) {P[t.i].Metallicity[k] = (double)t.Z[k] * ssc_pow2_at_least(t.N_drawn * mu) * ldexp(1.0, -100) / M;}
             SingleStars.Z_birth[single_star_slot(P[t.i].StarIdx)] = P[t.i].Metallicity[0];
+#ifdef GALSF_SINGLE_STARS_POPIII
+            if(!popIII_gas_is_pristine(P[t.i].Metallicity[0], All.PopIII_Zcrit_solar * All.SolarAbundances[0])) {SingleStars.popIII[single_star_slot(P[t.i].StarIdx)] = 0;} /* collected above Z_crit: keeps its mass, labelled Pop II */
+#endif
 #endif
             moved.push_back(t.i); M_collected_here += M;
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
@@ -365,6 +374,9 @@ void single_star_attach_to_new_star(int i_star, int i, double M_drawn)
     struct single_star_record r; memset(&r, 0, sizeof(r)); r.M_drawn = M_drawn;
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
     r.rho_birth = (float)(CellP[i].Density * All.cf_a3inv); /* physical */
+#endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+    r.popIII = popIII_gas_is_pristine(P[i].Metallicity[0], All.PopIII_Zcrit_solar * All.SolarAbundances[0]) ? 1 : 0; /* the Pop III channel drew it */
 #endif
     P[i_star].StarIdx = single_star_record_new(&r);
     ssc_births.push_back({i_star, i, CellP[i].Density});

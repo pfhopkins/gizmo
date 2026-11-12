@@ -1559,6 +1559,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
         case IO_SINGLE_STAR_BIRTH_DENSITY:
 #endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+        case IO_SINGLE_STAR_POPIII:
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
         case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
@@ -1570,6 +1573,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     double v = (blocknr == IO_SINGLE_STAR_DRAWN_MASS) ? r.M_drawn : r.Z_birth;
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
                     if(blocknr == IO_SINGLE_STAR_BIRTH_DENSITY) {v = r.rho_birth;}
+#endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+                    if(blocknr == IO_SINGLE_STAR_POPIII) {v = r.popIII;}
 #endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
                     if(blocknr == IO_SINGLE_STAR_EVENT_BITS) {v = r.event_bits;}
@@ -2406,6 +2412,9 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
         case IO_SINGLE_STAR_BIRTH_DENSITY:
 #endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+        case IO_SINGLE_STAR_POPIII:
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
         case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
@@ -2859,6 +2868,9 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_SINGLE_STAR_BIRTH_Z:
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
         case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+        case IO_SINGLE_STAR_POPIII:
 #endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
@@ -3383,6 +3395,9 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_SINGLE_STAR_BIRTH_Z:
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
         case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+        case IO_SINGLE_STAR_POPIII:
 #endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
@@ -3983,6 +3998,9 @@ int blockpresent(enum iofields blocknr)
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
         case IO_SINGLE_STAR_BIRTH_DENSITY:
 #endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+        case IO_SINGLE_STAR_POPIII:
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
         case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
@@ -4578,6 +4596,11 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             strncpy(label, "SSRB", 4);
             break;
 #endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+        case IO_SINGLE_STAR_POPIII:
+            strncpy(label, "SSP3", 4);
+            break;
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
             strncpy(label, "SSEB", 4);
@@ -5140,6 +5163,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
         case IO_SINGLE_STAR_BIRTH_DENSITY:
             strcpy(buf, "SingleStarBirthDensity");
+            break;
+#endif
+#ifdef GALSF_SINGLE_STARS_POPIII
+        case IO_SINGLE_STAR_POPIII:
+            strcpy(buf, "SingleStarPopIII");
             break;
 #endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)

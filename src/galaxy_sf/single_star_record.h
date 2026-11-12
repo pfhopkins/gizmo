@@ -25,9 +25,15 @@
 #endif
 
 /* the fields: X(type, name, comment); a field is added together with its first user */
+#ifdef GALSF_SINGLE_STARS_POPIII
+#define SINGLE_STAR_RECORD_POPIII_FIELDS(X) X(int8_t, popIII, "1: formed through the Pop III channel (pristine gas, Pop III IMF, birth Z below the critical Z)")
+#else
+#define SINGLE_STAR_RECORD_POPIII_FIELDS(X)
+#endif
 #define SINGLE_STAR_RECORD_FIELDS(X) \
     X(double, M_drawn, "drawn IMF mass [Msun]: the evolution mass for the tables") \
     X(double, Z_birth, "total metallicity at birth (mass fraction)") \
+    SINGLE_STAR_RECORD_POPIII_FIELDS(X) \
     SINGLE_STAR_RECORD_TABLE_FIELDS(X) \
     SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X) \
     SINGLE_STAR_RECORD_KETJU_FIELDS(X)

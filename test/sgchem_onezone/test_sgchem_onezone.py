@@ -92,3 +92,45 @@ def test_sgchem_net5_euv_h2(nH, env):
     t0 = run(0.0, 1e-4)  # without the H2 channel (the network before this change) shielded molecular gas stays molecular
     print("no H2 channel, G0 = 1e-4:", [l for l in t0.stdout.splitlines() if l.startswith("RESULT")])
     assert "EVOL FAIL" in t0.stdout
+
+
+@pytest.fixture(scope="module")
+def popIII_driver(env):
+    """the Pop III one-zone collapse driver on network 17 with H- from the stellar bands (build_popIII_onezone.sh)"""
+    out = path.join(HERE, "output", "popIII")
+    b = subprocess.run(["bash", path.join(HERE, "build_popIII_onezone.sh"), out], capture_output=True, text=True, env=env)
+    assert b.returncode == 0, f"build failed:\n{b.stdout[-4000:]}\n{b.stderr[-4000:]}"
+    return path.join(out, "popIII_onezone")
+
+
+def popIII_track(exe, Z, dgr="rr14", extra=None):
+    """free-fall collapse at z = 17 to n_H = 1e10, He/H = 0.079: the RESULT (and HMINUS) row of the driver"""
+    tables, out = chemistry_tables_dir(17), path.join(HERE, "output", "popIII", f"Z{Z}_{dgr}.csv")
+    r = subprocess.run([exe, tables, str(Z), dgr, out, "17", "1e10"], capture_output=True, text=True, timeout=1200,
+                       env={**environ, "ABHE": "0.079", **(extra or {})})
+    rows = [l for l in r.stdout.splitlines() if l.startswith(("RESULT", "HMINUS"))]
+    assert r.returncode == 0 and rows and rows[-1].startswith("RESULT"), r.stdout[-3000:] + r.stderr[-3000:]
+    res = {}
+    for l in rows:
+        pre = "hm_" if l.startswith("HMINUS") else ""
+        res.update({pre + k: v for k, v in re.findall(r"(\w+)=(\S+)", l)})
+    print(rows)
+    assert int(res["rc"]) == 0, "chemistry solver failed"
+    return {k: float(v) for k, v in res.items() if k not in ("dgr", "hm_mode")}
+
+
+def test_popIII_onezone(popIII_driver):
+    """pristine gas (Z = 0): loiters at 150-250 K near n = 1e3; the Pop III criterion first passes at n_H = 1e6-3e6, the Stella
+    Jeans test (M_J < 32 Msun) only above 1e9. Gas at 1e-3 Zsun is not pristine: with the Remy-Ruyer+14 dust-to-gas ratio it
+    fragments below 1e6, with the linear law only above 1e7. H- from the stellar bands (3e4 K, G0 = 1, LW off): the band rate
+    equals the direct spectral integral, and H2 forms early enough for Pop III below 5e6 (the ISRF-calibrated rate: above 1e7)"""
+    r = popIII_track(popIII_driver, 0.0)
+    assert r["pristine"] == 1 and 150 <= r["Tmin_1e2_1e4"] <= 250 and 1e6 <= r["n_popIII"] <= 3e6 and r["n_MJ32"] > 1e9, r
+    e = popIII_track(popIII_driver, 1e-3)
+    assert e["pristine"] == 0 and e["n_popIII"] < 0 and 0 < e["n_MJ32"] < 1e6, e
+    assert popIII_track(popIII_driver, 1e-3, dgr="lin")["n_MJ32"] > 1e7
+    field = {"HM_FIELD_T": "3e4", "HM_FIELD_G0": "1"}
+    b = popIII_track(popIII_driver, 0.0, extra=dict(field, HM_MODE="bands"))
+    i = popIII_track(popIII_driver, 0.0, extra=dict(field, HM_MODE="isrf"))
+    assert abs(b["hm_ph3"] / b["hm_direct"] - 1) < 1e-3 and abs(i["hm_ph3"] / 4.2e-7 - 1) < 1e-6
+    assert b["n_popIII"] < 5e6 and i["n_popIII"] > 1e7
