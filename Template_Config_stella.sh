@@ -20,6 +20,7 @@ N_STELLAR_MASS=5                         % stellar mass slots per particle  [req
 #GALSF_RESOLVEDISM_STOCHASTIC_IMF        % alternative: one massive-star mass per star particle  [excl SAMPLE_IMF]
 #GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF     % instant SF above nHcutoffSF (param); off = pure Jeans criterion
 GALSF_RESOLVEDISM_INSTANT_SN             % SNe before TimeInstantSN (param) explode instantly (start-up)
+#GALSF_RESOLVEDISM_POPIII_STARS          % Pop III channel: gas below PopIII_Zcrit_solar (1e-4) forms stars at n_H > PopIII_nH_thresh (1e6), div v < 0, x_H2 > PopIII_xH2_min (1e-3), M_J < PopIII_Mreservoir (1000 Msun); Pop III IMF (PopIII_IMF_Type 0: M_char 20, 1: log-flat; 1-300 Msun); full mass or no star; tables: Z = 1e-4 row until a Z = 0 row exists  [req SAMPLE_IMF, SGCHEM, METALS]
 
 ########## Supernovae / Type Ia / mass return ##########
 GALSF_RESOLVEDISM_TYPE_IA                % Type Ia SNe from WD DTD (W7 yields)

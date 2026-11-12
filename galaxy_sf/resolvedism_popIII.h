@@ -3,7 +3,8 @@
 #ifndef RESOLVEDISM_POPIII_H
 #define RESOLVEDISM_POPIII_H
 /* Pop III star formation (GALSF_RESOLVEDISM_POPIII_STARS): pristine-gas switch, SF criterion and IMF.
- * Pure functions, shared by sfr_eff.cc and the unit/one-zone tests. */
+ * Pure functions, shared by sfr_eff.cc and the unit/one-zone tests.
+ * Pop III stars use the lowest stellar-table row (Z = 1e-4 absolute) until stella-tables has a Z = 0 row. */
 #include <math.h>
 
 struct popIII_sf_params {

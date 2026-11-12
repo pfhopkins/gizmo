@@ -265,6 +265,7 @@
 #SGCHEM_FORTRAN                % legacy Fortran backend of SGCHEM (default: C++/CVODE)
 #SGCHEM_OMP_CROSSCHECK      # test only: each step cools a copy serially and requires the threaded pass to match it byte for byte
 #SGCHEM_KEEP_IC_ABUNDANCES  # keep SGChemTracAbund from the IC on fresh starts (default zeroes it, x_H+ = 1e-4)
+#GALSF_RESOLVEDISM_POPIII_STARS # Stella: Pop III star formation in gas below PopIII_Zcrit_solar (own criterion and IMF; see Template_Config_stella.sh)
 #SGCHEM_DGR_INDEPENDENT_OF_METALLICITY # no live dust: DGR = DGRnormalized (x MW) at every Z; with DGRnormalized 0.01 = gizmo2017. Default scales with local Z
                                 #   of the Fortran DVODE driver. DEFAULT OFF: the Fortran path stays the
                                 #   reference implementation. Networks 5, 15 and 17 only. Replaces the
