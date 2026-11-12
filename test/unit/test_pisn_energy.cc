@@ -1,6 +1,7 @@
 // Unit test: supernova explosion energies (galaxy_sf/resolvedism_sn_energy.h).
 // PISN: Heger & Woosley 2002 via the Wise+12a fit, E = [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20),
-// He core held to HW02's PISN range 64-133 Msun; other explosive deaths 1e51 erg; failed SNe and direct BHs 0.
+// He core held to HW02's PISN range 64-133 Msun (opt-in GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE; default PISN 1e51);
+// other explosive deaths 1e51 erg; failed SNe and direct BHs 0.
 #include "test_harness.h"
 #include "galaxy_sf/resolvedism_sn_energy.h"
 
@@ -18,7 +19,11 @@ TEST_CASE("PISN energy from the helium core") {
 TEST_CASE("energy by death type") {
     CHECK(resolvedism_sn_energy_erg(0, 1, 15.) == 1e51);  // CCSN, ECSN, PPISN
     CHECK(resolvedism_sn_energy_erg(0, 0, 40.) == 0);     // failed SN, direct BH
+#ifdef GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE
     CHECK(resolvedism_sn_energy_erg(1, 1, 200.) == resolvedism_pisn_energy_erg(200.));
+#else
+    CHECK(resolvedism_sn_energy_erg(1, 1, 200.) == 1e51); // default: flat 1e51 for PISN
+#endif
 }
 
 TEST_MAIN()
