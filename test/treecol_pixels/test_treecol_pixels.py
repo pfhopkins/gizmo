@@ -28,6 +28,7 @@ stops) and checks them against exact values.
     sums, H-ionising absorber masses per cell and in the root node.
   test_ionising_sweep: photon and energy flux per cell against a direct sweep through the HI column at NSIDE 2 (median 20 %, tree error at tau ~ 1).
   test_radial_shells_photon_cap: thick cells: implied absorption brought back to the stars' emission (2e-3).
+  test_radial_shells_photon_cap_comoving: the same at a = 0.5 in a comoving run (2e-3).
   test_radial_shells_host_equals_device: device walk repeats bitwise and equals the host walk to float sums (1e-5).
   test_far_field_g0: after five steps with chemistry, during which one star dies, the tree 6-13.6 eV field of every cell
     equals the direct sum over the stars' current luminosities (median |ratio - 1| <= 1e-2, p99 <= 5e-2): node
@@ -511,6 +512,44 @@ def test_radial_shells_photon_cap(tables):
     L_emit = root[bins[0]] + root[bins[2]]
     absorbed = (cells[:, 40:52].sum(1) * 2.9979e10 * SIGMA_UV * cells[:, 1] * 1.989e33 * 0.7065 / 1.6726e-24).sum()
     assert abs(absorbed / L_emit - 1) < 2e-3, absorbed / L_emit
+
+
+def box_omega(m_tot, box):
+    """Omega_M of a periodic box as check_omega computes it (pc, Msun, km/s, h = 1; its constants): within its 1e-2"""
+    G = 6.672e-8 * 1.989e33 / (3.085678e18 * 1e5 * 1e5)
+    H0 = (1.0 * 3.2407789e-18) * (3.085678e18 / 1e5)
+    return m_tot / (box * box * box) / (3 * H0 * H0 / (8 * np.pi * G))
+
+
+def comoving_ic(a, L, a_birth):
+    """the physical lattice at scale factor a (h = 1): comoving positions and box, stars born at a_birth"""
+    def post(f):
+        with h5py.File(f, "r+") as h:
+            h["Header"].attrs["Time"] = a; h["Header"].attrs["BoxSize"] = L / a
+            for t in ("PartType0", "PartType4"):
+                h[f"{t}/Coordinates"][...] = h[f"{t}/Coordinates"][...] / a
+            h["PartType4/StellarFormationTime"][...] = a_birth
+    return post
+
+
+def test_radial_shells_photon_cap_comoving(tables):
+    """the cap test at a = 0.5: the stored energy densities are physical, so absorption over emission is 1 as at a = 1.
+    The periodic box must hold Omega_M (no Lambda): a young, dense universe; the stars are born at 0.9 a"""
+    a, L, gas_mass = 0.5, 20.0, 500.0
+    m_tot = 12 ** 3 * gas_mass + sum(M for M, _ in PIX_STARS)
+    omega = box_omega(m_tot, L / a)
+    over = {"ComovingIntegrationOn": 1, "TimeBegin": a, "TimeMax": 0.6, "TimeBetSnapshot": 1.1, "MaxSizeTimestep": 1e-3,
+            "Omega0": omega, "OmegaLambda": 0, "OmegaBaryon": omega, "HubbleParam": 1.0, "BoxSize": L / a, "TreeColShieldingLength": SHIELD / a,
+            **{f"Softening{t}": 0.01 / a for t in ("Gas", "Halo", "Disk", "Bulge", "Stars", "Bndry")},
+            **{f"Softening{t}MaxPhys": 0.01 for t in ("Gas", "Halo", "Disk", "Bulge", "Stars", "Bndry")}}
+    cells, _, _ = pixel_run(tables, 2, tag="_shells_cap_comoving", build_tag="shells", gas_mass=gas_mass, overrides=over,
+                            extra=("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",), post_ic=comoving_ic(a, L, 0.9 * a))
+    out = TEST_DIR / "run_pixels_np2_shells_cap_comoving" / "output"
+    assert "photon cap engaged" in (out.parent / f"test_{TEST_NAME}.out").read_text()
+    bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
+    root = np.loadtxt(out / "treecol_dump_root_lum_0.txt")
+    absorbed = (cells[:, 40:52].sum(1) * 2.9979e10 * SIGMA_UV * cells[:, 1] * 1.989e33 * 0.7065 / 1.6726e-24).sum()
+    assert abs(absorbed / (root[bins[0]] + root[bins[2]]) - 1) < 2e-3, absorbed / (root[bins[0]] + root[bins[2]])
 
 
 def test_radial_shells_host_equals_device(tables):

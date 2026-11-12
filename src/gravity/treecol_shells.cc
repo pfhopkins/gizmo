@@ -22,7 +22,7 @@ void treecol_shells_photon_cap(void)
         if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
         double m[TREECOL_PIXELS_NSPECIES], u_uv = 0; treecol_pixels_species_masses(P, CellP, i, m);
         for(int k = 0; k < TREECOL_PIXELS_N; k++) {u_uv += TREECOL_PIXELS_EGY_UV(CellP[i], k);}
-        abs_loc += u_uv * TREECOL_SHELLS_SIGMA_UV * m[TREECOL_PIXELS_DUST] * to_NH * C_LIGHT_CGS / All.cf_a2inv; /* F = u c */
+        abs_loc += u_uv * TREECOL_SHELLS_SIGMA_UV * m[TREECOL_PIXELS_DUST] * to_NH * C_LIGHT_CGS; /* F = u c, physical */
     }
     MPI_Allreduce(&abs_loc, &abs_glob, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(abs_glob <= L_emit || abs_glob <= 0) {return;}
