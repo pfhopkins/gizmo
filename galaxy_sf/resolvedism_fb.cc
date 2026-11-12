@@ -701,6 +701,14 @@ double resolvedism_cr_energy_local(void)
 }
 #endif
 
+/* fully disrupted star: zero the deposit residue so the particle is removed, not left near-massless in the AGS kernels (1/m force term) */
+static void resolvedism_zero_disrupted_star(int i, double M_pre_solar, const char *what)
+{
+    double resid = P[i].Mass * UNIT_MASS_IN_SOLAR;
+    if(fabs(resid) > 1.0e-10 * M_pre_solar) {printf("RESOLVEDISM FB WARNING: %s ID=%llu kept %g of %g Msun after full disruption\n", what, (unsigned long long)P[i].ID, resid, M_pre_solar); fflush(stdout);}
+    P[i].Mass = 0; TreeMomentsStaleFlag = 1;
+}
+
 static void resolvedism_fb_apply_recoil(void)
 {
     int ii, k;
@@ -1144,11 +1152,7 @@ void resolvedism_inject_fb_energy(void)
              fb_death_row_push(i, 0, 7, FB_LOG_EXPLODED, IA_ENERGY_ERG, yia, resolvedism_star_age_yr(i), 0.0);}
             printf("RESOLVEDISM TYPE_IA: Task=%d ID=%llu M_WD=%.3f E=%.2e[erg]\n",
                 ThisTask, (unsigned long long)P[i].ID, M_WD, IA_ENERGY_ERG);
-            /* Do NOT set P[i].Mass = 0 here — the fb_thermal walk's out2particle
-             * has already reduced star mass via measured-coupling (M_coupled).
-             * Forcing 0 would silently absorb any residual from Σ wk_j ≠ 1, hiding
-             * a leak.  WD is effectively disrupted: star mass is whatever the
-             * walk actually deposited to the gas neighbors (~0). */
+            resolvedism_zero_disrupted_star(i, M_WD, "Ia");
             P[i].M_drawn_Ia = 0; /* no longer eligible */
             P[i].M_at_SN_trigger = -1; /* reset bookkeeping snapshot */
             STELLA_FB_EVENT(P[i]) = -1;
@@ -1245,6 +1249,7 @@ void resolvedism_inject_fb_energy(void)
                 printf("RESOLVEDISM AGB: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f\n",
                     ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass);
             }
+            if(rem_type == REM_PISN) {resolvedism_zero_disrupted_star(i, M_star_old, "PISN");}
 
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
             /* Mark WD remnants as eligible for future Type Ia */
