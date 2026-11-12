@@ -352,7 +352,7 @@ void gravity_tree(void)
        disagree with the tree exported to other ranks (rebuilt only at full builds) whenever a luminosity changes, i.e.
        every step; the finite-time staleness smooths the early-age fluctuations of close sources, which an immediate
        refresh turns into opening-criterion noise and, in past experiments, larger force errors; and it would put an
-       all-node pass on the smallest steps. A build is forced once insertions pass 1% of the particles. */
+       all-node pass on the smallest steps. A build is forced once insertions pass 1% of the particles. TREE_MOMENTS_REFRESH_ON_MUTATION (opt-in) overrides this choice. */
     {
         int TreeMomentsStaleFlag_global;
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);

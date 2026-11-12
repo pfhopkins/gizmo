@@ -618,14 +618,26 @@ void calculate_non_standard_physics(void)
     if(All.Dt_Since_LastFBCalc_Gyr >= All.Dt_Min_Between_FBCalc_Gyr)
 #endif
     {
+#ifdef TREE_MOMENTS_REFRESH_ON_MUTATION
+        NtotSwallowedThisStep = 0;
+#endif
         sink_accretion();
+#ifdef TREE_MOMENTS_REFRESH_ON_MUTATION
+        /* Swallow victims sit at Mass=0, linked in the tree, until a rearrange eliminates them; by default that
+           happens only on a spawn step or a decomposition. Rank-uniform (Allreduce'd swallow tally). */
+        int need_cleanup_rearrange = (NtotSwallowedThisStep > 0);
+#endif
 #ifdef SINK_WIND_SPAWN
         double Max_Unspawned_MassUnits_fromSink_global;
         MPI_Allreduce(&Max_Unspawned_MassUnits_fromSink, &Max_Unspawned_MassUnits_fromSink_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         if(Max_Unspawned_MassUnits_fromSink_global > 1)
         {
             spawn_sink_wind_feedback();
+#ifdef TREE_MOMENTS_REFRESH_ON_MUTATION
+            need_cleanup_rearrange = 1;
+#else
             rearrange_particle_sequence();
+#endif
             Max_Unspawned_MassUnits_fromSink=Max_Unspawned_MassUnits_fromSink_global=0.;
         }
 #if defined(SNE_NONSINK_SPAWN)
@@ -634,6 +646,9 @@ void calculate_non_standard_physics(void)
             if(n_unspawned> Max_Unspawned_MassUnits_fromSink) {Max_Unspawned_MassUnits_fromSink = n_unspawned;} // track the maximum integer number of elements this sink could spawn
         }}
 #endif
+#endif
+#ifdef TREE_MOMENTS_REFRESH_ON_MUTATION
+        if(need_cleanup_rearrange) {rearrange_particle_sequence();} /* one cleanup per sink pass, on swallow or spawn */
 #endif
         gizmo_exit_bad_stop_if_requested("run:after_sinks"); CPU_Step[CPU_SINKS] += measure_time();
     }

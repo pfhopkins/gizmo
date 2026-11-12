@@ -315,7 +315,7 @@ void GravAccel_SpecialCustomNuclearZoomBoundaryConditions()
                 double x = r/r_cut, tau = pow(All.cf_atime / 0.18437477681344028, -3.);
                 double m0 = 0.19*(pow(x,1.15)-1.)/(1.+pow(x/300.,0.8)) + (1.4e-8*tau)*(pow(x,3.)-1.);
                 if(analytic_gravity_adds_to(i, ii)) {P[i].GravAccel += dp * (-All.G * m0 / (r2*r * All.cf_a2inv));}
-                if(r > 2.*r_cut) {P[i].Mass = 0;} // clip it
+                if(r > 2.*r_cut) {TREE_MOMENTS_RAISE_ON_MUTATION_IF(P[i].Mass > 0); P[i].Mass = 0;} // clip it
             }
 #else
             r_cut = 0.1 / UNIT_LENGTH_IN_PC;
@@ -325,7 +325,7 @@ void GravAccel_SpecialCustomNuclearZoomBoundaryConditions()
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4)
             r_cut = 20. / UNIT_LENGTH_IN_PC;
 #endif
-            if(r > r_cut) {P[i].Mass = 0;} // clip it
+            if(r > r_cut) {TREE_MOMENTS_RAISE_ON_MUTATION_IF(P[i].Mass > 0); P[i].Mass = 0;} // clip it
             if(is_particle_a_special_zoom_target(i) == 0 && P[i].Mass > 0 && r > 0) // add additional Paczynski-Wiita potential corrections, if desired //
             {
                 double rG = 2.*All.G*All.Mass_of_SpecialParticle[j]/(C_LIGHT_CODE*C_LIGHT_CODE); // define gravitational radius
@@ -549,6 +549,7 @@ void apply_excision(void)
             if(r2 < excision_radius2)
             {
                 All.Mass_Accreted_By_SpecialParticle[j] += P[i].Mass;
+                TREE_MOMENTS_RAISE_ON_MUTATION_IF(P[i].Mass > 0);
                 P[i].Mass = 0;
             }
         }
@@ -569,7 +570,7 @@ void apply_excision(void)
             dp = -P[i].Min_xyz_to_Sink;
 #endif
             double r2 = dp.norm_sq(), r = sqrt(r2);
-            if(r < excision_radius) {P[i].Mass = 0;}
+            if(r < excision_radius) {TREE_MOMENTS_RAISE_ON_MUTATION_IF(P[i].Mass > 0); P[i].Mass = 0;}
         }
     }
 #endif

@@ -1718,6 +1718,7 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
        reduced count is what is tested, so every rank reaches the same decision and none of them is
        left walking a tree the others rebuilt. */
     if(flag_sum && !repair_walk_links) {TreeReconstructFlag = 1;}
+    if(tot_elim > 0 && repair_walk_links) {TREE_MOMENTS_RAISE_ON_MUTATION();} /* eliminated mass leaves the ancestor moments; rank-uniform */
     wakeup_sidecar_invalidate();   /* particle indices compacted/reordered → rebuild WakeupDirty from P[] next scan */
 }
 

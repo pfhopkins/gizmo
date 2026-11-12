@@ -224,13 +224,22 @@ void sink_swallow_and_kick_loop(void)
     if(N_gas_sw > 0) {ghost_exchange_gas_eligibility_changed("sink_swallow_and_kick_loop");}
     /* Swallowed particles keep their slot, at zero mass and still linked in the tree, until the next rearrange or build,
        and the node moments are deliberately not refreshed for them: a refresh is an all-node pass, and swallows happen on
-       the smallest steps (see the moment-refresh note in gravtree.cc). */
+       the smallest steps (see the moment-refresh note in gravtree.cc). TREE_MOMENTS_REFRESH_ON_MUTATION (opt-in) overrides this choice. */
 
     int Ntot_gas = 0, Ntot_sink = 0, Ntot_star = 0, Ntot_dm = 0;
+#ifdef TREE_MOMENTS_REFRESH_ON_MUTATION
+    /* every rank needs the global count: it gates the cleanup rearrange in run.cc, which must be rank-uniform */
+    MPI_Allreduce(&N_gas_sw,  &Ntot_gas,  1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&N_sink_sw, &Ntot_sink, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&N_star_sw, &Ntot_star, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&N_dm_sw,   &Ntot_dm,   1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    NtotSwallowedThisStep = Ntot_gas + Ntot_sink + Ntot_star + Ntot_dm;
+#else
     MPI_Reduce(&N_gas_sw,  &Ntot_gas,  1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&N_sink_sw, &Ntot_sink, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&N_star_sw, &Ntot_star, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&N_dm_sw,   &Ntot_dm,   1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+#endif
     if(ThisTask == 0 && (Ntot_gas || Ntot_sink || Ntot_star || Ntot_dm)) {
         printf("Accretion done: swallowed %d gas, %d star, %d dm, and %d sink particles\n",
                Ntot_gas, Ntot_star, Ntot_dm, Ntot_sink);
@@ -305,6 +314,7 @@ void spawn_sink_wind_feedback(void)
     MPI_Allreduce(&n_particles_split, &MPI_n_particles_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(MPI_n_particles_split>0) {
 #ifdef MAINTAIN_TREE_IN_REARRANGE
+        TREE_MOMENTS_RAISE_ON_MUTATION(); /* spawned mass and the debited sink mass; rank-uniform */
         All.NumForcesSinceLastTreeBuild +=  0.0001 * All.TreeRebuild_ActiveFraction * All.TotNumPart; // we can insert spawned particles in the tree, but still a good idea to rebuild the tree every now and then, so we bring the next treebuild a bit sooner; additional cost should be small
 #else
         TreeReconstructFlag = 1; // otherwise just wipe and rebuild the tree next chance you get - more expensive but more accurate

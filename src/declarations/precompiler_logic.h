@@ -1943,3 +1943,14 @@
 #define EOS_PROVIDES_ENTROPY
 #define EOS_PROVIDES_CV
 #endif
+
+#if defined(TREE_MOMENTS_REFRESH_ON_MUTATION) && defined(SINK_PARTICLES) && !defined(MAINTAIN_TREE_IN_REARRANGE) && (defined(HERMITE_INTEGRATION) || !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM))
+/* The flag adds a cleanup rearrange after every swallow (run.cc). Without walk-link repair that rearrange condemns the
+   standing tree, and the Hermite passes later in the step walk it without rebuilding; with no Hermite it forces a rebuild
+   on every swallow step. So under the flag sink builds repair the links per swap (as starforge_dev abd5e309), except non-Hermite
+   SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, which keeps the base's rebuild and so rebuilds on every swallow step. */
+#define MAINTAIN_TREE_IN_REARRANGE
+#endif
+#if defined(TREE_MOMENTS_DELTA) && !defined(TREE_MOMENTS_REFRESH_ON_MUTATION)
+#error "TREE_MOMENTS_DELTA makes the mutation-driven moment refreshes cheaper; it needs TREE_MOMENTS_REFRESH_ON_MUTATION"
+#endif
