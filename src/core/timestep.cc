@@ -41,7 +41,7 @@ void find_timesteps(void)
     CPU_Step[CPU_MISC] += measure_time();
 
     int i, bin, binold, prev, next;
-    integertime ti_step, ti_step_old, ti_min, ti_stepmax, ti_max;
+    integertime ti_step, ti_min, ti_stepmax, ti_max;
     double aphys;
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     int special_particle_active_with_this_index[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM], j_specialpartical_counter=0;
@@ -230,8 +230,17 @@ void find_timesteps(void)
             P[i].TimeBin = bin;
         }
 
-        ti_step_old = P[i].dt_step;
-        P[i].Ti_begstep += ti_step_old;
+        /* Start the new step at the clock, not at the old step plus its length. Being in
+           ActiveParticleList here IS the statement that the particle is synchronized at
+           All.Ti_Current, so for consistent bookkeeping the two forms are bit-identical. They
+           differ only when something upstream left the marker wrong, and then the incremental
+           form advances faithfully from the wrong origin forever -- there is no other absolute
+           write on this path, so a single bad step is permanent. Downstream that shows up as a
+           Hermite source prediction extrapolated over many times the source's own step, far
+           outside the interpolant's convergence radius. Kick intervals are unaffected: kicks
+           take differences of endpoints derived from the same marker, and this lands between
+           the closing and opening kicks, not inside either. */
+        P[i].Ti_begstep = All.Ti_Current;
         P[i].dt_step = ti_step;
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
         if(P[i].Type == 5){
@@ -255,6 +264,7 @@ void find_timesteps(void)
 #endif
         
     }
+
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     MPI_Allreduce(xyz_local, xyz_global, 3*SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD); // broadcast the new position of the special particle
