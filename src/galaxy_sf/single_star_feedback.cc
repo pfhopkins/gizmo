@@ -473,6 +473,9 @@ int single_star_feedback_uncoupled(const int *list, int n, int *out)
         int kind = single_star_kind_this_step(i);
         if(kind == SSE_NONE) {continue;}
         struct single_star_event ev; single_star_event_of(i, kind, &ev);
+#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+        if(single_star_sn_needs_ejecta_cell(i, &ev)) {continue;} /* its ejecta become a new cell: no kernel growth */
+#endif
         if(ev.Mej > 0 && P[i].Mass >= ssfb_mass_before[a]) {out[m++] = i;}
     }
     return m;
