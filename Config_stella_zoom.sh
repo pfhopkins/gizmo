@@ -39,6 +39,7 @@ COOLING_OPERATOR_SPLIT
 SGCHEM
 CHEMISTRYNETWORK=17               % zoom: primordial H/He + D/HD + CO (Uli 2026-11-10)
 SGCHEM_PRIMORDIAL_HELIUM          % zoom: He/H = 0.079 (Y = 0.24), X_H = 0.76
+SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS  % zoom: H- photodetachment from the stellar band fields, not 4.2e-7 G0
 CO_SHIELDING
 WSS_CIE_COOL
 #GALSF_SGCHEM_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe driven from ElementAbundance[H/He]

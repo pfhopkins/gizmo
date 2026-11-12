@@ -72,6 +72,7 @@ COOLING_OPERATOR_SPLIT                   % operator-split cooling
 SGCHEM                                 % non-equilibrium chemistry (Fortran DVODE)  [excl CHIMES]
 SGCHEM_FORTRAN                % legacy Fortran backend (SGCHEM alone = C++/CVODE)
 CHEMISTRYNETWORK=17                      % 17 = full network with CO; 5 = reduced (both ABHE 0.1)
+#SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS % H- photodetachment from the stellar 0.4-3.4, 3.4-6, 6-13.6 eV band fields (Shapiro & Kang 1987 cross-section, 3e4 K in-band shape) instead of 4.2e-7 G0; ISRF floor/UVB part keeps 4.2e-7 G0; CMB terms unchanged  [req C++ backend, G0_VARIABLE with OPT/NUV bands (auto by RADPRESSURE)] [excl TREE_RAY, RADTRANSFER]
 #SGCHEM_PRIMORDIAL_HELIUM                % He/H = 0.079 by number (Y = 0.24) in the chemistry and X_H = 0.76 for the gas (as net 1); cosmological zooms. Default nets 5/17: He/H 0.1, X_H 0.7065  [excl ABHE in Config]
 CO_SHIELDING                             % CO self-shielding
 WSS_CIE_COOL                             % WSS09 metal-line CIE cooling for hot gas
