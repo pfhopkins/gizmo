@@ -9,7 +9,8 @@
  * the SAME dust field. Mirrors the sgchem.cc convention exactly (2026-07-28):
  * evolved-dust branch sums Dust[]/0.01; no-dust branch scales the dust-to-metal
  * efficiency DGRnormalized with the LOCAL metallicity (constant DGRnormalized with
- * SGCHEM_DGR_INDEPENDENT_OF_METALLICITY); capped at 10x solar (the
+ * SGCHEM_DGR_INDEPENDENT_OF_METALLICITY; Remy-Ruyer+14 below 0.26 Zsun with SGCHEM_DGR_REMY_RUYER14,
+ * also for the star-side radiation pressure; MW depletions of C/O/Si unchanged); capped at 10x solar (the
  * certified one-zone domain — fresh unmixed ejecta would otherwise reach ~50x). */
 #if defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY) && defined(GALSF_RESOLVEDISM_DUST)
 #error "SGCHEM_DGR_INDEPENDENT_OF_METALLICITY has no effect with GALSF_RESOLVEDISM_DUST (live dust sets the DGR)"
