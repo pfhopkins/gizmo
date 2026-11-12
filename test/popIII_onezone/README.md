@@ -17,3 +17,7 @@ Checks:
 
 Needs `SUNDIALS_DIR` (CVODE >= 6) and `CHEMCXX_DATADIR` (the SGChem tables); the test is skipped without them. It builds
 its own copy of `cooling/sgchem` with a minimal `GIZMO_config.h` (net 17, CO shielding, WSS CIE cooling).
+
+Dust-to-gas ratio (`declarations/resolvedism_dgr_rr14.h`, `SGCHEM_DGR_REMY_RUYER14`): at 1e-3 Zsun the Remy-Ruyer+14 law
+lets the gas fragment at the CMB floor (M_J < 32 Msun below n = 1e6), while the linear law, with 1e5 times more dust,
+heats the gas through H2 formation on grains and delays it beyond 1e7.

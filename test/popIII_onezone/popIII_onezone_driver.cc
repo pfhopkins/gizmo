@@ -1,10 +1,11 @@
 // One-zone free-fall collapse with the net-17 SGChem C++ backend (Omukai-style), for test_popIII_onezone.py.
 // Per step: chemistry+cooling at fixed n over dt (cxx_evolve_abundances), then free-fall compression
 // n *= exp(dt/t_ff), e *= (n'/n)^gamma. Evaluates the code's Pop III criterion (galaxy_sf/resolvedism_popIII.h)
-// along the track.
-// usage: popIII_onezone_driver DATADIR Z_solar DGRMODE(lin) OUT.csv [z=17] [n_end=1e12]
+// and DGR law (declarations/resolvedism_dgr_rr14.h) along the track.
+// usage: popIII_onezone_driver DATADIR Z_solar DGRMODE(lin|rr14) OUT.csv [z=17] [n_end=1e12]
 #include "chem_types.h"
 #include "galaxy_sf/resolvedism_popIII.h"
+#include "declarations/resolvedism_dgr_rr14.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -19,7 +20,7 @@ int main(int argc, char** argv)
     if (argc < 5) { std::fprintf(stderr, "usage: %s DATADIR Z DGRMODE OUT [z] [n_end]\n", argv[0]); return 1; }
     const char* datadir = argv[1];
     const double Z = atof(argv[2]);
-    const int rr14 = 0;
+    const int rr14 = (std::strcmp(argv[3], "rr14") == 0);
     const char* out = argv[4];
     const double zred = (argc > 5) ? atof(argv[5]) : 17.0;
     const double n_end = (argc > 6) ? atof(argv[6]) : 1e12;
@@ -45,7 +46,7 @@ int main(int argc, char** argv)
     c.abundD  = 2.6e-5;
     c.G0 = 0; c.G0_LW = 0; c.G0_dust = 0;
     c.cosmic_ray_ion_rate = 1e-21;        // CR_SCALE_WITH_G0 floor at G0 = 0
-    c.dust_to_gas_ratio = Z;   // solar units, DGRnormalized = 1
+    c.dust_to_gas_ratio = Z * (rr14 ? resolvedism_dgr_rr14_over_linear(Z) : 1.0);   // solar units, DGRnormalized = 1
     c.redshift = zred;
     c.iphoto = 0;
     const double zsolar[12] = {1.0 / (1.0 + 4.0 * cfg.abhe), 2.07e-3, 5.91e-4, 5.49e-3, 1.10e-3, 6.83e-4,

@@ -1,7 +1,8 @@
 """Pop III one-zone collapse: pristine gas (net 17, C++ SGChem, z = 17, primordial He/H = 0.079) in free fall.
-The driver evaluates the code's Pop III criterion (galaxy_sf/resolvedism_popIII.h) along the track.
-Checks: Z = 0 loiters at 150-250 K near n = 1e3 (Bromm+02); the Pop III criterion first passes at n_H = 1e6-3e6
-(the design density), while the Stella Jeans criterion (M_J < 32 Msun) only passes above 1e9; gas at 1e-3 Zsun is not pristine.
+The driver evaluates the code's Pop III criterion (galaxy_sf/resolvedism_popIII.h) and the Remy-Ruyer+14 DGR
+(declarations/resolvedism_dgr_rr14.h) along the track. Checks: Z = 0 loiters at 150-250 K near n = 1e3 (Bromm+02);
+the Pop III criterion first passes at n_H = 1e6-3e6 (the design density), while the Stella Jeans criterion
+(M_J < 32 Msun) only passes above 1e9; gas at 1e-3 Zsun is not pristine and fragments at the CMB floor (n < 1e6).
 Needs SUNDIALS_DIR (CVODE >= 6) and CHEMCXX_DATADIR (the SGChem tables); skipped without them.
 """
 
@@ -57,7 +58,7 @@ def driver(tmp_path_factory):
     return exe
 
 
-def run_track(exe, tmp_path, Z, dgr="lin", n_end=1e10):
+def run_track(exe, tmp_path, Z, dgr="rr14", n_end=1e10):
     data = _env_dir("CHEMCXX_DATADIR")
     out = tmp_path / f"Z{Z}_{dgr}.csv"
     r = subprocess.run([str(exe), str(data), str(Z), dgr, str(out), "17", str(n_end)], capture_output=True, text=True,
@@ -81,3 +82,9 @@ def test_pristine_gas_forms_popIII_at_design_density(driver, tmp_path):
 def test_enriched_gas_is_not_popIII(driver, tmp_path):
     r = run_track(driver, tmp_path, 1e-3)
     assert r["pristine"] == 0 and r["n_popIII"] < 0
+    assert 0 < r["n_MJ32"] < 1e6, "1e-3 Zsun gas (RR14 DGR) fragments at the CMB floor via the Stella criterion"
+
+
+def test_linear_dgr_delays_fragmentation_at_1e_3_zsun(driver, tmp_path):
+    r = run_track(driver, tmp_path, 1e-3, dgr="lin")
+    assert r["n_MJ32"] > 1e7, "linear DGR: grain H2 formation heating keeps 1e-3 Zsun gas warm (design report: 2.7e7)"
