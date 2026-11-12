@@ -776,6 +776,9 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
         /* fresh weighting for THIS event against current neighbor masses,
          * with bubble retry (kernel growth) if no gas weight was found */
         int try_num, ok_local, ok_glob;
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+        int spawn_this = 0, sp_glob = 0;
+#endif
         for(try_num = 0; try_num < 4; try_num++) {
             for(int ii : ActiveParticleList) {
                 if(STELLA_OWNS_STAR(P[ii])) {P[ii].FB_Area_weighted_sum = 0;
@@ -794,6 +797,57 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
             if(i_owner >= 0 && All.Time < All.TestFBNoGasUntilTime) {P[i_owner].FB_KernelGasMass = 0;}
 #endif
 #endif
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+            /* ---- SN ejecta-spawn decision (prototype, 2026-07-05) ----
+             * If the weight walk found less gas in the kernel than f*Mej (f = flag value),
+             * kernel deposition would couple across a cavity to a distant shell. Instead:
+             * store the payload (Mej + THERMAL E + yields) on the star; a new gas cell is
+             * created at the next merge/split phase and the split machinery + hydro do the
+             * rest. Thermal SN pass only (flagA==1, explosive remnants). Collective skip. */
+            if(try_num == 0 && flagA == 1 && i_owner >= 0 && STELLA_FB_EVENT(P[i_owner]) == 1) {
+                double Mstar_sp = P[i_owner].MstarSampleIMF[0];
+                double Zbirth_sp = (P[i_owner].BirthMetallicity > 0) ? P[i_owner].BirthMetallicity : All.InitMetallicityinSolar*All.SolarAbundances[0];
+                double logM_sp = log10(DMAX(Mstar_sp, 0.1)), logZ_sp = log10(DMAX(Zbirth_sp, 1e-8));
+                int rt_sp = stellar_remnant_type(logM_sp, logZ_sp);
+                double rem_sp = stellar_remnant_mass(logM_sp, logZ_sp);
+                if(rt_sp != REM_FSN && rt_sp != REM_DBH) {   /* explosive only (Esne>0) */
+                    double Mpre_sp = (P[i_owner].M_at_SN_trigger > 0) ? (double)P[i_owner].M_at_SN_trigger : P[i_owner].Mass*UNIT_MASS_IN_SOLAR;
+                    double Mej_sp = DMAX(Mpre_sp - rem_sp, 0.0);
+                    double f_thresh = (double)(GALSF_RESOLVEDISM_SN_SPAWN);
+                    if(P[i_owner].FB_KernelGasMass*UNIT_MASS_IN_SOLAR < f_thresh*Mej_sp && Mej_sp > 0) {
+                        /* payload: yields scaled to Mej (same single-source logic as fb_thermal) */
+                        int ksp; double m_k_sp[STBL_NELEM], Mej_tab_sp = 0;
+                        for(ksp = 0; ksp < STBL_NELEM; ksp++) {
+                            m_k_sp[ksp] = stellar_elem_ej_SN(logM_sp, logZ_sp, ksp);
+#ifndef GALSF_RESOLVEDISM_WINDS
+                            {double t_end_sp = stellar_lifetime(logM_sp, logZ_sp);
+                             m_k_sp[ksp] += stellar_elem_ej_wind_cumulative(logM_sp, logZ_sp, log10(DMAX(t_end_sp,100.)), ksp);}
+#endif
+                            if(m_k_sp[ksp] < 0) m_k_sp[ksp] = 0; Mej_tab_sp += m_k_sp[ksp];
+                        }
+                        double scl_sp = (Mej_tab_sp > 0) ? Mej_sp/Mej_tab_sp : 0;
+                        for(ksp = 0; ksp < STBL_NELEM; ksp++) P[i_owner].SpawnEjZ[ksp] = (MyFloat)(m_k_sp[ksp]*scl_sp/UNIT_MASS_IN_SOLAR);
+                        P[i_owner].SpawnEjMass = (MyFloat)(Mej_sp/UNIT_MASS_IN_SOLAR);
+                        P[i_owner].SpawnEjEnergy = (MyFloat)(1.0e51/UNIT_ENERGY_IN_CGS);
+                        P[i_owner].SN_SpawnPending = 1;
+                        /* keep STELLA_FB_EVENT==1 and M_at_SN_trigger: the post-walk
+                         * conversion must still run for this star (FeedbackBudget entries +
+                         * MstarSampleIMF/luminosity zeroing + RemnantType), otherwise the
+                         * star re-flags as a live SN every step and re-spawns (round-2 bug:
+                         * 22 DECIDEs / repeated EXECs from 9 stars). Kernel re-injection
+                         * cannot happen: this event is marked done[] below and the
+                         * serialization token never re-admits it. The mass drain happens
+                         * at EXEC time in merge_split.cc, star -> spawned cell atomically.
+                         * Validated round-3 (job 173065): 99 SNe, DECIDE=EXEC=conv=99, 0 dups. */
+                        printf("SPAWNSN_DECIDE: star=%llu Mkern=%.3e Msun < %.2f*Mej=%.3e -> payload stored (rem=%.3f)\n",
+                            (unsigned long long)P[i_owner].ID, P[i_owner].FB_KernelGasMass*UNIT_MASS_IN_SOLAR,
+                            f_thresh, Mej_sp, rem_sp); fflush(stdout);
+                        spawn_this = 1;
+                    }
+                }
+            }
+            if(try_num == 0) {MPI_Allreduce(&spawn_this, &sp_glob, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); if(sp_glob) break;} /* ejecta cell first; kernel growth only if none */
+#endif
             ok_local = 1;
             if(i_owner >= 0 && P[i_owner].FB_Area_weighted_sum <= 0) {ok_local = 0;}
             MPI_Allreduce(&ok_local, &ok_glob, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
@@ -805,57 +859,7 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
             }
         }
 #ifdef GALSF_RESOLVEDISM_SN_SPAWN
-        /* ---- SN ejecta-spawn decision (prototype, 2026-07-05) ----
-         * If the weight walk found less gas in the kernel than f*Mej (f = flag value),
-         * kernel deposition would couple across a cavity to a distant shell. Instead:
-         * store the payload (Mej + THERMAL E + yields) on the star; a new gas cell is
-         * created at the next merge/split phase and the split machinery + hydro do the
-         * rest. Thermal SN pass only (flagA==1, explosive remnants). Collective skip. */
-        int spawn_this = 0;
-        if(flagA == 1 && i_owner >= 0 && STELLA_FB_EVENT(P[i_owner]) == 1) {
-            double Mstar_sp = P[i_owner].MstarSampleIMF[0];
-            double Zbirth_sp = (P[i_owner].BirthMetallicity > 0) ? P[i_owner].BirthMetallicity : All.InitMetallicityinSolar*All.SolarAbundances[0];
-            double logM_sp = log10(DMAX(Mstar_sp, 0.1)), logZ_sp = log10(DMAX(Zbirth_sp, 1e-8));
-            int rt_sp = stellar_remnant_type(logM_sp, logZ_sp);
-            double rem_sp = stellar_remnant_mass(logM_sp, logZ_sp);
-            if(rt_sp != REM_FSN && rt_sp != REM_DBH) {   /* explosive only (Esne>0) */
-                double Mpre_sp = (P[i_owner].M_at_SN_trigger > 0) ? (double)P[i_owner].M_at_SN_trigger : P[i_owner].Mass*UNIT_MASS_IN_SOLAR;
-                double Mej_sp = DMAX(Mpre_sp - rem_sp, 0.0);
-                double f_thresh = (double)(GALSF_RESOLVEDISM_SN_SPAWN);
-                if(P[i_owner].FB_KernelGasMass*UNIT_MASS_IN_SOLAR < f_thresh*Mej_sp && Mej_sp > 0) {
-                    /* payload: yields scaled to Mej (same single-source logic as fb_thermal) */
-                    int ksp; double m_k_sp[STBL_NELEM], Mej_tab_sp = 0;
-                    for(ksp = 0; ksp < STBL_NELEM; ksp++) {
-                        m_k_sp[ksp] = stellar_elem_ej_SN(logM_sp, logZ_sp, ksp);
-#ifndef GALSF_RESOLVEDISM_WINDS
-                        {double t_end_sp = stellar_lifetime(logM_sp, logZ_sp);
-                         m_k_sp[ksp] += stellar_elem_ej_wind_cumulative(logM_sp, logZ_sp, log10(DMAX(t_end_sp,100.)), ksp);}
-#endif
-                        if(m_k_sp[ksp] < 0) m_k_sp[ksp] = 0; Mej_tab_sp += m_k_sp[ksp];
-                    }
-                    double scl_sp = (Mej_tab_sp > 0) ? Mej_sp/Mej_tab_sp : 0;
-                    for(ksp = 0; ksp < STBL_NELEM; ksp++) P[i_owner].SpawnEjZ[ksp] = (MyFloat)(m_k_sp[ksp]*scl_sp/UNIT_MASS_IN_SOLAR);
-                    P[i_owner].SpawnEjMass = (MyFloat)(Mej_sp/UNIT_MASS_IN_SOLAR);
-                    P[i_owner].SpawnEjEnergy = (MyFloat)(1.0e51/UNIT_ENERGY_IN_CGS);
-                    P[i_owner].SN_SpawnPending = 1;
-                    /* keep STELLA_FB_EVENT==1 and M_at_SN_trigger: the post-walk
-                     * conversion must still run for this star (FeedbackBudget entries +
-                     * MstarSampleIMF/luminosity zeroing + RemnantType), otherwise the
-                     * star re-flags as a live SN every step and re-spawns (round-2 bug:
-                     * 22 DECIDEs / repeated EXECs from 9 stars). Kernel re-injection
-                     * cannot happen: this event is marked done[] below and the
-                     * serialization token never re-admits it. The mass drain happens
-                     * at EXEC time in merge_split.cc, star -> spawned cell atomically.
-                     * Validated round-3 (job 173065): 99 SNe, DECIDE=EXEC=conv=99, 0 dups. */
-                    printf("SPAWNSN_DECIDE: star=%llu Mkern=%.3e Msun < %.2f*Mej=%.3e -> payload stored (rem=%.3f)\n",
-                        (unsigned long long)P[i_owner].ID, P[i_owner].FB_KernelGasMass*UNIT_MASS_IN_SOLAR,
-                        f_thresh, Mej_sp, rem_sp); fflush(stdout);
-                    spawn_this = 1;
-                }
-            }
-        }
-        {int sp_glob=0; MPI_Allreduce(&spawn_this, &sp_glob, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-         if(sp_glob) {if(i_owner >= 0) {done[my_idx] = 1; if(spawn_this) {P[i_owner].FB_Deposited = 1;}} continue;}}  /* all ranks skip injection for this event */
+        if(sp_glob) {if(i_owner >= 0) {done[my_idx] = 1; if(spawn_this) {P[i_owner].FB_Deposited = 1;}} continue;}  /* all ranks skip injection for this event */
 #endif
         calc_fn(0); /* injection for this single event (collective) */
         resolvedism_fb_apply_recoil();
