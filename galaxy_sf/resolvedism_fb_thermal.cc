@@ -143,7 +143,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     double rem_mass = stellar_remnant_mass(logM, logZ);
 
     switch(rem_type) {
-        case REM_PISN:  in->Esne = resolvedism_pisn_energy_erg(Mstar) / UNIT_ENERGY_IN_CGS; rem_mass = 0; break; /* Heger & Woosley 2002 He-core energy */
+        case REM_PISN:  in->Esne = resolvedism_sn_energy_erg(1, 1, Mstar) / UNIT_ENERGY_IN_CGS; rem_mass = 0; break; /* 1e51, or the He-core energy (opt-in) */
         case REM_PPISN: in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS; break;
         case REM_ECSN:  in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS; break; /* uniform 1e51 (was 5e50) */
         case REM_FSN:
