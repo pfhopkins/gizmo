@@ -9,8 +9,12 @@
 /* He:H ratio, by number:
  * -- 0.079 corresponds to an He mass fraction of approx 0.24 
  * -- 0.100  "     "         "         "       "     "   0.286 */
+#if defined(SGCHEM_PRIMORDIAL_HELIUM) && defined(ABHE) && !defined(SGCHEM_ABHE_SET_HERE)
+#error "SGCHEM_PRIMORDIAL_HELIUM sets ABHE itself: remove ABHE from Config.sh"
+#endif
 #ifndef ABHE
-#if CHEMISTRYNETWORK == 1
+#define SGCHEM_ABHE_SET_HERE
+#if CHEMISTRYNETWORK == 1 || defined(SGCHEM_PRIMORDIAL_HELIUM)
 #define ABHE 0.079      /* primordial: Y = 0.24, matches HYDROGEN_MASSFRAC=0.76 */
 #else
 #ifdef HII_TEST

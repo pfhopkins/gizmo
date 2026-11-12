@@ -83,8 +83,8 @@
 
 
 /* Chemistry-network branches first so they take precedence over RT/non-SGCHEM fallbacks. */
-#if defined(SGCHEM) && (CHEMISTRYNETWORK == 1)
-#define  HYDROGEN_MASSFRAC 0.76   /*!< primordial (BBN-like), matches net 1 ABHE=0.079 */
+#if defined(SGCHEM) && (CHEMISTRYNETWORK == 1 || defined(SGCHEM_PRIMORDIAL_HELIUM))
+#define  HYDROGEN_MASSFRAC 0.76   /*!< primordial (BBN-like), matches ABHE=0.079 (net 1, SGCHEM_PRIMORDIAL_HELIUM) */
 #elif defined(SGCHEM) && (CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 17)
 #define  HYDROGEN_MASSFRAC 0.7065 /*!< evolved ISM, matches net 5/17 ABHE=0.1 */
 #elif defined(SGCHEM)
