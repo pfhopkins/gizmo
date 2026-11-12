@@ -23,7 +23,8 @@ GALSF_RESOLVEDISM_INSTANT_SN             % SNe before TimeInstantSN (param) expl
 #GALSF_RESOLVEDISM_POPIII_STARS          % Pop III channel: gas below PopIII_Zcrit_solar (1e-4) forms stars at n_H > PopIII_nH_thresh (1e6), div v < 0, x_H2 > PopIII_xH2_min (1e-3), M_J < PopIII_Mreservoir (1000 Msun); Pop III IMF (PopIII_IMF_Type 0: M_char 20, 1: log-flat; 1-300 Msun); full mass or no star; tables: Z = 1e-4 row until a Z = 0 row exists  [req SAMPLE_IMF, SGCHEM, METALS]
 
 ########## Supernovae / Type Ia / mass return ##########
-# SN energies (resolvedism_sn_energy.h): 1e51 erg for CCSN, ECSN, PPISN; PISN [5.0 + 1.304 (M_He - 64)] 1e51, M_He = (13/24)(M - 20) held to 64-133 Msun (Heger & Woosley 2002, Wise+12a); 0 for failed SNe and direct BHs
+# SN energies (resolvedism_sn_energy.h): 1e51 erg for CCSN, ECSN, PPISN and PISN (flat by design); 0 for failed SNe and direct BHs
+#GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE % opt-in: PISN [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to 64-133 Msun (Heger & Woosley 2002, Wise+12a); default flat 1e51
 GALSF_RESOLVEDISM_TYPE_IA                % Type Ia SNe from WD DTD (W7 yields)
 #FB_G17_BOUNDARY_INJECTION               % gizmo2017-style SN boundary injection; production choice pending ladder-v2 head-to-head
 #GALSF_RESOLVEDISM_SN_SPAWN              % spawn ejecta cells when the FB kernel holds too little gas (prototype)
@@ -41,9 +42,9 @@ GALSF_RESOLVEDISM_WINDS_THERMAL          % inelastic-residual heating (adopted 2
 GALSF_RESOLVEDISM_PHOTOION               % subgrid Stromgren photoionisation (pisub)  [excl RADTRANSFER]
 #GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE % pisub photon cost per cell at case-B alpha(T_cell), T>=1e4 K  [req PHOTOION]
 GALSF_RESOLVEDISM_G0_VARIABLE            % variable ISRF from stellar FUV  [req HEALPix RT_USE_TREECOL_FOR_NH, auto RADPRESSURE_TREERAD] [excl RADTRANSFER]
-#GALSF_RESOLVEDISM_NUV_VARIABLE          % NUV band field  [auto by RADPRESSURE]
+#GALSF_RESOLVEDISM_NUV_VARIABLE          % NUV band field  [auto by RADPRESSURE or the upstream flag RT_NUV]
 #GALSF_RESOLVEDISM_G0_FROM_PE_PLUS_NUV_6_8EV_SHARE  % tree bands PE/LW/NUV/OPT + per-source 6-8 eV share of NUV; G0 = PE + share (GPU-port band set)  [tree path only]
-#GALSF_RESOLVEDISM_OPT_VARIABLE          % optical/NIR band field  [auto by RADPRESSURE]
+#GALSF_RESOLVEDISM_OPT_VARIABLE          % optical/NIR band field  [auto by RADPRESSURE or the upstream flag RT_OPTICAL_NIR]
 GALSF_RESOLVEDISM_RADPRESSURE            % radiation pressure (direct + IR boost)  [auto NUV/OPT_VARIABLE] [excl RADTRANSFER]
 #GALSF_RESOLVEDISM_RADPRESSURE_TREERAD   % per-cell direct radp from tree per-pixel fluxes  [auto by G0_VARIABLE without RADTRANSFER]
 #GHOSDT_G0_CR                            % GHOSDT defaults: uniform G0 (and CR rate with CR_SCALE_WITH_G0) scaled with the 30 Myr SFR; G0_VARIABLE/M1/CR fluid override it
@@ -72,7 +73,7 @@ COOLING_OPERATOR_SPLIT                   % operator-split cooling
 SGCHEM                                 % non-equilibrium chemistry (Fortran DVODE)  [excl CHIMES]
 SGCHEM_FORTRAN                % legacy Fortran backend (SGCHEM alone = C++/CVODE)
 CHEMISTRYNETWORK=17                      % 17 = full network with CO; 5 = reduced (both ABHE 0.1)
-#SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS % H- photodetachment from the stellar 0.4-3.4, 3.4-6, 6-13.6 eV band fields (Shapiro & Kang 1987 cross-section, 3e4 K in-band shape) instead of 4.2e-7 G0; ISRF floor/UVB part keeps 4.2e-7 G0; CMB terms unchanged  [req C++ backend, G0_VARIABLE with OPT/NUV bands (auto by RADPRESSURE)] [excl TREE_RAY, RADTRANSFER]
+#SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS % H- photodetachment from the stellar band fields in the upstream bins RT_FREQ_BIN_OPTICAL_NIR (0.4133-3.444 eV), RT_FREQ_BIN_NUV less FUV_6_8EV (3.444-6 eV), FUV_6_8EV + PHOTOELECTRIC (6-13.6 eV) (Shapiro & Kang 1987 cross-section, 3e4 K in-band shape) instead of 4.2e-7 G0; ISRF floor/UVB part keeps 4.2e-7 G0; CMB terms unchanged  [req C++ backend, G0_VARIABLE with RT_NUV + RT_OPTICAL_NIR (or RADPRESSURE)] [excl TREE_RAY, RADTRANSFER]
 #SGCHEM_PRIMORDIAL_HELIUM                % He/H = 0.079 by number (Y = 0.24) in the chemistry and X_H = 0.76 for the gas (as net 1); cosmological zooms. Default nets 5/17: He/H 0.1, X_H 0.7065  [excl ABHE in Config]
 CO_SHIELDING                             % CO self-shielding
 WSS_CIE_COOL                             % WSS09 metal-line CIE cooling for hot gas
