@@ -1169,9 +1169,6 @@ void single_star_feedback_set_log_rows(int any);
 #ifdef HOT_GAS_TIMESTEP_SYNC
 extern int HotGasSyncArmed;
 #endif
-#ifdef RESOLVEDISM_HOTSYNC_CLAMP
-extern int HotsyncClampArmed;
-#endif
 #ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
 int single_star_ejecta_cell_pending(int i);
 void single_star_ejecta_cell_payload(int i, struct addFB_evaluate_data_in_ *in, double *E_code);
@@ -1183,6 +1180,9 @@ int single_star_feedback_uncoupled(const int *list, int n, int *out);
 void single_star_event_logs_write(void);
 void single_star_sfr_windows_write(void);
 #endif
+#endif
+#ifdef RESOLVEDISM_HOTSYNC_CLAMP
+extern int HotsyncClampArmed;
 #endif
 #if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
 enum {SINGLE_STAR_BAND_PE, SINGLE_STAR_BAND_LW, SINGLE_STAR_BAND_68, SINGLE_STAR_BAND_NUV, SINGLE_STAR_BAND_OPT, SINGLE_STAR_BAND_ION_H0, SINGLE_STAR_BAND_ION_HE0, SINGLE_STAR_BAND_ION_HE1, SINGLE_STAR_BAND_ION_HE2, SINGLE_STAR_BAND_Q, SINGLE_STAR_NBANDS}; /* Q: photons/s */
