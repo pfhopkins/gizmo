@@ -23,6 +23,7 @@ GALSF_RESOLVEDISM_INSTANT_SN             % SNe before TimeInstantSN (param) expl
 #GALSF_RESOLVEDISM_POPIII_STARS          % Pop III channel: gas below PopIII_Zcrit_solar (1e-4) forms stars at n_H > PopIII_nH_thresh (1e6), div v < 0, x_H2 > PopIII_xH2_min (1e-3), M_J < PopIII_Mreservoir (1000 Msun); Pop III IMF (PopIII_IMF_Type 0: M_char 20, 1: log-flat; 1-300 Msun); full mass or no star; tables: Z = 1e-4 row until a Z = 0 row exists  [req SAMPLE_IMF, SGCHEM, METALS]
 
 ########## Supernovae / Type Ia / mass return ##########
+# SN energies (resolvedism_sn_energy.h): 1e51 erg for CCSN, ECSN, PPISN; PISN [5.0 + 1.304 (M_He - 64)] 1e51, M_He = (13/24)(M - 20) held to 64-133 Msun (Heger & Woosley 2002, Wise+12a); 0 for failed SNe and direct BHs
 GALSF_RESOLVEDISM_TYPE_IA                % Type Ia SNe from WD DTD (W7 yields)
 #FB_G17_BOUNDARY_INJECTION               % gizmo2017-style SN boundary injection; production choice pending ladder-v2 head-to-head
 #GALSF_RESOLVEDISM_SN_SPAWN              % spawn ejecta cells when the FB kernel holds too little gas (prototype)

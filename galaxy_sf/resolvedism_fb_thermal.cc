@@ -16,6 +16,7 @@
 
 /* Resolved-ISM thermal feedback injection: SN (CCSN/ECSN/PISN/PPISN) and Type Ia.
  * Injects thermal energy, ejecta mass, metal yields, and dust (destruction + injection).
+ * Explosion energy per death type: resolvedism_sn_energy.h.
  * Uses ngb_treefind_variable_threads (one-way search) — no momentum conservation needed.
  *
  * Called from resolvedism_inject_fb_energy() AFTER the momentum pass. */
