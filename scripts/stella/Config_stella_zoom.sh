@@ -4,7 +4,10 @@
 # periodic box with the PM grid and a nested PM grid around the zoom region.
 STELLA_DEFAULTS
 SGCHEM
-CHEMISTRYNETWORK=5
+CHEMISTRYNETWORK=17                 # zoom: primordial H/He + D/HD + CO
+SGCHEM_PRIMORDIAL_HELIUM            # zoom: He/H = 0.079 (Y = 0.24), X_H = 0.76
+SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS  # zoom: H- photodetachment from the stellar band fields
+GALSF_SINGLE_STARS_POPIII           # zoom: Pop III channel in gas below PopIII_Zcrit_solar (the Remy-Ruyer+14 dust-to-gas ratio comes with STELLA_DEFAULTS)
 METALS
 GALSF_RESOLVEDISM_TREECOL_PIXELS=12
 GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
