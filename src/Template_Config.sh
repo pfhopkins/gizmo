@@ -640,6 +640,7 @@
 # ----- Particle Merging/Splitting/Deletion/Boundaries
 #MAINTAIN_TREE_IN_REARRANGE        # don't rebuild the domains/tree every time a particle is spawned - salvage the existing one by redirecting pointers as needed. cite Grudic+ arXiv:2010.11254
 #TREE_MOMENTS_REFRESH_ON_MUTATION # re-derive the tree node moments after swallows, star spawns, eliminations and clips instead of leaving them stale until the next build (overrides the default documented in gravtree.cc; implies MAINTAIN_TREE_IN_REARRANGE for sink builds)
+#TREE_MOMENTS_DELTA             # with TREE_MOMENTS_REFRESH_ON_MUTATION: apply mass-only changes to the node moments along each particle's chain instead of a full refresh (type changes still take the full one); not bit-identical to the full refresh
 #PREVENT_PARTICLE_MERGE_SPLIT      # don't allow gas particle splitting/merging operations
 #PREVENT_PARTICLE_MERGE            # don't allow gas merging but still allow splitting: diffusion-free, finest-resolution reference for spawned outflows (cf. SINK_SPAWN_NO_MERGE, which protects only spawned cells)
 #PARTICLE_EXCISION                 # enable dynamical excision (remove particles within some radius)

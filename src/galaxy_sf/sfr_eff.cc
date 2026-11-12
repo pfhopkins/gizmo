@@ -626,7 +626,7 @@ void star_formation_parent_routine(void)
 #ifdef SINK_RETURN_BFLUX
                             P[i_star].B = {};
 #endif
-                            TreeMomentsStaleFlag = 1; /* particle changed type/mass: tree pointers maintained by MAINTAIN_TREE_IN_REARRANGE, just refresh moments */
+                            TreeMomentsStaleFlag = 1; TREE_MOMENTS_NEED_FULL(); /* particle changed type/mass: tree pointers maintained by MAINTAIN_TREE_IN_REARRANGE, just refresh moments */
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
                             P[i_star].SinkRadius = ForceSoftening_KernelRadius(i);
                             double cs = 0.2 / UNIT_VEL_IN_KMS;
@@ -744,7 +744,7 @@ void star_formation_parent_routine(void)
         All.TotNumPart += tot_spawned;
         All.TotN_gas -= tot_converted;
         NumPart += stars_spawned;
-        TREE_MOMENTS_RAISE_ON_MUTATION(); /* new and converted stars enter the type-conditioned moments; rank-uniform */
+        TREE_MOMENTS_RAISE_ON_MUTATION(); TREE_MOMENTS_NEED_FULL(); /* new and converted stars enter the type-conditioned moments (a type change: full refresh under TREE_MOMENTS_DELTA); rank-uniform */
         /* Note: N_gas is only reduced once rearrange_particle_sequence is called */
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
     } //(tot_spawned > 0 || tot_converted > 0)

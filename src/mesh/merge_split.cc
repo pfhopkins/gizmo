@@ -1445,6 +1445,9 @@ static inline void rearrange_set_node_nextnode(int no, int v){ Nodes[no].u.d.nex
 static inline void rearrange_set_node_sibling (int no, int v){ Nodes[no].u.d.sibling  = v; gpu_set_soa_sibling (no, v); }
 
 void swap_treewalk_pointers(int i, int j){
+#ifdef TREE_MOMENTS_DELTA
+    tree_counted_mass_swap(i, j);
+#endif
     // walk the tree and any time we see a nextnode or sibling set to i, swap it to j and vice versa
     int no, next, pre_sibling_i=-1, pre_sibling_j=-1, previous_node_i, previous_node_j;
     no = All.TreeNodeIndexBase;
@@ -1640,6 +1643,9 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
     for(i = 0; i < numpart_local; i++)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
+#ifdef TREE_MOMENTS_DELTA
+            tree_counted_mass_eliminate(i);
+#endif
             P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
             TimeBinCount[P[i].TimeBin]--;
             if(TimeBinActive[P[i].TimeBin]) {NumForceUpdate--;}
