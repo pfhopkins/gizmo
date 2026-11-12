@@ -72,6 +72,7 @@ COOLING_OPERATOR_SPLIT                   % operator-split cooling
 SGCHEM                                 % non-equilibrium chemistry (Fortran DVODE)  [excl CHIMES]
 SGCHEM_FORTRAN                % legacy Fortran backend (SGCHEM alone = C++/CVODE)
 CHEMISTRYNETWORK=17                      % 17 = full network with CO; 5 = reduced (both ABHE 0.1)
+#SGCHEM_PRIMORDIAL_HELIUM                % He/H = 0.079 by number (Y = 0.24) in the chemistry and X_H = 0.76 for the gas (as net 1); cosmological zooms. Default nets 5/17: He/H 0.1, X_H 0.7065  [excl ABHE in Config]
 CO_SHIELDING                             % CO self-shielding
 WSS_CIE_COOL                             % WSS09 metal-line CIE cooling for hot gas
 #GALSF_SGCHEM_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe from element abundances
