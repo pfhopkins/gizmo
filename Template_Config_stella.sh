@@ -75,6 +75,7 @@ WSS_CIE_COOL                             % WSS09 metal-line CIE cooling for hot 
 #GALSF_SGCHEM_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe from element abundances
 #GALSF_SGCHEM_DEBUG_INPUT              % DEBUG: validate species vs pools on DVODE entry
 #CR_SCALE_WITH_G0                        % CR ionisation rate scales with G0 (production: constant rate)
+#SGCHEM_UVB_TREECOL_SHIELDING            % cosmological runs: TREECOOL UV background attenuated by the TreeCol H column x local H0/He0/He+ fractions (10 FG20 bands); needs RT_USE_TREECOL_FOR_NH
 
 ########## Metals / dust ##########
 METALS                                   % metal tracking
