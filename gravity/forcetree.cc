@@ -2203,7 +2203,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         /* MSTAR also integrates a same-chain pair closer than the region radius over the next step (it
                            is within R of a centre whenever one of the two is a centre), so the pair does not set the
                            host step; a pair further apart may leave the chain */
-                        if((source_KetjuChainID == 0) || (P[no].KetjuChainID != source_KetjuChainID) || (r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius))
+                        if((source_KetjuChainID == 0) || (P[no].KetjuChainID != source_KetjuChainID) || (r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius * All.cf_a2inv))
 #endif
                         {
                         if(tSqr < Min_Sink_Approach_Time) {Min_Sink_Approach_Time = tSqr;}
