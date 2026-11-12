@@ -1864,6 +1864,7 @@ void force_add_element_to_tree(int iparent, int ichild)
      * final type call this as well; the raise is monotone, so the repeat can only over-claim. */
     force_tree_note_type_presence(ichild);
     gizmo_mark_position_dirty_indices(&ichild, 1);   /* the child is now reachable at its position */
+    gravity_note_set_positions(&ichild, 1);           /* placed beside its parent, not drifted there: its boxes must hold it */
 
     /* Each insertion stales the LET / pseudo-particle
      * moments shipped on the last full build.  Mass+CoM remain conserved at

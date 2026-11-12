@@ -632,6 +632,7 @@ void sink_final_operations(void)
                 }
                 P[n].Pos += (P[n].Sink_PotentialMinimumOfNeighborsPos - P[n].Pos) * fac_sink_shift;
                 gizmo_mark_position_dirty_indices(&n, 1);
+                gravity_note_set_positions(&n, 1);
             }
 #endif
 
@@ -680,6 +681,7 @@ void sink_final_operations(void)
 #if defined(SINK_FOLLOW_ACCRETED_COM) && !defined(SINK_REPOSITION_ON_POTMIN)
             P[n].Pos = (P[n].Pos*m_new + SinkTempInfo[i].accreted_centerofmass) / m_new;
             gizmo_mark_position_dirty_indices(&n, 1);
+            gravity_note_set_positions(&n, 1);
 #endif
 #ifdef HERMITE_INTEGRATION
             if(eligible_for_hermite(n, P))

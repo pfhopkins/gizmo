@@ -108,9 +108,12 @@ void gravity_note_inserted_motion_bound(int i);
  * particle_radius_growth_rate, for particles whose dilation factor was just frozen anew; the top-level
  * nodes reached ride the same flush.  Does nothing without USE_TIMESTEP_DILATION_FOR_ZOOMS. */
 void gravity_note_radius_growth_rates(const int *idx, int n);
+/* Widen every node box above each of idx[0..n), relocated discontinuously in the standing tree (inserted, or a
+ * sink re-centred on its accreted mass or moved toward its potential minimum), to hold it; the top-level boxes widened ride the same flush. */
+void gravity_note_set_positions(const int *idx, int n);
 /* All ranks, once per step, after the kick and before the drift: every rank
- * learns the raised bounds (speed, and kernel-length growth rate under
- * dilation) of every top-level node any rank changed since the last flush, and
+ * learns the raised bounds (speed, kernel-length growth rate under dilation,
+ * and box length for placed particles) of every top-level node any rank changed since the last flush, and
  * applies them up its own copy of the chain.  Nothing else in the node moves:
  * no momentum, no kick flag, no timestamp. */
 void gravity_flush_pending_motion_bounds(void);
