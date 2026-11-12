@@ -28,6 +28,10 @@
 #include "cxx/chem_net18_layout.h"
 #endif
 #include "../../declarations/resolvedism_dgr.h"
+#include "sgchem_hminus_bands.h"
+#if defined(SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS) && (defined(SGCHEM_FORTRAN) || !defined(GALSF_RESOLVEDISM_G0_VARIABLE) || !defined(GALSF_RESOLVEDISM_OPT_VARIABLE) || !defined(GALSF_RESOLVEDISM_NUV_VARIABLE) || !(defined(EXPERIMENTAL_RADIATION_DISJOINT_BANDS) || defined(GALSF_RESOLVEDISM_CELL_FLUX_6_8EV_TOTAL)) || defined(TREE_RAY) || defined(RADTRANSFER))
+#error "SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS needs the C++ backend and the tree band fields (G0_VARIABLE with OPT/NUV, e.g. via GALSF_RESOLVEDISM_RADPRESSURE), not TREE_RAY/RADTRANSFER"
+#endif
 #include "../../declarations/resolvedism_depletion.h"
 #include "../../galaxy_sf/resolvedism_selfcheck.h"
 #ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
@@ -371,6 +375,14 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->G0_LW = G0_LW;
     CellP[target].G0_LW = G0_LW;
     in->G0_dust = fuv.G0_dust + (G0_tot - fuv.G0); /* a UVB raise of G0 counts ISRF-shaped */
+#ifdef SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS
+    { /* stellar FUV = pixel flux above the floor; optical and NUV are stellar only */
+        double s = 0; for(i = 0; i < NPIX; i++) {s += DMAX(CellP[target].UV_flux[i] - UV_flux_min_pix, 0.);}
+        double u_fuv_star = s * fac_flux2energy;
+        in->hm_detach_stellar = sgchem_hminus_rate_from_bands(u_opt, u_nuv36, u_fuv_star);
+        in->G0_hm_isrf = DMAX(G0_tot - u_fuv_star / u_Hab_FUV, 0.);
+    }
+#endif
 
 #ifdef COSMIC_RAY_FLUID
     chem_zeta_from_crfluid(target, in);
