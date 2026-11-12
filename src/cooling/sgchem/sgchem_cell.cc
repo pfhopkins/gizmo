@@ -278,7 +278,7 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     sgchem_treecol_photoion_rates(i, &in, rho);
 #endif
 #ifdef RADTRANSFER
-    in.NH_cell = 0.5 * yn * cbrt(P[i].Mass / (CellP[i].Density * All.cf_a3inv)) * All.cf_atime * UNIT_LENGTH_IN_CGS; /* unresolved half-cell column */
+    in.NH_cell = 0.5 * yn * cbrt(P[i].Mass / (CellP[i].Density * All.cf_a3inv)) * UNIT_LENGTH_IN_CGS; /* unresolved half-cell column; cell size from the physical density is physical */
 #endif
 
     int skip = 0; out.tdust = in.tdust;
