@@ -10,6 +10,7 @@ and dt in yr (stella_dev multiplied the 1/yr rates by yr / time unit, the invers
 - its destruction rows: the McKee 1989 swept-mass fraction for n0 = 0.1, 1, 100, 1e4 cm^-3 and cells of 1, 10, 100 Msun;
 - one dust step (sputtering, growth, clamp to the element pools) on 70 cells from hot diffuse to cold dense gas, at 0.1, 1, 3 solar
   and off-solar mixtures where O, Mg or Fe limit the silicate;
+- the shock-tracked destruction factors (option `GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION`) at 30 to 1000 km/s;
 - the fresh-start seed at Z = 0, 0.01, 1, 3.6 solar and for an O-poor cell.
 
 Pass: relative difference below 1e-9 in every number, with plain -O2 and with the production flags. The condensation rows of the

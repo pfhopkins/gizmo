@@ -166,7 +166,7 @@ def test_seed_on_a_fresh_start(exe):
     assert np.allclose(s["D"][:, 13], 1.0)  # sources as fractions: all supernovae
 
 
-def star_run(tag, flags, tmax=5e-5):
+def star_run(tag, flags, tmax=5e-5, every=None):
     """a 20 Msun supernova and a 3 Msun AGB death in seeded gas (16^3 cells of 1 Msun)"""
     from test_single_stars_metals import event_stars, event_life
     T = get_stellar_evolution_tables()["StellarTablesFile"]
@@ -182,10 +182,11 @@ def star_run(tag, flags, tmax=5e-5):
     stars[1] = stars[1] + (np.log10(event_life(T, 3.0)),)
     dust, species = seed(SOLAR, 0.5, 0.5)
     L = make_single_stars_metals_ics(str(d / "output" / "snapshot_000.hdf5"), SOLAR, stars, gas_fields={"DustMetallicity": dust, "DustSpeciesAbundance": species})
-    launch(d, exe, {"BoxSize": L, "TimeMax": tmax, "TimeBetSnapshot": tmax, "StellarTablesFile": T}, "2")
+    launch(d, exe, {"BoxSize": L, "TimeMax": tmax, "TimeBetSnapshot": every or tmax, "StellarTablesFile": T}, "2")
     rows = np.loadtxt(d / "output" / "single_star_events.txt", ndmin=2)
     assert sorted(rows[:, 2].astype(int).tolist()) == [1, 2]
-    return snap(sorted((d / "output").glob("snapshot_*.hdf5"))[0]), snap(sorted((d / "output").glob("snapshot_*.hdf5"))[-1]), d
+    snaps = [snap(f) for f in sorted((d / "output").glob("snapshot_*.hdf5"))]
+    return (snaps[0], snaps[-1], d) if every is None else (snaps, d)
 
 
 def test_supernova_destroys_the_dust_of_its_kernel():
@@ -200,3 +201,97 @@ def test_supernova_destroys_the_dust_of_its_kernel():
           f"cells that lost any {(left < 0.99).sum()}, all of it {(left < 0.05).sum()}")
     assert core.sum() >= 8
     assert left[core].max() < 0.05
+
+
+def ejecta_dust(d):
+    """dust the events of a star run bring (table ejecta, Choban+22 condensation, FeMgSiO4; no metallic iron species tracked)"""
+    import test_single_stars_metals as ssm
+    ssm.SIL_ATOMS = {4: 4.0, 6: 1.0, 7: 1.0, 10: 1.0}  # FeMgSiO4 (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION=16)
+    T = get_stellar_evolution_tables()["StellarTablesFile"]
+    rows = np.atleast_2d(np.loadtxt(d / "output" / "single_star_events.txt"))
+    with h5py.File(T, "r") as F:
+        Zt, Mt = F["Z"][()], F["M_init"][()]
+        iz, n3 = int(np.argmin(np.abs(Zt - 0.014))), (len(Zt), len(Mt), -1)
+        ej = {"sn": F["elem_ej_SN_mass"][()].reshape(n3)[iz, int(np.argmin(np.abs(Mt - 20.0)))],
+              "agb": F["elem_ej_AGB_mass"][()].reshape(n3)[iz, int(np.argmin(np.abs(Mt - 3.0)))]}
+    total = 0.0
+    for r in rows:
+        kind = {1: "sn", 2: "agb"}[int(r[2])]
+        y = np.asarray(ej[kind], dtype=float); y = y * r[6] / y.sum()
+        dd, ss = ssm.stella_dust(np.concatenate([[y[2:].sum()], y[ssm.FIRE_ELEMENTS]]), kind)
+        total += dd[0] - ss[2]
+    return total
+
+
+def lost(s0, s1, d):
+    return (s0["m"] * s0["D"][:, 0]).sum() + ejecta_dust(d) - (s1["m"] * s1["D"][:, 0]).sum()
+
+
+def test_dust_budget_through_feedback_merge_and_split():
+    """a 3 Msun AGB death alone in cold seeded gas (100 K: no sputtering, growth below 1e-6 in 200 yr): the cells within two
+    spacings of the star start at 1.45 Msun with the split threshold at 1.5 Msun, eight 0.3 Msun cells elsewhere with the
+    merge threshold at 0.35 Msun; after the deposit splits and the mergers the gas holds the seeded dust plus the condensation of
+    the table ejecta (1e-3 of the ejecta dust), element by element inside its metals"""
+    from test_single_stars_metals import event_stars, event_life
+    T = get_stellar_evolution_tables()["StellarTablesFile"]
+    exe = TEST_DIR / "GIZMO_stars"
+    if not exe.exists():
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=STARS)
+        shutil.move(TEST_DIR / "GIZMO", exe)
+    d = TEST_DIR / "run_budget"
+    if d.exists():
+        shutil.rmtree(d)
+    (d / "output").mkdir(parents=True)
+    star = event_stars(T)[1] + (np.log10(event_life(T, 3.0)),)
+    dust, species = seed(SOLAR, 0.5, 0.5)
+    ic = d / "output" / "snapshot_000.hdf5"
+    L = make_single_stars_metals_ics(str(ic), SOLAR, [star], gas_fields={"DustMetallicity": dust, "DustSpeciesAbundance": species})
+    with h5py.File(ic, "r+") as F:
+        g, x_s = F["PartType0"], F["PartType4/Coordinates"][0]
+        m, x = g["Masses"][()], g["Coordinates"][()]
+        dx = L / round(len(m) ** (1 / 3))
+        r = np.linalg.norm((x - x_s + L / 2) % L - L / 2, axis=1)
+        m[r < 2 * dx] = 1.45
+        m[np.argsort(-r)[::97][:8]] = 0.3  # far from the star, spread over the box
+        g["Masses"][...] = m
+        F["Header"].attrs["Maximum_Mass_For_Cell_Split"] = 1.5
+        F["Header"].attrs["Minimum_Mass_For_Cell_Merge"] = 0.35
+    launch(d, exe, {"BoxSize": L, "TimeMax": 2e-4, "TimeBetSnapshot": 2e-4, "StellarTablesFile": T}, "2")
+    rows = np.loadtxt(d / "output" / "single_star_events.txt", ndmin=2)
+    assert rows[:, 2].astype(int).tolist() == [2]
+    out = (d / "run.out").read_text()
+    import re
+    merged = sum(int(a) for a in re.findall(r"check: (\d+) particles merged", out))
+    split = sum(int(a) for a in re.findall(r"merged, (\d+) particles split", out))
+    s0, s1 = snap(sorted((d / "output").glob("snapshot_*.hdf5"))[0]), snap(sorted((d / "output").glob("snapshot_*.hdf5"))[-1])
+    M_ej, gap = ejecta_dust(d), lost(s0, s1, d)
+    el = [((s1["m"][:, None] * s1["D"][:, SLOTS]).sum(0) - (s0["m"][:, None] * s0["D"][:, SLOTS]).sum(0))]
+    print(f"cells {len(s0['m'])} -> {len(s1['m'])}, merged {merged}, split {split}; T max {s1['T'].max():.3g} K; "
+          f"ejecta dust {M_ej:.6g} Msun, dust missing {gap:.3g} Msun; element dust change {el[0]}")
+    assert merged > 0 and split > 0
+    assert s1["T"].max() < 3e4
+    assert abs(gap) < 1e-3 * M_ej
+    assert np.all(s1["D"][:, 1:11] <= s1["Z"][:, 1:11] * (1 + 1e-12))
+
+
+def test_no_swept_mass_destruction():
+    """GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION: 50 yr after the supernova the cells it enriches by over half keep
+    over half of their silicate mass (only one step of sputtering; the swept-mass rule clears them,
+    test_supernova_destroys_the_dust_of_its_kernel)"""
+    s0, s1, _ = star_run("noswept", STARS + ("GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION",))
+    core = s1["Z"][:, 0] > 1.5 * s0["Z"][0, 0]
+    kept = s1["m"][core] * s1["S"][core, 0] / (s0["m"][0] * s0["S"][0, 0])  # silicate mass over the seeded one of a cell
+    print(f"strongly enriched cells {core.sum()}, silicate mass kept: min {kept.min():.3g}, median {np.median(kept):.3g}")
+    assert core.sum() >= 8 and kept.min() > 0.5
+
+
+def test_shock_tracked_destruction():
+    """GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION in place of the swept-mass rule, 200 yr: compressed cells with a shock above
+    50 km/s lose dust at 0.4 v^2/(v^2 + 100^2) per crossing time (carbon half): more dust lost than with no destruction at all,
+    less than the saturated swept-mass rule"""
+    s, d = star_run("shock", STARS + ("GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION",), 2e-4, 2.5e-5)
+    n, dn = star_run("noswept", STARS + ("GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION",), 2e-4, 2.5e-5)  # sputtering only
+    m, dm = star_run("stars", STARS, 2e-4, 2.5e-5)
+    shock, none, mckee = lost(s[0], s[-1], d), lost(n[0], n[-1], dn), lost(m[0], m[-1], dm)
+    print(f"dust lost in 200 yr [Msun]: shock-tracked {shock:.4g}, none (sputtering only) {none:.4g}, swept mass {mckee:.4g}")
+    assert shock > none + 1e-3 and shock < mckee

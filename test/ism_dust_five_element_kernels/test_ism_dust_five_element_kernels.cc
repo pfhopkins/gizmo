@@ -23,6 +23,10 @@ int main(void)
             dust5_grow(d, z, FRAC, a[0], a[1], a[2], a[3]);
             dust5_clamp(d, z);
             printf("%.17g %.17g %.17g %.17g %.17g\n", d[0], d[1], d[2], d[3], d[4]);
+        } else if(!strcmp(cmd, "shock")) { /* v_shock [km/s] t_cross [yr] dt [yr] */
+            if(scanf("%lf %lf %lf", &a[0], &a[1], &a[2]) != 3) {return 1;}
+            double fC, fS; dust5_shock_factors(a[0], a[1], a[2], &fC, &fS);
+            printf("%.17g %.17g\n", fC, fS);
         } else if(!strcmp(cmd, "seed")) { /* Z z[5] */
             for(int k = 0; k < 6; k++) {if(scanf("%lf", &a[k]) != 1) {return 1;}}
             for(int k = 0; k < 5; k++) {z[k] = a[1 + k];}

@@ -80,6 +80,15 @@ def ref_step(nH, T, Td, dt, D, Z, literal=False, frac=(O, MG, SI, FE)):
     return D
 
 
+def ref_shock(v, tc, dt):
+    """GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION block of resolvedism_dust_evolve (the caller checks compression)"""
+    if not v > 50.0:
+        return [1.0, 1.0]
+    v2 = v * v
+    eps_sil = 0.4 * v2 / (v2 + 100.0 * 100.0)
+    return [math.exp(-dt * 0.5 * eps_sil / tc), math.exp(-dt * eps_sil / tc)]
+
+
 def ref_seed(Zt, Z):
     dgr = 0.01 * (DMAX(Zt, 0) / 0.014)
     c = DMIN(0.3 * dgr, 0.5 * DMAX(Z[0], 0))
@@ -106,6 +115,7 @@ def cases():
                 out.append(("step", [nH, T, Td, dt] + D + Z, None))
         Z = list(np.array(SOLAR) * rng.uniform(0.2, 2.0, 5))  # off-solar mixtures: other elements limit the silicate
         out.append(("step", [nH, T, Td, dt, 0.4 * Z[0], 0.2 * Z[3] / SI * O, 0.2 * Z[3] / SI * MG, 0.2 * Z[3], 0.2 * Z[3] / SI * FE] + Z, None))
+    out += [("shock", [v, tc, dt], None) for v in (30.0, 50.0, 60.0, 100.0, 1000.0) for tc, dt in ((1e3, 10.0), (100.0, 1e3))]
     for Zt in (0.0, 1.4e-4, 0.014, 0.05):
         out.append(("seed", [Zt] + [s * Zt / 0.014 for s in SOLAR], None))
     out.append(("seed", [0.014, SOLAR[0], 1e-5, SOLAR[2], SOLAR[3], SOLAR[4]], None))  # O-poor: the silicate is capped by O
@@ -117,6 +127,8 @@ def reference(cmd, a):
         return [yth(a[0], YC), yth(a[0], YS), 1 / (1 + 0.04 * math.sqrt(a[0] + 20.0))]
     if cmd == "destr":
         return [ref_destr(*a)]
+    if cmd == "shock":
+        return ref_shock(*a)
     if cmd == "step":
         return ref_step(*a[:4], a[4:9], a[9:14])
     return ref_seed(a[0], a[1:6])

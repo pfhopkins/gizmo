@@ -20,3 +20,12 @@ Checks (the reference is the stella_dev code, transcribed in `test/ism_dust_five
 6. a supernova in 1 Msun cells: every cell it enriches by over half loses all its old dust (McKee 1989 swept mass with efficiency
    0.4 inside it, up to all of a cell's dust, as stella_dev; the shared loop's own rule would leave 60%); cells at the kernel edge,
    with a small share of the energy, lose part.
+7. dust budget through feedback, cell split and merge: a 3 Msun AGB death alone in cold seeded gas (no sputtering below 3e4 K),
+   cells next to the star at 1.45 Msun with the split threshold at 1.5 Msun, eight 0.3 Msun cells with the merge threshold at
+   0.35 Msun (both in the IC header), 200 yr: the gas holds the seeded dust plus the condensation of the table ejecta (FeMgSiO4)
+   to 1e-3 of the ejecta dust, after at least one split and one merge;
+8. `GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION` (stella_dev `GALSF_RESOLVEDISM_DUST_NO_MCKEE`): 50 yr after the
+   supernova the cells it enriches by over half keep over half of their silicate mass (check 6 clears them);
+9. `GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION` (stella_dev `GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION`), 200 yr with a
+   snapshot every 25 yr: more dust lost than without any SN destruction (by over 1e-3 Msun), less than with the swept-mass rule.
+   The shocked cells need a step after the deposit: the feedback runs before the cooling in a step, with that step's hydro.
