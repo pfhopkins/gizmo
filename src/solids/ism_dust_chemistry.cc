@@ -216,6 +216,9 @@ void Initialize_ISMDustChem_Particle_Variables(int i, struct particle_data *pp, 
 #ifdef GALSF_ISMDUSTCHEM_HU_MODEL
         if(RestartFlag == 0) {ism_dust_hu_seed_cell(i, pp, cell);}
 #endif
+#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
+        if(RestartFlag == 0) {ism_dust_five_element_seed_cell(i, pp, cell);}
+#endif
 #if (defined(RADTRANSFER) && defined(RT_INFRARED)) || (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
         cell[i].Dust_Temperature = DMIN(All.InitGasTemp,100.);
 #endif
@@ -741,6 +744,9 @@ void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, d
 #else
     // Assume a set fraction of dust is destroyed in the shocked gas and destroy each dust species equally
     double dest_eff = 0.4; // dust destruction efficiency
+#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
+    dest_eff = 1; /* already in the swept mass */
+#endif
     if (mass_shocked > m0) {mass_shocked = m0;} // limit total mass shocked to mass of gas particle
     double massfrac_destroyed = mass_shocked*dest_eff/m0;
     if((massfrac_destroyed > 0) && (CellP[j].ISMDustChem_Dust_Metal[0] > 0))
