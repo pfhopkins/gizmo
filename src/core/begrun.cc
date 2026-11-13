@@ -13,6 +13,9 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../galaxy_sf/stellar_evolution_tables.h"
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || defined(SGCHEM)
+#include "../galaxy_sf/stella_tables_check.h"
+#endif
 #include "../sidm/dm_cooling_tables.h"   /* InitCool_dm() declaration only; the full dm_fluid_functions.h chain belongs in GPU_OBJS TUs where Kokkos_Core.hpp is in-scope, not in host TUs like this one */
 
 
@@ -3700,10 +3703,19 @@ void read_parameter_file(char *fname)
 #ifdef STARS_INTEGRATED_BY_RUMI
                 if(rumi_param_default(tag[i], addr[i])) {continue;}
 #endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || defined(SGCHEM)
+                if(strcmp("StellarTablesFile",tag[i])==0 || strcmp("SGChemTablesPath",tag[i])==0) {*((char *)addr[i])=0; continue;} /* set below */
+#endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;
             }
         }
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        stella_tables_default_path(All.StellarTablesFile, sizeof(All.StellarTablesFile), "StellarTablesFile", "stellar_tables_unified.hdf5");
+#endif
+#ifdef SGCHEM
+        stella_tables_default_path(All.SGChemTablesPath, sizeof(All.SGChemTablesPath), "SGChemTablesPath", "");
+#endif
 
 #ifdef GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
         errorFlag += read_agetracerlist(All.AgeTracerListFilename);

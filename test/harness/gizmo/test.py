@@ -420,19 +420,19 @@ def get_cooling_tables(test_directory="."):
 
 
 def get_stellar_evolution_tables() -> dict:
-    """Install the stella-tables tables once with scripts/get_stella_tables.sh (built from the stella-tables repo at the
-    commit these sources expect, hash-checked) and return the parameter values pointing at them.
-    The install directory is GIZMO_STELLA_TABLES_DIR if set, else the script's default (~/.stella-tables/<commit>);
-    it is shared between tests and checkouts and reused while its hashes match. The script runs with this interpreter as
-    PYTHON (it has numpy and h5py, which the harness needs anyway); set PYTHON to override."""
+    """Install the stella-tables tables once with scripts/get_stella_deps.sh (the release of the commit these sources
+    expect, hash-checked, in the cache GIZMO reads by default) and return the parameter values pointing at them.
+    With GIZMO_STELLA_TABLES_DIR set, scripts/get_stella_tables.sh installs into that directory instead (built from the
+    stella-tables repo unless already there). Both are reused while their hashes match. The scripts run with this
+    interpreter as PYTHON (it has numpy and h5py, which the harness needs anyway); set PYTHON to override."""
     repo_root = path.dirname(path.dirname(path.dirname(path.dirname(path.abspath(__file__)))))
-    cmd = ["bash", path.join(repo_root, "scripts", "get_stella_tables.sh")]
-    if environ.get("GIZMO_STELLA_TABLES_DIR"):
-        cmd.append(environ["GIZMO_STELLA_TABLES_DIR"])
+    own = environ.get("GIZMO_STELLA_TABLES_DIR")
+    cmd = ["bash", path.join(repo_root, "scripts", "get_stella_tables.sh"), own] if own else ["bash", path.join(repo_root, "scripts", "get_stella_deps.sh"), "--tables"]
     out = subprocess.run(cmd, capture_output=True, text=True, env={**environ, "PYTHON": environ.get("PYTHON", sys.executable)})
     if out.returncode != 0:
-        raise RuntimeError(f"get_stella_tables.sh failed:\n{out.stdout}\n{out.stderr}")
-    prefix = [l for l in out.stdout.splitlines() if l.startswith("get_stella_tables: ") and " holds " in l][-1].split()[1]
+        raise RuntimeError(f"{path.basename(cmd[1])} failed:\n{out.stdout}\n{out.stderr}")
+    prefix = [l.split()[1] if " holds " in l else l.split()[2] for l in out.stdout.splitlines()
+              if (l.startswith("get_stella_tables: ") and " holds " in l) or l.startswith("get_stella_deps: tables ")][-1]
     return {"StellarTablesFile": path.join(prefix, "stellar_tables_unified.hdf5")}
 
 
