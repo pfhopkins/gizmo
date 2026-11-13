@@ -6187,6 +6187,9 @@ void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_f
         for(k=0;k<NUM_RPROCESS_SPECIES;k++) {zkey[1+NUM_LIVE_SPECIES_FOR_COOLTABLES+k]=-1;}
         for(k=0;k<NUM_AGE_TRACERS;k++) {zkey[AGE_TRACER_OFFSET+k]=-2;}
         for(k=0;k<NUM_STARFORGE_FEEDBACK_TRACERS;k++) {zkey[STARFORGE_FEEDBACK_TRACER_OFFSET+k]=-3;}
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+        for(k=0;k<4;k++) {zkey[SINGLE_STAR_METAL_ORIGIN_OFFSET+k]=-4-k;} /* single-star metals by source: -4 SN, -5 AGB, -6 winds, -7 Type Ia */
+#endif
         H5Awrite(hdf5_attribute, H5T_NATIVE_INT, zkey); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
 
 #ifdef GALSF_ISMDUSTCHEM_MODEL

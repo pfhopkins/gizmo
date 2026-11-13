@@ -475,6 +475,9 @@ void init(void)
 #ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
             for(j=0;j<STELLAR_EXTRA_NELEM;j++) {P[i].Metallicity[METALS_EXTRA_PASSIVE_SPECIES_OFFSET+j]=stellar_solar_massfrac[stellar_extra_slot_elem[j]]*(P[i].Metallicity[0]/All.SolarAbundances[0]);} /* the other 16 elements, solar */
 #endif
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+            for(j=0;j<4;j++) {P[i].Metallicity[SINGLE_STAR_METAL_ORIGIN_OFFSET+j]=0;} /* initial metals have no stellar source */
+#endif
         } // if(RestartFlag == 0)
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)

@@ -365,6 +365,9 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
 #ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
     for(int k = 0; k < STELLAR_EXTRA_NELEM; k++) {in->yields[METALS_EXTRA_PASSIVE_SPECIES_OFFSET + k] = ev.y[stellar_extra_slot_elem[k]] / ev.Mej;}
 #endif
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+    in->yields[SINGLE_STAR_METAL_ORIGIN_OFFSET + kind - SSE_SN] = in->yields[0]; /* the event's metals in its source slot: SN, AGB, winds, Type Ia */
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (NUM_LIVE_SPECIES_FOR_COOLTABLES >= 10)
     single_star_dust_yields(&ev, in->yields);
 #endif
