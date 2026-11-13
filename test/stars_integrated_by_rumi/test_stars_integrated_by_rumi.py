@@ -141,3 +141,15 @@ def test_merger():
     assert np.linalg.norm(p1 - p0) / (m0 * np.linalg.norm(v0, axis=1)).sum() < 1e-9
     k = list(i1).index(1); M = m0[0] + m0[1]; vcom = (m0[0] * v0[0] + m0[1] * v0[1]) / M
     assert abs(m1[k] / M - 1) < 1e-12 and np.linalg.norm(v1[k] - vcom) < 0.05 * np.linalg.norm(v0[0] - v0[1])
+
+
+def test_energy_books():
+    """RumiPrintInterval 1: rumi.txt has one row per common step; with no gas the books' residual stays at the integration
+    error and no kick work enters; every row comes with a RUMI ENERGY line"""
+    _, _, log = _errors("binary_ics", T_BINARY / 10, params={"RumiPrintInterval": 1})
+    rows = [l.split() for l in open(variant_output_dir(TEST_NAME, ()) + "/rumi.txt") if not l.startswith("#")]
+    steps = int(log.split("RUMI++ totals: ")[1].split()[0])
+    resid = max(abs(float(r[5])) for r in rows); kick = max(abs(float(r[7])) for r in rows)
+    print(f"rumi.txt: {len(rows)} rows, {steps} steps, max |residual| {resid:.3e}, max |W_kick| {kick:.3e}")
+    assert len(rows) == steps and log.count("RUMI ENERGY: t=") == steps
+    assert resid < 1e-12 and kick == 0
