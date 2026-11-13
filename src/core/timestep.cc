@@ -155,17 +155,20 @@ void find_timesteps(void)
            reversible, and an eccentric orbit drifts in energy although each Hermite step is
            time-symmetric. Instead take the largest h' in {2h, h, h/2, ...} with
            h' <= (f_start + f_end)/2, f_end extrapolated linearly from f at the start of the step
-           just completed. f depends on positions and |velocities| only, so it is even under time
-           reversal. Without a criterion history the default rule applies. Ti_begstep still holds
-           the start of the step just completed here; it advances below. */
+           just completed. f is the gravitational criterion only; it depends on positions and
+           |velocities|, so it is even under time reversal. When a hard limit (sink, neighbour,
+           Courant, ...) binds below f, the step obeys it at the start, as the default rule does.
+           Without a criterion history the default rule applies. Ti_begstep still holds the start
+           of the step just completed here; it advances below. */
         if(P[i].dt_crit_last > 0 && P[i].dt_crit_prev > 0 && All.Ti_Current > P[i].Ti_begstep && P[i].TimeBin > 1)
         {
             double ticks_per_unit = 1. / (All.Timebase_interval * timestep_dilation_factor(i, P));
             double f1 = P[i].dt_crit_last * ticks_per_unit, f0 = P[i].dt_crit_prev * ticks_per_unit; /* in ticks */
             double dfdh = (f1 - f0) / (double)(All.Ti_Current - P[i].Ti_begstep);
             double hmax = DMIN(All.MaxSizeTimestep, dt_displacement) * ticks_per_unit;
+            if((double) ti_step + 2. < (1. - 1.e-9) * f1) {hmax = DMIN(hmax, (double) ti_step);} /* a hard limit binds (margin: tick truncation) */
             int b;
-            for(b = P[i].TimeBin + 1; b > 1; b--)
+            for(b = DMIN(P[i].TimeBin + 1, TIMEBINS - 1); b > 1; b--)
             {
                 double h_try = (double) GET_INTEGERTIME_FROM_TIMEBIN(b);
                 if(h_try > hmax) {continue;}
@@ -593,6 +596,9 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
     if(P[p].Type == 0) {dt = DMIN(dt, 0.5 * All.CourantFac * DMIN(P[p].Min_Sink_FeedbackTime, P[p].Min_Sink_Approach_Time));}
 #endif    
 #endif // SINGLE_STAR_TIMESTEPPING
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+    const double dt_smooth = dt; /* the gravitational criteria; the limits applied below are hard caps, not extrapolated */
+#endif
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
     /* Particles using the adaptive kernel radius need a kernel-size signal-speed
@@ -1362,7 +1368,7 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
 
     if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* prevent integer timeline overflow */
 #ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
-    P[p].dt_crit_last = eligible_for_hermite(p, P) ? dt : 0; /* every factor and cap applied, not yet quantised */
+    P[p].dt_crit_last = eligible_for_hermite(p, P) ? DMIN(dt_smooth * All.cf_hubble_a, 0.5 * TIMEBASE * All.Timebase_interval) : 0; /* not quantised */
 #endif
     ti_step = (integertime) (dt / All.Timebase_interval);
     /* Floor the step on the integer timeline. This is not the MinSizeTimestep policy: a run that
