@@ -259,6 +259,9 @@ int main(int argc, char **argv)
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
   stellar_evolution_tables_free();
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+  rumi_finalize();          /* RUMI++ views go before Kokkos */
+#endif
   gizmo_kokkos_finalize();  /* must come before MPI_Finalize */
   MPI_Finalize();		/* clean up & finalize MPI */
 

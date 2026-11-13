@@ -1,0 +1,26 @@
+# RUMI++ (collisional N-body library) build additions; included by src/Makefile when STARS_INTEGRATED_BY_RUMI is set
+# RUMI_PATH = install prefix of the RUMI++ library (cmake -DBUILD_RUMI_LIBRARY=ON -DENABLE_COLLISIONAL=ON, built against the
+# same Kokkos as GIZMO): rumi-lib.mk, include/rumi_lib.h, lib/librumi.a. Set it in your SYSTYPE block, the environment or on the
+# make line. RUMI++ is a separate install, not part of this repository.
+RUMI_DIR = gravity/rumi
+OBJS += $(RUMI_DIR)/rumi_coupling.o $(RUMI_DIR)/rumi_params.o
+INCL += $(RUMI_DIR)/rumi_proto.h $(RUMI_DIR)/rumi_global_fields.h
+ifneq ($(MAKECMDGOALS),clean)
+$(if $(RUMI_PATH),,$(error STARS_INTEGRATED_BY_RUMI: set RUMI_PATH to the install prefix of the RUMI++ library))
+$(if $(wildcard $(RUMI_PATH)/rumi-lib.mk),,$(error RUMI++: no rumi-lib.mk under RUMI_PATH=$(RUMI_PATH)))
+$(if $(wildcard $(RUMI_PATH)/include/rumi_lib.h),,$(error RUMI++: no include/rumi_lib.h under RUMI_PATH=$(RUMI_PATH)))
+$(if $(wildcard $(RUMI_PATH)/lib/librumi.a),,$(error RUMI++: no lib/librumi.a under RUMI_PATH=$(RUMI_PATH)))
+include $(RUMI_PATH)/rumi-lib.mk
+RUMI_KOKKOS_ROOT := $(patsubst -I%/include,%,$(filter -I%/include,$(KOKKOS_CPPFLAGS)))
+$(if $(RUMI_KOKKOS_ROOT),$(if $(findstring $(firstword $(RUMI_KOKKOS_ROOT))/,$(RUMI_LIB_LIBS)),,$(error RUMI++: $(RUMI_PATH) was built against another Kokkos than $(firstword $(RUMI_KOKKOS_ROOT)))))
+# the installed librumi.a must embed the interface version rumi_coupling.cc is written for
+RUMI_LIB_ID := $(shell strings $(RUMI_PATH)/lib/librumi.a 2>/dev/null | grep -m1 '^RUMI_LIB_ID ')
+RUMI_LIB_API := $(patsubst api=%,%,$(filter api=%,$(RUMI_LIB_ID)))
+RUMI_COUPLING_API := $(shell sed -n 's/^\#define RUMI_COUPLING_API_VERSION *\([0-9]*\).*/\1/p' $(RUMI_DIR)/rumi_coupling.cc)
+$(if $(filter $(RUMI_COUPLING_API),$(RUMI_LIB_API)),,$(error RUMI++: $(RUMI_PATH)/lib/librumi.a has interface version '$(RUMI_LIB_API)' ($(RUMI_LIB_ID)), $(RUMI_DIR)/rumi_coupling.cc expects '$(RUMI_COUPLING_API)'))
+CFLAGS += $(RUMI_LIB_INCL) -DRUMI_LIB_ID_MK='"$(RUMI_LIB_ID)"'
+ifeq ($(RUMI_LIB_MPI),ON)
+CFLAGS += -DRUMI_LIB_HAS_MPI
+endif
+LIBS += $(filter-out %libkokkoscore.a %libkokkoscontainers.a,$(RUMI_LIB_LIBS))
+endif

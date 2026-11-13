@@ -1094,6 +1094,9 @@ LIBS = $(HDF5LIB) -g $(MPICHLIB) \
 ifneq ($(filter KETJU_REGULARIZATION,$(CONFIGVARS)),)
 include gravity/ketju/Makefile.ketju
 endif
+ifneq ($(filter STARS_INTEGRATED_BY_RUMI,$(CONFIGVARS)),)
+include gravity/rumi/Makefile.rumi
+endif
 
 $(EXEC): $(OBJS) $(GPU_OBJS)
 	$(CXX) $(OPTIMIZE) $(GPU_LDFLAGS) $(OBJS) $(GPU_OBJS) $(KOKKOS_LIBS) $(LIBS) -o $(EXEC)

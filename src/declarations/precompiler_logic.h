@@ -847,6 +847,28 @@
 #define STARS_HERMITE_AARSETH_ETA 0.02 /* Aarseth (1985) step parameter */
 #endif
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI /* Type-4 stars integrated by the RUMI++ library (gravity/rumi): star-star pairs leave the tree */
+#if defined(STARS_HERMITE_DIRECT_GRAVITY)
+#error "STARS_INTEGRATED_BY_RUMI and STARS_HERMITE_DIRECT_GRAVITY both integrate the Type-4 stars: choose one"
+#endif
+#if !defined(STAR_DIRECT_GRAVITY_TYPE) && (defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(SPECIAL_POINT_MOTION) || defined(PMGRID) || defined(KETJU_REGULARIZATION)) /* first pass only: this file is read twice */
+#error "STARS_INTEGRATED_BY_RUMI takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, Hermite, other SINK_CALC_DISTANCES users, PMGRID or KETJU_REGULARIZATION"
+#endif
+#define SINGLE_STAR_DIRECT_GRAVITY /* the exact star-star sum (stars not yet integrated by RUMI++) */
+#define STAR_DIRECT_GRAVITY_TYPE 4
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI /* Type-4 stars integrated by the RUMI++ library (gravity/rumi): star-star pairs leave the tree */
+#if defined(STARS_HERMITE_DIRECT_GRAVITY)
+#error "STARS_INTEGRATED_BY_RUMI and STARS_HERMITE_DIRECT_GRAVITY both integrate the Type-4 stars: choose one"
+#endif
+#if !defined(STAR_DIRECT_GRAVITY_TYPE) && (defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(SPECIAL_POINT_MOTION) || defined(PMGRID) || defined(KETJU_REGULARIZATION)) /* first pass only: this file is read twice */
+#error "STARS_INTEGRATED_BY_RUMI takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, Hermite, other SINK_CALC_DISTANCES users, PMGRID or KETJU_REGULARIZATION"
+#endif
+#define SINGLE_STAR_DIRECT_GRAVITY /* the exact star-star sum (stars not yet integrated by RUMI++) */
+#define STAR_DIRECT_GRAVITY_TYPE 4
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#endif
 #ifndef STAR_DIRECT_GRAVITY_TYPE
 #define STAR_DIRECT_GRAVITY_TYPE 5 /* particle type whose mutual gravity SINGLE_STAR_DIRECT_GRAVITY sums directly */
 #endif
@@ -1041,6 +1063,12 @@
    where it is, the sink_vel declaration and the moment sums that fill it widen to match this macro. */
 #if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
 #define SINK_NODE_MOTION_TRACKED
+#endif
+#if defined(STARS_INTEGRATED_BY_RUMI) && (((SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) != 4) || defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE))
+#error "STARS_INTEGRATED_BY_RUMI: another option uses the sink node moments"
+#endif
+#if defined(STARS_INTEGRATED_BY_RUMI) && (((SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) != 4) || defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE))
+#error "STARS_INTEGRATED_BY_RUMI: another option uses the sink node moments"
 #endif
 #if defined(STARS_HERMITE_DIRECT_GRAVITY) && ((SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) != 4)
 #error "STARS_HERMITE_DIRECT_GRAVITY: another option set the sink node moments to a type other than 4"
