@@ -604,7 +604,15 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
 #ifdef HERMITE_INTEGRATION
     /* divide out the second-order margin, as the two-body criterion below does. After the tree-update
        cadence above, which wants the unscaled dynamical estimate rather than the integrator's step. */
-    if(eligible_for_hermite(p, P)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;}
+    if(eligible_for_hermite(p, P)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;
+#ifdef STARS_HERMITE_DIRECT_GRAVITY /* Aarseth criterion replaces the tidal one; start-up step eta/2 |a|/|j| */
+        if(P[p].Hermite_dt_ratio > 0) {dt_tidal = P[p].Hermite_dt_ratio * get_particle_timestep_in_physical(p, P);}
+        else {double jm = P[p].GravJerk.norm(); if(jm > 0) {dt_tidal = DMIN(dt_tidal, 0.5 * STARS_HERMITE_AARSETH_ETA * P[p].GravAccel.norm() / jm);}}
+#endif
+    }
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+    else {P[p].Hermite_dt_ratio = 0;} /* KDK step: no Hermite history to extrapolate from */
+#endif
 #endif
     
 #if (SINGLE_STAR_TIMESTEPPING > 0)

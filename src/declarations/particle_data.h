@@ -61,6 +61,9 @@ extern ALIGN(32) struct particle_data
     Vec3<MyFloat> OldPos;
     Vec3<MyFloat> OldVel;
     Vec3<MyFloat> OldJerk;
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+    MyDouble Hermite_dt_ratio; /*!< Aarseth step / last step, from the last corrector; 0 = none yet */
+#endif
     short int AccretedThisTimestep;     /*!< set when a sink accreted this step (eligible_for_hermite does not read it) */
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE

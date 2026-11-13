@@ -265,6 +265,9 @@ void init(void)
                               state rather than from whatever the allocator left behind */
         P[i].OldPos = P[i].Pos; P[i].OldVel = P[i].Vel;
         P[i].Hermite_OldAcc = {}; P[i].OldJerk = {};
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+        P[i].Hermite_dt_ratio = 0;
+#endif
         P[i].AccretedThisTimestep = 0;
 #endif        
         

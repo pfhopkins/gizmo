@@ -10,7 +10,7 @@
 #include "../mesh/gpu_neighbor_list.h"      /* gizmo_mark_kernel_radius_dirty_indices */
 
 /*! \file star_direct_gravity.cc
- *  \brief exact direct-summation gravity between star (type-5) particles.
+ *  \brief exact direct-summation gravity between star particles (type STAR_DIRECT_GRAVITY_TYPE: 5, or 4 with STARS_HERMITE_DIRECT_GRAVITY).
  *
  *  The tree approximates the field of a group of distant stars by its monopole, which is fine for
  *  gas but destroys the few-body dynamics stars have with each other: the error is uncorrelated
@@ -21,7 +21,7 @@
  *  sum is O(N_star^2). Do not enable it for a run whose star count is comparable to its cell count.
  *
  *  Correctness here depends on the tree NOT also supplying star->star forces, or every pair would
- *  be counted twice. force_treeevaluate() drops those contributions when the target is type 5; see
+ *  be counted twice. force_treeevaluate() drops those contributions when the target is a star; see
  *  the SINGLE_STAR_DIRECT_GRAVITY blocks there.
  *
  *  The sum below is a serial host loop over a table gathered to every task. A direct N-body sum is
@@ -51,7 +51,7 @@ int N_StarDirect;
 void star_direct_gravity_build_table(void)
 {
     int i, n_local = 0;
-    for(i = 0; i < NumPart; i++) {if(P[i].Type == 5 && P[i].Mass > 0) {n_local++;}}
+    for(i = 0; i < NumPart; i++) {if(P[i].Type == STAR_DIRECT_GRAVITY_TYPE && P[i].Mass > 0) {n_local++;}}
 
     /* mymalloc is a LIFO stack allocator, so StarDirect -- the one buffer that has to outlive this
        function -- must sit at the bottom, underneath every temporary. That means we need the total
@@ -75,7 +75,7 @@ void star_direct_gravity_build_table(void)
     int k = 0;
     for(i = 0; i < NumPart; i++)
     {
-        if(P[i].Type != 5 || P[i].Mass <= 0) {continue;}
+        if(P[i].Type != STAR_DIRECT_GRAVITY_TYPE || P[i].Mass <= 0) {continue;}
         if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current); gizmo_mark_kernel_radius_dirty_indices(&i, 1);}
         sendbuf[k].Pos = P[i].Pos;
         sendbuf[k].Vel = P[i].Vel;
@@ -130,7 +130,7 @@ void star_direct_gravity_compute(void)
     for(int ii = 0; ii < n_active; ii++)
     {
         int i = ActiveParticleList[ii];
-        if(P[i].Type != 5 || !gravity_treewalk_candidate_prewalk(i, ii)) {continue;}
+        if(P[i].Type != STAR_DIRECT_GRAVITY_TYPE || !gravity_treewalk_candidate_prewalk(i, ii)) {continue;}
         Vec3<double> pos = P[i].Pos, acc = {};
         double h_i = ForceSoftening_KernelRadius(i);
         MyIDType id_i = P[i].ID;
