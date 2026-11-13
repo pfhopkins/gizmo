@@ -49,3 +49,19 @@ def test_triple():
     de, dx, _, _ = _errors("triple_ics", T_TRIPLE)
     print(f"triple: dE/E {de:.3e} position {dx:.3e}")
     assert de < 1.5e-5 and dx < 6e-3
+
+
+SYMMETRIC = ("HERMITE_CORRECTOR_ITERATIONS=2", "HERMITE_SYMMETRIC_TIMESTEP")
+
+
+# P(EC)^2 with time-symmetric steps, bars 3x measured (binary dE 1.1e-5, offset 2.8e-5 a; triple dE 3.1e-7, offset 3.3e-3 a_in)
+def test_binary_symmetric():
+    de, dx, _, _ = _errors("binary_ics", T_BINARY, SYMMETRIC)
+    print(f"binary symmetric: dE/E {de:.3e} position {dx:.3e}")
+    assert de < 3.5e-5 and dx < 1e-4
+
+
+def test_triple_symmetric():
+    de, dx, _, _ = _errors("triple_ics", T_TRIPLE, SYMMETRIC)
+    print(f"triple symmetric: dE/E {de:.3e} position {dx:.3e}")
+    assert de < 1e-6 and dx < 1e-2
