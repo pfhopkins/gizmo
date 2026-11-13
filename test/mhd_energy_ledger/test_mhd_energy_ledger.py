@@ -1,24 +1,20 @@
 """mhd_energy_ledger: TEST_MHD_ENERGY_LEDGER_OUTPUT, the MHD energy rows in ledger.txt (OUTPUT_MASS_METAL_ENERGY_LEDGER). The box of
 test/mhd_kernel_volume_energy (static periodic box, 20^3 jittered cells, uniform B_z, beta about 0.14, adiabatic, 2 ranks, 1.96 Myr),
-all cells on one timestep, one ledger row per snapshot.
+all cells on one fixed step (Min = MaxSizeTimestep, TimeMax/256, ~1/5 of the Courant step), and again at TimeMax/512.
 
-Bars, written before the runs, from stella_dev on the same box (E_B change -1.3726657e48 erg, volume + kick terms -1.3726657e48;
-drift +0.573e48, not explained by the ledger -0.011e48; E_B not booked by the u equation +0.611e48):
-  test_magnetic_energy_split: the E_B change equals the kernel-volume term plus the B-kick term (plus the volume change since the
-    last B kick, pending at output) to 1e-6 of the initial E_B.
-  test_ledger_closes: the total-energy drift minus the booked source terms (limiter and floor, Powell, Dedner face and correction,
-    face-closure limiter) minus the E_B change the u equation did not book is below 5 % of the drift; that unbooked E_B change
-    is the drift to 20 %.
-  test_ledger_closes_psi (DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH; E_psi in the total, no Dedner rows): the closure bar (rest below
-    5 % of the drift), and the psi damping row is not negative.
-Changed after the first run: the psi variant first also had "unbooked E_B is the drift to 20 %"; with this cleaning the Powell term
-is most of the drift (+1.56e48 of +2.17e48 erg), so that bar does not apply there. The E_B state row then came from the drifted B
-while the ledger is written before the second half-kick; it now uses the kicked B, as E_th and E_kin use the kicked u and v.
-The ledger is written after the drift, which also moves the cell volume: the volume change since the last B kick is now a state row
-(the split missed it by 7e-6 of E_B). The first runs used the adaptive steps of test/mhd_kernel_volume_energy: the closure rest was
--0.036e48 erg (6.6 % of the drift); with all cells on one step it is -0.011e48 (2.2 %), as stella_dev, so the difference comes from
-cells on different steps in the hydro scheme, outside the MHD terms. The test now runs one step for all cells.
+Bars from the ledger's algebra, set before the run (reports/test_bars_2026_11_13.md):
+  test_magnetic_energy_split: per cell E_B changes only at its B kicks (kick row) and through its volume between kicks (volume row,
+    pending at output); the rows telescope, the sums are exact, so the split closes to the rounding of the per-kick differences:
+    (4 N_steps + 10) x 2.2e-16 x E_B0.
+  test_ledger_closes / _psi: rest = drift - unbalanced source rows - E_B the u equation did not book. Everything in the rest is
+    time-integration error of the KDK (the fluxes conserve in rate form, the psi pair too); on one uniform step it is 2nd order:
+    measured order log2(|rest(TimeMax/256)| / |rest(TimeMax/512)|) >= 1.5, unless below the roundoff floor (4 N + 10) x 2.2e-16 x E_tot.
+  _psi also: no Dedner rows (exactly 0), psi damping row >= 0 (each kick multiplies PsiZ by a factor <= 1).
+Uniform steps: on block steps the flux exchange between cells on different bins adds a 1st-order hydro residual (outside the MHD
+terms) whose size is not fixed by theory; one step makes the rest a pure 2nd-order KDK error. Not tested here: the closure on
+block steps. Earlier bars (rest < 5 % of the drift, unbooked E_B = drift to 20 %, split to 1e-6) were set or changed after runs.
 """
+import re
 import shutil
 import subprocess
 import sys
@@ -35,23 +31,33 @@ from make_mhd_box_ics import write_ics  # noqa: E402
 SOURCES = ("E_kick_floor_erg", "E_mhd_powell_erg", "E_mhd_dedner_face_erg", "E_mhd_dedner_correction_erg", "E_mhd_closure_erg")
 
 
+STEPS = (256, 512)  # uniform steps per run (TimeMax / n)
+
+
 def run(tag, flags=()):
+    """ledger rows per step count"""
     build_gizmo_for_test(TEST_NAME, extra_config_flags=tuple(flags))
-    d = TEST_DIR / f"run_{tag}"
-    shutil.rmtree(d, ignore_errors=True)
-    (d / "output").mkdir(parents=True)
-    shutil.move(TEST_DIR / "GIZMO", d / "GIZMO")
-    write_ics(d / "snapshot_000.hdf5")
-    shutil.copy(TEST_DIR / f"{TEST_NAME}.params", d / "run.params")
-    with open(d / "run.out", "w") as out:
-        subprocess.run(mpi_launch_command(2, 1) + [str(d / "GIZMO"), "run.params"], cwd=d, stdout=out, stderr=subprocess.STDOUT, check=True)
-    fn = d / "output" / "ledger.txt"
-    with open(fn) as f:
-        head = f.readline().split()[1:]
-    names = head[:next(k for k, w in enumerate(head) if w.startswith("("))]
-    a = np.loadtxt(fn, ndmin=2)
-    assert a.shape[1] == len(names) and len(a) >= 5 and a[-1, 0] > 0.0019, (a.shape, len(names))
-    return {n: a[:, k] for k, n in enumerate(names)}
+    out = {}
+    for n in STEPS:
+        d = TEST_DIR / f"run_{tag}_{n}"
+        shutil.rmtree(d, ignore_errors=True)
+        (d / "output").mkdir(parents=True)
+        shutil.copy(TEST_DIR / "GIZMO", d / "GIZMO")
+        write_ics(d / "snapshot_000.hdf5")
+        p = (TEST_DIR / f"{TEST_NAME}.params").read_text()
+        for k in ("MaxSizeTimestep", "MinSizeTimestep"):
+            p = re.sub(rf"(?m)^{k}\s+\S+", f"{k:34s} {0.002 / n!r}", p)
+        (d / "run.params").write_text(p)
+        with open(d / "run.out", "w") as o:
+            subprocess.run(mpi_launch_command(2, 1) + [str(d / "GIZMO"), "run.params"], cwd=d, stdout=o, stderr=subprocess.STDOUT, check=True)
+        fn = d / "output" / "ledger.txt"
+        with open(fn) as f:
+            head = f.readline().split()[1:]
+        names = head[:next(k for k, w in enumerate(head) if w.startswith("("))]
+        a = np.loadtxt(fn, ndmin=2)
+        assert a.shape[1] == len(names) and len(a) >= 5 and a[-1, 0] > 0.0019, (a.shape, len(names))
+        out[n] = {k: a[:, j] for j, k in enumerate(names)}
+    return out
 
 
 @pytest.fixture(scope="module")
@@ -65,24 +71,35 @@ def ledger_psi():
 
 
 def delta(L, n):
-    return (L[n][-1] - L[n][0]) / 1e48
+    return L[n][-1] - L[n][0]
 
 
-def closes(L, with_psi, unbooked_is_drift=True):
+def eps_bar(n, E):
+    return (4 * n + 10) * 2.2e-16 * E
+
+
+def rest(L, with_psi):
     dE = sum(delta(L, n) for n in ("E_th_erg", "E_kin_erg", "E_B_erg") + (("E_psi_erg",) if with_psi else ()))
-    src = sum(delta(L, n) for n in SOURCES)
     unbooked = delta(L, "E_B_erg") - (delta(L, "E_mhd_B_dVB_booked_erg") - delta(L, "E_mhd_half_B2_dV_booked_erg"))
-    rest = dE - src - unbooked
-    print(f"drift {dE:+.4f}, sources {src:+.4f} (" + " ".join(f"{n} {delta(L, n):+.4f}" for n in SOURCES) + f"), unbooked E_B {unbooked:+.4f}, rest {rest:+.4f} (1e48 erg)")
-    assert abs(rest) < 0.05 * abs(dE)
-    if unbooked_is_drift:
-        assert abs(unbooked - dE) < 0.2 * abs(dE)
+    return dE - sum(delta(L, n) for n in SOURCES) - unbooked, dE, unbooked
+
+
+def closes(runs, with_psi):
+    (R1, dE1, ub1), (R2, dE2, ub2) = (rest(runs[n], with_psi) for n in STEPS)
+    L = runs[STEPS[0]]
+    Etot = sum(L[n][0] for n in ("E_th_erg", "E_kin_erg", "E_B_erg") + (("E_psi_erg",) if with_psi else ()))
+    order = np.log2(abs(R1) / abs(R2)) if R2 != 0 else np.inf
+    print(f"drift {dE1:+.6e} / {dE2:+.6e}, unbooked E_B {ub1:+.6e} / {ub2:+.6e}, rest {R1:+.6e} / {R2:+.6e} erg (steps {STEPS}), order {order:.2f}, "
+          f"floor {eps_bar(STEPS[0], Etot):.2e}; " + " ".join(f"{n} {delta(L, n):+.4e}" for n in SOURCES))
+    assert abs(R1) <= eps_bar(STEPS[0], Etot) or order >= 1.5
 
 
 def test_magnetic_energy_split(ledger):
-    dEB, dv, dk, dp = (delta(ledger, n) for n in ("E_B_erg", "E_B_volume_change_erg", "E_B_kick_change_erg", "E_B_volume_change_pending_erg"))
-    print(f"dE_B {dEB:+.9f}, volume {dv:+.9f} + kick {dk:+.9f} + pending {dp:+.9f} = {dv + dk + dp:+.9f} (1e48 erg)")
-    assert abs(dEB - dv - dk - dp) < 1e-6 * ledger["E_B_erg"][0] / 1e48
+    for n in STEPS:
+        L = ledger[n]
+        dEB, dv, dk, dp = (delta(L, k) for k in ("E_B_erg", "E_B_volume_change_erg", "E_B_kick_change_erg", "E_B_volume_change_pending_erg"))
+        print(f"steps {n}: dE_B {dEB:+.12e}, volume + kick + pending {dv + dk + dp:+.12e}, residual {dEB - dv - dk - dp:+.3e}, bar {eps_bar(n, L['E_B_erg'][0]):.2e} erg")
+        assert abs(dEB - dv - dk - dp) <= eps_bar(n, L["E_B_erg"][0])
 
 
 def test_ledger_closes(ledger):
@@ -90,7 +107,8 @@ def test_ledger_closes(ledger):
 
 
 def test_ledger_closes_psi(ledger_psi):
-    assert delta(ledger_psi, "E_mhd_dedner_face_erg") == 0 and delta(ledger_psi, "E_mhd_dedner_correction_erg") == 0
-    print("E_psi end", ledger_psi["E_psi_erg"][-1], "damped", ledger_psi["E_psi_damping_erg"][-1], "erg")
-    assert ledger_psi["E_psi_damping_erg"][-1] >= 0
-    closes(ledger_psi, True, unbooked_is_drift=False)
+    for n in STEPS:
+        L = ledger_psi[n]
+        assert delta(L, "E_mhd_dedner_face_erg") == 0 and delta(L, "E_mhd_dedner_correction_erg") == 0
+        assert np.all(np.diff(L["E_psi_damping_erg"]) >= 0) and L["E_psi_damping_erg"][0] >= 0
+    closes(ledger_psi, True)
