@@ -2157,6 +2157,7 @@ static void scatter_results(KetjuRegion &reg)
                 P[idx].Vel[j] = sp.Vel[j] + reg.com_vel[j];
                 km.final_vel[j] = P[idx].Vel[j];
             }
+            gravity_cover_set_position(idx);
         }
         gizmo_motion_bound_raise(&idx, 1); /* velocity set outside the kick: nodes must cover this drift */
 #if SINGLE_STAR_TIMESTEPPING > 0
@@ -2939,6 +2940,7 @@ void ketju_set_final_velocities(void)
 #else
                 if(d2 < 1e-12 * All.KetjuRegionRadius * All.KetjuRegionRadius * All.cf_a2inv) {for(int j = 0; j < 3; j++) {P[i].Pos[j] = km.target_pos[j];}}
 #endif
+                gravity_cover_set_position(i);
             }
             for(int j = 0; j < 3; j++) {
                 /* dp correction: the difference between true velocity and trick velocity,

@@ -1937,3 +1937,7 @@ void gizmo_gpu_sync_all(void);
 void tree_node_momentum_audit(void);
 void tree_node_momentum_audit_report(void);
 #endif
+#ifdef TEST_TREE_NODE_BOX_AUDIT
+void tree_node_box_audit(void);
+void tree_node_box_audit_report(void);
+#endif

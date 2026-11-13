@@ -1848,6 +1848,7 @@ void force_add_element_to_tree(int iparent, int ichild)
     /* The child's speed bound goes up its whole chain, to the top-level node other ranks route by; the
      * parent's node alone would let it outrun every ancestor box until its first kick or the next build. */
     gravity_note_inserted_motion_bound(ichild);
+    gravity_cover_set_position(ichild); /* a spawned cell is placed a step away from its parent */
     /* update parent node property [maximum softening] for opening criteria. The bound and the per-type band below are raised
        from the PARENT's radius and type, not the inserted child's: a spawned child's own band reaches the tree when it is
        next active (force_update_hmax) or at the next build. Known and accepted: measured on a FIRE galaxy run, no neighbour pair depended on the stale band
