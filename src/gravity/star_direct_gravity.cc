@@ -131,6 +131,9 @@ void star_direct_gravity_compute(void)
     {
         int i = ActiveParticleList[ii];
         if(P[i].Type != STAR_DIRECT_GRAVITY_TYPE || !gravity_treewalk_candidate_prewalk(i, ii)) {continue;}
+#ifdef STARS_INTEGRATED_BY_RUMI
+        if(P[i].RumiMember) {continue;} /* RUMI++ integrates the members' mutual gravity */
+#endif
         Vec3<double> pos = P[i].Pos, acc = {};
         double h_i = ForceSoftening_KernelRadius(i);
         MyIDType id_i = P[i].ID;
@@ -219,6 +222,9 @@ void star_direct_gravity_compute(void)
         }
 
         P[i].GravAccel += acc;
+#ifdef STARS_INTEGRATED_BY_RUMI
+        for(int k = 0; k < 3; k++) {rumi_member(i).direct_acc[k] = acc[k];} /* taken out of its opening kick when it joins */
+#endif
 #ifdef EVALPOTENTIAL
         P[i].Potential += pot;
 #endif

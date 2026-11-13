@@ -4,7 +4,7 @@
 # make line. RUMI++ is a separate install, not part of this repository.
 RUMI_DIR = gravity/rumi
 OBJS += $(RUMI_DIR)/rumi_coupling.o $(RUMI_DIR)/rumi_params.o
-INCL += $(RUMI_DIR)/rumi_proto.h $(RUMI_DIR)/rumi_global_fields.h
+INCL += $(RUMI_DIR)/rumi_proto.h $(RUMI_DIR)/rumi_particle_fields.h $(RUMI_DIR)/rumi_global_fields.h $(RUMI_DIR)/rumi_member_state.h
 ifneq ($(MAKECMDGOALS),clean)
 $(if $(RUMI_PATH),,$(error STARS_INTEGRATED_BY_RUMI: set RUMI_PATH to the install prefix of the RUMI++ library))
 $(if $(wildcard $(RUMI_PATH)/rumi-lib.mk),,$(error RUMI++: no rumi-lib.mk under RUMI_PATH=$(RUMI_PATH)))

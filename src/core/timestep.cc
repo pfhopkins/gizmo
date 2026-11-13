@@ -688,6 +688,9 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
     if(((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) && (P[p].Type > 0)) {need_agscfl = 1;}
+#ifdef STARS_INTEGRATED_BY_RUMI
+    if(P[p].Type == 4) {need_agscfl = 0;} /* the star-star flow this limit follows is RUMI++'s */
+#endif
 #endif
 #ifdef DM_SIDM
     if((1 << P[p].Type) & (DM_SIDM)) {need_agscfl = 1;}

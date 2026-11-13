@@ -5,14 +5,35 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <climits>
+#include <algorithm>
+#include <vector>
+#include <unordered_map>
+#include <functional>
 #include "../../declarations/allvars.h"
 #include "../../core/proto.h"
+#include "../../mesh/gpu_neighbor_list.h"   /* gizmo_motion_bound_raise */
+#include "../forcetree.h"                   /* gravity_cover_set_position */
+#include "../../galaxy_sf/single_star_record.h"
+#include "../../system/gpu_particles_arena.h"
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#include "../../galaxy_sf/stellar_evolution_tables.h" /* star radii */
+#endif
 #include "rumi_lib.h"
 
 /*! \file rumi_coupling.cc
- *  \brief Type-4 stars and the collisional N-body library RUMI++ (STARS_INTEGRATED_BY_RUMI): RUMI++ start-up on GIZMO's
- *  Kokkos and tasks 0..RumiNumRanks-1, units (pc, Msun, km/s) and G from All.G. Star-star pairs leave the tree; until RUMI++
- *  integrates the stars they feel each other by the exact direct sum (star_direct_gravity.cc).
+ *  \brief Type-4 stars integrated by the collisional N-body library RUMI++ (STARS_INTEGRATED_BY_RUMI), as a BRIDGE:
+ *
+ *  - Member stars share one timebin (rumi_limit_timesteps). Their host kicks carry the field of everything but stars:
+ *    the tree drops star sources for star targets (SINGLE_STAR_DIRECT_GRAVITY with STAR_DIRECT_GRAVITY_TYPE 4).
+ *  - At the start of the common step (after the first half kick) the members go to the RUMI++ ranks, RUMI++ integrates
+ *    their mutual gravity over the step and the end state comes back (rumi_integrate). The stars drift on the chord to
+ *    that end point; after the drift ending the step they land on RUMI++'s state (rumi_finish_drift).
+ *  - Stars not yet members feel every star by the exact direct sum (star_direct_gravity.cc) on their own steps, which
+ *    are cut to end at the members' next common sync, where they join.
+ *  - RUMI++ keeps the members' state; GIZMO's changes reach it as differences against what it returned: gas kicks,
+ *    box wraps, mass changes in place, new or removed stars (a new set).
+ *  - G is GIZMO's (All.G), converted to pc, Msun, km/s at each step. RUMI++ runs on tasks 0..RumiNumRanks-1.
  */
 
 #ifdef STARS_INTEGRATED_BY_RUMI
@@ -25,16 +46,98 @@ static_assert(RUMI_LIB_API_VERSION == RUMI_COUPLING_API_VERSION, "rumi_lib.h is 
 
 namespace {
 
-double UL = 1, UM = 1, UV = 1;           /* GIZMO code unit in pc, Msun, km/s */
+/* a star's identity: stars spawned from one gas cell share ID and differ in child number / generation */
+struct StarKey {
+    unsigned long long id, child, gen;
+    bool operator<(const StarKey &o) const {return id != o.id ? id < o.id : (child != o.child ? child < o.child : gen < o.gen);}
+    bool operator==(const StarKey &o) const {return id == o.id && child == o.child && gen == o.gen;}
+};
+struct StarKeyHash {size_t operator()(const StarKey &k) const {return std::hash<unsigned long long>()(k.id * 0x9E3779B97F4A7C15ULL ^ (k.child << 20) ^ k.gen);}};
+inline StarKey star_key(int i) {return StarKey{(unsigned long long)P[i].ID, (unsigned long long)P[i].ID_child_number, (unsigned long long)P[i].ID_generation};}
+struct RumiStar { StarKey ID; int task, index, kw; integertime ti_step; double m, pos[3], vel[3], r_rsun; };
+struct RumiBack { StarKey ID; int index; double m, pos[3], vel[3]; };
+struct Plan { int rebuild, n_new, do_mass, nsl; double dt, G; };   /* task 0 -> RUMI++ ranks, per step */
+
+double UL = 1, UM = 1, UV = 1, UT = 1;   /* GIZMO code unit in pc, Msun, km/s, pc/(km/s) */
 MPI_Comm RumiComm = MPI_COMM_NULL;       /* tasks 0..RumiNumRanks-1 */
 int rumi_rank = 0;                        /* this task runs RUMI++ */
+/* task 0 coupling state */
+std::vector<StarKey> slot_id;             /* library slot -> star */
+std::unordered_map<StarKey, int, StarKeyHash> slot_of;
+std::vector<double> last_m, last_x, last_v; /* by slot, GIZMO units, the state last handed back (mass: GIZMO's own) */
+std::vector<double> slot_m_r;             /* by slot, the mass RUMI++ holds */
+long long n_steps = 0;
+
+inline int is_rumi_star(int i) {return (P[i].Type == 4) && (P[i].Mass > 0);}
 
 double rumi_G(void) {return All.G * UL * UV * UV / UM;} /* G in pc^3 Msun^-1 (km/s)^2 */
 
+double star_radius_rsun(int i) /* contact radius as KETJU's: Stella tables, else the main-sequence fit */
+{
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    if(P[i].StarIdx <= 0 || SingleStars.M_drawn[single_star_slot(P[i].StarIdx)] <= 0) {return 0;}
+    int s = single_star_slot(P[i].StarIdx);
+    double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
+    double age_tab = evaluate_stellar_age_Gyr(i) * 1.e9 - stellar_t_PMS(logM, logZ);
+    if(age_tab >= stellar_lifetime(logM, logZ)) {return 0;}
+    return pow(10.0, stellar_log_R_cm(logM, logZ, log10(DMAX(age_tab, 100.0)))) / 6.957e10;
+#else
+    double M = P[i].Mass * UNIT_MASS_IN_SOLAR;
+    return (M < 1) ? pow(M, 0.8) : pow(M, 0.57);
+#endif
+}
+
+void move_to_bin(int i, int new_bin) /* as ketju_coupling.cc move_particle_timebin */
+{
+    int old_bin = P[i].TimeBin;
+    if(old_bin == new_bin) return;
+    TimeBinCount[old_bin]--;
+    if(PrevInTimeBin[i] >= 0) {NextInTimeBin[PrevInTimeBin[i]] = NextInTimeBin[i];} else {FirstInTimeBin[old_bin] = NextInTimeBin[i];}
+    if(NextInTimeBin[i] >= 0) {PrevInTimeBin[NextInTimeBin[i]] = PrevInTimeBin[i];} else {LastInTimeBin[old_bin] = PrevInTimeBin[i];}
+    if(FirstInTimeBin[new_bin] >= 0) {PrevInTimeBin[FirstInTimeBin[new_bin]] = i;}
+    NextInTimeBin[i] = FirstInTimeBin[new_bin];
+    PrevInTimeBin[i] = -1;
+    FirstInTimeBin[new_bin] = i;
+    if(LastInTimeBin[new_bin] < 0) {LastInTimeBin[new_bin] = i;}
+    TimeBinCount[new_bin]++;
+    P[i].TimeBin = new_bin;
+}
+
 void rumi_atexit(void) {rumi_lib::kokkos_finalize();}
+
+/* the members' group: whether any exists, whether it starts a step now, and its current step's end (all tasks agree) */
+void member_status(int &exist, int &sync, long long &ti_end)
+{
+    int loc[2] = {0, 0}; long long te = LLONG_MAX;
+    for(int i = 0; i < NumPart; i++) {
+        if(!is_rumi_star(i) || !P[i].RumiMember) continue;
+        loc[0] = 1;
+        if(TimeBinActive[P[i].TimeBin]) {loc[1] = 1;}
+        else {long long e = (long long)P[i].Ti_begstep + (long long)P[i].dt_step; if(e < te) {te = e;}}
+    }
+    int glob[2]; MPI_Allreduce(loc, glob, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, &te, 1, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+    exist = glob[0]; sync = glob[1]; ti_end = te;
+}
 
 } // namespace
 
+
+/* the star's record slot, made on first use (without IMF sampling the record exists for RUMI++ alone) */
+struct rumi_member_state &rumi_member(int i)
+{
+    if(P[i].StarIdx <= 0) {struct single_star_record r; memset(&r, 0, sizeof(r)); P[i].StarIdx = single_star_record_new(&r);}
+    return SingleStars.rumi[single_star_slot(P[i].StarIdx)];
+}
+
+/* 1 when an active star is not yet a member (all tasks agree): the direct star-star sum is needed this call */
+int rumi_direct_gravity_needed(void)
+{
+    int nt = 0;
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {int i = ActiveParticleList[ii]; if(is_rumi_star(i) && !P[i].RumiMember) {rumi_member(i); nt = 1;}}
+    MPI_Allreduce(MPI_IN_PLACE, &nt, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    return nt;
+}
 
 /* begrun: units; on the RUMI++ ranks GIZMO's Kokkos (RUMI++ reuses it), the sub-communicator and the RUMI++ configuration */
 void rumi_init(void)
@@ -44,6 +147,7 @@ void rumi_init(void)
     if(All.RumiLengthUnitPc > 0) {UL = All.RumiLengthUnitPc;}
     if(All.RumiMassUnitMsun > 0) {UM = All.RumiMassUnitMsun;}
     if(All.RumiVelUnitKms > 0) {UV = All.RumiVelUnitKms;}
+    UT = UL / UV;
     int nr = All.RumiNumRanks; if(nr < 1) {nr = 1;} if(nr > NTask) {nr = NTask;}
     rumi_rank = (ThisTask < nr);
     MPI_Comm_split(MPI_COMM_WORLD, rumi_rank ? 0 : MPI_UNDEFINED, ThisTask, &RumiComm);
@@ -72,7 +176,218 @@ void rumi_init(void)
 void rumi_finalize(void)
 {
     if(!rumi_rank) return;
+    if(ThisTask == 0) {printf("RUMI++ totals: %lld steps\n", n_steps);}
     rumi_lib::kokkos_finalize();
+}
+
+
+/* after find_timesteps. Members starting a step now (or, before the first step, every synchronised star): one bin,
+   the smallest any of them chose, RumiStarMaxTimestep, and not past the end of a non-member's current step (it joins
+   there). Non-members starting a step while the members are mid-step: steps that end at the members' next sync. */
+void rumi_limit_timesteps(void)
+{
+    int exist, sync; long long ti_grp;
+    member_status(exist, sync, ti_grp);
+    const int group_step = (!exist || sync);
+    int bmin = TIMEBINS; long long ti_ns = LLONG_MAX;
+    for(int i = 0; i < NumPart; i++) {
+        if(!is_rumi_star(i)) continue;
+        if(TimeBinActive[P[i].TimeBin]) {if(P[i].TimeBin > 0 && P[i].TimeBin < bmin) {bmin = P[i].TimeBin;}}
+        else if(!P[i].RumiMember) {long long te = (long long)P[i].Ti_begstep + (long long)P[i].dt_step; if(te < ti_ns) {ti_ns = te;}}
+    }
+    int bmin_g; long long ti_ns_g;
+    MPI_Allreduce(&bmin, &bmin_g, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&ti_ns, &ti_ns_g, 1, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+    if(bmin_g >= TIMEBINS) {return;}
+    int bin = bmin_g;
+    if(group_step) {
+        if(All.RumiStarMaxTimestep > 0) {
+            long long ti_cap = (long long)(All.RumiStarMaxTimestep / All.Timebase_interval);
+            int bcap = get_timestep_bin((integertime)DMAX(ti_cap, 2)); if(bcap < bin) {bin = bcap;}
+        }
+        if(ti_ns_g < LLONG_MAX && ti_ns_g > (long long)All.Ti_Current) {int bns = get_timestep_bin((integertime)(ti_ns_g - (long long)All.Ti_Current)); if(bns < bin) {bin = bns;}}
+        while(bin > 0 && !TimeBinActive[bin]) {bin--;}
+        if(bin > 0) {
+            integertime ti_bin = GET_INTEGERTIME_FROM_TIMEBIN(bin);
+            for(int i = 0; i < NumPart; i++) {if(is_rumi_star(i) && TimeBinActive[P[i].TimeBin]) {move_to_bin(i, bin); P[i].dt_step = ti_bin;}}
+        }
+    } else if(ti_grp < LLONG_MAX && ti_grp > (long long)All.Ti_Current) { /* joiners: end no later than the members' sync */
+        int bg = get_timestep_bin((integertime)(ti_grp - (long long)All.Ti_Current));
+        for(int i = 0; i < NumPart; i++) {
+            if(!is_rumi_star(i) || P[i].RumiMember || !TimeBinActive[P[i].TimeBin]) continue;
+            int b = P[i].TimeBin; if(b > bg) {b = bg;} while(b > 0 && !TimeBinActive[b]) {b--;}
+            if(b > 0 && b != P[i].TimeBin) {move_to_bin(i, b); P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(b);}
+        }
+    }
+}
+
+
+/* after do_first_halfstep_kick: when the members start a common step, the synchronised stars (members and joiners)
+   go through RUMI++ over that step */
+void rumi_integrate(void)
+{
+    int exist, sync; long long ti_grp;
+    member_status(exist, sync, ti_grp);
+    if(exist && !sync) {return;} /* members mid-step: joiners stay on their KDK steps */
+    std::vector<RumiStar> mine;
+    for(int i = 0; i < NumPart; i++) {
+        if(!is_rumi_star(i) || !TimeBinActive[P[i].TimeBin]) continue;
+        if(!P[i].RumiMember) { /* joining now: its opening half kick carried the direct star-star force, which RUMI++ integrates from here */
+            integertime ts = P[i].integertime_step();
+            double dtk = get_gravkick_factor(P[i].Ti_begstep, P[i].Ti_begstep + ts / 2, i, 0);
+            double *a = rumi_member(i).direct_acc;
+            for(int k = 0; k < 3; k++) {double dv = a[k] * All.G * dtk; P[i].Vel[k] -= dv; P[i].dp[k] -= P[i].Mass * dv; a[k] = 0;}
+        }
+        RumiStar s; s.ID = star_key(i); s.task = ThisTask; s.index = i; s.ti_step = GET_INTEGERTIME_FROM_TIMEBIN(P[i].TimeBin);
+        s.m = P[i].Mass; for(int k = 0; k < 3; k++) {s.pos[k] = P[i].Pos[k]; s.vel[k] = P[i].Vel[k];}
+        s.r_rsun = star_radius_rsun(i); s.kw = (P[i].Mass * UNIT_MASS_IN_SOLAR < 0.7) ? 0 : 1;
+        mine.push_back(s);
+    }
+    int nl = (int)mine.size(), ntot = 0;
+    MPI_Allreduce(&nl, &ntot, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(ntot == 0) {return;}
+    std::vector<int> cnt(NTask), disp(NTask);
+    int nb = nl * (int)sizeof(RumiStar);
+    MPI_Gather(&nb, 1, MPI_INT, cnt.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);
+    std::vector<RumiStar> all;
+    if(ThisTask == 0) {int o = 0; for(int t = 0; t < NTask; t++) {disp[t] = o; o += cnt[t];} all.resize(ntot);}
+    MPI_Gatherv(mine.data(), nb, MPI_BYTE, all.data(), cnt.data(), disp.data(), MPI_BYTE, 0, MPI_COMM_WORLD);
+
+    /* ---- task 0 plans the step: deltas of the stars RUMI++ has, mass changes, new or removed stars ---- */
+    Plan plan = {0, 0, 0, 0, 0, 0};
+    const int nsl = (int)slot_id.size();
+    std::vector<int> star_of_slot(nsl, -1);
+    std::vector<double> dx, dv, mnew, rnew;
+    if(ThisTask == 0) {
+        std::sort(all.begin(), all.end(), [](const RumiStar &a, const RumiStar &b) {return a.ID < b.ID;});
+        const integertime ti_step = all[0].ti_step;
+        for(const RumiStar &s : all) {if(s.ti_step != ti_step) {printf("RUMI++: stars on different bins in one step\n"); endrun(9303);}}
+        plan.dt = ti_step * All.Timebase_interval * UT; plan.G = rumi_G(); plan.nsl = nsl;
+        for(int k = 0; k < ntot; k++) {auto it = slot_of.find(all[k].ID); if(it == slot_of.end()) {plan.n_new++;} else {star_of_slot[it->second] = k;}}
+        for(int q = 0; q < nsl; q++) {if(star_of_slot[q] < 0 && last_m[q] > 0) {plan.rebuild = 1;}} /* a star left */
+        if(plan.n_new > 0 || nsl == 0) {plan.rebuild = 1;}
+        dx.assign(3*nsl, 0.0); dv.assign(3*nsl, 0.0); mnew.assign(nsl, 0.0); rnew.assign(nsl, 0.0);
+        for(int q = 0; q < nsl; q++) {
+            int k = star_of_slot[q]; if(k < 0) continue;
+            double d[3]; for(int j = 0; j < 3; j++) {d[j] = all[k].pos[j] - last_x[3*q+j];}
+            NEAREST_XYZ(d[0], d[1], d[2], 1);
+            for(int j = 0; j < 3; j++) {dx[3*q+j] = d[j] * UL; dv[3*q+j] = (all[k].vel[j] - last_v[3*q+j]) * UV;}
+            mnew[q] = (all[k].m == last_m[q]) ? slot_m_r[q] : all[k].m * UM; rnew[q] = all[k].r_rsun;
+            if(all[k].m != last_m[q]) {last_m[q] = all[k].m; slot_m_r[q] = mnew[q];}
+        }
+        if(nsl > 0) {plan.do_mass = 1;} /* radii age every step; set_mass skips what did not change */
+    }
+
+    /* ---- RUMI++ ranks: the plan, then the library calls (collective; host arrays read on task 0) ---- */
+    std::vector<double> m_out, x_out, v_out;
+    if(rumi_rank) {
+        MPI_Bcast(&plan, sizeof(Plan), MPI_BYTE, 0, RumiComm);
+        if(plan.nsl > 0) { /* slot bookkeeping lives on task 0: every RUMI++ rank follows the plan */
+            rumi_lib::shift(ThisTask == 0 ? dx.data() : nullptr);
+            rumi_lib::kick(ThisTask == 0 ? dv.data() : nullptr); /* the gas work on the stars, booked */
+            if(plan.do_mass) {rumi_lib::set_mass(ThisTask == 0 ? mnew.data() : nullptr, ThisTask == 0 ? rnew.data() : nullptr, plan.G);}
+        }
+        if(plan.rebuild) { /* new set: the library's state for the stars it has, GIZMO's for the others */
+            int ns = rumi_lib::n_slots();
+            std::vector<double> lm(ns), lx(3*ns), lv(3*ns);
+            if(ns > 0) {rumi_lib::get_state(lm.data(), lx.data(), lv.data());}
+            std::vector<long long> id; std::vector<double> m, x, v, r; std::vector<int> kw;
+            if(ThisTask == 0) {
+                id.resize(ntot); m.resize(ntot); x.resize(3*ntot); v.resize(3*ntot); r.resize(ntot); kw.resize(ntot);
+                for(int k = 0; k < ntot; k++) {
+                    const RumiStar &s = all[k]; id[k] = (long long)s.ID.id; kw[k] = s.kw; r[k] = s.r_rsun;
+                    auto it = slot_of.find(s.ID);
+                    if(it != slot_of.end() && lm[it->second] > 0) {
+                        int q = it->second; m[k] = lm[q];
+                        for(int j = 0; j < 3; j++) {x[3*k+j] = lx[3*q+j]; v[3*k+j] = lv[3*q+j];}
+                    } else {
+                        m[k] = s.m * UM; for(int j = 0; j < 3; j++) {x[3*k+j] = s.pos[j] * UL; v[3*k+j] = s.vel[j] * UV;}
+                    }
+                }
+            }
+            if(rumi_lib::set_particles(ntot, id.data(), m.data(), x.data(), v.data(), kw.data(), r.data(), plan.G, plan.dt) != 0) {printf("RUMI++: set_particles failed\n"); endrun(9304);}
+            if(ThisTask == 0) {
+                slot_id.resize(ntot); slot_of.clear();
+                for(int k = 0; k < ntot; k++) {slot_id[k] = all[k].ID; slot_of[all[k].ID] = k;}
+                last_m.assign(ntot, 0); last_x.assign(3*ntot, 0); last_v.assign(3*ntot, 0); slot_m_r = m;
+                for(int k = 0; k < ntot; k++) {last_m[k] = all[k].m;}
+            }
+        }
+        const int ns = rumi_lib::n_slots();
+        if(rumi_lib::advance(plan.dt, plan.G) != 0) {printf("RUMI++: advance failed\n"); endrun(9305);}
+        m_out.resize(ns); x_out.resize(3*ns); v_out.resize(3*ns);
+        rumi_lib::get_state(m_out.data(), x_out.data(), v_out.data());
+        n_steps++;
+    }
+    /* task 0: the results by star, back to the owners in task order */
+    std::vector<RumiBack> back;
+    std::vector<int> bcnt(NTask, 0), bdisp(NTask, 0);
+    if(ThisTask == 0) {
+        const int ns = (int)slot_id.size();
+        std::vector<char> m_new(ns, 0); /* RUMI++ changed this mass: GIZMO takes it, else GIZMO keeps its own bits */
+        for(int q = 0; q < ns; q++) {
+            if(m_out[q] != slot_m_r[q]) {m_new[q] = 1; slot_m_r[q] = m_out[q]; last_m[q] = (m_out[q] > 0) ? m_out[q] / UM : 0;}
+            for(int j = 0; j < 3; j++) {last_x[3*q+j] = x_out[3*q+j] / UL; last_v[3*q+j] = v_out[3*q+j] / UV;}
+        }
+        back.resize(ntot);
+        std::vector<int> order(ntot); for(int k = 0; k < ntot; k++) {order[k] = k;}
+        std::stable_sort(order.begin(), order.end(), [&](int a, int b) {return all[a].task < all[b].task;});
+        for(int q = 0; q < ntot; q++) {
+            int k = order[q], sl = slot_of[all[k].ID]; RumiBack &b = back[q];
+            b.ID = all[k].ID; b.index = all[k].index; b.m = m_new[sl] ? last_m[sl] : -1;
+            for(int j = 0; j < 3; j++) {b.pos[j] = last_x[3*sl+j]; b.vel[j] = last_v[3*sl+j];}
+            bcnt[all[k].task] += (int)sizeof(RumiBack);
+        }
+        int o = 0; for(int t = 0; t < NTask; t++) {bdisp[t] = o; o += bcnt[t];}
+    }
+    std::vector<RumiBack> got(nl);
+    MPI_Scatterv(back.data(), bcnt.data(), bdisp.data(), MPI_BYTE, got.data(), nl * (int)sizeof(RumiBack), MPI_BYTE, 0, MPI_COMM_WORLD);
+    int mass_changed_local = 0;
+    std::vector<int> moved;
+    for(const RumiBack &b : got) {
+        int i = b.index;
+        if(!(star_key(i) == b.ID)) {printf("RUMI++: index mismatch ID %llu vs %llu on task %d\n", (unsigned long long)P[i].ID, b.ID.id, ThisTask); endrun(9306);}
+        if(b.m >= 0 && b.m != P[i].Mass) {P[i].Mass = b.m; mass_changed_local = 1;}
+        struct rumi_member_state &rm = rumi_member(i);
+        integertime ti_step = GET_INTEGERTIME_FROM_TIMEBIN(P[i].TimeBin);
+        double dt_drift = get_drift_factor(P[i].Ti_current, P[i].Ti_current + ti_step, i, 0);
+        double d[3]; for(int j = 0; j < 3; j++) {d[j] = b.pos[j] - P[i].Pos[j];}
+        NEAREST_XYZ(d[0], d[1], d[2], 1);
+        for(int j = 0; j < 3; j++) {rm.target_pos[j] = b.pos[j]; rm.true_vel[j] = b.vel[j];}
+        double vnew[3];
+        if(dt_drift > 0) {for(int j = 0; j < 3; j++) {vnew[j] = d[j] / dt_drift;}}
+        else {for(int j = 0; j < 3; j++) {vnew[j] = b.vel[j]; P[i].Pos[j] = b.pos[j];} gravity_cover_set_position(i);}
+        for(int j = 0; j < 3; j++) {P[i].dp[j] += P[i].Mass * (vnew[j] - P[i].Vel[j]); P[i].Vel[j] = vnew[j];} /* the nodes' bulk velocity follows this write as it does a kick */
+        rm.ti_start = P[i].Ti_current; rm.ti_end = P[i].Ti_current + ti_step;
+        P[i].RumiIntegrated = 1; P[i].RumiMember = 1;
+        moved.push_back(i);
+    }
+    if(!moved.empty()) {gizmo_motion_bound_raise(moved.data(), (int)moved.size()); gizmo_mark_position_dirty_indices(moved.data(), (int)moved.size());} /* velocity set outside the kick: nodes must cover this drift */
+    int mc = 0; MPI_Allreduce(&mass_changed_local, &mc, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(mc) {TreeMomentsStaleFlag = 1;}
+}
+
+
+/* after the drift to a sync point: stars ending their RUMI++ step land on its position and take its velocity */
+void rumi_finish_drift(void)
+{
+    std::vector<int> moved;
+    for(int n = 0; n < TIMEBINS; n++) {if(!TimeBinActive[n]) {continue;}
+    for(int i = FirstInTimeBin[n]; i >= 0; i = NextInTimeBin[i]) {
+        if(P[i].Type != 4 || !P[i].RumiIntegrated) continue;
+        struct rumi_member_state &rm = rumi_member(i);
+        if(rm.ti_end != All.Ti_Current) continue;
+        double d[3]; for(int j = 0; j < 3; j++) {d[j] = P[i].Pos[j] - rm.target_pos[j];}
+        double w[3] = {d[0], d[1], d[2]}; NEAREST_XYZ(w[0], w[1], w[2], 1);
+        double err2 = w[0]*w[0] + w[1]*w[1] + w[2]*w[2], s2 = 0; for(int j = 0; j < 3; j++) {s2 += rm.target_pos[j] * rm.target_pos[j];}
+        if(err2 > 1e-20 * (s2 + 1e-30)) {printf("RUMI++ WARNING: star %llu drifted %g off its RUMI++ position (task %d)\n", (unsigned long long)P[i].ID, sqrt(err2), ThisTask);}
+        for(int j = 0; j < 3; j++) {P[i].Pos[j] = (d[j] == w[j]) ? rm.target_pos[j] : rm.target_pos[j] + (d[j] - w[j]);} /* keep a box wrap the drift made */
+        gravity_cover_set_position(i);
+        for(int j = 0; j < 3; j++) {P[i].dp[j] += P[i].Mass * (rm.true_vel[j] - P[i].Vel[j]); P[i].Vel[j] = rm.true_vel[j];}
+        P[i].RumiIntegrated = 0;
+        moved.push_back(i);
+    }}
+    if(!moved.empty()) {gizmo_motion_bound_raise(moved.data(), (int)moved.size()); gizmo_mark_position_dirty_indices(moved.data(), (int)moved.size()); gpu_particles_arena_invalidate();}
 }
 
 #endif /* STARS_INTEGRATED_BY_RUMI */

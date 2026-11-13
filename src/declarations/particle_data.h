@@ -483,6 +483,9 @@ extern ALIGN(32) struct particle_data
 #ifdef KETJU_REGULARIZATION
 #include "../gravity/ketju/ketju_particle_fields.h"
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+#include "../gravity/rumi/rumi_particle_fields.h"
+#endif
     /* member functions */
     GIZMO_GPU_FUNCTION inline integertime integertime_step() const { /*!< integer timestep for this particle */
         return dt_step;

@@ -2412,7 +2412,7 @@
 #ifdef KETJU_REGULARIZATION
 #include "../gravity/ketju/ketju_precompiler_logic.h"
 #endif
-#if defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(KETJU_REGULARIZATION)
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(KETJU_REGULARIZATION) || defined(STARS_INTEGRATED_BY_RUMI)
 #define SINGLE_STAR_RECORDS /* compact star records and P[i].StarIdx */
 #endif
 
