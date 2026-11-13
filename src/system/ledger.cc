@@ -107,6 +107,19 @@ static void ledger_state_rows(void) /* the state rows: sums over this rank's par
 #ifdef COSMIC_RAY_FLUID
     for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0) {for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {ledger_add_exact(&ledger_total[LEDGER_E_CR], CellP[i].CosmicRayEnergy[k]);}}}
 #endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    for(int i = 0; i < N_gas; i++) {
+        if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].Density <= 0) {continue;}
+        ledger_add_exact(&ledger_total[LEDGER_E_TH], P[i].Mass * CellP[i].InternalEnergy);
+        ledger_add_exact(&ledger_total[LEDGER_E_KIN], 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv);
+        double eb = 0.5 * CellP[i].B.norm_sq() * CellP[i].Density / (P[i].Mass * All.cf_atime); /* kicked B, as u and v */
+        ledger_add_exact(&ledger_total[LEDGER_E_B], eb);
+        if(CellP[i].LedgerEB >= 0) {ledger_add_exact(&ledger_total[LEDGER_E_B_VOLUME_CHANGE_PENDING], eb - CellP[i].LedgerEB);} /* drifted volume since the last B kick */
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+        ledger_add_exact(&ledger_total[LEDGER_E_PSI], 0.5 * CellP[i].PsiZ * CellP[i].PsiZ / All.cf_atime);
+#endif
+    }
+#endif
 #ifdef GALSF
     for(int i = 0; i < NumPart; i++) {
         if(P[i].Type == 0) {ledger_add_exact(&ledger_total[LEDGER_M_GAS], P[i].Mass); ledger_add_exact(&ledger_total[LEDGER_MZ_GAS], P[i].Mass * P[i].Metallicity[0]);}

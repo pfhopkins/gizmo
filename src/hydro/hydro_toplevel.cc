@@ -164,6 +164,9 @@ void hydro_final_operations_and_cleanup(void)
 #endif
                 CellP[i].HydroAccel -= CellP[i].divB * Bi;
                 CellP[i].DtInternalEnergy -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                CellP[i].DtE_MHDLedger[0] -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
+#endif
 #endif
             }
 
@@ -192,6 +195,9 @@ void hydro_final_operations_and_cleanup(void)
                 if(DtB_PhiCorr > tolerance_for_correction * DtB_UnCorr) {PhiCorr_Norm *= tolerance_for_correction * DtB_UnCorr / DtB_PhiCorr;}
                 CellP[i].DtB += PhiCorr_Norm * CellP[i].DtB_PhiCorr;
                 CellP[i].DtInternalEnergy += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, CellP[i].Bfield() * All.cf_a2inv);
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                CellP[i].DtE_MHDLedger[2] += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, CellP[i].Bfield() * All.cf_a2inv);
+#endif
             }
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
@@ -238,6 +244,9 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
             CellP[i].DtEB_booked = dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB) - CellP[i].DtEB_facevol; /* dE_B/dt the u equation assumes */
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            CellP[i].DtE_MHDLedger[3] += (magnorm_closure-1.) * dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB);
 #endif
             CellP[i].DtB *= magnorm_closure;
 #ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
@@ -564,6 +573,9 @@ void hydro_force_initial_operations_preloop(void)
 #endif
 #ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
             CellP[i].DtEB_facevol = 0;
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
 #endif
 #ifdef DIVBCLEANING_DEDNER
             CellP[i].DtB_PhiCorr = {};

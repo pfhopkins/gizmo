@@ -566,6 +566,9 @@ struct HydroForceSpec
 #ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
         MERGE_ADD(DtEB_facevol);
 #endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+        for(int kl = 0; kl < 5; kl++) { dst.DtE_MHDLedger[kl] += src.DtE_MHDLedger[kl]; }
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         MERGE_ADD(DtPhi);

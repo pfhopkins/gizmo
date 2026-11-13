@@ -423,6 +423,9 @@ void hydro_accumulate_neighbor(
     {
         double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel + face_vel_i);
         out.DtInternalEnergy += 0.5 * kernel.b2_i * All.cf_a2inv * All.cf_a2inv * wt_face_sum;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+        out.DtE_MHDLedger[4] += 0.5 * kernel.b2_i * All.cf_a2inv * All.cf_a2inv * wt_face_sum;
+#endif
 #ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
         out.DtEB_facevol += 0.5 * kernel.b2_i * All.cf_a2inv * All.cf_a2inv * wt_face_sum;
 #endif
@@ -432,6 +435,9 @@ void hydro_accumulate_neighbor(
         out.DtB_PhiCorr[k] += Riemann_out.phi_normal_db * Face_Area_Vec[k];
         out.DtB[k] += Riemann_out.phi_normal_mean * Face_Area_Vec[k];
         out.DtInternalEnergy += Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k] * All.cf_a2inv;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+        out.DtE_MHDLedger[1] += Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k] * All.cf_a2inv;
+#endif
     }
 #endif
 #if defined(MHD_NON_IDEAL) || defined(MHD_BATTERY_MECHANISMS)

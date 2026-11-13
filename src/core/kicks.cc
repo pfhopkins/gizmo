@@ -471,8 +471,13 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #endif
             EOS_LIMIT_RECORD_KICK_MIN_ENERGY(CellP[i].CompositionType, CellP[i].InternalEnergy, P[i].Mass);
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
-#if defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+#if (defined(SGCHEM) || defined(TEST_MHD_ENERGY_LEDGER_OUTPUT)) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
             ledger_add(LEDGER_E_KICK_FLOOR, P[i].Mass * (CellP[i].InternalEnergy - dEnt)); /* what the limiter and the floor add */
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            for(int kl=0;kl<5;kl++) {ledger_add(LEDGER_E_MHD_POWELL + kl, CellP[i].DtE_MHDLedger[kl] * dt_hydrokick);}
+#endif
+#if defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
 #ifdef MAGNETIC
             ledger_add(LEDGER_E_MHD_NUMERICAL, CellP[i].DtEnergyMHDNum * dt_hydrokick);
 #endif
@@ -643,11 +648,23 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #ifdef MAGNETIC
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    ledger_add(LEDGER_E_MHD_B_DVB_BOOKED, dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB) * dt_entr);
+    double eb_ledger_now = (CellP[i].Density > 0) ? 0.5 * CellP[i].B.norm_sq() * CellP[i].Density / (P[i].Mass * All.cf_atime) : 0; /* physical E_B */
+    if(CellP[i].LedgerEB >= 0) {ledger_add(LEDGER_E_B_VOLUME_CHANGE, eb_ledger_now - CellP[i].LedgerEB);}
+#endif
     CellP[i].B += CellP[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    CellP[i].LedgerEB = (CellP[i].Density > 0) ? 0.5 * CellP[i].B.norm_sq() * CellP[i].Density / (P[i].Mass * All.cf_atime) : 0;
+    ledger_add(LEDGER_E_B_KICK_CHANGE, CellP[i].LedgerEB - eb_ledger_now);
+#endif
 #ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
     { /* hyperbolic update, then parabolic damping; the damped E_psi goes to heat unless _NO_DAMPING_HEAT */
         CellP[i].PsiZ += sqrt(All.cf_atime) * CellP[i].DtPsiZ * dt_entr;
         double z0 = CellP[i].PsiZ; CellP[i].PsiZ *= Get_Gas_Psi_Damping_Factor_P(i, dt_entr, P, CellP);
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+        ledger_add(LEDGER_E_PSI_DAMPING, 0.5 * (z0*z0 - CellP[i].PsiZ*CellP[i].PsiZ) / All.cf_atime);
+#endif
 #ifndef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_NO_DAMPING_HEAT
         if(P[i].Mass > 0) {CellP[i].InternalEnergy += 0.5 * (z0*z0 - CellP[i].PsiZ*CellP[i].PsiZ) / (All.cf_atime * P[i].Mass);}
 #endif

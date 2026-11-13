@@ -1719,6 +1719,10 @@
 #define MHD_TRACK_BOOKED_MAGNETIC_ENERGY /* cell E_B at the last B kick and the dE_B/dt the u equation books */
 #endif
 
+#if defined(TEST_MHD_ENERGY_LEDGER_OUTPUT) && (!defined(MAGNETIC) || defined(HYDRO_SPH) || defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME) || !defined(OUTPUT_MASS_METAL_ENERGY_LEDGER))
+#error "TEST_MHD_ENERGY_LEDGER_OUTPUT needs MAGNETIC with a meshless method, the default leapfrog and OUTPUT_MASS_METAL_ENERGY_LEDGER"
+#endif
+
 /* constrained gradients (and MHD_MODIFIED_GRADIENT, which turns them on above) fit the cleaning-field gradient at the
    face mid-points; that needs the Dedner field, so it is on exactly when both are, whatever the order they were set in */
 #if defined(MHD_CONSTRAINED_GRADIENT) && defined(DIVBCLEANING_DEDNER)

@@ -375,6 +375,9 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 #ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
     CellP[i].DtEB_facevol += out->DtEB_facevol;
 #endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    for(int kl = 0; kl < 5; kl++) {CellP[i].DtE_MHDLedger[kl] += out->DtE_MHDLedger[kl];}
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[i].DtPhi += out->DtPhi;

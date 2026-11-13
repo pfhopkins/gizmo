@@ -1099,6 +1099,9 @@ void init(void)
 #ifdef MAGNETIC
         CellP[i].B = CellP[i].BPred * (P[i].Mass / CellP[i].Density); // convert to the conserved unit V*B //
         CellP[i].BPred = CellP[i].B; CellP[i].DtB = {}; CellP[i].BField_prerefinement = {};
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+        CellP[i].LedgerEB = -1; for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
+#endif
 #ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
         CellP[i].EB_last = -1; CellP[i].DtEB_booked = CellP[i].DtEB_facevol = 0;
 #endif

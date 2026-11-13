@@ -290,6 +290,9 @@ struct hydro_data_out
 #ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
     MyDouble DtEB_facevol;
 #endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    MyDouble DtE_MHDLedger[5];
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     MyFloat DtPhi;

@@ -91,6 +91,10 @@ extern struct gas_cell_data
     Vec3<MyDouble> B;               /*!< actual B (conserved variable used for integration; can be B*V for flux schemes) */
     Vec3<MyDouble> DtB;             /*!< time derivative of B-field (of -conserved- B-field) */
     MyFloat divB;                   /*!< storage for the 'effective' divB used in div-cleaning procedure */
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    MyDouble DtE_MHDLedger[5];      /*!< energy rates for the ledger: Powell, Dedner face, Dedner correction, closure limiter, B^2/2 dV/dt booked */
+    MyDouble LedgerEB;              /*!< E_B of this cell at its last B kick (<0: unset) */
+#endif
 #ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
     MyDouble PsiZ;                  /*!< (psi/c_h) sqrt(V): E_psi = PsiZ^2/(2a) */
     MyDouble PsiZPred;              /*!< drifted PsiZ */
