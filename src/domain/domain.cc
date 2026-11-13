@@ -1561,9 +1561,10 @@ static double domain_a_priori_cost_multiplier(int i)
 static void domain_compute_particle_costs(void)
 {
     /* global sums: [0] sum(w * GravWork) over stars, [1] sum(ExtraWorkEstimate), [2] sum(0.1 + GravWork), [3] sum(hydro),
-       [4] all recorded work */
-    double sums[5] = {0, 0, 0, 0, 0};
+       [4] all recorded work, [5] this step's prepaid hydro work */
+    double sums[6] = {0, 0, 0, 0, 0, 0};
     domain_no_work_recorded = 0;
+    const int prepay = domain_prepay_armed && !UseAllParticles;
     for(int i = 0; i < NumPart; i++)
     {
 #ifdef SUBFIND
@@ -1576,11 +1577,12 @@ static void domain_compute_particle_costs(void)
 #endif
         if(P[i].Type == 0) {sums[4] += (double) CellP[i].HydroWorkEstimate;}
         if(P[i].Type == 0) {sums[3] += (double) CellP[i].HydroWorkEstimate;}
+        if(prepay && P[i].Type == 0 && TimeBinActive[P[i].TimeBin]) {sums[5] += domain_gas_work_weight(i);}
 #if defined(GALSF) && !defined(CHIMES)
         if(P[i].ExtraWorkEstimate > 0) {sums[0] += domain_star_age_work_weight(i) * (double) P[i].GravWork; sums[1] += (double) P[i].ExtraWorkEstimate;}
 #endif
     }
-    MPI_Allreduce(MPI_IN_PLACE, sums, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, sums, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(sums[4] <= 0)
     {
         /* Nothing has been recorded yet: weight each particle by the a-priori estimate of its work, (1 + multiplier) times
@@ -1604,19 +1606,9 @@ static void domain_compute_particle_costs(void)
         }
         return;
     }
-    const int prepay = domain_prepay_armed && !UseAllParticles;
     if(prepay)
     {
-        double add = 0;
-        for(int i = 0; i < NumPart; i++)
-        {
-#ifdef SUBFIND
-            if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
-#endif
-            if(P[i].Type == 0 && TimeBinActive[P[i].TimeBin]) {add += domain_gas_work_weight(i);}
-        }
-        MPI_Allreduce(MPI_IN_PLACE, &add, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        sums[3] += add;
+        sums[3] += sums[5];
         domain_prepaid_ti = All.Ti_Current;
     }
     domain_stellar_prior_scale = (sums[1] > 0) ? sums[0] / sums[1] : 0;
