@@ -153,3 +153,15 @@ def test_energy_books():
     print(f"rumi.txt: {len(rows)} rows, {steps} steps, max |residual| {resid:.3e}, max |W_kick| {kick:.3e}")
     assert len(rows) == steps and log.count("RUMI ENERGY: t=") == steps
     assert resid < 1e-12 and kick == 0
+
+
+def test_cpu_row_and_header():
+    """cpu.txt has the rumi row; snapshots name the RUMI++ library build in their header"""
+    _, _, log = _errors("binary_ics", T_BINARY / 10)
+    out = variant_output_dir(TEST_NAME, ())
+    rows = [l for l in open(f"{out}/cpu.txt") if l.startswith("rumi ")]
+    with h5py.File(sorted(glob.glob(f"{out}/snapshot_*.hdf5"))[-1], "r") as f:
+        rid = f["Header"].attrs["RUMI_lib_id"]
+    rid = rid.decode() if isinstance(rid, bytes) else str(rid)
+    print(f"{len(rows)} rumi rows, header {rid}")
+    assert rows and rid.startswith("RUMI_LIB_ID api=3 commit=") and rid in log

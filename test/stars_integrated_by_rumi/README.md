@@ -8,5 +8,6 @@ Type-4 stars with the RUMI++ library (`STARS_INTEGRATED_BY_RUMI`), no gas, on th
 * `test_restart` (`TEST_RESTART_AT_STEP`): the triple stopped at step 40 and restarted from its restart files (RUMI++'s state among them) ends bit-identical to the uninterrupted run.
 * `test_merger`: the grazing pass of `test/ketju_star_collision` (1 + 0.5 Msun, pericentre 0.8 (R1 + R2), contact radii from the main-sequence fit, a bound third star and a far bystander) merges inside RUMI++: ID 2 into ID 1, total mass conserved to 1e-12, momentum to 1e-9, the product has the pair's mass and its CoM velocity (5 % of the relative speed, the third star pulls the pair).
 * `test_energy_books` (`RumiPrintInterval` 1): `rumi.txt` has one row per common step (19 in one orbit) and a RUMI ENERGY line each; with no gas the books' residual stays at round-off (measured 9e-15 of |E_ref|, bar 1e-12) and no kick work enters.
+* `test_cpu_row_and_header`: `cpu.txt` has a `rumi` row; the snapshot header attribute `RUMI_lib_id` names the library build, the same as the run log.
 
 Runs only when `RUMI_PATH` points to a RUMI++ library install built against the same Kokkos as GIZMO (skipped otherwise), e.g. `RUMI_PATH=/u/uli/sw/rumi/4979aaf1b283-omp-mpi-kokkos5.0.0-gcc13` on Orion.
