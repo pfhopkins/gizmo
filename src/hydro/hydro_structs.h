@@ -185,6 +185,9 @@ struct hydro_data_in
 #ifdef DIVBCLEANING_DEDNER
     MyFloat PhiPred;
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    MyDouble PsiCons;
+#endif
 #ifdef MHD_MODIFIED_GRADIENT
     MyFloat MG_cgcoeff;
     long long MG_piece_token;
@@ -280,6 +283,16 @@ struct hydro_data_out
     Vec3<MyDouble> Face_Area;
     Vec3<MyFloat> DtB;
     MyFloat divB;
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    MyDouble DivBDiff;
+    Vec3<MyDouble> DtB_PsiCons;
+#endif
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+    MyDouble DtEB_facevol;
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    MyDouble DtE_MHDLedger[5];
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     MyFloat DtPhi;

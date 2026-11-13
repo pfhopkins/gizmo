@@ -1688,12 +1688,39 @@
 #endif
 
 #ifdef MAGNETIC /* recommended MHD switches -- only turn these off for de-bugging */
-#ifndef TEST_MHD_NO_DEDNER_CLEANING /* test only: disables div-cleaning */
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH /* constrained psi/c_h cleaning (Tricco & Price 2012; Tricco, Price & Bate 2016) in place of Dedner */
+#ifndef HYDRO_MESHLESS_FINITE_MASS
+#error "DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH requires HYDRO_MESHLESS_FINITE_MASS"
+#endif
+#ifdef DIVBCLEANING_DEDNER
+#error "DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH replaces DIVBCLEANING_DEDNER: do not set both"
+#endif
+#ifndef DIVBCLEANING_CONSERVATIVE_SIGMA
+#if !defined(BOX_SPATIAL_DIMENSION) || (BOX_SPATIAL_DIMENSION == 3)
+#define DIVBCLEANING_CONSERVATIVE_SIGMA 1.0 /* TPB16 optimum in 3D */
+#else
+#define DIVBCLEANING_CONSERVATIVE_SIGMA 0.3 /* TPB16 optimum in 2D */
+#endif
+#endif
+#elif !defined(TEST_MHD_NO_DEDNER_CLEANING) /* test only: disables div-cleaning */
 #define DIVBCLEANING_DEDNER         /* hyperbolic/parabolic div-cleaing (Dedner 2002), with TP improvements */
 #endif
 #ifdef HYDRO_SPH /* MHD switches specific to SPH MHD */
 #define SPH_TP12_ARTIFICIAL_RESISTIVITY   /* turns on magnetic dissipation ('artificial resistivity'): uses tricco switch =h*|gradB|/|B| */
 #endif
+#endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) && defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+#error "MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE and MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY are alternatives"
+#endif
+#if !defined(MAGNETIC) || defined(HYDRO_SPH) || defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME)
+#error "MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE and MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY need MAGNETIC with a meshless method and the default leapfrog"
+#endif
+#define MHD_TRACK_BOOKED_MAGNETIC_ENERGY /* cell E_B at the last B kick and the dE_B/dt the u equation books */
+#endif
+
+#if defined(TEST_MHD_ENERGY_LEDGER_OUTPUT) && (!defined(MAGNETIC) || defined(HYDRO_SPH) || defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME) || !defined(OUTPUT_MASS_METAL_ENERGY_LEDGER))
+#error "TEST_MHD_ENERGY_LEDGER_OUTPUT needs MAGNETIC with a meshless method, the default leapfrog and OUTPUT_MASS_METAL_ENERGY_LEDGER"
 #endif
 
 /* constrained gradients (and MHD_MODIFIED_GRADIENT, which turns them on above) fit the cleaning-field gradient at the

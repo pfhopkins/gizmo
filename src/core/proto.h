@@ -1453,18 +1453,36 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #else
 #define LEDGER_ROWS_PI(X)
 #endif
-#ifdef SGCHEM /* gas energy the kick limiter and the temperature floor add; the energy the MHD source terms create */
+#if defined(SGCHEM) || defined(TEST_MHD_ENERGY_LEDGER_OUTPUT) /* gas energy the kick limiter and the temperature floor add */
 #define LEDGER_ROWS_KICK_FLOOR(X) X(LEDGER_E_KICK_FLOOR, "E_kick_floor_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_KICK_FLOOR(X)
+#endif
+#ifdef SGCHEM /* the energy the MHD source terms create */
 #ifdef MAGNETIC
 #define LEDGER_ROWS_MHD(X) X(LEDGER_E_MHD_NUMERICAL, "E_mhd_numerical_erg", UNIT_ENERGY_IN_CGS, 0)
 #else
 #define LEDGER_ROWS_MHD(X)
 #endif
 #else
-#define LEDGER_ROWS_KICK_FLOOR(X)
 #define LEDGER_ROWS_MHD(X)
 #endif
-#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X) LEDGER_ROWS_PI(X) LEDGER_ROWS_KICK_FLOOR(X) LEDGER_ROWS_MHD(X)
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT /* test: gas and field energies at output, the MHD source terms, booked and actual E_B changes */
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+#define LEDGER_ROWS_MHD_PSI(X) X(LEDGER_E_PSI, "E_psi_erg", UNIT_ENERGY_IN_CGS, 1) X(LEDGER_E_PSI_DAMPING, "E_psi_damping_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_MHD_PSI(X)
+#endif
+#define LEDGER_ROWS_MHD_TERMS(X) X(LEDGER_E_TH, "E_th_erg", UNIT_ENERGY_IN_CGS, 1) X(LEDGER_E_KIN, "E_kin_erg", UNIT_ENERGY_IN_CGS, 1) X(LEDGER_E_B, "E_B_erg", UNIT_ENERGY_IN_CGS, 1) \
+    X(LEDGER_E_MHD_POWELL, "E_mhd_powell_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_MHD_DEDNER_FACE, "E_mhd_dedner_face_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_MHD_DEDNER_CORRECTION, "E_mhd_dedner_correction_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_MHD_CLOSURE, "E_mhd_closure_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_MHD_HALF_B2_DV_BOOKED, "E_mhd_half_B2_dV_booked_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_MHD_B_DVB_BOOKED, "E_mhd_B_dVB_booked_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_B_VOLUME_CHANGE, "E_B_volume_change_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_B_KICK_CHANGE, "E_B_kick_change_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_B_VOLUME_CHANGE_PENDING, "E_B_volume_change_pending_erg", UNIT_ENERGY_IN_CGS, 1) LEDGER_ROWS_MHD_PSI(X)
+#else
+#define LEDGER_ROWS_MHD_TERMS(X)
+#endif
+#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X) LEDGER_ROWS_PI(X) LEDGER_ROWS_KICK_FLOOR(X) LEDGER_ROWS_MHD(X) LEDGER_ROWS_MHD_TERMS(X)
 #define LEDGER_ROW_ENUM(id, name, unit, state) id,
 enum ledger_rows {LEDGER_ROWS(LEDGER_ROW_ENUM) LEDGER_NROWS};
 void ledger_init(void);

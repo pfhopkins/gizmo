@@ -277,6 +277,9 @@ struct HydroForceSpec
         local.PhiPred       = active.enabled ? (kc[i].PhiPred / kp[i].Mass) : 0;
         local.Gradients.Phi = kc[i].Gradients.Phi;
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+        local.PsiCons = Get_Gas_Psi_Conservative_P(i, kp, kc);
+#endif
 #ifdef MHD_MODIFIED_GRADIENT
         local.MG_cgcoeff = kc[i].MG_cgcoeff;
         local.MG_piece_token = kc[i].MG_piece_token;
@@ -556,6 +559,16 @@ struct HydroForceSpec
         for(int kv = 0; kv < 3; kv++) { dst.Face_Area[kv] += src.Face_Area[kv]; }
         for(int kv = 0; kv < 3; kv++) { dst.DtB[kv] += src.DtB[kv]; }
         MERGE_ADD(divB);
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+        MERGE_ADD(DivBDiff);
+        for(int kv = 0; kv < 3; kv++) { dst.DtB_PsiCons[kv] += src.DtB_PsiCons[kv]; }
+#endif
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+        MERGE_ADD(DtEB_facevol);
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+        for(int kl = 0; kl < 5; kl++) { dst.DtE_MHDLedger[kl] += src.DtE_MHDLedger[kl]; }
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         MERGE_ADD(DtPhi);

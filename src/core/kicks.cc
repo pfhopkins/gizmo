@@ -15,6 +15,9 @@
 #ifdef MHD_NON_IDEAL_EVOLVED_FLUX
 #include "../hydro/nonideal_mhd_functions.h"
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+#include "predict_functions.h" /* Get_Gas_Psi_Damping_Factor_P */
+#endif
 
 /*!
  * This file was originally part of the GADGET3 code developed by
@@ -335,6 +338,21 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             dEnt_Gravity += dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+            { /* physical E_B = |VB_code|^2 (rho/m)_code / (2a) */
+                double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0;
+                Vec3<double> dVB = CellP[i].DtB * (dt_hydrokick / All.cf_atime), VB_new = CellP[i].B + dVB;
+                double eb_new = 0.5 * VB_new.norm_sq() * rho_over_m / All.cf_atime;
+#ifdef MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY /* rescale |VB| so E_B after this kick is what the u equation booked */
+                double eb_target = CellP[i].EB_last + CellP[i].DtEB_booked * dt_hydrokick;
+                if(CellP[i].EB_last >= 0 && eb_target > 0 && eb_new > 0) {CellP[i].B = VB_new * sqrt(eb_target / eb_new) - dVB; CellP[i].EB_last = eb_target;}
+                else {CellP[i].EB_last = eb_new;}
+#else /* charge u with the actual E_B change (kernel volume since the last kick and this kick's dVB) minus what it booked */
+                if(CellP[i].EB_last >= 0) {du_tot -= (eb_new - CellP[i].EB_last - CellP[i].DtEB_booked * dt_hydrokick) / P[i].Mass;}
+                CellP[i].EB_last = eb_new;
+#endif
+            }
+#endif
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
             if((mode == 1) && (du_tot != 0) && (dt_hydrokick > 0)) { /* if about to consider second-halfstep kick (just after hydro) */
                 CellP[i].CoolingIsOperatorSplitThisTimestep=0; /* default to assume un-split */
@@ -453,8 +471,13 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #endif
             EOS_LIMIT_RECORD_KICK_MIN_ENERGY(CellP[i].CompositionType, CellP[i].InternalEnergy, P[i].Mass);
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
-#if defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+#if (defined(SGCHEM) || defined(TEST_MHD_ENERGY_LEDGER_OUTPUT)) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
             ledger_add(LEDGER_E_KICK_FLOOR, P[i].Mass * (CellP[i].InternalEnergy - dEnt)); /* what the limiter and the floor add */
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            for(int kl=0;kl<5;kl++) {ledger_add(LEDGER_E_MHD_POWELL + kl, CellP[i].DtE_MHDLedger[kl] * dt_hydrokick);}
+#endif
+#if defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
 #ifdef MAGNETIC
             ledger_add(LEDGER_E_MHD_NUMERICAL, CellP[i].DtEnergyMHDNum * dt_hydrokick);
 #endif
@@ -568,6 +591,9 @@ void set_predicted_quantities_for_extra_physics(int i)
     {
         int k, kf; k=0, kf=0;
 #if defined(MAGNETIC)
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+        CellP[i].PsiZPred = CellP[i].PsiZ;
+#endif
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
         CellP[i].BPred = CellP[i].B;
 #if defined(DIVBCLEANING_DEDNER)
@@ -622,7 +648,28 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #ifdef MAGNETIC
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    ledger_add(LEDGER_E_MHD_B_DVB_BOOKED, dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB) * dt_entr);
+    double eb_ledger_now = (CellP[i].Density > 0) ? 0.5 * CellP[i].B.norm_sq() * CellP[i].Density / (P[i].Mass * All.cf_atime) : 0; /* physical E_B */
+    if(CellP[i].LedgerEB >= 0) {ledger_add(LEDGER_E_B_VOLUME_CHANGE, eb_ledger_now - CellP[i].LedgerEB);}
+#endif
     CellP[i].B += CellP[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    CellP[i].LedgerEB = (CellP[i].Density > 0) ? 0.5 * CellP[i].B.norm_sq() * CellP[i].Density / (P[i].Mass * All.cf_atime) : 0;
+    ledger_add(LEDGER_E_B_KICK_CHANGE, CellP[i].LedgerEB - eb_ledger_now);
+#endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    { /* hyperbolic update, then parabolic damping; the damped E_psi goes to heat unless _NO_DAMPING_HEAT */
+        CellP[i].PsiZ += sqrt(All.cf_atime) * CellP[i].DtPsiZ * dt_entr;
+        double z0 = CellP[i].PsiZ; CellP[i].PsiZ *= Get_Gas_Psi_Damping_Factor_P(i, dt_entr, P, CellP);
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+        ledger_add(LEDGER_E_PSI_DAMPING, 0.5 * (z0*z0 - CellP[i].PsiZ*CellP[i].PsiZ) / All.cf_atime);
+#endif
+#ifndef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_NO_DAMPING_HEAT
+        if(P[i].Mass > 0) {CellP[i].InternalEnergy += 0.5 * (z0*z0 - CellP[i].PsiZ*CellP[i].PsiZ) / (All.cf_atime * P[i].Mass);}
+#endif
+    }
+#endif
 #ifdef DIVBCLEANING_DEDNER
     double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi-fluxes (otherwise is just "1")
     /* phi units are [vcode][Bcode]=a^3 * vphys*Bphys */

@@ -82,6 +82,37 @@ double Get_Gas_PhiField_P(int i_particle_id, struct particle_data *pp, struct ga
 #endif /* DIVBCLEANING_DEDNER */
 
 
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+/* cleaning speed c_h = sqrt(c_s^2 + v_A^2), physical */
+KOKKOS_INLINE_FUNCTION
+double Get_Gas_CleaningSpeed_P(int i, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    if(cell[i].Density <= 0) {return 0;}
+    double cs = cell[i].effective_soundspeed();
+    double ch = sqrt(cs*cs + cell[i].Bfield().norm_sq() / (All.cf_atime * cell[i].Density));
+#ifdef TEST_DIVBCLEANING_ALTERNATING_CLEANING_SPEED
+    if(((long)(All.Time / 0.05)) % 2) {ch *= 2;} /* test only: c_h doubles every other 0.05 in code time */
+#endif
+    return ch;
+}
+/* physical psi = c_h PsiZ / sqrt(a V_phys) */
+KOKKOS_INLINE_FUNCTION
+double Get_Gas_Psi_Conservative_P(int i, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    if(cell[i].Density <= 0 || pp[i].Mass <= 0) {return 0;}
+    double V_phys = pp[i].Mass / (cell[i].Density * All.cf_a3inv);
+    return Get_Gas_CleaningSpeed_P(i, pp, cell) * cell[i].PsiZPred / sqrt(All.cf_atime * V_phys);
+}
+/* parabolic damping factor over dt: exp(-sigma c_h dt / h), h = 1.2 (m/rho)^(1/d) */
+KOKKOS_INLINE_FUNCTION
+double Get_Gas_Psi_Damping_Factor_P(int i, double dt, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    double ch = Get_Gas_CleaningSpeed_P(i, pp, cell), h = 1.2 * pp[i].Get_Particle_Size() * All.cf_atime;
+    return (ch > 0 && h > 0 && dt > 0) ? exp(-dt * DIVBCLEANING_CONSERVATIVE_SIGMA * ch / h) : 1;
+}
+#endif
+
+
 #ifdef DIVBCLEANING_DEDNER
 KOKKOS_INLINE_FUNCTION
 double Get_Gas_PhiField_DampingTimeInv_P(int i_particle_id, struct particle_data *pp, struct gas_cell_data *cell)

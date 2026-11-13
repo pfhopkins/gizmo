@@ -423,16 +423,37 @@ void hydro_accumulate_neighbor(
     {
         double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel + face_vel_i);
         out.DtInternalEnergy += 0.5 * kernel.b2_i * All.cf_a2inv * All.cf_a2inv * wt_face_sum;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+        out.DtE_MHDLedger[4] += 0.5 * kernel.b2_i * All.cf_a2inv * All.cf_a2inv * wt_face_sum;
+#endif
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+        out.DtEB_facevol += 0.5 * kernel.b2_i * All.cf_a2inv * All.cf_a2inv * wt_face_sum;
+#endif
     }
 #ifdef DIVBCLEANING_DEDNER
     for(k=0; k<3; k++) {
         out.DtB_PhiCorr[k] += Riemann_out.phi_normal_db * Face_Area_Vec[k];
         out.DtB[k] += Riemann_out.phi_normal_mean * Face_Area_Vec[k];
         out.DtInternalEnergy += Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k] * All.cf_a2inv;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+        out.DtE_MHDLedger[1] += Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k] * All.cf_a2inv;
+#endif
     }
 #endif
 #if defined(MHD_NON_IDEAL) || defined(MHD_BATTERY_MECHANISMS)
     out.DtInternalEnergy += dot(local.BPred, bflux_from_nonideal_effects) * All.cf_a2inv;
+#endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    { /* outward area of i is -Face_Area_Vec; the pair is antisymmetric, so each side's own evaluation conserves E_B + E_psi */
+        double psi_j = Get_Gas_Psi_Conservative_P(j, P, CellP);
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_SYMMETRIC_DIVB
+        out.DtB_PsiCons += Face_Area_Vec * (-0.5 * (local.PsiCons - psi_j)); /* TP12 sec. 4.2.2: symmetric V div.B, difference grad psi */
+        out.DivBDiff += -0.5 * dot(Face_Area_Vec, BPred_j + local.BPred) * All.cf_a2inv;
+#else
+        out.DtB_PsiCons += Face_Area_Vec * (0.5 * (local.PsiCons + psi_j)); /* symmetric -V grad psi, difference V div.B */
+        out.DivBDiff += -0.5 * dot(Face_Area_Vec, BPred_j - local.BPred) * All.cf_a2inv;
+#endif
+    }
 #endif
 #endif
 #endif

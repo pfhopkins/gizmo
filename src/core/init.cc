@@ -868,6 +868,9 @@ void init(void)
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
         CellP[i].Balpha = 0.0;
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+        CellP[i].PsiZ = CellP[i].PsiZPred = CellP[i].DtPsiZ = 0;
+#endif
 #ifdef DIVBCLEANING_DEDNER
         CellP[i].Phi = CellP[i].PhiPred = CellP[i].DtPhi = 0;
 #endif
@@ -1099,6 +1102,12 @@ void init(void)
 #ifdef MAGNETIC
         CellP[i].B = CellP[i].BPred * (P[i].Mass / CellP[i].Density); // convert to the conserved unit V*B //
         CellP[i].BPred = CellP[i].B; CellP[i].DtB = {}; CellP[i].BField_prerefinement = {};
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+        CellP[i].LedgerEB = -1; for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
+#endif
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+        CellP[i].EB_last = -1; CellP[i].DtEB_booked = CellP[i].DtEB_facevol = 0;
+#endif
 #endif
 #ifdef COSMIC_RAY_FLUID
         if(RestartFlag == 0 && (All.CosmicRayInitialAmbient_eVcm3 > 0 || All.CosmicRayInitialCloud_eVcm3 > 0)) { /* initial CR background, split by density; other starts keep what they read */
