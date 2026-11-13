@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <climits>
+#include <sys/stat.h>
 #include <algorithm>
 #include <vector>
 #include <unordered_map>
@@ -67,7 +68,10 @@ std::vector<StarKey> slot_id;             /* library slot -> star */
 std::unordered_map<StarKey, int, StarKeyHash> slot_of;
 std::vector<double> last_m, last_x, last_v; /* by slot, GIZMO units, the state last handed back (mass: GIZMO's own) */
 std::vector<double> slot_m_r;             /* by slot, the mass RUMI++ holds */
-long long n_steps = 0, n_merge = 0;
+long long n_steps = 0, n_merge = 0, n_split = 0;
+double E0_led = 0; int have_E0 = 0;      /* the energy books' residual at the first printed step */
+double tw_limit = 0, tw_gather = 0, tw_lib = 0, tw_scatter = 0; /* wall s */
+FILE *FdRumi = NULL;
 
 inline int is_rumi_star(int i) {return (P[i].Type == 4) && (P[i].Mass > 0);}
 
@@ -177,13 +181,24 @@ void rumi_init(void)
         printf("RUMI++: %s (built against %s), Kokkos %s on %d rank(s); G = %.10e pc^3/Msun (km/s)^2 (All.G = %.10e); units pc %.10g Msun %.10g km/s %.10g\n",
                rumi_lib::build_id(), RUMI_LIB_ID_MK, rumi_lib::backend_name(), nr, rumi_G(), All.G, UL, UM, UV);
         if(strcmp(rumi_lib::build_id(), RUMI_LIB_ID_MK) != 0) {printf("RUMI++: the linked library is not the one Makefile.rumi checked\n"); endrun(9307);}
+        mkdir(All.OutputDir, 02755); /* begrun runs this before the output files are opened */
+        char buf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, sizeof(buf), "%s/rumi.txt", All.OutputDir);
+        FdRumi = fopen(buf, RestartFlag == 0 ? "w" : "a");
+        if(!FdRumi) {printf("RUMI++: cannot open %s\n", buf); endrun(9308);}
+        fprintf(FdRumi, "# %s\n# step time N E_stars E_books ledger_residual/|E_ref| E_ref W_kick W_kick_abs E_set (RUMI++ units: pc Msun km/s) | books escape gw merge sse | wall s: limit gather advance rebuild h2d d2h scatter direct | mergers splits\n", rumi_lib::build_id()); fflush(FdRumi);
     }
 }
 
 void rumi_finalize(void)
 {
     if(!rumi_rank) return;
-    if(ThisTask == 0) {printf("RUMI++ totals: %lld steps, %lld mergers\n", n_steps, n_merge);}
+    if(ThisTask == 0) {
+        const rumi_lib::Timers &T = rumi_lib::timers(); const rumi_lib::Ledger &L = rumi_lib::ledger();
+        printf("RUMI++ totals: %lld steps, %lld mergers, %lld set rebuilds, %lld mass updates, %lld split steps; wall s: limit %.3f gather %.3f rumi %.3f (advance %.3f rebuild %.3f h2d %.3f d2h %.3f) scatter %.3f\n",
+               n_steps, n_merge, T.n_rebuild, T.n_set_mass, n_split, tw_limit, tw_gather, tw_lib, T.advance, T.rebuild, T.h2d, T.d2h, tw_scatter);
+        printf("RUMI ENERGY: kick work net %.6e abs %.6e set changes %.6e (RUMI++ units)\n", L.W_kick, L.W_kick_abs, L.E_set);
+    }
+    if(FdRumi) {fclose(FdRumi); FdRumi = NULL;}
     rumi_lib::kokkos_finalize();
 }
 
@@ -193,6 +208,7 @@ void rumi_finalize(void)
    there). Non-members starting a step while the members are mid-step: steps that end at the members' next sync. */
 void rumi_limit_timesteps(void)
 {
+    double t0 = MPI_Wtime();
     int exist, sync; long long ti_grp;
     member_status(exist, sync, ti_grp);
     const int group_step = (!exist || sync);
@@ -205,7 +221,7 @@ void rumi_limit_timesteps(void)
     int bmin_g; long long ti_ns_g;
     MPI_Allreduce(&bmin, &bmin_g, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     MPI_Allreduce(&ti_ns, &ti_ns_g, 1, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
-    if(bmin_g >= TIMEBINS) {return;}
+    if(bmin_g >= TIMEBINS) {tw_limit += MPI_Wtime() - t0; return;}
     int bin = bmin_g;
     if(group_step) {
         if(All.RumiStarMaxTimestep > 0) {
@@ -230,6 +246,7 @@ void rumi_limit_timesteps(void)
             if(b > 0 && b != P[i].TimeBin) {move_to_bin(i, b); P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(b);}
         }
     }
+    tw_limit += MPI_Wtime() - t0;
 }
 
 
@@ -237,6 +254,7 @@ void rumi_limit_timesteps(void)
    go through RUMI++ over that step */
 void rumi_integrate(void)
 {
+    double t0 = MPI_Wtime();
     int exist, sync; long long ti_grp;
     member_status(exist, sync, ti_grp);
     if(exist && !sync) {return;} /* members mid-step: joiners stay on their KDK steps */
@@ -263,6 +281,7 @@ void rumi_integrate(void)
     std::vector<RumiStar> all;
     if(ThisTask == 0) {int o = 0; for(int t = 0; t < NTask; t++) {disp[t] = o; o += cnt[t];} all.resize(ntot);}
     MPI_Gatherv(mine.data(), nb, MPI_BYTE, all.data(), cnt.data(), disp.data(), MPI_BYTE, 0, MPI_COMM_WORLD);
+    double t1 = MPI_Wtime(); tw_gather += t1 - t0;
 
     /* ---- task 0 plans the step: deltas of the stars RUMI++ has, mass changes, new or removed stars ---- */
     Plan plan = {0, 0, 0, 0, 0, 0, 0, 0};
@@ -333,11 +352,25 @@ void rumi_integrate(void)
             m_mid.resize(ns); x_mid.resize(3*ns); v_mid.resize(3*ns);
             rumi_lib::get_state(m_mid.data(), x_mid.data(), v_mid.data());
             if(rumi_lib::advance(plan.dt - plan.dt1, plan.G) != 0) {printf("RUMI++: advance failed\n"); endrun(9305);}
+            n_split++;
         } else if(rumi_lib::advance(plan.dt, plan.G) != 0) {printf("RUMI++: advance failed\n"); endrun(9305);}
         m_out.resize(ns); x_out.resize(3*ns); v_out.resize(3*ns);
         rumi_lib::get_state(m_out.data(), x_out.data(), v_out.data());
         rumi_lib::merger_events(mk, mg, mp);
         n_steps++;
+        const int print_now = All.RumiPrintInterval > 0 && (n_steps % All.RumiPrintInterval == 1 || All.RumiPrintInterval == 1);
+        double E = 0, Eb = 0;
+        if(print_now) {rumi_lib::energy(plan.G, &E, &Eb);} /* collective over the RUMI++ ranks */
+        if(ThisTask == 0 && print_now) {
+            const rumi_lib::Ledger &L = rumi_lib::ledger();
+            double resid = E + Eb - L.W_kick - L.E_set; /* constant up to the integration error */
+            if(!have_E0) {E0_led = resid; have_E0 = 1;}
+            double bk[7]; rumi_lib::books(bk); const rumi_lib::Timers &T = rumi_lib::timers(); double Er = fabs(rumi_lib::e_ref());
+            if(FdRumi) {fprintf(FdRumi, "%lld %.10e %d %.16e %.6e %.6e %.6e %.6e %.6e %.6e | %.3e %.3e %.3e %.3e | %.3f %.3f %.3f %.3f %.3f %.3f %.3f %.3f | %lld %lld\n",
+                                n_steps, All.Time, ns, E, Eb, (resid - E0_led) / Er, rumi_lib::e_ref(), L.W_kick, L.W_kick_abs, L.E_set,
+                                bk[0], bk[1], bk[2], bk[3], tw_limit, tw_gather, T.advance, T.rebuild, T.h2d, T.d2h, tw_scatter, 0.0, n_merge, n_split); fflush(FdRumi);}
+            printf("RUMI ENERGY: t=%.6f collisions-dE=%.6e kick-work=%.6e (|E_ref| units)\n", All.Time, (Er > 0) ? -bk[2] / Er : 0.0, (Er > 0) ? L.W_kick / Er : 0.0);
+        }
     }
     /* task 0: the results by star, back to the owners in task order */
     std::vector<RumiBack> back;
@@ -374,6 +407,7 @@ void rumi_integrate(void)
         }
         int o = 0; for(int t = 0; t < NTask; t++) {bdisp[t] = o; o += bcnt[t];}
     }
+    double t2 = MPI_Wtime(); tw_lib += t2 - t1;
     std::vector<RumiBack> got(nl);
     MPI_Scatterv(back.data(), bcnt.data(), bdisp.data(), MPI_BYTE, got.data(), nl * (int)sizeof(RumiBack), MPI_BYTE, 0, MPI_COMM_WORLD);
     int mass_changed_local = 0;
@@ -408,6 +442,7 @@ void rumi_integrate(void)
     }
     int mc = 0; MPI_Allreduce(&mass_changed_local, &mc, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(mc) {TreeMomentsStaleFlag = 1;}
+    tw_scatter += MPI_Wtime() - t2;
 }
 
 
@@ -454,7 +489,7 @@ void rumi_save_state(void)
 {
     if(!rumi_rank) return;
     std::vector<char> b;
-    if(ThisTask == 0) {put_vec(b, slot_id); put_vec(b, last_m); put_vec(b, last_x); put_vec(b, last_v); put_vec(b, slot_m_r); put(b, n_steps); put(b, n_merge);}
+    if(ThisTask == 0) {put_vec(b, slot_id); put_vec(b, last_m); put_vec(b, last_x); put_vec(b, last_v); put_vec(b, slot_m_r); put(b, n_steps); put(b, n_merge); put(b, n_split); put(b, E0_led); put(b, have_E0);}
     char dir[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(dir, sizeof(dir), "%s/restartfiles/rumi", All.OutputDir);
     if(rumi_lib::save_state(dir, b) != 0) {printf("RUMI++: save_state failed\n"); endrun(9308);}
 }
@@ -467,7 +502,7 @@ void rumi_load_state(void)
     if(rumi_lib::load_state(dir, b) != 0) {printf("RUMI++: load_state failed (%s)\n", dir); endrun(9309);}
     if(ThisTask == 0 && !b.empty()) {
         size_t o = 0;
-        get_vec(b, o, slot_id); get_vec(b, o, last_m); get_vec(b, o, last_x); get_vec(b, o, last_v); get_vec(b, o, slot_m_r); get(b, o, n_steps); get(b, o, n_merge);
+        get_vec(b, o, slot_id); get_vec(b, o, last_m); get_vec(b, o, last_x); get_vec(b, o, last_v); get_vec(b, o, slot_m_r); get(b, o, n_steps); get(b, o, n_merge); get(b, o, n_split); get(b, o, E0_led); get(b, o, have_E0);
         slot_of.clear(); for(size_t k = 0; k < slot_id.size(); k++) {slot_of[slot_id[k]] = (int)k;}
         printf("RUMI++: restarted from %s, %zu slots, step %lld\n", dir, slot_id.size(), n_steps);
     }

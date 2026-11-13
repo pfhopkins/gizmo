@@ -15,6 +15,7 @@ int rumi_register_params(char (*tag)[50], void **addr, int *id, int nt, int maxt
     RUMI_TAG("RumiMassUnitMsun", &All.RumiMassUnitMsun, type_real);
     RUMI_TAG("RumiVelUnitKms", &All.RumiVelUnitKms, type_real);
     RUMI_TAG("RumiNumRanks", &All.RumiNumRanks, type_int);
+    RUMI_TAG("RumiPrintInterval", &All.RumiPrintInterval, type_int);
 #undef RUMI_TAG
     return nt;
 }
@@ -30,6 +31,7 @@ int rumi_param_default(const char *tag, void *addr)
     RUMI_DEF_REAL("RumiMassUnitMsun", 0, " (the code unit in Msun)");
     RUMI_DEF_REAL("RumiVelUnitKms", 0, " (the code unit in km/s)");
     RUMI_DEF_INT("RumiNumRanks", 1, "");
+    RUMI_DEF_INT("RumiPrintInterval", 64, "");
 #undef RUMI_DEF_REAL
 #undef RUMI_DEF_INT
     return 0;
