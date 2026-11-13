@@ -118,8 +118,10 @@ def test_h2_transition_matches_treecol(result):
     x_tc = cells[:, 2] * 1.4 / 2.0  # H2 mass of a 1 Msun cell, per H nucleus
     a_m1 = axis(result); z_m1 = result["x"][:, 2]; x_m1 = result["ab"][:, 0]
     edges = (0.0, 0.4, 1.0, 2.0, 3.5)
+    ratios = []
     for lo, hi in zip(edges[:-1], edges[1:]):
         m = x_m1[a_m1 & (z_m1 >= Z0 + lo) & (z_m1 < Z0 + hi)].mean()
         t = x_tc[a_tc & (zc >= Z0 + lo) & (zc < Z0 + hi)].mean()
         print(f"depth {lo}-{hi} pc: x_H2 M1 {m:.3e}, TreeCol {t:.3e}, ratio {m / t:.3f}")
-        assert 0.5 < m / t < 2.0, (lo, hi, m, t)
+        ratios.append(m / t)
+    assert all(0.5 < r < 2.0 for r in ratios), ratios
