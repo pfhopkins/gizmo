@@ -12,3 +12,15 @@
 - Table splines for cl52, cl59, cl60, cl61 are built directly from coolinmo.F:1028-1071; the dust temperature Newton iteration is bounded.
 - Network 18 (non-equilibrium metal ions) and network 20 (TIGRESS-NCR thermochemistry) exist only in C++; network 5 additionally handles ionising photons on H2.
 - Diagnostic and test-only Fortran branches (THERMAL_INFO_DUMP, COLLECT_EQB_DATA, FF_COLLAPSE_TEST, KOYAMA) are not carried over.
+
+## Network 17 and oxygen
+
+Network 17 tracks no oxygen species and has no O–H2 reactions, as in the Fortran: atomic O = abundo − CO only feeds the NL97 CO formation and O I cooling.
+
+Ploeckinger et al. (arXiv:2506.15773, arXiv:2512.13447) find that O + H2 → OH + H and the OH/H2O chain lower the H2 fraction by up to 1 dex. Their result is for gas held at a fixed temperature in chemical equilibrium. We tested it in one zone, with net 17 plus an oxygen block (OH, H2O, O2 time-dependent; O+, OH+, H2O+, H3O+ in equilibrium; rates from net 3):
+
+- At 0.01–0.3 Zsun in thermal equilibrium the HI→H2 transition moves by ≤0.01–0.04 dex. The transition sits at 15–180 K, where O + H2 → OH + H (barrier ~3150 K) does not run.
+- The barrier-free ion chain (H+ + O → O+, then O+/OH+/H2O+ + H2 → … → H3O+) moves it by +0.15 dex, only at solar Z under a Milky Way cosmic-ray rate (3e-17 s^-1, N_H = 1e21 cm^-2). It scales with x(H+) and vanishes under weak fields.
+- The large effect needs warm gas (1000–3000 K) kept in chemical equilibrium for ≳100 Myr. After 10 Myr it is ≤0.02 dex for Z ≤ 0.1 and n ≤ 100 cm^-3.
+
+If it is ever needed, the ion chain can be added as four algebraic species.

@@ -425,7 +425,7 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
 
     // --- CO: NL97 + He+ CT destruction (.F:864-878) ---
     const double k0 = 5e-16, k1 = 5e-10;
-    double abo = c.abundo - abco; if (abo < 0.0) abo = 0.0;
+    double abo = c.abundo - abco; if (abo < 0.0) abo = 0.0;  // no oxygen chemistry by design: DIFFERENCES.md, "Network 17 and oxygen"
     double beta;
     if (abo == 0.0)             beta = 0.0;
     else if (gamma_chx < 1e-30) beta = 1.0;
