@@ -5,6 +5,7 @@
 int rumi_register_params(char (*tag)[50], void **addr, int *id, int nt, int maxtags, int type_real, int type_string, int type_int);
 int rumi_param_default(const char *tag, void *addr);
 void rumi_init(void);
+const char *rumi_lib_id_string(void);
 void rumi_finalize(void);
 void rumi_limit_timesteps(void);
 void rumi_integrate(void);

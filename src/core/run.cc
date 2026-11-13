@@ -1588,6 +1588,9 @@ void write_cpu_log(void)
 #endif
           "drift/splitmg %10.2f  %5.1f%%\n"
           "kicks         %10.2f  %5.1f%%\n"
+#ifdef STARS_INTEGRATED_BY_RUMI
+          "rumi          %10.2f  %5.1f%%\n"
+#endif
           "log/stats     %10.2f  %5.1f%%\n"
 	      "find_timestep %10.2f  %5.1f%%\n"
 	      "io/snapshots  %10.2f  %5.1f%%\n"
@@ -1672,6 +1675,9 @@ void write_cpu_log(void)
 #endif
     All.CPU_Sum[CPU_DRIFT], (All.CPU_Sum[CPU_DRIFT]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_KICKS], (All.CPU_Sum[CPU_KICKS]) / All.CPU_Sum[CPU_ALL] * 100,
+#ifdef STARS_INTEGRATED_BY_RUMI
+    All.CPU_Sum[CPU_RUMI], (All.CPU_Sum[CPU_RUMI]) / All.CPU_Sum[CPU_ALL] * 100,
+#endif
     All.CPU_Sum[CPU_LOGMSG], (All.CPU_Sum[CPU_LOGMSG]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_FIND_TIMESTEPS], (All.CPU_Sum[CPU_FIND_TIMESTEPS]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_SNAPSHOT], (All.CPU_Sum[CPU_SNAPSHOT]) / All.CPU_Sum[CPU_ALL] * 100,

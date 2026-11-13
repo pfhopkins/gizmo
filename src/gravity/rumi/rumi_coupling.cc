@@ -131,7 +131,12 @@ template <class V> void put_vec(std::vector<char> &b, const std::vector<V> &v) {
 template <class V> void get(const std::vector<char> &b, size_t &o, V &v) {std::memcpy(&v, b.data() + o, sizeof(V)); o += sizeof(V);}
 template <class V> void get_vec(const std::vector<char> &b, size_t &o, std::vector<V> &v) {long long n; get(b, o, n); v.resize(n); if(n) {std::memcpy(v.data(), b.data() + o, n * sizeof(V));} o += n * sizeof(V);}
 
+/* RUMI++'s share of the CPU accounting: what ran before is charged as before, this function's time to CPU_RUMI */
+struct RumiClock {RumiClock() {CPU_Step[CPU_MISC] += measure_time();} ~RumiClock() {CPU_Step[CPU_RUMI] += measure_time();}};
+
 } // namespace
+
+const char *rumi_lib_id_string(void) {return RUMI_LIB_ID_MK;}
 
 
 /* the star's record slot, made on first use (without IMF sampling the record exists for RUMI++ alone) */
@@ -208,6 +213,7 @@ void rumi_finalize(void)
    there). Non-members starting a step while the members are mid-step: steps that end at the members' next sync. */
 void rumi_limit_timesteps(void)
 {
+    RumiClock clk;
     double t0 = MPI_Wtime();
     int exist, sync; long long ti_grp;
     member_status(exist, sync, ti_grp);
@@ -254,6 +260,7 @@ void rumi_limit_timesteps(void)
    go through RUMI++ over that step */
 void rumi_integrate(void)
 {
+    RumiClock clk;
     double t0 = MPI_Wtime();
     int exist, sync; long long ti_grp;
     member_status(exist, sync, ti_grp);

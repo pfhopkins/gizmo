@@ -1040,6 +1040,9 @@ void open_outputfiles(void)
     fprintf(FdBalance, "Hydro compute  = '%c' / '%c'\n", CPU_Symbol[CPU_HYDCOMPUTE], CPU_SymbolImbalance[CPU_HYDCOMPUTE]);
     fprintf(FdBalance, "Drifts         = '%c' / '%c'\n", CPU_Symbol[CPU_DRIFT], CPU_SymbolImbalance[CPU_DRIFT]);
     fprintf(FdBalance, "Kicks          = '%c' / '%c'\n", CPU_Symbol[CPU_KICKS], CPU_SymbolImbalance[CPU_KICKS]);
+#ifdef STARS_INTEGRATED_BY_RUMI
+    fprintf(FdBalance, "RUMI++ stars   = '%c' / '%c'\n", CPU_Symbol[CPU_RUMI], CPU_SymbolImbalance[CPU_RUMI]);
+#endif
     fprintf(FdBalance, "Log & stats    = '%c' / '%c'\n", CPU_Symbol[CPU_LOGMSG], CPU_SymbolImbalance[CPU_LOGMSG]);
     fprintf(FdBalance, "Find-timesteps = '%c' / '%c'\n", CPU_Symbol[CPU_FIND_TIMESTEPS], CPU_SymbolImbalance[CPU_FIND_TIMESTEPS]);
     fprintf(FdBalance, "PM-gravity     = '%c' / '%c'\n", CPU_Symbol[CPU_MESH], CPU_SymbolImbalance[CPU_MESH]);
