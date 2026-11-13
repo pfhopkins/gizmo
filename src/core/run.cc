@@ -372,6 +372,7 @@ void run(void)
              * Force a full eager drift before either decomp variant fires.
              * In eager mode this is a no-op (g_last_full_drift_Ti cache hit). */
             gizmo_full_drift_to(All.Ti_Current);
+            domain_arm_step_prepay(1);   /* these cost the step they are made for (domain.cc) */
 #ifdef DOMAIN_LIGHTWEIGHT_REPARTITION
             /* Which of the two the step gets is a domain question.  This once keyed on
              * TreeReconstructFlag, so anything that merely wanted a fresh tree also suppressed the
@@ -381,6 +382,7 @@ void run(void)
             else
 #endif
             {domain_Decomposition(0, 0, 1, 1);}  /* full decomposition needed */
+            domain_arm_step_prepay(0);
             /* Cleared here rather than inside the decomposition, because the request is made to
                this loop: group finding raises it and then runs decompositions of its own, which
                would otherwise consume it and leave the tree storage it later frees unclaimed. */
@@ -489,11 +491,14 @@ void run(void)
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();
         CPU_Step[CPU_KICKS] += measure_time();
-        HermiteOnlyFlag = 2;
-        gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
-        HermiteOnlyFlag = 0;
-        do_hermite_correction();
-        CPU_Step[CPU_KICKS] += measure_time();
+        for(int hermite_pass = 0; hermite_pass < HERMITE_CORRECTOR_ITERATIONS; hermite_pass++) /* P(EC)^n: each pass evaluates at the latest (predicted, then corrected) state */
+        {
+            HermiteOnlyFlag = 2;
+            gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
+            HermiteOnlyFlag = 0;
+            do_hermite_correction(hermite_pass == HERMITE_CORRECTOR_ITERATIONS - 1);
+            CPU_Step[CPU_KICKS] += measure_time();
+        }
 #endif
         /* Check whether we need to interrupt the run */
         int stopflag = 0;
@@ -615,14 +620,26 @@ void calculate_non_standard_physics(void)
     if(All.Dt_Since_LastFBCalc_Gyr >= All.Dt_Min_Between_FBCalc_Gyr)
 #endif
     {
+#ifdef TREE_MOMENTS_REFRESH_ON_MUTATION
+        NtotSwallowedThisStep = 0;
+#endif
         sink_accretion();
+#ifdef TREE_MOMENTS_REFRESH_ON_MUTATION
+        /* Swallow victims sit at Mass=0, linked in the tree, until a rearrange eliminates them; by default that
+           happens only on a spawn step or a decomposition. Rank-uniform (Allreduce'd swallow tally). */
+        int need_cleanup_rearrange = (NtotSwallowedThisStep > 0);
+#endif
 #ifdef SINK_WIND_SPAWN
         double Max_Unspawned_MassUnits_fromSink_global;
         MPI_Allreduce(&Max_Unspawned_MassUnits_fromSink, &Max_Unspawned_MassUnits_fromSink_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         if(Max_Unspawned_MassUnits_fromSink_global > 1)
         {
             spawn_sink_wind_feedback();
+#ifdef TREE_MOMENTS_REFRESH_ON_MUTATION
+            need_cleanup_rearrange = 1;
+#else
             rearrange_particle_sequence();
+#endif
             Max_Unspawned_MassUnits_fromSink=Max_Unspawned_MassUnits_fromSink_global=0.;
         }
 #if defined(SNE_NONSINK_SPAWN)
@@ -631,6 +648,9 @@ void calculate_non_standard_physics(void)
             if(n_unspawned> Max_Unspawned_MassUnits_fromSink) {Max_Unspawned_MassUnits_fromSink = n_unspawned;} // track the maximum integer number of elements this sink could spawn
         }}
 #endif
+#endif
+#ifdef TREE_MOMENTS_REFRESH_ON_MUTATION
+        if(need_cleanup_rearrange) {rearrange_particle_sequence();} /* one cleanup per sink pass, on swallow or spawn */
 #endif
         gizmo_exit_bad_stop_if_requested("run:after_sinks"); CPU_Step[CPU_SINKS] += measure_time();
     }
@@ -1325,6 +1345,35 @@ void write_cpu_log(void)
     }
 
     CPUThisRun += CPU_Step[0];
+
+    /* Per-step timing log, opt-in with GIZMO_STEP_LOG=1: one line per step on rank 0 with the active
+       count, the top active bin, and the rank-average and rank-max of every CPU_* part (indices as in
+       constants.h). cpu.txt prints only at global syncs and decompositions, which hides how the cost is
+       distributed over the timestep hierarchy. Same format as the legacy backend's steps.txt; the column
+       meanings follow this tree's CPU_* indices. Uses the reductions above, so it adds no collective. */
+    if(ThisTask == 0)
+    {
+        static FILE *fd_steps = NULL; static int steplog_checked = 0;
+        if(!steplog_checked)
+        {
+            steplog_checked = 1;
+            const char *e = getenv("GIZMO_STEP_LOG");
+            if(e && atoi(e) > 0)
+            {
+                char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%ssteps.txt", All.OutputDir);
+                fd_steps = fopen(buf, RestartFlag == 1 ? "a" : "w");
+                if(fd_steps) {fprintf(fd_steps, "# step time nactive top_active_bin top_occupied_bin wall_max wall_avg then avg[1..%d] then max[1..%d] (kokkos CPU_* indices)\n", CPU_PARTS-1, CPU_PARTS-1);}
+            }
+        }
+        if(fd_steps)
+        {
+            fprintf(fd_steps, "%lld %.10g %lld %d %d %.6g %.6g", (long long) All.NumCurrentTiStep, All.Time, (long long) GlobNumForceUpdate, All.HighestActiveTimeBin, All.HighestOccupiedTimeBin, max_CPU_Step[0], avg_CPU_Step[0]);
+            for(i = 1; i < CPU_PARTS; i++) {fprintf(fd_steps, " %.4g", avg_CPU_Step[i]);}
+            for(i = 1; i < CPU_PARTS; i++) {fprintf(fd_steps, " %.4g", max_CPU_Step[i]);}
+            fprintf(fd_steps, "\n");
+            if(All.NumCurrentTiStep % 50 == 0) {fflush(fd_steps);}
+        }
+    }
 
     for(i = 0; i < CPU_PARTS; i++) {CPU_Step[i] = 0;}
     if(ThisTask == 0)

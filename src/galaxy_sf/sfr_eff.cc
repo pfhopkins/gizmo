@@ -468,6 +468,7 @@ void star_formation_parent_routine(void)
                         if(P[i].FluidType == FLUID_DM) { P[i].Type = 3; } else /* dark fluid -> inert collisionless Type=3 */
 #endif
                         { P[i].Type = 5; }
+                        P[i].ForceSoftening = compute_force_softening_kernel_radius(i); /* the cache still held the gas value; SinkRadius below reads it */
                         force_tree_note_type_presence(i);  /* the element's type is final here, so tell the standing tree before anything walks it looking for that type */
                         TimeBinCountGas[P[i].TimeBin]--;
                         num_sink_formed++;
@@ -613,6 +614,9 @@ void star_formation_parent_routine(void)
                             if(P[i_star].FluidType == FLUID_DM) { P[i_star].Type = 3; } else /* dark fluid -> inert collisionless Type=3 */
 #endif
                             { P[i_star].Type = 5; }
+                            /* ForceSoftening_KernelRadius reads the per-particle cache, which still holds the gas softening; the sink
+                               radius below must see the new type's softening, as legacy's live evaluation does */
+                            P[i_star].ForceSoftening = compute_force_softening_kernel_radius(i_star);
                             force_tree_note_type_presence(i_star);  /* the element's type is final here, so tell the standing tree before anything walks it looking for that type */
                             num_sink_formed++;
                             P[i_star].Sink_Mass = DMAX(All.SeedSinkMass, DMIN(0.5*P[i_star].Mass , 0.01/UNIT_MASS_IN_SOLAR)); // if desired to make this appreciable fraction of particle mass, please do so in params file
@@ -626,15 +630,15 @@ void star_formation_parent_routine(void)
 #ifdef SINK_RETURN_BFLUX
                             P[i_star].B = {};
 #endif
-                            TreeMomentsStaleFlag = 1; /* particle changed type/mass: tree pointers maintained by MAINTAIN_TREE_IN_REARRANGE, just refresh moments */
+                            TreeMomentsStaleFlag = 1; TREE_MOMENTS_NEED_FULL(); /* particle changed type/mass: tree pointers maintained by MAINTAIN_TREE_IN_REARRANGE, just refresh moments */
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
-                            P[i_star].SinkRadius = ForceSoftening_KernelRadius(i);
+                            P[i_star].SinkRadius = ForceSoftening_KernelRadius(i_star);
                             double cs = 0.2 / UNIT_VEL_IN_KMS;
 #if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED)) || defined(EOS_GMC_BAROTROPIC)
                             double nHcgs = HYDROGEN_MASSFRAC * (CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS);
                             if(nHcgs > 1e10) cs *= pow(nHcgs/1e10, 1./5); // if we're getting opacity-limited then we can set a smaller sink radius, since cs ~ n^1/5
 #endif
-                            P[i_star].SinkRadius = DMAX(0.79 * P[i_star].Mass * All.G / (cs * cs), ForceSoftening_KernelRadius(i)); // volume-equivalent particle radius R= (3V/(4PI))^(1/3) at the density where cell length = Jeans length/2
+                            P[i_star].SinkRadius = DMAX(0.79 * P[i_star].Mass * All.G / (cs * cs), ForceSoftening_KernelRadius(i_star)); // volume-equivalent particle radius R= (3V/(4PI))^(1/3) at the density where cell length = Jeans length/2
 #endif
 #ifdef SINGLE_STAR_FIND_BINARIES
                             P[i_star].Min_Sink_OrbitalTime=MAX_REAL_NUMBER; P[i_star].comp_dx = {}; P[i_star].comp_dv = {}; P[i_star].is_in_a_binary = 0;
@@ -693,7 +697,7 @@ void star_formation_parent_routine(void)
                         { if(P[i_star].Type != 5) {P[i_star].Type = 4;} } // if we didn't set to type 5 above, default to type 4
                         /* a new star (type 4; a sink formed above has already asked for a refresh) enters the type-conditioned node
                            moments, its luminosity among them, only at the next build or refresh, deliberately: its luminosity keys off its
-                           age, zero at formation (see the moment-refresh note in gravtree.cc) */
+                           age, zero at formation (see the moment-refresh note in gravtree.cc). TREE_MOMENTS_REFRESH_ON_MUTATION (opt-in) overrides this choice. */
                         force_tree_note_type_presence(i_star);  /* the element's type is final here, so tell the standing tree before anything walks it looking for that type */
                         if(i_star != i) {gravity_note_inserted_motion_bound(i_star);}  /* a spawned element's speed is readable only now */
 
@@ -744,6 +748,7 @@ void star_formation_parent_routine(void)
         All.TotNumPart += tot_spawned;
         All.TotN_gas -= tot_converted;
         NumPart += stars_spawned;
+        TREE_MOMENTS_RAISE_ON_MUTATION(); TREE_MOMENTS_NEED_FULL(); /* new and converted stars enter the type-conditioned moments (a type change: full refresh under TREE_MOMENTS_DELTA); rank-uniform */
         /* Note: N_gas is only reduced once rearrange_particle_sequence is called */
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
     } //(tot_spawned > 0 || tot_converted > 0)

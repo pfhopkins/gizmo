@@ -5,6 +5,7 @@
 #include <math.h>
 #include <time.h>
 #include <limits.h>
+#include <vector>
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
@@ -199,6 +200,9 @@ int force_treebuild_gravity(void)
 #ifdef HERMITE_FOREIGN_SOURCE_TABLE
     hermite_local_sources_rebuild();   /* the Hermite-type particles this tree exports, listed while the build has visited every particle */
 #endif
+#ifdef TREE_MOMENTS_DELTA
+    if(status >= 0) {tree_counted_mass_reset();}   /* a successful build returns its node count */
+#endif
     return status;
 }
 
@@ -363,6 +367,9 @@ void force_tree_invalidate_global_topology(void) {g_force_global_topology_valid 
  *  wherever that parent happens to be. */
 void force_tree_swap_attachment_slots(int i, int j)
 {
+#ifdef TREE_MOMENTS_DELTA
+    tree_counted_mass_swap(i, j);
+#endif
     if(!g_force_global_topology_valid) {return;}
     if(i < 0 || j < 0 || i >= All.TreeParticleSlots || j >= All.TreeParticleSlots || !Father)
     {
@@ -1127,7 +1134,13 @@ static int *pseudo_recvcounts_pending = NULL;
 static int *pseudo_recvoffset_pending = NULL;
 static int  pseudo_n_requests_pending = 0;
 
-void force_exchange_pseudodata_issue(void)
+static void force_exchange_pseudodata_post(int blocking);
+void force_exchange_pseudodata_issue(void) {force_exchange_pseudodata_post(0);}
+
+/* blocking=1 when the caller has nothing to overlap with the exchange: the blocking Allgatherv then uses MPI's tuned
+ * algorithms, where the nonblocking schedule progresses only inside MPI calls (at 96 ranks on 4 nodes it took ~1.5x
+ * as long). The same bytes land in the same places either way. */
+static void force_exchange_pseudodata_post(int blocking)
 {
     int i, no, m;
     /* Re-entrant issue() (a prior issue had no matching complete()): soft
@@ -1246,9 +1259,17 @@ void force_exchange_pseudodata_issue(void)
               }
             ro[recvTask] = (int) offset_bytes;
         }
-        MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
-                        &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
-                        &pseudo_requests_pending[m]);
+        if(blocking)
+        {
+            MPI_Allgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE, &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD);
+            pseudo_requests_pending[m] = MPI_REQUEST_NULL;
+        }
+        else
+        {
+            MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
+                            &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
+                            &pseudo_requests_pending[m]);
+        }
     }
 }
 
@@ -1367,7 +1388,7 @@ int force_exchange_pseudodata_complete(void)
  *  pseudo-update work and drains at its poll). */
 int force_exchange_pseudodata(void)
 {
-    force_exchange_pseudodata_issue();
+    force_exchange_pseudodata_post(1);
     return force_exchange_pseudodata_complete();
 }
 
@@ -1822,39 +1843,49 @@ void force_add_element_to_tree(int iparent, int ichild)
     Nextnode[iparent] = ichild; // insert new particle into linked list
     Nextnode[ichild] = no; // order correctly
     Father[ichild] = father; // set parent node to be the same
+#ifdef TREE_MOMENTS_DELTA
+    tree_counted_mass_insert(ichild);   /* not in the node moments until the next refresh */
+#endif
     /* The child's speed bound goes up its whole chain, to the top-level node other ranks route by; the
      * parent's node alone would let it outrun every ancestor box until its first kick or the next build. */
     gravity_note_inserted_motion_bound(ichild);
-    /* update parent node property [maximum softening] for opening criteria. The bound and the per-type band below are raised
-       from the PARENT's radius and type, not the inserted child's: a spawned child's own band reaches the tree when it is
-       next active (force_update_hmax) or at the next build. Known and accepted: measured on a FIRE galaxy run, no neighbour pair depended on the stale band
-       (checks after 13 spawns, none locally or remotely); change this only if a missed pair is shown. */
-    MyFloat new_hmax = DMAX(Extnodes[father].hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[iparent].KernelRadius, All.MaxKernelRadius));
-    Extnodes[father].hmax = new_hmax;
-    /* Mode B per-type incremental update -- the band of the parent's type, as for the bound above. */
+    /* Father[] is -1 for every slot the standing tree does not contain (gpu_topology_finalize_father
+     * seeds it so). Such a parent has no node whose opening criteria could be updated, and indexing
+     * Extnodes with it would be a wild write; the child inherits the same -1, which every other
+     * Father[] reader skips. It stays absent from the tree moments until the next build. */
+    if(father >= 0)
     {
-        int ptype = (int)P[iparent].Type;
-        double htmp = force_hmax_per_type_particle_radius(iparent);
-        if(htmp > Extnodes[father].hmax_per_type[ptype]) {
-            Extnodes[father].hmax_per_type[ptype] = (MyFloat)htmp;
-        }
-    }
-    /* Keep SoA walk-mirror coherent with the AoS Extnodes
-     * change above.  hmax is read by the walk's opening criteria (vmax was
-     * mirrored by the chain raise above).  Indexing matches the local-or-foreign convention from gpu_force_drift_nodes:
-     * SoA slot k = father - All.TreeNodeIndexBase for both local nodes (k < MaxNodes) and
-     * foreign nodes (MaxNodes <= k < MaxNodes + AllocatedForeignNodes) -- bounded by the mirror
-     * that exists, not by the index range it sits in. */
-    {
-        struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
-        const int k_soa = gpu_gravity_tree_mirror_slot(father);
-        if(soa && k_soa >= 0) {
-            if(soa->hmax) {soa->hmax[k_soa] = (MyGravFloat) new_hmax;}
-            /* ⛔ node_ti is deliberately NOT written here. It must pair with the
-               LENGTH it describes, and this site does not write soa->len: stamping a
-               newer time onto an older length makes the walk widen by too little --
-               silent under-inclusion. A fresher vmax is safe (running max, so it can
-               only over-widen); a fresher time is not. */
+        /* update parent node property [maximum softening] for opening criteria. The bound and the per-type band below are raised
+           from the PARENT's radius and type, not the inserted child's: a spawned child's own band reaches the tree when it is
+           next active (force_update_hmax) or at the next build. Known and accepted: measured on a FIRE galaxy run, no neighbour pair depended on the stale band
+           (checks after 13 spawns, none locally or remotely); change this only if a missed pair is shown. */
+        MyFloat new_hmax = DMAX(Extnodes[father].hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[iparent].KernelRadius, All.MaxKernelRadius));
+        Extnodes[father].hmax = new_hmax;
+        /* Mode B per-type incremental update -- the band of the parent's type, as for the bound above. */
+        {
+            int ptype = (int)P[iparent].Type;
+            double htmp = force_hmax_per_type_particle_radius(iparent);
+            if(htmp > Extnodes[father].hmax_per_type[ptype]) {
+                Extnodes[father].hmax_per_type[ptype] = (MyFloat)htmp;
+            }
+            /* Keep SoA walk-mirror coherent with the AoS Extnodes
+             * change above.  hmax is read by the walk's opening criteria (vmax was
+             * mirrored by the chain raise above).  Indexing matches the local-or-foreign convention from gpu_force_drift_nodes:
+             * SoA slot k = father - All.TreeNodeIndexBase for both local nodes (k < MaxNodes) and
+             * foreign nodes (MaxNodes <= k < MaxNodes + AllocatedForeignNodes) -- bounded by the mirror
+             * that exists, not by the index range it sits in. */
+            {
+                struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+                const int k_soa = gpu_gravity_tree_mirror_slot(father);
+                if(soa && k_soa >= 0) {
+                    if(soa->hmax) {soa->hmax[k_soa] = (MyGravFloat) new_hmax;}
+                    /* ⛔ node_ti is deliberately NOT written here. It must pair with the
+                       LENGTH it describes, and this site does not write soa->len: stamping a
+                       newer time onto an older length makes the walk widen by too little --
+                       silent under-inclusion. A fresher vmax is safe (running max, so it can
+                       only over-widen); a fresher time is not. */
+                }
+            }
         }
     }
 
@@ -4377,6 +4408,169 @@ void force_refresh_node_moments(void)
             if(gpu_topnode_moment_resum() != 0)      {endrun(90000089);}
         }
         PRINT_STATUS(" ..tree node moments refreshed (GPU).");
+#ifdef TREE_MOMENTS_DELTA
+        tree_counted_mass_reset();
+#endif
         return;
     }
 }
+
+#ifdef TREE_MOMENTS_DELTA
+#if defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION) || defined(DM_SCALARFIELD_SCREENING)
+#error "TREE_MOMENTS_DELTA does not maintain the tidal or DM-screening node moments"
+#endif
+/* Incremental tree-moment refresh for mass-only changes (accretion, sink spawning, sink mass changes, elimination of
+ * zero-mass slots). TreeCountedMass[i] is the mass particle slot i contributes to the node moments; it is set at every
+ * build and full refresh, follows particles through the tree's slot swaps, and is -1 for a particle inserted into the
+ * standing tree but not yet counted. The refresh applies each difference along the particle's father chain, up to its
+ * top leaf, then rebuilds the replicated top tree with the usual pseudo-particle exchange. Mass, centre of mass, mass
+ * velocity, gas mass, particle counts and the sink moments are maintained; luminosity and max-type moments keep their
+ * values from the last build or full refresh (inserted particles already raise the bounds). Changes of type or anything
+ * else set TreeMomentsNeedFullRefresh and take the full refresh. */
+/* Plain heap rather than the mymalloc arena: the array lives across tree frees and rebuilds, which the arena's LIFO
+   order does not allow. If it cannot be allocated, this rank reports not-ready and every refresh is a full one. */
+static MyFloat *TreeCountedMass = NULL;
+static int TreeCountedMassCap = 0;
+int TreeMomentsNeedFullRefresh = 0;
+
+void tree_counted_mass_reset(void)
+{
+    if(TreeCountedMassCap < All.MaxPart)
+    {
+        free(TreeCountedMass); TreeCountedMassCap = 0;
+        TreeCountedMass = (MyFloat *) malloc((size_t) All.MaxPart * sizeof(MyFloat));
+        if(TreeCountedMass) {TreeCountedMassCap = All.MaxPart;}
+    }
+    if(!TreeCountedMass) {TreeMomentsNeedFullRefresh = 1; return;}
+    for(int i = 0; i < NumPart; i++) {TreeCountedMass[i] = P[i].Mass;}
+    TreeMomentsNeedFullRefresh = 0;
+}
+
+void tree_counted_mass_swap(int i, int j)
+{
+    if(!TreeCountedMass) {return;}
+    if(i < 0 || j < 0 || i >= TreeCountedMassCap || j >= TreeCountedMassCap) {TreeMomentsNeedFullRefresh = 1; return;}
+    const MyFloat t = TreeCountedMass[i]; TreeCountedMass[i] = TreeCountedMass[j]; TreeCountedMass[j] = t;
+}
+
+void tree_counted_mass_insert(int i)
+{
+    if(!TreeCountedMass || i < 0 || i >= TreeCountedMassCap) {TreeMomentsNeedFullRefresh = 1; return;}
+    TreeCountedMass[i] = -1;
+}
+
+int tree_counted_mass_ready(void) {return (TreeCountedMass != NULL && TreeCountedMassCap >= NumPart && !TreeMomentsNeedFullRefresh);}
+
+/* A node whose updated mass is at most this fraction of its previous mass is empty to rounding. */
+#define TREE_MOMENT_DELTA_EMPTY_FRAC (1.0e-10)
+/* Add mass dm (and dN particles) at particle i's current state to every node from its leaf up to its top leaf. */
+static void tree_moment_delta_along_chain(int i, double dm, int dN)
+{
+    if(!Father || Father[i] < 0) {return;}   /* no tree (freed, e.g. by FOF, until the next build) or not in it */
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    const Vec3<double> x = P[i].Pos, v = P[i].Vel;
+    const int type = (int) P[i].Type;
+    const int lo = All.TreeNodeIndexBase, hi = All.TreeNodeIndexBase + Numnodestree;
+    for(int no = Father[i]; no >= lo && no < hi; no = Nodes[no].u.d.father)
+    {
+        if(Nodes[no].u.d.bitflags & (1u << BITFLAG_INTERNAL_TOPLEVEL)) {break;}   /* re-summed from the leaves after the exchange */
+        force_drift_node(no, All.Ti_Current);
+        const double M = Nodes[no].u.d.mass, Mn = M + dm;
+        /* removing the last of a node's mass leaves a rounding residual of either sign; dividing by it would throw the
+           centre of mass anywhere, so treat the node as empty and keep its old centre */
+        const int keeps_mass = (Nodes[no].N_part + dN > 0) && (Mn > TREE_MOMENT_DELTA_EMPTY_FRAC * M);
+        if(keeps_mass)
+        {
+            for(int k = 0; k < 3; k++)
+            {
+                Nodes[no].u.d.s[k] = (MyFloat) ((M * Nodes[no].u.d.s[k] + dm * x[k]) / Mn);
+                Extnodes[no].vs[k] = (MyFloat) ((M * Extnodes[no].vs[k] + dm * v[k]) / Mn);
+            }
+        }
+        Nodes[no].u.d.mass = (MyFloat) (keeps_mass ? Mn : 0);
+        Nodes[no].N_part += dN;
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+        if(type == 0) {Nodes[no].gasmass = (MyFloat) DMAX(0., Nodes[no].gasmass + dm);}
+#endif
+#ifdef SINK_CALC_DISTANCES
+        if(type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
+        {
+            const double sm = Nodes[no].sink_mass, smn = sm + dm;
+            const int keeps_sink_mass = (smn > TREE_MOMENT_DELTA_EMPTY_FRAC * sm);
+            if(keeps_sink_mass)
+            {
+                for(int k = 0; k < 3; k++)
+                {
+                    Nodes[no].sink_pos[k] = (MyFloat) ((sm * Nodes[no].sink_pos[k] + dm * x[k]) / smn);
+#if defined(SINK_NODE_MOTION_TRACKED)
+                    Nodes[no].sink_vel[k] = (MyFloat) ((sm * Nodes[no].sink_vel[k] + dm * v[k]) / smn);
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+                    Nodes[no].sink_acc[k] = (MyFloat) ((sm * Nodes[no].sink_acc[k] + dm * P[i].Acc_Total_PrevStep[k]) / smn);
+#endif
+                }
+            }
+            Nodes[no].sink_mass = (MyFloat) (keeps_sink_mass ? smn : 0);
+#if defined(SINK_NODE_MOTION_TRACKED)
+            Nodes[no].N_SINK += dN;
+#endif
+        }
+#endif
+        const int k = soa ? gpu_gravity_tree_mirror_slot(no) : -1;
+        if(k >= 0)
+        {
+            if(soa->mass) {soa->mass[k] = (MyGravFloat) Nodes[no].u.d.mass;}
+            if(soa->s) {soa->s[k] = {(MyGravFloat) Nodes[no].u.d.s[0], (MyGravFloat) Nodes[no].u.d.s[1], (MyGravFloat) Nodes[no].u.d.s[2]};}
+            if(soa->node_vs) {soa->node_vs[k] = {(MyGravFloat) Extnodes[no].vs[0], (MyGravFloat) Extnodes[no].vs[1], (MyGravFloat) Extnodes[no].vs[2]};}
+            if(soa->N_part) {soa->N_part[k] = Nodes[no].N_part;}
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+            if(soa->gasmass) {soa->gasmass[k] = (MyGravFloat) Nodes[no].gasmass;}
+#endif
+#ifdef SINK_CALC_DISTANCES
+            if(soa->sink_mass) {soa->sink_mass[k] = (MyGravFloat) Nodes[no].sink_mass;}
+            if(soa->sink_pos) {soa->sink_pos[k] = {(MyGravFloat) Nodes[no].sink_pos[0], (MyGravFloat) Nodes[no].sink_pos[1], (MyGravFloat) Nodes[no].sink_pos[2]};}
+#if defined(SINK_NODE_MOTION_TRACKED)
+            if(soa->sink_vel) {soa->sink_vel[k] = {(MyGravFloat) Nodes[no].sink_vel[0], (MyGravFloat) Nodes[no].sink_vel[1], (MyGravFloat) Nodes[no].sink_vel[2]};}
+            if(soa->N_SINK) {soa->N_SINK[k] = Nodes[no].N_SINK;}
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+            if(soa->sink_acc) {soa->sink_acc[k] = {(MyGravFloat) Nodes[no].sink_acc[0], (MyGravFloat) Nodes[no].sink_acc[1], (MyGravFloat) Nodes[no].sink_acc[2]};}
+#endif
+#endif
+        }
+        gpu_node_dirty_claim(no);
+    }
+}
+
+/* Slot i is about to be removed from the tree: take out whatever it still contributes. */
+void tree_counted_mass_eliminate(int i)
+{
+    if(!TreeCountedMass || i < 0 || i >= TreeCountedMassCap) {TreeMomentsNeedFullRefresh = 1; return;}
+    const double counted = TreeCountedMass[i];
+    if(counted >= 0) {tree_moment_delta_along_chain(i, -counted, -1);}
+    TreeCountedMass[i] = 0;
+}
+
+/* Collective: every rank calls it when the global stale flag is set and no rank needs the full refresh. */
+void force_refresh_node_moments_delta(void)
+{
+    int nchanged = 0;
+    for(int i = 0; i < NumPart; i++)
+    {
+        const double c = TreeCountedMass[i], m = P[i].Mass;
+        if(c < 0) {tree_moment_delta_along_chain(i, m, 1); TreeCountedMass[i] = P[i].Mass; nchanged++;}
+        else if(m != c) {tree_moment_delta_along_chain(i, m - c, 0); TreeCountedMass[i] = P[i].Mass; nchanged++;}
+    }
+    /* The exchange copies top-leaf moments without their clocks, and the re-sum combines them: bring every top-level
+       node to the current time first, as the full refresh's sweep does. */
+    for(int t = 0; t < NTopnodes; t++) {if(TopNodeNodeIndex[t] >= 0) {force_drift_node(TopNodeNodeIndex[t], All.Ti_Current);}}
+    for(int i = 0; i < NTopleaves; i++) {force_drift_node(DomainNodeIndex[i], All.Ti_Current);}
+    int pseudo_status = force_exchange_pseudodata();
+    if(!pseudo_status) {
+        if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(90000088);}
+        if(gpu_topnode_moment_resum() != 0)      {endrun(90000089);}
+    }
+    PRINT_STATUS(" ..tree node moments updated incrementally (%d particles).", nchanged);
+}
+
+#endif /* TREE_MOMENTS_DELTA */

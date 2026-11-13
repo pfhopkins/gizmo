@@ -101,7 +101,7 @@ GIZMO_GPU_FUNCTION static inline double matrix_invert_ndims(double T[3][3], doub
 #ifdef HERMITE_INTEGRATION
 GIZMO_GPU_FUNCTION int eligible_for_hermite(int i, struct particle_data *pp); /* definition in core/timestep_functions.h (single source of truth) */
 void do_hermite_prediction(void);
-void do_hermite_correction(void);
+void do_hermite_correction(int final_pass);
 #endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int i);
@@ -148,6 +148,7 @@ void make_list_of_active_particles(void);
 void domain_reset_work_history(void);
 void domain_clear_work_history(int i);
 void domain_record_step_work(int i);
+void domain_arm_step_prepay(int on);
 void domain_merge_work_history(int i, int j);
 void output_extra_log_messages(void);
 
@@ -1382,6 +1383,18 @@ int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
 void rearrange_particle_sequence(int tree_rebuilt_before_next_walk = 0);
 void swap_treewalk_pointers(int i, int j);
+#ifdef TREE_MOMENTS_DELTA
+extern int TreeMomentsNeedFullRefresh;   /* a moment change the incremental refresh does not cover (type changes, ...) */
+#define TREE_MOMENTS_NEED_FULL() (TreeMomentsNeedFullRefresh = 1)
+void tree_counted_mass_reset(void);
+void tree_counted_mass_swap(int i, int j);
+void tree_counted_mass_insert(int i);
+void tree_counted_mass_eliminate(int i);
+int tree_counted_mass_ready(void);
+void force_refresh_node_moments_delta(void);
+#else
+#define TREE_MOMENTS_NEED_FULL() ((void) 0)
+#endif
 void remove_particle_from_tree(int i);
 void reorder_gas(void);
 void reorder_particles(void);

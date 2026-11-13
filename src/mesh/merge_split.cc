@@ -1445,6 +1445,9 @@ static inline void rearrange_set_node_nextnode(int no, int v){ Nodes[no].u.d.nex
 static inline void rearrange_set_node_sibling (int no, int v){ Nodes[no].u.d.sibling  = v; gpu_set_soa_sibling (no, v); }
 
 void swap_treewalk_pointers(int i, int j){
+#ifdef TREE_MOMENTS_DELTA
+    tree_counted_mass_swap(i, j);
+#endif
     // walk the tree and any time we see a nextnode or sibling set to i, swap it to j and vice versa
     int no, next, pre_sibling_i=-1, pre_sibling_j=-1, previous_node_i, previous_node_j;
     no = All.TreeNodeIndexBase;
@@ -1640,6 +1643,9 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
     for(i = 0; i < numpart_local; i++)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
+#ifdef TREE_MOMENTS_DELTA
+            if(repair_walk_links) {tree_counted_mass_eliminate(i);} else {TREE_MOMENTS_NEED_FULL();}   /* unrepaired: a rebuild follows */
+#endif
             P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
             TimeBinCount[P[i].TimeBin]--;
             if(TimeBinActive[P[i].TimeBin]) {NumForceUpdate--;}
@@ -1718,6 +1724,7 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
        reduced count is what is tested, so every rank reaches the same decision and none of them is
        left walking a tree the others rebuilt. */
     if(flag_sum && !repair_walk_links) {TreeReconstructFlag = 1;}
+    if(tot_elim > 0 && repair_walk_links) {TREE_MOMENTS_RAISE_ON_MUTATION();} /* eliminated mass leaves the ancestor moments; rank-uniform */
     wakeup_sidecar_invalidate();   /* particle indices compacted/reordered → rebuild WakeupDirty from P[] next scan */
 }
 

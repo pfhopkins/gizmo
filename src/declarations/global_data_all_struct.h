@@ -700,6 +700,10 @@ struct global_data_all_processes
   double SinkMaxAccretionRadius;
   double SinkEddingtonFactor;	    /*!< Factor above Eddington */
   double SinkRadiativeEfficiency;   /*!< Radiative efficiency determined by the spin value, default value is 0.1 */
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+  double SinkMergerMaxMass;         /*!< most massive sink another sink may absorb (code units); 0 = 10 x its Sink_Formation_Mass */
+  double SinkMergerMaxRadiusFactor; /*!< sinks merge only inside this many sink radii */
+#endif
 #endif
 
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
