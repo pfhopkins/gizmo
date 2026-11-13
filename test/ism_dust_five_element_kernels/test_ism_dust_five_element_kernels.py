@@ -31,9 +31,10 @@ def ref_destr(n0, M, E51=1.0):
     return DMIN(0.4 * 2460.0 * E51 / (n0 ** 0.1 * 1.0 ** (9 / 7)) / M, 1.0)
 
 
-def ref_step(nH, T, Td, dt, D, Z, literal=False):
+def ref_step(nH, T, Td, dt, D, Z, literal=False, frac=(O, MG, SI, FE)):
     """resolvedism_dust_evolve for one cell, rates in 1/yr, dt in yr; literal=True keeps the Mg and Fe caps of stella_dev,
     which scale by an earlier O cap a second time (resolvedism_dust.cc:203-204), the port takes the plain minimum"""
+    O, MG, SI, FE = frac
     D = list(D)
     if sum(D) <= 0:
         return D
