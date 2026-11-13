@@ -1,9 +1,10 @@
 """stella_deps test: scripts/get_stella_deps.sh, the one setup command for the Stella dependencies outside this repository.
   1. a clean HOME: the setup installs the stella-tables release of the pinned commit into ~/.stella-deps/tables-<ref>, hash
-     checked; the stamp holds no machine-local path; a rerun downloads nothing;
+     checked, and SUNDIALS at the version pinned in src/Makefile; the stamp holds no machine-local path; a rerun builds and
+     downloads nothing;
   2. make reports the KETJU install it will use: under the cache, keyed by the pinned commits and by the Kokkos install;
      an explicit KETJU_PATH wins;
-  3. a KETJU build without the install stops in make, naming the setup command;
+  3. a KETJU or SGChem build without the install stops in make, naming the setup command;
   4. (slow) the whole new-machine procedure, new_machine.sh: fresh clone, setup, build and run the cloud smoke test with and
      without KETJU, rerun, start-up stop without the cache.
 Tests 1 and 4 need the network and are skipped without it."""
@@ -17,6 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent.parent
 SETUP = ROOT / "scripts" / "get_stella_deps.sh"
 REF = re.search(r'#define STELLA_TABLES_REF "([0-9a-f]+)"', (ROOT / "src/galaxy_sf/stella_tables_check.h").read_text()).group(1)
+SUNDIALS = re.search(r"^SUNDIALS_VERSION *= *(\S+)", (ROOT / "src/Makefile").read_text(), re.M).group(1)
 KETJU_REF = re.search(r"^KETJU_REF *= *([0-9a-f]+)", (ROOT / "src/gravity/ketju/Makefile.ketju").read_text(), re.M)
 
 
@@ -29,7 +31,7 @@ needs_network = pytest.mark.skipif(not online(), reason="no network")
 
 
 def env_with(**kw):
-    env = {k: v for k, v in os.environ.items() if k not in ("STELLA_DEPS_PREFIX", "KETJU_PATH")}
+    env = {k: v for k, v in os.environ.items() if k not in ("STELLA_DEPS_PREFIX", "KETJU_PATH", "SUNDIALS_DIR")}
     env.update({k: str(v) for k, v in kw.items()})
     return env
 
@@ -47,10 +49,12 @@ def test_setup_tables_clean_home(tmp_path):
     stamp = (tables / "stella_tables.stamp").read_text()
     assert REF in stamp and f"release tables-{REF[:7]}" in stamp and str(tmp_path) not in stamp and "/tmp" not in stamp
     assert "all checks passed" in out.stdout
-    assert sorted(p.name for p in (home / ".stella-deps").iterdir()) == [f"tables-{REF[:7]}"]   # no leftovers
+    assert (home / ".stella-deps" / f"sundials-{SUNDIALS}" / "include" / "cvode" / "cvode.h").is_file()
+    assert sorted(p.name for p in (home / ".stella-deps").iterdir()) == [f"sundials-{SUNDIALS}", f"tables-{REF[:7]}"]   # no leftovers
     t0 = time.time()
     again = subprocess.run(["bash", str(SETUP)], capture_output=True, text=True, env=env_with(HOME=home))
-    assert again.returncode == 0 and "already installed" in again.stdout and "downloading" not in again.stdout
+    assert again.returncode == 0 and again.stdout.count("already installed") == 2
+    assert "downloading" not in again.stdout and "building" not in again.stdout
     assert time.time() - t0 < 30
 
 
@@ -71,10 +75,13 @@ def test_ketju_path_default(tmp_path):
     assert ketju_path(KETJU_PATH=tmp_path / "mine")["KETJU_PATH"] == str(tmp_path / "mine")
 
 
-def test_ketju_missing_install_stops_make(tmp_path):
+def test_missing_install_stops_make(tmp_path):
     out = subprocess.run(["make", "-n", "-C", str(ROOT / "src"), "CONFIGVARS=KETJU_REGULARIZATION"], capture_output=True, text=True,
                          env=env_with(STELLA_DEPS_PREFIX=tmp_path))
     assert out.returncode != 0 and "run scripts/get_stella_deps.sh --ketju" in out.stderr
+    out = subprocess.run(["make", "-n", "-C", str(ROOT / "src"), "CONFIGVARS=SGCHEM"], capture_output=True, text=True,
+                         env=env_with(STELLA_DEPS_PREFIX=tmp_path))
+    assert out.returncode != 0 and f"SUNDIALS_DIR={tmp_path}/sundials-{SUNDIALS}; run scripts/get_stella_deps.sh" in out.stderr
 
 
 @pytest.mark.slow
