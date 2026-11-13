@@ -66,6 +66,15 @@ DUSTK_INLINE void dust5_seed(double d[5], const double z[5], const double frac[4
     for(int k = 1; k < 5; k++) {d[k] = sil * frac[k - 1];}
 }
 
+/* shock-tracked destruction over dt in a compressed cell: silicate efficiency 0.4 v^2/(v^2 + 100^2) per crossing time, carbon half */
+DUSTK_INLINE void dust5_shock_factors(double v_kms, double t_cross_yr, double dt_yr, double *fC, double *fS)
+{
+    *fC = *fS = 1;
+    if(!(v_kms > 50.0 && t_cross_yr > 0)) {return;}
+    double v2 = v_kms * v_kms, eS = 0.4 * v2 / (v2 + 100.0 * 100.0);
+    *fS = exp(-dt_yr * eS / t_cross_yr); *fC = exp(-dt_yr * 0.5 * eS / t_cross_yr);
+}
+
 /* fraction of a cell's dust a supernova destroys (McKee 1989): efficiency x swept mass / cell mass, at most 1 */
 DUSTK_INLINE double dust5_swept_mass_destroyed_fraction(double n0, double E51, double M_cell_msun)
 {

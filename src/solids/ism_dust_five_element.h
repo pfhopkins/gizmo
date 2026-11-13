@@ -48,6 +48,16 @@ KOKKOS_INLINE_FUNCTION void update_dust_processes_five_element(int i, double dti
     double ne = 1, nh0 = 0, nhp = 0, mu = 1, T = ThermalProperties(cell[i].InternalEnergyPred, rho, i, &mu, &ne, &nh0, &nhp, pp, cell), T_dust = DMIN(T, 100.);
 #endif
     dust5_sputter(d, nH, T, dt_yr);
+#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION
+    {   /* compression with a shock: pairwise approach speed from the signal velocity */
+        double divv = pp[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3 * All.cf_hubble_a : 0);
+        double v = 0.5 * (cell[i].MaxSignalVel - 2.0 * cell[i].effective_soundspeed()) * UNIT_VEL_IN_KMS, fC, fS;
+        if(divv < 0 && v > 0) {
+            dust5_shock_factors(v, pp[i].Get_Particle_Size() * All.cf_atime / (v / UNIT_VEL_IN_KMS) * UNIT_TIME_IN_YR, dt_yr, &fC, &fS);
+            d[0] *= fC; for(int k = 1; k < 5; k++) {d[k] *= fS;}
+        }
+    }
+#endif
     double total1 = d[0] + d[1] + d[2] + d[3] + d[4];
     double grown = dust5_grow(d, z, frac, nH, T, T_dust, dt_yr);
     dust5_clamp(d, z);

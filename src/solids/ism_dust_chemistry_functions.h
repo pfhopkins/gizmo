@@ -133,6 +133,9 @@ double ISMDustChem_Return_Mass_Where_Dust_Shocked(double rho_cell_in_code_units,
 #if defined(GALSF_ISMDUSTCHEM_HU_MODEL) && !defined(GALSF_ISMDUSTCHEM_HU_SN_SWEPT_MASS_DESTRUCTION)
     return 0; /* the resolved blast sputters its dust explicitly */
 #endif
+#if defined(GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION) || defined(GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION)
+    return 0; /* off, or replaced by the shock-tracked destruction */
+#endif
     double vs7=1., local_n0=rho_cell_in_code_units*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS; // dust destruction efficiency, minimum gas shock velocity in ~10^7 cm/s which destroys dust, and number density around SNe
     double mass_shocked_in_code_units; // mass shocked to 100 km/s which destroys dust. use the weights to distribute shocked mass across the neighboring gas particles
 #ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
