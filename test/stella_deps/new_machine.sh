@@ -27,10 +27,11 @@ build() { # name config
     cp "$2" "$G/src/Config.sh"
     (cd "$G" && make clean > /dev/null 2>&1; make -j "$NP" > "$S/build_$1.log" 2>&1)
 }
-run_cloud() { # name: a few steps of the shipped cloud params, tables from the cache
+run_cloud() { # name [extra params line]: a few steps of the shipped cloud params, tables from the cache
     local d="$S/run_$1"; mkdir -p "$d"
     sed -e "s|^InitCondFile .*|InitCondFile $IC|" -e "s|^OutputDir .*|OutputDir $d/output|" -e "s|^TimeMax .*|TimeMax 0.00002|" \
         -e "s|^TimeBetSnapshot .*|TimeBetSnapshot 0.00001|" "$G/scripts/stella/stella_cloud.params" > "$d/cloud.params"
+    [ -z "${2:-}" ] || echo "$2" >> "$d/cloud.params"
     (cd "$d" && OMP_NUM_THREADS=1 mpirun -np "$NP" "$G/src/GIZMO" cloud.params > run.log 2>&1) || fail "run $1, see $d/run.log"
     grep -q "Final time=" "$d/run.log" || fail "run $1 did not reach TimeMax"
     grep -q "$HOME/.stella-deps/tables-.*/stellar_tables_unified.hdf5 ok" "$d/run.log" || fail "run $1: stellar tables not from the cache"
@@ -51,7 +52,7 @@ step "setup with KETJU (from Config.sh), build + run"
 bash "$G/scripts/get_stella_deps.sh" > "$S/setup2.log" || fail "setup with KETJU, see $S/setup2.log"
 grep -q "KETJU" "$S/setup2.log" && grep -q "all checks passed" "$S/setup2.log" || fail "setup with KETJU summary"
 build ketju "$S/Config_ketju.sh" || fail "KETJU build, see $S/build_ketju.log"
-run_cloud ketju
+run_cloud ketju "KetjuRegionRadius 1e-5"   # 0.01 pc, as test/ketju_cloud_restart
 
 step "rerun of the setup"
 t0=$(date +%s); bash "$G/scripts/get_stella_deps.sh" > "$S/setup3.log" || fail "rerun"
