@@ -104,13 +104,17 @@ static void let_compute_tree_lifetime(void)
      * the interval that matters.  Taken from the counts just reduced, not from global state. */
     if(trigger_bin < 0) {trigger_bin = highest_occupied;}
 
-    g_let_tree_lifetime_dti = LET_TREE_LIFETIME_PAD_FACTOR * GET_INTEGERTIME_FROM_TIMEBIN(trigger_bin);
     /* The horizon is only ever used as an offset from the current time, so it must not run off the
      * end of the integer timeline: get_drift_factor maps time1 into the drift table and clamps the
-     * index only after forming it. */
+     * index only after forming it.  The clamp is tested before the multiplication so that a large
+     * pad factor cannot overflow the integer time; the product is formed unsigned and only once it
+     * is known not to exceed the remaining interval. */
     integertime remaining = TIMEBASE - All.Ti_Current;
     if(remaining < 0) {remaining = 0;}
-    if(g_let_tree_lifetime_dti > remaining) {g_let_tree_lifetime_dti = remaining;}
+    const unsigned long long pad_factor = (LET_TREE_LIFETIME_PAD_FACTOR);
+    const unsigned long long trigger_interval = (unsigned long long) GET_INTEGERTIME_FROM_TIMEBIN(trigger_bin);
+    if(pad_factor > 0 && trigger_interval > (unsigned long long) remaining / pad_factor) {g_let_tree_lifetime_dti = remaining;}
+    else {g_let_tree_lifetime_dti = (integertime) (pad_factor * trigger_interval);}
     if(g_let_tree_lifetime_dti > 0) {g_let_tree_lifetime_drift = get_drift_factor_undilated(All.Ti_Current, All.Ti_Current + g_let_tree_lifetime_dti);}
 }
 
