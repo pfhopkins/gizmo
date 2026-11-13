@@ -1230,9 +1230,9 @@ double ps_radius_MS_in_solar(double m) {
 #ifdef SINGLE_STAR_FB_SNE_N_EJECTA_QUADRANT
 void single_star_SN_init_directions(void){
     /* routine to initialize the distribution of spawned wind particles during SNe. This is essentially a copy of the function rt_init_intensity_directions() in rt_utilities.c */
-    int n_polar = SINGLE_STAR_FB_SNE_N_EJECTA_QUADRANT;
-    if(n_polar < 1) {printf("Number of SN ejecta particles is invalid (<1). Terminating.\n"); endrun(53463431); return;} // soft-stop + return: skip the invalid mu[n_polar] VLA (n_polar<1 is stack-UB) below
-    double mu[n_polar]; int i,j,k,l,n=0,n_oct=n_polar*(n_polar+1)/2;
+    constexpr int n_polar = SINGLE_STAR_FB_SNE_N_EJECTA_QUADRANT, n_oct = n_polar*(n_polar+1)/2;
+    static_assert(n_polar >= 1, "SINGLE_STAR_FB_SNE_N_EJECTA_QUADRANT must be at least 1");
+    double mu[n_polar]; int i,j,k,l,n=0;
     double SN_Ejecta_Direction_tmp[n_oct][3];
     for(j=0;j<n_polar;j++) {mu[j] = sqrt( (j + 1./6.) / (n_polar - 1./2.) );}
     for(i=0;i<n_polar;i++)
