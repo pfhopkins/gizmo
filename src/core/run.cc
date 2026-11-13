@@ -1064,7 +1064,13 @@ void find_next_sync_point_and_drift(void)
 #ifdef KETJU_REGULARIZATION
         ketju_swap_output_velocities(); /* members ending their step here: write the MSTAR velocity */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_swap_output_state();  /* stars on a RUMI++ step: its state at the output, not the chord */
+#endif
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_swap_output_state();
+#endif
 #ifdef KETJU_REGULARIZATION
         ketju_swap_output_velocities();
 #endif

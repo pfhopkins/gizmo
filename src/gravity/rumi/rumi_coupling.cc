@@ -55,8 +55,8 @@ struct StarKey {
 struct StarKeyHash {size_t operator()(const StarKey &k) const {return std::hash<unsigned long long>()(k.id * 0x9E3779B97F4A7C15ULL ^ (k.child << 20) ^ k.gen);}};
 inline StarKey star_key(int i) {return StarKey{(unsigned long long)P[i].ID, (unsigned long long)P[i].ID_child_number, (unsigned long long)P[i].ID_generation};}
 struct RumiStar { StarKey ID; int task, index, kw; integertime ti_step; double m, pos[3], vel[3], r_rsun; };
-struct RumiBack { StarKey ID; int index; double m, pos[3], vel[3]; };
-struct Plan { int rebuild, n_new, do_mass, nsl; double dt, G; };   /* task 0 -> RUMI++ ranks, per step */
+struct RumiBack { StarKey ID; int index, has_mid; double m, pos[3], vel[3], mpos[3], mvel[3]; };
+struct Plan { int rebuild, n_new, do_mass, split, nsl; double dt, G, dt1; };   /* task 0 -> RUMI++ ranks, per step */
 
 double UL = 1, UM = 1, UV = 1, UT = 1;   /* GIZMO code unit in pc, Msun, km/s, pc/(km/s) */
 MPI_Comm RumiComm = MPI_COMM_NULL;       /* tasks 0..RumiNumRanks-1 */
@@ -119,6 +119,12 @@ void member_status(int &exist, int &sync, long long &ti_end)
     MPI_Allreduce(MPI_IN_PLACE, &te, 1, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
     exist = glob[0]; sync = glob[1]; ti_end = te;
 }
+
+/* host coupling state <-> bytes (restart files) */
+template <class V> void put(std::vector<char> &b, const V &v) {const char *p = (const char *)&v; b.insert(b.end(), p, p + sizeof(V));}
+template <class V> void put_vec(std::vector<char> &b, const std::vector<V> &v) {put(b, (long long)v.size()); const char *p = (const char *)v.data(); b.insert(b.end(), p, p + v.size() * sizeof(V));}
+template <class V> void get(const std::vector<char> &b, size_t &o, V &v) {std::memcpy(&v, b.data() + o, sizeof(V)); o += sizeof(V);}
+template <class V> void get_vec(const std::vector<char> &b, size_t &o, std::vector<V> &v) {long long n; get(b, o, n); v.resize(n); if(n) {std::memcpy(v.data(), b.data() + o, n * sizeof(V));} o += n * sizeof(V);}
 
 } // namespace
 
@@ -206,6 +212,10 @@ void rumi_limit_timesteps(void)
             int bcap = get_timestep_bin((integertime)DMAX(ti_cap, 2)); if(bcap < bin) {bin = bcap;}
         }
         if(ti_ns_g < LLONG_MAX && ti_ns_g > (long long)All.Ti_Current) {int bns = get_timestep_bin((integertime)(ti_ns_g - (long long)All.Ti_Current)); if(bns < bin) {bin = bns;}}
+        if(!All.OutputListOn && All.TimeBetSnapshot > 0 && All.Ti_nextoutput > All.Ti_Current) { /* at most one output inside the step: the split keeps one mid-step state */
+            long long ti_o2 = (long long)All.Ti_nextoutput + (long long)(All.TimeBetSnapshot / All.Timebase_interval);
+            int bo = get_timestep_bin((integertime)(ti_o2 - (long long)All.Ti_Current)); if(bo < bin) {bin = bo;}
+        }
         while(bin > 0 && !TimeBinActive[bin]) {bin--;}
         if(bin > 0) {
             integertime ti_bin = GET_INTEGERTIME_FROM_TIMEBIN(bin);
@@ -254,7 +264,7 @@ void rumi_integrate(void)
     MPI_Gatherv(mine.data(), nb, MPI_BYTE, all.data(), cnt.data(), disp.data(), MPI_BYTE, 0, MPI_COMM_WORLD);
 
     /* ---- task 0 plans the step: deltas of the stars RUMI++ has, mass changes, new or removed stars ---- */
-    Plan plan = {0, 0, 0, 0, 0, 0};
+    Plan plan = {0, 0, 0, 0, 0, 0, 0, 0};
     const int nsl = (int)slot_id.size();
     std::vector<int> star_of_slot(nsl, -1);
     std::vector<double> dx, dv, mnew, rnew;
@@ -276,10 +286,12 @@ void rumi_integrate(void)
             if(all[k].m != last_m[q]) {last_m[q] = all[k].m; slot_m_r[q] = mnew[q];}
         }
         if(nsl > 0) {plan.do_mass = 1;} /* radii age every step; set_mass skips what did not change */
+        /* an output inside the step: split it there, so the snapshot gets RUMI++'s state */
+        if(All.Ti_nextoutput > All.Ti_Current && All.Ti_nextoutput < All.Ti_Current + ti_step) {plan.split = 1; plan.dt1 = (All.Ti_nextoutput - All.Ti_Current) * All.Timebase_interval * UT;}
     }
 
     /* ---- RUMI++ ranks: the plan, then the library calls (collective; host arrays read on task 0) ---- */
-    std::vector<double> m_out, x_out, v_out;
+    std::vector<double> m_mid, x_mid, v_mid, m_out, x_out, v_out;
     if(rumi_rank) {
         MPI_Bcast(&plan, sizeof(Plan), MPI_BYTE, 0, RumiComm);
         if(plan.nsl > 0) { /* slot bookkeeping lives on task 0: every RUMI++ rank follows the plan */
@@ -314,7 +326,12 @@ void rumi_integrate(void)
             }
         }
         const int ns = rumi_lib::n_slots();
-        if(rumi_lib::advance(plan.dt, plan.G) != 0) {printf("RUMI++: advance failed\n"); endrun(9305);}
+        if(plan.split) {
+            if(rumi_lib::advance(plan.dt1, plan.G) != 0) {printf("RUMI++: advance failed\n"); endrun(9305);}
+            m_mid.resize(ns); x_mid.resize(3*ns); v_mid.resize(3*ns);
+            rumi_lib::get_state(m_mid.data(), x_mid.data(), v_mid.data());
+            if(rumi_lib::advance(plan.dt - plan.dt1, plan.G) != 0) {printf("RUMI++: advance failed\n"); endrun(9305);}
+        } else if(rumi_lib::advance(plan.dt, plan.G) != 0) {printf("RUMI++: advance failed\n"); endrun(9305);}
         m_out.resize(ns); x_out.resize(3*ns); v_out.resize(3*ns);
         rumi_lib::get_state(m_out.data(), x_out.data(), v_out.data());
         n_steps++;
@@ -334,8 +351,9 @@ void rumi_integrate(void)
         std::stable_sort(order.begin(), order.end(), [&](int a, int b) {return all[a].task < all[b].task;});
         for(int q = 0; q < ntot; q++) {
             int k = order[q], sl = slot_of[all[k].ID]; RumiBack &b = back[q];
-            b.ID = all[k].ID; b.index = all[k].index; b.m = m_new[sl] ? last_m[sl] : -1;
+            b.ID = all[k].ID; b.index = all[k].index; b.m = m_new[sl] ? last_m[sl] : -1; b.has_mid = 0;
             for(int j = 0; j < 3; j++) {b.pos[j] = last_x[3*sl+j]; b.vel[j] = last_v[3*sl+j];}
+            if(plan.split && m_mid[sl] > 0) {b.has_mid = 1; for(int j = 0; j < 3; j++) {b.mpos[j] = x_mid[3*sl+j] / UL; b.mvel[j] = v_mid[3*sl+j] / UV;}}
             bcnt[all[k].task] += (int)sizeof(RumiBack);
         }
         int o = 0; for(int t = 0; t < NTask; t++) {bdisp[t] = o; o += bcnt[t];}
@@ -354,6 +372,8 @@ void rumi_integrate(void)
         double d[3]; for(int j = 0; j < 3; j++) {d[j] = b.pos[j] - P[i].Pos[j];}
         NEAREST_XYZ(d[0], d[1], d[2], 1);
         for(int j = 0; j < 3; j++) {rm.target_pos[j] = b.pos[j]; rm.true_vel[j] = b.vel[j];}
+        rm.mid_ti = -1;
+        if(b.has_mid) {rm.mid_ti = All.Ti_nextoutput; for(int j = 0; j < 3; j++) {rm.mid_pos[j] = b.mpos[j]; rm.mid_vel[j] = b.mvel[j];}}
         double vnew[3];
         if(dt_drift > 0) {for(int j = 0; j < 3; j++) {vnew[j] = d[j] / dt_drift;}}
         else {for(int j = 0; j < 3; j++) {vnew[j] = b.vel[j]; P[i].Pos[j] = b.pos[j];} gravity_cover_set_position(i);}
@@ -388,6 +408,46 @@ void rumi_finish_drift(void)
         moved.push_back(i);
     }}
     if(!moved.empty()) {gizmo_motion_bound_raise(moved.data(), (int)moved.size()); gizmo_mark_position_dirty_indices(moved.data(), (int)moved.size()); gpu_particles_arena_invalidate();}
+}
+
+
+/* around savepositions: stars on a RUMI++ step write RUMI++'s state at the output, not the chord: its end state or the state
+   of a step split at the output; the second call swaps back (exactly) */
+void rumi_swap_output_state(void)
+{
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].Type != 4 || !P[i].RumiIntegrated || P[i].StarIdx <= 0) continue;
+        struct rumi_member_state &rm = rumi_member(i);
+        double *x = NULL, *v = NULL;
+        if(rm.ti_end == All.Ti_nextoutput) {x = rm.target_pos; v = rm.true_vel;}
+        else if(rm.mid_ti == All.Ti_nextoutput) {x = rm.mid_pos; v = rm.mid_vel;}
+        if(!x) continue;
+        for(int j = 0; j < 3; j++) {MyDouble t = P[i].Pos[j]; P[i].Pos[j] = x[j]; x[j] = t; t = P[i].Vel[j]; P[i].Vel[j] = v[j]; v[j] = t;}
+    }
+}
+
+/* restart files: the RUMI++ library state and this file's task-0 state, beside GIZMO's */
+void rumi_save_state(void)
+{
+    if(!rumi_rank) return;
+    std::vector<char> b;
+    if(ThisTask == 0) {put_vec(b, slot_id); put_vec(b, last_m); put_vec(b, last_x); put_vec(b, last_v); put_vec(b, slot_m_r); put(b, n_steps);}
+    char dir[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(dir, sizeof(dir), "%s/restartfiles/rumi", All.OutputDir);
+    if(rumi_lib::save_state(dir, b) != 0) {printf("RUMI++: save_state failed\n"); endrun(9308);}
+}
+
+void rumi_load_state(void)
+{
+    if(!rumi_rank) return;
+    std::vector<char> b;
+    char dir[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(dir, sizeof(dir), "%s/restartfiles/rumi", All.OutputDir);
+    if(rumi_lib::load_state(dir, b) != 0) {printf("RUMI++: load_state failed (%s)\n", dir); endrun(9309);}
+    if(ThisTask == 0 && !b.empty()) {
+        size_t o = 0;
+        get_vec(b, o, slot_id); get_vec(b, o, last_m); get_vec(b, o, last_x); get_vec(b, o, last_v); get_vec(b, o, slot_m_r); get(b, o, n_steps);
+        slot_of.clear(); for(size_t k = 0; k < slot_id.size(); k++) {slot_of[slot_id[k]] = (int)k;}
+        printf("RUMI++: restarted from %s, %zu slots, step %lld\n", dir, slot_id.size(), n_steps);
+    }
 }
 
 #endif /* STARS_INTEGRATED_BY_RUMI */

@@ -10,5 +10,8 @@ void rumi_limit_timesteps(void);
 void rumi_integrate(void);
 void rumi_finish_drift(void);
 int rumi_direct_gravity_needed(void);
+void rumi_swap_output_state(void);
+void rumi_save_state(void);
+void rumi_load_state(void);
 struct rumi_member_state &rumi_member(int i);
 #endif
