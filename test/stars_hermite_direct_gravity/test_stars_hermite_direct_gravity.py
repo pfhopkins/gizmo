@@ -15,7 +15,7 @@ TEST_DIR = f"test/{TEST_NAME}"
 _spec = importlib.util.spec_from_file_location("fewbody_reference", f"{TEST_DIR}/fewbody_reference.py")
 ref = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(ref)
 
-ETAS = (0.02, 0.005, 0.00125)  # eta x1/4 halves the Aarseth step, so the block steps shift by one bin
+ERRTOL = 0.049  # largest GIZMO accepts; the acceleration step stays above the Aarseth step for the ladders below
 ORDER = (3.5, 4.5)  # 4th order; next-order terms ~ dt/tau ~ sqrt(eta) move the measured order by < 0.5
 LIFT = 1e-9  # snapshots this fraction of an interval after a full sync point, where the start-of-step state is the corrected one
 ORIGIN = np.full(3, 2e-5)  # centre of mass near the origin: coordinate roundoff 1e4 below that at 0.15 kpc
@@ -29,8 +29,10 @@ def period(m, a):
 
 P_BIN = period(2 * ref.MSUN, 1000 * ref.AU)
 P_OUT = period(3 * ref.MSUN, 1000 * ref.AU)
-SYSTEMS = {"binary": dict(ic=ref.binary, tmax=8 * P_BIN, every=P_BIN, maxstep=P_BIN / 4),  # snapshots after orbits 1..7
-           "triple": dict(ic=ref.triple, tmax=2 * P_OUT, every=P_OUT, maxstep=P_OUT / 4)}  # snapshot after one outer orbit
+SYSTEMS = {"binary": dict(ic=ref.binary, tmax=8 * P_BIN, every=P_BIN, maxstep=P_BIN / 4,  # snapshots after orbits 1..7
+                       etas=(0.00125, 3.125e-4, 7.8125e-5)),  # eta x1/4 halves the Aarseth step, so the block steps shift by one bin
+           "triple": dict(ic=ref.triple, tmax=2 * P_OUT, every=P_OUT, maxstep=P_OUT / 4,  # snapshot after one outer orbit
+                       etas=(0.005, 0.00125, 3.125e-4))}
 RUNS = {}
 
 
@@ -47,7 +49,7 @@ def run(system, eta, symmetric=False):
     build_and_run_test(TEST_NAME, 1, 1, extra_config_flags=flags,
                        param_overrides={"InitCondFile": f"hermite_{system}_ics", "TimeMax": s["tmax"], "TimeOfFirstSnapshot": s["every"] * (1 + LIFT),
                                         "TimeBetSnapshot": s["every"], "TimeBetStatistics": s["tmax"], "MaxSizeTimestep": s["maxstep"],
-                                        "ErrTolIntAccuracy": 10.0})  # acceleration criterion far above the Aarseth step
+                                        "ErrTolIntAccuracy": ERRTOL})
     out = []
     for f in sorted(glob.glob(variant_output_dir(TEST_NAME, flags) + "/snapshot_*.hdf5")):
         x1, v1, _, t1 = ref.read(f)
@@ -153,23 +155,24 @@ def drift(system, eta, symmetric):
 
 
 def test_binary():
-    check(ladder("binary", False, ETAS), True)
+    check(ladder("binary", False, SYSTEMS["binary"]["etas"]), True)
 
 
 def test_triple():
-    check(ladder("triple", False, ETAS), True)
+    check(ladder("triple", False, SYSTEMS["triple"]["etas"]), True)
 
 
 def test_binary_symmetric():
     """P(EC)^2 with time-symmetric steps: bounded by the same truncation estimate, offsets at 4th order, and no secular drift:
     the slope of dE/E over the orbits below sqrt(eta) (one order in dt) times that of the base scheme at the same eta"""
-    check(ladder("binary", True, ETAS[:2]), False)
-    s_sym, de_sym = drift("binary", ETAS[0], True)
-    s_base, de_base = drift("binary", ETAS[0], False)
-    print(f"dE/E per orbit: symmetric {de_sym}, slope {s_sym:.3e}; base {de_base}, slope {s_base:.3e}; bar {np.sqrt(ETAS[0]) * abs(s_base):.3e}")
+    eta = SYSTEMS["binary"]["etas"][0]
+    check(ladder("binary", True, SYSTEMS["binary"]["etas"][:2]), False)
+    s_sym, de_sym = drift("binary", eta, True)
+    s_base, de_base = drift("binary", eta, False)
+    print(f"dE/E per orbit: symmetric {de_sym}, slope {s_sym:.3e}; base {de_base}, slope {s_base:.3e}; bar {np.sqrt(eta) * abs(s_base):.3e}")
     assert len(de_sym) == 7 and len(de_base) == 7
-    assert abs(s_sym) <= np.sqrt(ETAS[0]) * abs(s_base)
+    assert abs(s_sym) <= np.sqrt(eta) * abs(s_base)
 
 
 def test_triple_symmetric():
-    check(ladder("triple", True, ETAS[:2]), False)
+    check(ladder("triple", True, SYSTEMS["triple"]["etas"][:2]), False)
