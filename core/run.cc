@@ -927,6 +927,9 @@ void calculate_non_standard_physics(void)
 #endif
     {
         sink_accretion();
+#ifdef TREE_INTEGRITY_AUDITS
+        force_tree_geometry_audit("after_sink"); /* positions the sink pass set directly must still lie inside their node boxes */
+#endif
         /* rank-uniform: Allreduce'd in the swallow tally. Swallow victims sit at Mass=0, still
            linked in the tree, until a rearrange eliminates them -- previously that only happened
            if the SPAWN gate below chanced to open, so zero-mass slots could linger indefinitely. */
