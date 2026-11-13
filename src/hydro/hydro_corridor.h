@@ -118,7 +118,8 @@ GizmoHydroCorridorMode gizmo_hydro_corridor_get_mode(void);
  *     caller-owned-pool contract (the runner skips its own ghost
  *     import/cleanup — see neighbor_loop_runner.h GHOST-POOL OWNERSHIP).
  *     Mid-span ghost staleness is handled by
- *     gizmo_hydro_corridor_refresh_ghost_values() below, the ONLY function
+ *     gizmo_hydro_corridor_refresh_ghost_values() below, which with
+ *     gizmo_hydro_corridor_revalidate_ghost_pool() are the ONLY functions
  *     that may rebuild + republish the corridor CSR view.
  *   MODE_B: builds ONLY the shared active-index list (the request-driven
  *     walkers' row source) and dematerializes leftover ghosts — no import,
@@ -155,8 +156,9 @@ void gizmo_hydro_corridor_begin(void);
  *                        TURB_DIFF_DYNAMIC only, first iteration only.
  *   "pre_hydro_force"  — CellP.Gradients.
  * No-op unless the corridor published a
- * Mode-A CSR view. THE ONLY function that may rebuild and republish the
- * corridor CSR. Two paths:
+ * Mode-A CSR view. With gizmo_hydro_corridor_revalidate_ghost_pool (below,
+ * which shares its full path), THE ONLY function that may rebuild and
+ * republish the corridor CSR. Two paths:
  *   FAST — when the live ghost pool is the very import the CSR was built
  *   from (import-epoch match): value-only in-place refresh via
  *   ghost_refresh_values(); slot identity preserved by construction, CSR
@@ -171,6 +173,12 @@ void gizmo_hydro_corridor_begin(void);
  * `stage` is a short diagnostic label ("pre_gradients", "mhd_cg_iter",
  * "pre_hydro_force"). */
 void gizmo_hydro_corridor_refresh_ghost_values(const char *stage);
+
+/* For a call site where no owner field a later neighbour-side reader consumes
+ * can have been written since the pool was packed: re-import (the FULL path
+ * above) only if the live pool is no longer the corridor's own import, and
+ * otherwise ship nothing. Collective, like the refresh. */
+void gizmo_hydro_corridor_revalidate_ghost_pool(const char *stage);
 
 /* Accessor for downstream corridor consumers. Returns a non-null pointer
  * iff gizmo_hydro_corridor_begin populated a usable Mode-A CSR for this

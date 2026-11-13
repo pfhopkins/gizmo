@@ -420,7 +420,8 @@ void GradientsIterSpec::apply_active_writeback(const neighbor_loop_args& args,
  *   0. TURB_DIFF_DYNAMIC: smooth Velocity_bar on its owners, so the refresh
  *      below ships the value the pair term reads on neighbours.
  *   1. Corridor ghost-value refresh (Mode A; topology was built once at
- *      gizmo_hydro_corridor_begin — this function builds nothing).
+ *      gizmo_hydro_corridor_begin — this function builds nothing); without
+ *      a writer of this stage compiled, only the pool-identity check.
  *   2. Allocate GasGradDataPasser off the mymalloc LIFO stack (local
  *      std::vector — symlist stays at LIFO top, refresh is unobstructed).
  *   3. Host-side zero of CellP[i].Gradients.* / passer[i] / etc.
@@ -464,8 +465,10 @@ void hydro_gradient_calc(void)
     /* (1) Corridor topology. The shared active list (and, in Mode A, the
      * ghost pool + CSR) was built ONCE at gizmo_hydro_corridor_begin(); this
      * function builds nothing. Mode A with a published view: refresh ghost
-     * field values (owner-side hydro fields changed since the corridor
-     * import: cellcorrections' Volume_1) — the refresh may
+     * field values (owner-side fields written since the corridor import:
+     * cellcorrections' volumes, density and pressure; the dynamic-diffusion
+     * filter's Velocity_bar and Norm_hat), or, with neither compiled, only
+     * check the pool is still the corridor's own import — the refresh may
      * rebuild+republish the CSR view, so the view is re-fetched per
      * iteration below, never cached across a refresh. Mode B: nothing to do
      * here (request-driven walkers use the corridor-built active list; no
@@ -474,7 +477,16 @@ void hydro_gradient_calc(void)
     const GizmoHydroCorridorMode   corridor_mode = gizmo_hydro_corridor_get_mode();
     const bool corridor_built_csr = (gizmo_hydro_corridor_external_csr() != nullptr);
     if(corridor_built_csr) {
+#if defined(HYDRO_VOLUME_CORRECTIONS) || defined(TURB_DIFF_DYNAMIC)
         gizmo_hydro_corridor_refresh_ghost_values("pre_gradients");
+#else
+        /* Neither writer of the "pre_gradients" stage is compiled (the only
+         * routines between gizmo_hydro_corridor_begin and here, in accel.cc;
+         * keep this condition in step with them), so the corridor import is
+         * still current: a value refresh here would ship every ghost again
+         * unchanged. */
+        gizmo_hydro_corridor_revalidate_ghost_pool("pre_gradients");
+#endif
     } else if(corridor_mode == GizmoHydroCorridorMode::MODE_A
               && gizmo_sym_any_active_global) {
         printf("FATAL: hydro_gradient_calc in Mode A with active gas but no published corridor CSR on task %d.\n", ThisTask);
