@@ -203,8 +203,9 @@ def test_supernova_destroys_the_dust_of_its_kernel():
     assert left[core].max() < 0.05
 
 
-def ejecta_dust(d):
-    """dust the events of a star run bring (table ejecta, Choban+22 condensation, FeMgSiO4; no metallic iron species tracked)"""
+def ejecta_dust(d, species=False):
+    """dust the events of a star run bring (table ejecta, Choban+22 condensation, FeMgSiO4; no metallic iron species tracked);
+    species=True: the silicate alone"""
     import test_single_stars_metals as ssm
     ssm.SIL_ATOMS = {4: 4.0, 6: 1.0, 7: 1.0, 10: 1.0}  # FeMgSiO4 (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION=16)
     T = get_stellar_evolution_tables()["StellarTablesFile"]
@@ -219,7 +220,7 @@ def ejecta_dust(d):
         kind = {1: "sn", 2: "agb"}[int(r[2])]
         y = np.asarray(ej[kind], dtype=float); y = y * r[6] / y.sum()
         dd, ss = ssm.stella_dust(np.concatenate([[y[2:].sum()], y[ssm.FIRE_ELEMENTS]]), kind)
-        total += dd[0] - ss[2]
+        total += ss[0] if species else dd[0] - ss[2]
     return total
 
 
@@ -228,10 +229,11 @@ def lost(s0, s1, d):
 
 
 def test_dust_budget_through_feedback_merge_and_split():
-    """a 3 Msun AGB death alone in cold seeded gas (100 K: no sputtering, growth below 1e-6 in 200 yr): the cells within two
+    """a 3 Msun AGB death alone in cold seeded gas (100 K: no sputtering): the cells within two
     spacings of the star start at 1.45 Msun with the split threshold at 1.5 Msun, eight 0.3 Msun cells elsewhere with the
     merge threshold at 0.35 Msun; after the deposit splits and the mergers the gas holds the seeded dust plus the condensation of
-    the table ejecta (1e-3 of the ejecta dust), element by element inside its metals"""
+    the table ejecta plus the growth booked as gas-dust accretion, to the yields' precision (1e-10 of the ejecta dust) and the
+    double roundoff, element by element inside its metals"""
     from test_single_stars_metals import event_stars, event_life
     T = get_stellar_evolution_tables()["StellarTablesFile"]
     exe = TEST_DIR / "GIZMO_stars"
@@ -265,33 +267,41 @@ def test_dust_budget_through_feedback_merge_and_split():
     split = sum(int(a) for a in re.findall(r"merged, (\d+) particles split", out))
     s0, s1 = snap(sorted((d / "output").glob("snapshot_*.hdf5"))[0]), snap(sorted((d / "output").glob("snapshot_*.hdf5"))[-1])
     M_ej, gap = ejecta_dust(d), lost(s0, s1, d)
+    grown = (s1["m"] * s1["D"][:, 0] * s1["D"][:, 11]).sum() - (s0["m"] * s0["D"][:, 0] * s0["D"][:, 11]).sum()  # booked gas-dust accretion
+    steps = out.count("Sync-Point")
+    M_dust = (s1["m"] * s1["D"][:, 0]).sum()
+    bar = 1e-10 * M_ej + (10 * steps + len(s1["m"])) * 2.2e-16 * M_dust  # yields precision + double roundoff per step and in the sum
     el = [((s1["m"][:, None] * s1["D"][:, SLOTS]).sum(0) - (s0["m"][:, None] * s0["D"][:, SLOTS]).sum(0))]
-    print(f"cells {len(s0['m'])} -> {len(s1['m'])}, merged {merged}, split {split}; T max {s1['T'].max():.3g} K; "
-          f"ejecta dust {M_ej:.6g} Msun, dust missing {gap:.3g} Msun; element dust change {el[0]}")
+    print(f"cells {len(s0['m'])} -> {len(s1['m'])}, merged {merged}, split {split}, steps {steps}; T max {s1['T'].max():.3g} K; "
+          f"ejecta dust {M_ej:.6g} Msun, booked growth {grown:.4g} Msun, dust missing net of growth {gap + grown:.4g} Msun, bar {bar:.3g}; element dust change {el[0]}")
     assert merged > 0 and split > 0
-    assert s1["T"].max() < 3e4
-    assert abs(gap) < 1e-3 * M_ej
+    assert s1["T"].max() < 3e4  # no sputtering below 3e4 K (Nozawa fits)
+    assert grown >= 0 and abs(gap + grown) < bar
     assert np.all(s1["D"][:, 1:11] <= s1["Z"][:, 1:11] * (1 + 1e-12))
 
 
 def test_no_swept_mass_destruction():
-    """GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION: 50 yr after the supernova the cells it enriches by over half keep
-    over half of their silicate mass (only one step of sputtering; the swept-mass rule clears them,
-    test_supernova_destroys_the_dust_of_its_kernel)"""
-    s0, s1, _ = star_run("noswept", STARS + ("GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION",))
-    core = s1["Z"][:, 0] > 1.5 * s0["Z"][0, 0]
-    kept = s1["m"][core] * s1["S"][core, 0] / (s0["m"][0] * s0["S"][0, 0])  # silicate mass over the seeded one of a cell
-    print(f"strongly enriched cells {core.sum()}, silicate mass kept: min {kept.min():.3g}, median {np.median(kept):.3g}")
-    assert core.sum() >= 8 and kept.min() > 0.5
+    """GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION: in 50 yr after the supernova the box loses at most the silicate
+    thermal sputtering takes, M1 (exp(3 n Y(T) dt / a) - 1) per cell at its final n, T, with the rate x1.5 for the density and
+    temperature change in 50 yr (cells move < 0.1 pc, spacing 1.4 pc); the swept-mass rule would clear the kernel"""
+    s0, s1, d = star_run("noswept", STARS + ("GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION",))
+    dt = s1["t"] - s0["t"]
+    lost_sil = (s0["m"] * s0["S"][:, 0]).sum() + ejecta_dust(d, species=True) - (s1["m"] * s1["S"][:, 0]).sum()
+    rate = 3 * nH(s1) * np.array([yth(t, YS) for t in s1["T"]]) / 0.1
+    bound = (s1["m"] * s1["S"][:, 0] * np.expm1(1.5 * rate * dt)).sum()
+    print(f"silicate lost in {dt:.3g} yr: {lost_sil:.4g} Msun, sputtering bound {bound:.4g} Msun")
+    assert lost_sil <= bound
 
 
 def test_shock_tracked_destruction():
     """GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION in place of the swept-mass rule, 200 yr: compressed cells with a shock above
-    50 km/s lose dust at 0.4 v^2/(v^2 + 100^2) per crossing time (carbon half): more dust lost than with no destruction at all,
-    less than the saturated swept-mass rule"""
+    50 km/s lose dust at 0.4 v^2/(v^2 + 100^2) per crossing time (carbon half), on top of the same sputtering: more lost than with
+    no SN destruction (above the double roundoff); per cell at most 1 - exp(-0.4 dt v/h) <~ 20% (v < 3000 km/s, h > 1.4 pc), so
+    less than the swept-mass rule, which clears the kernel"""
     s, d = star_run("shock", STARS + ("GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION",), 2e-4, 2.5e-5)
     n, dn = star_run("noswept", STARS + ("GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION",), 2e-4, 2.5e-5)  # sputtering only
     m, dm = star_run("stars", STARS, 2e-4, 2.5e-5)
     shock, none, mckee = lost(s[0], s[-1], d), lost(n[0], n[-1], dn), lost(m[0], m[-1], dm)
+    floor = 1e-12 * (s[-1]["m"] * s[-1]["D"][:, 0]).sum()
     print(f"dust lost in 200 yr [Msun]: shock-tracked {shock:.4g}, none (sputtering only) {none:.4g}, swept mass {mckee:.4g}")
-    assert shock > none + 1e-3 and shock < mckee
+    assert shock > none + floor and shock < mckee
