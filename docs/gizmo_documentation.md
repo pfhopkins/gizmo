@@ -1905,6 +1905,10 @@ The switches below are in development (developer: Ulrich Steinwandel, GitHub Ull
 
 **TEST\_KETJU\_LIMITER\_SCAN\_CROSSCHECK\_ABORTS**: Test only. Every step, the KETJU limiting-particle steps are recomputed by a full particle scan, and the run stops if the cell grid of the limiter finds a different result. Slow. Used by `test/ketju_binary` (`test_periodic_pair_across_the_edge`).
 
+**DIVBCLEANING\_CONSERVATIVE\_PSI\_OVER\_CH**: Divergence cleaning for meshless finite-mass MHD that conserves energy, in place of the Dedner cleaning (Tricco & Price 2012; Tricco, Price & Bate 2016). The cell evolves PsiZ = (psi/c_h) sqrt(V), so the cleaning energy E_psi = PsiZ^2/2 is unchanged when the cell volume or the cleaning speed c_h = sqrt(c_s^2 + v_A^2) changes. The face operators come as a conjugate pair (symmetric -V grad psi, difference V div B), so the hyperbolic part only moves energy between E_B and E_psi. Parabolic damping multiplies PsiZ by exp(-sigma c_h dt / h), h = 1.2 (m/rho)^(1/3), and the removed E_psi goes into the gas internal energy. With `OUTPUT_BFIELD_DIVCLEAN_INFO` the snapshots carry the physical psi in `DivBcleaningFunctionPhi`. Sub-switches: **DIVBCLEANING\_CONSERVATIVE\_PSI\_OVER\_CH\_SYMMETRIC\_DIVB** uses the other conjugate pair (symmetric V div B, difference grad psi; Tricco & Price 2012 sec. 4.2.2); **DIVBCLEANING\_CONSERVATIVE\_PSI\_OVER\_CH\_NO\_DAMPING\_HEAT** drops the damped E_psi instead of heating the gas; **DIVBCLEANING\_CONSERVATIVE\_SIGMA**=value sets sigma (dimensionless; default 1.0 in 3D, 0.3 in 2D; 0 = no damping). The Dedner parameters `DivBcleaningParabolicSigma` and `DivBcleaningHyperbolicSigma` are not used. Requires `MAGNETIC` and `HYDRO_MESHLESS_FINITE_MASS`; do not set `DIVBCLEANING_DEDNER`. Memory: 7 doubles per cell. Not enabled in any Stella configuration. Test: `test/conservative_psi_cleaning`.
+
+**TEST\_DIVBCLEANING\_ALTERNATING\_CLEANING\_SPEED**: Test only. The div-B cleaning speed (of the conservative cleaning above, or of the Dedner cleaning) doubles in every other interval of 0.05 code time units (Tricco, Price & Bate 2016 sec. 3.2). Used by `test/conservative_psi_cleaning` (`test_pair_conserves[alternating]`).
+
 **Behaviour without a switch.**
 * *Comoving density refresh*: in comoving runs, single stars from the tables younger than 35 Myr refresh their neighbour density every step, as they already do in non-comoving runs. Their radiation and wind radii therefore follow the gas. Test: `test/photoion_per_direction` (`test_young_star_density_follows_the_gas_in_comoving_runs`).
 * *Death-log columns*: `SNinfo.txt` gains columns 21-26 and `AGBinfo.txt` columns 19-24 (with `GALSF_SINGLE_STARS_EVENT_LOGS`). They hold the ambient n_H [cm^-3], T [K, mu = 1.22], the star's kernel radius [pc], its neighbour number, the birth n_H [cm^-3], and the birth comoving density at the current a [cm^-3]. Test: `test/single_stars_event_logs`.
@@ -1919,6 +1923,7 @@ The switches below are in development (developer: Ulrich Steinwandel, GitHub Ull
 | `GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF` | `GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY` |
 | `GALSF_RESOLVEDISM_SN_SPAWN` | `GALSF_SINGLE_STARS_SN_EJECTA_CELL` |
 | `SGCHEM_PRIMORDIAL_HELIUM`, `SGCHEM_DGR_REMY_RUYER14`, `SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS`, `SGCHEM_UVB_TREECOL_SHIELDING`, `TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS` | same names |
+| `DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH` and its sub-switches, `DIVBCLEANING_CONSERVATIVE_SIGMA`, `TEST_DIVBCLEANING_ALTERNATING_CLEANING_SPEED` | same names |
 | parameters `PopIII_*`, `nHcutoffSF` | same names |
 
 
