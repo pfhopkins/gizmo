@@ -8,8 +8,11 @@ drift +0.573e48, not explained by the ledger -0.011e48; E_B not booked by the u 
   test_ledger_closes: the total-energy drift minus the booked source terms (limiter and floor, Powell, Dedner face and correction,
     face-closure limiter) minus the E_B change the u equation did not book is below 5 % of the drift; that unbooked E_B change
     is the drift to 20 %.
-  test_ledger_closes_psi (DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH; E_psi in the total, no Dedner rows): the same two bars, and the
-    psi damping row is not negative.
+  test_ledger_closes_psi (DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH; E_psi in the total, no Dedner rows): the closure bar (rest below
+    5 % of the drift), and the psi damping row is not negative.
+Changed after the first run: the psi variant first also had "unbooked E_B is the drift to 20 %"; with this cleaning the Powell term
+is most of the drift (+1.56e48 of +2.17e48 erg), so that bar does not apply there. The E_B state row then came from the drifted B
+while the ledger is written before the second half-kick; it now uses the kicked B, as E_th and E_kin use the kicked u and v.
 """
 import shutil
 import subprocess
@@ -60,14 +63,15 @@ def delta(L, n):
     return (L[n][-1] - L[n][0]) / 1e48
 
 
-def closes(L, with_psi):
+def closes(L, with_psi, unbooked_is_drift=True):
     dE = sum(delta(L, n) for n in ("E_th_erg", "E_kin_erg", "E_B_erg") + (("E_psi_erg",) if with_psi else ()))
     src = sum(delta(L, n) for n in SOURCES)
     unbooked = delta(L, "E_B_erg") - (delta(L, "E_mhd_B_dVB_booked_erg") - delta(L, "E_mhd_half_B2_dV_booked_erg"))
     rest = dE - src - unbooked
     print(f"drift {dE:+.4f}, sources {src:+.4f} (" + " ".join(f"{n} {delta(L, n):+.4f}" for n in SOURCES) + f"), unbooked E_B {unbooked:+.4f}, rest {rest:+.4f} (1e48 erg)")
     assert abs(rest) < 0.05 * abs(dE)
-    assert abs(unbooked - dE) < 0.2 * abs(dE)
+    if unbooked_is_drift:
+        assert abs(unbooked - dE) < 0.2 * abs(dE)
 
 
 def test_magnetic_energy_split(ledger):
@@ -84,4 +88,4 @@ def test_ledger_closes_psi(ledger_psi):
     assert delta(ledger_psi, "E_mhd_dedner_face_erg") == 0 and delta(ledger_psi, "E_mhd_dedner_correction_erg") == 0
     print("E_psi end", ledger_psi["E_psi_erg"][-1], "damped", ledger_psi["E_psi_damping_erg"][-1], "erg")
     assert ledger_psi["E_psi_damping_erg"][-1] >= 0
-    closes(ledger_psi, True)
+    closes(ledger_psi, True, unbooked_is_drift=False)
