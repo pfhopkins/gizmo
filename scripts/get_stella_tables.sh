@@ -1,20 +1,23 @@
 #!/bin/bash
 # Install the Stella stellar + SGCHEM tables these GIZMO sources expect into PREFIX, and check them against the hashes
 # recorded in src/galaxy_sf/stella_tables_check.h (GIZMO checks the same hashes at startup). Run once per machine/version,
-# before any run: GIZMO itself never builds or fetches tables, and needs no network.
+# before any run: GIZMO itself never builds or fetches tables, and needs no network. scripts/get_stella_deps.sh calls this
+# with the release of <ref>, the default; building here is not reproducible across numpy/scipy versions.
 #   get_stella_tables.sh [PREFIX]
-#   PREFIX               install directory (default: $STELLA_TABLES_PREFIX, else ~/.stella-tables/<ref>)
+#   PREFIX               install directory (default: $STELLA_TABLES_PREFIX, else the place GIZMO looks by default,
+#                        ${STELLA_DEPS_PREFIX:-~/.stella-deps}/tables-<first 7 of ref>)
 #   STELLA_TABLES_FROM   take already-built tables from this directory (an install, or a stella-tables build/) instead of building
+#   STELLA_TABLES_SOURCE what the stamp records as their origin when copying (default: "copy")
 #   STELLA_TABLES_REPO   git URL or local path of stella-tables to build from (default: the public GitHub repo)
 #   STELLA_TABLES_DIR    where to clone and build (default: PREFIX/src)
 #   PYTHON               python with numpy and h5py, for the hash check and the build (default: python3 if it has h5py,
 #                        else the module python-waterboa)
-# Then set in the parameter file: StellarTablesFile PREFIX/stellar_tables_unified.hdf5 (the wind table is read from the same directory)
+# For another PREFIX set in the parameter file: StellarTablesFile PREFIX/stellar_tables_unified.hdf5, SGChemTablesPath PREFIX
 set -euo pipefail
 GIZMO="$(cd "$(dirname "$0")/.." && pwd)"
 HDR="$GIZMO/src/galaxy_sf/stella_tables_check.h"
 REF="$(sed -n 's/^#define STELLA_TABLES_REF "\([0-9a-f]*\)".*/\1/p' "$HDR")"
-PREFIX="${1:-${STELLA_TABLES_PREFIX:-$HOME/.stella-tables/$REF}}"
+PREFIX="${1:-${STELLA_TABLES_PREFIX:-${STELLA_DEPS_PREFIX:-$HOME/.stella-deps}/tables-${REF:0:7}}}"
 REPO="${STELLA_TABLES_REPO:-https://github.com/Ulli1991/stella-tables.git}"
 # python with numpy and h5py (hash check and the stella-tables build): PYTHON if set, else python3 if it has h5py, else
 # a python module where a module system exists
@@ -67,7 +70,8 @@ if ! verify "$PREFIX" 2>/dev/null; then
         if [ -e "$SRC/$f" ]; then cp "$SRC/$f" "$PREFIX/"; elif [ -e "$SRC/chemistry/$f" ]; then cp "$SRC/chemistry/$f" "$PREFIX/"; fi
     done
     verify "$PREFIX" || { echo "get_stella_tables: installed tables in $PREFIX do not match these sources" >&2; exit 1; }
-    { echo "stella-tables: $REF"; echo "source: ${STELLA_TABLES_FROM:-$REPO}"; date; } > "$PREFIX/stella_tables.stamp"
+    ORIGIN="build of ${REPO##*/}"; [ -n "${STELLA_TABLES_FROM:-}" ] && ORIGIN="${STELLA_TABLES_SOURCE:-copy}"   # no local paths
+    { echo "stella-tables: $REF"; echo "source: $ORIGIN"; date; } > "$PREFIX/stella_tables.stamp"
 fi
 echo "get_stella_tables: $PREFIX holds stella-tables $REF (hashes checked)"
 echo "parameter file: StellarTablesFile $PREFIX/stellar_tables_unified.hdf5"

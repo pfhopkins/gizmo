@@ -127,7 +127,7 @@ int stellar_tables_verify(const std::vector<std::string> &paths)
         if(!want) {continue;}
         std::string got = stellar_tables_hash(p.c_str());
         if(got == want) {printf("STELLAR TABLES: %s ok\n", p.c_str()); continue;}
-        printf("STELLAR TABLES: %s %s (expected %s, stella-tables %s); install with scripts/get_stella_tables.sh\n",
+        printf("STELLAR TABLES: %s %s (expected %s, stella-tables %s); run scripts/get_stella_deps.sh\n",
                p.c_str(), got.empty() ? "cannot be read" : ("has hash " + got).c_str(), want, STELLAR_TABLES_REF);
         bad++;
     }

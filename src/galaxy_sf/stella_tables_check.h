@@ -25,6 +25,16 @@ static const char *const StellaTablesExpected[][2] = { /* basename, content hash
     {"sgchem_net18_tables.bin",      "e3c41f2c5a676557d06f44854b14a1ee64b0d98142e1459779b1b8c8631f928d"}, /* SGChem network 18 only */
 };
 
+/* empty or SET_ME: the install of scripts/get_stella_deps.sh, ${STELLA_DEPS_PREFIX:-$HOME/.stella-deps}/tables-<ref>[/file] */
+static inline void stella_tables_default_path(char *dst, size_t n, const char *tag, const char *file)
+{
+    if(*dst && strcmp(dst, "SET_ME")) {return;}
+    const char *p = getenv("STELLA_DEPS_PREFIX"), *h = getenv("HOME");
+    int own = (p && *p);
+    snprintf(dst, n, "%s%s/tables-%.7s%s%s", own ? p : (h ? h : "."), own ? "" : "/.stella-deps", STELLA_TABLES_REF, *file ? "/" : "", file);
+    printf("%-50s%s (not set: the install of scripts/get_stella_deps.sh)\n", tag, dst);
+}
+
 struct StellaSha256 {
     uint32_t h[8]; uint64_t len; unsigned char buf[64]; size_t nbuf;
     StellaSha256() : len(0), nbuf(0) {
@@ -77,14 +87,14 @@ typedef H5O_info2_t stella_h5o_info_t;
 #else
 typedef H5O_info_t stella_h5o_info_t;
 #endif
-static herr_t stella_tables_collect_dataset(hid_t, const char *name, const stella_h5o_info_t *info, void *out)
+static inline herr_t stella_tables_collect_dataset(hid_t, const char *name, const stella_h5o_info_t *info, void *out)
 {
     if(info->type == H5O_TYPE_DATASET) {((std::vector<std::string> *)out)->push_back(name);}
     return 0;
 }
 
 /* content hash of one table file; "" if it cannot be read */
-static std::string stella_tables_hash(const char *path)
+static inline std::string stella_tables_hash(const char *path)
 {
     StellaSha256 sh;
     size_t n = strlen(path);
@@ -119,7 +129,7 @@ static std::string stella_tables_hash(const char *path)
 }
 
 /* 0 if every file matches its expected hash; prints each mismatch. STELLA_TABLES_ALLOW_MISMATCH=1 turns mismatches into warnings. */
-static int stella_tables_verify(const std::vector<std::string> &paths)
+static inline int stella_tables_verify(const std::vector<std::string> &paths)
 {
     int bad = 0;
     for(const std::string &p : paths) {
@@ -129,7 +139,7 @@ static int stella_tables_verify(const std::vector<std::string> &paths)
         if(!want) {continue;}
         std::string got = stella_tables_hash(p.c_str());
         if(got == want) {printf("STELLA TABLES: %s ok\n", p.c_str()); continue;}
-        printf("STELLA TABLES: %s %s (expected %s, stella-tables %s); install with scripts/get_stella_tables.sh\n",
+        printf("STELLA TABLES: %s %s (expected %s, stella-tables %s); run scripts/get_stella_deps.sh\n",
                p.c_str(), got.empty() ? "cannot be read" : ("has hash " + got).c_str(), want, STELLA_TABLES_REF);
         bad++;
     }

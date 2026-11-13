@@ -1,7 +1,18 @@
 # KETJU (MSTAR chain regularisation) build additions; included by src/Makefile when KETJU_REGULARIZATION is set
 # KETJU_PATH = install prefix of MSTAR (ketju-integrator: include/mstar, lib/libmstar.a, built against the same Kokkos as
-# GIZMO) and of the ketju-integrator-c headers (include/ketju_integrator); set it in your SYSTYPE block, the environment or
-# on the make line. Both are separate installs, not part of this repository.
+# GIZMO) and of the ketju-integrator-c headers (include/ketju_integrator). Default: the install of
+# scripts/get_stella_deps.sh --ketju under $(STELLA_DEPS_PREFIX) (~/.stella-deps), keyed by the pins below and by the
+# Kokkos install; set it in your SYSTYPE block, the environment or on the make line to use another. Not part of this repository.
+# pins: MSTAR (branch kokkos) and the ketju-integrator-c headers (branch ketju-c)
+KETJU_REPO  = https://github.com/Ulli1991/ketju-integrator.git
+KETJU_REF   = 4b042547982b1aa4b05533eaa39ec121753b9240
+KETJU_C_REF = e70b815a23ee03a666636d18c51e222cada3309a
+KETJU_KOKKOS = $(or $(strip $(KOKKOS_PATH)),$(patsubst -I%/include,%,$(firstword $(filter -I%,$(KOKKOS_CPPFLAGS)))))
+STELLA_DEPS_PREFIX ?= $(HOME)/.stella-deps
+ifeq ($(strip $(KETJU_PATH)),)
+KETJU_PATH := $(STELLA_DEPS_PREFIX)/ketju-$(shell echo $(KETJU_REF) | cut -c1-7)-$(shell echo $(KETJU_C_REF) | cut -c1-7)-kokkos-$(shell printf '%s' '$(KETJU_KOKKOS)' | cksum | cut -d' ' -f1)
+endif
+KETJU_OK = $(and $(wildcard $(KETJU_PATH)/include/mstar/mstar.hpp),$(wildcard $(KETJU_PATH)/include/ketju_integrator/ketju_integrator.h),$(wildcard $(KETJU_PATH)/lib/libmstar.a $(KETJU_PATH)/lib64/libmstar.a))
 KETJU_DIR = gravity/ketju
 OBJS += $(KETJU_DIR)/ketju_coupling.o $(KETJU_DIR)/ketju_params.o
 INCL += $(KETJU_DIR)/ketju_coupling.h $(KETJU_DIR)/ketju_proto.h $(KETJU_DIR)/ketju_particle_fields.h $(KETJU_DIR)/ketju_global_fields.h $(KETJU_DIR)/ketju_member_state.h
@@ -13,9 +24,13 @@ OBJS += $(KETJU_DIR)/ketju_tree_audit.o
 OBJS += $(KETJU_DIR)/ketju_star_mergers.o
 INCL += $(KETJU_DIR)/ketju_star_mergers.h
 OBJS += $(KETJU_DIR)/ketju_energy_diag.o
-$(if $(KETJU_PATH),,$(error KETJU_REGULARIZATION: set KETJU_PATH to the install prefix of MSTAR and the ketju-integrator-c headers))
-$(if $(wildcard $(KETJU_PATH)/include/mstar/mstar.hpp),,$(error KETJU: no include/mstar/mstar.hpp under KETJU_PATH=$(KETJU_PATH)))
-$(if $(wildcard $(KETJU_PATH)/include/ketju_integrator/ketju_integrator.h),,$(error KETJU: no include/ketju_integrator/ketju_integrator.h under KETJU_PATH=$(KETJU_PATH)))
-$(if $(wildcard $(KETJU_PATH)/lib/libmstar.a $(KETJU_PATH)/lib64/libmstar.a),,$(error KETJU: no lib/libmstar.a under KETJU_PATH=$(KETJU_PATH)))
+ifeq ($(MAKECMDGOALS),ketju-path)
+# the setup script asks make where KETJU goes and which compiler and Kokkos to build it with
+ketju-path:
+	@echo "KETJU_PATH='$(KETJU_PATH)'"; echo "KETJU_REPO='$(KETJU_REPO)'"; echo "KETJU_REF='$(KETJU_REF)'"; echo "KETJU_C_REF='$(KETJU_C_REF)'"
+	@echo "KETJU_KOKKOS='$(KETJU_KOKKOS)'"; echo "KETJU_CXX='$(firstword $(GPU_CC))'"; echo "KETJU_OK='$(if $(KETJU_OK),1,0)'"
+else
+$(if $(KETJU_OK),,$(error KETJU: no MSTAR install (include/mstar/mstar.hpp, include/ketju_integrator/ketju_integrator.h, lib/libmstar.a) at KETJU_PATH=$(KETJU_PATH); run scripts/get_stella_deps.sh --ketju))
+endif
 CFLAGS += -I$(KETJU_PATH)/include
 LIBS += -L$(KETJU_PATH)/lib -L$(KETJU_PATH)/lib64 -lmstar $(KOKKOS_LIBS_PATH) $(KOKKOS_LIBS)

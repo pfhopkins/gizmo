@@ -4,7 +4,13 @@
 set in this tree's flag and parameter names; `Template_Config_stella.sh` lists the options of the paper runs
 (CR fluid, KETJU, nets 15 and 17, moment transport). `STELLA_DEFAULTS` is the default set; the configs add the
 opt-ins for the production runs: `GALSF_FB_PHOTOIONIZATION_PER_DIRECTION`, `GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE`.
-Set `InitCondFile`, `StellarTablesFile` and `SGChemTablesPath` (and `BoxSize` for the zoom) in the params.
+Set `InitCondFile` (and `BoxSize` for the zoom) in the params. `StellarTablesFile` and `SGChemTablesPath` stay `SET_ME`:
+GIZMO then reads the tables from the cache of `scripts/get_stella_deps.sh`.
+
+New machine (in development): clone, then once `scripts/get_stella_deps.sh` (tables; with `--ketju`, or a `Config.sh` with
+`KETJU_REGULARIZATION`, also MSTAR against the Kokkos of your `SYSTYPE`), then `make` and run. Run the setup in the build
+environment; a rerun only checks. Cache: `~/.stella-deps`, or `$STELLA_DEPS_PREFIX` (export it for `make` and runs too).
+Details: Stella section of `docs/gizmo_documentation.md`; test: `test/stella_deps`.
 
 - cloud: periodic box with isolated gravity, `SGCHEM_KEEP_IC_ABUNDANCES`, attenuated CR rate (MakeCloud ICs).
 - galaxy: open boundaries; dwarf-galaxy parameters (0.1 solar, 400 kpc box, 1 Gyr).
