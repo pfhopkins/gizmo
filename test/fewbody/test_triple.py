@@ -101,7 +101,8 @@ def _ic_matches():
             m = np.array(g["Masses"])[o]
             x = np.array(g["Coordinates"])[o]
             v = np.array(g["Velocities"])[o]
-        if len(m) != 3:
+            t_form = np.array(g["StellarFormationTime"])   # absent in ICs from older generators: KeyError -> regenerate
+        if len(m) != 3 or len(t_form) != 3 or not np.all(t_form == -1.0):
             return False
         m_in_tot = m[0] + m[1]
         r, dv = x[0] - x[1], v[0] - v[1]

@@ -124,8 +124,16 @@ MIN_ENERGY_ORDER = 1.5
 
 
 def _ensure_ic():
+    # An IC from an older generator lacks the mature-star formation times (see make_binary_ics.py) and would run the
+    # stars on the ordinary scheme for their first steps, so it is regenerated rather than reused.
     if path.exists(IC_FILE):
-        return
+        try:
+            with h5py.File(IC_FILE, "r") as f:
+                t_form = np.array(f["PartType5/StellarFormationTime"])
+            if len(t_form) == 2 and np.all(t_form == -1.0):
+                return
+        except (OSError, KeyError):
+            pass
     import subprocess
     import sys
     subprocess.run(
