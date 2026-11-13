@@ -228,12 +228,15 @@ void sink_swallow_and_kick_loop(void)
 
     int Ntot_gas = 0, Ntot_sink = 0, Ntot_star = 0, Ntot_dm = 0;
 #ifdef TREE_MOMENTS_REFRESH_ON_MUTATION
-    /* every rank needs the global count: it gates the cleanup rearrange in run.cc, which must be rank-uniform */
-    MPI_Allreduce(&N_gas_sw,  &Ntot_gas,  1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&N_sink_sw, &Ntot_sink, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&N_star_sw, &Ntot_star, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&N_dm_sw,   &Ntot_dm,   1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    {   /* every rank needs the global count: it gates the cleanup rearrange in run.cc, which must be rank-uniform */
+        int n_local[4] = {N_gas_sw, N_sink_sw, N_star_sw, N_dm_sw}, n_tot[4];
+        MPI_Allreduce(n_local, n_tot, 4, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        Ntot_gas = n_tot[0]; Ntot_sink = n_tot[1]; Ntot_star = n_tot[2]; Ntot_dm = n_tot[3];
+    }
     NtotSwallowedThisStep = Ntot_gas + Ntot_sink + Ntot_star + Ntot_dm;
+    /* a partial swallow (SINK_WIND_KICK) leaves the cell's reduced mass in place, so no elimination raises the refresh
+       for it or for the sink's gain */
+    TREE_MOMENTS_RAISE_ON_MUTATION_IF(NtotSwallowedThisStep > 0);
 #else
     MPI_Reduce(&N_gas_sw,  &Ntot_gas,  1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&N_sink_sw, &Ntot_sink, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
