@@ -1118,21 +1118,28 @@ struct DomainNODE
 #endif
     };
 
-/*! State shared between force_exchange_pseudodata_issue() and
- *  ..._complete() for the non-blocking-overlap pattern.  let_run_exchange
- *  runs concurrently with the pseudodata Iallgathervs in the GPU build path. */
+/*! State shared between force_exchange_pseudodata_post() and ..._complete().
+ *  In the tree build, let_run_exchange runs between the two, concurrently with
+ *  the nonblocking pseudodata all-gathers. */
 static struct DomainNODE *DomainMoment_pending = NULL;
 static MPI_Request *pseudo_requests_pending = NULL;
 static int *pseudo_recvcounts_pending = NULL;
 static int *pseudo_recvoffset_pending = NULL;
 static int  pseudo_n_requests_pending = 0;
 
-void force_exchange_pseudodata_issue(void)
+static void force_exchange_pseudodata_post(int blocking);
+void force_exchange_pseudodata_issue(void) {force_exchange_pseudodata_post(0);}
+
+/* blocking=1 for the synchronous wrapper, whose caller (the moment refresh) has no work to overlap with the
+ * exchange: a blocking Allgatherv can use MPI's tuned algorithms, and it was the faster form in a measured
+ * many-rank case. The segments are then exchanged one after another rather than together. The same bytes land
+ * in the same places either way. */
+static void force_exchange_pseudodata_post(int blocking)
 {
     int i, no, m;
     /* Re-entrant issue() (a prior issue had no matching complete()): soft
-     * bad-stop + return BEFORE allocating/posting a second Iallgatherv, so the
-     * already-pending exchange is left intact for its complete(). No poll here
+     * bad-stop + return BEFORE allocating/posting a second exchange, so the
+     * already-pending one is left intact for its complete(). No poll here
      * (a nonblocking collective may be outstanding); drains at a later poll. */
     if(DomainMoment_pending != NULL) {endrun(90000075); return;}
 
@@ -1205,13 +1212,16 @@ void force_exchange_pseudodata_issue(void)
 #endif
         }
 
-    /* Post one MPI_Iallgatherv per All.DomainSegmentsPerRank slice; the requests
-     * are stored in static pseudo_requests_pending and waited on in _complete().
+    /* Post one all-gather per All.DomainSegmentsPerRank slice; the requests (null for a
+     * blocking one) are stored in static pseudo_requests_pending and waited on in _complete().
      * Per-slice recvcounts/recvoffset arrays must remain valid until Wait, so
      * we allocate one set per slice and free them all in _complete(). */
     pseudo_n_requests_pending = All.DomainSegmentsPerRank;
     pseudo_requests_pending = (MPI_Request *) mymalloc("pseudo_requests",
                                   All.DomainSegmentsPerRank * sizeof(MPI_Request));
+    /* null until posted: a blocking post leaves its entry null, and a stop requested part-way through the loop
+     * below leaves _complete() waiting only on what was actually posted */
+    for(m = 0; m < All.DomainSegmentsPerRank; m++) {pseudo_requests_pending[m] = MPI_REQUEST_NULL;}
     pseudo_recvcounts_pending = (int *) mymalloc("pseudo_recvcounts",
                                   All.DomainSegmentsPerRank * NTask * sizeof(int));
     pseudo_recvoffset_pending = (int *) mymalloc("pseudo_recvoffset",
@@ -1226,7 +1236,7 @@ void force_exchange_pseudodata_issue(void)
                 (DomainEndList[recvTask * All.DomainSegmentsPerRank + m] -
                  DomainStartList[recvTask * All.DomainSegmentsPerRank + m] + 1)
                 * sizeof(struct DomainNODE);
-            /* MPI_Iallgatherv takes int byte counts and displacements, so the whole pseudodata
+            /* MPI's all-gathers take int byte counts and displacements, so the whole pseudodata
              * block has to stay under 2 GB.  That ceiling is a property of this exchange, not of
              * the caller, and silently wrapping it would hand MPI a negative displacement -- so
              * check it here, where the number is formed. */
@@ -1246,16 +1256,20 @@ void force_exchange_pseudodata_issue(void)
               }
             ro[recvTask] = (int) offset_bytes;
         }
-        MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
-                        &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
-                        &pseudo_requests_pending[m]);
+        if(blocking) {MPI_Allgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE, &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD);}
+        else
+        {
+            MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
+                            &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
+                            &pseudo_requests_pending[m]);
+        }
     }
 }
 
-/*! Waits on the Iallgathervs posted by force_exchange_pseudodata_issue() and
+/*! Waits on the all-gathers posted by force_exchange_pseudodata_post() (done already when posted blocking) and
  *  unpacks the received topleaf moments into the AoS Nodes_base / Extnodes_base.
- *  GPU build path calls let_run_exchange() in between to overlap MPI; CPU and
- *  refresh paths call the sync wrapper force_exchange_pseudodata() below. */
+ *  The tree build calls let_run_exchange() in between to overlap MPI; the moment
+ *  refresh calls the sync wrapper force_exchange_pseudodata() below. */
 int force_exchange_pseudodata_complete(void)
 {
     /* Unmatched complete (pending==NULL = complete without a matching issue, or a
@@ -1361,13 +1375,13 @@ int force_exchange_pseudodata_complete(void)
     return 0;
 }
 
-/*! Synchronous wrapper (begin + complete in one call) for the CPU and
- *  refresh code paths (which do not have a LET round to overlap with).
+/*! Synchronous wrapper (begin + complete in one call) for the moment refresh,
+ *  which has no LET round to overlap with.
  *  Returns the complete() status (nonzero = unmatched; caller skips dependent
  *  pseudo-update work and drains at its poll). */
 int force_exchange_pseudodata(void)
 {
-    force_exchange_pseudodata_issue();
+    force_exchange_pseudodata_post(1);
     return force_exchange_pseudodata_complete();
 }
 
