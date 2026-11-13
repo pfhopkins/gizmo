@@ -7,7 +7,7 @@ opt-ins for the production runs: `GALSF_FB_PHOTOIONIZATION_PER_DIRECTION`, `GALS
 Set `InitCondFile` (and `BoxSize` for the zoom) in the params. `StellarTablesFile` and `SGChemTablesPath` stay `SET_ME`:
 GIZMO then reads the tables from the cache of `scripts/get_stella_deps.sh`.
 
-New machine (in development): clone, then once `scripts/get_stella_deps.sh` (tables; with `--ketju`, or a `Config.sh` with
+New machine (in development): clone, then once `scripts/get_stella_deps.sh` (tables and SUNDIALS; with `--ketju`, or a `Config.sh` with
 `KETJU_REGULARIZATION`, also MSTAR against the Kokkos of your `SYSTYPE`), then `make` and run. Run the setup in the build
 environment; a rerun only checks. Cache: `~/.stella-deps`, or `$STELLA_DEPS_PREFIX` (export it for `make` and runs too).
 Details: Stella section of `docs/gizmo_documentation.md`; test: `test/stella_deps`.
