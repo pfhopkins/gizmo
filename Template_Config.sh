@@ -102,7 +102,7 @@
 #TURB_DIFF_METALS_EXACT_CONSERVATION # conserve metal mass to round-off under adaptive timesteps (pairwise exchange, inactive side buffered to its next step); one extra double per diffused species per cell
 #OUTPUT_TURB_DIFF_METALS_BUDGET # print the global metal budget (sum of M*Z, plus exchange still pending with TURB_DIFF_METALS_EXACT_CONSERVATION) after every hydro step [diagnostic]
 #OUTPUT_STAR_ENERGY_DIRECT_SUM # print direct-sum total energy of star particles (ETOT_INCODE) at every sync; O(N^2), skipped for N>4096; on by default with KETJU_REGULARIZATION [diagnostic]
-#TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS # KETJU: recompute the limiting-particle steps by a full particle scan every step and abort if the cell grid differs [test only, slow]
+#TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS # KETJU: recompute the limiting-particle steps by a full particle scan every step and abort if the cell grid differs [test only, slow] [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #TURB_DIFF_ENERGY               # turbulent diffusion of internal energy (conduction with effective turbulent coefficients)
 #TURB_DIFF_VELOCITY             # turbulent diffusion of momentum (viscosity with effective turbulent coefficients)
 #TURB_DIFF_DYNAMIC              # replace Smagorinsky-style eddy diffusion with the 'dynamic localized Smagorinsky' model from Rennehan et al. (arXiv:1807.11509 and 2104.07673): cite those papers for all methods. more accurate but more complex and expensive.
@@ -252,7 +252,7 @@
 #GALSF_RESOLVEDISM_SAMPLE_IMF   # full Kroupa IMF sampling into N_STELLAR_MASS slots (mutually exclusive with STOCHASTIC_IMF)
 #N_STELLAR_MASS=300             # number of individual stellar mass slots per star particle (default=300)
 #GALSF_RESOLVEDISM_G0_VARIABLE  # per-star UV luminosity tracked in tree walk for spatially-varying G0
-#GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF # instant SF above nHcutoffSF density (prob=1)
+#GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF # instant SF above nHcutoffSF density (prob=1) [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #GALSF_RESOLVEDISM_INSTANT_SN  # all SNe fire instantly before TimeInstantSN
 ## note: convergent flow (bit 2) and Jeans mass (bit 64) criteria use GALSF_SFR_CRITERION bitflag
 ## with GALSF_RESOLVEDISM-specific implementations (Particle_DivVel, FacSfThreshMJ param)
@@ -266,15 +266,15 @@
 #BS19_XH2                       # Bialy & Sternberg 2019 H2 prescription
 #CR_HEATING_DM72                # Dalgarno & McCray 1972 cosmic ray heating
 #CR_SCALE_WITH_G0               # cosmic ray ionization rate scales with G0
-#SGCHEM_UVB_TREECOL_SHIELDING   # cosmological runs: TREECOOL UV background attenuated per HEALPix pixel by the TreeCol H column x local H0/He0/He+ fractions (10 FG20 bands, Verner+96); requires RT_USE_TREECOL_FOR_NH (HEALPix)
+#SGCHEM_UVB_TREECOL_SHIELDING   # cosmological runs: TREECOOL UV background attenuated per HEALPix pixel by the TreeCol H column x local H0/He0/He+ fractions (10 FG20 bands, Verner+96); requires RT_USE_TREECOL_FOR_NH (HEALPix) [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #SGCHEM_FORTRAN                % legacy Fortran backend of SGCHEM (default: C++/CVODE)
 #SGCHEM_OMP_CROSSCHECK      # test only: each step cools a copy serially and requires the threaded pass to match it byte for byte
 #SGCHEM_KEEP_IC_ABUNDANCES  # keep SGChemTracAbund from the IC on fresh starts (default zeroes it, x_H+ = 1e-4)
-#GALSF_RESOLVEDISM_POPIII_STARS # Stella: Pop III star formation in gas below PopIII_Zcrit_solar (own criterion and IMF; see Template_Config_stella.sh)
-#GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE # Stella: opt-in PISN energy from the He core (Heger & Woosley 2002 via Wise+12a); default flat 1e51 erg
-#SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS # Stella tree bands (RT_NUV + RT_OPTICAL_NIR, with or without radiation pressure): H- photodetachment from the stellar optical/NUV/FUV band fields instead of the ISRF calibration 4.2e-7 G0
-#SGCHEM_PRIMORDIAL_HELIUM       # He/H = 0.079 (Y = 0.24) in the chemistry and HYDROGEN_MASSFRAC = 0.76, for any network (net 1 always uses it)
-#SGCHEM_DGR_REMY_RUYER14        # no live dust: DGR from the Remy-Ruyer+14 broken power law below 0.26 Zsun (linear in Z above); Stella default
+#GALSF_RESOLVEDISM_POPIII_STARS # Stella: Pop III star formation in gas below PopIII_Zcrit_solar (own criterion and IMF; see Template_Config_stella.sh) [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE # Stella: opt-in PISN energy from the He core (Heger & Woosley 2002 via Wise+12a); default flat 1e51 erg [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS # Stella tree bands (RT_NUV + RT_OPTICAL_NIR, with or without radiation pressure): H- photodetachment from the stellar optical/NUV/FUV band fields instead of the ISRF calibration 4.2e-7 G0 [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#SGCHEM_PRIMORDIAL_HELIUM       # He/H = 0.079 (Y = 0.24) in the chemistry and HYDROGEN_MASSFRAC = 0.76, for any network (net 1 always uses it) [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#SGCHEM_DGR_REMY_RUYER14        # no live dust: DGR from the Remy-Ruyer+14 broken power law below 0.26 Zsun (linear in Z above); Stella default [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #SGCHEM_DGR_INDEPENDENT_OF_METALLICITY # no live dust: DGR = DGRnormalized (x MW) at every Z; with DGRnormalized 0.01 = gizmo2017. Default scales with local Z
                                 #   of the Fortran DVODE driver. DEFAULT OFF: the Fortran path stays the
                                 #   reference implementation. Networks 5, 15 and 17 only. Replaces the

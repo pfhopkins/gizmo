@@ -18,13 +18,13 @@ DO_DENSITY_AROUND_NONGAS_PARTICLES       % kernel weights around stars (required
 GALSF_RESOLVEDISM_SAMPLE_IMF             % sample individual stars from Kroupa IMF (LYRA-style accretion radius)  [excl STOCHASTIC_IMF]
 N_STELLAR_MASS=5                         % stellar mass slots per particle  [req >=5 with SAMPLE_IMF; default 300]
 #GALSF_RESOLVEDISM_STOCHASTIC_IMF        % alternative: one massive-star mass per star particle  [excl SAMPLE_IMF]
-#GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF     % instant SF above nHcutoffSF (param); off = pure Jeans criterion
+#GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF     % instant SF above nHcutoffSF (param); off = pure Jeans criterion [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 GALSF_RESOLVEDISM_INSTANT_SN             % SNe before TimeInstantSN (param) explode instantly (start-up)
-#GALSF_RESOLVEDISM_POPIII_STARS          % Pop III channel: gas below PopIII_Zcrit_solar (1e-4) forms stars at n_H > PopIII_nH_thresh (1e6), div v < 0, x_H2 > PopIII_xH2_min (1e-3), M_J < PopIII_Mreservoir (1000 Msun); Pop III IMF (PopIII_IMF_Type 0: M_char 20, 1: log-flat; 1-300 Msun); full mass or no star; tables: Z = 1e-4 row until a Z = 0 row exists  [req SAMPLE_IMF, SGCHEM, METALS]
+#GALSF_RESOLVEDISM_POPIII_STARS          % Pop III channel: gas below PopIII_Zcrit_solar (1e-4) forms stars at n_H > PopIII_nH_thresh (1e6), div v < 0, x_H2 > PopIII_xH2_min (1e-3), M_J < PopIII_Mreservoir (1000 Msun); Pop III IMF (PopIII_IMF_Type 0: M_char 20, 1: log-flat; 1-300 Msun); full mass or no star; tables: Z = 1e-4 row until a Z = 0 row exists  [req SAMPLE_IMF, SGCHEM, METALS] [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 
 ########## Supernovae / Type Ia / mass return ##########
 # SN energies (resolvedism_sn_energy.h): 1e51 erg for CCSN, ECSN, PPISN and PISN (flat by design); 0 for failed SNe and direct BHs
-#GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE % opt-in: PISN [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to 64-133 Msun (Heger & Woosley 2002, Wise+12a); default flat 1e51
+#GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE % opt-in: PISN [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to 64-133 Msun (Heger & Woosley 2002, Wise+12a); default flat 1e51 [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 GALSF_RESOLVEDISM_TYPE_IA                % Type Ia SNe from WD DTD (W7 yields)
 #FB_G17_BOUNDARY_INJECTION               % gizmo2017-style SN boundary injection; production choice pending ladder-v2 head-to-head
 #GALSF_RESOLVEDISM_SN_SPAWN              % spawn ejecta cells when the FB kernel holds too little gas (prototype)
@@ -73,14 +73,14 @@ COOLING_OPERATOR_SPLIT                   % operator-split cooling
 SGCHEM                                 % non-equilibrium chemistry (Fortran DVODE)  [excl CHIMES]
 SGCHEM_FORTRAN                % legacy Fortran backend (SGCHEM alone = C++/CVODE)
 CHEMISTRYNETWORK=17                      % 17 = full network with CO; 5 = reduced (both ABHE 0.1)
-#SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS % H- photodetachment from the stellar band fields in the upstream bins RT_FREQ_BIN_OPTICAL_NIR (0.4133-3.444 eV), RT_FREQ_BIN_NUV less FUV_6_8EV (3.444-6 eV), FUV_6_8EV + PHOTOELECTRIC (6-13.6 eV) (Shapiro & Kang 1987 cross-section, 3e4 K in-band shape) instead of 4.2e-7 G0; ISRF floor/UVB part keeps 4.2e-7 G0; CMB terms unchanged  [req C++ backend, G0_VARIABLE with RT_NUV + RT_OPTICAL_NIR (or RADPRESSURE)] [excl TREE_RAY, RADTRANSFER]
-#SGCHEM_PRIMORDIAL_HELIUM                % He/H = 0.079 by number (Y = 0.24) in the chemistry and X_H = 0.76 for the gas (as net 1); cosmological zooms. Default nets 5/17: He/H 0.1, X_H 0.7065  [excl ABHE in Config]
+#SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS % H- photodetachment from the stellar band fields in the upstream bins RT_FREQ_BIN_OPTICAL_NIR (0.4133-3.444 eV), RT_FREQ_BIN_NUV less FUV_6_8EV (3.444-6 eV), FUV_6_8EV + PHOTOELECTRIC (6-13.6 eV) (Shapiro & Kang 1987 cross-section, 3e4 K in-band shape) instead of 4.2e-7 G0; ISRF floor/UVB part keeps 4.2e-7 G0; CMB terms unchanged  [req C++ backend, G0_VARIABLE with RT_NUV + RT_OPTICAL_NIR (or RADPRESSURE)] [excl TREE_RAY, RADTRANSFER] [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#SGCHEM_PRIMORDIAL_HELIUM                % He/H = 0.079 by number (Y = 0.24) in the chemistry and X_H = 0.76 for the gas (as net 1); cosmological zooms. Default nets 5/17: He/H 0.1, X_H 0.7065  [excl ABHE in Config] [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 CO_SHIELDING                             % CO self-shielding
 WSS_CIE_COOL                             % WSS09 metal-line CIE cooling for hot gas
 #GALSF_SGCHEM_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe from element abundances
 #GALSF_SGCHEM_DEBUG_INPUT              % DEBUG: validate species vs pools on DVODE entry
 #CR_SCALE_WITH_G0                        % CR ionisation rate scales with G0 (production: constant rate)
-#SGCHEM_UVB_TREECOL_SHIELDING            % cosmological runs: TREECOOL UV background attenuated by the TreeCol H column x local H0/He0/He+ fractions (10 FG20 bands); needs RT_USE_TREECOL_FOR_NH
+#SGCHEM_UVB_TREECOL_SHIELDING            % cosmological runs: TREECOOL UV background attenuated by the TreeCol H column x local H0/He0/He+ fractions (10 FG20 bands); needs RT_USE_TREECOL_FOR_NH [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 
 ########## Metals / dust ##########
 METALS                                   % metal tracking
@@ -88,7 +88,7 @@ GALSF_RESOLVEDISM_METALS_INDIVIDUAL      % 27 elements H-Zn in Metallicity[]
 #GALSF_RESOLVEDISM_METALS_ISOTOPES       % NOT IMPLEMENTED (#error): 40 isotopes instead of 27 elements
 TURB_DIFF_METALS                         % turbulent metal diffusion
 GALSF_RESOLVEDISM_DUST                   % 5-species dust model  [req FB, METALS_INDIVIDUAL]
-SGCHEM_DGR_REMY_RUYER14                  % no live dust: DGR follows Remy-Ruyer+14 (Table 1, X_CO,Z) below 0.26 Zsun, linear in Z above; chemistry (dust cooling, H2 on grains, photoelectric, A_V), TreeCol dust column, radiation pressure  [excl DUST, DGR_INDEPENDENT_OF_METALLICITY]
+SGCHEM_DGR_REMY_RUYER14                  % no live dust: DGR follows Remy-Ruyer+14 (Table 1, X_CO,Z) below 0.26 Zsun, linear in Z above; chemistry (dust cooling, H2 on grains, photoelectric, A_V), TreeCol dust column, radiation pressure  [excl DUST, DGR_INDEPENDENT_OF_METALLICITY] [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #SGCHEM_DGR_INDEPENDENT_OF_METALLICITY % no live dust: DGR = DGRnormalized (x MW) at every Z; with DGRnormalized 0.01 = gizmo2017. Default scales with local Z
 #GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION % shock-tracked SN dust destruction
 #GALSF_RESOLVEDISM_DUST_NO_MCKEE         % disable McKee SN dust destruction
