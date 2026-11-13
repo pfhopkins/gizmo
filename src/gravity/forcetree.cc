@@ -647,7 +647,7 @@ let_build_attempt:
     if(hardfail_any)
     {
         /* Non-retryable. The failing rank records the cause; pseudodata failures
-         * already soft-stopped inside force_exchange_pseudodata_complete(). Skip the
+         * already soft-stopped in force_exchange_pseudodata_post() or _complete(). Skip the
          * foreign-moment scatter/finalize/resum; drains at gravtree:after_treebuild. */
         if(let_status == LET_PACK_OOM)
         {
@@ -1126,6 +1126,7 @@ static MPI_Request *pseudo_requests_pending = NULL;
 static int *pseudo_recvcounts_pending = NULL;
 static int *pseudo_recvoffset_pending = NULL;
 static int  pseudo_n_requests_pending = 0;
+static int  pseudo_post_failed = 0;   /* the post stopped before every segment was exchanged */
 
 static void force_exchange_pseudodata_post(int blocking);
 void force_exchange_pseudodata_issue(void) {force_exchange_pseudodata_post(0);}
@@ -1142,6 +1143,7 @@ static void force_exchange_pseudodata_post(int blocking)
      * already-pending one is left intact for its complete(). No poll here
      * (a nonblocking collective may be outstanding); drains at a later poll. */
     if(DomainMoment_pending != NULL) {endrun(90000075); return;}
+    pseudo_post_failed = 0;
 
     DomainMoment_pending = (struct DomainNODE *) mymalloc("DomainMoment", NTopleaves * sizeof(struct DomainNODE));
     struct DomainNODE *DomainMoment = DomainMoment_pending;
@@ -1251,6 +1253,7 @@ static void force_exchange_pseudodata_post(int blocking)
                     printf("There are %d top-tree leaves; lower DOMAIN_SEGMENTS_SCALE or run on fewer ranks.\n", NTopleaves);
                     fflush(stdout);
                   }
+                pseudo_post_failed = 1;
                 endrun(90000025);
                 return;
               }
@@ -1291,6 +1294,8 @@ int force_exchange_pseudodata_complete(void)
     pseudo_recvcounts_pending = NULL;
     pseudo_recvoffset_pending = NULL;
     pseudo_n_requests_pending = 0;
+    /* A post that stopped part-way left segments unexchanged: unpack nothing, report failure like an unmatched complete */
+    if(pseudo_post_failed) {myfree(DomainMoment); DomainMoment_pending = NULL; pseudo_post_failed = 0; return 1;}
 
     int i, no, m, ta;
     /* The segment count this exchange was posted with, not whatever it is now: the domain lists
@@ -1377,7 +1382,7 @@ int force_exchange_pseudodata_complete(void)
 
 /*! Synchronous wrapper (begin + complete in one call) for the moment refresh,
  *  which has no LET round to overlap with.
- *  Returns the complete() status (nonzero = unmatched; caller skips dependent
+ *  Returns the complete() status (nonzero = unmatched or not fully posted; caller skips dependent
  *  pseudo-update work and drains at its poll). */
 int force_exchange_pseudodata(void)
 {
@@ -4385,7 +4390,7 @@ void force_refresh_node_moments(void)
         force_refresh_hmax_per_type_host(Numnodestree);
         if(gpu_force_flag_localnodes() != 0)     {endrun(90000087);}
         int pseudo_status = force_exchange_pseudodata();
-        /* skip dependent pseudo-update on an unmatched complete (soft bad-stop set);
+        /* skip dependent pseudo-update on an unmatched complete or a post stopped part-way (soft bad-stop set);
          * drains at gravtree:after_refresh_moments. */
         if(!pseudo_status) {
             if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(90000088);}

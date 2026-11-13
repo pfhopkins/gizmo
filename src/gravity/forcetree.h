@@ -120,9 +120,9 @@ void gravity_flush_pending_motion_bounds(void);
 /* A rebuild sets every bound afresh, so whatever was pending is void. */
 void gravity_clear_pending_motion_bounds(void);
 int force_create_empty_nodes(int no, int topnode, int bits, peano1D x, peano1D y, peano1D z, int *nodecount, int *nextfree);
-int  force_exchange_pseudodata(void);          /* returns complete() status: nonzero = unmatched (caller skips dependent pseudo-update) */
+int  force_exchange_pseudodata(void);          /* returns complete() status: nonzero = unmatched or stopped part-way (caller skips dependent pseudo-update) */
 void force_exchange_pseudodata_issue(void);    /* split for non-blocking overlap with LET */
-int  force_exchange_pseudodata_complete(void); /* pair to _issue; nonzero = unmatched (pending==NULL) */
+int  force_exchange_pseudodata_complete(void); /* pair to _issue; nonzero = unmatched (pending==NULL) or the post stopped part-way */
 void force_insert_pseudo_particles(void);
 void force_add_element_to_tree(int igas, int istar);
 
