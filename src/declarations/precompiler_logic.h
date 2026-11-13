@@ -781,6 +781,9 @@
 #ifndef HERMITE_CORRECTOR_ITERATIONS
 #define HERMITE_CORRECTOR_ITERATIONS 1 /* P(EC)^n: n>1 re-evaluates gravity at the corrected state and re-applies the corrector (Kokubo, Yoshinaga & Makino 1998) */
 #endif
+#if (HERMITE_CORRECTOR_ITERATIONS) < 1
+#error "HERMITE_CORRECTOR_ITERATIONS counts corrector passes and must be at least 1"
+#endif
 #if defined(HERMITE_SYMMETRIC_TIMESTEP) && !defined(FORCE_EQUAL_TIMESTEPS)
 /* inert without HERMITE_INTEGRATION or on equal steps. The code tests this name rather than relying on
    an #undef, which the re-inclusion of GIZMO_config.h (via eos.h) after this file would undo */
@@ -1947,7 +1950,7 @@
 #if defined(TREE_MOMENTS_REFRESH_ON_MUTATION) && defined(SINK_PARTICLES) && !defined(MAINTAIN_TREE_IN_REARRANGE) && (defined(HERMITE_INTEGRATION) || !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM))
 /* The flag adds a cleanup rearrange after every swallow (run.cc). Without walk-link repair that rearrange condemns the
    standing tree, and the Hermite passes later in the step walk it without rebuilding; with no Hermite it forces a rebuild
-   on every swallow step. So under the flag sink builds repair the links per swap (as starforge_dev abd5e309), except non-Hermite
+   on every swallow step. So under the flag sink builds repair the links per swap, except non-Hermite
    SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, which keeps the base's rebuild and so rebuilds on every swallow step. */
 #define MAINTAIN_TREE_IN_REARRANGE
 #endif
