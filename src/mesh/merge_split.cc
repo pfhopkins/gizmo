@@ -1644,7 +1644,7 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
 #ifdef TREE_MOMENTS_DELTA
-            tree_counted_mass_eliminate(i);
+            if(repair_walk_links) {tree_counted_mass_eliminate(i);} else {TREE_MOMENTS_NEED_FULL();}   /* unrepaired: a rebuild follows */
 #endif
             P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
             TimeBinCount[P[i].TimeBin]--;
