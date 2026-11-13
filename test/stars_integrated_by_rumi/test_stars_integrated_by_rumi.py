@@ -115,3 +115,29 @@ def test_restart():
     (xa, va, ta), (xb, vb, tb) = out["plain"], out["restarted"]
     print(f"restart: max|dx| {np.abs(xa - xb).max():.3e} max|dv| {np.abs(va - vb).max():.3e}")
     assert ta == tb and np.array_equal(xa, xb) and np.array_equal(va, vb)
+
+
+def test_merger():
+    """a grazing pass (pericentre 0.8 (R1 + R2), the ICs of test/ketju_star_collision) merges inside RUMI++: the heavier star
+    survives with the pair's mass and CoM velocity, mass and momentum are conserved"""
+    coll = os.path.abspath("test/ketju_star_collision")
+    subprocess.run([sys.executable, f"{coll}/make_ketju_star_collision_ics.py"], cwd=TEST_DIR, check=True)
+    p = {"InitCondFile": "ketju_star_collision_graze_ics", "TimeMax": 1e-7, "TimeBetSnapshot": 2e-8, "TimeBetStatistics": 2e-8, "MaxSizeTimestep": 1e-8}
+    build_and_run_test(TEST_NAME, 1, 1, param_overrides=p)
+    snaps = sorted(glob.glob(variant_output_dir(TEST_NAME, ()) + "/snapshot_*.hdf5"))
+    log = open(f"{TEST_DIR}/test_{TEST_NAME}.out").read()
+
+    def load(s):
+        with h5py.File(s, "r") as f:
+            g = f["PartType4"]; o = np.argsort(g["ParticleIDs"][:])
+            return g["ParticleIDs"][:][o], g["Masses"][:][o], g["Velocities"][:][o]
+    with h5py.File(f"{TEST_DIR}/ketju_star_collision_graze_ics.hdf5", "r") as f:
+        g = f["PartType4"]; i0, m0, v0 = g["ParticleIDs"][:], g["Masses"][:], g["Velocities"][:]
+    i1, m1, v1 = load(snaps[-1])
+    print("RUMI++ MERGER" in log, len(i0), len(i1))
+    assert "RUMI++ MERGER: ID 2" in log and len(i1) == len(i0) - 1 and 1 in i1 and 2 not in i1
+    assert abs(m1.sum() / m0.sum() - 1) < 1e-12
+    p0 = (m0[:, None] * v0).sum(0); p1 = (m1[:, None] * v1).sum(0)
+    assert np.linalg.norm(p1 - p0) / (m0 * np.linalg.norm(v0, axis=1)).sum() < 1e-9
+    k = list(i1).index(1); M = m0[0] + m0[1]; vcom = (m0[0] * v0[0] + m0[1] * v0[1]) / M
+    assert abs(m1[k] / M - 1) < 1e-12 and np.linalg.norm(v1[k] - vcom) < 0.05 * np.linalg.norm(v0[0] - v0[1])
