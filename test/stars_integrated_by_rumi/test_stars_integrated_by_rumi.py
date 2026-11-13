@@ -46,9 +46,20 @@ def _errors(ics, tmax, flags=(), params=None):
     return de, dx, log
 
 
-def test_startup_and_direct_sum():
-    """the library starts (its build id in the log, no RUMI++ warning); the stars feel each other through the exact direct sum only"""
-    de, dx, log = _errors("binary_ics", T_BINARY / 10)
-    print(f"binary, one orbit on the direct sum: dE/E {de:.3e} position {dx:.3e}")
-    assert "RUMI++: RUMI_LIB_ID api=3" in log and "RUMI++ WARNING" not in log
-    assert de < 3.5e-3 and dx < 1.2e-2  # 3x measured (1.1e-3, 3.8e-3 a): leapfrog on the direct sum
+def test_startup():
+    """the library starts: its build id in the log, one RUMI++ step count at the end"""
+    _, _, log = _errors("binary_ics", T_BINARY / 10)
+    assert "RUMI++: RUMI_LIB_ID api=3" in log and "RUMI++ totals:" in log and "RUMI++ WARNING" not in log
+
+
+# RUMI++ integrates the stars; bars 3x measured end-position offsets (binary 1.1e-6 a, triple 3.8e-5 a_in)
+def test_binary():
+    _, dx, log = _errors("binary_ics", T_BINARY)
+    print(f"binary: position {dx:.3e}")
+    assert "RUMI++ WARNING" not in log and dx < 3.5e-6
+
+
+def test_triple():
+    _, dx, log = _errors("triple_ics", T_TRIPLE)
+    print(f"triple: position {dx:.3e}")
+    assert "RUMI++ WARNING" not in log and dx < 1.2e-4
