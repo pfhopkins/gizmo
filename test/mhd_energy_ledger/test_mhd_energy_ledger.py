@@ -1,10 +1,11 @@
 """mhd_energy_ledger: TEST_MHD_ENERGY_LEDGER_OUTPUT, the MHD energy rows in ledger.txt (OUTPUT_MASS_METAL_ENERGY_LEDGER). The box of
 test/mhd_kernel_volume_energy (static periodic box, 20^3 jittered cells, uniform B_z, beta about 0.14, adiabatic, 2 ranks, 1.96 Myr),
-one ledger row per snapshot.
+all cells on one timestep, one ledger row per snapshot.
 
 Bars, written before the runs, from stella_dev on the same box (E_B change -1.3726657e48 erg, volume + kick terms -1.3726657e48;
 drift +0.573e48, not explained by the ledger -0.011e48; E_B not booked by the u equation +0.611e48):
-  test_magnetic_energy_split: the E_B change equals the kernel-volume term plus the B-kick term to 1e-6 of the initial E_B.
+  test_magnetic_energy_split: the E_B change equals the kernel-volume term plus the B-kick term (plus the volume change since the
+    last B kick, pending at output) to 1e-6 of the initial E_B.
   test_ledger_closes: the total-energy drift minus the booked source terms (limiter and floor, Powell, Dedner face and correction,
     face-closure limiter) minus the E_B change the u equation did not book is below 5 % of the drift; that unbooked E_B change
     is the drift to 20 %.
@@ -13,6 +14,10 @@ drift +0.573e48, not explained by the ledger -0.011e48; E_B not booked by the u 
 Changed after the first run: the psi variant first also had "unbooked E_B is the drift to 20 %"; with this cleaning the Powell term
 is most of the drift (+1.56e48 of +2.17e48 erg), so that bar does not apply there. The E_B state row then came from the drifted B
 while the ledger is written before the second half-kick; it now uses the kicked B, as E_th and E_kin use the kicked u and v.
+The ledger is written after the drift, which also moves the cell volume: the volume change since the last B kick is now a state row
+(the split missed it by 7e-6 of E_B). The first runs used the adaptive steps of test/mhd_kernel_volume_energy: the closure rest was
+-0.036e48 erg (6.6 % of the drift); with all cells on one step it is -0.011e48 (2.2 %), as stella_dev, so the difference comes from
+cells on different steps in the hydro scheme, outside the MHD terms. The test now runs one step for all cells.
 """
 import shutil
 import subprocess
@@ -37,7 +42,7 @@ def run(tag, flags=()):
     (d / "output").mkdir(parents=True)
     shutil.move(TEST_DIR / "GIZMO", d / "GIZMO")
     write_ics(d / "snapshot_000.hdf5")
-    shutil.copy(TEST_DIR.parent / "mhd_kernel_volume_energy" / "mhd_kernel_volume_energy.params", d / "run.params")
+    shutil.copy(TEST_DIR / f"{TEST_NAME}.params", d / "run.params")
     with open(d / "run.out", "w") as out:
         subprocess.run(mpi_launch_command(2, 1) + [str(d / "GIZMO"), "run.params"], cwd=d, stdout=out, stderr=subprocess.STDOUT, check=True)
     fn = d / "output" / "ledger.txt"
@@ -75,9 +80,9 @@ def closes(L, with_psi, unbooked_is_drift=True):
 
 
 def test_magnetic_energy_split(ledger):
-    dEB, dv, dk = delta(ledger, "E_B_erg"), delta(ledger, "E_B_volume_change_erg"), delta(ledger, "E_B_kick_change_erg")
-    print(f"dE_B {dEB:+.7f}, volume {dv:+.7f} + kick {dk:+.7f} = {dv + dk:+.7f} (1e48 erg)")
-    assert abs(dEB - dv - dk) < 1e-6 * ledger["E_B_erg"][0] / 1e48
+    dEB, dv, dk, dp = (delta(ledger, n) for n in ("E_B_erg", "E_B_volume_change_erg", "E_B_kick_change_erg", "E_B_volume_change_pending_erg"))
+    print(f"dE_B {dEB:+.9f}, volume {dv:+.9f} + kick {dk:+.9f} + pending {dp:+.9f} = {dv + dk + dp:+.9f} (1e48 erg)")
+    assert abs(dEB - dv - dk - dp) < 1e-6 * ledger["E_B_erg"][0] / 1e48
 
 
 def test_ledger_closes(ledger):
