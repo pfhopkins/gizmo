@@ -16,6 +16,12 @@ the right-hand side. A molecular cell (x_H2 = 0.4999) loses its H2 and ionises a
 Without the H2 channel the shielded cell stays molecular (x_H2 = 0.45 after 1 Myr). G0 = 0 cannot stand for shielding:
 the backend then skips every photo-rate, the ionising ones too, as the SGChem Fortran does.
 
+`test_h2_shielding_db96` (`h2_shield_db96.cc`, network 5): H2 self-shielding of the Lyman-Werner rate. The factor equals
+Draine & Bertoldi (1996) eq. 37 (b = sqrt(2kT/m_H2), written out in the driver) at N_H2 = 1e12-1e22 cm^-2 and T = 10-8000 K;
+with 12 pixel columns it is the pixel average with the field's weights, isotropic and beamed (as the TreeCol walk and the
+moment solver set them); and it is applied once: the LW rate does not change with the H2 columns and the right-hand side
+term of dx_H2/dt is -rate x factor x x_H2. Background: reports/m1_molecular_opacity_options.md.
+
 Inputs (not in the repository):
 - `SUNDIALS_DIR` (6.x or 7.x), `KOKKOS_PATH`, `mpicxx`;
 - the chemistry tables: `SGCHEM_TABLES_DIR`, else installed by `scripts/get_stella_tables.sh`; content hashes as in

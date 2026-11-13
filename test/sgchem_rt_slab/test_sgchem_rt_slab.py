@@ -2,6 +2,7 @@
 treecol_pixels test_slab_shielding: n_H ~ 1e3 slab, N_H ~ 1e22 through it, 40 Msun star 3 pc in front of the face.
   test_bins_attenuate: on the axis the 6-13.6 eV energy density equals L / (4 pi r^2 c) exp(-tau) of the chemistry's law (20 %) for tau < 3.
   test_attenuation_with_depth: the ratio to analytic stays flat inside the slab: dust acts once.
+  test_h2_transition_matches_treecol: the axis x_H2 profile matches the TreeCol-walk run of the same slab (factor 2 per depth bin).
   test_shielding: after 0.15 Myr the cells deep in the slab hold over 30 x the H2 of the lit face and x_H2 > 1e-2: H2 and CO
     columns act with the transported field, dust in the bins only.
 """
@@ -97,3 +98,28 @@ def test_shielding(result):
     face, deep = x[a & (z < Z0 + 0.4)].mean(), x[a & (z > Z0 + 2.0)].mean()
     print(f"x_H2 face {face:.2e}, deep {deep:.2e}")
     assert deep >= 30 * face and deep > 1e-2
+
+
+def test_h2_transition_matches_treecol(result):
+    """H2 self-shielding acts once and alike on both paths (Draine & Bertoldi 1996 with the pixel H2 columns): the axis x_H2
+    depth profile at t = 0.15 matches the TreeCol-walk field (treecol_pixels, same slab and star, 75 steps of 0.002) within a
+    factor 2 in each depth bin"""
+    import test_treecol_pixels as tc
+    tables = get_stellar_evolution_tables()
+    get_cooling_tables(str(tc.TEST_DIR))
+    tab = Tables(tables["StellarTablesFile"])
+    lM, lZ = np.log10(40.0), np.log10(0.0142)
+    star = (40.0, tab._i2(tab.t_pms, lM, lZ) + 0.3 * tab._i2(tab.life, lM, lZ), np.array([4.0, 4.0, ZSTAR]))
+    exe = tc.build("pix12_step75", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "TEST_DUMP_TREECOL_PIXELS_AT_STEP=75"))
+    out = tc.run(exe, "slab_m1_twin", tables, L, slab_ics(L, Z0), [star], gas_mass=1.0, hsml=0.6,
+                 overrides={"TimeMax": 1.0, "MaxSizeTimestep": 0.002, "SGChemBackgroundG0": 1.7, "SGChemCosmicRayIonRate": 3.0e-17})
+    cells = tc.load(out, "cells"); zc = cells[:, -1]
+    a_tc = (np.abs(cells[:, -3] - 4.0) < 1.2) & (np.abs(cells[:, -2] - 4.0) < 1.2) & (zc > Z0)
+    x_tc = cells[:, 2] * 1.4 / 2.0  # H2 mass of a 1 Msun cell, per H nucleus
+    a_m1 = axis(result); z_m1 = result["x"][:, 2]; x_m1 = result["ab"][:, 0]
+    edges = (0.0, 0.4, 1.0, 2.0, 3.5)
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        m = x_m1[a_m1 & (z_m1 >= Z0 + lo) & (z_m1 < Z0 + hi)].mean()
+        t = x_tc[a_tc & (zc >= Z0 + lo) & (zc < Z0 + hi)].mean()
+        print(f"depth {lo}-{hi} pc: x_H2 M1 {m:.3e}, TreeCol {t:.3e}, ratio {m / t:.3f}")
+        assert 0.5 < m / t < 2.0, (lo, hi, m, t)
