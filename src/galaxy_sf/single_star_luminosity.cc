@@ -197,7 +197,11 @@ double single_star_radpressure_absorbed_local(void)
     {
         const int i = ActiveParticleList[a];
         if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
+        const double dgr = (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_cell_dust_to_gas_ratio(P, CellP, i), 0.); /* the cell's live dust */
+#else
         const double dgr = (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_dust_to_gas_ratio(P[i].Metallicity[0]), 0.);
+#endif
         lum_abs[a] = to_L * dgr * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
         const double l = lum_abs[a] * CellP[i].TreeColRadpFlux[3];
         abs_sum_local += l - CellP[i].RadpAbsorbedLum;
