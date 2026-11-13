@@ -4461,6 +4461,8 @@ void tree_counted_mass_insert(int i)
 
 int tree_counted_mass_ready(void) {return (TreeCountedMass != NULL && TreeCountedMassCap >= NumPart && !TreeMomentsNeedFullRefresh);}
 
+/* A node whose updated mass is at most this fraction of its previous mass is empty to rounding. */
+#define TREE_MOMENT_DELTA_EMPTY_FRAC (1.0e-10)
 /* Add mass dm (and dN particles) at particle i's current state to every node from its leaf up to its top leaf. */
 static void tree_moment_delta_along_chain(int i, double dm, int dN)
 {
@@ -4474,7 +4476,10 @@ static void tree_moment_delta_along_chain(int i, double dm, int dN)
         if(Nodes[no].u.d.bitflags & (1u << BITFLAG_INTERNAL_TOPLEVEL)) {break;}   /* re-summed from the leaves after the exchange */
         force_drift_node(no, All.Ti_Current);
         const double M = Nodes[no].u.d.mass, Mn = M + dm;
-        if(Mn > 0)
+        /* removing the last of a node's mass leaves a rounding residual of either sign; dividing by it would throw the
+           centre of mass anywhere, so treat the node as empty and keep its old centre */
+        const int keeps_mass = (Nodes[no].N_part + dN > 0) && (Mn > TREE_MOMENT_DELTA_EMPTY_FRAC * M);
+        if(keeps_mass)
         {
             for(int k = 0; k < 3; k++)
             {
@@ -4482,7 +4487,7 @@ static void tree_moment_delta_along_chain(int i, double dm, int dN)
                 Extnodes[no].vs[k] = (MyFloat) ((M * Extnodes[no].vs[k] + dm * v[k]) / Mn);
             }
         }
-        Nodes[no].u.d.mass = (MyFloat) ((Mn > 0) ? Mn : 0);
+        Nodes[no].u.d.mass = (MyFloat) (keeps_mass ? Mn : 0);
         Nodes[no].N_part += dN;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
         if(type == 0) {Nodes[no].gasmass = (MyFloat) DMAX(0., Nodes[no].gasmass + dm);}
@@ -4491,7 +4496,8 @@ static void tree_moment_delta_along_chain(int i, double dm, int dN)
         if(type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES)
         {
             const double sm = Nodes[no].sink_mass, smn = sm + dm;
-            if(smn > 0)
+            const int keeps_sink_mass = (smn > TREE_MOMENT_DELTA_EMPTY_FRAC * sm);
+            if(keeps_sink_mass)
             {
                 for(int k = 0; k < 3; k++)
                 {
@@ -4504,7 +4510,7 @@ static void tree_moment_delta_along_chain(int i, double dm, int dN)
 #endif
                 }
             }
-            Nodes[no].sink_mass = (MyFloat) ((smn > 0) ? smn : 0);
+            Nodes[no].sink_mass = (MyFloat) (keeps_sink_mass ? smn : 0);
 #if defined(SINK_NODE_MOTION_TRACKED)
             Nodes[no].N_SINK += dN;
 #endif
