@@ -20,6 +20,8 @@ struct OutputStreams {
     bool attempted = false;
 };
 OutputStreams cumulative_output, step_output;
+OutputStreams rank_cumulative_output, rank_step_output;
+bool per_rank_output = false;
 enum class ReportMode { Cumulative = 0, Step = 1, Both = 2 };
 ReportMode report_mode = ReportMode::Cumulative;
 long long report_interval = 1;
@@ -82,33 +84,59 @@ std::vector<gizmo::timing::TimerRecord> step_difference(
     return result;
 }
 
-void write_report(OutputStreams &output, const char *stem, const char *label, long long step,
+void write_stream_report(OutputStreams &output, const char *stem, const char *label, long long step,
+                  const std::vector<gizmo::timing::TimerRecord> &snapshot,
+                  const gizmo::timing::TimerReportContext &context, bool rank_local)
+{
+    const bool writer = rank_local || ThisTask == 0;
+    if(writer && !output.attempted) {
+        output.attempted = true;
+        std::string basename(stem);
+        if(rank_local) {
+            char suffix[48];
+            std::snprintf(suffix, sizeof(suffix), ".rank-%06d", ThisTask);
+            basename += suffix;
+        }
+        output.tree = open_output((basename + ".txt").c_str());
+        output.tsv = open_output((basename + ".tsv").c_str());
+        if(output.tree) {std::fprintf(output.tree, "\n=== New GIZMO timer session (totals reset at process startup) ===\n");}
+        if(rank_local) {
+            for(FILE *file : {output.tree, output.tsv}) {
+                if(file) {std::fprintf(file, "# Rank-local timers: world_rank=%d world_size=%d; schema=rank-local; workload active counts are local, particles is global.\n", ThisTask, NTask);}
+            }
+        }
+        if(output.tsv) {
+            std::fprintf(output.tsv, "# New GIZMO timer session; mode=%s; seconds\n", context.mode);
+            gizmo::timing::TimerWriteTSVHeader(output.tsv, rank_local);
+        }
+    }
+    if(!gizmo::timing::TimerReportMPI(rank_local ? MPI_COMM_SELF : MPI_COMM_WORLD, output.tree, output.tsv, label, step,
+                                    report_sort, &snapshot, &context, rank_local) && writer) {
+        std::fprintf(stderr, "GIZMO timers: skipped report exceeding MPI count limits\n");
+    }
+}
+
+void write_report(OutputStreams &output, OutputStreams &rank_output, const char *stem,
+                  const char *label, long long step,
                   const std::vector<gizmo::timing::TimerRecord> &snapshot,
                   const gizmo::timing::TimerReportContext &context)
 {
-    if(ThisTask == 0 && !output.attempted) {
-        output.attempted = true;
-        output.tree = open_output((std::string(stem) + ".txt").c_str());
-        output.tsv = open_output((std::string(stem) + ".tsv").c_str());
-        if(output.tree) {std::fprintf(output.tree, "\n=== New GIZMO timer session (totals reset at process startup) ===\n");}
-        if(output.tsv) {
-            std::fprintf(output.tsv, "# New GIZMO timer session; mode=%s; seconds\n", context.mode);
-            gizmo::timing::TimerWriteTSVHeader(output.tsv);
-        }
-    }
-    if(!gizmo::timing::TimerReportMPI(MPI_COMM_WORLD, output.tree, output.tsv, label, step,
-                                    report_sort, &snapshot, &context) && ThisTask == 0) {
-        std::fprintf(stderr, "GIZMO timers: skipped report exceeding MPI count limits\n");
+    write_stream_report(output, stem, label, step, snapshot, context, false);
+    if(per_rank_output) {
+        // SELF reuses the hierarchy/TSV formatter without communication between
+        // ranks. Both reports use the identical captured snapshot and interval.
+        write_stream_report(rank_output, stem, label, step, snapshot, context, true);
     }
 }
 } // namespace
 
 void gizmo_timers_initialize()
 {
-    int options[4] = {0, 0, 0, 0};
+    int options[5] = {0, 0, 0, 0, 0};
     if(ThisTask == 0) {
         options[0] = env_enabled("GIZMO_TIMERS");
         options[1] = env_enabled("GIZMO_TIMERS_KOKKOS");
+        options[4] = env_enabled("GIZMO_TIMERS_PER_RANK");
         const char *sort = std::getenv("GIZMO_TIMERS_SORT");
         if(sort && !std::strcmp(sort, "mean")) {options[2] = 1;}
         else if(sort && std::strcmp(sort, "max")) {
@@ -131,18 +159,19 @@ void gizmo_timers_initialize()
     }
     // All ranks use rank zero's configuration so reporting remains collective
     // even when a launcher propagates environment variables inconsistently.
-    MPI_Bcast(options, 4, MPI_INT, 0, MPI_COMM_WORLD);
+    MPI_Bcast(options, 5, MPI_INT, 0, MPI_COMM_WORLD);
     MPI_Bcast(&report_interval, 1, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
     report_sort = static_cast<gizmo::timing::TimerTreeSort>(options[2]);
     report_mode = static_cast<ReportMode>(options[3]);
+    per_rank_output = options[4] != 0;
     gizmo::timing::RegionHooks hooks;
     if(options[0] && options[1]) {hooks = gizmo::timing::TimerKokkosHooks();}
     gizmo::timing::TimerInitialize(options[0] != 0, hooks);
     if(ThisTask == 0 && options[0]) {
         const char *mode = report_mode == ReportMode::Both ? "both" :
                            (report_mode == ReportMode::Step ? "step" : "cumulative");
-        std::printf("GIZMO hierarchical timers enabled (host elapsed time, mode=%s, interval=%lld, sort=%s, Kokkos regions=%s).\n",
-                    mode, report_interval, options[2] ? "incl_mean" : "incl_max", options[1] ? "on; tool may add fences" : "off");
+        std::printf("GIZMO hierarchical timers enabled (host elapsed time, mode=%s, interval=%lld, sort=%s, Kokkos regions=%s, per-rank files=%s).\n",
+                    mode, report_interval, options[2] ? "incl_mean" : "incl_max", options[1] ? "on; tool may add fences" : "off", per_rank_output ? "on" : "off");
     }
 }
 
@@ -188,17 +217,17 @@ void gizmo_timers_report(const char *label, long long step, bool force)
     context.previous_active_particles_local = previous_active_particles;
     context.previous_active_gas_local = previous_active_gas;
     if(report_mode != ReportMode::Step) {
-        write_report(cumulative_output, "timers", event, step, current, context);
+        write_report(cumulative_output, rank_cumulative_output, "timers", event, step, current, context);
     }
     if(report_mode != ReportMode::Cumulative && (baseline_valid || force)) {
         if(!baseline_valid) {
             context.mode = "startup";
-            write_report(step_output, "timers-step", label, step, current, context);
+            write_report(step_output, rank_step_output, "timers-step", label, step, current, context);
         } else if(context_valid || force) {
             context.mode = initial_boundary ? "initial" : (sync_boundary ? "step" : "partial");
             context.from_sync_point = window_start_sync_point;
             const auto delta = step_difference(current);
-            write_report(step_output, "timers-step", event, step, delta, context);
+            write_report(step_output, rank_step_output, "timers-step", event, step, delta, context);
         }
     }
 }
@@ -206,7 +235,7 @@ void gizmo_timers_report(const char *label, long long step, bool force)
 void gizmo_timers_shutdown()
 {
     gizmo::timing::TimerShutdown();
-    for(auto *output : {&cumulative_output, &step_output}) {
+    for(auto *output : {&cumulative_output, &step_output, &rank_cumulative_output, &rank_step_output}) {
         if(output->tree) {std::fclose(output->tree); output->tree = nullptr;}
         if(output->tsv) {std::fclose(output->tsv); output->tsv = nullptr;}
     }

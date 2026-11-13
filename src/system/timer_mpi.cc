@@ -109,9 +109,14 @@ std::vector<TreeRow> sorted_tree_rows(const std::vector<std::string> &keys,
 }
 } // namespace
 
-void TimerWriteTSVHeader(FILE *stream)
+void TimerWriteTSVHeader(FILE *stream, bool rank_local)
 {
-    if(stream) {
+    if(stream && rank_local) {
+        std::fprintf(stream, "label\tsync_point\tlane\tpath\tcalls\tcompleted\topen_scopes"
+                     "\tincl_s\tself_s\tmode\tsimulation_time\tsimulation_dt\tparticles_total"
+                     "\tactive_particles_local\tactive_gas_local\thighest_active_bin\tfrom_sync_point"
+                     "\tprevious_active_particles_local\tprevious_active_gas_local\n");
+    } else if(stream) {
         std::fprintf(stream, "label\tsync_point\tlane\tpath\tranks_present\tcalls_sum\tcompleted_sum\tactive_sum"
                      "\tinclusive_min_s\tinclusive_mean_s\tinclusive_max_s"
                      "\texclusive_min_s\texclusive_mean_s\texclusive_max_s"
@@ -126,11 +131,12 @@ void TimerWriteTSVHeader(FILE *stream)
 
 bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, long long step,
                     TimerTreeSort sort, const std::vector<TimerRecord> *snapshot,
-                    const TimerReportContext *context)
+                    const TimerReportContext *context, bool rank_local)
 {
     int rank, ranks;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &ranks);
+    if(rank_local && ranks != 1) {return false;}
     std::map<std::string, Totals> local;
     const auto captured = snapshot ? std::vector<TimerRecord>() : TimerSnapshot();
     for(const auto &record : snapshot ? *snapshot : captured) {
@@ -232,6 +238,13 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
         } else if(mode == "cumulative") {
             std::fprintf(tree, "Window: process startup through this sync-point (includes initialization).\n");
         }
+        if(rank_local) {
+            std::fprintf(tree, "Rank-local seconds; siblings sorted by descending incl_s; branches preserve each subtree.\n");
+            std::fprintf(tree, "Workload: time=%.17g dt=%.17g particles_global=%lld active_local=%lld gas_active_local=%lld highest_active_bin=%d (-1 = unavailable)\n",
+                         info.simulation_time, info.simulation_dt, info.particles_total,
+                         work_sum[0], work_sum[1], info.highest_active_bin);
+            std::fprintf(tree, "Interval-entry workload: active_local=%lld gas_active_local=%lld (before timestep selection and first half-kick)\n", work_sum[2], work_sum[3]);
+        } else {
         std::fprintf(tree, "Means include absent ranks as zero; row maxima need not add up. Imbalance = max/mean.\n"
                      "Siblings sorted by descending %s; branches preserve each subtree.\n",
                      sort == TimerTreeSort::InclusiveMean ? "incl_mean" : "incl_max");
@@ -242,6 +255,7 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
         std::fprintf(tree, "Interval-entry workload: active=%lld gas_active=%lld active_rank_mean=%.6g "
                      "active_rank_max=%lld (before timestep selection and first half-kick)\n",
                      work_sum[2], work_sum[3], previous_active_mean, work_max[2]);
+        }
         // Ranking by sums is equivalent to ranking by means: the divisor is
         // the same number of MPI ranks for every row.
         const auto rows = sorted_tree_rows(keys, sort == TimerTreeSort::InclusiveMean ? sums : maxima);
@@ -256,13 +270,22 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
                 std::fprintf(tree, "\n%s\n", lane == "main" ?
                              "Main threads: host elapsed seconds per MPI rank" :
                              "Worker threads: summed thread-seconds per MPI rank");
+                if(rank_local) {
+                    std::fprintf(tree, "%12s %12s %12s %11s  %s\n", "incl_s", "self_s", "calls", "open_scopes", "region");
+                } else {
                 std::fprintf(tree, "%12s %12s %12s %12s %10s %10s %12s %8s %11s  %s\n",
                              "incl_mean", "incl_max", "self_mean", "self_max", "incl_imb", "self_imb", "calls_sum",
                              "ranks", "open_scopes", "region");
+                }
             }
             const auto last = path.rfind("::");
             const char *leaf = path.c_str() + (last == std::string::npos ? 0 : last + 2);
             const auto *c = &count_sums[4 * i];
+            if(rank_local) {
+                std::fprintf(tree, "%12.6g %12.6g %12llu %11llu  %s%s\n",
+                             sums[2*i], sums[2*i+1], static_cast<unsigned long long>(c[0]),
+                             static_cast<unsigned long long>(c[2]), row.prefix.c_str(), leaf);
+            } else {
             std::fprintf(tree, "%12.6g %12.6g %12.6g %12.6g %10.4g %10.4g %12llu %8llu %11llu  %s%s\n",
                          sums[2 * i] / ranks, maxima[2 * i],
                          sums[2 * i + 1] / ranks, maxima[2 * i + 1],
@@ -270,6 +293,7 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
                          imbalance(sums[2 * i + 1], maxima[2 * i + 1], ranks),
                          static_cast<unsigned long long>(c[0]), static_cast<unsigned long long>(c[3]),
                          static_cast<unsigned long long>(c[2]), row.prefix.c_str(), leaf);
+            }
         }
     }
     for(int i = 0; i < n; ++i) {
@@ -277,7 +301,16 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
         const auto lane = keys[i].substr(0, tab);
         const auto path = keys[i].substr(tab + 1);
         const auto *c = &count_sums[4 * i];
-        if(tsv) {
+        if(tsv && rank_local) {
+            std::fprintf(tsv, "%s\t%lld\t%s\t%s\t%llu\t%llu\t%llu\t%.17g\t%.17g\t%s"
+                         "\t%.17g\t%.17g\t%lld\t%lld\t%lld\t%d\t%lld\t%lld\t%lld\n",
+                         label, step, lane.c_str(), path.c_str(),
+                         static_cast<unsigned long long>(c[0]), static_cast<unsigned long long>(c[1]),
+                         static_cast<unsigned long long>(c[2]), sums[2*i], sums[2*i+1], info.mode,
+                         info.simulation_time, info.simulation_dt, info.particles_total,
+                         work_sum[0], work_sum[1], info.highest_active_bin, info.from_sync_point,
+                         work_sum[2], work_sum[3]);
+        } else if(tsv) {
             std::fprintf(tsv, "%s\t%lld\t%s\t%s\t%llu\t%llu\t%llu\t%llu"
                          "\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g"
                          "\t%.17g\t%.17g\t%s\t%.17g\t%.17g\t%lld"

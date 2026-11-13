@@ -27,12 +27,14 @@ struct TimerReportContext {
  * canonical path order. The sort argument is used only on rank zero.
  * An optional rank-local snapshot can contain interval deltas. Context counts
  * are reduced across ranks; context/snapshot presence must agree on all ranks. */
-void TimerWriteTSVHeader(FILE *stream);
+// rank_local selects a compact schema and requires a communicator of size one.
+void TimerWriteTSVHeader(FILE *stream, bool rank_local = false);
 bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv,
                     const char *label, long long step,
                     TimerTreeSort sort = TimerTreeSort::InclusiveMax,
                     const std::vector<TimerRecord> *snapshot = nullptr,
-                    const TimerReportContext *context = nullptr);
+                    const TimerReportContext *context = nullptr,
+                    bool rank_local = false);
 } // namespace timing
 } // namespace gizmo
 

@@ -435,3 +435,39 @@ context changes, recursion, early returns, exceptions, invalid boundaries,
 disabled timers, concurrent workers, scope ownership, shutdown, and MPI reports
 with differing registration order and missing regions. `TIMER_BUILD`, `CXX`,
 `MPICXX`, `MPIEXEC`, and `CXXFLAGS` can be overridden on the make command line.
+
+
+### Per-rank output
+
+Enable rank-local files alongside the aggregate reports in the job environment:
+
+```sh
+export GIZMO_TIMERS=1
+export GIZMO_TIMERS_MODE=both
+export GIZMO_TIMERS_PER_RANK=1
+```
+
+Each MPI rank appends its own files under `Output_Directory`:
+
+- `timers.rank-000000.txt` and `.tsv`: cumulative snapshots for rank 0.
+- `timers-step.rank-000000.txt` and `.tsv`: interval snapshots for rank 0.
+- Other ranks use their zero-padded world rank in the filename.
+
+The existing `GIZMO_TIMERS_MODE`, `GIZMO_TIMERS_INTERVAL`, and sorting settings
+apply to both aggregate and rank-local output. The rank files use exactly the
+same captured snapshots and interval baselines as the aggregate reports,
+including scopes still open at the report boundary. Only regions visited on
+that rank appear; main-thread and worker-thread lanes remain separate.
+
+Rank-local text columns are `incl_s`, `self_s`, `calls`, `open_scopes`, and
+`region`. The TSV uses `calls`, `completed`, `open_scopes`, `incl_s`, and
+`self_s`, alongside labels, sync-point/window information, lanes, full region
+paths, and workload context. It omits cross-rank statistics and names local
+workload counts explicitly. Worker times sum the rank's worker threads.
+`particles_total` remains the global particle count. A session comment identifies
+the rank-local schema, world rank, and world size.
+
+This option defaults to off. With `both`, it adds four files per MPI rank.
+Rank-local formatting uses `MPI_COMM_SELF`, which introduces no communication
+or synchronization between ranks. File writing adds reporting overhead and
+requires the output directory to be visible to all ranks.
