@@ -15,6 +15,7 @@
 #include "../../mesh/gpu_neighbor_list.h"   /* gizmo_motion_bound_raise */
 #include "../forcetree.h"                   /* gravity_cover_set_position */
 #include "../../galaxy_sf/single_star_record.h"
+#include "../../galaxy_sf/single_star_mergers.h"
 #include "../../system/gpu_particles_arena.h"
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
 #include "../../galaxy_sf/stellar_evolution_tables.h" /* star radii */
@@ -66,7 +67,7 @@ std::vector<StarKey> slot_id;             /* library slot -> star */
 std::unordered_map<StarKey, int, StarKeyHash> slot_of;
 std::vector<double> last_m, last_x, last_v; /* by slot, GIZMO units, the state last handed back (mass: GIZMO's own) */
 std::vector<double> slot_m_r;             /* by slot, the mass RUMI++ holds */
-long long n_steps = 0;
+long long n_steps = 0, n_merge = 0;
 
 inline int is_rumi_star(int i) {return (P[i].Type == 4) && (P[i].Mass > 0);}
 
@@ -182,7 +183,7 @@ void rumi_init(void)
 void rumi_finalize(void)
 {
     if(!rumi_rank) return;
-    if(ThisTask == 0) {printf("RUMI++ totals: %lld steps\n", n_steps);}
+    if(ThisTask == 0) {printf("RUMI++ totals: %lld steps, %lld mergers\n", n_steps, n_merge);}
     rumi_lib::kokkos_finalize();
 }
 
@@ -292,6 +293,7 @@ void rumi_integrate(void)
 
     /* ---- RUMI++ ranks: the plan, then the library calls (collective; host arrays read on task 0) ---- */
     std::vector<double> m_mid, x_mid, v_mid, m_out, x_out, v_out;
+    std::vector<int> mk, mg; std::vector<double> mp; /* mergers: kept slot, merged slot, product mass */
     if(rumi_rank) {
         MPI_Bcast(&plan, sizeof(Plan), MPI_BYTE, 0, RumiComm);
         if(plan.nsl > 0) { /* slot bookkeeping lives on task 0: every RUMI++ rank follows the plan */
@@ -334,17 +336,31 @@ void rumi_integrate(void)
         } else if(rumi_lib::advance(plan.dt, plan.G) != 0) {printf("RUMI++: advance failed\n"); endrun(9305);}
         m_out.resize(ns); x_out.resize(3*ns); v_out.resize(3*ns);
         rumi_lib::get_state(m_out.data(), x_out.data(), v_out.data());
+        rumi_lib::merger_events(mk, mg, mp);
         n_steps++;
     }
     /* task 0: the results by star, back to the owners in task order */
     std::vector<RumiBack> back;
     std::vector<int> bcnt(NTask, 0), bdisp(NTask, 0);
+    std::vector<star_merger_action> actions;
     if(ThisTask == 0) {
         const int ns = (int)slot_id.size();
         std::vector<char> m_new(ns, 0); /* RUMI++ changed this mass: GIZMO takes it, else GIZMO keeps its own bits */
         for(int q = 0; q < ns; q++) {
             if(m_out[q] != slot_m_r[q]) {m_new[q] = 1; slot_m_r[q] = m_out[q]; last_m[q] = (m_out[q] > 0) ? m_out[q] / UM : 0;}
             for(int j = 0; j < 3; j++) {last_x[3*q+j] = x_out[3*q+j] / UL; last_v[3*q+j] = v_out[3*q+j] / UV;}
+        }
+        std::unordered_map<int, int> star_of; for(int k = 0; k < ntot; k++) {star_of[slot_of[all[k].ID]] = k;}
+        for(size_t e = 0; e < mk.size(); e++) { /* mergers: merger products (galaxy_sf/single_star_mergers.cc) */
+            auto ik = star_of.find(mk[e]), ig = star_of.find(mg[e]);
+            if(ik == star_of.end() || ig == star_of.end()) continue;
+            const RumiStar &sk = all[ik->second], &sg = all[ig->second];
+            star_merger_action a; memset(&a, 0, sizeof(a));
+            a.id_merged = (MyIDType)sg.ID.id; a.id_survivor = (MyIDType)sk.ID.id; a.type_merged = a.type_survivor = 4;
+            a.task_merged = sg.task; a.task_survivor = sk.task; a.idx_merged = sg.index; a.idx_survivor = sk.index;
+            a.M_merged = sg.m; a.M_survivor_old = sk.m; a.M_survivor_new = mp[e] / UM;
+            actions.push_back(a); n_merge++;
+            printf("RUMI++ MERGER: ID %llu (M=%g) merged into ID %llu (M=%g->%g)\n", sg.ID.id, sg.m, sk.ID.id, sk.m, a.M_survivor_new);
         }
         back.resize(ntot);
         std::vector<int> order(ntot); for(int k = 0; k < ntot; k++) {order[k] = k;}
@@ -383,6 +399,13 @@ void rumi_integrate(void)
         moved.push_back(i);
     }
     if(!moved.empty()) {gizmo_motion_bound_raise(moved.data(), (int)moved.size()); gizmo_mark_position_dirty_indices(moved.data(), (int)moved.size());} /* velocity set outside the kick: nodes must cover this drift */
+    int na = (int)actions.size(); MPI_Bcast(&na, 1, MPI_INT, 0, MPI_COMM_WORLD); /* every task applies the same list */
+    if(na > 0) {
+        actions.resize(na);
+        MPI_Bcast(actions.data(), na * (int)sizeof(star_merger_action), MPI_BYTE, 0, MPI_COMM_WORLD);
+        star_mergers_apply(actions, "RUMI++");
+        mass_changed_local = 1;
+    }
     int mc = 0; MPI_Allreduce(&mass_changed_local, &mc, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(mc) {TreeMomentsStaleFlag = 1;}
 }
@@ -431,7 +454,7 @@ void rumi_save_state(void)
 {
     if(!rumi_rank) return;
     std::vector<char> b;
-    if(ThisTask == 0) {put_vec(b, slot_id); put_vec(b, last_m); put_vec(b, last_x); put_vec(b, last_v); put_vec(b, slot_m_r); put(b, n_steps);}
+    if(ThisTask == 0) {put_vec(b, slot_id); put_vec(b, last_m); put_vec(b, last_x); put_vec(b, last_v); put_vec(b, slot_m_r); put(b, n_steps); put(b, n_merge);}
     char dir[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(dir, sizeof(dir), "%s/restartfiles/rumi", All.OutputDir);
     if(rumi_lib::save_state(dir, b) != 0) {printf("RUMI++: save_state failed\n"); endrun(9308);}
 }
@@ -444,7 +467,7 @@ void rumi_load_state(void)
     if(rumi_lib::load_state(dir, b) != 0) {printf("RUMI++: load_state failed (%s)\n", dir); endrun(9309);}
     if(ThisTask == 0 && !b.empty()) {
         size_t o = 0;
-        get_vec(b, o, slot_id); get_vec(b, o, last_m); get_vec(b, o, last_x); get_vec(b, o, last_v); get_vec(b, o, slot_m_r); get(b, o, n_steps);
+        get_vec(b, o, slot_id); get_vec(b, o, last_m); get_vec(b, o, last_x); get_vec(b, o, last_v); get_vec(b, o, slot_m_r); get(b, o, n_steps); get(b, o, n_merge);
         slot_of.clear(); for(size_t k = 0; k < slot_id.size(); k++) {slot_of[slot_id[k]] = (int)k;}
         printf("RUMI++: restarted from %s, %zu slots, step %lld\n", dir, slot_id.size(), n_steps);
     }

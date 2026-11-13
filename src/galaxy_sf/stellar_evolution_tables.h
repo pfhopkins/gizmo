@@ -41,7 +41,7 @@ struct StellarEvolutionTables {
     double lifetime_yr[STBL_NZ * STBL_NM], remnant_mass[STBL_NZ * STBL_NM];
     int    remnant_type[STBL_NZ * STBL_NM];
     double t_PMS[STBL_NZ * STBL_NM];   /* pre-main-sequence duration (feedback delay) [yr] */
-#ifdef KETJU_MERGE_STARS
+#if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
     double t_MS_start[STBL_NZ * STBL_NM], t_MS_end[STBL_NZ * STBL_NM]; /* table age of the main sequence [yr] */
     float *logR_cm;                                                    /* log10 stellar radius [cm], node-shared */
 #endif
@@ -69,7 +69,7 @@ double stellar_lifetime(double logM, double logZ);          /* [yr] */
 double stellar_remnant_mass(double logM, double logZ);      /* [Msun] */
 int    stellar_remnant_type(double logM, double logZ);      /* enum StellarRemnantType */
 double stellar_t_PMS(double logM, double logZ);             /* [yr] */
-#ifdef KETJU_MERGE_STARS
+#if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
 double stellar_t_MS_start(double logM, double logZ);        /* [yr] */
 double stellar_t_MS_end(double logM, double logZ);          /* [yr] */
 double stellar_log_R_cm(double logM, double logZ, double log_age);
