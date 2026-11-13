@@ -2113,6 +2113,7 @@ static void scatter_results(KetjuRegion &reg)
                 P[idx].Vel[j] = sp.Vel[j] + reg.com_vel[j];
                 P[idx].KetjuFinalVel[j] = P[idx].Vel[j];
             }
+            force_cover_position(idx); /* position set, not drifted */
         }
         force_raise_motion_bound(idx); /* chord velocity set outside the kick: nodes must cover this drift */
 
@@ -2893,6 +2894,7 @@ void ketju_set_final_velocities(void)
 #else
                 if(d2 < 1e-12 * All.KetjuRegionRadius * All.KetjuRegionRadius * All.cf_a2inv) {for(int j = 0; j < 3; j++) {P[i].Pos[j] = P[i].KetjuTargetPos[j];}}
 #endif
+                force_cover_position(i); /* position set, not drifted */
             }
 #endif
             for(int j = 0; j < 3; j++) {

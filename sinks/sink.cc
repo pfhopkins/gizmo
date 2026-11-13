@@ -735,6 +735,7 @@ void sink_final_operations(void)
                     if(fac_sink_shift > 1.e-4) {fac_sink_shift = 1.-exp(-fac_sink_shift);} // make sure we can't overshoot by using this smooth interpolation function
                 }
                 P[n].Pos += (P[n].Sink_PotentialMinimumOfNeighborsPos - P[n].Pos) * fac_sink_shift;
+                force_cover_position(n); /* position set, not drifted: node boxes above must hold it */
             }
 #endif
 
