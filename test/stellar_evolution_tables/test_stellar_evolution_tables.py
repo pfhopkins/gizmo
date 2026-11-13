@@ -4,11 +4,14 @@ the wind table is read from the same directory; GIZMO checks the content hashes 
   1. the installed files: GIZMO reports both ok and runs to TimeMax;
   2. a directory without tables: GIZMO stops at start-up, naming the file and the install script;
   3. a file with the right name but other content: same, naming its hash;
+  3b. StellarTablesFile unset or SET_ME: the install of scripts/get_stella_deps.sh under STELLA_DEPS_PREFIX is used; with
+     no install there GIZMO stops at start-up, naming the setup command;
   4. the lookups (node-shared tables, standalone build in unit/): exact at the grid nodes, closure of the ejecta,
      lifetime monotone, agreement with the reference implementation to 1e-12, same on both ranks.
 """
 import subprocess
 import os
+import re
 from pathlib import Path
 import pytest
 from gizmo.test import build_gizmo_for_test, run_test, get_stellar_evolution_tables, default_mpi_ranks, mpi_launch_command
@@ -30,10 +33,11 @@ def built():
     return tables
 
 
-def run(overrides, allow_fail):
+def run(overrides, allow_fail, params_name=None):
     os.chdir(TEST_DIR)
     try:
-        run_test(TEST_NAME, num_mpi_ranks=min(2, default_mpi_ranks()), param_overrides=overrides, allow_nonzero_exit=allow_fail)
+        run_test(TEST_NAME, num_mpi_ranks=min(2, default_mpi_ranks()), param_overrides=overrides, allow_nonzero_exit=allow_fail,
+                 params_name=params_name)
         log = Path(f"test_{TEST_NAME}.out").read_text() + Path(f"test_{TEST_NAME}.err").read_text()
     finally:
         os.chdir("../../")
@@ -48,7 +52,7 @@ def test_installed_tables_pass(built):
 def test_missing_table_stops(built):
     log = run({"StellarTablesFile": "/nonexistent/stellar_tables_unified.hdf5"}, allow_fail=True)
     assert "/nonexistent/stellar_tables_unified.hdf5 cannot be read" in log
-    assert "get_stella_tables.sh" in log
+    assert "run scripts/get_stella_deps.sh" in log
     assert "Final time" not in log
 
 
@@ -58,7 +62,40 @@ def test_wrong_table_stops(built, tmp_path):
     with h5py.File(fake, "w") as F:
         F["lifetime_yr"] = [1.0, 2.0]
     log = run({"StellarTablesFile": str(fake)}, allow_fail=True)
-    assert f"{fake} has hash" in log and "get_stella_tables.sh" in log
+    assert f"{fake} has hash" in log and "run scripts/get_stella_deps.sh" in log
+    assert "Final time" not in log
+
+
+def deps_cache(tmp_path, built):
+    """a STELLA_DEPS_PREFIX holding the installed tables as tables-<ref>"""
+    ref = re.search(r'#define STELLA_TABLES_REF "([0-9a-f]+)"', (TEST_DIR.parent.parent / "src/galaxy_sf/stella_tables_check.h").read_text()).group(1)
+    (tmp_path / f"tables-{ref[:7]}").symlink_to(Path(built["StellarTablesFile"]).parent)
+    return tmp_path / f"tables-{ref[:7]}" / "stellar_tables_unified.hdf5"
+
+
+def test_set_me_uses_deps_cache(built, tmp_path, monkeypatch):
+    main = deps_cache(tmp_path, built)
+    monkeypatch.setenv("STELLA_DEPS_PREFIX", str(tmp_path))
+    log = run({"StellarTablesFile": "SET_ME"}, allow_fail=False)
+    assert f"{main} ok" in log and "Final time" in log
+
+
+def test_unset_uses_deps_cache(built, tmp_path, monkeypatch):
+    main = deps_cache(tmp_path, built)
+    monkeypatch.setenv("STELLA_DEPS_PREFIX", str(tmp_path))
+    unset = TEST_DIR / f"{TEST_NAME}_unset.params"
+    unset.write_text("".join(l for l in (TEST_DIR / f"{TEST_NAME}.params").read_text().splitlines(True) if not l.startswith("StellarTablesFile")))
+    try:
+        log = run(None, allow_fail=False, params_name=f"{TEST_NAME}_unset")
+    finally:
+        unset.unlink()
+    assert f"{main} ok" in log and "Final time" in log
+
+
+def test_no_deps_cache_stops(built, tmp_path, monkeypatch):
+    monkeypatch.setenv("STELLA_DEPS_PREFIX", str(tmp_path))
+    log = run({"StellarTablesFile": "SET_ME"}, allow_fail=True)
+    assert f"{tmp_path}/tables-" in log and "run scripts/get_stella_deps.sh" in log
     assert "Final time" not in log
 
 

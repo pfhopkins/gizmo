@@ -301,7 +301,7 @@ def test_sgchem_startup(tables, box):
     finally:
         chdir(ROOT)
     log = open(path.join(HERE, f"test_{NAME}.out")).read()
-    assert "wss_z_collis.txt has hash" in log and "scripts/get_stella_tables.sh" in log
+    assert "wss_z_collis.txt has hash" in log and "run scripts/get_stella_deps.sh" in log
     assert "SGCHEM: chemistry tables built" not in log
 
 
