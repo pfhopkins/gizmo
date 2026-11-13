@@ -1903,6 +1903,8 @@ The switches below are in development (developer: Ulrich Steinwandel, GitHub Ull
 
 **SGCHEM\_UVB\_TREECOL\_SHIELDING**: Comoving SGChem. The TREECOOL HI, HeI and HeII photoionisation and heating rates of the UV-background floor are attenuated per HEALPix pixel. The attenuation uses 10 FG20 bands and the TreeCol gas column times the cell's neutral H, He0 and He+ fractions, averaged over the pixels. A zero column leaves the rates exactly unshielded, and the G0 floor stays unshielded. Memory: a fourth stored column per pixel (the gas mass), 2 bytes per pixel per cell (24 bytes per cell with 12 pixels), plus one more species mass per tree node. Needs `SGCHEM` and `GALSF_RESOLVEDISM_TREECOL_PIXELS`. No parameters; not enabled in any Stella configuration yet. Tests: `test/sgchem_uvb_shielding` (shielding factors against the FG20 spectrum), `test/treecol_pixels` (`test_gas_column_for_uvb_shielding`).
 
+**STARS\_HERMITE\_DIRECT\_GRAVITY**: Type-4 stars are integrated with the 4th-order Hermite scheme (`HERMITE_INTEGRATION` with the Type-4 mask) and feel each other through the exact direct star-star sum of `gravity/star_direct_gravity.cc`, with its jerk, instead of the tree; the tree leaves star-star pairs out for star targets. The step of each star is the Aarseth (1985) criterion, sqrt(eta (|a||a''| + |a'|^2) / (|a'||a'''| + |a''|^2)), from the Hermite interpolant of its last step (Makino & Aarseth 1992), with eta = `STARS_HERMITE_AARSETH_ETA` (compile-time, default 0.02); the first step is eta/2 |a|/|a'|. Gas and all other forces on the stars are unchanged. The direct sum costs O(N_star^2) per Hermite pass and gathers all stars on every task: for star counts far below the cell count. Needs fixed Type-4 softening (no bit 16 in `ADAPTIVE_GRAVSOFT_FORALL`); not combinable with sinks, `SINGLE_STAR_DIRECT_GRAVITY`, another `HERMITE_INTEGRATION` mask, `PMGRID` or `KETJU_REGULARIZATION` (build errors). Use `IO_HERMITE_SYNC` to read orbits or energies from snapshots. No run-time parameters; not enabled in any Stella configuration. Test: `test/stars_hermite_direct_gravity` (an e = 0.9 binary over ten orbits and a hierarchical triple over two outer orbits against Newtonian reference orbits).
+
 **TEST\_KETJU\_LIMITER\_SCAN\_CROSSCHECK\_ABORTS**: Test only. Every step, the KETJU limiting-particle steps are recomputed by a full particle scan, and the run stops if the cell grid of the limiter finds a different result. Slow. Used by `test/ketju_binary` (`test_periodic_pair_across_the_edge`).
 
 **Behaviour without a switch.**
@@ -1918,7 +1920,7 @@ The switches below are in development (developer: Ulrich Steinwandel, GitHub Ull
 | `GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE` | `GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE` |
 | `GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF` | `GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY` |
 | `GALSF_RESOLVEDISM_SN_SPAWN` | `GALSF_SINGLE_STARS_SN_EJECTA_CELL` |
-| `SGCHEM_PRIMORDIAL_HELIUM`, `SGCHEM_DGR_REMY_RUYER14`, `SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS`, `SGCHEM_UVB_TREECOL_SHIELDING`, `TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS` | same names |
+| `SGCHEM_PRIMORDIAL_HELIUM`, `SGCHEM_DGR_REMY_RUYER14`, `SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS`, `SGCHEM_UVB_TREECOL_SHIELDING`, `STARS_HERMITE_DIRECT_GRAVITY` (and `STARS_HERMITE_AARSETH_ETA`), `TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS` | same names |
 | parameters `PopIII_*`, `nHcutoffSF` | same names |
 
 
