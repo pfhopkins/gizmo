@@ -1987,6 +1987,21 @@
    Every module that adds fields must add its count here so that all loops, I/O, diffusion,
    merge/split, and MPI exchange automatically handle the correct number of species. */
 /* passive species appended at the end of Metallicity[] (carried, diffused, merged/split and written; not used by cooling) */
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS /* metal mass fraction by source (SN, AGB, winds, Type Ia): 4 extra passive slots after the 27-element ones */
+#if !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_FB_MECHANICAL) || !defined(METALS)
+#error "GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS needs GALSF_SINGLE_STARS_EVOLUTION_TABLES, GALSF_SINGLE_STARS_FROM_IMF, GALSF_FB_MECHANICAL and METALS"
+#endif
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
+#define SINGLE_STAR_METAL_ORIGIN_FIRST_EXTRA_SLOT 16
+#else
+#define SINGLE_STAR_METAL_ORIGIN_FIRST_EXTRA_SLOT 0
+#endif
+#ifndef METALS_EXTRA_PASSIVE_SPECIES
+#define METALS_EXTRA_PASSIVE_SPECIES (SINGLE_STAR_METAL_ORIGIN_FIRST_EXTRA_SLOT+4)
+#elif (METALS_EXTRA_PASSIVE_SPECIES < SINGLE_STAR_METAL_ORIGIN_FIRST_EXTRA_SLOT+4)
+#error "GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS needs 4 extra passive metal slots (20 with GALSF_SINGLE_STARS_27_ELEMENT_YIELDS)"
+#endif
+#endif
 #ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS /* the 16 table elements outside the FIRE slots go into the first 16 extra passive slots */
 #if !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || !defined(COOL_METAL_LINES_BY_SPECIES)
 #error "GALSF_SINGLE_STARS_27_ELEMENT_YIELDS needs GALSF_SINGLE_STARS_EVOLUTION_TABLES and COOL_METAL_LINES_BY_SPECIES"
@@ -2006,6 +2021,9 @@
 #define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS+NUM_ISMDUSTCHEM_PASSIVE_SCALARS+NUM_NUCLEAR_PASSIVE_SCALARS+METALS_EXTRA_PASSIVE_SPECIES)
 #define METALS_EXTRA_PASSIVE_SPECIES_OFFSET (NUM_METAL_SPECIES-METALS_EXTRA_PASSIVE_SPECIES) /* first appended slot */
 #define NUM_METAL_SPECIES_BASE (NUM_METAL_SPECIES-METALS_EXTRA_PASSIVE_SPECIES) /* species count without the appended slots, for the checks on the cooling-species layout */
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+#define SINGLE_STAR_METAL_ORIGIN_OFFSET (METALS_EXTRA_PASSIVE_SPECIES_OFFSET+SINGLE_STAR_METAL_ORIGIN_FIRST_EXTRA_SLOT) /* slots SN, AGB, winds, Type Ia */
+#endif
 
 /* offset of ISM dustchem species within Metallicity array */
 #define AGE_TRACER_OFFSET (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES) /* first enrichment-age-tracer slot in Metallicity[]; other tracers and scalars follow */
