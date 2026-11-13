@@ -431,7 +431,12 @@
 #define CPU_KICKS             56  /* first+second half-step kicks, Hermite predict/correct */
 #define CPU_LOGMSG            57  /* per-step statistics + log-file writes (a barrier-sync absorber) */
 
+#ifdef STARS_INTEGRATED_BY_RUMI
+#define CPU_RUMI              58  /* RUMI++ star integration: common-bin limiter, gather, library calls, scatter */
+#define CPU_PARTS          59  /* this gives the number of parts above (must be last) */
+#else
 #define CPU_PARTS          58  /* this gives the number of parts above (must be last) */
+#endif
 
 #define CPU_STRING_LEN 120
 

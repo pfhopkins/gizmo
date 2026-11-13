@@ -1,0 +1,16 @@
+# RUMI++ library settings (collisional, Newtonian, no stellar evolution); R_NGB puts all test stars into one regularised subsystem
+COLLISIONAL = true
+PN_ORDER = 0
+SSE_ENABLED = false
+SSE_NATAL_KICKS = none
+R_ESCAPE_RH = 1e6
+ETA_FF = 0.2
+ETA_FB = 0.2
+ETA_GRAD = 0.2
+ETA_GBS = 1e-10
+ETA_RESTART = 0
+FLYBY_CM_EPS = 1e-7
+PROFILING = off
+SUBSYS_ADVANCE_LIMIT = 200000
+NGB_WIDE_FAC = 10
+R_NGB = 0.02

@@ -61,6 +61,13 @@ extern ALIGN(32) struct particle_data
     Vec3<MyFloat> OldPos;
     Vec3<MyFloat> OldVel;
     Vec3<MyFloat> OldJerk;
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+    MyDouble dt_crit_last;  /*!< step criterion (code time, all factors and caps, not quantised) from the latest get_timestep call; 0 if not Hermite-eligible then */
+    MyDouble dt_crit_prev;  /*!< dt_crit_last as it stood when the current step started */
+#endif
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+    MyDouble Hermite_dt_ratio; /*!< Aarseth step / last step, from the last corrector; 0 = none yet */
+#endif
     short int AccretedThisTimestep;     /*!< set when a sink accreted this step (eligible_for_hermite does not read it) */
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
@@ -475,6 +482,9 @@ extern ALIGN(32) struct particle_data
 
 #ifdef KETJU_REGULARIZATION
 #include "../gravity/ketju/ketju_particle_fields.h"
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+#include "../gravity/rumi/rumi_particle_fields.h"
 #endif
     /* member functions */
     GIZMO_GPU_FUNCTION inline integertime integertime_step() const { /*!< integer timestep for this particle */

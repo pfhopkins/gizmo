@@ -245,6 +245,9 @@ void init(void)
 #ifdef KETJU_REGULARIZATION
         ketju_init_particle(i);
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+        P[i].RumiIntegrated = 0; P[i].RumiMember = 0;
+#endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* init tidal tensor for first output (not used for calculation) */
         for(j=0;j<3;j++) {int kt; for(kt=0;kt<3;kt++) {P[i].tidal_tensorps[j][kt]=0;}}
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
@@ -265,6 +268,12 @@ void init(void)
                               state rather than from whatever the allocator left behind */
         P[i].OldPos = P[i].Pos; P[i].OldVel = P[i].Vel;
         P[i].Hermite_OldAcc = {}; P[i].OldJerk = {};
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+        P[i].Hermite_dt_ratio = 0;
+#endif
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+        P[i].dt_crit_last = P[i].dt_crit_prev = 0; /* no criterion history: the default step rule until there is one */
+#endif
         P[i].AccretedThisTimestep = 0;
 #endif        
         

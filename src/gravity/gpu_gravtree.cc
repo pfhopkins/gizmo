@@ -955,7 +955,7 @@ gpu_grav_node_member_geometry(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_nod
 {
     s_node = nd.s_node; mass_node = nd.mass_node;
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
-    if((open.ptype == 5) && (ctx.tree_soa.sink_mass[nd.idx] > 0))
+    if((open.ptype == STAR_DIRECT_GRAVITY_TYPE) && (ctx.tree_soa.sink_mass[nd.idx] > 0))
     {
         MyFloat sm = (MyFloat) ctx.tree_soa.sink_mass[nd.idx];
         if(mass_node - sm <= 0) {return 0;} /* pure-star node */
@@ -1046,7 +1046,7 @@ static KOKKOS_INLINE_FUNCTION int
 gpu_grav_leaf_member_accepts(const gpu_grav_walk_ctx_t &ctx, int no, const gpu_grav_open_inputs_t &open)
 {
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
-    if((open.ptype == 5) && (ctx.P_dev[no].Type == 5)) {return 0;}
+    if((open.ptype == STAR_DIRECT_GRAVITY_TYPE) && (ctx.P_dev[no].Type == STAR_DIRECT_GRAVITY_TYPE)) {return 0;}
 #else
     (void) ctx; (void) no; (void) open;
 #endif

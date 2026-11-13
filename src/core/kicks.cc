@@ -214,7 +214,7 @@ void do_hermite_prediction(void)
     mark_hermite_positions_written();
 }
 
-void do_hermite_correction(void) // corrector step
+void do_hermite_correction(int final_pass) // corrector step; final_pass: last of the HERMITE_CORRECTOR_ITERATIONS passes
 {
     int i; integertime ti_step, tstart=0, tend=0;
     int gas_corrected = 0; /* the corrector writes positions, which the kept gas neighbour index must see */
@@ -232,9 +232,19 @@ void do_hermite_correction(void) // corrector step
                     double dt_grav = get_gravkick_factor(tstart, tend, i, 0);
                     P[i].Vel = P[i].OldVel + (P[i].Hermite_OldAcc + P[i].GravAccel) * (dt_grav * 0.5) + (P[i].OldJerk - P[i].GravJerk) * (dt_grav * dt_grav / 12);
                     P[i].Pos = P[i].OldPos + (P[i].Vel + P[i].OldVel) * (dt_grav * 0.5) + (P[i].Hermite_OldAcc - P[i].GravAccel) * (dt_grav * dt_grav / 12);
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+                    if(final_pass && dt_grav > 0) /* Aarseth (1985) criterion from the step's Hermite interpolant (Makino & Aarseth 1992) */
+                    {
+                        Vec3<double> da = P[i].Hermite_OldAcc - P[i].GravAccel, j0 = P[i].OldJerk, j1 = P[i].GravJerk;
+                        Vec3<double> a3 = (12. * da + 6. * dt_grav * (j0 + j1)) / (dt_grav * dt_grav * dt_grav);
+                        Vec3<double> a2 = (-6. * da - dt_grav * (4. * j0 + 2. * j1)) / (dt_grav * dt_grav) + dt_grav * a3; /* at step end */
+                        double A1 = P[i].GravAccel.norm(), J1 = j1.norm(), A2 = a2.norm(), A3 = a3.norm(), den = J1 * A3 + A2 * A2;
+                        P[i].Hermite_dt_ratio = (den > 0) ? sqrt(STARS_HERMITE_AARSETH_ETA * (A1 * A2 + J1 * J1) / den) / dt_grav : 0;
+                    }
+#endif
 #ifdef PMGRID
                     //Add the long-range kick from the second half-step, if necessary (since we are overwriting the previous kick operations with the Hermite scheme)
-                    if(All.PM_Ti_endstep == All.Ti_Current)	/* need to do long-range kick */
+                    if(final_pass && All.PM_Ti_endstep == All.Ti_Current) /* an intermediate corrected state carries no PM kick */	/* need to do long-range kick */
                     {
                         double dt_grav_pm = get_gravkick_factor(All.PM_Ti_begstep + (All.PM_Ti_endstep - All.PM_Ti_begstep)/2, All.PM_Ti_endstep, i, 0);
                         P[i].Vel += P[i].GravPM * dt_grav_pm;
@@ -516,6 +526,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                 P[i].OldPos = P[i].Pos;
                 P[i].OldJerk = P[i].GravJerk;
                 P[i].Hermite_OldAcc = P[i].GravAccel; // this is the value from the first Hermite tree pass for this timestep
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+                P[i].dt_crit_prev = P[i].dt_crit_last; // criterion at the start of this step, for the next step choice
+#endif
             }
         }
 #endif

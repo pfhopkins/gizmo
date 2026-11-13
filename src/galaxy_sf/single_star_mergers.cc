@@ -3,12 +3,12 @@
 #include <cstdio>
 #include <vector>
 #include <unordered_map>
-#include "../../declarations/allvars.h"
-#include "../../core/proto.h"
-#include "ketju_star_mergers.h"
-#include "../../galaxy_sf/single_star_record.h"
+#include "../declarations/allvars.h"
+#include "../core/proto.h"
+#include "single_star_mergers.h"
+#include "single_star_record.h"
 #ifdef SINGLE_STAR_MERGER_PRODUCT
-#include "../../galaxy_sf/stellar_evolution_tables.h"
+#include "stellar_evolution_tables.h"
 #endif
 
 /* the survivor of a merger takes the victims' metals and drawn mass */

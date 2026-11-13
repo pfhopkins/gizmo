@@ -832,9 +832,55 @@
 #endif
 #define TIDAL_TIMESTEP_CRITERION // use tidal tensor timestep criterion
 #endif
+#ifdef STARS_HERMITE_DIRECT_GRAVITY /* Type-4 stars: 4th-order Hermite, exact direct star-star gravity and jerk, Aarseth steps */
+#if !defined(STAR_DIRECT_GRAVITY_TYPE) && (defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(PMGRID) || defined(KETJU_REGULARIZATION)) /* first pass only: this file is read twice */
+#error "STARS_HERMITE_DIRECT_GRAVITY takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, another HERMITE_INTEGRATION mask, other SINK_CALC_DISTANCES users, PMGRID or KETJU_REGULARIZATION"
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_FORALL) && ((ADAPTIVE_GRAVSOFT_FORALL) & 16)
+#error "STARS_HERMITE_DIRECT_GRAVITY needs fixed Type-4 softening: adaptive softening changes between Hermite force evaluations and collapses the steps"
+#endif
+#define HERMITE_INTEGRATION 16
+#define SINGLE_STAR_DIRECT_GRAVITY
+#define STAR_DIRECT_GRAVITY_TYPE 4
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#ifndef STARS_HERMITE_AARSETH_ETA
+#define STARS_HERMITE_AARSETH_ETA 0.02 /* Aarseth (1985) step parameter */
+#endif
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI /* Type-4 stars integrated by the RUMI++ library (gravity/rumi): star-star pairs leave the tree */
+#if defined(STARS_HERMITE_DIRECT_GRAVITY)
+#error "STARS_INTEGRATED_BY_RUMI and STARS_HERMITE_DIRECT_GRAVITY both integrate the Type-4 stars: choose one"
+#endif
+#if !defined(STAR_DIRECT_GRAVITY_TYPE) && (defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(SPECIAL_POINT_MOTION) || defined(PMGRID) || defined(KETJU_REGULARIZATION)) /* first pass only: this file is read twice */
+#error "STARS_INTEGRATED_BY_RUMI takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, Hermite, other SINK_CALC_DISTANCES users, PMGRID or KETJU_REGULARIZATION"
+#endif
+#define SINGLE_STAR_DIRECT_GRAVITY /* the exact star-star sum (stars not yet integrated by RUMI++) */
+#define STAR_DIRECT_GRAVITY_TYPE 4
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI /* Type-4 stars integrated by the RUMI++ library (gravity/rumi): star-star pairs leave the tree */
+#if defined(STARS_HERMITE_DIRECT_GRAVITY)
+#error "STARS_INTEGRATED_BY_RUMI and STARS_HERMITE_DIRECT_GRAVITY both integrate the Type-4 stars: choose one"
+#endif
+#if !defined(STAR_DIRECT_GRAVITY_TYPE) && (defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(SPECIAL_POINT_MOTION) || defined(PMGRID) || defined(KETJU_REGULARIZATION)) /* first pass only: this file is read twice */
+#error "STARS_INTEGRATED_BY_RUMI takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, Hermite, other SINK_CALC_DISTANCES users, PMGRID or KETJU_REGULARIZATION"
+#endif
+#define SINGLE_STAR_DIRECT_GRAVITY /* the exact star-star sum (stars not yet integrated by RUMI++) */
+#define STAR_DIRECT_GRAVITY_TYPE 4
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#endif
+#ifndef STAR_DIRECT_GRAVITY_TYPE
+#define STAR_DIRECT_GRAVITY_TYPE 5 /* particle type whose mutual gravity SINGLE_STAR_DIRECT_GRAVITY sums directly */
+#endif
 #ifdef HERMITE_INTEGRATION
 #define COMPUTE_JERK_IN_GRAVTREE /* needs to be computed in order to do the Hermite integration */
-#if !(defined(SINGLE_STAR_DIRECT_GRAVITY) && ((HERMITE_INTEGRATION) == 32))
+#ifndef HERMITE_CORRECTOR_ITERATIONS
+#define HERMITE_CORRECTOR_ITERATIONS 1 /* P(EC)^n: n>1 re-evaluates gravity at the corrected state and re-applies the corrector (Kokubo, Yoshinaga & Makino 1998) */
+#endif
+#if defined(HERMITE_SYMMETRIC_TIMESTEP) && !defined(FORCE_EQUAL_TIMESTEPS)
+#define HERMITE_SYMMETRIC_TIMESTEP_ACTIVE /* inert without HERMITE_INTEGRATION or on equal steps */
+#endif
+#if !(defined(SINGLE_STAR_DIRECT_GRAVITY) && ((HERMITE_INTEGRATION) == (1 << (STAR_DIRECT_GRAVITY_TYPE))))
 #define HERMITE_FOREIGN_SOURCE_TABLE /* Hermite passes take a foreign Hermite-type leaf at its owner's predicted state (gravtree.cc). Not needed when Hermite covers only sinks and their mutual gravity is the direct sum, which the tree never evaluates */
 #endif
 #if defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
@@ -1017,6 +1063,15 @@
    where it is, the sink_vel declaration and the moment sums that fill it widen to match this macro. */
 #if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
 #define SINK_NODE_MOTION_TRACKED
+#endif
+#if defined(STARS_INTEGRATED_BY_RUMI) && (((SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) != 4) || defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE))
+#error "STARS_INTEGRATED_BY_RUMI: another option uses the sink node moments"
+#endif
+#if defined(STARS_INTEGRATED_BY_RUMI) && (((SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) != 4) || defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE))
+#error "STARS_INTEGRATED_BY_RUMI: another option uses the sink node moments"
+#endif
+#if defined(STARS_HERMITE_DIRECT_GRAVITY) && ((SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) != 4)
+#error "STARS_HERMITE_DIRECT_GRAVITY: another option set the sink node moments to a type other than 4"
 #endif
 
 
@@ -2419,7 +2474,7 @@
 #ifdef KETJU_REGULARIZATION
 #include "../gravity/ketju/ketju_precompiler_logic.h"
 #endif
-#if defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(KETJU_REGULARIZATION)
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(KETJU_REGULARIZATION) || defined(STARS_INTEGRATED_BY_RUMI)
 #define SINGLE_STAR_RECORDS /* compact star records and P[i].StarIdx */
 #endif
 

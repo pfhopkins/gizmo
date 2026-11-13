@@ -10,8 +10,8 @@ OBJS += $(KETJU_DIR)/ketju_mstar_kokkos.o
 INCL += $(KETJU_DIR)/ketju_mstar_kokkos.h
 INCL += $(KETJU_DIR)/ketju_tree.h
 OBJS += $(KETJU_DIR)/ketju_tree_audit.o
-OBJS += $(KETJU_DIR)/ketju_star_mergers.o
-INCL += $(KETJU_DIR)/ketju_star_mergers.h
+OBJS += galaxy_sf/single_star_mergers.o
+INCL += galaxy_sf/single_star_mergers.h
 OBJS += $(KETJU_DIR)/ketju_energy_diag.o
 $(if $(KETJU_PATH),,$(error KETJU_REGULARIZATION: set KETJU_PATH to the install prefix of MSTAR and the ketju-integrator-c headers))
 $(if $(wildcard $(KETJU_PATH)/include/mstar/mstar.hpp),,$(error KETJU: no include/mstar/mstar.hpp under KETJU_PATH=$(KETJU_PATH)))

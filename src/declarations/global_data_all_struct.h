@@ -44,6 +44,9 @@ struct global_data_all_processes
 #ifdef KETJU_REGULARIZATION
 #include "../gravity/ketju/ketju_global_fields.h"
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+#include "../gravity/rumi/rumi_global_fields.h"
+#endif
   long long TotNumPart;		/*!<  total particle numbers (global value) */
   long long TotN_gas;		/*!<  total gas particle number (global value) */
 

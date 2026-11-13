@@ -46,7 +46,7 @@
 #if defined(KETJU_PN_REMNANT_TAG) || defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
 #include "../../galaxy_sf/stellar_evolution_tables.h" /* remnant types, radii */
 #endif
-#include "ketju_star_mergers.h"
+#include "../../galaxy_sf/single_star_mergers.h"
 
 #ifdef KETJU_REGULARIZATION
 
@@ -1771,7 +1771,7 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
  *  KETJU_MERGE_BH (Type 5+5, Type 5+4).
  * ============================================================ */
 
-/* Merger action descriptor (ketju_star_mergers.h) -- determined on affected root, broadcast to all affected tasks */
+/* Merger action descriptor (galaxy_sf/single_star_mergers.h) -- determined on affected root, broadcast to all affected tasks */
 
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
 typedef star_merger_action ketju_merger_action;
@@ -1865,7 +1865,7 @@ static void handle_mergers(KetjuRegion &reg,
     MPI_Bcast(actions.data(), n_mergers * sizeof(ketju_merger_action), MPI_BYTE,
               reg.affected_tasks.root, reg.affected_tasks.comm);
 
-    /* ---- Phases 3-4: victims' data to the survivors, merger products (ketju_star_mergers.cc) ---- */
+    /* ---- Phases 3-4: victims' data to the survivors, merger products (galaxy_sf/single_star_mergers.cc) ---- */
     star_mergers_apply(actions, "KETJU");
 }
 #endif /* KETJU_MERGE_STARS || KETJU_MERGE_BH */

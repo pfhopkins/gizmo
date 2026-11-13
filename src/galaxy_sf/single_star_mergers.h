@@ -1,11 +1,11 @@
-#ifndef KETJU_STAR_MERGERS_H
-#define KETJU_STAR_MERGERS_H
-/* Stellar mergers handed back from the integrator: the victims' metals and drawn masses go to the survivor. */
+#ifndef SINGLE_STAR_MERGERS_H
+#define SINGLE_STAR_MERGERS_H
+/* Stellar mergers handed back from the few-body integrator (KETJU or RUMI++): the victims' metals and drawn masses go to the survivor. */
 #include <vector>
-#if defined(KETJU_REGULARIZATION) && (defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH))
+#if (defined(KETJU_REGULARIZATION) && (defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH))) || defined(STARS_INTEGRATED_BY_RUMI)
 #define STAR_MERGERS_SHARED
 #endif
-#if defined(KETJU_REGULARIZATION) && defined(KETJU_MERGE_STARS) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+#if ((defined(KETJU_REGULARIZATION) && defined(KETJU_MERGE_STARS)) || defined(STARS_INTEGRATED_BY_RUMI)) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
 #define SINGLE_STAR_MERGER_PRODUCT /* collision products get table state (Hurley+2002 rejuvenation) */
 #endif
 #ifdef STAR_MERGERS_SHARED
