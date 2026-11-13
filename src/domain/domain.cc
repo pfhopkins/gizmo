@@ -177,6 +177,14 @@ static double domain_stellar_prior_scale = 0; /*!< C, set by domain_compute_part
    particle's cost from the a-priori estimate instead (domain_a_priori_cost_multiplier), and the per-timebin attribution
    below uses that estimate in place of the recorded work. */
 static int domain_no_work_recorded = 0;
+/* A decomposition made by the step loop is made for the step about to run, whose active set is known; the recorded work
+   only covers the steps since the previous decomposition, in which a gas cell that was not active carries no hydro
+   weight. So such a decomposition also costs its own step: one step's hydro weight for each currently active gas cell,
+   in the costs it balances on and nowhere else. The step is still recorded in the fresh history afterwards, as usual.
+   Under DOMAIN_TIMEBINS the weight is attributed with the cell's recorded work, to its finest recorded bin or, with no
+   history, its current one. */
+static int domain_prepay_armed = 0;
+void domain_arm_step_prepay(int on) {domain_prepay_armed = on;}
 static inline double domain_gravity_work(int i) {return domain_no_work_recorded ? (double) particle_total_cost[i] : 0.1 + (double) P[i].GravWork;}
 static inline double domain_stellar_work(int i)
 {
@@ -1530,7 +1538,8 @@ void domain_merge_work_history(int i, int j)
    denominator and not the numerator, a star whose age weight changed during the interval is weighted
    by its current one, and a star formed during the interval brings its gas cell's walks into the
    numerator but only its own steps into the denominator. The 0.1 floor keeps a particle that never walked
-   from costing nothing. Hydro work of a gas cell is its hydro work estimate.
+   from costing nothing. Hydro work of a gas cell is its hydro work estimate (plus, in a step-loop decomposition, one step's
+   weight if it is active now: domain_prepay_armed).
    particle_total_cost -- the work queue and the cost-driven top-tree refinement -- is the sum of the
    two, each normalized to its global total, the same construction normalized_load uses, so a region
    heavy in either kind of work is refined and spread. particle_hydro_cost -- the gas-work queue -- is
@@ -1554,6 +1563,7 @@ static void domain_compute_particle_costs(void)
        [4] all recorded work */
     double sums[5] = {0, 0, 0, 0, 0};
     domain_no_work_recorded = 0;
+    const int prepay = domain_prepay_armed && !UseAllParticles;   /* step-loop decompositions only */
     for(int i = 0; i < NumPart; i++)
     {
 #ifdef SUBFIND
@@ -1566,6 +1576,7 @@ static void domain_compute_particle_costs(void)
 #endif
         if(P[i].Type == 0) {sums[4] += (double) CellP[i].HydroWorkEstimate;}
         if(P[i].Type == 0) {sums[3] += (double) CellP[i].HydroWorkEstimate;}
+        if(prepay && P[i].Type == 0 && TimeBinActive[P[i].TimeBin]) {sums[3] += domain_gas_work_weight(i);}
 #if defined(GALSF) && !defined(CHIMES)
         if(P[i].ExtraWorkEstimate > 0) {sums[0] += domain_star_age_work_weight(i) * (double) P[i].GravWork; sums[1] += (double) P[i].ExtraWorkEstimate;}
 #endif
@@ -1605,7 +1616,8 @@ static void domain_compute_particle_costs(void)
 #endif
         NtypeLocal[P[i].Type]++;
         const double grav = domain_gravity_work(i) + domain_stellar_work(i);
-        const double hydro = (P[i].Type == 0) ? (double) CellP[i].HydroWorkEstimate : 0;
+        double hydro = (P[i].Type == 0) ? (double) CellP[i].HydroWorkEstimate : 0;
+        if(prepay && P[i].Type == 0 && TimeBinActive[P[i].TimeBin]) {hydro += domain_gas_work_weight(i);}
         const double total = grav * inv_grav_total + hydro * inv_hydro_total;
         particle_total_cost[i] = (float) total;
         particle_hydro_cost[i] = (float) hydro;

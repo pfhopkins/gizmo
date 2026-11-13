@@ -148,6 +148,7 @@ void make_list_of_active_particles(void);
 void domain_reset_work_history(void);
 void domain_clear_work_history(int i);
 void domain_record_step_work(int i);
+void domain_arm_step_prepay(int on);
 void domain_merge_work_history(int i, int j);
 void output_extra_log_messages(void);
 
