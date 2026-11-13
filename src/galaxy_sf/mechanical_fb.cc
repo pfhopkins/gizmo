@@ -11,6 +11,7 @@
 #include "../mesh/kernel.h"
 #include "mechanical_fb_types.h"  /* provides struct MechFBGasDelta */
 #include "galsf_gpu_decls.h"      /* mechfb_{alloc,free,run_iterative,fill_call_scalars} prototypes */
+#include "single_star_checks.h"
 
 /* Routines for mechanical feedback/enrichment models: stellar winds, supernovae, etc
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -162,7 +163,13 @@ void verify_and_assign_local_mechfb_integrals(void)
             m0=CellP[j].MassTrue; CellP[j].MassTrue += dm; /* update conserved mass */
 #endif
             double mf=m0+dm; /* save for below */
+#if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(METALS)
+            double Z_before[NUM_METAL_SPECIES]; for(k=0;k<NUM_METAL_SPECIES;k++) {Z_before[k]=P[j].Metallicity[k];}
+#endif
             for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = (m0/mf)*P[j].Metallicity[k] + (1./mf)*LocalGasMechFBInfoTemp[j].Z_injected[k];} /* update metallicity */
+#if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(METALS)
+            single_star_check_receiver(j, m0, mf, Z_before, LocalGasMechFBInfoTemp[j].Z_injected);
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
             update_ISMDustChem_after_mechanical_injection(j, LocalGasMechFBInfoTemp[j].Mass_Where_Dust_Shocked, m0, mf, LocalGasMechFBInfoTemp[j].Z_injected); /* update dust chemistry quantities */
 #endif
@@ -439,6 +446,9 @@ void mechanical_fb_calc_toplevel(void)
 
 
     verify_and_assign_local_mechfb_integrals();
+#if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(METALS)
+    single_star_check_gas_after_feedback();
+#endif
 #ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
     if(n_wind_all > 0) {mechfb_test_state_dump(1);} /* after the deposits are applied to the cells */
 #endif

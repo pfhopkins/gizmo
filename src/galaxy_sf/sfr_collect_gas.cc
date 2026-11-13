@@ -31,6 +31,7 @@
 #endif
 #include "single_star_record.h"
 #include "sfr_collect_gas_loop.h"
+#include "single_star_checks.h"
 
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 
@@ -288,6 +289,11 @@ double single_stars_collect_gas(long long tot_spawned)
         double e_cr_0 = ssc_local_cr_energy();
 #endif
         ssc_run<SscApplySpec>(list, in, aux);
+#ifdef TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS
+        for(const SscGrantRecord& r : records) { /* donors keep more than the collection floor */
+            SINGLE_STAR_CHECK("donor_mass_floor", P[r.j].Mass >= (1 - 1.0e-9) * 0.01 * All.MinMassForParticleMerger, "donor ID=%llu M_left=%.3e M_merge=%.3e", (unsigned long long)P[r.j].ID, (double)P[r.j].Mass, All.MinMassForParticleMerger);}
+        SINGLE_STAR_CHECK_RAN("donor_mass_floor", (long)records.size());
+#endif
 #if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(COSMIC_RAY_FLUID)
         ledger_add(LEDGER_E_CR_COLLECTED, e_cr_0 - ssc_local_cr_energy());
 #endif
@@ -362,6 +368,12 @@ double single_stars_collect_gas(long long tot_spawned)
    [Msun]: its record, and a place in the next collection */
 void single_star_attach_to_new_star(int i_star, int i, double M_drawn)
 {
+#ifdef TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS
+    SINGLE_STAR_CHECK("tree_insert", P[i_star].Pos[0] == P[i].Pos[0] && P[i_star].Pos[1] == P[i].Pos[1] && P[i_star].Pos[2] == P[i].Pos[2]
+                      && (Father[i_star] == Father[i] || (TreeReconstructFlag && Father[i_star] == -1)), "ID=%llu parent=%d node=%d parent_node=%d",
+                      (unsigned long long)P[i_star].ID, i, Father[i_star], Father[i]); /* linked beside its parent */
+    SINGLE_STAR_CHECK_RAN("tree_insert", 1);
+#endif
     P[i_star].Type = 4;
     P[i_star].StellarAge = All.Time;
 #ifdef TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE
