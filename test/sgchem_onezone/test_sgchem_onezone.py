@@ -94,6 +94,21 @@ def test_sgchem_net5_euv_h2(nH, env):
     assert "EVOL FAIL" in t0.stdout
 
 
+def test_h2_shielding_db96(env):
+    """Lyman-Werner H2 self-shielding: Draine & Bertoldi (1996) eq. 37 at N_H2 1e12-1e22 and T 10-8000 K, the pixel average
+    with isotropic and beamed weights (TreeCol and moment-solver fields alike), and applied once (h2_shield_db96.cc)"""
+    tables = chemistry_tables_dir(5)
+    out = path.join(HERE, "output", "net5")
+    if not path.exists(path.join(out, "h2_shield_db96")):
+        makedirs(out, exist_ok=True)
+        b = subprocess.run(["bash", path.join(HERE, "build_onezone_dump.sh"), "5", out], capture_output=True, text=True,
+                           env={**env, "CHEMCXX_DATADIR": tables})
+        assert b.returncode == 0, f"build failed:\n{b.stdout[-4000:]}\n{b.stderr[-4000:]}"
+    t = subprocess.run([path.join(out, "h2_shield_db96"), tables], capture_output=True, text=True)
+    print("\n".join(l for l in t.stdout.splitlines() if l.startswith(("LOCAL", "PIXELS", "ONCE", "RESULT"))))
+    assert t.returncode == 0 and "RESULT PASS" in t.stdout, t.stdout[-3000:]
+
+
 @pytest.fixture(scope="module")
 def popIII_driver(env):
     """the Pop III one-zone collapse driver on network 17 with H- from the stellar bands (build_popIII_onezone.sh)"""
