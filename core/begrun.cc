@@ -3010,6 +3010,8 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
       All.Timebase_interval *= 2.0;
       ti_end /= 2;
       All.Ti_Current /= 2;
+      All.Previous_Ti_Current /= 2;
+      All.Ti_lastoutput /= 2;
 #ifdef PMGRID
       All.PM_Ti_begstep /= 2;
       All.PM_Ti_endstep /= 2;
@@ -3022,6 +3024,9 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
 	{
         P[i].Ti_begstep /= 2;
         P[i].Ti_current /= 2;
+#ifdef WAKEUP
+        P[i].dt_step /= 2; /* the particle's own step, which integertime_step() returns */
+#endif
         if(P[i].TimeBin > 0)
 	    {
 	      P[i].TimeBin--;
@@ -3029,6 +3034,8 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
 	    }
 	}
     All.Ti_nextlineofsight /= 2;
+    /* the tree restored from the restart files carries node times on the old timeline */
+    if(Nodes_base && Extnodes_base) {for(i = 0; i < Numnodestree; i++) {Nodes_base[i].Ti_current /= 2; Extnodes_base[i].Ti_lastkicked /= 2;}}
   }
   All.TimeMax = TimeMax_new;
 }
