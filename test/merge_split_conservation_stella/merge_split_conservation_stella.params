@@ -33,8 +33,8 @@ UnitMass_in_g                   1.989e43          % 1e10 Msun
 UnitVelocity_in_cm_per_s        1.0e5             % 1 km/s
 UnitMagneticField_in_gauss      1.0
 
-%---- Gravity softening (ADAPTIVE_GRAVSOFT_FORALL for gas+stars)
-%---- These are MINIMUM softenings when adaptive softening is on
+%---- Gravity softening (ADAPTIVE_GRAVSOFT_FORALL=1: gas adaptive, stars fixed)
+%---- SofteningGas is the minimum of the adaptive gas softening; the others are fixed
 SofteningGas                    1.0e-10           % sub-floor; ADAPTIVE_GRAVSOFT_FORGAS handles real value
 SofteningHalo                   0.050             % 50 pc DM (Type 1)
 SofteningDisk                   0.020             % 20 pc disk stars (Type 2)

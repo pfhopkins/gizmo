@@ -28,7 +28,7 @@ NEED_HEALPIX
 METALS
 MAGNETIC
 MHD_B_SET_IN_PARAMS
-ADAPTIVE_GRAVSOFT_FORALL=1+16    % adaptive softening for gas (Type 0) + stars (Type 4)
+ADAPTIVE_GRAVSOFT_FORALL=1    % adaptive softening for gas only; stars use fixed SofteningStars
 TIDAL_TIMESTEP_CRITERION         % tidal tensor timestep (more accurate for few-body, Grudic+2021)
 DO_DENSITY_AROUND_NONGAS_PARTICLES
 NO_ISEND_IRECV_IN_DOMAIN
