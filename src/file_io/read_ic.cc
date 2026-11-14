@@ -58,6 +58,9 @@ void read_ic(char *fname)
      * branch after H5Dread succeeds. */
     for(int t = 0; t < 6; t++) { CBE_Moments_LoadedFromIC_PType[t] = 0; }
 #endif
+#ifdef METALS
+    for(int t = 0; t < 6; t++) { Metallicity_LoadedFromIC_PType[t] = 0; }
+#endif
 
     NumPart = 0;
     N_gas = 0;
@@ -323,6 +326,12 @@ void read_ic(char *fname)
         for(int t = 0; t < 6; t++) { loaded_local[t] = CBE_Moments_LoadedFromIC_PType[t]; }
         MPI_Allreduce(loaded_local, CBE_Moments_LoadedFromIC_PType, 6, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
+#endif
+#ifdef METALS
+    MPI_Allreduce(MPI_IN_PLACE, Metallicity_LoadedFromIC_PType, 6, MPI_INT, MPI_MAX, MPI_COMM_WORLD); /* set only on the tasks that read a file */
+    if(ThisTask == 0) {for(int t = 0; t < 6; t++) {
+        if(Metallicity_LoadedFromIC_PType[t] == 1) {printf("IC Metallicity kept for particle type %d (%d species) in place of InitMetallicity\n", t, (int) NUM_METAL_SPECIES);}
+        if(Metallicity_LoadedFromIC_PType[t] == 2) {printf("IC Metallicity of particle type %d does not have this build's %d species: it is initialized from InitMetallicity as before\n", t, (int) NUM_METAL_SPECIES);}}}
 #endif
 
     if(header.flag_ic_info != FLAG_SECOND_ORDER_ICS)
@@ -1445,6 +1454,9 @@ int read_file(char *fname, int readTask, int lastTask)
                 /* blocks only for restartflag == 0 */
                 if(RestartFlag == 0 && blocknr > IO_U
                    && blocknr != IO_BFLD
+#ifdef METALS
+                   && !(blocknr == IO_Z && All.ICFormat == 3) /* optional in HDF5 ICs: kept only if it holds exactly this build's species */
+#endif
 #ifdef INPUT_READ_KERNELRADIUS
                    && blocknr != IO_KERNELRADIUS
 #endif
@@ -1754,6 +1766,19 @@ int read_file(char *fname, int readTask, int lastTask)
                                             }
                                         }
                                         H5Eset_auto(old_func, old_client_data);
+#ifdef METALS
+                                        if(hdf5_dataset >= 0 && blocknr == IO_Z && RestartFlag == 0) /* the species list depends on the build: keep the ICs' metallicity only if it has exactly this build's columns */
+                                        {
+                                            hid_t filespace = H5Dget_space(hdf5_dataset); int ndims = H5Sget_simple_extent_ndims(filespace); hsize_t filedims[2] = {0, 1};
+                                            if(ndims == 1 || ndims == 2) {H5Sget_simple_extent_dims(filespace, filedims, NULL);}
+                                            H5Sclose(filespace);
+                                            int width_ok = (NUM_METAL_SPECIES == 1) ? (ndims == 1) : (ndims == 2 && filedims[1] == (hsize_t) NUM_METAL_SPECIES);
+                                            Metallicity_LoadedFromIC_PType[type] = width_ok ? 1 : 2;
+#ifndef NUCLEAR_NETWORK /* the nuclear network reads this block on a fresh start regardless, for its species */
+                                            if(!width_ok) {H5Dclose(hdf5_dataset); hdf5_dataset = -1;}
+#endif
+                                        }
+#endif
 
                                       if(hdf5_dataset >= 0)
                                       {

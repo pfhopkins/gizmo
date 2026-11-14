@@ -446,7 +446,7 @@ void init(void)
 
 
 #ifdef METALS
-        if(RestartFlag == 0) {
+        if(RestartFlag == 0 && Metallicity_LoadedFromIC_PType[P[i].Type] != 1) { /* types whose ICs held this build's full Metallicity keep it */
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED)
             P[i].Metallicity[0] = All.InitMetallicityinSolar*All.SolarAbundances[0];
 #else

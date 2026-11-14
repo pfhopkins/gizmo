@@ -262,6 +262,9 @@ FILE *FdCbeDiagnostics;
  * successful H5Dread of the VlasovMoments dataset. */
 int CBE_Moments_LoadedFromIC_PType[6] = {0, 0, 0, 0, 0, 0};
 #endif
+#ifdef METALS
+int Metallicity_LoadedFromIC_PType[6] = {0, 0, 0, 0, 0, 0};
+#endif
 
 
 

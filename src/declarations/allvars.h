@@ -360,6 +360,9 @@ extern FILE *FdCbeDiagnostics;
  * particles. Reset to {0,0,0,0,0,0} at the top of read_ic() each call. */
 extern int CBE_Moments_LoadedFromIC_PType[6];
 #endif
+#ifdef METALS
+extern int Metallicity_LoadedFromIC_PType[6]; /*!< fresh-start HDF5 ICs, per particle type: 1 = Metallicity dataset of exactly NUM_METAL_SPECIES columns, kept instead of InitMetallicity; 2 = dataset of another width, not used; 0 = no dataset */
+#endif
 #if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(SINK_OUTPUT_MOREINFO)) && defined(SINK_PARTICLES)
 extern FILE *FdSinksDetails;
 #ifdef SINK_OUTPUT_MOREINFO
