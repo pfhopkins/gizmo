@@ -446,15 +446,19 @@ void init(void)
 
 #ifdef METALS
         if(RestartFlag == 0) {
+            int ic_cols = IC_Metallicity_Columns[P[i].Type]; /* InitMetallicity applies only where the ICs hold no Metallicity for this type */
+            if(ic_cols == 0) {
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED)
             P[i].Metallicity[0] = All.InitMetallicityinSolar*All.SolarAbundances[0];
 #else
             P[i].Metallicity[0] = 0;
 #endif
-            /* initialize abundance ratios. for now, assume solar */
+            }
+            if(ic_cols <= 1) { /* only the total is known: assume solar abundance ratios */
             for(j=0;j<NUM_METAL_SPECIES;j++) {P[i].Metallicity[j]=All.SolarAbundances[j]*(P[i].Metallicity[0]/All.SolarAbundances[0]);}
             /* need to allow for a primordial He abundance */
             if(NUM_LIVE_SPECIES_FOR_COOLTABLES>=10) P[i].Metallicity[1]=(1.-HYDROGEN_MASSFRAC)+(All.SolarAbundances[1]-(1.-HYDROGEN_MASSFRAC))*P[i].Metallicity[0]/All.SolarAbundances[0];
+            }
         } // if(RestartFlag == 0)
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)

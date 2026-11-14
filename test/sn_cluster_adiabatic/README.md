@@ -28,8 +28,8 @@ case, at the last synchronization at or before t = 10.24:
 * `test_hydro_conserves_energy`: |E - E0 - E_fb| / E_fb < 5%. The hydro and time integration alone. With
   the time integration resolved (the `m100_resolved` control, timestep capped at 0.005 = 5 kyr) the
   budget closes to 1e-4 at 100 Msun (3e-3 at 10 Msun), so 5% sits more than 10x above that floor.
-* `test_sne_broadcast_timestep_conserves_energy`: the four cases the default build fails, built with
-  `SNE_BROADCAST_TIMESTEP`, at |E - E0 - E_fb| / E_fb < 20%. The flag removes the error at the explosion; what
+* `test_sne_broadcast_timestep_conserves_energy`: the four cases that fail without `SNE_BROADCAST_TIMESTEP`,
+  in the default build (which has it), at |E - E0 - E_fb| / E_fb < 20%. The flag removes the error at the explosion; what
   remains (+5% to +16%) builds up as the blasts expand through cells on steps set by the unchanged Courant
   factor. A 4x smaller Courant factor, or a non-local Courant condition through the gravity tree, takes it
   below 1% at 1.3-2x the cost; neither is in the flag.
@@ -46,10 +46,11 @@ fixes the integer timestep ladder, (TimeMax - TimeBegin) 2^-k; the long-TimeMax 
 
 ## Current status
 
-The hydro check fails in the default build (marked xfail(strict=True)) and passes with `SNE_BROADCAST_TIMESTEP`; the
+`SNE_BROADCAST_TIMESTEP` is on by default for this configuration. The hydro check fails when it is turned off
+with `SNE_BROADCAST_TIMESTEP_DISABLE` (marked xfail(strict=True)) and passes in the default build; the
 coupling check passes.
 
-| case | (dE - E_fb)/E_fb, default | with `SNE_BROADCAST_TIMESTEP` | E_fb/(N_SN E51) |
+| case | (dE - E_fb)/E_fb, disabled | with `SNE_BROADCAST_TIMESTEP` | E_fb/(N_SN E51) |
 |---|---|---|---|
 | m100_resolved | -0.0003 | | 1.004 |
 | m100_TimeMax1x | +0.37 (+0.45 before the coupling fix) | +0.057 | 1.001 |
@@ -57,7 +58,7 @@ coupling check passes.
 | m10_TimeMax1x | +2.13 | +0.161 | 1.018 |
 | m10_TimeMax100x | +1.56 | +0.143 | 1.016 |
 
-1. Hydro. Nearly all of the default build's error appears at the first supernova into quiescent gas (+8 to
+1. Hydro. Nearly all of the error without the flag appears at the first supernova into quiescent gas (+8 to
    +22 E51 from one 1e51 erg event); later supernovae into the hot bubble add +0.1-0.6 E51 each. Mechanical
    feedback is deposited after the density pass and before the hydro force pass (`compute_stellar_feedback` in
    `core/accel.cc`), so a receiving cell's closing half-kick of its old step applies the post-explosion
