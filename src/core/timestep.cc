@@ -1674,6 +1674,24 @@ void process_wake_ups(void)
     n = 0;
 
     MPI_Allreduce(&NeedToWakeupParticles_local, &NeedToWakeupParticles, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process processes wakeups then they all should, just in case a woke particle gets swapped to another process before we get here
+#ifdef TEST_WAKEUP_REQUEST_AUDIT
+    { /* test only: flagged cells off their sync point that the scan below would skip (not in the dirty sidecar, or the gate shut) */
+    static long long audit_pending = 0, audit_missing = 0, audit_gate = 0; long long loc[3] = {0, 0, 0}, tot[3];
+    for(int ii = 0; ii < NumPart; ii++)
+    {
+        if(!P[ii].wakeup || P[ii].Mass <= 0 || TimeBinActive[P[ii].TimeBin]) {continue;}
+#if !defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
+        if(P[ii].Type != 0) {continue;}
+#endif
+        loc[0]++;
+        if(WakeupDirty && WakeupDirtyValid && !WakeupDirty[ii]) {loc[1]++;}
+        if(!NeedToWakeupParticles) {loc[2]++;}
+    }
+    MPI_Allreduce(loc, tot, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    audit_pending += tot[0]; audit_missing += tot[1]; audit_gate += tot[2];
+    if(ThisTask == 0 && tot[0] > 0) {printf("WAKEUP_REQUEST_AUDIT pending %lld missing %lld gate_shut %lld\n", audit_pending, audit_missing, audit_gate); fflush(stdout);}
+    }
+#endif
 
     int wakeup_bin_offset = 0;
     while(((integertime)1 << wakeup_bin_offset) < (integertime)WAKEUP) wakeup_bin_offset++;

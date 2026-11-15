@@ -266,6 +266,7 @@
 #KETJU_REGULARIZATION   # KETJU chain regularisation of star encounters and binaries (gravity/ketju, MSTAR); MSTAR and the ketju-integrator-c headers are a separate install, its prefix in KETJU_PATH (SYSTYPE block, environment or make line)
 #TEST_KETJU_TREE_MOTION_AUDIT   # test only: audits node momentum, motion bounds and imported leaves under KETJU
 #TEST_TREE_NODE_BOX_AUDIT       # test only: counts, after every tree update without a rebuild, the particles outside a node box above them (box at the length the walk uses); prints TREE_NODE_BOX_AUDIT at the end
+#TEST_WAKEUP_REQUEST_AUDIT      # test only: before each wake-up scan, counts flagged gas cells off their sync point that the scan would skip (not in the dirty sidecar, or no rank raised the wake-up flag); prints WAKEUP_REQUEST_AUDIT
 #TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS # test only: recomputes the KETJU limiting-particle steps by a full particle scan every step and stops if the cell grid differs (slow) [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #KETJU_MERGE_BH   # with KETJU_REGULARIZATION: BH mergers inside MSTAR
 #KETJU_PN_COMPACT_OBJECTS   # with KETJU_REGULARIZATION: PN terms also on non-relic sinks
