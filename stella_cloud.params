@@ -41,7 +41,7 @@ SofteningGas                    1.0e-7            % 0.0001 pc: no effective floo
 SofteningHalo                   0.050             % 50 pc DM (Type 1)
 SofteningDisk                   0.020             % 20 pc disk stars (Type 2)
 SofteningBulge                  0.020             % 20 pc bulge (Type 3)
-SofteningStars                  1.0e-4            % 0.1 pc fixed star softening (Type 4)
+SofteningStars                  3.0e-6            % 0.003 pc fixed star softening (Type 4): clouds keep a small value (Uli)
 SofteningBndry                  0.005             % 5 pc sink/BH (Type 5)
 
 %---- Kernel
