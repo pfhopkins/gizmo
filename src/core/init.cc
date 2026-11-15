@@ -271,9 +271,6 @@ void init(void)
 #ifdef STARS_HERMITE_DIRECT_GRAVITY
         P[i].Hermite_dt_ratio = 0;
 #endif
-#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
-        P[i].dt_crit_last = P[i].dt_crit_prev = 0; /* no criterion history: the default step rule until there is one */
-#endif
         P[i].AccretedThisTimestep = 0;
 #endif        
         

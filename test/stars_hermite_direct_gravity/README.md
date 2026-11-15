@@ -10,6 +10,5 @@ Convergence test in the Aarseth step parameter `STARS_HERMITE_AARSETH_ETA` = 0.0
 Bars (from theory, set before the runs):
 * energy error and position offset fall at 4th order: measured order log2(error ratio) per rung within [3.5, 4.5];
 * |dE/E| below the truncation bound of the scheme integrated along the reference orbit without cancellation (corrector quadrature error dt^5/720 of the 4th and 3rd derivatives of the acceleration, predictor error through the tidal tensor, Aarseth steps from the exact derivatives; Makino & Aarseth 1992);
-* `_symmetric` (`HERMITE_CORRECTOR_ITERATIONS=2`, `HERMITE_SYMMETRIC_TIMESTEP`, the first two rungs of each ladder): the same bound, offsets at 4th order, and no secular drift: the slope of dE/E over orbits 1..7 of the binary below sqrt(eta) (one order in dt) times the base scheme's slope at the binary's first rung, eta 0.00125.
 
 `fewbody_reference.py` writes the ICs of `test/stars_integrated_by_rumi`; this test writes its own, shifted to the origin.

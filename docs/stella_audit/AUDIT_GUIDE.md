@@ -92,7 +92,7 @@ New features and fixes added on the branch after the audit state, each with its 
   `DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH` with its sub-switches, `DIVBCLEANING_CONSERVATIVE_SIGMA`, `TEST_DIVBCLEANING_ALTERNATING_CLEANING_SPEED` (`conservative_psi_cleaning`);
   `MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE`, `MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY` (`mhd_kernel_volume_energy`); `TEST_MHD_ENERGY_LEDGER_OUTPUT` (`mhd_energy_ledger`);
   `GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL`, `GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION`, `GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION` (`ism_dust_five_element_kernels`, `ism_dust_five_element_model`, `single_stars_radpressure_cells`);
-  `STARS_HERMITE_DIRECT_GRAVITY`, `HERMITE_CORRECTOR_ITERATIONS`, `HERMITE_SYMMETRIC_TIMESTEP` (`stars_hermite_direct_gravity`); `STARS_INTEGRATED_BY_RUMI` (`stars_integrated_by_rumi`, needs `RUMI_PATH`);
+  `STARS_HERMITE_DIRECT_GRAVITY` (`stars_hermite_direct_gravity`); `STARS_INTEGRATED_BY_RUMI` (`stars_integrated_by_rumi`, needs `RUMI_PATH`);
   `scripts/get_stella_deps.sh` installs tables, SUNDIALS and KETJU into one cache that make and GIZMO find by default (`stella_deps`, `stellar_evolution_tables`).
 
 The new switches, their parameters, configurations and tests, and the stella_dev name of each, are documented in the User Guide (`docs/gizmo_documentation.md`, section "Stella Single Stars and SGChem Additions"). They are marked in development there and in `Template_Config.sh`.

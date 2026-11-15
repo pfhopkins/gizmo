@@ -20,7 +20,6 @@ ORDER = (3.5, 4.5)  # 4th order; next-order terms ~ dt/tau ~ sqrt(eta) move the 
 LIFT = 1e-9  # snapshots this fraction of an interval after a full sync point, where the start-of-step state is the corrected one
 ORIGIN = np.full(3, 2e-5)  # centre of mass near the origin: coordinate roundoff 1e4 below that at 0.15 kpc
 DEV = ("DEVELOPER_MODE",)  # ErrTolIntAccuracy read from the parameters
-SYMMETRIC = ("HERMITE_CORRECTOR_ITERATIONS=2", "HERMITE_SYMMETRIC_TIMESTEP")
 
 
 def period(m, a):
@@ -36,9 +35,9 @@ SYSTEMS = {"binary": dict(ic=ref.binary, tmax=8 * P_BIN, every=P_BIN, maxstep=P_
 RUNS = {}
 
 
-def run(system, eta, symmetric=False):
+def run(system, eta):
     """initial state and the snapshots at k x every (+LIFT), k >= 1, as (k, x, v, t)"""
-    key = (system, eta, symmetric)
+    key = (system, eta)
     if key in RUNS:
         return RUNS[key]
     for name, sy in SYSTEMS.items():  # every IC on disk: the harness checks the params file's InitCondFile before the override
@@ -47,7 +46,7 @@ def run(system, eta, symmetric=False):
     s = SYSTEMS[system]
     x, v, m = s["ic"]()
     x = x - ref.CENTRE + ORIGIN
-    flags = (f"STARS_HERMITE_AARSETH_ETA={eta}",) + DEV + (SYMMETRIC if symmetric else ())
+    flags = (f"STARS_HERMITE_AARSETH_ETA={eta}",) + DEV
     build_and_run_test(TEST_NAME, 1, 1, extra_config_flags=flags,
                        param_overrides={"InitCondFile": f"hermite_{system}_ics", "TimeMax": s["tmax"], "TimeOfFirstSnapshot": s["every"] * (1 + LIFT),
                                         "TimeBetSnapshot": s["every"], "TimeBetStatistics": s["tmax"], "MaxSizeTimestep": s["maxstep"],
@@ -122,15 +121,15 @@ def truncation_bound(x0, v0, m, t_end, eta, maxstep):
     return getattr(np, "trapezoid", getattr(np, "trapz", None))(rate, t) / abs(ref.energy(x0, v0, m))
 
 
-def ladder(system, symmetric, etas):
+def ladder(system, etas):
     """per eta: signed dE/E, offset and the truncation bound at the last snapshot"""
     s, rows = SYSTEMS[system], []
     for eta in etas:
-        x0, v0, m, out = run(system, eta, symmetric)
+        x0, v0, m, out = run(system, eta)
         k, x1, v1, t1 = out[-1]
         de, dx = errors(x0, v0, m, x1, v1, t1)
         rows.append((eta, k, de, dx, truncation_bound(x0, v0, m, t1, eta, s["maxstep"])))
-        print(f"{system}{' symmetric' if symmetric else ''} eta {eta}: after {k} x {s['every']:.4g}: dE/E {de:.3e} (bound {rows[-1][4]:.3e}), offset {dx:.3e}")
+        print(f"{system} eta {eta}: after {k} x {s['every']:.4g}: dE/E {de:.3e} (bound {rows[-1][4]:.3e}), offset {dx:.3e}")
     return rows
 
 
@@ -149,32 +148,10 @@ def check(rows, energy_order):
         assert np.all((pe >= ORDER[0]) & (pe <= ORDER[1])), pe
 
 
-def drift(system, eta, symmetric):
-    """secular slope of the signed energy error per snapshot interval (orbit)"""
-    x0, v0, m, out = run(system, eta, symmetric)
-    k = np.array([o[0] for o in out]); de = np.array([errors(x0, v0, m, *o[1:])[0] for o in out])
-    return np.polyfit(k, de, 1)[0], de
-
-
 def test_binary():
-    check(ladder("binary", False, SYSTEMS["binary"]["etas"]), True)
+    check(ladder("binary", SYSTEMS["binary"]["etas"]), True)
 
 
 def test_triple():
-    check(ladder("triple", False, SYSTEMS["triple"]["etas"]), True)
+    check(ladder("triple", SYSTEMS["triple"]["etas"]), True)
 
-
-def test_binary_symmetric():
-    """P(EC)^2 with time-symmetric steps: bounded by the same truncation estimate, offsets at 4th order, and no secular drift:
-    the slope of dE/E over the orbits below sqrt(eta) (one order in dt) times that of the base scheme at the same eta"""
-    eta = SYSTEMS["binary"]["etas"][0]
-    check(ladder("binary", True, SYSTEMS["binary"]["etas"][:2]), False)
-    s_sym, de_sym = drift("binary", eta, True)
-    s_base, de_base = drift("binary", eta, False)
-    print(f"dE/E per orbit: symmetric {de_sym}, slope {s_sym:.3e}; base {de_base}, slope {s_base:.3e}; bar {np.sqrt(eta) * abs(s_base):.3e}")
-    assert len(de_sym) == 7 and len(de_base) == 7
-    assert abs(s_sym) <= np.sqrt(eta) * abs(s_base)
-
-
-def test_triple_symmetric():
-    check(ladder("triple", True, SYSTEMS["triple"]["etas"][:2]), False)
