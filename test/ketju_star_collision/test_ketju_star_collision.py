@@ -50,6 +50,19 @@ def test_ketju_star_collision(case, expect_merge):
         assert np.linalg.norm(v1[k] - vcom) < 0.05 * np.linalg.norm(v0[0] - v0[1])
     else:
         assert len(i1) == len(i0)
+    _check_merger_table(f"{TEST_DIR}/output/ketju_output.hdf5", m0 if expect_merge else None)
+
+
+def _check_merger_table(path, m0):
+    """ketju_output.hdf5 "mergers": one row per collision (survivor ID 1, merged ID 2, masses), none for a miss."""
+    with h5py.File(path, "r") as h:
+        t = h["mergers"][()]
+    if m0 is None:
+        assert len(t) == 0
+        return
+    assert len(t) == 1 and t["ID1"][0] == 1 and t["ID2"][0] == 2 and t["is_collision"][0] == 1
+    assert abs(t["M1"][0] / m0[0] - 1) < 1e-12 and abs(t["M2"][0] / m0[1] - 1) < 1e-12
+    assert abs(t["M_remnant"][0] / (m0[0] + m0[1]) - 1) < 1e-12
 
 
 def test_ketju_star_collision_energy():
@@ -82,16 +95,19 @@ def test_ketju_star_collision_triple():
     assert abs(de_tot) < 1e-6
 
 
-def test_ketju_star_collision_snapshot_start():
-    """A snapshot start (RestartFlag 2) into an empty output directory creates ketju_output.hdf5 and fills its timesteps."""
+@pytest.mark.parametrize("nranks", [1, 2])
+def test_ketju_star_collision_snapshot_start(nranks):
+    """A snapshot start (RestartFlag 2) into an empty output directory creates ketju_output.hdf5 and fills it; on 2 ranks
+    the collision record reaches rank 0 whichever rank integrates the region."""
     subprocess.run([sys.executable, "make_ketju_star_collision_ics.py"], cwd=TEST_DIR, check=True)
     clean_test_outputs(TEST_NAME)
     build_gizmo_for_test(TEST_NAME, 1)
     cwd = os.getcwd()
     try:
         os.chdir(TEST_DIR)
-        run_test(TEST_NAME, 1, 1, restart_flag=2)
+        run_test(TEST_NAME, nranks, 1, restart_flag=2)
     finally:
         os.chdir(cwd)
     with h5py.File(f"{TEST_DIR}/output/ketju_output.hdf5", "r") as h:
         assert len(h["timesteps"]) > 0
+    _check_merger_table(f"{TEST_DIR}/output/ketju_output.hdf5", _load(f"{TEST_DIR}/ketju_star_collision_ics.hdf5")[1])
