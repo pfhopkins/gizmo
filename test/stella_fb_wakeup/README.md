@@ -8,8 +8,11 @@ fix/stella-feedback-wakeup-list 29f84ab81; here every writer of `P.wakeup` marks
 thermal feedback kernel, the ghost write-back, the supernova causal wake, merge/split, sinks.)
 
 `TEST_WAKEUP_REQUEST_AUDIT` (test only): before each scan, counts flagged gas cells off their sync point that the scan
-would skip (not in the sidecar, or no rank raised the flag) and prints the running totals as
-`WAKEUP_REQUEST_AUDIT pending <n> missing <n> gate_shut <n>`.
+would skip: not in the sidecar (`missing`), or a request new since the last scan (flag value changed) while no rank raised
+the flag (`gate_shut`). A flag stays until its cell is next active, so flags seen by an earlier scan are not counted as
+shut out; steps after an index remap (domain decomposition) skip the gate count. Prints the running totals as
+`WAKEUP_REQUEST_AUDIT pending <n> missing <n> gate_shut <n>`. (The first version counted every flag behind a shut gate:
+750 of 798, all of them flags already scanned.)
 
 Problem: the Stella cloud flags (`scripts/stella/Config_stella_cloud.sh`) plus `TEST_SINGLE_STARS_SN_AT_FORCED_TIMES`;
 16^3 lattice of 1 Msun cells at n_H = 10 cm^-3, 100 K, solar composition (the `single_stars_metals` lattice), one 20 Msun
