@@ -3126,7 +3126,9 @@ void ketju_open_output_file(void)
     if(ThisTask != 0) return;
     char buf[512];
     snprintf(buf, sizeof(buf), "%sketju_output.hdf5", All.OutputDir);
-    if(RestartFlag == 0) {
+    FILE *probe = (RestartFlag == 0) ? NULL : fopen(buf, "r"); /* append when it exists, as the other logs; else create */
+    int exists = (probe != NULL); if(probe) fclose(probe);
+    if(!exists) {
         ketju_output_file = H5Fcreate(buf, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
         /* create groups */
         hid_t grp = H5Gcreate2(ketju_output_file, "BHs", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
