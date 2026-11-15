@@ -203,3 +203,4 @@ test/hot_gas_timebin_clamp/output_*/
 test/hot_gas_timebin_clamp/mpi_collective_callers.so
 test/stella_fb_wakeup/run/
 test/stella_rng_identity_keys/run_*/
+test/stella_merge_kinetic_veto/run_*/
