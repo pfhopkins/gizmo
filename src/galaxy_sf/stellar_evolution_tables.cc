@@ -13,7 +13,7 @@
 #include <mpi.h>
 
 /* Single-star stellar-evolution tables (stella-tables, github.com/Ulli1991/stella-tables): lifetimes, tracks, band
-   luminosities, winds, yields, remnants. Installed outside the repository by scripts/get_stella_tables.sh; the
+   luminosities, winds, yields, remnants. Installed outside the repository by scripts/get_stella_deps.sh; the
    parameter StellarTablesFile names the main table, the wind table is read from the same directory. Both must have the
    content hashes compiled in (stellar_tables_check.cc). */
 
@@ -36,7 +36,7 @@ void stellar_evolution_tables_init(void)
     int bad = stellar_tables_verify(paths);
     printf("STELLAR TABLES: hash check took %.2f s\n", MPI_Wtime() - t0); fflush(stdout);
     if(bad) {
-        gizmo_request_controlled_stop(7801, "stellar evolution tables missing or not the version these sources expect; install with scripts/get_stella_tables.sh", __FILE__, __LINE__, __FUNCTION__);
+        gizmo_request_controlled_stop(7801, "stellar evolution tables missing or not the version these sources expect; run scripts/get_stella_deps.sh", __FILE__, __LINE__, __FUNCTION__);
     }
 }
 
@@ -212,7 +212,7 @@ void stellar_evolution_tables_load(void)
 #else
     enum {N3_HE = 0};
 #endif
-#ifdef KETJU_MERGE_STARS
+#if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
     enum {N3 = 14 + N3_HE};
 #else
     enum {N3 = 13 + N3_HE};
@@ -221,7 +221,7 @@ void stellar_evolution_tables_load(void)
 #ifdef TREECOL_SHELLS_ION_HELIUM
         , &StellarTbl.log_Q_ion_H0
 #endif
-#ifdef KETJU_MERGE_STARS
+#if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
         , &StellarTbl.logR_cm
 #endif
     };
@@ -229,7 +229,7 @@ void stellar_evolution_tables_load(void)
 #ifdef TREECOL_SHELLS_ION_HELIUM
         , "log_Q_ion_H0"
 #endif
-#ifdef KETJU_MERGE_STARS
+#if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
         , "logR_cm"
 #endif
     };
@@ -263,7 +263,7 @@ void stellar_evolution_tables_load(void)
         err |= stbl_read(f, "remnant_mass", H5T_NATIVE_DOUBLE, StellarTbl.remnant_mass, n2d);
         err |= stbl_read(f, "remnant_type", H5T_NATIVE_INT, StellarTbl.remnant_type, n2d);
         err |= stbl_read(f, "t_PMS", H5T_NATIVE_DOUBLE, StellarTbl.t_PMS, n2d);
-#ifdef KETJU_MERGE_STARS
+#if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
         err |= stbl_read(f, "phase_transitions/t_MS_start", H5T_NATIVE_DOUBLE, StellarTbl.t_MS_start, n2d);
         err |= stbl_read(f, "phase_transitions/t_MS_end", H5T_NATIVE_DOUBLE, StellarTbl.t_MS_end, n2d);
 #endif
@@ -328,7 +328,7 @@ double stellar_t_PMS(double logM, double logZ)
     return interp2d(StellarTbl.t_PMS, logM, logZ);
 }
 
-#ifdef KETJU_MERGE_STARS
+#if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
 double stellar_t_MS_start(double logM, double logZ) {return interp2d(StellarTbl.t_MS_start, logM, logZ);}
 double stellar_t_MS_end(double logM, double logZ) {return interp2d(StellarTbl.t_MS_end, logM, logZ);}
 #endif
@@ -365,7 +365,7 @@ double stellar_log_L_OPT_NIR(double logM, double logZ, double log_age)
     return interp3d(StellarTbl.log_L_OPT_NIR, logM, logZ, log_age);
 }
 
-#ifdef KETJU_MERGE_STARS
+#if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
 double stellar_log_R_cm(double logM, double logZ, double log_age) {return interp3d(StellarTbl.logR_cm, logM, logZ, log_age);}
 #endif
 double stellar_log_L_bol(double logM, double logZ, double log_age)

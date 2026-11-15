@@ -709,9 +709,12 @@ gravity_walk_attempt:
        the tree's own contributions are complete (imports included) but not yet multiplied by All.G
        in the loop below, and the direct sum is in those same G-free units. */
     CPU_Step[CPU_TREEMISC] += measure_time();
-    star_direct_gravity_build_table();
+#ifdef STARS_INTEGRATED_BY_RUMI
+    if(rumi_direct_gravity_needed()) /* only stars not yet integrated by RUMI++ take the sum */
+#endif
+    {star_direct_gravity_build_table();
     star_direct_gravity_compute();
-    star_direct_gravity_free_table();
+    star_direct_gravity_free_table();}
     CPU_Step[CPU_TREEWALK1] += measure_time();
 #endif
 

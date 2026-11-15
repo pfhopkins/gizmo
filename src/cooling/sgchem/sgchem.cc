@@ -42,7 +42,7 @@ static void sgchem_tables_check(void)
     }
     MPI_Bcast(&bad, 1, MPI_INT, 0, MPI_COMM_WORLD);
     if(bad) {
-        if(ThisTask == 0) {printf("SGCHEM: chemistry tables in '%s' missing or not the version these sources expect; install with scripts/get_stella_tables.sh and set SGChemTablesPath\n", All.SGChemTablesPath); fflush(stdout);}
+        if(ThisTask == 0) {printf("SGCHEM: chemistry tables in '%s' missing or not the version these sources expect; run scripts/get_stella_deps.sh (or set SGChemTablesPath)\n", All.SGChemTablesPath); fflush(stdout);}
         endrun(78001);
         gizmo_exit_bad_stop_if_requested("sgchem:tables");
     }

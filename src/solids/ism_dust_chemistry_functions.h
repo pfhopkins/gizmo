@@ -36,6 +36,7 @@
 #include "../declarations/gpu_rng.h"   /* gizmo_gpu_rand_double */
 #include "grain_collisional_outcomes.h"
 #include "ism_dust_hu.h"
+#include "ism_dust_five_element.h"
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 
@@ -132,6 +133,9 @@ double ISMDustChem_Return_Mass_Where_Dust_Shocked(double rho_cell_in_code_units,
 #if defined(GALSF_ISMDUSTCHEM_HU_MODEL) && !defined(GALSF_ISMDUSTCHEM_HU_SN_SWEPT_MASS_DESTRUCTION)
     return 0; /* the resolved blast sputters its dust explicitly */
 #endif
+#if defined(GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION) || defined(GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION)
+    return 0; /* off, or replaced by the shock-tracked destruction */
+#endif
     double vs7=1., local_n0=rho_cell_in_code_units*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS; // dust destruction efficiency, minimum gas shock velocity in ~10^7 cm/s which destroys dust, and number density around SNe
     double mass_shocked_in_code_units; // mass shocked to 100 km/s which destroys dust. use the weights to distribute shocked mass across the neighboring gas particles
 #ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
@@ -142,6 +146,9 @@ double ISMDustChem_Return_Mass_Where_Dust_Shocked(double rho_cell_in_code_units,
 #else
     /* Simple radiative SNR case from McKee 1989 and Cioffi 1988 */
     mass_shocked_in_code_units = 2460 * Esne51_into_cell / (pow(local_n0, 0.1) * pow(vs7, 9./7.) * UNIT_MASS_IN_SOLAR);
+#endif
+#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
+    mass_shocked_in_code_units *= DUST5_MCKEE_EFF; /* dust-free mass: the efficiency before the cap */
 #endif
 
     return DMIN(mass_shocked_in_code_units * All.ISMDustChem_SNeGasClearedOfDustScaling, mass_preshock_in_code_units); // mass shocked limited to the entire mass of the gas particle
@@ -260,6 +267,10 @@ void update_dust_processes(int i, double dtime_gyr, struct particle_data *pp, st
 {
 #ifdef GALSF_ISMDUSTCHEM_HU_MODEL
     update_dust_processes_hu(i, dtime_gyr, pp, cell);
+    return;
+#endif
+#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
+    update_dust_processes_five_element(i, dtime_gyr, pp, cell);
     return;
 #endif
     int k; double ne=1, nh0=0, nhp=0, temp, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;

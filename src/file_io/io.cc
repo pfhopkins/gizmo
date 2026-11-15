@@ -1385,6 +1385,14 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     n++;
                 }
 #endif
+#if defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) (Get_Gas_Psi_Conservative_P(pindex, P, CellP) * gizmo2gauss); /* physical psi */
+                    n++;
+                }
+#endif
             break;
 
         case IO_GRADPHI:		/* divBcleaning fuction of particle  */
@@ -3895,6 +3903,9 @@ int blockpresent(enum iofields blocknr)
             break;
 
         case IO_PHI:
+#if defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+            return 1;
+#endif
         case IO_GRADPHI:
 #if defined(DIVBCLEANING_DEDNER) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
             return 1;
@@ -6187,6 +6198,9 @@ void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_f
         for(k=0;k<NUM_RPROCESS_SPECIES;k++) {zkey[1+NUM_LIVE_SPECIES_FOR_COOLTABLES+k]=-1;}
         for(k=0;k<NUM_AGE_TRACERS;k++) {zkey[AGE_TRACER_OFFSET+k]=-2;}
         for(k=0;k<NUM_STARFORGE_FEEDBACK_TRACERS;k++) {zkey[STARFORGE_FEEDBACK_TRACER_OFFSET+k]=-3;}
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+        for(k=0;k<4;k++) {zkey[SINGLE_STAR_METAL_ORIGIN_OFFSET+k]=-4-k;} /* single-star metals by source: -4 SN, -5 AGB, -6 winds, -7 Type Ia */
+#endif
         H5Awrite(hdf5_attribute, H5T_NATIVE_INT, zkey); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
 
 #ifdef GALSF_ISMDUSTCHEM_MODEL
@@ -6371,6 +6385,11 @@ void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_f
     {unsigned long long holder = (unsigned long long) All.SpawnedWindCellID; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Spawned_Cell_ID", H5T_NATIVE_ULLONG, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_ULLONG, &holder); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
 #endif
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+    {const char *rid = rumi_lib_id_string(); hid_t st = H5Tcopy(H5T_C_S1); H5Tset_size(st, strlen(rid) + 1); /* the RUMI++ library build */
+     hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "RUMI_lib_id", st, hdf5_dataspace, H5P_DEFAULT);
+     H5Awrite(hdf5_attribute, st, rid); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace); H5Tclose(st);}
 #endif
 
 }

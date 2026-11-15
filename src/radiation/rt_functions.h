@@ -622,6 +622,9 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
     if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC || k_freq==RT_FREQ_BIN_LYMAN_WERNER || k_freq==RT_FREQ_BIN_NUV) {
         double sig_H = (k_freq==RT_FREQ_BIN_LYMAN_WERNER) ? 2.0e-21 : 1.337e-21;
         double dgr = (i>=0) ? sgchem_dust_to_gas_ratio(pp[i].Metallicity[0]) : All.SGChemDustToGasRatio;
+#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
+        if(is_gas_cell) {dgr = sgchem_cell_dust_to_gas_ratio(pp, cell, i);} /* the cell's live dust */
+#endif
         return DMAX(kappa_HHe, sig_H * dgr * HYDROGEN_MASSFRAC / PROTONMASS_CGS) * fac;
     }
 #endif

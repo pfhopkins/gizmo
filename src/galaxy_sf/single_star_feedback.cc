@@ -11,6 +11,7 @@
 #include "single_star_record.h"
 #include "stellar_evolution_tables.h"
 #include "stellar_solar_abundances.h"
+#include "single_star_checks.h"
 #ifdef GALSF_ISMDUSTCHEM_MODEL
 #include "../solids/ism_dust_chemistry_functions.h"
 #endif
@@ -365,6 +366,9 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
 #ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
     for(int k = 0; k < STELLAR_EXTRA_NELEM; k++) {in->yields[METALS_EXTRA_PASSIVE_SPECIES_OFFSET + k] = ev.y[stellar_extra_slot_elem[k]] / ev.Mej;}
 #endif
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+    in->yields[SINGLE_STAR_METAL_ORIGIN_OFFSET + kind - SSE_SN] = in->yields[0]; /* the event's metals in its source slot: SN, AGB, winds, Type Ia */
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (NUM_LIVE_SPECIES_FOR_COOLTABLES >= 10)
     single_star_dust_yields(&ev, in->yields);
 #endif
@@ -522,6 +526,20 @@ void single_star_feedback_finalize(const int *list, int n)
             continue;
         }
         double z = 0; for(int k = ELEM_C; k < STBL_NELEM; k++) {z += ev.y[k];}
+#ifdef TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS
+        if(ev.Mej > 0) { /* a booked event left the star; trace of its table ejecta and the slot yields it sent */
+            SINGLE_STAR_CHECK("fb_booked_deposited", removed >= (1 - 1.0e-6) * ev.Mej, "kind=%d ID=%llu M_ejecta=%g removed=%g", kind, (unsigned long long)P[i].ID, ev.Mej, removed);
+            SINGLE_STAR_CHECK_RAN("fb_booked_deposited", 1);
+            struct addFB_evaluate_data_in_ tr; memset(&tr, 0, sizeof(tr)); single_star_particle2in(&tr, i, (kind == SSE_SN || kind == SSE_IA) ? 0 : 1);
+            const char *ch[5] = {"", "SN", "AGB", "wind", "Ia"};
+            printf("SINGLE_STAR_YIELDS ch=%s ID=%llu t=%.17g table", ch[kind], (unsigned long long)P[i].ID, All.Time);
+            for(int k = 0; k < STBL_NELEM; k++) {printf(" %.17g", ev.y[k]);}
+#ifdef METALS
+            printf(" slots"); for(int k = 0; k < NUM_METAL_SPECIES; k++) {printf(" %.17g", (double)tr.yields[k] * ev.Mej);}
+#endif
+            printf("\n"); fflush(stdout);
+        }
+#endif
 #ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
         if(ev.Mej > 0) { /* offered, at the star */
             double off = 1. / UNIT_MASS_IN_SOLAR;
@@ -553,6 +571,9 @@ void single_star_feedback_finalize(const int *list, int n)
         }
         ssfb_rows.insert(ssfb_rows.end(), row, row + SSFB_LOG_COLS);
         P[i].Mass = ev.M_rem / UNIT_MASS_IN_SOLAR; /* exactly the table remnant; 0 (PISN, Type Ia) removes the particle */
+#ifdef TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS
+        if(ev.M_trigger - ev.M_rem > 1.0e-6) {SINGLE_STAR_CHECK("fb_booked_deposited", P[i].Mass * UNIT_MASS_IN_SOLAR < ev.M_trigger * (1 - 1.0e-6), "kind=%d ID=%llu M_trigger=%g M_now=%g", kind, (unsigned long long)P[i].ID, ev.M_trigger, P[i].Mass * UNIT_MASS_IN_SOLAR);}
+#endif
         SingleStars.event_bits[s] |= (kind == SSE_AGB) ? SINGLE_STAR_EVENT_AGB_DONE : SINGLE_STAR_EVENT_SN_DONE;
 #ifdef KETJU_PN_REMNANT_TAG
         SingleStars.remnant_tag[s] = (int8_t)(ev.remnant_type + 1); /* compact remnants take PN terms in KETJU */

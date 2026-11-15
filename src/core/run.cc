@@ -330,6 +330,9 @@ void run(void)
 #ifdef KETJU_REGULARIZATION
         ketju_limit_timesteps(); /* chain particles to a shared timebin */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_limit_timesteps(); /* stars onto one bin */
+#endif
 
         /* Controlled-stop check (Wave-CBE 2026-05-28). find_timesteps()
          * just ran gizmo_collect_controlled_stop() on every rank; if any
@@ -381,6 +384,9 @@ void run(void)
         HermiteOnlyFlag = 0;
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_integrate();        /* stars' mutual gravity over their step by RUMI++, chord velocities for the drift */
+#endif
 #ifdef KETJU_REGULARIZATION
         ketju_find_regions();    /* chain regions around massive stars/BHs */
         ketju_run_integration(); /* subtract tree pair force, run MSTAR, velocity trick; raises motion bounds */
@@ -643,10 +649,13 @@ void run(void)
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();
         CPU_Step[CPU_KICKS] += measure_time();
-        HermiteOnlyFlag = 2;
-        gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
-        HermiteOnlyFlag = 0;
-        do_hermite_correction();
+        for(int hermite_pass = 0; hermite_pass < HERMITE_CORRECTOR_ITERATIONS; hermite_pass++) /* P(EC)^n: each pass evaluates at the latest (predicted, then corrected) state */
+        {
+            HermiteOnlyFlag = 2;
+            gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
+            HermiteOnlyFlag = 0;
+            do_hermite_correction(hermite_pass == HERMITE_CORRECTOR_ITERATIONS - 1);
+        }
         CPU_Step[CPU_KICKS] += measure_time();
 #endif
 #ifdef KETJU_REGULARIZATION
@@ -1057,7 +1066,13 @@ void find_next_sync_point_and_drift(void)
 #ifdef KETJU_REGULARIZATION
         ketju_swap_output_velocities(); /* members ending their step here: write the MSTAR velocity */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_swap_output_state();  /* stars on a RUMI++ step: its state at the output, not the chord */
+#endif
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_swap_output_state();
+#endif
 #ifdef KETJU_REGULARIZATION
         ketju_swap_output_velocities();
 #endif
@@ -1151,6 +1166,9 @@ void find_next_sync_point_and_drift(void)
   }
 #ifdef KETJU_REGULARIZATION
   ketju_set_final_velocities(); /* MSTAR velocities after the drift (velocity trick) */
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+  rumi_finish_drift();          /* stars ending their RUMI++ step: its position and velocity */
 #endif
 
 }
@@ -1572,6 +1590,9 @@ void write_cpu_log(void)
 #endif
           "drift/splitmg %10.2f  %5.1f%%\n"
           "kicks         %10.2f  %5.1f%%\n"
+#ifdef STARS_INTEGRATED_BY_RUMI
+          "rumi          %10.2f  %5.1f%%\n"
+#endif
           "log/stats     %10.2f  %5.1f%%\n"
 	      "find_timestep %10.2f  %5.1f%%\n"
 	      "io/snapshots  %10.2f  %5.1f%%\n"
@@ -1656,6 +1677,9 @@ void write_cpu_log(void)
 #endif
     All.CPU_Sum[CPU_DRIFT], (All.CPU_Sum[CPU_DRIFT]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_KICKS], (All.CPU_Sum[CPU_KICKS]) / All.CPU_Sum[CPU_ALL] * 100,
+#ifdef STARS_INTEGRATED_BY_RUMI
+    All.CPU_Sum[CPU_RUMI], (All.CPU_Sum[CPU_RUMI]) / All.CPU_Sum[CPU_ALL] * 100,
+#endif
     All.CPU_Sum[CPU_LOGMSG], (All.CPU_Sum[CPU_LOGMSG]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_FIND_TIMESTEPS], (All.CPU_Sum[CPU_FIND_TIMESTEPS]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_SNAPSHOT], (All.CPU_Sum[CPU_SNAPSHOT]) / All.CPU_Sum[CPU_ALL] * 100,

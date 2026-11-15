@@ -86,5 +86,13 @@ New features and fixes added on the branch after the audit state, each with its 
 - Network 17 and oxygen: why the network has no oxygen chemistry, with the one-zone measurement, in `src/cooling/sgchem/cxx/DIFFERENCES.md` (comment and doc only).
 - Tree (from Mike's starforge_dev e1b1c2bbb): a particle whose position is set rather than drifted (a jet or wind cell spawned into the standing tree, a sink re-centred on its accreted mass or moved to the potential minimum, a KETJU member set directly or snapped to its end position) gets every node box above it widened to hold it. Node centres stay fixed and a raised length only errs wide; widened top-level boxes reach the other ranks with the motion-bound flush. Test `tree_node_boxes` with the test-only audit `TEST_TREE_NODE_BOX_AUDIT` (a sink accreting and spawning jet cells: 2 particles outside a box before, 0 after).
 - Full-run Pop III test `sgchem_keep_ic::test_popIII_stars_in_pristine_gas`: pristine gas at n_H 1e7 forms only Pop III stars that hold their drawn mass (>= 1 Msun); the same gas at 1e-3 Zsun forms none.
+- Options merged later (all off by default, except the metal-origin tracers, which the Stella configs switch on):
+  `GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS` (test `single_stars_metal_origin`);
+  `TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS` (`single_stars_invariant_checks`);
+  `DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH` with its sub-switches, `DIVBCLEANING_CONSERVATIVE_SIGMA`, `TEST_DIVBCLEANING_ALTERNATING_CLEANING_SPEED` (`conservative_psi_cleaning`);
+  `MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE`, `MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY` (`mhd_kernel_volume_energy`); `TEST_MHD_ENERGY_LEDGER_OUTPUT` (`mhd_energy_ledger`);
+  `GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL`, `GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION`, `GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION` (`ism_dust_five_element_kernels`, `ism_dust_five_element_model`, `single_stars_radpressure_cells`);
+  `STARS_HERMITE_DIRECT_GRAVITY`, `HERMITE_CORRECTOR_ITERATIONS`, `HERMITE_SYMMETRIC_TIMESTEP` (`stars_hermite_direct_gravity`); `STARS_INTEGRATED_BY_RUMI` (`stars_integrated_by_rumi`, needs `RUMI_PATH`);
+  `scripts/get_stella_deps.sh` installs tables, SUNDIALS and KETJU into one cache that make and GIZMO find by default (`stella_deps`, `stellar_evolution_tables`).
 
 The new switches, their parameters, configurations and tests, and the stella_dev name of each, are documented in the User Guide (`docs/gizmo_documentation.md`, section "Stella Single Stars and SGChem Additions"). They are marked in development there and in `Template_Config.sh`.

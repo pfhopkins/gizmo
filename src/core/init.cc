@@ -245,6 +245,9 @@ void init(void)
 #ifdef KETJU_REGULARIZATION
         ketju_init_particle(i);
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+        P[i].RumiIntegrated = 0; P[i].RumiMember = 0;
+#endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* init tidal tensor for first output (not used for calculation) */
         for(j=0;j<3;j++) {int kt; for(kt=0;kt<3;kt++) {P[i].tidal_tensorps[j][kt]=0;}}
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
@@ -265,6 +268,12 @@ void init(void)
                               state rather than from whatever the allocator left behind */
         P[i].OldPos = P[i].Pos; P[i].OldVel = P[i].Vel;
         P[i].Hermite_OldAcc = {}; P[i].OldJerk = {};
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+        P[i].Hermite_dt_ratio = 0;
+#endif
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+        P[i].dt_crit_last = P[i].dt_crit_prev = 0; /* no criterion history: the default step rule until there is one */
+#endif
         P[i].AccretedThisTimestep = 0;
 #endif        
         
@@ -474,6 +483,9 @@ void init(void)
             }
 #ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
             for(j=0;j<STELLAR_EXTRA_NELEM;j++) {P[i].Metallicity[METALS_EXTRA_PASSIVE_SPECIES_OFFSET+j]=stellar_solar_massfrac[stellar_extra_slot_elem[j]]*(P[i].Metallicity[0]/All.SolarAbundances[0]);} /* the other 16 elements, solar */
+#endif
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+            for(j=0;j<4;j++) {P[i].Metallicity[SINGLE_STAR_METAL_ORIGIN_OFFSET+j]=0;} /* initial metals have no stellar source */
 #endif
         } // if(RestartFlag == 0)
 
@@ -865,6 +877,9 @@ void init(void)
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
         CellP[i].Balpha = 0.0;
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+        CellP[i].PsiZ = CellP[i].PsiZPred = CellP[i].DtPsiZ = 0;
+#endif
 #ifdef DIVBCLEANING_DEDNER
         CellP[i].Phi = CellP[i].PhiPred = CellP[i].DtPhi = 0;
 #endif
@@ -1096,6 +1111,12 @@ void init(void)
 #ifdef MAGNETIC
         CellP[i].B = CellP[i].BPred * (P[i].Mass / CellP[i].Density); // convert to the conserved unit V*B //
         CellP[i].BPred = CellP[i].B; CellP[i].DtB = {}; CellP[i].BField_prerefinement = {};
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+        CellP[i].LedgerEB = -1; for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
+#endif
+#ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
+        CellP[i].EB_last = -1; CellP[i].DtEB_booked = CellP[i].DtEB_facevol = 0;
+#endif
 #endif
 #ifdef COSMIC_RAY_FLUID
         if(RestartFlag == 0 && (All.CosmicRayInitialAmbient_eVcm3 > 0 || All.CosmicRayInitialCloud_eVcm3 > 0)) { /* initial CR background, split by density; other starts keep what they read */

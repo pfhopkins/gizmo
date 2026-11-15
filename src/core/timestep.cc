@@ -224,6 +224,26 @@ void find_timesteps(void)
         ti_step = get_timestep(i, &aphys, 0);
         ti_step = (integertime)(((double)ti_step) / timestep_dilation_factor(i, P)); /* get_timestep above froze the factor for this particle */
 #endif
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+        /* time-symmetric block step (Hut, Makino & McMillan 1995; Makino et al. 2006): the largest h' in {2h, h, h/2, ...}
+           with h' <= (f_start + f_end)/2, f_end extrapolated linearly from the criterion at the start of the step just done */
+        if(P[i].dt_crit_last > 0 && P[i].dt_crit_prev > 0 && All.Ti_Current > P[i].Ti_begstep && P[i].TimeBin > 1)
+        {
+            double ticks_per_unit = 1. / (All.Timebase_interval * timestep_dilation_factor(i, P));
+            double f1 = P[i].dt_crit_last * ticks_per_unit, f0 = P[i].dt_crit_prev * ticks_per_unit; /* in ticks */
+            double dfdh = (f1 - f0) / (double)(All.Ti_Current - P[i].Ti_begstep);
+            double hmax = DMIN(All.MaxSizeTimestep, dt_displacement) * ticks_per_unit;
+            int b;
+            for(b = P[i].TimeBin + 1; b > 1; b--)
+            {
+                double h_try = (double) GET_INTEGERTIME_FROM_TIMEBIN(b);
+                if(h_try > hmax) {continue;}
+                double f2 = DMAX(f1 + dfdh * h_try, 0.01 * f1); /* floor: keeps a steep extrapolated decline positive */
+                if(h_try <= 0.5 * (f1 + f2)) {break;}
+            }
+            ti_step = GET_INTEGERTIME_FROM_TIMEBIN(b); /* growth still goes through the sync-point rule below */
+        }
+#endif
         
 #if !defined(FORCE_EQUAL_TIMESTEPS) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
         if(ti_step < 0) {ti_step = ti_min_glob;}
@@ -604,7 +624,15 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
 #ifdef HERMITE_INTEGRATION
     /* divide out the second-order margin, as the two-body criterion below does. After the tree-update
        cadence above, which wants the unscaled dynamical estimate rather than the integrator's step. */
-    if(eligible_for_hermite(p, P)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;}
+    if(eligible_for_hermite(p, P)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;
+#ifdef STARS_HERMITE_DIRECT_GRAVITY /* Aarseth criterion replaces the tidal one; start-up step eta/2 |a|/|j| */
+        if(P[p].Hermite_dt_ratio > 0) {dt_tidal = P[p].Hermite_dt_ratio * get_particle_timestep_in_physical(p, P);}
+        else {double jm = P[p].GravJerk.norm(); if(jm > 0) {dt_tidal = DMIN(dt_tidal, 0.5 * STARS_HERMITE_AARSETH_ETA * P[p].GravAccel.norm() / jm);}}
+#endif
+    }
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+    else {P[p].Hermite_dt_ratio = 0;} /* KDK step: no Hermite history to extrapolate from */
+#endif
 #endif
     
 #if (SINGLE_STAR_TIMESTEPPING > 0)
@@ -660,6 +688,9 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
     if(((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) && (P[p].Type > 0)) {need_agscfl = 1;}
+#ifdef STARS_INTEGRATED_BY_RUMI
+    if(P[p].Type == 4) {need_agscfl = 0;} /* the star-star flow this limit follows is RUMI++'s */
+#endif
 #endif
 #ifdef DM_SIDM
     if((1 << P[p].Type) & (DM_SIDM)) {need_agscfl = 1;}
@@ -1423,6 +1454,9 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
         dt = All.MinSizeTimestep;
     }
 
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+    P[p].dt_crit_last = eligible_for_hermite(p, P) ? dt : 0; /* every factor and cap applied, not yet quantised */
+#endif
     ti_step = (integertime) (dt / All.Timebase_interval);
     /* Floor the step on the integer timeline. This is not the MinSizeTimestep policy: a run that
        has asked for a controlled stop still has to reach the next phase boundary to take it, and a

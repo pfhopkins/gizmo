@@ -2574,7 +2574,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                        center of mass to that of what remains. Both terms are on the same clock, since
                        SINK_NODE_MOTION_TRACKED drifts sink_pos with sink_vel exactly as u.d.s is drifted
                        with vs. The traversal judged the opening criteria on this reduced mass too. */
-                    if((ptype == 5) && (nop->sink_mass > 0))
+                    if((ptype == STAR_DIRECT_GRAVITY_TYPE) && (nop->sink_mass > 0))
                     {
                         double mass_nosink = mass - nop->sink_mass;
                         dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;
@@ -2863,7 +2863,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
                 /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
                    here as well would double every such force */
-                if((open_of(m).ptype == 5) && (P[no].Type == 5)) {continue;}
+                if((open_of(m).ptype == STAR_DIRECT_GRAVITY_TYPE) && (P[no].Type == STAR_DIRECT_GRAVITY_TYPE)) {continue;}
 #endif
                 GRAV_WALK_MASK_SET(accept_mask, m); any_accept = 1;
             }
@@ -2985,7 +2985,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                         {
                             int &resume_at = resume_of(m);
                             if(resume_at != GRAV_WALK_MEMBER_IN_PLAY) {continue;}
-                            if(node_is_pure_star && open_of(m).ptype == 5) {resume_at = node_sibling;} else {n_descending++;}
+                            if(node_is_pure_star && open_of(m).ptype == STAR_DIRECT_GRAVITY_TYPE) {resume_at = node_sibling;} else {n_descending++;}
                         }
                         if(n_descending == 0) {no = node_sibling; continue;}   /* the members sat out re-join there, at the loop head */
                         no = nop->u.d.nextnode;
@@ -3007,7 +3007,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
             {
                 if(resume_of(m) != GRAV_WALK_MEMBER_IN_PLAY) {continue;}
                 const struct grav_walk_open_inputs_t &open = open_of(m);
-                if(node_is_pure_star && open.ptype == 5) {continue;} /* done with this node (see above) */
+                if(node_is_pure_star && open.ptype == STAR_DIRECT_GRAVITY_TYPE) {continue;} /* done with this node (see above) */
                 const int ptype = open.ptype; const Vec3<double> &pos = open.pos; const double soft = open.soft, h = open.soft, aold = open.aold;
                 double mass = node_mass;
                 /* the node's centre of mass and mass as the opening criteria judge them; the
@@ -3018,7 +3018,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                    the subtraction is exact); this sits after force_drift_node so both terms are on the
                    same clock, and mass is reduced before the opening criteria below so they judge the
                    node on the mass actually being used. Pure-star nodes were already skipped above. */
-                if((ptype == 5) && (nop->sink_mass > 0))
+                if((ptype == STAR_DIRECT_GRAVITY_TYPE) && (nop->sink_mass > 0))
                 {
                     double mass_nosink = mass - nop->sink_mass;
                     dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;

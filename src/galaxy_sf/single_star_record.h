@@ -17,6 +17,12 @@
 #else
 #define SINGLE_STAR_RECORD_KETJU_FIELDS(X)
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+#include "../gravity/rumi/rumi_member_state.h"
+#define SINGLE_STAR_RECORD_RUMI_FIELDS(X) X(struct rumi_member_state, rumi, "RUMI++ step state")
+#else
+#define SINGLE_STAR_RECORD_RUMI_FIELDS(X)
+#endif
 
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
 #define SINGLE_STAR_RECORD_LOG_FIELDS(X) X(double, u_ambient, "mass-weighted gas specific energy around the star [code]")
@@ -36,7 +42,8 @@
     SINGLE_STAR_RECORD_POPIII_FIELDS(X) \
     SINGLE_STAR_RECORD_TABLE_FIELDS(X) \
     SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X) \
-    SINGLE_STAR_RECORD_KETJU_FIELDS(X)
+    SINGLE_STAR_RECORD_KETJU_FIELDS(X) \
+    SINGLE_STAR_RECORD_RUMI_FIELDS(X)
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
 #if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF)
 struct single_star_tree_lum {float L[N_RT_FREQ_BINS];};

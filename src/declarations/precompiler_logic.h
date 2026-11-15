@@ -832,9 +832,55 @@
 #endif
 #define TIDAL_TIMESTEP_CRITERION // use tidal tensor timestep criterion
 #endif
+#ifdef STARS_HERMITE_DIRECT_GRAVITY /* Type-4 stars: 4th-order Hermite, exact direct star-star gravity and jerk, Aarseth steps */
+#if !defined(STAR_DIRECT_GRAVITY_TYPE) && (defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(PMGRID) || defined(KETJU_REGULARIZATION)) /* first pass only: this file is read twice */
+#error "STARS_HERMITE_DIRECT_GRAVITY takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, another HERMITE_INTEGRATION mask, other SINK_CALC_DISTANCES users, PMGRID or KETJU_REGULARIZATION"
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_FORALL) && ((ADAPTIVE_GRAVSOFT_FORALL) & 16)
+#error "STARS_HERMITE_DIRECT_GRAVITY needs fixed Type-4 softening: adaptive softening changes between Hermite force evaluations and collapses the steps"
+#endif
+#define HERMITE_INTEGRATION 16
+#define SINGLE_STAR_DIRECT_GRAVITY
+#define STAR_DIRECT_GRAVITY_TYPE 4
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#ifndef STARS_HERMITE_AARSETH_ETA
+#define STARS_HERMITE_AARSETH_ETA 0.02 /* Aarseth (1985) step parameter */
+#endif
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI /* Type-4 stars integrated by the RUMI++ library (gravity/rumi): star-star pairs leave the tree */
+#if defined(STARS_HERMITE_DIRECT_GRAVITY)
+#error "STARS_INTEGRATED_BY_RUMI and STARS_HERMITE_DIRECT_GRAVITY both integrate the Type-4 stars: choose one"
+#endif
+#if !defined(STAR_DIRECT_GRAVITY_TYPE) && (defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(SPECIAL_POINT_MOTION) || defined(PMGRID) || defined(KETJU_REGULARIZATION)) /* first pass only: this file is read twice */
+#error "STARS_INTEGRATED_BY_RUMI takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, Hermite, other SINK_CALC_DISTANCES users, PMGRID or KETJU_REGULARIZATION"
+#endif
+#define SINGLE_STAR_DIRECT_GRAVITY /* the exact star-star sum (stars not yet integrated by RUMI++) */
+#define STAR_DIRECT_GRAVITY_TYPE 4
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI /* Type-4 stars integrated by the RUMI++ library (gravity/rumi): star-star pairs leave the tree */
+#if defined(STARS_HERMITE_DIRECT_GRAVITY)
+#error "STARS_INTEGRATED_BY_RUMI and STARS_HERMITE_DIRECT_GRAVITY both integrate the Type-4 stars: choose one"
+#endif
+#if !defined(STAR_DIRECT_GRAVITY_TYPE) && (defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(SPECIAL_POINT_MOTION) || defined(PMGRID) || defined(KETJU_REGULARIZATION)) /* first pass only: this file is read twice */
+#error "STARS_INTEGRATED_BY_RUMI takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, Hermite, other SINK_CALC_DISTANCES users, PMGRID or KETJU_REGULARIZATION"
+#endif
+#define SINGLE_STAR_DIRECT_GRAVITY /* the exact star-star sum (stars not yet integrated by RUMI++) */
+#define STAR_DIRECT_GRAVITY_TYPE 4
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#endif
+#ifndef STAR_DIRECT_GRAVITY_TYPE
+#define STAR_DIRECT_GRAVITY_TYPE 5 /* particle type whose mutual gravity SINGLE_STAR_DIRECT_GRAVITY sums directly */
+#endif
 #ifdef HERMITE_INTEGRATION
 #define COMPUTE_JERK_IN_GRAVTREE /* needs to be computed in order to do the Hermite integration */
-#if !(defined(SINGLE_STAR_DIRECT_GRAVITY) && ((HERMITE_INTEGRATION) == 32))
+#ifndef HERMITE_CORRECTOR_ITERATIONS
+#define HERMITE_CORRECTOR_ITERATIONS 1 /* P(EC)^n: n>1 re-evaluates gravity at the corrected state and re-applies the corrector (Kokubo, Yoshinaga & Makino 1998) */
+#endif
+#if defined(HERMITE_SYMMETRIC_TIMESTEP) && !defined(FORCE_EQUAL_TIMESTEPS)
+#define HERMITE_SYMMETRIC_TIMESTEP_ACTIVE /* inert without HERMITE_INTEGRATION or on equal steps */
+#endif
+#if !(defined(SINGLE_STAR_DIRECT_GRAVITY) && ((HERMITE_INTEGRATION) == (1 << (STAR_DIRECT_GRAVITY_TYPE))))
 #define HERMITE_FOREIGN_SOURCE_TABLE /* Hermite passes take a foreign Hermite-type leaf at its owner's predicted state (gravtree.cc). Not needed when Hermite covers only sinks and their mutual gravity is the direct sum, which the tree never evaluates */
 #endif
 #if defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
@@ -1017,6 +1063,15 @@
    where it is, the sink_vel declaration and the moment sums that fill it widen to match this macro. */
 #if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
 #define SINK_NODE_MOTION_TRACKED
+#endif
+#if defined(STARS_INTEGRATED_BY_RUMI) && (((SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) != 4) || defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE))
+#error "STARS_INTEGRATED_BY_RUMI: another option uses the sink node moments"
+#endif
+#if defined(STARS_INTEGRATED_BY_RUMI) && (((SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) != 4) || defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE))
+#error "STARS_INTEGRATED_BY_RUMI: another option uses the sink node moments"
+#endif
+#if defined(STARS_HERMITE_DIRECT_GRAVITY) && ((SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) != 4)
+#error "STARS_HERMITE_DIRECT_GRAVITY: another option set the sink node moments to a type other than 4"
 #endif
 
 
@@ -1688,12 +1743,39 @@
 #endif
 
 #ifdef MAGNETIC /* recommended MHD switches -- only turn these off for de-bugging */
-#ifndef TEST_MHD_NO_DEDNER_CLEANING /* test only: disables div-cleaning */
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH /* constrained psi/c_h cleaning (Tricco & Price 2012; Tricco, Price & Bate 2016) in place of Dedner */
+#ifndef HYDRO_MESHLESS_FINITE_MASS
+#error "DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH requires HYDRO_MESHLESS_FINITE_MASS"
+#endif
+#ifdef DIVBCLEANING_DEDNER
+#error "DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH replaces DIVBCLEANING_DEDNER: do not set both"
+#endif
+#ifndef DIVBCLEANING_CONSERVATIVE_SIGMA
+#if !defined(BOX_SPATIAL_DIMENSION) || (BOX_SPATIAL_DIMENSION == 3)
+#define DIVBCLEANING_CONSERVATIVE_SIGMA 1.0 /* TPB16 optimum in 3D */
+#else
+#define DIVBCLEANING_CONSERVATIVE_SIGMA 0.3 /* TPB16 optimum in 2D */
+#endif
+#endif
+#elif !defined(TEST_MHD_NO_DEDNER_CLEANING) /* test only: disables div-cleaning */
 #define DIVBCLEANING_DEDNER         /* hyperbolic/parabolic div-cleaing (Dedner 2002), with TP improvements */
 #endif
 #ifdef HYDRO_SPH /* MHD switches specific to SPH MHD */
 #define SPH_TP12_ARTIFICIAL_RESISTIVITY   /* turns on magnetic dissipation ('artificial resistivity'): uses tricco switch =h*|gradB|/|B| */
 #endif
+#endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) && defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+#error "MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE and MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY are alternatives"
+#endif
+#if !defined(MAGNETIC) || defined(HYDRO_SPH) || defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME)
+#error "MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE and MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY need MAGNETIC with a meshless method and the default leapfrog"
+#endif
+#define MHD_TRACK_BOOKED_MAGNETIC_ENERGY /* cell E_B at the last B kick and the dE_B/dt the u equation books */
+#endif
+
+#if defined(TEST_MHD_ENERGY_LEDGER_OUTPUT) && (!defined(MAGNETIC) || defined(HYDRO_SPH) || defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME) || !defined(OUTPUT_MASS_METAL_ENERGY_LEDGER))
+#error "TEST_MHD_ENERGY_LEDGER_OUTPUT needs MAGNETIC with a meshless method, the default leapfrog and OUTPUT_MASS_METAL_ENERGY_LEDGER"
 #endif
 
 /* constrained gradients (and MHD_MODIFIED_GRADIENT, which turns them on above) fit the cleaning-field gradient at the
@@ -1926,6 +2008,12 @@
 #endif
 
 /* ISM dust chemistry species counts (defined before NUM_METAL_SPECIES so they can be included) */
+#if defined(GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL) && !defined(GALSF_ISMDUSTCHEM_MODEL)
+#error "GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL runs on the fields of GALSF_ISMDUSTCHEM_MODEL=(1) or (1+2)"
+#endif
+#if (defined(GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION) || defined(GALSF_ISMDUSTCHEM_FIVE_ELEMENT_SHOCK_DESTRUCTION)) && !defined(GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL)
+#error "GALSF_ISMDUSTCHEM_FIVE_ELEMENT_NO_SWEPT_MASS_DESTRUCTION and _SHOCK_DESTRUCTION are options of GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL"
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 #if defined(COOLING)
 #define GALSF_ISMDUSTCHEM_HIGHTEMPDUSTCOOLING // optional, can turn off
@@ -1943,6 +2031,17 @@
 #endif
 #ifndef GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION
 #define GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION (16) /* FeMgSiO4 */
+#endif
+#endif
+#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
+#if defined(GALSF_ISMDUSTCHEM_HU_MODEL) || (GALSF_ISMDUSTCHEM_MODEL & 12) || defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) || (NUM_LIVE_SPECIES_FOR_COOLTABLES < 10)
+#error "GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL needs COOL_METAL_LINES_BY_SPECIES and GALSF_ISMDUSTCHEM_MODEL=(1) or (1+2), without GALSF_ISMDUSTCHEM_HU_MODEL or GALSF_ISMDUSTCHEM_GRAINSIZEEVO"
+#endif
+#ifndef GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION
+#define GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION (16) /* FeMgSiO4 */
+#endif
+#if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION != 16)
+#error "GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL grows FeMgSiO4: GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION=16"
 #endif
 #endif
 #ifndef GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION
@@ -1987,6 +2086,21 @@
    Every module that adds fields must add its count here so that all loops, I/O, diffusion,
    merge/split, and MPI exchange automatically handle the correct number of species. */
 /* passive species appended at the end of Metallicity[] (carried, diffused, merged/split and written; not used by cooling) */
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS /* metal mass fraction by source (SN, AGB, winds, Type Ia): 4 extra passive slots after the 27-element ones */
+#if !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_FB_MECHANICAL) || !defined(METALS)
+#error "GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS needs GALSF_SINGLE_STARS_EVOLUTION_TABLES, GALSF_SINGLE_STARS_FROM_IMF, GALSF_FB_MECHANICAL and METALS"
+#endif
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
+#define SINGLE_STAR_METAL_ORIGIN_FIRST_EXTRA_SLOT 16
+#else
+#define SINGLE_STAR_METAL_ORIGIN_FIRST_EXTRA_SLOT 0
+#endif
+#ifndef METALS_EXTRA_PASSIVE_SPECIES
+#define METALS_EXTRA_PASSIVE_SPECIES (SINGLE_STAR_METAL_ORIGIN_FIRST_EXTRA_SLOT+4)
+#elif (METALS_EXTRA_PASSIVE_SPECIES < SINGLE_STAR_METAL_ORIGIN_FIRST_EXTRA_SLOT+4)
+#error "GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS needs 4 extra passive metal slots (20 with GALSF_SINGLE_STARS_27_ELEMENT_YIELDS)"
+#endif
+#endif
 #ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS /* the 16 table elements outside the FIRE slots go into the first 16 extra passive slots */
 #if !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || !defined(COOL_METAL_LINES_BY_SPECIES)
 #error "GALSF_SINGLE_STARS_27_ELEMENT_YIELDS needs GALSF_SINGLE_STARS_EVOLUTION_TABLES and COOL_METAL_LINES_BY_SPECIES"
@@ -2006,6 +2120,9 @@
 #define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS+NUM_ISMDUSTCHEM_PASSIVE_SCALARS+NUM_NUCLEAR_PASSIVE_SCALARS+METALS_EXTRA_PASSIVE_SPECIES)
 #define METALS_EXTRA_PASSIVE_SPECIES_OFFSET (NUM_METAL_SPECIES-METALS_EXTRA_PASSIVE_SPECIES) /* first appended slot */
 #define NUM_METAL_SPECIES_BASE (NUM_METAL_SPECIES-METALS_EXTRA_PASSIVE_SPECIES) /* species count without the appended slots, for the checks on the cooling-species layout */
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+#define SINGLE_STAR_METAL_ORIGIN_OFFSET (METALS_EXTRA_PASSIVE_SPECIES_OFFSET+SINGLE_STAR_METAL_ORIGIN_FIRST_EXTRA_SLOT) /* slots SN, AGB, winds, Type Ia */
+#endif
 
 /* offset of ISM dustchem species within Metallicity array */
 #define AGE_TRACER_OFFSET (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES) /* first enrichment-age-tracer slot in Metallicity[]; other tracers and scalars follow */
@@ -2357,7 +2474,7 @@
 #ifdef KETJU_REGULARIZATION
 #include "../gravity/ketju/ketju_precompiler_logic.h"
 #endif
-#if defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(KETJU_REGULARIZATION)
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(KETJU_REGULARIZATION) || defined(STARS_INTEGRATED_BY_RUMI)
 #define SINGLE_STAR_RECORDS /* compact star records and P[i].StarIdx */
 #endif
 

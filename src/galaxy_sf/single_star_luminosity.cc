@@ -10,6 +10,7 @@
 #include "../core/proto.h"
 #include "single_star_record.h"
 #include "stellar_evolution_tables.h"
+#include "single_star_checks.h"
 #ifdef SGCHEM
 #include "../cooling/sgchem/sgchem_dust_to_gas.h"
 #endif
@@ -52,6 +53,10 @@ int single_star_band_luminosities_cgs(int i, double *L, double *L_bol)
     L[SINGLE_STAR_BAND_ION_HE1] = single_star_band_lum_cgs(stellar_log_L_ion_He1(logM, logZ, la));
     L[SINGLE_STAR_BAND_ION_HE2] = single_star_band_lum_cgs(stellar_log_L_ion_He2(logM, logZ, la));
     L[SINGLE_STAR_BAND_Q] = single_star_band_lum_cgs(stellar_log_Q_ion(logM, logZ, la));
+#endif
+#if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(GALSF_FB_MECHANICAL)
+    SINGLE_STAR_CHECK("lifetime_consistent", !(SingleStars.event_bits[s] & (SINGLE_STAR_EVENT_SN_DONE | SINGLE_STAR_EVENT_AGB_DONE)), "ID=%llu M=%g radiates after its death", (unsigned long long)P[i].ID, SingleStars.M_drawn[s]);
+    SINGLE_STAR_CHECK_RAN("lifetime_consistent", 1);
 #endif
     return 1;
 }
@@ -192,7 +197,11 @@ double single_star_radpressure_absorbed_local(void)
     {
         const int i = ActiveParticleList[a];
         if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
+        const double dgr = (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_cell_dust_to_gas_ratio(P, CellP, i), 0.); /* the cell's live dust */
+#else
         const double dgr = (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_dust_to_gas_ratio(P[i].Metallicity[0]), 0.);
+#endif
         lum_abs[a] = to_L * dgr * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
         const double l = lum_abs[a] * CellP[i].TreeColRadpFlux[3];
         abs_sum_local += l - CellP[i].RadpAbsorbedLum;

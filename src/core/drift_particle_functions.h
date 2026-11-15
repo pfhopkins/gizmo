@@ -57,6 +57,10 @@ void drift_extra_physics_P(int i, integertime tstart, integertime tend, double d
         cell[i].PhiPred *= exp( -dt_entr * t_damp );
     }
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    cell[i].PsiZPred += sqrt(All.cf_atime) * cell[i].DtPsiZ * dt_entr;
+    cell[i].PsiZPred *= Get_Gas_Psi_Damping_Factor_P(i, dt_entr, pp, cell);
+#endif
 #ifdef MHD_ALTERNATIVE_LEAPFROG_SCHEME
     cell[i].B = cell[i].BPred;
 #ifdef DIVBCLEANING_DEDNER

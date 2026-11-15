@@ -13,6 +13,7 @@
 #include "sgchem_network.h"
 #include "sgchem_dust_to_gas.h"
 #include "../../gravity/gravtree_treecol_pixels.h"
+#include "../../galaxy_sf/single_star_checks.h"
 #ifdef COSMIC_RAY_FLUID
 #include "../../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
 #endif
@@ -306,6 +307,13 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     temp = chem_cxx_calc_temp(abh2, in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + ab[IHP]) * yn));
 #endif
     if(temp > 1.0e5) {in.dust_to_gas_ratio = 0;} /* hot gas: grains sputtered */
+#if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
+    if(temp > 1.0e5 && CellP[i].Temp > 1.0e5) { /* hot gas: no dust in the chemistry nor in the TreeCol columns */
+        double m_tc[TREECOL_PIXELS_NSPECIES]; treecol_pixels_species_masses(P, CellP, i, m_tc);
+        SINGLE_STAR_CHECK("dgr_consistent", in.dust_to_gas_ratio == 0 && m_tc[TREECOL_PIXELS_DUST] == 0, "ID=%llu T=%g Temp_stored=%g", (unsigned long long)P[i].ID, temp, (double)CellP[i].Temp);
+        SINGLE_STAR_CHECK_RAN("dgr_consistent", 1);
+    }
+#endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
     sgchem_treecol_columns(i, &in);
 #endif

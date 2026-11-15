@@ -13,6 +13,9 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../galaxy_sf/stellar_evolution_tables.h"
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || defined(SGCHEM)
+#include "../galaxy_sf/stella_tables_check.h"
+#endif
 #include "../sidm/dm_cooling_tables.h"   /* InitCool_dm() declaration only; the full dm_fluid_functions.h chain belongs in GPU_OBJS TUs where Kokkos_Core.hpp is in-scope, not in host TUs like this one */
 
 
@@ -167,6 +170,9 @@ void begrun(void)
 #endif
 #ifdef KETJU_REGULARIZATION
   ketju_open_output_file();
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+  rumi_init();
 #endif
 #ifdef HYDRO_MULTIFLUID_DM_COOLING
   InitCool_dm();
@@ -1037,6 +1043,9 @@ void open_outputfiles(void)
     fprintf(FdBalance, "Hydro compute  = '%c' / '%c'\n", CPU_Symbol[CPU_HYDCOMPUTE], CPU_SymbolImbalance[CPU_HYDCOMPUTE]);
     fprintf(FdBalance, "Drifts         = '%c' / '%c'\n", CPU_Symbol[CPU_DRIFT], CPU_SymbolImbalance[CPU_DRIFT]);
     fprintf(FdBalance, "Kicks          = '%c' / '%c'\n", CPU_Symbol[CPU_KICKS], CPU_SymbolImbalance[CPU_KICKS]);
+#ifdef STARS_INTEGRATED_BY_RUMI
+    fprintf(FdBalance, "RUMI++ stars   = '%c' / '%c'\n", CPU_Symbol[CPU_RUMI], CPU_SymbolImbalance[CPU_RUMI]);
+#endif
     fprintf(FdBalance, "Log & stats    = '%c' / '%c'\n", CPU_Symbol[CPU_LOGMSG], CPU_SymbolImbalance[CPU_LOGMSG]);
     fprintf(FdBalance, "Find-timesteps = '%c' / '%c'\n", CPU_Symbol[CPU_FIND_TIMESTEPS], CPU_SymbolImbalance[CPU_FIND_TIMESTEPS]);
     fprintf(FdBalance, "PM-gravity     = '%c' / '%c'\n", CPU_Symbol[CPU_MESH], CPU_SymbolImbalance[CPU_MESH]);
@@ -3241,6 +3250,9 @@ void read_parameter_file(char *fname)
 #ifdef KETJU_REGULARIZATION
       nt = ketju_register_params(tag, addr, id, nt, MAXTAGS, REAL, STRING, INT);
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+      nt = rumi_register_params(tag, addr, id, nt, MAXTAGS, REAL, STRING, INT);
+#endif
         if(nt > MAXTAGS) {printf("Parameter registry overflow: %d tags for room for %d (raise MAXTAGS in begrun.cc)\n", nt, MAXTAGS); errorFlag = 1;}
 
         if((fd = fopen(fname, "r")))
@@ -3688,10 +3700,22 @@ void read_parameter_file(char *fname)
 #ifdef KETJU_REGULARIZATION
                 if(ketju_param_default(tag[i], addr[i])) {continue;}
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+                if(rumi_param_default(tag[i], addr[i])) {continue;}
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || defined(SGCHEM)
+                if(strcmp("StellarTablesFile",tag[i])==0 || strcmp("SGChemTablesPath",tag[i])==0) {*((char *)addr[i])=0; continue;} /* set below */
+#endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;
             }
         }
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        stella_tables_default_path(All.StellarTablesFile, sizeof(All.StellarTablesFile), "StellarTablesFile", "stellar_tables_unified.hdf5");
+#endif
+#ifdef SGCHEM
+        stella_tables_default_path(All.SGChemTablesPath, sizeof(All.SGChemTablesPath), "SGChemTablesPath", "");
+#endif
 
 #ifdef GALSF_FB_FIRE_AGE_TRACERS_CUSTOM
         errorFlag += read_agetracerlist(All.AgeTracerListFilename);

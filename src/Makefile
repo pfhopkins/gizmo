@@ -1017,13 +1017,17 @@ OBJS    += cooling/chimes/chimes.o cooling/chimes/chimes_cooling.o cooling/chime
 INCL    += cooling/chimes/chimes_interpol.h cooling/chimes/chimes_proto.h cooling/chimes/chimes_vars.h 
 endif
 
-# SGChem chemistry (cooling/sgchem/, C++ on SUNDIALS CVODE 6.x or 7.x): SUNDIALS_DIR from the system file or the environment
+# SGChem chemistry (cooling/sgchem/, C++ on SUNDIALS CVODE 6.x or 7.x): SUNDIALS_DIR from the system file or the environment,
+# else the install of scripts/get_stella_deps.sh (version and tarball hash pinned here)
+SUNDIALS_VERSION = 6.7.0
+SUNDIALS_SHA256  = 5f113a1564a9d2d98ff95249f4871a4c815a05dbb9b8866a82b13ab158c37adb
 SGCHEMINCL = # default to empty, will only be used below if called
 SGCHEMLIBS = # default to empty, will only be used below if called
 ifneq (,$(filter SGCHEM,$(CONFIGVARS)))
 ifeq (,$(strip $(SUNDIALS_DIR)))
-$(error SGCHEM needs SUNDIALS_DIR, a SUNDIALS 6.x or 7.x install)
+SUNDIALS_DIR := $(or $(STELLA_DEPS_PREFIX),$(HOME)/.stella-deps)/sundials-$(SUNDIALS_VERSION)
 endif
+$(if $(wildcard $(SUNDIALS_DIR)/include/cvode/cvode.h),,$(error SGCHEM: no SUNDIALS (6.x or 7.x) at SUNDIALS_DIR=$(SUNDIALS_DIR); run scripts/get_stella_deps.sh))
 SGCHEM_SUNLIB = $(firstword $(wildcard $(SUNDIALS_DIR)/lib64 $(SUNDIALS_DIR)/lib))
 SGCHEMINCL = -I$(SUNDIALS_DIR)/include -I.
 SGCHEMLIBS = -L$(SGCHEM_SUNLIB) -Wl,-rpath,$(SGCHEM_SUNLIB) -lsundials_cvode -lsundials_nvecserial -lsundials_sunmatrixdense \
@@ -1093,6 +1097,9 @@ LIBS = $(HDF5LIB) -g $(MPICHLIB) \
 
 ifneq ($(filter KETJU_REGULARIZATION,$(CONFIGVARS)),)
 include gravity/ketju/Makefile.ketju
+endif
+ifneq ($(filter STARS_INTEGRATED_BY_RUMI,$(CONFIGVARS)),)
+include gravity/rumi/Makefile.rumi
 endif
 
 $(EXEC): $(OBJS) $(GPU_OBJS)
