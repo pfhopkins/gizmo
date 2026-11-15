@@ -1,4 +1,4 @@
-InitCondFile binary_ics
+InitCondFile hermite_binary_ics
 OutputDir                        output
 TimeMax 0.00023
 BoxSize                            0.3

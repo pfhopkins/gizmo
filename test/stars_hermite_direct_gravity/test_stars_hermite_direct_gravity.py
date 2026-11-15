@@ -41,10 +41,12 @@ def run(system, eta, symmetric=False):
     key = (system, eta, symmetric)
     if key in RUNS:
         return RUNS[key]
+    for name, sy in SYSTEMS.items():  # every IC on disk: the harness checks the params file's InitCondFile before the override
+        xi, vi, mi = sy["ic"]()
+        ref.write(f"{TEST_DIR}/hermite_{name}_ics.hdf5", xi - ref.CENTRE + ORIGIN, vi, mi)
     s = SYSTEMS[system]
     x, v, m = s["ic"]()
     x = x - ref.CENTRE + ORIGIN
-    ref.write(f"{TEST_DIR}/hermite_{system}_ics.hdf5", x, v, m)
     flags = (f"STARS_HERMITE_AARSETH_ETA={eta}",) + DEV + (SYMMETRIC if symmetric else ())
     build_and_run_test(TEST_NAME, 1, 1, extra_config_flags=flags,
                        param_overrides={"InitCondFile": f"hermite_{system}_ics", "TimeMax": s["tmax"], "TimeOfFirstSnapshot": s["every"] * (1 + LIFT),
