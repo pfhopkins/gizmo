@@ -15,17 +15,17 @@ UnitLength_in_cm 3.085678e21
 UnitMass_in_g 1.989e43
 UnitVelocity_in_cm_per_s 1.0e5
 UnitMagneticField_in_gauss 1.0
-SofteningGas 1.0e-10
+SofteningGas 4.0e-6 % comoving kpc/h, above SofteningGasMaxPhys/TimeBegin: the physical cap binds from the start
 SofteningHalo 0.02
 SofteningDisk 0.02
 SofteningBulge 0.02
-SofteningStars 1.0e-4
+SofteningStars 4.0e-3 % comoving kpc/h, above SofteningStarsMaxPhys/TimeBegin: the physical cap binds from the start
 SofteningBndry 0.005
-SofteningGasMaxPhys 1.0e-10
+SofteningGasMaxPhys 6.8e-8 % 0.0001 pc physical (h = 0.68): no effective floor, gas smoothing length uncapped
 SofteningHaloMaxPhys 0.02
 SofteningDiskMaxPhys 0.02
 SofteningBulgeMaxPhys 0.02
-SofteningStarsMaxPhys 1.0e-4
+SofteningStarsMaxPhys 6.8e-5 % 0.1 pc physical (h = 0.68) = 0.1 pc x (m_gas/Msun)^(1/3) at 1 Msun, Stella star-softening rule; set from the IC
 SofteningBndryMaxPhys 0.005
 DesNumNgb 32
 AGS_DesNumNgb 32

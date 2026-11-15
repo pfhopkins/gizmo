@@ -1889,6 +1889,8 @@ Note there are many sub-flags not explicitly listed in the template Config file,
 
 The switches below are in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using them. They extend the single-star model (`GALSF_SINGLE_STARS_FROM_IMF` with the stella-tables tables) and the SGChem chemistry. The Stella production configurations are in `scripts/stella/` (`Config_stella_default.sh`, `_cloud`, `_galaxy`, `_tallbox`, `_zoom`; `STELLA_DEFAULTS` sets the common part).
 
+**Star softening rule** (in development). Stars use a fixed gravitational softening (`ADAPTIVE_GRAVSOFT_FORALL=1`: adaptive softening for gas only), set per run from the gas mass resolution: eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3) with n_SF = 1e6 cm^-3 (the hard star-formation threshold), i.e. eps_star = 0.1 pc x (m_gas/Msun)^(1/3) physical (0.1 pc at 1 Msun, 0.047 pc at 0.1 Msun): `SofteningStars`, or in comoving runs `SofteningStarsMaxPhys` with a comoving `SofteningStars` large enough that the physical cap binds from the start. The gas smoothing length is not capped from below: the Stella params set a tiny gas softening floor (0.0001 pc).
+
 **Setup on a new machine** (in development). Stella needs the stella-tables tables, SUNDIALS (CVODE, for SGChem) and, with `KETJU_REGULARIZATION`, the MSTAR library; none is part of this repository, and neither `make` nor GIZMO fetches anything. One command installs them into a cache, `~/.stella-deps` (or `$STELLA_DEPS_PREFIX`), at the versions these sources pin:
 
     git clone -b gku_stella_dev https://github.com/pfhopkins/gizmo.git && cd gizmo

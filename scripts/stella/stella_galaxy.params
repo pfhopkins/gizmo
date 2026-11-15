@@ -15,11 +15,11 @@ UnitLength_in_cm 3.085678e21
 UnitMass_in_g 1.989e43
 UnitVelocity_in_cm_per_s 1.0e5
 UnitMagneticField_in_gauss 1.0
-SofteningGas 1.0e-10
+SofteningGas 1.0e-7 % 0.0001 pc: no effective floor, gas smoothing length uncapped
 SofteningHalo 0.050
 SofteningDisk 0.020
 SofteningBulge 0.020
-SofteningStars 1.0e-4
+SofteningStars 1.585e-4 % 0.158 pc = 0.1 pc x (m_gas/Msun)^(1/3) at 3.98 Msun (the test_SN_PI_G0_v3 dwarf IC), Stella star-softening rule; set from the IC
 SofteningBndry 0.005
 DesNumNgb 32
 AGS_DesNumNgb 32
