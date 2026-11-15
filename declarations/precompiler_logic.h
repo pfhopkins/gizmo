@@ -1989,6 +1989,17 @@
 #define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION // the shock-side counterpart: never merge a pair whose merge would thermalize the majority of the energy involved, which cooling then radiates away, making the merge an artificial unresolved shock. MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION opts back out
 #endif
 
+/* Stella: merge/split always on, so the same three; opt-outs as above */
+#if defined(GALSF_RESOLVEDISM) && !defined(WAKEUP_REVERSE_KICK_ON_DEMOTION) && !defined(WAKEUP_TRUNCATE_STEP_ON_DEMOTION)
+#define WAKEUP_TRUNCATE_STEP_ON_DEMOTION
+#endif
+#if defined(GALSF_RESOLVEDISM) && !defined(MERGE_SPLIT_DISCARD_ENERGY) && !defined(MERGE_SPLIT_CONSERVE_ENERGY)
+#define MERGE_SPLIT_CONSERVE_ENERGY
+#endif
+#if defined(GALSF_RESOLVEDISM) && !defined(MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION) && !defined(MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION)
+#define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+#endif
+
 
 /* ---- KETJU regularized integrator ---- */
 #if defined(KETJU_REGULARIZATION) && !defined(OUTPUT_STAR_ENERGY_DIRECT_SUM)

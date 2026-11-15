@@ -123,6 +123,19 @@ Each step, recomputes the KETJU limiting-particle steps by a full particle scan 
 different answer. Slow; for checking the grid (which now also works in periodic boxes). KetjuRegionRadius is a physical
 length in every use.
 
+## Energy-conserving merges (no switch)
+
+Every Stella build now switches on MERGE_SPLIT_CONSERVE_ENERGY, MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION and
+WAKEUP_TRUNCATE_STEP_ON_DEMOTION (declarations/precompiler_logic.h), as spawning builds already did. Before, a gas merge
+kept momentum but dropped the pair's centre-of-mass kinetic energy (1/2) mu |dv|^2. Now that energy goes into the
+merged cell's thermal energy. Merges that would turn most of the energy involved into heat are refused. The wake-up
+switch has no effect with MFM, which already ends the step at the system time. MERGE_SPLIT_DISCARD_ENERGY,
+MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION and WAKEUP_REVERSE_KICK_ON_DEMOTION switch the three off again.
+
+Tests: test/merge_split_conservation_stella_default (with the Stella default config, a light cell merged into a heavier one at
+8 km/s relative speed: 6.1% of the pair's energy lost before, conserved to 1e-16 after); test/stella_sn_merge_energy
+(adiabatic SN at 1 Msun with merge/split on: gas energy matches the coupled energy to 0.3%).
+
 ## Names on gku_stella_dev
 
 | stella_dev | gku_stella_dev |

@@ -223,6 +223,48 @@ static void test_merge()
     check("merge:no_CellP_write_past_MaxPartGas", canary_intact(), canary_intact(), 1);
 }
 
+/* thermal + kinetic energy of live gas; pred=1 uses the predicted state */
+static double gas_energy(int n, int pred)
+{
+    double e = 0;
+    for(int i = 0; i < n; i++)
+    {
+        if(P[i].Mass <= 0 || P[i].Type != 0) {continue;}
+        Vec3<double> v = pred ? Vec3<double>(CellP[i].VelPred) : Vec3<double>(P[i].Vel);
+        e += P[i].Mass * ((pred ? CellP[i].InternalEnergyPred : CellP[i].InternalEnergy) + 0.5 * v.norm_sq() * All.cf_a2inv);
+    }
+    return e;
+}
+
+static void test_merge_energy()
+{
+    /* light cell into heavier one at ~Mach 0.8 relative speed: the merge must not lose (1/2) mu |dv|^2 */
+    setup(64, 64);
+    make_gas(0, 0.5, 0.5, 0.5, 0.4, 0.72, 0.27, 0.01, 0.);
+    make_gas(1, 0.55, 0.5, 0.5, 1.0, 0.72, 0.27, 0.01, 0.);
+    P[0].Vel = Vec3<double>{5., 0., 0.}; P[1].Vel = Vec3<double>{-3., 0., 0.};
+    CellP[0].VelPred = Vec3<double>{5.5, 0., 0.}; CellP[1].VelPred = Vec3<double>{-3.2, 0., 0.};
+    NumPart = N_gas = 2;
+    double e0 = gas_energy(2, 0), e0p = gas_energy(2, 1);
+    double mu = 0.4 * 1.0 / 1.4, ke_com = 0.5 * mu * 64. * All.cf_a2inv;
+#ifdef MAGNETIC
+    double V0 = P[0].Mass / CellP[0].Density, V1 = P[1].Mass / CellP[1].Density;
+    double eb0 = 0.5 * (CellP[0].B.norm_sq() / V0 + CellP[1].B.norm_sq() / V1);
+#endif
+    int ok = merge_particles_ij(0, 1);
+    check("merge_energy:succeeded", ok == 1, ok, 1);
+    double e1 = gas_energy(2, 0), e1p = gas_energy(2, 1);
+    fprintf(out, "INFO merge_energy: E_before=%.10g E_after=%.10g dE/E=%.4e KE_com/E=%.4e\n", e0, e1, (e1 - e0) / e0, ke_com / e0);
+#ifdef MAGNETIC
+    double eb1 = 0.5 * CellP[1].B.norm_sq() / (V0 + V1); /* summed VB over summed volume until the next density pass */
+    fprintf(out, "INFO merge_energy: E_B_before=%.6g E_B_after=%.6g (relative to E: %.3e)\n", eb0, eb1, (eb1 - eb0) / e0);
+#endif
+#if defined(MERGE_SPLIT_CONSERVE_ENERGY) || defined(GALSF_RESOLVEDISM)
+    check_rel("merge_energy:thermal_plus_kinetic_conserved", e1, e0, e0);
+    check_rel("merge_energy:predicted_state_conserved", e1p, e0p, e0p);
+#endif
+}
+
 static void test_hydrogen_massfrac()
 {
 #ifdef HAVE_PARTICLE_HYDROGEN_MASSFRAC
@@ -382,6 +424,7 @@ int main(int argc, char **argv)
 
     test_split();
     test_merge();
+    test_merge_energy();
     test_hydrogen_massfrac();
     test_nongas_never_touches_CellP();
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
