@@ -784,6 +784,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
 #endif
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
+                    wakeup_list_note(j);
                 }
 
 #ifdef GALSF_RESOLVEDISM_DUST
@@ -821,6 +822,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     CellP[j].InternalEnergyPred += du_full;
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
+                    wakeup_list_note(j);
                 }
 #else
                 if(local.WindMomentum > 0) {
@@ -900,6 +902,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     }
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
+                    wakeup_list_note(j);
                 }
 #endif /* GALSF_RESOLVEDISM_WINDS_THERMAL_ONLY (kick block ends here) */
 #ifdef COSMIC_RAY_FLUID

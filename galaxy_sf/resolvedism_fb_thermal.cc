@@ -429,6 +429,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                      * <1% at m0.01 ever needed: sync-boundary injection (post-KICK2). */
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
+                    wakeup_list_note(j);
 #ifdef FB_G17_BOUNDARY_INJECTION
                     CellP[j].FBinjFlag = 1; /* gizmo2017-mimicry: triggers boundary hydro recompute */
 #endif
@@ -605,6 +606,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
 #endif
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
+                    wakeup_list_note(j);
 #ifdef FB_G17_BOUNDARY_INJECTION
                     CellP[j].FBinjFlag = 1; /* gizmo2017-mimicry: triggers boundary hydro recompute */
 #endif
