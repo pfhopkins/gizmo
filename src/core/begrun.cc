@@ -168,9 +168,6 @@ void begrun(void)
 #ifdef COOLING
   InitCool();
 #endif
-#ifdef KETJU_REGULARIZATION
-  ketju_open_output_file();
-#endif
 #ifdef STARS_INTEGRATED_BY_RUMI
   rumi_init();
 #endif
@@ -659,6 +656,9 @@ void begrun(void)
   snprintf(contfname, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%scont", All.OutputDir);
   unlink(contfname);
   open_outputfiles();
+#ifdef KETJU_REGULARIZATION
+  ketju_open_output_file(); /* after open_outputfiles: needs OutputDir to exist */
+#endif
 
 #ifdef PMGRID
   long_range_init_regionsize();

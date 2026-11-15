@@ -447,6 +447,14 @@ struct KjClock {
     ~KjClock() {lap(rest);}
 };
 static double KetjuCollisionEnergy = 0; /* energy change by star collisions since the last KETJU STATS line (compute roots) */
+struct ketju_merger_output { /* one row of ketju_output.hdf5 "mergers" */
+    MyIDType id1, child1, id2, child2; /* survivor, merged */
+    double m1, m2, m_remnant; /* host mass units */
+    double time, redshift; /* start of the KETJU step */
+    int is_collision; /* 1 star collision, 0 BH merger */
+};
+static std::vector<ketju_merger_output> KetjuMergerRecords; /* this step's mergers, compute roots; sent to rank 0 at the step's end */
+static void ketju_hdf5_write_merger(ketju_merger_output *merger);
 /* Coupling energy ledger since the last KETJU STATS line, host units (rank-local sums):
  * [0] internal energy the host's external kicks put into region members (start: compute roots; end: member owners),
  * [1] its absolute value per region and kick, [2] MSTAR's own energy change (integration error, collisions excluded) */
@@ -1994,6 +2002,11 @@ static void scatter_results(KetjuRegion &reg)
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
                 scatter_buf[info->extra_index2].MergedInto = {reg.extra_data[info->extra_index1].ID, reg.extra_data[info->extra_index1].Child};
 #endif
+                {
+                    const double mu = KJ_MASS_TO_NAT; const ketju_extra_data &y1 = reg.extra_data[info->extra_index1], &y2 = reg.extra_data[info->extra_index2];
+                    KetjuMergerRecords.push_back({y1.ID, y1.Child, y2.ID, y2.Child, info->m1 / mu, info->m2 / mu, info->m_remnant / mu,
+                                                  All.Time, All.ComovingIntegrationOn ? 1. / All.Time - 1. : 0., info->is_collision});
+                }
                 if(info->is_collision) {
                     double mu = KJ_MASS_TO_NAT, eu = mu * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT; /* MSTAR natural -> host units */
                     KetjuCollisionEnergy += info->dE_collision / eu;
@@ -2868,6 +2881,25 @@ void ketju_run_integration(void)
     ketju_note_live_chains();
     ketju_tree_rebuild_rule();
     ketju_report_stats(0);
+    { /* this step's merger rows to rank 0: count by reduce, rows point to point, sorted by IDs */
+        long long n_loc = (long long)KetjuMergerRecords.size(), n_tot = 0;
+        MPI_Reduce(&n_loc, &n_tot, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+        const int tag = 995;
+        if(ThisTask != 0 && n_loc > 0)
+            MPI_Send(KetjuMergerRecords.data(), (int)(n_loc * sizeof(ketju_merger_output)), MPI_BYTE, 0, tag, MPI_COMM_WORLD);
+        if(ThisTask == 0) {
+            std::vector<ketju_merger_output> rows(KetjuMergerRecords);
+            while((long long)rows.size() < n_tot) {
+                MPI_Status st; int nb; MPI_Probe(MPI_ANY_SOURCE, tag, MPI_COMM_WORLD, &st); MPI_Get_count(&st, MPI_BYTE, &nb);
+                size_t k0 = rows.size(); rows.resize(k0 + nb / sizeof(ketju_merger_output));
+                MPI_Recv(rows.data() + k0, nb, MPI_BYTE, st.MPI_SOURCE, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            }
+            std::sort(rows.begin(), rows.end(), [](const ketju_merger_output &a, const ketju_merger_output &b)
+                      {return (a.id1 != b.id1) ? a.id1 < b.id1 : (a.child1 != b.child1) ? a.child1 < b.child1 : (a.id2 != b.id2) ? a.id2 < b.id2 : a.child2 < b.child2;});
+            for(ketju_merger_output &m : rows) ketju_hdf5_write_merger(&m);
+        }
+        KetjuMergerRecords.clear();
+    }
 
     if(ThisTask == 0) {
         int total_mergers = 0;
@@ -3129,13 +3161,22 @@ struct ketju_bh_output {
     int timestep_index, n_particles, n_bh;
 };
 
-struct ketju_merger_output {
-    MyIDType id1, id2;
-    double m1, m2, m_remnant;
-    double time, redshift;
-};
-
 static hid_t ketju_output_file = -1;
+static hid_t ketju_merger_type(void) /* memory and file layout of a "mergers" row */
+{
+    hid_t t = H5Tcreate(H5T_COMPOUND, sizeof(ketju_merger_output));
+    H5Tinsert(t, "ID1", HOFFSET(ketju_merger_output, id1), H5T_NATIVE_ULLONG);
+    H5Tinsert(t, "Child1", HOFFSET(ketju_merger_output, child1), H5T_NATIVE_ULLONG);
+    H5Tinsert(t, "ID2", HOFFSET(ketju_merger_output, id2), H5T_NATIVE_ULLONG);
+    H5Tinsert(t, "Child2", HOFFSET(ketju_merger_output, child2), H5T_NATIVE_ULLONG);
+    H5Tinsert(t, "M1", HOFFSET(ketju_merger_output, m1), H5T_NATIVE_DOUBLE);
+    H5Tinsert(t, "M2", HOFFSET(ketju_merger_output, m2), H5T_NATIVE_DOUBLE);
+    H5Tinsert(t, "M_remnant", HOFFSET(ketju_merger_output, m_remnant), H5T_NATIVE_DOUBLE);
+    H5Tinsert(t, "time", HOFFSET(ketju_merger_output, time), H5T_NATIVE_DOUBLE);
+    H5Tinsert(t, "redshift", HOFFSET(ketju_merger_output, redshift), H5T_NATIVE_DOUBLE);
+    H5Tinsert(t, "is_collision", HOFFSET(ketju_merger_output, is_collision), H5T_NATIVE_INT);
+    return t;
+}
 static int ketju_output_tstep_index = 0;
 
 void ketju_open_output_file(void)
@@ -3143,7 +3184,9 @@ void ketju_open_output_file(void)
     if(ThisTask != 0) return;
     char buf[512];
     snprintf(buf, sizeof(buf), "%sketju_output.hdf5", All.OutputDir);
-    if(RestartFlag == 0) {
+    FILE *probe = (RestartFlag == 0) ? NULL : fopen(buf, "r"); /* append when it exists, as the other logs; else create */
+    int exists = (probe != NULL); if(probe) fclose(probe);
+    if(!exists) {
         ketju_output_file = H5Fcreate(buf, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
         /* create groups */
         hid_t grp = H5Gcreate2(ketju_output_file, "BHs", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
@@ -3156,14 +3199,7 @@ void ketju_open_output_file(void)
         H5Dcreate2(ketju_output_file, "timesteps", H5T_NATIVE_DOUBLE, space, H5P_DEFAULT, dcpl, H5P_DEFAULT);
         H5Pclose(dcpl); H5Sclose(space);
         /* create extendable merger dataset */
-        hid_t merger_type = H5Tcreate(H5T_COMPOUND, sizeof(ketju_merger_output));
-        H5Tinsert(merger_type, "ID1", HOFFSET(ketju_merger_output, id1), H5T_NATIVE_LLONG);
-        H5Tinsert(merger_type, "ID2", HOFFSET(ketju_merger_output, id2), H5T_NATIVE_LLONG);
-        H5Tinsert(merger_type, "M1", HOFFSET(ketju_merger_output, m1), H5T_NATIVE_DOUBLE);
-        H5Tinsert(merger_type, "M2", HOFFSET(ketju_merger_output, m2), H5T_NATIVE_DOUBLE);
-        H5Tinsert(merger_type, "M_remnant", HOFFSET(ketju_merger_output, m_remnant), H5T_NATIVE_DOUBLE);
-        H5Tinsert(merger_type, "time", HOFFSET(ketju_merger_output, time), H5T_NATIVE_DOUBLE);
-        H5Tinsert(merger_type, "redshift", HOFFSET(ketju_merger_output, redshift), H5T_NATIVE_DOUBLE);
+        hid_t merger_type = ketju_merger_type();
         dims[0] = 0;
         space = H5Screate_simple(1, dims, maxdims);
         dcpl = H5Pcreate(H5P_DATASET_CREATE);
@@ -3221,7 +3257,7 @@ static void ketju_hdf5_write_merger(ketju_merger_output *merger)
     hsize_t offset[1] = {dims[0]}, count[1] = {1};
     H5Sselect_hyperslab(sp, H5S_SELECT_SET, offset, NULL, count, NULL);
     hid_t memsp = H5Screate_simple(1, count, NULL);
-    hid_t mtype = H5Dget_type(ds);
+    hid_t mtype = ketju_merger_type();
     H5Dwrite(ds, mtype, memsp, sp, H5P_DEFAULT, merger);
     H5Tclose(mtype); H5Sclose(memsp); H5Sclose(sp); H5Dclose(ds);
 }
