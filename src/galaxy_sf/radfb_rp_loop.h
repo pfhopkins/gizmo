@@ -42,6 +42,17 @@
 #include "../declarations/gpu_rng.h"            /* gizmo_gpu_rand_double */
 #include "../radiation/rt_functions.h"          /* rt_kappa, RT_FREQ_BIN_FIRE_* */
 
+/* key of a radiation-pressure draw: with GALSF_SINGLE_STARS_FROM_IMF the identity key (any rank count shares the draws), else the event key */
+template <class Particle>
+GIZMO_RNG_INLINE uint64_t rp_draw_rng_key(const Particle &p)
+{
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    return gizmo_rng_particle_identity_key(p);
+#else
+    return gizmo_rng_particle_event_key(p);
+#endif
+}
+
 /* No KOKKOS_INLINE_FUNCTION fallback here — Kokkos_Core.hpp is included
  * unconditionally above. This Spec carries device-callable pair-kernel
  * accessors; misordered includes must compile-fail loudly, not silently
@@ -119,7 +130,7 @@ struct RadFBRPLocalIn {
                                            * by separation there is meaningless. */
     MyFloat        dE_over_c;             /* total photon momentum budget this step */
     MyFloat        f_lum_ion;             /* ionizing luminosity fraction */
-    uint64_t       rng_key;               /* the star's event key (gizmo_rng_particle_event_key), for the pair draw */
+    uint64_t       rng_key;               /* the star's key (rp_draw_rng_key), for the pair draw */
     /* Staged kick-weight denominator. Iter 0 = 0 at populate; written by iteration 0's
      * after_iter from accum.wt_sum before iter 1 dispatch. DOUBLE,
      * not MyFloat — legacy computes the denominator in double and narrowing
@@ -333,7 +344,7 @@ static void radfb_rp_pair_kick(
     double dv_imparted = (double)loc.delta_v_imparted_rp;
     double prob = (dv_ms + dv_ss) / dv_imparted;
     if (prob > 1.0) { dv_imparted *= prob; prob = 1.0; }
-    double p_rand = gizmo_gpu_rand_double(gizmo_rng_combine(loc.rng_key, gizmo_rng_particle_event_key(Pj)),
+    double p_rand = gizmo_gpu_rand_double(gizmo_rng_combine(loc.rng_key, rp_draw_rng_key(Pj)),
                                            gizmo_rng_event_counter(RP_PAIR_GATE_RNG_SALT, scalars.rng_ti_counter, 0));
     if (p_rand >= prob) return;
 

@@ -43,6 +43,22 @@ double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_
     return gizmo_gpu_rand_double(particle_event_rng_key(i), gizmo_rng_event_counter(site_salt, event, draw_index));
 }
 
+/* key of a single-star model draw: with GALSF_SINGLE_STARS_FROM_IMF the identity key, so runs on any rank count share the draws; else the event key */
+uint64_t single_star_draw_rng_key(int i)
+{
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    return gizmo_rng_particle_identity_key(P[i]);
+#else
+    return gizmo_rng_particle_event_key(P[i]);
+#endif
+}
+
+/* particle_random_number on single_star_draw_rng_key */
+double single_star_random_number(int i, uint64_t site_salt, uint64_t event, uint64_t draw_index)
+{
+    return gizmo_gpu_rand_double(single_star_draw_rng_key(i), gizmo_rng_event_counter(site_salt, event, draw_index));
+}
+
 /* returns the number of cpu-ticks in seconds that have elapsed. (or the wall-clock time) */
 double my_second(void)
 {

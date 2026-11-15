@@ -137,7 +137,7 @@ static int hii_prepare_source(int i, double dt, double stellum, HIISourcePrep& s
     src.i = i; src.dt = dt;
     src.mionizable = mionizable; src.RHII_initial = RHII; src.RHIIMAX = RHIIMAX;
     static constexpr uint64_t HII_SOURCE_RNG_SALT = gizmo_loop_rng_salt("hii_region_source");
-    src.prandom = particle_random_number(i, HII_SOURCE_RNG_SALT, (uint64_t)All.Ti_Current, 0);
+    src.prandom = single_star_random_number(i, HII_SOURCE_RNG_SALT, (uint64_t)All.Ti_Current, 0);
     src.R_for_NL = 1.26 * RHIIMAX; /* covers the full RHII expansion */
     if(src.R_for_NL < 0.5*h_i) src.R_for_NL = 0.5*h_i;
     return (src.prandom < 5.0*mionizable/P[i].Mass); /* above this the source cannot ionize anything of interest */

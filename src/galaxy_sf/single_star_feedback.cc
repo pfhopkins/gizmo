@@ -260,7 +260,7 @@ double single_star_eventrates(int i, double dt)
 #ifdef TEST_SINGLE_STARS_TYPE_IA_RATE_MULTIPLIER
         p *= (TEST_SINGLE_STARS_TYPE_IA_RATE_MULTIPLIER); /* test only */
 #endif
-        if(particle_random_number(i, SINGLE_STAR_IA_RNG_SALT, (uint64_t)All.Ti_Current, 0) < p) {
+        if(single_star_random_number(i, SINGLE_STAR_IA_RNG_SALT, (uint64_t)All.Ti_Current, 0) < p) {
             SingleStars.M_at_SN_trigger[s] = P[i].Mass; P[i].SNe_ThisTimeStep = 1; return 1;
         }
 #endif

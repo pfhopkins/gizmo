@@ -589,10 +589,10 @@ void star_formation_parent_routine(void)
                 
                 prob = P[i].Mass / mass_of_star * pfac;
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* draw the star's mass first; P = (m_cell / M_star) pfac keeps the SFR on average (LYRA, Gutcke+21; as the reference implementation, P may exceed 1 when M_star < m_cell) */
-                double M_drawn = single_star_imf_draw_massweighted(All.IMFSampleMinMass, gizmo_rng_combine(particle_event_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);
+                double M_drawn = single_star_imf_draw_massweighted(All.IMFSampleMinMass, gizmo_rng_combine(single_star_draw_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);
 #ifdef GALSF_SINGLE_STARS_POPIII
                 const bool popIII_draw = single_star_popIII_cell(i);
-                if(popIII_draw) {M_drawn = single_star_popIII_draw(gizmo_rng_combine(particle_event_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);}
+                if(popIII_draw) {M_drawn = single_star_popIII_draw(gizmo_rng_combine(single_star_draw_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);}
 #endif
 #ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY /* above nHcutoffSF the star forms now, its mass drawn number-weighted */
                 bool instant_sf = (CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS > All.nHcutoffSF) && (P[i].Mass > 0);
@@ -605,7 +605,7 @@ void star_formation_parent_routine(void)
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
                 if(All.Ti_Current < CellP[i].PhotoionizedUntil) {instant_sf = false;}
 #endif
-                if(instant_sf) {M_drawn = single_star_imf_draw_numberweighted(All.IMFSampleMinMass, gizmo_rng_combine(particle_event_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);}
+                if(instant_sf) {M_drawn = single_star_imf_draw_numberweighted(All.IMFSampleMinMass, gizmo_rng_combine(single_star_draw_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);}
 #endif
                 prob = (P[i].Mass / (M_drawn / UNIT_MASS_IN_SOLAR)) * pfac;
 #ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY
@@ -622,7 +622,7 @@ void star_formation_parent_routine(void)
 #endif
                 
                 static constexpr uint64_t STAR_FORMATION_RNG_SALT = gizmo_loop_rng_salt("star_formation");
-                if(particle_random_number(i, STAR_FORMATION_RNG_SALT, (uint64_t)All.Ti_Current, 0) < prob)    /* ok, make a star */
+                if(single_star_random_number(i, STAR_FORMATION_RNG_SALT, (uint64_t)All.Ti_Current, 0) < prob)    /* ok, make a star */
                 {
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* a zero-mass single star that collects its drawn mass after this loop; its mass enters the SF statistics there */
                     {int i_star = spawn_star_from_gas(i, 0, stars_spawned);

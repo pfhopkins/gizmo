@@ -767,7 +767,7 @@ static int make_sn_ejecta_cell(int i, int n_particles_split)
     if(P[tmpl].ID_generation > 30) {P[tmpl].ID_generation = 0;}
     P[j].ID_generation = P[tmpl].ID_generation;
     static constexpr uint64_t EJECTA_CELL_DIRECTION_RNG_SALT = gizmo_loop_rng_salt("ejecta_cell_direction");
-    double phi = 2.0*M_PI*particle_random_number(i, EJECTA_CELL_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 0), cth = 2.0*(particle_random_number(i, EJECTA_CELL_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 1)-0.5), sth = sqrt(1.-cth*cth), dr = 0.05 * P[tmpl].KernelRadius;
+    double phi = 2.0*M_PI*single_star_random_number(i, EJECTA_CELL_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 0), cth = 2.0*(single_star_random_number(i, EJECTA_CELL_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 1)-0.5), sth = sqrt(1.-cth*cth), dr = 0.05 * P[tmpl].KernelRadius;
     Vec3<double> n_dir; n_dir[0] = sth*cos(phi); n_dir[1] = sth*sin(phi); n_dir[2] = cth;
     P[j].Pos = P[i].Pos + n_dir * dr;
     P[j].Vel = P[i].Vel; CellP[j].VelPred = P[i].Vel; CellP[j].HydroAccel = {}; P[j].dp = {};
@@ -841,8 +841,8 @@ int split_particle_i(int i, int n_particles_split, double r_near)
     int k; double phi,cos_theta;
     k=0;
     static constexpr uint64_t SPLIT_DIRECTION_RNG_SALT = gizmo_loop_rng_salt("split_direction");
-    phi = 2.0*M_PI*particle_random_number(i, SPLIT_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 0); // random from 0 to 2pi //
-    cos_theta = 2.0*(particle_random_number(i, SPLIT_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 1)-0.5); // random between 1 to -1 //
+    phi = 2.0*M_PI*single_star_random_number(i, SPLIT_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 0); // random from 0 to 2pi //
+    cos_theta = 2.0*(single_star_random_number(i, SPLIT_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 1)-0.5); // random between 1 to -1 //
     /* set d_r to the Voronoi-optimal daughter offset: d = (V_daughter)^{1/NDIMS}/2 = 2^{-(NDIMS+1)/NDIMS} * dx_eff,
        placing each daughter at its sub-cell centroid. minimizes O(d^2) perturbations to neighbor density estimates
        while maintaining a glass-like configuration. dimension-general: 0.397*dx_eff in 3D, 0.354 in 2D, 0.25 in 1D */
@@ -1036,7 +1036,7 @@ int split_particle_i(int i, int n_particles_split, double r_near)
         {
             norm = 1/sqrt(norm);
             static constexpr uint64_t SPLIT_AXIS_SIGN_RNG_SALT = gizmo_loop_rng_salt("split_axis_sign");
-            double qq = particle_random_number(i, SPLIT_AXIS_SIGN_RNG_SALT, (uint64_t)All.Ti_Current, 0);
+            double qq = single_star_random_number(i, SPLIT_AXIS_SIGN_RNG_SALT, (uint64_t)All.Ti_Current, 0);
             if(qq < 0.5) {norm *= -1.;} // randomly decide which direction along principle axis to orient split (since this is arbitrary, this helps prevent accidental collisions)
             for(k=0;k<NUMDIMS;k++) {dp[k] *= norm;}
             /* project dp onto the isodensity plane (perpendicular to grad_rho): placing daughters on the same

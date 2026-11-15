@@ -44,6 +44,8 @@ void turb_accel_refresh_for_new_step(int i, integertime ti_previous_step_start);
 void log_turb_temp(void);
 uint64_t particle_event_rng_key(int i);
 double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_t draw_index);
+uint64_t single_star_draw_rng_key(int i);
+double single_star_random_number(int i, uint64_t site_salt, uint64_t event, uint64_t draw_index);
 double mpi_report_comittable_memory(long long BaseMem, int verbose);
 int report_node_memory_headroom(long long *avail_kb, long long *commit_headroom_kb);
 int gizmo_node_headroom_admits(long long bytes_this_rank);

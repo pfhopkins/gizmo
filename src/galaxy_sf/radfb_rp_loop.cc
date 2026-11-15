@@ -394,7 +394,7 @@ int radfb_rp_local_fill(int i,
 #endif
 
     static constexpr uint64_t RP_SOURCE_GATE_RNG_SALT = gizmo_loop_rng_salt("radiation_pressure_source_gate");
-    double p_random = gizmo_gpu_rand_double(gizmo_rng_particle_event_key(P_host[i]), gizmo_rng_event_counter(RP_SOURCE_GATE_RNG_SALT, (uint64_t)HostAll->Ti_Current, 0));
+    double p_random = gizmo_gpu_rand_double(rp_draw_rng_key(P_host[i]), gizmo_rng_event_counter(RP_SOURCE_GATE_RNG_SALT, (uint64_t)HostAll->Ti_Current, 0));
 #ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
     (void) p_random; /* single stars: every step, the full budget */
 #else
@@ -407,7 +407,7 @@ int radfb_rp_local_fill(int i,
     loc->SourceKernelRadius = (MyFloat)P_host[i].KernelRadius;
     loc->dE_over_c    = (MyFloat)dE_over_c;
     loc->f_lum_ion    = (MyFloat)f_lum_ion;
-    loc->rng_key      = gizmo_rng_particle_event_key(P_host[i]);
+    loc->rng_key      = rp_draw_rng_key(P_host[i]);
     loc->wt_sum       = 0;
     loc->wt_area      = 0;                /* zero at iter-0 entry; filled by
                                            * iteration 0's after_iter before iter 1 */
