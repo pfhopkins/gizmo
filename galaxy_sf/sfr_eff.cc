@@ -19,6 +19,7 @@ static constexpr uint64_t SINK_SEED_MASS_RNG_SALT = gizmo_loop_rng_salt("sink_se
 #include "../mesh/kernel.h"
 #ifdef GALSF_RESOLVEDISM
 #include "resolvedism_rng.h"
+#include "resolvedism_sf_draw.h"
 #endif
 #ifdef GALSF_RESOLVEDISM_POPIII_STARS
 #include "resolvedism_popIII.h"
@@ -534,6 +535,9 @@ void star_formation_parent_routine(void)
     sf_T = (double *)mymalloc_movable(&sf_T, "sf_T", sf_buf_size * sizeof(double));
     sf_id = (long long *)mymalloc_movable(&sf_id, "sf_id", sf_buf_size * sizeof(long long));
 #endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+    std::vector<double> sf_event_mass; /* stellar masses [Msun] formed by one SF event */
+#endif
 
     for (int i : ActiveParticleList)
     {
@@ -591,6 +595,7 @@ void star_formation_parent_routine(void)
                 prob = P[i].Mass / mass_of_star * pfac;
 
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                int sf_one_star = 0; /* forced or test star: exactly one, mass M_drawn_imf */
                 /* LYRA-style: draw stellar mass FIRST, then compute probability.
                  * P = (M_cell / M_star) * pfac  (Gutcke+ 2021, eq. 3).
                  * Massive stars have low P; low-mass stars have high P.
@@ -598,8 +603,8 @@ void star_formation_parent_routine(void)
 #ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
                 int sf_channel = sf_channel_for_cell(i);
                 double M_drawn_imf = 0, m_drawn_code = 0;
+                unsigned long long imf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_DRAW_IMF_MASS); /* rank-independent per-event stream */
                 if(sf_channel == SF_CHANNEL_STELLA) { /* SSP cells keep the FIRE probability */
-                    unsigned long long imf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_DRAW_IMF_MASS); /* rank-independent per-event stream */
                     M_drawn_imf = draw_one_mass_from_kroupa_IMF(&imf_rng);
                     m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
                     prob = (P[i].Mass / m_drawn_code) * pfac;
@@ -624,7 +629,7 @@ void star_formation_parent_routine(void)
                         if(P[i].ID == 2 && All.TestStarMass2 > 0) {M_drawn_imf = All.TestStarMass2;}
                         if(P[i].ID == 3 && All.TestStarMass3 > 0) {M_drawn_imf = All.TestStarMass3;}
                         m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
-                        prob = 2.0; /* always succeeds the random check below */
+                        prob = 2.0; sf_one_star = 1; /* always succeeds the random check below */
                     }
                 }
 #endif
@@ -650,7 +655,7 @@ void star_formation_parent_routine(void)
                     /* forced formation skips the 1/M acceptance: redraw by number (accept mass-weighted draw with M_min/M) */
                     double m_lo = DMAX(All.IMFSampleMinMass, 0.08);
                     do {M_drawn_imf = draw_one_mass_from_kroupa_IMF(&imf_rng);} while(resolvedism_rng_uniform(&imf_rng) > m_lo / M_drawn_imf);
-                    m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
+                    m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR; sf_one_star = 1;
 #endif
                     prob = 2.0;}}
 #endif
@@ -664,13 +669,30 @@ void star_formation_parent_routine(void)
                 
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
                 unsigned long long sf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_DRAW_SF_ACCEPT);
-                if(resolvedism_rng_uniform(&sf_rng) < prob)    /* ok, make a star */
+                int n_sf_event = 0;
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                if(sf_channel != SF_CHANNEL_STELLA) {sf_event_mass.assign(1, M_drawn_imf); n_sf_event = (resolvedism_rng_uniform(&sf_rng) < prob);} else
+#endif
+                if(sf_one_star) {sf_event_mass.assign(1, M_drawn_imf); n_sf_event = 1;}
+                else {
+                    double sf_M_lo = DMAX(All.IMFSampleMinMass, 0.08);
+#ifdef GALSF_RESOLVEDISM_POPIII_STARS
+                    if(popIII_draw) {sf_M_lo = All.PopIII_IMF_Mmin;}
+                    auto sf_draw = [&]() {return popIII_draw ? resolvedism_draw_popIII_mass(&imf_rng) : draw_one_mass_from_kroupa_IMF(&imf_rng);};
+#else
+                    auto sf_draw = [&]() {return draw_one_mass_from_kroupa_IMF(&imf_rng);};
+#endif
+                    n_sf_event = resolvedism_sf_event(P[i].Mass * pfac * UNIT_MASS_IN_SOLAR, sf_M_lo, M_drawn_imf, sf_draw, [&]() {return resolvedism_rng_uniform(&sf_rng);}, sf_event_mass);
+                }
+                for(int k_sf = 0; k_sf < n_sf_event && P[i].Type == 0; k_sf++)    /* ok, make a star */
 #else
                 static constexpr uint64_t STAR_FORMATION_RNG_SALT = gizmo_loop_rng_salt("star_formation");
                 if(particle_random_number(i, STAR_FORMATION_RNG_SALT, (uint64_t)All.Ti_Current, 0) < prob)    /* ok, make a star */
 #endif
                 {
-                    
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                    M_drawn_imf = sf_event_mass[k_sf]; m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
+#endif
 #ifdef SINK_SEED_FROM_LOCALGAS
                     /* before making a star, assess whether or not we can instead make a sink seed particle */
                     p = return_probability_of_this_forming_sink_from_seed_model(i);

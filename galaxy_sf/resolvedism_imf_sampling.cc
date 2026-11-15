@@ -10,6 +10,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "resolvedism_star_age.h"
+#include "resolvedism_sf_draw.h"
 #include "resolvedism_selfcheck.h"
 #include "resolvedism_fb_shared.h"
 #include "resolvedism_rng.h"
@@ -45,22 +46,6 @@
 
 static const double M_max = 350.;
 
-/* Mass-weighted Kroupa IMF: M * dN/dM.  Slopes are -0.3 (M<0.5) and -1.3 (M>=0.5).
-   Used with the LYRA probability P = M_cell/M_star * pfac, where the 1/M in P
-   cancels the extra M here, giving the correct number-weighted Kroupa for formed stars. */
-static inline double drawMassFromIMF(double x)
-{
-    double A = 0.126512;
-    if(x < 0.5) return 2.0 * A * pow(x, -0.3);
-    return A * pow(x, -1.3);
-}
-
-/* Envelope function for rejection sampling (upper bound of mass-weighted IMF) */
-static inline double envelope_function(double x)
-{
-    return 2.0 * 0.126512 * pow(x, -0.3);
-}
-
 /* Public function: draw a single stellar mass from the mass-weighted Kroupa IMF via rejection sampling.
  * The mass-weighting is cancelled by the LYRA probability P = M_cell/M_star * pfac,
  * giving the correct number-weighted Kroupa distribution for formed stars.
@@ -70,13 +55,7 @@ double draw_one_mass_from_kroupa_IMF(unsigned long long *rng)
     double M_min = All.IMFSampleMinMass;
     if(M_min < 0.08) M_min = 0.08;
     if(M_min > M_max) M_min = M_max * 0.99; /* safety */
-    double M_drawn;
-    do {
-        /* Proposal from CDF inversion of envelope M^{-0.3}: integral gives M^{0.7} */
-        M_drawn = pow((pow(M_max, 0.7) - pow(M_min, 0.7)) * resolvedism_rng_uniform(rng)
-                      + pow(M_min, 0.7), 1.0 / 0.7);
-    } while(resolvedism_rng_uniform(rng) > (drawMassFromIMF(M_drawn) / envelope_function(M_drawn)));
-    return M_drawn;
+    return kroupa_draw_mass_weighted([rng]() {return resolvedism_rng_uniform(rng);}, M_min, M_max);
 }
 
 /* Public function: finalize a newly sampled star — set up luminosity, winds, Ia fields.
