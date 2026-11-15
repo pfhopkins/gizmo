@@ -6,6 +6,7 @@ Three cases (make_ketju_star_collision_ics.py): head-on and grazing (pericentre 
 mass and its CoM velocity (the grazing pair's CoM is pulled by its bound third star, hence the tolerance)."""
 
 import glob
+import os
 import subprocess
 import sys
 
@@ -13,7 +14,7 @@ import h5py
 import numpy as np
 import pytest
 
-from gizmo.test import build_and_run_test, clean_test_outputs
+from gizmo.test import build_and_run_test, build_gizmo_for_test, clean_test_outputs, run_test
 
 TEST_NAME = "ketju_star_collision"
 TEST_DIR = f"test/{TEST_NAME}"
@@ -79,3 +80,18 @@ def test_ketju_star_collision_triple():
     lines = [l for l in log.splitlines() if l.startswith("KETJU ENERGY")]
     de_tot = float(dict(kv.split("=") for kv in lines[-1].split() if "=" in kv and not kv.startswith("t="))["dE"])
     assert abs(de_tot) < 1e-6
+
+
+def test_ketju_star_collision_snapshot_start():
+    """A snapshot start (RestartFlag 2) into an empty output directory creates ketju_output.hdf5 and fills its timesteps."""
+    subprocess.run([sys.executable, "make_ketju_star_collision_ics.py"], cwd=TEST_DIR, check=True)
+    clean_test_outputs(TEST_NAME)
+    build_gizmo_for_test(TEST_NAME, 1)
+    cwd = os.getcwd()
+    try:
+        os.chdir(TEST_DIR)
+        run_test(TEST_NAME, 1, 1, restart_flag=2)
+    finally:
+        os.chdir(cwd)
+    with h5py.File(f"{TEST_DIR}/output/ketju_output.hdf5", "r") as h:
+        assert len(h["timesteps"]) > 0
