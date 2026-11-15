@@ -35,13 +35,13 @@ UnitMass_in_g                   1.989e43          % 1e10 Msun
 UnitVelocity_in_cm_per_s        1.0e5             % 1 km/s
 UnitMagneticField_in_gauss      1.0
 
-%---- Gravity softening (ADAPTIVE_GRAVSOFT_FORALL for gas+stars)
-%---- These are MINIMUM softenings when adaptive softening is on
+%---- Gravity softening (ADAPTIVE_GRAVSOFT_FORALL=1: gas adaptive, stars fixed)
+%---- SofteningGas is the minimum of the adaptive gas softening; the others are fixed
 SofteningGas                    1.0e-4            % 0.1 pc min for gas (Type 0)
 SofteningHalo                   0.050             % 50 pc DM (Type 1)
 SofteningDisk                   0.020             % 20 pc disk stars (Type 2)
 SofteningBulge                  0.020             % 20 pc bulge (Type 3)
-SofteningStars                  1.0e-4            % 0.1 pc min for spawned stars (Type 4)
+SofteningStars                  3.0e-6            % 0.003 pc fixed star softening (Type 4)
 SofteningBndry                  0.005             % 5 pc sink/BH (Type 5)
 
 %---- Kernel
@@ -110,7 +110,7 @@ InitialMetallicity              1.0             % same as InitMetallicity
 MaxPISearchRadius               0.05              % maximum PI search radius [kpc] (50 pc, matching gizmo2017)
 
 %---- KETJU (KETJU_REGULARIZATION + KETJU_MERGE_STARS, ADAPTIVE_GRAVSOFT_FORALL=1): best set of the N-body matrix (KOf); uncomment all
-%SofteningStars                 1.0e-6            % 1e-3 pc fixed star softening (replaces the 0.1 pc line above)
+%SofteningStars                 1.0e-6            % 1e-3 pc star softening for KETJU (replaces the line above)
 %MaxSizeTimestep                6.25e-6           % 1/8 of the default 50 kyr
 %KetjuRegionRadius              5.0e-6            % 1000 AU
 %KetjuMinStarMass               0.5e-11           % 0.05 Msun: every sampled star can be a region centre

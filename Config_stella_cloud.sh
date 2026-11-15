@@ -98,7 +98,7 @@ GRAVITY_NOT_PERIODIC             % as STARFORGE: isolated cloud gravity
 #SHIFTBACK_ON_OUTPUT
 
 ## -- Gravity & density --
-ADAPTIVE_GRAVSOFT_FORALL=1+16    % adaptive softening for gas (Type 0) + stars (Type 4)
+ADAPTIVE_GRAVSOFT_FORALL=1    % adaptive softening for gas only; stars use fixed SofteningStars
 TIDAL_TIMESTEP_CRITERION         % tidal tensor timestep (more accurate for few-body, Grudic+2021)
 #ADAPTIVE_TREEFORCE_UPDATE=0.0625 % disabled — stales the tree columns and radiation fields
 DO_DENSITY_AROUND_NONGAS_PARTICLES

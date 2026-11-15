@@ -107,7 +107,7 @@ SGCHEM_DGR_REMY_RUYER14                  % no live dust: DGR follows Remy-Ruyer+
 #SGCHEM_KEEP_IC_ABUNDANCES             % keep IC SGChemTracAbund on fresh starts
 
 ########## Gravity / N-body / KETJU ##########
-ADAPTIVE_GRAVSOFT_FORALL=1+16            % adaptive softening for gas + stars
+ADAPTIVE_GRAVSOFT_FORALL=1            % adaptive softening for gas only; stars use fixed SofteningStars
 TIDAL_TIMESTEP_CRITERION                 % tidal-tensor timestep criterion
 #ADAPTIVE_TREEFORCE_UPDATE=0.0625        % stale tree forces — incompatible with the tree columns and fluxes
 KETJU_REGULARIZATION                     % MSTAR chain regularisation for stellar encounters  [excl FORCE_EQUAL_TIMESTEPS]
