@@ -15,11 +15,11 @@
 #include <algorithm>
 #include <hdf5.h>
 
-#define STELLA_TABLES_REF "a4830ab18252c8786539e95598fc789f3b6d5142" /* stella-tables commit; keep in step with scripts/get_stella_tables.sh */
+#define STELLA_TABLES_REF "aa87301dc1ffbab31f7ddcde30d8364a0d245c53" /* stella-tables commit; keep in step with scripts/get_stella_tables.sh */
 
 static const char *const StellaTablesExpected[][2] = { /* basename, content hash */
-    {"stellar_tables_unified.hdf5",  "14a23087b3d22c09eefa0d6097ae059f92598fb55cf2f86687419dcced5efada"},
-    {"stellar_wind_cumulative.hdf5", "5ad360969afac76fc0bec10e0afddf2a210fec1b47787ce9374215c7d426ae50"},
+    {"stellar_tables_unified.hdf5",  "7593d9a85ff134441d0e417302b5fd1d40da7aba04f0d8727e2dca9ec3213613"},
+    {"stellar_wind_cumulative.hdf5", "89f40e36aa5abe3ed3846973204dba5fec0b2598f5af2d9b0a9fbd9495d49285"},
     {"energy-table-x.txt",           "e1b03445ee95b020e611f73d3d84ca395378c607517e3367ceb18d95a712b96d"},
     {"eh2-table.txt",                "d423c682d6e9036edc9100e9e2ee990084ee191d500289dc485ce0a486f4450b"},
     {"H2-cooling-ratios.dat",        "13cf3c756a6b9e4e993ba9fb5fa93883e1dedd788d6415149497ef1fee893a0d"},
