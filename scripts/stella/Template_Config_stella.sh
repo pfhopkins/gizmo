@@ -4,7 +4,7 @@
 #COSMIC_RAY_FLUID                       # CR fluid: drop CR_BACKGROUND_IONRATE_ATTENUATED; zeta then comes from the fluid
 #CRFLUID_DIFFUSION_MODEL=7
 #CRFLUID_INJECTION_AT_SHOCKS=(0.1)
-#KETJU_REGULARIZATION                   # replaces ADAPTIVE_GRAVSOFT_FORALL=1+16 by =1 (fixed star softening)
+#KETJU_REGULARIZATION                   # KETJU regularisation of close star encounters (stars use fixed softening)
 #KETJU_MERGE_STARS
 #KETJU_MERGE_BH
 #GALSF_SINGLE_STARS_BH_PROMOTION
