@@ -58,7 +58,7 @@ def test_zeldovich(num_mpi_ranks, num_omp_threads, extra_config_flags):
         boxsize = F["Header"].attrs["BoxSize"]
 
     # Exact solution x is in Mpc centered on 0; sim box is in kpc from 0 to BoxSize
-    # BoxSize = 64000 kpc = 64 Mpc. Pancake is at box center, so shift by half a box.
+    # BoxSize = 64000 kpc = 64 Mpc. The pancake sits at the periodic origin, so wrap x into [-L/2, L/2).
     box_mpc = boxsize / 1000.0
     x_sim_mpc = (coords[:, 0] / 1000.0 + box_mpc / 2) % box_mpc - box_mpc / 2
 

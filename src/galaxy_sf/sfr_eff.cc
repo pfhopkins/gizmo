@@ -387,7 +387,7 @@ double get_starformation_rate(int i, int mode)
 
 #if (SINGLE_STAR_SINK_FORMATION & 8) /* restrict to cell which neither 'sees' or 'is seen by' a sink too close */
     if(P[i].Sink_Ngb_Flag) {rateOfSF=0;} /* cell cannot be 'seen' by -any- sink as a potential interacting neighbor */
-    if(P[i].Min_Distance_to_Sink < P[i].KernelRadius) {rateOfSF=0;} /* cell does not overlap with a sink */
+    if(P[i].Min_Distance_to_Sink < DMAX(P[i].KernelRadius, SinkParticle_GravityKernelRadius)) {rateOfSF=0;} /* cell does not overlap with a sink, nor lie within any sink's softening (holds even when that sink is inactive this step) */
 #if (defined(COOLING) || defined(EOS_GMC_BAROTROPIC)) // if the simulation has opacity limit physics
     if(P[i].Min_Distance_to_Sink * All.cf_atime * UNIT_LENGTH_IN_AU < 0.1) {rateOfSF=0;} /* distance to nearest sink is much greater than the size of a Larson core (at least a few AU), else the core should be accreted by the pre-existing protostar star */
 #endif
@@ -642,6 +642,7 @@ void star_formation_parent_routine(void)
                         if(P[i].FluidType == FLUID_DM) { P[i].Type = 3; } else /* dark fluid -> inert collisionless Type=3 */
 #endif
                         { P[i].Type = 5; }
+                        P[i].ForceSoftening = compute_force_softening_kernel_radius(i); /* the cached softening still holds the gas cell's; the sink radius below must see the new type's */
                         force_tree_note_type_presence(i);  /* the element's type is final here, so tell the standing tree before anything walks it looking for that type */
                         TimeBinCountGas[P[i].TimeBin]--;
                         num_sink_formed++;
@@ -752,6 +753,7 @@ void star_formation_parent_routine(void)
                             if(P[i_star].FluidType == FLUID_DM) { P[i_star].Type = 3; } else /* dark fluid -> inert collisionless Type=3 */
 #endif
                             { P[i_star].Type = 5; }
+                            P[i_star].ForceSoftening = compute_force_softening_kernel_radius(i_star); /* the cached softening still holds the gas cell's; the sink radius below must see the new type's */
                             force_tree_note_type_presence(i_star);  /* the element's type is final here, so tell the standing tree before anything walks it looking for that type */
                             num_sink_formed++;
                             P[i_star].Sink_Mass = DMAX(All.SeedSinkMass, DMIN(0.5*P[i_star].Mass , 0.01/UNIT_MASS_IN_SOLAR)); // if desired to make this appreciable fraction of particle mass, please do so in params file
@@ -767,13 +769,13 @@ void star_formation_parent_routine(void)
 #endif
                             TreeMomentsStaleFlag = 1; /* particle changed type/mass: tree pointers maintained by MAINTAIN_TREE_IN_REARRANGE, just refresh moments */
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
-                            P[i_star].SinkRadius = ForceSoftening_KernelRadius(i);
+                            P[i_star].SinkRadius = ForceSoftening_KernelRadius(i_star);
                             double cs = 0.2 / UNIT_VEL_IN_KMS;
 #if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED)) || defined(EOS_GMC_BAROTROPIC)
                             double nHcgs = HYDROGEN_MASSFRAC * (CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS);
                             if(nHcgs > 1e10) cs *= pow(nHcgs/1e10, 1./5); // if we're getting opacity-limited then we can set a smaller sink radius, since cs ~ n^1/5
 #endif
-                            P[i_star].SinkRadius = DMAX(0.79 * P[i_star].Mass * All.G / (cs * cs), ForceSoftening_KernelRadius(i)); // volume-equivalent particle radius R= (3V/(4PI))^(1/3) at the density where cell length = Jeans length/2
+                            P[i_star].SinkRadius = DMAX(0.79 * P[i_star].Mass * All.G / (cs * cs), ForceSoftening_KernelRadius(i_star)); // volume-equivalent particle radius R= (3V/(4PI))^(1/3) at the density where cell length = Jeans length/2
 #endif
 #ifdef SINGLE_STAR_FIND_BINARIES
                             P[i_star].Min_Sink_OrbitalTime=MAX_REAL_NUMBER; P[i_star].comp_dx = {}; P[i_star].comp_dv = {}; P[i_star].is_in_a_binary = 0;

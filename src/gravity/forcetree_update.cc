@@ -7,14 +7,14 @@
 #include <cstring>
 #include <cstdint>
 #include <algorithm>
-#include <vector>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../core/timestep_functions.h"   /* dilation, for the motion bound */
 #include "force_node_drift_sync.h"
 #include "gpu_gravity_tree.h"        /* SoA mirror: vmax coherence for widen-on-open */
 #include "gravtree_moment_kernel.h"   /* the shared node-motion arithmetic */
-#include "../declarations/box_distance.h"   /* box_nearest_image, for gravity_cover_set_position */
+#include "gravity_box_distance.h"     /* gravity's periodicity, for the box a relocated particle needs */
+#include "../declarations/box_distance.h"   /* box_nearest_image, for the test-only box audit */
 
 /* GPU replacement for force_update_tree. */
 extern "C" void gpu_force_update_tree(void);
@@ -133,6 +133,17 @@ static inline int force_soa_raise_vmax(int no, MyFloat vmax_aos)   /* returns th
     const MyGravFloat v = (MyGravFloat) vmax_aos;
     if(soa->vmax[k] < v) {soa->vmax[k] = v;}
     return k;
+}
+
+/* Raise the SoA mirror of a node's box length to the AoS value, as for vmax above: a longer length on the mirror's own (equal or older)
+ * node time can only over-widen the walk, so this needs neither a drift nor the mirror's time, and it holds on a tree already
+ * certified current, whose mirror no later repair would revisit. */
+static inline void force_soa_raise_len(int no, MyFloat len_aos)
+{
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->len) {return;}
+    const int k = gpu_gravity_tree_mirror_slot(no);
+    if(k >= 0 && soa->len[k] < len_aos) {soa->len[k] = len_aos;}
 }
 
 /* The same raise for a node that has just been kicked, which also marks the mirror as holding a
@@ -284,18 +295,19 @@ inline int marked_top_level_slot(const int *node_slot, int no)
  * and are re-sized when the top-level tree changes size. */
 static int  *g_pending_topnode_list  = NULL;   /* [NTopnodes] */
 static int  *g_pending_topnode_stamp = NULL;   /* [NTopnodes]: == g_pending_stamp when listed */
+static MyFloat *g_pending_topnode_cover = NULL; /* [NTopnodes]: side length a listed node must reach to hold a placed particle, 0 if none */
 static int   g_pending_topnode_n     = 0;
 static int   g_pending_topnode_cap   = 0;
 static int   g_pending_stamp         = 1;
-static std::vector<int> g_cover_topnodes;      /* top-level nodes widened by gravity_cover_set_position since the last flush */
 
 static void pending_topnodes_ensure(void)
 {
     if(g_pending_topnode_cap == NTopnodes && g_pending_topnode_list) {return;}
-    free(g_pending_topnode_list); free(g_pending_topnode_stamp);
+    free(g_pending_topnode_list); free(g_pending_topnode_stamp); free(g_pending_topnode_cover);
     g_pending_topnode_cap   = NTopnodes;
     g_pending_topnode_list  = (int *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(int));
     g_pending_topnode_stamp = (int *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(int));
+    g_pending_topnode_cover = (MyFloat *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(MyFloat));
     g_pending_topnode_n = 0;
     g_pending_stamp = 1;
 }
@@ -303,7 +315,6 @@ static void pending_topnodes_ensure(void)
 void gravity_clear_pending_motion_bounds(void)
 {
     g_pending_topnode_n = 0;
-    g_cover_topnodes.clear();
     g_pending_stamp++;
     if(g_pending_stamp == 0) {g_pending_stamp = 1; if(g_pending_topnode_stamp) {memset(g_pending_topnode_stamp, 0, (size_t)g_pending_topnode_cap * sizeof(int));}}
 }
@@ -326,6 +337,7 @@ static inline void list_pending_topnode(int no)
     if(t >= 0 && t < g_pending_topnode_cap && g_pending_topnode_stamp[t] != g_pending_stamp)
     {
         g_pending_topnode_stamp[t] = g_pending_stamp;
+        g_pending_topnode_cover[t] = 0;
         g_pending_topnode_list[g_pending_topnode_n++] = no;
     }
 }
@@ -341,25 +353,6 @@ static void raise_chain_motion_bound(int i, int stop_at_bounded)
         /* An insertion lists its top-level nodes whether or not they were raised here, so other ranks'
          * copies never depend on how an earlier local raise was published. */
         if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) {list_pending_topnode(no);}
-    }
-}
-
-/* Particle i's position was set, not drifted: widen every node box above it to hold it. Node centres do not move and the
- * walk widens a length from its node's own time, so a raised length only errs wide. */
-void gravity_cover_set_position(int i)
-{
-    if(i < 0 || i >= All.TreeParticleSlots || !Father || !Nodes || !Extnodes) {return;}
-    for(int no = Father[i]; no >= 0; no = Nodes[no].u.d.father)
-    {
-        double dx = P[i].Pos[0] - Nodes[no].center[0], dy = P[i].Pos[1] - Nodes[no].center[1], dz = P[i].Pos[2] - Nodes[no].center[2];
-        box_nearest_image(dx, dy, dz, -1);
-        const double need = 2 * DMAX(fabs(dx), DMAX(fabs(dy), fabs(dz)));
-        if((double) Nodes[no].len + TREE_NODE_WIDENING_DELTA(Extnodes[no].vmax, get_drift_factor_undilated(Nodes[no].Ti_current, All.Ti_Current)) >= need) {continue;} /* the length the walk uses now */
-        Nodes[no].len = (MyFloat) (need * (1 + 1e-6));
-        struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
-        const int k = gpu_gravity_tree_mirror_slot(no);
-        if(soa && soa->len && k >= 0 && soa->len[k] < Nodes[no].len) {soa->len[k] = Nodes[no].len;}
-        if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) {g_cover_topnodes.push_back(no);}
     }
 }
 
@@ -390,6 +383,50 @@ void gravity_note_inserted_motion_bound(int i)
     if(P[i].Type == 0 && i >= All.MaxPartGas) {return;}
     pending_topnodes_ensure();
     raise_chain_motion_bound(i, 0);
+}
+
+/* A particle relocated discontinuously in a standing tree -- spawned beside its parent, or a sink re-centred on its accreted mass or
+ * moved toward its potential minimum -- can sit outside node boxes, which otherwise grow only with their members' motion. Widen every
+ * box above each to hold it: the whole chain, since a widened box need not lie inside its father's. A node's centre is fixed between
+ * builds and its length only grows, so a length that holds the particle now still holds it after any later drift, on this rank or on
+ * another rank's copy of a top-level node. Continuous motion (drifts, the Hermite predictor and corrector) belongs to the speed bound,
+ * not here. A new site that relocates a particle in a standing tree calls this too. Serial. */
+/* Side length node `no` needs to hold particle i. The box serves both the neighbour walks and gravity, whose periodicity can differ
+ * (GRAVITY_NOT_PERIODIC in a periodic box), so each axis takes the larger of the two distances. */
+static double node_length_to_hold(int no, int i)
+{
+    double xtmp, ytmp, ztmp; (void) xtmp; (void) ytmp; (void) ztmp; /* scratch for the periodic macros */
+    const double dx = P[i].Pos[0] - Nodes[no].center[0], dy = P[i].Pos[1] - Nodes[no].center[1], dz = P[i].Pos[2] - Nodes[no].center[2];
+    const double ngb_x = NGB_PERIODIC_BOX_LONG_X(dx,dy,dz,-1);
+    const double ngb_y = NGB_PERIODIC_BOX_LONG_Y(dx,dy,dz,-1);
+    const double ngb_z = NGB_PERIODIC_BOX_LONG_Z(dx,dy,dz,-1);
+    const double ax = DMAX(ngb_x, gravity_box_long_abs_x(dx,dy,dz,-1));
+    const double ay = DMAX(ngb_y, gravity_box_long_abs_y(dx,dy,dz,-1));
+    const double az = DMAX(ngb_z, gravity_box_long_abs_z(dx,dy,dz,-1));
+    return 2. * DMAX(ax, DMAX(ay, az));
+}
+
+void gravity_note_set_positions(const int *idx, int n)
+{
+    if(n <= 0 || !idx || !force_tree_is_allocated() || !Father || !Nodes) {return;}
+    for(int k = 0; k < n; k++)
+    {
+        const int i = idx[k];
+        if(i < 0 || i >= All.TreeParticleSlots) {continue;}
+        for(int no = Father[i]; no >= 0; no = Nodes[no].u.d.father)
+        {
+            const double need = node_length_to_hold(no, i);
+            if(Nodes[no].len >= need) {continue;}
+            Nodes[no].len = (MyFloat) (need * (1. + 1.e-6)); /* slack for roundoff */
+            force_soa_raise_len(no, Nodes[no].len);
+            if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
+            {
+                pending_topnodes_ensure(); list_pending_topnode(no);
+                const int t = no - All.TreeNodeIndexBase;
+                if(t >= 0 && t < g_pending_topnode_cap && g_pending_topnode_cover[t] < Nodes[no].len) {g_pending_topnode_cover[t] = Nodes[no].len;}
+            }
+        }
+    }
 }
 
 /* A member's kernel length grows at particle_radius_growth_rate, which carries its dilation factor. That factor
@@ -425,13 +462,13 @@ void gravity_flush_pending_motion_bounds(void)
     /* Every rank enters, with or without pending nodes of its own. */
     pending_topnodes_ensure();
     int *counts = (int *) mymalloc("mb_counts", sizeof(int) * NTask);
-    int n_local = g_pending_topnode_n + (int) g_cover_topnodes.size();
+    int n_local = g_pending_topnode_n;
     MPI_Allgather(&n_local, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
     int total = 0;
     for(int ta = 0; ta < NTask; ta++) {total += counts[ta];}
     if(total > 0)
     {
-        struct NodeBound {int node; MyFloat vmax; MyFloat len;   /* len > 0: a box widened by gravity_cover_set_position */
+        struct NodeBound {int node; MyFloat vmax; MyFloat cover; /* gravity_note_set_positions */
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
             MyFloat divVmax;   /* gravity_note_radius_growth_rates */
 #endif
@@ -440,19 +477,12 @@ void gravity_flush_pending_motion_bounds(void)
         int *offset_b = (int *) mymalloc("mb_offset_b", sizeof(int) * NTask);
         struct NodeBound *loc = (struct NodeBound *) mymalloc("mb_loc", (size_t)(n_local > 0 ? n_local : 1) * sizeof(struct NodeBound));
         struct NodeBound *all = (struct NodeBound *) mymalloc("mb_all", (size_t)total * sizeof(struct NodeBound));
-        for(int k = 0; k < g_pending_topnode_n; k++)
+        for(int k = 0; k < n_local; k++)
         {
-            loc[k].node = g_pending_topnode_list[k]; loc[k].vmax = Extnodes[g_pending_topnode_list[k]].vmax; loc[k].len = 0;
+            loc[k].node = g_pending_topnode_list[k]; loc[k].vmax = Extnodes[g_pending_topnode_list[k]].vmax;
+            loc[k].cover = g_pending_topnode_cover[g_pending_topnode_list[k] - All.TreeNodeIndexBase];
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
             loc[k].divVmax = Extnodes[g_pending_topnode_list[k]].divVmax;
-#endif
-        }
-        for(int k = g_pending_topnode_n; k < n_local; k++)
-        {
-            const int no = g_cover_topnodes[k - g_pending_topnode_n];
-            loc[k].node = no; loc[k].vmax = 0; loc[k].len = Nodes[no].len;
-#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
-            loc[k].divVmax = 0;
 #endif
         }
         for(int ta = 0; ta < NTask; ta++)
@@ -467,14 +497,8 @@ void gravity_flush_pending_motion_bounds(void)
             /* The record names a top-level node, which every rank holds at the
              * same index; validated rather than trusted, as the kick exchange does. */
             if(!(no >= All.TreeNodeIndexBase && no - All.TreeNodeIndexBase < NTopnodes)) {continue;}
-            if(all[r].len > 0)
-            {
-                if(Nodes[no].len < all[r].len) {Nodes[no].len = all[r].len;}
-                struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
-                const int k = gpu_gravity_tree_mirror_slot(no);
-                if(soa && soa->len && k >= 0 && soa->len[k] < Nodes[no].len) {soa->len[k] = Nodes[no].len;}
-                continue;
-            }
+            /* the same centre on every rank, so the length that holds the placed particle holds it in this copy too */
+            if(Nodes[no].len < all[r].cover) {Nodes[no].len = all[r].cover; force_soa_raise_len(no, Nodes[no].len);}
             const MyFloat vmax = all[r].vmax;
             while(no >= 0)
             {

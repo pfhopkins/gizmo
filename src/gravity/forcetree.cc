@@ -652,7 +652,7 @@ let_build_attempt:
     if(hardfail_any)
     {
         /* Non-retryable. The failing rank records the cause; pseudodata failures
-         * already soft-stopped inside force_exchange_pseudodata_complete(). Skip the
+         * already soft-stopped in force_exchange_pseudodata_post() or _complete(). Skip the
          * foreign-moment scatter/finalize/resum; drains at gravtree:after_treebuild. */
         if(let_status == LET_PACK_OOM)
         {
@@ -1126,23 +1126,32 @@ struct DomainNODE
 #endif
     };
 
-/*! State shared between force_exchange_pseudodata_issue() and
- *  ..._complete() for the non-blocking-overlap pattern.  let_run_exchange
- *  runs concurrently with the pseudodata Iallgathervs in the GPU build path. */
+/*! State shared between force_exchange_pseudodata_post() and ..._complete().
+ *  In the tree build, let_run_exchange runs between the two, concurrently with
+ *  the nonblocking pseudodata all-gathers. */
 static struct DomainNODE *DomainMoment_pending = NULL;
 static MPI_Request *pseudo_requests_pending = NULL;
 static int *pseudo_recvcounts_pending = NULL;
 static int *pseudo_recvoffset_pending = NULL;
 static int  pseudo_n_requests_pending = 0;
+static int  pseudo_post_failed = 0;   /* the post stopped before every segment was exchanged */
 
-void force_exchange_pseudodata_issue(void)
+static void force_exchange_pseudodata_post(int blocking);
+void force_exchange_pseudodata_issue(void) {force_exchange_pseudodata_post(0);}
+
+/* blocking=1 for the synchronous wrapper, whose caller (the moment refresh) has no work to overlap with the
+ * exchange: a blocking Allgatherv can use MPI's tuned algorithms, and it was the faster form in a measured
+ * many-rank case. The segments are then exchanged one after another rather than together. The same bytes land
+ * in the same places either way. */
+static void force_exchange_pseudodata_post(int blocking)
 {
     int i, no, m;
     /* Re-entrant issue() (a prior issue had no matching complete()): soft
-     * bad-stop + return BEFORE allocating/posting a second Iallgatherv, so the
-     * already-pending exchange is left intact for its complete(). No poll here
+     * bad-stop + return BEFORE allocating/posting a second exchange, so the
+     * already-pending one is left intact for its complete(). No poll here
      * (a nonblocking collective may be outstanding); drains at a later poll. */
     if(DomainMoment_pending != NULL) {endrun(90000075); return;}
+    pseudo_post_failed = 0;
 
     DomainMoment_pending = (struct DomainNODE *) mymalloc("DomainMoment", NTopleaves * sizeof(struct DomainNODE));
     struct DomainNODE *DomainMoment = DomainMoment_pending;
@@ -1216,13 +1225,16 @@ void force_exchange_pseudodata_issue(void)
 #endif
         }
 
-    /* Post one MPI_Iallgatherv per All.DomainSegmentsPerRank slice; the requests
-     * are stored in static pseudo_requests_pending and waited on in _complete().
+    /* Post one all-gather per All.DomainSegmentsPerRank slice; the requests (null for a
+     * blocking one) are stored in static pseudo_requests_pending and waited on in _complete().
      * Per-slice recvcounts/recvoffset arrays must remain valid until Wait, so
      * we allocate one set per slice and free them all in _complete(). */
     pseudo_n_requests_pending = All.DomainSegmentsPerRank;
     pseudo_requests_pending = (MPI_Request *) mymalloc("pseudo_requests",
                                   All.DomainSegmentsPerRank * sizeof(MPI_Request));
+    /* null until posted: a blocking post leaves its entry null, and a stop requested part-way through the loop
+     * below leaves _complete() waiting only on what was actually posted */
+    for(m = 0; m < All.DomainSegmentsPerRank; m++) {pseudo_requests_pending[m] = MPI_REQUEST_NULL;}
     pseudo_recvcounts_pending = (int *) mymalloc("pseudo_recvcounts",
                                   All.DomainSegmentsPerRank * NTask * sizeof(int));
     pseudo_recvoffset_pending = (int *) mymalloc("pseudo_recvoffset",
@@ -1237,7 +1249,7 @@ void force_exchange_pseudodata_issue(void)
                 (DomainEndList[recvTask * All.DomainSegmentsPerRank + m] -
                  DomainStartList[recvTask * All.DomainSegmentsPerRank + m] + 1)
                 * sizeof(struct DomainNODE);
-            /* MPI_Iallgatherv takes int byte counts and displacements, so the whole pseudodata
+            /* MPI's all-gathers take int byte counts and displacements, so the whole pseudodata
              * block has to stay under 2 GB.  That ceiling is a property of this exchange, not of
              * the caller, and silently wrapping it would hand MPI a negative displacement -- so
              * check it here, where the number is formed. */
@@ -1252,21 +1264,26 @@ void force_exchange_pseudodata_issue(void)
                     printf("There are %d top-tree leaves; lower DOMAIN_SEGMENTS_SCALE or run on fewer ranks.\n", NTopleaves);
                     fflush(stdout);
                   }
+                pseudo_post_failed = 1;
                 endrun(90000025);
                 return;
               }
             ro[recvTask] = (int) offset_bytes;
         }
-        MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
-                        &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
-                        &pseudo_requests_pending[m]);
+        if(blocking) {MPI_Allgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE, &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD);}
+        else
+        {
+            MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
+                            &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
+                            &pseudo_requests_pending[m]);
+        }
     }
 }
 
-/*! Waits on the Iallgathervs posted by force_exchange_pseudodata_issue() and
+/*! Waits on the all-gathers posted by force_exchange_pseudodata_post() (done already when posted blocking) and
  *  unpacks the received topleaf moments into the AoS Nodes_base / Extnodes_base.
- *  GPU build path calls let_run_exchange() in between to overlap MPI; CPU and
- *  refresh paths call the sync wrapper force_exchange_pseudodata() below. */
+ *  The tree build calls let_run_exchange() in between to overlap MPI; the moment
+ *  refresh calls the sync wrapper force_exchange_pseudodata() below. */
 int force_exchange_pseudodata_complete(void)
 {
     /* Unmatched complete (pending==NULL = complete without a matching issue, or a
@@ -1288,6 +1305,8 @@ int force_exchange_pseudodata_complete(void)
     pseudo_recvcounts_pending = NULL;
     pseudo_recvoffset_pending = NULL;
     pseudo_n_requests_pending = 0;
+    /* A post that stopped part-way left segments unexchanged: unpack nothing, report failure like an unmatched complete */
+    if(pseudo_post_failed) {myfree(DomainMoment); DomainMoment_pending = NULL; pseudo_post_failed = 0; return 1;}
 
     int i, no, m, ta;
     /* The segment count this exchange was posted with, not whatever it is now: the domain lists
@@ -1375,13 +1394,13 @@ int force_exchange_pseudodata_complete(void)
     return 0;
 }
 
-/*! Synchronous wrapper (begin + complete in one call) for the CPU and
- *  refresh code paths (which do not have a LET round to overlap with).
- *  Returns the complete() status (nonzero = unmatched; caller skips dependent
+/*! Synchronous wrapper (begin + complete in one call) for the moment refresh,
+ *  which has no LET round to overlap with.
+ *  Returns the complete() status (nonzero = unmatched or not fully posted; caller skips dependent
  *  pseudo-update work and drains at its poll). */
 int force_exchange_pseudodata(void)
 {
-    force_exchange_pseudodata_issue();
+    force_exchange_pseudodata_post(1);
     return force_exchange_pseudodata_complete();
 }
 
@@ -1848,7 +1867,6 @@ void force_add_element_to_tree(int iparent, int ichild)
     /* The child's speed bound goes up its whole chain, to the top-level node other ranks route by; the
      * parent's node alone would let it outrun every ancestor box until its first kick or the next build. */
     gravity_note_inserted_motion_bound(ichild);
-    gravity_cover_set_position(ichild); /* a spawned cell is placed a step away from its parent */
     /* update parent node property [maximum softening] for opening criteria. The bound and the per-type band below are raised
        from the PARENT's radius and type, not the inserted child's: a spawned child's own band reaches the tree when it is
        next active (force_update_hmax) or at the next build. Known and accepted: measured on a FIRE galaxy run, no neighbour pair depended on the stale band
@@ -1888,6 +1906,7 @@ void force_add_element_to_tree(int iparent, int ichild)
      * final type call this as well; the raise is monotone, so the repeat can only over-claim. */
     force_tree_note_type_presence(ichild);
     gizmo_mark_position_dirty_indices(&ichild, 1);   /* the child is now reachable at its position */
+    gravity_note_set_positions(&ichild, 1);           /* placed beside its parent, not drifted there: its boxes must hold it */
 
     /* Each insertion stales the LET / pseudo-particle
      * moments shipped on the last full build.  Mass+CoM remain conserved at
@@ -4449,7 +4468,7 @@ void force_refresh_node_moments(void)
         force_refresh_hmax_per_type_host(Numnodestree);
         if(gpu_force_flag_localnodes() != 0)     {endrun(90000087);}
         int pseudo_status = force_exchange_pseudodata();
-        /* skip dependent pseudo-update on an unmatched complete (soft bad-stop set);
+        /* skip dependent pseudo-update on an unmatched complete or a post stopped part-way (soft bad-stop set);
          * drains at gravtree:after_refresh_moments. */
         if(!pseudo_status) {
             if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(90000088);}
