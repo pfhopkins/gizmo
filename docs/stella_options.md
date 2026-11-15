@@ -150,3 +150,7 @@ Tests: test/merge_split_conservation_stella_default (with the Stella default con
 | GALSF_RESOLVEDISM_SN_SPAWN | GALSF_SINGLE_STARS_SN_EJECTA_CELL |
 | TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS | TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS |
 | star density refresh, death-log columns | no switch on either branch |
+
+### Star softening rule (in development)
+Stars use a fixed gravitational softening (adaptive softening for gas only), set per run from the gas mass resolution:
+eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = the hard star-formation threshold (1e6 cm^-3), i.e. eps_star = 0.1 pc x (m_gas/Msun)^(1/3) (0.1 pc at 1 Msun, 0.047 pc at 0.1 Msun). This is 3x the Hopkins et al. (2018) / RIGEL scaling: it keeps stars clearly above the smallest gas cells, so birth clusters do not shrink below the softening and set the global timestep. Comoving runs set it as a physical cap (SofteningStarsMaxPhys) with a comoving value large enough that the cap binds before the first stars form. The gas smoothing length is not capped (tiny gas softening floor).
