@@ -52,6 +52,7 @@ static Vec3<double> merged_position(int i, int j);
 #ifndef SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST
 #define SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST (1.0)
 #endif
+#endif /* define a mass threshold for this model above which a 'hyper-element' has accreted enough to be treated as 'normal' */
 #ifndef MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION
 #define MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION (0.5)
 #endif
@@ -74,7 +75,6 @@ static inline double merge_kinetic_dissipation_fraction(int i, int j)
     return ke_com / (ke_com + e_light);
 }
 #endif
-#endif /* define a mass threshold for this model above which a 'hyper-element' has accreted enough to be treated as 'normal' */
 
 
 /*! Here we can insert any desired criteria for particle mergers: by default, this will occur
@@ -597,17 +597,24 @@ void merge_and_split_particles(void)
                         }
                     }
 #endif
-#ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
-                    /* Do not retire a spawned cell into a target if that would convert the majority of the
-                       energy involved from kinetic into heat, which cooling then radiates: such a merge is
-                       an artificial unresolved shock, and vetoing it lets the solver follow the shock.
-                       Deliberately confined to spawned cells. De-refinement elsewhere is a resolution
-                       policy, and applying a kinematic veto to it would suppress de-refinement wherever
-                       these feedback modules happen to be compiled in. */
-                    if (do_allow_merger && is_spawned_i && (P[j].Type == 0) && (P[j].Mass > 0)) {
-                        if (merge_kinetic_dissipation_fraction(i,j) > MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION) {do_allow_merger = 0;}
-                    }
 #endif
+#ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+                    /* Do not retire a cell into a target if that would convert the majority of the energy involved
+                       from kinetic into heat, which cooling then radiates: such a merge is an artificial unresolved
+                       shock, and vetoing it lets the solver follow the shock. Confined to spawned cells, except with
+                       single stars (MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION_ALL_GAS), where it holds for every gas merge. */
+                    {
+                        int veto_applies = 0;
+#ifdef SINK_WIND_SPAWN
+                        veto_applies = is_spawned_i;
+#endif
+#ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION_ALL_GAS
+                        veto_applies = (P[i].Type == 0);
+#endif
+                        if (do_allow_merger && veto_applies && (P[j].Type == 0) && (P[j].Mass > 0)) {
+                            if (merge_kinetic_dissipation_fraction(i,j) > MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION) {do_allow_merger = 0;}
+                        }
+                    }
 #endif
                     if ((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
 #ifdef GALSF_SINGLE_STARS_FROM_IMF

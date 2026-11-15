@@ -391,7 +391,7 @@
 #SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST=(1.0)  # max |ln(u_cell/u_ambient)| for a spawned cell to count as having joined the ambient medium
 #SINK_SPAWN_MERGE_ANY_NEIGHBOR  # opt out of SINK_SPAWN_MERGE_WHEN_AMBIENT, restoring the retire-when-subsonic-wrt-target behaviour
 #SINK_SPAWN_NO_MERGE            # never merge spawned jet/wind cells, in either direction (compare merged vs unmerged outflows). Diagnostic: removes retirement, so cell counts grow without bound
-#MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION  # never retire a spawned cell into a target if that would thermalize the majority of the energy involved, which is an unresolved shock. auto-set with the STARFORGE protostellar model
+#MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION  # never retire a spawned cell into a target if that would thermalize the majority of the energy involved, which is an unresolved shock. auto-set with the STARFORGE protostellar model; with single stars (GALSF_SINGLE_STARS_FROM_IMF) auto-set for every gas merge
 #MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION=(0.5)  # max KE_com/(KE_com+E_light) allowed by the above; lower is stricter (~0.34 is Mach 1 on the lighter cell)
 #MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION  # opt out of MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
 #SINGLE_STAR_FB_SNE             # enable supernovae from single stellar sources at end of main-sequence lifetime. with STARFORGE flag[s] enabled this will use particle spawning in shells following STARFORGE methods (Grudic+ arXiv:2010.11254). Otherwise, this will act uniformly and in a single timestep at the end of the stellar main-sequence lifetime for type=4 particles representing single stars, using the standard GALSF_FB_MECHNICAL algorithms in code, for which you should cite Hopkins et al. 2018MNRAS.477.1578H

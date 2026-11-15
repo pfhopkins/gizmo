@@ -1237,6 +1237,12 @@
 #if defined(OUTPUT_SGCHEM_RADIATION_FIELDS) && !defined(OUTPUT_SHIELD_FAC)
 #define OUTPUT_SHIELD_FAC
 #endif
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION) /* single stars: the veto on every gas merge */
+#ifndef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+#define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+#endif
+#define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION_ALL_GAS
+#endif
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
 #define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
 #endif
