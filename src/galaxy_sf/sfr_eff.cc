@@ -13,6 +13,7 @@
 #endif
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 #include "single_star_imf.h"
+#include "single_star_sf_event.h"
 #endif
 #if defined(GALSF_SINGLE_STARS_SF_CRITERION) && defined(GALSF_SFR_CRITERION)
 #error "GALSF_SINGLE_STARS_SF_CRITERION replaces GALSF_SFR_CRITERION"
@@ -546,6 +547,9 @@ void star_formation_parent_routine(void)
     stars_spawned = stars_converted = 0; sum_sm = sum_mass_stars = 0;
     for(bits = 0; GALSF_GENERATIONS > (1 << bits); bits++);
 
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+    std::vector<double> sf_event_mass; /* stellar masses [Msun] formed by one SF event */
+#endif
     for (int i : ActiveParticleList)
     {
         if((P[i].Type == 0)&&(P[i].Mass>0))
@@ -611,7 +615,6 @@ void star_formation_parent_routine(void)
 #ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY
                 if(instant_sf) {prob = 2.;} else
 #endif
-                if(prob > 1) {static int warned = 0; if(!warned) {warned = 1; PRINT_WARNING("single-star formation probability %g > 1 (drawn mass %g Msun below the cell mass): the realised SFR is capped there (reference rule); further cases on task %d not reported", prob, M_drawn, ThisTask);}}
 #endif
                 
 #if defined(METALS) && defined(GALSF_EFFECTIVE_EQS) // does instantaneous enrichment //
@@ -622,13 +625,37 @@ void star_formation_parent_routine(void)
 #endif
                 
                 static constexpr uint64_t STAR_FORMATION_RNG_SALT = gizmo_loop_rng_salt("star_formation");
-                if(single_star_random_number(i, STAR_FORMATION_RNG_SALT, (uint64_t)All.Ti_Current, 0) < prob)    /* ok, make a star */
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* one event of expected mass X = m_cell pfac: ceil(X/M_lo) sub-events (single_star_sf_event.h), sub-event k on draw index k */
                 {
-#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* a zero-mass single star that collects its drawn mass after this loop; its mass enters the SF statistics there */
-                    {int i_star = spawn_star_from_gas(i, 0, stars_spawned);
-                     if(i_star >= 0) {single_star_attach_to_new_star(i_star, i, M_drawn); stars_spawned++;}}
-                    continue;
+                    const uint64_t imf_key = gizmo_rng_combine(single_star_draw_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation);
+                    double M_lo = DMAX(All.IMFSampleMinMass, 0.08);
+#ifdef GALSF_SINGLE_STARS_POPIII
+                    if(popIII_draw) {M_lo = All.PopIII_IMF_Mmin;}
 #endif
+                    auto draw_k = [&](long k) {const uint64_t key_k = gizmo_rng_combine(imf_key, (uint64_t)k);
+#ifdef GALSF_SINGLE_STARS_POPIII
+                        if(popIII_draw) {return single_star_popIII_draw(key_k, (uint64_t)All.Ti_Current);}
+#endif
+                        return single_star_imf_draw_massweighted(All.IMFSampleMinMass, key_k, (uint64_t)All.Ti_Current);};
+                    auto accept_k = [&](long k) {return single_star_random_number(i, STAR_FORMATION_RNG_SALT, (uint64_t)All.Ti_Current, (uint64_t)k);};
+                    bool one_star = false;
+#ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY
+                    one_star = instant_sf; /* one star, number-weighted draw */
+#endif
+                    if(one_star) {sf_event_mass.assign(1, M_drawn);}
+                    else {single_star_sf_event(P[i].Mass * pfac * UNIT_MASS_IN_SOLAR, M_lo, M_drawn, draw_k, accept_k, sf_event_mass);}
+                    for(double M_star : sf_event_mass) /* zero-mass single stars that collect their drawn mass after this loop; their mass enters the SF statistics there */
+                    {
+                        int i_star = spawn_star_from_gas(i, 0, stars_spawned);
+                        if(i_star >= 0) {single_star_attach_to_new_star(i_star, i, M_star); stars_spawned++;}
+                    }
+                    if(!sf_event_mass.empty()) {continue;}
+                }
+                if(0)
+#else
+                if(single_star_random_number(i, STAR_FORMATION_RNG_SALT, (uint64_t)All.Ti_Current, 0) < prob)    /* ok, make a star */
+#endif
+                {
                     
 #ifdef SINK_SEED_FROM_LOCALGAS
                     /* before making a star, assess whether or not we can instead make a sink seed particle */
