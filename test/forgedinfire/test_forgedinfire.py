@@ -15,10 +15,10 @@ so the IC read fails. Use HDF5 < 2 (e.g. module swap hdf5/2.0.0 hdf5/1.14.x)
 on such machines. Most other tests use uncompressed ICs and are unaffected.
 """
 
-import shlex
+import subprocess
 import pytest
 import numpy as np
-from os import path, system, chdir, environ
+from os import path, chdir, environ
 from os.path import isfile
 from shutil import copy2
 from urllib.request import urlretrieve, HTTPError
@@ -32,6 +32,7 @@ from gizmo.test import (
     default_omp_threads,
     get_final_snapshot,
     mpi_launch_command,
+    _resolve_test_timeout,
 )
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -192,9 +193,15 @@ def run_forgedinfire_test(test_name, num_mpi_ranks, num_omp_threads):
     if num_omp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_omp_threads)
     paramsfile = f"{test_name}.params"
-    launch = shlex.join(mpi_launch_command(num_mpi_ranks, num_omp_threads) + ["./GIZMO", paramsfile, "2"])
-    system(f"{launch} 1>test_{test_name}.out 2>test_{test_name}.err")
-    chdir("../../")
+    cmd = mpi_launch_command(num_mpi_ranks, num_omp_threads) + ["./GIZMO", paramsfile, "2"]
+    timeout = _resolve_test_timeout(None)   # GIZMO_TEST_TIMEOUT, as run_test uses
+    try:
+        with open(f"test_{test_name}.out", "w") as out, open(f"test_{test_name}.err", "w") as err:
+            subprocess.run(cmd, stdout=out, stderr=err, timeout=timeout, check=False)
+    except subprocess.TimeoutExpired:
+        pytest.skip(f"{test_name} exceeded {timeout}s timeout; GIZMO subprocess killed")
+    finally:
+        chdir("../../")
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))

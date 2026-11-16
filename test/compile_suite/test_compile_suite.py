@@ -273,7 +273,9 @@ def _make_build(gizmo_root: Path, timeout: int = 600) -> subprocess.CompletedPro
 def _missing_external_library(flags: str, output: str):
     """Why an external-library row could not build here, or None. CHIMES needs SUNDIALS >= 6 (headers and
     libraries from the SYSTYPE block's CHIMESINCL/CHIMESLIBS), Grackle needs GRACKLE_PATH or a grackle.pc on
-    PKG_CONFIG_PATH. Only a missing or too-old library skips; any other failure of these rows fails."""
+    PKG_CONFIG_PATH, and the multigrid MHD_MODIFIED_GRADIENT solve (without _CG_ONLY / _USE_PARDISO) needs HYPRE.
+    Only a missing or too-old library skips; any other failure of these rows fails. The skip is a convenience for
+    machines without these libraries, not a pass."""
     missing = []   # a header or library the build could not find
     if "CHIMES" in flags.split():
         if "CHIMES needs SUNDIALS 6 or newer" in output:
@@ -281,6 +283,9 @@ def _missing_external_library(flags: str, output: str):
         missing += ["cvode/cvode.h", "sundials/sundials_", "nvector/nvector_serial.h", "sunmatrix/", "sunlinsol/", "-lsundials", "'sundials_"]
     if "COOL_GRACKLE" in flags.split():
         missing += ["grackle.h", "-lgrackle", "'grackle'"]
+    names = [f.split("=")[0] for f in flags.split()]
+    if "MHD_MODIFIED_GRADIENT" in names and not {"MHD_MODIFIED_GRADIENT_CG_ONLY", "MHD_MODIFIED_GRADIENT_USE_PARDISO"} & set(names):
+        missing += ["HYPRE.h", "-lHYPRE"]   # the Makefile's MG_USES_HYPRE: the multigrid solve links HYPRE
     for line in output.split("\n"):
         if any(s in line for s in missing) and ("not found" in line or "No such file" in line or "cannot find" in line):
             return line.strip()
