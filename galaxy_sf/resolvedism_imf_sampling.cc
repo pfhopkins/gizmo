@@ -605,6 +605,8 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
 #endif
                             /* conserved MHD quantities scale with the mass removed (parent side of merge_split.cc:517-525) */
                             double frac = dM / Mj;
+                            ESTEP_BOOK(EBK_IMF_TH_LOCKED, -dM * CellP[j].InternalEnergy); ESTEP_BOOK(EBK_IMF_MAG_LOCKED, -frac * estep_cell_mag_energy(j));
+                            ESTEP_BOOK(EBK_IMF_KIN, -0.5 * dM * P[j].Vel.norm_sq() * All.cf_a2inv); /* donor kinetic energy carried to the star */
 #ifdef MAGNETIC
                             for(k=0;k<3;k++) {
                                 CellP[j].B[k] -= frac * CellP[j].B[k];
@@ -899,6 +901,7 @@ void assign_stellar_masses(void)
         }
 
         /* Star mass = actual mass accreted (exact conservation) */
+        ESTEP_BOOK(EBK_IMF_KIN, -0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv); /* placeholder kinetic energy */
         P[i].Mass = mass_acc; TreeMomentsStaleFlag = 1;
 
         /* CoM velocity from all donor cells */
@@ -906,6 +909,7 @@ void assign_stellar_masses(void)
             for(k=0;k<3;k++) P[i].Vel[k] = IMF_MomAccreted[i*3+k] / mass_acc;
             force_raise_motion_bound(i);
         }
+        ESTEP_BOOK(EBK_IMF_KIN, 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv); /* star kinetic energy: minus the donors' = inelastic loss */
 
         /* Mass-weighted metallicity */
 #ifdef METALS

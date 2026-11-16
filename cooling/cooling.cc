@@ -221,6 +221,7 @@ void cooling_parent_routine(void)
             printf("NEG_ENERGY_COOL: Task=%d ID=%llu u=%.6e (was %.6e) — flooring to u_min\n",
                 ThisTask, (unsigned long long)P[i].ID, u_now, u_before_cool[j]);
             double u_min = All.MinEgySpec;
+            ESTEP_BOOK(EBK_COOL_FLOOR, (u_min - u_now) * P[i].Mass);
             CellP[i].InternalEnergy = u_min;
             CellP[i].InternalEnergyPred = u_min;
         }

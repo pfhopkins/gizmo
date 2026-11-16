@@ -778,6 +778,7 @@ void apply_special_boundary_conditions(int i, double mass_for_dp, int mode, inte
         const int outflow_lower = (o == 0 || o == -1), outflow_upper = (o == 0 || o == 1);
         if((lower_hit && outflow_lower) || (upper_hit && outflow_upper))
         {
+            ESTEP_BOOK(EBK_OUTFLOW, -estep_cell_energy(i)); /* energy leaving through the outflow boundary */
             P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}
 #pragma omp atomic write
             TreeMomentsStaleFlag=1; /* reached from the OpenMP-parallel drift; every thread writes the same value, but keep it a defined write */

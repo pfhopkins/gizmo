@@ -969,6 +969,30 @@ int get_index(double search);
 void mbary_step_checkpoint(const char *tag);
 #define MBARY_STEP(tag) mbary_step_checkpoint(tag)
 
+/* Energy step trace (core/energy_step_trace.cc): rank-local stage brackets, booked sources/sinks, one reduce per window */
+enum {ESTEP_MERGE_SPLIT, ESTEP_FB_WIND_AGB, ESTEP_FB_SN_IA, ESTEP_FB_POST, ESTEP_FB_RADP, ESTEP_DIFF_UNPACK, ESTEP_PHOTOION, ESTEP_COOLING,
+      ESTEP_DUST, ESTEP_SF_SPAWN, ESTEP_IMF_ACCRETE, ESTEP_NSTAGE};
+enum {EBK_FB_WIND, EBK_FB_AGB, EBK_FB_SN, EBK_FB_IA, EBK_FB_FAILED, EBK_COOL_RAD, EBK_COOL_PI, EBK_COOL_FLOOR, EBK_SF_TH_LOCKED,
+      EBK_SF_MAG_LOCKED, EBK_SF_PLACEHOLDER_KIN, EBK_IMF_TH_LOCKED, EBK_IMF_MAG_LOCKED, EBK_IMF_KIN, EBK_MERGE_GRAVWORK,
+      EBK_MERGE_HEAT_NOT_RETURNED, EBK_SN_CELL_TH, EBK_SN_CELL_MAG, EBK_MERGE_MAG_LOST, EBK_KICK_FLOOR, EBK_OUTFLOW, EBK_INFO_MHD_NUM, EBK_N};
+#ifdef OUTPUT_ENERGY_STEP_TRACE
+extern double EstepBooked[EBK_N];
+void estep_begin(int stage);
+void estep_end(int stage);
+void energy_step_trace_report(void);
+double estep_cell_energy(int i);
+double estep_cell_mag_energy(int i);
+#define ESTEP_BEGIN(s) estep_begin(s)
+#define ESTEP_END(s) estep_end(s)
+#define ESTEP_BOOK(ch, x) do {double estep_x_ = (x); _Pragma("omp atomic") EstepBooked[ch] += estep_x_;} while(0)
+#define ESTEP_REPORT() energy_step_trace_report()
+#else
+#define ESTEP_BEGIN(s)
+#define ESTEP_END(s)
+#define ESTEP_BOOK(ch, x)
+#define ESTEP_REPORT()
+#endif
+
 /* Diff-unpack breakdown: pair-flux total vs clamp-correction contributions to dM_Z. */
 void diff_unpack_breakdown_log(double dMZ_pair_loc, double dMZ_clamp_loc);
 

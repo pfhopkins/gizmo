@@ -791,6 +791,7 @@ void star_formation_parent_routine(void)
                             P[ns].StellaFBEvent_ThisTimeStep = 0;
 #endif
                             P[ns].Mass = 1e-10 / UNIT_MASS_IN_SOLAR; /* tiny placeholder — filled by accretion walk */
+                            ESTEP_BOOK(EBK_SF_PLACEHOLDER_KIN, 0.5 * P[ns].Mass * P[ns].Vel.norm_sq() * All.cf_a2inv); /* placeholder mass is not taken from the parent */
                             P[ns].StellarAge = All.Time;
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                         /* TestStarInitAgeYr>0 (B10 AGB test, 2026-07-28): back-date the birth
@@ -853,6 +854,7 @@ void star_formation_parent_routine(void)
                     if(number_of_stars_generated == (GALSF_GENERATIONS - 1))
                     {
                         /* here we turn the gas particle itself into a star, so only change attributes, not the number of total particles */
+                        ESTEP_BOOK(EBK_SF_TH_LOCKED, -P[i].Mass * CellP[i].InternalEnergy); ESTEP_BOOK(EBK_SF_MAG_LOCKED, -estep_cell_mag_energy(i));
                         Stars_converted++;
                         stars_converted++;
 #ifdef GHOSDT_G0_CR
@@ -886,6 +888,7 @@ void star_formation_parent_routine(void)
                         if(P[i].ID_generation > 30) {P[i].ID_generation=0;} // roll over at 32 generations (unlikely to ever reach this)
                         P[i_star].ID_generation = P[i].ID_generation; // ok, all set!
                         P[i_star].Mass = mass_of_star; CellP[i_star].Mass = P[i_star].Mass;
+                        ESTEP_BOOK(EBK_SF_TH_LOCKED, -P[i_star].Mass * CellP[i].InternalEnergy); /* star leaves with the parent's velocity */
                         P[i].Mass -= P[i_star].Mass; CellP[i].Mass = P[i].Mass;
                         if(P[i].Mass<0) {P[i].Mass=0;} CellP[i].Mass = P[i].Mass;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME

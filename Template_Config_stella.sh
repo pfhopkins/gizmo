@@ -150,6 +150,7 @@ MHD_B_SET_IN_PARAMS                      % initial B from params
 NO_ISEND_IRECV_IN_DOMAIN                 % blocking domain exchange
 MULTIPLEDOMAINS=16                       % domain decomposition granularity
 EVALPOTENTIAL                            % output potential
+#OUTPUT_ENERGY_STEP_TRACE                % energy twin of the mass trace -> energy_step_trace.txt; =N closes a window every N steps (default 1); on in Stella tests
 OUTPUT_GRADIENT_VEL                      % output velocity gradients
 OUTPUT_TIMESTEP                          % output timesteps
 OUTPUT_TEMPERATURE                       % output temperature

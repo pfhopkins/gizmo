@@ -914,6 +914,7 @@ void resolvedism_inject_fb_energy(void)
     /* ---- Pass 0: wind + AGB (momentum + mass + metals).  Fires first so final
      *      winds happen before the star explodes as SN. Serialized per event. ---- */
     MBARY_STEP("pre_fb_mom_p0");
+    ESTEP_BEGIN(ESTEP_FB_WIND_AGB);
 #ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
     /* AGB deaths (big single dumps) stay serialized; WINDS batch: one collective
      * walk pair per step for ALL wind stars together (tiny parcels, stale-weight
@@ -941,6 +942,7 @@ void resolvedism_inject_fb_energy(void)
 #else
     resolvedism_fb_serialized_pass(resolvedism_fb_momentum_calc, 2, 3);
 #endif
+    ESTEP_END(ESTEP_FB_WIND_AGB);
     MBARY_STEP("post_fb_mom_p0");
     E_mech2 = resolvedism_mech_energy_local();
 #if defined(TEST_DUMP_STATE_AROUND_WIND_DEPOSIT) && defined(GALSF_RESOLVEDISM_WINDS_CONTINUOUS)
@@ -977,8 +979,11 @@ void resolvedism_inject_fb_energy(void)
 
     /* ---- Pass 1: SN + Type Ia (mass + thermal energy + metals). Serialized per event. ---- */
     MBARY_STEP("pre_fb_thermal");
+    ESTEP_BEGIN(ESTEP_FB_SN_IA);
     resolvedism_fb_serialized_pass(resolvedism_fb_thermal_calc, 1, 4);
+    ESTEP_END(ESTEP_FB_SN_IA);
     MBARY_STEP("post_fb_thermal");
+    ESTEP_BEGIN(ESTEP_FB_POST);
 #if defined(STELLA_FIRE_YIELD_SLOTS) && defined(STELLA_SELFCHECK)
     { /* every step: each gas cell keeps sum(C..Fe) <= Z and non-negative FIRE slots */
         int ibad = -1, nbad = 0, ngas = 0;
@@ -1405,7 +1410,14 @@ void resolvedism_inject_fb_energy(void)
     myfree(wind_log_tb); myfree(wind_log_id); myfree(wind_log_zw); myfree(wind_log_dp); myfree(wind_log_dm);
     myfree(wind_log_mstar); myfree(wind_log_z); myfree(wind_log_y); myfree(wind_log_x);
 
+    ESTEP_END(ESTEP_FB_POST);
+    /* energy step trace: what each pass books it deposits (E_injected is erg, on the star's rank) */
+    ESTEP_BOOK(EBK_FB_WIND, E_injected[2] / UNIT_ENERGY_IN_CGS); ESTEP_BOOK(EBK_FB_AGB, E_injected[1] / UNIT_ENERGY_IN_CGS);
+    ESTEP_BOOK(EBK_FB_SN, E_injected[0] / UNIT_ENERGY_IN_CGS); ESTEP_BOOK(EBK_FB_IA, E_injected[4] / UNIT_ENERGY_IN_CGS);
+    ESTEP_BOOK(EBK_FB_FAILED, E_injected[5] / UNIT_ENERGY_IN_CGS);
+
     /* ---- Pass 2: radiation pressure (momentum) ---- */
+    ESTEP_BEGIN(ESTEP_FB_RADP);
 #ifdef COSMIC_RAY_FLUID
     E_cr3 = resolvedism_cr_energy_local();
 #endif
@@ -1453,6 +1465,7 @@ void resolvedism_inject_fb_energy(void)
 #else
     E_mech3 = resolvedism_mech_energy_local();
 #endif
+    ESTEP_END(ESTEP_FB_RADP);
     /* split a shared pass's measured coupling by booked energy (else by events) */
     double gE_inj[NFBCH], gN_ev[NFBCH]; /* split weights must be global: receiver-only ranks book no events */
     MPI_Allreduce(E_injected, gE_inj, NFBCH, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);

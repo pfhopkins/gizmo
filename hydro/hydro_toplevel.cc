@@ -1266,6 +1266,7 @@ void hydro_force(void)
     double t_demalloc_start = my_second();
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
     MBARY_STEP("pre_diff_unpack");
+    ESTEP_BEGIN(ESTEP_DIFF_UNPACK);
     double t_demalloc = timediff(t_demalloc_start, my_second());
     double t_postloop_start = my_second();
     hydro_final_operations_and_cleanup(); /* do final operations on results */
@@ -1275,6 +1276,7 @@ void hydro_force(void)
 #if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
     turb_diff_metals_budget_log();
 #endif
+    ESTEP_END(ESTEP_DIFF_UNPACK);
     MBARY_STEP("post_diff_unpack");
     double t_postloop = timediff(t_postloop_start, my_second());
     /* collect timing information */

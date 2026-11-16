@@ -102,6 +102,7 @@
 #TURB_DIFF_METALS_EXACT_CONSERVATION # conserve metal mass to round-off under adaptive timesteps (pairwise exchange, inactive side buffered to its next step); one extra double per diffused species per cell
 #OUTPUT_TURB_DIFF_METALS_BUDGET # print the global metal budget (sum of M*Z, plus exchange still pending with TURB_DIFF_METALS_EXACT_CONSERVATION) after every hydro step [diagnostic]
 #OUTPUT_STAR_ENERGY_DIRECT_SUM # print direct-sum total energy of star particles (ETOT_INCODE) at every sync; O(N^2), skipped for N>4096; on by default with KETJU_REGULARIZATION [diagnostic]
+#OUTPUT_ENERGY_STEP_TRACE      # per-stage energy closure (energy twin of mass_balance_steps.txt) -> energy_step_trace.txt: rank-local stage brackets, booked sources/sinks, one MPI_Reduce every N steps (=N, default 1) and at full syncs; E_pot (enables EVALPOTENTIAL) closes the integration budget in isolated runs [diagnostic]
 #TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS # KETJU: recompute the limiting-particle steps by a full particle scan every step and abort if the cell grid differs [test only, slow] [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #TURB_DIFF_ENERGY               # turbulent diffusion of internal energy (conduction with effective turbulent coefficients)
 #TURB_DIFF_VELOCITY             # turbulent diffusion of momentum (viscosity with effective turbulent coefficients)

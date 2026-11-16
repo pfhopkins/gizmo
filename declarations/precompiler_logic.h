@@ -1344,6 +1344,10 @@
 #define EVALPOTENTIAL
 #endif
 
+#if defined(OUTPUT_ENERGY_STEP_TRACE) && !defined(EVALPOTENTIAL)
+#define EVALPOTENTIAL /* energy step trace: E_pot at full syncs closes the time-integration budget */
+#endif
+
 #if defined(SINK_PARTICLES) && (defined(SINK_REPOSITION_ON_POTMIN) || defined(SINK_SEED_FROM_FOF))
 #ifndef EVALPOTENTIAL
 #define EVALPOTENTIAL

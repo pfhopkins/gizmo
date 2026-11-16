@@ -741,8 +741,10 @@ void run(void)
         if(!reconstructed_tree)
         {
             MBARY_STEP("pre_merge_split");
+            ESTEP_BEGIN(ESTEP_MERGE_SPLIT);
             merge_and_split_particles();
             rearrange_particle_sequence();
+            ESTEP_END(ESTEP_MERGE_SPLIT);
             MBARY_STEP("post_merge_split");
         }
 #endif
@@ -768,6 +770,7 @@ void run(void)
         ketju_finish_step();        /* clean up KETJU region data (flags persist for next step's guards) */
 #endif
         EB_GRAV_REPORT(); /* after Hermite, so Vel is the corrected end-of-step velocity */
+        ESTEP_REPORT(); /* energy step trace: window closure; E_tot at full syncs */
 #ifdef TEST_RESTART_AT_STEP
         if(RestartFlag == 0 && getenv("GIZMO_TEST_RESTART_AT_STEP") && All.NumCurrentTiStep == atoll(getenv("GIZMO_TEST_RESTART_AT_STEP"))) {restart(0); endrun(0);} /* restart files part-way through the long steps */
 #endif
@@ -1026,7 +1029,9 @@ void calculate_non_standard_physics(void)
 #if defined(GALSF_RESOLVEDISM_PHOTOION) && !defined(TREE_RAY_PI)
     /* TreeRay-PI supersedes the subgrid Stromgren search: continuous per-cell
      * ionization rates from the tree bands feed rt_phot_HI in sgchem instead. */
+    ESTEP_BEGIN(ESTEP_PHOTOION);
     resolvedism_photoionize(); // resolved ISM Stromgren sphere photo-ionization
+    ESTEP_END(ESTEP_PHOTOION);
 #endif
 
     MCBAL_LOG("pre_cooling");
@@ -1069,12 +1074,16 @@ void calculate_non_standard_physics(void)
 #endif
 
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING) && !defined(RESOLVEDISM_ADIABATIC_NOCOOL) /* NOCOOL = adiabatic test twin: skip the energy/chemistry update */
+    ESTEP_BEGIN(ESTEP_COOLING);
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
+    ESTEP_END(ESTEP_COOLING);
     CPU_Step[CPU_COOLINGSFR] += measure_time(); /* this rank's own cooling work; the wait for the slowest rank lands in the next collective */
 #endif
     MCBAL_LOG("post_cooling");
 #ifdef GALSF_RESOLVEDISM_DUST
+    ESTEP_BEGIN(ESTEP_DUST);
     resolvedism_dust_evolve(); // ISM dust sputtering (operator-split after chemistry)
+    ESTEP_END(ESTEP_DUST);
 #endif
 
 
@@ -1084,11 +1093,15 @@ void calculate_non_standard_physics(void)
 #if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
     double E_pre_sf = resolvedism_mech_energy_local(); /* SF energy sink for ENERGYinfo */
 #endif
+    ESTEP_BEGIN(ESTEP_SF_SPAWN);
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine); books its own work to CPU_COOLINGSFR //
+    ESTEP_END(ESTEP_SF_SPAWN);
     MBARY_STEP("post_sf_spawn");
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
     MBARY_STEP("pre_imf_accrete");
+    ESTEP_BEGIN(ESTEP_IMF_ACCRETE);
     assign_stellar_masses(); // sample individual stellar masses from Kroupa IMF for newly formed star particles
+    ESTEP_END(ESTEP_IMF_ACCRETE);
     MBARY_STEP("post_imf_accrete");
 #endif
 #if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)

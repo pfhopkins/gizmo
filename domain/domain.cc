@@ -587,11 +587,13 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     wakeup_list_invalidate(); /* merge/split, rearrange, exchange and Peano order all move particles */
     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
     {
+        ESTEP_BEGIN(ESTEP_MERGE_SPLIT);
         merge_and_split_particles(); /* do the particle split/merge operations: only do this on tree-building super-steps */
     }
     t_mergesplit = timediff(t_drift_start, my_second());
     double t_tmp = my_second();
     rearrange_particle_sequence(1); /* must be called after merge_and_split_particles, and should always be called before new domains are built; the tree is freed below */
+    ESTEP_END(ESTEP_MERGE_SPLIT); /* after the rearrange: gas daughters join NumPart there; no-op when no bracket is open */
     t_rearrange = timediff(t_tmp, my_second());
 
     UseAllParticles = UseAllTimeBins;

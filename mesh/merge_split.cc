@@ -628,6 +628,7 @@ void merge_and_split_particles(void)
             double u_sp = (P[i_sp].SpawnEjMass > 0) ? (P[i_sp].SpawnEjEnergy / P[i_sp].SpawnEjMass) : 0;
             CellP[j_sp].InternalEnergy = CellP[j_sp].InternalEnergyPred = u_sp;
             CellP[j_sp].DtInternalEnergy = 0;
+            ESTEP_BOOK(EBK_SN_CELL_TH, P[j_sp].Mass * u_sp); ESTEP_BOOK(EBK_SN_CELL_MAG, estep_cell_mag_energy(j_sp)); /* SN heat; field copied from the template */
             /* metallicity: ejecta composition (slot0 = total Z; slots 1..27 = elements) */
             {double minv_sp = 1./DMAX(P[i_sp].SpawnEjMass, 1e-30), zs_sp = 0; int ke_sp;
              for(ke_sp = 0; ke_sp < NUM_RESOLVEDISM_ELEMENTS; ke_sp++) {
@@ -1118,6 +1119,7 @@ int merge_particles_ij(int i, int j)
 
     egy_old += mtot*wt_j * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (j) //
     egy_old += mtot*wt_i * 0.5 * P[i].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (i) //
+    const double estep_egy_mech = egy_old; (void)estep_egy_mech; /* energy step trace: before the work terms */
     // gravitational energy terms need to be added (including work for moving particles 'together') //
     // Egrav = m*g*h = m * (-grav_acc) * (position relative to zero point) //
     egy_old -= mtot*wt_j * dot(dr_j, P[j].GravAccel) * All.cf_a2inv; // work (j) //
@@ -1167,6 +1169,8 @@ int merge_particles_ij(int i, int j)
 #endif
 #ifdef MAGNETIC
     // we evolve the conservative variables VB and Vpsi, these should simply add in particle-merge operations //
+    ESTEP_BOOK(EBK_MERGE_MAG_LOST, 0.5 / All.cf_atime * ((CellP[i].B + CellP[j].B).norm_sq() / (volume_before_merger_i + volume_before_merger_j)
+        - CellP[i].B.norm_sq() / volume_before_merger_i - CellP[j].B.norm_sq() / volume_before_merger_j)); /* summed flux in the summed volume; not returned as heat */
     { Vec3<double> B_before_split = (CellP[i].B + CellP[j].B) * (1.0 / (volume_before_merger_i + volume_before_merger_j)); /* calculate the real value of B pre-split to know what we need to correctly re-initialize to once the volume partition can be recomputed. here since VB is the conserved variable explicitly integrated, that gets added with the pre-summation volumes (so we take a volume-weighted mean here) */
     CellP[j].BField_prerefinement = B_before_split; CellP[i].BField_prerefinement = B_before_split; } /* record the real value of B pre-split to know what we need to correctly re-initialize to once the volume partition can be recomputed */
     CellP[j].B += CellP[i].B; CellP[j].BPred += CellP[i].BPred; CellP[j].DtB += CellP[i].DtB; /* simply add conserved quantities */
@@ -1181,7 +1185,9 @@ int merge_particles_ij(int i, int j)
     /* correct our 'guess' for the internal energy with the residual from exact energy conservation */
     double egy_new = mtot * CellP[j].InternalEnergy + mtot * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv;
     egy_new = (egy_old - egy_new) / mtot; /* this residual needs to be put into the thermal energy */
+    const double estep_res_raw = egy_new; (void)estep_res_raw;
     if(egy_new < -0.5*CellP[j].InternalEnergy) egy_new = -0.5 * CellP[j].InternalEnergy;
+    ESTEP_BOOK(EBK_MERGE_GRAVWORK, egy_old - estep_egy_mech); /* the merge moves both cells to their centre of mass */
 #ifdef MERGE_SPLIT_CONSERVE_ENERGY
     /* The merge sets the velocity momentum-conservingly, so the pair's COM-frame kinetic energy
        (1/2)*mu*|dv|^2 leaves the kinetic budget; returning it here as heat makes the operation
@@ -1194,7 +1200,9 @@ int merge_particles_ij(int i, int j)
     egy_new_pred = (egy_old_pred - egy_new_pred) / mtot;
     if(egy_new_pred < -0.5*CellP[j].InternalEnergyPred) egy_new_pred = -0.5 * CellP[j].InternalEnergyPred;
     CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new_pred;
+    ESTEP_BOOK(EBK_MERGE_HEAT_NOT_RETURNED, mtot * (egy_new - estep_res_raw)); /* the -u/2 clamp */
 #else
+    ESTEP_BOOK(EBK_MERGE_HEAT_NOT_RETURNED, -mtot * estep_res_raw); /* residual discarded */
     //CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new;//test during splits
 #endif
     if(CellP[j].InternalEnergyPred<0.5*CellP[j].InternalEnergy) CellP[j].InternalEnergyPred=0.5*CellP[j].InternalEnergy;
