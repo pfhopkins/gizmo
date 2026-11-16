@@ -939,17 +939,30 @@ void star_formation_parent_routine(void)
 #endif
     
     for(bin = 0, sfrrate = 0; bin < TIMEBINS; bin++) {if(TimeBinCount[bin]) {sfrrate += TimeBinSfr[bin];}}
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    static double sfr_row_sm = 0, sfr_row_mass = 0, sfr_row_t0 = -1; /* Stella: a row books every step since the previous row */
+    if(sfr_row_t0 < 0) {sfr_row_t0 = All.Time;}
+    sfr_row_sm += sum_sm; sfr_row_mass += sum_mass_stars;
+#endif
     
 #ifndef OUTPUT_ADDITIONAL_RUNINFO
     if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
 #endif
     {
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+        sum_sm = sfr_row_sm; sum_mass_stars = sfr_row_mass; sfr_row_sm = sfr_row_mass = 0;
+        double dt_row = All.Time - sfr_row_t0; sfr_row_t0 = All.Time;
+#endif
         double local_log[3] = {sum_sm, sfrrate, sum_mass_stars}, total_log[3] = {0};   /* read only by rank 0's log line */
         MPI_Reduce(local_log, total_log, 3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
         total_sm = total_log[0]; totsfrrate = total_log[1]; total_sum_mass_stars = total_log[2];
         if(ThisTask == 0)
         {
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+            rate = (dt_row > 0) ? total_sum_mass_stars / (dt_row / (All.cf_atime*All.cf_hubble_a)) : 0; /* mass formed since the previous row over that time */
+#else
             if(All.TimeStep > 0) {rate = total_sm / (All.TimeStep / (All.cf_atime*All.cf_hubble_a));} else {rate = 0;}
+#endif
             /* convert to solar masses per yr */
             rate_in_msunperyear = rate * UNIT_MASS_IN_SOLAR / UNIT_TIME_IN_YR;
             fprintf(FdSfr, "%.16g %g %g %g %g\n", All.Time, total_sm, totsfrrate, rate_in_msunperyear, total_sum_mass_stars);
