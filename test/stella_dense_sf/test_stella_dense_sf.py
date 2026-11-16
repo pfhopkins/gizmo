@@ -97,3 +97,22 @@ def test_dense_gas_kernel_not_floored(run):
         print(f"{os.path.basename(snap)}: {dense.sum()} cells n_H > 1e5, median h {1e3 * med:.3f} pc, default floor {1e3 * floor_default:.3f} pc")
         assert med < 0.5 * floor_default, f"{os.path.basename(snap)}: dense-gas kernel radius held at the softening floor"
     assert checked, "no snapshot with dense gas"
+
+
+def test_sfr_log_counts_stella_stars(run):
+    """sfr.txt (rows on full-sync steps) books the Stella stars formed since the previous row: summed over the rows up
+    to the last one (at TimeMax), column 5 equals the drawn masses of all stars in SFinfo.txt, and column 4 times the
+    interval since the previous row gives the same mass."""
+    text, out = run
+    sfr = np.loadtxt(join(out, "sfr.txt"), comments="#", ndmin=2)
+    sfi = np.loadtxt(join(out, "SFinfo.txt"), comments="#", ndmin=2)
+    assert abs(sfr[-1, 0] / TIME_MAX - 1) < 1e-9, "no sfr.txt row at TimeMax"
+    m_drawn = sfi[:, 5].sum()
+    m_logged = sfr[:, 4].sum() * UNIT_MASS_MSUN
+    dt_yr = np.diff(np.concatenate([[0.0], sfr[:, 0]])) * UNIT_TIME_YR
+    m_rate = np.sum(sfr[:, 3] * dt_yr)
+    print(f"{len(sfr)} sfr.txt rows; stars formed (SFinfo) {len(sfi)}, {m_drawn:.3f} Msun; column 5 {m_logged:.3f}, "
+          f"column 4 x dt {m_rate:.3f}")
+    assert m_drawn > 1.0, "the clump formed no stars"
+    assert abs(m_logged - m_drawn) < 1e-3 * m_drawn, "sfr.txt column 5 misses Stella stars"
+    assert abs(m_rate - m_drawn) < 1e-3 * m_drawn, "sfr.txt column 4 is not the formed mass per time"

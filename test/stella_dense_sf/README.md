@@ -16,3 +16,6 @@ several checks.
   feedback injects (`elem_ej_SN_mass`, `elem_ej_AGB_mass`, cumulative winds) and pass.
 - Gas smoothing lengths are uncapped (`MinGasKernelRadiusFractional 0`): the median kernel radius of the n_H > 1e5 cells
   stays below half of 2.8 x `SofteningGas`, the floor the default fraction 1 would impose.
+- `sfr.txt` books Stella star formation: summed over its rows (written on full-sync steps), column 5 equals the drawn
+  masses of all stars in `SFinfo.txt` (the last row is at `TimeMax`), and column 4 times the
+  interval since the previous row gives the same mass.
