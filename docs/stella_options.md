@@ -125,7 +125,8 @@ times (Min_Sink_Approach_Time, Min_Sink_Freefall_time; stars are the "special" t
 is no extra walk. Comoving runs convert them to physical time. With KETJU, a chain member ignores its own chain partners
 within the region radius (MSTAR integrates them); it is still limited by approaching stars outside the chain.
 Without it, star encounters are resolved only by MaxStellarTimestep. Not combinable with sinks, STARS_HERMITE_DIRECT_GRAVITY
-or STARS_INTEGRATED_BY_RUMI. Off in the shipped configs.
+or STARS_INTEGRATED_BY_RUMI. On by default in every Stella build with single stars (GALSF_RESOLVEDISM_SAMPLE_IMF), set in
+declarations/precompiler_logic.h; skipped where one of those is set; opt out with STARS_APPROACH_TIMESTEP_OFF.
 
 Checks (reports/sn_boundary_and_approach_dt.md): 1 + 10 Msun flyby, eps = b = 0.033 pc, v = 3 km/s, cloud build. With a
 50 kyr step cap the deflection is 0.31 deg off and dE/E = -4e-3; with no cap 63 deg off. With the switch, 0.002 deg and

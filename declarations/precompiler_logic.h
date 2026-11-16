@@ -844,6 +844,9 @@
 #define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
 #define TREE_STAR_STAR_EXCLUDED_TYPE 4
 #endif
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && !defined(STARS_APPROACH_TIMESTEP) && !defined(STARS_APPROACH_TIMESTEP_OFF) && !defined(SINK_CALC_DISTANCES) && !defined(SINGLE_STAR_TIMESTEPPING) && !defined(STARS_HERMITE_DIRECT_GRAVITY) && !defined(STARS_INTEGRATED_BY_RUMI) && !defined(SPECIAL_POINT_MOTION) && !defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE)
+#define STARS_APPROACH_TIMESTEP /* default for Stella single stars: resolves star encounters in clusters; skipped where the sink node moments are taken, opt out with STARS_APPROACH_TIMESTEP_OFF */
+#endif
 #ifdef STARS_APPROACH_TIMESTEP /* Type-4 stars: STARFORGE's two-body step (approach and free-fall time to the nearest star, from the gravity walk) */
 #if defined(SINK_CALC_DISTANCES) || defined(SINGLE_STAR_TIMESTEPPING) || defined(STARS_HERMITE_DIRECT_GRAVITY) || defined(STARS_INTEGRATED_BY_RUMI)
 #error "STARS_APPROACH_TIMESTEP uses the tree's sink node moments for Type 4: not combinable with sinks, STARFORGE timestepping, other SINK_CALC_DISTANCES users, STARS_HERMITE_DIRECT_GRAVITY or STARS_INTEGRATED_BY_RUMI"

@@ -116,6 +116,7 @@ KETJU_MERGE_STARS                        % stellar collisions (Type 4+4)  [req K
 #KETJU_LEGACY_C_LIBRARY                  % legacy: MSTAR from the C library (reference); default: C++/Kokkos library mstar::mstar (KOKKOS_ROOT)  [req KETJU_REGULARIZATION]
 #STARS_INTEGRATED_BY_RUMI                % EXPERIMENTAL: all Type-4 stars integrated by the RUMI++ library (BRIDGE: gas kicks at star steps, star-star pairs out of the tree; make RUMI_LIB_DIR=<prefix>)  [excl KETJU_REGULARIZATION]
 #STARS_HERMITE_DIRECT_GRAVITY            % EXPERIMENTAL prototype (A-lite): Type-4 stars on 4th-order Hermite with direct star-star gravity, Aarseth steps (STARS_HERMITE_AARSETH_ETA=0.02)  [excl sinks, KETJU-free Hermite, adaptive Type-4 softening]
+#STARS_APPROACH_TIMESTEP_OFF  % opt out of the default-on STARS_APPROACH_TIMESTEP (set by GALSF_RESOLVEDISM_SAMPLE_IMF)
 #STARS_APPROACH_TIMESTEP                 % Type-4 stars also limited by STARFORGE's two-body step: approach and free-fall time to the nearest star from the gravity walk (no extra walk)  [excl sinks, STARS_HERMITE_DIRECT_GRAVITY, STARS_INTEGRATED_BY_RUMI] [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #KETJU_PN_REMNANT_TAG                    % tag remnant type at SN; PN on Type-4 NS/BH remnants
 #GALSF_RESOLVEDISM_BH_PROMOTION          % promote massive remnants to sinks  [req STELLAR_TABLES] [auto SINK_PARTICLES]
