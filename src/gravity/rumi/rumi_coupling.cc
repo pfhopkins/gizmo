@@ -14,7 +14,7 @@
 #include "../../declarations/allvars.h"
 #include "../../core/proto.h"
 #include "../../mesh/gpu_neighbor_list.h"   /* gizmo_motion_bound_raise */
-#include "../forcetree.h"                   /* gravity_cover_set_position */
+#include "../forcetree.h"                   /* gravity_note_set_positions */
 #include "../../galaxy_sf/single_star_record.h"
 #include "../../galaxy_sf/single_star_mergers.h"
 #include "../../system/gpu_particles_arena.h"
@@ -433,7 +433,7 @@ void rumi_integrate(void)
         if(b.has_mid) {rm.mid_ti = All.Ti_nextoutput; for(int j = 0; j < 3; j++) {rm.mid_pos[j] = b.mpos[j]; rm.mid_vel[j] = b.mvel[j];}}
         double vnew[3];
         if(dt_drift > 0) {for(int j = 0; j < 3; j++) {vnew[j] = d[j] / dt_drift;}}
-        else {for(int j = 0; j < 3; j++) {vnew[j] = b.vel[j]; P[i].Pos[j] = b.pos[j];} gravity_cover_set_position(i);}
+        else {for(int j = 0; j < 3; j++) {vnew[j] = b.vel[j]; P[i].Pos[j] = b.pos[j];} gravity_note_set_positions(&i, 1);}
         for(int j = 0; j < 3; j++) {P[i].dp[j] += P[i].Mass * (vnew[j] - P[i].Vel[j]); P[i].Vel[j] = vnew[j];} /* the nodes' bulk velocity follows this write as it does a kick */
         rm.ti_start = P[i].Ti_current; rm.ti_end = P[i].Ti_current + ti_step;
         P[i].RumiIntegrated = 1; P[i].RumiMember = 1;
@@ -467,7 +467,7 @@ void rumi_finish_drift(void)
         double err2 = w[0]*w[0] + w[1]*w[1] + w[2]*w[2], s2 = 0; for(int j = 0; j < 3; j++) {s2 += rm.target_pos[j] * rm.target_pos[j];}
         if(err2 > 1e-20 * (s2 + 1e-30)) {printf("RUMI++ WARNING: star %llu drifted %g off its RUMI++ position (task %d)\n", (unsigned long long)P[i].ID, sqrt(err2), ThisTask);}
         for(int j = 0; j < 3; j++) {P[i].Pos[j] = (d[j] == w[j]) ? rm.target_pos[j] : rm.target_pos[j] + (d[j] - w[j]);} /* keep a box wrap the drift made */
-        gravity_cover_set_position(i);
+        gravity_note_set_positions(&i, 1);
         for(int j = 0; j < 3; j++) {P[i].dp[j] += P[i].Mass * (rm.true_vel[j] - P[i].Vel[j]); P[i].Vel[j] = rm.true_vel[j];}
         P[i].RumiIntegrated = 0;
         moved.push_back(i);
