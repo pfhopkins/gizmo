@@ -16,6 +16,7 @@ UnitMass_in_g 1.989e43
 UnitVelocity_in_cm_per_s 1.0e5
 UnitMagneticField_in_gauss 1.0
 SofteningGas 4.0e-6 % comoving kpc/h, above SofteningGasMaxPhys/TimeBegin: the physical cap binds from the start
+MinGasKernelRadiusFractional 0 % gas smoothing lengths uncapped (unset, adaptive softening floors them at 2.8 x SofteningGas)
 SofteningHalo 0.02
 SofteningDisk 0.02
 SofteningBulge 0.02

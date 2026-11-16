@@ -23,6 +23,7 @@ SGChemCosmicRayIonRate      2.0e-16
 SGChemDustToGasRatio        1.0
 SGChemDeuteriumAbundance    2.6e-5
 SofteningGas                0.01
+MinGasKernelRadiusFractional 0
 SofteningHalo               0.01
 SofteningDisk               0.01
 SofteningBulge              0.01

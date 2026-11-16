@@ -17,6 +17,7 @@ UnitMass_in_g 1.989e43
 UnitVelocity_in_cm_per_s 1.0e5
 UnitMagneticField_in_gauss 1.0
 SofteningGas 1.0e-7 % 0.0001 pc: no effective floor, gas smoothing length uncapped
+MinGasKernelRadiusFractional 0 % gas smoothing lengths uncapped (unset, adaptive softening floors them at 2.8 x SofteningGas)
 SofteningHalo 0.050
 SofteningDisk 0.020
 SofteningBulge 0.020
