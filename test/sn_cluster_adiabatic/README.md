@@ -36,7 +36,8 @@ case, at the last synchronization at or before t = 10.24:
 * `test_feedback_delivers_sn_energy`: |E_fb / (N_SN * 1e51 erg) - 1| < 5%. The coupling alone. The FIRE
   scheme is built to couple exactly E_SN per event, except that ejecta mass joins a cell at the cell's
   specific internal energy, adding m_ej * u_cell; inside a hot bubble that is percent-level (0.4% at
-  100 Msun and 1.9% at 10 Msun).
+  100 Msun and 1.9% at 10 Msun). It runs on every case without the broadcast and, for the four
+  long-timestep cases, on the default build too.
 
 The product of the two is the full budget, (E - E0 - N_SN E51)/(N_SN E51), which each case prints.
 
@@ -53,10 +54,14 @@ coupling check passes.
 | case | (dE - E_fb)/E_fb, disabled | with `SNE_BROADCAST_TIMESTEP` | E_fb/(N_SN E51) |
 |---|---|---|---|
 | m100_resolved | -0.0003 | | 1.004 |
-| m100_TimeMax1x | +0.37 (+0.45 before the coupling fix) | +0.057 | 1.001 |
-| m100_TimeMax100x | +3.40 | +0.052 | 1.005 |
-| m10_TimeMax1x | +2.13 | +0.161 | 1.018 |
-| m10_TimeMax100x | +1.56 | +0.143 | 1.016 |
+| m100_TimeMax1x | +0.37 | +0.057 | 1.001 |
+| m100_TimeMax100x | +3.40 | +0.054 | 1.005 |
+| m10_TimeMax1x | +2.46 | +0.157 | 1.019 |
+| m10_TimeMax100x | +1.59 | +0.142 | 1.011 |
+
+The runs are threaded and not reproducible to roundoff: the disabled-build errors have moved by up to 0.4 between
+runs of the same code (m10_TimeMax1x: +2.13 to +2.49). The last column is from the disabled build; the default
+build gives 1.002 to 1.024 on the four cases it runs.
 
 1. Hydro. Nearly all of the error without the flag appears at the first supernova into quiescent gas (+8 to
    +22 E51 from one 1e51 erg event); later supernovae into the hot bubble add +0.1-0.6 E51 each. Mechanical
