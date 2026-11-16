@@ -6,7 +6,9 @@
 # before any run: GIZMO itself never builds or fetches tables, and needs no network.
 #   get_stella_tables.sh [--into-tree GIZMO_DIR] [PREFIX]
 #   PREFIX               install directory (default: $STELLA_TABLES_PREFIX, else ~/.stella-tables/<ref>)
-#   STELLA_TABLES_FROM   take already-built tables from this directory (an install, or a stella-tables build/) instead of building
+#   default              download the prebuilt files of release tables-<ref> (STELLA_TABLES_RELEASES, default the GitHub releases)
+#   STELLA_TABLES_FROM   take already-built tables from this directory (an install, or a stella-tables build/) instead
+#   STELLA_TABLES_BUILD=1 build from source instead (needs the build environment stella-tables pins; cross-check)
 #   STELLA_TABLES_REPO   git URL or local path of stella-tables to build from (default: the public GitHub repo)
 #   STELLA_TABLES_DIR    where to clone and build (default: PREFIX/src)
 #   PYTHON               python with numpy and h5py, for the hash check (default: python3)
@@ -20,6 +22,7 @@ TREE=""; if [ "${1:-}" = "--into-tree" ]; then TREE="$(cd "$2" && pwd)"; shift 2
 REF="$(sed -n 's/^#define STELLA_TABLES_REF "\([0-9a-f]*\)".*/\1/p' "$HDR")"
 PREFIX="${1:-${STELLA_TABLES_PREFIX:-$HOME/.stella-tables/$REF}}"
 REPO="${STELLA_TABLES_REPO:-https://github.com/Ulli1991/stella-tables.git}"
+RELEASES="${STELLA_TABLES_RELEASES:-https://github.com/Ulli1991/stella-tables/releases/download}"
 if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"; else
     PY=python3
     if ! python3 -c "import h5py, numpy" 2>/dev/null; then
@@ -49,7 +52,14 @@ verify() { # verify DIR: every table present with its expected hash
 mkdir -p "$PREFIX"; PREFIX="$(cd "$PREFIX" && pwd)"
 if ! verify "$PREFIX" 2>/dev/null; then
     if [ -n "${STELLA_TABLES_FROM:-}" ]; then
-        SRC="$STELLA_TABLES_FROM"; echo "get_stella_tables: copying tables from $SRC"
+        SRC="$STELLA_TABLES_FROM"; ORIGIN="$SRC"; echo "get_stella_tables: copying tables from $SRC"
+    elif [ -z "${STELLA_TABLES_BUILD:-}" ]; then
+        TAG="tables-${REF:0:7}"; SRC="$PREFIX/download"; ORIGIN="$RELEASES/$TAG"; mkdir -p "$SRC"
+        echo "get_stella_tables: downloading release $TAG from $RELEASES"
+        for f in "${FILES[@]}"; do
+            curl -fsSL -o "$SRC/$f" "$RELEASES/$TAG/$f" || { echo "get_stella_tables: download of $TAG/$f failed" >&2; exit 1; }
+        done
+        for f in "${OPTIONAL[@]}"; do curl -fsSL -o "$SRC/$f" "$RELEASES/$TAG/$f" || rm -f "$SRC/$f"; done
     else
         DIR="${STELLA_TABLES_DIR:-$PREFIX/src}"
         [ -d "$DIR/.git" ] || git clone -q "$REPO" "$DIR"
@@ -57,7 +67,7 @@ if ! verify "$PREFIX" 2>/dev/null; then
         git -C "$DIR" checkout -q "$REF"
         echo "get_stella_tables: building tables from $REPO @ $REF in $DIR"
         (cd "$DIR" && ./build.sh) || { echo "get_stella_tables: stella-tables build or tests FAILED; nothing installed" >&2; exit 1; }
-        SRC="$DIR/build"
+        SRC="$DIR/build"; ORIGIN="$REPO (built)"
     fi
     for f in "${FILES[@]}"; do
         if [ -e "$SRC/$f" ]; then cp "$SRC/$f" "$PREFIX/"; elif [ -e "$SRC/chemistry/$f" ]; then cp "$SRC/chemistry/$f" "$PREFIX/";
@@ -66,8 +76,9 @@ if ! verify "$PREFIX" 2>/dev/null; then
     for f in "${OPTIONAL[@]}"; do
         if [ -e "$SRC/$f" ]; then cp "$SRC/$f" "$PREFIX/"; elif [ -e "$SRC/chemistry/$f" ]; then cp "$SRC/chemistry/$f" "$PREFIX/"; fi
     done
+    [ "$SRC" = "$PREFIX/download" ] && rm -rf "$PREFIX/download"
     verify "$PREFIX" || { echo "get_stella_tables: installed tables in $PREFIX do not match these sources" >&2; exit 1; }
-    { echo "stella-tables: $REF"; echo "source: ${STELLA_TABLES_FROM:-$REPO}"; date; } > "$PREFIX/stella_tables.stamp"
+    { echo "stella-tables: $REF"; echo "source: $ORIGIN"; date; } > "$PREFIX/stella_tables.stamp"
 fi
 echo "get_stella_tables: $PREFIX holds stella-tables $REF (hashes checked)"
 if [ -n "$TREE" ]; then

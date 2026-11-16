@@ -17,12 +17,11 @@ The tests launch GIZMO with `srun` inside a SLURM allocation and with Open MPI's
 ## Step 2c: Stella and SGCHEM tables
 Tests built with `SGCHEM` or `GALSF_RESOLVEDISM_STELLAR_TABLES` need the installed tables. `build_gizmo_for_test.sh` runs
 `scripts/get_stella_tables.sh --into-tree .`, which installs them once into `$STELLA_TABLES_PREFIX` (default
-`~/.stella-tables/<ref>`; `STELLA_TABLES_FROM=<dir>` copies existing tables instead of building them), checks their hashes
+`~/.stella-tables/<ref>`; `STELLA_TABLES_FROM=<dir>` copies existing tables instead), checks their hashes
 and links them to the default paths the test parameter files use. GIZMO checks the same hashes at startup; tables are
 never fetched at run time. Production runs set `StellarTablesFile` and `SGCHEMTablesDir` to the install directory.
-A build from source reproduces the pinned hashes only in the Python environment the release was built with; until that is
-fixed, use the release files: download the assets of the `tables-<ref>` release on github.com/Ulli1991/stella-tables into a
-directory and set `STELLA_TABLES_FROM` to it.
+By default the script downloads the prebuilt files of release `tables-<ref>` (github.com/Ulli1991/stella-tables);
+`STELLA_TABLES_BUILD=1` builds from source instead, which reproduces the hashes only in the build environment stella-tables pins.
 
 ## Step 3: run pytest
 
