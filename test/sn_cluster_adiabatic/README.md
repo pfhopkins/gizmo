@@ -60,7 +60,7 @@ coupling check passes.
 | m10_TimeMax100x | +1.59 | +0.142 | 1.011 |
 
 The runs are threaded and not reproducible to roundoff: the disabled-build errors have moved by up to 0.4 between
-runs of the same code (m10_TimeMax1x: +2.13 to +2.49). The last column is from the disabled build; the default
+runs of the same code (m10_TimeMax1x: +2.09 to +2.49). The last column is from the disabled build; the default
 build gives 1.002 to 1.024 on the four cases it runs.
 
 1. Hydro. Nearly all of the error without the flag appears at the first supernova into quiescent gas (+8 to
