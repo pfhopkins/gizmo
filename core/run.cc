@@ -65,15 +65,15 @@ void mbary_step_checkpoint(const char *tag)
 #if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
     ml_loc[2] = CumulMetalYieldToGas - CumulMetalEjectedFromStars;
 #endif
-    double ml[3] = {0, 0, 0};
-    MPI_Allreduce(ml_loc, ml, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    double M_gas = 0, M_star = 0, M_Z = 0;
-    MPI_Allreduce(&M_gas_loc,  &M_gas,  1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&M_star_loc, &M_star, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&M_Z_loc,    &M_Z,    1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    double red_loc[7] = {ml_loc[0], ml_loc[1], ml_loc[2], M_gas_loc, M_star_loc, M_Z_loc, 0}, red[7] = {0}; /* one reduction per checkpoint */
 #ifdef GALSF_RESOLVEDISM_DUST
-    double M_dust = 0;
-    MPI_Allreduce(&M_dust_loc, &M_dust, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    red_loc[6] = M_dust_loc;
+#endif
+    MPI_Reduce(red_loc, red, 7, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); /* only rank 0 reads the sums */
+    double ml[3] = {red[0], red[1], red[2]};
+    double M_gas = red[3], M_star = red[4], M_Z = red[5];
+#ifdef GALSF_RESOLVEDISM_DUST
+    double M_dust = red[6];
 #endif
     double M_tot = M_gas + M_star;
     double M_L = M_Z + ml[0] + ml[1] - ml[2];
