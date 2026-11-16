@@ -1089,7 +1089,7 @@ void pairflux_mark_closing_kick_expected(void);
 void pairflux_record_add(int r, int r_active, int e_task, int e_index, double W2_e, Vec3<double> mom, double egy, Vec3<double> B);
 void pairflux_after_closing_kick(void);
 void pairflux_after_opening_kick(void);
-void pairflux_wake_kick_correction(int i, double dt_wake);
+void pairflux_wake_kick_correction(int i, double dt_wake, int to_pred);
 #endif
 #ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
 void print_gas_conserved_totals(void);

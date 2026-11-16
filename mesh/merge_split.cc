@@ -844,6 +844,19 @@ int split_particle_i(int i, int n_particles_split, double r_near)
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
         for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] = 0;} /* pending exchange stays with the parent */
 #endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        { /* pair-flux sums are absolute: share them with the mass */
+            double f = mass_of_new_particle;
+            CellP[j].PairFluxSumMom = CellP[i].PairFluxSumMom * f; CellP[i].PairFluxSumMom -= CellP[j].PairFluxSumMom;
+            CellP[j].PairFluxSumEgy = CellP[i].PairFluxSumEgy * f; CellP[i].PairFluxSumEgy -= CellP[j].PairFluxSumEgy;
+            CellP[j].PairFluxRecvMom = CellP[i].PairFluxRecvMom * f; CellP[i].PairFluxRecvMom -= CellP[j].PairFluxRecvMom;
+            CellP[j].PairFluxRecvEgy = CellP[i].PairFluxRecvEgy * f; CellP[i].PairFluxRecvEgy -= CellP[j].PairFluxRecvEgy;
+#ifdef MAGNETIC
+            CellP[j].PairFluxSumB = CellP[i].PairFluxSumB * f; CellP[i].PairFluxSumB -= CellP[j].PairFluxSumB;
+            CellP[j].PairFluxRecvB = CellP[i].PairFluxRecvB * f; CellP[i].PairFluxRecvB -= CellP[j].PairFluxRecvB;
+#endif
+        }
+#endif
 #if defined(SINK_THERMALFEEDBACK)
         CellP[j].Injected_Sink_Energy = mass_of_new_particle * CellP[i].Injected_Sink_Energy; CellP[i].Injected_Sink_Energy -= CellP[j].Injected_Sink_Energy; /* pending energy (not specific): partition with the mass */
 #endif
@@ -1271,6 +1284,13 @@ int merge_particles_ij(int i, int j)
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving */
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
     for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] += CellP[i].Dyield_pending[k];} /* pending exchange adds */
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    CellP[j].PairFluxSumMom += CellP[i].PairFluxSumMom; CellP[j].PairFluxSumEgy += CellP[i].PairFluxSumEgy; /* pair-flux sums add */
+    CellP[j].PairFluxRecvMom += CellP[i].PairFluxRecvMom; CellP[j].PairFluxRecvEgy += CellP[i].PairFluxRecvEgy;
+#ifdef MAGNETIC
+    CellP[j].PairFluxSumB += CellP[i].PairFluxSumB; CellP[j].PairFluxRecvB += CellP[i].PairFluxRecvB;
+#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     /* Force Σ Met[1..27] = 1 bit-exact via H from conservation. */

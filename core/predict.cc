@@ -220,6 +220,16 @@ void drift_particle(int i, integertime time1)
             
             CellP[i].Density *= exp(-divv_fac);
             double etmp = CellP[i].InternalEnergyPred + CellP[i].DtInternalEnergy * dt_entr;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            { /* cross-bin fluxes received at this cell's last step arrive as impulses from the smaller-step cells: not predicted twice */
+                Vec3<double> a_recv = CellP[i].PairFluxRecvMom / P[i].Mass; CellP[i].VelPred -= a_recv * (dt_hydrokick*All.cf_atime);
+                double du_recv = CellP[i].PairFluxRecvEgy - dot(CellP[i].HydroVelRef, CellP[i].PairFluxRecvMom);
+#ifdef MAGNETIC
+                du_recv -= dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].PairFluxRecvB);
+#endif
+                etmp -= du_recv / P[i].Mass * dt_entr;
+            }
+#endif
             double u_floor = 0; /* the lowest energy the material's equation of state is valid at (0: none), at the predicted density */
 #ifdef EOS_ANEOS
             u_floor = lowest_valid_internal_energy(CellP[i].CompositionType, CellP[i].Density);
@@ -284,6 +294,9 @@ void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_
 #ifdef MAGNETIC
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
     CellP[i].BPred += CellP[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    CellP[i].BPred -= CellP[i].PairFluxRecvB * (dt_entr * BphysVolphys_to_BcodeVolCode); /* delivered as impulses */
+#endif
 #ifdef DIVBCLEANING_DEDNER
     double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi fluxes (otherwise coefficient is 1)
     double dtphi_code = (PhiphysVolphys_to_PhicodeVolCode) * CellP[i].DtPhi;

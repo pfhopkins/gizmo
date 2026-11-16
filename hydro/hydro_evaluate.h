@@ -473,6 +473,13 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifdef MAGNETIC
                         CellP[j].PairFluxSumB -= pf_B;
 #endif
+                        if(dt_hydrostep_i < dt_hydrostep_j) /* cross-bin: i delivers this flux to j as impulses until j's next step */
+                        {
+                            CellP[j].PairFluxRecvMom -= Fluxes.v; CellP[j].PairFluxRecvEgy -= Fluxes.p;
+#ifdef MAGNETIC
+                            CellP[j].PairFluxRecvB -= pf_B;
+#endif
+                        }
                     }
                     pairflux_record_add(j, j_is_active_for_fluxes, local.PairFluxTask, local.PairFluxIndex, local.PairFluxW2, -1.*Fluxes.v, -Fluxes.p, -1.*pf_B);
                 }

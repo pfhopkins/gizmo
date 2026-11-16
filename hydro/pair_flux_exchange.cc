@@ -64,8 +64,9 @@ void pairflux_record_add(int r, int r_active, int e_task, int e_index, double W2
     PairFluxRecords.push_back(rec);
 }
 
-/* conserved-form impulse: momentum, total energy and B*V (physical); u takes dE minus the exact kinetic and magnetic change */
-static void pairflux_apply_impulse(int i, Vec3<double> dmom, double dE, Vec3<double> dB, int sync_pred)
+/* conserved-form impulse: momentum, total energy and B*V (physical); u takes dE minus the exact kinetic and magnetic change.
+   to_pred: the predicted variables get the same change (the cell responds now, as the Riemann solver will see it) */
+static void pairflux_apply_impulse(int i, Vec3<double> dmom, double dE, Vec3<double> dB, int to_pred)
 {
     if(P[i].Type != 0 || P[i].Mass <= 0) {PairFluxNLost++; return;}
     double m = P[i].Mass, a = All.cf_atime;
@@ -74,11 +75,12 @@ static void pairflux_apply_impulse(int i, Vec3<double> dmom, double dE, Vec3<dou
 #ifdef MAGNETIC
     Vec3<double> dBc = dB / a; double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0; /* E_B = |VB_code|^2 (rho/m) / (2a), as in do_the_kick */
     dEB = 0.5 * ((CellP[i].B + dBc).norm_sq() - CellP[i].B.norm_sq()) * rho_over_m / a;
-    CellP[i].B += dBc; if(sync_pred) {CellP[i].BPred += dBc;}
+    CellP[i].B += dBc; if(to_pred) {CellP[i].BPred += dBc;}
 #else
     (void) dB;
 #endif
-    double u_target = CellP[i].InternalEnergy + (dE - dKE - dEB) / m;
+    double du = (dE - dKE - dEB) / m, u_target = CellP[i].InternalEnergy + du;
+    if(to_pred) {CellP[i].InternalEnergyPred = DMAX(internal_energy_positivity_catch(CellP[i].InternalEnergyPred, CellP[i].InternalEnergyPred + du, 0), All.MinEgySpec);}
     CellP[i].InternalEnergy = internal_energy_positivity_catch(CellP[i].InternalEnergy, u_target, 0);
     CellP[i].enforce_temperature_floor();
     double de_floor = (CellP[i].InternalEnergy - u_target) * m;
@@ -90,25 +92,25 @@ static void pairflux_apply_impulse(int i, Vec3<double> dmom, double dE, Vec3<dou
 #endif
     }
     P[i].Vel = vn * a; P[i].dp += dmom * a;
-    if(sync_pred) {CellP[i].VelPred = P[i].Vel; CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;}
+    if(to_pred) {CellP[i].VelPred += dmom * (a / m);}
     force_raise_motion_bound(i);
 }
 
 /* sum impulses per receiver, then apply each once */
-struct pairflux_sum {int i, sync_pred; Vec3<double> mom; double egy; Vec3<double> B;};
+struct pairflux_sum {int i, to_pred; Vec3<double> mom; double egy; Vec3<double> B;};
 static std::vector<pairflux_sum> PairFluxSums;
-static void pairflux_sum_add(int i, int sync_pred, Vec3<double> mom, double egy, Vec3<double> B)
+static void pairflux_sum_add(int i, int to_pred, Vec3<double> mom, double egy, Vec3<double> B)
 {
     if(i < 0 || i >= NumPart) {PairFluxNLost++; return;}
     if((int)PairFluxSlot.size() < NumPart) {PairFluxSlot.resize(NumPart, -1);}
     int s = PairFluxSlot[i];
-    if(s < 0) {pairflux_sum t; t.i = i; t.sync_pred = sync_pred; t.mom = {}; t.egy = 0; t.B = {}; s = PairFluxSlot[i] = (int)PairFluxSums.size(); PairFluxSums.push_back(t);}
+    if(s < 0) {pairflux_sum t; t.i = i; t.to_pred = to_pred; t.mom = {}; t.egy = 0; t.B = {}; s = PairFluxSlot[i] = (int)PairFluxSums.size(); PairFluxSums.push_back(t);}
     PairFluxSums[s].mom += mom; PairFluxSums[s].egy += egy; PairFluxSums[s].B += B;
-    if(!sync_pred) {PairFluxSums[s].sync_pred = 0;}
+    if(!to_pred) {PairFluxSums[s].to_pred = 0;}
 }
 static void pairflux_sums_apply(void)
 {
-    for(auto &t : PairFluxSums) {pairflux_apply_impulse(t.i, t.mom, t.egy, t.B, t.sync_pred); PairFluxSlot[t.i] = -1;}
+    for(auto &t : PairFluxSums) {pairflux_apply_impulse(t.i, t.mom, t.egy, t.B, t.to_pred); PairFluxSlot[t.i] = -1;}
     PairFluxSums.clear();
 }
 
@@ -136,7 +138,7 @@ void pairflux_after_closing_kick(void)
 #ifdef MAGNETIC
         B = rec.B * rec.c2;
 #endif
-        pairflux_sum_add(rec.r, rec.r_active, rec.mom * rec.c2, rec.egy * rec.c2, B);
+        pairflux_sum_add(rec.r, 1, rec.mom * rec.c2, rec.egy * rec.c2, B); /* active r: Pred = conserved just after its closing kick */
     }
     pairflux_sums_apply();
     PairFluxClosingKickExpected = 0;
@@ -168,7 +170,7 @@ void pairflux_after_opening_kick(void)
 #ifdef MAGNETIC
         B = rec.B * c1;
 #endif
-        pairflux_sum_add(rec.r, 0, rec.mom * c1, rec.egy * c1, B);
+        pairflux_sum_add(rec.r, !rec.r_active, rec.mom * c1, rec.egy * c1, B); /* active r: opening-kick type change, prediction as GIZMO's */
     }
     pairflux_sums_apply();
     for(int i : ActiveParticleList) {if(P[i].Type == 0) {CellP[i].Ti_PairFluxCoveredP1 = P[i].Ti_begstep + P[i].integertime_step()/2 + 1;}}
@@ -177,14 +179,14 @@ void pairflux_after_opening_kick(void)
 }
 
 /* a woken cell's wake kicks applied its stale rates over dt_wake: take the pair-flux part back out (its partners never got it) */
-void pairflux_wake_kick_correction(int i, double dt_wake)
+void pairflux_wake_kick_correction(int i, double dt_wake, int to_pred)
 {
     if(dt_wake == 0 || P[i].Type != 0) {return;}
     Vec3<double> B = {};
 #ifdef MAGNETIC
     B = CellP[i].PairFluxSumB * (-dt_wake);
 #endif
-    pairflux_apply_impulse(i, CellP[i].PairFluxSumMom * (-dt_wake), CellP[i].PairFluxSumEgy * (-dt_wake), B, 0);
+    pairflux_apply_impulse(i, CellP[i].PairFluxSumMom * (-dt_wake), CellP[i].PairFluxSumEgy * (-dt_wake), B, to_pred);
 }
 
 #endif /* HYDRO_EXACT_PAIR_FLUX_EXCHANGE */

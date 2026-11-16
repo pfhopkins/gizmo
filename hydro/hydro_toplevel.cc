@@ -1193,9 +1193,9 @@ void hydro_force_initial_operations_preloop(void)
             CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
             CellP[i].HydroAccel = {};
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
-            CellP[i].PairFluxSumMom = {}; CellP[i].PairFluxSumEgy = 0;
+            CellP[i].PairFluxSumMom = {}; CellP[i].PairFluxSumEgy = 0; CellP[i].PairFluxRecvMom = {}; CellP[i].PairFluxRecvEgy = 0;
 #ifdef MAGNETIC
-            CellP[i].PairFluxSumB = {};
+            CellP[i].PairFluxSumB = {}; CellP[i].PairFluxRecvB = {};
 #endif
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
