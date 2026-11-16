@@ -613,7 +613,7 @@ void star_formation_parent_routine(void)
 #endif
                 prob = (P[i].Mass / (M_drawn / UNIT_MASS_IN_SOLAR)) * pfac;
 #ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY
-                if(instant_sf) {prob = 2.;} else
+                if(instant_sf) {prob = 2.;}
 #endif
 #endif
                 
