@@ -637,6 +637,9 @@ void merge_and_split_particles(void)
              P[j_sp].Metallicity[0] = zs_sp;}
             /* star bookkeeping: mass moves star -> new cell atomically here */
             P[i_sp].Mass -= P[j_sp].Mass;
+#if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
+            CumulMetalYieldToGas += P[j_sp].Mass * P[j_sp].Metallicity[0]; CumulMetalEjectedFromStars += P[j_sp].Mass * P[i_sp].Metallicity[0]; /* metal ledger, as the kernel deposit */
+#endif
             if(ej_frac_sp < 1) {printf("SPAWNSN: star=%llu held only %.3g of its ejecta mass; payload scaled down to conserve mass\n", (unsigned long long)P[i_sp].ID, ej_frac_sp);}
             P[i_sp].SN_SpawnPending = 0;
 #ifdef WAKEUP
