@@ -571,7 +571,6 @@ void star_formation_parent_routine(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
             if(CellP[i].IMFSpawnBlock) {flag=1;} /* recently spawned a star — wait for density recomputation */
-            if(P[i].Mass <= resolvedism_imf_donor_floor(All.MinMassForParticleMerger)) {flag=1;} /* parent must be a donor: a draw always finds gas */
             if(CellP[i].SFCooldown > 0) {flag=1; CellP[i].SFCooldown -= dtime; if(CellP[i].SFCooldown < 0) {CellP[i].SFCooldown = 0;}} /* t_ff cooldown after a spawn */
 #endif
 

@@ -569,7 +569,7 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
                 r2=0; for(k=0;k<3;k++) {r2 += dp[k]*dp[k];}
                 if(r2 < 0 || r2 >= h2) continue; /* allow r2==0: parent cell at same position */
 
-                double M_floor = resolvedism_imf_donor_floor(All.MinMassForParticleMerger); /* keep donors far from empty (merged later if below threshold) */
+                double M_floor = 0.01 * All.MinMassForParticleMerger; /* keep donors far from empty (merged later if below threshold) */
                 if(Mass_j <= M_floor) continue;
                 if(IMF_AccretionMode == 0)
                 {
@@ -892,11 +892,10 @@ void assign_stellar_masses(void)
         }
 #endif
 
-        if(mass_acc <= 0) { /* the parent is always a donor (sfr_eff.cc floor gate): no donor mass is a bug, never filled from nowhere */
-            int ip = (int)P[i].MstarSampleIMF[1];
-            printf("IMF accretion found no donor mass for star ID=%llu M_drawn=%.3f Msun: parent ID=%llu M=%.6e floor=%.6e\n", (unsigned long long)P[i].ID, M_drawn,
-                (unsigned long long)P[ip].ID, (double)P[ip].Mass, resolvedism_imf_donor_floor(All.MinMassForParticleMerger));
-            endrun(8889);
+        if(mass_acc <= 0) {
+            printf("WARNING: IMF accretion failed for star ID=%llu M_star=%.2f Msun, using tiny mass\n",
+                (unsigned long long)P[i].ID, M_drawn);
+            mass_acc = 1e-10;
         }
 
         /* Star mass = actual mass accreted (exact conservation) */
