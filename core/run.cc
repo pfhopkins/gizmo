@@ -552,7 +552,9 @@ void run(void)
             if((P[i].Type == 4) && eligible_for_hermite(i)) {double s2[2], z2[2]; tree_pair_softening(i, s2, z2); for(int k = 0; k < 2; k++) {P[i].KetjuTreeSoft[k] = s2[k]; P[i].KetjuTreeZeta[k] = z2[k];}}
 #endif
 #endif
+        ESTEP_BEGIN(ESTEP_INT_KICK1);
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+        ESTEP_END(ESTEP_INT_KICK1);
 #ifdef STARS_INTEGRATED_BY_RUMI
         rumi_integrate();           /* stars' mutual gravity over their step by RUMI++, chord velocities for the drift */
 #endif
@@ -564,12 +566,14 @@ void run(void)
         ketju_write_output();       /* write KETJU diagnostics to HDF5 */
 #endif
 
+        ESTEP_BEGIN(ESTEP_INT_DRIFT);
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
 
 
+        ESTEP_END(ESTEP_INT_DRIFT);
         output_log_messages();	/* write some info to log-files */
 
         set_non_standard_physics_for_current_time();	/* update auxiliary physics for current time */
@@ -700,7 +704,9 @@ void run(void)
 #endif
 
 
+        ESTEP_BEGIN(ESTEP_INT_GRAV);
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
+        ESTEP_END(ESTEP_INT_GRAV);
 
 
 #ifdef GALSF_SUBGRID_WINDS
@@ -732,7 +738,9 @@ void run(void)
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
 #endif
 
+        ESTEP_BEGIN(ESTEP_INT_HYDRO);
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+        ESTEP_END(ESTEP_INT_HYDRO);
 #ifdef TREE_INTEGRITY_AUDITS
         force_tree_walk_audit("forces"); /* the bounds this step's gravity and hydro walks just used */
 #endif
@@ -749,7 +757,9 @@ void run(void)
         }
 #endif
         
+        ESTEP_BEGIN(ESTEP_INT_KICK2);
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
+        ESTEP_END(ESTEP_INT_KICK2);
 
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
