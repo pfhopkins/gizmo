@@ -4,12 +4,11 @@ Uniform n_H = 200 cm^-3 box of 1 Msun cells (12^3, 4 ranks), Stella production m
 cutoff. nHcutoffSF and CritPhysDensity are far below the box density and the SF cooldown is off, so every cell forms
 one star per step and the box drains its gas down to the accretion floor (1% of the merge mass). Masses are float32 as
 in Gadget ICs, so drained donors reach the floor exactly. TreeDomainUpdateFrequency 2 keeps the decomposition, and with
-it cell merging, off as in a deep zoom sub-step, so the drained cells stay. A cell at the floor cannot donate and must
-not form a star. Checks:
-  - the box drains: every gas cell ends at the floor;
-  - no star is drawn without donor mass (no "found no donor mass" abort);
+it cell merging, off as in a deep zoom sub-step, so the drained cells stay. Stars drawn there cannot collect their mass.
+Checks:
+  - failed draws happen and are undone (gas back to the parent cell), never filled from nowhere;
   - total baryonic mass (gas + stars, double precision, mass_balance_steps.txt) is conserved to 1e-14;
-  - no star is heavier than its drawn IMF mass (SFinfo.txt: M_acc <= M_drawn).
+  - every star holds its drawn IMF mass to within 1% (SFinfo.txt: 0.99 M_drawn <= M_acc <= M_drawn).
 """
 
 import os
@@ -116,24 +115,21 @@ def test_stella_imf_accretion_floor():
     shutil.copy(join(run, "run.log"), join(OUT, "run.log"))
     text = open(join(run, "run.log")).read()
 
-    n_nodonor = len(re.findall(r"IMF accretion (failed for star|found no donor mass for star)", text))
+    n_fallback = len(re.findall(r"IMF accretion (failed for star|found no donor mass for star)", text))
+    n_failed = sum(int(x) for x in re.findall(r"RESOLVEDISM IMF: (\d+) failed draws", text))
     n_spawn = sum(int(x) for x in re.findall(r"RESOLVEDISM SFR: spawned (\d+) stars", text))
     trace = mbary_trace(join(OUT, "mass_balance_steps.txt"))
     m0, m1 = trace[0][1], trace[-1][1]
     d_imf = sum(d for tag, _, d in trace if tag == "post_imf_accrete")
     sf = np.loadtxt(join(OUT, "SFinfo.txt"), usecols=(5, 6), ndmin=2)  # M_drawn, M_acc [Msun]
     heavy = int(np.sum(sf[:, 1] > sf[:, 0] + 1e-4))
-    snaps = sorted(s for s in os.listdir(join(run, "output")) if s.startswith("snapshot_"))
-    with h5py.File(join(run, "output", snaps[-1]), "r") as f:
-        m_gas = f["PartType0/Masses"][:].astype(float)
-    floor = 0.01 * 0.49 * float(np.float32(M_CELL * MSUN / 1.989e43))
-    n_above = int(np.sum(m_gas > floor * (1 + 1e-6)))
-    print(f"stars spawned {n_spawn}, no-donor draws {n_nodonor}; gas cells {len(m_gas)}, above the floor {n_above}; "
+    light = int(np.sum(sf[:, 1] < 0.99 * sf[:, 0] - 1e-4))
+    print(f"stars spawned {n_spawn}, failed draws undone {n_failed}, fallback stars {n_fallback}; "
           f"M_bary {m0:.16e} -> {m1:.16e} (rel {(m1 - m0) / m0:+.3e}), sum dM at post_imf_accrete {d_imf:+.3e}; "
-          f"SFinfo rows {len(sf)}, M_acc > M_drawn {heavy}")
-    assert r.returncode == 0 or n_nodonor > 0, f"GIZMO exited {r.returncode}, see {OUT}/run.log"
-    assert n_nodonor == 0, f"{n_nodonor} stars drawn without donor mass"
+          f"SFinfo rows {len(sf)}, M_acc > M_drawn {heavy}, M_acc < 0.99 M_drawn {light}")
+    assert r.returncode == 0, f"GIZMO exited {r.returncode}, see {OUT}/run.log"
+    assert n_fallback == 0, f"{n_fallback} stars were given mass without donors"
     assert abs(m1 - m0) <= 1e-14 * m0, f"baryonic mass changed by {(m1 - m0) / m0:+.3e} (IMF accretion: {d_imf:+.3e} code)"
-    assert heavy == 0, f"{heavy} stars are heavier than their drawn IMF mass"
-    assert n_above == 0, f"{n_above} gas cells above the floor: the box did not drain, the floor case was not reached"
+    assert heavy == 0 and light == 0, f"{heavy} stars heavier, {light} stars more than 1% lighter than their drawn IMF mass"
+    assert n_failed > 0, "no failed draw: the drained-floor case was not reached"
     shutil.rmtree(run, ignore_errors=True)

@@ -1,8 +1,8 @@
 # Star formation in gas drained to the IMF-accretion floor creates no mass
 
-A Stella star collects its drawn IMF mass from gas cells above the accretion floor (1% of the merge mass). A cell at the
-floor cannot donate, so it must not form a star: before the fix such a draw found no donor and was given 1e-10 code mass
-from nowhere (zoom run full_1e8_c_L12_ketju1: 991 draws, +1460 Msun).
+A Stella star collects its drawn IMF mass from gas cells above the accretion floor (1% of the merge mass). In gas drained
+to the floor a draw cannot collect its mass; it must be undone (gas back to the parent cell), never filled from nowhere
+(before the fix: 1e-10 code mass per such star; zoom run full_1e8_c_L12_ketju1: 991 stars, +1460 Msun).
 
 ## Setup
 
@@ -12,7 +12,6 @@ from nowhere (zoom run full_1e8_c_L12_ketju1: 991 draws, +1460 Msun).
 
 ## What is tested
 
-- the box drains: every gas cell ends at the floor
-- no star is drawn without donor mass
+- failed draws happen and are undone; no star gets mass without donors
 - total baryonic mass conserved to 1e-14 (mass_balance_steps.txt)
-- no star heavier than its drawn mass (SFinfo.txt)
+- every star holds its drawn mass to within 1% (SFinfo.txt)
