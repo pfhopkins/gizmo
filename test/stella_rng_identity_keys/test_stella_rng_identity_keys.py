@@ -48,7 +48,8 @@ def births(tables, n):
         subprocess.run(mpi_launch_command(n) + [str(TEST_DIR / "GIZMO"), f"{TEST_NAME}.params"], cwd=d, stdout=f,
                        stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True)
     rows = [l.split() for l in open(d / "output" / "single_star_births.txt") if not l.startswith("#")]
-    return [tuple(r[:5]) for r in rows]  # time, ID, child, generation, drawn mass (as printed)
+    # time, ID, child, generation, drawn mass (as printed); within one time in ID order (ranks write a step's rows in any order)
+    return sorted((tuple(r[:5]) for r in rows), key=lambda r: (float(r[0]), int(r[1]), int(r[2]), int(r[3])))
 
 
 def shared(a, b):
@@ -60,7 +61,7 @@ def shared(a, b):
 
 def test_rank_counts_share_their_first_stars(tables):
     """bar (written before the run): the births logs of 1, 2 and 4 ranks agree row by row (time, ID, child, generation,
-    drawn mass) for at least the first 10 stars"""
+    drawn mass; rows of one time in ID order) for at least the first 10 stars"""
     b = {n: births(tables, n) for n in RANKS}
     k12, k24, k14 = shared(b[1], b[2]), shared(b[2], b[4]), shared(b[1], b[4])
     print(f"stars formed: {[len(b[n]) for n in RANKS]}; identical leading stars: 1-2 {k12}, 2-4 {k24}, 1-4 {k14}")

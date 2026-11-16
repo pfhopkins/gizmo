@@ -15,5 +15,5 @@ on the cloud IC named by `STELLA_CLOUD_IC` (a MakeCloud cloud; the study used gm
 (TimeMax 0.0028), 1, 2 and 4 ranks one after the other. The test skips without `STELLA_CLOUD_IC` or `SUNDIALS_DIR`.
 
 Check (bar written before the run): the births logs (`single_star_births.txt`: time, ID, child, generation, drawn mass) of
-the three runs agree row by row for at least the first 10 stars. (An identity-keyed test build of the same cloud shared
-22-51 stars at 1-8 ranks.)
+the three runs agree row by row (rows of one time in ID order: ranks write a step's rows in any order) for at least the
+first 10 stars. (An identity-keyed test build of the same cloud shared 22-51 stars at 1-8 ranks.)
