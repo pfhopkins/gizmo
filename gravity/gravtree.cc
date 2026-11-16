@@ -376,7 +376,7 @@ void gravity_tree(void)
 #if defined(SINK_DYNFRICTION_FROMTREE)
                 if(P[place].Type==5) {GravDataIn[j].Sink_Mass = P[place].Sink_Mass;}
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 GravDataIn[j].Vel = P[place].Vel;
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FORGAS
@@ -537,7 +537,7 @@ void gravity_tree(void)
                     P[place].weight_sum_for_special_point_smoothing += GravDataOut[j].weight_sum_for_special_point_smoothing; /* weighted sum needed */
                 }
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
                 if(GravDataOut[j].Min_Sink_Approach_Time < P[place].Min_Sink_Approach_Time) {P[place].Min_Sink_Approach_Time = GravDataOut[j].Min_Sink_Approach_Time;}
                 if(GravDataOut[j].Min_Sink_Freefall_time < P[place].Min_Sink_Freefall_time) {P[place].Min_Sink_Freefall_time = GravDataOut[j].Min_Sink_Freefall_time;}
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT

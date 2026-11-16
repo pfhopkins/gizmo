@@ -1312,7 +1312,7 @@ extern struct gravdata_in
     Vec3<MyFloat> Pos;
     MyFloat Soft;
     MyFloat Mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
     Vec3<MyFloat> Vel;
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
@@ -1426,7 +1426,7 @@ extern struct gravdata_out
     MyFloat weight_sum_for_special_point_smoothing;
 #endif
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
     MyFloat Min_Sink_Freefall_time;    // minimum value of sqrt(R^3 / G(M_SINK + M_particle)) as calculated from the tree-walk
     MyFloat Min_Sink_Approach_Time; // smallest approach time t_a = |v_radial|/r
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT

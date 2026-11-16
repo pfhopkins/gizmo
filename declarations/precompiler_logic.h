@@ -844,6 +844,13 @@
 #define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
 #define TREE_STAR_STAR_EXCLUDED_TYPE 4
 #endif
+#ifdef STARS_APPROACH_TIMESTEP /* Type-4 stars: STARFORGE's two-body step (approach and free-fall time to the nearest star, from the gravity walk) */
+#if defined(SINK_CALC_DISTANCES) || defined(SINGLE_STAR_TIMESTEPPING) || defined(STARS_HERMITE_DIRECT_GRAVITY) || defined(STARS_INTEGRATED_BY_RUMI)
+#error "STARS_APPROACH_TIMESTEP uses the tree's sink node moments for Type 4: not combinable with sinks, STARFORGE timestepping, other SINK_CALC_DISTANCES users, STARS_HERMITE_DIRECT_GRAVITY or STARS_INTEGRATED_BY_RUMI"
+#endif
+#define SINK_CALC_DISTANCES
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#endif
 #if defined(SINGLE_STAR_DIRECT_GRAVITY) && !defined(TREE_STAR_STAR_EXCLUDED_TYPE)
 #define TREE_STAR_STAR_EXCLUDED_TYPE (STAR_DIRECT_GRAVITY_TYPE) /* the tree leaves star-star pairs to star_direct_gravity.cc */
 #endif
@@ -893,8 +900,19 @@
    subtracts the sink monopole from mixed nodes and so needs sink_pos on the same clock as u.d.s; it can
    be set without SINGLE_STAR_TIMESTEPPING, and where it is, the sink_vel declaration and the moment sums
    that fill it widen to match this macro. */
-#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(STARS_INTEGRATED_BY_RUMI))
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(STARS_INTEGRATED_BY_RUMI) || defined(STARS_APPROACH_TIMESTEP))
 #define SINK_NODE_MOTION_TRACKED
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(STARS_APPROACH_TIMESTEP)
+#define SINK_APPROACH_TIME_TRACKED /* the gravity walk fills Min_Sink_Approach_Time / Min_Sink_Freefall_time */
+#endif
+#ifdef STARS_APPROACH_TIMESTEP
+#define SINK_APPROACH_SOURCE_SOFTENING (All.ForceSoftening[4])
+#if defined(SPECIAL_POINT_MOTION) || defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE)
+#error "STARS_APPROACH_TIMESTEP: SPECIAL_POINT_MOTION and GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE use the sink node moments"
+#endif
+#else
+#define SINK_APPROACH_SOURCE_SOFTENING SinkParticle_GravityKernelRadius
 #endif
 #if defined(STARS_INTEGRATED_BY_RUMI) && defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE)
 #error "STARS_INTEGRATED_BY_RUMI: GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE uses the sink node moments"
