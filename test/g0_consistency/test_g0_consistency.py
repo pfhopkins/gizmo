@@ -24,6 +24,7 @@ import numpy as np
 import pytest
 
 from gizmo.test import build_gizmo_for_test, default_mpi_ranks
+from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "g0_consistency"
 TEST_DIR = dirname(abspath(__file__))
@@ -224,3 +225,5 @@ def test_g0_consistency():
     bad = [f"{p}/{c}/{q}={rat[q]:.3f} not in {TOL[(c, p)]}" for (p, c), (rat, _, _) in results.items()
            for q in QUANT if (c, p, q) not in UNCHECKED and not (TOL[(c, p)][0] <= rat[q] <= TOL[(c, p)][1])]
     assert not bad, "chemistry-side rates off the analytic field:\n" + "\n".join(bad) + "\n" + table
+    traces = {f"{p}/{c}": keep_and_check_traces(join(OUT, f"{p}_{c}", "output"), join(OUT, f"{p}_{c}", "output")) for p in PATHS for c in CASES}
+    assert all(r.ok for r in traces.values()), "\n".join(f"{k}: {r.summary()}" for k, r in traces.items() if not r.ok)

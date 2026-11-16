@@ -14,6 +14,7 @@ import h5py
 import numpy as np
 
 from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "radp_starside"
 TEST_DIR = f"test/{TEST_NAME}"
@@ -42,3 +43,5 @@ def test_radp_starside():
     print(f"booked {booked:.3f} Msun km/s, delivered radial {delivered:.3f}, ratio {delivered / booked:.3f}")
     assert booked > 10
     assert BAR[0] < delivered / booked < BAR[1]
+    rep = keep_and_check_traces(os.path.join(TEST_DIR, "output"), os.path.join(TEST_DIR, "output"))
+    assert rep.ok, rep.summary()

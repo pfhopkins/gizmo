@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "stella_dense_sf"
 TEST_DIR = dirname(abspath(__file__))
@@ -116,3 +117,10 @@ def test_sfr_log_counts_stella_stars(run):
     assert m_drawn > 1.0, "the clump formed no stars"
     assert abs(m_logged - m_drawn) < 1e-3 * m_drawn, "sfr.txt column 5 misses Stella stars"
     assert abs(m_rate - m_drawn) < 1e-3 * m_drawn, "sfr.txt column 4 is not the formed mass per time"
+
+
+def test_mass_and_energy_traces_close(run):
+    """Mass trace and energy step trace: no checkpoint or stage beyond its bar (gizmo.conservation_trace)."""
+    _, out = run
+    rep = keep_and_check_traces(out, out)
+    assert rep.ok, rep.summary()

@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "stella_fb_wakeup"
 TEST_DIR = dirname(abspath(__file__))
@@ -55,6 +56,7 @@ def test_feedback_wakeups_reach_the_pending_list():
             shutil.copy(join(run, f), out)
     text = open(join(run, "run.log")).read()
     sninfo = np.loadtxt(join(run, "output", "SNinfo.txt"), ndmin=2) if os.path.exists(join(run, "output", "SNinfo.txt")) else np.zeros((0, 20))
+    trace = keep_and_check_traces(join(run, "output"), out)
     shutil.rmtree(run, ignore_errors=True)
 
     assert r.returncode == 0, f"GIZMO exited {r.returncode}, see {out}/run.log"
@@ -65,3 +67,4 @@ def test_feedback_wakeups_reach_the_pending_list():
     print(f"wake-up requests missing from the list: {sum(missed)} in {len(missed)} reports; shut-gate reports: {len(gate)}")
     assert not missed, f"{sum(missed)} feedback wake-up requests were not in the pending list ({out}/run.log)"
     assert not gate, f"{len(gate)} steps shut the wake-up gate with requests pending ({out}/run.log)"
+    assert trace.ok, trace.summary()

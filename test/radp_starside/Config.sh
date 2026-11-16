@@ -24,3 +24,4 @@ NO_ISEND_IRECV_IN_DOMAIN
 SELFGRAVITY_OFF
 BOX_PERIODIC
 OUTPUT_TIMESTEP
+OUTPUT_ENERGY_STEP_TRACE                 % energy step trace (gizmo.conservation_trace)

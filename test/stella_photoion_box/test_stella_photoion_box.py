@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "stella_photoion_box"
 TEST_DIR = dirname(abspath(__file__))
@@ -94,6 +95,7 @@ def test_stella_photoion_box():
                            stdout=log, stderr=subprocess.STDOUT, cwd=run)
     os.makedirs(OUT, exist_ok=True)
     shutil.copy(join(run, "run.log"), join(OUT, "run.log"))
+    trace = keep_and_check_traces(join(run, "output"), OUT)
     text = open(join(run, "run.log")).read()
     assert "too small to hold a single particle" not in text, f"exchange buffer overflow, see {OUT}/run.log"
     assert r.returncode == 0, f"GIZMO exited {r.returncode}, see {OUT}/run.log"
@@ -110,3 +112,4 @@ def test_stella_photoion_box():
     assert np.all(np.abs(ratio - 1) <= LEDGER_TOL), f"photon budget not spent: ledger ratio {ratio.min():.4f}..{ratio.max():.4f}"
     assert asym.max() <= ASYM_MAX, f"HII region not round in a uniform medium: asymmetry {asym.max():.2f}"
     shutil.rmtree(run, ignore_errors=True)
+    assert trace.ok, trace.summary()

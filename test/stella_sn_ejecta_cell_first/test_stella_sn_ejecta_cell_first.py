@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.conservation_trace import keep_and_check_traces, assert_conservation_traces
 
 TEST_NAME = "stella_sn_ejecta_cell_first"
 TEST_DIR = dirname(abspath(__file__))
@@ -115,6 +116,7 @@ def run_variant(flags, tag):
     m0 = masses(snaps[0])
     m1 = masses(snaps[-1])
     sninfo = np.loadtxt(join(run, "output", "SNinfo.txt"), ndmin=2) if os.path.exists(join(run, "output", "SNinfo.txt")) else np.zeros((0, 20))
+    keep_and_check_traces(join(run, "output"), out)
     shutil.rmtree(run, ignore_errors=True)
     return text, m0, m1, sninfo, out
 
@@ -136,6 +138,7 @@ def test_sn_without_gas_makes_ejecta_cell_first():
     assert abs(float(exe[0]) / mej - 1) < 1e-3, f"ejecta cell holds {exe[0]} Msun, ejecta mass {mej}"
     assert ms1 is not None and abs(ms1 - rem) < 1e-3 * mej, f"star mass {ms1} Msun after the SN, remnant {rem}"
     assert mz1 - mz0 > 0.1, f"gas metal mass grew by only {mz1 - mz0:.3g} Msun: the ejecta metals did not reach the gas"
+    assert_conservation_traces(out)
 
 
 @pytest.mark.skipif(bool(os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN")), reason="builds GIZMO")
@@ -155,3 +158,4 @@ def test_sn_without_gas_kernel_growth_fallback():
     assert np.any((sninfo[:, 6] == 1) & (sninfo[:, 19] == 2)), "no retried (no gas reached) row before the SN was delivered"
     assert ms1 is not None and abs(ms1 - (row[0, 7] - mej)) < 1e-3 * mej, f"star mass {ms1} Msun after the SN, expected {row[0, 7] - mej}"
     assert mz1 - mz0 > 0.1, f"gas metal mass grew by only {mz1 - mz0:.3g} Msun: the ejecta metals did not reach the gas"
+    assert_conservation_traces(out)

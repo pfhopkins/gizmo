@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 
 from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "stella_hotsync_periodic"
 TEST_DIR = dirname(abspath(__file__))
@@ -84,6 +85,7 @@ def test_hot_sync_sphere_uses_nearest_image():
             res["snap"] = os.path.basename(snap)
             rows.append(res)
             print(res)
+    trace = keep_and_check_traces(join(run, "output"), out)
     shutil.rmtree(run, ignore_errors=True)
 
     assert r.returncode == 0, f"GIZMO exited {r.returncode}, see {out}/run.log"
@@ -94,3 +96,4 @@ def test_hot_sync_sphere_uses_nearest_image():
         assert x["frac_far_clamped"] < 0.05, (
             f"{x['snap']}: {100 * x['frac_far_clamped']:.0f}% of the {x['n_far']} cells beyond 1.25 x the "
             f"nearest-image clamp radius ({1e3 * x['r_sync']:.1f} pc) sit on the hot step {x['dt_hot']:.3g}")
+    assert trace.ok, trace.summary()

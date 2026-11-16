@@ -21,6 +21,7 @@ import numpy as np
 import pytest
 
 from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "sf_cutoff_pi_guard"
 TEST_DIR = dirname(abspath(__file__))
@@ -126,6 +127,7 @@ def test_sf_cutoff_pi_guard():
                            stdout=log, stderr=subprocess.STDOUT, cwd=run)
     os.makedirs(OUT, exist_ok=True)
     shutil.copy(join(run, "run.log"), join(OUT, "run.log"))
+    trace = keep_and_check_traces(join(run, "output"), OUT)
     text = open(join(run, "run.log")).read()
     assert r.returncode == 0, f"GIZMO exited {r.returncode}, see {OUT}/run.log"
     assert not re.search(r"nHcutoffSF.*(not used|ignored)", text), "nHcutoffSF not read"
@@ -147,3 +149,4 @@ def test_sf_cutoff_pi_guard():
     assert inside == 0, f"{inside} stars formed inside the HII region through the density cutoff"
     assert outside > 0, "the density cutoff formed no stars in neutral gas"
     shutil.rmtree(run, ignore_errors=True)
+    assert trace.ok, trace.summary()

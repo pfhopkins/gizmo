@@ -23,6 +23,7 @@ import numpy as np
 import pytest
 
 from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "stella_sn_merge_energy"
 TEST_DIR = dirname(abspath(__file__))
@@ -103,6 +104,7 @@ def test_adiabatic_sn_energy_with_merge_split():
         if os.path.exists(join(run, f)):
             shutil.copy(join(run, f), out)
     text = open(join(run, "run.log")).read()
+    trace = keep_and_check_traces(join(run, "output"), out)
     shutil.rmtree(run, ignore_errors=True)
     assert r.returncode == 0, f"GIZMO exited {r.returncode}, see {out}/run.log"
 
@@ -117,3 +119,4 @@ def test_adiabatic_sn_energy_with_merge_split():
     print(f"E_coupled={e_inj:.4e} erg  dE_gas={de:.4e} erg  rel={err:+.4%}  merges={nm} splits={ns}")
     assert e_inj > 0.9e51, f"SN did not couple its energy ({e_inj:.3e} erg)"
     assert abs(err) < 0.02, f"gas energy change {de:.4e} erg vs coupled {e_inj:.4e} erg ({err:+.2%})"
+    assert trace.ok, trace.summary()
