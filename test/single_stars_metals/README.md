@@ -41,4 +41,4 @@ Checks:
 
 - `test_27_element_diffusion`: with `TURB_DIFF_METALS` every cell keeps total Z = the sum of the 25 metal slots (1e-10); each slot gains what it gains without diffusion (1e-6). Single stars switch on exact conservation and the 1 % pair cap.
 
-Reference: the stellar tables (stella-tables aa87301).
+Reference: the stellar tables (stella-tables e3a707a).

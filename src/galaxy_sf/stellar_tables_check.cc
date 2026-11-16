@@ -16,10 +16,10 @@
 
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
 
-#define STELLAR_TABLES_REF "aa87301dc1ffbab31f7ddcde30d8364a0d245c53" /* stella-tables commit; keep in step with scripts/get_stella_tables.sh */
+#define STELLAR_TABLES_REF "e3a707aa142f3096010085c9c9f79175d94b3ae2" /* stella-tables commit; keep in step with scripts/get_stella_tables.sh */
 
 static const char *const StellarTablesExpected[][2] = { /* basename, content hash */
-    {"stellar_tables_unified.hdf5",  "7593d9a85ff134441d0e417302b5fd1d40da7aba04f0d8727e2dca9ec3213613"},
+    {"stellar_tables_unified.hdf5",  "b94a4edc596ba04af2143a5982b0777b9297adc43e12cd4c39d2709aea2a5c62"},
     {"stellar_wind_cumulative.hdf5", "89f40e36aa5abe3ed3846973204dba5fec0b2598f5af2d9b0a9fbd9495d49285"},
 };
 
