@@ -37,7 +37,7 @@ UnitMagneticField_in_gauss      1.0
 
 %---- Gravity softening (ADAPTIVE_GRAVSOFT_FORALL=1: gas adaptive, stars fixed)
 %---- SofteningGas is the minimum of the adaptive gas softening; the others are fixed
-SofteningGas                    1.0e-4            % 0.1 pc min for gas (Type 0)
+SofteningGas                    1.0e-4            % 0.1 pc gas softening (Type 0)
 SofteningHalo                   0.050             % 50 pc DM (Type 1)
 SofteningDisk                   0.020             % 20 pc disk stars (Type 2)
 SofteningBulge                  0.020             % 20 pc bulge (Type 3)

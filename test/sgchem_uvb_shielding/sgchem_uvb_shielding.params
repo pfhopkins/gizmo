@@ -36,6 +36,7 @@ MaxKernelRadius     1.0             % ckpc/h
 InitGasTemp         0               % IC temperature
 MinGasTemp          10.0
 SofteningGas        0.004      % min of adaptive gas softening
+MinGasKernelRadiusFractional    0                 % gas smoothing lengths uncapped (FIRE-style tiny floor, not SofteningGas)
 SofteningHalo       0.048      % high-res DM type 1 (~1/30 of spacing)
 SofteningDisk       0.2             % coarse DM type 2 (levels 8-11)
 SofteningBulge      0

@@ -36,6 +36,7 @@ UnitMagneticField_in_gauss      1.0
 %---- Gravity softening (ADAPTIVE_GRAVSOFT_FORALL for gas+stars)
 %---- These are MINIMUM softenings when adaptive softening is on
 SofteningGas                    1.0e-10           % sub-floor; ADAPTIVE_GRAVSOFT_FORGAS handles real value
+MinGasKernelRadiusFractional    0                 % gas smoothing lengths uncapped (FIRE-style tiny floor, not SofteningGas)
 SofteningHalo                   0.050             % 50 pc DM (Type 1)
 SofteningDisk                   0.020             % 20 pc disk stars (Type 2)
 SofteningBulge                  0.020             % 20 pc bulge (Type 3)
