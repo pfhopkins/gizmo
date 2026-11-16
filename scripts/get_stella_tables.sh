@@ -25,7 +25,7 @@ REPO="${STELLA_TABLES_REPO:-https://github.com/Ulli1991/stella-tables.git}"
 RELEASES="${STELLA_TABLES_RELEASES:-https://github.com/Ulli1991/stella-tables/releases/download}"
 if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"; else
     PY=python3
-    if ! python3 -c "import h5py, numpy" 2>/dev/null; then
+    if ! python3 -I -c "import h5py, numpy" 2>/dev/null; then   # same isolation as the hash check (-I hides user site-packages)
         [ -f /etc/profile.d/modules.sh ] && source /etc/profile.d/modules.sh
         if type module >/dev/null 2>&1 && module load python-waterboa >/dev/null 2>&1; then PY="$(command -v python3)"; fi
     fi

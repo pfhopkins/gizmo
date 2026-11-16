@@ -1726,10 +1726,9 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
  *  KETJU_MERGE_BH (Type 5+5, Type 5+4).
  * ============================================================ */
 
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
 /* Merger action descriptor (stella_star_mergers.h) -- determined on affected root, broadcast to all affected tasks */
 typedef star_merger_action ketju_merger_action;
-
-#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
 #if defined(KJ_STAR_COLLISIONS) && defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES)
 #define KJ_STELLA_PRODUCT /* collision products get Stella table state (Hurley+2002 rejuvenation): stella_star_mergers.cc */
 #endif
