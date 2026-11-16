@@ -707,6 +707,55 @@ static void imf_return_draw_to_parent(int i, int ip, double mass_acc)
     P[i].Mass = 0; P[i].MstarSampleIMF[0] = 0; P[i].MstarSampleIMF[1] = 0; P[i].MstarSampleIMF[2] = 0; P[i].sampled = 1; TreeMomentsStaleFlag = 1;
 }
 
+#ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
+/* test only: in a call where every draw failed, each gas cell must end as it began */
+struct imf_cell_state {double M, u, v[3], B[3];};
+static std::vector<imf_cell_state> IMF_CheckState;
+static void imf_check_save(void)
+{
+    IMF_CheckState.assign(N_gas, imf_cell_state());
+    for(int j = 0; j < N_gas; j++) {
+        if(P[j].Type != 0) continue;
+        imf_cell_state &c = IMF_CheckState[j]; c.M = P[j].Mass; c.u = CellP[j].InternalEnergy;
+        for(int k = 0; k < 3; k++) {c.v[k] = P[j].Vel[k]; c.B[k] = 0;}
+#ifdef MAGNETIC
+        for(int k = 0; k < 3; k++) {c.B[k] = CellP[j].B[k];}
+#endif
+    }
+}
+static void imf_check_compare(int n_kept_total)
+{
+    if(n_kept_total > 0) return;
+    double dmax[4] = {0, 0, 0, 0}, tot[2][7] = {{0}}; /* M, px, py, pz, Ekin, Eth, Emag: before, after */
+    for(int j = 0; j < N_gas && j < (int)IMF_CheckState.size(); j++) {
+        if(P[j].Type != 0) continue;
+        const imf_cell_state &c = IMF_CheckState[j];
+        double B1[3] = {0, 0, 0}, v2a = 0, v2b = 0, B2a = 0, B2b = 0, w = (P[j].Mass > 0) ? CellP[j].Density / P[j].Mass : 0;
+#ifdef MAGNETIC
+        for(int k = 0; k < 3; k++) {B1[k] = CellP[j].B[k];}
+#endif
+        dmax[0] = DMAX(dmax[0], fabs(P[j].Mass - c.M) / c.M);
+        dmax[1] = DMAX(dmax[1], fabs(CellP[j].InternalEnergy - c.u) / DMAX(c.u, MIN_REAL_NUMBER));
+        for(int k = 0; k < 3; k++) {
+            dmax[2] = DMAX(dmax[2], fabs(P[j].Vel[k] - c.v[k]));
+            dmax[3] = DMAX(dmax[3], fabs(B1[k] - c.B[k]) / DMAX(sqrt(c.B[0]*c.B[0] + c.B[1]*c.B[1] + c.B[2]*c.B[2]), MIN_REAL_NUMBER));
+            tot[0][1+k] += c.M * c.v[k]; tot[1][1+k] += P[j].Mass * P[j].Vel[k];
+            v2a += c.v[k] * c.v[k]; v2b += P[j].Vel[k] * P[j].Vel[k]; B2a += c.B[k] * c.B[k]; B2b += B1[k] * B1[k];
+        }
+        tot[0][0] += c.M; tot[1][0] += P[j].Mass; tot[0][4] += 0.5 * c.M * v2a; tot[1][4] += 0.5 * P[j].Mass * v2b;
+        tot[0][5] += c.M * c.u; tot[1][5] += P[j].Mass * CellP[j].InternalEnergy; tot[0][6] += 0.5 * B2a * w; tot[1][6] += 0.5 * B2b * w;
+    }
+    double gmax[4], gtot[14];
+    MPI_Allreduce(dmax, gmax, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&tot[0][0], gtot, 14, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0) {
+        double pa = sqrt(gtot[1]*gtot[1] + gtot[2]*gtot[2] + gtot[3]*gtot[3]), dp = sqrt(pow(gtot[8]-gtot[1],2) + pow(gtot[9]-gtot[2],2) + pow(gtot[10]-gtot[3],2));
+        printf("IMF UNDO CHECK: cell max rel dM %.3e rel du %.3e dv %.3e rel dB %.3e; total rel dM %.3e |dp|/sum m|v| %.3e rel dEkin %.3e rel dEth %.3e rel dEmag %.3e\n",
+            gmax[0], gmax[1], gmax[2], gmax[3], (gtot[7]-gtot[0])/gtot[0], dp / DMAX(pa, MIN_REAL_NUMBER), (gtot[11]-gtot[4])/DMAX(gtot[4], MIN_REAL_NUMBER), (gtot[12]-gtot[5])/gtot[5], (gtot[13]-gtot[6])/DMAX(gtot[6], MIN_REAL_NUMBER));
+    }
+}
+#endif
+
 /* =========================================================================== */
 /*  Top-level routine: pre-compute f_acc, run accretion walk, finalize stars    */
 /* =========================================================================== */
@@ -727,6 +776,9 @@ void assign_stellar_masses(void)
     if(nstars_total == 0) return;
 
     if(ThisTask == 0) printf("RESOLVEDISM IMF: accreting mass for %d new stars\n", nstars_total);
+#ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
+    imf_check_save();
+#endif
     PRINT_STATUS(" ..IMF accretion walk for single stars");
     IMF_DonorLog.clear();
 
@@ -988,6 +1040,9 @@ void assign_stellar_masses(void)
     {
         int nimf_total = 0;
         MPI_Allreduce(&nimf, &nimf_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+#ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
+        imf_check_compare(nimf_total);
+#endif
         double fl_loc[2] = {(double)n_failed_draws, m_failed_drawn}, fl_glob[2];
         MPI_Allreduce(fl_loc, fl_glob, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         if(ThisTask == 0 && fl_glob[0] > 0) {printf("RESOLVEDISM IMF: %d failed draws (drawn %.3f Msun) returned to their parent cells\n", (int)fl_glob[0], fl_glob[1]);}

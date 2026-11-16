@@ -6,7 +6,9 @@ one star per step and the box drains its gas down to the accretion floor (1% of 
 in Gadget ICs, so drained donors reach the floor exactly. TreeDomainUpdateFrequency 2 keeps the decomposition, and with
 it cell merging, off as in a deep zoom sub-step, so the drained cells stay. Stars drawn there cannot collect their mass.
 Checks:
-  - failed draws happen and are undone (gas back to the parent cell), never filled from nowhere;
+  - failed draws happen and are undone, never filled from nowhere: in a step where every draw failed, each gas cell ends
+    with the mass, specific energy, velocity and magnetic field it began with (TEST_IMF_FAILED_DRAW_RESTORE_CHECK), so
+    total mass, momentum and kinetic, thermal and magnetic energy are unchanged;
   - total baryonic mass (gas + stars, double precision, mass_balance_steps.txt) is conserved to 1e-14;
   - every star holds its drawn IMF mass to within 1% (SFinfo.txt: 0.99 M_drawn <= M_acc <= M_drawn).
 """
@@ -97,7 +99,7 @@ def test_stella_imf_accretion_floor():
     cwd = os.getcwd()
     os.chdir(REPO)
     try:
-        build_gizmo_for_test(TEST_NAME)
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=("TEST_IMF_FAILED_DRAW_RESTORE_CHECK",))
     finally:
         os.chdir(cwd)
     run = tempfile.mkdtemp(prefix=f"{TEST_NAME}_")
@@ -132,4 +134,11 @@ def test_stella_imf_accretion_floor():
     assert abs(m1 - m0) <= 1e-14 * m0, f"baryonic mass changed by {(m1 - m0) / m0:+.3e} (IMF accretion: {d_imf:+.3e} code)"
     assert heavy == 0 and light == 0, f"{heavy} stars heavier, {light} stars more than 1% lighter than their drawn IMF mass"
     assert n_failed > 0, "no failed draw: the drained-floor case was not reached"
+    checks = [list(map(float, re.findall(r"[-+]?\d+\.\d+e[-+]\d+", l))) for l in text.splitlines() if l.startswith("IMF UNDO CHECK")]
+    assert checks, "no step in which every draw failed: the undo was not checked"
+    worst = np.max(np.abs(np.array(checks)), axis=0)
+    print(f"undo checks {len(checks)}: worst cell rel dM {worst[0]:.2e} rel du {worst[1]:.2e} dv {worst[2]:.2e} rel dB {worst[3]:.2e}; "
+          f"totals rel dM {worst[4]:.2e} dp {worst[5]:.2e} dEkin {worst[6]:.2e} dEth {worst[7]:.2e} dEmag {worst[8]:.2e}")
+    assert np.all(worst[:4] <= 1e-12), "an undone draw did not restore its donor cells"
+    assert np.all(worst[4:] <= 1e-13), "an undone draw changed total mass, momentum or energy"
     shutil.rmtree(run, ignore_errors=True)

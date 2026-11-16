@@ -12,6 +12,7 @@ to the floor a draw cannot collect its mass; it must be undone (gas back to the 
 
 ## What is tested
 
-- failed draws happen and are undone; no star gets mass without donors
+- failed draws happen and are undone into the cells they came from: in a step where every draw failed every gas cell ends
+  as it began (mass, u, v, B; test flag TEST_IMF_FAILED_DRAW_RESTORE_CHECK); no star gets mass without donors
 - total baryonic mass conserved to 1e-14 (mass_balance_steps.txt)
 - every star holds its drawn mass to within 1% (SFinfo.txt)
