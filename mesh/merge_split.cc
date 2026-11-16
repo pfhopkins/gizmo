@@ -1596,6 +1596,9 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
 #endif
     TreeOpsCount[TREEOPS_REARRANGE]++;
     double _t0_rearr = my_second();
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    pairflux_note_rearrange(); /* pair-flux records hold particle indices */
+#endif
 #ifdef REARRANGE_INCREMENTAL_TIMEBINS
     /* mid-step calls (sink cleanup, per-step merge/split) move a handful of slots; decomposition-path calls are
        followed by a full rebuild of the lists anyway */

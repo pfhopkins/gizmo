@@ -178,6 +178,10 @@ struct INPUT_STRUCT_NAME
     MyFloat SoundSpeed;
     MyFloat dt_hydrostep_i;
     MyCommFloat DrkernNgbFactor;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    MyDouble PairFluxW2;            /* closing-kick weight of this cell's pair fluxes (physical time) */
+    int PairFluxTask, PairFluxIndex; /* home rank and index, to fetch the opening-kick weight */
+#endif
 #ifdef EOS_ANEOS
     MyFloat Temperature; /* orders the two sides of a face in the MFM entropic energy switch */
 #endif
@@ -327,6 +331,13 @@ struct OUTPUT_STRUCT_NAME
     MyDouble DtInternalEnergy;
     //MyDouble dInternalEnergy; //manifest-indiv-timestep-debug//
     MyScratchFloat MaxSignalVel;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    Vec3<MyDouble> PairFluxSumMom;
+    MyDouble PairFluxSumEgy;
+#ifdef MAGNETIC
+    Vec3<MyDouble> PairFluxSumB;
+#endif
+#endif
 #ifdef OUTPUT_SHOCK_MACH_NUMBER
     MyFloat MaxShockMachNumber;
 #endif
@@ -423,6 +434,9 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     in->InternalEnergyPred = CellP[i].InternalEnergyPred;
     in->SoundSpeed = CellP[i].effective_soundspeed();
     in->dt_hydrostep_i = get_particle_timestep_in_physical(i);
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    in->PairFluxW2 = pairflux_closing_weight(i); in->PairFluxTask = ThisTask; in->PairFluxIndex = i;
+#endif
     in->ConditionNumber = CellP[i].ConditionNumber;
     in->FaceClosureError = CellP[i].FaceClosureError;
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -632,6 +646,12 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     CellP[i].HydroAccel += out->Acc;
     CellP[i].DtInternalEnergy += out->DtInternalEnergy;
     //CellP[i].dInternalEnergy += out->dInternalEnergy; //manifest-indiv-timestep-debug//
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    CellP[i].PairFluxSumMom += out->PairFluxSumMom; CellP[i].PairFluxSumEgy += out->PairFluxSumEgy;
+#ifdef MAGNETIC
+    CellP[i].PairFluxSumB += out->PairFluxSumB;
+#endif
+#endif
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[i].DtMass += out->DtMass;
@@ -836,6 +856,9 @@ void hydro_final_operations_and_cleanup(void)
              intermediate drift operations, we need the primive variables, so reduce to those here
              (remembering that v_phys = v_code/All.cf_atime, for the sake of doing the unit conversions to physical) */
             {Vec3<double> vel_phys = CellP[i].VelPred / All.cf_atime;
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+            CellP[i].HydroVelRef = vel_phys;
+#endif
             CellP[i].DtInternalEnergy -= dot(vel_phys, CellP[i].HydroAccel);
             /* we solved for total energy flux (and remember, HydroAccel is still momentum -- keep units straight here!) */
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -1169,6 +1192,12 @@ void hydro_force_initial_operations_preloop(void)
 #endif
             CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
             CellP[i].HydroAccel = {};
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            CellP[i].PairFluxSumMom = {}; CellP[i].PairFluxSumEgy = 0;
+#ifdef MAGNETIC
+            CellP[i].PairFluxSumB = {};
+#endif
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};
 #endif
@@ -1256,6 +1285,9 @@ void hydro_force(void)
 #endif
     double t_preloop_start = my_second();
     hydro_force_initial_operations_preloop(); /* do initial pre-processing operations as needed before main hydro force loop */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    pairflux_begin_hydro_pass(); /* this pass's records replace the previous pass's */
+#endif
     double t_preloop = timediff(t_preloop_start, my_second());
     double t_malloc_start = my_second();
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */

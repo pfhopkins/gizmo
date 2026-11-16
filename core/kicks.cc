@@ -311,6 +311,10 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             dEnt_Gravity += dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+            {Vec3<double> v_phys = P[i].Vel / All.cf_atime, a_h = CellP[i].HydroAccel; /* u takes the exact complement of the hydro velocity kick, applied before gravity */
+             du_tot += dot(CellP[i].HydroVelRef - v_phys, a_h) * dt_hydrokick - 0.5 * a_h.norm_sq() * dt_hydrokick * dt_hydrokick;}
+#endif
 #if defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY) && defined(MAGNETIC) && !defined(HYDRO_SPH) && !defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME)
             { /* rescale |VB| so the cell E_B after this kick equals the E_B the u equation booked (kernel-volume changes then move no energy) */
                 double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0; /* physical E_B = |VB_code|^2 (rho/m)_code / (2a) */

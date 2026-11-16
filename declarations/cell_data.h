@@ -41,6 +41,17 @@ extern struct gas_cell_data
     
     Vec3<MyDouble> VelPred;         /*!< predicted gas cell velocity at the current time */
     Vec3<MyDouble> HydroAccel;      /*!< acceleration due to hydrodynamical force (for drifting) */
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+    Vec3<MyDouble> HydroVelRef;     /*!< physical velocity the hydro pass used to turn the total-energy rate into du/dt */
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    Vec3<MyDouble> PairFluxSumMom;  /*!< sum of the pair momentum fluxes in this cell's rates (physical) */
+    MyDouble PairFluxSumEgy;        /*!< sum of the pair total-energy fluxes in this cell's rates (physical) */
+#ifdef MAGNETIC
+    Vec3<MyDouble> PairFluxSumB;    /*!< sum of the pair B*V fluxes in this cell's rates (physical) */
+#endif
+    long long Ti_PairFluxCoveredP1; /*!< 1 + integer time up to which this cell's pair fluxes are delivered (0: not set) */
+#endif
     
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
     MyDouble Density_ExplicitInt;   /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */

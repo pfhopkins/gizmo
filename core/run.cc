@@ -554,7 +554,13 @@ void run(void)
 #endif
         ESTEP_BEGIN(ESTEP_INT_KICK1);
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        pairflux_after_opening_kick(); /* receivers' opening-kick shares; coverage advanced */
+#endif
         ESTEP_END(ESTEP_INT_KICK1);
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+        print_gas_conserved_totals();
+#endif
 #ifdef STARS_INTEGRATED_BY_RUMI
         rumi_integrate();           /* stars' mutual gravity over their step by RUMI++, chord velocities for the drift */
 #endif
@@ -738,6 +744,9 @@ void run(void)
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
 #endif
 
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        pairflux_mark_closing_kick_expected(); /* this pass's records carry closing-kick shares */
+#endif
         ESTEP_BEGIN(ESTEP_INT_HYDRO);
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
         ESTEP_END(ESTEP_INT_HYDRO);
@@ -759,6 +768,9 @@ void run(void)
         
         ESTEP_BEGIN(ESTEP_INT_KICK2);
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        pairflux_after_closing_kick(); /* own coverage gap and receivers' closing-kick shares */
+#endif
         ESTEP_END(ESTEP_INT_KICK2);
 
 

@@ -1081,6 +1081,19 @@ double get_particle_feedback_timestep_in_physical(int i, struct particle_data *p
 void determine_PMinterior(void);
 void gravity_tree(void);
 void hydro_force(void);
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+double pairflux_closing_weight(int i);
+void pairflux_begin_hydro_pass(void);
+void pairflux_note_rearrange(void);
+void pairflux_mark_closing_kick_expected(void);
+void pairflux_record_add(int r, int r_active, int e_task, int e_index, double W2_e, Vec3<double> mom, double egy, Vec3<double> B);
+void pairflux_after_closing_kick(void);
+void pairflux_after_opening_kick(void);
+void pairflux_wake_kick_correction(int i, double dt_wake);
+#endif
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+void print_gas_conserved_totals(void);
+#endif
 void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);

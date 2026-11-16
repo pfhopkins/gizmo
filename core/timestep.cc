@@ -1665,6 +1665,9 @@ void process_wake_ups(void)
 #ifndef HYDRO_MESHLESS_FINITE_VOLUME
 		    /* the old step kicked this cell only to its midpoint and kick 1 (ActiveParticleList) skips it: complete the old step to now here, first half-kick of the new one below */
 		    if(new_step_starts_now) {do_the_kick(i, old_midpoint, All.Ti_Current, P[i].Ti_current, 1);} /* otherwise no kick: the step is truncated below */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+		    if(new_step_starts_now) {pairflux_wake_kick_correction(i, (double)(All.Ti_Current - old_midpoint) * unit_integertime_in_physical(i));}
+#endif
 #else
 		    {
 #ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
@@ -1702,6 +1705,9 @@ void process_wake_ups(void)
 		if(P[i].Ti_current < All.Ti_Current) {P[i].Ti_current=All.Ti_Current;}
 #ifndef HYDRO_MESHLESS_FINITE_VOLUME
 		if(new_step_starts_now) {do_the_kick(i, P[i].Ti_begstep, P[i].Ti_begstep + P[i].integertime_step() / 2, P[i].Ti_current, 0);} /* the first half-kick of the new step, as do_first_halfstep_kick gives an active particle */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+		if(new_step_starts_now) {pairflux_wake_kick_correction(i, (double)(P[i].integertime_step() / 2) * unit_integertime_in_physical(i));}
+#endif
 #endif
 		force_raise_motion_bound(i); /* the wake-up kicks above changed this particle's velocity outside the sync-point kick */
 	    }
