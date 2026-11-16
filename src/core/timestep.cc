@@ -1273,7 +1273,9 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
 
     if(dt >= dt_displacement) {dt = dt_displacement;}
 
-    if((dt < All.MinSizeTimestep)||(((integertime) (dt / All.Timebase_interval)) <= 1))
+    /* "Below two ticks of the integer timeline", compared in floating point: a step far longer than the run
+       (MaxSizeTimestep >> TimeMax - TimeBegin) would overflow the integer conversion; the cap below handles it. */
+    if((dt < All.MinSizeTimestep) || !(dt / All.Timebase_interval >= 2.0))
     {
         PRINT_WARNING("Timestep wants to be below the limit `MinSizeTimestep'");
         double agrav_pm=0, agrav = P[p].GravAccel.norm() * All.cf_a2inv;
