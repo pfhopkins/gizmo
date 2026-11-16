@@ -830,6 +830,7 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
                         for(ksp = 0; ksp < STBL_NELEM; ksp++) P[i_owner].SpawnEjZ[ksp] = (MyFloat)(m_k_sp[ksp]*scl_sp/UNIT_MASS_IN_SOLAR);
                         P[i_owner].SpawnEjMass = (MyFloat)(Mej_sp/UNIT_MASS_IN_SOLAR);
                         P[i_owner].SpawnEjEnergy = (MyFloat)(resolvedism_sn_energy_erg(rt_sp == REM_PISN, 1, Mstar_sp)/UNIT_ENERGY_IN_CGS);
+                        ESTEP_BOOK(EBK_FB_SN, -P[i_owner].SpawnEjEnergy); /* booked in this step's E_injected, delivered by the ejecta cell at the next merge/split */
                         P[i_owner].SN_SpawnPending = 1;
                         /* keep STELLA_FB_EVENT==1 and M_at_SN_trigger: the post-walk
                          * conversion must still run for this star (FeedbackBudget entries +

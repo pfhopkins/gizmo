@@ -628,7 +628,7 @@ void merge_and_split_particles(void)
             double u_sp = (P[i_sp].SpawnEjMass > 0) ? (P[i_sp].SpawnEjEnergy / P[i_sp].SpawnEjMass) : 0;
             CellP[j_sp].InternalEnergy = CellP[j_sp].InternalEnergyPred = u_sp;
             CellP[j_sp].DtInternalEnergy = 0;
-            ESTEP_BOOK(EBK_SN_CELL_TH, P[j_sp].Mass * u_sp); ESTEP_BOOK(EBK_SN_CELL_MAG, estep_cell_mag_energy(j_sp)); /* SN heat; field copied from the template */
+            ESTEP_BOOK(EBK_SN_CELL_TH, P[i_sp].SpawnEjEnergy); ESTEP_BOOK(EBK_SN_CELL_MAG, estep_cell_mag_energy(j_sp)); /* the SN energy the cell should carry; field copied from the template */
             /* metallicity: ejecta composition (slot0 = total Z; slots 1..27 = elements) */
             {double minv_sp = 1./DMAX(P[i_sp].SpawnEjMass, 1e-30), zs_sp = 0; int ke_sp;
              for(ke_sp = 0; ke_sp < NUM_RESOLVEDISM_ELEMENTS; ke_sp++) {
