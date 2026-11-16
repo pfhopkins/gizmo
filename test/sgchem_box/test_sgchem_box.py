@@ -10,8 +10,9 @@ test_sgchem_habing_field: a uniform Habing-shaped field at G0 = 1, 10, 100 gives
 path, and the cells equal the standalone run on them.
 test_sgchem_ledger: ledger.txt rows (chemistry heating and cooling) at every snapshot close the box's thermal energy
 budget and are identical with 1 and 4 threads; test_sgchem_restart also checks they survive a restart.
-test_sgchem_cooling: the cells cool through SGChem: final energy, temperature, electrons and HI equal a standalone run of
-the backend on the same inputs and timesteps, and the snapshots are identical with 1 and 4 OpenMP threads.
+test_sgchem_cooling: the cells cool through SGChem: at t = 0.012 (densities still those of snapshot 0) every cell equals a
+standalone run of the backend on the same inputs and timesteps to 1e-12; the final state equals it to 1e-5 (the cells move);
+the snapshots are identical with 1 and 4 OpenMP threads.
 """
 
 import glob
@@ -127,16 +128,40 @@ def step_times(cpu_txt):
 
 def test_sgchem_cooling(tables, box):
     out = path.join(HERE, "output")
+    # while the cells keep the densities of snapshot 0 (to t = 0.012), each cell equals the standalone run exactly
+    early = path.join(HERE, "output_early")
+    shutil.rmtree(early, ignore_errors=True)
+    chdir(HERE)
+    try:
+        run_test(NAME, 2, default_omp_threads(), param_overrides={"SGChemTablesPath": tables, "OutputDir": "output_early",
+                                                                  "TimeOfFirstSnapshot": 0.012, "TimeBetSnapshot": 1.0})
+    finally:
+        chdir(ROOT)
+    with h5py.File(path.join(out, "snapshot_000.hdf5")) as s0, h5py.File(path.join(early, "snapshot_000.hdf5")) as se:
+        g, g0 = se["PartType0"], s0["PartType0"]
+        o, o0 = np.argsort(g["ParticleIDs"][:]), np.argsort(g0["ParticleIDs"][:])
+        assert se["Header"].attrs["Time"] == 0.012 and np.array_equal(g["Density"][:][o], g0["Density"][:][o0])
+        times = step_times(path.join(early, "cpu.txt"))
+        ref = standalone(tables, s0, times[times <= 0.012])
+        ids = [int(i) for i in g["ParticleIDs"][:]]
+        got = np.column_stack([g["InternalEnergy"][:], g["Temperature"][:], g["ElectronAbundance"][:], g["SGChemTracAbund"][:], g["SGChemDustTemp"][:]])
+    want = np.array([[ref[i][k] for k in range(7)] for i in ids])
+    dev = np.max(np.abs(got / want - 1), axis=0)
+    print(f"t = 0.012, cells at the densities of snapshot 0: (u, T, Ne, H2, H+, CO, T_dust) vs standalone, max relative deviation {dev}")
+    assert np.all(dev < 1e-12)
+
     with h5py.File(path.join(out, "snapshot_000.hdf5")) as s0, h5py.File(path.join(out, "snapshot_002.hdf5")) as s2:
         ref = standalone(tables, s0, step_times(path.join(out, "cpu.txt")))
         g = s2["PartType0"]
         ids = [int(i) for i in g["ParticleIDs"][:]]
         got = {"u": g["InternalEnergy"][:], "T": g["Temperature"][:], "Ne": g["ElectronAbundance"][:], "HI": g["NeutralHydrogenAbundance"][:]}
+        spread = g["Density"][:].max() / g["Density"][:].min() - 1
     want = {"u": [ref[i][0] for i in ids], "T": [ref[i][1] for i in ids], "Ne": [ref[i][2] for i in ids], "HI": [1 - ref[i][4] for i in ids]}
     dev = {k: float(np.max(np.abs(got[k] / np.array(want[k]) - 1))) for k in got}
-    print(f"box vs standalone, max relative deviation: {dev}; T: {np.min(got['T']):.6g}-{np.max(got['T']):.6g} K, "
+    print(f"box vs standalone, max relative deviation: {dev} (density spread {spread:.2g}); T: {np.min(got['T']):.6g}-{np.max(got['T']):.6g} K, "
           f"x(H2) = {ref[ids[0]][3]:.6g}, x(CO) = {ref[ids[0]][5]:.6g}, T_dust = {ref[ids[0]][6]:.6g} K")
-    assert max(dev.values()) < 1e-8 and np.max(got["T"]) < 0.01 * 8000  # cell densities differ from snapshot 0 at 1e-10
+    # 1e-5: densities 1 ulp apart give up to 1.5e-6 in u after one solve (rtol 1e-4); the pressure differences move the cells
+    assert max(dev.values()) < 1e-5 and np.max(got["T"]) < 0.01 * 8000
 
     snaps = {}
     for nt in (1, 4):  # same executable and inputs, 1 and 4 OpenMP threads per rank
@@ -163,7 +188,7 @@ def test_sgchem_snapshot_io(tables, box):
         got = np.column_stack([g["SGChemTracAbund"][:], g["SGChemDustTemp"][:]])
     dev = np.max(np.abs(got / want - 1), axis=0)
     print(f"x(H2), x(H+), x(CO), T_dust vs standalone, max relative deviation: {dev}")
-    assert np.all(dev < 1e-8)
+    assert np.all(dev < 1e-5)  # the cells move, as in test_sgchem_cooling
 
     # restart from snapshot 1 with the datasets under their old names: the state is read back
     rs = path.join(HERE, "output_restart")
@@ -191,7 +216,7 @@ def test_sgchem_snapshot_io(tables, box):
         got = np.column_stack([g["InternalEnergy"][:], g["SGChemTracAbund"][:], g["SGChemDustTemp"][:]])
     dev = np.max(np.abs(got / want - 1), axis=0)
     print(f"restart from old names: u, x(H2), x(H+), x(CO), T_dust vs standalone, max relative deviation: {dev}")
-    assert np.all(dev < 1e-8)
+    assert np.all(dev < 1e-5)
 
 
 def test_sgchem_restart(tables, box):
