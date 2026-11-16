@@ -6,6 +6,7 @@
 #include <string.h>
 #include <math.h>
 #include <vector>
+#include <algorithm>
 #include <gsl/gsl_rng.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -416,6 +417,19 @@ static int IMF_AccretionMode = 0;
  * the removal pass. Logged to IMFinfo.txt after the accretion walk completes. */
 struct imf_donor_log_entry { int star_index; MyIDType donor_ID; double dM; };
 static std::vector<imf_donor_log_entry> IMF_DonorLog;
+/* what each removal took from a donor, kept on the donor's rank: an undone draw puts it back exactly */
+struct imf_star_key { MyIDType id, child; int gen; };
+static bool operator<(const imf_star_key &a, const imf_star_key &b) {return a.id != b.id ? a.id < b.id : (a.child != b.child ? a.child < b.child : a.gen < b.gen);}
+struct imf_grant {
+    int j; imf_star_key star; double dM;
+#ifdef MAGNETIC
+    double dB[3], dBPred[3], dDtB[3], ddivB;
+#ifdef DIVBCLEANING_DEDNER
+    double dPhi, dPhiPred, dDtPhi, dDtB_PhiCorr[3];
+#endif
+#endif
+};
+static std::vector<imf_grant> IMF_Grants;
 
 
 #define CORE_FUNCTION_NAME resolvedismIMF_evaluate
@@ -428,6 +442,7 @@ struct INPUT_STRUCT_NAME
 {
     MyDouble Pos[3], KernelRadius;
     MyDouble f_acc;   /* mass fraction to remove from each neighbor */
+    MyIDType sid, schild; int sgen; /* star key: an undone draw finds its grants on the donors' ranks */
     int NodeList[NODELISTLENGTH];
 }
 *DATAIN_NAME, *DATAGET_NAME;
@@ -438,6 +453,7 @@ void particle2in_resolvedismIMF(struct INPUT_STRUCT_NAME *in, int i, int loop_it
     in->KernelRadius = P[i].KernelRadius;
     if(in->KernelRadius <= 0) in->KernelRadius = All.ForceSoftening[P[i].Type] * 5.0;
     in->f_acc = P[i].MstarSampleIMF[2]; /* set in assign_stellar_masses() pre-processing */
+    in->sid = P[i].ID; in->schild = P[i].ID_child_number; in->sgen = (int)P[i].ID_generation;
 }
 
 #define IMF_MAX_DONORS 128
@@ -605,20 +621,22 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
 #endif
                             /* conserved MHD quantities scale with the mass removed (parent side of merge_split.cc:517-525) */
                             double frac = dM / Mj;
+                            imf_grant g; g.j = j; g.star = {local.sid, local.schild, local.sgen}; g.dM = dM;
 #ifdef MAGNETIC
                             for(k=0;k<3;k++) {
-                                CellP[j].B[k] -= frac * CellP[j].B[k];
-                                CellP[j].BPred[k] -= frac * CellP[j].BPred[k];
-                                CellP[j].DtB[k] -= frac * CellP[j].DtB[k];
+                                g.dB[k] = frac * CellP[j].B[k]; CellP[j].B[k] -= g.dB[k];
+                                g.dBPred[k] = frac * CellP[j].BPred[k]; CellP[j].BPred[k] -= g.dBPred[k];
+                                g.dDtB[k] = frac * CellP[j].DtB[k]; CellP[j].DtB[k] -= g.dDtB[k];
                             }
-                            CellP[j].divB -= frac * CellP[j].divB;
+                            g.ddivB = frac * CellP[j].divB; CellP[j].divB -= g.ddivB;
 #ifdef DIVBCLEANING_DEDNER
-                            CellP[j].Phi -= frac * CellP[j].Phi;
-                            CellP[j].PhiPred -= frac * CellP[j].PhiPred;
-                            CellP[j].DtPhi -= frac * CellP[j].DtPhi;
-                            for(k=0;k<3;k++) {CellP[j].DtB_PhiCorr[k] -= frac * CellP[j].DtB_PhiCorr[k];}
+                            g.dPhi = frac * CellP[j].Phi; CellP[j].Phi -= g.dPhi;
+                            g.dPhiPred = frac * CellP[j].PhiPred; CellP[j].PhiPred -= g.dPhiPred;
+                            g.dDtPhi = frac * CellP[j].DtPhi; CellP[j].DtPhi -= g.dDtPhi;
+                            for(k=0;k<3;k++) {g.dDtB_PhiCorr[k] = frac * CellP[j].DtB_PhiCorr[k]; CellP[j].DtB_PhiCorr[k] -= g.dDtB_PhiCorr[k];}
 #endif
 #endif
+                            IMF_Grants.push_back(g);
                             P[j].Mass -= dM;
                             CellP[j].Mass -= dM;
                             CellP[j].IMFSpawnBlock = 1; /* donors cool down like the spawning cell (sfr_eff.cc) */
@@ -682,29 +700,38 @@ void assign_stellar_masses_xchange(void)
 #include "../system/code_block_xchange_finalize.h"
 
 
-/* failed draw: the gathered mass, momentum and metals go into the parent cell, the star is dropped */
-static void imf_return_draw_to_parent(int i, int ip, double mass_acc)
+/* undo the failed draws: every rank puts back what its cells gave to them (mass, magnetic field); specific energy,
+   velocity and composition of a donor are untouched by the removal, so its energy, momentum and metals return with the mass */
+static void imf_undo_failed_draws(std::vector<imf_star_key> &failed_mine)
 {
-    int k;
-    if(mass_acc > 0) {
-        double m0 = P[ip].Mass, m1 = m0 + mass_acc;
-        for(k = 0; k < 3; k++) {double dv = (IMF_MomAccreted[i*3+k] - mass_acc * P[ip].Vel[k]) / m1; P[ip].Vel[k] += dv; CellP[ip].VelPred[k] += dv;}
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        double Z_sum = 0;
-        for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
-            P[ip].Metallicity[MET_OF(k)] = (m0 * P[ip].Metallicity[MET_OF(k)] + IMF_ElemAccreted[i*NUM_RESOLVEDISM_ELEMENTS+k]) / m1;
-            if(k >= ELEM_C) {Z_sum += P[ip].Metallicity[MET_OF(k)];}
-        }
-        P[ip].Metallicity[0] = Z_sum;
-#elif defined(METALS)
-        P[ip].Metallicity[0] = (m0 * P[ip].Metallicity[0] + IMF_MetalAccreted[i]) / m1;
-#endif
-        P[ip].Mass = m1; CellP[ip].Mass = m1;
+    int n_mine = (int)failed_mine.size(), n_tot = 0;
+    MPI_Allreduce(&n_mine, &n_tot, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(n_tot == 0) return;
+    std::vector<int> counts(NTask), displs(NTask);
+    int nb = n_mine * (int)sizeof(imf_star_key), tot = 0;
+    MPI_Allgather(&nb, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    for(int t = 0; t < NTask; t++) {displs[t] = tot; tot += counts[t];}
+    std::vector<imf_star_key> failed(tot / sizeof(imf_star_key));
+    MPI_Allgatherv(failed_mine.data(), nb, MPI_BYTE, failed.data(), counts.data(), displs.data(), MPI_BYTE, MPI_COMM_WORLD);
+    std::sort(failed.begin(), failed.end());
+    for(const imf_grant &g : IMF_Grants) {
+        if(!std::binary_search(failed.begin(), failed.end(), g.star)) continue;
+        int j = g.j, k;
+        P[j].Mass += g.dM; CellP[j].Mass += g.dM;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-        CellP[ip].MassTrue += mass_acc;
+        CellP[j].MassTrue += g.dM;
 #endif
+#ifdef MAGNETIC
+        for(k = 0; k < 3; k++) {CellP[j].B[k] += g.dB[k]; CellP[j].BPred[k] += g.dBPred[k]; CellP[j].DtB[k] += g.dDtB[k];}
+        CellP[j].divB += g.ddivB;
+#ifdef DIVBCLEANING_DEDNER
+        CellP[j].Phi += g.dPhi; CellP[j].PhiPred += g.dPhiPred; CellP[j].DtPhi += g.dDtPhi;
+        for(k = 0; k < 3; k++) {CellP[j].DtB_PhiCorr[k] += g.dDtB_PhiCorr[k];}
+#endif
+#endif
+        (void)k;
     }
-    P[i].Mass = 0; P[i].MstarSampleIMF[0] = 0; P[i].MstarSampleIMF[1] = 0; P[i].MstarSampleIMF[2] = 0; P[i].sampled = 1; TreeMomentsStaleFlag = 1;
+    TreeMomentsStaleFlag = 1;
 }
 
 #ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
@@ -780,7 +807,7 @@ void assign_stellar_masses(void)
     imf_check_save();
 #endif
     PRINT_STATUS(" ..IMF accretion walk for single stars");
-    IMF_DonorLog.clear();
+    IMF_DonorLog.clear(); IMF_Grants.clear();
 
     /* Allocate accumulators (persist across iterations, zeroed each pass) */
     IMF_MassAccreted = (double *) mymalloc("IMF_MassAccreted", NumPart * sizeof(double));
@@ -934,6 +961,7 @@ void assign_stellar_masses(void)
     std::vector<double> imf_rdon(DMAX(nstars_local,1), 0.0); /* farthest donor distance [physical kpc] */
     int nimf = 0;
     int n_failed_draws = 0; double m_failed_drawn = 0; /* draws undone this call */
+    std::vector<imf_star_key> failed_mine; std::vector<int> failed_index;
 
     for(i = 0; i < NumPart; i++)
     {
@@ -943,21 +971,20 @@ void assign_stellar_masses(void)
         double mass_acc = IMF_MassAccreted[i];
 #ifdef GALSF_RESOLVEDISM_POPIII_STARS
         if(P[i].PopIIIStar && M_drawn / UNIT_MASS_IN_SOLAR - mass_acc > 0.01 * M_drawn / UNIT_MASS_IN_SOLAR) {
-            printf("POPIII SF: ID=%llu M_drawn=%.2f gathered %.3f Msun only: returned to the parent cell, no star\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR);
+            printf("POPIII SF: ID=%llu M_drawn=%.2f gathered %.3f Msun only: returned to the donors, no star\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR);
+            failed_mine.push_back({P[i].ID, P[i].ID_child_number, (int)P[i].ID_generation}); failed_index.push_back(i);
             int iparent = (int)P[i].MstarSampleIMF[1];
-            imf_return_draw_to_parent(i, iparent, mass_acc);
+            P[i].Mass = 0; P[i].MstarSampleIMF[0] = 0; P[i].MstarSampleIMF[1] = 0; P[i].MstarSampleIMF[2] = 0; P[i].sampled = 1; TreeMomentsStaleFlag = 1;
             force_add_element_to_tree(iparent, i); /* zero-mass placeholder until the next rearrange removes it */
             continue;
         }
 #endif
 
-        if(M_drawn / UNIT_MASS_IN_SOLAR - mass_acc > 0.01 * M_drawn / UNIT_MASS_IN_SOLAR) { /* >1% short after the passes: failed draw, gas back to the parent */
+        if(M_drawn / UNIT_MASS_IN_SOLAR - mass_acc > 0.01 * M_drawn / UNIT_MASS_IN_SOLAR) { /* >1% short after the passes: failed draw, undone on the donors below */
+            printf("RESOLVEDISM IMF FAILED DRAW: ID=%llu M_drawn=%.4f collected=%.4e Msun\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR);
+            failed_mine.push_back({P[i].ID, P[i].ID_child_number, (int)P[i].ID_generation}); failed_index.push_back(i);
             int iparent = (int)P[i].MstarSampleIMF[1];
-            if(iparent < 0 || iparent >= NumPart || P[iparent].Type != 0) {
-                printf("IMF accretion: failed draw of star ID=%llu (M_drawn=%.3f, collected %.3e Msun) has no parent cell (index %d)\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR, iparent);
-                endrun(8889);
-            }
-            imf_return_draw_to_parent(i, iparent, mass_acc);
+            P[i].Mass = 0; P[i].MstarSampleIMF[0] = 0; P[i].MstarSampleIMF[1] = 0; P[i].MstarSampleIMF[2] = 0; P[i].sampled = 1; TreeMomentsStaleFlag = 1;
             force_add_element_to_tree(iparent, i); /* zero-mass placeholder until the next rearrange removes it */
             n_failed_draws++; m_failed_drawn += M_drawn;
             continue;
@@ -1036,6 +1063,11 @@ void assign_stellar_masses(void)
 #ifdef STELLA_SELFCHECK
     STELLA_CHECK_RAN("tree_insert", n_selfcheck_tree);
 #endif
+    imf_undo_failed_draws(failed_mine); /* collective */
+    if(!failed_index.empty()) { /* IMFinfo lists kept stars only */
+        std::sort(failed_index.begin(), failed_index.end());
+        IMF_DonorLog.erase(std::remove_if(IMF_DonorLog.begin(), IMF_DonorLog.end(), [&](const imf_donor_log_entry &e) {return std::binary_search(failed_index.begin(), failed_index.end(), e.star_index);}), IMF_DonorLog.end());
+    }
     /* Gather SF info and write to SFinfo.txt on rank 0 */
     {
         int nimf_total = 0;
