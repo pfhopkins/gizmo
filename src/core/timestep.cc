@@ -71,32 +71,42 @@ static integertime hotsync_ti = TIMEBASE; /* step of everything inside the spher
 static double hotsync_cen[3], hotsync_R2 = -1;
 int HotsyncClampArmed = 1; /* set by feedback events and new ejecta cells; off when no hot gas is left */
 
-/* gas above 1e6 K: a quarter of its shortest step, and a sphere around it (centroid + farthest hot cell + 3 largest kernels, not wrapped) */
+/* gas above 1e6 K: a quarter of its shortest step, and a sphere around it (hottest cell + mean nearest-image offset, farthest hot cell + 3 largest kernels) */
 static void hotsync_clamp_prepare(void)
 {
     hotsync_ti = TIMEBASE; hotsync_R2 = -1;
     if(!HotsyncClampArmed) {return;}
     const double u_hot = (1.0e6 * BOLTZMANN_CGS) / ((2./3.) * 0.6 * PROTONMASS_CGS) / UNIT_SPECEGY_IN_CGS;
-    std::vector<int> hot;
-    for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0 && P[i].Mass > 0 && CellP[i].InternalEnergyPred > u_hot) {hot.push_back(i);}}
-    int any_local = hot.empty() ? 0 : 1, any = 0;
-    MPI_Allreduce(&any_local, &any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    if(!any) {HotsyncClampArmed = 0; return;}
+    std::vector<int> hot; struct {double u; int task;} umax_loc = {-1, ThisTask}, umax; int i_ref = -1;
+    for(int i = 0; i < N_gas; i++) {
+        if(P[i].Type == 0 && P[i].Mass > 0 && CellP[i].InternalEnergyPred > u_hot) {
+            hot.push_back(i);
+            if(CellP[i].InternalEnergyPred > umax_loc.u) {umax_loc.u = CellP[i].InternalEnergyPred; i_ref = i;}
+        }
+    }
+    MPI_Allreduce(&umax_loc, &umax, 1, MPI_DOUBLE_INT, MPI_MAXLOC, MPI_COMM_WORLD);
+    if(umax.u < 0) {HotsyncClampArmed = 0; return;}
+    double ref[3] = {0,0,0};
+    if(ThisTask == umax.task) {for(int k = 0; k < 3; k++) {ref[k] = P[i_ref].Pos[k];}}
+    MPI_Bcast(ref, 3, MPI_DOUBLE, umax.task, MPI_COMM_WORLD);
     integertime ti_local = TIMEBASE, ti_glob; double aphys, sum_loc[4] = {0,0,0,0}, sum_glob[4], rh_loc[2] = {0,0}, rh_glob[2];
     for(int i : hot) {
         struct particle_data p_keep = P[i]; struct gas_cell_data c_keep = CellP[i];
         integertime t = get_timestep(i, &aphys, 0); /* its own step, never its bin: the bin holds the last clamp */
         P[i] = p_keep; CellP[i] = c_keep; /* inactive cells stay as they are */
         if(t > 0 && t < ti_local) {ti_local = t;}
-        for(int k = 0; k < 3; k++) {sum_loc[k] += P[i].Pos[k];}
+        double d[3]; for(int k = 0; k < 3; k++) {d[k] = P[i].Pos[k] - ref[k];}
+        NEAREST_XYZ(d[0], d[1], d[2], 1);
+        for(int k = 0; k < 3; k++) {sum_loc[k] += d[k];}
         sum_loc[3] += 1;
     }
     MPI_Allreduce(&ti_local, &ti_glob, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
     MPI_Allreduce(sum_loc, sum_glob, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    for(int k = 0; k < 3; k++) {hotsync_cen[k] = sum_glob[k] / sum_glob[3];}
+    for(int k = 0; k < 3; k++) {hotsync_cen[k] = ref[k] + sum_glob[k] / sum_glob[3];}
     for(int i : hot) {
-        double r2 = 0; for(int k = 0; k < 3; k++) {double d = P[i].Pos[k] - hotsync_cen[k]; r2 += d * d;}
-        rh_loc[0] = DMAX(rh_loc[0], r2); rh_loc[1] = DMAX(rh_loc[1], P[i].KernelRadius);
+        double d[3]; for(int k = 0; k < 3; k++) {d[k] = P[i].Pos[k] - hotsync_cen[k];}
+        NEAREST_XYZ(d[0], d[1], d[2], 1);
+        rh_loc[0] = DMAX(rh_loc[0], d[0]*d[0] + d[1]*d[1] + d[2]*d[2]); rh_loc[1] = DMAX(rh_loc[1], P[i].KernelRadius);
     }
     MPI_Allreduce(rh_loc, rh_glob, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
     hotsync_ti = DMAX(ti_glob >> 2, 2);
@@ -235,8 +245,9 @@ void find_timesteps(void)
 #endif
 #ifdef RESOLVEDISM_HOTSYNC_CLAMP
         if(hotsync_R2 > 0 && ti_step > hotsync_ti) {
-            double r2 = 0; for(int k = 0; k < 3; k++) {double d = P[i].Pos[k] - hotsync_cen[k]; r2 += d * d;}
-            if(r2 < hotsync_R2) {ti_step = hotsync_ti;}
+            double d[3]; for(int k = 0; k < 3; k++) {d[k] = P[i].Pos[k] - hotsync_cen[k];}
+            NEAREST_XYZ(d[0], d[1], d[2], 1);
+            if(d[0]*d[0] + d[1]*d[1] + d[2]*d[2] < hotsync_R2) {ti_step = hotsync_ti;}
         }
 #endif
 #ifdef HOT_GAS_TIMESTEP_SYNC
