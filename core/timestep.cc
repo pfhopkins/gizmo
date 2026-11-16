@@ -127,7 +127,8 @@ void find_timesteps(void)
     {
         double u_hot_code = (1.0e6 * BOLTZMANN_CGS) / ((2./3.)*0.6*PROTONMASS_CGS) / UNIT_SPECEGY_IN_CGS; /* u(T~1e6 K, mu=0.6) */
         integertime ti_local = TIMEBASE; int i_hot; double aphys_hot;
-        double csum_loc[4] = {0,0,0,0}, csum_glob[4] = {0,0,0,0}; /* Sum(x,y,z), count of hot cells */
+        double csum_loc[4] = {0,0,0,0}, csum_glob[4] = {0,0,0,0}; /* Sum of nearest-image offsets from the reference cell, count of hot cells */
+        struct {double u; int task;} uhot_loc = {-1, ThisTask}, uhot_glob; double hot_ref[3] = {0,0,0}; int i_ref = -1;
         for(i_hot = 0; i_hot < NumPart; i_hot++) {
             if(P[i_hot].Type != 0 || P[i_hot].Mass <= 0) continue;
             if(CellP[i_hot].InternalEnergyPred > u_hot_code) {
@@ -137,11 +138,22 @@ void find_timesteps(void)
                  * by the margin every find_timesteps (runaway to the integer-time quantum). */
                 integertime t_c = get_timestep(i_hot, &aphys_hot, 0);
                 if(t_c > 0 && t_c < ti_local) {ti_local = t_c;}
-                int kc_; for(kc_ = 0; kc_ < 3; kc_++) {csum_loc[kc_] += P[i_hot].Pos[kc_];}
-                csum_loc[3] += 1;
+                if(CellP[i_hot].InternalEnergyPred > uhot_loc.u) {uhot_loc.u = CellP[i_hot].InternalEnergyPred; i_ref = i_hot;}
             }
         }
         MPI_Allreduce(&ti_local, &ti_spawnhot_glob, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
+        MPI_Allreduce(&uhot_loc, &uhot_glob, 1, MPI_DOUBLE_INT, MPI_MAXLOC, MPI_COMM_WORLD);
+        if(uhot_glob.u > 0) { /* centre = hottest cell + mean nearest-image offset of the hot cells (periodic-safe) */
+            if(ThisTask == uhot_glob.task) {int kc_; for(kc_ = 0; kc_ < 3; kc_++) {hot_ref[kc_] = P[i_ref].Pos[kc_];}}
+            MPI_Bcast(hot_ref, 3, MPI_DOUBLE, uhot_glob.task, MPI_COMM_WORLD);
+            for(i_hot = 0; i_hot < NumPart; i_hot++) {
+                if(P[i_hot].Type != 0 || P[i_hot].Mass <= 0 || CellP[i_hot].InternalEnergyPred <= u_hot_code) continue;
+                double d_[3]; int kc_; for(kc_ = 0; kc_ < 3; kc_++) {d_[kc_] = P[i_hot].Pos[kc_] - hot_ref[kc_];}
+                NEAREST_XYZ(d_[0], d_[1], d_[2], 1);
+                for(kc_ = 0; kc_ < 3; kc_++) {csum_loc[kc_] += d_[kc_];}
+                csum_loc[3] += 1;
+            }
+        }
         MPI_Allreduce(csum_loc, csum_glob, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         if(ti_spawnhot_glob < TIMEBASE && csum_glob[3] > 0)
         {
@@ -152,16 +164,17 @@ void find_timesteps(void)
             ti_spawnhot_glob >>= 2; if(ti_spawnhot_glob < 2) {ti_spawnhot_glob = 2;}
             /* distance limiting: only particles within the remnant's sphere of influence need
              * the fine cadence -- pairs not touching a hot cell carry no blast-flux error.
-             * Sphere = hot-cell centroid + max hot-cell distance + 3x max hot kernel radius.
+             * Sphere = hot-cell centroid + max hot-cell distance + 3x max hot kernel radius, all nearest-image.
              * (Single-centroid approximation: multiple simultaneous remnants degrade toward a
-             * global clamp -- safe, just costlier. Plain (non-wrapped) coordinates: the FB test
-             * boxes are non-periodic; revisit for BOX_PERIODIC production use.) */
-            int kc_; for(kc_ = 0; kc_ < 3; kc_++) {spawnhot_cen[kc_] = csum_glob[kc_] / csum_glob[3];}
+             * global clamp -- safe, just costlier.) */
+            int kc_; for(kc_ = 0; kc_ < 3; kc_++) {spawnhot_cen[kc_] = hot_ref[kc_] + csum_glob[kc_] / csum_glob[3];}
             double r2max_loc = 0, hmax_loc = 0, rh_glob[2] = {0,0}, rh_loc[2];
             for(i_hot = 0; i_hot < NumPart; i_hot++) {
                 if(P[i_hot].Type != 0 || P[i_hot].Mass <= 0) continue;
                 if(CellP[i_hot].InternalEnergyPred > u_hot_code) {
-                    double r2_ = 0; for(kc_ = 0; kc_ < 3; kc_++) {double d_ = P[i_hot].Pos[kc_] - spawnhot_cen[kc_]; r2_ += d_*d_;}
+                    double d_[3]; for(kc_ = 0; kc_ < 3; kc_++) {d_[kc_] = P[i_hot].Pos[kc_] - spawnhot_cen[kc_];}
+                    NEAREST_XYZ(d_[0], d_[1], d_[2], 1);
+                    double r2_ = d_[0]*d_[0] + d_[1]*d_[1] + d_[2]*d_[2];
                     if(r2_ > r2max_loc) {r2max_loc = r2_;}
                     if(P[i_hot].KernelRadius > hmax_loc) {hmax_loc = P[i_hot].KernelRadius;}
                 }
@@ -216,7 +229,9 @@ void find_timesteps(void)
 #endif
 #if defined(GALSF_RESOLVEDISM_SN_SPAWN) || defined(RESOLVEDISM_HOTSYNC_CLAMP) /* clamp is injection-agnostic: any persistent hot region (wind bubbles) suffers the same one-sided pair-flux creation (2026-07-17) */
         if(ti_spawnhot_glob < TIMEBASE && ti_step > ti_spawnhot_glob && spawnhot_R2 > 0) {
-            double r2_sc = 0; int kc_; for(kc_ = 0; kc_ < 3; kc_++) {double d_ = P[i].Pos[kc_] - spawnhot_cen[kc_]; r2_sc += d_*d_;}
+            double d_[3]; int kc_; for(kc_ = 0; kc_ < 3; kc_++) {d_[kc_] = P[i].Pos[kc_] - spawnhot_cen[kc_];}
+            NEAREST_XYZ(d_[0], d_[1], d_[2], 1);
+            double r2_sc = d_[0]*d_[0] + d_[1]*d_[1] + d_[2]*d_[2];
             if(r2_sc < spawnhot_R2) {ti_step = ti_spawnhot_glob;} /* SPAWN-SYNC clamp, distance-limited (see above) */
         }
 #endif
