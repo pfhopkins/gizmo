@@ -4,11 +4,16 @@
   test_checker_reports_unread: a flag and a parameter the code does not know are named and the exit code is 1.
   test_setups: default, cloud, galaxy and zoom start from STELLA_DEFAULTS; the zoom is comoving with TimeBetSnapshot > 1
     (run.cc stops otherwise); cloud, galaxy and tall box are not.
+  test_gas_kernel_radius_uncapped: every tracked params file of a Stella build with adaptive gas softening sets
+    MinGasKernelRadiusFractional, and the gas kernel radius floor it gives is below 1e-3 pc.
 """
+import math
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 CFG = REPO / "scripts" / "stella"
@@ -44,3 +49,36 @@ def test_setups():
     assert z["ComovingIntegrationOn"] == "1" and float(z["TimeBetSnapshot"]) > 1.0 and float(z["OmegaBaryon"]) > 0
     for p in ("stella_cloud.params", "stella_galaxy.params", "stella_tallbox.params"):
         assert par(p)["ComovingIntegrationOn"] == "0", p
+
+
+KERNEL_FAC = 2.8  # MinKernelRadius = MinGasKernelRadiusFractional x ForceSoftening[0], ForceSoftening = 2.8 x SofteningGas (cubic spline)
+FLOOR_MAX_PC = 1e-3
+
+
+def active_flags(config):
+    return {l.split("#")[0].strip().split("=")[0] for l in config.read_text().splitlines()} - {""}
+
+
+def stella_params_files():
+    """tracked params files of Stella builds (STELLA_DEFAULTS or GALSF_SINGLE_STARS_FROM_IMF) with adaptive gas softening"""
+    files = subprocess.run(["git", "ls-files", "*.params"], cwd=REPO, capture_output=True, text=True).stdout.split()
+    out = []
+    for f in map(Path, files):
+        config = REPO / f.parent / ("Config_" + f.stem + ".sh" if f.parent == Path("scripts/stella") else "Config.sh")
+        if not config.exists():
+            continue
+        flags = active_flags(config)
+        if flags & {"STELLA_DEFAULTS", "GALSF_SINGLE_STARS_FROM_IMF"} and flags & {"ADAPTIVE_GRAVSOFT_FORALL", "ADAPTIVE_GRAVSOFT_FORGAS"}:
+            out.append(f)
+    return out
+
+
+@pytest.mark.parametrize("params", stella_params_files(), ids=str)
+def test_gas_kernel_radius_uncapped(params):
+    """without MinGasKernelRadiusFractional, adaptive gas softening defaults it to 1 (begrun.cc): h >= 2.8 x SofteningGas"""
+    p = {l.split()[0]: l.split()[1] for l in (REPO / params).read_text().splitlines() if l.split() and not l.startswith(("%", "#"))}
+    assert "MinGasKernelRadiusFractional" in p, f"{params}: MinGasKernelRadiusFractional not set (defaults to 1: h floored at 2.8 x SofteningGas)"
+    comoving = p.get("ComovingIntegrationOn", "0") == "1"
+    soft = float(p["SofteningGasMaxPhys"]) / float(p.get("HubbleParam", 1)) if comoving else float(p["SofteningGas"])
+    floor_pc = float(p["MinGasKernelRadiusFractional"]) * KERNEL_FAC * soft * float(p.get("UnitLength_in_cm", 3.085678e21)) / 3.085678e18
+    assert math.isfinite(floor_pc) and floor_pc < FLOOR_MAX_PC, f"{params}: gas kernel radius floored at {floor_pc:.3g} pc"

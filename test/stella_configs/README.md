@@ -11,3 +11,6 @@ Static test of the production set in `scripts/stella`: `Config_stella_{default,c
 
 Limit: a flag read somewhere in `src/` can still be inert in this combination; the check is by name.
 The zoom needs the SGChem UV background (comoving floor): SGChem stops on `ComovingIntegrationOn` without it.
+- `test_gas_kernel_radius_uncapped`: every tracked params file of a Stella build (`STELLA_DEFAULTS` or `GALSF_SINGLE_STARS_FROM_IMF`)
+  with adaptive gas softening sets `MinGasKernelRadiusFractional`: unset, it defaults to 1 there (`begrun.cc`) and floors every gas
+  kernel radius at 2.8 x `SofteningGas` (`gravtree.cc`). The floor it gives (`SofteningGasMaxPhys` / h for comoving runs) is below 1e-3 pc.
