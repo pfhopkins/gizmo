@@ -6,6 +6,9 @@
 #include <math.h>
 #include <vector>
 
+/* IMF accretion donor floor: a gas cell gives mass only above it; m_merge = All.MinMassForParticleMerger */
+static inline double resolvedism_imf_donor_floor(double m_merge) {return 0.01 * m_merge;}
+
 /* mass-weighted Kroupa M dN/dM (slopes -0.3 below 0.5 Msun, -1.3 above) by rejection from M^-0.3; uniform() returns [0,1) */
 template<class U> static inline double kroupa_draw_mass_weighted(U &&uniform, double M_min, double M_max)
 {
