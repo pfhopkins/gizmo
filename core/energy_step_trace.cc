@@ -25,7 +25,7 @@ enum {EC_KIN, EC_TH, EC_MAG, EC_CR, EC_RAD, EC_N};
 static const char *estep_comp_name[EC_N] = {"kin", "th", "mag", "cr", "rad"};
 
 static const char *estep_stage_name[] = {"merge_split", "fb_wind_agb", "fb_sn_ia", "fb_post", "fb_radp", "diff_unpack",
-    "photoion", "cooling", "dust", "sf_spawn", "imf_accrete"};
+    "photoion", "cooling", "dust", "sf_spawn", "imf_accrete", "rt_inject"};
 /* 1 = exact (booked terms must close it to round-off), 0 = measured source with no energy booking */
 static const int estep_stage_exact[] = {1, 1, 1, 1, 0, 1, 1,
 #ifdef SGCHEM
@@ -33,7 +33,7 @@ static const int estep_stage_exact[] = {1, 1, 1, 1, 0, 1, 1,
 #else
     0,
 #endif
-    1, 1, 1};
+    1, 1, 1, 0};
 
 static const char *estep_book_name[] = {"fb_wind", "fb_agb", "fb_sn", "fb_ia", "fb_failed", "cool_rad", "cool_pi", "cool_floor",
     "sf_th_locked", "sf_mag_locked", "sf_placeholder_kin", "imf_th_locked", "imf_mag_locked", "imf_kin", "merge_gravwork",
@@ -214,7 +214,7 @@ void energy_step_trace_report(void)
             fprintf(fd, "#        d_mag and b_*mag* are shown but not closed per stage: tree walks drift Density, and E_B = 1/2|BV|^2 m/rho moves with it.\n");
             fprintf(fd, "# SYNC: full sync. int_res = (E_tot - E_tot0) - sum(stage dE) - integration bookings (kick_floor, outflow).\n");
             fprintf(fd, "#       b_info_*: information only, in no closure (info_mhd_num = the kicks' CumulMHDNumEnergy, the hydro/MHD step's own energy change).\n");
-            fprintf(fd, "#       tot_res = (E_tot - E_tot0) - all bookings - measured sources (fb_radp%s).\n",
+            fprintf(fd, "#       tot_res = (E_tot - E_tot0) - all bookings - measured sources (fb_radp, rt_inject%s).\n",
 #ifdef SGCHEM
                     "");
 #else
