@@ -31,7 +31,8 @@ else
     for f in $(awk '{print $2}' "$DL/SHA256SUMS"); do curl -fsSL --retry 3 -o "$DL/$f" "$URL/$f" || die "cannot download $URL/$f"; done
     (cd "$DL" && sumcheck) || die "release $TAG does not match its SHA256SUMS"
     STELLA_TABLES_FROM="$DL" STELLA_TABLES_SOURCE="release $TAG" bash "$GIZMO/scripts/get_stella_tables.sh" "$TABLES" > /dev/null
-    cp "$DL/SHA256SUMS" "$TABLES/"; rm -rf "$DL"; T="installed from release $TAG"
+    while read -r h f; do [ -e "$TABLES/$f" ] && echo "$h  $f"; done < "$DL/SHA256SUMS" > "$TABLES/SHA256SUMS"   # the files installed
+    rm -rf "$DL"; T="installed from release $TAG"
 fi
 SUMMARY="get_stella_deps: tables  $TABLES (stella-tables $REF, $T, hashes checked)"
 
