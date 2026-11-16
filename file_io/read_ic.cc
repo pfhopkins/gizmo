@@ -1241,11 +1241,14 @@ void read_file(char *fname, int readTask, int lastTask)
                                         if(hdf5_dataset >= 0 && blocknr == IO_Z && RestartFlag == 0)
                                         {
                                             hsize_t filedims[2] = {0, 1}; hid_t filespace = H5Dget_space(hdf5_dataset);
-                                            if(H5Sget_simple_extent_ndims(filespace) <= 2) {H5Sget_simple_extent_dims(filespace, filedims, NULL);} else {filedims[1] = 0;}
+                                            int filerank = H5Sget_simple_extent_ndims(filespace), cols_expected = (int) (bytes_per_blockelement / sizeof(MyInputFloat));
+                                            if(filerank <= 2) {H5Sget_simple_extent_dims(filespace, filedims, NULL);} else {filedims[1] = 0;}
                                             H5Sclose(filespace);
-                                            if(filedims[1] != (hsize_t) (bytes_per_blockelement / sizeof(MyInputFloat)))
+                                            /* a single column is read as a 1-D dataset, so an (N,1) one does not qualify */
+                                            if(filedims[1] != (hsize_t) cols_expected || filerank != (cols_expected == 1 ? 1 : 2))
                                             {
-                                                printf("IC Metallicity of type %d has %d columns where %d are expected (Header Flag_Metals = %d): ignoring it\n", type, (int) filedims[1], (int) (bytes_per_blockelement / sizeof(MyInputFloat)), header.flag_metals);
+                                                static int warned[6]; /* this runs once per communication chunk */
+                                                if(!warned[type]) {printf("IC Metallicity of type %d has shape (N%s%d) where %d column(s) are expected (Header Flag_Metals = %d; a single column must be 1-D): ignoring it\n", type, (filerank == 2 ? "," : "; rank "), (filerank == 2 ? (int) filedims[1] : filerank), cols_expected, header.flag_metals); warned[type] = 1;}
                                                 H5Dclose(hdf5_dataset); hdf5_dataset = -1;
                                             }
                                             else {IC_Metallicity_Columns[type] = (int) filedims[1];}
