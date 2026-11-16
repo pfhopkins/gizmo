@@ -1249,6 +1249,11 @@
 #endif
 #endif
 
+/* SNe injected one at a time below the scale of their ejecta need the timestep broadcast; single-star setups resolve the ejecta instead.
+   Not the one-loop coupling: its injection has no post-injection signal-speed update or instant heating, and it is unmeasured there */
+#if defined(GALSF_FB_MECHANICAL) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && !defined(GALSF_USE_SNE_ONELOOP_SCHEME) && !defined(SINGLE_STAR_SINK_DYNAMICS) && !defined(SNE_BROADCAST_TIMESTEP) && !defined(SNE_BROADCAST_TIMESTEP_DISABLE)
+#define SNE_BROADCAST_TIMESTEP
+#endif
 #ifdef SNE_BROADCAST_TIMESTEP
 #if !defined(GALSF_FB_MECHANICAL) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
 #error "SNE_BROADCAST_TIMESTEP requires GALSF_FB_MECHANICAL with GALSF_FB_FIRE_STELLAREVOLUTION"

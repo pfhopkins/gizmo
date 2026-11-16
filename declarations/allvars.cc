@@ -47,6 +47,7 @@ int NumGasUpdate;		/*!< number of active gas cells on local processor in current
 int MaxTopNodes;		/*!< Maximum number of nodes in the top-level tree used for domain decomposition */
 
 int RestartFlag;		/*!< taken from command line used to start code. 0 is normal start-up from initial conditions, 1 is resuming a run from a set of restart files, while 2 marks a restart from a snapshot file. */
+int IC_Metallicity_Columns[6];
 
 int RestartSnapNum;
 int SelRnd;
