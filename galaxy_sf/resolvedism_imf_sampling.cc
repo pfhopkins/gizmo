@@ -621,6 +621,11 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
 #endif
                             P[j].Mass -= dM;
                             CellP[j].Mass -= dM;
+                            CellP[j].IMFSpawnBlock = 1; /* donors cool down like the spawning cell (sfr_eff.cc) */
+                            if(All.SFCooldownFreeFallFraction > 0 && CellP[j].Density > 0) {
+                                double t_cool = All.SFCooldownFreeFallFraction * sqrt(3.*M_PI / (32.*All.G * CellP[j].Density * All.cf_a3inv));
+                                if(t_cool > CellP[j].SFCooldown) {CellP[j].SFCooldown = t_cool;}
+                            }
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                             CellP[j].MassTrue -= dM;
 #endif
@@ -677,9 +682,8 @@ void assign_stellar_masses_xchange(void)
 #include "../system/code_block_xchange_finalize.h"
 
 
-#ifdef GALSF_RESOLVEDISM_POPIII_STARS
-/* failed Pop III draw: the gathered mass, momentum and metals go into the parent cell, the star is dropped */
-static void popIII_return_draw_to_parent(int i, int ip, double mass_acc)
+/* failed draw: the gathered mass, momentum and metals go into the parent cell, the star is dropped */
+static void imf_return_draw_to_parent(int i, int ip, double mass_acc)
 {
     int k;
     if(mass_acc > 0) {
@@ -696,10 +700,12 @@ static void popIII_return_draw_to_parent(int i, int ip, double mass_acc)
         P[ip].Metallicity[0] = (m0 * P[ip].Metallicity[0] + IMF_MetalAccreted[i]) / m1;
 #endif
         P[ip].Mass = m1; CellP[ip].Mass = m1;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        CellP[ip].MassTrue += mass_acc;
+#endif
     }
     P[i].Mass = 0; P[i].MstarSampleIMF[0] = 0; P[i].MstarSampleIMF[1] = 0; P[i].MstarSampleIMF[2] = 0; P[i].sampled = 1; TreeMomentsStaleFlag = 1;
 }
-#endif
 
 /* =========================================================================== */
 /*  Top-level routine: pre-compute f_acc, run accretion walk, finalize stars    */
@@ -875,6 +881,7 @@ void assign_stellar_masses(void)
     long long *imf_id = (long long *)mymalloc("imf_id", DMAX(nstars_local,1) * sizeof(long long));
     std::vector<double> imf_rdon(DMAX(nstars_local,1), 0.0); /* farthest donor distance [physical kpc] */
     int nimf = 0;
+    int n_failed_draws = 0; double m_failed_drawn = 0; /* draws undone this call */
 
     for(i = 0; i < NumPart; i++)
     {
@@ -886,16 +893,22 @@ void assign_stellar_masses(void)
         if(P[i].PopIIIStar && M_drawn / UNIT_MASS_IN_SOLAR - mass_acc > 0.01 * M_drawn / UNIT_MASS_IN_SOLAR) {
             printf("POPIII SF: ID=%llu M_drawn=%.2f gathered %.3f Msun only: returned to the parent cell, no star\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR);
             int iparent = (int)P[i].MstarSampleIMF[1];
-            popIII_return_draw_to_parent(i, iparent, mass_acc);
+            imf_return_draw_to_parent(i, iparent, mass_acc);
             force_add_element_to_tree(iparent, i); /* zero-mass placeholder until the next rearrange removes it */
             continue;
         }
 #endif
 
-        if(mass_acc <= 0) {
-            printf("WARNING: IMF accretion failed for star ID=%llu M_star=%.2f Msun, using tiny mass\n",
-                (unsigned long long)P[i].ID, M_drawn);
-            mass_acc = 1e-10;
+        if(M_drawn / UNIT_MASS_IN_SOLAR - mass_acc > 0.01 * M_drawn / UNIT_MASS_IN_SOLAR) { /* >1% short after the passes: failed draw, gas back to the parent */
+            int iparent = (int)P[i].MstarSampleIMF[1];
+            if(iparent < 0 || iparent >= NumPart || P[iparent].Type != 0) {
+                printf("IMF accretion: failed draw of star ID=%llu (M_drawn=%.3f, collected %.3e Msun) has no parent cell (index %d)\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR, iparent);
+                endrun(8889);
+            }
+            imf_return_draw_to_parent(i, iparent, mass_acc);
+            force_add_element_to_tree(iparent, i); /* zero-mass placeholder until the next rearrange removes it */
+            n_failed_draws++; m_failed_drawn += M_drawn;
+            continue;
         }
 
         /* Star mass = actual mass accreted (exact conservation) */
@@ -975,6 +988,9 @@ void assign_stellar_masses(void)
     {
         int nimf_total = 0;
         MPI_Allreduce(&nimf, &nimf_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        double fl_loc[2] = {(double)n_failed_draws, m_failed_drawn}, fl_glob[2];
+        MPI_Allreduce(fl_loc, fl_glob, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && fl_glob[0] > 0) {printf("RESOLVEDISM IMF: %d failed draws (drawn %.3f Msun) returned to their parent cells\n", (int)fl_glob[0], fl_glob[1]);}
         if(nimf_total > 0)
         {
             int *recvcounts = NULL, *displs = NULL;
