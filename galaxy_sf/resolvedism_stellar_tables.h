@@ -141,12 +141,7 @@ struct StellarTables {
     /* 4D cumulative wind ejecta [NZ * NM * NAGE * NELEM] [Msun] — only if winds enabled */
     float *elem_ej_wind_cumulative;
 
-    /* 3D yield datasets — flat [NZ * NM * NELEM]
-     * net_yields/wind_yields kept for diagnostics only.
-     * Use elem_ej_SN_mass / elem_ej_AGB_mass at runtime — these are
-     * absolute element ejecta masses [Msun] with X_init baked in. */
-    double net_yields[STBL_NZ * STBL_NM * STBL_NELEM];
-    double wind_yields[STBL_NZ * STBL_NM * STBL_NELEM];
+    /* 3D yield datasets — flat [NZ * NM * NELEM]: absolute element ejecta masses [Msun] with X_init baked in */
     double elem_ej_SN_mass[STBL_NZ * STBL_NM * STBL_NELEM];
     double elem_ej_AGB_mass[STBL_NZ * STBL_NM * STBL_NELEM];
 
@@ -210,9 +205,6 @@ double stellar_surface_abundance(double logM, double logZ, double log_age, int e
 double stellar_elem_ej_wind_cumulative(double logM, double logZ, double log_age, int elem); /* cumulative wind ejecta from birth [Msun] */
 
 /* ---- Yields (2D + element index) ---- */
-double stellar_net_yield(double logM, double logZ, int elem);   /* diagnostics — do not use at runtime */
-double stellar_wind_yield(double logM, double logZ, int elem);  /* diagnostics — do not use at runtime */
-double stellar_sn_yield(double logM, double logZ, int elem);    /* diagnostics — do not use at runtime */
 double stellar_elem_ej_SN(double logM, double logZ, int elem);  /* absolute SN ejecta [Msun], X_init baked in */
 double stellar_elem_ej_AGB(double logM, double logZ, int elem); /* absolute AGB ejecta [Msun], X_init baked in */
 double stellar_X_init(double logZ, int elem);                   /* table's assumed birth mass fraction */

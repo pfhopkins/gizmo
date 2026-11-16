@@ -333,11 +333,6 @@ void resolvedism_load_stellar_tables(void)
         read_hdf5_dataset_as_float(file, "surface_abundances",     StellarTbl.surface_abundances,     n3d * STBL_NELEM);
 #endif
 
-        /* Legacy net_yields/wind_yields arrays no longer in HDF5; zero them so
-         * any leftover diagnostic code sees a clean state. */
-        memset(StellarTbl.net_yields,  0, STBL_NZ * STBL_NM * STBL_NELEM * sizeof(double));
-        memset(StellarTbl.wind_yields, 0, STBL_NZ * STBL_NM * STBL_NELEM * sizeof(double));
-
         /* Absolute element ejecta tables (X_init baked in by table builder) */
         read_hdf5_dataset_double(file, "elem_ej_SN_mass",  StellarTbl.elem_ej_SN_mass,  (size_t)STBL_NZ * STBL_NM * STBL_NELEM);
         read_hdf5_dataset_double(file, "elem_ej_AGB_mass", StellarTbl.elem_ej_AGB_mass, (size_t)STBL_NZ * STBL_NM * STBL_NELEM);
@@ -717,100 +712,61 @@ void resolvedism_load_stellar_tables(void)
             else printf("  [PASS] Remnant mass consistent for all (Z,M): 0 < rem < M_init (PISN=0)\n");
         }
 
-        /* --- Test 8b: Ejecta metallicity sanity --- */
+        /* --- Test 8b: Ejecta metallicity: wind + SN ejecta over the lifetime (as injected) --- */
         {
-            int nfail = 0, nprint = 0;
+            int nfail = 0; double zej_max = 0;
             for(int iz = 0; iz < STBL_NZ; iz++) {
-                double Z_birth = pow(10., StellarTbl.log_Z[iz]);
                 for(int im = 0; im < STBL_NM; im++) {
-                    double M = StellarTbl.M[im];
                     int rt = StellarTbl.remnant_type[IDX2(iz, im)];
-                    double rm = StellarTbl.remnant_mass[IDX2(iz, im)];
-                    if(rt == REM_FSN || rt == REM_DBH) continue; /* no yields */
-                    if(rt == REM_PISN) continue; /* PISN are legitimately metal-rich (full disruption) */
-                    if(M < 8.0) continue; /* only check massive stars */
-                    double Mej = M - rm;
-                    if(Mej < 0.1) continue;
-                    /* Compute total metal yield mass */
-                    double logM_t = StellarTbl.log_M[im], logZ_t = StellarTbl.log_Z[iz];
-                    double metal_yield = 0;
-                    for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {
-                        double ny = StellarTbl.net_yields[(IDX2(iz, im)) * STBL_NELEM + kk]; /* element stride, NOT IDX3 (age stride): OOB read, segfaulted adiab builds (ASAN 2026-07-13) */
-                        /* Apply same clip as injection code */
-                        double X_birth_k = StellarTbl.X_init[iz * STBL_NELEM + kk]; /* table's birth mass fraction of element kk */
-                        double M_elem_ej = ny + X_birth_k * Mej;
-                        if(M_elem_ej > 0) metal_yield += M_elem_ej;
+                    if(StellarTbl.M[im] < 8.0 || rt == REM_WD || rt == REM_PISN) continue; /* PISN: full disruption, legitimately metal-rich */
+                    double log_end = log10(DMAX(StellarTbl.lifetime_yr[IDX2(iz, im)], 100.)), m_tot = 0, m_met = 0;
+                    for(int kk = 0; kk < STBL_NELEM; kk++) {
+                        double m_k = StellarTbl.elem_ej_SN_mass[IDX2(iz, im) * STBL_NELEM + kk] + stellar_elem_ej_wind_cumulative(StellarTbl.log_M[im], StellarTbl.log_Z[iz], log_end, kk);
+                        m_tot += m_k; if(kk >= ELEM_C) m_met += m_k;
                     }
-                    double Z_ej = metal_yield / Mej;
-                    /* Ejecta metallicity should not exceed 50% — no physical star does this */
+                    if(m_tot < 0.1) continue;
+                    double Z_ej = m_met / m_tot;
+                    if(Z_ej > zej_max) zej_max = Z_ej;
                     if(Z_ej > 0.5) {
-                        if(nprint < 5) printf("  WARNING: ejecta Z=%.3f (%.0fx solar) at M=%.1f Z=%.4f type=%d rem=%.1f Mej=%.1f\n",
-                            Z_ej, Z_ej/0.014, M, Z_birth, rt, rm, Mej);
-                        nfail++; nprint++;
+                        if(nfail < 5) printf("  WARNING: lifetime ejecta Z=%.3f at M=%.1f Z=%.4f type=%d Mej=%.1f\n", Z_ej, StellarTbl.M[im], pow(10., StellarTbl.log_Z[iz]), rt, m_tot);
+                        nfail++;
                     }
                 }
             }
             if(nfail > 0) { printf("  WARNING: %d entries with ejecta Z > 50%%\n", nfail); n_warn++; }
-            else printf("  [PASS] Ejecta metallicity < 50%% for all massive star entries\n");
+            else printf("  [PASS] Ejecta metallicity < 50%% for all massive stars (wind + SN ejecta over the lifetime, max Z_ej=%.3f)\n", zej_max);
         }
 
-        /* --- Test 9: Net yield mass conservation: sum over all elements ≈ 0 --- */
+        /* --- Test 9: Ejecta mass budget: SN (or AGB) ejecta + lifetime winds = M_init - M_remnant --- */
         {
-            int nfail_severe = 0, nfail_hhe = 0;
-            double worst_imbal = 0, worst_M9 = 0;
+            int nfail = 0; double worst = 0, worst_M = 0;
             for(int iz = 0; iz < STBL_NZ; iz++) {
                 for(int im = 0; im < STBL_NM; im++) {
-                    double M = StellarTbl.M[im];
                     int rt = StellarTbl.remnant_type[IDX2(iz, im)];
-                    if(rt == 3 || rt == 6) continue; /* FSN/DBH have zeroed yields */
-                    double logM_t = StellarTbl.log_M[im], logZ_t = StellarTbl.log_Z[iz];
-                    double sum_all = 0, sum_metals = 0;
-                    for(int kk = 0; kk < STBL_NELEM; kk++) {
-                        double ny = stellar_net_yield(logM_t, logZ_t, kk);
-                        sum_all += ny;
-                        if(kk >= ELEM_C) sum_metals += ny;
-                    }
-                    double imbal = fabs(sum_all) / DMAX(M, 1.0);
-                    if(imbal > worst_imbal) { worst_imbal = imbal; worst_M9 = M; }
-                    if(imbal > 0.20) { /* >20% — H/He budget issue in source tables, not a code bug */
-                        nfail_severe++;
-                    } else if(imbal > 0.05) {
-                        nfail_hhe++;
-                    }
+                    const double *ej = (rt == REM_WD) ? StellarTbl.elem_ej_AGB_mass : StellarTbl.elem_ej_SN_mass;
+                    double log_end = log10(DMAX(StellarTbl.lifetime_yr[IDX2(iz, im)], 100.)), m_ej = 0;
+                    for(int kk = 0; kk < STBL_NELEM; kk++) {m_ej += ej[IDX2(iz, im) * STBL_NELEM + kk] + stellar_elem_ej_wind_cumulative(StellarTbl.log_M[im], StellarTbl.log_Z[iz], log_end, kk);}
+                    double imbal = fabs(m_ej - (StellarTbl.M[im] - StellarTbl.remnant_mass[IDX2(iz, im)])) / StellarTbl.M[im];
+                    if(imbal > worst) {worst = imbal; worst_M = StellarTbl.M[im];}
+                    if(imbal > 1e-3) nfail++;
                 }
             }
-            if(nfail_severe > 0) printf("  [INFO] %d entries with >20%% yield mass imbalance (worst %.0f%% at M=%.1f) — H/He budget in source tables; code conserves mass via M_ej=M_particle-M_remnant\n", nfail_severe, worst_imbal*100, worst_M9);
-            else printf("  [PASS] No severe yield mass imbalance >20%%\n");
-            if(nfail_hhe > 0) printf("  [INFO] %d entries with 5-20%% H/He imbalance (untracked isotopes in Karakas/Limongi tables)\n", nfail_hhe);
+            if(nfail > 0) { printf("  WARNING: %d entries where ejecta + winds differ from M_init - M_remnant by > 0.1%% (worst %.2e at M=%.1f); feedback rescales the ejecta to the star's mass\n", nfail, worst, worst_M); n_warn++; }
+            else printf("  [PASS] Ejecta mass budget: table SN/AGB ejecta + lifetime winds = M_init - M_remnant to %.1e (worst)\n", worst);
         }
 
-        /* --- Test 10: SN yields (net - wind) non-negative for major elements --- */
+        /* --- Test 10: SN and AGB element ejecta finite and non-negative --- */
         {
-            int nfail_severe = 0, nfail_minor = 0;
-            int check_elems[] = {ELEM_C, ELEM_O, ELEM_Si, ELEM_Fe};
-            const char *check_names[] = {"C", "O", "Si", "Fe"};
-            for(int iz = 0; iz < STBL_NZ; iz++) {
-                for(int im = 0; im < STBL_NM; im++) {
-                    double M = StellarTbl.M[im];
-                    if(M < 8.0) continue;
-                    int rt = StellarTbl.remnant_type[IDX2(iz, im)];
-                    if(rt == 3 || rt == 6) continue;
-                    double logM_t = StellarTbl.log_M[im], logZ_t = StellarTbl.log_Z[iz];
-                    for(int e = 0; e < 4; e++) {
-                        double sy = stellar_sn_yield(logM_t, logZ_t, check_elems[e]);
-                        if(sy < -0.1) { /* > 0.1 Msun negative is a real problem */
-                            nfail_severe++;
-                            if(nfail_severe <= 3) printf("  WARNING: large negative SN yield %s=%.4f at M=%.1f Z=%.4f type=%d\n",
-                                check_names[e], sy, M, pow(10., logZ_t), rt);
-                        } else if(sy < -0.001) {
-                            nfail_minor++; /* small negative — clamped to 0 in injection code */
-                        }
-                    }
+            int nfail = 0, n = STBL_NZ * STBL_NM * STBL_NELEM;
+            for(int q = 0; q < n; q++) {
+                double sn = StellarTbl.elem_ej_SN_mass[q], agb = StellarTbl.elem_ej_AGB_mass[q];
+                if(!(sn >= 0 && isfinite(sn)) || !(agb >= 0 && isfinite(agb))) {
+                    if(nfail < 3) printf("  WARNING: element ejecta SN=%g AGB=%g at (Z,M,elem) flat index %d\n", sn, agb, q);
+                    nfail++;
                 }
             }
-            if(nfail_severe > 0) { printf("  WARNING: %d large negative SN yields (>0.1 Msun)\n", nfail_severe); n_warn++; }
-            else printf("  [PASS] No large negative SN yields (net-wind) for C, O, Si, Fe\n");
-            if(nfail_minor > 0) printf("  [INFO] %d small negative SN yields (<0.1 Msun, clamped to 0 in injection code)\n", nfail_minor);
+            if(nfail > 0) { printf("  WARNING: %d negative or non-finite element ejecta entries\n", nfail); n_warn++; }
+            else printf("  [PASS] SN and AGB element ejecta finite and >= 0 for all %d entries\n", 2 * n);
         }
 
         /* --- Test 11: Lifetime within age grid range (M >= 0.8 only — lower mass stars can exceed Hubble time at low Z) --- */
@@ -835,25 +791,26 @@ void resolvedism_load_stellar_tables(void)
             if(nfail_lowmass > 0) printf("  [INFO] %d low-mass (M<0.8) lifetimes exceed age grid (expected — these stars can outlive the Hubble time at low Z)\n", nfail_lowmass);
         }
 
-        /* --- Test 12: AGB yields — C enrichment from 3rd dredge-up (M=2-4 Msun) --- */
+        /* --- Test 12: AGB ejecta — C enrichment from 3rd dredge-up (M=2-4 Msun) --- */
         {
             int n_checked = 0, n_c_enriched = 0;
             for(int iz = 0; iz < STBL_NZ; iz++) {
-                double logZ_t = StellarTbl.log_Z[iz];
                 for(int im = 0; im < STBL_NM; im++) {
                     double M = StellarTbl.M[im];
                     if(M < 2.0 || M > 4.0) continue;
                     int rt = StellarTbl.remnant_type[IDX2(iz, im)];
                     if(rt != 0) continue; /* WD only */
+                    double m_ej = 0;
+                    for(int kk = 0; kk < STBL_NELEM; kk++) m_ej += StellarTbl.elem_ej_AGB_mass[IDX2(iz, im) * STBL_NELEM + kk];
+                    if(m_ej <= 0) continue;
                     n_checked++;
-                    double yC = stellar_net_yield(StellarTbl.log_M[im], logZ_t, ELEM_C);
-                    if(yC > 0) n_c_enriched++;
+                    if(StellarTbl.elem_ej_AGB_mass[IDX2(iz, im) * STBL_NELEM + ELEM_C] > StellarTbl.X_init[iz * STBL_NELEM + ELEM_C] * m_ej) n_c_enriched++; /* ejecta C fraction above birth */
                 }
             }
             if(n_checked > 0) {
                 double frac = (double)n_c_enriched / n_checked * 100;
-                if(frac < 50) { printf("  WARNING: only %.0f%% of AGB stars (2-4 Msun) have net C > 0 (expected ~100%%)\n", frac); n_warn++; }
-                else printf("  [PASS] AGB C enrichment: %.0f%% of 2-4 Msun WD stars have net C > 0 (%d/%d)\n", frac, n_c_enriched, n_checked);
+                if(frac < 50) { printf("  WARNING: only %.0f%% of AGB stars (2-4 Msun) eject C above their birth fraction (expected ~100%%)\n", frac); n_warn++; }
+                else printf("  [PASS] AGB C enrichment: %.0f%% of 2-4 Msun WD stars eject C above their birth fraction (%d/%d)\n", frac, n_c_enriched, n_checked);
             }
         }
 
@@ -1192,52 +1149,6 @@ double stellar_surface_abundance(double logM, double logZ, double log_age, int e
 }
 
 /* --- Yields --- */
-
-double stellar_net_yield(double logM, double logZ, int elem)
-{
-    if(elem < 0 || elem >= STBL_NELEM) return 0;
-
-    int iz, im; double fz, fm;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-
-    /* bilinear with fixed element index */
-    int base00 = (IDX2(iz,   im  )) * STBL_NELEM + elem;
-    int base01 = (IDX2(iz,   im+1)) * STBL_NELEM + elem;
-    int base10 = (IDX2(iz+1, im  )) * STBL_NELEM + elem;
-    int base11 = (IDX2(iz+1, im+1)) * STBL_NELEM + elem;
-
-    double v00 = StellarTbl.net_yields[base00];
-    double v01 = StellarTbl.net_yields[base01];
-    double v10 = StellarTbl.net_yields[base10];
-    double v11 = StellarTbl.net_yields[base11];
-    return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
-}
-
-double stellar_wind_yield(double logM, double logZ, int elem)
-{
-    if(elem < 0 || elem >= STBL_NELEM) return 0;
-
-    int iz, im; double fz, fm;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-
-    int base00 = (IDX2(iz,   im  )) * STBL_NELEM + elem;
-    int base01 = (IDX2(iz,   im+1)) * STBL_NELEM + elem;
-    int base10 = (IDX2(iz+1, im  )) * STBL_NELEM + elem;
-    int base11 = (IDX2(iz+1, im+1)) * STBL_NELEM + elem;
-
-    double v00 = StellarTbl.wind_yields[base00];
-    double v01 = StellarTbl.wind_yields[base01];
-    double v10 = StellarTbl.wind_yields[base10];
-    double v11 = StellarTbl.wind_yields[base11];
-    return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
-}
-
-double stellar_sn_yield(double logM, double logZ, int elem)
-{
-    return stellar_net_yield(logM, logZ, elem) - stellar_wind_yield(logM, logZ, elem);
-}
 
 double stellar_type_ia_yield(int elem)
 {
