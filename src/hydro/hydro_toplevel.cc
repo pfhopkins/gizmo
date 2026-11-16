@@ -332,6 +332,9 @@ void hydro_final_operations_and_cleanup(void)
             double dCR_div = CR_calculate_adiabatic_gasCR_exchange_term(i, dt, gamma_minus_eCR_tmp, 1, P, CellP); // this will handle the update below - separate subroutine b/c we want to allow it to appear in a couple different places
             double u0=DMAX(CellP[i].InternalEnergyPred, All.MinEgySpec) , uf=DMAX(u0 - dCR_div/P[i].Mass , All.MinEgySpec); // final updated value of internal energy per above
             CellP[i].DtInternalEnergy += (uf - u0) / (dt + MIN_REAL_NUMBER); // update gas quantities to be used in cooling function
+#if !defined(CRFLUID_EVOLVE_SPECTRUM) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) /* the spectrum and scattering-wave solvers apply the CRs' adiabatic term themselves; otherwise the CRs receive here exactly what the gas gave up, shared between bins by their (gamma-1)*E */
+            if(gamma_minus_eCR_tmp > 0) {for(k=0;k<N_CR_PARTICLE_BINS;k++) {CellP[i].DtCosmicRayEnergy[k] += ((GAMMA_COSMICRAY(k)-1.)*CellP[i].CosmicRayEnergyPred[k] / gamma_minus_eCR_tmp) * (u0 - uf) * P[i].Mass / (dt + MIN_REAL_NUMBER);}}
+#endif
 #endif
 #endif
 #if defined(COSMIC_RAY_FLUID)
