@@ -117,6 +117,28 @@ SNinfo.txt gains columns 21-26 and AGBinfo.txt gains columns 19-24. They hold th
 (n_H, T, kernel radius, NumNgb), the birth density, and the birth density at the current scale factor.
 Details: docs/stella_death_log.md.
 
+## STARS_APPROACH_TIMESTEP: approach-time step for stars
+
+Type-4 stars also take STARFORGE's two-body step: dt <= sqrt(2 eta) 0.3 / (1/t_approach + 1/t_freefall), with
+t_approach = r/|dv| and t_freefall = sqrt(r^3 / G (m1 + m2)) to the nearest star (softened r). The gravity walk fills both
+times (Min_Sink_Approach_Time, Min_Sink_Freefall_time; stars are the "special" type of the tree's sink moments), so there
+is no extra walk. Comoving runs convert them to physical time. With KETJU, a chain member ignores its own chain partners
+within the region radius (MSTAR integrates them); it is still limited by approaching stars outside the chain.
+Without it, star encounters are resolved only by MaxStellarTimestep. Not combinable with sinks, STARS_HERMITE_DIRECT_GRAVITY
+or STARS_INTEGRATED_BY_RUMI. On by default in every Stella build with single stars (GALSF_RESOLVEDISM_SAMPLE_IMF), set in
+declarations/precompiler_logic.h; skipped where one of those is set; opt out with STARS_APPROACH_TIMESTEP_OFF.
+
+Checks (reports/sn_boundary_and_approach_dt.md): 1 + 10 Msun flyby, eps = b = 0.033 pc, v = 3 km/s, cloud build. With a
+50 kyr step cap the deflection is 0.31 deg off and dE/E = -4e-3; with no cap 63 deg off. With the switch, 0.002 deg and
+|dE/E| <= 5e-5 at any cap. Cost in the 1e4 Msun cloud: 9% more steps, 19% more time per step.
+
+## FB_G17_BOUNDARY_INJECTION: feedback at the step boundary
+
+Feedback is deposited after the closing kick, and the hydro pass is redone on feedback steps (gizmo2017 order). The redone
+pass no longer repeats the turbulent metal exchange, which is applied in the pass itself rather than by the kicks. Not
+combinable with MFV. On in Config_stella_zoom.sh. Adiabatic SN at 1 Msun: energy excess +0.96% (max) with mid-step
+deposit, +0.40% at the boundary.
+
 ## TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS (test only)
 
 Each step, recomputes the KETJU limiting-particle steps by a full particle scan and aborts if the cell grid gives a

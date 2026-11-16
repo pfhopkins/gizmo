@@ -633,6 +633,13 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
 #endif    
 #endif // SINGLE_STAR_TIMESTEPPING
+#ifdef STARS_APPROACH_TIMESTEP
+    if(P[p].Type == 4) /* the Type-5 dt_2body above for stars; walk times are comoving (r, Vel = a^2 dx/dt): to physical */
+    {
+        double t_app = All.cf_atime * All.cf_atime * P[p].Min_Sink_Approach_Time, t_ff = All.cf_atime * sqrt(All.cf_atime) * P[p].Min_Sink_Freefall_time;
+        dt = DMIN(dt, sqrt(2*All.ErrTolIntAccuracy) * SINK_TIMESTEP_SAFETY_FACTOR / (1./t_app + 1./t_ff));
+    }
+#endif
 
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
     /* make sure smoothing length of non-gas particles doesn't change too much in one timestep */

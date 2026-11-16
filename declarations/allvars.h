@@ -245,6 +245,9 @@ extern int TreeReconstructFlag; /*!< the standing tree is CONDEMNED: its storage
     DomainReconstructFlag (ownership/balance decomposition owed -- strictly more expensive) and from
     TreeMomentsStaleFlag below (moments re-derivation on intact topology -- strictly cheaper).
     Serialized in restartfiles. */
+#ifdef FB_G17_BOUNDARY_INJECTION
+extern int HydroPassRepeatsStep; /*!< 1 during the feedback hydro recompute (run.cc): the metal exchange was already applied this step */
+#endif
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
 #ifdef TREE_REFRESH_INCREMENTAL
 extern int TreeMomentsDirtyFlag; /*!< some node is marked (force_mark_moments_dirty): the next refresh may re-derive only the marked chains, unless TreeMomentsStaleFlag asks for all */
@@ -1309,7 +1312,7 @@ extern struct gravdata_in
     Vec3<MyFloat> Pos;
     MyFloat Soft;
     MyFloat Mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
     Vec3<MyFloat> Vel;
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
@@ -1423,7 +1426,7 @@ extern struct gravdata_out
     MyFloat weight_sum_for_special_point_smoothing;
 #endif
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
     MyFloat Min_Sink_Freefall_time;    // minimum value of sqrt(R^3 / G(M_SINK + M_particle)) as calculated from the tree-walk
     MyFloat Min_Sink_Approach_Time; // smallest approach time t_a = |v_radial|/r
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT

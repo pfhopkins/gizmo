@@ -348,6 +348,10 @@ extern ALIGN(32) struct particle_data
     MyFloat weight_sum_for_special_point_smoothing;
 #endif
 #endif
+#ifdef STARS_APPROACH_TIMESTEP
+    MyFloat Min_Sink_Freefall_time; /* as below, for Type-4 stars */
+    MyFloat Min_Sink_Approach_Time;
+#endif
 #ifdef SINGLE_STAR_TIMESTEPPING
     MyFloat Min_Sink_Freefall_time;
     MyFloat Min_Sink_Approach_Time;

@@ -1924,7 +1924,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef COMPUTE_JERK_IN_GRAVTREE
     Vec3<double> jerk = {};
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
     Vec3<double> vel;
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
@@ -1986,7 +1986,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #endif
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
     double Min_Sink_Approach_Time = MAX_REAL_NUMBER, Min_Sink_Freefall_time = MAX_REAL_NUMBER;
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
@@ -2022,7 +2022,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         soft = ForceSoftening_KernelRadius(target);
         aold = All.ErrTolForceAcc * P[target].OldAcc;
         pmass = P[target].Mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
         vel = P[target].Vel;
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
@@ -2051,7 +2051,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         soft = GravDataGet[target].Soft;
         aold = All.ErrTolForceAcc * GravDataGet[target].OldAcc;
         pmass = GravDataGet[target].Mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
         vel = GravDataGet[target].Vel;
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
@@ -2150,7 +2150,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 dv = P[no].Vel - vel; NGB_SHEARBOX_BOUNDARY_VELCORR_(pos,P[no].Pos,dv,-1);
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
                 /* the source velocity this interaction is evaluated at; the Hermite predictor below
                    replaces it, so the (dr, dv) pair feeding Min_Sink_Approach_Time and the binary
                    pairing stays mutually consistent on a Hermite pass instead of mixing a predicted
@@ -2186,7 +2186,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                     dv = P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/2)) * hD - vel;
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
                     src_vel_asused = P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/2)) * hD;
 #endif
                 }
@@ -2254,8 +2254,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                                 acc_of_nearest_special = P[no].Acc_Total_PrevStep;
 #endif
                             }
-#ifdef SINGLE_STAR_TIMESTEPPING
-                        Vec3<double> sink_dv=src_vel_asused-vel; double vSqr=sink_dv.norm_sq(), M_total=P[no].Mass+pmass, r2soft=SinkParticle_GravityKernelRadius;
+#ifdef SINK_APPROACH_TIME_TRACKED
+                        Vec3<double> sink_dv=src_vel_asused-vel; double vSqr=sink_dv.norm_sq(), M_total=P[no].Mass+pmass, r2soft=SINK_APPROACH_SOURCE_SOFTENING;
                         r2soft = DMAX(r2soft, soft);
                         r2soft *= KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER;
                         r2soft = r2 + r2soft*r2soft;
@@ -2685,9 +2685,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                             acc_of_nearest_special = nop->sink_acc;
 #endif
                         }
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
                     Vec3<double> sink_dv = nop->sink_vel - vel; double vSqr=sink_dv.norm_sq(), M_total=nop->sink_mass+pmass, r2soft;
-                    r2soft = DMAX(SinkParticle_GravityKernelRadius, soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = sink_r2 + r2soft*r2soft;
+                    r2soft = DMAX(SINK_APPROACH_SOURCE_SOFTENING, soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = sink_r2 + r2soft*r2soft;
                     double tSqr = r2soft/(vSqr + MIN_REAL_NUMBER), tff4 = r2soft*r2soft*r2soft/(M_total*M_total);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
                     if(ptype == 0) {
@@ -2695,8 +2695,13 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         if(tSqr_fb < Min_Sink_FeedbackTime) {Min_Sink_FeedbackTime = tSqr_fb;}
                     } // for gas, add the signal velocity of feedback from the star
 #endif
+#if defined(STARS_APPROACH_TIMESTEP) && defined(KETJU_REGULARIZATION)
+                    if((source_KetjuChainID == 0) || (sink_r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius * All.cf_a2inv)) /* nodes carry no IDs: within the region radius of a chain member they hold its partners, which MSTAR integrates */
+#endif
+                    {
                     if(tSqr < Min_Sink_Approach_Time) {Min_Sink_Approach_Time = tSqr;}
                     if(tff4 < Min_Sink_Freefall_time) {Min_Sink_Freefall_time = tff4;}
+                    }
 #endif //#ifdef SINGLE_STAR_TIMESTEPPING
                 }
 #endif // SINK_CALC_DISTANCES
@@ -3266,7 +3271,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
         }
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
         P[target].Min_Sink_Approach_Time = sqrt(Min_Sink_Approach_Time);
         P[target].Min_Sink_Freefall_time = sqrt(sqrt(Min_Sink_Freefall_time)/All.G);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
@@ -3369,7 +3374,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
         }
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
         GravDataResult[target].Min_Sink_Approach_Time = sqrt(Min_Sink_Approach_Time);
         GravDataResult[target].Min_Sink_Freefall_time = sqrt(sqrt(Min_Sink_Freefall_time)/All.G);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT

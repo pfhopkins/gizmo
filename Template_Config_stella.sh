@@ -26,7 +26,7 @@ GALSF_RESOLVEDISM_INSTANT_SN             % SNe before TimeInstantSN (param) expl
 # SN energies (resolvedism_sn_energy.h): 1e51 erg for CCSN, ECSN, PPISN and PISN (flat by design); 0 for failed SNe and direct BHs
 #GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE % opt-in: PISN [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to 64-133 Msun (Heger & Woosley 2002, Wise+12a); default flat 1e51 [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 GALSF_RESOLVEDISM_TYPE_IA                % Type Ia SNe from WD DTD (W7 yields)
-#FB_G17_BOUNDARY_INJECTION               % gizmo2017-style SN boundary injection; production choice pending ladder-v2 head-to-head
+#FB_G17_BOUNDARY_INJECTION               % feedback deposited after the closing kick, then the hydro pass is redone on feedback steps (gizmo2017 order); on in Config_stella_zoom.sh  [excl MFV]
 #GALSF_RESOLVEDISM_SN_SPAWN              % spawn ejecta cells when the FB kernel holds too little gas (prototype)
 #RESOLVEDISM_HOTSYNC_CLAMP               % clamp timebins in hot regions (validated with SN_SPAWN)
 #GALSF_RESOLVEDISM_FB_HEALPIX            % HEALPix FB weighting (weights are mass-blind)
@@ -116,6 +116,8 @@ KETJU_MERGE_STARS                        % stellar collisions (Type 4+4)  [req K
 #KETJU_LEGACY_C_LIBRARY                  % legacy: MSTAR from the C library (reference); default: C++/Kokkos library mstar::mstar (KOKKOS_ROOT)  [req KETJU_REGULARIZATION]
 #STARS_INTEGRATED_BY_RUMI                % EXPERIMENTAL: all Type-4 stars integrated by the RUMI++ library (BRIDGE: gas kicks at star steps, star-star pairs out of the tree; make RUMI_LIB_DIR=<prefix>)  [excl KETJU_REGULARIZATION]
 #STARS_HERMITE_DIRECT_GRAVITY            % EXPERIMENTAL prototype (A-lite): Type-4 stars on 4th-order Hermite with direct star-star gravity, Aarseth steps (STARS_HERMITE_AARSETH_ETA=0.02)  [excl sinks, KETJU-free Hermite, adaptive Type-4 softening]
+#STARS_APPROACH_TIMESTEP_OFF  % opt out of the default-on STARS_APPROACH_TIMESTEP (set by GALSF_RESOLVEDISM_SAMPLE_IMF)
+#STARS_APPROACH_TIMESTEP                 % Type-4 stars also limited by STARFORGE's two-body step: approach and free-fall time to the nearest star from the gravity walk (no extra walk)  [excl sinks, STARS_HERMITE_DIRECT_GRAVITY, STARS_INTEGRATED_BY_RUMI] [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #KETJU_PN_REMNANT_TAG                    % tag remnant type at SN; PN on Type-4 NS/BH remnants
 #GALSF_RESOLVEDISM_BH_PROMOTION          % promote massive remnants to sinks  [req STELLAR_TABLES] [auto SINK_PARTICLES]
 
