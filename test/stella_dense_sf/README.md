@@ -14,3 +14,5 @@ several checks.
 
 - Start-up table self-tests: the ejecta checks (metallicity, mass budget, sign, AGB carbon) run on the tables the
   feedback injects (`elem_ej_SN_mass`, `elem_ej_AGB_mass`, cumulative winds) and pass.
+- Gas smoothing lengths are uncapped (`MinGasKernelRadiusFractional 0`): the median kernel radius of the n_H > 1e5 cells
+  stays below half of 2.8 x `SofteningGas`, the floor the default fraction 1 would impose.

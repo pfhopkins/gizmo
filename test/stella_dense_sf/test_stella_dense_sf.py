@@ -76,3 +76,24 @@ def test_table_selftests_check_runtime_ejecta(run):
     m = re.search(r"\[PASS\] SN and AGB element ejecta finite and >= 0 for all (\d+) entries", text)
     assert m and int(m.group(1)) > 0, "ejecta sign self-test missing or not passing"
     assert re.search(r"\[PASS\] AGB C enrichment", text), "AGB carbon self-test not passing"
+
+
+def test_dense_gas_kernel_not_floored(run):
+    """Gas smoothing lengths are uncapped: dense clump cells reach kernel radii well below 2.8 x SofteningGas, the
+    floor MinGasKernelRadiusFractional = 1 (the default with adaptive gas softening) would impose."""
+    text, out = run
+    soft_gas = float(re.search(r"^SofteningGas\s+(\S+)", open(join(TEST_DIR, f"{TEST_NAME}.params")).read(), re.M).group(1))
+    floor_default = 2.8 * soft_gas
+    checked = 0
+    for snap in sorted(glob.glob(join(out, "snapshot_*.hdf5"))):
+        with h5py.File(snap, "r") as f:
+            nh = f["PartType0/Density"][:] * UNIT_DENSITY_CGS * 0.7 / 1.6726e-24
+            h = f["PartType0/KernelMaxRadius"][:]
+        dense = nh > 1e5
+        if dense.sum() < 50:
+            continue
+        checked += 1
+        med = np.median(h[dense])
+        print(f"{os.path.basename(snap)}: {dense.sum()} cells n_H > 1e5, median h {1e3 * med:.3f} pc, default floor {1e3 * floor_default:.3f} pc")
+        assert med < 0.5 * floor_default, f"{os.path.basename(snap)}: dense-gas kernel radius held at the softening floor"
+    assert checked, "no snapshot with dense gas"
