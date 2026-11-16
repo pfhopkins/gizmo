@@ -579,6 +579,15 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     }
 #endif
 #endif
+                    { /* the momentum-conserving merge below drops 1/2 mu |v_star - v_j|^2: into heat */
+                        double dv2_rel = 0; for(k = 0; k < 3; k++) {double d_ = local.StarVel[k] - P[j].Vel[k]; dv2_rel += d_ * d_;}
+                        double du_rel = 0.5 * Mass_j * dM / (Mass_j + dM) * dv2_rel * All.cf_a2inv / (Mass_j + dM);
+                        #pragma omp atomic
+                        CellP[j].InternalEnergy += du_rel;
+                        #pragma omp atomic
+                        CellP[j].InternalEnergyPred += du_rel;
+                        ESTEP_BOOK(EBK_INFO_SN_RELKIN_HEAT, du_rel * (Mass_j + dM));
+                    }
                     for(k = 0; k < 3; k++) { /* ejecta arrives with the star's velocity */
                         double dv_ej = dM * (local.StarVel[k] - P[j].Vel[k]) / (Mass_j + dM);
                         #pragma omp atomic
