@@ -789,6 +789,9 @@ void open_outputfiles(void)
       fprintf(FdSfr,"%s   (3) Total star formation rate [SFR] summed over gas cells [code units] \n",prefix_char);
       fprintf(FdSfr,"%s   (4) Discretized mass formed / timestep, in solar masses per year \n",prefix_char);
       fprintf(FdSfr,"%s   (5) Total mass actually formed this timestep [code units] \n",prefix_char);
+#ifdef GALSF_RESOLVEDISM
+      fprintf(FdSfr,"%s Stella: rows are written on full-sync steps and (2), (4), (5) cover all steps since the previous row; (4) is (5) over that interval in Msun/yr, (5) the drawn masses of the stars spawned; (3) is the SFR at the row, in Msun/yr \n",prefix_char);
+#endif
   }
 #endif
 
