@@ -83,7 +83,7 @@ def test_solar_abundances(tables, z_solar, layout):
     with the 27 elements the other 16 elements too"""
     n = 27 if layout == "27" else 11
     exe = build("elements27", ELEMENTS27) if layout == "27" else build("default")
-    d = run(exe, f"solar_{z_solar}_{layout}", tables, np.zeros(n), flag=0, over={"InitMetallicity": z_solar})
+    d = run(exe, f"solar_{z_solar}_{layout}", tables, None, flag=0, over={"InitMetallicity": z_solar})
     _, Z = gas_metals(d / "output" / "snapshot_000.hdf5")
     X = solar_table(tables["StellarTablesFile"])
     expect = np.concatenate([[0.014], X[FIRE_ELEMENTS], X[EXTRA_ELEMENTS]])[:n] * z_solar

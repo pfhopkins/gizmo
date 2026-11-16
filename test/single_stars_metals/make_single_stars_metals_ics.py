@@ -1,6 +1,6 @@
 """Lattice of 1 Msun gas cells at n_H = 10 cm^-3, T = 100 K, at rest, given metal slots per cell, with single stars at
 rest (units pc, Msun, km/s), written as a snapshot (start flag 2 reads stellar ages, metals and star records; a fresh
-start, flag 0, sets the gas metals from InitMetallicity)."""
+start, flag 0, with metals None writes no Metallicity, so InitMetallicity sets them)."""
 import numpy as np
 import h5py
 
@@ -8,14 +8,15 @@ PC_KMS_IN_YR = 3.085678e13 / 3.155e7  # time unit [yr], with the code's year (co
 
 
 def make_single_stars_metals_ics(fname, metals, stars=(), n=16, n_H=10.0, T=100.0, z=0.014, gas_fields=None):
-    """metals: the gas (and star) metal slots; stars: (drawn mass, mass, age [yr], position in box units, event bits[,
-    log10 table age [yr] up to which the winds count as returned]); gas_fields: more gas datasets, one row per cell"""
+    """metals: the gas (and star) metal slots (None: none in the file); stars: (drawn mass, mass, age [yr], position in
+    box units, event bits[, log10 table age [yr] up to which the winds count as returned]); gas_fields: more gas
+    datasets, one row per cell"""
     rho = n_H * 1.6726e-24 / 0.7 * 3.0857e18 ** 3 / 1.989e33
     dx = (1.0 / rho) ** (1.0 / 3.0)
     L = n * dx
     g = (np.arange(n) + 0.5) * dx
     pos = np.stack(np.meshgrid(g, g, g, indexing="ij"), -1).reshape(-1, 3)
-    N, ns, nm = len(pos), len(stars), len(metals)
+    N, ns, nm = len(pos), len(stars), (0 if metals is None else len(metals))
     u = 1.5 * 1.380649e-16 * T / (1.27 * 1.6726e-24) / 1e10
     with h5py.File(fname, "w") as F:
         h = F.create_group("Header")
@@ -28,7 +29,9 @@ def make_single_stars_metals_ics(fname, metals, stars=(), n=16, n_H=10.0, T=100.
         h.attrs["Flag_Feedback"] = 1; h.attrs["Flag_DoublePrecision"] = 1
         p = F.create_group("PartType0")
         p["Coordinates"] = pos; p["Velocities"] = np.zeros((N, 3)); p["ParticleIDs"] = np.arange(1, N + 1, dtype=np.uint32)
-        p["Masses"] = np.ones(N); p["InternalEnergy"] = np.full(N, u); p["Metallicity"] = np.tile(metals, (N, 1))
+        p["Masses"] = np.ones(N); p["InternalEnergy"] = np.full(N, u)
+        if metals is not None:
+            p["Metallicity"] = np.tile(metals, (N, 1))
         p["SmoothingLength"] = np.full(N, 2.0 * dx)
         for k, v in (gas_fields or {}).items():
             p[k] = np.tile(v, (N, 1))
