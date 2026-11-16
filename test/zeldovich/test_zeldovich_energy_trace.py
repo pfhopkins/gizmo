@@ -7,14 +7,14 @@ gizmo.conservation_trace, through and after the caustic (shock heating moves kin
 
 import pytest
 
-from gizmo.test import build_and_run_test, clean_test_outputs, default_mpi_ranks, default_omp_threads, variant_output_dir
+from gizmo.test import build_and_run_test, clean_test_outputs, default_mpi_ranks, variant_output_dir
 from gizmo.conservation_trace import check_conservation_traces
 
 FLAGS = ("OUTPUT_ENERGY_STEP_TRACE",)
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))
+@pytest.mark.parametrize("num_omp_threads", (1,))
 def test_zeldovich_layzer_irvine_closes(num_mpi_ranks, num_omp_threads):
     test_name = "zeldovich"
     clean_test_outputs(test_name, FLAGS)

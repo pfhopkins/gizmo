@@ -67,3 +67,5 @@ TestSNTime0                     2.1e-6            % forced SN at ~2 kyr, between
 CosmicRay_SNeFraction           0.1               % 10% of the SN energy into CRs
 CosmicRayDiffusionCoeff         690.0             % ~3e29 cm^2/s
 CosmicRayInitialAmbient_eVcm3   1.0               % ambient CRs, so losses act from the start
+CosmicRayInitialCloud_eVcm3     0                 % no separate cloud CR field
+CosmicRayInitialCloudThreshold_nH 1e10            % (unused with the above)
