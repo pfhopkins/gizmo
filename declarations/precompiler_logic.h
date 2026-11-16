@@ -2059,6 +2059,9 @@
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
 #error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
 #endif
+#if defined(FB_G17_BOUNDARY_INJECTION) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
+#error "FB_G17_BOUNDARY_INJECTION repeats the hydro pass on feedback steps: MFV mass fluxes are applied in that pass and would be applied twice"
+#endif
 
 /* coupled mode: upstream RT bins next to FIRE-3 break FIRE's all-bins consumers (docs/stella_hybrid/P4_DESIGN.md) until P4 masks them */
 #if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && !defined(GALSF_RESOLVEDISM_TREE_BANDS_PIXEL_FLUX_ONLY) && (defined(RT_PHOTOELECTRIC) || defined(RT_LYMAN_WERNER) || defined(RT_NUV) || defined(RT_OPTICAL_NIR) || defined(RT_FUV_6_8EV))

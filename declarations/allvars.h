@@ -245,6 +245,9 @@ extern int TreeReconstructFlag; /*!< the standing tree is CONDEMNED: its storage
     DomainReconstructFlag (ownership/balance decomposition owed -- strictly more expensive) and from
     TreeMomentsStaleFlag below (moments re-derivation on intact topology -- strictly cheaper).
     Serialized in restartfiles. */
+#ifdef FB_G17_BOUNDARY_INJECTION
+extern int HydroPassRepeatsStep; /*!< 1 during the feedback hydro recompute (run.cc): the metal exchange was already applied this step */
+#endif
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
 #ifdef TREE_REFRESH_INCREMENTAL
 extern int TreeMomentsDirtyFlag; /*!< some node is marked (force_mark_moments_dirty): the next refresh may re-derive only the marked chains, unless TreeMomentsStaleFlag asks for all */

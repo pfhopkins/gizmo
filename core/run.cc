@@ -897,7 +897,9 @@ void calculate_non_standard_physics(void)
         if(tot_count_fb > 0)
         {
             if(ThisTask == 0) {printf("G17RECOMPUTE: %d feedback-affected cells -> re-running compute_hydro_densities_and_forces\n", tot_count_fb); fflush(stdout);}
+            HydroPassRepeatsStep = 1; /* the metal exchange is applied in the hydro pass itself, not by the kicks: once per step */
             compute_hydro_densities_and_forces();
+            HydroPassRepeatsStep = 0;
         }
         for(i_fb = 0; i_fb < N_gas; i_fb++) {CellP[i_fb].FBinjFlag = 0;}
     }
