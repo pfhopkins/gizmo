@@ -414,7 +414,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
                             if(k==RT_FREQ_BIN_INFRARED) {CellP[i].Radiation_Temperature = CellP[i].Radiation_Temperature_CoolingWeighted;}
 #endif
                             double Rad_E_gamma_before = CellP[i].Rad_E_gamma[k];
-                            CellP[i].Rad_E_gamma[k] += de_rad;
+                            CellP[i].Rad_E_gamma[k] += de_rad; ESTEP_BOOK(EBK_COOL_RAD_EXCHANGE, de_rad);
                             CellP[i].Rad_E_gamma_Pred[k] = CellP[i].Rad_E_gamma[k];
                             int kv;
 #if defined(RT_EVOLVE_FLUX)
@@ -562,6 +562,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #endif
                         double Rad_E_gamma_before = cell[i].Rad_E_gamma[k]; // save for immediate use below
                         cell[i].Rad_E_gamma[k] += de_rad; /* energy gained by gas is lost here (or vice versa if dust is acting as a net coolant) */
+                        ESTEP_BOOK(EBK_COOL_RAD_EXCHANGE, de_rad);
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
                         rt_diag_add(RT_DIAG_COOLING_TO_BAND, k, de_rad);
                         if(k==RT_FREQ_BIN_NUV) {rt_diag_sc(RT_DIAG_SC_RET_NUV, de_rad);}

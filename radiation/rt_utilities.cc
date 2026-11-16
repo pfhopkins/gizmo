@@ -1060,6 +1060,13 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             if(isnan(ef)) {PRINT_WARNING("\n ef energy prediction is NaN for cell-ID=%llu, e0=%g e_abs_0=%g abs_0=%g a0_abs=%g total_de_dt=%g dt_entr=%g slabfac=%g\n", (unsigned long long) (long long)i /* particle index */,e0, e_abs_0,abs_0, a0_abs, total_de_dt,dt_entr,slabfac);}
 #endif
             if(ef < 0) {ef=0;}
+            if(mode==0 && dt_entr > 0) { /* energy step trace: emission, IR re-emission and absorption of this kick (transport left unbooked) */
+                ESTEP_BOOK(EBK_RT_EMIT, cell[i].Rad_Je[kf] * dt_entr);
+#ifdef RT_INFRARED
+                if(kf == RT_FREQ_BIN_INFRARED) {ESTEP_BOOK(EBK_RT_TOIR, E_abs_tot_toIR * dt_entr);}
+#endif
+                ESTEP_BOOK(EBK_RT_ABS, -(e0 + total_de_dt * dt_entr - ef));
+            }
             double de_abs = e0 + total_de_dt * dt_entr - ef; // energy removed by absorption alone
             double de_emission_minus_absorption = (ef - DMAX(0, (e0 + dt_e_gamma_band * dt_entr * slabfac))); // total change, relative to what we would get with just advection (positive = net energy increase in the gas)
             if((dt_entr <= 0) || (de_abs <= 0)) {de_abs = 0;}
