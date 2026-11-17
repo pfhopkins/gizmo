@@ -216,7 +216,9 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             
 #if (HYDRO_FIX_MESH_MOTION > 0)
 #ifdef GENERAL_RELATIVITY
-            /* GR: the kernel radius and the density follow the volume variation computed in the Riemann problems (DtVolume; zero in pure hydro) */
+            /* GR: the kernel radius and the density follow the volume variation DtVolume. It is not computed in this hydro-only version (it enters
+               only the GR MHD update), so during the drift the density and kernel radius of GR cells are not predicted: the density pass of
+               the active cells recomputes them */
             const double divv_fac_gr = kernel_radius_drift_log_change(cell[i].DtVolume*dt_hydrokick/pow(pp[i].Get_Particle_Size(), NUMDIMS));
             pp[i].KernelRadius *= exp(divv_fac_gr/((double)NUMDIMS));
 #else
