@@ -1241,11 +1241,11 @@ void resolvedism_inject_fb_energy(void)
              * trading exact-remnant-mass for exact-budget-closure on the injection. */
             if(channel != 1) {
                 printf("RESOLVEDISM SN: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f rem_type=%d E=%.2e[erg]\n",
-                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass, rem_type,
+                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, P[i].Mass * UNIT_MASS_IN_SOLAR, rem_type,
                     Esne_erg);
             } else {
                 printf("RESOLVEDISM AGB: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f\n",
-                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass);
+                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, P[i].Mass * UNIT_MASS_IN_SOLAR);
             }
             if(rem_type == REM_PISN) {resolvedism_zero_disrupted_star(i, M_star_old, "PISN");}
 
