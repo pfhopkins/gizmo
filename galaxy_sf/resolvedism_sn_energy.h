@@ -13,13 +13,12 @@ static inline double resolvedism_pisn_energy_erg(double M_zams)
     return (5.0 + 1.304 * (M_He - 64.0)) * 1.0e51;
 }
 
-/* core-collapse-type death: 1e51 for explosive types (PISN from the He core with GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE), 0 for failed SNe and direct BHs */
-static inline double resolvedism_sn_energy_erg(int is_pisn, int explodes, double M_zams)
+/* by death type: PISN from the He core; ECSN 1e50 (Kitaura, Janka & Hillebrandt 2006); other explosions 1e51; failed SNe and direct collapse 0 */
+static inline double resolvedism_sn_energy_erg(int is_pisn, int is_ecsn, int explodes, double M_zams)
 {
     if(!explodes) {return 0;}
-#ifdef GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE
     if(is_pisn) {return resolvedism_pisn_energy_erg(M_zams);}
-#endif
+    if(is_ecsn) {return 1.0e50;}
     return 1.0e51;
 }
 #endif

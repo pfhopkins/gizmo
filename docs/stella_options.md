@@ -60,14 +60,14 @@ Not with TREE_RAY or RADTRANSFER. No parameters.
 On in: Config_stella_zoom.sh (with RT_NUV and RT_OPTICAL_NIR). Tests: test/unit/test_hminus_bands.cc (blackbody field
 against the spectral integral, upstream bin edges), test/unit/test_band_flags_without_radpressure.cc.
 
-## GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE: PISN energy (opt-in)
+## Explosion energies (no switch)
 
-By default every exploding death (CCSN, ECSN, PPISN, PISN) injects a flat 1e51 erg, by design. Failed SNe and direct
-black holes inject nothing. With this switch a PISN instead injects [5.0 + 1.304 (M_He - 64)] 1e51 erg. Here
-M_He = (13/24)(M - 20), held to 64-133 Msun (Heger & Woosley 2002, as fitted by Wise+12a). The same energy goes to an
-ejecta cell (see the ejecta-cell rule below). No parameters.
+A PISN injects [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to 64-133 Msun (Heger & Woosley 2002, as
+fitted by Wise+12a). An ECSN injects 1e50 erg (Kitaura, Janka & Hillebrandt 2006). CCSNe and PPISNe inject 1e51 erg; failed
+SNe and direct collapse nothing. The same energy goes to an ejecta cell (see the ejecta-cell rule below). The former opt-in
+switch GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE is gone: the He-core energy is the only PISN energy.
 
-On in: no shipped config. Tests: test/unit/test_pisn_energy.cc (default flat 1e51), test/unit/test_pisn_energy_helium_core.cc.
+Tests: test/unit/test_pisn_energy.cc; test/stella_fb_conservation (ECSN booked = deposited).
 
 ## SGCHEM_UVB_TREECOL_SHIELDING: self-shielding of the UV background
 
@@ -166,7 +166,6 @@ Tests: test/merge_split_conservation_stella_default (with the Stella default con
 | SGCHEM_DGR_REMY_RUYER14 | SGCHEM_DGR_REMY_RUYER14 |
 | SGCHEM_PRIMORDIAL_HELIUM | SGCHEM_PRIMORDIAL_HELIUM |
 | SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS | SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS |
-| GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE | GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE |
 | SGCHEM_UVB_TREECOL_SHIELDING | SGCHEM_UVB_TREECOL_SHIELDING |
 | GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF (nHcutoffSF) | GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY (nHcutoffSF) |
 | GALSF_RESOLVEDISM_SN_SPAWN | GALSF_SINGLE_STARS_SN_EJECTA_CELL |

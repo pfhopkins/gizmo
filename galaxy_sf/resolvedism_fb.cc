@@ -840,7 +840,7 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
                         int ksp;
                         for(ksp = 0; ksp < STBL_NELEM; ksp++) P[i_owner].SpawnEjZ[ksp] = (MyFloat)(m_k_sp[ksp]/UNIT_MASS_IN_SOLAR);
                         P[i_owner].SpawnEjMass = (MyFloat)(Mej_sp/UNIT_MASS_IN_SOLAR);
-                        P[i_owner].SpawnEjEnergy = (MyFloat)(resolvedism_sn_energy_erg(rt_sp == REM_PISN, 1, Mstar_sp)/UNIT_ENERGY_IN_CGS);
+                        P[i_owner].SpawnEjEnergy = (MyFloat)(resolvedism_sn_energy_erg(rt_sp == REM_PISN, rt_sp == REM_ECSN, 1, Mstar_sp)/UNIT_ENERGY_IN_CGS);
                         ESTEP_BOOK(EBK_FB_SN, -P[i_owner].SpawnEjEnergy); /* booked in this step's E_injected, delivered by the ejecta cell at the next merge/split */
                         P[i_owner].SN_SpawnPending = 1;
                         /* keep STELLA_FB_EVENT==1 and M_at_SN_trigger: the post-walk
@@ -1208,7 +1208,7 @@ void resolvedism_inject_fb_energy(void)
             for(int kk = 0; kk < STBL_NELEM; kk++) {Mej_solar += m_led[kk];}
             for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {Z_ej += m_led[kk];}
             if(channel == 0 && (rem_type == REM_FSN || rem_type == REM_DBH)) {channel = 5;} /* failed SN: recorded, zero energy */
-            double Esne_erg = resolvedism_sn_energy_erg(rem_type == REM_PISN, rem_type != REM_FSN && rem_type != REM_DBH, Mstar);
+            double Esne_erg = resolvedism_sn_energy_erg(rem_type == REM_PISN, rem_type == REM_ECSN, rem_type != REM_FSN && rem_type != REM_DBH, Mstar);
             {
                 double yl[6] = {Mej_solar, Z_ej, 0, 0, 0, 0}; const int ke[4] = {ELEM_C, ELEM_O, ELEM_Si, ELEM_Fe};
                 for(int q = 0; q < 4; q++) {yl[2 + q] = m_led[ke[q]];}
