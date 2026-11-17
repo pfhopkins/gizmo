@@ -65,3 +65,30 @@ def test_ketju_pm():
     assert da < 1e-2
     rep = keep_and_check_traces(os.path.join(TEST_DIR, "output"), os.path.join(TEST_DIR, "output"))
     assert rep.ok, rep.summary()
+
+
+def test_ketju_pm_comoving():
+    """Production combination of item K1: comoving (a = 0.5, Omega0 = 1), PMGRID, 2 ranks, 2 KETJU regions. Two binaries at
+    +x and +y, 5000 AU physical from a 20 Msun star (force on them entirely in the mesh), single 2 Msun stars at the mirror
+    positions. The box and the mesh are mirror-symmetric about the 20 Msun star, so each binary's CoM must stay the mirror image
+    of its single star: |CoM_pair + x_single - 2 x_centre| / r < 1e-3 after a quarter outer orbit (the binaries' own tide,
+    (a/r)^2 = 1e-4 of the force, is far below). Without the PM kick the binaries do not orbit at all (1.2 r off)."""
+    subprocess.run([sys.executable, "make_ketju_pm_comoving_ics.py"], cwd=TEST_DIR, check=True)
+    clean_test_outputs(TEST_NAME)
+    t_end = 0.5 * (1 + 0.5 * 0.2828427 * 1.8e-5)  # a after a quarter outer orbit (H(a=0.5) = 0.283 / code time)
+    build_and_run_test(TEST_NAME, 2, 1, param_overrides={"InitCondFile": "ketju_pm_comoving_ics", "ComovingIntegrationOn": 1,
+                       "Omega0": 1, "TimeBegin": 0.5, "TimeMax": t_end, "TimeOfFirstSnapshot": t_end, "TimeBetSnapshot": 1.1,
+                       "TimeBetStatistics": 1.1, "BoxSize": 1e5 * AU})
+    with h5py.File(sorted(glob.glob(f"{TEST_DIR}/output/snapshot_*.hdf5"))[-1], "r") as f:
+        a = f["Header"].attrs["Time"]; g = f["PartType4"]; o = np.argsort(np.array(g["ParticleIDs"]))
+        x = np.array(g["Coordinates"])[o] * a; m = np.array(g["Masses"])[o]
+    assert a >= 0.999999 * t_end
+    c, r = x[0], 5000 * AU
+    for k in (0, 1):
+        i = 1 + 3 * k
+        com = (m[i] * x[i] + m[i + 1] * x[i + 1]) / (m[i] + m[i + 1])
+        d = np.linalg.norm(com + x[i + 2] - 2 * c) / r
+        print(f"region {k}: |CoM + mirror single| = {d:.3e} r, single moved {np.linalg.norm(x[i + 2] - c - (x[i + 2] - c) / np.linalg.norm(x[i + 2] - c) * r) / r:.3e} r")
+        assert d < 1e-3
+    rep = keep_and_check_traces(os.path.join(TEST_DIR, "output"), os.path.join(TEST_DIR, "output"))
+    assert rep.ok, rep.summary()
