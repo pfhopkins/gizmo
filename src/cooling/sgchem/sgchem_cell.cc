@@ -292,6 +292,15 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     double timestep = dt_code * UNIT_TIME_IN_CGS;
     energy *= UNIT_ENERGY_IN_CGS / pow(UNIT_LENGTH_IN_CGS, 3);
     divv *= UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;
+#ifdef TEST_SGCHEM_PRINT_CELL_VELOCITY_DIVERGENCE /* the physical div v and net-20 dv/dr the solver gets, H(a) and the peculiar dv_k/dx_k [s^-1] */
+    {double dvdr = 0, g[3], c = All.cf_a2inv * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;
+#if CHEMISTRYNETWORK == 20
+     dvdr = in.dvdr_cgs;
+#endif
+     for(int k = 0; k < 3; k++) {g[k] = CellP[i].Gradients.Velocity[k][k] * c;}
+     printf("SGCHEM_DIVV: ID=%llu a=%.12g H=%.15e divv=%.15e dvdr=%.15e g=%.15e %.15e %.15e\n", (unsigned long long) P[i].ID, All.Time,
+            (All.ComovingIntegrationOn ? hubble_function(All.Time) : 0) * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS, divv, dvdr, g[0], g[1], g[2]);}
+#endif
     double *ab = in.abundances;
     for(int k = 0; k < TRAC_NUM; k++) {ab[k] = CellP[i].TracAbund[k];}
     in.abhe = chem_cxx_abhe_default(); in.X_H_chem = chem_cxx_xh_default();
