@@ -768,10 +768,6 @@ void calculate_non_standard_physics(void)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
-#if defined(GENERAL_RELATIVITY) && defined(GR_BETACOOLING)
-    implicit_cooling(); // GR beta cooling of a disc around the black hole(s) (gr/gr_utils.cc) //
-    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
-#endif
 #ifdef DISK_BETA_COOL
     disk_betacool_parent_routine(); // simple beta-cooling for disk problems (mutually exclusive with COOLING) //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();

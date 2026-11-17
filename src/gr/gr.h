@@ -84,15 +84,6 @@ void gr_load_metric_table(void); /* reads All.GR_MetricTableFile into All.GR_Met
 void check_boundary(int target);
 void smooth_conservatives_inside_horizon(int i, double r, double r_EH, double M);
 #endif
-#ifdef GR_BETACOOLING
-#ifndef GR_BETA
-#define GR_BETA (1.0)                 /* beta cooling: cooling time = GR_BETA orbital periods */
-#endif
-#ifndef HR_COOLING
-#define HR_COOLING (0.1)              /* beta cooling: target aspect ratio H/R of the disc (sets the target sound speed) */
-#endif
-void implicit_cooling(void);              /* gr/gr_utils.cc: beta cooling of the disc towards the target sound speed (Kerr metric) */
-#endif
 void gr_con2prim_report_failure(const char *where, int code, const struct gr_conservatives *cons, const struct gr_primitives *prims, const struct gr_metric *gr); /* prints the state of a failed inversion (host) */
 
 /* --- the integration of the conserved variables is in gr/gr_kick_functions.h (device-callable: gr_kick_impl, gr_drift_impl, gr_predict_impl) --- */

@@ -115,8 +115,6 @@
 #GR_EXCISION_RADIUS=2.1         # cells inside this radius (in units of the horizon radius) are removed from the simulation, to avoid the divergence at the black hole (default 2.1)
 #GR_TEST_PARTICLE               # forces the gas to behave like collisionless particles (tests of the source terms)
 #SLOPELIMITER_POSITIVITY_RANGE_FAC=0.25 # positivity-preserving slope limiter (all hydro): positivity is enforced over this fraction of the maximum neighbour distance (default 0.25, GR 0.5 as in the original GR code); 1.0 over-limits and excites an inward density wave in polytropes/TOV stars, 0.5 slows it (a TOV star's poorly resolved surface then expands slowly), while 0.25 in GR lets a noise front grow from a poorly resolved TOV surface
-#GR_TIMESTEP_FIXED_SOFTENING    # GR: the acceleration time-step criterion of the gas uses the fixed SofteningGas (as in the original GR code) instead of the kernel radius used under SELFGRAVITY_OFF (default off)
-#GR_BETACOOLING                 # beta cooling of a disc towards the target sound speed HR_COOLING*v_K, with cooling time GR_BETA orbits (gr/gr.h); GR_METRIC=1
 #GR_DRIFT_LEGACY                # GR: the drift of Lupi (2023), carrying tau through the drift (default off: the drift holds D, S_j and u fixed while the metric changes along the path and recomputes W and tau at the new metric, GR_DRIFT_HOLD_INTERNAL_ENERGY; second-order geodesics in Kerr-Schild coordinates)
 ####################################################################################################
 

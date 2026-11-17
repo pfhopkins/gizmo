@@ -1,5 +1,5 @@
 /* gr/gr_utils.cc -- host-side utilities of the GR module: the tabulated metric, the initial accelerations, failure reports, the
- * excision around the black hole and beta cooling.
+ * excision around the black hole.
  *
  * The device-callable physics is in gr/gr_functions.h (included through declarations/cell_data.h). */
 #include <mpi.h>
@@ -87,82 +87,5 @@ void check_boundary(int target)
 
 #endif /* PARTICLE_EXCISION */
 
-#ifdef GR_BETACOOLING
-/* Beta cooling as in Noble et al. (2012), towards a target sound speed (Farris et al. 2014) instead of a target entropy: the energy and
-   momentum lose rho0 u W/(2 pi GR_BETA) Omega f (and the same times v_i) per unit time, with Omega the Keplerian frequency (of the
-   hole) and f = (c_s - c_s,target)/max(c_s, c_s,target), damped above |z| > HR_COOLING r_eff; implicit in u
-   (predictor plus iterated corrector). Applied to the predicted state of the active cells once per step, as in the original code.
-   Fix: the vertical damping uses the height above the box centre (the original used the raw coordinate P.Pos[2], off by half a box
-   with BOX_PERIODIC). */
-void implicit_cooling(void)
-{
-    PRINT_STATUS("...cooling for GR quantities");
-    std::vector<int> active; active.reserve(N_gas);
-    for(int i : ActiveParticleList) {if(P[i].Type == 0 && P[i].Mass > 0) {active.push_back(i);}}
-    const int N_active = (int) active.size();
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
-#endif
-    for(int j = 0; j < N_active; j++)
-    {
-        int target = active[j];
-        const struct gr_metric *gr = &(CellP[target].gr);
-        struct gr_primitives Prims; struct gr_conservatives Cons;
-        double Vi = P[target].Mass/CellP[target].Density, dtime = get_particle_timestep_in_physical(target, P), res_con2prim;
-        Vec3<double> BV = {0,0,0};
-        double Wlorentz = gr_primitives_of_cell(target, CellP[target].VelPred, P[target].Mass, Vi, CellP[target].InternalEnergyPred, BV, &Prims, P, CellP);
-        Vec3<double> v_cov = gr->gamma.matvec(Prims.v); /* (kept fixed through the iteration, as in the original) */
-        gr_get_conservative_variables(&Prims, &Cons, Wlorentz, gr);
-        /* cooling parameters */
-        double Omega_cool, target_SoundSpeed, eff_distance;
-        Vec3<double> dp = P[target].Pos;
-#ifdef BOX_PERIODIC
-        dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y; dp[2] -= boxHalf_Z;
-#endif
-        double r = sqrt(dp[0]*dp[0] + dp[1]*dp[1]); /* cylindrical radius */
-#if GR_METRIC==1
-        double r_EH = 2*All.MetricParams[0];
-        Omega_cool = sqrt(All.MetricParams[0]/(r+r_EH)/(r+r_EH)/(r+r_EH));
-        target_SoundSpeed = HR_COOLING*sqrt(All.MetricParams[0]/(r+r_EH));
-        eff_distance = r;
-#else
-#error "GR_BETACOOLING works only with GR_METRIC=1 or 2"
-#endif
-        double cs = CellP[target].effective_soundspeed();
-        double cooling_factor = (cs - target_SoundSpeed)/DMAX(target_SoundSpeed, cs);
-        if(fabs(dp[2]) > HR_COOLING*eff_distance) {cooling_factor *= exp(1 - fabs(dp[2])/HR_COOLING/eff_distance);}
-        double rate_fac = 1./(2*M_PI)/GR_BETA*Omega_cool*cooling_factor*gr->alpha*gr->gdet;
-        /* predictor */
-        double cool_rate_tau = -(Prims.rho0*Prims.u*Wlorentz)*rate_fac;
-        Vec3<double> cool_rate_S = (-(Prims.rho0*Prims.u*Wlorentz)*rate_fac)*v_cov;
-        Cons.tau += cool_rate_tau*dtime; Cons.S += dtime*cool_rate_S;
-        if(Cons.tau <= 0) {printf("WARNING: Tau < 0 after the cooling procedure (prediction)\n"); continue;}
-        res_con2prim = gr_get_primitive_variables(&Cons, &Prims, gr, gr->limiter);
-        if(res_con2prim < 0) {printf("Warning: failed inversion with code %g - particle %llu at %g %g %g - kernelsize %g\n", res_con2prim, (unsigned long long) P[target].ID, P[target].Pos[0], P[target].Pos[1], P[target].Pos[2], P[target].KernelRadius); endrun(9993101);}
-        /* corrector, iterated on u */
-        double cool_rate_tau_corr = cool_rate_tau, u_error; Vec3<double> cool_rate_S_corr = cool_rate_S; int iter = 0;
-        do {
-            u_error = Prims.u;
-            cool_rate_tau = cool_rate_tau_corr; cool_rate_S = cool_rate_S_corr;
-            Wlorentz = lorentz_factor(gr->gamma, Prims.v, gr->limiter);
-            cool_rate_tau_corr = -(Prims.rho0*Prims.u*Wlorentz)*rate_fac;
-            cool_rate_S_corr = (-(Prims.rho0*Prims.u*Wlorentz)*rate_fac)*v_cov;
-            Cons.tau += (cool_rate_tau_corr - cool_rate_tau)*dtime; Cons.S += dtime*(cool_rate_S_corr - cool_rate_S);
-            if(Cons.tau <= 0) {printf("WARNING: Tau < 0 after the cooling procedure, iteration %d\n", iter); Cons.tau = MIN_REAL_NUMBER; break;}
-            res_con2prim = gr_get_primitive_variables(&Cons, &Prims, gr, gr->limiter);
-            if(res_con2prim < 0) {printf("Warning: failed inversion with code %g - particle %llu at %g %g %g - kernelsize %g\n", res_con2prim, (unsigned long long) P[target].ID, P[target].Pos[0], P[target].Pos[1], P[target].Pos[2], P[target].KernelRadius); endrun(9993102);}
-            u_error = Prims.u - u_error;
-            iter++;
-            if(iter > IMPLICIT_MAX_NITER) {printf("WARNING: Iter >100 in cooling procedure - u %g - error %g\n", Prims.u, u_error); break;}
-        } while(u_error > IMPLICIT_SOLVER);
-        /* back to the coordinate velocity; the kicked and predicted quantities are kept synchronized */
-        CellP[target].VelPred = Vcoord(Prims.v, gr);
-        CellP[target].InternalEnergyPred = Prims.u;
-        CellP[target].InternalEnergy = CellP[target].InternalEnergyPred;
-        P[target].Vel = CellP[target].VelPred;
-        set_eos_pressure(target, P, CellP);
-    }
-}
-#endif /* GR_BETACOOLING */
 
 #endif /* GENERAL_RELATIVITY */
