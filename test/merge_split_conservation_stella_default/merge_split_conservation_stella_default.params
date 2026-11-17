@@ -108,6 +108,7 @@ ShieldingLength                 0.05              % max distance for self-shield
 %KetjuMinStarMass               0                 % min Type 4 mass for region center [code units] (0=off)
 %KetjuMinBHMass                 0                 % min Type 5 mass for region center [code units] (0=off)
 %KetjuIntegrationTolerance      1.0e-9            % GBS relative tolerance for MSTAR
+%KetjuExpandBinariesFactor      0.1               % expand tight binaries if period < 0.1*dt (0=off)
 %KetjuMinParticlesPerTask       10                % min particles per compute task for load balancing
 %KetjuMaxStepCount              100000            % max MSTAR steps before bail-out (0=unlimited)
 %KetjuEnableBHMergerKicks       1                 % enable GW recoil kicks for BH mergers
