@@ -54,7 +54,7 @@ DGRnormalized                   1.0               % dust-to-metal efficiency (1.
 DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
 InitialMetallicity              0.1
 MaxPISearchRadius               0.05              % maximum PI search radius [kpc] (50 pc, matching gizmo2017)
-ResolvedISM_SFCooldownFreeFallFraction 0.0     % no cooldown: a cell forms a star every step
+ResolvedISM_SFCooldownFreeFallFraction 1.0e-4  % ~300 yr (1.6 steps): spawning cells and donors cool down, the box still drains
 ResolvedISM_RNGRealisation      0               % Stella random-stream realisation (0: default)
 MaxMemSize                      3500
 nHcutoffSF                      1.0e-4            % cm^-3: drained cells stay above the cutoff

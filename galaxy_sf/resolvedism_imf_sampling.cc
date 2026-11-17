@@ -749,12 +749,17 @@ static void imf_undo_failed_draws(std::vector<imf_star_key> &failed_mine)
 }
 
 #ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
-/* test only: in a call where every draw failed, each gas cell must end as it began */
+/* test only, every call: each gas cell ends with its mass less what it gave to kept stars, its field less the matching share,
+   its specific energy and velocity unchanged; the grants keyed to a star add up to the mass the star collected; star keys are
+   unique; every donor is blocked and cooled down; gas plus new stars keep their mass and momentum */
 struct imf_cell_state {double M, u, v[3], B[3];};
+struct imf_check_star {imf_star_key k; double m_acc; int kept, index, parent;};
 static std::vector<imf_cell_state> IMF_CheckState;
+static std::vector<imf_check_star> IMF_CheckStars;
+static double IMF_CheckStarMom0[4]; /* new stars before the walk: mass, momentum */
 static void imf_check_save(void)
 {
-    IMF_CheckState.assign(N_gas, imf_cell_state());
+    IMF_CheckState.assign(N_gas, imf_cell_state()); IMF_CheckStars.clear();
     for(int j = 0; j < N_gas; j++) {
         if(P[j].Type != 0) continue;
         imf_cell_state &c = IMF_CheckState[j]; c.M = P[j].Mass; c.u = CellP[j].InternalEnergy;
@@ -763,36 +768,88 @@ static void imf_check_save(void)
         for(int k = 0; k < 3; k++) {c.B[k] = CellP[j].B[k];}
 #endif
     }
+    for(int k = 0; k < 4; k++) {IMF_CheckStarMom0[k] = 0;}
+    for(int i = 0; i < NumPart; i++) {
+        if(!STELLA_OWNS_STAR(P[i]) || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
+        IMF_CheckStarMom0[0] += P[i].Mass; for(int k = 0; k < 3; k++) {IMF_CheckStarMom0[1+k] += P[i].Mass * P[i].Vel[k];}
+    }
 }
-static void imf_check_compare(int n_kept_total)
+static void imf_check_record(int i, double m_acc, int kept, int parent) {IMF_CheckStars.push_back({imf_star_key_of(i), m_acc, kept, i, parent});}
+static void imf_check_compare(void)
 {
-    if(n_kept_total > 0) return;
-    double dmax[4] = {0, 0, 0, 0}, tot[2][7] = {{0}}; /* M, px, py, pz, Ekin, Eth, Emag: before, after */
+    struct rec {imf_star_key k; double m; int kept;};
+    std::vector<rec> mine;
+    for(const imf_check_star &s : IMF_CheckStars) {mine.push_back({s.k, s.m_acc, s.kept});}
+    std::vector<int> counts(NTask), displs(NTask);
+    int nb = (int)(mine.size() * sizeof(rec)), tot_b = 0;
+    MPI_Allgather(&nb, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    for(int t = 0; t < NTask; t++) {displs[t] = tot_b; tot_b += counts[t];}
+    std::vector<rec> all(tot_b / sizeof(rec));
+    MPI_Allgatherv(mine.data(), nb, MPI_BYTE, all.data(), counts.data(), displs.data(), MPI_BYTE, MPI_COMM_WORLD);
+    std::sort(all.begin(), all.end(), [](const rec &a, const rec &b) {return a.k < b.k;});
+    long n_dup = 0, n_kept = 0;
+    for(size_t x = 0; x < all.size(); x++) {n_kept += all[x].kept; if(x > 0 && !(all[x-1].k < all[x].k)) {n_dup++;}}
+    /* grants: per-star sums, and what each cell gave to kept stars */
+    std::vector<double> gsum(all.size(), 0.0), dMk(N_gas, 0.0), dBk(3 * (size_t)N_gas, 0.0);
+    double cnt[5] = {0, 0, 0, 0, 0}; /* orphan grants, donors, donors not blocked, donors not cooled down, max spawns per parent */
+    for(const imf_grant &g : IMF_Grants) {
+        auto it = std::lower_bound(all.begin(), all.end(), g.star, [](const rec &a, const imf_star_key &b) {return a.k < b;});
+        if(it == all.end() || g.star < it->k) {cnt[0]++; continue;}
+        gsum[it - all.begin()] += g.dM;
+        if(it->kept) {
+            dMk[g.j] += g.dM;
+#ifdef MAGNETIC
+            for(int k = 0; k < 3; k++) {dBk[3 * (size_t)g.j + k] += g.dB[k];}
+#endif
+        }
+        cnt[1]++;
+        if(!CellP[g.j].IMFSpawnBlock) {cnt[2]++;}
+        if(All.SFCooldownFreeFallFraction > 0 && CellP[g.j].Density > 0) {
+            double t_ff = sqrt(3.*M_PI / (32.*All.G * CellP[g.j].Density * All.cf_a3inv));
+            if(CellP[g.j].SFCooldown < (1 - 1e-12) * All.SFCooldownFreeFallFraction * t_ff) {cnt[3]++;}
+        }
+    }
+    {std::vector<int> par; for(const imf_check_star &s : IMF_CheckStars) {par.push_back(s.parent);}
+     std::sort(par.begin(), par.end());
+     for(size_t a = 0, b = 0; a < par.size(); a = b) {while(b < par.size() && par[b] == par[a]) {b++;} cnt[4] = DMAX(cnt[4], (double)(b - a));}}
+    MPI_Allreduce(MPI_IN_PLACE, gsum.data(), (int)gsum.size(), MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    double gs_max = 0;
+    for(size_t x = 0; x < all.size(); x++) {gs_max = DMAX(gs_max, fabs(gsum[x] - all[x].m) / DMAX(all[x].m, MIN_REAL_NUMBER));}
+    /* cells */
+    double dmax[5] = {0, 0, 0, 0, 0}, tot[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0}; /* dM, du, dv, dB, |B|max; M, p before; M, p after; sum m|v| */
     for(int j = 0; j < N_gas && j < (int)IMF_CheckState.size(); j++) {
         if(P[j].Type != 0) continue;
         const imf_cell_state &c = IMF_CheckState[j];
-        double B1[3] = {0, 0, 0}, v2a = 0, v2b = 0, B2a = 0, B2b = 0, w = (P[j].Mass > 0) ? CellP[j].Density / P[j].Mass : 0;
+        double B1[3] = {0, 0, 0}, Bn = sqrt(c.B[0]*c.B[0] + c.B[1]*c.B[1] + c.B[2]*c.B[2]);
 #ifdef MAGNETIC
         for(int k = 0; k < 3; k++) {B1[k] = CellP[j].B[k];}
 #endif
-        dmax[0] = DMAX(dmax[0], fabs(P[j].Mass - c.M) / c.M);
+        dmax[0] = DMAX(dmax[0], fabs(P[j].Mass - (c.M - dMk[j])) / c.M);
         dmax[1] = DMAX(dmax[1], fabs(CellP[j].InternalEnergy - c.u) / DMAX(c.u, MIN_REAL_NUMBER));
         for(int k = 0; k < 3; k++) {
             dmax[2] = DMAX(dmax[2], fabs(P[j].Vel[k] - c.v[k]));
-            dmax[3] = DMAX(dmax[3], fabs(B1[k] - c.B[k]) / DMAX(sqrt(c.B[0]*c.B[0] + c.B[1]*c.B[1] + c.B[2]*c.B[2]), MIN_REAL_NUMBER));
-            tot[0][1+k] += c.M * c.v[k]; tot[1][1+k] += P[j].Mass * P[j].Vel[k];
-            v2a += c.v[k] * c.v[k]; v2b += P[j].Vel[k] * P[j].Vel[k]; B2a += c.B[k] * c.B[k]; B2b += B1[k] * B1[k];
+            dmax[3] = DMAX(dmax[3], fabs(B1[k] - (c.B[k] - dBk[3 * (size_t)j + k])) / DMAX(Bn, MIN_REAL_NUMBER));
+            tot[1+k] += c.M * c.v[k]; tot[5+k] += P[j].Mass * P[j].Vel[k]; tot[8] += c.M * fabs(c.v[k]);
         }
-        tot[0][0] += c.M; tot[1][0] += P[j].Mass; tot[0][4] += 0.5 * c.M * v2a; tot[1][4] += 0.5 * P[j].Mass * v2b;
-        tot[0][5] += c.M * c.u; tot[1][5] += P[j].Mass * CellP[j].InternalEnergy; tot[0][6] += 0.5 * B2a * w; tot[1][6] += 0.5 * B2b * w;
+        dmax[4] = DMAX(dmax[4], Bn);
+        tot[0] += c.M; tot[4] += P[j].Mass;
     }
-    double gmax[4], gtot[14];
-    MPI_Allreduce(dmax, gmax, 4, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&tot[0][0], gtot, 14, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    for(int k = 0; k < 4; k++) {tot[k] += IMF_CheckStarMom0[k];}
+    for(const imf_check_star &s : IMF_CheckStars) {
+        tot[4] += P[s.index].Mass;
+        for(int k = 0; k < 3; k++) {tot[5+k] += P[s.index].Mass * P[s.index].Vel[k]; tot[8] += P[s.index].Mass * fabs(P[s.index].Vel[k]);}
+    }
+    double gmax[5], gtot[9], gmaxper;
+    MPI_Allreduce(dmax, gmax, 5, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(tot, gtot, 9, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&cnt[4], &gmaxper, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, cnt, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(ThisTask == 0) {
-        double pa = sqrt(gtot[1]*gtot[1] + gtot[2]*gtot[2] + gtot[3]*gtot[3]), dp = sqrt(pow(gtot[8]-gtot[1],2) + pow(gtot[9]-gtot[2],2) + pow(gtot[10]-gtot[3],2));
-        printf("IMF UNDO CHECK: cell max rel dM %.3e rel du %.3e dv %.3e rel dB %.3e; total rel dM %.3e |dp|/sum m|v| %.3e rel dEkin %.3e rel dEth %.3e rel dEmag %.3e\n",
-            gmax[0], gmax[1], gmax[2], gmax[3], (gtot[7]-gtot[0])/gtot[0], dp / DMAX(pa, MIN_REAL_NUMBER), (gtot[11]-gtot[4])/DMAX(gtot[4], MIN_REAL_NUMBER), (gtot[12]-gtot[5])/gtot[5], (gtot[13]-gtot[6])/DMAX(gtot[6], MIN_REAL_NUMBER));
+        double dp = sqrt(pow(gtot[5]-gtot[1],2) + pow(gtot[6]-gtot[2],2) + pow(gtot[7]-gtot[3],2));
+        printf("IMF UNDO CHECK: stars=%d kept=%ld failed=%ld dup_keys=%ld orphan_grants=%.0f max_per_parent=%.0f cell_dM=%.3e cell_du=%.3e cell_dv=%.3e "
+               "cell_dB=%.3e B_max=%.3e grant_sum=%.3e tot_dM=%.3e tot_dp=%.3e donors=%.0f not_blocked=%.0f not_cooled=%.0f\n",
+               (int)all.size(), n_kept, (long)all.size() - n_kept, n_dup, cnt[0], gmaxper, gmax[0], gmax[1], gmax[2], gmax[3], gmax[4], gs_max,
+               (gtot[4]-gtot[0])/gtot[0], dp / DMAX(gtot[8], MIN_REAL_NUMBER), cnt[1], cnt[2], cnt[3]);
     }
 }
 #endif
@@ -988,6 +1045,9 @@ void assign_stellar_masses(void)
             printf("POPIII SF: ID=%llu M_drawn=%.2f gathered %.3f Msun only: returned to the donors, no star\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR);
             failed_mine.push_back({P[i].ID, P[i].ID_child_number, (int)P[i].ID_generation}); failed_index.push_back(i);
             int iparent = (int)P[i].MstarSampleIMF[1];
+#ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
+            imf_check_record(i, mass_acc, 0, iparent);
+#endif
             P[i].Mass = 0; P[i].MstarSampleIMF[0] = 0; P[i].MstarSampleIMF[1] = 0; P[i].MstarSampleIMF[2] = 0; P[i].sampled = 1; TreeMomentsStaleFlag = 1;
             force_add_element_to_tree(iparent, i); /* zero-mass placeholder until the next rearrange removes it */
             continue;
@@ -998,6 +1058,9 @@ void assign_stellar_masses(void)
             printf("RESOLVEDISM IMF FAILED DRAW: ID=%llu M_drawn=%.4f collected=%.4e Msun\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR);
             failed_mine.push_back({P[i].ID, P[i].ID_child_number, (int)P[i].ID_generation}); failed_index.push_back(i);
             int iparent = (int)P[i].MstarSampleIMF[1];
+#ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
+            imf_check_record(i, mass_acc, 0, iparent);
+#endif
             P[i].Mass = 0; P[i].MstarSampleIMF[0] = 0; P[i].MstarSampleIMF[1] = 0; P[i].MstarSampleIMF[2] = 0; P[i].sampled = 1; TreeMomentsStaleFlag = 1;
             force_add_element_to_tree(iparent, i); /* zero-mass placeholder until the next rearrange removes it */
             n_failed_draws++; m_failed_drawn += M_drawn;
@@ -1061,6 +1124,9 @@ void assign_stellar_masses(void)
         nimf++;
 
         int iparent = (int)P[i].MstarSampleIMF[1]; /* read before finalize clears the temporary slots */
+#ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
+        imf_check_record(i, mass_acc, 1, iparent);
+#endif
         finalize_sampled_star(i, M_drawn);
         force_add_element_to_tree(iparent, i); /* deferred tree insertion beside the parent cell */
 #ifdef STELLA_SELFCHECK
@@ -1089,7 +1155,7 @@ void assign_stellar_masses(void)
         int nimf_total = 0;
         MPI_Allreduce(&nimf, &nimf_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 #ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
-        imf_check_compare(nimf_total);
+        imf_check_compare();
 #endif
         double fl_loc[2] = {(double)n_failed_draws, m_failed_drawn}, fl_glob[2];
         MPI_Allreduce(fl_loc, fl_glob, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
