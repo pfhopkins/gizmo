@@ -99,7 +99,7 @@ ShieldingLength                 0.050             % 50 pc shielding length
 
 %---- SGCHEM (SGCHEM + CHEMISTRYNETWORK=5)
 G0                              1.7               % Habing; not used by GHOSDT (field as Hu+21: I_UV x 8.94e-14 erg/cm^3, I_UV = max(Sigma_SFR/2.4e-3, 0.002))
-CosmicRayIonRate                3.0e-17           % CR ionization rate [s^-1] at FactorG0 = 1 (GHOSDT + CR_SCALE_WITH_G0 scale it with the 30 Myr SFR)
+CosmicRayIonRate                3.0e-17           % solar neighbourhood [s^-1]; GHOSDT: zeta = I_UV x this (Hu+21 I_UV, CR_SCALE_WITH_G0), 6e-20 before the first star
 DGRnormalized                   1.0               % dust-to-metal efficiency (1.0 = MW); DGR scales with local Z per particle
 DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
 InitialMetallicity              1.0             % same as InitMetallicity

@@ -94,5 +94,6 @@ def test_ghosdt_field_hu21(out):
     iuv = [float(l[1]) for l in out if l and l[0] == "IUV1"]
     print(f"GHOSDT before the first star: G0 = {g0:.6e} (Hu+21 {g0_ref:.6e}), zeta = {zeta:.6e} (expected {0.002 * rate:.6e}); I_UV at Sigma_SFR,0: {iuv}")
     assert abs(g0 / g0_ref - 1) < 1e-12
+    assert rate == 3e-17  # tallbox: solar neighbourhood
     assert abs(zeta / (0.002 * rate) - 1) < 1e-12
     assert len(iuv) == 1 and abs(iuv[0] - 1) < 1e-12
