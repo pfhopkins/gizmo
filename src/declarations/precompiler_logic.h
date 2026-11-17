@@ -33,7 +33,7 @@
 #error "GENERAL_RELATIVITY does not work with the SPH solvers"
 #endif
 #if (GENERAL_RELATIVITY==2)
-#error "GENERAL_RELATIVITY=2 (HLLC solver) is not ported to the Kokkos code: use 0 (HLL) or 1 (GForce)"
+#error "GENERAL_RELATIVITY=2 is not available: use 0 (HLL) or 1 (HLLC)"
 #endif
 #ifndef GR_METRIC
 #define GR_METRIC (1)                 /* default: Kerr (Schwarzschild for GR_Spin=0) */
