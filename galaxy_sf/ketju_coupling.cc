@@ -1349,85 +1349,6 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
     }
 }
 
-/* ============================================================
- *  Expand tight binaries: if the tightest binary has a period
- *  much shorter than the timestep and is an outlier, double its
- *  semi-major axis to prevent integrator stalling.
- *  Based on the public GADGET4-KETJU algorithm (Mannerkoski+ 2023).
- * ============================================================ */
-static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
-{
-    if(!reg.compute_tasks.is_root() || !reg.integrator) return;
-    if(All.KetjuExpandBinariesFactor <= 0) return; /* disabled */
-
-    int n = reg.integrator->num_particles;
-    struct ketju_system_physical_state *ps = reg.integrator->physical_state;
-
-    /* find the tightest bound binary */
-    int best_i = -1, best_j = -1;
-    double min_period = 1e30;
-    int n_tight = 0; /* count of binaries with period < 2*min_period */
-
-    for(int i = 0; i < n; i++) {
-        for(int j = i + 1; j < n; j++) {
-            double dr[3], dv[3], r2 = 0, v2 = 0;
-            for(int k = 0; k < 3; k++) {
-                dr[k] = ps->pos[i][k] - ps->pos[j][k];
-                dv[k] = ps->vel[i][k] - ps->vel[j][k];
-                r2 += dr[k] * dr[k]; v2 += dv[k] * dv[k];
-            }
-            double GM = All.G * (ps->mass[i] + ps->mass[j]);
-            double E = 0.5 * v2 - GM / sqrt(r2);
-            if(E >= 0) continue; /* unbound */
-            double a = -GM / (2.0 * E);
-            double period = 2.0 * M_PI * a * sqrt(a / GM);
-            if(period < min_period) {
-                min_period = period; best_i = i; best_j = j;
-            }
-        }
-    }
-
-    if(best_i < 0) return; /* no bound binaries */
-    if(min_period > All.KetjuExpandBinariesFactor * dt_physical) return; /* not tight enough */
-
-    /* count binaries with period < 2*min_period */
-    for(int i = 0; i < n; i++) {
-        for(int j = i + 1; j < n; j++) {
-            double dr[3], dv[3], r2 = 0, v2 = 0;
-            for(int k = 0; k < 3; k++) {
-                dr[k] = ps->pos[i][k] - ps->pos[j][k];
-                dv[k] = ps->vel[i][k] - ps->vel[j][k];
-                r2 += dr[k] * dr[k]; v2 += dv[k] * dv[k];
-            }
-            double GM = All.G * (ps->mass[i] + ps->mass[j]);
-            double E = 0.5 * v2 - GM / sqrt(r2);
-            if(E >= 0) continue;
-            double a = -GM / (2.0 * E);
-            double period = 2.0 * M_PI * a * sqrt(a / GM);
-            if(period < 2.0 * min_period) n_tight++;
-        }
-    }
-
-    /* only expand if it's an outlier (< max(N/100, 5) tight binaries) */
-    if(n_tight > DMAX(n / 100, 5)) return;
-
-    /* double the semi-major axis: scale relative velocity by 1/sqrt(2)
-     * so a_new = 2*a_old (via virial theorem: E_new = E_old/2) */
-    double scale = 1.0 / sqrt(2.0);
-    double com_vel[3];
-    double mtot = ps->mass[best_i] + ps->mass[best_j];
-    for(int k = 0; k < 3; k++) {
-        com_vel[k] = (ps->mass[best_i] * ps->vel[best_i][k] + ps->mass[best_j] * ps->vel[best_j][k]) / mtot;
-    }
-    for(int k = 0; k < 3; k++) {
-        ps->vel[best_i][k] = com_vel[k] + scale * (ps->vel[best_i][k] - com_vel[k]);
-        ps->vel[best_j][k] = com_vel[k] + scale * (ps->vel[best_j][k] - com_vel[k]);
-    }
-
-    printf("KETJU: expanded tight binary (period=%g -> %g, dt=%g) in region with %d particles\n",
-           min_period, min_period * 2.0 * sqrt(2.0), dt_physical, n);
-}
-
 #ifdef KETJU_TYPE4_STARS
 /* Snapshot state of members part-way through their step: for each output time inside a region's step (and at its start,
  * where the first output after the IC falls: written after this integration), a copy of the region's MSTAR system is
@@ -1635,14 +1556,6 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         KetjuEnergyLedger[0] += W; KetjuEnergyLedger[1] += fabs(W);
     }
 
-    /* expand tight binaries before integration to prevent stalling.
-     * Runs on compute root only — broadcast updated velocities to all compute tasks. */
-    expand_tight_binaries(reg, dt_physical);
-    if(reg.compute_tasks.is_member() && reg.integrator && reg.compute_tasks.size > 1) {
-        int n = reg.integrator->num_particles;
-        MPI_Bcast(reg.integrator->physical_state->vel, 3 * n, MPI_DOUBLE,
-                  reg.compute_tasks.root, reg.compute_tasks.comm);
-    }
 
 #ifdef KETJU_TYPE4_STARS
     record_midstep_output_state(reg);
