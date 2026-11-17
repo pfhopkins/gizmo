@@ -310,7 +310,7 @@ struct ketju_merger_output { /* one row of ketju_output.hdf5 "mergers" */
 static std::vector<ketju_merger_output> KetjuMergerRecords; /* this step's mergers, compute roots; gathered on rank 0 with the ledger */
 static void ketju_hdf5_write_merger(ketju_merger_output *merger);
 /* Coupling energy ledger since the last KETJU STATS line, host units (rank-local sums):
- * [0] internal energy the host's external kicks put into region members (start: compute roots; end: member owners),
+ * [0] internal energy the host's external kicks and tight-binary expansions put into region members (start: compute roots; end: member owners),
  * [1] its absolute value per region and kick, [2] MSTAR's own energy change (integration error, collisions excluded) */
 static double KetjuEnergyLedger[3] = {0, 0, 0};
 static double KetjuEtot = 0, KetjuEtot0 = 0; static int KetjuEtotSet = 0; /* direct-sum total energy (rank 0) */
@@ -1357,11 +1357,19 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
  *  much shorter than the timestep and is an outlier, double its
  *  semi-major axis to prevent integrator stalling.
  *  Based on the public GADGET4-KETJU algorithm (Mannerkoski+ 2023).
+ *  Returns the energy it injects (unsoftened internal energy of the region, after minus before; 0 if none).
  * ============================================================ */
-static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
+static double kj_region_internal_energy(const struct ketju_system_physical_state *ps, int n)
 {
-    if(!reg.compute_tasks.is_root() || !reg.integrator) return;
-    if(All.KetjuExpandBinariesFactor <= 0) return; /* disabled */
+    double E = 0;
+    for(int i = 0; i < n; i++) {E += 0.5 * ps->mass[i] * (ps->vel[i][0]*ps->vel[i][0] + ps->vel[i][1]*ps->vel[i][1] + ps->vel[i][2]*ps->vel[i][2]);
+        for(int j = i + 1; j < n; j++) {double d2 = 0; for(int k = 0; k < 3; k++) {double d = ps->pos[i][k] - ps->pos[j][k]; d2 += d * d;} E -= All.G * ps->mass[i] * ps->mass[j] / sqrt(d2);}}
+    return E;
+}
+static double expand_tight_binaries(KetjuRegion &reg, double dt_physical)
+{
+    if(!reg.compute_tasks.is_root() || !reg.integrator) return 0;
+    if(All.KetjuExpandBinariesFactor <= 0) return 0; /* disabled */
 
     int n = reg.integrator->num_particles;
     struct ketju_system_physical_state *ps = reg.integrator->physical_state;
@@ -1390,8 +1398,8 @@ static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
         }
     }
 
-    if(best_i < 0) return; /* no bound binaries */
-    if(min_period > All.KetjuExpandBinariesFactor * dt_physical) return; /* not tight enough */
+    if(best_i < 0) return 0; /* no bound binaries */
+    if(min_period > All.KetjuExpandBinariesFactor * dt_physical) return 0; /* not tight enough */
 
     /* count binaries with period < 2*min_period */
     for(int i = 0; i < n; i++) {
@@ -1412,23 +1420,27 @@ static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
     }
 
     /* only expand if it's an outlier (< max(N/100, 5) tight binaries) */
-    if(n_tight > DMAX(n / 100, 5)) return;
+    if(n_tight > DMAX(n / 100, 5)) return 0;
 
-    /* double the semi-major axis: scale relative velocity by 1/sqrt(2)
-     * so a_new = 2*a_old (via virial theorem: E_new = E_old/2) */
-    double scale = 1.0 / sqrt(2.0);
-    double com_vel[3];
+    /* double a at fixed e: r -> 2r, v -> v/sqrt(2) about the pair CoM, so E_pair -> E_pair/2 and L -> sqrt(2) L */
+    double E0 = kj_region_internal_energy(ps, n);
+    double com_pos[3], com_vel[3];
     double mtot = ps->mass[best_i] + ps->mass[best_j];
     for(int k = 0; k < 3; k++) {
+        com_pos[k] = (ps->mass[best_i] * ps->pos[best_i][k] + ps->mass[best_j] * ps->pos[best_j][k]) / mtot;
         com_vel[k] = (ps->mass[best_i] * ps->vel[best_i][k] + ps->mass[best_j] * ps->vel[best_j][k]) / mtot;
     }
     for(int k = 0; k < 3; k++) {
-        ps->vel[best_i][k] = com_vel[k] + scale * (ps->vel[best_i][k] - com_vel[k]);
-        ps->vel[best_j][k] = com_vel[k] + scale * (ps->vel[best_j][k] - com_vel[k]);
+        ps->pos[best_i][k] = com_pos[k] + 2.0 * (ps->pos[best_i][k] - com_pos[k]);
+        ps->pos[best_j][k] = com_pos[k] + 2.0 * (ps->pos[best_j][k] - com_pos[k]);
+        ps->vel[best_i][k] = com_vel[k] + (ps->vel[best_i][k] - com_vel[k]) / sqrt(2.0);
+        ps->vel[best_j][k] = com_vel[k] + (ps->vel[best_j][k] - com_vel[k]) / sqrt(2.0);
     }
+    double dE = kj_region_internal_energy(ps, n) - E0;
 
-    printf("KETJU: expanded tight binary (period=%g -> %g, dt=%g) in region with %d particles\n",
-           min_period, min_period * 2.0 * sqrt(2.0), dt_physical, n);
+    printf("KETJU: expanded tight binary (period=%g -> %g, dt=%g, dE=%g) in region with %d particles\n",
+           min_period, min_period * 2.0 * sqrt(2.0), dt_physical, dE, n);
+    return dE;
 }
 
 #ifdef KETJU_TYPE4_STARS
@@ -1638,11 +1650,13 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         KetjuEnergyLedger[0] += W; KetjuEnergyLedger[1] += fabs(W);
     }
 
-    /* expand tight binaries before integration to prevent stalling.
-     * Runs on compute root only — broadcast updated velocities to all compute tasks. */
-    expand_tight_binaries(reg, dt_physical);
+    /* expand tight binaries before integration to prevent stalling; compute root only, then positions and velocities to all
+     * compute tasks. The energy it injects goes into the coupling ledger, not into MSTAR's error term. */
+    {double dE_exp = expand_tight_binaries(reg, dt_physical); KetjuEnergyLedger[0] += dE_exp; KetjuEnergyLedger[1] += fabs(dE_exp);}
     if(reg.compute_tasks.is_member() && reg.integrator && reg.compute_tasks.size > 1) {
         int n = reg.integrator->num_particles;
+        MPI_Bcast(reg.integrator->physical_state->pos, 3 * n, MPI_DOUBLE,
+                  reg.compute_tasks.root, reg.compute_tasks.comm);
         MPI_Bcast(reg.integrator->physical_state->vel, 3 * n, MPI_DOUBLE,
                   reg.compute_tasks.root, reg.compute_tasks.comm);
     }
