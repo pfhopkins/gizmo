@@ -182,6 +182,14 @@ double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR
    an active cell swaps its share, full recount on all-active steps. L_emit is the root node, so no star loop. The sum is reduced
    with the source count in radiation_pressure_winds_consolidated: no collective here. */
 static std::vector<double> radp_lum_abs; /* per active cell, absorbed_local to per_cell */
+static double radp_cell_dgr(int i) /* the cell's dust-to-gas ratio for the direct term; hot gas none */
+{
+#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
+    return (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_cell_dust_to_gas_ratio(P, CellP, i), 0.); /* the cell's live dust */
+#else
+    return (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_dust_to_gas_ratio(P[i].Metallicity[0]), 0.);
+#endif
+}
 double single_star_radpressure_absorbed_local(void)
 {
     static double abs_sum_local = 0; static int counted = 0;
@@ -197,16 +205,18 @@ double single_star_radpressure_absorbed_local(void)
     {
         const int i = ActiveParticleList[a];
         if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
-#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
-        const double dgr = (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_cell_dust_to_gas_ratio(P, CellP, i), 0.); /* the cell's live dust */
-#else
-        const double dgr = (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_dust_to_gas_ratio(P[i].Metallicity[0]), 0.);
-#endif
-        lum_abs[a] = to_L * dgr * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+        lum_abs[a] = to_L * radp_cell_dgr(i) * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
         const double l = lum_abs[a] * CellP[i].TreeColRadpFlux[3];
         abs_sum_local += l - CellP[i].RadpAbsorbedLum;
         CellP[i].RadpAbsorbedLum = (float) l;
     }
+#ifdef TEST_SINGLE_STARS_RADPRESSURE_PRINT_CAP_SUM
+    { /* reference: every gas cell now, current mass and dust, last flux (stella_dev resolvedism_fb_momentum.cc photon cap) */
+        double rc = 0;
+        for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {rc += to_L * radp_cell_dgr(i) * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS * CellP[i].TreeColRadpFlux[3];}}
+        printf("RADP_CAP_SUM: rank=%d t=%.10g all_active=%d n_active=%d used=%.17g recount=%.17g\n", ThisTask, All.Time, all_active, (int) ActiveParticleList.size(), abs_sum_local, rc);
+    }
+#endif
     return abs_sum_local;
 }
 

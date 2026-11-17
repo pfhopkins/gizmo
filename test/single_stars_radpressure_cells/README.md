@@ -11,5 +11,6 @@ deposited in the absorbing cell, all deposits scaled to the emitted luminosity w
 | `test_outward` | the gas gains outward momentum |
 | `test_no_extra_collectives[quiet]`, `[shining]` | MPI collectives per run equal the direct term at the star, no star and one shining |
 | `test_radial_shells_quiet_steps` | no star: `GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS` adds no MPI collective |
+| `test_cap_sum_over_all_cells` | `TEST_SINGLE_STARS_RADPRESSURE_PRINT_CAP_SUM`: the photon cap sums every gas cell now (stella_dev's recount: current mass and dust, last flux), also when 8 heavy cells moving at 500 km/s split between all-active steps (decomposition every step) and a second star dies; used = recount to 1e-5, mass to 1e-12 |
 
 Inputs: `SUNDIALS_DIR`; tables from `GIZMO_STELLA_TABLES_DIR` (else `scripts/get_stella_tables.sh`).

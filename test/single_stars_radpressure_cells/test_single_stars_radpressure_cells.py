@@ -54,7 +54,7 @@ def build(tag, extra=()):
     return BUILDS[tag]
 
 
-def run(exe, tag, tables, n_h, star_on=True, preload=None):
+def run(exe, tag, tables, n_h, star_on=True, preload=None, stars=None, post_ic=None, extra_over=None):
     rho = n_h * MP / 0.7065 * PC ** 3 / MSUN  # Msun / pc^3, HYDROGEN_MASSFRAC under SGChem
     dx = (1.0 / rho) ** (1.0 / 3.0); L = NGRID * dx
     tab = Tables(tables["StellarTablesFile"])
@@ -65,7 +65,9 @@ def run(exe, tag, tables, n_h, star_on=True, preload=None):
         shutil.rmtree(d)
     (d / "output").mkdir(parents=True)
     star = np.full(3, L / 2 + 0.31 * dx)
-    make_treecol_pixels_ics(str(d / "output" / "snapshot_000.hdf5"), L, lattice(NGRID, L), [(M_STAR, age, star)] if star_on else [], hsml=2 * dx)
+    make_treecol_pixels_ics(str(d / "output" / "snapshot_000.hdf5"), L, lattice(NGRID, L), stars(tab, L, dx) if stars else ([(M_STAR, age, star)] if star_on else []), hsml=2 * dx)
+    if post_ic:
+        post_ic(d / "output" / "snapshot_000.hdf5", L, dx)
     for f in ("TREECOOL", "spcool_tables"):
         if (HERE / f).exists():
             os.symlink(HERE / f, d / f)
@@ -73,7 +75,7 @@ def run(exe, tag, tables, n_h, star_on=True, preload=None):
     p = (HERE / f"{NAME}.params").read_text()
     p = p.replace("StellarTablesFile           SET_BY_TEST", f"StellarTablesFile           {T}")
     p = p.replace("SGChemTablesPath            SET_BY_TEST", f"SGChemTablesPath            {os.environ.get('SGCHEM_TABLES_DIR', os.path.dirname(T))}")
-    over = {"BoxSize": L, "TimeMax": 2e-3, "MaxSizeTimestep": 1e-4, "DesNumNgb": 32}
+    over = {"BoxSize": L, "TimeMax": 2e-3, "MaxSizeTimestep": 1e-4, "DesNumNgb": 32, **(extra_over or {})}
     p = "\n".join([l for l in p.splitlines() if not (l.split() and l.split()[0] in over)] + [f"{k:27s} {v}" for k, v in over.items()]) + "\n"
     (d / f"{NAME}.params").write_text(p)
     with open(d / f"test_{NAME}.out", "w") as out:
@@ -188,3 +190,51 @@ def test_no_extra_collectives(tables, star_on):
 def test_radial_shells_quiet_steps(tables):
     a, b = collectives((("disjoint", ()), ("shells", ("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",))), False, tables)
     assert a == b
+
+
+CAP = ("TEST_SINGLE_STARS_RADPRESSURE_PRINT_CAP_SUM", "MERGESPLIT_HARDCODE_MAX_MASS=2.0", "OUTPUT_MASS_METAL_ENERGY_LEDGER")
+
+
+def test_cap_sum_over_all_cells(tables):
+    """the photon cap's absorbed luminosity is the sum over every gas cell now (stella_dev's recount: current mass and dust,
+    each cell's last flux), also between all-active steps: 40 kyr, a 40 Msun star shining, a second dying near 20 kyr, and
+    8 cold cells of 2.5 Msun next to the first moving out at 500 km/s (finer Courant steps than the rest, max step 0.02) that
+    split (cap 2 Msun) at the first decomposition after the start; DomainBuild_ActiveFraction 1e-6 decomposes on every step,
+    so the split falls on a step where the rest of the gas is inactive. Every RADP_CAP_SUM line: used = recount to 1e-5
+    (float storage); mass constant to 1e-12; gas energy change minus the ledger's chemistry and floor rows below 1e-3 of the
+    initial gas energy (thermal + kinetic)"""
+    def stars(tab, L, dx):
+        lM, lZ = np.log10(M_STAR), np.log10(Z)
+        t_pms, life = tab._i2(tab.t_pms, lM, lZ), tab._i2(tab.life, lM, lZ)
+        return [(M_STAR, t_pms + F_LIFE * life, np.full(3, L / 2 + 0.31 * dx)), (M_STAR, t_pms + life - 20000.0, np.full(3, 0.25 * L + 0.31 * dx))]
+
+    def heavy_fast(f, L, dx):
+        with h5py.File(f, "r+") as F:
+            x = F["PartType0/Coordinates"][()]
+            near = np.argsort(((x - (L / 2 + 0.31 * dx)) ** 2).sum(1))[:8]
+            m = F["PartType0/Masses"][()]
+            v = F["PartType0/Velocities"][()]
+            r = x[near] - (L / 2 + 0.31 * dx)
+            m[near] = 2.5
+            v[near] = 500.0 * r / np.linalg.norm(r, axis=1)[:, None]
+            F["PartType0/Masses"][...] = m
+            F["PartType0/Velocities"][...] = v
+    d, rows, tab, age, rho, L, star, dx = run(build("cap", CAP), "cap_sum", tables, 1.0, stars=stars, post_ic=heavy_fast,
+                                                 extra_over={"TimeMax": 0.04, "MaxSizeTimestep": 0.02, "TimeBetSnapshot": 0.04, "DomainBuild_ActiveFraction": 1e-6})
+    lines = re.findall(r"RADP_CAP_SUM: rank=(\d+) t=(\S+) all_active=(\d) n_active=(\d+) used=(\S+) recount=(\S+)", (d / f"test_{NAME}.out").read_text())
+    a = np.array([[float(v) for v in l] for l in lines])
+    ok = a[:, 5] > 0
+    dev = np.abs(a[ok, 4] / a[ok, 5] - 1)
+    snaps = sorted((d / "output").glob("snapshot_*.hdf5"))
+    with h5py.File(snaps[0], "r") as A, h5py.File(snaps[-1], "r") as B:
+        n0, n1 = len(A["PartType0/Masses"]), len(B["PartType0/Masses"])
+        m = [F["PartType0/Masses"][()].sum() + F["PartType4/Masses"][()].sum() for F in (A, B)]
+        e = [np.sum(F["PartType0/Masses"][()] * (F["PartType0/InternalEnergy"][()] + 0.5 * np.sum(F["PartType0/Velocities"][()] ** 2, axis=1))) * MSUN * 1e10 for F in (A, B)]
+    led = np.atleast_2d(np.loadtxt(d / "output" / "ledger.txt"))
+    names = [c for c in open(d / "output" / "ledger.txt").readline().split()[1:] if c != "(cumulative;"]
+    booked = sum(led[-1, names.index(k)] * s for k, s in (("E_chem_heating_erg", 1), ("E_chem_cooling_erg", -1), ("E_kick_floor_erg", 1)))
+    print(f"{len(a)} cap sums, {int((a[:, 2] == 0).sum())} on steps not all active; cells {n0} -> {n1}; max |used/recount - 1| {dev.max():.3e}; "
+          f"mass change {m[1] / m[0] - 1:.1e}; energy residual / E(0) {((e[1] - e[0]) - booked) / e[0]:.2e}")
+    assert (a[:, 2] == 0).sum() > 0 and n1 > n0
+    assert dev.max() < 1e-5
+    assert abs(m[1] / m[0] - 1) < 1e-12 and abs((e[1] - e[0]) - booked) < 1e-3 * e[0]
