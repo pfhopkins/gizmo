@@ -245,6 +245,69 @@ void hermite_ghost_table_release(void)
 }
 #endif
 
+/* the step's tree: drift, build (with the foreign subtree exchange), recoveries; clears the rebuild and stale flags */
+static void gravity_tree_build_main(void)
+{
+    PRINT_STATUS("Tree construction initiated (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
+    CPU_Step[CPU_MISC] += measure_time();
+    move_particles(All.Ti_Current);
+    rearrange_particle_sequence(1);   /* the tree is rebuilt just below */
+    refresh_old_acceleration_for_tree_opening();
+    gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
+    int build_status = force_treebuild_gravity();
+    if(build_status == FORCE_TREE_NEEDS_DOMAIN_REBUILD)
+    {
+        /* A particle has left the extent the domain was built on.  A full decomposition re-measures
+         * it, and drifts, wraps and re-lists every particle on the way.  The refinement pass is
+         * suppressed: this is a recovery, not the step's merge/split. */
+        domain_Decomposition(0, 0, 0, 1);
+        gravity_clear_pending_motion_bounds();   /* noted against the top tree just replaced */
+        build_status = force_treebuild_gravity();
+        if(build_status == FORCE_TREE_NEEDS_DOMAIN_REBUILD) {endrun(91572);}
+    }
+    if(build_status == FORCE_TREE_NEEDS_OWNERSHIP_RESTORE)
+    {
+        /* Particles have drifted into top-leaves other ranks own, and the standing tree cannot
+         * say where they were attached -- either because there is none, or because it could not
+         * place them -- so the decomposition in place cannot carry this build.  A repartition
+         * hands each particle back to the rank whose top-leaf it now sits in, after which the
+         * ordinary build has nothing to retain.  The refinement pass is suppressed: this is a
+         * recovery, not the step's merge/split, and running it here would refine twice. */
+        if(ThisTask == 0) {printf("Tree build: restoring geometric particle ownership before rebuilding.\n"); fflush(stdout);}
+        domain_Decomposition_light(0, 0);
+        const int retry_status = force_treebuild_gravity();
+        if(retry_status < 0)
+        {
+            if(ThisTask == 0) {printf("Tree build still failed (status %d) after restoring particle ownership. Stopping.\n", retry_status); fflush(stdout);}
+            endrun(91566);
+            gizmo_exit_bad_stop_if_requested("gravtree:treebuild_retry");   /* the gravity walk below reads this tree */
+        }
+    }
+    /* The tree just built is current by construction: the build set every
+     * node's Ti_current to All.Ti_Current and refilled the whole SoA mirror,
+     * local and foreign, from those nodes.  Record that here, at the call
+     * site that KNOWS this is the main step tree, rather than inside
+     * force_treebuild -- which is also used to build group-local and subset
+     * trees whose geometry must never be certified for the step's device
+     * consumers.  The full-drift test is the remaining precondition: it is
+     * what makes the node geometry describe this time rather than merely
+     * being freshly written, and move_particles above drifts only the active
+     * set.  Absent that proof nothing is recorded and consumers fall back to
+     * the host, which is correct but slower -- never wrong.
+     * Recorded AFTER the bad-stop drain below: force_treebuild can request a
+     * controlled stop during GPU finalize / LET / pseudo handling and still
+     * return, and a tree whose build asked to stop must never be recorded as
+     * current -- not even for the few statements before the poll exits. */
+    gizmo_exit_bad_stop_if_requested("gravtree:after_treebuild"); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
+    if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
+    report_memory_ledger_on_growth("post-treebuild");  /* after force_treebuild (LET exchange ran); rebuild-only all-rank boundary */
+    TreeReconstructFlag = 0;
+    TreeMomentsStaleFlag = 0;
+    TypePresenceMaskTrusted = 1;   /* the build recomputed the per-node type bits exactly */
+    All.NumForcesSinceLastTreeBuild = 0;   /* the counter this build answers */
+    PRINT_STATUS(" ..Tree construction done.");
+}
+
 void gravity_tree(void)
 {
     /* initialize variables */
@@ -282,67 +345,7 @@ void gravity_tree(void)
 #ifdef HERMITE_INTEGRATION
     if(!HermiteOnlyFlag)
 #endif
-    if(TreeReconstructFlag)
-    {
-        PRINT_STATUS("Tree construction initiated (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
-        CPU_Step[CPU_MISC] += measure_time();
-        move_particles(All.Ti_Current);
-        rearrange_particle_sequence(1);   /* the tree is rebuilt just below */
-        refresh_old_acceleration_for_tree_opening();
-        gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
-        int build_status = force_treebuild_gravity();
-        if(build_status == FORCE_TREE_NEEDS_DOMAIN_REBUILD)
-        {
-            /* A particle has left the extent the domain was built on.  A full decomposition re-measures
-             * it, and drifts, wraps and re-lists every particle on the way.  The refinement pass is
-             * suppressed: this is a recovery, not the step's merge/split. */
-            domain_Decomposition(0, 0, 0, 1);
-            gravity_clear_pending_motion_bounds();   /* noted against the top tree just replaced */
-            build_status = force_treebuild_gravity();
-            if(build_status == FORCE_TREE_NEEDS_DOMAIN_REBUILD) {endrun(91572);}
-        }
-        if(build_status == FORCE_TREE_NEEDS_OWNERSHIP_RESTORE)
-        {
-            /* Particles have drifted into top-leaves other ranks own, and the standing tree cannot
-             * say where they were attached -- either because there is none, or because it could not
-             * place them -- so the decomposition in place cannot carry this build.  A repartition
-             * hands each particle back to the rank whose top-leaf it now sits in, after which the
-             * ordinary build has nothing to retain.  The refinement pass is suppressed: this is a
-             * recovery, not the step's merge/split, and running it here would refine twice. */
-            if(ThisTask == 0) {printf("Tree build: restoring geometric particle ownership before rebuilding.\n"); fflush(stdout);}
-            domain_Decomposition_light(0, 0);
-            const int retry_status = force_treebuild_gravity();
-            if(retry_status < 0)
-            {
-                if(ThisTask == 0) {printf("Tree build still failed (status %d) after restoring particle ownership. Stopping.\n", retry_status); fflush(stdout);}
-                endrun(91566);
-                gizmo_exit_bad_stop_if_requested("gravtree:treebuild_retry");   /* the gravity walk below reads this tree */
-            }
-        }
-        /* The tree just built is current by construction: the build set every
-         * node's Ti_current to All.Ti_Current and refilled the whole SoA mirror,
-         * local and foreign, from those nodes.  Record that here, at the call
-         * site that KNOWS this is the main step tree, rather than inside
-         * force_treebuild -- which is also used to build group-local and subset
-         * trees whose geometry must never be certified for the step's device
-         * consumers.  The full-drift test is the remaining precondition: it is
-         * what makes the node geometry describe this time rather than merely
-         * being freshly written, and move_particles above drifts only the active
-         * set.  Absent that proof nothing is recorded and consumers fall back to
-         * the host, which is correct but slower -- never wrong.
-         * Recorded AFTER the bad-stop drain below: force_treebuild can request a
-         * controlled stop during GPU finalize / LET / pseudo handling and still
-         * return, and a tree whose build asked to stop must never be recorded as
-         * current -- not even for the few statements before the poll exits. */
-        gizmo_exit_bad_stop_if_requested("gravtree:after_treebuild"); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
-        if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
-        report_memory_ledger_on_growth("post-treebuild");  /* after force_treebuild (LET exchange ran); rebuild-only all-rank boundary */
-        TreeReconstructFlag = 0;
-        TreeMomentsStaleFlag = 0;
-        TypePresenceMaskTrusted = 1;   /* the build recomputed the per-node type bits exactly */
-        All.NumForcesSinceLastTreeBuild = 0;   /* the counter this build answers */
-        PRINT_STATUS(" ..Tree construction done.");
-    }
+    if(TreeReconstructFlag) {gravity_tree_build_main();}
 
     /* Refresh the node moments where a site has asked for it (a sink formed, a sink run down to its relic mass). This must run
        before any gravity evaluation, Hermite passes included. The refresh is a pass over every node, so it is asked for
@@ -362,7 +365,12 @@ void gravity_tree(void)
 #else
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
 #endif
-        if(TreeMomentsStaleFlag_global)
+        int light_switch_rebuild = (TreeMomentsStaleFlag_global >= 2 && NTask > 1); /* other ranks hold copies of the nodes: only a build re-sends them */
+#ifdef HERMITE_INTEGRATION
+        if(HermiteOnlyFlag) {light_switch_rebuild = 0;}
+#endif
+        if(light_switch_rebuild) {gravity_tree_build_main();}
+        else if(TreeMomentsStaleFlag_global)
         {
             CPU_Step[CPU_MISC] += measure_time();
             force_refresh_node_moments();

@@ -245,7 +245,8 @@ void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code)
 #define SINGLE_STAR_TREE_LUM_TOL 1.e-2 /* a star's band luminosity may drift this fraction of its own before the nodes are refreshed */
 /* before a gravity call: refresh the tree node moments (luminosities) if a single star started to shine, started to ionise or went
    dark since the last call, or its band luminosity moved by more than SINGLE_STAR_TREE_LUM_TOL of its own since the nodes last
-   saw it; reduced in gravity_tree, so no collective here */
+   saw it; reduced in gravity_tree, so no collective here. A switch sets 2: on several ranks gravity_tree then rebuilds, which
+   re-sends the node light to the ranks holding copies; a drift sets 1 (local refresh) */
 void single_star_light_switch_check(void)
 {
     static double t_last = -1; double t0 = t_last; t_last = All.Time;
@@ -256,7 +257,11 @@ void single_star_light_switch_check(void)
         if(P[i].Type != 4 || P[i].StarIdx <= 0 || P[i].Mass <= 0) {continue;}
         int s = single_star_slot(P[i].StarIdx);
         double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, P, CellP);
-        for(int b = 0; b < N_RT_FREQ_BINS; b++) {if(fabs(lum[b] - SingleStars.tree_lum[s].L[b]) > SINGLE_STAR_TREE_LUM_TOL * DMAX(fabs(lum[b]), fabs((double) SingleStars.tree_lum[s].L[b]))) {TreeMomentsStaleFlag = 1; return;}}
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) {
+            const double l0 = SingleStars.tree_lum[s].L[b];
+            if((l0 == 0) != (lum[b] == 0)) {TreeMomentsStaleFlag = 2; return;} /* a band switched on or off */
+            if(fabs(lum[b] - l0) > SINGLE_STAR_TREE_LUM_TOL * DMAX(fabs(lum[b]), fabs(l0))) {if(TreeMomentsStaleFlag < 1) {TreeMomentsStaleFlag = 1;}}
+        }
         if(SingleStars.M_drawn[s] <= All.IMFSampleStellarMassCut) {continue;}
 #if defined(GALSF_FB_MECHANICAL)
         if(SingleStars.event_bits[s] & (SINGLE_STAR_EVENT_SN_DONE | SINGLE_STAR_EVENT_AGB_DONE)) {continue;}
@@ -264,7 +269,7 @@ void single_star_light_switch_check(void)
         double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
         double age = evaluate_stellar_age_Gyr(i) * 1.e9, t_pms = stellar_t_PMS(logM, logZ), t_on = single_star_ionizing_onset_yr(i);
         double t_switch[3] = {t_pms, t_pms + stellar_lifetime(logM, logZ), t_on};
-        for(int k = 0; k < 3; k++) {if(t_switch[k] > 0 && age - dt_yr < t_switch[k] && t_switch[k] <= age) {TreeMomentsStaleFlag = 1; return;}}
+        for(int k = 0; k < 3; k++) {if(t_switch[k] > 0 && age - dt_yr < t_switch[k] && t_switch[k] <= age) {TreeMomentsStaleFlag = 2; return;}}
     }
 }
 
