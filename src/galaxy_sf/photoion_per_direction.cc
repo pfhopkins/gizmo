@@ -100,6 +100,7 @@ static void pi_pool_reset(int n_g, int cap)
         if(!pi_pool_slot || !pi_pool_g || !pi_pool_ctl || !pi_pool_cost || !pi_pool_rmin) {gizmo_request_controlled_stop(7903, "per-direction photoionisation: could not allocate the histogram pool", __FILE__, __LINE__, __FUNCTION__); return;}
         Kokkos::fence();
         for(int g = 0; g < pi_pool_ng; g++) {pi_pool_slot[g] = -1;}
+        for(int c = 0; c < pi_pool_cap; c++) {pi_pool_g[c] = -1;} /* a slot lost to a claim race stays -1 */
         for(size_t k = 0; k < nb; k++) {pi_pool_cost[k] = 0; pi_pool_rmin[k] = PI_RMIN_EMPTY;}
         pi_pool_ctl[0] = pi_pool_ctl[1] = 0;
     }
