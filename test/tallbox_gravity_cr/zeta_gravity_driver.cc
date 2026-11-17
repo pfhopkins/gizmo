@@ -1,6 +1,6 @@
 /* Driver shared by test_tallbox_gravity_cr.py and test_sgchem_cr_floor.py: startup and one gravity pass, then
    "PROBE id z az pot" for type-3 particles, "HU z az tzz phi dAz/dz -dPhi/dz" from hu_tallbox_field and "EPOT3" (tallbox builds), and the chemistry's
-   cosmic-ray ionisation rate "ZETA zeta Z" of gas cell 0 with its TreeCol gas columns set to argv[2] g/cm^2 (if given). */
+   cosmic-ray ionisation rate, Z/Zsun, G0 and CosmicRayIonRate "ZETA zeta Z G0 rate" of gas cell 0 with its TreeCol gas columns set to argv[2] g/cm^2 (if given). */
 #include <mpi.h>
 #include <cstdio>
 #include <cstdlib>
@@ -34,13 +34,17 @@ int main(int argc, char **argv)
     double epot_probes = 0; for(int i = 0; i < NumPart; i++) {if(P[i].Type == 3) {epot_probes += 0.5 * P[i].Mass * P[i].Potential + P[i].Mass * analytic_external_potential(i);}}
     printf("EPOT3 %.17g %.17g\n", SysState.EnergyPotComp[3], epot_probes);
 #endif
+#if defined(GHOSDT_G0_CR) && defined(HU21_SIGMA_SFR0)
+    {double m = HU21_SIGMA_SFR0 * 3.0e7 * (boxSize_X * UNIT_LENGTH_IN_KPC) * (boxSize_Y * UNIT_LENGTH_IN_KPC) / UNIT_MASS_IN_SOLAR; /* Sigma_SFR,0 over 30 Myr */
+     printf("IUV1 %.17g\n", ghosdt_iuv_unfloored(m));}
+#endif
     int c = -1; for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0) {c = i; break;}}
     if(c >= 0) {
         if(argc > 2) {double sig = atof(argv[2]) / (UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv); for(int k = 0; k < RT_USE_TREECOL_FOR_NH; k++) {TREECOL_BINS(c)[TREECOL_GAS][k] = sig;}}
         struct ChemInputs in; memset(&in, 0, sizeof(in));
         in.dt_code = 1e-6; in.u_code = CellP[c].InternalEnergy;
         chem_fill_inputs(c, &in);
-        printf("ZETA %.17g %.17g\n", in.cosmic_ray_ion_rate, (double)P[c].Metallicity[0] / All.SolarAbundances[0]);
+        printf("ZETA %.17g %.17g %.17g %.17g\n", in.cosmic_ray_ion_rate, (double)P[c].Metallicity[0] / All.SolarAbundances[0], in.G0, All.CosmicRayIonRate);
     }
     fflush(stdout);
     MPI_Finalize();
