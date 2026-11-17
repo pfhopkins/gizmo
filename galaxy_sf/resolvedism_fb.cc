@@ -658,6 +658,7 @@ int FB_WindBatchOnly = 0;   /* 1 = momentum walk admits ONLY flag-3 (wind) stars
 #endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
 extern double FB_TestWindPabs, FB_TestWindPvec[3], FB_TestWindMcoupled;
+extern double FB_TestRadpPabs, FB_TestRadpPvec[3];
 #endif
 #ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
 /* test: raw double state of all local particles (ID,type,m,v,u) appended to <OutputDir>/wind_dep_dump.<task>.bin */
@@ -1441,6 +1442,27 @@ void resolvedism_inject_fb_energy(void)
         double dp_code_led = resolvedism_radp_starside_dp_code(i);
         if(dp_code_led > 0) {RadPressure_dp_thisStep += dp_code_led * (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);}
     }
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    { /* test: star-side radp booked vs delivered this step, full precision (code units) */
+        double loc[6] = {0}, glob[6];
+        for(int i : ActiveParticleList) {
+            if(!STELLA_OWNS_STAR(P[i]) || P[i].Mass <= 0) continue;
+            double aws = P[i].FB_Area_weighted_sum, m2 = 0;
+            if(aws <= 0) continue;
+            loc[0] += resolvedism_radp_starside_dp_code(i);
+            for(int k_ = 0; k_ < 3; k_++) {m2 += (P[i].FB_VecSum[k_] / aws) * (P[i].FB_VecSum[k_] / aws);}
+            loc[5] += m2;
+        }
+        loc[1] = FB_TestRadpPabs; for(int k_ = 0; k_ < 3; k_++) {loc[2 + k_] = FB_TestRadpPvec[k_];}
+        MPI_Allreduce(loc, glob, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && glob[0] > 0) {
+            double pv = sqrt(glob[2]*glob[2] + glob[3]*glob[3] + glob[4]*glob[4]);
+            printf("RADPLEDGER t=%.17e p_book=%.17e p_abs=%.17e p_vec=%.17e m2=%.17e\n", All.Time, glob[0], glob[1], pv, glob[5]);
+            fflush(stdout);
+        }
+        FB_TestRadpPabs = 0; FB_TestRadpPvec[0] = FB_TestRadpPvec[1] = FB_TestRadpPvec[2] = 0;
+    }
+#endif
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
     /* LEBRON-style DIRECT radp: per gas cell, from the tree attenuated per-pixel
      * fluxes finalized in the gravity walk (deposited locally in the absorbing cell,

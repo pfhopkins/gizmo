@@ -27,6 +27,7 @@
 
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
 double FB_TestWindPabs = 0, FB_TestWindPvec[3] = {0, 0, 0}, FB_TestWindMcoupled = 0; /* test: wind momentum/mass delivered by the walk (code units) */
+double FB_TestRadpPabs = 0, FB_TestRadpPvec[3] = {0, 0, 0}; /* test: star-side radp momentum delivered by the walk (code units) */
 #endif
 
 #define FB_QNORM_MIN 1.0e-6 /* Σ|q| below this: neighbours collinear, no isotropic split exists */
@@ -854,6 +855,15 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         for(k = 0; k < 3; k++) {
                             #pragma omp atomic
                             FB_TestWindPvec[k] += dp_share * dir_[k];
+                        }
+                    }
+                    if(loop_iteration == 1) {
+                        double dpa = 0; for(k = 0; k < 3; k++) {dpa += (dp_share * dir_[k]) * (dp_share * dir_[k]);}
+                        #pragma omp atomic
+                        FB_TestRadpPabs += sqrt(dpa);
+                        for(k = 0; k < 3; k++) {
+                            #pragma omp atomic
+                            FB_TestRadpPvec[k] += dp_share * dir_[k];
                         }
                     }
 #endif
