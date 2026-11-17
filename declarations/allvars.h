@@ -137,8 +137,11 @@ extern short int special_boundary_condition_xyz_def_reflect[3];
 extern short int special_boundary_condition_xyz_def_outflow[3];
 #endif
 
-#ifdef GHOSDT_G0_CR /* GHOSDT (Hu+21): background ISRF scaled by FactorG0, floored at G0 = 0.324e-2 Habing */
-#define ISRF_BACKGROUND_STRENGTH (DMAX(All.FactorG0 * All.InterstellarRadiationFieldStrength, 0.324e-2/1.7))
+#ifdef GHOSDT_G0_CR /* GHOSDT, Hu+21 Sec. 2.2: u_UV = I_UV u_UV,0, I_UV = max(Sigma_SFR/Sigma_SFR,0, I_UV,min), SFR over 30 Myr */
+#define HU21_SIGMA_SFR0 2.4e-3 /* Msun yr^-1 kpc^-2, solar neighbourhood (Fuchs+09) */
+#define HU21_IUV_MIN 0.002     /* cosmic UV background (Haardt & Madau 2012) */
+#define HU21_U_UV0 8.94e-14    /* erg cm^-3, Draine field */
+#define ISRF_BACKGROUND_STRENGTH (DMAX(All.FactorG0 * All.InterstellarRadiationFieldStrength, HU21_IUV_MIN))
 #else
 #define ISRF_BACKGROUND_STRENGTH (All.InterstellarRadiationFieldStrength)
 #endif
@@ -825,7 +828,7 @@ extern struct global_data_all_processes
 #endif
 #ifdef GHOSDT_G0_CR
     double Mgas0;     /*!< GHOSDT: total gas mass in the initial conditions */
-    double FactorG0;  /*!< GHOSDT: ISRF and CR-rate scale factor, SFR(<30 Myr) / (Mgas0 / 4 Gyr) */
+    double FactorG0;  /*!< GHOSDT: Sigma_SFR(<30 Myr) / Sigma_SFR,0 (Hu+21), before the I_UV,min floor */
 #endif
 #if defined(SINGLE_STAR_SINK_DYNAMICS) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
     double StellarLuminosityFactor; /* multiplies the radiation single-star sinks emit into RT, all bands */
