@@ -1237,9 +1237,14 @@ void resolvedism_inject_fb_energy(void)
             n_events[channel] += 1;
             M_injected[channel] += Mej_solar;
             M_removed[channel] += Mej_solar;
-            Z_injected[channel] += Z_ej;
+            Z_injected[channel] += P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR; /* metals the walk delivered */
             if(channel == 0) { /* SN: 1e51 for explosive remnants, the He-core energy for PISN, 0 for FSN/DBH */
                 E_injected[channel] += Esne_erg;
+            }
+            if(channel == 1 && Mej_solar > 0) { /* AGB: delivered momentum and its kinetic energy 1/2 p^2 / M_ej (kick + inelastic heat), as winds */
+                double p_agb = P[i].FB_DepositedP * UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s; /* g cm/s */
+                dp_injected[1] += p_agb;
+                E_injected[1] += 0.5 * p_agb * p_agb / (Mej_solar * SOLAR_MASS_CGS);
             }
 
             /* P[i].Mass has already been reduced by the measured-coupling pattern in
