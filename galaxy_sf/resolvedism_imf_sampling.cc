@@ -1068,7 +1068,6 @@ void assign_stellar_masses(void)
         }
 
         /* Star mass = actual mass accreted (exact conservation) */
-        ESTEP_BOOK(EBK_IMF_KIN, -0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv); /* placeholder kinetic energy */
         P[i].Mass = mass_acc; TreeMomentsStaleFlag = 1;
 
         /* CoM velocity from all donor cells */
