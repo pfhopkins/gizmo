@@ -391,6 +391,9 @@ void energy_budget_gravity_report(void)
         if(P[i].Mass <= 0) {continue;}
         loc[0] += 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv;
         loc[1] += 0.5 * P[i].Mass * P[i].Potential; /* 1/2 removes the double counting of each pair */
+#ifdef GALSF_RESOLVEDISM_TALLBOX
+        loc[1] += P[i].Mass * analytic_external_potential(i); /* external field: full weight */
+#endif
         loc[2] += P[i].Mass;
     }
     MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);

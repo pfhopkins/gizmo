@@ -211,7 +211,11 @@ void GravAccel_RayleighTaylorTest()
  * the box midplane (boxHalf_Z, periodic x/y + long/outflow z).  All constants in
  * Stella code units (kpc, 1e10 Msun, km/s); this potential is for NON-comoving
  * runs only (the tallbox is a physical-coordinate patch). */
-void GravAccel_HuTallbox()
+/* field at height zc above the midplane: a_z, T_zz = d a_z/dz and Phi with a_z = -dPhi/dz, Phi(0) = 0
+ *   disk: Phi = 2 pi G Sigma_* H_* ln cosh(z/H_*),  T_zz = -2 pi G Sigma_* / (H_* cosh^2(z/H_*))
+ *   NFW:  Phi = -4 pi G rho_s r_s^3 [ln(1+x)/r - ln(1+R0/r_s)/R0], x = r/r_s,
+ *         T_zz = -[G M'(r) z^2/r^4 + G M/r^3 - 3 G M z^2/r^5], G M'(r) = 4 pi G rho_s r_s^3 x/((1+x)^2 r_s) */
+void hu_tallbox_field(double zc, double *az, double *tzz, double *phi)
 {
     const double Sigma_star = 4.0e-3;   /* Sigma_* = 40 Msun/pc^2  = 4e-3 (1e10Msun)/kpc^2 */
     const double z_star     = 0.25;     /* stellar scale height H_* [kpc] */
@@ -220,16 +224,32 @@ void GravAccel_HuTallbox()
     const double R0         = 8.0;      /* solar cylindrical radius [kpc] */
     const double two_piG_Sig      = 2.0 * M_PI * All.G * Sigma_star;
     const double fourpiG_rhos_rs3 = 4.0 * M_PI * All.G * rho_s * r_s * r_s * r_s;
+    /* stellar disk (Hu+21 eq. 4): a_z = -2 pi G Sigma_* tanh(z/H_*) */
+    double ch = cosh(zc / z_star);
+    double a_disk = -two_piG_Sig * tanh(zc / z_star), t_disk = -two_piG_Sig / (z_star * ch * ch), p_disk = two_piG_Sig * z_star * log(ch);
+    /* vertical NFW (Hu+21 eq. 5): a_z = -G M(<r) z / r^3, r = sqrt(z^2 + R0^2) */
+    double r = sqrt(zc*zc + R0*R0), x = r / r_s, r3 = r*r*r;
+    double GM = fourpiG_rhos_rs3 * (log(1.0 + x) - x / (1.0 + x));  /* = G * M(<r) */
+    double dGM = fourpiG_rhos_rs3 * x / ((1.0 + x) * (1.0 + x) * r_s);
+    double a_dm = -GM * zc / r3, t_dm = -(dGM * zc * zc / (r*r3) + GM / r3 - 3.0 * GM * zc * zc / (r3*r*r));
+    double p_dm = -fourpiG_rhos_rs3 * (log(1.0 + x) / r - log(1.0 + R0 / r_s) / R0);
+    *az = a_disk + a_dm; *tzz = t_disk + t_dm; *phi = p_disk + p_dm;
+}
+/* external potential of particle i (code units, physical; 0 outside the tallbox), for E_pot at full weight */
+double analytic_external_potential(int i)
+{
+    double az, tzz, phi; hu_tallbox_field(P[i].Pos[2] - boxHalf_Z, &az, &tzz, &phi);
+    return phi;
+}
+void GravAccel_HuTallbox()
+{
     for(int i : ActiveParticleList)
     {
-        double zc = P[i].Pos[2] - boxHalf_Z;                 /* height above midplane [kpc] */
-        /* stellar disk (Hu+21 eq. 4): a_z = -2 pi G Sigma_* tanh(z/H_*) */
-        double a_disk = -two_piG_Sig * tanh(zc / z_star);
-        /* vertical NFW (Hu+21 eq. 5): a_z = -G M(<r) z / r^3, r = sqrt(z^2 + R0^2) */
-        double r = sqrt(zc*zc + R0*R0), x = r / r_s;
-        double GM = fourpiG_rhos_rs3 * (log(1.0 + x) - x / (1.0 + x));  /* = G * M(<r) */
-        double a_dm = -GM * zc / (r*r*r);
-        P[i].GravAccel[2] += a_disk + a_dm;
+        double az, tzz, phi; hu_tallbox_field(P[i].Pos[2] - boxHalf_Z, &az, &tzz, &phi); /* height above midplane [kpc] */
+        P[i].GravAccel[2] += az;
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+        P[i].tidal_tensorps[2][2] += tzz;
+#endif
     }
 }
 

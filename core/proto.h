@@ -402,6 +402,11 @@ double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double 
 double INLINE_FUNC Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double CR_gas_heating(int target, double n_elec, double nH0, double nHcgs, struct particle_data *pp, struct gas_cell_data *cell);
 double Get_CosmicRayIonizationRate_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
+#ifdef GALSF_RESOLVEDISM_TALLBOX
+#define HU_TALLBOX_FIELD_DEFINED
+void hu_tallbox_field(double zc, double *az, double *tzz, double *phi);
+double analytic_external_potential(int i); /* Hu+21 tallbox potential of particle i, Phi(midplane) = 0 */
+#endif
 #ifdef COSMIC_RAY_FLUID
 void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double Get_CosmicRayGradientLength(int i, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell);
