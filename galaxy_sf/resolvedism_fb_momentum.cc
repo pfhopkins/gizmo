@@ -211,7 +211,7 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     in->WindCREnergy = 0;
 #endif
     /* Load measured AWS from prior weighting pass (or 0 if this IS the weighting pass). */
-    int load_ = (loop_iteration >= 0 || loop_iteration <= -3); /* -3/-4: wind/AGB normalisation passes */
+    int load_ = (loop_iteration >= 0 || loop_iteration <= -3); /* -3/-4: wind/AGB normalisation passes, -5: radp */
     in->FB_Area_weighted_sum_in = load_ ? (MyDouble)P[i].FB_Area_weighted_sum : 0;
     for(k=0;k<3;k++) {in->FB_VecSum_in[k] = load_ ? P[i].FB_VecSum[k] : 0;}
     in->FB_QnormSum_in = load_ ? P[i].FB_QnormSum : 0;
@@ -240,8 +240,8 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     if(!get_star_info(i, &Mstar, &logM, &logZ)) return;
 
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
-    /* ---- Radiation pressure (loop_iteration == 1; -2 is its weighting pre-pass and needs the budget too) ---- */
-    if(loop_iteration == 1 || loop_iteration == -2) {
+    /* ---- Radiation pressure (loop_iteration == 1; -2 and -5 are its weighting and Σ|q| passes and need the budget too) ---- */
+    if(loop_iteration == 1 || loop_iteration == -2 || loop_iteration == -5) {
         in->WindMomentum = resolvedism_radp_starside_dp_code(i);
         return;
     }
@@ -465,7 +465,7 @@ struct OUTPUT_STRUCT_NAME
 void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
 {
     if(loop_iteration == -3) {int k_; for(k_=0;k_<3;k_++) {ASSIGN_ADD(P[i].FB_VecSum[k_], out->FB_VecSum_accum[k_], mode);} return;}
-    if(loop_iteration == -4) {ASSIGN_ADD(P[i].FB_QnormSum, out->FB_Qnorm_accum, mode); return;}
+    if(loop_iteration == -4 || loop_iteration == -5) {ASSIGN_ADD(P[i].FB_QnormSum, out->FB_Qnorm_accum, mode); return;}
     if(loop_iteration < 0) {
         /* Weighting pass: accumulate measured kernel sum onto the star. */
         P[i].FB_Area_weighted_sum += out->FB_Area_weighted_sum_accum;
@@ -507,7 +507,7 @@ int resolvedismFB_momentum_active_check(int i, int loop_iteration)
     if(P[i].KernelRadius <= 0) return 0;
     if(P[i].NumNgb <= 0) return 0;
 
-    /* Pair (-1, 0) for wind/AGB; pair (-2, 1) for radpressure.  STARFORGE pattern:
+    /* Pair (-1, 0) for wind/AGB; pair (-2, 1) for radpressure (-5 its Σ|q| pass).  STARFORGE pattern:
      * the weighting pre-pass uses the same active_check criterion as its injection. */
     if(loop_iteration == 0 || loop_iteration == -1 || loop_iteration == -3 || loop_iteration == -4) {
         /* per-event serialization (see resolvedism_fb_serialized_pass in resolvedism_fb.cc):
@@ -519,7 +519,7 @@ int resolvedismFB_momentum_active_check(int i, int loop_iteration)
         if(STELLA_FB_EVENT(P[i]) == 2 || STELLA_FB_EVENT(P[i]) == 3) return 1;
     }
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
-    if(loop_iteration == 1 || loop_iteration == -2) {
+    if(loop_iteration == 1 || loop_iteration == -2 || loop_iteration == -5) {
         if(P[i].Mass <= 0) return 0;
         double Mstar = 0;
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
@@ -581,7 +581,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                 if((kernel.wk <= 0)||(isnan(kernel.wk))) {continue;}
 
                 /* wind/AGB passes weight with the cell mass frozen at the weighting pass (batch-consistent) */
-                double Mass_w = (loop_iteration == 0 || loop_iteration == -1 || loop_iteration <= -3) ? (double)CellP[j].FB_WeightMass : Mass_j;
+                double Mass_w = (loop_iteration == 0 || loop_iteration == -1 || loop_iteration == -3 || loop_iteration == -4) ? (double)CellP[j].FB_WeightMass : Mass_j;
                 double rhat[3]; for(k=0;k<3;k++) {rhat[k] = -kernel.dp[k] / kernel.r;}
 
                 /* STARFORGE two-pass pattern: weighting pre-pass (loop_iteration -1/-2) just
@@ -612,14 +612,14 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                 /* kick direction: r̂_j minus the weighted mean direction m, so Σ_j wk_j dir_j = 0 */
                 double mdir[3], dir_[3];
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
-                for(k=0;k<3;k++) {mdir[k] = (loop_iteration == 1) ? 0 : local.FB_VecSum_in[k];}
+                for(k=0;k<3;k++) {mdir[k] = (loop_iteration == 1 || loop_iteration == -5) ? 0 : local.FB_VecSum_in[k];}
 #else
                 for(k=0;k<3;k++) {mdir[k] = local.FB_VecSum_in[k] / (MIN_REAL_NUMBER + fabs(local.FB_Area_weighted_sum_in));}
 #endif
                 for(k=0;k<3;k++) {dir_[k] = rhat[k] - mdir[k];}
                 double qn = wk * sqrt(dir_[0]*dir_[0] + dir_[1]*dir_[1] + dir_[2]*dir_[2]);
-                if(loop_iteration == -4) {out.FB_Qnorm_accum += qn; continue;}
-                if(loop_iteration == 0) {
+                if(loop_iteration == -4 || loop_iteration == -5) {out.FB_Qnorm_accum += qn; continue;}
+                if(loop_iteration == 0 || loop_iteration == 1) {
                     /* vector weights q_j = wk_j (r̂_j - m), normalised by Σ|q|: share |q_j|/Σ|q| along q̂_j,
                      * so Σ dp = 0, Σ|dp| = p_ej and Σ ½ dM v_w² = ½ M_ej v_w² exactly */
                     if(local.FB_QnormSum_in > FB_QNORM_MIN) {
@@ -960,11 +960,16 @@ static void resolvedism_fb_momentum_walk(int fb_loop_iteration)
     #include "../system/code_block_xchange_perform_ops_demalloc.h"
 }
 
-/* -1 (wind/AGB weighting) also runs the normalisation passes: -3 HEALPIX mean direction, -4 Σ|q| */
+/* -1 (wind/AGB weighting) also runs the normalisation passes: -3 HEALPIX mean direction, -4 Σ|q|; -2 (radp weighting) runs -5 Σ|q| */
 void resolvedism_fb_momentum_calc(int fb_loop_iteration)
 {
     if(fb_loop_iteration == -1) {for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0) {CellP[i].FB_WeightMass = P[i].Mass;}}}
     resolvedism_fb_momentum_walk(fb_loop_iteration);
+    if(fb_loop_iteration == -2) {
+        for(int i : ActiveParticleList) {if(P[i].Type == 4) {P[i].FB_QnormSum = 0;}}
+        resolvedism_fb_momentum_walk(-5);
+        return;
+    }
     if(fb_loop_iteration != -1) return;
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
     for(int i : ActiveParticleList) {if(P[i].Type == 4) {P[i].FB_VecSum[0] = P[i].FB_VecSum[1] = P[i].FB_VecSum[2] = 0;}}
