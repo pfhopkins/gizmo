@@ -1,13 +1,13 @@
 InitCondFile                    ketju_expand_binary_ics
 OutputDir                       output
-TimeBetSnapshot                 1e-5
+TimeBetSnapshot                 1e-6
 TimeBetStatistics               3.3e-6
 TimeOfFirstSnapshot             0
 SnapFormat                      3
 ICFormat                        3
 BoxSize                         1.0
 TimeBegin                       0.0
-TimeMax                         1e-5
+TimeMax                         1e-6
 ComovingIntegrationOn           0
 MaxSizeTimestep                 1e-5
 MinSizeTimestep                 0
@@ -38,4 +38,4 @@ KetjuMinStarMass                0.5e-11
 KetjuUseStarStarSoftening       0
 KetjuTimestepLimitingFactor     10
 MaxMemSize                      4000
-KetjuExpandBinariesFactor       100               % expand when the tightest period < 100 x the region step
+KetjuExpandBinariesFactor       0.03              % expand when the tightest period < 0.03 x the region step (fires a few times while the step grows)

@@ -73,6 +73,7 @@ def test_ketju_pm_comoving():
     positions. The box and the mesh are mirror-symmetric about the 20 Msun star, so each binary's CoM must stay the mirror image
     of its single star: |CoM_pair + x_single - 2 x_centre| / r < 1e-3 after a quarter outer orbit (the binaries' own tide,
     (a/r)^2 = 1e-4 of the force, is far below). Without the PM kick the binaries do not orbit at all (1.2 r off)."""
+    subprocess.run([sys.executable, "make_ketju_pm_ics.py"], cwd=TEST_DIR, check=True)  # the harness expects <name>_ics.hdf5
     subprocess.run([sys.executable, "make_ketju_pm_comoving_ics.py"], cwd=TEST_DIR, check=True)
     clean_test_outputs(TEST_NAME)
     t_end = 0.5 * (1 + 0.5 * 0.2828427 * 1.8e-5)  # a after a quarter outer orbit (H(a=0.5) = 0.283 / code time)

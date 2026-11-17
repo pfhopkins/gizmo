@@ -1,12 +1,12 @@
 """KETJU tight-binary expansion (audit K3): a hard 1.2 + 0.8 Msun binary (a = 2 AU, e = 0.6, P ~ 2 yr) with a 1 Msun star at
-400 AU in the same region and KetjuExpandBinariesFactor = 100, so an expansion fires while the binary's period is
-below 100 region steps.
+400 AU in the same region and KetjuExpandBinariesFactor = 0.03: an expansion fires while the binary's period is below 0.03
+region steps; the region step grows as the binary widens, so it fires a few times up to t = 1e-6 (a <= 16 AU, r3/a >= 25).
 
 Derivation (Mannerkoski+ 2023 intent: double a, keep e). About the pair CoM, r -> 2r and v -> v/sqrt(2): the pair's specific
 energy eps = v^2/2 - G M/r -> eps/2, so a = -G M/(2 eps) -> 2a; the specific angular momentum h = |r x v| -> sqrt(2) h, and from
 h^2 = G M a (1 - e^2) e stays the same; CoM position and velocity are unchanged. Each expansion doubles a: after k events
 (counted from the "expanded tight binary" log lines) a = 2^k a0 and e = e0. The third star at 400 AU perturbs a by
-~(a/r)^3 per orbit-averaged step: bars, set before running, |a/(2^k a0) - 1| < 1e-3 and |e - e0| < 1e-3 at t = 1e-5, k >= 1.
+~(a/r)^3 per orbit-averaged step: bars, set before running, |a/(2^k a0) - 1| < 1e-3 and |e - e0| < 1e-3 at t = 1e-6, k >= 1.
 Each event's energy (dE = -E_pair/2 > 0 plus the tiny change of the pair-third star term) is booked in the coupling ledger."""
 
 import glob
