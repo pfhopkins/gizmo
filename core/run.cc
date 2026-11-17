@@ -5,6 +5,7 @@
 #include <math.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <vector>
 
 #include "../declarations/allvars.h"
 #include "../mesh/kernel.h"   /* kernel_gravity: softened-potential metric in incode_total_energy */
@@ -16,7 +17,29 @@
  * the previous call by more than 1e-14 fractional.  M_Z change between
  * pre/post_diff_unpack catches metal-diffusion leaks; M_bary change at any
  * tag catches mass leaks.  Use it to bracket suspect operations.
- * M_Z_ledger = gas + star/remnant + in-flight diffusion metals - net yields; constant to roundoff. */
+ * M_Z_ledger = gas + star/remnant + in-flight diffusion metals - net yields; constant to roundoff.
+ * Element ledger (mass_balance_elements.txt): the same closure for every Metallicity slot, in the same reduce. */
+static double MbaryOutflow = 0; /* gas + star mass that left through an outflow boundary on this rank [code mass] */
+#ifdef METALS
+static double MbaryElemOutflow[NUM_METAL_SPECIES]; /* per-slot mass that left through an outflow boundary [code mass] */
+#endif
+void mbary_book_outflow(int i)
+{
+    if(P[i].Mass <= 0) {return;}
+    if(P[i].Type == 0 || P[i].Type == 4) {
+        #pragma omp atomic
+        MbaryOutflow += P[i].Mass;
+    }
+#ifdef METALS
+    if(P[i].Type == 0 || P[i].Type == 4 || P[i].Type == 5) {
+        for(int m = 0; m < NUM_METAL_SPECIES; m++) {
+            #pragma omp atomic
+            MbaryElemOutflow[m] += P[i].Mass * P[i].Metallicity[m];
+        }
+    }
+#endif
+}
+
 void mbary_step_checkpoint(const char *tag)
 {
     static double last_M_tot = -1.0;
@@ -65,18 +88,95 @@ void mbary_step_checkpoint(const char *tag)
 #if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
     ml_loc[2] = CumulMetalYieldToGas - CumulMetalEjectedFromStars;
 #endif
-    double red_loc[7] = {ml_loc[0], ml_loc[1], ml_loc[2], M_gas_loc, M_star_loc, M_Z_loc, 0}, red[7] = {0}; /* one reduction per checkpoint */
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+    enum {EL_GAS, EL_STAR, EL_FLIGHT, EL_OUT, EL_NET, EL_N}; /* per slot: gas, stars + remnants, in-flight diffusion, outflow, booked net yield */
+    const int NRED = 9 + EL_N * NUM_METAL_SPECIES;
+#else
+    const int NRED = 9;
+#endif
+    std::vector<double> red_loc(NRED, 0.0), red(NRED, 0.0); /* one reduction per checkpoint */
+    red_loc[0] = ml_loc[0]; red_loc[1] = ml_loc[1]; red_loc[2] = ml_loc[2]; red_loc[3] = M_gas_loc; red_loc[4] = M_star_loc; red_loc[5] = M_Z_loc;
 #ifdef GALSF_RESOLVEDISM_DUST
     red_loc[6] = M_dust_loc;
 #endif
-    MPI_Reduce(red_loc, red, 7, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); /* only rank 0 reads the sums */
+    red_loc[7] = MbaryOutflow;
+#ifdef METALS
+    red_loc[8] = MbaryElemOutflow[0]; /* metals gone through an outflow boundary */
+#endif
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+    {
+        double *el = &red_loc[9];
+        for(i = 0; i < NumPart; i++) {
+            if(P[i].Mass <= 0) {continue;}
+            int c = (P[i].Type == 0) ? EL_GAS : ((P[i].Type == 4 || P[i].Type == 5) ? EL_STAR : -1);
+            if(c < 0) {continue;}
+            for(int m = 0; m < NUM_METAL_SPECIES; m++) {el[c * NUM_METAL_SPECIES + m] += P[i].Mass * P[i].Metallicity[m];}
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+            if(P[i].Type == 0) {for(int m = 0; m < NUM_METAL_SPECIES; m++) {el[EL_FLIGHT * NUM_METAL_SPECIES + m] += CellP[i].Dyield_pending[m];}}
+#endif
+        }
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        if(strcmp(tag, "pre_diff_unpack") == 0) {for(int j : ActiveParticleList) {if(P[j].Type == 0 && P[j].Mass > 0) {for(int m = 0; m < NUM_METAL_SPECIES; m++) {el[EL_FLIGHT * NUM_METAL_SPECIES + m] += CellP[j].Dyield[m];}}}}
+#endif
+        for(int m = 0; m < NUM_METAL_SPECIES; m++) {
+            el[EL_OUT * NUM_METAL_SPECIES + m] = MbaryElemOutflow[m];
+#ifdef GALSF_RESOLVEDISM_FB
+            el[EL_NET * NUM_METAL_SPECIES + m] = CumulElemToGas[m] - CumulElemFromStars[m];
+#endif
+        }
+    }
+#endif
+    MPI_Reduce(red_loc.data(), red.data(), NRED, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); /* only rank 0 reads the sums */
     double ml[3] = {red[0], red[1], red[2]};
     double M_gas = red[3], M_star = red[4], M_Z = red[5];
 #ifdef GALSF_RESOLVEDISM_DUST
     double M_dust = red[6];
 #endif
-    double M_tot = M_gas + M_star;
-    double M_L = M_Z + ml[0] + ml[1] - ml[2];
+    double M_tot = M_gas + M_star + red[7]; /* baryons in the box plus those gone through an outflow boundary */
+    double M_L = M_Z + ml[0] + ml[1] + red[8] - ml[2];
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+    if(ThisTask == 0) {
+        static std::vector<double> last_EL;
+        static const char *slot_name[] = {"Z", "H", "He", "C", "N", "O", "F", "Ne", "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca",
+                                          "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn"};
+        const double *el = &red[9];
+        std::vector<double> EL(NUM_METAL_SPECIES), S(NUM_METAL_SPECIES);
+        for(int m = 0; m < NUM_METAL_SPECIES; m++) { /* L = gas + stars + in flight + gone - net yields: constant to round-off */
+            double g = el[EL_GAS * NUM_METAL_SPECIES + m], s = el[EL_STAR * NUM_METAL_SPECIES + m], fl = el[EL_FLIGHT * NUM_METAL_SPECIES + m], o = el[EL_OUT * NUM_METAL_SPECIES + m];
+            EL[m] = g + s + fl + o - el[EL_NET * NUM_METAL_SPECIES + m];
+            S[m] = fabs(g) + fabs(s) + fabs(fl) + fabs(o);
+        }
+        int worst = -1; double worst_rel = 0;
+        std::vector<double> rel(NUM_METAL_SPECIES, 0.0);
+        if(!last_EL.empty()) {
+            for(int m = 0; m < NUM_METAL_SPECIES; m++) {
+                double d = EL[m] - last_EL[m];
+                rel[m] = (S[m] > 0) ? d / S[m] : ((d != 0) ? HUGE_VAL : 0);
+                if(fabs(rel[m]) > fabs(worst_rel) || worst < 0) {worst_rel = rel[m]; worst = m;}
+            }
+        }
+        if(last_EL.empty() || fabs(worst_rel) > 1.0e-14) {
+            char path[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+            snprintf(path, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/mass_balance_elements.txt", All.OutputDir);
+            FILE *f = fopen(path, "a");
+            if(f) {
+                if(ftell(f) == 0) {
+                    fprintf(f, "### Per-slot element ledger L = gas + stars/remnants + in flight + outflow - booked net yields, constant to round-off.\n");
+                    fprintf(f, "### Logs the first call and every checkpoint where some |dL|/S > 1e-14, S = gas + stars + |in flight| + outflow of that slot.\n");
+                    fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) worst slot  (5) its dL/S  (6..) dL/S per slot:");
+                    for(int m = 0; m < NUM_METAL_SPECIES; m++) {fprintf(f, " %s", (m < (int)(sizeof(slot_name) / sizeof(slot_name[0]))) ? slot_name[m] : "x");}
+                    fprintf(f, "\n");
+                }
+                const char *wn = (worst >= 0 && worst < (int)(sizeof(slot_name) / sizeof(slot_name[0]))) ? slot_name[worst] : "none";
+                fprintf(f, "%8lld  %-22s  %.10e  %-3s  %+.6e", call_count, tag, All.Time, wn, worst_rel);
+                for(int m = 0; m < NUM_METAL_SPECIES; m++) {fprintf(f, "  %+.3e", rel[m]);}
+                fprintf(f, "\n");
+                fclose(f);
+            }
+        }
+        last_EL = EL;
+    }
+#endif
     if(ThisTask == 0) {
         int should_log = 0;
         double dM = 0.0, dZ = 0.0, dL = 0.0;
@@ -105,7 +205,7 @@ void mbary_step_checkpoint(const char *tag)
             if(f) {
                 if(ftell(f) == 0) {
                     fprintf(f, "### Per-checkpoint M_bary + M_Z delta trace for leak localization.\n");
-                    fprintf(f, "###  Logs only when |delta|/value > 1e-14 for M_bary, M_Z, M_dust or M_Z_ledger (or first call).\n");
+                    fprintf(f, "###  Logs only when |delta|/value > 1e-14 for M_bary, M_Z, M_dust or M_Z_ledger (or first call). M_bary and M_Z_ledger include what left through an outflow boundary.\n");
                     fprintf(f, "###  M_Z = gas only.  M_Z_ledger = M_Z + M_Z_star + M_Z_inflight - M_Z_netyield: total metals, conserved to roundoff.\n");
 #ifdef GALSF_RESOLVEDISM_DUST
                     fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) M_bary[code]  (5) deltaM_bary[code]  (6) M_Z[code]  (7) deltaM_Z[code]  (8) M_dust[code]  (9) deltaM_dust[code]");

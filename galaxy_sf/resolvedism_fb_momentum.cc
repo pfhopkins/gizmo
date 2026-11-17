@@ -491,6 +491,12 @@ void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, 
         #pragma omp atomic
         CumulMetalEjectedFromStars += (m_before - P[i].Mass) * P[i].Metallicity[0]; /* metal ledger: star metal mass removed */
 #endif
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+        for(int m_ = 0; m_ < NUM_METAL_SPECIES; m_++) { /* element ledger: removed at the star's own composition */
+            #pragma omp atomic
+            CumulElemFromStars[m_] += (m_before - P[i].Mass) * P[i].Metallicity[m_];
+        }
+#endif
     }
 }
 
@@ -661,6 +667,10 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         P[j].Metallicity[0] += dZ;
                         #pragma omp atomic
                         CumulMetalYieldToGas += dMZ; /* metal ledger: yield metals into gas */
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                        #pragma omp atomic
+                        CumulElemToGas[0] += dMZ;
+#endif
                     }
                     {
                         int ch = local.fb_channel;
@@ -702,6 +712,8 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         double dX = (dMX - X_old * dM) / (Mass_j + dM);
                         #pragma omp atomic
                         P[j].Metallicity[m] += dX;
+                        #pragma omp atomic
+                        CumulElemToGas[m] += dMX; /* element ledger: what the deposit books */
                     }
                     /* Force ΣMet = 1 by construction (see fb_thermal for rationale). */
                     {

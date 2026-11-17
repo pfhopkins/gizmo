@@ -955,6 +955,9 @@ extern double CumulFeedbackMass;     /* cumulative mass returned to gas [Msun] *
 extern double CumulStarMassFormed;   /* cumulative stellar mass formed [Msun] */
 extern double CumulFeedbackMetals;   /* cumulative metals returned to gas [Msun] */
 extern double CumulMetalYieldToGas, CumulMetalEjectedFromStars; /* metal ledger on this rank [code mass] */
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+extern double CumulElemToGas[NUM_METAL_SPECIES], CumulElemFromStars[NUM_METAL_SPECIES]; /* element ledger on this rank, per Metallicity slot: deposited, removed from stars [code mass] */
+#endif
 extern int CumulSNe, CumulAGB, CumulIa; /* cumulative event counts */
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)
@@ -967,6 +970,7 @@ int get_index(double search);
 /* Always-on mass-balance leak locator: log per-checkpoint M_bary + M_Z delta
  * to mass_balance_steps.txt; bracket suspect operations with MBARY_STEP("tag"). */
 void mbary_step_checkpoint(const char *tag);
+void mbary_book_outflow(int i); /* mass and composition of particle i leaving through an outflow boundary */
 #define MBARY_STEP(tag) mbary_step_checkpoint(tag)
 
 /* Energy step trace (core/energy_step_trace.cc): rank-local stage brackets, booked sources/sinks, one reduce per window */

@@ -369,6 +369,10 @@ void restart(int modus)
 	  byten(&CumulFeedbackMetals, sizeof(double), modus);
 	  byten(&CumulMetalYieldToGas, sizeof(double), modus);
 	  byten(&CumulMetalEjectedFromStars, sizeof(double), modus);
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+	  byten(CumulElemToGas, sizeof(CumulElemToGas), modus);
+	  byten(CumulElemFromStars, sizeof(CumulElemFromStars), modus);
+#endif
 	  byten(&CumulStarMassFormed, sizeof(double), modus);
 	  in(&CumulSNe, modus);
 	  in(&CumulAGB, modus);
