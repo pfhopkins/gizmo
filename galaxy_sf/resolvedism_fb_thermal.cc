@@ -576,6 +576,13 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     }
 #endif
 #endif
+                    if(local.Esne <= 0) { /* no SN energy: dilute here (SN branch above already did), before the merge heat below */
+                        double dil = Mass_j / (Mass_j + dM);
+                        #pragma omp atomic
+                        CellP[j].InternalEnergy *= dil;
+                        #pragma omp atomic
+                        CellP[j].InternalEnergyPred *= dil;
+                    }
                     { /* the momentum-conserving merge below drops 1/2 mu |v_star - v_j|^2: into heat */
                         double dv2_rel = 0; for(k = 0; k < 3; k++) {double d_ = local.StarVel[k] - P[j].Vel[k]; dv2_rel += d_ * d_;}
                         double du_rel = 0.5 * Mass_j * dM / (Mass_j + dM) * dv2_rel * All.cf_a2inv / (Mass_j + dM);
@@ -593,13 +600,6 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         CellP[j].VelPred[k] += dv_ej;
                     }
                     force_note_motion_change(j);
-                    if(local.Esne <= 0) { /* no SN energy: dilute here (SN branch above already did) */
-                        double dil = Mass_j / (Mass_j + dM);
-                        #pragma omp atomic
-                        CellP[j].InternalEnergy *= dil;
-                        #pragma omp atomic
-                        CellP[j].InternalEnergyPred *= dil;
-                    }
                     #pragma omp atomic
                     P[j].Mass += dM;
                     #pragma omp atomic
