@@ -420,6 +420,7 @@ static std::vector<imf_donor_log_entry> IMF_DonorLog;
 /* what each removal took from a donor, kept on the donor's rank: an undone draw puts it back exactly */
 struct imf_star_key { MyIDType id, child; int gen; };
 static bool operator<(const imf_star_key &a, const imf_star_key &b) {return a.id != b.id ? a.id < b.id : (a.child != b.child ? a.child < b.child : a.gen < b.gen);}
+static inline imf_star_key imf_star_key_of(int i) {return {P[i].ID, P[i].ID_child_number, (int)P[i].ID_generation};}
 struct imf_grant {
     int j; imf_star_key star; double dM;
 #ifdef MAGNETIC
@@ -445,7 +446,7 @@ struct INPUT_STRUCT_NAME
 {
     MyDouble Pos[3], KernelRadius;
     MyDouble f_acc;   /* mass fraction to remove from each neighbor */
-    MyIDType sid, schild; int sgen; /* star key: an undone draw finds its grants on the donors' ranks */
+    imf_star_key star; /* star key: an undone draw finds its grants on the donors' ranks */
     int NodeList[NODELISTLENGTH];
 }
 *DATAIN_NAME, *DATAGET_NAME;
@@ -456,7 +457,7 @@ void particle2in_resolvedismIMF(struct INPUT_STRUCT_NAME *in, int i, int loop_it
     in->KernelRadius = P[i].KernelRadius;
     if(in->KernelRadius <= 0) in->KernelRadius = All.ForceSoftening[P[i].Type] * 5.0;
     in->f_acc = P[i].MstarSampleIMF[2]; /* set in assign_stellar_masses() pre-processing */
-    in->sid = P[i].ID; in->schild = P[i].ID_child_number; in->sgen = (int)P[i].ID_generation;
+    in->star = imf_star_key_of(i);
 }
 
 #define IMF_MAX_DONORS 128
@@ -626,7 +627,7 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
                             double frac = dM / Mj;
                             ESTEP_BOOK(EBK_IMF_TH_LOCKED, -dM * CellP[j].InternalEnergy); ESTEP_BOOK(EBK_IMF_MAG_LOCKED, -frac * estep_cell_mag_energy(j));
                             ESTEP_BOOK(EBK_IMF_KIN, -0.5 * dM * P[j].Vel.norm_sq() * All.cf_a2inv); /* donor kinetic energy carried to the star */
-                            imf_grant g; g.j = j; g.star = {local.sid, local.schild, local.sgen}; g.dM = dM;
+                            imf_grant g; g.j = j; g.star = local.star; g.dM = dM;
 #ifdef MAGNETIC
                             for(k=0;k<3;k++) {
                                 g.dB[k] = frac * CellP[j].B[k]; CellP[j].B[k] -= g.dB[k];
@@ -1043,7 +1044,7 @@ void assign_stellar_masses(void)
 #ifdef GALSF_RESOLVEDISM_POPIII_STARS
         if(P[i].PopIIIStar && M_drawn / UNIT_MASS_IN_SOLAR - mass_acc > 0.01 * M_drawn / UNIT_MASS_IN_SOLAR) {
             printf("POPIII SF: ID=%llu M_drawn=%.2f gathered %.3f Msun only: returned to the donors, no star\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR);
-            failed_mine.push_back({P[i].ID, P[i].ID_child_number, (int)P[i].ID_generation}); failed_index.push_back(i);
+            failed_mine.push_back(imf_star_key_of(i)); failed_index.push_back(i);
             int iparent = (int)P[i].MstarSampleIMF[1];
 #ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
             imf_check_record(i, mass_acc, 0, iparent);
@@ -1056,7 +1057,7 @@ void assign_stellar_masses(void)
 
         if(M_drawn / UNIT_MASS_IN_SOLAR - mass_acc > 0.01 * M_drawn / UNIT_MASS_IN_SOLAR) { /* >1% short after the passes: failed draw, undone on the donors below */
             printf("RESOLVEDISM IMF FAILED DRAW: ID=%llu M_drawn=%.4f collected=%.4e Msun\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR);
-            failed_mine.push_back({P[i].ID, P[i].ID_child_number, (int)P[i].ID_generation}); failed_index.push_back(i);
+            failed_mine.push_back(imf_star_key_of(i)); failed_index.push_back(i);
             int iparent = (int)P[i].MstarSampleIMF[1];
 #ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
             imf_check_record(i, mass_acc, 0, iparent);
