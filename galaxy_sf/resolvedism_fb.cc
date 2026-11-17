@@ -1111,30 +1111,11 @@ void resolvedism_inject_fb_energy(void)
 #ifdef COSMIC_RAY_FLUID
             if(dM_wind > 0 && P[i].WindMomentumAccum > 1000. * dM_wind) {dp_injected[2] -= dp_wind * (1. - sqrt(1. - All.CosmicRay_SNeFraction));} /* fast wind: f_CR of the KE went to CRs */
 #endif
-            /* Wind metals: estimate from surface abundances */
-            double Mstar_w, logM_w, logZ_w;
-            if(get_star_info(i, &Mstar_w, &logM_w, &logZ_w)) {
-                double star_age_yr = resolvedism_star_age_yr(i);
-                double table_age_w = get_star_table_age(star_age_yr, logM_w, logZ_w);
-                double log_age_w = log10(DMAX(table_age_w, 100.0));
-                double Z_wind = 0;
-                for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {
-                    Z_wind += stellar_surface_abundance(logM_w, logZ_w, log_age_w, kk) * dM_wind;
-                }
-                Z_injected[2] += Z_wind;
-            }
+            Z_injected[2] += P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR; /* wind metals the walk delivered */
 
             /* Log wind event */
             if(n_wind_logged < n_wind_alloc) {
-                double Z_w_log = 0;
-                double Mstar_wl, logM_wl, logZ_wl;
-                if(get_star_info(i, &Mstar_wl, &logM_wl, &logZ_wl)) {
-                    double age_wl = resolvedism_star_age_yr(i);
-                    double table_age_wl = get_star_table_age(age_wl, logM_wl, logZ_wl);
-                    double lage_wl = log10(DMAX(table_age_wl, 100.0));
-                    for(int kk = ELEM_C; kk < STBL_NELEM; kk++)
-                        Z_w_log += stellar_surface_abundance(logM_wl, logZ_wl, lage_wl, kk) * dM_wind;
-                }
+                double Z_w_log = P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR;
                 wind_log_x[n_wind_logged] = P[i].Pos[0];
                 wind_log_y[n_wind_logged] = P[i].Pos[1];
                 wind_log_z[n_wind_logged] = P[i].Pos[2];
@@ -1182,7 +1163,7 @@ void resolvedism_inject_fb_energy(void)
             E_injected[4] += IA_ENERGY_ERG;
             double Z_ia = 0;
             for(int kk = ELEM_C; kk < STBL_NELEM; kk++) Z_ia += stellar_type_ia_yield(kk) * yield_rescale;
-            Z_injected[4] += Z_ia;
+            Z_injected[4] += P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR; /* metals the walk delivered */
             {double yia[6] = {M_WD, Z_ia, stellar_type_ia_yield(ELEM_C) * yield_rescale, stellar_type_ia_yield(ELEM_O) * yield_rescale,
                               stellar_type_ia_yield(ELEM_Si) * yield_rescale, stellar_type_ia_yield(ELEM_Fe) * yield_rescale};
              fb_death_row_push(i, 0, 7, FB_LOG_EXPLODED, IA_ENERGY_ERG, yia, resolvedism_star_age_yr(i), 0.0);}
