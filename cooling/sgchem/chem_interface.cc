@@ -382,7 +382,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 
     double UV_flux_tot = 0.0;
     double LW_flux_tot = 0.0;
-    double UV_flux_min_pix = 0.324e-2 * All.G0 / NPIX / (fac_flux2energy / u_Hab_FUV); /* All.G0 scales only the background floor */
+    double UV_flux_min_pix = G0_FLOOR_BACKGROUND / NPIX / (fac_flux2energy / u_Hab_FUV); /* All.G0 scales only the background floor */
     double LW_flux_min_pix = 0.1 * UV_flux_min_pix;
     for(i = 0; i < NPIX; i++) {
 #if defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED) && !defined(RADTRANSFER)
@@ -407,7 +407,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #if defined(GALSF_RESOLVEDISM_OPT_VARIABLE) && !defined(TREE_RAY)
     { double s = 0; for(i = 0; i < NPIX; i++) {s += CellP[target].OPT_flux[i];} u_opt = s * fac_flux2energy; has_opt = 1; }
 #endif
-    struct ChemFUVField fuv = chem_fuv_field_from_band_energy(UV_flux_tot * fac_flux2energy, u_Hab_FUV, LW_flux_tot * fac_flux2energy, u_nuv36, u_opt, has_nuv36, has_opt, 0.324e-2 * All.G0);
+    struct ChemFUVField fuv = chem_fuv_field_from_band_energy(UV_flux_tot * fac_flux2energy, u_Hab_FUV, LW_flux_tot * fac_flux2energy, u_nuv36, u_opt, has_nuv36, has_opt, G0_FLOOR_BACKGROUND);
     double G0_tot = fuv.G0;
     double G0_LW  = fuv.G0_LW;
 
@@ -503,7 +503,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
             }
         }
 #endif
-        double G0_floor_pix = 0.324e-2 * All.G0 / NPIX;
+        double G0_floor_pix = G0_FLOOR_BACKGROUND / NPIX;
         double G0_LW_floor_pix = 0.1 * G0_floor_pix * (u_Hab_FUV / u_Hab_LW); /* TREE_RAD: LW_flux_min_pix = 0.1 UV_flux_min_pix */
         double G0_tot = 0, G0_LW_tot = 0, g_pix[NPIX];
         for(i = 0; i < NPIX; i++) {
@@ -518,7 +518,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         in->G0 = G0_tot;
         in->G0_LW = G0_LW_tot;
 #if defined(RT_OPTICAL_NIR)
-        in->G0_dust = chem_grain_heating_g0(G0_tot, 0, CellP[target].Rad_E_gamma[RT_FREQ_BIN_OPTICAL_NIR] * fac_to_cgs, 0, 1, 0.324e-2 * All.G0); /* M1 NUV bin is 6-8 eV: 3.4-6 eV ISRF-shaped */
+        in->G0_dust = chem_grain_heating_g0(G0_tot, 0, CellP[target].Rad_E_gamma[RT_FREQ_BIN_OPTICAL_NIR] * fac_to_cgs, 0, 1, G0_FLOOR_BACKGROUND); /* M1 NUV bin is 6-8 eV: 3.4-6 eV ISRF-shaped */
 #else
         in->G0_dust = G0_tot; /* no 3.4-6 eV or optical band: ISRF-shaped grain heating */
 #endif
@@ -528,10 +528,10 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         /* G0: FUV field (8-13.6 eV, already includes LW) in Habing units — drives the
            molecular photochemistry (H2/CO dissociation, C ionization).
            FLOOR (2026-07-04, Uli): use the SAME floor as the tree-column/G0_VARIABLE path
-           (0.324e-2 * All.G0 = 5.508e-3 for All.G0=1.7; see UV_flux_min_pix above), so
+           (G0_FLOOR_BACKGROUND = 5.508e-3 for All.G0=1.7; see UV_flux_min_pix above), so
            M1 and subgrid share one far-field floor. RT_ISRF_BACKGROUND must be OFF —
            the diffuse field is represented by this floor, identically in both schemes. */
-        double G0_floor_treerad = 0.324e-2 * All.G0;
+        double G0_floor_treerad = G0_FLOOR_BACKGROUND;
 #if defined(RT_OPTICAL_NIR)
         double u_OPT_cgs = CellP[target].Rad_E_gamma[RT_FREQ_BIN_OPTICAL_NIR] * fac_to_cgs;
 #else
