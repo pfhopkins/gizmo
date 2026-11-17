@@ -242,9 +242,9 @@ void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code)
 #endif
 
 #if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
-#define SINGLE_STAR_TREE_LUM_TOL 1.e-2 /* a star's band luminosity may drift this fraction of the root's before the nodes are refreshed */
+#define SINGLE_STAR_TREE_LUM_TOL 1.e-2 /* a star's band luminosity may drift this fraction of its own before the nodes are refreshed */
 /* before a gravity call: refresh the tree node moments (luminosities) if a single star started to shine, started to ionise or went
-   dark since the last call, or its band luminosity moved by more than SINGLE_STAR_TREE_LUM_TOL of the root's since the nodes last
+   dark since the last call, or its band luminosity moved by more than SINGLE_STAR_TREE_LUM_TOL of its own since the nodes last
    saw it; reduced in gravity_tree, so no collective here */
 void single_star_light_switch_check(void)
 {
@@ -256,7 +256,7 @@ void single_star_light_switch_check(void)
         if(P[i].Type != 4 || P[i].StarIdx <= 0 || P[i].Mass <= 0) {continue;}
         int s = single_star_slot(P[i].StarIdx);
         double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, P, CellP);
-        for(int b = 0; b < N_RT_FREQ_BINS; b++) {if(fabs(lum[b] - SingleStars.tree_lum[s].L[b]) > SINGLE_STAR_TREE_LUM_TOL * Nodes[All.TreeNodeIndexBase].stellar_lum[b]) {TreeMomentsStaleFlag = 1; return;}}
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) {if(fabs(lum[b] - SingleStars.tree_lum[s].L[b]) > SINGLE_STAR_TREE_LUM_TOL * DMAX(fabs(lum[b]), fabs((double) SingleStars.tree_lum[s].L[b]))) {TreeMomentsStaleFlag = 1; return;}}
         if(SingleStars.M_drawn[s] <= All.IMFSampleStellarMassCut) {continue;}
 #if defined(GALSF_FB_MECHANICAL)
         if(SingleStars.event_bits[s] & (SINGLE_STAR_EVENT_SN_DONE | SINGLE_STAR_EVENT_AGB_DONE)) {continue;}
