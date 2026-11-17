@@ -3115,7 +3115,6 @@ Note that *all* of these FIRE parameters have sensible default values (the value
     SinkRadiativeEfficiency 0.1        % radiative efficiency (for accretion and feedback)
     SinkMergerMaxMass       0          % most massive sink another sink may absorb, code units; 0 = 10x its formation mass (SINGLE_STAR_SINK_DYNAMICS)
     SinkMergerMaxRadiusFactor 1.0      % sinks merge only inside this many sink radii (SINGLE_STAR_SINK_DYNAMICS)
-    StellarLuminosityFactor 1.0        % multiplies the radiation single-star sinks emit into RT, all bands (SINGLE_STAR_SINK_DYNAMICS with RT)
     %--- feedback 
     SinkFeedbackFactor      1.0	    % generic feedback strength multiplier 
     Sink_Rad_MomentumFactor 1.0	    % multiply radiation pressure (SINK_PHOTONMOMENTUM) 
@@ -3158,8 +3157,6 @@ These parameters control the sub-grid models for super-massive black hole partic
 **SinkMergerMaxMass**: With `SINGLE_STAR_SINK_DYNAMICS`, the most massive sink (code mass units) that another sink may absorb in a sink-sink merger. Default =0, which uses 10 times the absorbed sink's formation mass (`SinkInitialMass` in snapshots). Set it to permit mergers where that mass is zero or unrepresentative, e.g. sinks from the initial conditions of a gas-free run. `SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES` overrides it.
 
 **SinkMergerMaxRadiusFactor**: With `SINGLE_STAR_SINK_DYNAMICS`, two sinks merge only inside this many sink radii of each other (the other merger criteria still apply). Default =1.
-
-**StellarLuminosityFactor**: With `SINGLE_STAR_SINK_DYNAMICS` and radiation transport, multiplies the luminosity that single-star sinks (including relics) inject into the radiation field, in every band; the spectral shape is unchanged. Default =1. At =0 the stars emit nothing, while the radiation transport, background ISRF and IR field still evolve and photons a sink accretes are still re-emitted. Luminosities used for non-radiative physics (protostellar evolution, wind mass-loss rates, the feedback timestep limiter) are not scaled. Can be changed on a restart.
 
 **SINK\_FluxMomentumFactor** or **SINK\_Rad_MomentumFactor**: (Either name here produces the same functionality). This serves the same role as SinkFeedbackFactor, specific to the radiation pressure terms from the BH. Currently this is separated just for de-bugging purposes.
 

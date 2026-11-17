@@ -370,9 +370,6 @@ void begrun(void)
         All.Sink_Rad_MomentumFactor = all.Sink_Rad_MomentumFactor;
 #endif
 #endif // sinks
-#if defined(SINGLE_STAR_SINK_DYNAMICS) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
-        All.StellarLuminosityFactor = all.StellarLuminosityFactor;
-#endif
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
         All.RP_Local_Momentum_Renormalization = all.RP_Local_Momentum_Renormalization;
 #endif
@@ -1996,12 +1993,6 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.RadiationBackgroundRedshift;
         id[nt++] = REAL;
 #endif
-
-#if defined(SINGLE_STAR_SINK_DYNAMICS) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
-        strcpy(tag[nt], "StellarLuminosityFactor");
-        addr[nt] = &All.StellarLuminosityFactor;
-        id[nt++] = REAL;
-#endif
 #ifdef RT_INFRARED
     strcpy(tag[nt], "InitRadiationTemp");
 	strcpy(alternate_tag[nt], "InitRadTemp");
@@ -2548,9 +2539,6 @@ void read_parameter_file(char *fname)
                 if(strcmp("InterstellarRadiationFieldStrength",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to assuming Solar neighborhood (Draine) background radiation field (=%g) \n",tag[i],alternate_tag[i],All.InterstellarRadiationFieldStrength); continue;}
 
                 if(strcmp("Redshift_RT_Background",tag[i])==0) {*((double *)addr[i])=0.0; printf("Tag %s (%s) not set in parameter file: defaulting to assuming z=0 background radiation field \n",tag[i],alternate_tag[i]); continue;}
-#endif
-#if defined(SINGLE_STAR_SINK_DYNAMICS) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
-                if(strcmp("StellarLuminosityFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to unscaled stellar luminosity (=%g) \n",tag[i],alternate_tag[i],All.StellarLuminosityFactor); continue;}
 #endif
 #if defined(RT_INFRARED)
                 if(strcmp("InitRadiationTemp",tag[i])==0) {*((double *)addr[i])=20.; printf("Tag %s (%s) not set in parameter file: defaulting to assuming 20K radiation temperature \n",tag[i],alternate_tag[i]); continue;}

@@ -692,9 +692,6 @@ extern struct global_data_all_processes
     double InterstellarRadiationFieldStrength;
     double RadiationBackgroundRedshift;
 #endif
-#if defined(SINGLE_STAR_SINK_DYNAMICS) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
-    double StellarLuminosityFactor; /* multiplies the radiation single-star sinks emit into RT, all bands */
-#endif
 #ifdef RT_INFRARED
     double InitRadiationTemp;
 #endif
