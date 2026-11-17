@@ -756,6 +756,9 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
         if(!STELLA_OWNS_STAR(P[ii])) continue;
         if(STELLA_FB_EVENT(P[ii]) != flagA && STELLA_FB_EVENT(P[ii]) != flagB) continue;
         if(P[ii].KernelRadius <= 0 || P[ii].NumNgb <= 0) continue;
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+        if(STELLA_FB_EVENT(P[ii]) == 1 && !resolvedism_death_has_payload(ii)) continue; /* nothing to deposit: no weighting walks, no kernel growth */
+#endif
         if(ncand >= ccap) {ccap *= 2; cand = (int *)myrealloc_movable(cand, ccap * sizeof(int));}
         cand[ncand++] = ii;
     }
