@@ -9,9 +9,10 @@ test_death_ejecta_table (no run): the death ejecta the deposit uses (stellar_dea
   rem + sum_k m_k = M_death (1e-12), no m_k < 0, rem >= 0 (the star never ejects more than it holds) and no ejecta
   without composition; at grid stars rem / M_death = rem_tab / (rem_tab + sum ej_tab).
 test_failed_sn_composition: a failed SN (42.3 Msun, log Z = -1.70, table ejecta 0 at the nearest grid star) and a direct
-  collapse (a table grid star), each in its own box; element ledger, mass and energy traces close.
-test_failed_sn_merge_heat: failed SN with ejecta, at a grid star, in gas with random velocities: the ejecta merge turns
-  1/2 mu |v_star - v_j|^2 into heat (booked as info); deposit = booking, so the fb_sn_ia stage closes.
+  collapse (a table grid star), each in its own box of gas with 1 km/s random velocities; element ledger, mass and energy
+  traces close. Every failed SN and direct collapse in the table ejects nothing, so with exact death ejecta they deposit
+  nothing; the old arithmetic deposited 5.2 Msun of hydrogen with zero energy for the failed SN, whose ejecta merge heat
+  1/2 mu |v_star - v_j|^2 was then partly diluted away while booked in full (fb_sn_ia stage).
 test_sibling_sne: two stars with the same ID (one parent cell), different child numbers, explode in the same step on one
   rank: each is injected once (2 x 1e51 erg booked = deposited), mass and elements close.
 test_agb_energy / test_wind_metals / test_ia_iron / test_ecsn_energy: one run with a 3 Msun star (forced AGB death, then
@@ -185,17 +186,6 @@ def test_failed_sn_composition(build, case):
     sn = re.findall(r"RESOLVEDISM SN: .* rem_type=(\d+)", text)
     print(f"{case}: M = {M:.2f} Msun, log Z = {logZ:.2f}, rem_types {sn}")
     assert [int(x) for x in sn] == [3 if case == "failed_sn" else 6], f"expected one {case}, got rem_types {sn}"
-    traces_ok(out)
-
-
-def test_failed_sn_merge_heat(build):
-    M, logZ = table_star(3, True, -2.0, np.log10(40.0))
-    d = join(TEST_DIR, "run_failed_sn_heat"); os.makedirs(d, exist_ok=True)
-    make_box(join(d, "box_ics.hdf5"), 10 ** logZ, sigma_v=3.0)
-    print(f"failed SN with ejecta: M = {M:.2f} Msun, log Z = {logZ:.2f}")
-    text, out = run_case("failed_sn_heat", build, {"InitCondFile": "box_ics", "TestNumStars": 1, "TestStarMass": M,
-                                                   "TestSNTime0": 1.0e-6, "TimeMax": 3.0e-6, **zpar(logZ)})
-    assert re.search(r"RESOLVEDISM SN: .* rem_type=3 ", text), "no failed SN"
     traces_ok(out)
 
 
