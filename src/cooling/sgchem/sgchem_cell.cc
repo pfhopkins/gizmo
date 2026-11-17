@@ -228,7 +228,7 @@ static thread_local int sgchem_network_skipped = 0; /* the last cell step ran no
 static double sgchem_cell_step(int i, double u_code, double dt_code)
 {
     struct ChemInputs in = {};
-    struct ChemOutputs out;
+    struct ChemOutputs out = {};
     double rho = CellP[i].Density * All.cf_a3inv, divv = 0;
     for(int k = 0; k < 3; k++) {divv += CellP[i].Gradients.Velocity[k][k];}
     const double hf = All.ComovingIntegrationOn ? All.cf_hubble_a : 0; /* Hubble flow per axis */
@@ -394,6 +394,12 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
         energy = (All.TestTreeRayNeutralTemp + (1.0e4 - All.TestTreeRayNeutralTemp) * x) * 1.5 * BOLTZMANN_CGS * yn * (1.0 + ABHE + x);
     }
 #endif
+    } else { /* no network: this cell's photo rates and shielding (as stella_dev), no cooling */
+        chem_cxx_begin_cell(&in, temp, abh2, abhd, abco);
+        chem_cxx_read_outputs(&out);
+        for(int k = 0; k < 28; k++) {out.lambda[k] = 0;}
+        for(int k = 0; k < NRATES_CHEM; k++) {out.lambda_chem[k] = 0;}
+        out.cr_ion_heat = 0; out.tdust = in.tdust;
     }
 #if CHEMISTRYNETWORK == 18
     chem_cxx_net18_finish(ab, energy, &temp);
