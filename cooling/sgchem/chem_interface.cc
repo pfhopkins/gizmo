@@ -370,7 +370,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #if defined(COSMIC_RAY_FLUID)
         chem_zeta_from_crfluid(target, in); /* transported CRs win over the SFR scaling */
 #elif defined(CR_SCALE_WITH_G0)
-        in->cosmic_ray_ion_rate = All.FactorG0 * All.CosmicRayIonRate;
+        in->cosmic_ray_ion_rate = DMAX(1e-21, All.FactorG0 * All.CosmicRayIonRate); /* floor as the G0_VARIABLE and M1 paths */
 #endif
     }
 #endif
