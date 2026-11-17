@@ -418,9 +418,9 @@ static int IMF_AccretionMode = 0;
 struct imf_donor_log_entry { int star_index; MyIDType donor_ID; double dM; };
 static std::vector<imf_donor_log_entry> IMF_DonorLog;
 /* what each removal took from a donor, kept on the donor's rank: an undone draw puts it back exactly */
-struct imf_star_key { MyIDType id, child; int gen; };
-static bool operator<(const imf_star_key &a, const imf_star_key &b) {return a.id != b.id ? a.id < b.id : (a.child != b.child ? a.child < b.child : a.gen < b.gen);}
-static inline imf_star_key imf_star_key_of(int i) {return {P[i].ID, P[i].ID_child_number, (int)P[i].ID_generation};}
+struct imf_star_key { int task, index; }; /* (rank, local index): unique by construction, no reordering between walk and undo */
+static bool operator<(const imf_star_key &a, const imf_star_key &b) {return a.task != b.task ? a.task < b.task : a.index < b.index;}
+static inline imf_star_key imf_star_key_of(int i) {return {ThisTask, i};}
 struct imf_grant {
     int j; imf_star_key star; double dM;
 #ifdef MAGNETIC
