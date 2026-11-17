@@ -2094,11 +2094,11 @@
 #define HYDRO_KICK_TOTAL_ENERGY_EXACT /* u takes the exact kinetic-energy complement of the hydro kick */
 #endif
 #if !defined(HYDRO_MESHLESS_FINITE_MASS) || defined(CONDUCTION) || defined(VISCOSITY) || defined(COSMIC_RAY_FLUID) || defined(RT_SOLVER_EXPLICIT) || defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(EOS_ELASTIC) || defined(MHD_NON_IDEAL) || defined(GALSF_SUBGRID_WINDS) || defined(PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP) || defined(ENERGY_ENTROPY_SWITCH_IS_ACTIVE) || defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) || (defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT))
-#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE: MFM only;conduction, viscosity, CR fluid, explicit RT, turbulent energy/velocity diffusion, elastic EOS, non-ideal MHD, subgrid winds, per-step merge/split, the entropy switch, conservative psi cleaning and non-split cooling are not exchanged"
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE: MFM only; conduction, viscosity, CR fluid, explicit RT, turbulent energy/velocity diffusion, elastic EOS, non-ideal MHD, subgrid winds, per-step merge/split, the entropy switch, conservative psi cleaning and non-split cooling are not exchanged"
 #endif
 #endif
 #if defined(HYDRO_KICK_TOTAL_ENERGY_EXACT) && (!defined(HYDRO_MESHLESS_FINITE_MASS) || (defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)) || defined(ENERGY_ENTROPY_SWITCH_IS_ACTIVE))
-#error "HYDRO_KICK_TOTAL_ENERGY_EXACT: MFM kick only"
+#error "HYDRO_KICK_TOTAL_ENERGY_EXACT: MFM kick only; not with the entropy switch or non-split cooling"
 #endif
 #if defined(HYDRO_PAIR_ONCE) && (defined(_OPENMP) || defined(OPENMP) || defined(BOX_SHEARING) || defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
 #error "HYDRO_PAIR_ONCE: pure-MPI MFM only (j-side writes are not thread-safe; shearing, dilation, SPH and MFV fluxes are not handled)"
