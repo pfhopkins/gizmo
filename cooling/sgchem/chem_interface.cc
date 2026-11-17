@@ -906,6 +906,12 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #else
         in->cosmic_ray_ion_rate = All.CosmicRayIonRate * f_cr;
 #endif
+#ifdef METALS
+        in->cosmic_ray_ion_rate += 1.e-21 * P[target].Metallicity[0] / All.SolarAbundances[0]; /* unshielded radioactive floor, as Get_CosmicRayIonizationRate_cgs */
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+        in->cosmic_ray_ion_rate += 1.e-19 * P[target].Metallicity[MET_OF(ELEM_Fe)] / resolvedism_solar_massfrac[ELEM_Fe];
+#endif
+#endif
         CellP[target].CR_ionization_rate = in->cosmic_ray_ion_rate;
     }
 #endif
