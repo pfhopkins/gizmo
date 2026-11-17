@@ -952,6 +952,29 @@ double stellar_M_preSN(double logM, double logZ)
     return interp2d_rt_aware(StellarTbl.M_preSN, logM, logZ);
 }
 
+/* Death ejecta (SN, or AGB for WD remnants) of a star holding M_death [Msun] at death: table composition rescaled to M_death - rem. */
+double stellar_death_ejecta(double logM, double logZ, double M_death, double *m_k)
+{
+    int rt = stellar_remnant_type(logM, logZ);
+    double rem = (rt == REM_PISN) ? 0 : stellar_remnant_mass(logM, logZ), m_tab = 0;
+#ifndef GALSF_RESOLVEDISM_WINDS
+    double log_age_end = log10(DMAX(stellar_lifetime(logM, logZ), 100.0));
+#endif
+    for(int k = 0; k < STBL_NELEM; k++) {
+        if(rt == REM_WD) {m_k[k] = stellar_elem_ej_AGB(logM, logZ, k);}
+        else {
+            m_k[k] = stellar_elem_ej_SN(logM, logZ, k);
+#ifndef GALSF_RESOLVEDISM_WINDS
+            m_k[k] += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end, k);
+#endif
+        }
+        m_tab += m_k[k];
+    }
+    double Mej = DMAX(M_death - rem, 0), scale = (m_tab > 0) ? Mej / m_tab : 0;
+    for(int k = 0; k < STBL_NELEM; k++) {m_k[k] *= scale;}
+    return rem;
+}
+
 /* --- PMS duration / feedback delay (2D bilinear) --- */
 
 double stellar_t_PMS(double logM, double logZ)

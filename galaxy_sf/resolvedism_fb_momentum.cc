@@ -370,13 +370,13 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     /* ---- AGB death (STELLA_FB_EVENT == 2) ---- */
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
     int rem_type = stellar_remnant_type(logM, logZ);
-    double rem_mass = stellar_remnant_mass(logM, logZ);
 
     /* same export-repack freeze as the SN thermal path (2026-07-05) */
     double M_particle_solar = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger
                                                          : P[i].Mass * UNIT_MASS_IN_SOLAR;
-    double Mej_solar = M_particle_solar - rem_mass;
-    if(Mej_solar < 0) Mej_solar = 0;
+    double m_k_ej[STBL_NELEM]; /* AGB element ejecta of this star (stellar_death_ejecta) */
+    double rem_mass = stellar_death_ejecta(logM, logZ, M_particle_solar, m_k_ej);
+    double Mej_solar = DMAX(M_particle_solar - rem_mass, 0);
     in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;
 
     /* AGB momentum: planetary nebula ejection at 30 km/s */
@@ -384,36 +384,21 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
         in->WindMomentum = Mej_solar * 30.0 * SOLAR_MASS_CGS * 1.0e5 / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
     }
 
-    /* AGB yields: the table gives the ejecta COMPOSITION; rescale it to the physical
-     * ejecta mass Mej_solar = M_particle - rem_mass so we never remove more than the
-     * star currently has. BUGFIX 2026-07-02: previously in->Mej was overwritten with the
-     * ZAMS-envelope table sum Mej_table_solar, which for a wind-stripped star exceeds the
-     * current mass -> out2particle clip -> mass non-conservation (the test_FULL leak).
-     * Mirror the SN thermal path: current-mass Mej, table composition. */
     double metal_mass_solar = 0;
-    double Mej_table_solar = 0;
 #ifdef STELLA_FIRE_YIELD_SLOTS
     double y_fire[STBL_NELEM];
 #endif
     for(k = 0; k < STBL_NELEM; k++) {
-        double m_k = stellar_elem_ej_AGB(logM, logZ, k);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR; /* table-absolute; rescaled below */
+        in->ElemYields[k] = m_k_ej[k] / UNIT_MASS_IN_SOLAR;
 #endif
 #ifdef STELLA_FIRE_YIELD_SLOTS
-        y_fire[k] = m_k / UNIT_MASS_IN_SOLAR;
+        y_fire[k] = m_k_ej[k] / UNIT_MASS_IN_SOLAR;
 #endif
-        Mej_table_solar += m_k;
-        if(k >= ELEM_C) metal_mass_solar += m_k;
+        if(k >= ELEM_C) metal_mass_solar += m_k_ej[k];
     }
-    double zscale = (Mej_table_solar > 0) ? (Mej_solar / Mej_table_solar) : 0.0;
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-    for(k = 0; k < STBL_NELEM; k++) in->ElemYields[k] *= zscale;
-#endif
-    in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;                     /* current-mass ejecta (not table sum) */
-    in->MetalMass = metal_mass_solar * zscale / UNIT_MASS_IN_SOLAR;
+    in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
 #ifdef STELLA_FIRE_YIELD_SLOTS
-    for(k = 0; k < STBL_NELEM; k++) {y_fire[k] *= zscale;}
     in->MetalMass = stella_pack_fire_yields(y_fire, in->FireYields, P[i].ID); /* Z deposit = sum of the packed table metals */
 #ifdef STELLA_SELFCHECK
     if(loop_iteration == 0) {stella_fire_yields_log("AGB", P[i].ID, y_fire, in->FireYields);}
@@ -424,9 +409,9 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     {
         double sum_y_code = 0;
         for(int kk = 0; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) sum_y_code += in->ElemYields[kk];
-        printf("FBDBG_AGB_DONOR star=%llu(%.1fMsun) rem_type=%d M_pre=%.6e rem=%.6e Mej_solar(unused)=%.6e Mej_tab=%.6e in.Mej=%.6e Msun SumY=%.6e Msun Y[H]=%.6e Y[He]=%.6e Y[C]=%.6e Y[O]=%.6e Y[Fe]=%.6e\n",
+        printf("FBDBG_AGB_DONOR star=%llu(%.1fMsun) rem_type=%d M_pre=%.6e rem=%.6e Mej_solar=%.6e in.Mej=%.6e Msun SumY=%.6e Msun Y[H]=%.6e Y[He]=%.6e Y[C]=%.6e Y[O]=%.6e Y[Fe]=%.6e\n",
             (unsigned long long)P[i].ID, P[i].MstarSampleIMF[0],
-            rem_type, M_particle_solar, rem_mass, Mej_solar, Mej_table_solar,
+            rem_type, M_particle_solar, rem_mass, Mej_solar,
             in->Mej*UNIT_MASS_IN_SOLAR, sum_y_code*UNIT_MASS_IN_SOLAR,
             in->ElemYields[0]*UNIT_MASS_IN_SOLAR, in->ElemYields[1]*UNIT_MASS_IN_SOLAR,
             in->ElemYields[2]*UNIT_MASS_IN_SOLAR, in->ElemYields[4]*UNIT_MASS_IN_SOLAR,

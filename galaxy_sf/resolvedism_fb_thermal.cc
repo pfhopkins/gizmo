@@ -140,10 +140,9 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
     int rem_type = stellar_remnant_type(logM, logZ);
-    double rem_mass = stellar_remnant_mass(logM, logZ);
 
     switch(rem_type) {
-        case REM_PISN:  in->Esne = resolvedism_sn_energy_erg(1, 1, Mstar) / UNIT_ENERGY_IN_CGS; rem_mass = 0; break; /* 1e51, or the He-core energy (opt-in) */
+        case REM_PISN:  in->Esne = resolvedism_sn_energy_erg(1, 1, Mstar) / UNIT_ENERGY_IN_CGS; break; /* 1e51, or the He-core energy (opt-in) */
         case REM_PPISN: in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS; break;
         case REM_ECSN:  in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS; break; /* uniform 1e51 (was 5e50) */
         case REM_FSN:
@@ -152,20 +151,6 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
         default:        in->Esne = 1.0e51 / UNIT_ENERGY_IN_CGS; break;
     }
 
-    /* SN ejecta: read absolute element ejecta from table directly.
-     * Table guarantees: all values ≥0, Σ_k elem_ej_SN_mass = post-wind envelope ejecta.
-     *
-     * When WINDS is OFF at compile time, the wind ejecta from the star's lifetime
-     * was never injected anywhere — it would silently vanish from the mass ledger.
-     * To preserve mass conservation, fold the cumulative wind ejecta (at end of life)
-     * into the SN injection so the entire returned mass is delivered in one event. */
-#ifndef GALSF_RESOLVEDISM_WINDS
-    double t_end_yr = stellar_lifetime(logM, logZ);
-    double log_age_end = log10(DMAX(t_end_yr, 100.0));
-#endif
-    /* Mass-conservation fix: inject Mej_actual = (current particle mass) - rem_mass.
-       This makes mass-removed-from-star = mass-injected-to-gas exactly.
-       Per-element shape comes from the table; rescale so total = Mej_actual. */
     /* EXPORT-REPACK FIX (2026-07-05, found by check_twin_sn + FBOUT ledger):
      * particle2in is called AGAIN when packing the EXPORT buffer, AFTER out2particle
      * has already reduced P[i].Mass by the locally-deposited mass -> every REMOTE
@@ -175,26 +160,16 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
      * 7 edge cases). Freeze to the pre-walk snapshot so every pack is identical. */
     double M_pre_solar = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger
                                                     : P[i].Mass * UNIT_MASS_IN_SOLAR;
-    double Mej_actual = M_pre_solar - rem_mass;
-    if(Mej_actual < 0) Mej_actual = 0;
-
-    double Mej_table = 0;
-    double m_k_table[STBL_NELEM];
-    for(k = 0; k < STBL_NELEM; k++) {
-        m_k_table[k] = stellar_elem_ej_SN(logM, logZ, k);
-#ifndef GALSF_RESOLVEDISM_WINDS
-        m_k_table[k] += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end, k);
-#endif
-        Mej_table += m_k_table[k];
-    }
-    double scale = (Mej_table > 0) ? Mej_actual / Mej_table : 0;
+    double m_k_table[STBL_NELEM]; /* element ejecta of this star at death (stellar_death_ejecta; lifetime winds included without WINDS) */
+    double rem_mass = stellar_death_ejecta(logM, logZ, M_pre_solar, m_k_table);
+    double Mej_actual = DMAX(M_pre_solar - rem_mass, 0);
 
     double metal_mass_solar = 0;
 #ifdef STELLA_FIRE_YIELD_SLOTS
     double y_fire[STBL_NELEM];
 #endif
     for(k = 0; k < STBL_NELEM; k++) {
-        double m_k = m_k_table[k] * scale;
+        double m_k = m_k_table[k];
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
         in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR;
 #endif
@@ -216,8 +191,8 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     {
         double sum_y_code = 0;
         for(int kk = 0; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) sum_y_code += in->ElemYields[kk];
-        printf("FBDBG_TH_DONOR star=%llu rem_type=%d M_pre=%.6e rem=%.6e Mej_act=%.6e Mej_tab=%.6e scale=%.6e in.Mej=%.6e Msun SumY=%.6e Msun Y[H]=%.6e Y[He]=%.6e Y[C]=%.6e Y[O]=%.6e Y[Fe]=%.6e\n",
-            (unsigned long long)P[i].ID, rem_type, M_pre_solar, rem_mass, Mej_actual, Mej_table, scale,
+        printf("FBDBG_TH_DONOR star=%llu rem_type=%d M_pre=%.6e rem=%.6e Mej_act=%.6e in.Mej=%.6e Msun SumY=%.6e Msun Y[H]=%.6e Y[He]=%.6e Y[C]=%.6e Y[O]=%.6e Y[Fe]=%.6e\n",
+            (unsigned long long)P[i].ID, rem_type, M_pre_solar, rem_mass, Mej_actual,
             in->Mej*UNIT_MASS_IN_SOLAR, sum_y_code*UNIT_MASS_IN_SOLAR,
             in->ElemYields[0]*UNIT_MASS_IN_SOLAR, in->ElemYields[1]*UNIT_MASS_IN_SOLAR,
             in->ElemYields[2]*UNIT_MASS_IN_SOLAR, in->ElemYields[4]*UNIT_MASS_IN_SOLAR,

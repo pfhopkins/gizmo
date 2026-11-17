@@ -368,36 +368,12 @@ void resolvedism_determine_SNe(void)
             double mej_log = 0;
             double zej_log = 0, yC_log = 0, yO_log = 0, ySi_log = 0, yFe_log = 0;
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
-#ifndef GALSF_RESOLVEDISM_WINDS
-            double t_end_yr_log = stellar_lifetime(logM, logZ);
-            double log_age_end_log = log10(DMAX(t_end_yr_log, 100.0));
-#endif
-            for(int kk = 0; kk < STBL_NELEM; kk++) {
-                double me = stellar_elem_ej_SN(logM, logZ, kk);
-#ifndef GALSF_RESOLVEDISM_WINDS
-                me += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end_log, kk);
-#endif
-                mej_log += me;
-                if(kk >= ELEM_C) zej_log += me;
-                if(kk == ELEM_C)  yC_log  = me;
-                if(kk == ELEM_O)  yO_log  = me;
-                if(kk == ELEM_Si) ySi_log = me;
-                if(kk == ELEM_Fe) yFe_log = me;
-            }
-            /* LEDGER FIX (2026-07-03): log what fb_thermal ACTUALLY injects, not the raw
-             * table values. The injector rescales all yields by
-             *   scale = (M_pre - rem_mass) / Mej_table
-             * (heavy-fallback remnants at low Z swallow most of the nominal ejecta:
-             * rem ~ M_star for 25-60 Msun at Z~1e-3 -> scale ~ 0 for FSN). Logging the
-             * unscaled table values made the metal ledger over-count by ~20% vs the
-             * double-precision M_Z tracker. Mirror fb_thermal.cc exactly. */
-            {
-                double M_pre_log = P[i].M_at_SN_trigger; /* Msun, pre-walk */
-                double rem_log = rem_mass;
-                double Mej_actual_log = DMAX(M_pre_log - rem_log, 0);
-                double scale_log = (mej_log > 0) ? Mej_actual_log / mej_log : 0;
-                mej_log *= scale_log; zej_log *= scale_log;
-                yC_log *= scale_log; yO_log *= scale_log; ySi_log *= scale_log; yFe_log *= scale_log;
+            { /* what fb_thermal injects (stellar_death_ejecta of the pre-walk mass) */
+                double m_log[STBL_NELEM];
+                double rem_log = stellar_death_ejecta(logM, logZ, P[i].M_at_SN_trigger, m_log);
+                mej_log = DMAX(P[i].M_at_SN_trigger - rem_log, 0);
+                for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {zej_log += m_log[kk];}
+                yC_log = m_log[ELEM_C]; yO_log = m_log[ELEM_O]; ySi_log = m_log[ELEM_Si]; yFe_log = m_log[ELEM_Fe];
             }
 #endif
             sn_mej[n_logged] = mej_log;
@@ -814,24 +790,16 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
                 double Zbirth_sp = (P[i_owner].BirthMetallicity > 0) ? P[i_owner].BirthMetallicity : All.InitMetallicityinSolar*All.SolarAbundances[0];
                 double logM_sp = log10(DMAX(Mstar_sp, 0.1)), logZ_sp = log10(DMAX(Zbirth_sp, 1e-8));
                 int rt_sp = stellar_remnant_type(logM_sp, logZ_sp);
-                double rem_sp = stellar_remnant_mass(logM_sp, logZ_sp);
+                double Mpre_sp = (P[i_owner].M_at_SN_trigger > 0) ? (double)P[i_owner].M_at_SN_trigger : P[i_owner].Mass*UNIT_MASS_IN_SOLAR;
+                double m_k_sp[STBL_NELEM];
+                double rem_sp = stellar_death_ejecta(logM_sp, logZ_sp, Mpre_sp, m_k_sp);
                 if(rt_sp != REM_FSN && rt_sp != REM_DBH) {   /* explosive only (Esne>0) */
-                    double Mpre_sp = (P[i_owner].M_at_SN_trigger > 0) ? (double)P[i_owner].M_at_SN_trigger : P[i_owner].Mass*UNIT_MASS_IN_SOLAR;
                     double Mej_sp = DMAX(Mpre_sp - rem_sp, 0.0);
                     double f_thresh = (double)(GALSF_RESOLVEDISM_SN_SPAWN);
                     if(P[i_owner].FB_KernelGasMass*UNIT_MASS_IN_SOLAR < f_thresh*Mej_sp && Mej_sp > 0) {
-                        /* payload: yields scaled to Mej (same single-source logic as fb_thermal) */
-                        int ksp; double m_k_sp[STBL_NELEM], Mej_tab_sp = 0;
-                        for(ksp = 0; ksp < STBL_NELEM; ksp++) {
-                            m_k_sp[ksp] = stellar_elem_ej_SN(logM_sp, logZ_sp, ksp);
-#ifndef GALSF_RESOLVEDISM_WINDS
-                            {double t_end_sp = stellar_lifetime(logM_sp, logZ_sp);
-                             m_k_sp[ksp] += stellar_elem_ej_wind_cumulative(logM_sp, logZ_sp, log10(DMAX(t_end_sp,100.)), ksp);}
-#endif
-                            if(m_k_sp[ksp] < 0) m_k_sp[ksp] = 0; Mej_tab_sp += m_k_sp[ksp];
-                        }
-                        double scl_sp = (Mej_tab_sp > 0) ? Mej_sp/Mej_tab_sp : 0;
-                        for(ksp = 0; ksp < STBL_NELEM; ksp++) P[i_owner].SpawnEjZ[ksp] = (MyFloat)(m_k_sp[ksp]*scl_sp/UNIT_MASS_IN_SOLAR);
+                        /* payload: the same death ejecta as fb_thermal */
+                        int ksp;
+                        for(ksp = 0; ksp < STBL_NELEM; ksp++) P[i_owner].SpawnEjZ[ksp] = (MyFloat)(m_k_sp[ksp]/UNIT_MASS_IN_SOLAR);
                         P[i_owner].SpawnEjMass = (MyFloat)(Mej_sp/UNIT_MASS_IN_SOLAR);
                         P[i_owner].SpawnEjEnergy = (MyFloat)(resolvedism_sn_energy_erg(rt_sp == REM_PISN, 1, Mstar_sp)/UNIT_ENERGY_IN_CGS);
                         ESTEP_BOOK(EBK_FB_SN, -P[i_owner].SpawnEjEnergy); /* booked in this step's E_injected, delivered by the ejecta cell at the next merge/split */
@@ -1215,45 +1183,15 @@ void resolvedism_inject_fb_energy(void)
             double logM = log10(Mstar);
             double logZ = log10(DMAX(P[i].BirthMetallicity, 1e-10));
             int rem_type = stellar_remnant_type(logM, logZ);
-            double rem_mass = stellar_remnant_mass(logM, logZ);
-            if(rem_type == REM_PISN) rem_mass = 0; /* complete disruption */
-
-            /* Mej_actual = (current particle mass) - rem_mass. Matches the injection and ensures
-             * exact mass conservation. Z_ej is table-shape rescaled so total = Mej_actual. */
-#ifndef GALSF_RESOLVEDISM_WINDS
-            double t_end_yr_acc = stellar_lifetime(logM, logZ);
-            double log_age_end_acc = log10(DMAX(t_end_yr_acc, 100.0));
-#endif
-            double Mej_table = 0, Z_ej_table = 0;
-            for(int kk = 0; kk < STBL_NELEM; kk++) {
-                double m_k;
-                if(channel == 0) {
-                    m_k = stellar_elem_ej_SN(logM, logZ, kk);
-#ifndef GALSF_RESOLVEDISM_WINDS
-                    m_k += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end_acc, kk);
-#endif
-                } else {
-                    m_k = stellar_elem_ej_AGB(logM, logZ, kk);
-                }
-                Mej_table += m_k;
-                if(kk >= ELEM_C) Z_ej_table += m_k;
-            }
-            double Mej_actual = M_star_old - rem_mass;
-            if(Mej_actual < 0) Mej_actual = 0;
-            double scale_diag = (Mej_table > 0) ? Mej_actual / Mej_table : 0;
-            double Mej_solar = Mej_actual;
-            double Z_ej = Z_ej_table * scale_diag;
+            double m_led[STBL_NELEM]; /* the deposit's element ejecta (stellar_death_ejecta of the pre-walk mass) */
+            double rem_mass = stellar_death_ejecta(logM, logZ, M_star_old, m_led);
+            double Mej_solar = DMAX(M_star_old - rem_mass, 0), Z_ej = 0;
+            for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {Z_ej += m_led[kk];}
             if(channel == 0 && (rem_type == REM_FSN || rem_type == REM_DBH)) {channel = 5;} /* failed SN: recorded, zero energy */
             double Esne_erg = resolvedism_sn_energy_erg(rem_type == REM_PISN, rem_type != REM_FSN && rem_type != REM_DBH, Mstar);
             {
                 double yl[6] = {Mej_solar, Z_ej, 0, 0, 0, 0}; const int ke[4] = {ELEM_C, ELEM_O, ELEM_Si, ELEM_Fe};
-                for(int q = 0; q < 4; q++) {
-                    double m_q = (channel == 1) ? stellar_elem_ej_AGB(logM, logZ, ke[q]) : stellar_elem_ej_SN(logM, logZ, ke[q]);
-#ifndef GALSF_RESOLVEDISM_WINDS
-                    if(channel != 1) m_q += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end_acc, ke[q]);
-#endif
-                    yl[2 + q] = m_q * scale_diag;
-                }
+                for(int q = 0; q < 4; q++) {yl[2 + q] = m_led[ke[q]];}
                 double age_l = resolvedism_star_age_yr(i);
                 fb_death_row_push(i, channel == 1, (channel == 1) ? REM_WD : rem_type, (channel == 5) ? FB_LOG_FAILED : FB_LOG_EXPLODED,
                                   (channel == 0) ? Esne_erg : 0.0, yl, age_l, get_star_lifetime(Mstar, logM, logZ));

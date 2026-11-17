@@ -166,6 +166,7 @@ double stellar_lifetime(double logM, double logZ);
 double stellar_remnant_mass(double logM, double logZ);
 int    stellar_remnant_type(double logM, double logZ);
 double stellar_M_preSN(double logM, double logZ);
+double stellar_death_ejecta(double logM, double logZ, double M_death, double *m_k); /* element ejecta m_k[STBL_NELEM] of a star of mass M_death [Msun] at death; returns the remnant mass [Msun] */
 
 /* ---- PMS duration / feedback delay (2D bilinear: logM, logZ) ---- */
 double stellar_t_PMS(double logM, double logZ);
