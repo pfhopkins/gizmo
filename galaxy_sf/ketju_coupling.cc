@@ -121,6 +121,7 @@ struct ketju_mpi_particle {
 #endif
 #ifdef KETJU_TYPE4_STARS
     double SoftGrav[2], ZetaGrav[2]; /* tree softening/zeta of the last gravity call ([0] target, [1] secondary) */
+    double MassGrav; /* mass of the last gravity call: feedback mass loss after it must not enter the start subtraction */
     double SoftNow[2], ZetaNow[2];   /* values the next gravity call will use */
 #endif
 #ifdef KJ_STAR_COLLISIONS
@@ -1054,6 +1055,7 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 #endif
 #ifdef KETJU_TYPE4_STARS
         for(int k = 0; k < 2; k++) {mp.SoftGrav[k] = P[idx].KetjuTreeSoft[k]; mp.ZetaGrav[k] = P[idx].KetjuTreeZeta[k];}
+        mp.MassGrav = (P[idx].KetjuTreeMass > 0) ? P[idx].KetjuTreeMass : P[idx].Mass;
         tree_pair_softening(idx, mp.SoftNow, mp.ZetaNow);
 #endif
 #ifdef KJ_STAR_COLLISIONS
@@ -1318,8 +1320,9 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
                 const double *sj = at_start ? pj.SoftGrav : pj.SoftNow, *zj = at_start ? pj.ZetaGrav : pj.ZetaNow;
                 double r2c = drc[0]*drc[0] + drc[1]*drc[1] + drc[2]*drc[2], rc = sqrt(r2c), f_ij, f_ji, d0, d1, d2;
                 if(rc <= 0) continue;
-                tree_pair_gravity_factors(rc, r2c, ps->mass[j], si[0], sj[1], pi.Type, pj.Type, zi[0], zj[1], ps->mass[i], ags_gravity_kernel_shared_BITFLAG(pi.Type), f_ij, d0, d1, d2);
-                tree_pair_gravity_factors(rc, r2c, ps->mass[i], sj[0], si[1], pj.Type, pi.Type, zj[0], zi[1], ps->mass[j], ags_gravity_kernel_shared_BITFLAG(pj.Type), f_ji, d0, d1, d2);
+                const double mi = at_start ? pi.MassGrav : ps->mass[i], mj = at_start ? pj.MassGrav : ps->mass[j]; /* masses of the gravity call being cancelled */
+                tree_pair_gravity_factors(rc, r2c, mj, si[0], sj[1], pi.Type, pj.Type, zi[0], zj[1], mi, ags_gravity_kernel_shared_BITFLAG(pi.Type), f_ij, d0, d1, d2);
+                tree_pair_gravity_factors(rc, r2c, mi, sj[0], si[1], pj.Type, pi.Type, zj[0], zi[1], mj, ags_gravity_kernel_shared_BITFLAG(pj.Type), f_ji, d0, d1, d2);
                 double fac_c = kick_factor * All.G / (a_kick * a_kick); /* comoving pair force -> physical acceleration */
                 for(int k = 0; k < 3; k++) {
                     dv[3*i + k] += fac_c * f_ij * drc[k];
@@ -1518,7 +1521,7 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
                 NEAREST_XYZ(dr[0], dr[1], dr[2], 1);
 #endif
                 double r2 = dr[0]*dr[0] + dr[1]*dr[1] + dr[2]*dr[2], r = sqrt(r2), fa, fp, ft, ft2; if(r <= 0) continue;
-                tree_pair_gravity_factors(r, r2, it.Mass, me.SoftGrav[0], it.SoftGrav[1], me.Type, it.Type, me.ZetaGrav[0], it.ZetaGrav[1], me.Mass, ags_gravity_kernel_shared_BITFLAG(me.Type), fa, fp, ft, ft2);
+                tree_pair_gravity_factors(r, r2, it.MassGrav, me.SoftGrav[0], it.SoftGrav[1], me.Type, it.Type, me.ZetaGrav[0], it.ZetaGrav[1], me.MassGrav, ags_gravity_kernel_shared_BITFLAG(me.Type), fa, fp, ft, ft2);
                 Ti[0] -= All.G * (ft2 * dr[0]*dr[0] - ft); Ti[1] -= All.G * (ft2 * dr[1]*dr[1] - ft); Ti[2] -= All.G * (ft2 * dr[2]*dr[2] - ft);
                 Ti[3] -= All.G * ft2 * dr[0]*dr[1]; Ti[4] -= All.G * ft2 * dr[1]*dr[2]; Ti[5] -= All.G * ft2 * dr[0]*dr[2];
                 (void)fa; (void)fp;
@@ -2872,6 +2875,7 @@ void ketju_snapshot_tree_softening(void)
         if(P[i].Type != 4 && P[i].Type != 5) continue;
         double s2[2], z2[2]; tree_pair_softening(i, s2, z2);
         for(int k = 0; k < 2; k++) {P[i].KetjuTreeSoft[k] = s2[k]; P[i].KetjuTreeZeta[k] = z2[k];}
+        P[i].KetjuTreeMass = P[i].Mass;
     }
 }
 #endif

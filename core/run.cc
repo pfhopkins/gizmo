@@ -662,7 +662,7 @@ void run(void)
         HermiteOnlyFlag = 0;
 #if defined(STARS_HERMITE_DIRECT_GRAVITY) && defined(KETJU_TYPE4_STARS)
         for(int i : ActiveParticleList) /* this pass set the kick a new KETJU member's start subtraction cancels */
-            if((P[i].Type == 4) && eligible_for_hermite(i)) {double s2[2], z2[2]; tree_pair_softening(i, s2, z2); for(int k = 0; k < 2; k++) {P[i].KetjuTreeSoft[k] = s2[k]; P[i].KetjuTreeZeta[k] = z2[k];}}
+            if((P[i].Type == 4) && eligible_for_hermite(i)) {double s2[2], z2[2]; tree_pair_softening(i, s2, z2); for(int k = 0; k < 2; k++) {P[i].KetjuTreeSoft[k] = s2[k]; P[i].KetjuTreeZeta[k] = z2[k];} P[i].KetjuTreeMass = P[i].Mass;}
 #endif
 #endif
         ESTEP_BEGIN(ESTEP_INT_KICK1);
