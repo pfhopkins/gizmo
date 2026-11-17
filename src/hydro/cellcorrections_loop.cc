@@ -66,7 +66,7 @@ void cellcorrections_calc(void)
     const GizmoHydroCorridorMode corridor_mode = gizmo_hydro_corridor_get_mode();
 
     int *active_list_local = nullptr;       /* allocated by nlr_build_active_list in fallback */
-    int  num_active = 0, num_global_active = 0;
+    int  num_active = 0;
     neighbor_loop_args args = nlr_default_args();
 
     if(corridor_csr != nullptr) {
@@ -81,7 +81,7 @@ void cellcorrections_calc(void)
         /* Mode B (request-driven, no corridor CSR): narrow active list built
          * here. */
         if(!nlr_build_active_list(CellcorrectionsSpec::is_active,
-                                   &active_list_local, &num_active, &num_global_active,
+                                   &active_list_local, &num_active,
                                    "cellcorrections_active")) {
             /* No active gas anywhere globally — nothing to do. */
             CPU_Step[CPU_DENSMISC] += measure_time();

@@ -206,6 +206,40 @@
 
 
 
+/* free-surface volume correction (HYDRO_KERNEL_SURFACE_VOLCORR): the cell volume factor is SLOPE * f_imb + OFFSET, held between FLOOR and 1.
+   3D: the fits of Reinhardt & Stadel 2017 (arXiv:1701.08296, Fig. 3), for the cubic spline and the Wendland C2 kernel. 2D: the same form fitted
+   in 2D (planar free surfaces of hexagonal lattices at several orientations, exact and jittered, 20 / 32 neighbours; the floor is the factor a
+   90-degree corner needs), so a 2D surface reads the interior density instead of ~1.5-2.5% above it. Other kernels use the Wendland C2 fit. */
+#ifdef HYDRO_KERNEL_SURFACE_VOLCORR
+#if (NUMDIMS == 2) && (KERNEL_FUNCTION == 3)
+#define KERNEL_SURFACE_VOLCORR_SLOPE   (-2.33516)
+#define KERNEL_SURFACE_VOLCORR_OFFSET  (1.03536)
+#define KERNEL_SURFACE_VOLCORR_FLOOR   (0.40)
+#elif (NUMDIMS == 2)
+#define KERNEL_SURFACE_VOLCORR_SLOPE   (-2.47918)
+#define KERNEL_SURFACE_VOLCORR_OFFSET  (1.02734)
+#define KERNEL_SURFACE_VOLCORR_FLOOR   (0.37)
+#elif (KERNEL_FUNCTION == 3)
+#define KERNEL_SURFACE_VOLCORR_SLOPE   (-2.39701)
+#define KERNEL_SURFACE_VOLCORR_OFFSET  (1.02918)
+#define KERNEL_SURFACE_VOLCORR_FLOOR   (0.4)   /* the plateau of their cubic-spline fit, read from Fig. 3 (reached at f_imb ~ 0.26) */
+#else /* the Wendland C2 fit; the other kernels have no fit of their own and use this one */
+#define KERNEL_SURFACE_VOLCORR_SLOPE   (-2.52444)
+#define KERNEL_SURFACE_VOLCORR_OFFSET  (1.0259)
+#define KERNEL_SURFACE_VOLCORR_FLOOR   (0.344301)
+#endif
+/* The imbalance it reads is that of the neighbour COUNT, so it cannot tell empty space from a neighbouring material
+   whose cells are spaced more widely (equal-mass cells across a density jump): the dense side of every material
+   interface reads as a partial free surface. With materials, the correction is therefore scaled back by the share of
+   the kernel volume another material fills (volumes min(h_i,h_j)^NUMDIMS, kernel-weighted, less the largest single
+   contribution so one stray cell does not count), linearly from the full correction at a share of zero to no correction
+   at this share and above. A single-material body is unchanged. */
+#ifdef KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE /* defined in precompiler_logic.h, so every unit sees the same density accumulators */
+#define KERNEL_SURFACE_VOLCORR_FOREIGN_SHARE_OFF (0.02)
+#endif
+#endif
+
+
 GIZMO_GPU_FUNCTION static inline void kernel_hinv(double h, double *hinv, double *hinv3, double *hinv4)
 {
   *hinv = 1.0 / h;

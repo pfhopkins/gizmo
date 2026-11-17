@@ -44,25 +44,12 @@
  * accessors; misordered includes must compile-fail loudly, not silently
  * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
-/*! Pair key for the sink stochastic draws.
- *
- *  The claim token is unique per sink, so it separates the draws of DIFFERENT sinks. It cannot
- *  separate one sink's own neighbours, and the identifier cannot either: every wind-spawned cell
- *  carries one stamped value, so a key of (token, identifier) is CONSTANT across all of them and
- *  they draw the same number -- the whole group is then accreted or skipped together, which is the
- *  correlation this key exists to remove. The neighbour's position is what distinguishes them.
- *
- *  One-sided, unlike the SIDM pair key: only the sink evaluates this draw, so the key does not need
- *  to be symmetric under exchange and the two ends are composed in a fixed order. */
-KOKKOS_INLINE_FUNCTION uint64_t sink_pair_rng_key(MyIDType claim_token, MyIDType neighbor_id,
-                                                  double nx, double ny, double nz)
-{
-    uint64_t h = (uint64_t)claim_token * 0x9E3779B97F4A7C15ULL;
-    h ^= ((uint64_t)neighbor_id + 0xBF58476D1CE4E5B9ULL + (h << 6) + (h >> 2));
-    h ^= (gizmo_position_mix(nx, ny, nz) + 0x94D049BB133111EBULL + (h << 6) + (h >> 2));
-    h ^= h >> 31;
-    return h;
-}
+/* Stochastic capture/swallow draws: key = the sink's event key combined with the neighbour's, counter =
+ * the site's salt and the current time. Keyed on particles, never on the owning rank or slot, so a draw does
+ * not depend on the decomposition; the neighbour's position (in its event key) separates a sink's own
+ * neighbours that share an ID (every wind-spawned cell carries one). One-sided: only the sink evaluates it. */
+static constexpr uint64_t SINK_CAPTURE_RNG_SALT = gizmo_loop_rng_salt("sink_eddington_limited_capture");
+static constexpr uint64_t SINK_SWALLOW_RNG_SALT = gizmo_loop_rng_salt("sink_stochastic_swallow");
 
 /* Forward decls. */
 int  sink_isactive(int i);
@@ -75,13 +62,7 @@ int  sink_feed_is_active(int i);
 
 /* Per-call cosmology + sink globals captured once from All.* on the host
  * by populate_call_scalars. Passed to the inline pair body as its own
- * argument, once per call, so the body never reads All.* directly (TRAP 1).
- *
- * rng_step uses a sink_feed-unique constant XOR shift on top of
- * NumCurrentTiStep. This is load-bearing: if multiple sink loops in the
- * same timestep used identical rng_step bases, a per-particle draw
- * "fires" simultaneously across loops. See feedback_rng_loop_uniqueness.md
- * in project memory. */
+ * argument, once per call, so the body never reads All.* directly (TRAP 1). */
 struct SinkFeedCallScalars {
     NlrCommonScalars common;             /* cf_atime, cf_a2inv, newton_G, ... */
     double           sink_radius_grav;   /* SinkParticle_GravityKernelRadius */
@@ -90,7 +71,7 @@ struct SinkFeedCallScalars {
                                                  (zero otherwise) — pair-body readers are
                                                  themselves under matching #ifdefs, so the
                                                  fallback zero is never observed */
-    uint64_t         rng_step;           /* (uint64_t)NumCurrentTiStep ^ 0xfeed5117ULL */
+    uint64_t         rng_ti;             /* (uint64_t)All.Ti_Current, the event time of the draws */
 };
 
 /* Per-active host-fill struct, populated by populate_device_context() on
@@ -110,7 +91,8 @@ struct SinkFeedLocalIn {
     MyFloat Mdot;
     MyFloat Dt;
     MyIDType ID;
-    MyIDType claim_token;   /* sink ownership for the claim protocol; see gizmo_sink_claim_token */
+    MyIDType claim_token;   /* sink ownership for the claim protocol; see gizmo_claim_token */
+    uint64_t rng_key;       /* the sink's event key (gizmo_rng_particle_event_key), for the stochastic draws */
 #ifdef SINK_GRAVCAPTURE_GAS
     MyFloat mass_to_swallow_edd;
 #endif
@@ -241,11 +223,32 @@ struct SinkFeedDeviceContext : NeighborLoopDeviceContextBase {
  * stochastic-allowed and do NOT constitute a regression. The scratch field is
  * deliberately absent from the merge_accum manifest — see that manifest.
  *
- * RNG keys: per feedback_rng_loop_uniqueness.md, all per-pair draws key
- * on (local.ID ^ neighbor_particle.ID) and use scalars.rng_step which
- * carries a sink_feed-unique 0xfeed5117ULL XOR shift on top of
- * NumCurrentTiStep.
+ * RNG: per-pair draws are keyed on the sink and the neighbour (see the
+ * salts above).
  * ========================================================================== */
+
+/* Which of two sinks swallows the other, decided the same way from either side, so a pair has exactly one candidate unless
+ * the two mass measures disagree: the larger Sink_Mass, or the larger total Mass where the Sink_Mass ties; with sink dynamics
+ * a sink larger in Sink_Mass but smaller in total Mass swallows nothing, and neither does its partner (as in legacy). Both
+ * measures equal -- e.g. two sinks born from cells of one glass IC that have not yet accreted -- the wrapped separation
+ * j - i decides: it is antisymmetric, so the first axis on which it is nonzero is negative for exactly one of the pair. All
+ * three zero is r2 == 0, which the caller excludes. A NaN mass never merges. */
+KOKKOS_INLINE_FUNCTION
+static int sink_swallows_sink_neighbor(double sink_mass_i, double mass_i, double sink_mass_j, double mass_j, const Vec3<double>& dpos)
+{
+    if(!(sink_mass_i == sink_mass_i) || !(sink_mass_j == sink_mass_j) || !(mass_i == mass_i) || !(mass_j == mass_j)) {return 0;}
+    if(sink_mass_j != sink_mass_i)
+    {
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+        if((mass_j != mass_i) && ((mass_j < mass_i) != (sink_mass_j < sink_mass_i))) {return 0;}
+#endif
+        return sink_mass_j < sink_mass_i;
+    }
+    if(mass_j != mass_i) {return mass_j < mass_i;}
+    if(dpos[0] != 0) {return dpos[0] < 0;}
+    if(dpos[1] != 0) {return dpos[1] < 0;}
+    return dpos[2] < 0;
+}
 
 KOKKOS_INLINE_FUNCTION
 static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
@@ -331,11 +334,13 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
 #endif
 
     /* ---- sink-sink merger check ---- */
+#ifndef DISABLE_SINK_MERGERS
     if(neighbor_particle.Type == 5) {
         /* Identity is a separation of zero: IDs are not unique, so the identifier half of this test
          * did nothing the distance does not already do, and could only mis-fire. */
-        if((r2 > 0) &&
-           (SwallowID_j == 0) && (neighbor_particle.Sink_Mass < local.Sink_Mass)) {
+        if((r2 > 0) && (SwallowID_j == 0) &&
+           sink_swallows_sink_neighbor((double)local.Sink_Mass, (double)local.Mass,
+                                       (double)neighbor_particle.Sink_Mass, (double)neighbor_particle.Mass, dpos)) {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
             /* volatile per [[feedback_gpu]] §D.3 (nvc++ device-lambda
              * const-prop bug on int gate vars assigned conditionally —
@@ -343,17 +348,6 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             volatile int allow_sink_merger = 1;
             if(r >= 1.0001 * neighbor_particle.Min_Distance_to_Sink)  allow_sink_merger = 0;
             if(r >= heff_j)                                            allow_sink_merger = 0;
-            if(neighbor_particle.Mass > local.Mass)                    allow_sink_merger = 0;
-            /* Two sinks of exactly equal mass need one of them picked, the same way on both sides.
-             * Ordering on the identifier cannot do that when identifiers repeat -- it left this
-             * gate OPEN on both, so each swallowed the other.  The wrapped separation is
-             * antisymmetric, so the first axis on which it is nonzero is positive for exactly one
-             * of the pair; all three zero is r2 == 0, already excluded above. */
-            if(neighbor_particle.Mass == local.Mass) {
-                if(dpos[0] != 0)      {if(dpos[0] > 0) {allow_sink_merger = 0;}}
-                else if(dpos[1] != 0) {if(dpos[1] > 0) {allow_sink_merger = 0;}}
-                else if(dpos[2] > 0)  {allow_sink_merger = 0;}
-            }
             double max_rmerge = 1.0 * sink_radius;
             double max_mmerge = 10. * neighbor_particle.Sink_Formation_Mass;
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
@@ -379,7 +373,7 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                                            vrel, vesc, r, sink_radius)) allow_sink_merger = 0;
 #endif
             if(r >= max_rmerge)                  allow_sink_merger = 0;
-            if(neighbor_particle.Mass > max_mmerge) allow_sink_merger = 0;
+            if(!(neighbor_particle.Mass <= max_mmerge)) allow_sink_merger = 0; /* negated so a NaN ceiling blocks rather than permits; an infinite one still permits */
             if(allow_sink_merger == 1)
 #endif
             {
@@ -387,6 +381,7 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             }
         }
     }
+#endif /* DISABLE_SINK_MERGERS */
 
     /* ---- grav-capture check (non-Type5) ---- */
 #if defined(SINK_GRAVCAPTURE_GAS) || defined(SINK_GRAVCAPTURE_NONGAS)
@@ -426,16 +421,8 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                     if(scalars.sink_accreted_fraction > 0)
                         p /= scalars.sink_accreted_fraction;
 #endif
-                    /* RNG site 1: per-loop-unique rng_step (0xfeed5117ULL shift in
-                     * populate_call_scalars).  Key = claim token + neighbour identifier + neighbour
-                     * position; the position is what separates a sink's own same-identifier
-                     * neighbours, which the first two cannot. */
-                    double w = gizmo_gpu_rand_double(sink_pair_rng_key(local.claim_token,
-                                                                       neighbor_particle.ID,
-                                                                       (double)neighbor_particle.Pos[0],
-                                                                       (double)neighbor_particle.Pos[1],
-                                                                       (double)neighbor_particle.Pos[2]),
-                                                     scalars.rng_step);
+                    double w = gizmo_gpu_rand_double(gizmo_rng_combine(local.rng_key, gizmo_rng_particle_event_key(neighbor_particle)),
+                                                     gizmo_rng_event_counter(SINK_CAPTURE_RNG_SALT, scalars.rng_ti, 0));
                     if(w < p) { SwallowID_j = local.claim_token; }
 #else
                     SwallowID_j = local.claim_token;
@@ -478,13 +465,8 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                 }
             }
 #endif
-            /* RNG site 2: same pairwise key + +1 counter offset to separate from site 1. */
-            double w = gizmo_gpu_rand_double(sink_pair_rng_key(local.claim_token,
-                                                               neighbor_particle.ID,
-                                                               (double)neighbor_particle.Pos[0],
-                                                               (double)neighbor_particle.Pos[1],
-                                                               (double)neighbor_particle.Pos[2]),
-                                             scalars.rng_step + 1);
+            double w = gizmo_gpu_rand_double(gizmo_rng_combine(local.rng_key, gizmo_rng_particle_event_key(neighbor_particle)),
+                                             gizmo_rng_event_counter(SINK_SWALLOW_RNG_SALT, scalars.rng_ti, 0));
             if(w < p) {
                 SwallowID_j = local.claim_token;
                 out.mass_markedswallow_scratch += (double)neighbor_particle.Mass * f_accreted;

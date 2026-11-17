@@ -15,7 +15,11 @@
 #include "../system/gpu_particles_arena.h"
 #include "../core/timestep_functions.h"   /* Hermite pass state, refreshed below */
 #include "../mesh/kernel.h"
+#include "../declarations/gpu_rng.h"
 #include "./analytic_gravity.h"
+#include "gpu_topology_finalize.h"   /* gpu_tree_alloc_bytes: the Hermite ghost table is SharedSpace */
+#include <vector>
+#include <algorithm>
 
 /*! Host-vs-device routing for the gravity walk, keyed on the RANK-LOCAL count of active
  *  gravity candidates. With few candidates the host walk is the cheaper route; with many
@@ -24,7 +28,7 @@
  *  need not coincide. */
 int gravity_walk_route_to_host(long long n_local_active)
 {
-    return (All.GravityHostWalkBelowActive > 0 && n_local_active < (long long)All.GravityHostWalkBelowActive) ? 1 : 0;
+    return gizmo_gpu_offload_takes(GPU_OFFLOAD_GRAVITY_WALK, n_local_active) ? 0 : 1;
 }
 
 /*! \file gravtree.c
@@ -133,13 +137,119 @@ void refresh_old_acceleration_for_tree_opening(void)
 
 
 
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+struct hermite_ghost_entry *HermiteGhostTab = NULL;   /* the table for the current Hermite pass; NULL outside one */
+int NHermiteGhost = 0;
+/* Storage behind the table (SharedSpace, read by both walks): kept across passes and grown only when the global
+ * count of Hermite-type particles exceeds its capacity, so a pass normally allocates nothing. */
+static struct hermite_ghost_entry *HermiteGhostStore = NULL;
+static int HermiteGhostCapacity = 0;
+
+/* This rank's Hermite-type particles, listed where every particle is visited anyway -- each gravity tree build and each
+ * re-sequencing under a standing tree -- so a Hermite pass reads only these and never scans the particles. A particle created since the build is
+ * not in any other rank's imported tree, so nobody looks it up; one removed since has zero mass and is skipped. */
+static std::vector<int> HermiteLocalSources;
+void hermite_local_sources_rebuild(void)
+{
+    HermiteLocalSources.clear();
+    if(NTask <= 1) {return;}   /* a single rank imports no foreign leaves, so the table is never built */
+    for(int i = 0; i < NumPart; i++) {if(((1 << P[i].Type) & HERMITE_INTEGRATION) && P[i].Mass > 0) {HermiteLocalSources.push_back(i);}}
+}
+
+/* Host buffers of the table build, reused from pass to pass. HermiteGhostOrder[k] is the gathered entry that
+ * goes to table slot k (ascending ID): reused while the count is unchanged and the result is still sorted, which
+ * holds between tree builds unless a listed particle drops out; otherwise rebuilt. */
+static std::vector<struct hermite_ghost_entry> HermiteGhostMine, HermiteGhostGathered;
+static std::vector<int> HermiteGhostCounts, HermiteGhostDispls, HermiteGhostOrder;
+
+/* Gather every rank's Hermite-type particles at the state a local walk would read them in this pass
+ * (see hermite_ghost_entry). Only on a Hermite pass with more than one rank: a single rank has no
+ * foreign leaves. */
+static void hermite_ghost_table_build(void)
+{
+    HermiteGhostTab = NULL; NHermiteGhost = 0;
+    if(!HermiteOnlyFlag || NTask <= 1) {return;}
+    const struct DriftKickTableView tables = drift_kick_table_view_host();
+    std::vector<struct hermite_ghost_entry> &mine = HermiteGhostMine;
+    mine.clear();
+    for(int i : HermiteLocalSources)
+    {
+        if(i >= NumPart || !((1 << P[i].Type) & HERMITE_INTEGRATION) || P[i].Mass <= 0) {continue;}
+        struct hermite_ghost_entry e; e.id = P[i].ID;
+        Vec3<double> pos = P[i].Pos, vel = P[i].Vel;
+        if(P[i].Ti_current < All.Ti_Current)
+        {
+            struct particle_motion_prediction motion(P, CellP, i);
+            predict_particle_motion(motion, All.Ti_Current, &tables);
+            pos = motion.pos_; vel = motion.vel_;
+        }
+        if(hermite_source_needs_prediction(i, P, HermiteWalk)) {hermite_predict_source_state(i, P, HermiteWalk, &HermiteWalkTables, pos, vel);}
+        e.pos = pos; e.vel = vel;
+        mine.push_back(e);
+    }
+    const int esz = (int) sizeof(struct hermite_ghost_entry);
+    int n_local = (int) mine.size();
+    std::vector<int> &counts = HermiteGhostCounts, &displs = HermiteGhostDispls;
+    counts.resize(NTask); displs.resize(NTask);
+    MPI_Allgather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    int n_tot = 0;
+    for(int t = 0; t < NTask; t++) {displs[t] = n_tot * esz; n_tot += counts[t]; counts[t] *= esz;}
+    if(n_tot == 0) {return;}
+    if(n_tot > HermiteGhostCapacity)   /* n_tot is global, so every rank grows on the same pass */
+    {
+        const int capacity = n_tot + n_tot / 2;   /* headroom, so a run that keeps forming sinks does not regrow at each new count */
+        struct hermite_ghost_entry *grown = (struct hermite_ghost_entry *) gpu_tree_alloc_bytes((size_t) capacity * esz, "hermite_ghost_table");
+        int ok = (grown != NULL), all_ok = 0;
+        MPI_Allreduce(&ok, &all_ok, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if(!all_ok)   /* every rank stops here together, rather than one rank missing the exchange below */
+        {
+            if(grown) {gpu_tree_free_bytes(grown);}
+            endrun(90000099); return;
+        }
+        if(HermiteGhostStore) {gpu_tree_free_bytes(HermiteGhostStore);}
+        HermiteGhostStore = grown; HermiteGhostCapacity = capacity;
+    }
+    std::vector<struct hermite_ghost_entry> &gathered = HermiteGhostGathered;
+    gathered.resize(n_tot);
+    MPI_Allgatherv(mine.data(), n_local * esz, MPI_BYTE, gathered.data(), counts.data(), displs.data(), MPI_BYTE, MPI_COMM_WORLD);
+    HermiteGhostTab = HermiteGhostStore;
+    std::vector<int> &order = HermiteGhostOrder;
+    int sorted = ((int) order.size() == n_tot);
+    for(int k = 0; sorted && k < n_tot; k++)
+    {
+        HermiteGhostTab[k] = gathered[order[k]];
+        if(k > 0 && HermiteGhostTab[k].id < HermiteGhostTab[k-1].id) {sorted = 0;}
+    }
+    if(!sorted)
+    {
+        order.resize(n_tot);
+        for(int k = 0; k < n_tot; k++) {order[k] = k;}
+        std::sort(order.begin(), order.end(), [&gathered](int a, int b) {return gathered[a].id < gathered[b].id;});
+        for(int k = 0; k < n_tot; k++) {HermiteGhostTab[k] = gathered[order[k]];}
+    }
+    NHermiteGhost = n_tot;
+}
+
+/* End of a Hermite pass: the walks stop using the table; its storage is kept for the next pass. */
+static void hermite_ghost_table_close(void)
+{
+    HermiteGhostTab = NULL; NHermiteGhost = 0;
+}
+
+/* At shutdown, before Kokkos is finalized. */
+void hermite_ghost_table_release(void)
+{
+    hermite_ghost_table_close();
+    if(HermiteGhostStore) {gpu_tree_free_bytes(HermiteGhostStore);}
+    HermiteGhostStore = NULL; HermiteGhostCapacity = 0;
+}
+#endif
+
 void gravity_tree(void)
 {
     /* initialize variables */
-    long long n_exported = 0; int i, j, maxnumnodes, iter; i = 0; j = 0; iter = 0; maxnumnodes=0;
-    double t0, t1, timeall = 0, timetree1 = 0, timetree2 = 0, timetree, timewait, timecomm;
-    double timecommsumm1 = 0, timecommsumm2 = 0, timewait1 = 0, timewait2 = 0, sum_costtotal, ewaldtot;
-    double maxt, sumt, maxt1, sumt1, maxt2, sumt2, sumcommall, sumwaitall, plb, plb_max;
+    int i, j, iter; i = 0; j = 0; iter = 0;
+    double t0, t1, timeall = 0, timetree1 = 0, timetree2 = 0, timewait2 = 0;
     CPU_Step[CPU_MISC] += measure_time();
 
     /* set new softening lengths */
@@ -163,6 +273,9 @@ void gravity_tree(void)
        pass, since the predictor returns immediately when HermiteOnlyFlag is 0. */
     HermiteWalk = hermite_walk_state_snapshot();
     if(HermiteOnlyFlag) {HermiteWalkTables = drift_kick_table_view_host();}
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    hermite_ghost_table_build();
+#endif
 #endif
 
     /* construct tree if needed */
@@ -198,7 +311,13 @@ void gravity_tree(void)
              * recovery, not the step's merge/split, and running it here would refine twice. */
             if(ThisTask == 0) {printf("Tree build: restoring geometric particle ownership before rebuilding.\n"); fflush(stdout);}
             domain_Decomposition_light(0, 0);
-            if(force_treebuild_gravity() < 0) {endrun(91566);}
+            const int retry_status = force_treebuild_gravity();
+            if(retry_status < 0)
+            {
+                if(ThisTask == 0) {printf("Tree build still failed (status %d) after restoring particle ownership. Stopping.\n", retry_status); fflush(stdout);}
+                endrun(91566);
+                gizmo_exit_bad_stop_if_requested("gravtree:treebuild_retry");   /* the gravity walk below reads this tree */
+            }
         }
         /* The tree just built is current by construction: the build set every
          * node's Ti_current to All.Ti_Current and refilled the whole SoA mirror,
@@ -225,9 +344,15 @@ void gravity_tree(void)
         PRINT_STATUS(" ..Tree construction done.");
     }
 
-    /* refresh tree moments if stale (e.g. after star formation or sink mass change).
-       This must run before ANY gravity evaluation including Hermite calls, since
-       stale moments produce wrong forces. Much cheaper than a full treebuild. */
+    /* Refresh the node moments where a site has asked for it (a sink formed, a sink run down to its relic mass). This must run
+       before any gravity evaluation, Hermite passes included. The refresh is a pass over every node, so it is asked for
+       only where a change cannot wait for the next build. Otherwise the node moments are left stale between builds ON
+       PURPOSE -- after ordinary star formation, sink swallows and spawns -- a deliberate choice, not an oversight: a new star's luminosity keys off its
+       age, which is zero at formation, so it is not yet meaningful; an immediate refresh would make the local tree
+       disagree with the tree exported to other ranks (rebuilt only at full builds) whenever a luminosity changes, i.e.
+       every step; the finite-time staleness smooths the early-age fluctuations of close sources, which an immediate
+       refresh turns into opening-criterion noise and, in past experiments, larger force errors; and it would put an
+       all-node pass on the smallest steps. A build is forced once insertions pass 1% of the particles. */
     {
         int TreeMomentsStaleFlag_global;
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -593,7 +718,14 @@ gravity_walk_attempt:
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         double dt = get_particle_timestep_in_physical(i, P);
         if(!gravity_treeforce_candidate_frozen(ii)) { // the one decision this call froze before any walk ran, the same one the walk dispatchers used
+#ifdef HERMITE_INTEGRATION
+            if(HermiteOnlyFlag) {continue;} // a Hermite pass evaluates at the time of the latest main pass, which already advanced this particle and left its full acceleration: no time has elapsed
+#endif
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+            P[i].GravAccel_Retained += P[i].GravJerk * (dt * All.cf_a2inv); P[i].GravAccel = P[i].GravAccel_Retained; // the kept gravity, without the forces added after the last gravity call
+#else
             P[i].GravAccel += P[i].GravJerk * (dt * All.cf_a2inv); // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
+#endif
             P[i].time_since_last_treeforce += dt;
             continue;
         } else {
@@ -723,16 +855,6 @@ gravity_walk_attempt:
 	    } // we put a floor here to avoid underflow errors where exp(-large) = 0 - will just return a very high surface density that will be in the highly optically thick regime where both the ISRF and cooling radiation escape will be negligible
         P[i].SigmaEff = -log(attenuation/RT_USE_TREECOL_FOR_NH) / (kappa_photoelectric * UNIT_SURFDEN_IN_CGS);
 	    if(P[i].SigmaEff < minimum_column) {P[i].SigmaEff = minimum_column;} // if in the overflowing regime just take the minimum column density to extrapolate better to the IR-thick regime
-#ifdef GIZMO_TREECOL_DIAG
-        if(ThisTask==0 && P[i].Type==0 && i<10 && All.NumCurrentTiStep<4) {
-            double csum=0; for(int kb=0;kb<RT_USE_TREECOL_FOR_NH;kb++) csum+=P[i].ColumnDensityBins[kb];
-            printf("TREECOL_DIAG step=%d i=%d ID=%llu SigmaEff=%g binsum=%g bins=[%g,%g,%g,%g,%g,%g] LET=%d\n",
-                   All.NumCurrentTiStep,(int)i,(unsigned long long)P[i].ID,P[i].SigmaEff,csum,
-                   P[i].ColumnDensityBins[0],P[i].ColumnDensityBins[1],P[i].ColumnDensityBins[2],
-                   P[i].ColumnDensityBins[3],P[i].ColumnDensityBins[4],P[i].ColumnDensityBins[5],
-                   (MaxForeignNodes>0)?1:0); fflush(stdout);
-        }
-#endif
 #endif
 
 #if !defined(BOX_PERIODIC) && !defined(PMGRID) /* some factors here in case we are trying to do comoving simulations in a non-periodic box (special use cases) */
@@ -751,48 +873,37 @@ gravity_walk_attempt:
 #endif /* end SELFGRAVITY operations (check if SELFGRAVITY_OFF not enabled) */
 
 
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+    /* the tree part of the acceleration, for every particle this call rebuilt: what its skipped walks advance with the jerk. A skipped
+       walk has already advanced its own. The analytic terms and the forces added after gravity go on top, afresh each step */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {int i = ActiveParticleList[ii]; if(gravity_treewalk_candidate_prewalk(i, ii)) {P[i].GravAccel_Retained = P[i].GravAccel;}}
+#endif
+
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
 
 
     /* Now the force computation is finished: gather timing and diagnostic information */
     t1 = my_second(); cpu_chain_sync(t1); timeall = cpu_minus_children(timediff(t0, t1), child0_span);
-    timetree = timetree1 + timetree2; timewait = timewait1 + timewait2; timecomm = timecommsumm1 + timecommsumm2;
-    MPI_Reduce(&timetree, &sumt, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timetree, &maxt, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timetree1, &sumt1, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timetree1, &maxt1, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timetree2, &sumt2, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timetree2, &maxt2, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timewait, &sumwaitall, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timecomm, &sumcommall, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    /* The interaction total the walks recorded into GravWork rides the same reduction as Costtotal, for
-     * the consistency check below, so it adds no collective to the call. */
-    double sum_costtotal_new = 0;
-    {
-        double costtotal_pair[2] = {Costtotal, 0}, sum_costtotal_pair[2] = {0, 0};
-#ifndef SELFGRAVITY_OFF
-        for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {costtotal_pair[1] += (double) P[ActiveParticleList[ii]].GravWork - (double) grav_work_at_call_start[ii];}
-#endif
-        MPI_Reduce(costtotal_pair, sum_costtotal_pair, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        sum_costtotal = sum_costtotal_pair[0]; sum_costtotal_new = sum_costtotal_pair[1];
-    }
-    MPI_Reduce(&Ewaldcount, &ewaldtot, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    sumup_longs(1, &n_exported, &n_exported);
-    sumup_longs(1, &N_nodesinlist, &N_nodesinlist);
     All.TotNumOfForces += GlobNumForceUpdate;
-    plb = (NumPart / ((double) All.TotNumPart)) * NTask;
-    MPI_Reduce(&plb, &plb_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    /* The span from the end of the build to t1 is the force walk.  Only the
+     * wait is separately measured inside it, so the walk row is the rest of the
+     * span; charging the remainder to `misc` instead reported the whole walk as
+     * unattributed. */
+    CPU_Step[CPU_TREEWALK1] += timeall - timewait2;
+    CPU_Step[CPU_TREEWAIT2] += timewait2;
+#ifdef OUTPUT_ADDITIONAL_RUNINFO
+    /* Everything below feeds only rank 0's timings report, so it is reduced to rank 0, only in builds that
+     * write the report, and in one reduction per operation and type. */
     /* Packets the device engine gave up on this call, by reason, summed over ranks and also taken
      * at its worst rank: a budget cliff is a property of the rank with the divergent subtree, and
-     * a sum over ranks alone would average it away.  Collective, so it sits with the other
-     * reductions rather than inside the rank-0 report below. */
-    /* The two stamped recorders' fail-safe totals ride in the same two reductions rather than
-     * adding their own: the node claims answered before each device walk, and the touched set of
-     * the Mode-D fused walk.  Each exists so that a permanent silent revert -- to sweeping every
-     * node, or to drifting every particle -- is visible rather than indistinguishable from the
-     * optimisation working, and nothing read either of them; but observability may not charge the
-     * path it is watching, and this call already carries collectives.  Three extra words on an
-     * existing reduction is free; two more reductions per gravity call would not be. */
+     * a sum over ranks alone would average it away. */
+    /* The two stamped recorders' fail-safe totals: the node claims answered before each device walk,
+     * and the touched set of the Mode-D fused walk.  Each exists so that a permanent silent revert --
+     * to sweeping every node, or to drifting every particle -- is visible rather than
+     * indistinguishable from the optimisation working. */
     /* Scoped, not #define: a macro here would be translation-unit-wide despite sitting in a
        function. */
     constexpr int recorder_slots = 3;
@@ -803,9 +914,12 @@ gravity_walk_attempt:
        unreadable rather than negative. */
     constexpr int mode_slots     = 4;   /* flat, packet, cooperative, flat walk that could not run as teams */
     constexpr int report_slots   = GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + mode_slots;
-    long long packet_fail[report_slots] = {0};
-    long long packet_fail_sum[report_slots] = {0};
-    long long packet_fail_max[report_slots] = {0};
+    /* the integer report: packet counts, then the export and node-list counts (summed) and the tree's node count (maximum) */
+    constexpr int slot_exported = report_slots, slot_nodesinlist = report_slots + 1, slot_numnodes = report_slots + 2;
+    constexpr int int_slots = report_slots + 3;
+    long long packet_fail[int_slots] = {0};
+    long long packet_fail_sum[int_slots] = {0};
+    long long packet_fail_max[int_slots] = {0};
     gpu_gravtree_packet_failures(packet_fail, GRAV_PACKET_FAIL_REASON_SLOTS);
     packet_fail[GRAV_PACKET_FAIL_REASON_SLOTS + 0] = gpu_node_dirty_unsafe_events();
     packet_fail[GRAV_PACKET_FAIL_REASON_SLOTS + 1] = gx_touched_set_refused_epochs();
@@ -818,21 +932,30 @@ gravity_walk_attempt:
         else if(ps_local.mode == GRAV_PACKET_MODE_COOPERATIVE) {packet_fail[mode_base + 2] = 1;}
         if(ps_local.mode == GRAV_PACKET_MODE_FLAT && ps_local.team == 0 && ps_local.team_max >= 0) {packet_fail[mode_base + 3] = 1;}
     }
-    MPI_Reduce(packet_fail, packet_fail_sum, report_slots, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(packet_fail, packet_fail_max, report_slots, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&Numnodestree, &maxnumnodes, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
-    /* The span from the end of the build to here is the force walk.  Only the
-     * wait is separately measured inside it, so the walk row is the rest of the
-     * span; charging the remainder to `misc` instead reported the whole walk as
-     * unattributed.  The send/recv and second-walk timers this routine used to
-     * split out have no writer any more and are not charged. */
-    CPU_Step[CPU_TREEWALK1] += timeall - timewait2;
-    CPU_Step[CPU_TREEWAIT2] += timewait2;
-#ifdef OUTPUT_ADDITIONAL_RUNINFO
+    packet_fail[slot_exported] = 0;   /* no export round-trip remains to count */
+    packet_fail[slot_nodesinlist] = N_nodesinlist;
+    packet_fail[slot_numnodes] = Numnodestree;
+    MPI_Reduce(packet_fail, packet_fail_sum, int_slots, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(packet_fail, packet_fail_max, int_slots, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
+    const long long n_exported = packet_fail_sum[slot_exported], nodesinlist_tot = packet_fail_sum[slot_nodesinlist];
+    const int maxnumnodes = (int) packet_fail_max[slot_numnodes];
+    /* The real-valued report, one sum and one maximum. The interaction total the walks recorded into GravWork
+     * is summed beside Costtotal for the consistency check below. */
+    double gravwork_new = 0;
+#ifndef SELFGRAVITY_OFF
+    for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {gravwork_new += (double) P[ActiveParticleList[ii]].GravWork - (double) grav_work_at_call_start[ii];}
+#endif
+    const double timetree = timetree1 + timetree2, plb = (NumPart / ((double) All.TotNumPart)) * NTask;
+    double sum_local[6] = {timetree, timetree1, timetree2, Costtotal, gravwork_new, Ewaldcount}, sum_tot[6] = {0};
+    double max_local[4] = {timetree, timetree1, timetree2, plb}, max_tot[4] = {0};
+    MPI_Reduce(sum_local, sum_tot, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(max_local, max_tot, 4, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    const double sumt = sum_tot[0], sumt1 = sum_tot[1], sumt2 = sum_tot[2], sum_costtotal = sum_tot[3], sum_costtotal_new = sum_tot[4], ewaldtot = sum_tot[5];
+    const double maxt = max_tot[0], maxt1 = max_tot[1], maxt2 = max_tot[2], plb_max = max_tot[3];
     if(ThisTask == 0)
     {
         fprintf(FdTimings, "Step= %lld  t= %.16g  dt= %.16g \n",(long long) All.NumCurrentTiStep, All.Time, All.TimeStep);
-        fprintf(FdTimings, "Nf= %d%09d  total-Nf= %d%09d  ex-frac= %g (%g) iter= %d\n", (int) (GlobNumForceUpdate / 1000000000), (int) (GlobNumForceUpdate % 1000000000), (int) (All.TotNumOfForces / 1000000000), (int) (All.TotNumOfForces % 1000000000), n_exported / ((double) GlobNumForceUpdate), N_nodesinlist / ((double) n_exported + 1.0e-10), iter); /* note: on Linux, the 8-byte integer could be printed with the format identifier "%qd", but doesn't work on AIX */
+        fprintf(FdTimings, "Nf= %d%09d  total-Nf= %d%09d  ex-frac= %g (%g) iter= %d\n", (int) (GlobNumForceUpdate / 1000000000), (int) (GlobNumForceUpdate % 1000000000), (int) (All.TotNumOfForces / 1000000000), (int) (All.TotNumOfForces % 1000000000), n_exported / ((double) GlobNumForceUpdate), nodesinlist_tot / ((double) n_exported + 1.0e-10), iter); /* note: on Linux, the 8-byte integer could be printed with the format identifier "%qd", but doesn't work on AIX */
         fprintf(FdTimings, "work-load balance: %g (%g %g) rel1to2=%g   max=%g avg=%g\n", maxt / (1.0e-6 + sumt / NTask), maxt1 / (1.0e-6 + sumt1 / NTask), maxt2 / (1.0e-6 + sumt2 / NTask), sumt1 / (1.0e-6 + sumt1 + sumt2), maxt, sumt / NTask);
         fprintf(FdTimings, "particle-load balance: %g\n", plb_max);
         fprintf(FdTimings, "max. nodes: %d, filled: %g\n", maxnumnodes, maxnumnodes / ((double) MaxNodes));
@@ -876,6 +999,9 @@ gravity_walk_attempt:
          * whichever path each target took. A larger value means the two no longer measure the same thing. */
         if(sum_costtotal>0) {PRINT_STATUS(" ..relative error in the total number of tree-gravity interactions = %g", (sum_costtotal - sum_costtotal_new) / sum_costtotal);}
     }
+#endif
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    hermite_ghost_table_close();
 #endif
     CPU_Step[CPU_TREEMISC] += measure_time();
 }

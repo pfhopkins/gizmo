@@ -427,10 +427,12 @@ int eligible_for_hermite(int i, struct particle_data *pp)
 #if defined(GRAIN_FLUID)
     if((1 << pp[i].Type) & (GRAIN_PTYPES)) {return 0;} // not compatible with these flags for these types
 #endif
-#if defined(SINK_PARTICLES) || defined(GALSF)
-    if(pp[i].StellarAge >= DMAX(All.Time - 2*(get_particle_timestep_in_physical(i, pp)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
-    if(pp[i].AccretedThisTimestep) {return 0;}
+#if defined(GALSF) /* the formation time only exists, and new particles are only spawned, with GALSF */
+    if(pp[i].StellarAge >=DMAX(All.Time - 2*(get_particle_timestep_in_physical(i, pp)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
 #endif
+    /* An accreting sink stays Hermite-integrated: a per-particle fallback would put the two members of a pair on different
+       schemes whenever only one of them accretes, and the force between them would no longer be reciprocal. The accretion
+       jump is carried into the Hermite step's starting state instead (sink_final_operations). */
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     if(pp[i].SuperTimestepFlag >= 2) {return 0;}
 #endif
@@ -454,6 +456,36 @@ static_assert(TIMEBINS <= 64, "HermiteWalkState carries the active timebins as a
  *  Host globals: the walks consume them on the host, and the device walk is handed a copy. */
 extern struct HermiteWalkState   HermiteWalk;
 extern struct DriftKickTableView HermiteWalkTables;   /*!< assembled only while HermiteOnlyFlag is set */
+
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+/*! Owner-side source state of one Hermite-type particle for a Hermite pass.
+ *
+ *  A foreign leaf in the imported tree is a moment snapshot taken at the last tree build, so in a
+ *  Hermite pass it stands where the leapfrog left it with the leapfrog velocity, not where the
+ *  owner's Hermite predictor/corrector has put it, and it has no Old* state to re-predict from.
+ *  Each Hermite pass every rank therefore publishes, for its own Hermite-type particles, the state a
+ *  LOCAL walk would read (live state, or the Old* prediction for an inactive eligible source), and
+ *  the walks substitute it for a foreign leaf's position and velocity, looked up by particle ID.
+ *  Sorted by ID; SharedSpace, so the device walk reads it directly. */
+struct hermite_ghost_entry {
+    MyIDType id;
+    Vec3<double> pos, vel;
+};
+extern struct hermite_ghost_entry *HermiteGhostTab;   /*!< non-NULL only inside a Hermite-pass gravity_tree() */
+extern int NHermiteGhost;
+
+KOKKOS_INLINE_FUNCTION int hermite_ghost_lookup(const struct hermite_ghost_entry *tab, int n, MyIDType id)
+{
+    int lo = 0, hi = n - 1;
+    while(lo <= hi)
+    {
+        const int mid = lo + ((hi - lo) >> 1);
+        if(tab[mid].id == id) {return mid;}
+        if(tab[mid].id < id) {lo = mid + 1;} else {hi = mid - 1;}
+    }
+    return -1;
+}
+#endif
 
 /*! Take the snapshot. Host only: it reads the host globals the walks cannot see from
  *  device code, which is the whole reason the snapshot exists. */
@@ -480,14 +512,22 @@ static inline struct HermiteWalkState hermite_walk_state_snapshot(void)
  *  be empty and would return the start of its previous step. On the corrector pass
  *  do_hermite_prediction has already written the predicted state into Pos and Vel.
  *
+ *  The prediction is used only inside the source's own step: the Old* polynomial
+ *  describes the source over that step, and evaluated beyond it, it is an
+ *  extrapolation that can carry the source a multiple of a close pair's separation
+ *  along the orbit. Outside the step the leapfrog-drifted state is used instead.
+ *
  *  The type test comes first because it is a mask compare, while the full predicate
- *  below it reads several fields and computes a timestep. */
+ *  below it reads several fields and computes a timestep; the step-span test is two
+ *  integer compares and goes ahead of it for the same reason. */
 KOKKOS_INLINE_FUNCTION
 int hermite_source_needs_prediction(int no, struct particle_data *pp, struct HermiteWalkState hw)
 {
     if(!hw.hermite_only) {return 0;}
     if(!(HERMITE_INTEGRATION & (1 << pp[no].Type))) {return 0;}
     if(hw.active_bins & (1ULL << pp[no].TimeBin)) {return 0;}
+    if(hw.ti_current < pp[no].Ti_begstep) {return 0;}
+    if(hw.ti_current - pp[no].Ti_begstep > pp[no].integertime_step()) {return 0;}
     return eligible_for_hermite(no, pp);
 }
 
@@ -830,7 +870,7 @@ struct particle_motion_in_arrays {
     KOKKOS_INLINE_FUNCTION void add_reflected_momentum(int j, double mass_for_dp, double vel_before) const {pp[i].dp[j]+=(pp[i].Vel[j]-vel_before)*mass_for_dp;}
     KOKKOS_INLINE_FUNCTION void zero_momentum() const {pp[i].dp[0]=pp[i].dp[1]=pp[i].dp[2]=0;}
     KOKKOS_INLINE_FUNCTION void outflow_removed_mass() const {if(pp[i].Type==0) {cell[i].Mass=0;}}
-    /* A gas cell's radiation and cosmic-ray fluxes are mirrored with it: their normal components change sign. */
+    /* A gas cell's radiation and cosmic-ray fluxes, and its evolved non-ideal MHD field, are mirrored with it: their normal components change sign. */
     KOKKOS_INLINE_FUNCTION void reflect_normal_fluxes(int j) const
     {
         (void)j;
@@ -839,6 +879,9 @@ struct particle_motion_in_arrays {
 #endif
 #ifdef COSMIC_RAY_FLUID
         if(pp[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {cell[i].CosmicRayFlux[kf][j]=-cell[i].CosmicRayFlux[kf][j]; cell[i].CosmicRayFluxPred[kf][j]=cell[i].CosmicRayFlux[kf][j];}}
+#endif
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+        if(pp[i].Type==0) {cell[i].NonIdealMHDFlux[j]=-cell[i].NonIdealMHDFlux[j]; cell[i].NonIdealMHDFluxPred[j]=cell[i].NonIdealMHDFlux[j];}
 #endif
     }
 };
@@ -1027,7 +1070,7 @@ void apply_special_boundary_conditions_body(Motion &a, double mass_for_dp, int m
             if((reflect_lower && x < wall_gap) || (reflect_upper && L - x < wall_gap))
             {
                 const struct particle_data &s = a.stored();
-                const uint64_t key = gizmo_gpu_splitmix64((uint64_t) s.ID ^ gizmo_gpu_splitmix64((uint64_t) s.ID_child_number ^ gizmo_gpu_splitmix64((uint64_t) s.ID_generation)));
+                const uint64_t key = gizmo_rng_particle_identity((uint64_t) s.ID, (uint64_t) s.ID_child_number, (uint64_t) s.ID_generation);
                 const int face = (reflect_lower && x < wall_gap) ? 0 : 1;
                 const uint64_t counter = gizmo_gpu_splitmix64(((uint64_t) ti_target) ^ SPECIAL_BOUNDARY_RNG_SALT) + (uint64_t)(6 * crossings + 2 * j + face);
                 const double offset = wall_gap * (0.5 + gizmo_gpu_rand_double(key, counter));

@@ -186,8 +186,11 @@ static void thermal_fb_pair_kernel(
      * deposits cause during the loop (local.wt_sum holds Sum_k W_k). */
     wk = wk / (double)local.wt_sum;
 
-    /* Mass injected into j. */
+    /* Mass injected into j. This contribution's energy and metals are spread over j's mass including
+     * it, as in the legacy kernel, so the contribution adds wk*Esne of energy and dM*yields of metal mass
+     * (deposits from other sources into the same cell are separate atomic updates). */
     double dM = wk * (double)local.Msne;
+    double Mass_j_new = Mass_j + dM;
 
     /* Delta density. Branches preserved from the legacy kernel (rho_j_0 sign
      * + per-j kernel radius decide the smoothing length). */
@@ -201,8 +204,7 @@ static void thermal_fb_pair_kernel(
         delta_rho = (double)local.kernel_zero * dM / kr3;
     }
 
-    /* Energy: IE += wk * Esne / Mass_j. */
-    double dIE = wk * (double)local.Esne / Mass_j;
+    double dIE = wk * (double)local.Esne / Mass_j_new;
 
     out.M_coupled += dM;
 
@@ -233,7 +235,7 @@ static void thermal_fb_pair_kernel(
 
 #ifdef METALS
     for (int k = 0; k < NUM_METAL_SPECIES; k++) {
-        double dMet = (dM / Mass_j)
+        double dMet = (dM / Mass_j_new)
                     * ((double)local.yields[k] - (double)Kokkos::atomic_load(&Pj.Metallicity[k]));
         Kokkos::atomic_add(&Pj.Metallicity[k], (MyFloat)dMet);
     }

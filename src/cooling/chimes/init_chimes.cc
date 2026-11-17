@@ -3394,9 +3394,9 @@ void init_chimes(struct globalVariables *myGlobalVars)
   else
     printf("CHIMES precision not recognised.\n");
 
-  if (sizeof(realtype) == sizeof(float))
+  if (sizeof(sunrealtype) == sizeof(float))
     printf("Sundials built in single precision.\n");
-  else if (sizeof(realtype) == sizeof(double))
+  else if (sizeof(sunrealtype) == sizeof(double))
     printf("Sundials built in double precision.\n");
   else
     printf("Sundials precision not recognised.\n");
@@ -3404,7 +3404,7 @@ void init_chimes(struct globalVariables *myGlobalVars)
   /* Check that both CHIMES and the Sundials 
    * library have been built with the same 
    * float precision. */
-  if (sizeof(ChimesFloat) != sizeof(realtype))
+  if (sizeof(ChimesFloat) != sizeof(sunrealtype))
     {
       printf("CHIMES ERROR: CHIMES and Sundials have to use the same float precision.\n");
       chimes_exit();

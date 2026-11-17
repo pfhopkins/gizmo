@@ -48,6 +48,15 @@
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
 
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+/* Grain coagulation is claim-then-consume, like sink accretion: the force pass
+ * records claims (merged home through the ghost writeback), and a second pass of
+ * this Spec over the grains that claimed something moves the mass. The flag
+ * selects that second pass; the list is filled by the first pass's writeback. */
+static int              ags_force_coag_consume_pass = 0;
+static std::vector<int> ags_force_coag_claimants;
+#endif
+
 
 /* ============================================================================
  * HOST HOOKS
@@ -68,6 +77,10 @@ AgsForceSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
     scalars.common = nlr_common_scalars_from_all();
     for(int k = 0; k < TIMEBINS; k++) scalars.TimeBinActive[k] = TimeBinActive[k];
     scalars.rng_salt = AGS_FORCE_RNG_SALT;
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+    scalars.this_task    = ThisTask;
+    scalars.coag_consume = ags_force_coag_consume_pass;
+#endif
     return scalars;
 }
 
@@ -119,6 +132,30 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
                                            int /*active_slot*/, int i,
                                            const AccumData& accum)
 {
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+    if(ags_force_coag_consume_pass) {
+        /* The consume pass carries nothing but the absorbed mass. */
+        if(P[i].Mass > 0 && accum.Grain_DeltaCoagMass > 0) {
+            double M_old = (double)P[i].Mass;
+            double M_new = M_old + accum.Grain_DeltaCoagMass;
+            for(int s = 0; s < GRAIN_NUM_SPECIES; s++) {
+                double M_species_s = M_old * (double)P[i].Composition[s]
+                                     + accum.Grain_DeltaCoag_CompositionMass[s];
+                if(M_species_s < 0) M_species_s = 0;
+                P[i].Composition[s] = (MyFloat)(M_species_s / M_new);
+            }
+            P[i].Grain_Size = (MyFloat)((double)P[i].Grain_Size * pow(M_new / M_old, 1.0 / 3.0));
+            P[i].Mass       = (MyDouble)M_new;
+        }
+        return;
+    }
+    /* Each claimant is listed once: this writeback runs serially and once per active (one pass, and a particle
+       sits in one subgroup). Listing one twice would let it absorb the same grain twice in the consume pass. */
+    static_assert(AgsForceSpec::max_iters == 1, "the coagulation claimant list assumes one writeback per active");
+    static_assert(!nlr_spec_writeback_writes_only_own_particle_v<AgsForceSpec>,
+                  "the coagulation claimant list is filled from a serial writeback");
+    if(accum.Grain_CoagClaims > 0) { ags_force_coag_claimants.push_back(i); }
+#endif
 #ifdef AGS_ZETA_IN_FORCE
     /* ags_density stored the normalization for this step; this is the pair sum */
     P[i].AGS_zeta *= accum.AGS_zeta;
@@ -135,18 +172,6 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 #endif
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
     if(P[i].Mass > 0) {
-        if(accum.Grain_DeltaCoagMass > 0) {
-            double M_old = (double)P[i].Mass;
-            double M_new = M_old + accum.Grain_DeltaCoagMass;
-            for(int s = 0; s < GRAIN_NUM_SPECIES; s++) {
-                double M_species_s = M_old * (double)P[i].Composition[s]
-                                     + accum.Grain_DeltaCoag_CompositionMass[s];
-                if(M_species_s < 0) M_species_s = 0;
-                P[i].Composition[s] = (MyFloat)(M_species_s / M_new);
-            }
-            P[i].Grain_Size = (MyFloat)((double)P[i].Grain_Size * pow(M_new / M_old, 1.0 / 3.0));
-            P[i].Mass       = (MyDouble)M_new;
-        }
         if(accum.Grain_DeltaErosionFrac != 1.0 && accum.Grain_DeltaErosionFrac > 0.0) {
             P[i].Grain_Size = (MyFloat)((double)P[i].Grain_Size * accum.Grain_DeltaErosionFrac);
         }
@@ -194,6 +219,11 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
  *   P[j].dp              — DM_SIDM scatter kicks       (PARTICLE_ADD_VEC3)
  *   P[j].NInteractions   — DM_SIDM scatter counter     (PARTICLE_ADD)
  *   P[j].wakeup          — DM_SIDM/CBE wakeup writes   (PARTICLE_MAX)
+ *   P[j].Grain_CoagClaim — coagulation claims          (PARTICLE_MAX: one winner per grain)
+ *   P[j].Grain_Size      — fragmentation/shattering    (PARTICLE_MUL: the factors compose)
+ *
+ * The coagulation consume pass has its own bundle: the winner clears the claim
+ * and zeroes the absorbed grain's Mass and Grain_Size (PARTICLE_MIN to 0).
  *
  * The wakeup-event semantics needs a host-side pre-zero of ghost
  * P[j].wakeup BEFORE the bundle snapshot — see ghost_writeback_begin
@@ -212,7 +242,21 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(ags_force)
 #if defined(DM_SIDM) || defined(CBE_INTEGRATOR)
     GHOST_WRITEBACK_PARTICLE_MAX(wakeup)
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+    GHOST_WRITEBACK_PARTICLE_MAX(Grain_CoagClaim)
+#endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & (2|4))
+    GHOST_WRITEBACK_PARTICLE_MUL(Grain_Size)
+#endif
 GHOST_WRITEBACK_BUNDLE_END(ags_force)
+
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+GHOST_WRITEBACK_BUNDLE_BEGIN(ags_force_coag_consume)
+    GHOST_WRITEBACK_PARTICLE_MIN(Grain_CoagClaim)
+    GHOST_WRITEBACK_PARTICLE_MIN(Mass)
+    GHOST_WRITEBACK_PARTICLE_MIN(Grain_Size)
+GHOST_WRITEBACK_BUNDLE_END(ags_force_coag_consume)
+#endif
 
 
 /* ghost_write_detector_begin/end: runner default (loop_name = "ags_force"). */
@@ -221,6 +265,12 @@ void AgsForceSpec::ghost_writeback_begin(const neighbor_loop_args& args,
                                            const NeighborLoopPlan& /*plan*/)
 {
     (void)args;   /* may be unused depending on physics flags below */
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+    if(ags_force_coag_consume_pass) {
+        ghost_writeback_begin_bundle(ags_force_coag_consume_ghost_writeback_bundle_ptr());
+        return;
+    }
+#endif
 #if defined(DM_SIDM) || defined(CBE_INTEGRATOR)
     /* Pre-zero ghost P[j].wakeup BEFORE the bundle snapshot. Restores the
      * event semantics of the retired ghost_writeback_zero_agsforce: any
@@ -250,17 +300,27 @@ void AgsForceSpec::ghost_writeback_begin(const neighbor_loop_args& args,
 void AgsForceSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
                                          const NeighborLoopPlan& /*plan*/)
 {
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+    if(ags_force_coag_consume_pass) {
+        ghost_writeback_end_bundle(ags_force_coag_consume_ghost_writeback_bundle_ptr());
+        return;
+    }
+#endif
     ghost_writeback_end_bundle(ags_force_ghost_writeback_bundle_ptr());
 }
 
 
-void ags_force_partition_actives(AgsForcePartition &part)
+/* Partition `candidates` by neighbour type mask (same rule as legacy gravity/ags_rkern.cc:224-234),
+ * keeping only AGS-force actives when `only_ags_actives` is set. The global presence of each mask is
+ * a collective, so every rank gets the same subgroup list, and an empty list on every rank means no
+ * call at all. */
+template <typename Container>
+static void ags_force_partition_of(const Container &candidates, int only_ags_actives, AgsForcePartition &part)
 {
-    /* Same partition rule as legacy gravity/ags_rkern.cc:224-234. */
     std::map<int, std::vector<int>> by_mask;
     uint64_t local_presence = 0;
-    for(int i : ActiveParticleList) {
-        if(AGSForce_isactive(i)) {
+    for(int i : candidates) {
+        if(!only_ags_actives || AGSForce_isactive(i)) {
             const int bm = ags_gravity_kernel_shared_BITFLAG(P[i].Type);
             if(bm > 0 && bm < 64) {
                 by_mask[bm].push_back(i);
@@ -280,6 +340,61 @@ void ags_force_partition_actives(AgsForcePartition &part)
         auto it = by_mask.find(bm);
         part.actives.push_back((it != by_mask.end()) ? std::move(it->second) : std::vector<int>());
     }
+}
+
+void ags_force_partition_actives(AgsForcePartition &part)
+{
+    ags_force_partition_of(ActiveParticleList, 1, part);
+}
+
+/* One runner call over a partition. ALL ranks enter with the same subgroup ordering; a rank with no
+ * actives for a mask contributes an empty entry (collective-symmetry filler). `via_corridor`: the CBE
+ * neighbour corridor supplies the lists and owns the ghost pool for this call. */
+static void ags_force_run_partition(AgsForcePartition &part, int via_corridor)
+{
+    std::vector<NlrSubgroup> subgroups;
+    std::vector<int> active_list_concat;
+    for(size_t s = 0; s < part.masks.size(); s++) {
+        NlrSubgroup sg{};
+        sg.j_type_bitmask   = part.masks[s];
+        sg.num_active_local = (int)part.actives[s].size();
+        sg.active_indices   = (sg.num_active_local > 0) ? part.actives[s].data() : nullptr;
+#ifdef CBE_NEIGHBOUR_CORRIDOR
+        if(via_corridor) {sg.external_csr = cbe_corridor_list((int)s);}
+#endif
+        subgroups.push_back(sg);
+        /* Concatenated active list across subgroups (runner's union view). */
+        active_list_concat.insert(active_list_concat.end(), part.actives[s].begin(), part.actives[s].end());
+    }
+    const int total_active_local = (int)active_list_concat.size();
+
+    /* CBE gradients (when CBE_INTEGRATOR_WITHGRADIENTS is on) are refreshed
+     * pre-force by CBEGrad_gradient_calc() (called from core/accel.cc
+     * before this toplevel), with persistent storage on
+     * P[i].Gradients_CBE_basis_moments. AGSForce_calc itself owns no
+     * gradient scratch; the flux body reads the persistent field via
+     * load_active's by-value snapshot (i side) and direct P[j] access
+     * (j side, naturally ghost-imported). */
+    AgsForceSpec::Aux aux{};
+
+    neighbor_loop_args_iterative args{};
+    static_cast<neighbor_loop_args&>(args) = nlr_default_args();
+    args.P                   = P;
+    args.CellP               = (All.TotN_gas > 0) ? CellP : nullptr;
+    args.num_total           = NumPart;
+    args.active_list         = (total_active_local > 0)
+                               ? active_list_concat.data() : nullptr;
+    args.num_active          = total_active_local;
+    args.aux                 = &aux;
+    args.num_subgroups       = (int)subgroups.size();
+    args.subgroups           = subgroups.data();
+    args.ghost_safety_factor = gizmo_ghost_safety_factor();
+#ifdef CBE_NEIGHBOUR_CORRIDOR
+    if(via_corridor && cbe_corridor_serves()) {args.dispatch_override = cbe_corridor_mode();}
+#endif
+    (void)via_corridor;
+
+    run_neighbor_loop_iterative<AgsForceSpec>(args);
 }
 
 
@@ -372,61 +487,32 @@ void AGSForce_calc(void)
     cbe_corridor_refresh();
 #endif
 
-    /* NlrSubgroup array in the partition's global ordering. ALL ranks enter
-     * with the same subgroup ordering; ranks with no actives for a mask
-     * contribute an empty entry (collective-symmetry filler). */
-    std::vector<NlrSubgroup> subgroups;
-    std::vector<int> active_list_concat;
-    for(size_t s = 0; s < part.masks.size(); s++) {
-        NlrSubgroup sg{};
-        sg.j_type_bitmask   = part.masks[s];
-        sg.num_active_local = (int)part.actives[s].size();
-        sg.active_indices   = (sg.num_active_local > 0) ? part.actives[s].data() : nullptr;
-#ifdef CBE_NEIGHBOUR_CORRIDOR
-        sg.external_csr     = cbe_corridor_list((int)s);
-#endif
-        subgroups.push_back(sg);
-        /* Concatenated active list across subgroups (runner's union view). */
-        active_list_concat.insert(active_list_concat.end(), part.actives[s].begin(), part.actives[s].end());
-    }
-    const int total_active_local = (int)active_list_concat.size();
-
     /* The runner owns the ghost lifecycle (see ags_density), unless the CBE
      * corridor handed every subgroup its list: then the corridor imported the
      * pool and tears it down below. */
-    double ags_ghost_safety = gizmo_ghost_safety_factor();
-
-    /* CBE gradients (when CBE_INTEGRATOR_WITHGRADIENTS is on) are refreshed
-     * pre-force by CBEGrad_gradient_calc() (called from core/accel.cc
-     * before this toplevel), with persistent storage on
-     * P[i].Gradients_CBE_basis_moments. AGSForce_calc itself owns no
-     * gradient scratch; the flux body reads the persistent field via
-     * load_active's by-value snapshot (i side) and direct P[j] access
-     * (j side, naturally ghost-imported). */
-    AgsForceSpec::Aux aux{};
-
-    neighbor_loop_args_iterative args{};
-    static_cast<neighbor_loop_args&>(args) = nlr_default_args();
-    args.P                   = P;
-    args.CellP               = (All.TotN_gas > 0) ? CellP : nullptr;
-    args.num_total           = NumPart;
-    args.active_list         = (total_active_local > 0)
-                               ? active_list_concat.data() : nullptr;
-    args.num_active          = total_active_local;
-    args.aux                 = &aux;
-    args.num_subgroups       = (int)subgroups.size();
-    args.subgroups           = subgroups.data();
-    args.ghost_safety_factor = ags_ghost_safety;
-#ifdef CBE_NEIGHBOUR_CORRIDOR
-    if(cbe_corridor_serves()) {args.dispatch_override = cbe_corridor_mode();}
-#endif
-
-    run_neighbor_loop_iterative<AgsForceSpec>(args);
+    ags_force_run_partition(part, 1);
 
 #ifdef CBE_NEIGHBOUR_CORRIDOR
     cbe_corridor_end();   /* the corridor's span ends here: it tears down the ghost pool */
 #else
     if(NTask > 1) ghost_exchange_cleanup();
+#endif
+
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+    /* Coagulation consume pass, over the grains that made a claim: a fresh call, so its ghost import
+     * carries the claims as merged home. Every rank takes part or none does (the partition's presence
+     * reduction), and a rank with no claimants enters with empty subgroups. */
+    {
+        AgsForcePartition coag_part;
+        ags_force_partition_of(ags_force_coag_claimants, 0, coag_part);
+        if(!coag_part.masks.empty()) {
+            ags_force_coag_consume_pass = 1;
+            ags_force_run_partition(coag_part, 0);
+            if(NTask > 1) ghost_exchange_cleanup();
+            ags_force_coag_consume_pass = 0;
+        }
+        ags_force_coag_claimants.clear();
+    }
 #endif
     timecomp += cpu_minus_children(timediff(t0, my_second()), child0_timecomp);
 

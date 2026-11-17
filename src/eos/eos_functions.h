@@ -67,15 +67,7 @@ KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temp
 #endif
 
     /* if tracking chemistry explicitly, return the explicitly-evolved H2 fraction */
-#ifdef CHIMES // use the CHIMES molecular network for H2
-    return DMIN(1,DMAX(0, ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_H2]] * 2.0)); // factor 2 converts to mass fraction in molecular gas, as desired
-#endif
-
-#if (COOL_GRACKLE_CHEMISTRY >= 2) // Use GRACKLE explicitly-tracked H2 [using the molecular network if this is valid]
-    return DMIN(1,DMAX(0, cell[i].grH2I + cell[i].grH2II)); // include both states of H2 tracked
-#endif
-
-#if defined(COOL_MOLECFRAC_NONEQM) // use our simple 1-species network for explicitly-evolved H2 fraction
+#if defined(COOL_MOLECFRAC_NONEQM) || defined(EXTERNAL_CHEMISTRY_REPORTS_H2) // our simple 1-species network, or an external chemistry library, evolves the H2 fraction explicitly and leaves it in the cell
     return DMIN(1, DMAX(0, cell[i].MolecularMassFraction));
 #endif
 
@@ -280,8 +272,8 @@ KOKKOS_INLINE_FUNCTION double yhelium(int target, struct particle_data *pp)
 /* return mean molecular weight, appropriate for the approximations of the user-selected chemical network[s] */
 KOKKOS_INLINE_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
-#if defined(CHIMES)
-    if(target >= 0) { return calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars); } else { return 0.59; }
+#if defined(EXTERNAL_CHEMISTRY_REPORTS_SPECIES)
+    if(target >= 0) { return cell[target].MeanMolecularWeight; } else { return 0.59; } /* as the chemistry last solved it */
 #elif defined(COOLING)
     double X=HYDROGEN_MASSFRAC, Y=1.-X, Z=0, fmol=0;
 #ifdef METALS
@@ -341,8 +333,8 @@ KOKKOS_INLINE_FUNCTION
 double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef COOLING
-#ifdef CHIMES
-  return (double) ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
+#if defined(EXTERNAL_CHEMISTRY_REPORTS_SPECIES)
+  return (double) cell[i].HII;
 #else
     double ne = cell[i].Ne, nh0 = cell[i].HI; // saved by the cooling solver; no need to re-solve the chemistry to answer this
     double f_ion = DMIN(DMAX(DMAX(1-nh0, ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
@@ -392,7 +384,7 @@ KOKKOS_INLINE_FUNCTION double return_user_desired_target_pressure(int i, struct 
 #endif
 
 
-#if defined(COOLING) && !defined(CHIMES)
+#if defined(COOLING)
 /* ================================================================
    ThermalProperties — get temperature and ionization state from u
    ================================================================ */
@@ -414,27 +406,22 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
                * u * (UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS);
     }
 #endif
-#if defined(CHIMES)
-    /* Unreachable: the enclosing guard is !defined(CHIMES), so under CHIMES this
-       function does not exist at all. Kept because it records what the CHIMES
-       state would be read from, and it is inert either way -- CHIMES needs
-       SUNDIALS, which does not build for the device. */
-    int i = target; *ne_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_elec]]; *nH0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HI]];
-    *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
-    double temp = ChimesGasVars[target].temperature;
+    *ne_guess = cell[target].Ne; *nH0_guess = cell[target].HI;
+#if defined(EXTERNAL_CHEMISTRY_REPORTS_SPECIES)
+    *nHp_guess = cell[target].HII; /* a species of its own there: with molecules, 1 - HI is not it */
 #else
-    *ne_guess = cell[target].Ne; *nH0_guess = cell[target].HI; *nHp_guess = DMAX(0, 1. - *nH0_guess);
+    *nHp_guess = DMAX(0, 1. - *nH0_guess);
+#endif
     double temp = cell[target].gas_temperature_at_u(u);
-#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
+#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES) && !defined(CHIMES_HII_REGIONS)
     /* gas inside an HII region is held ionized by the local source, which the saved state
        only picks up once the cell next cools */
     if(cell[target].DelayTimeHII > 0) {*ne_guess = 1.0 + 2.0*yhelium(target, pp); *nH0_guess = 0; *nHp_guess = 1;}
 #endif
-#endif
     *mu_guess = cell[target].MeanMolecularWeight;
     return temp;
 }
-#endif /* COOLING && !CHIMES */
+#endif /* COOLING */
 
 
 /* ==========================================================================
@@ -512,6 +499,9 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
 #ifdef EOS_HELMHOLTZ
 #include "helmholtz/helmholtz.h"
 #endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (4|8))
+#include "../solids/dust_battery_functions.h"
+#endif
 
 /* The tables a call to set_eos_pressure_impl may need, as data.
 
@@ -530,7 +520,67 @@ struct EosTableView
 #ifdef EOS_ANEOS
     const struct aneos_table *aneos;
 #endif
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    struct eos_limit_counts *limits_host;   /* this rank's eos_limits.txt counts: the host pass of a body adds here */
+    struct eos_limit_counts *limits_device; /* and the device pass here (device memory; host memory in a build without a device) */
+#endif
 };
+
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+extern struct eos_limit_counts *EosLimitsHost, *EosLimitsDevice; /* owned by eos.cc */
+
+/* The counter block the calling pass of a device-callable body adds to */
+KOKKOS_INLINE_FUNCTION struct eos_limit_counts *eos_limit_block(const struct EosTableView *eos_tables)
+{
+    if(!eos_tables) {return NULL;}
+#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+    return eos_tables->limits_device;
+#else
+    return eos_tables->limits_host;
+#endif
+}
+
+KOKKOS_INLINE_FUNCTION void eos_limit_count(const struct EosTableView *eos_tables, int composition_type, int counter)
+{
+    struct eos_limit_counts *block = eos_limit_block(eos_tables);
+    if(block) {eos_limit_atomic_count(&block->slot[eos_limit_slot_of(composition_type)].count[counter], 1);}
+}
+
+/* Count the limits, if any, that internal_energy_positivity_catch(u_old, u_new, u_floor) applies */
+KOKKOS_INLINE_FUNCTION void eos_limit_count_catch(const struct EosTableView *eos_tables, int composition_type, double u_old, double u_new, double u_floor,
+                                                  int counter_halved, int counter_floor)
+{
+    int event = internal_energy_positivity_catch_event(u_old, u_new, u_floor);
+    if(event & 1) {eos_limit_count(eos_tables, composition_type, counter_halved);}
+    if(event & 2) {eos_limit_count(eos_tables, composition_type, counter_floor);}
+}
+
+#ifdef EOS_ANEOS
+/* Count what an energy inversion reported (called only when it reported something) */
+KOKKOS_INLINE_FUNCTION void eos_limit_record_inversion(const struct EosTableView *eos_tables, int composition_type, const struct aneos_inversion_report *report)
+{
+    struct eos_limit_counts *block = eos_limit_block(eos_tables);
+    if(!block) {return;}
+    struct eos_limit_slot *slot = &block->slot[eos_limit_slot_of(composition_type)];
+    /* no root / several roots are not counted: they stop the run, and the stop prints the state instead */
+    const int flag_of[6] = {ANEOS_INVERSION_RHO_BELOW_TABLE, ANEOS_INVERSION_RHO_ABOVE_TABLE, ANEOS_INVERSION_U_BELOW_FLOOR, ANEOS_INVERSION_U_ABOVE_TABLE,
+                            ANEOS_INVERSION_PLATEAU, ANEOS_INVERSION_RECOVERED};
+    const int counter_of[6] = {EOS_LIMIT_RHO_BELOW_TABLE, EOS_LIMIT_RHO_ABOVE_TABLE, EOS_LIMIT_U_BELOW_FLOOR, EOS_LIMIT_U_ABOVE_TABLE,
+                               EOS_LIMIT_PLATEAU, EOS_LIMIT_RECOVERED};
+    for(int k = 0; k < 6; k++) {if(report->flags & flag_of[k]) {eos_limit_atomic_count(&slot->count[counter_of[k]], 1);}}
+    if(report->flags & ANEOS_INVERSION_PLATEAU)
+    {
+        eos_limit_atomic_max(&slot->maximum[EOS_LIMIT_MAX_PLATEAU_LOGT_WIDTH], report->plateau_logT_width);
+        eos_limit_atomic_max(&slot->maximum[EOS_LIMIT_MAX_PLATEAU_PRESSURE_SPREAD], report->plateau_P_spread);
+    }
+}
+#endif
+#define EOS_LIMIT_COUNT(...) eos_limit_count(__VA_ARGS__)
+#define EOS_LIMIT_COUNT_CATCH(...) eos_limit_count_catch(__VA_ARGS__)
+#else
+#define EOS_LIMIT_COUNT(...)        /* builds without a solid or tabulated equation of state count nothing */
+#define EOS_LIMIT_COUNT_CATCH(...)
+#endif
 
 /* Fill a view from the live tables.
 
@@ -556,6 +606,10 @@ inline struct EosTableView eos_tables_view(void)
 #endif
 #ifdef EOS_ANEOS
     view.aneos = ANEOS_Tables;
+#endif
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    view.limits_host = EosLimitsHost;
+    view.limits_device = EosLimitsDevice;
 #endif
     return view;
 }
@@ -623,11 +677,13 @@ static KOKKOS_INLINE_FUNCTION int eos_validate(const HelmTable *tab, struct eos_
   {
     BITMASK_SET_FLAG(*bitmask, EOS_ERR_RHO_LT_RHOMIN);
     vars_adj->rho = rho_ye_min / vars_adj->Ye;
+    while(vars_adj->rho * vars_adj->Ye < rho_ye_min) {vars_adj->rho = nextafter(vars_adj->rho, HUGE_VAL);} /* rounding must not leave the clamped value outside the table */
   }
   if(vars->rho * vars_adj->Ye > rho_ye_max)
   {
     BITMASK_SET_FLAG(*bitmask, EOS_ERR_RHO_GT_RHOMAX);
     vars_adj->rho = rho_ye_max / vars_adj->Ye;
+    while(vars_adj->rho * vars_adj->Ye > rho_ye_max) {vars_adj->rho = nextafter(vars_adj->rho, -HUGE_VAL);}
   }
 
   /* check energy range by evaluating at table T boundaries */
@@ -778,10 +834,9 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     if(pp[i].FluidType == FLUID_DM) { set_dark_eos_pressure(i, pp, cell); return; }
 #endif
     double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = GAMMA_DEFAULT; soundspeed=0;
+#ifdef GENERAL_RELATIVITY /* GR: pressure from the rest-mass density (density_for_energy()), with the EOS of the con2prim (gr/gr_functions.h) */
     if(All.Time > All.TimeBegin) {gamma_eos_index = cell[i].gamma_eos_value();} /* can only safely set this after initial startup, not on first call before proper cooling pass */
     cell[i].Gamma = gamma_eos_index;
-    press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy();
-#ifdef GENERAL_RELATIVITY /* GR: pressure from the rest-mass density (density_for_energy()), with the EOS of the con2prim (gr/gr_functions.h) */
     press = gr_pressure_rho0_u(cell[i].density_for_energy(), cell[i].InternalEnergyPred);
 #ifdef EOS_GENERAL
     cell[i].SoundSpeed = gr_sound_speed(gamma_eos_index, press, cell[i].density_for_energy(), cell[i].InternalEnergyPred);
@@ -800,7 +855,6 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
            overwriting the cache would discard the solve that has already run */
         double ne=1, nh0=0, nhp=0, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
         temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, pp, cell);
-        cell[i].Gamma = cell[i].gamma_eos_value();
 #ifdef GIZMO_TRACK_ELECTRON_STATE
         ne_battery_save = ne;
 #endif
@@ -812,6 +866,14 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     /* this is the boundary that keeps Temperature fresh: it is the temperature of the energy the
        cell holds right now. anything wanting another energy derives it with gas_temperature_from_u */
     cell[i].Temperature = temp;
+    /* after the temperature write: gamma_eos_value() reads Temperature under EOS_SUBSTELLAR_ISM */
+    if(All.Time > All.TimeBegin) {gamma_eos_index = cell[i].gamma_eos_value();} /* can only safely set this after initial startup, not on first call before proper cooling pass */
+#ifdef COOLING
+    cell[i].Gamma = cell[i].gamma_eos_value(); /* the stored index goes with this temperature, at startup too: gas_temperature_from_u reads the pair */
+#else
+    cell[i].Gamma = gamma_eos_index;
+#endif
+    press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy();
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
     cell[i].u_anchor = cell[i].InternalEnergyPred; /* re-anchor along the tangent so the pair stays coherent */
 #endif
@@ -980,10 +1042,21 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
             double aneos_rho_cgs = cell[i].Density * UNIT_DENSITY_IN_CGS;
             double aneos_u_cgs   = cell[i].InternalEnergyPred * UNIT_SPECEGY_IN_CGS;
             double aneos_T_guess = cell[i].Temperature;
-            double aneos_P, aneos_cs, aneos_S, aneos_cv, aneos_grun;
+            double aneos_P, aneos_cs;
             int aneos_phase;
+            struct aneos_inversion_report aneos_report;
             int aneos_ierr = aneos_compute_P(eos_tables->aneos, aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
-                          &aneos_P, &aneos_cs, &aneos_S, &aneos_cv, &aneos_grun, &aneos_phase);
+                          &aneos_P, &aneos_cs, NULL, NULL, NULL, &aneos_phase, &aneos_report); /* entropy, Cv and Gruneisen not needed here */
+            if(aneos_report.flags) {eos_limit_record_inversion(eos_tables, cell[i].CompositionType, &aneos_report);}
+            if(aneos_report.flags & (ANEOS_INVERSION_NO_ROOT | ANEOS_INVERSION_MULTIPLE_ROOTS))
+            {
+                /* the energy names no single temperature of this material at this density: any state chosen here would be
+                   arbitrary physics, so the run stops with the state that caused it */
+                printf("ERROR: cell ID %llu (CompositionType %d, ANEOS table %d): rho = %g g/cm^3, u = %g erg/g has %d temperatures in the table's valid range log10(T) = %g to %g (exactly one is needed). Stopping.\n",
+                       (unsigned long long) pp[i].ID, cell[i].CompositionType, aneos_mat, aneos_rho_cgs, aneos_u_cgs, aneos_report.n_roots,
+                       aneos_report.logT_lo, aneos_report.logT_hi);
+                endrun((aneos_report.n_roots == 0) ? 920910 : 920911);
+            }
             /* The cell's CompositionType names a material whose table was never
                loaded: a setup error, and the same for every cell of that type, so
                there is nothing to recover to. endrun requests a controlled stop on
@@ -993,6 +1066,10 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
             if(aneos_ierr) {endrun(920902); break;}
             press      = aneos_P / UNIT_PRESSURE_IN_CGS;
             soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
+#ifdef EOS_ELASTIC
+            soundspeed = sqrt(soundspeed*soundspeed + elastic_longitudinal_soundspeed2_excess(cell[i].CompositionType, cell[i].Density,
+                              solid_strength_fraction(cell[i].CompositionType, cell[i].InternalEnergyPred, aneos_T_guess, press))); /* longitudinal: bulk plus the deviatoric stiffness */
+#endif
             cell[i].Temperature = aneos_T_guess;
             cell[i].PhaseID = aneos_phase;
             break;
@@ -1001,10 +1078,26 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
         default:
             break;
     }
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+    /* fractured material carries (1-D) of its tension; compression is unchanged (Benz & Asphaug 1994) */
+    if(press < 0) {double D_t = cell[i].Damage; if(D_t < 0) {D_t = 0;} if(D_t > 1) {D_t = 1;} press *= (1.0 - D_t);}
+#endif
+#ifdef EOS_ELASTIC_MELT
+    /* fully molten material (strength fraction 0) holds at most its cavitation strength in tension (0 by default: a liquid without cohesion);
+       a state-only limit, like the damage cut above. Solid material keeps its tension (its fracture model limits it) */
+    if(press < 0 && solid_material_is_elastic(cell[i].CompositionType))
+    {
+        double P_cavitation = All.SolidStrengthModel[cell[i].CompositionType].CavitationStrength;
+        if(press < -P_cavitation && solid_strength_fraction(cell[i].CompositionType, cell[i].InternalEnergyPred, cell[i].Temperature, press) == 0) {press = -P_cavitation;}
+    }
+#endif
 #endif
 
+/* The models below impose a fixed pressure-density curve (for the collapse models, a stand-in for efficient cooling); they are not a
+   variable-gamma or non-ideal EOS. The gas still responds to compression on short times with the adiabatic index gamma_eos_index (EOS_GAMMA, or the
+   molecular/atomic index set below), and that index sets the sound speed the Riemann solver and the timestep use. */
 #ifdef EOS_MHD_CORE_BAROTROPIC
-    press = 0.04*cell[i].Density*sqrt(1.+pow(cell[i].Density/1.47705e8 ,4./3.));
+    press = 0.04*cell[i].Density*sqrt(1.+pow(cell[i].Density/1.47705e8 ,4./3.)); /* isothermal core-collapse test EOS (Hopkins 2015), stiffening to rho^(5/3) */
 #endif
 #ifdef EOS_ENFORCE_ADIABAT
     press = EOS_ENFORCE_ADIABAT * pow(cell[i].Density, gamma_eos_index);
@@ -1016,16 +1109,17 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     cell[i].InternalEnergy = cell[i].InternalEnergyPred = press / (cell[i].Density * (gamma_eos_index-1.));
 #endif
 
-#ifdef EOS_GMC_BAROTROPIC
+#ifdef EOS_GMC_BAROTROPIC /* Masunaga & Inutsuka 2000, as eq. 4 of Federrath 2014: isothermal, then alternating transition and adiabatic segments */
     gamma_eos_index=7./5.; double rho=cell[i].density_for_energy(), nH_cgs=rho*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS;
-    if(nH_cgs > 2.30181e16) {gamma_eos_index=5./3.;}
+    if(nH_cgs > 2.30181e16) {gamma_eos_index=5./3.;} /* 7/5 for molecular gas, 5/3 once dissociated */
     if (nH_cgs < 1.49468e8) {press = 6.60677e-16 * nH_cgs;}
     else if (nH_cgs < 2.30181e11) {press = 1.00585e-16 * pow(nH_cgs, 1.1);}
     else if (nH_cgs < 2.30181e16) {press = 3.92567e-20 * pow(nH_cgs, gamma_eos_index);}
     else if (nH_cgs < 2.30181e21) {press = 3.1783e-15 * pow(nH_cgs, 1.1);}
     else {press = 2.49841e-27 * pow(nH_cgs, gamma_eos_index);}
 #if CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(EOS_GMC_BAROTROPIC)
-#if (EOS_GMC_BAROTROPIC==1)
+#if (EOS_GMC_BAROTROPIC==1) /* Bate, Bonnell & Bromm 2003: isothermal, then rho^(7/5) at all higher densities, with no dissociation */
+    gamma_eos_index = 7./5.;
     if (nH_cgs < 6e10) {press = 6.60677e-16 * nH_cgs;}
     else press = 3.964062e-5 * pow(nH_cgs/6e10,1.4);
 #endif
@@ -1090,6 +1184,12 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     if(soundspeed == 0) {double rho_for_soundspeed = cell[i].density_for_energy(); /* every pressure term assembled above scales with the density, so P/rho keeps a finite limit as rho->0: evaluate that limit rather than forming 0/0 */
         if(rho_for_soundspeed > 0) {cell[i].SoundSpeed = sqrt(gamma_eos_index * press / rho_for_soundspeed);} else {cell[i].SoundSpeed = sqrt(gamma_eos_index * (gamma_eos_index-1.) * cell[i].InternalEnergyPred);}
     } else {cell[i].SoundSpeed = soundspeed;}
+#if defined(EOS_ELASTIC)
+    /* a solid with no tabulated or Tillotson EOS (those branches add it themselves): the signal speed includes its deviatoric stiffness */
+    if(eos_branch_of(cell[i].CompositionType) == EOS_BRANCH_NONE && solid_material_is_elastic(cell[i].CompositionType))
+        {cell[i].SoundSpeed = sqrt(cell[i].SoundSpeed*cell[i].SoundSpeed + elastic_longitudinal_soundspeed2_excess(cell[i].CompositionType, cell[i].Density,
+                                   solid_strength_fraction(cell[i].CompositionType, cell[i].InternalEnergyPred, cell[i].Temperature, press)));}
+#endif
 #endif
 
     cell[i].Pressure = press;

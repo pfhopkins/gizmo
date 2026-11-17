@@ -96,6 +96,7 @@ void subfind_setup_smoothinglengths(int j)
 
 
 static int Nrkern;
+static long long Nrkern_in_previous_files;   /* written by lower ranks: the file header field */
 
 static struct rkern_data
 {
@@ -135,8 +136,8 @@ void subfind_save_densities(int num)
       Nrkern++;
 
   MPI_Allgather(&Nrkern, 1, MPI_INT, Send_count, 1, MPI_INT, MPI_COMM_WORLD);
-  for(i = 1, Send_offset[0] = 0; i < NTask; i++)
-    Send_offset[i] = Send_offset[i - 1] + Send_count[i - 1];
+  for(i = 0, Nrkern_in_previous_files = 0; i < ThisTask; i++)
+    Nrkern_in_previous_files += Send_count[i];
 
   sumup_large_ints(1, &Nrkern, &Ntotal);
 
@@ -217,7 +218,7 @@ void subfind_save_local_densities(int num)
     }
 
   my_fwrite(&Nrkern, sizeof(int), 1, fd);
-  my_fwrite(&Send_offset[ThisTask], sizeof(int), 1, fd);	/* this is the number of IDs in previous files */
+  my_fwrite(&Nrkern_in_previous_files, sizeof(long long), 1, fd);	/* this is the number of IDs in previous files */
   my_fwrite(&Ntotal, sizeof(long long), 1, fd);
   my_fwrite(&NTask, sizeof(int), 1, fd);
 

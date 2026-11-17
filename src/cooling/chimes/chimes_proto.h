@@ -20,6 +20,9 @@
 #include <sundials/sundials_types.h>
 #include <nvector/nvector_serial.h> 
 #include <sundials/sundials_dense.h>
+#if !defined(SUNDIALS_VERSION_MAJOR) || (SUNDIALS_VERSION_MAJOR < 6)
+#error "CHIMES needs SUNDIALS 6 or newer (its SUNContext API): point CHIMESINCL and CHIMESLIBS in the Makefile at such an install"
+#endif
 #include <hdf5.h>
 
 
@@ -605,8 +608,11 @@ void update_cooling_rates(struct gasVariables *myGasVars, struct globalVariables
 
 // chimes.c 
 void chimes_network(struct gasVariables *myGasVars, struct globalVariables *myGlobalVars);
+#if (SUNDIALS_VERSION_MAJOR >= 7)
+void chimes_err_handler_fn(int line, const char *function, const char *file, const char *msg, SUNErrCode error_code, void *eh_data, SUNContext sun_context);
+#else
 void chimes_err_handler_fn(int error_code, const char *module, const char *function, char *msg, void *eh_data);
-void cvErrHandler(int error_code, const char *module, const char *function, char *msg, void *data);
+#endif
 void set_equilibrium_abundances_from_tables(struct UserData data);
 void chimes_print_gas_vars(FILE *log_file, struct gasVariables *myGasVars, struct globalVariables *myGlobalVars); 
 
@@ -630,7 +636,7 @@ void load_redshift_dependent_UVB(ChimesFloat redshift, int bin_index, struct glo
 
 // rate_equations.c 
 void check_constraint_equations(struct gasVariables *myGasVars, struct globalVariables *myGlobalVars);
-int f(realtype t, N_Vector y, N_Vector ydot, void *user_data);
+int f(sunrealtype t, N_Vector y, N_Vector ydot, void *user_data);
 
 // update_rates.c 
 void set_initial_rate_coefficients(struct gasVariables *myGasVars, struct globalVariables *myGlobalVars, struct UserData data); 

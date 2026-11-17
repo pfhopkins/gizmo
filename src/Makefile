@@ -70,7 +70,10 @@ CONFIGVARS += OPENMP
 HG_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null)
 HG_REPO := $(shell git config --get remote.origin.url)
 HG_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
-BUILDINFO = "Build on $(HOSTNAME) by $(USER) from $(HG_BRANCH):$(HG_COMMIT) at $(HG_REPO)"
+# tracked source files under src/ that differ from the commit (untracked files are not detected)
+HG_DIRTY := $(if $(HG_COMMIT),$(shell git diff --quiet HEAD -- . 2>/dev/null || echo "-tracked-dirty"),)
+BUILD_HOST := $(or $(HOSTNAME),$(shell hostname 2>/dev/null),unknown-host)
+BUILDINFO = "Build on $(BUILD_HOST) by $(USER) from $(HG_BRANCH):$(HG_COMMIT)$(HG_DIRTY) at $(HG_REPO)"
 OPT += -DBUILDINFO='$(BUILDINFO)'
 OPT += -DGIZMO_SOURCE_DIR='"$(CURDIR)/"'
 
@@ -88,13 +91,11 @@ KOKKOS_CXXFLAGS = #
 KOKKOS_LDFLAGS  = #
 KOKKOS_LIBS     = #
 # CHIMES SUNDIALS/CVODE requirement (READ BEFORE ENABLING CHIMES):
-#   The bundled CHIMES network uses the pre-6.0 SUNDIALS API -- context-free
-#   CVodeCreate()/N_VNew_Serial()/SUNDenseMatrix()/SUNLinSol_Dense() and the
-#   'realtype' type. It therefore requires SUNDIALS in the 2.7 - 5.x range.
-#   SUNDIALS 6.x made a SUNContext argument mandatory on those calls, and 7.x
-#   removed 'realtype' (now 'sunrealtype'), so 6.0+ will NOT compile against the
-#   current CHIMES sources without source-level API updates. Point CHIMESINCL/
-#   CHIMESLIBS below at a SUNDIALS install in the supported range.
+#   The bundled CHIMES network uses the SUNDIALS >= 6 API (every solver object
+#   takes a SUNContext; the floating type is 'sunrealtype'), so it needs SUNDIALS
+#   6.0 or newer. Point CHIMESINCL at the directory holding cvode/, nvector/,
+#   sundials/ and CHIMESLIBS at its libraries; SUNDIALS 7.x also needs
+#   -lsundials_core beside -lsundials_cvode -lsundials_nvecserial.
 CHIMESINCL = # default to empty, will only be used below if called
 CHIMESLIBS = # default to empty, will only be used below if called
 HYPRE_INCL = # hypre library for AMG-preconditioned solver in MG gradient correction
@@ -164,6 +165,7 @@ endif
 ## TACC's kokkos/4.5.01-cuda module sets TACC_KOKKOS_DIR/INC/LIB/BIN.
 ## We set flags manually (no Makefile.kokkos — TACC's Kokkos is CMake-installed).
 ## Load modules: nvidia/25.9 cuda kokkos/4.5.01-cuda openmpi hdf5/2.0.0 fftw3
+##   (+ sundials/7.5.0 for CHIMES; Grackle has no module: build it once and point GRACKLE_PATH at its install)
 KOKKOS_PATH    = $(TACC_KOKKOS_DIR)
 ## Compile flags: Kokkos includes + CUDA relaxed-constexpr/lambda extensions + sm_90 arch
 KOKKOS_CPPFLAGS = -I$(TACC_KOKKOS_INC)
@@ -179,7 +181,7 @@ GPU_CFLAGS = $(KOKKOS_CPPFLAGS) $(KOKKOS_CXXFLAGS)
 GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
-CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
+CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -Wl,-rpath,$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial -lsundials_core
 endif
 ifeq (yes,$(MG_USES_HYPRE))
 ## Vista: `module load hypre` provides TACC_HYPRE_INC + TACC_HYPRE_LIB.
@@ -251,6 +253,11 @@ GSL_INCL = -I$(OLCF_GSL_ROOT)/include
 GSL_LIBS = -L$(OLCF_GSL_ROOT)/lib
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
+ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
+## CHIMES: `module load sundials/7.4.0-mpi` (built for amd/6.4.2 + cray-mpich/9.0.1, as this block) sets OLCF_SUNDIALS_ROOT
+CHIMESINCL = -I$(OLCF_SUNDIALS_ROOT)/include
+CHIMESLIBS = -L$(OLCF_SUNDIALS_ROOT)/lib64 -Wl,-rpath,$(OLCF_SUNDIALS_ROOT)/lib64 -lsundials_cvode -lsundials_nvecserial -lsundials_core
+endif
 ifeq (yes,$(MG_USES_HYPRE))
 ## Frontier: `module load hypre/3.0.0-mpi` sets OLCF_HYPRE_ROOT (the OLCF module
 ## convention, as for gsl/kokkos above); its libraries are under lib64. That version
@@ -335,6 +342,11 @@ FFTW_INCL=
 FFTW_LIBS=
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
+ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
+## CHIMES: `module load sundials/7.4.0-mpi` (built for amd/6.4.2 + cray-mpich/9.0.1, as this block) sets OLCF_SUNDIALS_ROOT
+CHIMESINCL = -I$(OLCF_SUNDIALS_ROOT)/include
+CHIMESLIBS = -L$(OLCF_SUNDIALS_ROOT)/lib64 -Wl,-rpath,$(OLCF_SUNDIALS_ROOT)/lib64 -lsundials_cvode -lsundials_nvecserial -lsundials_core
+endif
 ifeq (yes,$(MG_USES_HYPRE))
 ifdef OLCF_HYPRE_ROOT
 HYPRE_INCL = -I$(OLCF_HYPRE_ROOT)/include
@@ -356,6 +368,7 @@ ifeq ($(SYSTYPE),"Vista_CPU")
 ## CPU threads instead of CUDA. GIZMO_GPU_COMPILER is NOT defined (no nvcc),
 ## so the per-TU AllDeviceMirror blocks are skipped and All remains the normal extern.
 ## Load modules: nvidia openmpi hdf5/2.0.0 fftw3 gsl kokkos/4.5.01-omp
+##   (+ sundials/7.5.0 for CHIMES; Grackle has no module: build it once and point GRACKLE_PATH at its install)
 ## (i.e. kokkos/4.5.01-omp NOT kokkos/4.5.01-cuda; the rest matches the CUDA build).
 ## mpicxx on Vista wraps nvc++ (NVIDIA HPC SDK), not gcc — no -foffload needed.
 CC       =  mpicc
@@ -367,7 +380,7 @@ GSL_INCL = -I$(TACC_GSL_INC)
 GSL_LIBS = -L$(TACC_GSL_LIB)
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
 CHIMESINCL = -I$(TACC_SUNDIALS_INC)
-CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial
+CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -Wl,-rpath,$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial -lsundials_core
 endif
 ## Kokkos paths (TACC module sets TACC_KOKKOS_INC/LIB)
 KOKKOS_INCL     = -I$(TACC_KOKKOS_INC)
@@ -529,8 +542,11 @@ KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
 GPU_CXX    = mpicxx -std=c++17
 GPU_CFLAGS = $(KOKKOS_INCL)
 GPU_LDFLAGS= $(KOKKOS_LIBS_PATH)
-MKL_INCL = #
-MKL_LIBS = #
+## MKL only for the PARDISO backend of the MG solve (TACC's intel module sets TACC_MKL_INC/LIB)
+ifeq (MHD_MODIFIED_GRADIENT_USE_PARDISO,$(findstring MHD_MODIFIED_GRADIENT_USE_PARDISO,$(CONFIGVARS)))
+MKL_INCL = -I$(TACC_MKL_INC)
+MKL_LIBS = -L$(TACC_MKL_LIB) -Wl,-rpath,$(TACC_MKL_LIB) -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -ldl
+endif
 FFTW_INCL= -I$(TACC_FFTW3_INC)
 FFTW_LIBS= -L$(TACC_FFTW3_LIB)
 HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
@@ -642,14 +658,14 @@ HYPRE_VERSION := $(shell ls /opt/homebrew/Cellar/hypre/ 2>/dev/null | sort -V | 
 HYPRE_INCL = -I/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/include/
 HYPRE_LIBS = -L/opt/homebrew/Cellar/hypre/$(HYPRE_VERSION)/lib/ -lHYPRE
 endif
+## SkyNet (NUCLEAR_NETWORK_SOLVER=1 only)
+SKYNET_PATH ?= $(HOME)/.local
+SKYNET_EXTRA_INCL ?= -I/opt/homebrew/include
+SKYNET_EXTRA_LIBS ?= -L/opt/homebrew/lib -L/opt/homebrew/opt/gcc/lib/gcc/current -lhdf5_cpp -lhdf5 -lboost_filesystem -lboost_serialization -lgsl -lgslcblas -framework Accelerate -lgfortran
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
-# NOTE: set these to a SUNDIALS install in the CHIMES-supported 2.7-5.x range (see the
-# note at the CHIMESINCL/CHIMESLIBS defaults above). Homebrew currently ships SUNDIALS
-# 7.x (too new: no 'realtype', context-mandatory CVode API), so `brew`'s default path
-# will not compile CHIMES; the paths below are the legacy Intel-Homebrew location and
-# must be pointed at a supported SUNDIALS to build CHIMES on this platform.
-CHIMESINCL = -I/usr/local/include/sundials
-CHIMESLIBS = -L/usr/local/lib -lsundials_cvode -lsundials_nvecserial
+# Homebrew's SUNDIALS (`brew install sundials`, 7.x; see the note at the CHIMESINCL/CHIMESLIBS defaults above)
+CHIMESINCL = -I/opt/homebrew/opt/sundials/include
+CHIMESLIBS = -L/opt/homebrew/opt/sundials/lib -lsundials_cvode -lsundials_nvecserial -lsundials_core
 endif
 MKL_INCL = #
 MKL_LIBS = #
@@ -737,6 +753,53 @@ HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
 HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
 endif
 
+#----------------------------
+# Rusty AMD Genoa nodes (--constraint=genoa), Kokkos OpenMP backend. Select with
+# `export SYSTYPE=RUSTY_GENOA` or a ~/.gizmo file. Unlike "RUSTY" above, this sets CXX/FC and the
+# Kokkos and GSL paths, which the Kokkos translation units need even in a CPU-only build.
+ifeq ($(SYSTYPE),"RUSTY_GENOA")
+CC       =   mpicc
+CXX      =   mpicxx -std=c++20
+ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
+CC       =   mpicxx
+endif
+FC       =   mpifort
+## plain -O2 like the other Kokkos CPU systypes; no -ffast-math or -march (see the position->key
+## contract in declarations/typedefs.h). OPT_EXTRA adds flags without editing this file.
+OPTIMIZE =  -O2 -funroll-loops -g -Wall $(OPT_EXTRA)
+OPTIMIZE += -fopenmp   # the Kokkos OpenMP backend needs it whether or not OPENMP is set
+## There is no Kokkos module on Rusty, so each user builds one once (OpenMP backend, here 4.4.01):
+##   module load modules/2.4-20250724 gcc openmpi cmake
+##   cmake -S <kokkos source> -B <build dir> -DCMAKE_INSTALL_PREFIX=$HOME/opt/kokkos-openmp -DCMAKE_BUILD_TYPE=Release
+##     -DCMAKE_CXX_STANDARD=20 -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DBUILD_SHARED_LIBS=ON
+##     -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_SERIAL=ON -DKokkos_ARCH_ZEN4=ON
+##   cmake --build <build dir> -j 16 && cmake --install <build dir>
+## Installed into the default below. KOKKOS_PATH resolves make command line > environment > $(HOME)/opt/kokkos-openmp. A plain
+## "?=" cannot do this: the unconditional "KOKKOS_PATH =" near the top of this file overrides the
+## environment and leaves the variable defined but empty, and the test harness runs a bare `make`.
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(shell echo $$KOKKOS_PATH)
+endif
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(HOME)/opt/kokkos-openmp
+endif
+KOKKOS_INCL = -I$(KOKKOS_PATH)/include
+KOKKOS_CPPFLAGS = -I$(KOKKOS_PATH)/include
+KOKKOS_LIBS_PATH = -L$(KOKKOS_PATH)/lib64 -L$(KOKKOS_PATH)/lib -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib64 -Xlinker -R -Xlinker $(KOKKOS_PATH)/lib
+KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers
+GPU_CXX    = mpicxx -std=c++20
+GPU_CFLAGS = $(KOKKOS_INCL) -fopenmp
+GPU_LDFLAGS = $(KOKKOS_LIBS_PATH)
+GSL_INCL = -I$(GSL_BASE)/include
+GSL_LIBS = -L$(GSL_BASE)/lib -Xlinker -R -Xlinker $(GSL_BASE)/lib -lgsl -lgslcblas
+FFTW3_BASE= /mnt/sw/nix/store/bjzkf3pwcw0gy54db19kd4rl0xdiq98s-fftw-3.3.10/.
+FFTW_INCL= -I$(FFTW3_BASE)/include
+FFTW_LIBS= -L$(FFTW3_BASE)/lib -Xlinker -R -Xlinker $(FFTW3_BASE)/lib
+MPICHLIB =
+HDF5INCL = -I$(HDF5_BASE)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
+endif
+
 
 #----------------------------------------------------------------------------------------------
 #----------------------------------------------------------------------------------------------
@@ -782,7 +845,6 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 				hydro/density.o \
 				hydro/gradients.o \
 				hydro/hydro_corridor.o \
-				hydro/mg_gradient_correction.o \
 				turb/dynamic_diffusion.o \
 				turb/dynamic_diffusion_velocities.o \
 				turb/turb_powerspectra.o
@@ -792,7 +854,7 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
-GPU_OBJS = core/gpu_drift.o cooling/cooling.o eos/eos.o hydro/density_gpu.o hydro/density_loop.o hydro/cellcorrections_loop.o hydro/gradients_loop.o hydro/hydro_force_loop.o mesh/gpu_neighbor_list.o mesh/neighbor_loop_runner.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_loop.o solids/grain_drag.o galaxy_sf/dm_dispersion.o galaxy_sf/dm_dispersion_loop.o gravity/ags_density_loop.o gravity/ags_force_loop.o sidm/dm_fuzzy_loop.o sidm/cbe_integrator_gpu.o sidm/cbe_integrator_gradients.o radiation/rt_source_injection_loop.o galaxy_sf/thermal_fb.o galaxy_sf/thermal_fb_loop.o sinks/sink_feed.o sinks/sink_feed_loop.o sinks/sink_environment.o sinks/sink_env1_loop.o sinks/sink_env2_loop.o galaxy_sf/mechfb_loop.o solids/grain_physics_loop.o sinks/sink_swallow_and_kick.o sinks/sink_swk_loop.o galaxy_sf/radfb_rp_loop.o system/gpu_particles_arena.o system/kokkos_mem_telemetry.o gravity/gpu_gravity_tree.o gravity/gpu_gravtree.o gravity/gpu_moment_refresh.o gravity/gpu_nextnode_thread.o gravity/gpu_morton.o gravity/gpu_peano_walk.o gravity/gpu_topology_build.o gravity/gpu_topology_finalize.o gravity/gpu_pseudo_update.o gravity/gpu_force_drift.o gravity/gpu_force_update.o
+GPU_OBJS = core/gpu_drift.o cooling/cooling.o eos/eos.o hydro/density_gpu.o hydro/density_loop.o hydro/cellcorrections_loop.o hydro/gradients_loop.o hydro/hydro_force_loop.o hydro/mg_gradient_correction.o mesh/gpu_neighbor_list.o mesh/neighbor_loop_runner.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_loop.o solids/grain_drag.o galaxy_sf/dm_dispersion.o galaxy_sf/dm_dispersion_loop.o gravity/ags_density_loop.o gravity/ags_force_loop.o sidm/dm_fuzzy_loop.o sidm/cbe_integrator_gpu.o sidm/cbe_integrator_gradients.o radiation/rt_source_injection_loop.o galaxy_sf/thermal_fb.o galaxy_sf/thermal_fb_loop.o sinks/sink_feed.o sinks/sink_feed_loop.o sinks/sink_environment.o sinks/sink_env1_loop.o sinks/sink_env2_loop.o galaxy_sf/mechfb_loop.o solids/grain_physics_loop.o sinks/sink_swallow_and_kick.o sinks/sink_swk_loop.o galaxy_sf/radfb_rp_loop.o system/gpu_particles_arena.o system/kokkos_mem_telemetry.o gravity/gpu_gravity_tree.o gravity/gpu_gravtree.o gravity/gpu_moment_refresh.o gravity/gpu_nextnode_thread.o gravity/gpu_morton.o gravity/gpu_peano_walk.o gravity/gpu_topology_build.o gravity/gpu_topology_finalize.o gravity/gpu_pseudo_update.o gravity/gpu_force_drift.o gravity/gpu_force_update.o
 ## Nuclear network files are added to GPU_OBJS below (conditional on NUCLEAR_NETWORK)
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
@@ -928,15 +990,20 @@ ifeq (NUCLEAR_NETWORK,$(findstring NUCLEAR_NETWORK,$(CONFIGVARS)))
 GPU_OBJS += nuclear/nuclear.o
 INCL     += nuclear/nuclear.h nuclear/nuclear_physics_functions.h
 endif
-ifeq (NUCLEAR_NETWORK_SOLVER=1,$(findstring NUCLEAR_NETWORK_SOLVER=1,$(CONFIGVARS)))
+ifeq (NUCLEAR_NETWORK_SOLVER 1,$(findstring NUCLEAR_NETWORK_SOLVER 1,$(CONFIGVARS)))
 OBJS    += nuclear/nuclear_skynet.o
-SKYNETLIBS = -lskynet
+# SKYNET_PATH = SkyNet's install prefix, set in your SYSTYPE block, the environment or on the make line.
+# SKYNET_EXTRA_LIBS and SKYNET_EXTRA_INCL = the libraries SkyNet itself needs and any include directories for them, which depend on the machine: override them in your SYSTYPE block.
+SKYNET_EXTRA_LIBS ?= -lhdf5_cpp -lhdf5 -lboost_filesystem -lboost_serialization -lgsl -lgslcblas -llapack -lgfortran
+SKYNETINCL = $(if $(SKYNET_PATH),-I$(SKYNET_PATH)/include/SkyNet -I$(SKYNET_PATH)/include) $(SKYNET_EXTRA_INCL)
+SKYNETLIBS = $(if $(SKYNET_PATH),-L$(SKYNET_PATH)/lib -Wl$(comma)-rpath$(comma)$(SKYNET_PATH)/lib) -lskynet $(SKYNET_EXTRA_LIBS)
 else
+SKYNETINCL =
 SKYNETLIBS =
 endif
-ifeq (NUCLEAR_NETWORK_SOLVER=2,$(findstring NUCLEAR_NETWORK_SOLVER=2,$(CONFIGVARS)))
+ifeq (NUCLEAR_NETWORK_SOLVER 2,$(findstring NUCLEAR_NETWORK_SOLVER 2,$(CONFIGVARS)))
 OBJS    += nuclear/nuclear_torch.o
-TORCHLIBS = -ltorch_nuclear
+TORCHLIBS = # the solver 2 stub links nothing; a real library is named here
 else
 TORCHLIBS =
 endif
@@ -948,11 +1015,24 @@ OBJS    += cooling/chimes/chimes.o cooling/chimes/chimes_cooling.o cooling/chime
 INCL    += cooling/chimes/chimes_interpol.h cooling/chimes/chimes_proto.h cooling/chimes/chimes_vars.h 
 endif
 
-# if grackle libraries are installed they must be a shared library as defined here
+comma := ,
+# Grackle (>= 3), built with Grackle's CMake build, which installs a grackle.pc file: pkg-config then gives the compile and link
+#   flags, including the Fortran/HDF5 dependencies of a static libgrackle.a. grackle.pc is looked up as
+#   $(GRACKLE_PATH)/lib{,64}/pkgconfig/grackle.pc, GRACKLE_PATH = Grackle's CMAKE_INSTALL_PREFIX set in your SYSTYPE block, the
+#   environment or on the make line; otherwise on PKG_CONFIG_PATH. Without a grackle.pc it falls back to -lgrackle from GRACKLE_PATH.
+#   The include and library directories under GRACKLE_PATH (lib or lib64) are added either way, the library with an rpath: Grackle
+#   3.4's grackle.pc names ${prefix}/lib even where its build installed into lib64 and gives no rpath, and pkg-config gives nothing
+#   at all when it cannot resolve the hdf5 package grackle.pc requires (e.g. Cray's HDF5 module ships no matching hdf5.pc).
 ifeq (COOL_GRACKLE,$(findstring COOL_GRACKLE,$(CONFIGVARS)))
-OPTIONS += -DCONFIG_BFLOAT_8
-GRACKLEINCL =
-GRACKLELIBS = -lgrackle
+GRACKLE_PC := $(if $(GRACKLE_PATH),$(firstword $(wildcard $(GRACKLE_PATH)/lib/pkgconfig/grackle.pc $(GRACKLE_PATH)/lib64/pkgconfig/grackle.pc)))
+GRACKLE_LIBDIR := $(if $(GRACKLE_PATH),$(patsubst %/,%,$(dir $(firstword $(wildcard $(GRACKLE_PATH)/lib/libgrackle.* $(GRACKLE_PATH)/lib64/libgrackle.*)))))
+ifeq ($(GRACKLE_PC),)
+GRACKLE_PC := $(shell pkg-config --exists grackle 2>/dev/null && echo grackle)
+endif
+GRACKLE_PC_CFLAGS := $(if $(GRACKLE_PC),$(shell pkg-config --cflags $(GRACKLE_PC) 2>/dev/null))
+GRACKLE_PC_LIBS := $(if $(GRACKLE_PC),$(shell pkg-config --libs $(GRACKLE_PC) 2>/dev/null))
+GRACKLEINCL = $(if $(GRACKLE_PATH),-I$(GRACKLE_PATH)/include) $(GRACKLE_PC_CFLAGS)
+GRACKLELIBS = $(if $(GRACKLE_LIBDIR),-L$(GRACKLE_LIBDIR) -Wl$(comma)-rpath$(comma)$(GRACKLE_LIBDIR)) $(if $(GRACKLE_PC_LIBS),$(GRACKLE_PC_LIBS),-lgrackle)
 else
 GRACKLEINCL =
 GRACKLELIBS =
@@ -961,7 +1041,7 @@ endif
 
 # linking libraries (includes machine-dependent options above)
 CFLAGS = $(OPTIONS) $(FFTW_INCL) $(HDF5INCL) \
-         $(GRACKLEINCL) $(CHIMESINCL) $(HYPRE_INCL) $(MKL_INCL) $(KOKKOS_CPPFLAGS)
+         $(GRACKLEINCL) $(CHIMESINCL) $(SKYNETINCL) $(HYPRE_INCL) $(MKL_INCL) $(KOKKOS_CPPFLAGS)
 
 
 
@@ -1004,6 +1084,8 @@ eos/eos.o: eos/eos.cc $(INCL) $(CONFIG) compile_time_info.cc
 nuclear/nuclear.o: nuclear/nuclear.cc nuclear/nuclear_physics_functions.h $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 hydro/density_gpu.o: hydro/density_gpu.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+hydro/mg_gradient_correction.o: hydro/mg_gradient_correction.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 mesh/gpu_neighbor_list.o: mesh/gpu_neighbor_list.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
@@ -1133,7 +1215,7 @@ ifeq ($(SYSTYPE),"Vista")
 galaxy_sf/mechanical_fb.o: CFLAGS := $(subst -O2,-O1,$(CFLAGS))
 endif
 
-compile_time_info.cc: $(CONFIG)
+compile_time_info.cc: $(CONFIG) declarations/precompiler_logic.h Template_Config.sh file_io/prepare-config.perl
 	$(PERL) file_io/prepare-config.perl $(CONFIG)
 
 clean:

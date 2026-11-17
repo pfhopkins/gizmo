@@ -25,3 +25,4 @@ ResubmitOn                         0
 ResubmitCommand                    none
 DivBcleaningParabolicSigma         0.1
 DivBcleaningHyperbolicSigma        1.0
+ActiveFractionForMGSweep           0     % MG builds: solve on every step with active gas, so the MG variant checks the full method (ignored in other builds)

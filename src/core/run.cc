@@ -180,7 +180,13 @@ void run(void)
              * and rebuild. */
             if(ThisTask == 0) {printf("Restart tree build: restoring geometric particle ownership first.\n"); fflush(stdout);}
             domain_Decomposition_light(0, 0);
-            if(force_treebuild_gravity() < 0) {endrun(91568);}
+            const int retry_status = force_treebuild_gravity();
+            if(retry_status < 0)
+            {
+                if(ThisTask == 0) {printf("Restart tree build still failed (status %d) after restoring particle ownership. Stopping.\n", retry_status); fflush(stdout);}
+                endrun(91568);
+                gizmo_exit_bad_stop_if_requested("run:restart_treebuild_retry");
+            }
         }
         /* Same proof as the main-step build in gravtree.cc: a full drift ran
          * immediately above, so this tree's node geometry describes this time and
@@ -196,6 +202,9 @@ void run(void)
         gizmo_exit_bad_stop_if_requested("run:restart_treebuild");
         if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
     }
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    eos_limits_emit(1); /* what startup needed, before any step */
+#endif
 
     while(1)			/* main timestep iteration loop */
     {
@@ -208,6 +217,9 @@ void run(void)
         {
             if(ThisTask == 0) {printf("\nFinal time=%g reached. Simulation ends.\n", All.TimeMax);}
             gizmo_full_drift_to(All.Ti_Current); /* lazy-drift sync: restart + final snapshot need all-particle predicted state */
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+            rearrange_particle_sequence(); /* fold the last step's promoted grains into the gas block, so the restart carries their cells */
+#endif
             restart(0); /* write a restart file to allow continuation of the run for a larger value of TimeMax */
             if(All.Ti_lastoutput != All.Ti_Current) {savepositions(All.SnapshotFileCount++);} /* make a snapshot at the final time in case none has produced at this time; this will be overwritten if All.TimeMax is increased and the run is continued */
             break;
@@ -365,6 +377,7 @@ void run(void)
              * Force a full eager drift before either decomp variant fires.
              * In eager mode this is a no-op (g_last_full_drift_Ti cache hit). */
             gizmo_full_drift_to(All.Ti_Current);
+            domain_arm_step_prepay(1);   /* these also cost the step they are made for (domain.cc) */
 #ifdef DOMAIN_LIGHTWEIGHT_REPARTITION
             /* Which of the two the step gets is a domain question.  This once keyed on
              * TreeReconstructFlag, so anything that merely wanted a fresh tree also suppressed the
@@ -374,6 +387,7 @@ void run(void)
             else
 #endif
             {domain_Decomposition(0, 0, 1, 1);}  /* full decomposition needed */
+            domain_arm_step_prepay(0);
             /* Cleared here rather than inside the decomposition, because the request is made to
                this loop: group finding raises it and then runs decompositions of its own, which
                would otherwise consume it and leave the tree storage it later frees unclaimed. */
@@ -464,6 +478,21 @@ void run(void)
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
         CPU_Step[CPU_KICKS] += measure_time();
 
+#if defined(GALSF) && defined(GALSF_FB_MECHANICAL)
+        /* mechanical feedback after the closing kick: a step ending here closes with the forces of the gas it was taken in, not with a
+           post-feedback pressure over half a step sized for the pre-feedback gas (which creates energy); the receivers' signal speed is
+           raised at deposition, so the next step, which opens with this step's forces, is short */
+        int mechanical_fb_this_step = (All.TotN_gas > 0);
+#ifdef GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW
+        mechanical_fb_this_step = mechanical_fb_this_step && (All.Dt_Since_LastFBCalc_Gyr >= All.Dt_Min_Between_FBCalc_Gyr); /* the cadence decision compute_stellar_feedback made this step */
+#endif
+        if(mechanical_fb_this_step)
+        {
+            mechanical_fb_calc_toplevel();
+            gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
+        }
+#endif
+
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion (sinks, cooling, FoF, RT subcycle) */
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
@@ -479,14 +508,20 @@ void run(void)
         int stopflag = 0;
         if(ThisTask == 0)
         {
-            FILE *fd;
-            char stopfname[DEFAULT_PATH_BUFFERSIZE_TOUSE];
-            snprintf(stopfname, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sstop", All.OutputDir);
-            if((fd = fopen(stopfname, "r")))	/* Is the stop-file present? If yes, interrupt the run. */
+            static double t_last_stopcheck = -1;
+            double t_now = MPI_Wtime();
+            if((t_last_stopcheck < 0) || (t_now - t_last_stopcheck >= STOP_FILE_CHECK_MIN_WALL_SECONDS))
             {
-                fclose(fd);
-                stopflag = 1;
-                unlink(stopfname);
+                t_last_stopcheck = t_now;
+                FILE *fd;
+                char stopfname[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+                snprintf(stopfname, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sstop", All.OutputDir);
+                if((fd = fopen(stopfname, "r")))	/* Is the stop-file present? If yes, interrupt the run. */
+                {
+                    fclose(fd);
+                    stopflag = 1;
+                    unlink(stopfname);
+                }
             }
 
             if(CPUThisRun > 0.85 * All.TimeLimitCPU)	/* are we running out of CPU-time ? If yes, interrupt run. */
@@ -500,6 +535,9 @@ void run(void)
 
         if(stopflag)
         {
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+            rearrange_particle_sequence(); /* fold this step's promoted grains into the gas block, so the restart carries their cells */
+#endif
             restart(0);		/* write restart file */
             MPI_Barrier(MPI_COMM_WORLD);
 
@@ -533,6 +571,9 @@ void run(void)
 
         if(stopflag == 3)
         {
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+            rearrange_particle_sequence(); /* as above */
+#endif
             restart(0);		/* write an occasional restart file */
             stopflag = 0;
             All.TimeLastRestartFile += report_time();
@@ -632,15 +673,6 @@ void calculate_non_standard_physics(void)
             printf("Transport subcycling: %d sub-steps (hydro_dt/transport_dt = %.1f)\n",
                    All.Transport_Subcycle_N, max_hydro_dt_global / min_transport_dt_global);
     }
-    /* Save the hydro-pass DtInternalEnergy before the subcycle loop. rt_update_driftkick adds
-       IR gas heating to DtInternalEnergy each sub-step; without resetting, it accumulates N-fold.
-       We reset to the hydro value before each kick so only one sub-step's IR contribution is present. */
-#if defined(RT_INFRARED) && defined(COOLING)
-    for(int idx : ActiveParticleList) {
-        if(P[idx].Type == 0 && P[idx].Mass > 0)
-            CellP[idx].DtIE_IR_Subcycle = CellP[idx].DtInternalEnergy;
-    }
-#endif
 #endif // TRANSPORT_SUBCYCLE
 
 #ifdef RADTRANSFER
@@ -661,10 +693,12 @@ void calculate_non_standard_physics(void)
 #endif
     }
 #endif
-#if defined(RT_CHEM_PHOTOION) && !defined(COOLING)
-    rt_update_chemistry(); /* chemistry update (under TRANSPORT_SUBCYCLE_COOLING, cooling handles it on subsequent sub-steps) */
+#if defined(RT_CHEM_PHOTOION) && (!defined(COOLING) || (defined(COOL_GRACKLE) && !(COOL_GRACKLE_CHEMISTRY > 0)))
+#if !(defined(TRANSPORT_SUBCYCLE_COOLING) && defined(COOLING))
+    rt_update_chemistry(); /* the ionization states, when no cooling chemistry evolves them (none, or grackle's tables). with subcycled cooling it runs in the sub-steps instead, below */
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
     if(Flag_FullStep) {rt_write_chemistry_stats();}
+#endif
 #endif
 #endif
     gizmo_exit_bad_stop_if_requested("run:after_rt_nonflux"); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
@@ -680,14 +714,6 @@ void calculate_non_standard_physics(void)
     gizmo_exit_bad_stop_if_requested("run:transport_subcycle_substep");
     /* --- recompute transport fluxes every sub-step and apply kick --- */
     transport_subcycle_exchange_fluxes(transport_sub);
-    /* Reset DtInternalEnergy to hydro-pass value before each kick, so rt_update_driftkick's
-       IR gas heating contribution doesn't accumulate across sub-steps. */
-#if defined(RT_INFRARED) && defined(COOLING)
-    for(int idx : ActiveParticleList) {
-        if(P[idx].Type == 0 && P[idx].Mass > 0)
-            CellP[idx].DtInternalEnergy = CellP[idx].DtIE_IR_Subcycle;
-    }
-#endif
     transport_subcycle_kick();
 #endif
 
@@ -700,6 +726,9 @@ void calculate_non_standard_physics(void)
             if(P[idx].Type == 0 && P[idx].Mass > 0)
                 CellP[idx].Dt_Transport_Subcycle_Saved = CellP[idx].DtInternalEnergy;
         }
+#endif
+#if defined(RT_CHEM_PHOTOION) && defined(COOL_GRACKLE) && !(COOL_GRACKLE_CHEMISTRY > 0)
+        rt_update_chemistry(); /* grackle's tables do not evolve the ionization states: advance them with each sub-step's radiation, over that sub-step, before grackle cools with them */
 #endif
         cooling_parent_routine();
 #ifndef COOLING_OPERATOR_SPLIT
@@ -718,15 +747,15 @@ void calculate_non_standard_physics(void)
        above (active list + shared CSR + gas ghost pool). */
     gizmo_sym_neighbor_list_free();
     ghost_exchange_cleanup();
-    /* After the loop DtInternalEnergy = DtIE_IR_Subcycle + IR_rate_last_substep, which is correct:
-       the pre-kick reset already prevents N-fold accumulation, so the cooling solver and second
-       KDK half-kick see exactly one sub-step's IR contribution at the final Rad_E_gamma state. */
 #if defined(TRANSPORT_SUBCYCLE_COOLING) && !defined(COOLING_OPERATOR_SPLIT)
     /* zero DtInternalEnergy after the subcycle loop — the hydro work has been fully applied across all sub-steps */
     for(int idx : ActiveParticleList) {
         if(P[idx].Type == 0 && P[idx].Mass > 0 && CellP[idx].CoolingIsOperatorSplitThisTimestep==0)
             CellP[idx].DtInternalEnergy = 0;
     }
+#endif
+#if defined(RT_CHEM_PHOTOION) && defined(COOL_GRACKLE) && !(COOL_GRACKLE_CHEMISTRY > 0) && defined(TRANSPORT_SUBCYCLE_COOLING) && defined(OUTPUT_ADDITIONAL_RUNINFO)
+    if(Flag_FullStep) {rt_write_chemistry_stats();} /* after the sub-steps that advanced the ionization states */
 #endif
 #endif
 
@@ -787,6 +816,9 @@ void compute_statistics(void)
          * on TimeBetStatistics so this doesn't fire every step. */
         gizmo_full_drift_to(All.Ti_Current);
         energy_statistics();	/* compute and output energy statistics */
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+        eos_limits_emit(0);
+#endif
 #if defined(CBE_INTEGRATOR) && (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO))
         /*  emit per-output-interval CBE diagnostic line and
          * reset the per-rank accumulators. Co-located with energy_statistics

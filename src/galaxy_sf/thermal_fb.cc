@@ -64,11 +64,11 @@ void thermal_fb_calc(void)
     PRINT_STATUS(" ..depositing thermal feedback to gas");
 
     /* ---- Build active list via the engine helper (filters by Spec::is_active,
-     *      MPI_Allreduce-gates on global count). */
+     *      returns false when no rank has an active source). */
     int *active_list = nullptr;
-    int  num_active = 0, num_global_active = 0;
+    int  num_active = 0;
     if (!nlr_build_active_list(ThermalFBSpec::is_active,
-                                &active_list, &num_active, &num_global_active,
+                                &active_list, &num_active,
                                 "thermalfb_active_list")) {
         CPU_Step[CPU_SNIIHEATING] += measure_time();
         return;
@@ -109,13 +109,13 @@ void thermal_fb_calc(void)
      * write via atomic_max in the pair kernel. Set the host-side
      * NeedToWakeupParticles_local flag so process_wake_ups() at the next
      * sync actually scans for and applies the wakeup writes. Setting this
-     * unconditionally (when num_global_active > 0) is safe: process_wake_ups
+     * unconditionally (this point is reached only when some rank has a source) is safe: process_wake_ups
      * only mutates particles with P[i].wakeup != 0, so a no-op scan is
      * harmless when no actual wakeup was written. Thermalfb has no UVM
      * need_wakeup signal of its own (unlike hydro_force / ags_force); this
      * is the simplest collective-safe equivalent. */
     extern int NeedToWakeupParticles_local;
-    if (num_global_active > 0) NeedToWakeupParticles_local = 1;
+    NeedToWakeupParticles_local = 1;
 
     /* ---- Free + return. host_locals must outlive run_neighbor_loop because
      *      apply_active_writeback (called from inside) reads it; freed here

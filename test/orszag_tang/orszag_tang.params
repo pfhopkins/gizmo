@@ -24,3 +24,4 @@ ResubmitCommand                    none
 ErrTolTheta                        0.7
 ErrTolForceAcc                     0.001
 TimeBetStatistics                  0.5
+ActiveFractionForMGSweep           0     % MG builds: solve on every step with active gas, so the MG variant checks the full method (ignored in other builds)

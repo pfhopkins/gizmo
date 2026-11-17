@@ -105,11 +105,7 @@ void hydro_accumulate_neighbor(
     {double Wlorentz_j = lorentz_factor(gr_j->gamma, VelPred_j, grj.gr_limiter_j); grj.FourVelocity_j = Wlorentz_j*VelPred_j;} /* (the velocity is limited in place where required) */
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-#ifdef GENERAL_RELATIVITY
-    Vec3<MyDouble> ParticleVel_j = CellP[j].ParticleVel; /* GR: the velocity of the mesh-generating point of j */
-#else
-    Vec3<MyDouble> ParticleVel_j = CellP[j].VelPred;
-#endif
+    Vec3<MyDouble> ParticleVel_j = CellP[j].ParticleVel; /* the velocity of the mesh-generating point of j, not of the fluid (Lupi fix 2022 of the original C code) */
     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos, P[j].Pos, ParticleVel_j, -1);
 #ifdef GENERAL_RELATIVITY
     ParticleVel_j = Vphys(ParticleVel_j, gr_j);
@@ -117,9 +113,9 @@ void hydro_accumulate_neighbor(
 #endif
     kernel.dv = local.Vel - VelPred_j;
     kernel.rho_ij_inv = 2.0 / (local.Density + CellP[j].Density);
-    double Particle_Size_j = P[j].Get_Particle_Size() * All.cf_atime;
-    double Particle_Size_i = local.Mass / local.Density;
-    Particle_Size_i = pow(Particle_Size_i, 1.0/NUMDIMS) * All.cf_atime;
+    /* both sides take the cell size from the cell volume, so every pair quantity built from them (face checks, transport speed caps) is the same seen from either cell */
+    double Particle_Size_i = pow(local.Mass / local.Density, 1.0/NUMDIMS) * All.cf_atime;
+    double Particle_Size_j = pow(P[j].Mass / CellP[j].Density, 1.0/NUMDIMS) * All.cf_atime;
 
     kernel.sound_j = CellP[j].effective_soundspeed();
     kernel.vsig = kernel.sound_i + kernel.sound_j;
@@ -270,6 +266,7 @@ void hydro_accumulate_neighbor(
     double face_vel_i = 0, face_vel_j = 0;
     double v_hll = 0;
     int kernel_mode = 0;
+    Vec3<double> face_velocity_jump = {}; /* velocity jump between the reconstructed face states (meshless methods) */
 
     memset(&Fluxes, 0, sizeof(struct Conserved_var_Riemann));
 
@@ -310,7 +307,7 @@ void hydro_accumulate_neighbor(
                                          cr_pressure_j_ptr,
                                          Face_Area_Vec, Face_Area_Norm,
                                          face_vel_i, face_vel_j, face_area_dot_vel,
-                                         mdot_estimated, Riemann_vec, Riemann_out, Fluxes, out);
+                                         mdot_estimated, face_velocity_jump, Riemann_vec, Riemann_out, Fluxes, out);
     }
 #endif
 
@@ -342,9 +339,14 @@ void hydro_accumulate_neighbor(
 #endif
 
     /* ---- Physics sub-modules ---- */
-    elastic_stress_tensor_force_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
+    int in_impedance_scope = elastic_stress_tensor_force_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, face_velocity_jump, rinv,
                                              Face_Area_Vec, Face_Area_Norm,
                                              tensile_correction_factor, dt_hydrostep, Fluxes);
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    if(in_impedance_scope) {out.ElasticImpedanceNeighbour = 1;} /* a gas cell with a solid neighbour: its timestep is capped like a solid's (timestep.cc) */
+#else
+    (void)in_impedance_scope;
+#endif
     Vec3<double> bflux_from_nonideal_effects = {};
     /* nonideal_mhd_compute_pair handles classical non-ideal MHD only
        (Ohmic / Hall / ambipolar). Battery sources are now applied as
@@ -355,8 +357,9 @@ void hydro_accumulate_neighbor(
     /* Per-pair physics sub-modules. Functions guard their bodies with the
        relevant #ifdef so callers invoke unconditionally (no-op when disabled). */
     double face_density_for_diffusion = 0;
-#if defined(SAVE_FACE_DENSITY) && !defined(HYDRO_SPH)
-    face_density_for_diffusion = Riemann_out.Face_Density;
+#if defined(TURB_DIFFUSION) && !defined(HYDRO_SPH)
+    /* the reconstructed face densities of the two sides, averaged: the same value from either side of the pair. the face states are comoving; the diffusion weight is physical, as in the SPH branch */
+    face_density_for_diffusion = 0.5 * (Riemann_vec.L.rho + Riemann_vec.R.rho) * All.cf_a3inv;
 #endif
 #if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
     /* 2-T plasma bit 2: capture the conduction-only contribution to Fluxes.p
@@ -373,9 +376,9 @@ void hydro_accumulate_neighbor(
                            Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
                            dt_hydrostep, Fluxes);
     turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
-                                  face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated, out);
+                                  face_density_for_diffusion, v_hll, dt_hydrostep, dt_hydrostep_i, mdot_estimated, out);
     chimes_turb_diff_ions_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
-                                       face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated, out);
+                                       face_density_for_diffusion, v_hll, dt_hydrostep, dt_hydrostep_i, mdot_estimated, out);
     {
         /* Riemann_out / face_area_dot_vel exist only under !HYDRO_SPH; local
            shims default to zero so the function signature stays the same. */
@@ -419,17 +422,19 @@ void hydro_accumulate_neighbor(
         double dmass_holder = Fluxes.rho * dt_hydrostep_i, dmass_limiter;
         if(dmass_holder > 0) {dmass_limiter = P[j].Mass;} else {dmass_limiter = local.Mass;}
         dmass_limiter *= 0.1;
-        if(fabs(dmass_holder) > dmass_limiter) {dmass_holder *= dmass_limiter / fabs(dmass_holder);}
+        double mass_flux_accepted = Fluxes.rho; /* the part of this pair's mass flux this side actually transfers (to both cells) */
+        if(fabs(dmass_holder) > dmass_limiter) {mass_flux_accepted *= dmass_limiter / fabs(dmass_holder); dmass_holder *= dmass_limiter / fabs(dmass_holder);}
         /* Timestep-conditional mass flux for machine-accurate conservation */
         double dt_hydrostep_j_loc = get_particle_timestep_in_physical(j, P);
         if(local.dt_hydrostep_i < dt_hydrostep_j_loc) {
             out.dMass += dmass_holder;
         } else if(local.dt_hydrostep_i == dt_hydrostep_j_loc) {
-            out.dMass += 0.5 * dmass_holder;
-        }
+            out.dMass += 0.5 * dmass_holder; mass_flux_accepted *= 0.5;
+        } else {mass_flux_accepted = 0;}
         out.DtMass += Fluxes.rho;
-        Vec3<double> gravwork = kernel.dp * Fluxes.rho;
-        out.GravWorkTerm += gravwork;
+        /* mass dm moved from x_j to x_i changes the potential energy by -dm g.(x_i-x_j); the thermal energy of the cell
+           that transfers it repays that, so the pair's total energy is conserved (normalised per unit mass in hydro_toplevel) */
+        out.GravWorkTerm += kernel.dp * mass_flux_accepted;
 #ifdef METALS
         if(Fluxes.rho > 0) { for(k=0;k<NUM_METAL_SPECIES;k++) {out.Dyield[k] += (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;} }
 #endif
@@ -472,8 +477,24 @@ void hydro_accumulate_neighbor(
     /* Signal velocity for timestepping. This is an i-side accumulation and
      * MUST stay here, updated on every pair, ABOVE the j-side writes below.
      * It was once placed among them behind a gate that could skip them, which
-     * left out.MaxSignalVel stuck at the kernel.sound_i seed. */
-    if(kernel.vsig > out.MaxSignalVel) {out.MaxSignalVel = kernel.vsig;}
+     * left out.MaxSignalVel stuck at the kernel.sound_i seed.
+     * With unequal wave speeds (sound speeds, or with MAGNETIC the fast
+     * magnetosonic speeds along the pair) the fastest characteristic of the
+     * pair is the larger one, so this signal uses 2 max(c_i,c_j) in place of
+     * c_i + c_j (approach term unchanged). It sets the timestep, the wakeup
+     * test and everything else read from MaxSignalVel (divergence-cleaning
+     * and cosmic-ray transport speeds); kernel.vsig, used by the Riemann
+     * solver and dissipation, is not changed. MFM with GALSF keeps its
+     * contact-wave estimate as is. */
+    double vsig_timestep = kernel.vsig;
+#if !(defined(HYDRO_MESHLESS_FINITE_MASS) && defined(GALSF))
+#ifdef MAGNETIC
+    vsig_timestep += fabs(magneticspeed_i - magneticspeed_j);
+#else
+    vsig_timestep += fabs(kernel.sound_i - kernel.sound_j);
+#endif
+#endif
+    if(vsig_timestep > out.MaxSignalVel) {out.MaxSignalVel = vsig_timestep;}
 
     /* ---- J-particle writes (Kokkos atomics for thread safety) ---- */
 
@@ -502,7 +523,7 @@ void hydro_accumulate_neighbor(
        flag it for wakeup. Uses Kokkos atomics for thread safety. */
     if(TimeBinActive_arr && !(TimeBinActive_arr[P[j].TimeBin]))
     {
-        if(kernel.vsig > WAKEUP * CellP[j].MaxSignalVel) {
+        if(vsig_timestep > WAKEUP * CellP[j].MaxSignalVel) {
             int wakeup_val = wakeup_flag_from_timebin(local.TimeBin);
             HYDRO_ATOMIC_MAX(&P[j].wakeup, wakeup_val);
             if(NeedToWakeup_flag) HYDRO_ATOMIC_STORE(NeedToWakeup_flag, 1);

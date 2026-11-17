@@ -74,15 +74,6 @@ static long scan_block_for_coincident(struct peano_hilbert_data *m, int n, long 
     return ndup;
 }
 
-/*! Peano key of a particle's current position, built exactly as domain.cc builds Key[]. */
-static peanokey particle_peano_key(int i)
-{
-    peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-    peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-    peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-    return peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
-}
-
 #define COINCIDENT_RUN_MAX 64
 #define COINCIDENT_NEIGHBOUR_WINDOW 32
 /*! Fraction of a repair displacement below which a separation is treated as coincidence. */
@@ -246,8 +237,8 @@ static long coincident_pass(int do_repair, long nseen, long *nfailed)
 #ifndef IO_REPAIR_COINCIDENT_POSITIONS
     (void) do_repair; (void) nfailed;
 #endif
-    peanokey ka = (a < N_gas) ? particle_peano_key(a) : 0;
-    peanokey kb = (b < NumPart) ? particle_peano_key(b) : 0;
+    peanokey ka = (a < N_gas) ? domain_peano_key(a) : 0;
+    peanokey kb = (b < NumPart) ? domain_peano_key(b) : 0;
     while(a < N_gas || b < NumPart)
     {
         peanokey k;
@@ -256,12 +247,12 @@ static long coincident_pass(int do_repair, long nseen, long *nfailed)
         while(a < N_gas && ka == k)
         {
             if(nm < COINCIDENT_RUN_MAX) {members[nm++] = a;}
-            a++; ka = (a < N_gas) ? particle_peano_key(a) : 0;
+            a++; ka = (a < N_gas) ? domain_peano_key(a) : 0;
         }
         while(b < NumPart && kb == k)
         {
             if(nm < COINCIDENT_RUN_MAX) {members[nm++] = b;}
-            b++; kb = (b < NumPart) ? particle_peano_key(b) : 0;
+            b++; kb = (b < NumPart) ? domain_peano_key(b) : 0;
         }
         if(nm < 2) {continue;}
         for(int u = 0; u < nm; u++) for(int v = u + 1; v < nm; v++)

@@ -29,6 +29,18 @@ from gizmo.test import (
     default_mpi_ranks,
     default_omp_threads,
     get_final_snapshot,
+    stash_baseline_output,
+    finalize_variant_output,
+    variant_output_dir,
+)
+
+# Non-ideal MHD variants run by this test: the standard diffusive solver, and the evolved non-ideal field at a reduced speed
+# of light of 100 code units (the field relaxes within the diffusive step, so the code takes that step and reproduces the
+# standard solver) and of 1 code unit (slow finite response of the field, Courant step at the reduced speed of light)
+NIMHD_VARIANTS = (
+    ("MHD_NON_IDEAL",),
+    ("MHD_NON_IDEAL=2", "MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION=(100./2.99792458e10)"),
+    ("MHD_NON_IDEAL=2", "MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION=(1./2.99792458e10)"),
 )
 
 # Fixed non-ideal MHD coefficients for this test (code units)
@@ -177,29 +189,34 @@ def plot_time_evolution(output_dir, plot_dir, x0=0.5):
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(4),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-def test_hall_wave(num_mpi_ranks, num_omp_threads):
+@pytest.mark.parametrize("extra_config_flags", NIMHD_VARIANTS)
+def test_hall_wave(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "hall_wave"
-    clean_test_outputs(test_name)
+    clean_test_outputs(test_name, extra_config_flags)
 
     # Patch eos.cc with fixed non-ideal MHD coefficients, build, then restore
     patched = False
     try:
         patched = _patch_eos()
-        build_gizmo_for_test(test_name, num_omp_threads)
+        build_gizmo_for_test(test_name, num_omp_threads, extra_config_flags)
     finally:
         if patched:
             _restore_eos()
 
-    # Download ICs and reference if not present, then run
+    # Download ICs and reference if not present, then run (each variant writes its own output directory)
     from os import chdir
-    chdir(f"test/{test_name}/")
-    _download_if_missing("hall_wave_ics.hdf5")
-    _download_if_missing("hall_wave_exact.hdf5")
-    run_test(test_name, num_mpi_ranks, num_omp_threads)
-    chdir("../../")
+    stash_baseline_output(test_name, extra_config_flags)
+    try:
+        chdir(f"test/{test_name}/")
+        _download_if_missing("hall_wave_ics.hdf5")
+        _download_if_missing("hall_wave_exact.hdf5")
+        run_test(test_name, num_mpi_ranks, num_omp_threads)
+        chdir("../../")
+    finally:
+        finalize_variant_output(test_name, extra_config_flags)
 
     # Verify the simulation completed
-    final_snap = get_final_snapshot(test_name)
+    final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
 
     # Compare final snapshot against reference numerical solution
@@ -214,11 +231,11 @@ def test_hall_wave(num_mpi_ranks, num_omp_threads):
     plot_1D_snapshot_comparison(
         REFERENCE_SNAP, final_snap,
         fields_to_plot=fields,
-        output_dir=f"test/{test_name}",
+        output_dir=variant_output_dir(test_name, extra_config_flags),
     )
 
     # Plot time evolution of B and v components for a tracked cell
     plot_time_evolution(
-        output_dir=f"test/{test_name}/output",
-        plot_dir=f"test/{test_name}",
+        output_dir=variant_output_dir(test_name, extra_config_flags),
+        plot_dir=variant_output_dir(test_name, extra_config_flags),
     )

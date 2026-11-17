@@ -124,6 +124,9 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(sink_env1)
 #ifdef SINGLE_STAR_SINK_DYNAMICS
     GHOST_WRITEBACK_PARTICLE_MIN(SwallowTime)
 #endif
+#if (SINGLE_STAR_SINK_FORMATION & 8)
+    GHOST_WRITEBACK_PARTICLE_MAX(Sink_Ngb_Flag)
+#endif
     /* future ghost-written fields: add one line per (op, field) under the
      * appropriate physics flag #ifdef. */
 GHOST_WRITEBACK_BUNDLE_END(sink_env1)

@@ -93,7 +93,7 @@ KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct
     const double *riso = rb + 3*N;
     if(r <= riso[0]) {r = riso[0];}
     if(All.GR_MetricTableLog) {ir = (int)(log10(r/riso[0])/log10(riso[N-1]/riso[0])*(N-1));}
-    else {int il = 0, ih = N-1; while(ih > il+1) {ir = (il+ih)/2; if(riso[ir] > r) {ih = ir;} else {il = ir;}} ir = il;}
+    else {int il = 0, ih = N-1; while(ih > il+1) {ir = (il+ih)/2; if(riso[ir] > r) {ih = ir;} else {il = ir;}} ir = il; if(r > riso[N-1]) {ir = N-1;}} /* beyond the table: exterior Schwarzschild g_tt below, as the original */
     if(ir < 0) {ir = 0;} if(ir > N-1) {ir = N-1;}
     double e4phi, g00;
     if(ir < N-1) {double f = (r - riso[ir])/(riso[ir+1] - riso[ir]); e4phi = rb[ir] + f*(rb[ir+1] - rb[ir]); g00 = -(gtt[ir] + f*(gtt[ir+1] - gtt[ir]));}
@@ -101,7 +101,7 @@ KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct
     e4phi = e4phi*e4phi/(r*r);
     g->tt = g00; g->ti = Vec3<double>{0,0,0}; g->ij.set_isotropic(e4phi);
 #else /* areal (Schwarzschild-like) radius: g_rr = 1/(1 - 2M(r)/r), gamma_ij = delta_ij + (g_rr - 1) x_i x_j/r^2 */
-    if(r <= rb[1]) {r = rb[1];} /* the first row is r = 0, where M/r^3 of the linear interpolation is singular: floor at the first positive radius */
+    {double r_floor = (rb[0] > 0) ? rb[0] : rb[1]; if(r <= r_floor) {r = r_floor;}} /* floor at the first row (as the original), or at the second if the first is r = 0, where M/r^3 of the linear interpolation is singular */
     if(All.GR_MetricTableLog) {ir = (r < rb[0]) ? 0 : (int)(log10(r/rb[0])/log10(rb[N-1]/rb[0])*(N-1));}
     else {ir = (int)(r*(N-1)/rb[N-1]);}
     if(ir < 0) {ir = 0;} if(ir > N-1) {ir = N-1;}

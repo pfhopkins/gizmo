@@ -343,10 +343,9 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
     if(min_nodes <= 0) {min_nodes = 1;}
 
     /* Extend SoA capacity to cover the foreign-node storage that currently exists,
-     * [MaxNodes, MaxNodes+AllocatedForeignNodes).  Foreign nodes installed by
-     * let_unpack_and_install are scattered into SoA at slot_base + j with
-     * absolute index = TreeNodeIndexBase + MaxNodes + slot, so SoA index =
-     * (MaxNodes + slot).  That is the storage force_treeallocate reserved, until the
+     * [MaxNodes, MaxNodes+AllocatedForeignNodes).  The foreign node in slot `slot`
+     * has absolute index TreeNodeIndexBase + MaxNodes + slot, so its SoA index is
+     * MaxNodes + slot (written by gpu_mirror_publish_imported_node).  That is the storage force_treeallocate reserved, until the
      * exchange counts an import larger than it and gpu_gravity_tree_grow_foreign extends
      * the mirror -- deliberately NOT the index ceiling MaxForeignNodes, which every rank
      * shares and which would reserve the whole run the worst rank's import. */
@@ -385,13 +384,13 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
  *
  * The field list below mirrors alloc_arrays_ entry for entry, including the #ifdef guards; the
  * two are kept adjacent so they can be read side by side.  Only the prefix already in use is
- * copied -- the foreign range is written by gpu_scatter_foreign_to_soa right after this returns.
+ * copied -- the foreign range is written by the install that follows (gpu_mirror_publish_imported_node).
  * Returns 1 on success, 0 on failure. */
 extern "C" int gpu_gravity_tree_grow_foreign(int min_nodes)
 {
     /* Enough node slots is not enough on its own: the sidecar mirror is sized separately, from
      * AllocatedForeignNodes, so it has to be checked on its own terms or a grow that only widened
-     * the foreign range would leave the scatter silently dropping leaf identities. */
+     * the foreign range would leave the install's mirror copy silently dropping leaf identities. */
     if(min_nodes <= soa_capacity_ && soa_.center
        && soa_.foreign_leaf_cap >= AllocatedForeignNodes) {return 1;}   /* already large enough */
     if(!soa_.center)

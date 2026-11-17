@@ -4,9 +4,8 @@
 ##  'A New Calculation of the Ionizing Background Spectrum and the Effects of He II Reionization'
 ##  and it was included as the default TREECOOL table for GIZMO pre-2020, 
 ##  as well as forming the default background for e.g. the FIRE simulations. 
-##  If you wish to use it, delete these lines (pre-ceded by '##') and rename
-##  the file simply TREECOOL, then include it in your run-time directory with the 
-##  compiled GIZMO binary. 
+##  If you wish to use it, rename the file simply TREECOOL, then include it in 
+##  your run-time directory with the compiled GIZMO binary. Lines pre-ceded by '#' are skipped.
 ##
 ## columns here are [see e.g. Fig 10 in Faucher-Giguere, 2020, MNRAS, 493, 2, 1614]:
 ##  (1) redshift: log_10(1+z)

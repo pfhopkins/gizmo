@@ -249,8 +249,9 @@ void powerspec_turb(int filenr)
 
   RandomValue = (float *) mymalloc("RndField", N_gas * sizeof(float));
 
+  static constexpr uint64_t POWERSPEC_RANDOM_FIELD_RNG_SALT = gizmo_loop_rng_salt("powerspectrum_random_field");
   for(i=0; i < N_gas; i++)
-    RandomValue[i] = (float)gizmo_gpu_rand_gaussian((uint64_t)(42 + ThisTask), (uint64_t)i);
+    RandomValue[i] = (float)gizmo_gpu_rand_gaussian(particle_event_rng_key(i), gizmo_rng_event_counter(POWERSPEC_RANDOM_FIELD_RNG_SALT, (uint64_t)All.Ti_Current, 0));
 
   powerspec_turb_obtain_fields();
  

@@ -19,7 +19,7 @@
 #include "../core/proto.h"
 #include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
-#include "let_data.h"   /* ForeignLeaf{Tag,Type,Zeta}[] host sidecar (scattered into SoA below) */
+#include "let_data.h"   /* ForeignLeaf{Tag,Type,Zeta}[] host sidecar (copied into the SoA below) */
 #include "gpu_pseudo_update.h"
 #include "forcetree.h"
 #include "gravtree_moment_kernel.h"
@@ -148,6 +148,65 @@ extern "C" int gpu_force_flag_localnodes(void)
     return 0;
 }
 
+/* The moment fields a node's mirror slot takes from its node record: mass, count, softening, the
+ * kernel-length and velocity bounds, the centre of mass and its velocity, and every optional payload.
+ * The same for an exchanged pseudo node and an imported node; geometry, time, flags and links differ
+ * between those two writers and stay with each. */
+static inline void tree_mirror_put_moments(struct gpu_gravity_tree_soa_t *m, long k,
+                                           const struct NODE &n, const struct extNODE &e)
+{
+    m->mass[k]    = (MyGravFloat) n.u.d.mass;
+    m->N_part[k]  = n.N_part;
+    m->maxsoft[k] = (MyGravFloat) n.maxsoft;
+    m->hmax[k]    = (MyGravFloat) e.hmax;
+    m->vmax[k]    = (MyGravFloat) e.vmax;
+    m->divVmax[k] = (MyGravFloat) e.divVmax;
+    m->s[k]       = {(MyGravFloat) n.u.d.s[0], (MyGravFloat) n.u.d.s[1], (MyGravFloat) n.u.d.s[2]};
+    m->node_vs[k] = {(MyGravFloat) e.vs[0], (MyGravFloat) e.vs[1], (MyGravFloat) e.vs[2]};
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+    m->gasmass[k] = (MyGravFloat) n.gasmass;
+#endif
+#ifdef RT_USE_GRAVTREE
+    for(int b = 0; b < N_RT_FREQ_BINS; b++) {m->stellar_lum[k * N_RT_FREQ_BINS + b] = (MyGravFloat) n.stellar_lum[b];}
+#ifdef CHIMES_STELLAR_FLUXES
+    for(int b = 0; b < CHIMES_LOCAL_UV_NBINS; b++) {
+        m->chimes_stellar_lum_G0 [k * CHIMES_LOCAL_UV_NBINS + b] = n.chimes_stellar_lum_G0[b];
+        m->chimes_stellar_lum_ion[k * CHIMES_LOCAL_UV_NBINS + b] = n.chimes_stellar_lum_ion[b];
+    }
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    m->rt_source_lum_s[k]  = {(MyGravFloat) n.rt_source_lum_s[0], (MyGravFloat) n.rt_source_lum_s[1], (MyGravFloat) n.rt_source_lum_s[2]};
+    m->rt_source_lum_vs[k] = {(MyGravFloat) e.rt_source_lum_vs[0], (MyGravFloat) e.rt_source_lum_vs[1], (MyGravFloat) e.rt_source_lum_vs[2]};
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    m->sink_lum[k]      = (MyGravFloat) n.sink_lum;
+    m->sink_lum_grad[k] = {(MyGravFloat) n.sink_lum_grad[0], (MyGravFloat) n.sink_lum_grad[1], (MyGravFloat) n.sink_lum_grad[2]};
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    m->cr_injection[k] = (MyGravFloat) n.cr_injection;
+#endif
+#ifdef SINK_CALC_DISTANCES
+    m->sink_mass[k] = (MyGravFloat) n.sink_mass;
+    m->sink_pos[k]  = {(MyGravFloat) n.sink_pos[0], (MyGravFloat) n.sink_pos[1], (MyGravFloat) n.sink_pos[2]};
+#if defined(SINK_NODE_MOTION_TRACKED)
+    m->N_SINK[k]   = n.N_SINK;
+    m->sink_vel[k] = {(MyGravFloat) n.sink_vel[0], (MyGravFloat) n.sink_vel[1], (MyGravFloat) n.sink_vel[2]};
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    m->sink_acc[k] = {(MyGravFloat) n.sink_acc[0], (MyGravFloat) n.sink_acc[1], (MyGravFloat) n.sink_acc[2]};
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    m->MaxFeedbackVel[k] = (MyGravFloat) n.MaxFeedbackVel;
+#endif
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    m->mass_dm[k] = (MyGravFloat) n.mass_dm;
+    m->s_dm[k]    = {(MyGravFloat) n.s_dm[0], (MyGravFloat) n.s_dm[1], (MyGravFloat) n.s_dm[2]};
+    m->vs_dm[k]   = {(MyGravFloat) e.vs_dm[0], (MyGravFloat) e.vs_dm[1], (MyGravFloat) e.vs_dm[2]};
+#endif
+}
+
 /* ===================================================================== */
 /* gpu_scatter_pseudo_to_soa                                             */
 /* ===================================================================== */
@@ -178,88 +237,11 @@ extern "C" int gpu_scatter_pseudo_to_soa(void)
                  * force_exchange_pseudodata_complete has just applied that length to the AoS node. */
                 soa->len[k]     = Nodes[no].len;
                 if(soa->node_ti) {soa->node_ti[k] = Nodes[no].Ti_current;}   /* the time that length describes */
-                /* Scalar moment fields */
-                soa->mass[k]    = (MyGravFloat) Nodes[no].u.d.mass;
-                soa->N_part[k]  = Nodes[no].N_part;
-                soa->maxsoft[k] = (MyGravFloat) Nodes[no].maxsoft;
-                soa->hmax[k]    = (MyGravFloat) Extnodes[no].hmax;
-                soa->vmax[k]    = (MyGravFloat) Extnodes[no].vmax;
-                soa->divVmax[k] = (MyGravFloat) Extnodes[no].divVmax;
                 /* Merge the MULTIPLEPARTICLES bit from the exchanged data;
                  * preserve all topology bits already set by gpu_force_flag_localnodes. */
                 soa->bitflags[k] = (soa->bitflags[k] & ~(1u << BITFLAG_MULTIPLEPARTICLES))
                                  | (Nodes[no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES));
-                /* Vec3 moment fields */
-                soa->s[k]        = {(MyGravFloat) Nodes[no].u.d.s[0],
-                                    (MyGravFloat) Nodes[no].u.d.s[1],
-                                    (MyGravFloat) Nodes[no].u.d.s[2]};
-                soa->node_vs[k]  = {(MyGravFloat) Extnodes[no].vs[0],
-                                    (MyGravFloat) Extnodes[no].vs[1],
-                                    (MyGravFloat) Extnodes[no].vs[2]};
-                /* Optional payload fields */
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-                soa->gasmass[k]  = (MyGravFloat) Nodes[no].gasmass;
-#endif
-#ifdef RT_USE_GRAVTREE
-                for(int b = 0; b < N_RT_FREQ_BINS; b++) {
-                    soa->stellar_lum[(long)k * N_RT_FREQ_BINS + b] =
-                        (MyGravFloat) Nodes[no].stellar_lum[b];
-                }
-#ifdef CHIMES_STELLAR_FLUXES
-                for(int b = 0; b < CHIMES_LOCAL_UV_NBINS; b++) {
-                    soa->chimes_stellar_lum_G0 [(long)k * CHIMES_LOCAL_UV_NBINS + b] =
-                        Nodes[no].chimes_stellar_lum_G0[b];
-                    soa->chimes_stellar_lum_ion[(long)k * CHIMES_LOCAL_UV_NBINS + b] =
-                        Nodes[no].chimes_stellar_lum_ion[b];
-                }
-#endif
-#endif
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-                soa->rt_source_lum_s[k]  = {(MyGravFloat) Nodes[no].rt_source_lum_s[0],
-                                             (MyGravFloat) Nodes[no].rt_source_lum_s[1],
-                                             (MyGravFloat) Nodes[no].rt_source_lum_s[2]};
-                soa->rt_source_lum_vs[k] = {(MyGravFloat) Extnodes[no].rt_source_lum_vs[0],
-                                             (MyGravFloat) Extnodes[no].rt_source_lum_vs[1],
-                                             (MyGravFloat) Extnodes[no].rt_source_lum_vs[2]};
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-                soa->sink_lum[k]      = (MyGravFloat) Nodes[no].sink_lum;
-                soa->sink_lum_grad[k] = {(MyGravFloat) Nodes[no].sink_lum_grad[0],
-                                          (MyGravFloat) Nodes[no].sink_lum_grad[1],
-                                          (MyGravFloat) Nodes[no].sink_lum_grad[2]};
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-                soa->cr_injection[k] = (MyGravFloat) Nodes[no].cr_injection;
-#endif
-#ifdef SINK_CALC_DISTANCES
-                soa->sink_mass[k] = (MyGravFloat) Nodes[no].sink_mass;
-                soa->sink_pos[k]  = {(MyGravFloat) Nodes[no].sink_pos[0],
-                                      (MyGravFloat) Nodes[no].sink_pos[1],
-                                      (MyGravFloat) Nodes[no].sink_pos[2]};
-#if defined(SINK_NODE_MOTION_TRACKED)
-                soa->N_SINK[k]    = Nodes[no].N_SINK;
-                soa->sink_vel[k]  = {(MyGravFloat) Nodes[no].sink_vel[0],
-                                      (MyGravFloat) Nodes[no].sink_vel[1],
-                                      (MyGravFloat) Nodes[no].sink_vel[2]};
-#ifdef SPECIAL_POINT_MOTION
-                soa->sink_acc[k]  = {(MyGravFloat) Nodes[no].sink_acc[0],
-                                      (MyGravFloat) Nodes[no].sink_acc[1],
-                                      (MyGravFloat) Nodes[no].sink_acc[2]};
-#endif
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-                soa->MaxFeedbackVel[k] = (MyGravFloat) Nodes[no].MaxFeedbackVel;
-#endif
-#endif
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-                soa->mass_dm[k]  = (MyGravFloat) Nodes[no].mass_dm;
-                soa->s_dm[k]     = {(MyGravFloat) Nodes[no].s_dm[0],
-                                     (MyGravFloat) Nodes[no].s_dm[1],
-                                     (MyGravFloat) Nodes[no].s_dm[2]};
-                soa->vs_dm[k]    = {(MyGravFloat) Extnodes[no].vs_dm[0],
-                                     (MyGravFloat) Extnodes[no].vs_dm[1],
-                                     (MyGravFloat) Extnodes[no].vs_dm[2]};
-#endif
+                tree_mirror_put_moments(soa, k, Nodes[no], Extnodes[no]);
             }
         }
     }
@@ -697,142 +679,38 @@ extern "C" int gpu_topnode_moment_resum(void)
 }
 
 /* ===================================================================== */
-/* gpu_scatter_foreign_to_soa                                            */
-/*                                                                        */
-/* Mirror foreign-node AoS Nodes[]/Extnodes[] fields into SoA for the     */
-/* range [slot_base_abs, slot_base_abs + count).  Called from             */
-/* let_unpack_and_install once per sender after the AoS install +         */
-/* pointer-remap pass.  Walk reads ALL of these fields from SoA, so we    */
-/* must cover every conditional payload that gpu_scatter_pseudo_to_soa    */
-/* covers.  Topology fields (sibling/nextnode/father/bitflags) come       */
-/* directly from the AoS (already remapped to absolute indices in         */
-/* let_unpack_and_install Pass 1).                                        */
+/* gpu_mirror_publish_imported_node                                      */
+/*                                                                       */
+/* Mirror one imported node's decoded record into its SoA slot, and its  */
+/* leaf identity into the foreign-indexed identity mirror.  The LET      */
+/* install calls it for each record as it is decoded, so the copy runs   */
+/* inside the install's parallel decode on the host.  The install has    */
+/* checked that the mirror holds every slot of the import.  The          */
+/* record's links are final: rebased, and its exits resolved to the      */
+/* local topleaf.                                                        */
 /* ===================================================================== */
-extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
+extern "C" void gpu_mirror_publish_imported_node(struct gpu_gravity_tree_soa_t *m, int no, const struct LETNodeWire *rec)
 {
-    GIZMO_GPU_ENSURE_ALL_FRESH();
-    if(count <= 0) {return 0;}
-
-    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
-    if(!soa) {printf("gpu_scatter_foreign_to_soa: SoA null\n"); return 1;}
-
-    int tree_base = All.TreeNodeIndexBase;
-
-    for(int j = 0; j < count; j++) {
-        int no = slot_base_abs + j;
-        int k  = no - tree_base;     /* SoA index = (MaxNodes + slot_local) */
-
-        /* Geometric */
-        soa->center[k] = Nodes[no].center;
-        soa->len[k]    = Nodes[no].len;
-
-        /* Moment scalars */
-        soa->mass[k]    = (MyGravFloat) Nodes[no].u.d.mass;
-        soa->N_part[k]  = Nodes[no].N_part;
-        soa->maxsoft[k] = (MyGravFloat) Nodes[no].maxsoft;
-        soa->hmax[k]    = (MyGravFloat) Extnodes[no].hmax;
-        soa->vmax[k]    = (MyGravFloat) Extnodes[no].vmax;
-        soa->divVmax[k] = (MyGravFloat) Extnodes[no].divVmax;
-        if(soa->node_ti) {soa->node_ti[k] = Nodes[no].Ti_current;}
-        soa->bitflags[k] = Nodes[no].u.d.bitflags;
-
-        /* Moment vectors */
-        soa->s[k]        = {(MyGravFloat) Nodes[no].u.d.s[0],
-                            (MyGravFloat) Nodes[no].u.d.s[1],
-                            (MyGravFloat) Nodes[no].u.d.s[2]};
-        soa->node_vs[k]  = {(MyGravFloat) Extnodes[no].vs[0],
-                            (MyGravFloat) Extnodes[no].vs[1],
-                            (MyGravFloat) Extnodes[no].vs[2]};
-
-        /* Topology (already in absolute indices after Pass 1 remap) */
-        soa->sibling[k]  = Nodes[no].u.d.sibling;
-        soa->nextnode[k] = Nodes[no].u.d.nextnode;
-        soa->father[k]   = Nodes[no].u.d.father;
-
-        /* foreign-leaf identity sidecar: mirror the host ForeignLeaf* arrays into the SoA at
-         * foreign_slot (= no-(tree_base+MaxNodes) = k-MaxNodes), the foreign-only index the walk uses
-         * -- NOT k.  Bounds-checked against both the SoA foreign capacity and the host array size. */
-        {
-            int foreign_slot = no - (tree_base + MaxNodes);
-            if(soa->foreign_leaf_tag && foreign_slot >= 0 && foreign_slot < soa->foreign_leaf_cap
-               && ForeignLeafTag && foreign_slot < AllocatedForeignNodes) {
-                soa->foreign_leaf_tag[foreign_slot]  = ForeignLeafTag[foreign_slot];
-                soa->foreign_leaf_type[foreign_slot] = ForeignLeafType[foreign_slot];
-                soa->foreign_leaf_zeta[foreign_slot] = ForeignLeafZeta[foreign_slot];
-                soa->foreign_leaf_soft[foreign_slot] = ForeignLeafSoft[foreign_slot];
-            }
-        }
-
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        soa->gasmass[k]  = (MyGravFloat) Nodes[no].gasmass;
-#endif
-#ifdef RT_USE_GRAVTREE
-        for(int b = 0; b < N_RT_FREQ_BINS; b++) {
-            soa->stellar_lum[(long)k * N_RT_FREQ_BINS + b] =
-                (MyGravFloat) Nodes[no].stellar_lum[b];
-        }
-#ifdef CHIMES_STELLAR_FLUXES
-        for(int b = 0; b < CHIMES_LOCAL_UV_NBINS; b++) {
-            soa->chimes_stellar_lum_G0 [(long)k * CHIMES_LOCAL_UV_NBINS + b] =
-                Nodes[no].chimes_stellar_lum_G0[b];
-            soa->chimes_stellar_lum_ion[(long)k * CHIMES_LOCAL_UV_NBINS + b] =
-                Nodes[no].chimes_stellar_lum_ion[b];
-        }
-#endif
-#endif
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-        soa->rt_source_lum_s[k]  = {(MyGravFloat) Nodes[no].rt_source_lum_s[0],
-                                     (MyGravFloat) Nodes[no].rt_source_lum_s[1],
-                                     (MyGravFloat) Nodes[no].rt_source_lum_s[2]};
-        soa->rt_source_lum_vs[k] = {(MyGravFloat) Extnodes[no].rt_source_lum_vs[0],
-                                     (MyGravFloat) Extnodes[no].rt_source_lum_vs[1],
-                                     (MyGravFloat) Extnodes[no].rt_source_lum_vs[2]};
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-        soa->sink_lum[k]      = (MyGravFloat) Nodes[no].sink_lum;
-        soa->sink_lum_grad[k] = {(MyGravFloat) Nodes[no].sink_lum_grad[0],
-                                  (MyGravFloat) Nodes[no].sink_lum_grad[1],
-                                  (MyGravFloat) Nodes[no].sink_lum_grad[2]};
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-        soa->cr_injection[k] = (MyGravFloat) Nodes[no].cr_injection;
-#endif
-#ifdef SINK_CALC_DISTANCES
-        soa->sink_mass[k] = (MyGravFloat) Nodes[no].sink_mass;
-        soa->sink_pos[k]  = {(MyGravFloat) Nodes[no].sink_pos[0],
-                              (MyGravFloat) Nodes[no].sink_pos[1],
-                              (MyGravFloat) Nodes[no].sink_pos[2]};
-#if defined(SINK_NODE_MOTION_TRACKED)
-        soa->N_SINK[k]    = Nodes[no].N_SINK;
-        soa->sink_vel[k]  = {(MyGravFloat) Nodes[no].sink_vel[0],
-                              (MyGravFloat) Nodes[no].sink_vel[1],
-                              (MyGravFloat) Nodes[no].sink_vel[2]};
-#ifdef SPECIAL_POINT_MOTION
-        soa->sink_acc[k]  = {(MyGravFloat) Nodes[no].sink_acc[0],
-                              (MyGravFloat) Nodes[no].sink_acc[1],
-                              (MyGravFloat) Nodes[no].sink_acc[2]};
-#endif
-#ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        soa->MaxFeedbackVel[k] = (MyGravFloat) Nodes[no].MaxFeedbackVel;
-#endif
-#endif
-#endif
+    const long k = no - All.TreeNodeIndexBase;   /* SoA index = MaxNodes + foreign slot */
+    const struct NODE    &n = rec->node;
+    const struct extNODE &e = rec->extnode;
+    m->center[k] = n.center;
+    m->len[k]    = n.len;
+    tree_mirror_put_moments(m, k, n, e);
+    if(m->node_ti) {m->node_ti[k] = n.Ti_current;}
+    m->bitflags[k] = n.u.d.bitflags;
+    m->sibling[k]  = n.u.d.sibling;
+    m->nextnode[k] = n.u.d.nextnode;
+    m->father[k]   = n.u.d.father;
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        for(int t = 0; t < 6; t++) {
-            soa->tidal_tensorps[(long)k * 6 + t] = (MyGravFloat) Nodes[no].tidal_tensorps_prevstep.data[t];
-        }
+    for(int t = 0; t < 6; t++) {m->tidal_tensorps[k * 6 + t] = (MyGravFloat) n.tidal_tensorps_prevstep.data[t];}
 #endif
-#ifdef DM_SCALARFIELD_SCREENING
-        soa->mass_dm[k] = (MyGravFloat) Nodes[no].mass_dm;
-        soa->s_dm[k]    = {(MyGravFloat) Nodes[no].s_dm[0],
-                           (MyGravFloat) Nodes[no].s_dm[1],
-                           (MyGravFloat) Nodes[no].s_dm[2]};
-        soa->vs_dm[k]   = {(MyGravFloat) Extnodes[no].vs_dm[0],
-                           (MyGravFloat) Extnodes[no].vs_dm[1],
-                           (MyGravFloat) Extnodes[no].vs_dm[2]};
-#endif
-    }
-    return 0;
+    /* the identity mirror is indexed by the foreign slot, not by the SoA index */
+    const int foreign_slot = no - (All.TreeNodeIndexBase + MaxNodes);
+    m->foreign_leaf_tag[foreign_slot]  = rec->leaf_tag;
+    m->foreign_leaf_type[foreign_slot] = rec->leaf_type;
+    m->foreign_leaf_zeta[foreign_slot] = rec->leaf_ags_zeta;
+    m->foreign_leaf_soft[foreign_slot] = rec->leaf_force_softening;
 }
 
 extern "C" int gpu_set_soa_nextnode(int abs_idx, int new_nextnode)

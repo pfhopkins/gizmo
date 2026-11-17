@@ -12,6 +12,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 
 /*! various routines are collected here, needed to communicate with the 
  *  actual system, stdin/out, abort runs, etc
@@ -27,10 +28,19 @@
  */
 
 
-/* get random number -- old format took ID as seed to generate reliably identical numbers from a table, but this is not safe for large simulations */
-double get_random_number(MyIDType id)
+/* random-number key of particle i at the current instant (gizmo_rng_particle_event_key) */
+uint64_t particle_event_rng_key(int i)
 {
-    return gizmo_rng_uniform(&random_generator);
+    return gizmo_rng_particle_event_key(P[i]);
+}
+
+/* uniform random number in [0,1) for one random event of particle i: site_salt names the kind of event, event says when it
+   happens (All.Ti_Current, or 0 at initialization), draw_index which of the event's numbers this is. It depends only on the
+   particle's state (identity and single-precision position), never on which rank or thread draws it: runs with different rank
+   counts draw the same numbers for as long as that state agrees. */
+double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_t draw_index)
+{
+    return gizmo_gpu_rand_double(particle_event_rng_key(i), gizmo_rng_event_counter(site_salt, event, draw_index));
 }
 
 /* returns the number of cpu-ticks in seconds that have elapsed. (or the wall-clock time) */
@@ -157,60 +167,23 @@ void x86_fix(void)
 #endif
 
 
-void minimum_large_ints(int n, long long *src, long long *res)
+void minimum_large_ints(int n, long long *src, long long *res)   /* src may be res */
 {
-  int i, j;
-  long long *numlist;
-
-  numlist = (long long *) mymalloc("numlist", NTask * n * sizeof(long long));
-  MPI_Allgather(src, n * sizeof(long long), MPI_BYTE, numlist, n * sizeof(long long), MPI_BYTE,
-                MPI_COMM_WORLD);
-
-  for(j = 0; j < n; j++)
-    res[j] = src[j];
-
-  for(i = 0; i < NTask; i++)
-    for(j = 0; j < n; j++)
-      if(res[j] > numlist[i * n + j])
-        res[j] = numlist[i * n + j];
-
-  myfree(numlist);
+  if(src == res) {MPI_Allreduce(MPI_IN_PLACE, res, n, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);}
+  else {MPI_Allreduce(src, res, n, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);}
 }
 
+/* Sums over ranks of per-rank integers, at 64 bits: one reduction, with no buffer or scan sized by the rank count. */
 void sumup_large_ints(int n, int *src, long long *res)
 {
-  int i, j, *numlist;
-
-  numlist = (int *) mymalloc("numlist", NTask * n * sizeof(int));
-  MPI_Allgather(src, n, MPI_INT, numlist, n, MPI_INT, MPI_COMM_WORLD);
-
-  for(j = 0; j < n; j++)
-    res[j] = 0;
-
-  for(i = 0; i < NTask; i++)
-    for(j = 0; j < n; j++)
-      res[j] += numlist[i * n + j];
-
-  myfree(numlist);
+  for(int j = 0; j < n; j++) {res[j] = src[j];}   /* widened in place: nothing is allocated before the collective */
+  MPI_Allreduce(MPI_IN_PLACE, res, n, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
 }
 
-void sumup_longs(int n, long long *src, long long *res)
+void sumup_longs(int n, long long *src, long long *res)   /* src may be res */
 {
-  int i, j;
-  long long *numlist;
-
-  numlist = (long long *) mymalloc("numlist", NTask * n * sizeof(long long));
-  MPI_Allgather(src, n * sizeof(long long), MPI_BYTE, numlist, n * sizeof(long long), MPI_BYTE,
-		MPI_COMM_WORLD);
-
-  for(j = 0; j < n; j++)
-    res[j] = 0;
-
-  for(i = 0; i < NTask; i++)
-    for(j = 0; j < n; j++)
-      res[j] += numlist[i * n + j];
-
-  myfree(numlist);
+  if(src == res) {MPI_Allreduce(MPI_IN_PLACE, res, n, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);}
+  else {MPI_Allreduce(src, res, n, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);}
 }
 
 size_t sizemax(size_t a, size_t b)
@@ -220,36 +193,6 @@ size_t sizemax(size_t a, size_t b)
   else
     return a;
 }
-
-
-/* routine to invert square matrices of side Ndims x Ndims, used in a number of places in code for e.g. gradients, etc. */
-double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv)
-{
-    double FrobNorm = T.frobenius_norm_sq(); /* Frobenius norm of T */
-    Tinv = Mat3<double>{}; /* initialize Tinv to null */
-#if (NUMDIMS==1) /* one-dimensional case */
-    double detT = T[0][0]; if((detT != 0) && !isnan(detT)) {Tinv[0][0] = 1./detT;} else {Tinv[0][0]=1;} /* only one non-trivial element in 1D! */
-#elif (NUMDIMS==2) /* two-dimensional case */
-    double detT = T[0][0]*T[1][1] - T[0][1]*T[1][0];
-    if((detT != 0) && !isnan(detT))
-    {
-        Tinv[0][0] =  T[1][1] / detT; Tinv[0][1] = -T[0][1] / detT;
-        Tinv[1][0] = -T[1][0] / detT; Tinv[1][1] =  T[0][0] / detT;
-    }
-#else /* three-dimensional case */
-    double detT = T.invert(Tinv);
-#endif
-    double FrobNorm_inv = Tinv.frobenius_norm_sq(); /* Frobenius norm of inverse matrix */
-    double ConditionNumber = DMAX( sqrt(FrobNorm*FrobNorm_inv) / NUMDIMS , 1 ); /* this = sqrt( ||T^-1||*||T|| ) :: should be ~1 for a well-conditioned matrix */
-    return ConditionNumber;
-}
-
-/* legacy overload accepting raw arrays — forwards to Mat3 version */
-double matrix_invert_ndims(double T[3][3], double Tinv[3][3])
-{
-    return matrix_invert_ndims(*reinterpret_cast<Mat3<double>*>(T), *reinterpret_cast<Mat3<double>*>(Tinv));
-}
-
 
 
 long long report_comittable_memory(long long *MemTotal,

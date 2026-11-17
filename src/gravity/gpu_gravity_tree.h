@@ -66,7 +66,7 @@ struct gpu_gravity_tree_soa_t {
      * AllocatedForeignNodes and indexed by foreign_slot = no - (TreeNodeIndexBase+MaxNodes) == (node SoA idx) -
      * MaxNodes -- a DIFFERENT index than every other array above (which use no - TreeNodeIndexBase).  The GPU
      * walk computes foreign_slot explicitly and bounds-checks it so the two conventions can never be
-     * confused.  Populated for the installed foreign range by gpu_scatter_foreign_to_soa. */
+     * confused.  Populated for each installed foreign node by gpu_mirror_publish_imported_node. */
     int            *foreign_leaf_tag;   /* LET_LEAF_TAG_* : 0 = descendable node, 1 = real
                                          * single-particle leaf, 2 = truncated aggregate */
     int            *foreign_leaf_type;  /* source particle Type   -> ptype_sec */

@@ -4,12 +4,12 @@
  * #define'd ROOTFIND_FUNCTION and a dozen ROOTFIND_* variables in the local
  * scope, #included the fragment, then #undef'd).
  *
- * The algorithm is identical: inverse-quadratic interpolation with secant
+ * The algorithm: inverse-quadratic interpolation with secant
  * fallback and bisection safeguard, plus an initial bracket-expansion step
  * if the caller-supplied bounds do not actually bracket the root. Log-space
- * bisection is used when both endpoints are positive. Behaviour,
- * convergence criteria, and failure modes match the original fragment bit
- * for bit.
+ * bisection is used when both endpoints are positive. Iteration stops when the
+ * residual is exactly zero, the bracket is no wider than the tolerance, or
+ * max_iter is reached; the returned x is the best evaluated point.
  *
  * Usage:
  *   auto func = [&](double x) { return ... };
@@ -79,6 +79,11 @@ BrentRootfindResult brent_rootfind(F&& func,
     double x_c_old = x_c, x_new, f_new = f_c;
     double x_error = 1e100, delta_tol = 0.;
 
+    if(f_b == 0) { /* exact zero at an end point (the convention above puts it at b) */
+        BrentRootfindResult r0 = {x_b, 0., 0};
+        return r0;
+    }
+
     do {
         x_new = 0;
         if((f_a != f_c) && (f_b != f_c)) {
@@ -90,15 +95,15 @@ BrentRootfindResult brent_rootfind(F&& func,
             /* secant method */
             x_new = (x_a * f_b - x_b * f_a) / (f_b - f_a);
         }
-        delta_tol = DMAX(fabs(abs_tol), rel_tol * fabs(x_new));
+        delta_tol = DMAX(fabs(abs_tol), rel_tol * fabs(x_b)); /* relative to the best estimate, which a bisection below cannot leave stale */
 
         do_bisection = 0;
         double x_midpoint_a = 0.25 * (3 * x_a + x_b);
         if((x_new < DMIN(x_midpoint_a, x_b)) || (x_new > DMAX(x_midpoint_a, x_b))) {
             do_bisection = 1;
         } else {
-            /* accept interpolation and bug out if converged */
-            if(fabs(x_new - x_b) < delta_tol) { break; }
+            /* a proposed step shorter than the tolerance is a minimal step, never convergence: the point has not been evaluated and the bracket may still be wide */
+            if(fabs(x_new - x_b) < delta_tol) { x_new = x_b + ((x_a > x_b) ? 0.9*delta_tol : -0.9*delta_tol); /* just inside the tolerance, so a step across the root closes the bracket */ }
         }
         if(used_bisection) {
             if(fabs(x_new - x_b) >= 0.5 * fabs(x_c - x_b)) { do_bisection = 1; }
@@ -143,6 +148,7 @@ BrentRootfindResult brent_rootfind(F&& func,
         iter++;
         if(iter > max_iter) { break; }
     } while(x_error > delta_tol);
+    if((f_new != 0) && (fabs(f_b) < fabs(f_new))) { x_new = x_b; } /* the best evaluated point, not the last one */
 
     BrentRootfindResult r = {x_new, x_error, iter};
     return r;

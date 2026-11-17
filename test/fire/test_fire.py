@@ -9,6 +9,7 @@ Checks: dark matter mass conservation, and compares gas/star/BH masses
 and gas density-temperature distribution against a reference solution.
 """
 
+import shlex
 import pytest
 import numpy as np
 from os import path, system, chdir, environ
@@ -26,6 +27,7 @@ from gizmo.test import (
     get_final_snapshot,
     stash_baseline_output,
     finalize_variant_output,
+    mpi_launch_command,
 )
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -120,9 +122,8 @@ def run_fire_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags=
     if num_omp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_omp_threads)
     paramsfile = f"{test_name}.params"
-    system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus "
-           f"./GIZMO {paramsfile} 2 "
-           f"1>test_{test_name}.out 2>test_{test_name}.err")
+    launch = shlex.join(mpi_launch_command(num_mpi_ranks, num_omp_threads) + ["./GIZMO", paramsfile, "2"])
+    system(f"{launch} 1>test_{test_name}.out 2>test_{test_name}.err")
     chdir("../../")
 
 

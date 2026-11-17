@@ -49,12 +49,19 @@ static bool g_mg_needs_all_gas = false;
 static void
 global_active_gas_counts(long long *out_sum, int *out_max, long long *out_sum_all_gas)
 {
-    long long local_sums[2] = {0, 0};   /* active gas with mass, all active gas */
-    for(int ii : ActiveParticleList) {
+    long long n_gas_with_mass = 0, n_gas = 0;
+    const long n_act = (long) ActiveParticleList.size();
+    const int *act = ActiveParticleList.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(+:n_gas_with_mass,n_gas) if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, n_act))
+#endif
+    for(long k = 0; k < n_act; k++) {
+        const int ii = act[k];
         if(P[ii].Type != 0) continue;
-        local_sums[1]++;
-        if(P[ii].Mass > 0) local_sums[0]++;
+        n_gas++;
+        if(P[ii].Mass > 0) n_gas_with_mass++;
     }
+    long long local_sums[2] = {n_gas_with_mass, n_gas};   /* active gas with mass, all active gas */
     int local_max = (int) local_sums[0];
     long long sums[2] = {local_sums[0], local_sums[1]};
     if(NTask > 1) {
@@ -145,15 +152,13 @@ void gizmo_hydro_corridor_decide_mode(void)
        defaults standing in where NeighborLoopModeBThreshold{Sum,Max} are unset.
        TRANSPORT_SUBCYCLE has already forced Mode A above. An MG step needs the
        complete gas graph, i.e. the Mode-A ghost pool and CSR. The summed count is
-       64-bit for the MG fraction; any count past INT_MAX is far above every
-       Mode-B threshold, so it enters the rule clamped. */
+       64-bit, for the MG fraction and for the rule itself. */
     long long sum_active_gas = 0, sum_active_all_gas = 0; int max_active_gas = 0;
     global_active_gas_counts(&sum_active_gas, &max_active_gas, &sum_active_all_gas);
     decide_mg_step(sum_active_gas, sum_active_all_gas);
     int default_sum, default_max;
     nlr_default_modeb_thresholds(MODE_B_SEARCH_SYMMETRIC, &default_sum, &default_max);
-    const int sum_for_rule = (sum_active_gas > (long long)INT_MAX) ? INT_MAX : (int)sum_active_gas;
-    bool select_mode_b = nlr_mode_b_rule(sum_for_rule, max_active_gas, default_sum, default_max) && !g_mg_step;
+    bool select_mode_b = nlr_mode_b_rule(sum_active_gas, max_active_gas, default_sum, default_max) && !g_mg_step;
     GizmoHydroCorridorMode mode = select_mode_b ? GizmoHydroCorridorMode::MODE_B
                                                 : GizmoHydroCorridorMode::MODE_A;
     g_corridor_mode = mode;
@@ -223,6 +228,9 @@ void gizmo_hydro_corridor_begin(void)
      * symmetric, gas only, the default radius policy, both radii scaled by the
      * ghost safety factor); each consumer is checked against it. */
     g_corridor_query_radii.resize((size_t)gizmo_sym_num_active);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, gizmo_sym_num_active))
+#endif
     for(int aa = 0; aa < gizmo_sym_num_active; aa++) {
         g_corridor_query_radii[aa] = gsl_safety * (double)P[gizmo_sym_active_indices[aa]].KernelRadius;
     }
@@ -249,15 +257,23 @@ const nlr_external_csr * gizmo_hydro_corridor_external_csr(void)
     return g_corridor_csr_valid ? &g_corridor_csr : nullptr;
 }
 
-bool gizmo_hydro_corridor_csr_arrays(const int **rows, int *n_rows, const int64_t **offsets, const int **neighbors)
+bool gizmo_hydro_corridor_csr_arrays(const int **rows, int *n_rows, const int64_t **offsets, const int **neighbors,
+                                     const struct gpu_neighbor_list_t **device)
 {
     if(!g_corridor_csr_valid) {return false;}
     *rows = g_corridor_csr.active_indices; *n_rows = g_corridor_csr.num_active;
     *offsets = g_corridor_csr.offsets; *neighbors = g_corridor_csr.neighbors;
+    *device = g_corridor_csr.device;
     return true;
 }
 
-void gizmo_hydro_corridor_refresh_ghost_values(const char *stage)
+static void corridor_refresh(const char *stage, bool values_current);
+
+void gizmo_hydro_corridor_refresh_ghost_values(const char *stage) {corridor_refresh(stage, false);}
+
+void gizmo_hydro_corridor_revalidate_ghost_pool(const char *stage) {corridor_refresh(stage, true);}
+
+static void corridor_refresh(const char *stage, bool values_current)
 {
     /* No-op unless the corridor owns a published Mode-A view this step —
      * Mode B / fallback paths keep their own refresh semantics. At NTask==1
@@ -277,6 +293,7 @@ void gizmo_hydro_corridor_refresh_ghost_values(const char *stage)
      * a refresh-guard failure — falls CLOSED to the full path below. */
     int same_pool = (ghost_pool_is_live() && ghost_provenance_epoch() == g_corridor_pool_epoch) ? 1 : 0;
     MPI_Allreduce(MPI_IN_PLACE, &same_pool, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);   /* both paths are collective */
+    if(same_pool && values_current) {return;}
     if(same_pool) {
         int refresh_rc = ghost_refresh_values();
         if(refresh_rc == GHOST_REFRESH_OK) {

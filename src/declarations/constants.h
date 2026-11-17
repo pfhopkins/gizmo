@@ -1,99 +1,7 @@
 /* values of various constants to be parsed as part of global definitions */
 
-/* Minimum number of active particles for GPU offload to be worthwhile.
- * Below this threshold, the kernel launch + memory transfer overhead exceeds
- * the GPU compute benefit, so we fall back to the CPU (OpenMP) path.
- * Applies to cooling, nuclear burning, and any future Kokkos-parallelized loops. */
-#ifndef GPU_MIN_PARTICLES_FOR_OFFLOAD
-#define GPU_MIN_PARTICLES_FOR_OFFLOAD 4096
-#endif
-/* DEBUG BISECTION: override to force CPU fallback for cooling/nuclear/turb.
-   Uncomment to disable GPU kernels while keeping GPU kernels active
-   (All_dev sync, __managed__ CoolTables, #pragma omp declare target, etc.) */
-//#undef GPU_MIN_PARTICLES_FOR_OFFLOAD
-//#define GPU_MIN_PARTICLES_FOR_OFFLOAD 999999999
-
-/* Minimum number of particles needing a drift for the batched drift to run on the
- * device. The drift needs its own threshold rather than the shared one above: its
- * per-element work is far smaller than cooling's, so the two want different policies,
- * and the shared constant is read by seven translation units.
- *
- * The count is per rank. Where the particle arrays are device-visible the device drift works on
- * them in place, sending only the index list (gpu_drift.cc), so the old cost of staging whole
- * particle and cell structs both ways no longer applies. Measured on a 128-rank galaxy run at
- * matched simulation time, drifting everything on the device against everything on the host:
- * the host is ahead by ~0.3 ms per step on steps with up to ~1e3 particles active in total, and
- * the two tie from ~1e4 active upward, where the busiest ranks hold ~1e3 of them. The default is
- * the smallest per-rank count at which the device does not lose, so the drift runs on the device
- * wherever it costs nothing to do so, and on the host for the many very small steps.
- *
- * That measurement is for a cheap equation of state. Under a tabulated or solid one the per-
- * particle pressure update becomes a root-find over table lookups, and the device's share should
- * be expected to grow. */
-#ifndef GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD
-#define GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD 1000
-#endif
-
-/* Minimum number of sources in ONE batch for a fused neighbour walk to run on the
- * device -- the upper of the two boundaries in a three-way choice, matching what
- * cooling and the other batched loops already do:
- *
- *     sources <  max(64, 4*threads)                  one host core
- *     sources >= max(64, 4*threads), < this constant host threads
- *     sources >= this constant                       the device
- *
- * The lower boundary is not a second constant; it is the neighbour-loop runner's
- * existing OpenMP work floor, which scales with the thread count. ⚠ Setting this
- * constant down to that floor would leave the threaded tier ZERO WIDTH and quietly
- * reduce the choice to two ways, so it belongs well above it.
- *
- * The walk is pointer-chasing down a dependent chain per source, so a batch of a
- * few sources leaves the device with almost nothing to overlap while still paying
- * a launch and a fence, where a host core pays neither. Per leaf visit the device
- * measures far worse than a host core at small and intermediate batch sizes and
- * reaches parity only at the largest. That deficit is a defect in this walk, to be
- * removed rather than routed around permanently, and the boundary below is set
- * where it currently pays rather than where it ought to end up.
- *
- * Decided per batch and per rank, from that batch's own source count: a rank's own
- * actives for a walk from the root, a group's received queries for a resumed one.
- * On a clustered run those two differ by three orders of magnitude inside a single
- * call, so no step-level or global property can stand in for either.
- *
- * At 1 every non-empty batch goes to the device; raising it sends batches below it
- * to the host instead.
- *
- * ⚠ THIS VALUE IS TEMPORARY AND MUST BE RE-PRICED, NOT INHERITED.
- *
- * Measured on a 128-rank cosmological zoom at matched simulation time, with the work
- * matched to 0.002% and every other cost row flat to within a second: against sending
- * every batch to the device, this saves 231 s of a 685 s wall, 236 s of it on the
- * density row alone. Replicate spread on that vehicle is ~0.3%, about 2 s, so the move
- * is a hundred times the noise; a boundary of 64 instead was measured at 133 s. On a
- * gas-only galaxy the same change is worth only 14 s, because that problem spends its
- * neighbour time in large batches where the two paths are within a few percent of each
- * other; the gain here comes from small and intermediate batches, which is where the
- * zoom spends nearly all of its.
- *
- * ⚠ What that measures is a DEFICIT IN THIS WALK'S DEVICE PATH, not a verdict that the
- * host is the right home for neighbour finding. The tile-and-BVH search on the same
- * hardware does not show it, so the work belongs on the device and the number above is
- * the size of the bill currently being paid. Sending EVERY batch to the host was also
- * measured and buys only about 4 s beyond this, so nothing material is left on the
- * table by stopping here -- and going further would be the wrong direction anyway: it
- * would concede the device for a widening share of the code, could cancel the gain
- * from moving the particle drift back onto the device, and would make the host look
- * like the better home for work -- memory placement especially -- when it is not.
- *
- * ⇒ RE-PRICE AND LOWER OR REMOVE THIS when any of the following lands: supply-type
- * pruning of the walk, bounded-occupancy terminal leaves, neighbour discovery through
- * an index built for the search rather than the gravity tree, the device drift, or the
- * next pricing of the three neighbour-search paths against each other. Each of those
- * attacks the deficit this compensates for; a threshold left in place afterwards hides
- * its own obsolescence. */
-#ifndef GPU_MIN_SOURCES_FOR_WALK_OFFLOAD
-#define GPU_MIN_SOURCES_FOR_WALK_OFFLOAD 4096
-#endif
+/* The counts from which work moves from the host to the device are runtime parameters, resolved in core/begrun.cc
+ * (gizmo_gpu_offload_min_count); see the User Guide entries for GPUElementOffloadMinCount and GPUTreeOffloadMinCount. */
 
 /* The Saitoh & Makino (2009) timestep-limiter factor: a cell is woken when a neighbour's step is
    this much shorter than its own. A run may set it in Config.sh -- their Table 1 gives f=2 a smaller
@@ -107,25 +15,35 @@
 #endif
 #endif
 
+#ifndef ARENA_SHARE_OF_TASK_MEMORY
 #define ARENA_SHARE_OF_TASK_MEMORY          0.90 /* most of a task's memory share the working pool may take when the code has to bring its own size down to fit the machine; the rest is for the particle arrays and the tree, which are not allocated from the pool */
+#endif
 #define REDUC_FAC_FOR_MEMORY_IN_DOMAIN      0.98 /* used to pad memory in domain decomposition structures, should be slightly less than unity */
 
+#ifndef TREE_ALLOC_FACTOR_START
 #define TREE_ALLOC_FACTOR_START             0.45 /* tree nodes allocated per particle at startup, before the run ratchets it upward to fit the particle distribution.  Named here because the startup memory projection has to use it before init() assigns it */
+#endif
 
 /* Cushion on the particle storage a rank holds for the coming epoch, as a fraction of the particles
  * per rank.  It covers the amount by which the next epoch's worst ghost import may exceed the one
  * just measured; on a galaxy-scale zoom that overshoot is a few percent of the per-rank count at the
  * median and around an eighth of it at the ninetieth percentile, so this covers the common case with
  * room to spare.  The rare import that exceeds it is met by growing the storage when it arrives. */
+#ifndef DOMAIN_CAPACITY_SAFETY_FRACTION
 #define DOMAIN_CAPACITY_SAFETY_FRACTION     0.15
+#endif
 
 /* Releasing storage means migrating every particle array, so it is only worth doing for a saving that
  * is a real proportion of the capacity AND a real amount of memory.  The second test is expressed
  * against the particles per rank rather than as a slot count, so that it means the same thing on a
  * small problem as on a large one; a fixed count would silently forbid ever releasing anything on a
  * problem whose whole per-rank capacity is smaller than that count. */
+#ifndef DOMAIN_CAPACITY_SHRINK_FRACTION
 #define DOMAIN_CAPACITY_SHRINK_FRACTION     0.10
+#endif
+#ifndef DOMAIN_CAPACITY_SHRINK_MIN_FRAC
 #define DOMAIN_CAPACITY_SHRINK_MIN_FRAC     0.10
+#endif
 
 /* these are tolerances for the slope-limiters. we define them here, because the gradient constraint routine needs to be sure to use the -same- values in both the gradients and reimann solver routines */
 #if MHD_CONSTRAINED_GRADIENT
@@ -153,17 +71,46 @@
    distribute; they cost more top-tree refinement, one more pseudo-particle all-gather each, and a
    more spatially fragmented rank territory.  The segment count is therefore chosen automatically at
    every full decomposition to hold roughly this many particles, which is where the balance gain
-   stops paying for those costs. */
+   stops paying for those costs.  The best value depends on the problem and the machine (a nearly
+   uniform problem with many particles per rank balances well with far fewer, larger segments), so
+   all the values below may be set in Config.sh. */
+#ifndef  DOMAIN_TARGET_PARTICLES_PER_SEGMENT
 #define  DOMAIN_TARGET_PARTICLES_PER_SEGMENT   10000
+#endif
+#ifndef  DOMAIN_MIN_SEGMENTS_PER_RANK
 #define  DOMAIN_MIN_SEGMENTS_PER_RANK          1
+#endif
+#ifndef  DOMAIN_MAX_SEGMENTS_PER_RANK
 #define  DOMAIN_MAX_SEGMENTS_PER_RANK          256   /* every segment posts its own pseudo-particle
                                                         all-gather, so this bounds the message count
                                                         on a large problem spread over few ranks */
-/* A small problem gets a single segment per rank, which on its own would leave the decomposition
-   almost nothing to balance with.  This is the floor on how many top-tree leaves each rank is
-   refined towards regardless -- a feasibility floor, not a tuned optimum; it sits below every
-   measured landing point, so it binds only in the small-problem regime it exists for. */
+#endif
+/* A rank holding a single segment would otherwise leave the decomposition almost nothing to
+   balance with.  This is the floor on how many top-tree leaves each rank is refined towards
+   regardless -- a feasibility floor, not a tuned optimum.  It binds whenever a rank holds few
+   segments: in a small problem, and equally in a large one whose segments were made large (one
+   segment per rank on 4096 ranks makes the floor ask for 65,536 leaves, and the eight-way
+   refinement delivered 262,144). */
+#ifndef  DOMAIN_MIN_TOPLEAVES_PER_RANK
 #define  DOMAIN_MIN_TOPLEAVES_PER_RANK         16
+#endif
+/* Every rank holds the complete top tree and exchanges every leaf's moments at each build, so that
+   cost follows the TOTAL number of leaves, not the number per rank -- and with the defaults above
+   the automatic segment count makes that total grow with the particle count (about one segment per
+   ten thousand particles, whatever the rank count).  The automatic choice is held so the leaves it
+   asks for in total stay within this, and so is the per-rank floor, which is lowered towards one
+   leaf per rank once the rank count alone would exceed it.  It is a request, not a bound on what is
+   achieved: refinement splits eight ways at a time, and measured runs achieved 3.5-5 times what they
+   asked for, more when very few are asked for.  The default changes nothing on any problem measured
+   so far (the largest asked for 65,536).  It acts on the segment count around a billion particles (a
+   quarter of that with the four-fold refinement of SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM), and on the
+   per-rank floor above 8,192 ranks (with the default floor of 16) whatever the particle count; the
+   segment lines in the log say when it did.  It cannot take a rank below one segment, so a very large
+   rank count can still ask for more.  DOMAIN_SEGMENTS_SCALE and the per-rank segment bounds are
+   applied after it, so an explicit choice can still ask for more. */
+#ifndef  DOMAIN_MAX_REQUESTED_TOPLEAVES
+#define  DOMAIN_MAX_REQUESTED_TOPLEAVES        131072
+#endif
 
 /* Change the segment count by this factor relative to the automatic choice above.  The result is
    still held to DOMAIN_MAX_SEGMENTS_PER_RANK, so raising this has no effect once the automatic
@@ -236,7 +183,12 @@
  * and the shape actually launched -- team, members, walkers and the capacities behind them -- is written
  * into each call's timings record. A device call whose targets reach about half the device's lanes walks
  * one target per lane instead (independent walks then keep the device busy and are faster), so on the
- * device this value matters only below that. The host walk's packets are unaffected. */
+ * device this value matters only below that. The host walk's packets are unaffected.
+ *
+ * The same value sets the packets of the fused neighbour walk (Mode D: density and the other loops whose
+ * pair kernel reduces only into the query's own accumulator), where a device batch of a few thousand to
+ * about a hundred thousand queries per rank walks as packets of this many queries sharing one traversal,
+ * one thread per query; 8 was measured there too. 1 walks every query alone. */
 #ifndef TREE_QUERY_PACKET_SIZE
 #define TREE_QUERY_PACKET_SIZE 8
 #endif
@@ -271,6 +223,23 @@
 #else
 #define  CONDITION_NUMBER_DANGER  1.0e3 /*!< condition number above which we will not trust matrix-based gradients */
 #endif
+#ifdef EOS_ELASTIC
+#define  CONDITION_NUMBER_FACE_BLEND_START  20.0 /*!< elastic solids: above this condition number (the larger of a pair) the meshless face starts to blend toward the kernel-gradient face */
+#define  CONDITION_NUMBER_FACE_BLEND_FULL   50.0 /*!< elastic solids: condition number at which that face is the kernel-gradient face alone */
+#define  TENSILE_CORRECTION_YIELD_MEMORY_ONSET  0.1 /*!< elastic solids: recent-yield memory (in yield strains) at which the tensile-instability correction starts to switch off; it is off at twice this value */
+#define  RECENT_YIELD_MEMORY_SOUND_CROSSINGS    10.0 /*!< elastic solids: the recent-yield memory decays on this many sound-crossing times of the cell's kernel radius */
+#define  ELASTIC_IMPEDANCE_COURANT_MAX  0.2 /*!< elastic solids: largest hydro Courant factor (timestep.cc). The face impedance dissipation (solids/elastic_stress_tensor_force_functions.h)
+                                              is explicit, and on periodic uniform solids it overshoots, growing an odd-even velocity mode, from dt c/L ~0.27-0.30 (cubic spline, 32 neighbours)
+                                              and 0.30-0.35 (Wendland C2, 64-125; and SPH, cubic spline, 32), ordered or disordered, in 2D and 3D: below the default CourantFac of 0.4. 0.2 leaves a margin of 1.35-1.5
+                                              in every case measured (an empirical bound: the operator alone, by a Gershgorin bound, would allow ~0.4). It applies to every cell the
+                                              dissipation acts on: every cell of an EOS_ELASTIC build (strengthless materials included), but in a gas+solid build only the solids and the
+                                              gas next to them (cell_data.h ElasticImpedanceNeighbour) */
+#define  ELASTIC_FINITE_VOLUME_COURANT  1.25 /*!< elastic solids: finite-volume step limit, dt <= this x V / sum over the cell's faces of (face area x face signal speed),
+                                              the signal speed being max(|v_L| + c_L, |v_R| + c_R) of the face states in the face frame (timestep.cc). A fixed, measured
+                                              stability coefficient, not a tuning parameter: at the capped Courant factor above, ordered packings (cubic lattices, aligned or
+                                              rotated) of an impacting solid can grow without bound; 1.0 and 1.25 remove that, 1.5 does not, and on a uniform glass the limit
+                                              never sets the step */
+#endif
 
 /* ... often used physical constants (cgs units). note many of these are defined to better precision with different units in e.g. the GSL package, these are purely for user convenience */
 #define  GRAVITY_G_CGS      (6.672e-8)
@@ -284,8 +253,10 @@
 #define  THOMPSON_CX_CGS    (6.65245e-25)
 #define  ELECTRONCHARGE_CGS (4.8032e-10)
 #define  SECONDS_PER_YEAR   (3.155e7)
+#define  STOP_FILE_CHECK_MIN_WALL_SECONDS (1.0) /* wall seconds between stop-file checks: at most one per step, skipped on steps shorter than this. The check opens a file on a shared filesystem while every other rank waits on it. */
 #define  HUBBLE_H100_CGS    (3.2407789e-18)    /* in h/sec */
 #define  ELECTRONVOLT_IN_ERGS (1.60217733e-12)
+#define  PLANCK_CGS         (6.6260755e-27)
 #define HABING_FLUX_CGS      (1.6e-3)
 #define DRAINE_FLUX_CGS      (1.7 * HABING_FLUX_CGS)
 
@@ -325,6 +296,9 @@
 #define C_LIGHT_CODE            ((C_LIGHT_CGS/UNIT_VEL_IN_CGS)) /* pure convenience function, speed-of-light in code units */
 #endif
 #define C_LIGHT_CODE_REDUCED    (((RT_SPEEDOFLIGHT_REDUCTION)*(C_LIGHT_CODE))) /* reduced speed-of-light in code units, again here as a convenience function, but just returns constant */
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+#define MHD_NON_IDEAL_REDUCED_C_CODE (((MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION)*(C_LIGHT_CODE))) /* reduced speed of light for the evolved non-ideal MHD electric field, in code units */
+#endif
 #define H0_CGS                  ((All.HubbleParam*HUBBLE_H100_CGS)) /* actual value of H0 in cgs */
 #define COSMIC_BARYON_DENSITY_CGS ((All.OmegaBaryon*(H0_CGS)*(H0_CGS)*(3./(8.*M_PI*GRAVITY_G_CGS))*All.cf_a3inv)) /* cosmic mean baryon density [scale-factor-dependent] in cgs units */
 

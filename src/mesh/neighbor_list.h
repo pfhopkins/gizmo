@@ -254,7 +254,7 @@ void free_neighbor_list(neighbor_list_t *list);
 extern neighbor_list_t gizmo_sym_neighbor_list;
 extern int *gizmo_sym_active_indices;
 extern int gizmo_sym_num_active;
-extern int gizmo_sym_num_active_global;
+extern int gizmo_sym_any_active_global;
 extern int gizmo_sym_active_indices_on_heap;  /* same meaning as neighbor_list_t::on_heap, for gizmo_sym_active_indices */
 void gizmo_sym_neighbor_list_free(void);
 void gizmo_sym_csr_free(void);   /* the shared list's host CSR and its device twin, leaving the active indices */

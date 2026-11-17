@@ -40,14 +40,12 @@ int gpu_force_flag_localnodes(void);
  * CPU loop.  Returns 0 on success. */
 int gpu_scatter_pseudo_to_soa(void);
 
-/* After let_unpack_and_install copies a foreign sender's
- * NODE+extNODE bytes into the AoS foreign-node range, mirror the same
- * data into the SoA so the GPU walk can read foreign nodes via SoA.
- * `slot_base_abs` is the absolute Node index of the first foreign node
- * for this sender (= TreeNodeIndexBase + MaxNodes + Numforeignnodes_at_start_of_sender),
- * `count` is the number of consecutive foreign nodes to scatter.
- * Returns 0 on success. */
-int gpu_scatter_foreign_to_soa(int slot_base_abs, int count);
+/* Mirror one imported node's decoded record `rec` (absolute index `no`) into the SoA `m`, so the GPU walk
+ * can read it.  Called by the LET install for each record it decodes, after checking that `m` holds every
+ * slot of the import. */
+struct gpu_gravity_tree_soa_t;
+struct LETNodeWire;
+void gpu_mirror_publish_imported_node(struct gpu_gravity_tree_soa_t *m, int no, const struct LETNodeWire *rec);
 
 /* Mirror a single AoS field write into the corresponding SoA
  * slot.  Used by let_unpack_and_install to redirect a local topleaf's

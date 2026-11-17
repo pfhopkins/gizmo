@@ -31,7 +31,7 @@
 
 #include "../declarations/typedefs.h"
 #include "../declarations/allvars.h"   /* topnode_data definition */
-#include "gpu_morton_functions.h"      /* Morton128 + gpu_morton_double_to_int42 */
+#include "gpu_morton_functions.h"      /* Morton128 */
 
 /* ----------------------- Peano-Hilbert lookup tables ---------------------- */
 /* Replicated verbatim from system/peano.cc.

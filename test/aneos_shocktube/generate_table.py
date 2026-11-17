@@ -51,9 +51,8 @@ def generate():
                 u = CV * T
                 P = (GAMMA - 1.0) * rho * u
                 cs = np.sqrt(GAMMA * P / rho) if rho > 0 else 0
-                # Entropy (arbitrary positive offset)
+                # Entropy (arbitrary offset; it may be negative)
                 S = CV * np.log(T) - (GAMMA - 1.0) * CV * np.log(rho) + 100.0
-                S = max(S, 1e-30)
                 f.write(f"{rho:.15e} {T:.15e} {P:.15e} {u:.15e} {S:.15e} {cs:.15e}\n")
 
     print(f"Generated {fname}: {NRHO}x{NT} grid, gamma={GAMMA}")

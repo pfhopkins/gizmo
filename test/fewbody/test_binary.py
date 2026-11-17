@@ -124,8 +124,16 @@ MIN_ENERGY_ORDER = 1.5
 
 
 def _ensure_ic():
+    # An IC from an older generator lacks the mature-star formation times (see make_binary_ics.py) and would run the
+    # stars on the ordinary scheme for their first steps, so it is regenerated rather than reused.
     if path.exists(IC_FILE):
-        return
+        try:
+            with h5py.File(IC_FILE, "r") as f:
+                t_form = np.array(f["PartType5/StellarFormationTime"])
+            if len(t_form) == 2 and np.all(t_form == -1.0):
+                return
+        except (OSError, KeyError):
+            pass
     import subprocess
     import sys
     subprocess.run(
@@ -302,7 +310,9 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
     override mechanism -- so this costs runs, not rebuilds. Each point overwrites the previous
     one's snapshots, so each is analysed before the next starts.
     """
-    outdir = problem_output_dir(TEST_NAME, VARIANT, extra_config_flags)
+    # run_test, unlike build_and_run_test, does not move GIZMO's output/ under this problem's own
+    # name, so the sweep points land in output/ whatever the fiducial run's directory is.
+    outdir = f"{TEST_DIR}/output"
     etas, errs, series = [], [], []
     for eta in SWEEP_ETAS:
         # run_test resolves <name>.params relative to the TEST directory and is normally called

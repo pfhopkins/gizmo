@@ -39,7 +39,9 @@
 #include <omp.h>
 #endif
 
+#ifndef GIZMO_config_H /* the header defines it; a standalone build (e.g. a unit test) may define it to compile without a Config */
 #include "../GIZMO_config.h"
+#endif
 
 #include "precompiler_logic.h"
 
@@ -240,7 +242,6 @@ extern double Max_Unspawned_MassUnits_fromSink;
 
 extern long long Ntype[6];	/*!< total number of particles of each type */
 extern int NtypeLocal[6];	/*!< local number of particles of each type */
-extern gizmo_rng_t random_generator;	/*!< the random number generator used */
 extern int Gas_split;           /*!< current number of newly-spawned gas particles outside block */
 #ifdef GALSF
 extern int Stars_converted;	/*!< current number of star particles in gas particle block */
@@ -297,6 +298,7 @@ extern double* StAkb; // phases (imag part)
 extern double* StMode; // k vectors
 extern int StNModes; // total number of modes
 extern integertime StTPrev; // time of last update (to determine when next will be)
+extern integertime StTUpdatedAt; // time at which the driving phases last changed
 extern gizmo_rng_t StRng; // random number generator key
 #endif
 
@@ -306,7 +308,7 @@ extern gizmo_rng_t StRng; // random number generator key
 extern int NTopnodes, NTopleaves;
 
 /* variables for input/output , usually only used on process 0 */
-extern char ParameterFile[100];    /*!< file name of parameterfile used for starting the simulation */
+extern char ParameterFile[256];    /*!< file name of parameterfile used for starting the simulation */
 extern FILE
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
 *FdTimebin,    /*!< file handle for timebin.txt log-file. */
@@ -360,6 +362,9 @@ extern FILE *FdCbeDiagnostics;
  * (Type=0) or stars (Type=4). Single-flag would corrupt absent-type
  * particles. Reset to {0,0,0,0,0,0} at the top of read_ic() each call. */
 extern int CBE_Moments_LoadedFromIC_PType[6];
+#endif
+#ifdef METALS
+extern int Metallicity_LoadedFromIC_PType[6]; /*!< fresh-start HDF5 ICs, per particle type: 1 = Metallicity dataset of exactly NUM_METAL_SPECIES columns, kept instead of InitMetallicity; 2 = dataset of another width, not used; 0 = no dataset */
 #endif
 #if (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(SINK_OUTPUT_MOREINFO)) && defined(SINK_PARTICLES)
 extern FILE *FdSinksDetails;
@@ -446,6 +451,40 @@ extern struct global_data_all_processes All;
  * physics needing rho_DM / sigma_DM at gas cells: add to this OR. */
 #if (defined(GALSF_SUBGRID_WINDS) && (GALSF_SUBGRID_WIND_SCALING==2)) || defined(DM_HEATING)
 #define DM_DISPERSION_LOOP_ACTIVE
+#endif
+
+#ifdef EOS_ELASTIC
+/* the strength/damage/porosity properties of a cell's material (resolved at startup; see eos/composition_registry.h) */
+GIZMO_GPU_FUNCTION static inline const struct solid_material& solid_material_of(int composition_type) {return All.SolidMaterial[composition_type];}
+/* the fraction f of its cold shear modulus and yield strength a solid keeps at this thermal state (1 = no softening, 0 = molten),
+   from its specific internal energy u, or its temperature T [K] and pressure P (code units), by the form its material resolved to */
+GIZMO_GPU_FUNCTION static inline double solid_strength_fraction(int composition_type, double u, double T, double P)
+{
+#ifdef EOS_ELASTIC_MELT
+    if(!solid_material_is_elastic(composition_type)) {return 1;}
+    const struct solid_strength_model &model = All.SolidStrengthModel[composition_type];
+    double f = 1;
+    if(model.MeltForm == MELT_FORM_SPECIFIC_ENERGY) {f = 1. - u / model.MeltSpecificEnergy;}
+    else if(model.MeltForm == MELT_FORM_TEMPERATURE)
+    {
+        if(!(T > 0)) {return 1;} /* no temperature yet (before the first equation-of-state evaluation) */
+        double T_melt = model.MeltTemperature0 * pow(1. + DMAX(P, 0.) / model.MeltSimonA, 1. / model.MeltSimonC);
+        f = tanh(model.MeltOhnakaXi * (T_melt / T - 1.));
+    }
+    return (f > 0) ? ((f < 1) ? f : 1.) : 0.;
+#else
+    (void)composition_type; (void)u; (void)T; (void)P;
+    return 1;
+#endif
+}
+/* deviatoric stiffness added to the bulk modulus for uniaxial (longitudinal) strain under the stress law
+   dS/dt = 2 mu (strain rate - trace/NUMDIMS): c_L^2 = c_bulk^2 + 2 (1 - 1/NUMDIMS) mu / rho  (4/3 mu in 3D, mu in 2D),
+   with mu the material's shear modulus times its strength fraction */
+GIZMO_GPU_FUNCTION static inline double elastic_longitudinal_soundspeed2_excess(int composition_type, double rho, double strength_fraction)
+{
+    if(!solid_material_is_elastic(composition_type) || !(rho > 0)) {return 0;}
+    return (2.0 * (1.0 - 1.0/NUMDIMS)) * solid_material_of(composition_type).ShearModulus * strength_fraction / rho;
+}
 #endif
 
 #include "particle_data.h"
@@ -650,6 +689,7 @@ enum iofields
   IO_AMBIPOLAR,
   IO_OHMIC,
   IO_HALL,
+  IO_NONIDEAL_FLUX,
   IO_IMF,
   IO_COSMICRAY_ENERGY,
   IO_COSMICRAY_KAPPA,
@@ -677,6 +717,8 @@ enum iofields
   IO_PRESSURE,
   IO_EOSCS,
   IO_EOS_STRESS_TENSOR,
+  IO_EOS_RECENT_YIELD_MEMORY,
+  IO_EOS_STRENGTH_FRACTION,
   IO_CBE_MOMENTS,
   IO_EOSCOMP,
   IO_EOSPHASE,
@@ -732,6 +774,7 @@ enum iofields
   IO_DAMAGE_POROSITY_DAMAGE,      /* Grady-Kipp scalar D in [0,1] */
   IO_DAMAGE_POROSITY_DISTENTION,  /* Jutzi P-alpha alpha in [1,alpha_0] */
   IO_DAMAGE_POROSITY_ACTVCRACKS,  /* Grady-Kipp active-crack radius */
+  IO_DAMAGE_POROSITY_FLAWSPERMASS, /* tensile flaws per unit mass of the element's body */
   IO_FLUIDTYPE,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
@@ -789,7 +832,10 @@ enum siofields
 
 
 /* Variables for Tree */
-/* Tree Node structure (note, the ALIGN(32) directive will effectively pad the structure size to a multiple of 32 bytes) */
+/* Tree Node structure (note, the ALIGN(32) directive will effectively pad the structure size to a multiple of 32 bytes).
+   Nodes exported to other ranks travel through the wire codec in gravity/let_pack.cc, which sends only the fields some
+   reader of an imported node uses: a field added here (or to extNODE) that a walk, the drift or the GPU prediction reads
+   on an imported node must be added to that codec's field list too. */
 extern ALIGN(32) struct NODE
 {
   Vec3<MyFloat> center;		/*!< geometrical center of node */
@@ -883,6 +929,7 @@ extern int N_StarDirect;
 #endif
 
 
+/* Extension of NODE; see the note on NODE about the wire codec for exported nodes. */
 extern struct extNODE
 {
   Vec3<MyDouble> dp;

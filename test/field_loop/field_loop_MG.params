@@ -30,3 +30,4 @@ ResubmitOn                         0
 ResubmitCommand                    none
 DivBcleaningParabolicSigma         0.1
 DivBcleaningHyperbolicSigma        1.0
+ActiveFractionForMGSweep           0     % MG solve on every step with active gas: this test checks the full method

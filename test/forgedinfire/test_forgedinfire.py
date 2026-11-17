@@ -15,6 +15,7 @@ so the IC read fails. Use HDF5 < 2 (e.g. module swap hdf5/2.0.0 hdf5/1.14.x)
 on such machines. Most other tests use uncompressed ICs and are unaffected.
 """
 
+import shlex
 import pytest
 import numpy as np
 from os import path, system, chdir, environ
@@ -30,6 +31,7 @@ from gizmo.test import (
     default_mpi_ranks,
     default_omp_threads,
     get_final_snapshot,
+    mpi_launch_command,
 )
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -190,9 +192,8 @@ def run_forgedinfire_test(test_name, num_mpi_ranks, num_omp_threads):
     if num_omp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_omp_threads)
     paramsfile = f"{test_name}.params"
-    system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus "
-           f"./GIZMO {paramsfile} 2 "
-           f"1>test_{test_name}.out 2>test_{test_name}.err")
+    launch = shlex.join(mpi_launch_command(num_mpi_ranks, num_omp_threads) + ["./GIZMO", paramsfile, "2"])
+    system(f"{launch} 1>test_{test_name}.out 2>test_{test_name}.err")
     chdir("../../")
 
 

@@ -116,4 +116,3 @@ ErrTolIntAccuracy        0.01
 CourantFac               0.2
 MaxRMSDisplacementFac    0.125
 MaxNumNgbDeviation      0.05
-Sink_outflow_particlemass 1e-2

@@ -155,7 +155,7 @@ struct SinkSwallowOut {
  * by populate_call_scalars. Passed to the inline pair body as its own
  * argument, once per call, so the body never reads All.* directly (TRAP 1).
  *
- * No rng_step — sink_swk has no RNG sites in the pair body (audit
+ * No random-number scalars: sink_swk has no random draws in the pair body (audit
  * confirmed via grep: no gizmo_gpu_rand* in sink_swallow_and_kick_functions.h
  * or this loop's pair body).
  *

@@ -345,7 +345,7 @@ neighbor_list_t gizmo_sym_neighbor_list = {NULL, NULL, 0, 0, 0};
 int *gizmo_sym_active_indices = NULL;
 int gizmo_sym_active_indices_on_heap = 0;
 int gizmo_sym_num_active = 0;
-int gizmo_sym_num_active_global = 0; /* Allreduce'd in gizmo_gradients_prep_symlist; reused by refresh */
+int gizmo_sym_any_active_global = 0; /* 1 if any rank has active gas; set in gizmo_gradients_prep_symlist, reused by refresh */
 
 gpu_neighbor_list_t gizmo_sym_neighbor_list_device = {NULL, NULL, NULL, 0, 0};
 

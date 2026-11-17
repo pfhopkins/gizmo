@@ -8,7 +8,9 @@
 ## load libraries we will use 
 import numpy as np
 import h5py as h5py
-from gizmopy import *
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'analysis'))
+from load_from_snapshot import load_from_snapshot
 import matplotlib
 import matplotlib.pylab as pylab
 matplotlib.use('Agg') ## this calls matplotlib without a X-windows GUI

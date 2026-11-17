@@ -10,9 +10,8 @@
 ##  than intended]. This also includes the updated contribution from AGN 
 ##  from Shen et al., 2020, arXiv:2001.02696, 
 ##    'The Bolometric Quasar Luminosity Function at z = 0-7'
-##  If you wish to use this, delete these lines (pre-ceded by '##') and rename
-##  the file simply TREECOOL, then include it in your run-time directory with the 
-##  compiled GIZMO binary. 
+##  If you wish to use this, rename the file simply TREECOOL, then include it in 
+##  your run-time directory with the compiled GIZMO binary. Lines pre-ceded by '#' are skipped.
 ##
 ## columns here are [see e.g. Fig 10 in Faucher-Giguere, 2020, MNRAS, 493, 2, 1614]:
 ##  (1) redshift: log_10(1+z)

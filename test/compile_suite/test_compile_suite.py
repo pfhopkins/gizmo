@@ -108,6 +108,7 @@ COMPILE_CONFIGS = [
     # --- Material / damage EOS ---
     "HYDRO_MESHLESS_FINITE_MASS SELFGRAVITY_OFF EOS_ANEOS INPUT_IN_DOUBLEPRECISION OUTPUT_IN_DOUBLEPRECISION DEVELOPER_MODE",
     "HYDRO_MESHLESS_FINITE_MASS BOX_SPATIAL_DIMENSION=1 BOX_PERIODIC SELFGRAVITY_OFF EOS_ANEOS INPUT_IN_DOUBLEPRECISION OUTPUT_IN_DOUBLEPRECISION DEVELOPER_MODE",
+    "HYDRO_MESHLESS_FINITE_MASS EOS_TILLOTSON EOS_ANEOS EOS_ELASTIC EOS_DAMAGE_POROSITY=3 EOS_ELASTIC_MELT HYDRO_EXPLICITLY_INTEGRATE_VOLUME KERNEL_FUNCTION=6 INPUT_IN_DOUBLEPRECISION OUTPUT_IN_DOUBLEPRECISION",
     "HYDRO_MESHLESS_FINITE_MASS BOX_SPATIAL_DIMENSION=2 SELFGRAVITY_OFF EOS_TILLOTSON EOS_ELASTIC EOS_DAMAGE_POROSITY=7 KERNEL_FUNCTION=6 OUTPUT_IN_DOUBLEPRECISION DEVELOPER_MODE",
     "HYDRO_MESHLESS_FINITE_MASS HYDRO_PARTITION_UNITY_IMPROVE_FD BOX_SPATIAL_DIMENSION=1 BOX_PERIODIC SELFGRAVITY_OFF EOS_GAMMA=(5.0/3.0) INPUT_IN_DOUBLEPRECISION OUTPUT_IN_DOUBLEPRECISION DEVELOPER_MODE",
 
@@ -198,6 +199,7 @@ COMPILE_CONFIGS = [
     # --- Turbulence driving ---
     "TURB_DRIVING",
     "TURB_DRIVING BOX_PERIODIC TURB_DRIVING_SPECTRUMGRID=128",
+    "TURB_DRIVING TURB_DRIVING_TARGET_SIGMA",
 
     # --- Cosmology ---
     "GR_TABULATED_COSMOLOGY",
@@ -218,12 +220,10 @@ COMPILE_CONFIGS = [
     "EOS_ENFORCE_ADIABAT=1.0001 HYDRO_REPLACE_RIEMANN_KT SLOPE_LIMITER_TOLERANCE=0",
     "ENERGY_ENTROPY_SWITCH_IS_ACTIVE PARTICLE_EXCISION",
 
-    # --- CHIMES ---
-    #"GALSF CHIMES METALS COOLING COOL_METAL_LINES_BY_SPECIES CHIMES_REDUCED_OUTPUT CHIMES_NH_OUTPUT",
-
-    # --- Grackle ---
-    #"COOLING COOL_GRACKLE",
-    #"GALSF METALS COOLING COOL_GRACKLE COOL_GRACKLE_CHEMISTRY=2",
+    # --- External chemistry libraries (skipped where the library is not installed: see _missing_external_library) ---
+    "GALSF CHIMES METALS COOLING COOL_METAL_LINES_BY_SPECIES CHIMES_REDUCED_OUTPUT CHIMES_NH_OUTPUT",
+    "COOLING COOL_GRACKLE",
+    "GALSF METALS COOLING COOL_GRACKLE COOL_GRACKLE_CHEMISTRY=2",
 
     # --- Miscellaneous ---
     "OPENMP=2 IO_COMPRESS_HDF5 IO_SUPPRESS_TIMEBIN_STDOUT=10 OUTPUT_GRADIENT_RHO OUTPUT_GRADIENT_VEL OUTPUT_HYDROACCELERATION OUTPUT_SOFTENING OUTPUT_TEMPERATURE",
@@ -270,6 +270,23 @@ def _make_build(gizmo_root: Path, timeout: int = 600) -> subprocess.CompletedPro
     )
 
 
+def _missing_external_library(flags: str, output: str):
+    """Why an external-library row could not build here, or None. CHIMES needs SUNDIALS >= 6 (headers and
+    libraries from the SYSTYPE block's CHIMESINCL/CHIMESLIBS), Grackle needs GRACKLE_PATH or a grackle.pc on
+    PKG_CONFIG_PATH. Only a missing or too-old library skips; any other failure of these rows fails."""
+    missing = []   # a header or library the build could not find
+    if "CHIMES" in flags.split():
+        if "CHIMES needs SUNDIALS 6 or newer" in output:
+            return "SUNDIALS older than 6"
+        missing += ["cvode/cvode.h", "sundials/sundials_", "nvector/nvector_serial.h", "sunmatrix/", "sunlinsol/", "-lsundials", "'sundials_"]
+    if "COOL_GRACKLE" in flags.split():
+        missing += ["grackle.h", "-lgrackle", "'grackle'"]
+    for line in output.split("\n"):
+        if any(s in line for s in missing) and ("not found" in line or "No such file" in line or "cannot find" in line):
+            return line.strip()
+    return None
+
+
 @pytest.mark.parametrize("flags", COMPILE_CONFIGS, ids=[
     c.split()[0][:40] + ("..." if len(c.split()) > 1 else "")
     for c in COMPILE_CONFIGS
@@ -301,6 +318,11 @@ def test_compile(flags):
 
     # Clean up
     _make_clean(gizmo_root)
+
+    if result.returncode != 0:
+        missing = _missing_external_library(flags, (result.stdout or "") + (result.stderr or ""))
+        if missing:
+            pytest.skip(f"external library not available for {flags}: {missing}")
 
     assert result.returncode == 0 and not errors, (
         f"Compile FAILED for flags: {flags}\n"

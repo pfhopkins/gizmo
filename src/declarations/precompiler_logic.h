@@ -96,13 +96,22 @@
 #endif
 
 #if defined(EOS_DAMAGE_POROSITY)
-/* damage + porosity bitfield (bit 0 Grady-Kipp, bit 1 Drucker-Prager, bit 2 P-alpha Jutzi) auto-implies elastic+Tillotson machinery */
+/* damage + porosity bitfield (bit 0 fracture damage, bit 1 pressure-dependent strength, bit 2 P-alpha Jutzi) auto-implies elastic+Tillotson machinery */
 #ifndef EOS_TILLOTSON
 #define EOS_TILLOTSON
 #endif
 #ifndef EOS_ELASTIC
 #define EOS_ELASTIC
 #endif
+#endif
+
+#if defined(EOS_ELASTIC_MELT) && !defined(EOS_ELASTIC)
+#define EOS_ELASTIC /* thermal softening (melt) is a property of the elastic solids */
+#endif
+/* a solid strength that depends on the evolving state (pressure-dependent rock strength, EOS_DAMAGE_POROSITY model 2; thermal softening,
+   EOS_ELASTIC_MELT): the deviatoric stress is projected onto it after every accepted equation-of-state refresh (refresh_eos_and_project) */
+#if defined(EOS_ELASTIC) && ((defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)) || defined(EOS_ELASTIC_MELT))
+#define ELASTIC_STATE_DEPENDENT_STRENGTH
 #endif
 
 #if defined(PLANET_HEATING)
@@ -142,6 +151,17 @@
 #define NUCLEAR_NETWORK_NSPECIES 13
 #endif
 #define NUM_NUCLEAR_SPECIES NUCLEAR_NETWORK_NSPECIES
+#if (NUCLEAR_NETWORK_SOLVER == 2)
+#error "NUCLEAR_NETWORK_SOLVER=2 is a stub that does no burning (nuclear/nuclear_torch.cc marks where an external network can be connected): use 0 (built-in) or 1 (SkyNet)"
+#elif (NUCLEAR_NETWORK_SOLVER != 0) && (NUCLEAR_NETWORK_SOLVER != 1)
+#error "NUCLEAR_NETWORK_SOLVER must be 0 (built-in network) or 1 (SkyNet)"
+#endif
+#if (NUCLEAR_NETWORK_NSPECIES != 13)
+#error "NUCLEAR_NETWORK_NSPECIES must be 13: both solvers use the 13-species table"
+#endif
+#if (NUCLEAR_NETWORK_SOLVER == 1) && (defined(NUCLEAR_NETWORK_NSE_TABLE) || defined(NUCLEAR_NETWORK_NEUTRINOS))
+#error "NUCLEAR_NETWORK_NSE_TABLE and NUCLEAR_NETWORK_NEUTRINOS work with the built-in network only, not with SkyNet"
+#endif
 #ifdef NUCLEAR_NETWORK_NEUTRINOS
 #ifndef RADTRANSFER
 #define RADTRANSFER  /* neutrino transport requires RT framework */
@@ -263,6 +283,17 @@
 #if defined(COOL_GRACKLE) && !defined(COOLING)
 #define COOLING
 #endif
+/* a chemistry library that tracks species hands each cell's result to the shared cache (store_solved_chemistry in cell_data.h), which is
+   where every other module reads it: the species fractions, and for molecular networks the H2 fraction. A new library defines these two */
+#if defined(CHIMES) || (defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY >= 1))
+#define EXTERNAL_CHEMISTRY_REPORTS_SPECIES
+#endif
+#if defined(CHIMES) || (defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY >= 2))
+#define EXTERNAL_CHEMISTRY_REPORTS_H2
+#endif
+#if defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY >= 2)
+#define EOS_CHEMISTRY_PROVIDES_GAMMA /* the chemistry library evolves the molecules and stores the adiabatic index of the state it solved, and the equation of state uses it */
+#endif
 
 
 
@@ -302,11 +333,13 @@
 #endif
 
 #if (FIRE_PHYSICS_DEFAULTS == 3)
-#if !defined(CHIMES) /* CHIMES evolves its own chemistry and does not carry the electron fraction this model reads */
+#if !defined(CHIMES) && !defined(COOL_GRACKLE) /* CHIMES and Grackle replace the default network this model belongs to: its molecules would not match the composition they cache */
 #define COOL_MOLECFRAC_NONEQM
 #endif
 #define OUTPUT_MOLECULAR_FRACTION
+#if !defined(CHIMES) /* the net cooling rate it writes is a query of the in-code network, which CHIMES replaces */
 #define OUTPUT_COOLRATE
+#endif
 #if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))
 #define RT_USE_GRAVTREE_SAVE_RAD_FLUX  /* LEBRON-style gravtree flux save; mutex with explicit RT solvers (same reasoning as the GALSF_FB_FIRE_RT_* / SINK_*_HEATING blocks) */
 #endif
@@ -532,7 +565,7 @@
 #ifdef SINGLE_STAR_STARFORGE_DEFAULTS /* bunch of options -NOT- strictly required here, but this is a temporary convenience block */
 #define INPUT_POSITIONS_IN_DOUBLE
 #define OUTPUT_POTENTIAL
-#ifndef SINGLE_STAR_AND_SSP_HYBRID_MODEL
+#if !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL) && !defined(DISABLE_GRADUAL_SNAPSHOT_RESTART)
 #define IO_GRADUAL_SNAPSHOT_RESTART
 #endif
 #ifndef IO_SINKS_ONLY_SNAPSHOT_FREQUENCY
@@ -621,12 +654,12 @@
 #define RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
 #endif // closes SINGLE_STAR_RT_DEFAULTS
 
-#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED) && !defined(NOGRAVITY))
+#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED) && !defined(SELFGRAVITY_OFF)) /* the column densities come from the gravity tree walk */
 #define RT_USE_TREECOL_FOR_NH 6 /* This gives a better approximation for column density than the usual scale-length estimator, but is overkill for typical 1e-3msun-resolving simulations that only marginally resolve the opacity limit. Enable for high (<1e-5msun) resolution sims */
 #endif
 #ifdef COOLING
 #define SIMPLE_STEADYSTATE_CHEMISTRY
-#if !defined(CHIMES) /* not compatible with CHIMES, which evolves its own chemistry */
+#if !defined(CHIMES) && !defined(COOL_GRACKLE) /* not compatible with CHIMES or Grackle, which replace the default network this model belongs to */
 #define COOL_MOLECFRAC_NONEQM
 #endif
 #define EOS_SUBSTELLAR_ISM
@@ -777,6 +810,9 @@
 #endif
 #ifdef HERMITE_INTEGRATION
 #define COMPUTE_JERK_IN_GRAVTREE /* needs to be computed in order to do the Hermite integration */
+#if !(defined(SINGLE_STAR_DIRECT_GRAVITY) && ((HERMITE_INTEGRATION) == 32))
+#define HERMITE_FOREIGN_SOURCE_TABLE /* Hermite passes take a foreign Hermite-type leaf at its owner's predicted state (gravtree.cc). Not needed when Hermite covers only sinks and their mutual gravity is the direct sum, which the tree never evaluates */
+#endif
 #if defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
 #define MAINTAIN_TREE_IN_REARRANGE /* spawning winds is the one thing that re-sequences the particles while the tree is still standing, and the Hermite pass walks that tree after the source terms have run, deliberately skipping the rebuild they asked for.  Together they need a tree whose links are repaired as particles move rather than one waiting to be rebuilt.  Every other caller re-sequences either inside a decomposition or immediately before a build, so this asks nothing of a run that does not spawn. */
 #endif
@@ -886,6 +922,9 @@
 #endif
 
 
+#if defined(MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT) && !defined(MHD_MODIFIED_GRADIENT)
+#error "MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT selects the face weighting of the MHD_MODIFIED_GRADIENT solve: enable MHD_MODIFIED_GRADIENT as well"
+#endif
 #ifdef MHD_MODIFIED_GRADIENT
 #ifndef MAGNETIC
 #define MAGNETIC
@@ -981,13 +1020,13 @@
 
 
 #if defined(COOL_MOLECFRAC)
-#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM) && !defined(CHIMES)
+#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM) && !defined(CHIMES) && !defined(COOL_GRACKLE)
 #define COOL_MOLECFRAC_NONEQM // estimate molecular fractions for thermochemistry+cooling with explicitly-evolved non-equilibirum H2 formation+destruction with clumping and self-shielding (Hopkins et al arXiv:2203.00040)
 #endif
 #endif
 
 
-#if defined(EOS_SUBSTELLAR_ISM) || defined(COOL_MOLECFRAC_NONEQM)
+#if defined(EOS_SUBSTELLAR_ISM) || defined(COOL_MOLECFRAC_NONEQM) || defined(EOS_CHEMISTRY_PROVIDES_GAMMA)
 #define EOS_GAMMA_VARIABLE
 #endif
 
@@ -1010,7 +1049,7 @@
 #endif
 
 
-#ifndef  GALSF_GENERATIONS
+#if defined(GALSF) && !defined(GALSF_GENERATIONS)
 #define  GALSF_GENERATIONS     1    /*!< Number of star particles that may be created per gas particle */
 #endif
 
@@ -1028,13 +1067,13 @@
 #define CRFLUID_REDUCED_C_CODE(k) (return_CRbin_M1speed(k)) // allow for bin-to-bin variations in RSOL
 
 
+#if defined(FOF) || defined(SUBFIND) /* the group finders are the only users of the link types */
 #ifndef FOF_PRIMARY_LINK_TYPES
 #define FOF_PRIMARY_LINK_TYPES 2
 #endif
-
-
 #ifndef FOF_SECONDARY_LINK_TYPES
 #define FOF_SECONDARY_LINK_TYPES 0
+#endif
 #endif
 
 
@@ -1048,7 +1087,27 @@
 #define COOL_LOWTEMP_THIN_ONLY // don't want to double-count trapping of radiation if we're doing it self-consistently
 #endif
 
+/* the thermodynamics follows gas into the optically thick regime (cooling not restricted to optically thin gas, the infrared
+   radiation that traps it, or a barotropic equation of state), so a collapsing core stalls at the opacity limit: sink formation
+   and sink capture both ask this one question (after every block above that can switch on one of its inputs) */
+#if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY)) || defined(RT_INFRARED) || defined(EOS_GMC_BAROTROPIC)
+#define SINK_OPACITY_LIMIT_THERMODYNAMICS
+#endif
 
+
+
+#if defined(CHIMES_HII_REGIONS) && !defined(GALSF_FB_FIRE_RT_HIIHEATING)
+#define GALSF_FB_FIRE_RT_HIIHEATING // must be on, this module uses the same code
+#endif
+#if defined(CHIMES) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
+#define CHIMES_HII_REGIONS // with CHIMES, the HII-region heating acts through CHIMES (the default model assumes the in-code network's composition)
+#endif
+#if defined(CHIMES_HII_REGIONS) && !defined(CHIMES_STELLAR_FLUXES)
+#define CHIMES_STELLAR_FLUXES // the HII regions pass CHIMES the stellar fluxes in its age bins
+#endif
+#if defined(CHIMES_STELLAR_FLUXES) && !defined(GALSF_FB_FIRE_RT_LONGRANGE)
+#define GALSF_FB_FIRE_RT_LONGRANGE // the stellar fluxes CHIMES reads come from FIRE's long-range radiation (its luminosity tree and bands)
+#endif
 
 /* ----- giant block of options for RHD modules ------ */
 
@@ -1073,6 +1132,18 @@
    mesh/compute_finitevol_faces.cc can be retargeted; for neutrinos use multigroup-M1. */
 #ifdef RT_DIFFUSION_IMPLICIT
 #error "RT_DIFFUSION_IMPLICIT has been retired. Use RT_M1 with subcycling (TRANSPORT_SUBCYCLE) instead."
+#endif
+
+/* The counts from which work moves to the device are parameterfile parameters now; a Config.sh line that still sets one
+   of the old compile-time values would be ignored without this. */
+#ifdef GPU_MIN_PARTICLES_FOR_OFFLOAD
+#error "GPU_MIN_PARTICLES_FOR_OFFLOAD has been replaced by the parameterfile parameter GPUParticleLoopOffloadMinCount (or GPUElementOffloadMinCount for all per-particle loops and the drift). Remove it from Config.sh."
+#endif
+#ifdef GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD
+#error "GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD has been replaced by the parameterfile parameter GPUDriftOffloadMinCount. Remove it from Config.sh."
+#endif
+#ifdef GPU_MIN_SOURCES_FOR_WALK_OFFLOAD
+#error "GPU_MIN_SOURCES_FOR_WALK_OFFLOAD has been replaced by the parameterfile parameter GPUTreeWalkOffloadMinCount (or GPUTreeOffloadMinCount for the walk, the gravity walk and the spatial-index builds together). Remove it from Config.sh."
 #endif
 
 /* options for FLD or OTVET or M1 or Ray/Rad_Intensity modules */
@@ -1130,6 +1201,11 @@
 #if (defined(RT_FLUXLIMITER) || defined(RT_RAD_PRESSURE_FORCES) || defined(RT_SOLVER_EXPLICIT)) && !defined(RT_COMPGRAD_EDDINGTON_TENSOR) //&& !defined(RT_EVOLVE_FLUX) && !defined(RT_EVOLVE_INTENSITIES))
 #define RT_COMPGRAD_EDDINGTON_TENSOR
 #endif
+/* the neighbour-loop gradient of the Eddington-tensor-weighted radiation energy is read only by the flux limiter and by OTVET; otherwise (M1, or
+   any method without a flux limiter) the gradient finalization replaces it with ET.grad(E) before anything reads it, so it is neither computed nor carried */
+#if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (defined(RT_FLUXLIMITER) || defined(RT_OTVET))
+#define RT_COMPGRAD_ET_IN_NGB_LOOP
+#endif
 
 /* enable appropriate chemistry flags if we are using the photoionization modules */
 #if defined(RT_CHEM_PHOTOION)
@@ -1158,12 +1234,41 @@
 #ifndef RT_SPEEDOFLIGHT_REDUCTION
 #define RT_SPEEDOFLIGHT_REDUCTION (1.0)
 #endif
-#ifndef RT_SOURCES
+
+/* non-ideal MHD: MHD_NON_IDEAL (bare or =1) solves the non-ideal terms as diffusive fluxes; MHD_NON_IDEAL=2 instead evolves the
+   non-ideal electric field explicitly with a reduced speed of light. The reduced speed defaults to the one already used by an
+   explicit radiation solver, else by cosmic rays, else the true speed of light. */
+#ifdef MHD_NON_IDEAL
+#if !((MHD_NON_IDEAL+0 == 0) || (MHD_NON_IDEAL+0 == 1) || (MHD_NON_IDEAL+0 == 2))
+#error "MHD_NON_IDEAL must be set bare, =1 (diffusive non-ideal fluxes) or =2 (evolved non-ideal electric field)"
+#endif
+#if (MHD_NON_IDEAL+0 == 2)
+#define MHD_NON_IDEAL_EVOLVED_FLUX
+#if !defined(MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION)
+#if defined(RT_SOLVER_EXPLICIT)
+#define MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION (RT_SPEEDOFLIGHT_REDUCTION)
+#elif defined(COSMIC_RAY_FLUID)
+#define MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION (CRFLUID_SPEEDOFLIGHT_REDUCTION)
+#else
+#define MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION (1.0)
+#endif
+#endif
+#endif
+#endif
+#if (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE) || defined(RT_SOURCE_INJECTION)) && !defined(RT_SOURCES) /* only radiation code reads the source types */
 #define RT_SOURCES 1+2+4+8+16+32 // default to allowing all types to act as sources //
 #endif
 
 #if !defined(RT_USE_GRAVTREE) && defined(RT_SELFGRAVITY_OFF) && !defined(SELFGRAVITY_OFF)
 #define SELFGRAVITY_OFF // safely define SELFGRAVITY_OFF in this case, otherwise we act like there is gravity except in the final setting of accelerations
+#endif
+
+/* a particle whose tree walk is skipped advances the tree and direct-sum part of its gravity with the jerk. Forces added to GravAccel after the gravity call (drag and
+   grain radiation under the drag flag, quantum pressure, the shearing-box Coriolis force) must then not ride along on that value, so in these builds that
+   part is kept apart in GravAccel_Retained and the analytic terms are added afresh every step. Without this list a skipped walk keeps the
+   acceleration its last walk finalized, analytic terms included. Any new force added to GravAccel after gravity must join this list. */
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF) && (defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION) || defined(DM_FUZZY) || defined(BOX_SHEARING))
+#define GRAVACCEL_RETAINED_ON_SKIPPED_WALK
 #endif
 
 /* turn on outputs appropriately */
@@ -1197,6 +1302,8 @@
 
 #ifdef RT_CHEM_PHOTOION
 #define RT_BAND_IS_IONIZING(k) ((k==RT_FREQ_BIN_H0) || (k==RT_FREQ_BIN_He0) || (k==RT_FREQ_BIN_He1) || (k==RT_FREQ_BIN_He2))
+#else
+#define RT_BAND_IS_IONIZING(k) (0) /* no ionizing bands without photo-ionization chemistry */
 #endif
 
 #ifndef GALSF_FB_FIRE_RT_LONGRANGE
@@ -1419,8 +1526,10 @@
 #ifndef BOX_SHEARING_Q
 #define BOX_SHEARING_Q (3.0/2.0)
 #endif
-/* set omega - usually we will default to always using time coordinates such that Omega = 1 at the box center */
+/* Omega at the box center, in code units: defaults to 1 (time in units of 1/Omega) */
+#ifndef BOX_SHEARING_OMEGA_BOX_CENTER
 #define BOX_SHEARING_OMEGA_BOX_CENTER 1.0
+#endif
 /* need analytic gravity on so we can add the appropriate source terms to the EOM */
 #ifndef GRAVITY_ANALYTIC
 #define GRAVITY_ANALYTIC
@@ -1498,6 +1607,15 @@
 #define IO_COMPOSITIONTYPE_NOT_IN_ICFILE
 #endif
 #endif // GRAIN_FLUID_PROMOTION
+
+/* gas+solid builds: a solid cell beside gas deforms with its own material (hydro/gradients_loop.cc). Its stress rate (EOS_ELASTIC)
+   and, where cell volumes are integrated (MFM), its volume use the velocity gradient of its solid neighbours, while gas keeps its kernel density */
+#if defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS) && (defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)) && defined(HYDRO_EXPLICITLY_INTEGRATE_VOLUME) && defined(HYDRO_MESHLESS_FINITE_MASS) && !defined(HYDRO_SPH)
+#define SOLID_VOLUME_FROM_SOLID_NEIGHBOURS
+#endif
+#if defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS) && (defined(EOS_ELASTIC) || defined(SOLID_VOLUME_FROM_SOLID_NEIGHBOURS))
+#define SOLID_OWN_VELOCITY_GRADIENT
+#endif
 
 
 
@@ -1638,9 +1756,6 @@
 #endif
 
 
-#if defined(CHIMES_HII_REGIONS) && !defined(GALSF_FB_FIRE_RT_HIIHEATING)
-#define GALSF_FB_FIRE_RT_HIIHEATING // must be on, this module uses the same code
-#endif
 #ifdef CHIMES_STELLAR_FLUXES /* The following defines the stellar age bins that we will use to define the UV spectra from stars used in CHIMES. */
 #define CHIMES_LOCAL_UV_NBINS 8
 #define CHIMES_LOCAL_UV_AGE_LOW 0.0
@@ -1658,6 +1773,10 @@
 
 #if defined(GALSF_EFFECTIVE_EQS) && defined(GALSF_SFR_CRITERION) && (GALSF_SFR_CRITERION != 0)
 #error "GALSF_EFFECTIVE_EQS requires GALSF_SFR_CRITERION=0; molecular/virial/etc. criteria are not defined for this model (molecular fraction is undefined in the effective EOS)."
+#endif
+
+#if defined(GALSF_SUBGRID_WINDS) && !defined(GALSF_EFFECTIVE_EQS)
+#error "GALSF_SUBGRID_WINDS requires GALSF_EFFECTIVE_EQS; the wind energy and speed are normalized by the effective-EOS supernova energy (FactorSN, EgySpecSN), which exists only with that model."
 #endif
 
 
@@ -1690,14 +1809,14 @@
 /* Reduced speed-of-light factor for PIC dust dynamics. Global default so the
  * grain drag (solids/grain_drag.cc) and the PIC timestep limiter (core/timestep.cc)
  * use the same value; overridable from Config.sh. */
-#ifndef PIC_SPEEDOFLIGHT_REDUCTION
+#if defined(PIC_MHD) && !defined(PIC_SPEEDOFLIGHT_REDUCTION)
 #define PIC_SPEEDOFLIGHT_REDUCTION (1)
 #endif
 
 /* Fractional amount by which adaptive-gravity softening lengths are allowed to
  * vary in a single timestep. Global so the AGS radius solver (gravity/ags_rkern.cc)
  * and the AGS density loop (gravity/ags_density_loop.cc) share one tolerance. */
-#ifndef AGS_DSOFT_TOL
+#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && !defined(AGS_DSOFT_TOL)
 #define AGS_DSOFT_TOL (0.5)
 #endif
 
@@ -1841,3 +1960,24 @@
 #define EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
 #endif
 
+/* last, after every block that can switch on an equation of state (GRAIN_FLUID_PROMOTION turns on EOS_TILLOTSON above) */
+#if defined(HYDRO_KERNEL_SURFACE_VOLCORR) && (defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS))
+#define KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE /* cells carry a CompositionType: the surface correction stands down at material interfaces (mesh/kernel.h) */
+#endif
+
+/* what the tabulated equations of state imply: the global parameter, cell and EOS structures depend on these, so every file must see them */
+#ifdef EOS_HELMHOLTZ
+#define EOS_TABULATED
+#define EOS_USES_CGS
+#define EOS_CARRIES_YE
+#define EOS_CARRIES_ABAR
+#define EOS_PROVIDES_ENTROPY
+#define EOS_PROVIDES_CV
+#endif
+
+#ifdef EOS_ANEOS
+#define EOS_TABULATED
+#define EOS_USES_CGS
+#define EOS_PROVIDES_ENTROPY
+#define EOS_PROVIDES_CV
+#endif

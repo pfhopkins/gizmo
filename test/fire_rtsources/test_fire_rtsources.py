@@ -17,7 +17,9 @@ from shutil import copy2
 from urllib.request import urlretrieve, HTTPError
 import h5py
 import glob
+import shlex
 from gizmo.test import (
+    mpi_launch_command,
     build_gizmo_for_test,
     clean_test_outputs,
     get_cooling_tables,
@@ -67,9 +69,8 @@ def test_fire_rtsources(num_mpi_ranks, num_omp_threads):
         if num_omp_threads > 0:
             environ["OMP_NUM_THREADS"] = str(num_omp_threads)
         paramsfile = f"{TEST_NAME}.params"
-        system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus "
-               f"./GIZMO {paramsfile} 0 "
-               f"1>test_{TEST_NAME}.out 2>test_{TEST_NAME}.err")
+        launch = shlex.join(mpi_launch_command(num_mpi_ranks, num_omp_threads) + ["./GIZMO", paramsfile, "0"])
+        system(f"{launch} 1>test_{TEST_NAME}.out 2>test_{TEST_NAME}.err")
         chdir("../../")
     finally:
         finalize_variant_output(TEST_NAME)

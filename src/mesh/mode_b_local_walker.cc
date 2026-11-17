@@ -201,8 +201,10 @@ static inline double mode_b_node_symmetric_radius(int no,
  * => opening a remote topleaf T opens every ancestor of T, so no export is missed
  * (same strict-refinement guarantee as the LET cover tree).  Hence traversal
  * reach == export reach: ONE open predicate, no scalar/per-type dual path.  The
- * cand_out / export_out sinks only choose WHERE a reached node is recorded (local
- * candidate vs remote-topleaf export), never the reach.
+ * cand_out / export_out sinks choose WHERE a reached node is recorded (local
+ * candidate vs remote-topleaf export).  They change the reach in one way only: a
+ * walk with no candidate sink does not descend an opened LOCAL topleaf, since
+ * nothing below it can export -- so such a walk also leaves the nodes there undrifted.
  *
  * (Historically the export decision used the gas-biased cross-rank SCALAR hmax and
  * a fused walk re-tested exports against it; the non-gas SYMMETRIC loops could not
@@ -211,8 +213,7 @@ static inline double mode_b_node_symmetric_radius(int no,
 
 /* Build the topleaf reverse map from the DomainNodeIndex SSOT (never from a
  * slot-layout assumption). Sized to the max observed offset; entries outside
- * any topleaf stay -1. O(NTopleaves), rebuilt per export call (topnode indices
- * are stable between tree builds; per-call rebuild avoids any staleness). */
+ * any topleaf stay -1. O(NTopleaves). */
 void ModeBTopleafMap::build(void)
 {
     const int tree_base = All.TreeNodeIndexBase;
@@ -227,6 +228,23 @@ void ModeBTopleafMap::build(void)
     for(int i = 0; i < NTopleaves; i++) {
         leaf_of_topnode[DomainNodeIndex[i] - tree_base] = i;
     }
+}
+
+/* DomainNodeIndex is written only by a tree build, and every successful build advances
+ * force_treebuild_generation(), so the map is rebuilt once per build instead of on every call. */
+const ModeBTopleafMap &mode_b_topleaf_map_current(void)
+{
+    static ModeBTopleafMap map;
+    static long built_generation = -1;
+    static int built_ntopleaves = -1, built_tree_base = -1;
+    const long generation = force_treebuild_generation();
+    if(generation != built_generation || NTopleaves != built_ntopleaves || All.TreeNodeIndexBase != built_tree_base) {
+        map.build();
+        built_generation = generation;
+        built_ntopleaves = NTopleaves;
+        built_tree_base = All.TreeNodeIndexBase;
+    }
+    return map;
 }
 
 /* Shared traversal body (SSOT for all three public tree walks).
@@ -320,13 +338,22 @@ static void mode_b_walk_impl(const double pos[3],
              * subtree, which holds NO owned-local candidates and must NOT be
              * descended in source-export semantics. Export on the SAME predicate
              * that opened it (traversal reach == export reach) and skip to the
-             * sibling REGARDLESS (no owned-local candidates below a remote topleaf). */
+             * sibling REGARDLESS (no owned-local candidates below a remote topleaf).
+             * A walk that collects no candidates also skips an opened LOCAL topleaf:
+             * below it are only this rank's nodes and particles -- no top-level node,
+             * so no remote topleaf and no pseudo-node -- and nothing there can export. */
             if(do_open && export_out) {
                 const int leaf = topleaf_map->topleaf_of(no, tree_base);
-                if(leaf >= 0 && DomainTask[leaf] != ThisTask) {
-                    export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
-                    no = nop->u.d.sibling;
-                    continue;
+                if(leaf >= 0) {
+                    if(DomainTask[leaf] != ThisTask) {
+                        export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
+                        no = nop->u.d.sibling;
+                        continue;
+                    }
+                    if(cand_out == nullptr) {
+                        no = nop->u.d.sibling;
+                        continue;
+                    }
                 }
             }
             if(do_open) {
@@ -430,13 +457,14 @@ void mode_b_walk_from_start_nodes(const double pos[3],
 {
     if(All.TreeNodeIndexBase <= 0 || Nodes == NULL || Nextnode == NULL) return;
     const int tree_base      = All.TreeNodeIndexBase;
-    const int pseudo_start  = tree_base + MaxNodes + MaxForeignNodes;
+    const int foreign_start = tree_base + MaxNodes;
     for(int k = 0; k < n_nodes; k++) {
         const int nl = node_list[k];
         if(nl < 0) break;   /* -1 terminator (legacy NodeList convention) */
-        /* Defensive: a start-node arrives over MPI; it must be an internal
-         * node index. Skip a corrupt entry rather than dereference OOB. */
-        if(nl < tree_base || nl >= pseudo_start) continue;
+        /* Defensive: a start-node arrives over MPI; it is a top leaf this rank owns, so it must be a
+         * node of the LOCAL tree.  Skip a corrupt entry rather than walk imported nodes or read past
+         * their storage. */
+        if(nl < tree_base || nl >= foreign_start) continue;
         const int start = Nodes[nl].u.d.nextnode;   /* open the exported node */
         mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale,
                          start, /*stop_at_toplevel=*/true,

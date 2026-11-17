@@ -18,8 +18,9 @@
  *           subtree is fully emitted, let_relabel_subtree() resolves every sibling
  *           continuation to a WIRE index or the single LET_WIRE_EXIT sentinel, so
  *           the shipped graph is self-contained (no sender indices in topology).
- *      4. let_exchange_nodes          -- MPI_Alltoall counts + MPI_Alltoallv payloads
- *      5. let_unpack_and_install      -- copy NODE+extNODE bytes into the foreign slot
+ *      4. let_exchange_nodes          -- encode each destination's records compactly (the wire codec);
+ *                                        MPI_Alltoall counts + MPI_Alltoallv encoded streams
+ *      5. let_unpack_and_install      -- decode each record into its NODE+extNODE foreign slot
  *           range [TreeNodeIndexBase+MaxNodes, TreeNodeIndexBase+MaxNodes+Numforeignnodes); rebase each
  *           wire index to slot_base+wire; map LET_WIRE_EXIT to the local topleaf's
  *           continuation; redirect each affected local topleaf's u.d.nextnode at the
@@ -39,6 +40,8 @@
 #include <string.h>
 #include <math.h>
 #include <float.h>
+#include <limits.h>
+#include <vector>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -54,8 +57,9 @@
 #include "gravtree_moment_kernel.h"  /* shared node-moment CONSTRUCTION SSOT (add_particle/finalize) */
 #include "gravtree_moment_sources.h" /* shared per-particle RT/sink/CR source-input gates */
 
-#include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
+#include "gpu_pseudo_update.h"  /* gpu_mirror_publish_imported_node, gpu_set_soa_nextnode */
 #include "forcetree.h"          /* force_tree_grow_foreign_storage */
+#include "gpu_topology_finalize.h"       /* gpu_tree_alloc_bytes / gpu_tree_free_bytes */
 #include "gpu_gravity_tree.h"            /* suns_backup: the tree's own direct-child slots; the node mirror's foreign capacity */
 
 
@@ -100,13 +104,17 @@ static void let_compute_tree_lifetime(void)
      * the interval that matters.  Taken from the counts just reduced, not from global state. */
     if(trigger_bin < 0) {trigger_bin = highest_occupied;}
 
-    g_let_tree_lifetime_dti = LET_TREE_LIFETIME_PAD_FACTOR * GET_INTEGERTIME_FROM_TIMEBIN(trigger_bin);
     /* The horizon is only ever used as an offset from the current time, so it must not run off the
      * end of the integer timeline: get_drift_factor maps time1 into the drift table and clamps the
-     * index only after forming it. */
+     * index only after forming it.  The clamp is tested before the multiplication so that a large
+     * pad factor cannot overflow the integer time; the product is formed unsigned and only once it
+     * is known not to exceed the remaining interval. */
     integertime remaining = TIMEBASE - All.Ti_Current;
     if(remaining < 0) {remaining = 0;}
-    if(g_let_tree_lifetime_dti > remaining) {g_let_tree_lifetime_dti = remaining;}
+    const unsigned long long pad_factor = (LET_TREE_LIFETIME_PAD_FACTOR);
+    const unsigned long long trigger_interval = (unsigned long long) GET_INTEGERTIME_FROM_TIMEBIN(trigger_bin);
+    if(pad_factor > 0 && trigger_interval > (unsigned long long) remaining / pad_factor) {g_let_tree_lifetime_dti = remaining;}
+    else {g_let_tree_lifetime_dti = (integertime) (pad_factor * trigger_interval);}
     if(g_let_tree_lifetime_dti > 0) {g_let_tree_lifetime_drift = get_drift_factor_undilated(All.Ti_Current, All.Ti_Current + g_let_tree_lifetime_dti);}
 }
 
@@ -146,88 +154,6 @@ static double let_node_len_over_tree_lifetime(int no, double len)
 
 
 /* ----------------------------------------------------------------------
- * Active-only LET helpers.
- *
- * Each rank computes a per-topleaf bitmap (one bit per topleaf, NTopleaves
- * total) where bit tl == 1 iff topleaf tl is owned by ThisTask AND at least
- * one particle in ActiveParticleList lives in tl.  Bitmaps are MPI_Allgathered
- * so every rank sees every other rank's active-topleaf set.  In the pack
- * loop, sender S short-circuits packing for receiver R when R's bitmap is
- * all zero (R has no active particles -> R does not need any LET data).
- *
- * Particle -> topleaf lookup uses Father[i] -> ancestor chain until the
- * first BITFLAG_TOPLEVEL node, which is necessarily a topleaf (only
- * topleaves contain particles; internal topnodes have only topnode children).
- * ---------------------------------------------------------------------- */
-static inline int let_bitmap_word_count(int n_topleaves)
-{
-    return (n_topleaves + 63) / 64;
-}
-
-static inline int let_bitmap_test(const uint64_t *b, int tl)
-{
-    return (int) ((b[tl >> 6] >> (tl & 63)) & 1ULL);
-}
-
-static inline int let_bitmap_any_set(const uint64_t *b, int n_words)
-{
-    if(!b) return 1;  /* NULL bitmap -> conservative: assume some bits set */
-    for(int w = 0; w < n_words; w++) if(b[w]) return 1;
-    return 0;
-}
-
-extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
-{
-    memset(bitmap, 0, (size_t)n_words * sizeof(uint64_t));
-    if(NTopleaves <= 0) return;
-
-    /* Build inverse lookup: Nodes[no] -> topleaf index (or -1) for MY topleaves only. */
-    int *my_tl_lookup = (int *) mymalloc("LET_my_tl_lookup", (size_t)MaxNodes * sizeof(int));
-    for(int j = 0; j < MaxNodes; j++) my_tl_lookup[j] = -1;
-    for(int t = 0; t < NTopleaves; t++)
-    {
-        if(DomainTask[t] != ThisTask) continue;
-        int no = DomainNodeIndex[t];
-        if(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes)
-            my_tl_lookup[no - All.TreeNodeIndexBase] = t;
-    }
-
-    /* Fallback: if ActiveParticleList is empty (e.g. tree rebuilt before
-     * make_list_of_active_particles ran for the current step), set all MY
-     * topleaves' bits.  Preserves conservative (ship-everything) fallback behavior. */
-    if(ActiveParticleList.empty())
-    {
-        for(int t = 0; t < NTopleaves; t++)
-        {
-            if(DomainTask[t] != ThisTask) continue;
-            bitmap[t >> 6] |= (1ULL << (t & 63));
-        }
-        myfree(my_tl_lookup);
-        return;
-    }
-
-    for(size_t k = 0; k < ActiveParticleList.size(); k++)
-    {
-        int i = ActiveParticleList[k];
-        if(i < 0 || i >= NumPart) continue;
-        if(P[i].Mass <= 0) continue;
-        int no = Father[i];
-        int guard = 0;
-        while(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes && guard++ < 1024)
-        {
-            int tl = my_tl_lookup[no - All.TreeNodeIndexBase];
-            if(tl >= 0)
-            {
-                bitmap[tl >> 6] |= (1ULL << (tl & 63));
-                break;
-            }
-            no = Nodes[no].u.d.father;
-        }
-    }
-    myfree(my_tl_lookup);
-}
-
-/* ----------------------------------------------------------------------
  * Cluster cover leaves (see struct LETCoverLeaf).  Each rank groups its OWNED-topleaf targets by
  * softening octave and displacement octave into cluster leaves (let_compute_local_payload), and the per-rank cluster lists are
  * Allgatherv'd so every sender holds every receiver's cluster leaves for the cover-tree essentiality test.
@@ -243,6 +169,11 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
  * local tree corruption, reduced and reported collectively at the end of the exchange. */
 static long long g_let_malformed_singleton = 0;
 static int g_let_malformed_singleton_first = -1;
+/* Shipped records found still carrying the kicked bit, summed over this rank's packs (must stay 0). */
+static long long g_let_kicked_records = 0;
+static int g_let_kicked_records_first = -1;
+/* Single-particle leaves this rank sent compact, and in full, this exchange (reported with the exchange). */
+static long long g_let_leaves_compact = 0, g_let_leaves_full = 0;
 
 static struct LETCoverLeaf *g_my_clusters = NULL;
 static int g_my_clusters_n = 0, g_my_clusters_cap = 0;
@@ -345,9 +276,7 @@ static struct LETOrphanRecord *let_my_orphan_for_topleaf(int t)
 /* ----------------------------------------------------------------------
  * Step 1: per-rank-payload computation
  * ---------------------------------------------------------------------- */
-extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
-                                          const uint64_t *active_bitmap,
-                                          int bitmap_n_words)
+extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
 {
     /* bbox: union of OUR topleaf bboxes (each topleaf's [center-len/2, center+len/2]).
      * NOTE: as of the per-topleaf cover fix the bbox COORDS no longer feed LET
@@ -355,15 +284,13 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
      * sender-side from replicated topleaf geometry, not this single union box);
      * only has_cover (>=1 owned topleaf) is still consumed. The coords are kept
      * for wire-format compatibility + debug. min_OldAcc/soft/sink below ARE still
-     * used (whole-rank worst-case scalars fed to the same predicate). If
-     * active_bitmap is non-NULL, restrict to ACTIVE topleaves only. */
+     * used (whole-rank worst-case scalars fed to the same predicate). */
     out->bbox_min[0] = out->bbox_min[1] = out->bbox_min[2] = DBL_MAX;
     out->bbox_max[0] = out->bbox_max[1] = out->bbox_max[2] = -DBL_MAX;
     int found_any = 0;
     for(int i = 0; i < NTopleaves; i++)
     {
         if(DomainTask[i] != ThisTask) continue;
-        if(active_bitmap && !let_bitmap_test(active_bitmap, i)) continue;
         int no = DomainNodeIndex[i];
         if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes) continue;
         double cx = (double) Nodes[no].center[0];
@@ -392,8 +319,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     /* Per-particle bounds -> CLUSTER MEMBERS (grouped later by topleaf, softening octave and displacement octave) + WHOLE-RANK
      * reduce. Each local target is bucketed to its owning topleaf via the Father chain; owned targets are
      * stashed as cluster members, drifted ones ride an orphan record. The whole-rank payload scalars below are
-     * the reduce over all local targets -- a conservative wire-compat fallback (has_cover + empty-rank guard).
-     * active_bitmap non-NULL -> restrict to ActiveParticleList (tight); else all NumPart (conservative). */
+     * the reduce over all local targets -- a conservative wire-compat fallback (has_cover + empty-rank guard). */
     out->min_OldAcc = DBL_MAX;
     for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = 0.0;
     out->min_soft = DBL_MAX;
@@ -413,11 +339,8 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     g_my_orphans_n = 0;   /* drift-orphan records rebuilt each payload compute */
     g_cl_members_n = 0;   /* cluster members re-collected each payload compute */
 
-    int n_iter = (active_bitmap && !ActiveParticleList.empty()) ? (int) ActiveParticleList.size() : NumPart;
-    for(int kk = 0; kk < n_iter; kk++)
+    for(int i = 0; i < NumPart; i++)
     {
-        int i = (active_bitmap && !ActiveParticleList.empty()) ? ActiveParticleList[kk] : kk;
-        if(i < 0 || i >= NumPart) continue;
         if(P[i].Mass <= 0) continue;
         int t = P[i].Type;
         if(t < 0 || t > 5) continue;
@@ -633,6 +556,20 @@ struct LETPackContext {
      * within an exchange, so one handover reaches the same peak as many small ones. */
     long long wire_grow_bytes;
     long long wire_failed_bytes;
+    /* One destination's full records, packed and relabelled here and then encoded; reused by every
+     * destination this worker takes, grown as the largest needs, and released after the packs. */
+    struct LETNodeWire *scratch;
+    int                 scratch_cap;
+    /* the kind byte of each record of the destination being encoded */
+    unsigned char *wire_kinds;   size_t wire_kinds_cap;
+    /* storage this pack released when it finished (reported to the memory ledger after its growth) */
+    long long wire_released_bytes;
+    /* single-particle leaves this pack sent compact, and in full because a left-out field did not hold
+     * the value its receiver would restore */
+    long long leaves_compact, leaves_full;
+    /* shipped records found carrying the kicked bit (must stay 0), and the lowest such node */
+    long long kicked_records;
+    int       kicked_records_first;
 #if TREE_LEAF_BUCKET_SIZE > 1
     /* One multi-particle leaf's members, gathered once and then used EITHER to accumulate that
      * leaf's aggregate OR to emit the members' own wires -- never gathered twice.  Grown once to
@@ -679,6 +616,9 @@ static int let_pack_contexts_prepare(int want)
         g_pack_ctx[t].malformed_singleton = 0; g_pack_ctx[t].malformed_singleton_first = -1;
         g_pack_ctx[t].realloc_fail_msgs = 0;   g_pack_ctx[t].pack_oom = 0;
         g_pack_ctx[t].wire_grow_bytes = 0;     g_pack_ctx[t].wire_failed_bytes = 0;
+        g_pack_ctx[t].kicked_records = 0;      g_pack_ctx[t].kicked_records_first = -1;
+        g_pack_ctx[t].wire_released_bytes = 0;
+        g_pack_ctx[t].leaves_compact = 0;      g_pack_ctx[t].leaves_full = 0;
     }
     return g_pack_ctx_n;
 }
@@ -1017,6 +957,54 @@ static void let_fill_particle_src(int p_idx, moment_particle_src<MyFloat> *src_o
 
 }
 
+/* What a single-particle leaf's own values determine.  The constants are written here by the pack for
+ * every synthesized leaf; the full list is what a compact LEAF record leaves out and its receiver restores,
+ * and what the sender checks before sending a leaf compact.  apply(field, value) assigns (the pack, the
+ * decoder) or compares (the sender's check); the one list serves all three, so they cannot drift apart. */
+template <class V, class R>
+static void let_leaf_constant_fields(V &v, R &w)
+{
+    v.apply(w.leaf_tag, (int) LET_LEAF_TAG_REAL_LEAF);
+    v.apply(w.node.len, (MyFloat) 0);   /* zero size -- never opens, always treated as multipole */
+    v.apply(w.node.u.d.bitflags, (unsigned int)(1u << BITFLAG_MULTIPLEPARTICLES));
+    v.apply(w.node.N_part, (long) 1);
+    v.apply(w.node.Ti_current, (integertime) All.Ti_Current);
+}
+template <class V, class R>
+static void let_leaf_derived_fields(V &v, R &w)
+{
+    let_leaf_constant_fields(v, w);
+    /* the centre of mass, as the moment computes it for one particle at the leaf's position */
+    const MyFloat m = w.node.u.d.mass;
+    const Vec3<MyFloat> c = w.node.center;
+    v.apply(w.node.u.d.s, (m > 0) ? (Vec3<MyFloat>)((m * c) / m) : c);
+    /* the sink fields of a particle that carries no sink, as the moment leaves them */
+#ifdef SINK_PHOTONMOMENTUM
+    v.apply(w.node.sink_lum, (MyFloat) 0);
+    v.apply(w.node.sink_lum_grad, Vec3<MyFloat>{0, 0, 1});
+#endif
+#ifdef SINK_CALC_DISTANCES
+    v.apply(w.node.sink_mass, (MyFloat) 0);
+    v.apply(w.node.sink_pos, Vec3<MyFloat>{0, 0, 0});
+#if defined(SINK_NODE_MOTION_TRACKED)
+    v.apply(w.node.sink_vel, Vec3<MyFloat>{0, 0, 0});
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    v.apply(w.node.sink_acc, Vec3<MyFloat>{0, 0, 0});
+#endif
+#if defined(SINK_NODE_MOTION_TRACKED)
+    v.apply(w.node.N_SINK, (int) 0);
+#endif
+#endif
+}
+struct let_leaf_assign {
+    template <class T> void apply(T &field, const T &value) {field = value;}
+};
+struct let_leaf_matches {
+    int ok;
+    template <class T> void apply(const T &field, const T &value) {if(memcmp(&field, &value, sizeof(T)) != 0) {ok = 0;}}
+};
+
 /* Emit ONE particle's leaf wire from an already-gathered source POD. */
 static void let_emit_particle_leaf_from_src(int p_idx, const moment_particle_src<MyFloat> *src_in,
                                             int sib_terminator_sentinel, struct LETNodeWire *w)
@@ -1045,13 +1033,11 @@ static void let_emit_particle_leaf_from_src(int p_idx, const moment_particle_src
     /* wire topology + the forced multiple-particles bit (finalize left bitflags
      * untouched since ref.bitflags was null). */
     w->node.center       = pos;
-    w->node.len          = 0;   /* zero size -- never opens, always treated as multipole */
-    w->node.u.d.bitflags = (1u << BITFLAG_MULTIPLEPARTICLES);
     w->node.u.d.sibling  = sib_terminator_sentinel;
     w->node.u.d.nextnode = sib_terminator_sentinel;
     w->node.u.d.father   = -1;  /* foreign nodes have no father in OUR tree */
-    w->node.Ti_current   = All.Ti_Current;
-    w->node.N_part       = 1;
+    let_leaf_assign set;
+    let_leaf_constant_fields(set, *w);   /* tag, size, flags, count, build time */
     w->extnode.Ti_lastkicked = All.Ti_Current;
     w->extnode.Flag = 0;
 
@@ -1060,8 +1046,10 @@ static void let_emit_particle_leaf_from_src(int p_idx, const moment_particle_src
      * moment already carries every other source field (and for a singleton equals the particle
      * value); the two it cannot carry are Type and AGS_zeta.  Mirror the local-leaf AGS guards
      * EXACTLY: Type always, zeta only when the adaptive-softening field exists, else 0. */
-    w->leaf_tag      = LET_LEAF_TAG_REAL_LEAF;
     w->leaf_type     = pa->Type;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    w->leaf_id       = pa->ID;
+#endif
     w->leaf_force_softening = (MyFloat) src.force_softening;  /* pure ForceSoftening, NOT the node's
                                                               * conflated maxsoft=max(soft,kernel) */
     w->leaf_ags_zeta = 0;
@@ -1233,6 +1221,9 @@ static void let_build_bucket_aggregate(struct LETPackContext *pk, int n, int hea
      * asking for a tree that has gone stale, which a rebuild repairs. */
     w->leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;
     w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    w->leaf_id = 0;
+#endif
 }
 
 #endif
@@ -1273,6 +1264,30 @@ int     *ForeignLeafTag  = NULL;
 int     *ForeignLeafType = NULL;
 MyFloat *ForeignLeafZeta = NULL;
 MyFloat *ForeignLeafSoft = NULL;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+/* Kept apart from the sidecars above, with its own capacity, so the tree's allocate/grow/free paths are
+ * untouched: reserved before every install to cover the foreign storage, and never shrunk. */
+MyIDType *ForeignLeafID = NULL;
+static int ForeignLeafIDCap = 0;
+static int let_foreign_leaf_id_reserve(int n)
+{
+    if(n > ForeignLeafIDCap)
+    {
+        MyIDType *p = (MyIDType *) gpu_tree_alloc_bytes((size_t) n * sizeof(MyIDType), "tree_foreign_id");
+        if(!p) {return 1;}
+        if(ForeignLeafID) {gpu_tree_free_bytes(ForeignLeafID);}
+        ForeignLeafID = p; ForeignLeafIDCap = n;
+    }
+    if(n > 0) {memset(ForeignLeafID, 0, (size_t) n * sizeof(MyIDType));}
+    return 0;
+}
+/* At shutdown, before Kokkos is finalized. */
+void let_foreign_leaf_id_release(void)
+{
+    if(ForeignLeafID) {gpu_tree_free_bytes(ForeignLeafID);}
+    ForeignLeafID = NULL; ForeignLeafIDCap = 0;
+}
+#endif
 
 static void grow_wire_buf(struct LETPackContext *pk, struct LETNodeWire **buf, int needed, int *capacity)
 {
@@ -1429,6 +1444,9 @@ static void pack_recurse(struct LETPackContext *pk, int no, int sib_terminator,
     struct LETNodeWire *w = &(*buf)[my_idx];
     w->remote_id = no;
     w->leaf_tag = LET_LEAF_TAG_NODE; w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;  /* default: node */
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    w->leaf_id = 0;
+#endif
     w->node = Nodes[no];     /* full struct copy including all #ifdef payloads */
     /* The per-node type-presence bits mean "present and owned by the rank that holds this node",
      * so they must not travel: on the receiver this node describes somebody else's particles, and
@@ -1472,6 +1490,9 @@ static void pack_recurse(struct LETPackContext *pk, int no, int sib_terminator,
             struct particle_data *pa = &P[p];
             w->leaf_tag      = LET_LEAF_TAG_REAL_LEAF;
             w->leaf_type     = pa->Type;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+            w->leaf_id       = pa->ID;
+#endif
             w->leaf_force_softening = (MyFloat) ForceSoftening_KernelRadius(p);
             w->leaf_ags_zeta = 0;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
@@ -1719,15 +1740,246 @@ static void let_relabel_subtree(struct LETNodeWire *buf, int lo_w, int hi_w,
     }
 }
 
+/* ----------------------------------------------------------------------
+ * The wire codec.
+ *
+ * A destination's import is packed and relabelled into full records as above; each record is then
+ * encoded into a compact byte stream -- one kind byte per record, then the records back to back --
+ * and the receiver decodes it into the same full record before installing.  Two kinds:
+ *   FULL -- every field some reader of an imported node uses.  The fields no reader of an imported
+ *           node ever touches are not sent, and are installed as fixed values (let_wire_decode).
+ *   LEAF -- a single-particle leaf, without what such a leaf's own values determine: its centre of
+ *           mass (from its position and mass), its zero size, count, flags and build time, and the
+ *           sink fields of a particle that is not a sink.
+ * A leaf is sent as LEAF only when decoding the LEAF form gives exactly what decoding the FULL form
+ * gives, bit for bit, so the receiver installs the same node either way.  Encoder and decoder share
+ * one field list.  Records are read and written with memcpy only: a record's place in the stream
+ * carries no alignment.
+ *
+ * Every field below is listed under the same #if as its declaration in struct NODE / extNODE.  A
+ * new NODE or extNODE field that a walk, the drift or the GPU prediction reads on an imported node
+ * must be added here, or it arrives as zero.
+ * ---------------------------------------------------------------------- */
+enum {LET_WIRE_KIND_FULL = 1, LET_WIRE_KIND_LEAF = 2};
+
+struct let_wire_writer {
+    unsigned char *p;
+    template <class T> void field(const T &x) {memcpy(p, &x, sizeof(T)); p += sizeof(T);}
+};
+struct let_wire_sizer {
+    size_t n;
+    template <class T> void field(const T &) {n += sizeof(T);}
+};
+struct let_wire_reader {
+    const unsigned char *p, *end;
+    int bad;
+    template <class T> void field(T &x)
+    {
+        if(bad || (size_t)(end - p) < sizeof(T)) {bad = 1; return;}
+        memcpy(&x, p, sizeof(T)); p += sizeof(T);
+    }
+};
+
+/* The fields a record of this kind carries, in wire order. */
+template <class C, class R>
+static void let_wire_fields(C &c, R &w, int kind)
+{
+    const int full = (kind == LET_WIRE_KIND_FULL);
+    c.field(w.node.center);
+    if(full) {c.field(w.node.len); c.field(w.node.u.d.s);}
+    c.field(w.node.u.d.mass);
+    if(full) {c.field(w.node.u.d.bitflags);}
+    c.field(w.node.u.d.sibling);
+    c.field(w.node.u.d.nextnode);
+    if(full) {c.field(w.node.Ti_current); c.field(w.node.N_part);}
+    c.field(w.node.maxsoft);
+#if defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
+    c.field(w.node.gasmass);
+#endif
+#ifdef RT_USE_GRAVTREE
+    c.field(w.node.stellar_lum);
+#ifdef CHIMES_STELLAR_FLUXES
+    c.field(w.node.chimes_stellar_lum_G0);
+    c.field(w.node.chimes_stellar_lum_ion);
+#endif
+#endif
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    c.field(w.node.rt_source_lum_s);
+    c.field(w.extnode.rt_source_lum_vs);
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+    if(full) {c.field(w.node.sink_lum); c.field(w.node.sink_lum_grad);}
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    c.field(w.node.cr_injection);
+#endif
+#ifdef SINK_CALC_DISTANCES
+    if(full) {c.field(w.node.sink_mass); c.field(w.node.sink_pos);}
+#if defined(SINK_NODE_MOTION_TRACKED)
+    if(full) {c.field(w.node.sink_vel);}
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    if(full) {c.field(w.node.sink_acc);}
+#endif
+#if defined(SINK_NODE_MOTION_TRACKED)
+    if(full) {c.field(w.node.N_SINK);}
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    c.field(w.node.MaxFeedbackVel);
+#endif
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    c.field(w.node.tidal_tensorps_prevstep);
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    c.field(w.node.s_dm);
+    c.field(w.node.mass_dm);
+    c.field(w.extnode.vs_dm);
+#endif
+    c.field(w.extnode.vs);
+    c.field(w.extnode.vmax);
+    if(full) {c.field(w.leaf_tag);}
+    c.field(w.leaf_type);
+    c.field(w.leaf_ags_zeta);
+    c.field(w.leaf_force_softening);
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    c.field(w.leaf_id);
+#endif
+}
+
+static size_t let_wire_record_bytes(int kind)
+{
+    struct LETNodeWire dummy;
+    memset(&dummy, 0, sizeof(dummy));
+    let_wire_sizer s = {0};
+    let_wire_fields(s, dummy, kind);
+    return s.n;
+}
+
+/* Decode one record into the form it is installed in: the whole record zeroed, padding included,
+ * then the sent fields read back, then the values that are not sent.  Returns 0 on an unknown kind
+ * or a record that runs past the end of its stream. */
+static int let_wire_decode(int kind, let_wire_reader &rd, struct LETNodeWire *w)
+{
+    memset(w, 0, sizeof(*w));
+    if(kind != LET_WIRE_KIND_FULL && kind != LET_WIRE_KIND_LEAF) {return 0;}
+    let_wire_fields(rd, *w, kind);
+    if(rd.bad) {return 0;}
+    /* Not sent, because no reader of an imported node uses them: father (an imported node has no
+     * father here); the momentum gathered since a kick and the kick time (read only behind the
+     * kicked bit, which no shipped record carries); the kernel-length and divergence bounds (drifted,
+     * read by nothing); Flag; the sender's own node index.  Installed as fixed values. */
+    w->node.u.d.father = -1;
+    w->remote_id = -1;
+    if(kind == LET_WIRE_KIND_LEAF) {let_leaf_assign set; let_leaf_derived_fields(set, *w);}
+    return 1;
+}
+
+
+
+/* The encoded streams travel in whole units of this many bytes: large enough that an int count of them
+ * spans any one exchange, small enough that the zero padding at the end of a stream does not matter. */
+#define LET_WIRE_UNIT_BYTES 64
+
+/* A shipped record travels as LEAF when it is a single-particle leaf whose left-out fields hold exactly
+ * the values its receiver will restore -- so it installs bit for bit as it would have in full. */
+static int let_wire_leaf_eligible(const struct LETNodeWire *w)
+{
+    if(w->leaf_tag != LET_LEAF_TAG_REAL_LEAF) {return 0;}
+    let_leaf_matches same = {1};
+    let_leaf_derived_fields(same, *w);
+    return same.ok;
+}
+
+/* Encode the n full records of one destination into a newly allocated stream: n kind bytes, then the
+ * records, zero-padded to whole units.  The kinds are decided first, so the stream is allocated once at
+ * its exact size and written in place.  Returns the number of units, or -1 if the stream could not be
+ * had (the pack is then flagged as failed and nothing is shipped).  Tallies the leaves sent compact and
+ * the leaves sent in full in the pack's counters. */
+static long long let_wire_encode_destination(struct LETPackContext *pk, const struct LETNodeWire *full, int n,
+                                             unsigned char **out)
+{
+    *out = NULL;
+    if(n <= 0) {return 0;}
+    if(pk->wire_kinds_cap < (size_t) n)
+    {
+        unsigned char *nk = (unsigned char *) realloc(pk->wire_kinds, (size_t) n);
+        if(!nk)
+        {
+            if(let_realloc_fail_should_print(pk)) {printf("LET pack: wire kind buffer realloc failed (%d records)\n", n);}
+            pk->wire_failed_bytes += (long long)(n - (long long) pk->wire_kinds_cap);
+            pk->pack_oom = 1;
+            return -1;
+        }
+        pk->wire_grow_bytes += (long long)(n - (long long) pk->wire_kinds_cap);
+        pk->wire_kinds = nk; pk->wire_kinds_cap = (size_t) n;
+    }
+    const size_t full_bytes = let_wire_record_bytes(LET_WIRE_KIND_FULL), leaf_bytes = let_wire_record_bytes(LET_WIRE_KIND_LEAF);
+    size_t bytes = (size_t) n;
+    for(int j = 0; j < n; j++)
+    {
+        const struct LETNodeWire *w = &full[j];
+        /* The fields left out are read only behind the kicked bit; a shipped record carrying it would make
+         * that omission wrong, so it is refused, every time, not assumed. */
+        if(w->node.u.d.bitflags & (1u << BITFLAG_NODEHASBEENKICKED))
+        {
+            pk->kicked_records++;
+            if(pk->kicked_records_first < 0 || w->remote_id < pk->kicked_records_first) {pk->kicked_records_first = w->remote_id;}
+        }
+        const int leaf = let_wire_leaf_eligible(w);
+        if(w->leaf_tag == LET_LEAF_TAG_REAL_LEAF) {if(leaf) {pk->leaves_compact++;} else {pk->leaves_full++;}}
+        pk->wire_kinds[j] = (unsigned char)(leaf ? LET_WIRE_KIND_LEAF : LET_WIRE_KIND_FULL);
+        bytes += leaf ? leaf_bytes : full_bytes;
+    }
+
+    const size_t units = (bytes + LET_WIRE_UNIT_BYTES - 1) / LET_WIRE_UNIT_BYTES;
+    if(units > (size_t) INT_MAX)
+    {
+        printf("LET pack: rank %d's import for one destination encodes to %g GB, beyond what one exchange can carry.\n",
+               ThisTask, (double) bytes / 1e9);
+        pk->pack_oom = 1;
+        return -1;
+    }
+    unsigned char *buf = (unsigned char *) malloc(units * LET_WIRE_UNIT_BYTES);
+    if(!buf)
+    {
+        if(let_realloc_fail_should_print(pk)) {printf("LET pack: wire stream malloc failed (%g MB)\n", (double)(units * LET_WIRE_UNIT_BYTES) / (1024.0 * 1024.0));}
+        pk->wire_failed_bytes += (long long)(units * LET_WIRE_UNIT_BYTES);
+        pk->pack_oom = 1;
+        return -1;
+    }
+    memcpy(buf, pk->wire_kinds, (size_t) n);
+    let_wire_writer wr = {buf + n};
+    for(int j = 0; j < n; j++) {let_wire_fields(wr, full[j], (int) pk->wire_kinds[j]);}
+    memset(wr.p, 0, (size_t)(buf + units * LET_WIRE_UNIT_BYTES - wr.p));
+    pk->wire_grow_bytes += (long long)(units * LET_WIRE_UNIT_BYTES);
+    *out = buf;
+    return (long long) units;
+}
+
+#ifndef SUBFIND   /* see the top-leaf branch in let_pack_for_rank */
+/* The essentiality pack_recurse decides for a node, decided for a top leaf before any of it ships. */
+static int let_topleaf_essential(struct LETPackContext *pk, int no)
+{
+    int node_nsink = 0;
+#if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
+    node_nsink = Nodes[no].N_SINK;
+#endif
+    return let_node_essential_for_rank(pk, (double) Nodes[no].center[0], (double) Nodes[no].center[1], (double) Nodes[no].center[2],
+                                       (double) Nodes[no].u.d.s[0], (double) Nodes[no].u.d.s[1], (double) Nodes[no].u.d.s[2],
+                                       let_node_len_over_tree_lifetime(no, (double) Nodes[no].len), (double) Nodes[no].u.d.mass,
+                                       (double) Nodes[no].maxsoft, node_nsink);
+}
+#endif
+
 extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
                                   const struct LETPerRankPayload *all_ranks,
+                                  const int *own_topleaves, int n_own_topleaves,
                                   struct LETNodeWire **out_buf,
                                   int *out_capacity,
                                   struct LETSubtreeHeader **out_hdr_buf,
                                   int *out_hdr_capacity,
-                                  int *out_hdr_count,
-                                  const uint64_t *receiver_active_bitmap,
-                                  int bitmap_n_words)
+                                  int *out_hdr_count)
 {
     int count = 0;
     int hdr_count = 0;
@@ -1740,32 +1992,20 @@ extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
         *out_hdr_count = 0;
         return 0;
     }
-    /* Experimental active-receiver-cover mode only: short-circuit when receiver R
-     * has zero active particles.  receiver_active_bitmap is NULL on the default all-local path. */
-    if(receiver_active_bitmap && !let_bitmap_any_set(receiver_active_bitmap, bitmap_n_words))
-    {
-        *out_hdr_count = 0;
-        return 0;
-    }
     /* Build R's cluster cover tree (file-scope pk->cover*, consumed by
-     * let_node_essential_for_rank during this receiver's pack). R's clusters were
-     * already active-restricted when R computed them, so no sender-side bitmap here. */
+     * let_node_essential_for_rank during this receiver's pack). R's clusters span all of
+     * R's particles. */
     let_build_cover_tree(pk, R);
     /* Pack each of OUR topleaves' subtrees independently, entering pack_recurse from the
      * topleaf with sib_terminator = topleaf.sibling (topleaves already in R's domain are R's
      * own data and are skipped -- shipping them would be a self-reference).  R sees each
      * shipped subtree as the foreign content for that topleaf: the unpack step rewrites
      * Nodes[topleaf_in_R].u.d.nextnode = subtree_root. */
-    for(int i = 0; i < NTopleaves; i++)
+    for(int k = 0; k < n_own_topleaves; k++)
     {
-        if(DomainTask[i] != ThisTask) continue;
+        const int i = own_topleaves[k];
         int topleaf_no = DomainNodeIndex[i];
-        if(topleaf_no < All.TreeNodeIndexBase || topleaf_no >= All.TreeNodeIndexBase + MaxNodes) continue;
-
         int subtree_root = Nodes[topleaf_no].u.d.nextnode;
-        if(subtree_root < 0) continue;  /* empty topleaf */
-        if(subtree_root == Nodes[topleaf_no].u.d.sibling) continue;  /* topleaf has no descendants */
-
         int sib_term = Nodes[topleaf_no].u.d.sibling;
 
         /* Record wire offset BEFORE this topleaf's pack, so we can emit a
@@ -1779,6 +2019,27 @@ extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
         int first_child_wire_idx = -1;
         int last_child_wire_idx  = -1;
         int child = subtree_root;
+#ifndef SUBFIND
+        /* A multi-particle top leaf that no target in R's cover would open needs none of its children on R: ship the
+           top leaf itself, multipole-only and tagged truncated, as the whole subtree.  R's walk decides on its own copy
+           of the top leaf first and accepts it, exactly as it would with the children present.  If that copy has gone
+           stale enough to be opened, the walk meets this record instead of the children; opening the record too means
+           the import is short and is repaired, as at any other truncated node.  Safe for the gravity walks, which
+           either accept the multipole or repair; not done with SUBFIND, whose potential walk opens by its own test and
+           uses a truncated node as it finds it, so there every top leaf keeps its children. */
+        if((Nodes[topleaf_no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)) && !let_topleaf_essential(pk, topleaf_no))
+        {
+            const int w0 = count;
+            pack_recurse(pk, topleaf_no, sib_term, topleaf_no, out_buf, &count, out_capacity);
+            if(pk->pack_oom) goto pack_oom_bail;
+            if(count > w0)
+            {
+                first_child_wire_idx = last_child_wire_idx = w0;
+                (*out_buf)[w0].node.u.d.bitflags &= ~((1u << BITFLAG_TOPLEVEL) | (1u << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT));   /* a foreign copy, not part of R's top tree */
+            }
+            child = sib_term;   /* nothing else ships at this level */
+        }
+#endif
         while(child != sib_term && child >= 0)
         {
             int next_child;
@@ -1894,23 +2155,39 @@ pack_oom_bail:
  * keep the unpack call inside this scope, so all temporaries can be
  * released in strict reverse-alloc order before returning.
  * ---------------------------------------------------------------------- */
-extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_buf_per_rank,
+extern "C" let_exchange_status_t let_exchange_nodes(unsigned char **send_buf_per_rank,
                                    const int *send_count_per_rank,
+                                   const int *send_units_per_rank,
                                    struct LETSubtreeHeader **send_hdr_per_rank,
                                    const int *send_hdr_count_per_rank,
                                    long long *foreign_needed_out)
 {
-    /* First exchange node-counts and header-counts */
+    /* First exchange the record counts, the encoded sizes and the header counts.  Records decide the
+     * foreign slots and capacity; the encoded sizes decide the transport and its rounds. */
     int *send_counts_int = (int *) mymalloc("LET_send_counts",     NTask * sizeof(int));
     int *recv_counts_int = (int *) mymalloc("LET_recv_counts",     NTask * sizeof(int));
+    int *send_units_int  = (int *) mymalloc("LET_send_units",      NTask * sizeof(int));
+    int *recv_units_int  = (int *) mymalloc("LET_recv_units",      NTask * sizeof(int));
     int *send_hdr_counts = (int *) mymalloc("LET_send_hdr_counts", NTask * sizeof(int));
     int *recv_hdr_counts = (int *) mymalloc("LET_recv_hdr_counts", NTask * sizeof(int));
-    for(int r = 0; r < NTask; r++) {
-        send_counts_int[r] = send_count_per_rank[r];
-        send_hdr_counts[r] = send_hdr_count_per_rank[r];
+    {
+        /* the three per-peer figures travel together, in one collective */
+        int *both = (int *) mymalloc("LET_count_triples", 6 * NTask * sizeof(int));
+        for(int r = 0; r < NTask; r++)
+        {
+            both[3 * r + 0] = send_count_per_rank[r];
+            both[3 * r + 1] = send_units_per_rank[r];
+            both[3 * r + 2] = send_hdr_count_per_rank[r];
+        }
+        MPI_Alltoall(both, 3, MPI_INT, both + 3 * NTask, 3, MPI_INT, MPI_COMM_WORLD);
+        for(int r = 0; r < NTask; r++)
+        {
+            send_counts_int[r] = send_count_per_rank[r]; recv_counts_int[r] = both[3 * NTask + 3 * r + 0];
+            send_units_int[r]  = send_units_per_rank[r];  recv_units_int[r]  = both[3 * NTask + 3 * r + 1];
+            send_hdr_counts[r] = send_hdr_count_per_rank[r]; recv_hdr_counts[r] = both[3 * NTask + 3 * r + 2];
+        }
+        myfree(both);
     }
-    MPI_Alltoall(send_counts_int, 1, MPI_INT, recv_counts_int, 1, MPI_INT, MPI_COMM_WORLD);
-    MPI_Alltoall(send_hdr_counts, 1, MPI_INT, recv_hdr_counts, 1, MPI_INT, MPI_COMM_WORLD);
 
     /* Only the receive total is needed here, to settle capacity before any window installs.
      * Each window computes its own send and header totals from its windowed counts. */
@@ -1935,6 +2212,7 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     if(foreign_short_any)
     {
         myfree(recv_hdr_counts); myfree(send_hdr_counts);
+        myfree(recv_units_int);  myfree(send_units_int);
         myfree(recv_counts_int); myfree(send_counts_int);
         return LET_OVERFLOW_RETRYABLE;
     }
@@ -1948,7 +2226,7 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     if(!grow_failed_local && AllocatedForeignNodes > 0)
     {
         /* Every foreign slot with storage must have its leaf identity on both sides before anything is installed: the
-           install and the scatter skip a missing sidecar silently, and the device walk then reads garbage tags. */
+           install and its mirror copy skip a missing sidecar silently, and the device walk then reads garbage tags. */
         const struct gpu_gravity_tree_soa_t *mirror = gpu_gravity_tree_soa();
         const int host_ok = (ForeignLeafTag && ForeignLeafType && ForeignLeafZeta && ForeignLeafSoft) ? 1 : 0;
         const int mirror_ok = (!mirror || !mirror->center)
@@ -1964,11 +2242,20 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
             grow_failed_local = 1;
         }
     }
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    if(!grow_failed_local && let_foreign_leaf_id_reserve(AllocatedForeignNodes) != 0)
+    {
+        printf("LET install: rank %d could not allocate the foreign-leaf ID sidecar for %d slots. Stopping.\n", ThisTask, AllocatedForeignNodes);
+        fflush(stdout);
+        grow_failed_local = 1;
+    }
+#endif
     int grow_failed_any   = 0;
     MPI_Allreduce(&grow_failed_local, &grow_failed_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(grow_failed_any)
     {
         myfree(recv_hdr_counts); myfree(send_hdr_counts);
+        myfree(recv_units_int);  myfree(send_units_int);
         myfree(recv_counts_int); myfree(send_counts_int);
         return LET_FOREIGN_STORAGE_SHORT;
     }
@@ -2004,7 +2291,7 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
      * With room the whole walk is one round, which is one exchange over every partner -- what this
      * did before rounds existed.  Under pressure the rounds shorten, in the limit to a single pair,
      * whose cost is one partner's traffic no matter how large the run's total. */
-    const size_t node_sz = sizeof(struct LETNodeWire);
+    const size_t unit_sz = LET_WIRE_UNIT_BYTES;   /* the encoded streams travel in whole units */
     const size_t hdr_sz  = sizeof(struct LETSubtreeHeader);
 
     int pattern_bits = 0;
@@ -2012,16 +2299,18 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     const int n_steps = (1 << pattern_bits);   /* steps 1..n_steps-1 cover every pair once */
 
     /* Spend at most half of what is free on one round, so the round buffers cannot crowd out the
-     * scratch the install path still needs while they are held. */
+     * scratch the install path still needs while they are held -- and no more units than an int offset
+     * can count in either direction. */
     long long round_budget = (long long) FreeBytes / 2;
+    if(round_budget > (long long) INT_MAX * (long long) unit_sz) round_budget = (long long) INT_MAX * (long long) unit_sz;
     if(round_budget < 1) round_budget = 1;
 
     /* Bytes this rank trades at one step, both directions, nodes and headers. */
     auto step_bytes = [&](int step) -> long long {
         int peer = ThisTask ^ step;
         if(peer >= NTask || peer == ThisTask) return 0;
-        return (long long) send_counts_int[peer] * (long long) node_sz
-             + (long long) recv_counts_int[peer] * (long long) node_sz
+        return (long long) send_units_int[peer] * (long long) unit_sz
+             + (long long) recv_units_int[peer] * (long long) unit_sz
              + (long long) send_hdr_counts[peer] * (long long) hdr_sz
              + (long long) recv_hdr_counts[peer] * (long long) hdr_sz;
     };
@@ -2037,27 +2326,24 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
         if(b > largest_pair_bytes) largest_pair_bytes = b;
     }
 
-    /* Allocate offsets for both exchanges (in units of struct elements, NOT
-     * bytes), then flat_send / flat_recv for both data streams. All
-     * temporaries are freed in strict reverse order at the end of this
-     * function.
+    /* Allocate offsets for both exchanges (in stream units for the encoded streams and in headers
+     * for the headers, NOT bytes), then flat_send / flat_recv for both data streams. All
+     * temporaries are freed in strict reverse order at the end of this function.
      *
-     * Element-count units (instead of MPI_BYTE) are required for scaling:
-     * MPI_Alltoallv's count/displ arguments are int*, so byte-based counts
-     * overflow once any per-peer payload exceeds 2.1 GB. fire_m11i at 12.4M
-     * particles on 2 ranks already trips this (~2.4 GB per peer at
-     * sizeof(LETNodeWire)~400 B). Using a contiguous MPI_Datatype for the
-     * struct moves the int limit from 2.1 GB to 2.1 G *elements*, i.e.
-     * sizeof(struct)*2.1G bytes — effectively unbounded for any realistic
-     * problem. */
+     * Element units (instead of MPI_BYTE) are required for scaling: MPI_Alltoallv's count/displ
+     * arguments are int*, so byte-based counts overflow once a round's payload exceeds 2.1 GB
+     * (fire_m11i at 12.4M particles on 2 ranks already passed that).  Counting in LET_WIRE_UNIT_BYTES
+     * units moves the limit to ~137 GB per round and direction, and the round budget above keeps
+     * every round inside it. */
     int *send_offsets     = (int *) mymalloc("LET_send_offsets",     NTask * sizeof(int));
     int *recv_offsets     = (int *) mymalloc("LET_recv_offsets",     NTask * sizeof(int));
     int *send_hdr_offsets = (int *) mymalloc("LET_send_hdr_offsets", NTask * sizeof(int));
     int *recv_hdr_offsets = (int *) mymalloc("LET_recv_hdr_offsets", NTask * sizeof(int));
-    int *round_send_counts     = (int *) mymalloc("LET_round_send_counts",     NTask * sizeof(int));
-    int *round_recv_counts     = (int *) mymalloc("LET_round_recv_counts",     NTask * sizeof(int));
+    int *round_send_units     = (int *) mymalloc("LET_round_send_units",     NTask * sizeof(int));
+    int *round_recv_units     = (int *) mymalloc("LET_round_recv_units",     NTask * sizeof(int));
     int *round_send_hdr_counts = (int *) mymalloc("LET_round_send_hdr_counts", NTask * sizeof(int));
     int *round_recv_hdr_counts = (int *) mymalloc("LET_round_recv_hdr_counts", NTask * sizeof(int));
+    int *round_recv_records    = (int *) mymalloc("LET_round_recv_records",    NTask * sizeof(int));
 
     let_exchange_status_t unpack_status = LET_OK;
     int step = 1;   /* next step of the exchange pattern; the same on every rank */
@@ -2090,7 +2376,7 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
 
         for(int r = 0; r < NTask; r++)
         {
-            round_send_counts[r]     = 0; round_recv_counts[r]     = 0;
+            round_send_units[r]     = 0; round_recv_units[r]     = 0; round_recv_records[r] = 0;
             round_send_hdr_counts[r] = 0; round_recv_hdr_counts[r] = 0;
         }
         /* Both directions of a step are the same partner, so this rank already knows what it will
@@ -2100,9 +2386,10 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
         {
             int peer = ThisTask ^ s;
             if(peer >= NTask || peer == ThisTask) continue;
-            round_send_counts[peer]     = send_counts_int[peer];
+            round_send_units[peer]     = send_units_int[peer];
             round_send_hdr_counts[peer] = send_hdr_counts[peer];
-            round_recv_counts[peer]     = recv_counts_int[peer];
+            round_recv_units[peer]     = recv_units_int[peer];
+            round_recv_records[peer]    = recv_counts_int[peer];
             round_recv_hdr_counts[peer] = recv_hdr_counts[peer];
         }
         step += steps_this_round;
@@ -2114,8 +2401,8 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
             recv_offsets[r]     = r_off;
             send_hdr_offsets[r] = hs_off;
             recv_hdr_offsets[r] = hr_off;
-            s_off  += round_send_counts[r];
-            r_off  += round_recv_counts[r];
+            s_off  += round_send_units[r];
+            r_off  += round_recv_units[r];
             hs_off += round_send_hdr_counts[r];
             hr_off += round_recv_hdr_counts[r];
         }
@@ -2130,8 +2417,8 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
          * taken one after another, so what has to hold is that their rounded sizes sum to no more
          * than what is free.  Testing against anything stricter would refuse rounds the arena can
          * actually serve, and turn runs that work today into stops. */
-        long long round_bytes = (long long) gizmo_mymalloc_rounded_size((size_t) s_off  * node_sz + 1)
-                              + (long long) gizmo_mymalloc_rounded_size((size_t) r_off  * node_sz + 1)
+        long long round_bytes = (long long) gizmo_mymalloc_rounded_size((size_t) s_off  * unit_sz + 1)
+                              + (long long) gizmo_mymalloc_rounded_size((size_t) r_off  * unit_sz + 1)
                               + (long long) gizmo_mymalloc_rounded_size((size_t) hs_off * hdr_sz + 1)
                               + (long long) gizmo_mymalloc_rounded_size((size_t) hr_off * hdr_sz + 1);
         long long arena_room  = (long long) FreeBytes;
@@ -2172,10 +2459,8 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
             break;
         }
 
-        struct LETNodeWire *flat_send = (struct LETNodeWire *) mymalloc("LET_flat_send",
-            (size_t) s_off * node_sz + 1);
-        struct LETNodeWire *flat_recv = (struct LETNodeWire *) mymalloc("LET_flat_recv",
-            (size_t) r_off * node_sz + 1);
+        unsigned char *flat_send = (unsigned char *) mymalloc("LET_flat_send", (size_t) s_off * unit_sz + 1);
+        unsigned char *flat_recv = (unsigned char *) mymalloc("LET_flat_recv", (size_t) r_off * unit_sz + 1);
         struct LETSubtreeHeader *flat_hdr_send = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_send",
             (size_t) hs_off * hdr_sz + 1);
         struct LETSubtreeHeader *flat_hdr_recv = (struct LETSubtreeHeader *) mymalloc("LET_flat_hdr_recv",
@@ -2184,10 +2469,10 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
         /* Concatenate this window's per-rank send buffers */
         for(int r = 0; r < NTask; r++)
         {
-            if(round_send_counts[r] > 0 && send_buf_per_rank[r])
+            if(round_send_units[r] > 0 && send_buf_per_rank[r])
             {
-                memcpy(flat_send + send_offsets[r], send_buf_per_rank[r],
-                       (size_t) round_send_counts[r] * node_sz);
+                memcpy(flat_send + (size_t) send_offsets[r] * unit_sz, send_buf_per_rank[r],
+                       (size_t) round_send_units[r] * unit_sz);
             }
             if(round_send_hdr_counts[r] > 0 && send_hdr_per_rank[r])
             {
@@ -2198,16 +2483,16 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
 
         /* MPI exchanges (parallel for nodes + headers). Counts and displacements
          * are in element units, not bytes -- see system/mpi_alltoallv_typed.h. */
-        gizmo_mpi_alltoallv_typed(flat_send,     round_send_counts,     send_offsets,
-                                  flat_recv,     round_recv_counts,     recv_offsets,
-                                  node_sz, MPI_COMM_WORLD);
+        gizmo_mpi_alltoallv_typed(flat_send,     round_send_units,     send_offsets,
+                                  flat_recv,     round_recv_units,     recv_offsets,
+                                  unit_sz, MPI_COMM_WORLD);
         gizmo_mpi_alltoallv_typed(flat_hdr_send, round_send_hdr_counts, send_hdr_offsets,
                                   flat_hdr_recv, round_recv_hdr_counts, recv_hdr_offsets,
                                   hdr_sz, MPI_COMM_WORLD);
 
         /* Install this window's senders while their buffers are still alive on the mymalloc stack.
          * Each lands at its prefix slot, so the result does not depend on which window carried it. */
-        let_exchange_status_t st = let_unpack_and_install(flat_recv, round_recv_counts, r_off,
+        let_exchange_status_t st = let_unpack_and_install(flat_recv, round_recv_records, round_recv_units,
                                 flat_hdr_recv, round_recv_hdr_counts, hr_off, slot_prefix);
         if(st != LET_OK) unpack_status = st;
 
@@ -2226,37 +2511,48 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     {
         long long local[3]  = {largest_round_bytes, largest_pair_bytes, (long long) FreeBytes};
         long long global[3] = {0, 0, 0};
+        long long leaves_local[2] = {g_let_leaves_compact, g_let_leaves_full}, leaves[2] = {0, 0};
         MPI_Reduce(local, global, 2, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
         MPI_Reduce(&local[2], &global[2], 1, MPI_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD);
+        MPI_Reduce(leaves_local, leaves, 2, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
         if(ThisTask == 0)
         {
             /* Report a changed round count, and also whenever the largest round has grown by a
              * quarter since the last report -- the same growth gating the memory ledger uses.  A run
              * that fits in one round the whole way would otherwise say this once, at its smallest,
-             * and never show the exchange growing toward the limit it eventually stops at. */
+             * and never show the exchange growing toward the limit it eventually stops at.  Also
+             * whenever the share of single-particle leaves sent compact moves by more than five
+             * points: a leaf whose left-out fields stop matching what its receiver restores still
+             * arrives exactly, but in full, so this is the only place that loss would show. */
             static int last_rounds_reported = -1;
             static long long last_largest_reported = 0;
+            static double last_compact_share = -1;
+            const double compact_share = (leaves[0] + leaves[1] > 0) ? (double) leaves[0] / (double)(leaves[0] + leaves[1]) : 1.0;
             if(rounds_done != last_rounds_reported ||
-               global[0] > last_largest_reported + last_largest_reported / 4)
+               global[0] > last_largest_reported + last_largest_reported / 4 ||
+               fabs(compact_share - last_compact_share) > 0.05)
             {
                 last_rounds_reported  = rounds_done;
                 last_largest_reported = global[0];
+                last_compact_share    = compact_share;
                 printf("LET exchange: %d round(s) over %d step(s); largest round %g MB, largest single "
-                       "pair %g MB, arena free on the tightest rank %g MB\n",
+                       "pair %g MB, arena free on the tightest rank %g MB; single-particle leaves sent "
+                       "compact %lld, in full %lld\n",
                        rounds_done, n_steps - 1,
                        (double) global[0] / (1024.0 * 1024.0),
                        (double) global[1] / (1024.0 * 1024.0),
-                       (double) global[2] / (1024.0 * 1024.0));
+                       (double) global[2] / (1024.0 * 1024.0), leaves[0], leaves[1]);
                 fflush(stdout);
             }
         }
     }
 
     /* Free everything in strict reverse-alloc order */
+    myfree(round_recv_records);
     myfree(round_recv_hdr_counts);
     myfree(round_send_hdr_counts);
-    myfree(round_recv_counts);
-    myfree(round_send_counts);
+    myfree(round_recv_units);
+    myfree(round_send_units);
     myfree(recv_hdr_offsets);
     myfree(send_hdr_offsets);
     myfree(recv_offsets);
@@ -2264,6 +2560,8 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
     myfree(slot_prefix);
     myfree(recv_hdr_counts);
     myfree(send_hdr_counts);
+    myfree(recv_units_int);
+    myfree(send_units_int);
     myfree(recv_counts_int);
     myfree(send_counts_int);
     return unpack_status;
@@ -2275,11 +2573,12 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
  *         (pack's let_relabel_subtree() resolved all topology to wire indices /
  *         LET_WIRE_EXIT), so the receiver does NOT reconstruct sender topology.
  *
- * Per sender r (payload length recv_count_per_rank[r]):
- *   - byte-copy each LETNodeWire into a consecutive foreign slot;
- *   - rebase each u.d.{sibling,nextnode} value V: V in [0,rcount) -> slot_base+V,
- *     V == LET_WIRE_EXIT -> mapped (Pass 2) to the owning local topleaf's
- *     continuation; anything else is a malformed graph and aborts loudly;
+ * Per sender r (recv_count_per_rank[r] records, encoded in recv_units_per_rank[r] stream units):
+ *   - decode each record (the wire codec) into a consecutive foreign slot;
+ *   - rebase each u.d.{sibling,nextnode} value V of a record in subtree h: V in h's wire
+ *     records -> slot_base+V, V == LET_WIRE_EXIT -> the owning local topleaf's
+ *     continuation; anything else is a malformed graph, and every rank stops;
+ *   - mirror the record into the GPU tree SoA (and its leaf identity);
  *   - each subtree header h (topleaf_idx in the SHARED DomainNodeIndex[]/
  *     DomainTask[] partition) redirects Nodes[DomainNodeIndex[h.topleaf_idx]]
  *     .u.d.nextnode -> slot_base + h.wire_offset (the subtree root).
@@ -2288,140 +2587,290 @@ extern "C" let_exchange_status_t let_exchange_nodes(struct LETNodeWire **send_bu
  * allocated for this import, return LET_OVERFLOW_RETRYABLE without installing; the
  * force_treebuild loop raises the index ceiling and retries.
  * ---------------------------------------------------------------------- */
-extern "C" let_exchange_status_t let_unpack_and_install(const struct LETNodeWire *recv_buf,
+/* Records one parallel decode task takes at a time. */
+#define LET_DECODE_BLOCK_RECORDS 4096
+
+/* A run of one sender's records and where its payload starts, so that decoding it needs nothing from any
+ * other block. */
+struct let_decode_block {
+    const unsigned char *kinds;     /* the sender's kind bytes, indexed by record */
+    const unsigned char *payload;   /* this block's first record */
+    const unsigned char *end;       /* end of the sender's stream */
+    int sender, rcount, j0, j1, slot_base;   /* rcount: the sender's record count */
+    /* The subtree this block's records belong to: their links must stay in wire records [lo, hi), and an exit link
+     * becomes exit_to, the subtree's local topleaf continuation.  A block no usable header covers has lo = 0,
+     * hi = rcount and exit_to = LET_WIRE_EXIT: its exits are left as they arrive. */
+    int lo, hi, exit_to;
+};
+
+/* Where a subtree header lands on this rank: its local topleaf, and that topleaf's continuation, to which the
+ * subtree's exit links resolve.  Returns 0 for a header that does not describe a usable subtree: its records are
+ * then left with their exits unresolved and no topleaf is redirected to them. */
+static int let_header_target(const struct LETSubtreeHeader *h, int rcount, int *local_topleaf_no, int *exit_to)
+{
+    if(h->topleaf_idx < 0 || h->topleaf_idx >= NTopleaves) {return 0;}
+    if(h->wire_offset < 0 || h->count <= 0 || h->wire_offset > rcount - h->count) {return 0;}
+    const int no = DomainNodeIndex[h->topleaf_idx];
+    if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes) {return 0;}
+    *local_topleaf_no = no;
+    *exit_to = Nodes[no].u.d.sibling;
+    return 1;
+}
+
+/* Check one sender's stream and cut it into blocks: every kind known, the records fitting the stream, and
+ * what follows them fewer than one unit of zeros.  A block never spans two subtrees: blocks end at every
+ * usable header's boundary as well as every LET_DECODE_BLOCK_RECORDS records, and carry their subtree.  The
+ * usable headers must come in increasing, non-overlapping order, as pack writes them.  Returns 0 on a
+ * malformed stream or contradictory headers. */
+static int let_wire_plan_stream(const unsigned char *stream, int rcount, int runits, int slot_base, int sender,
+                                const struct LETSubtreeHeader *hdrs, int hcount, std::vector<struct let_decode_block> &blocks)
+{
+    const size_t span = (size_t) runits * LET_WIRE_UNIT_BYTES;
+    if(rcount <= 0 || runits < 0 || (size_t) rcount > span) {return 0;}
+    const size_t full_bytes = let_wire_record_bytes(LET_WIRE_KIND_FULL), leaf_bytes = let_wire_record_bytes(LET_WIRE_KIND_LEAF);
+    size_t off = (size_t) rcount;   /* the records follow the kind bytes; off <= span throughout */
+    int pos = 0;                    /* first record not yet cut into a block */
+    /* cut records [pos, end) into blocks of one context */
+    auto cut = [&](int end, int lo, int hi, int exit_to) -> int {
+        for(int j0 = pos; j0 < end; j0 += LET_DECODE_BLOCK_RECORDS)
+        {
+            const int j1 = (end - j0 > LET_DECODE_BLOCK_RECORDS) ? j0 + LET_DECODE_BLOCK_RECORDS : end;
+            blocks.push_back({stream, stream + off, stream + span, sender, rcount, j0, j1, slot_base, lo, hi, exit_to});
+            for(int j = j0; j < j1; j++)
+            {
+                const size_t sz = (stream[j] == LET_WIRE_KIND_FULL) ? full_bytes : (stream[j] == LET_WIRE_KIND_LEAF) ? leaf_bytes : 0;
+                if(sz == 0 || sz > span - off) {return 0;}
+                off += sz;
+            }
+        }
+        pos = end;
+        return 1;
+    };
+    for(int hh = 0; hh < hcount; hh++)
+    {
+        int topleaf_no, exit_to;
+        if(!let_header_target(&hdrs[hh], rcount, &topleaf_no, &exit_to)) {continue;}
+        if(hdrs[hh].wire_offset < pos) {return 0;}
+        if(!cut(hdrs[hh].wire_offset, 0, rcount, LET_WIRE_EXIT)) {return 0;}
+        if(!cut(hdrs[hh].wire_offset + hdrs[hh].count, hdrs[hh].wire_offset, hdrs[hh].wire_offset + hdrs[hh].count, exit_to)) {return 0;}
+    }
+    if(!cut(rcount, 0, rcount, LET_WIRE_EXIT)) {return 0;}
+    if(span - off >= LET_WIRE_UNIT_BYTES) {return 0;}
+    for(size_t q = off; q < span; q++) {if(stream[q]) {return 0;}}
+    return 1;
+}
+
+/* Decode one block, turn each record's wire links into node slots, and hand the record to the destination with
+ * its slot.  A link inside the block's subtree becomes that record's slot, and LET_WIRE_EXIT becomes the subtree's
+ * local topleaf continuation (left as it is in a block no header covers).  Returns 0 on a record that cannot be
+ * decoded or holds a link that is neither; the failing record and its raw links go to *bad_j, *bad_sib, *bad_next
+ * when asked for (the caller's report, after the parallel pass). */
+template <class Sink>
+static int let_wire_decode_block(const struct let_decode_block &b, Sink &sink,
+                                 int *bad_j = NULL, int *bad_sib = NULL, int *bad_next = NULL)
+{
+    let_wire_reader rd = {b.payload, b.end, 0};
+    for(int j = b.j0; j < b.j1; j++)
+    {
+        struct LETNodeWire rec;
+        if(bad_j) {*bad_j = j;}
+        if(!let_wire_decode(b.kinds[j], rd, &rec)) {return 0;}
+        int &sib = rec.node.u.d.sibling, &next = rec.node.u.d.nextnode;
+        const int sib_ok  = (sib == LET_WIRE_EXIT)  || (sib >= b.lo && sib < b.hi);
+        const int next_ok = (next == LET_WIRE_EXIT) || (next >= b.lo && next < b.hi);
+        if(!sib_ok || !next_ok)
+        {
+            if(bad_sib) {*bad_sib = sib;}
+            if(bad_next) {*bad_next = next;}
+            return 0;
+        }
+        sib  = (sib == LET_WIRE_EXIT)  ? b.exit_to : b.slot_base + sib;
+        next = (next == LET_WIRE_EXIT) ? b.exit_to : b.slot_base + next;
+        sink.put(b.slot_base + j, rec);
+    }
+    return 1;
+}
+
+/* A destination that keeps nothing: re-decoding the failed block through it names the failing record. */
+struct let_discard_sink {
+    void put(int, const struct LETNodeWire &) const {}
+};
+
+/* Decode every block, in parallel: each record lands in its own slot, so the result is the same however the
+ * work is split.  Returns the lowest failing block (so what is reported does not depend on thread timing),
+ * or -1.  The loop's end is a barrier: every record is in before the caller touches any of them. */
+template <class Sink>
+static long long let_wire_decode_blocks(const std::vector<struct let_decode_block> &blocks, Sink &sink)
+{
+    long long first_bad = LLONG_MAX;
+    const long long nb = (long long) blocks.size();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic)
+#endif
+    for(long long k = 0; k < nb; k++)
+    {
+        if(!let_wire_decode_block(blocks[(size_t) k], sink))
+        {
+#ifdef _OPENMP
+#pragma omp critical(let_wire_decode_fail)
+#endif
+            {if(k < first_bad) {first_bad = k;}}
+        }
+    }
+    return (first_bad == LLONG_MAX) ? -1 : first_bad;
+}
+
+/* The install destination: a decoded record into its node slot, its foreign-leaf identity sidecar (at
+ * foreign_slot = no - (TreeNodeIndexBase+MaxNodes), NOT the SoA index no-TreeNodeIndexBase; non-leaf records
+ * carry leaf_tag 0), and the GPU mirror of both. */
+struct let_install_sink {
+    struct gpu_gravity_tree_soa_t *mirror;
+    void put(int abs_idx, const struct LETNodeWire &rec) const
+    {
+        Nodes[abs_idx]    = rec.node;
+        Extnodes[abs_idx] = rec.extnode;
+        const int foreign_slot = abs_idx - (All.TreeNodeIndexBase + MaxNodes);
+        if(ForeignLeafTag && foreign_slot >= 0 && foreign_slot < AllocatedForeignNodes)
+        {
+            ForeignLeafTag[foreign_slot]  = rec.leaf_tag;
+            ForeignLeafType[foreign_slot] = rec.leaf_type;
+            ForeignLeafZeta[foreign_slot] = rec.leaf_ags_zeta;
+            ForeignLeafSoft[foreign_slot] = rec.leaf_force_softening;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+            if(ForeignLeafID && foreign_slot < ForeignLeafIDCap) {ForeignLeafID[foreign_slot] = rec.leaf_id;}
+#endif
+        }
+        gpu_mirror_publish_imported_node(mirror, abs_idx, &rec);
+    }
+};
+
+
+extern "C" let_exchange_status_t let_unpack_and_install(const unsigned char *recv_buf,
                                        const int *recv_count_per_rank,
-                                       int recv_count_total,
+                                       const int *recv_units_per_rank,
                                        const struct LETSubtreeHeader *recv_hdr_buf,
                                        const int *recv_hdr_count_per_rank,
                                        int recv_hdr_count_total,
                                        const int *foreign_slot_prefix)
 {
-    if(recv_count_total == 0) return LET_OK;
-
-    int node_off = 0;     /* running offset into recv_buf (per-sender) */
-    int hdr_off  = 0;     /* running offset into recv_hdr_buf (per-sender) */
-
-    for(int r = 0; r < NTask; r++)
+    /* Pass 1: check every sender's stream and cut it into blocks (one byte per record, in order), then
+     * decode all blocks of all senders in parallel -- each record decoded, its links checked against its subtree
+     * and resolved, stored and mirrored in one visit.  The stream is its record count of kind bytes, then
+     * the records, then zero padding to the end of its last unit; anything else -- an unknown kind, a
+     * record running past the stream, unexplained bytes at its end -- is a malformed exchange, which every
+     * rank then stops on together through the status. */
+    std::vector<struct let_decode_block> blocks;
     {
-        int rcount = recv_count_per_rank[r];
-        int hcount = recv_hdr_count_per_rank[r];
-        if(rcount == 0)
+        size_t unit_off = 0;  /* running offset into recv_buf, in stream units (per-sender) */
+        int hdr_scan = 0;     /* running offset into recv_hdr_buf (per-sender) */
+        for(int r = 0; r < NTask; r++)
         {
-            /* skip — no nodes from this sender; should also have no headers */
-            hdr_off += hcount;
-            continue;
+            const int rcount = recv_count_per_rank[r], runits = recv_units_per_rank[r], hcount = recv_hdr_count_per_rank[r];
+            if(hcount < 0 || hcount > recv_hdr_count_total - hdr_scan)
+            {
+                printf("LET install: rank %d sent %d subtree headers but only %d of the %d received remain, on rank %d; stopping.\n",
+                       r, hcount, recv_hdr_count_total - hdr_scan, recv_hdr_count_total, ThisTask);
+                fflush(stdout);
+                return LET_UNPACK_INTERNAL;
+            }
+            const unsigned char *stream = recv_buf + unit_off * LET_WIRE_UNIT_BYTES;
+            const struct LETSubtreeHeader *hdrs = recv_hdr_buf + hdr_scan;
+            unit_off += (size_t) runits;
+            hdr_scan += hcount;
+            if(rcount == 0)
+            {
+                /* nothing from this sender -- which must then also mean no stream and no headers */
+                if(runits != 0 || hcount != 0)
+                {
+                    printf("LET install: rank %d sent no records but %d units and %d headers to rank %d; stopping.\n",
+                           r, runits, hcount, ThisTask);
+                    fflush(stdout);
+                    return LET_UNPACK_INTERNAL;
+                }
+                continue;
+            }
+            /* This sender's slots come from the prefix over the receive counts, not from how many
+             * senders happen to have been installed already, so a sender occupies the same slots no
+             * matter which exchange round carried it.  The storage was checked against that same
+             * complete receive vector (and grown to it if short), so the last sender's slots end at or
+             * before the end of the storage and this can only fail if the two disagree -- an internal
+             * inconsistency, not a shortfall a larger tree would fix.  Say so and stop, rather than
+             * rebuilding three times to the same size. */
+            if((long long) foreign_slot_prefix[r] + (long long) rcount > (long long) AllocatedForeignNodes)
+            {
+                printf("LET install FATAL: sender %d needs foreign slots up to %lld but only %d are allocated (rank %d).\n",
+                       r, (long long) foreign_slot_prefix[r] + (long long) rcount, AllocatedForeignNodes, ThisTask);
+                fflush(stdout);
+                return LET_UNPACK_INTERNAL;
+            }
+            const int slot_base = All.TreeNodeIndexBase + MaxNodes + foreign_slot_prefix[r];
+            if(!let_wire_plan_stream(stream, rcount, runits, slot_base, r, hdrs, hcount, blocks))
+            {
+                printf("LET install: the stream from rank %d (%d records in %d units, %d subtree headers) is malformed or "
+                       "its headers overlap, on rank %d; stopping.\n", r, rcount, runits, hcount, ThisTask);
+                fflush(stdout);
+                return LET_UNPACK_INTERNAL;
+            }
         }
-
-        /* This sender's slots come from the prefix over the receive counts, not from how many
-         * senders happen to have been installed already, so a sender occupies the same slots no
-         * matter which exchange round carried it.  The storage was checked against that same
-         * complete receive vector (and grown to it if short), so the last sender's slots end at or
-         * before the end of the storage and this can only fail if the two disagree -- an internal
-         * inconsistency, not a shortfall a larger tree would fix.  Say so and stop, rather than
-         * rebuilding three times to the same size. */
-        if((long long) foreign_slot_prefix[r] + (long long) rcount > (long long) AllocatedForeignNodes)
+        if(hdr_scan != recv_hdr_count_total)
         {
-            printf("LET install FATAL: sender %d needs foreign slots up to %lld but only %d are allocated (rank %d).\n",
-                   r, (long long) foreign_slot_prefix[r] + (long long) rcount, AllocatedForeignNodes, ThisTask);
+            printf("LET install: %d subtree headers received but the senders' counts add to %d, on rank %d; stopping.\n",
+                   recv_hdr_count_total, hdr_scan, ThisTask);
             fflush(stdout);
             return LET_UNPACK_INTERNAL;
         }
-        int slot_base = All.TreeNodeIndexBase + MaxNodes + foreign_slot_prefix[r];
-
-        /* Pass 1: byte-copy nodes and rebase wire-local topology to absolute slots.
-         * The wire graph is self-contained -- pack RELABEL resolved every terminator to a
-         * wire index or LET_WIRE_EXIT -- so each sibling/nextnode is either LET_WIRE_EXIT
-         * (resolved to the local topleaf continuation in Pass 2) or an intra-sender wire
-         * index in [0,rcount).  No sender-index reconstruction; remote_id is identity-only. */
-        for(int j = 0; j < rcount; j++)
+        /* Every record is mirrored as it is decoded, so the mirror must hold every slot of the import: the build
+         * acquired it and the exchange grew it to the foreign storage, so a shortfall here is internal. */
+        struct gpu_gravity_tree_soa_t *mirror = gpu_gravity_tree_soa();
+        if(!blocks.empty() && (!mirror || !mirror->center || !mirror->foreign_leaf_tag
+                               || (long long) gpu_gravity_tree_capacity() < (long long) MaxNodes + AllocatedForeignNodes
+                               || mirror->foreign_leaf_cap < AllocatedForeignNodes))
         {
-            int abs_idx = slot_base + j;
-            Nodes[abs_idx]    = recv_buf[node_off + j].node;
-            Extnodes[abs_idx] = recv_buf[node_off + j].extnode;
-
-            int sib  = Nodes[abs_idx].u.d.sibling;
-            int next = Nodes[abs_idx].u.d.nextnode;
-            if(sib != LET_WIRE_EXIT)
-            {
-                if(sib >= 0 && sib < rcount) Nodes[abs_idx].u.d.sibling = slot_base + sib;
-                else { printf("LET install FATAL: node slot %d sibling wire %d out of [0,%d) and != EXIT "
-                              "(rank %d).\n", abs_idx, sib, rcount, ThisTask); fflush(stdout); endrun(90000074); }
-            }
-            if(next != LET_WIRE_EXIT)
-            {
-                if(next >= 0 && next < rcount) Nodes[abs_idx].u.d.nextnode = slot_base + next;
-                else { printf("LET install FATAL: node slot %d nextnode wire %d out of [0,%d) and != EXIT "
-                              "(rank %d).\n", abs_idx, next, rcount, ThisTask); fflush(stdout); endrun(90000075); }
-            }
-            Nodes[abs_idx].u.d.father = -1;  /* foreign nodes have no local father */
-
-            /* Install the foreign-leaf identity sidecar at this slot's foreign_slot
-             * (= no - (TreeNodeIndexBase+MaxNodes), NOT the SoA index no-TreeNodeIndexBase). Non-leaf records carry
-             * leaf_tag=0 from the packer, so this write is correct (and explicit) for both. */
-            int foreign_slot = abs_idx - (All.TreeNodeIndexBase + MaxNodes);
-            if(ForeignLeafTag && foreign_slot >= 0 && foreign_slot < AllocatedForeignNodes)
-            {
-                ForeignLeafTag[foreign_slot]  = recv_buf[node_off + j].leaf_tag;
-                ForeignLeafType[foreign_slot] = recv_buf[node_off + j].leaf_type;
-                ForeignLeafZeta[foreign_slot] = recv_buf[node_off + j].leaf_ags_zeta;
-                ForeignLeafSoft[foreign_slot] = recv_buf[node_off + j].leaf_force_softening;
-            }
+            printf("LET install: rank %d has no device mirror for its %d foreign slots (mirror %s, %d slots for %d local + foreign, "
+                   "identity mirror %d); stopping.\n", ThisTask, AllocatedForeignNodes, (mirror && mirror->center) ? "present" : "absent",
+                   gpu_gravity_tree_capacity(), MaxNodes + AllocatedForeignNodes, (mirror && mirror->foreign_leaf_tag) ? mirror->foreign_leaf_cap : 0);
+            fflush(stdout);
+            return LET_UNPACK_INTERNAL;
         }
+        let_install_sink sink = {mirror};
+        const long long bad = let_wire_decode_blocks(blocks, sink);
+        if(bad >= 0)
+        {
+            const struct let_decode_block &b = blocks[(size_t) bad];
+            let_discard_sink discard;
+            int j = -1, sib = LET_WIRE_EXIT, next = LET_WIRE_EXIT;
+            let_wire_decode_block(b, discard, &j, &sib, &next);
+            if(sib == LET_WIRE_EXIT && next == LET_WIRE_EXIT)
+                printf("LET install: record %d from rank %d could not be decoded on rank %d; stopping.\n", j, b.sender, ThisTask);
+            else
+                printf("LET install: record %d from rank %d links outside its subtree's records %d..%d of %d (sibling %d, "
+                       "nextnode %d; %d marks an exit) on rank %d; stopping.\n", j, b.sender, b.lo, b.hi - 1, b.rcount, sib, next,
+                       LET_WIRE_EXIT, ThisTask);
+            fflush(stdout);
+            return LET_UNPACK_INTERNAL;
+        }
+    }
 
-        /* Pass 2: resolve remaining plain sentinels (LET_EDGE_SENTINEL_BASE) to topleaf_sibling,
-         * and redirect each affected local topleaf's u.d.nextnode at the foreign subtree root. */
+    /* Pass 2, sender by sender, now that every record is in, linked and mirrored: point each subtree's local
+     * topleaf at the subtree's root (AoS + SoA). */
+    int hdr_off  = 0;     /* running offset into recv_hdr_buf (per-sender) */
+    for(int r = 0; r < NTask; r++)
+    {
+        const int rcount = recv_count_per_rank[r];
+        const int hcount = recv_hdr_count_per_rank[r];
+        if(rcount == 0) {continue;}   /* and then no headers either, checked above */
+        const int slot_base = All.TreeNodeIndexBase + MaxNodes + foreign_slot_prefix[r];
         for(int hh = 0; hh < hcount; hh++)
         {
             const struct LETSubtreeHeader *h = &recv_hdr_buf[hdr_off + hh];
-            int topleaf_idx = h->topleaf_idx;
-            int wire_off    = h->wire_offset;
-            int wire_cnt    = h->count;
-
-            /* Defensive bounds */
-            if(topleaf_idx < 0 || topleaf_idx >= NTopleaves) continue;
-            if(wire_off < 0 || wire_cnt <= 0 || wire_off + wire_cnt > rcount) continue;
-
-            int local_topleaf_no = DomainNodeIndex[topleaf_idx];
-            if(local_topleaf_no < All.TreeNodeIndexBase || local_topleaf_no >= All.TreeNodeIndexBase + MaxNodes) continue;
-
-            int topleaf_sibling = Nodes[local_topleaf_no].u.d.sibling;
-            int subtree_root    = slot_base + wire_off;
-
-            /* Map this subtree's LET_WIRE_EXIT markers to the local topleaf's continuation, and
-             * assert HEADER-RANGE CONFINEMENT: every intra-subtree topology link must stay within
-             * this header's foreign range [subtree_root, subtree_root+wire_cnt); the only edge that
-             * leaves it is the exit -> topleaf_sibling.  Pack builds wire indices per-subtree so this
-             * holds by construction; the check makes a cross-header link loud rather than silent. */
-            int sub_lo = subtree_root, sub_hi = subtree_root + wire_cnt;
-            for(int j = wire_off; j < wire_off + wire_cnt; j++)
-            {
-                int abs_idx = slot_base + j;
-                if(Nodes[abs_idx].u.d.sibling  == LET_WIRE_EXIT) Nodes[abs_idx].u.d.sibling  = topleaf_sibling;
-                if(Nodes[abs_idx].u.d.nextnode == LET_WIRE_EXIT) Nodes[abs_idx].u.d.nextnode = topleaf_sibling;
-                int s = Nodes[abs_idx].u.d.sibling, n = Nodes[abs_idx].u.d.nextnode;
-                if(s != topleaf_sibling && !(s >= sub_lo && s < sub_hi))
-                { printf("LET install FATAL: node slot %d sibling %d escapes header range [%d,%d) and "
-                         "!= topleaf_sibling %d (rank %d).\n", abs_idx, s, sub_lo, sub_hi, topleaf_sibling, ThisTask);
-                  fflush(stdout); endrun(90000077); }
-                if(n != topleaf_sibling && !(n >= sub_lo && n < sub_hi))
-                { printf("LET install FATAL: node slot %d nextnode %d escapes header range [%d,%d) and "
-                         "!= topleaf_sibling %d (rank %d).\n", abs_idx, n, sub_lo, sub_hi, topleaf_sibling, ThisTask);
-                  fflush(stdout); endrun(90000078); }
-            }
-
-            /* Redirect local topleaf at the foreign subtree root (AoS + SoA). */
-            Nodes[local_topleaf_no].u.d.nextnode = subtree_root;
-            gpu_set_soa_nextnode(local_topleaf_no, subtree_root);
-
+            int local_topleaf_no, exit_to;
+            if(!let_header_target(h, rcount, &local_topleaf_no, &exit_to)) {continue;}
+            Nodes[local_topleaf_no].u.d.nextnode = slot_base + h->wire_offset;
+            gpu_set_soa_nextnode(local_topleaf_no, slot_base + h->wire_offset);
         }
-        /* Pass 3: AoS -> SoA scatter for the foreign-node range we just
-         * installed.  GPU walk reads node fields via SoA only; without this
-         * the foreign nodes would have garbage SoA entries. */
-        gpu_scatter_foreign_to_soa(slot_base, rcount);
 
         Numforeignnodes += rcount;
         if((long long) Numforeignnodes > Numforeignnodes_highwater) {Numforeignnodes_highwater = Numforeignnodes;}
-        node_off += rcount;
         hdr_off  += hcount;
     }
 
@@ -2449,6 +2898,8 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
     g_let_malformed_singleton = 0; g_let_malformed_singleton_first = -1;
+    g_let_kicked_records = 0;      g_let_kicked_records_first = -1;
+    g_let_leaves_compact = 0;      g_let_leaves_full = 0;
 
     /* One collective, once per build: the horizon the import is pruned against. */
     let_compute_tree_lifetime();
@@ -2461,31 +2912,13 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     /* All-local receiver cover (WHICH particles): the payload worst-case scalars
      * (min_OldAcc/soft/sink) still cover ALL of R's particles, not just active ones,
      * so inactive / TREECOL / RT consumers stay complete (an active-only cover would
-     * silently drop them; still behind the audit-gated, default-OFF compile guard).
+     * silently drop them).
      * Note this is ORTHOGONAL to the per-topleaf cover GEOMETRY (how the boxes are
      * grouped) that the pack now uses: per-topleaf refines min_dist selectivity while
      * this all-local scalar cover keeps completeness. The shared cell predicate
      * (conservative + walk-consistent) + the self-sizing foreign arena keep it safe. */
     struct LETPerRankPayload my_payload;
-#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
-    int bitmap_n_words = let_bitmap_word_count(NTopleaves);
-    if(bitmap_n_words < 1) bitmap_n_words = 1;
-    uint64_t *my_active_bitmap = (uint64_t *) mymalloc("LET_my_active_bitmap",
-        (size_t) bitmap_n_words * sizeof(uint64_t));
-    let_compute_local_active_bitmap(my_active_bitmap, bitmap_n_words);
-
-    uint64_t *all_active_bitmaps = (uint64_t *) mymalloc("LET_all_active_bitmaps",
-        (size_t) NTask * (size_t) bitmap_n_words * sizeof(uint64_t));
-    MPI_Allgather(my_active_bitmap, bitmap_n_words, MPI_UINT64_T,
-                  all_active_bitmaps, bitmap_n_words, MPI_UINT64_T,
-                  MPI_COMM_WORLD);
-
-    /* Tighten the cover to MY active topleaves only (may regress TREECOL self-shielding for
-     * non-active particles -- that is exactly what the audit gate guards). */
-    let_compute_local_payload(&my_payload, my_active_bitmap, bitmap_n_words);
-#else
-    let_compute_local_payload(&my_payload, NULL, 0);
-#endif
+    let_compute_local_payload(&my_payload);
 
     struct LETPerRankPayload *all_payloads =
         (struct LETPerRankPayload *) mymalloc("LET_payloads", NTask * sizeof(struct LETPerRankPayload));
@@ -2591,19 +3024,33 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
         }
     }
 
-    /* Pack per remote rank.  Per-rank send buffers grown via realloc.  */
-    struct LETNodeWire **send_per_rank = (struct LETNodeWire **) mymalloc("LET_send_perrank",
-        NTask * sizeof(struct LETNodeWire *));
+    /* Pack per remote rank: each destination's encoded stream (record count, and size in stream units)
+     * and its subtree headers. */
+    unsigned char **send_per_rank = (unsigned char **) mymalloc("LET_send_perrank", NTask * sizeof(unsigned char *));
     struct LETSubtreeHeader **send_hdr_per_rank = (struct LETSubtreeHeader **) mymalloc("LET_send_hdr_perrank",
         NTask * sizeof(struct LETSubtreeHeader *));
     int *send_count     = (int *) mymalloc("LET_send_count",     NTask * sizeof(int));
+    int *send_units     = (int *) mymalloc("LET_send_units",     NTask * sizeof(int));
     int *send_hdr_count = (int *) mymalloc("LET_send_hdr_count", NTask * sizeof(int));
     for(int r = 0; r < NTask; r++) {
-        send_per_rank[r] = NULL; send_count[r] = 0;
+        send_per_rank[r] = NULL; send_count[r] = 0; send_units[r] = 0;
         send_hdr_per_rank[r] = NULL; send_hdr_count[r] = 0;
     }
 
     let_refresh_open_constants();
+    /* This rank's top leaves with a subtree to pack, in ascending order.  Which ones qualify does not
+     * depend on the destination, so they are found once here rather than by every destination's pack. */
+    std::vector<int> own_topleaves;
+    for(int i = 0; i < NTopleaves; i++)
+    {
+        if(DomainTask[i] != ThisTask) continue;
+        const int topleaf_no = DomainNodeIndex[i];
+        if(topleaf_no < All.TreeNodeIndexBase || topleaf_no >= All.TreeNodeIndexBase + MaxNodes) continue;
+        const int subtree_root = Nodes[topleaf_no].u.d.nextnode;
+        if(subtree_root < 0) continue;                                   /* empty topleaf */
+        if(subtree_root == Nodes[topleaf_no].u.d.sibling) continue;      /* topleaf has no descendants */
+        own_topleaves.push_back(i);
+    }
     /* Two ranks means at most one destination to pack, so ask for a single worker rather than
      * one per thread: a run that will never split the loop should not size a pool for it. */
     const int n_workers = let_pack_contexts_prepare((NTask > 2) ? let_pack_workers() : 1);
@@ -2629,26 +3076,34 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     for(int r = 0; r < NTask; r++)
     {
         if(r == ThisTask) {send_count[r] = 0; send_hdr_count[r] = 0; continue;}
-        int cap = 0, hcap = 0, hcnt = 0;
+        int hcap = 0, hcnt = 0, n = 0;
 #ifdef _OPENMP
         struct LETPackContext *pk = &g_pack_ctx[omp_get_thread_num()];
 #else
         struct LETPackContext *pk = &g_pack_ctx[0];
 #endif
-#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
-        const uint64_t *r_bitmap = all_active_bitmaps + (size_t) r * (size_t) bitmap_n_words;
-        send_count[r] = let_pack_for_rank(pk, r, all_payloads,
-                                           &send_per_rank[r], &cap,
-                                           &send_hdr_per_rank[r], &hcap, &hcnt,
-                                           r_bitmap, bitmap_n_words);
-#else
-        send_count[r] = let_pack_for_rank(pk, r, all_payloads,
-                                           &send_per_rank[r], &cap,
-                                           &send_hdr_per_rank[r], &hcap, &hcnt,
-                                           NULL, 0);
-#endif
+        n = let_pack_for_rank(pk, r, all_payloads, own_topleaves.data(), (int) own_topleaves.size(),
+                              &pk->scratch, &pk->scratch_cap,
+                              &send_hdr_per_rank[r], &hcap, &hcnt);
+        /* Encode this destination's records; on any failure it ships nothing, like a failed pack. */
+        const long long units = pk->pack_oom ? -1 : let_wire_encode_destination(pk, pk->scratch, n, &send_per_rank[r]);
+        if(units < 0)
+        {
+            if(send_per_rank[r]) {free(send_per_rank[r]); send_per_rank[r] = NULL;}
+            n = 0; hcnt = 0;
+        }
+        send_count[r] = n;
+        send_units[r] = (units > 0) ? (int) units : 0;
         send_hdr_count[r] = hcnt;
     }
+    }
+    /* The full records and the encoder's buffers are needed only while packing. */
+    for(int t = 0; t < g_pack_ctx_n; t++)
+    {
+        struct LETPackContext *pk = &g_pack_ctx[t];
+        pk->wire_released_bytes += (long long) pk->scratch_cap * (long long) sizeof(struct LETNodeWire) + (long long) pk->wire_kinds_cap;
+        free(pk->scratch);      pk->scratch = NULL;      pk->scratch_cap = 0;
+        free(pk->wire_kinds);   pk->wire_kinds = NULL;   pk->wire_kinds_cap = 0;
     }
 
     /* Combine what the packs reported.  The count is a total; the reported malformed node is the
@@ -2663,9 +3118,17 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
             g_pack_ctx[t].malformed_singleton_first < g_let_malformed_singleton_first))
             {g_let_malformed_singleton_first = g_pack_ctx[t].malformed_singleton_first;}
         if(g_pack_ctx[t].pack_oom) {g_let_pack_oom = 1;}
+        g_let_kicked_records += g_pack_ctx[t].kicked_records;
+        if(g_pack_ctx[t].kicked_records_first >= 0 &&
+           (g_let_kicked_records_first < 0 || g_pack_ctx[t].kicked_records_first < g_let_kicked_records_first))
+            {g_let_kicked_records_first = g_pack_ctx[t].kicked_records_first;}
         if(g_pack_ctx[t].wire_grow_bytes   > 0) {gizmo_let_wire_grow(g_pack_ctx[t].wire_grow_bytes);}
+        g_let_leaves_compact += g_pack_ctx[t].leaves_compact;
+        g_let_leaves_full    += g_pack_ctx[t].leaves_full;
         if(g_pack_ctx[t].wire_failed_bytes > 0) {gizmo_let_wire_note_failed(g_pack_ctx[t].wire_failed_bytes);}
     }
+    /* Released only after every pack's growth is in, so the peak the ledger keeps includes the scratch. */
+    for(int t = 0; t < g_pack_ctx_n; t++) {if(g_pack_ctx[t].wire_released_bytes > 0) {gizmo_let_wire_grow(-g_pack_ctx[t].wire_released_bytes);}}
 
     /* Exchange + install (let_exchange_nodes inlines let_unpack_and_install
      * to keep mymalloc LIFO discipline correct). Runs on ALL ranks even after a
@@ -2675,20 +3138,26 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
      * than earlier: the only writer is pack_recurse, which runs in the loop above, and a check that
      * precedes its writer reads zero forever. */
     {
-        long long malformed_max = 0;
-        MPI_Allreduce(&g_let_malformed_singleton, &malformed_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
-        if(malformed_max > 0)
+        long long local[2] = {g_let_malformed_singleton, g_let_kicked_records}, any[2] = {0, 0};
+        MPI_Allreduce(local, any, 2, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+        if(any[0] > 0 || any[1] > 0)
         {
             if(g_let_malformed_singleton > 0)
                 printf("LET pack: rank=%d found %lld single-particle node(s) (lowest node index %d) whose "
                        "child is not a particle -- the local tree is malformed. Stopping.\n",
                        ThisTask, g_let_malformed_singleton, g_let_malformed_singleton_first);
+            /* The wire leaves out the momentum a node gathers between kicks, because no node is
+               exported while it carries one; finding one means that assumption no longer holds. */
+            if(g_let_kicked_records > 0)
+                printf("LET pack: rank=%d was about to export %lld node(s) (lowest index %d) still marked as kicked "
+                       "since the tree was built; the wire does not carry what such a node needs. Stopping.\n",
+                       ThisTask, g_let_kicked_records, g_let_kicked_records_first);
             fflush(stdout);
-            endrun(90000093);
+            endrun(any[1] > 0 ? 90001028 : 90000093);
         }
     }
 
-    let_exchange_status_t exch_status = let_exchange_nodes(send_per_rank, send_count,
+    let_exchange_status_t exch_status = let_exchange_nodes(send_per_rank, send_count, send_units,
                        send_hdr_per_rank, send_hdr_count, foreign_needed_out);
 
     /* Free per-rank send buffers (allocated via realloc, not mymalloc) */
@@ -2700,14 +3169,11 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 
     /* Cleanup */
     myfree(send_hdr_count);
+    myfree(send_units);
     myfree(send_count);
     myfree(send_hdr_per_rank);
     myfree(send_per_rank);
     myfree(all_payloads);
-#ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
-    myfree(all_active_bitmaps);
-    myfree(my_active_bitmap);
-#endif
     /* Worst-status wins: a send-buffer malloc failure (g_let_pack_oom) is not
      * fixable by a larger foreign arena, so it outranks a retryable overflow. */
     if(g_let_pack_oom) return LET_PACK_OOM;

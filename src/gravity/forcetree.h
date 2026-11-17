@@ -73,9 +73,10 @@ size_t force_treewalk_workspace_bytes_per_thread(int cap);
 int force_treeevaluate_ewald_correction(int target, int *exportflag, int *exportnodecount, int *exportindex);
 void force_drift_node(int no, integertime time1);
 
-/*! Host-vs-device routing of the gravity walk: yes when this rank has fewer than
- *  All.GravityHostWalkBelowActive active candidates. A count policy only; the dynamic tree
- *  update routes on its own count and guard in force_update_tree. */
+/*! Host-vs-device routing of the gravity walk: yes when this rank has fewer active
+ *  candidates than the gravity-walk offload count (GPU_OFFLOAD_GRAVITY_WALK, set by
+ *  GravityHostWalkBelowActive or derived from GPUTreeOffloadMinCount). A count policy only;
+ *  the dynamic tree update routes on its own count and guard in force_update_tree. */
 int gravity_walk_route_to_host(long long n_local_active);
 
 /*! Time at which a host lazy node drift was last actually performed on this rank
@@ -101,22 +102,27 @@ void force_finish_kick_nodes(void);
  * flush after the step's kick.  The kick itself does not come through here: it has
  * its own route and exchange (force_kick_node / force_finish_kick_nodes). */
 void gravity_note_motion_bound(const int *idx, int n);
+/* The same raise for particle i just inserted by force_add_element_to_tree, over its whole chain. */
+void gravity_note_inserted_motion_bound(int i);
 /* Raise the kernel-length growth rate (divVmax) of every node above each of idx[0..n) to the member's
  * particle_radius_growth_rate, for particles whose dilation factor was just frozen anew; the top-level
  * nodes reached ride the same flush.  Does nothing without USE_TIMESTEP_DILATION_FOR_ZOOMS. */
 void gravity_note_radius_growth_rates(const int *idx, int n);
+/* Widen every node box above each of idx[0..n), relocated discontinuously in the standing tree (inserted, or a
+ * sink re-centred on its accreted mass or moved toward its potential minimum), to hold it; the top-level boxes widened ride the same flush. */
+void gravity_note_set_positions(const int *idx, int n);
 /* All ranks, once per step, after the kick and before the drift: every rank
- * learns the raised bounds (speed, and kernel-length growth rate under
- * dilation) of every top-level node any rank changed since the last flush, and
+ * learns the raised bounds (speed, kernel-length growth rate under dilation,
+ * and box length for placed particles) of every top-level node any rank changed since the last flush, and
  * applies them up its own copy of the chain.  Nothing else in the node moves:
  * no momentum, no kick flag, no timestamp. */
 void gravity_flush_pending_motion_bounds(void);
 /* A rebuild sets every bound afresh, so whatever was pending is void. */
 void gravity_clear_pending_motion_bounds(void);
 int force_create_empty_nodes(int no, int topnode, int bits, peano1D x, peano1D y, peano1D z, int *nodecount, int *nextfree);
-int  force_exchange_pseudodata(void);          /* returns complete() status: nonzero = unmatched (caller skips dependent pseudo-update) */
+int  force_exchange_pseudodata(void);          /* returns complete() status: nonzero = unmatched or stopped part-way (caller skips dependent pseudo-update) */
 void force_exchange_pseudodata_issue(void);    /* split for non-blocking overlap with LET */
-int  force_exchange_pseudodata_complete(void); /* pair to _issue; nonzero = unmatched (pending==NULL) */
+int  force_exchange_pseudodata_complete(void); /* pair to _issue; nonzero = unmatched (pending==NULL) or the post stopped part-way */
 void force_insert_pseudo_particles(void);
 void force_add_element_to_tree(int igas, int istar);
 

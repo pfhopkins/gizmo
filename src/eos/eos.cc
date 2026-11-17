@@ -111,6 +111,21 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     set_eos_pressure_impl(i, pp, cell, &eos_tables);
 }
 
+/* refresh_eos_and_project -- the host entry for every ACCEPTED state change (kick, density pass and its final operations, cooling, star
+   formation, merge/split, grain promotion): the equation of state, then the projection of the deviatoric stress copies that state
+   stands for onto the material's strength at the refreshed state (solids/elastic_physics_functions.h), so the stress the forces read is
+   consistent with the pressure they read. Trial evaluations (root finding, tables) use the equation of state alone. The device paths
+   (drift, cooling) do the same two calls in their own kernels. */
+void refresh_eos_and_project(int i, int state_copies)
+{
+    set_eos_pressure(i, P, CellP);
+#ifdef ELASTIC_STATE_DEPENDENT_STRENGTH
+    elastic_project_after_eos(i, state_copies);
+#else
+    (void)state_copies;
+#endif
+}
+
 
 /* subroutine to calculate the conductivities and assign the various non-ideal MHD coefficients (Ohmic, Hall, Ambipolar). can modify or expand chemistry or assumptions about grains herein. */
 void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data *pp, struct gas_cell_data *cell)
@@ -259,7 +274,7 @@ void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct pa
     double du_conduction=0; for(k=0;k<3;k++) {du_conduction += cell[i].Gradients.InternalEnergy[k] * cell[i].Gradients.InternalEnergy[k];}
     double temp_scale_length = u_int / sqrt(du_conduction) * All.cf_atime;
     /* also the Whistler instability limits the heat flux at high-beta; Komarov et al., arXiv:1711.11462 (2017) */
-    cell[i].Kappa_Conduction /= (1 + (4.2 + 1./(3.*beta_i)) * electron_free_path / temp_scale_length); /* should be in physical units */
+    cell[i].Kappa_Conduction /= (1 + (4.2 + 1./(3.*DMAX(beta_i, MIN_REAL_NUMBER))) * electron_free_path / temp_scale_length); /* should be in physical units. beta_i=0 (no field) with a flat internal energy would otherwise give inf*0 */
 #ifdef DIFFUSION_OPTIMIZERS
     cell[i].Kappa_Conduction = DMIN(cell[i].Kappa_Conduction , 42.85 * rho * vf_lim * DMIN(20.*pp[i].Get_Particle_Size()*All.cf_atime , temp_scale_length));
 #endif
@@ -369,6 +384,112 @@ void calculate_and_assign_turbulent_diffusion_coefficients(int i, struct particl
     cell[i].Eta_ShearViscosity += All.ShearViscosityCoeff * cell[i].TD_DiffCoeff * cell[i].Density * All.cf_a3inv; // physical
     cell[i].Zeta_BulkViscosity += All.BulkViscosityCoeff * cell[i].TD_DiffCoeff * cell[i].Density * All.cf_a3inv; // physical
 #endif
+}
+#endif
+
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+/* eos_limits.txt: how often the solid / tabulated equations of state limited a state, per material. Each rank adds to two blocks
+   -- one in host memory (host loops), one in device memory (device kernels; the same memory as the host's in a build without a
+   device) -- so no counter memory moves between host and device except here, at an emit. */
+struct eos_limit_counts *EosLimitsHost = NULL, *EosLimitsDevice = NULL;
+static struct eos_limit_counts *EosLimitsSinceStart = NULL; /* rank 0: the reduced counts since this run started (or resumed) */
+static FILE *FdEosLimits = NULL;
+
+void eos_limits_init(void)
+{
+    const size_t n = sizeof(struct eos_limit_counts);
+    EosLimitsHost = (struct eos_limit_counts *) calloc(1, n);
+    EosLimitsSinceStart = (struct eos_limit_counts *) calloc(1, n);
+    EosLimitsDevice = (struct eos_limit_counts *) gizmo_gpu_alloc_device(n, "eos_limit_counts");
+    if(!EosLimitsHost || !EosLimitsSinceStart || !EosLimitsDevice) {printf("could not allocate the %zu-byte eos_limits.txt counters\n", n); endrun(1); return;}
+    gizmo_gpu_copy_to_device(EosLimitsDevice, EosLimitsHost, n); /* zeroed */
+}
+
+void eos_limits_record_host(int composition_type, int counter, int energy_index, double energy)
+{
+    if(!EosLimitsHost) {return;}
+    struct eos_limit_slot *slot = &EosLimitsHost->slot[eos_limit_slot_of(composition_type)];
+    eos_limit_atomic_count(&slot->count[counter], 1);
+    if(energy_index >= 0) {eos_limit_atomic_energy(&slot->energy[energy_index], energy);}
+}
+
+void eos_limits_count_cell_updates(void)
+{
+    if(!EosLimitsHost) {return;}
+    unsigned long long n_by_slot[EOS_LIMIT_SLOTS] = {0};
+    for(int k = 0; k < (int)ActiveParticleList.size(); k++) {int i = ActiveParticleList[k]; if(P[i].Type == 0 && P[i].Mass > 0) {n_by_slot[eos_limit_slot_of(CellP[i].CompositionType)]++;}}
+    for(int s = 0; s < EOS_LIMIT_SLOTS; s++) {EosLimitsHost->slot[s].count[EOS_LIMIT_CELL_UPDATES] += n_by_slot[s];}
+}
+
+static const char *eos_limit_count_names[EOS_LIMIT_N_COUNTS] = {"active cell-updates (the denominator)", "density below the table",
+    "density above the table", "energy below the lowest valid temperature's (state taken there)", "energy above the hottest row's (state taken there)",
+    "plateau: u(T) flat to the solve tolerance, T undetermined", "inversion did not converge, recovered by the full-column search (one root)",
+    "kick: energy update halved", "kick: energy raised to the table floor",
+    "kick: energy raised to MinEgySpec", "drift: predicted energy halved", "drift: predicted energy raised to the table floor", "drift: predicted energy raised to MinEgySpec",
+    "kick or drift: energy floor held by drawing on radiation"};
+static const char *eos_limit_energy_names[EOS_LIMIT_N_ENERGIES] = {"energy added by the kick halving", "energy added by the kick table floor", "energy added by the kick MinEgySpec floor"};
+
+static void eos_limits_open_file(void)
+{
+    char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "eos_limits.txt");
+    if(!(FdEosLimits = fopen(buf, (RestartFlag == 0) ? "w" : "a"))) {printf("error in opening file '%s'\n", buf); endrun(1); return;}
+    fseek(FdEosLimits, 0, SEEK_END);
+    if(ftell(FdEosLimits) > 0) {return;} /* resuming a file that already has its header */
+    int c = 1;
+    fprintf(FdEosLimits, "### Equation-of-state limits per material (User Guide: eos_limits.txt). One line per material with any count, at every energy-statistics\n");
+    fprintf(FdEosLimits, "### output and at every restart write (also those of a wall-time or stop-file stop). 'Interval' = since the previous line set; 'since start' = since this run started or resumed (sum the\n");
+    fprintf(FdEosLimits, "### intervals over restarts for the whole run). Rates are events per active cell-update; the equation of state is evaluated a different\n");
+    fprintf(FdEosLimits, "### number of times per update on different paths and configurations, so they are not rates per evaluation. Kick counts are of active cells, both half-kicks; drift counts are of every drifted cell.\n");
+    fprintf(FdEosLimits, "###   (%d) simulation time  (%d) system step  (%d) 0 = startup (before the first step), 1 = run  (%d) CompositionType  (%d) equation of state (0 gas, 1 Tillotson, 2 table)\n", c, c+1, c+2, c+3, c+4); c += 5;
+    for(int k = 0; k < EOS_LIMIT_N_COUNTS; k++) {fprintf(FdEosLimits, "###   (%d) interval: %s\n", c++, eos_limit_count_names[k]);}
+    for(int k = 0; k < EOS_LIMIT_N_ENERGIES; k++) {fprintf(FdEosLimits, "###   (%d) interval: %s [code units]\n", c++, eos_limit_energy_names[k]);}
+    fprintf(FdEosLimits, "###   (%d) interval: widest plateau met, T_hot / T_cold - 1\n", c++);
+    fprintf(FdEosLimits, "###   (%d) interval: largest plateau pressure spread, |P_hot - P_cold| / max\n", c++);
+    for(int k = 0; k < EOS_LIMIT_N_COUNTS; k++) {fprintf(FdEosLimits, "###   (%d) since start: %s\n", c++, eos_limit_count_names[k]);}
+    for(int k = 0; k < EOS_LIMIT_N_ENERGIES; k++) {fprintf(FdEosLimits, "###   (%d) since start: %s [code units]\n", c++, eos_limit_energy_names[k]);}
+}
+
+void eos_limits_emit(int startup)
+{
+    if(!EosLimitsHost) {return;}
+    const size_t n = sizeof(struct eos_limit_counts);
+    struct eos_limit_counts interval;
+    gizmo_gpu_copy_to_host(&interval, EosLimitsDevice, n);
+    unsigned long long counts[EOS_LIMIT_SLOTS * EOS_LIMIT_N_COUNTS], counts_all[EOS_LIMIT_SLOTS * EOS_LIMIT_N_COUNTS];
+    double energies[EOS_LIMIT_SLOTS * EOS_LIMIT_N_ENERGIES], energies_all[EOS_LIMIT_SLOTS * EOS_LIMIT_N_ENERGIES];
+    double maxima[EOS_LIMIT_SLOTS * EOS_LIMIT_N_MAXIMA], maxima_all[EOS_LIMIT_SLOTS * EOS_LIMIT_N_MAXIMA];
+    for(int s = 0; s < EOS_LIMIT_SLOTS; s++)
+    {
+        const struct eos_limit_slot *d = &interval.slot[s], *h = &EosLimitsHost->slot[s];
+        for(int k = 0; k < EOS_LIMIT_N_COUNTS; k++) {counts[s * EOS_LIMIT_N_COUNTS + k] = d->count[k] + h->count[k];}
+        for(int k = 0; k < EOS_LIMIT_N_ENERGIES; k++) {energies[s * EOS_LIMIT_N_ENERGIES + k] = d->energy[k] + h->energy[k];}
+        for(int k = 0; k < EOS_LIMIT_N_MAXIMA; k++) {maxima[s * EOS_LIMIT_N_MAXIMA + k] = DMAX(d->maximum[k], h->maximum[k]);}
+    }
+    memset(EosLimitsHost, 0, n); memset(&interval, 0, n);
+    gizmo_gpu_copy_to_device(EosLimitsDevice, &interval, n); /* the next interval starts at zero */
+    MPI_Reduce(counts, counts_all, EOS_LIMIT_SLOTS * EOS_LIMIT_N_COUNTS, MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(energies, energies_all, EOS_LIMIT_SLOTS * EOS_LIMIT_N_ENERGIES, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(maxima, maxima_all, EOS_LIMIT_SLOTS * EOS_LIMIT_N_MAXIMA, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    if(ThisTask != 0) {return;}
+    if(!FdEosLimits) {eos_limits_open_file(); if(!FdEosLimits) {return;}}
+    for(int s = 0; s < EOS_LIMIT_SLOTS; s++)
+    {
+        struct eos_limit_slot *since = &EosLimitsSinceStart->slot[s];
+        int any = 0;
+        for(int k = 0; k < EOS_LIMIT_N_COUNTS; k++) {since->count[k] += counts_all[s * EOS_LIMIT_N_COUNTS + k]; if(since->count[k]) {any = 1;}}
+        for(int k = 0; k < EOS_LIMIT_N_ENERGIES; k++) {since->energy[k] += energies_all[s * EOS_LIMIT_N_ENERGIES + k];}
+        if(!any) {continue;}
+        fprintf(FdEosLimits, "%.16g %lld %d %d %d", All.Time, (long long) All.NumCurrentTiStep, startup ? 0 : 1, s, (int) eos_branch_of(s));
+        for(int k = 0; k < EOS_LIMIT_N_COUNTS; k++) {fprintf(FdEosLimits, " %llu", counts_all[s * EOS_LIMIT_N_COUNTS + k]);}
+        for(int k = 0; k < EOS_LIMIT_N_ENERGIES; k++) {fprintf(FdEosLimits, " %.8g", energies_all[s * EOS_LIMIT_N_ENERGIES + k]);}
+        fprintf(FdEosLimits, " %.6g %.6g", pow(10.0, maxima_all[s * EOS_LIMIT_N_MAXIMA + EOS_LIMIT_MAX_PLATEAU_LOGT_WIDTH]) - 1.0,
+                maxima_all[s * EOS_LIMIT_N_MAXIMA + EOS_LIMIT_MAX_PLATEAU_PRESSURE_SPREAD]);
+        for(int k = 0; k < EOS_LIMIT_N_COUNTS; k++) {fprintf(FdEosLimits, " %llu", since->count[k]);}
+        for(int k = 0; k < EOS_LIMIT_N_ENERGIES; k++) {fprintf(FdEosLimits, " %.8g", since->energy[k]);}
+        fprintf(FdEosLimits, "\n");
+    }
+    fflush(FdEosLimits);
 }
 #endif
 

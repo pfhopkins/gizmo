@@ -11,6 +11,13 @@
 #include "../core/proto.h"
 #include "../domain/domain.h"
 
+/* Particles of each type in the input file whose header was read last. The io_header keeps a 32-bit
+   field for this because the unformatted-binary formats fix its 256-byte layout, but an HDF5 file can
+   hold far more than 2^31 particles of a type, so the reader counts from this 64-bit copy instead. Only
+   the share each rank receives has to fit a rank-local int, and that is checked against MaxPart. */
+static long long npart_in_file[6];
+static void npart_in_file_from_binary_header(void) {for(int t = 0; t < 6; t++) {npart_in_file[t] = header.npart[t];}}
+
 /*! This function reads initial conditions that are in the default file format
  * of Gadget, i.e. snapshot files can be used as input files.  However, when a
  * snapshot file is used as input, not all the information in the header is
@@ -51,6 +58,9 @@ void read_ic(char *fname)
      * branch after H5Dread succeeds. */
     for(int t = 0; t < 6; t++) { CBE_Moments_LoadedFromIC_PType[t] = 0; }
 #endif
+#ifdef METALS
+    for(int t = 0; t < 6; t++) { Metallicity_LoadedFromIC_PType[t] = 0; }
+#endif
 
     NumPart = 0;
     N_gas = 0;
@@ -87,7 +97,7 @@ void read_ic(char *fname)
         gizmo_exit_bad_stop_if_requested("read_ic:header");   /* drains corrupt-header (soft my_fread) + precision mismatch, before any header-derived sizing/alloc */
 
         if(header.num_files <= 1)
-            for(i = 0; i < 6; i++) { header.npartTotal[i] = header.npart[i]; header.npartTotalHighWord[i] = 0; }
+            for(i = 0; i < 6; i++) { header.npartTotal[i] = (unsigned int) (npart_in_file[i] & 0xFFFFFFFFLL); header.npartTotalHighWord[i] = (unsigned int) (npart_in_file[i] >> 32); }
 
         All.TotN_gas = header.npartTotal[0] + (((long long) header.npartTotalHighWord[0]) << 32);
         for(i = 0, All.TotNumPart = 0; i < 6; i++)
@@ -98,12 +108,34 @@ void read_ic(char *fname)
         /* The decomposition's granularity follows the particle load, and this is the first point
            at which that load is known -- before any storage is sized from it.  Settled here once
            for the run; a restart from restart-files carries the value it was given. */
-        All.DomainSegmentsPerRank = domain_segments_per_rank_for_particles(All.TotNumPart);
-        PRINT_STATUS("Domain segments per rank: %d (%lld particles over %d ranks)",
-                     All.DomainSegmentsPerRank, (long long) All.TotNumPart, NTask);
+        int lowered_by_leaf_request = 0;
+        All.DomainSegmentsPerRank = domain_segments_per_rank_for_particles(All.TotNumPart, &lowered_by_leaf_request);
+        PRINT_STATUS("Domain segments per rank: %d (%lld particles over %d ranks%s)",
+                     All.DomainSegmentsPerRank, (long long) All.TotNumPart, NTask,
+                     lowered_by_leaf_request ? "; top-leaf request lowered by DOMAIN_MAX_REQUESTED_TOPLEAVES" : "");
 
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 
+        /* The total may be any size; what a rank holds is indexed with an int, and the tree's node indices sit
+           above the particle range in the same int, which is why the capacity ceiling below stops at INT_MAX/4.
+           The per-rank capacity has to fit under that.  Every rank computes the same value, so all stop here
+           together if it does not. */
+        {
+            const double maxpart_wanted = All.PartAllocFactor * (double) balanced_particles_per_rank(All.TotNumPart, NTask);
+            const double maxpart_limit = (double) (INT_MAX / 4);
+            if(maxpart_wanted > maxpart_limit)
+            {
+                if(ThisTask == 0)
+                {
+                    printf("%lld particles over %d ranks need %.0f particle slots per rank (PartAllocFactor=%g), more than a rank "
+                           "can index (%.0f). Run on at least %.0f ranks.\n", (long long) All.TotNumPart, NTask, maxpart_wanted,
+                           All.PartAllocFactor, maxpart_limit, ceil(maxpart_wanted / maxpart_limit * (double) NTask));
+                    fflush(stdout);
+                }
+                endrun(91571);
+                gizmo_exit_bad_stop_if_requested("read_ic:maxpart");
+            }
+        }
         All.MaxPart = (int) (All.PartAllocFactor * balanced_particles_per_rank(All.TotNumPart, NTask));	/* sets the maximum number of particles that may reside on a processor */
         /* The one place the gas COUNT decides whether gas storage exists: no storage exists yet to
            ask instead, and a run's initial conditions are what settle it for the rest of the run.
@@ -203,7 +235,7 @@ void read_ic(char *fname)
         (void) allocate_memory(1);
 
         {
-            size_t cbuf_bytes = (size_t) All.CommChunkSize * 1024 * 1024;
+            size_t cbuf_bytes = comm_chunk_bytes();
             if(!gizmo_alloc_fits_all_ranks(gizmo_mymalloc_rounded_size(cbuf_bytes), 1))
                 gizmo_request_controlled_stop(2, "read_ic: CommBuffer arena preflight won't fit on >=1 rank", __FILE__, __LINE__, __FUNCTION__);
             else
@@ -294,6 +326,12 @@ void read_ic(char *fname)
         for(int t = 0; t < 6; t++) { loaded_local[t] = CBE_Moments_LoadedFromIC_PType[t]; }
         MPI_Allreduce(loaded_local, CBE_Moments_LoadedFromIC_PType, 6, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
+#endif
+#ifdef METALS
+    MPI_Allreduce(MPI_IN_PLACE, Metallicity_LoadedFromIC_PType, 6, MPI_INT, MPI_MAX, MPI_COMM_WORLD); /* set only on the tasks that read a file */
+    if(ThisTask == 0) {for(int t = 0; t < 6; t++) {
+        if(Metallicity_LoadedFromIC_PType[t] == 1) {printf("IC Metallicity kept for particle type %d (%d species) in place of InitMetallicity\n", t, (int) NUM_METAL_SPECIES);}
+        if(Metallicity_LoadedFromIC_PType[t] == 2) {printf("IC Metallicity of particle type %d does not have this build's %d species: it is initialized from InitMetallicity as before\n", t, (int) NUM_METAL_SPECIES);}}}
 #endif
 
     if(header.flag_ic_info != FLAG_SECOND_ORDER_ICS)
@@ -453,6 +491,63 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        /* Grackle species: on a snapshot restart they continue from the file (a fresh start sets them in init()) */
+        case IO_grHI:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHI = *fp++;}
+#endif
+            break;
+        case IO_grHII:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHII = *fp++;}
+#endif
+            break;
+        case IO_grHM:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHM = *fp++;}
+#endif
+            break;
+        case IO_grHeI:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHeI = *fp++;}
+#endif
+            break;
+        case IO_grHeII:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHeII = *fp++;}
+#endif
+            break;
+        case IO_grHeIII:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHeIII = *fp++;}
+#endif
+            break;
+        case IO_grH2I:
+#if (COOL_GRACKLE_CHEMISTRY >= 2)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grH2I = *fp++;}
+#endif
+            break;
+        case IO_grH2II:
+#if (COOL_GRACKLE_CHEMISTRY >= 2)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grH2II = *fp++;}
+#endif
+            break;
+        case IO_grDI:
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grDI = *fp++;}
+#endif
+            break;
+        case IO_grDII:
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grDII = *fp++;}
+#endif
+            break;
+        case IO_grHDI:
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHDI = *fp++;}
+#endif
+            break;
+
 
         case IO_KERNELRADIUS:		/* gas kernel length */
             for(n = 0; n < pc; n++) {P[offset + n].KernelRadius = *fp++;}
@@ -556,6 +651,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
                     if(nmax<NUM_ISMDUSTCHEM_SIZE_BINS) {for(kf=nmax;kf<NUM_ISMDUSTCHEM_SIZE_BINS;kf++) {CellP[offset + n].ISMDustChem_Dust_SlopeInBin[k][kf]=0;}} // any extra fields zero'd
                 }
             }
+#endif
+            break;
+
+        case IO_NONIDEAL_FLUX:	/* evolved non-ideal MHD field: restored on a snapshot restart; absent from the file -> zeros */
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+            for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {CellP[offset + n].NonIdealMHDFluxPred[k] = *fp++;}}
 #endif
             break;
 
@@ -753,13 +854,21 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 
         case IO_CHIMES_ABUNDANCES:
 #if defined(CHIMES) && !defined(CHIMES_INITIALISE_IN_EQM)
+            {
+            long n_without_abundances = 0; /* a file without this block reads as zeros: those cells have no chemical state to start from */
             for (n = 0; n < pc; n++)
             {
     	        allocate_gas_abundances_memory(&(ChimesGasVars[offset + n]), &ChimesGlobalVars);
-	            for (k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {ChimesGasVars[offset + n].abundances[k] = (ChimesFloat) (*fp++);}
-#ifdef CHIMES_TURB_DIFF_IONS
-                chimes_update_turbulent_abundances(n, 1, P, CellP);
-#endif
+                double abundance_total = 0;
+	            for (k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {ChimesGasVars[offset + n].abundances[k] = (ChimesFloat) (*fp++); abundance_total += ChimesGasVars[offset + n].abundances[k];}
+                if(!(abundance_total > 0)) {n_without_abundances++;}
+            }
+            if(n_without_abundances > 0)
+            {
+                printf("Task %d: %ld gas cells have no CHIMES abundances in the initial-conditions file (no ChimesAbundances block; with CHIMES_REDUCED_OUTPUT, "
+                       "only every N_chimes_full_output_freq-th snapshot carries it). Supply them, or start from equilibrium with CHIMES_INITIALISE_IN_EQM.\n", ThisTask, n_without_abundances);
+                endrun(1894);
+            }
             }
 #endif
             break;
@@ -913,9 +1022,9 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         /* damage and porosity are integrated history, not diagnostics: they cannot be recomputed
-         * from the other fields, so a snapshot restart has to read them back (init.cc initializes
-         * them only on a fresh start). A snapshot written without these datasets arrives as zeros;
-         * the distention floor in init.cc restores the material default in that case. */
+         * from the other fields, so a snapshot restart has to read them back, and an HDF5 IC may set
+         * them (init.cc initializes them on a fresh binary-IC start). A file written without these
+         * datasets arrives as zeros; the distention floor in init.cc restores the material default. */
         case IO_DAMAGE_POROSITY_DAMAGE:
 #ifdef EOS_DAMAGE_POROSITY
             for(n = 0; n < pc; n++) {CellP[offset + n].Damage = *fp++;}
@@ -934,6 +1043,30 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS: /* fixed per element once set (its body's normalisation): read back, never recomputed; an absent dataset arrives as -1 = not set */
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].TensileFlawsPerMass = *fp++;}
+#endif
+            break;
+
+        case IO_EOS_STRESS_TENSOR: /* evolved deviatoric stress: element 3*k+kf is S[kf][k], the inverse of the snapshot writer */
+#ifdef EOS_ELASTIC
+            for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {for(int kf = 0; kf < 3; kf++) {CellP[offset + n].Elastic_Stress_Tensor[kf][k] = *fp++;}}}
+#endif
+            break;
+
+        case IO_EOS_RECENT_YIELD_MEMORY: /* evolved history of the same kind: the tensile correction depends on it */
+#ifdef EOS_ELASTIC
+            for(n = 0; n < pc; n++) {CellP[offset + n].RecentYieldMemory = *fp++;}
+#endif
+            break;
+
+        case IO_EOS_STRENGTH_FRACTION: /* evolved history: the strength fraction the stored stress was last projected with (thermal softening) */
+#ifdef EOS_ELASTIC_MELT
+            for(n = 0; n < pc; n++) {CellP[offset + n].StrengthFraction = *fp++;}
+#endif
+            break;
+
 
         /* the other input fields (if present) are not needed to define the
              initial conditions of the code */
@@ -944,7 +1077,6 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_AGS_PSI_RE:
         case IO_AGS_PSI_IM:
         case IO_EOSCS:
-        case IO_EOS_STRESS_TENSOR:
         case IO_SFR:
         case IO_POT:
         case IO_ACCEL:
@@ -979,17 +1111,6 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_ACRB:
         case IO_VSTURB_DISS:
         case IO_VSTURB_DRIVE:
-        case IO_grHI:
-        case IO_grHII:
-        case IO_grHM:
-        case IO_grHeI:
-        case IO_grHeII:
-        case IO_grHeIII:
-        case IO_grH2I:
-        case IO_grH2II:
-        case IO_grDI:
-        case IO_grDII:
-        case IO_grHDI:
         case IO_TURB_DIFF_COEFF:
         case IO_DYNERROR:
         case IO_DYNERRORDEFAULT:
@@ -1071,24 +1192,26 @@ static int read_file_sync_status(int readTask, int lastTask, int local_status)
  *  to tasks 'readTask' to 'lastTask'. An HDF5 file shared by several tasks is read by all of them at
  *  once: 'readTask' reads the header and passes it on, then each task opens the file read-only and reads
  *  its own slice of every dataset, in the same chunks the distributing loop would have sent it, so the
- *  result is the same; the other formats are read by 'readTask' and sent out. Returns 0 on success, or a nonzero IC-error
+ *  result is the same (if any of them cannot open the file, 'readTask' sends every task its share instead);
+ *  the other formats are read by 'readTask' and sent out. Returns 0 on success, or a nonzero IC-error
  *  code on failure (a soft bad-stop is also requested; the caller's per-turn poll
  *  drains it to a clean finalize -- no MPI_Abort, the node releases).
  */
 int read_file(char *fname, int readTask, int lastTask)
 {
     int read_status = 0;   /* soft bad-stop accumulator; reconciled among participants below */
-    const int parallel_ic = (All.ICFormat == 3) && (lastTask > readTask);   /* every task reads its own slice (see above) */
+    int parallel_ic = (All.ICFormat == 3) && (lastTask > readTask);   /* every task reads its own slice (see above); cleared below for a file some task cannot open */
     size_t blockmaxlen;
     long long i, n_in_file, n_for_this_task, ntask, pc, offset = 0, task, nall, nread, nstart, npart;
-    int blksize1, blksize2, type, bnr, bytes_per_blockelement, nextblock, typelist[6];
+    int blksize1, blksize2, type, bnr, bytes_per_blockelement, nextblock, typelist[6], id_bytes_in_file = sizeof(MyIDType);
     MPI_Status status;
     FILE *fd = 0;
     char label[4], buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
     enum iofields blocknr;
 
 
-    int rank, pcsum;
+    int rank;
+    long long pcsum;   /* offset of this slice in the file's dataset: spans every earlier rank's share, so 64-bit */
     hid_t hdf5_file = 0, hdf5_grp[6], hdf5_dataspace_in_file;
     hid_t hdf5_datatype = 0, hdf5_dataspace_in_memory, hdf5_dataset;
     hsize_t dims[2], count[2], start[2];
@@ -1121,6 +1244,7 @@ int read_file(char *fname, int readTask, int lastTask)
                 SKIP;
                 my_fread(&header, sizeof(header), 1, fd);
                 SKIP2;
+                npart_in_file_from_binary_header();
 
                 if(blksize1 != 256 || blksize2 != 256)
                 {
@@ -1136,14 +1260,32 @@ int read_file(char *fname, int readTask, int lastTask)
 
         if(All.ICFormat == 3)
         {
-            read_header_attributes_in_hdf5(fname);
-            hdf5_file = H5Fopen(fname, H5F_ACC_RDONLY, H5P_DEFAULT);
-            for(type = 0; type < 6; type++)
+            /* the reading task holds the file for the whole read: if it cannot open the file, its header or a particle
+               group, every participant stops together at Checkpoint A (the header it sends on is then never used) */
+            if(read_header_attributes_in_hdf5(fname))
             {
-                if(header.npart[type] > 0)
+                printf("can't open file `%s' or its Header group for reading initial conditions.\n", fname); fflush(stdout);
+                read_status = 123;
+            }
+            else
+            {
+                int n_groups_open = 0;
+                hdf5_file = H5Fopen(fname, H5F_ACC_RDONLY, H5P_DEFAULT);
+                if(hdf5_file < 0) {printf("can't open file `%s' for reading initial conditions.\n", fname); fflush(stdout); read_status = 123;}
+                for(type = 0; type < 6 && read_status == 0; type++)
                 {
-                    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "/PartType%d", type);
-                    hdf5_grp[type] = H5Gopen(hdf5_file, buf);
+                    if(npart_in_file[type] > 0)
+                    {
+                        snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "/PartType%d", type);
+                        hdf5_grp[type] = H5Gopen(hdf5_file, buf);
+                        if(hdf5_grp[type] < 0) {printf("no group %s in `%s'.\n", buf, fname); fflush(stdout); read_status = 124;}
+                        else {n_groups_open = type + 1;}
+                    }
+                }
+                if(read_status && hdf5_file >= 0)
+                {
+                    for(type = 0; type < n_groups_open; type++) {if(npart_in_file[type] > 0) {H5Gclose(hdf5_grp[type]);}}
+                    H5Fclose(hdf5_file);
                 }
             }
         }
@@ -1152,12 +1294,14 @@ int read_file(char *fname, int readTask, int lastTask)
         for(task = readTask + 1; task <= lastTask; task++)
         {
             MPI_Ssend(&header, sizeof(header), MPI_BYTE, task, TAG_HEADER, MPI_COMM_WORLD);
+            MPI_Ssend(npart_in_file, 6, MPI_LONG_LONG, task, TAG_HEADER, MPI_COMM_WORLD);
         }
 
     }
     else
     {
         MPI_Recv(&header, sizeof(header), MPI_BYTE, readTask, TAG_HEADER, MPI_COMM_WORLD, &status);
+        MPI_Recv(npart_in_file, 6, MPI_LONG_LONG, readTask, TAG_HEADER, MPI_COMM_WORLD, &status);
     }
 
     /* CHECKPOINT A: reconcile header open/parse status among the participants BEFORE any
@@ -1201,47 +1345,59 @@ int read_file(char *fname, int readTask, int lastTask)
 
     if(parallel_ic)
     {
+        /* A task other than the reader that cannot open the file (or its groups) does not stop the run: the reader has
+           the file open, so for this file the whole group falls back to the reader sending every task its share. */
+        int open_failed = 0;
         if(ThisTask != readTask)
         {
+            int n_groups_open = 0;
             hdf5_file = H5Fopen(fname, H5F_ACC_RDONLY, H5P_DEFAULT);
-            if(hdf5_file < 0) {printf("task %d: can't open file `%s' for reading initial conditions.\n", ThisTask, fname); fflush(stdout); read_status = 123;}
-            for(type = 0; type < 6 && read_status == 0; type++)
+            if(hdf5_file < 0) {printf("task %d: can't open file `%s' for reading initial conditions.\n", ThisTask, fname); fflush(stdout); open_failed = 1;}
+            for(type = 0; type < 6 && !open_failed; type++)
             {
-                if(header.npart[type] > 0)
+                if(npart_in_file[type] > 0)
                 {
                     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "/PartType%d", type);
                     hdf5_grp[type] = H5Gopen(hdf5_file, buf);
-                    if(hdf5_grp[type] < 0) {printf("task %d: no group %s in `%s'.\n", ThisTask, buf, fname); fflush(stdout); read_status = 124;}
+                    if(hdf5_grp[type] < 0) {printf("task %d: no group %s in `%s'.\n", ThisTask, buf, fname); fflush(stdout); open_failed = 1;}
+                    else {n_groups_open = type + 1;}
                 }
             }
+            if(open_failed && hdf5_file >= 0)
+            {
+                for(type = 0; type < n_groups_open; type++) {if(npart_in_file[type] > 0) {H5Gclose(hdf5_grp[type]);}}
+                H5Fclose(hdf5_file);
+            }
         }
-        /* every task must have the file before any reads: one that could not open it stops them all here */
-        read_status = read_file_sync_status(readTask, lastTask, read_status);
-        if(read_status) {endrun(read_status); return read_status;}
+        if(read_file_sync_status(readTask, lastTask, open_failed))
+        {
+            if(ThisTask == readTask) {printf("IC file `%s': at least one of tasks %d-%d could not open it; task %d reads it and sends each task its share instead.\n", fname, readTask + 1, lastTask, readTask); fflush(stdout);}
+            if(ThisTask != readTask && !open_failed)
+            {
+                for(type = 5; type >= 0; type--) {if(npart_in_file[type] > 0) {H5Gclose(hdf5_grp[type]);}}
+                H5Fclose(hdf5_file);
+            }
+            parallel_ic = 0;
+        }
     }
 
     if(ThisTask == readTask)
     {
-        for(i = 0, n_in_file = 0; i < 6; i++) {n_in_file += header.npart[i];}
+        for(i = 0, n_in_file = 0; i < 6; i++) {n_in_file += npart_in_file[i];}
 
+        long long type_total[6];
+        for(i = 0; i < 6; i++) {type_total[i] = (long long) header.npartTotal[i] + (((long long) header.npartTotalHighWord[i]) << 32);}
         printf("\nReading file `%s' on task=%d (contains %lld particles.)\n"
                " ..distributing this file to tasks %d-%d\n"
-               "Type 0 (gas):   %8d  (tot=%6d%09d) masstab=%g\n"
-               "Type 1 (halo):  %8d  (tot=%6d%09d) masstab=%g\n"
-               "Type 2 (alt):   %8d  (tot=%6d%09d) masstab=%g\n"
-               "Type 3 (pic):   %8d  (tot=%6d%09d) masstab=%g\n"
-               "Type 4 (stars): %8d  (tot=%6d%09d) masstab=%g\n"
-               "Type 5 (sink):  %8d  (tot=%6d%09d) masstab=%g\n\n", fname, ThisTask, n_in_file, readTask,
-               lastTask, header.npart[0], (int) (header.npartTotal[0] / 1000000000),
-               (int) (header.npartTotal[0] % 1000000000), All.MassTable[0], header.npart[1],
-               (int) (header.npartTotal[1] / 1000000000), (int) (header.npartTotal[1] % 1000000000),
-               All.MassTable[1], header.npart[2], (int) (header.npartTotal[2] / 1000000000),
-               (int) (header.npartTotal[2] % 1000000000), All.MassTable[2], header.npart[3],
-               (int) (header.npartTotal[3] / 1000000000), (int) (header.npartTotal[3] % 1000000000),
-               All.MassTable[3], header.npart[4], (int) (header.npartTotal[4] / 1000000000),
-               (int) (header.npartTotal[4] % 1000000000), All.MassTable[4], header.npart[5],
-               (int) (header.npartTotal[5] / 1000000000), (int) (header.npartTotal[5] % 1000000000),
-               All.MassTable[5]);
+               "Type 0 (gas):   %12lld  (tot=%15lld) masstab=%g\n"
+               "Type 1 (halo):  %12lld  (tot=%15lld) masstab=%g\n"
+               "Type 2 (alt):   %12lld  (tot=%15lld) masstab=%g\n"
+               "Type 3 (pic):   %12lld  (tot=%15lld) masstab=%g\n"
+               "Type 4 (stars): %12lld  (tot=%15lld) masstab=%g\n"
+               "Type 5 (sink):  %12lld  (tot=%15lld) masstab=%g\n\n", fname, ThisTask, n_in_file, readTask, lastTask,
+               npart_in_file[0], type_total[0], All.MassTable[0], npart_in_file[1], type_total[1], All.MassTable[1],
+               npart_in_file[2], type_total[2], All.MassTable[2], npart_in_file[3], type_total[3], All.MassTable[3],
+               npart_in_file[4], type_total[4], All.MassTable[4], npart_in_file[5], type_total[5], All.MassTable[5]);
         fflush(stdout);
     }
 
@@ -1255,7 +1411,7 @@ int read_file(char *fname, int readTask, int lastTask)
 
     for(type = 0, nall = 0; type < 6; type++)
     {
-        n_in_file = header.npart[type];
+        n_in_file = npart_in_file[type];
         n_for_this_task = n_in_file / ntask;
         if((ThisTask - readTask) < (n_in_file % ntask)) {n_for_this_task++;}
 
@@ -1302,6 +1458,9 @@ int read_file(char *fname, int readTask, int lastTask)
                 /* blocks only for restartflag == 0 */
                 if(RestartFlag == 0 && blocknr > IO_U
                    && blocknr != IO_BFLD
+#ifdef METALS
+                   && !(blocknr == IO_Z && All.ICFormat == 3) /* optional in HDF5 ICs: kept only if it holds exactly this build's species */
+#endif
 #ifdef INPUT_READ_KERNELRADIUS
                    && blocknr != IO_KERNELRADIUS
 #endif
@@ -1320,6 +1479,18 @@ int read_file(char *fname, int readTask, int lastTask)
 #endif
 #if (defined(EOS_TILLOTSON) || defined(EOS_ANEOS)) && !defined(IO_COMPOSITIONTYPE_NOT_IN_ICFILE)
                    && blocknr != IO_EOSCOMP
+#endif
+#ifdef EOS_ELASTIC
+                   && blocknr != IO_EOS_STRESS_TENSOR && blocknr != IO_EOS_RECENT_YIELD_MEMORY
+#endif
+#ifdef EOS_ELASTIC_MELT
+                   && blocknr != IO_EOS_STRENGTH_FRACTION
+#endif
+#ifdef EOS_DAMAGE_POROSITY
+                   && blocknr != IO_DAMAGE_POROSITY_DAMAGE && blocknr != IO_DAMAGE_POROSITY_DISTENTION && blocknr != IO_DAMAGE_POROSITY_ACTVCRACKS
+#if ((EOS_DAMAGE_POROSITY) & 1)
+                   && blocknr != IO_DAMAGE_POROSITY_FLAWSPERMASS
+#endif
 #endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==1)||(HYDRO_FIX_MESH_MOTION==2)||(HYDRO_FIX_MESH_MOTION==3))
                    && blocknr != IO_PARTVEL
@@ -1355,6 +1526,12 @@ int read_file(char *fname, int readTask, int lastTask)
                    && blocknr != IO_STAGE_PROTOSTAR
                    && blocknr != IO_AGE_PROTOSTAR
                    && blocknr != IO_LUM_SINGLESTAR
+#endif
+#if (defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)) && defined(INPUT_READ_SINKPROPS)
+                   /* the formation time is not only a protostellar-evolution property: eligible_for_hermite()'s
+                      settling window keys on it, so a pure-gravity sink build must be able to read a mature
+                      age from the IC too. Same gate init.cc uses to keep the read value for type 5. An
+                      absent dataset zero-fills (= formed at t=0). */
                    && blocknr != IO_AGE
 #endif
                    )
@@ -1382,6 +1559,15 @@ int read_file(char *fname, int readTask, int lastTask)
 #endif
 #endif
             
+#ifdef EOS_ELASTIC
+            if((blocknr == IO_EOS_STRESS_TENSOR || blocknr == IO_EOS_RECENT_YIELD_MEMORY || blocknr == IO_EOS_STRENGTH_FRACTION) && RestartFlag == 0 && All.ICFormat != 3) {continue;} /* a fresh binary IC need not carry it (stress then starts from zero); snapshots of every format do */
+#endif
+#ifdef EOS_DAMAGE_POROSITY
+            if((blocknr == IO_DAMAGE_POROSITY_DAMAGE || blocknr == IO_DAMAGE_POROSITY_DISTENTION || blocknr == IO_DAMAGE_POROSITY_ACTVCRACKS || blocknr == IO_DAMAGE_POROSITY_FLAWSPERMASS) && RestartFlag == 0 && All.ICFormat != 3) {continue;} /* likewise: an HDF5 IC may set them (e.g. a porous body), a fresh binary IC does not carry them */
+#endif
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+            if(blocknr == IO_NONIDEAL_FLUX && All.ICFormat != 3) {continue;} /* HDF5 only: legacy binary formats never carry it (it starts from zero) */
+#endif
 #ifdef CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART
             if(RestartFlag == 2 && blocknr == IO_COSMICRAY_SLOPES) {continue;}
 #if (CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART==2)
@@ -1453,23 +1639,18 @@ int read_file(char *fname, int readTask, int lastTask)
                 printf("reading block %d (%s)...\n", bnr, buf);
             }
             int printed_legacy_alias = 0;   /* limit the legacy-name notice below to one line per block */
+            int printed_missing_stress = 0; /* and the missing-stress warning */
 
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 1);
-            /* the old unformatted fortran binary GADGET-2 format used unsigned int for IDs, so that
-             * width has to be respected when reading one. All.ICFormat is what the reader actually
-             * parses the file as (it selects every format branch below), so it gates this too --
-             * All.SnapFormat alone described the file the run WRITES, and on a format-3 read with
-             * SnapFormat=1 it mis-sized the block against the HDF5 dtype. */
-            if(blocknr == IO_ID && All.ICFormat == 1 && ((RestartFlag == 0) || (RestartFlag == 2 && All.SnapFormat == 1))) {bytes_per_blockelement = sizeof(unsigned int);}
+            id_bytes_in_file = sizeof(MyIDType); /* binary IDs may be narrower than MyIDType: set from the record length below */
 #if (CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART==1)
             if(RestartFlag == 2 && blocknr == IO_COSMICRAY_ENERGY) {bytes_per_blockelement = (1) * get_input_float_bytes(blocknr);}
 #endif
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
             if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {bytes_per_blockelement = (header.flag_metals) * get_input_float_bytes(blocknr);}
 #endif
-            size_t comm_chunk_mb = All.CommChunkSize;
-            blockmaxlen = (size_t) ((comm_chunk_mb * 1024 * 1024) / bytes_per_blockelement);
-            npart = get_particles_in_block(blocknr, &typelist[0]);
+            blockmaxlen = (size_t) (comm_chunk_bytes() / bytes_per_blockelement);
+            npart = get_particles_in_block(blocknr, &typelist[0], npart_in_file);
 
             if(npart > 0)
             {
@@ -1493,12 +1674,25 @@ int read_file(char *fname, int readTask, int lastTask)
                               SKIP2;
                               SKIP;
                             }
+                            /* binary IDs are 32-bit (legacy GADGET-2) or 64-bit (MUSIC, our own binary snapshots): the record length
+                             * says which (the markers are 4-byte, so compared mod 2^32) */
+                            if(blocknr == IO_ID || blocknr == IO_CHILD_ID || blocknr == IO_GENERATION_ID)
+                            {
+                                if((unsigned int) blksize1 == (unsigned int) (npart * sizeof(unsigned int))) {id_bytes_in_file = sizeof(unsigned int);}
+                                else if((unsigned int) blksize1 != (unsigned int) (npart * sizeof(MyIDType)))
+                                {
+                                    printf("ID block %d: record length %u bytes fits neither 32- nor 64-bit IDs for %lld particles\n", bnr, (unsigned int) blksize1, npart);
+                                    fflush(stdout);
+                                    if(read_status == 0) {endrun(1890);}
+                                    read_status = 1890;
+                                }
+                            }
                         }
                     }
 
                 for(type = 0, offset = 0, nread = 0; type < 6; type++)
                 {
-                    n_in_file = header.npart[type];
+                    n_in_file = npart_in_file[type];
 
                     pcsum = 0;
 
@@ -1540,7 +1734,10 @@ int read_file(char *fname, int readTask, int lastTask)
                                     {
                                         if(read_status == 0)
                                         {
-                                            my_fread(CommBuffer, bytes_per_blockelement, pc, fd);
+                                            int narrow_ids = (id_bytes_in_file < (int) sizeof(MyIDType));
+                                            my_fread(CommBuffer, narrow_ids ? id_bytes_in_file : bytes_per_blockelement, pc, fd);
+                                            /* widen to MyIDType in place, last first so no unread ID is overwritten; memcpy because the two views alias */
+                                            if(narrow_ids) {for(long long k = pc - 1; k >= 0; k--) {unsigned int id32; memcpy(&id32, (char *) CommBuffer + k * sizeof(unsigned int), sizeof(id32)); ((MyIDType *) CommBuffer)[k] = id32;}}
                                             nread += pc;
                                         }
                                         else
@@ -1573,10 +1770,23 @@ int read_file(char *fname, int readTask, int lastTask)
                                             }
                                         }
                                         H5Eset_auto(old_func, old_client_data);
+#ifdef METALS
+                                        if(hdf5_dataset >= 0 && blocknr == IO_Z && RestartFlag == 0) /* the species list depends on the build: keep the ICs' metallicity only if it has exactly this build's columns */
+                                        {
+                                            hid_t filespace = H5Dget_space(hdf5_dataset); int ndims = H5Sget_simple_extent_ndims(filespace); hsize_t filedims[2] = {0, 1};
+                                            if(ndims == 1 || ndims == 2) {H5Sget_simple_extent_dims(filespace, filedims, NULL);}
+                                            H5Sclose(filespace);
+                                            int width_ok = (NUM_METAL_SPECIES == 1) ? (ndims == 1) : (ndims == 2 && filedims[1] == (hsize_t) NUM_METAL_SPECIES);
+                                            Metallicity_LoadedFromIC_PType[type] = width_ok ? 1 : 2;
+#ifndef NUCLEAR_NETWORK /* the nuclear network reads this block on a fresh start regardless, for its species */
+                                            if(!width_ok) {H5Dclose(hdf5_dataset); hdf5_dataset = -1;}
+#endif
+                                        }
+#endif
 
                                       if(hdf5_dataset >= 0)
                                       {
-                                        dims[0] = header.npart[type];
+                                        dims[0] = (hsize_t) npart_in_file[type];
                                         dims[1] = get_values_per_blockelement(blocknr);
 #if (CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART==1)
                                         if(RestartFlag == 2 && blocknr == IO_COSMICRAY_ENERGY) {dims[1] = 1;}
@@ -1608,7 +1818,9 @@ int read_file(char *fname, int readTask, int lastTask)
                                         switch(get_datatype_in_block(blocknr))
                                         {
                                             case 0:
-                                                hdf5_datatype = H5Tcopy(H5T_NATIVE_UINT);
+                                                /* CompositionType is signed: reading it into an unsigned type clipped a negative id
+                                                 * to 0 in HDF5's conversion, before init could refuse it */
+                                                hdf5_datatype = H5Tcopy(blocknr == IO_EOSCOMP ? H5T_NATIVE_INT : H5T_NATIVE_UINT);
                                                 break;
 
                                             case 1:
@@ -1665,6 +1877,25 @@ int read_file(char *fname, int readTask, int lastTask)
                                         /* Optional HDF5 dataset absent: zero CommBuffer so empty_read_buffer's
                                          * dispatch defaults the field rather than reading stale buffer contents. */
                                         memset(CommBuffer, 0, bytes_per_blockelement * pc);
+#ifdef EOS_ELASTIC_MELT
+                                        if(blocknr == IO_EOS_STRENGTH_FRACTION) /* absent: the file's stress is taken as at the cold modulus (a present block is used as it is, zero included) */
+                                        {
+                                            if(get_input_float_bytes(blocknr) == sizeof(double)) {for(int n_one = 0; n_one < pc; n_one++) {((double *) CommBuffer)[n_one] = 1;}}
+                                            else {for(int n_one = 0; n_one < pc; n_one++) {((float *) CommBuffer)[n_one] = 1;}}
+                                        }
+#endif
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+                                        if(blocknr == IO_DAMAGE_POROSITY_FLAWSPERMASS) /* absent: -1 = not set, told apart from a present value (zero included); init decides what an unset element gets */
+                                        {
+                                            if(get_input_float_bytes(blocknr) == sizeof(double)) {for(int n_one = 0; n_one < pc; n_one++) {((double *) CommBuffer)[n_one] = -1;}}
+                                            else {for(int n_one = 0; n_one < pc; n_one++) {((float *) CommBuffer)[n_one] = -1;}}
+                                        }
+#endif
+                                        if(RestartFlag == 2 && (blocknr == IO_EOS_STRESS_TENSOR || blocknr == IO_EOS_RECENT_YIELD_MEMORY) && ThisTask == readTask && !printed_missing_stress)
+                                        {
+                                            printf("WARNING: the snapshot has no '%s' block for particle type %d: this evolved solid state of these elements restarts from zero, not from its evolved value.\n", buf, type);
+                                            printed_missing_stress = 1;
+                                        }
                                       }
                                     }
 
@@ -1699,7 +1930,7 @@ int read_file(char *fname, int readTask, int lastTask)
                             {
                                 printf("incorrect block-sizes detected!\n");
                                 printf("Task=%d   blocknr=%d  blksize1=%d  blksize2=%d\n", ThisTask, bnr, blksize1, blksize2);
-                                if(blocknr == IO_ID) {printf("Possible mismatch of 32bit and 64bit ID's in IC file and GIZMO compilation !\n");}
+                                if(blocknr == IO_ID) {printf("The ID block's leading and trailing record lengths disagree: corrupt or inconsistent file\n");}
                                 fflush(stdout);
                                 /* soft: corrupt/misaligned binary block. This block's P2P already completed; keep the
                                  * outer block loop running (readTask keeps Ssending, peers keep Recv-ing) so no peer is
@@ -1715,7 +1946,7 @@ int read_file(char *fname, int readTask, int lastTask)
 
     for(type = 0; type < 6; type++)
     {
-        n_in_file = header.npart[type];
+        n_in_file = npart_in_file[type];
         n_for_this_task = n_in_file / ntask;
         if((ThisTask - readTask) < (n_in_file % ntask)) {n_for_this_task++;}
         NumPart += n_for_this_task;
@@ -1728,7 +1959,7 @@ int read_file(char *fname, int readTask, int lastTask)
 
         if(All.ICFormat == 3)
         {
-            for(type = 5; type >= 0; type--) {if(header.npart[type] > 0) {H5Gclose(hdf5_grp[type]);}}
+            for(type = 5; type >= 0; type--) {if(npart_in_file[type] > 0) {H5Gclose(hdf5_grp[type]);}}
             H5Fclose(hdf5_file);
         }
 
@@ -1787,6 +2018,7 @@ static int read_input_header(char *path, int single_file, int quiet)
                     if(readable && fread(&dummy, sizeof(dummy), 1, fd) != 1)   {readable = 0;}
                     if(readable && fread(&header, sizeof(header), 1, fd) != 1) {readable = 0;}
                     if(readable && fread(&dummy, sizeof(dummy), 1, fd) != 1)   {readable = 0;}
+                    npart_in_file_from_binary_header();
                 }
                 else
                 {
@@ -1801,11 +2033,12 @@ static int read_input_header(char *path, int single_file, int quiet)
                     my_fread(&dummy, sizeof(dummy), 1, fd);
                     my_fread(&header, sizeof(header), 1, fd);
                     my_fread(&dummy, sizeof(dummy), 1, fd);
+                    npart_in_file_from_binary_header();
                 }
             }
             fclose(fd);
 
-            if(All.ICFormat == 3) {read_header_attributes_in_hdf5(path);}
+            if(All.ICFormat == 3 && read_header_attributes_in_hdf5(path)) {readable = 0;}
 
             if(!readable)      {header.num_files = 0;}   /* truncated: report nothing usable found */
             else if(single_file) {header.num_files = 1;}
@@ -1813,6 +2046,7 @@ static int read_input_header(char *path, int single_file, int quiet)
     }
 
     MPI_Bcast(&header, sizeof(header), MPI_BYTE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(npart_in_file, 6, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
 
     return header.num_files;
 }
@@ -1850,6 +2084,8 @@ long long peek_total_particles_in_input(const char *fname)
 {
     char first_of_many[DEFAULT_PATH_BUFFERSIZE_TOUSE], single[DEFAULT_PATH_BUFFERSIZE_TOUSE];
     struct io_header saved_header = header;
+    long long saved_npart_in_file[6];
+    for(int i = 0; i < 6; i++) {saved_npart_in_file[i] = npart_in_file[i];}
     long long total = 0;
     int found;
 
@@ -1862,13 +2098,14 @@ long long peek_total_particles_in_input(const char *fname)
     if(found > 0)
     {
         if(header.num_files <= 1)
-            for(int i = 0; i < 6; i++) {total += header.npart[i];}
+            for(int i = 0; i < 6; i++) {total += npart_in_file[i];}
         else
             for(int i = 0; i < 6; i++)
                 {total += header.npartTotal[i] + (((long long) header.npartTotalHighWord[i]) << 32);}
     }
 
     header = saved_header;   /* leave the header exactly as it was: the real read owns it */
+    for(int i = 0; i < 6; i++) {npart_in_file[i] = saved_npart_in_file[i];}
 
     return (found > 0) ? total : -1;
 }
@@ -1892,7 +2129,7 @@ int find_files(char *fname)
         fflush(stdout);
     }
 
-    endrun(0);
+    endrun(1); /* a failure, not a normal end: the caller drains it at read_ic:header before the header is used */
     return 0;
 }
 
@@ -1938,12 +2175,14 @@ void distribute_file(int nfiles, int firstfile, int firsttask, int lasttask, int
 
 
 
-void read_header_attributes_in_hdf5(char *fname)
+int read_header_attributes_in_hdf5(char *fname)
 {
     hid_t hdf5_file, hdf5_headergrp, hdf5_attribute;
 
     hdf5_file = H5Fopen(fname, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if(hdf5_file < 0) {return 1;}   /* nothing read: the header keeps its previous contents */
     hdf5_headergrp = H5Gopen(hdf5_file, "/Header");
+    if(hdf5_headergrp < 0) {H5Fclose(hdf5_file); return 2;}
 
     /* Suppress HDF5 error messages for optional attributes that may not exist in the IC file.
        Many ICs lack attributes like Flag_DoublePrecision, Flag_Metals, cell merge/split limits, etc.
@@ -1959,17 +2198,31 @@ void read_header_attributes_in_hdf5(char *fname)
     H5Eset_auto(NULL, NULL);
 #endif
 
+    /* Counts are read as 64-bit, whatever width the file stores them at, so a file holding more than
+       2^31 particles of a type is read whole rather than narrowed. The 32-bit header field keeps a copy
+       capped at INT_MAX for the binary layout only; nothing in the reader counts from it. */
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "NumPart_ThisFile");
-    H5Aread(hdf5_attribute, H5T_NATIVE_INT, header.npart);
+    H5Aread(hdf5_attribute, H5T_NATIVE_LLONG, npart_in_file);
     H5Aclose(hdf5_attribute);
+    for(int t = 0; t < 6; t++) {header.npart[t] = (npart_in_file[t] > INT_MAX) ? INT_MAX : (int) npart_in_file[t];}
 
+    /* The total is a low and a high 32-bit word. Writers that store the whole count in the low word as a
+       64-bit integer are read correctly too: both words are read at 64 bits and recombined. */
+    unsigned long long total_low[6] = {0,0,0,0,0,0}, total_high[6] = {0,0,0,0,0,0};
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "NumPart_Total");
-    H5Aread(hdf5_attribute, H5T_NATIVE_UINT, header.npartTotal);
+    H5Aread(hdf5_attribute, H5T_NATIVE_ULLONG, total_low);
     H5Aclose(hdf5_attribute);
 
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "NumPart_Total_HighWord");
-    H5Aread(hdf5_attribute, H5T_NATIVE_UINT, header.npartTotalHighWord);
+    H5Aread(hdf5_attribute, H5T_NATIVE_ULLONG, total_high);
     H5Aclose(hdf5_attribute);
+    for(int t = 0; t < 6; t++)
+    {
+        /* a low word too large for 32 bits already holds the whole count: its writer stored it at 64 bits */
+        unsigned long long total = (total_low[t] > 0xFFFFFFFFULL) ? total_low[t] : total_low[t] + (total_high[t] << 32);
+        header.npartTotal[t] = (unsigned int) (total & 0xFFFFFFFFULL);
+        header.npartTotalHighWord[t] = (unsigned int) (total >> 32);
+    }
 
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "MassTable");
     H5Aread(hdf5_attribute, H5T_NATIVE_DOUBLE, header.mass);
@@ -2012,6 +2265,7 @@ void read_header_attributes_in_hdf5(char *fname)
 #else
     H5Eset_auto(old_func, old_client_data);
 #endif
+    return 0;
 }
 
 

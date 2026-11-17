@@ -65,7 +65,9 @@ struct Quantities_for_Gradients
 #endif
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
     MyFloat Rad_E_gamma[N_RT_FREQ_BINS];
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
     SymmetricTensor2<MyFloat> Rad_E_gamma_ET[N_RT_FREQ_BINS];
+#endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
     MyFloat Rad_Flux[N_RT_FREQ_BINS][3];
 #endif
@@ -106,6 +108,9 @@ struct GasGraddata_in_
     Vec3<MyDouble> Pos;
     MyFloat Mass;
     MyFloat KernelRadius;
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
+    int CompositionType; /* gas or solid: the constrained-gradient face construction and a solid's own velocity gradient need it */
+#endif
 #ifdef MHD_CONSTRAINED_GRADIENT
     MyDouble ConditionNumber;
     SymmetricTensor2<MyDouble> NV_T;
@@ -113,6 +118,7 @@ struct GasGraddata_in_
 #ifdef MHD_MODIFIED_GRADIENT
     MyFloat MG_cgcoeff;
     long long MG_piece_token;
+    MyDouble MG_envelope;
 #endif
 #endif
 #ifdef SPHAV_CD10_VISCOSITY_SWITCH
@@ -160,6 +166,11 @@ struct GasGraddata_out_
     struct Quantities_for_Gradients Maxima;
     struct Quantities_for_Gradients Minima;
     MyFloat MaxDistance;
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
+    MyDouble SolidVelocityDifferences[3][3]; /* a solid's sums over its solid neighbours: the velocity-gradient numerator, */
+    MyDouble SolidSeparationMoments[3][3];   /* the separation moment matrix of the same least-squares fit, */
+    MyDouble GasNeighbours;                  /* and the number of its gas neighbours */
+#endif
 #ifdef TURB_DIFF_DYNAMIC
     Vec3<MyDouble> Velocity_hat;
 #endif
@@ -373,7 +384,7 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
         kernel->dwk_j = kernel->wk_j = 0;
     }
 
-    double Particle_Size_j = P[j].Get_Particle_Size();
+    double Particle_Size_j = pow(P[j].Mass / CellP[j].Density, 1./NUMDIMS); /* same cell-volume definition on both sides */
     double Particle_Size_i = pow(local->Mass / local->GQuant.Density, 1./NUMDIMS);
 
     /* ---- MHD constrained gradient face computation ---- */
@@ -406,8 +417,11 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 
 #ifdef MHD_MODIFIED_GRADIENT
         {
-            /* the MG shift (c_j-c_i)(r^2/8) A of both face states changes (B_R+B_L).A by (c_j-c_i)(r^2/4)|A|^2 */
-            double mg_delta = 0.25 * r2 * mg_face_coefficient_difference(local->MG_cgcoeff, local->MG_piece_token, CellP[j].MG_cgcoeff, CellP[j].MG_piece_token) * Face_Area_Vec.norm_sq();
+            /* the MG shift (c_j-c_i) kappa A of both face states changes (B_R+B_L).A by 2 (c_j-c_i) kappa |A|^2 */
+            double mg_kappa = mg_face_shift_factor(r2, local->GQuant.B.norm_sq(), CellP[j].Bfield().norm_sq(), All.MG_RelativeFieldInvMeanB2);
+            double mg_delta = 2.0 * mg_kappa * mg_face_coefficient_difference(local->MG_cgcoeff, local->MG_piece_token, local->MG_envelope,
+                                                                         CellP[j].MG_cgcoeff, CellP[j].MG_piece_token, CellP[j].MG_envelope,
+                                                                         mg_kappa, Face_Area_Vec.norm_sq(), All.Flag_SkipMGSolve) * Face_Area_Vec.norm_sq();
             out->FaceDotB += mg_delta;
         }
 #endif
@@ -537,11 +551,15 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #endif
 
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
     SymmetricTensor2<double> dnET[N_RT_FREQ_BINS];
+#endif
     double dn[N_RT_FREQ_BINS];
     double V_i_inv = 1/V_i, V_j_inv = CellP[j].Density/P[j].Mass;
     for(int k=0;k<N_RT_FREQ_BINS;k++) {
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
         dnET[k] = (CellP[j].Rad_E_gamma_Pred[k]*V_j_inv) * CellP[j].ET[k] - (local->GQuant.Rad_E_gamma[k]*V_i_inv) * local->GQuant.Rad_E_gamma_ET[k];
+#endif
         dn[k] = CellP[j].Rad_E_gamma_Pred[k]*V_j_inv - local->GQuant.Rad_E_gamma[k]*V_i_inv;
         MINMAX_CHECK(dn[k], out->Minima.Rad_E_gamma[k], out->Maxima.Rad_E_gamma[k]);
     }
@@ -587,6 +605,12 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
     if(kernel->r < kernel->h_i)
     {
         double wk_for_grad = gradient_pair_weight(kernel, sph_gradients_flag_i, P[j].Mass);
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
+        /* a solid's velocity gradient from its own material, for its stress rate (gradients_loop.cc) */
+        volatile int solid_target = solid_material_is_elastic(local->CompositionType); /* volatile: runtime gates in device code */
+        volatile int solid_neighbour = solid_material_is_elastic(CellP[j].CompositionType);
+        if(solid_target && !solid_neighbour) {out->GasNeighbours += 1;}
+#endif
         for(int k=0;k<3;k++)
         {
             double wk_xyz_i = -wk_for_grad * kernel->dp[k];
@@ -596,6 +620,11 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #endif
             out->Gradients[k].Pressure += wk_xyz_i * dp_pres;
             out->Gradients[k].Velocity += wk_xyz_i * dv;
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
+            if(solid_target && solid_neighbour) {
+                for(int k2=0;k2<3;k2++) {out->SolidVelocityDifferences[k2][k] += wk_xyz_i * dv[k2]; out->SolidSeparationMoments[k][k2] += wk_for_grad * kernel->dp[k] * kernel->dp[k2];}
+            }
+#endif
 #ifdef TURB_DIFF_DYNAMIC
             {Vec3<MyDouble> dv_bar2 = CellP[j].Velocity_bar - local->GQuant.Velocity_bar;
              NGB_SHEARBOX_BOUNDARY_VELCORR_(local->Pos, P[j].Pos, dv_bar2, -1);
@@ -630,7 +659,9 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
             for(int k2=0;k2<N_RT_FREQ_BINS;k2++) {
                 out->Gradients[k].Rad_E_gamma[k2] += wk_xyz_i * dn[k2];
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
                 out->Gradients[k].Rad_E_gamma_ET[k2] += wk_xyz_i * dnET[k2];
+#endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
                 int k_d; for(k_d=0;k_d<3;k_d++) {out->Gradients[k].Rad_Flux[k2][k_d] += wk_xyz_i * dflux_rt[k2][k_d];}
 #endif
@@ -707,7 +738,7 @@ void gradient_accumulate_neighbor_iter(struct GasGraddata_in_ *local, struct Gas
         kernel->dwk_j = kernel->wk_j = 0;
     }
 
-    double Particle_Size_j = P[j].Get_Particle_Size();
+    double Particle_Size_j = pow(P[j].Mass / CellP[j].Density, 1./NUMDIMS); /* same cell-volume definition on both sides */
     double Particle_Size_i = pow(local->Mass / local->GQuant.Density, 1./NUMDIMS);
 
     {
@@ -730,8 +761,11 @@ void gradient_accumulate_neighbor_iter(struct GasGraddata_in_ *local, struct Gas
 
 #ifdef MHD_MODIFIED_GRADIENT
         {
-            /* the MG shift (c_j-c_i)(r^2/8) A of both face states changes (B_R+B_L).A by (c_j-c_i)(r^2/4)|A|^2 */
-            double mg_delta = 0.25 * r2 * mg_face_coefficient_difference(local->MG_cgcoeff, local->MG_piece_token, CellP[j].MG_cgcoeff, CellP[j].MG_piece_token) * Face_Area_Vec.norm_sq();
+            /* the MG shift (c_j-c_i) kappa A of both face states changes (B_R+B_L).A by 2 (c_j-c_i) kappa |A|^2 */
+            double mg_kappa = mg_face_shift_factor(r2, local->GQuant.B.norm_sq(), CellP[j].Bfield().norm_sq(), All.MG_RelativeFieldInvMeanB2);
+            double mg_delta = 2.0 * mg_kappa * mg_face_coefficient_difference(local->MG_cgcoeff, local->MG_piece_token, local->MG_envelope,
+                                                                         CellP[j].MG_cgcoeff, CellP[j].MG_piece_token, CellP[j].MG_envelope,
+                                                                         mg_kappa, Face_Area_Vec.norm_sq(), All.Flag_SkipMGSolve) * Face_Area_Vec.norm_sq();
             out->FaceDotB += mg_delta;
         }
 #endif

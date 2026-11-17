@@ -5,10 +5,10 @@
  * integration plan.
  *
  * Keys store as Morton128 = (uint64_t hi, uint64_t lo)
- * to match GIZMO's CPU build precision (BITS_PER_DIMENSION = 42).  Encoding
- * uses the same IEEE-754 mantissa-bit-trick as the host
- * domain_double_to_int (domain/domain.cc:2711) for bit-equivalent integer
- * coordinate extraction.
+ * to match GIZMO's CPU build precision (BITS_PER_DIMENSION = 42).  The
+ * position -> integer coordinate mapping is the shared one in
+ * domain/domain_key_functions.h, the same source the host decomposition
+ * keys with.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -27,8 +27,11 @@
 #include "../core/proto.h"
 #include "../declarations/gpu_error_check.h"
 #include "../system/gpu_particles_arena.h"
+#include "../domain/domain_key_functions.h"
 #include "gpu_morton.h"
 #include "gpu_morton_functions.h"
+
+static_assert(BITS_PER_DIMENSION == 42, "the 128-bit Morton encode splits each axis into two 21-bit halves");
 
 
 namespace {
@@ -76,36 +79,18 @@ extern "C" int gpu_morton_compute_global_keys(int npart)
     }
 
     /* Capture domain bounds.  DomainCorner / DomainLen are host globals not
-     * mirrored in All_dev; pass by value into the kernel.  Match host
-     * convention from domain.cc:496-498 / forcetree.cc:236-238: feed
-     * domain_double_to_int the value (Pos - DomainCorner)/DomainLen + 1.0
-     * (in [1.0, 2.0)), and let the IEEE-754 mantissa-bit-trick extract
-     * 42 bits of fractional position. */
+     * mirrored in All_dev; pass by value into the kernel. */
     const double dc0 = DomainCorner[0];
     const double dc1 = DomainCorner[1];
     const double dc2 = DomainCorner[2];
     const double dlen = DomainLen;
+    const int    bits = BITS_PER_DIMENSION;
 
     Morton128 *keys = g_morton_keys;
     Kokkos::parallel_for("morton_encode_global", npart, KOKKOS_LAMBDA(int i) {
-        double fx = (dlen > 0.0) ? ((P_dev[i].Pos[0] - dc0) / dlen) : 0.0;
-        double fy = (dlen > 0.0) ? ((P_dev[i].Pos[1] - dc1) / dlen) : 0.0;
-        double fz = (dlen > 0.0) ? ((P_dev[i].Pos[2] - dc2) / dlen) : 0.0;
-        /* The key is the mantissa of (frac + 1.0), so the value that has to land in
-         * [1.0, 2.0) is that sum: clamping the fraction instead leaves the addition
-         * free to round the result up to 2.0, whose mantissa is zero, which keys the
-         * coordinate to the first cell rather than the last one.  Domain decomp
-         * pre-wraps periodic cases; this protects against rare boundary FP drift.
-         * The upper bound is the largest double below 2.0, and the tests are written
-         * so a NaN coordinate takes the lower one rather than passing through. */
-        double sx = fx + 1.0, sy = fy + 1.0, sz = fz + 1.0;
-        if(!(sx >= 1.0)) {sx = 1.0;} if(!(sx < 2.0)) {sx = 0x1.fffffffffffffp0;}
-        if(!(sy >= 1.0)) {sy = 1.0;} if(!(sy < 2.0)) {sy = 0x1.fffffffffffffp0;}
-        if(!(sz >= 1.0)) {sz = 1.0;} if(!(sz < 2.0)) {sz = 0x1.fffffffffffffp0;}
-        uint64_t ix = gpu_morton_double_to_int42(sx);
-        uint64_t iy = gpu_morton_double_to_int42(sy);
-        uint64_t iz = gpu_morton_double_to_int42(sz);
-        keys[i] = gpu_morton_encode128(ix, iy, iz);
+        uint64_t c[3];
+        domain_key_integer_coordinates(P_dev[i].Pos[0], P_dev[i].Pos[1], P_dev[i].Pos[2], dc0, dc1, dc2, dlen, bits, c);
+        keys[i] = gpu_morton_encode128(c[0], c[1], c[2]);
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("morton_encode_global", npart);

@@ -69,6 +69,11 @@ struct temporary_data_topass
     struct Quantities_for_Gradients Maxima;
     struct Quantities_for_Gradients Minima;
     MyFloat MaxDistance;
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
+    MyDouble SolidVelocityDifferences[3][3];
+    MyDouble SolidSeparationMoments[3][3];
+    MyDouble GasNeighbours;
+#endif
 #if defined(KERNEL_CRK_FACES)
     MyDouble m0;
     MyDouble m1[3];
@@ -169,6 +174,7 @@ struct GradientsDeviceContext : NeighborLoopDeviceContextBase
 struct GradientsSpec
 {
     static constexpr const char *loop_name = "gradients";
+    static constexpr bool writeback_writes_only_own_particle = true;   /* writes its own P[i]/CellP[i] fields, passer[i] and its own accumulator only */
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only (delegates to gradient_accumulate_neighbor: out-> + local kernel scratch); no j-write, no atomics -> threaded eval bit-identical */
 
     /* Symmetric gas-gas topology (matches gizmo_sym_neighbor_list + the
@@ -343,7 +349,9 @@ struct GradientsSpec
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
         for(int k = 0; k < N_RT_FREQ_BINS; k++) {
             local.GQuant.Rad_E_gamma[k]    = kc[i].Rad_E_gamma_Pred[k];
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
             local.GQuant.Rad_E_gamma_ET[k] = kc[i].ET[k];
+#endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
             for(int k2 = 0; k2 < 3; k2++) {
                 local.GQuant.Rad_Flux[k][k2] = kc[i].Rad_Flux_Pred[k][k2];
@@ -358,6 +366,9 @@ struct GradientsSpec
         local.DelayTime = kc[i].DelayTime;
 #endif
 #endif
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
+        local.CompositionType = kc[i].CompositionType;
+#endif
 #ifdef MHD_CONSTRAINED_GRADIENT
         local.ConditionNumber = kc[i].ConditionNumber;
         local.NV_T            = kc[i].NV_T;
@@ -369,6 +380,7 @@ struct GradientsSpec
 #ifdef MHD_MODIFIED_GRADIENT
         local.MG_cgcoeff = kc[i].MG_cgcoeff;
         local.MG_piece_token = kc[i].MG_piece_token;
+        local.MG_envelope = kc[i].MG_envelope;
 #endif
 #endif
 
@@ -449,6 +461,10 @@ struct GradientsSpec
 #define MERGE_MAX(field)  do { if(src.field > dst.field) dst.field = src.field; } while(0)
 #define MERGE_MIN(field)  do { if(src.field < dst.field) dst.field = src.field; } while(0)
 
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
+        for(int k = 0; k < 3; k++) { for(int k2 = 0; k2 < 3; k2++) { MERGE_ADD(SolidVelocityDifferences[k][k2]); MERGE_ADD(SolidSeparationMoments[k][k2]); } }
+        MERGE_ADD(GasNeighbours);
+#endif
         /* Gradients[k].* — additive for every quantity in Quantities_for_Gradients. */
         for(int k = 0; k < 3; k++) {
             MERGE_ADD(Gradients[k].Density);
@@ -469,10 +485,12 @@ struct GradientsSpec
 #if defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
             for(int j = 0; j < N_RT_FREQ_BINS; j++) {
                 MERGE_ADD(Gradients[k].Rad_E_gamma[j]);
+#ifdef RT_COMPGRAD_ET_IN_NGB_LOOP
                 /* SymmetricTensor2 stores 6 unique elements behind [i][j]==[j][i]
                  * aliasing — iterate raw storage to avoid double-adding the
                  * off-diagonals (xy/yz/xz appear via both index orderings). */
                 for(int kd = 0; kd < 6; kd++) { MERGE_ADD(Gradients[k].Rad_E_gamma_ET[j].data[kd]); }
+#endif
 #if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
                 for(int kd = 0; kd < 3; kd++) { MERGE_ADD(Gradients[k].Rad_Flux[j][kd]); }
 #endif
@@ -605,6 +623,7 @@ struct GradientsSpec
 struct GradientsIterSpec
 {
     static constexpr const char *loop_name = "gradients";
+    static constexpr bool writeback_writes_only_own_particle = true;   /* writes passer[i] only */
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only; no j-write, no atomics */
 
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;

@@ -15,6 +15,9 @@
 #ifdef CBE_INTEGRATOR
 #include "../sidm/sidm_gpu_decls.h"
 #endif
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+#include "../hydro/nonideal_mhd_functions.h"
+#endif
 
 /*!
  * This file was originally part of the GADGET3 code developed by
@@ -162,6 +165,9 @@ void do_second_halfstep_kick(void)
 #ifdef TURB_DRIVING
     do_turb_driving_step_second_half();
 #endif
+#if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
+    eos_limits_count_cell_updates();
+#endif
     gpu_particles_arena_invalidate(); /* host Vel/Entropy kicked; arena stale */
 }
 
@@ -285,6 +291,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 
             /* load and update the particle masses : particle mass update here, from hydro fluxes */
             mass_old = CellP[i].MassTrue; mass_pred = P[i].Mass; mass_new = mass_old + dMass; CellP[i].MassTrue = mass_new; // UNITS: remember all time derivatives (DtX, dX) are in -physical- units; as are mass, entropy/internal energy, but -not- velocity //
+#ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+            if(mass_old > 0 && mass_new > 0 && CellP[i].Density_ExplicitInt > 0) {CellP[i].Density_ExplicitInt *= mass_new / mass_old;} /* the integrated density follows -rho div(v) below; the mass a cell exchanges here changes its density at fixed volume */
+#endif
             /* double e_old = mass_old * CellP[i].InternalEnergy; for(j = 0; j< 3; j++) e_old += 0.5*mass_old * (P[i].Vel[j]/All.cf_atime)*(P[i].Vel[j]/All.cf_atime); // physical //
             for(j = 0; j < 3; j++) // momentum-space-kick
             {
@@ -329,7 +338,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             /* calculate the contribution to the energy change from the mass fluxes in the gravitation field */
-            dEnt_Gravity += -dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
+            dEnt_Gravity += dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
 #ifdef GENERAL_RELATIVITY
             double du_tot = mass_pred/mass_new*CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity; /* the GR kick rate is defined with this mass_pred/mass_new factor */
@@ -339,6 +348,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
             if((mode == 1) && (du_tot != 0) && (dt_hydrokick > 0)) { /* if about to consider second-halfstep kick (just after hydro) */
                 CellP[i].CoolingIsOperatorSplitThisTimestep=0; /* default to assume un-split */
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+                if(eos_branch_of(CellP[i].CompositionType) != EOS_BRANCH_NONE) {CellP[i].CoolingIsOperatorSplitThisTimestep=1;} /* a solid material takes no gas cooling, so its hydro work is applied here, never handed to the cooling solver */
+#endif
 #if 0 /* this is a more sophisticated check to see if we need to split the cooling from the hydro work term, but it is not currently used because it is less accurate for complicated non-trivial chemistry, which we now adopt, and the energy conservation issues were more related to older problems in the code that we have since fixed*/
                 /* decide if we need to split this particular cell on this particular timestep, since this un-split solver can lead to energy conservation problems if the mechanical heating is much larger than cooling; compare the effective heating rate from the hydro work term to a reference cooling time (which is set to a typical cooling time for the cell, based on its density and the current timestep) */
                 CellP[i].CoolingIsOperatorSplitThisTimestep=1; /* default to assume split */
@@ -401,32 +413,52 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #endif // closes ENERGY_ENTROPY_SWITCH_IS_ACTIVE
             
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
-            CellP[i].Density_ExplicitInt *= exp(-DMIN(1.5,DMAX(-1.5,P[i].Particle_DivVel*All.cf_a2inv * dt_hydrokick))); /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
-            if(CellP[i].FaceClosureError > 0) {double drho2 = CellP[i].Gradients.Density.norm_sq(); /* the evolved density evolves back to the explicit density on a relaxation time of order the sound-crossing or tension wave-crossing time across the density gradient length */
+            double divergence_for_volume = P[i].Particle_DivVel;
+#ifdef SOLID_VOLUME_FROM_SOLID_NEIGHBOURS
+            if(CellP[i].SolidBesideGas) {divergence_for_volume = CellP[i].SolidVelocityDivergence;} /* a solid beside gas: its own material's divergence */
+#endif
+            CellP[i].Density_ExplicitInt *= exp(-DMIN(1.5,DMAX(-1.5,divergence_for_volume*All.cf_a2inv * dt_hydrokick))); /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
+            int relax_to_kernel_density = (CellP[i].KernelDensityForVolumeRelaxation > 0 && isfinite(CellP[i].KernelDensityForVolumeRelaxation));
+#ifdef SOLID_VOLUME_FROM_SOLID_NEIGHBOURS
+            if(CellP[i].SolidBesideGas) {relax_to_kernel_density = 0;} /* its kernel density counts the gas around it: it keeps its own integrated volume */
+#endif
+            if(relax_to_kernel_density) {double drho2 = CellP[i].Gradients.Density.norm_sq(); /* the evolved density evolves back to the explicit density on a relaxation time of order the sound-crossing or tension wave-crossing time across the density gradient length */
                 if(drho2>0 && CellP[i].Density_ExplicitInt>0 && CellP[i].Density>0) {
                     double Lgrad = CellP[i].Density / sqrt(drho2); Lgrad=DMAX(Lgrad,P[i].KernelRadius); double cs_eff_forrestoringforce=CellP[i].effective_soundspeed(); /* gradient scale length and sound speed */
-#if defined(EOS_TILLOTSON)
-                    cs_eff_forrestoringforce=DMIN(cs_eff_forrestoringforce , sqrt(All.Tillotson_EOS_params[CellP[i].CompositionType][10] / CellP[i].Density)); /* speed of deviatoric waves, which is most relevant, if defined */
+#if defined(EOS_ELASTIC)
+                    {double mu_shear = solid_material_is_elastic(CellP[i].CompositionType) ? solid_material_of(CellP[i].CompositionType).ShearModulus : 0;
+                    if(mu_shear > 0) {cs_eff_forrestoringforce=DMIN(cs_eff_forrestoringforce , sqrt(mu_shear / CellP[i].Density));}} /* speed of deviatoric (transverse) waves, which is most relevant, in a solid with strength */
 #endif
-                    double delta = 0.1 * dt_hydrokick * cs_eff_forrestoringforce / Lgrad, q0=log(CellP[i].Density_ExplicitInt), q1=log(P[i].Mass/CellP[i].FaceClosureError), qn=0; if(delta > 0.005) {qn=q0*exp(-delta) + q1*(1.-exp(-delta));} else {qn=q0 + (q1-q0)*delta*(1.-0.5*delta);} /* evolves in log-space across this span */
-                    CellP[i].Density_ExplicitInt = exp(q0); /* set final density */
+                    double delta = 0.1 * dt_hydrokick * cs_eff_forrestoringforce / Lgrad, q0=log(CellP[i].Density_ExplicitInt), q1=log(CellP[i].KernelDensityForVolumeRelaxation), qn=0; if(delta > 0.005) {qn=q0*exp(-delta) + q1*(1.-exp(-delta));} else {qn=q0 + (q1-q0)*delta*(1.-0.5*delta);} /* evolves in log-space across this span */
+                    if(isfinite(qn)) {CellP[i].Density_ExplicitInt = exp(qn);} /* set final density (relaxed toward the kernel density) */
                 }}
 #endif
 
+            double u_floor = 0; /* the lowest energy the material's equation of state is valid at (0: none) */
+#ifdef EOS_ANEOS
+            {double rho_eos = CellP[i].Density;
+#ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+            if(mode == 1) {rho_eos = CellP[i].Density_ExplicitInt;} /* the density the equation of state is evaluated at after this kick (assigned below) */
+#endif
+            u_floor = lowest_valid_internal_energy(ANEOS_Tables, CellP[i].CompositionType, rho_eos);}
+#endif
 #ifdef RADTRANSFER /* block here to deal with tricky cases where radiation energy density is -much- larger than thermal, re-distribute the energy that would have taken us negative in gas back into radiation */
             int kfreq; double erad_tot=0,emin=0,enew=0,demin=0,dErad=0,rsol_fac=C_LIGHT_CODE_REDUCED/C_LIGHT_CODE;  for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {erad_tot+=CellP[i].Rad_E_gamma[kfreq];}
             if(erad_tot > 0) // do some checks if this helps or hurts (identical setup in predict)
             {
                 double u_before_radblock = CellP[i].InternalEnergy;
-                demin=0.025*CellP[i].InternalEnergy; emin=0.025*(erad_tot/rsol_fac + CellP[i].InternalEnergy*P[i].Mass); enew=DMAX(erad_tot/rsol_fac + dEnt*P[i].Mass, emin);
-                dEnt=(enew - erad_tot/rsol_fac) / P[i].Mass; if(dEnt < demin) {dErad=rsol_fac*(dEnt-demin); dEnt=demin;}
+                demin=DMAX(0.025*CellP[i].InternalEnergy, u_floor); emin=0.025*(erad_tot/rsol_fac + CellP[i].InternalEnergy*P[i].Mass); enew=DMAX(erad_tot/rsol_fac + dEnt*P[i].Mass, emin);
+                dEnt=(enew - erad_tot/rsol_fac) / P[i].Mass; if(dEnt < demin) {dErad=rsol_fac*(dEnt-demin); dEnt=demin; EOS_LIMIT_RECORD_KICK_RADIATION_FLOOR(CellP[i].CompositionType);}
                 if(dErad<-0.975*erad_tot) {dErad=-0.975*erad_tot;} CellP[i].InternalEnergy = dEnt; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {CellP[i].Rad_E_gamma[kfreq] *= 1 + dErad/erad_tot;}
             } else {
-                if(dEnt < 0.5*CellP[i].InternalEnergy) {CellP[i].InternalEnergy *= 0.5;} else {CellP[i].InternalEnergy = dEnt;}
+                EOS_LIMIT_RECORD_KICK_CATCH(CellP[i].CompositionType, CellP[i].InternalEnergy, dEnt, u_floor, P[i].Mass);
+                CellP[i].InternalEnergy = internal_energy_positivity_catch(CellP[i].InternalEnergy, dEnt, u_floor);
             }
 #else
-            if(dEnt < 0.5*CellP[i].InternalEnergy) {CellP[i].InternalEnergy *= 0.5;} else {CellP[i].InternalEnergy = dEnt;}
+            EOS_LIMIT_RECORD_KICK_CATCH(CellP[i].CompositionType, CellP[i].InternalEnergy, dEnt, u_floor, P[i].Mass);
+            CellP[i].InternalEnergy = internal_energy_positivity_catch(CellP[i].InternalEnergy, dEnt, u_floor);
 #endif
+            EOS_LIMIT_RECORD_KICK_MIN_ENERGY(CellP[i].CompositionType, CellP[i].InternalEnergy, P[i].Mass);
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
         }
         
@@ -536,6 +568,9 @@ void set_predicted_quantities_for_extra_physics(int i)
 #endif
         }
 #endif
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+        CellP[i].NonIdealMHDFluxPred = CellP[i].NonIdealMHDFlux;
+#endif
         
 #if defined(RT_EVOLVE_ENERGY)
         for(kf=0;kf<N_RT_FREQ_BINS;kf++)
@@ -553,9 +588,12 @@ void set_predicted_quantities_for_extra_physics(int i)
 
 #ifdef EOS_ELASTIC
         CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor;
+#ifdef EOS_ELASTIC_MELT
+        CellP[i].StrengthFractionPred = CellP[i].StrengthFraction;
+#endif
 #endif
         
-        set_eos_pressure(i, P, CellP);
+        refresh_eos_and_project(i, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED);
     }
 }
 
@@ -628,6 +666,9 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #ifndef TRANSPORT_SUBCYCLE
     CosmicRay_Update_DriftKick(i,dt_entr,0,P,CellP);
 #endif
+#endif
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+    nonideal_mhd_flux_update_driftkick(i,dt_entr,0,P,CellP);
 #endif
 
 #ifdef RADTRANSFER

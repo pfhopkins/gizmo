@@ -116,14 +116,13 @@ static void group_search_allgather_tiles(const std::vector<group_search_tile_met
       total += tile_counts[task];
     }
   all_tiles.resize(total);
-  std::vector<int> byte_counts(NTask), byte_offsets(NTask);
-  for(int task = 0; task < NTask; task++)
-    {
-      byte_counts[task] = tile_counts[task] * (int)sizeof(group_search_tile_meta_t);
-      byte_offsets[task] = tile_offsets[task] * (int)sizeof(group_search_tile_meta_t);
-    }
-  MPI_Allgatherv((void *)(local_tiles.empty() ? NULL : local_tiles.data()), local_count * (int)sizeof(group_search_tile_meta_t), MPI_BYTE,
-                 (void *)(all_tiles.empty() ? NULL : all_tiles.data()), byte_counts.data(), byte_offsets.data(), MPI_BYTE, MPI_COMM_WORLD);
+  /* counted in tiles, not bytes: a byte count passes 2^31 long before the tile count does */
+  MPI_Datatype tile_type;
+  MPI_Type_contiguous((int)sizeof(group_search_tile_meta_t), MPI_BYTE, &tile_type);
+  MPI_Type_commit(&tile_type);
+  MPI_Allgatherv((void *)(local_tiles.empty() ? NULL : local_tiles.data()), local_count, tile_type,
+                 (void *)(all_tiles.empty() ? NULL : all_tiles.data()), tile_counts.data(), tile_offsets.data(), tile_type, MPI_COMM_WORLD);
+  MPI_Type_free(&tile_type);
 }
 
 static int group_search_particle_matches_group(const int i, const int group_filter)
@@ -141,7 +140,7 @@ static int group_search_particle_matches_group(const int i, const int group_filt
 }
 
 void group_search_import_particles(int source_type_mask, int import_type_mask, double search_radius,
-                                   const MyIDType *label_id, const MyIDType *label_task,
+                                   const MyIDType *label_id, const MyIDType *label_owner,
                                    group_search_import_pool_t &pool, int group_filter, bool import_cells)
 {
   pool.particles.assign(P, P + NumPart);
@@ -150,7 +149,7 @@ void group_search_import_particles(int source_type_mask, int import_type_mask, d
   pool.ghost_home_task.clear();
   pool.ghost_home_index.clear();
   pool.ghost_label_id.clear();
-  pool.ghost_label_task.clear();
+  pool.ghost_label_owner.clear();
 
   if(NTask <= 1) return;
   double global_search_radius = search_radius;
@@ -241,7 +240,7 @@ void group_search_import_particles(int source_type_mask, int import_type_mask, d
   std::vector<gas_cell_data> send_cells(import_cells ? (total_send > 0 ? total_send : 1) : 0);
   std::vector<int> send_home_index(total_send > 0 ? total_send : 1);
   std::vector<MyIDType> send_label_id(total_send > 0 ? total_send : 1);
-  std::vector<MyIDType> send_label_task(total_send > 0 ? total_send : 1);
+  std::vector<MyIDType> send_label_owner(total_send > 0 ? total_send : 1);
   std::vector<int> cursor = send_disp;
   for(int task = 0; task < NTask; task++)
     {
@@ -258,7 +257,7 @@ void group_search_import_particles(int source_type_mask, int import_type_mask, d
               if(import_cells) send_cells[off] = CellP[idx];
               send_home_index[off] = idx;
               send_label_id[off] = label_id ? label_id[idx] : P[idx].ID;
-              send_label_task[off] = label_task ? label_task[idx] : ThisTask;
+              send_label_owner[off] = label_owner ? label_owner[idx] : group_search_owner_key(ThisTask, idx);
             }
         }
     }
@@ -305,7 +304,7 @@ void group_search_import_particles(int source_type_mask, int import_type_mask, d
       pool.ghost_home_task[recv_disp[task] + g] = task;
 
   pool.ghost_label_id.resize(total_recv > 0 ? total_recv : 0);
-  pool.ghost_label_task.resize(total_recv > 0 ? total_recv : 0);
+  pool.ghost_label_owner.resize(total_recv > 0 ? total_recv : 0);
   for(int task = 0; task < NTask; task++)
     {
       send_bytes[task] = send_count[task] * (int)sizeof(MyIDType);
@@ -315,8 +314,8 @@ void group_search_import_particles(int source_type_mask, int import_type_mask, d
     }
   MPI_Alltoallv(send_label_id.data(), send_bytes.data(), send_bdisp.data(), MPI_BYTE,
                 total_recv > 0 ? pool.ghost_label_id.data() : NULL, recv_bytes.data(), recv_bdisp.data(), MPI_BYTE, MPI_COMM_WORLD);
-  MPI_Alltoallv(send_label_task.data(), send_bytes.data(), send_bdisp.data(), MPI_BYTE,
-                total_recv > 0 ? pool.ghost_label_task.data() : NULL, recv_bytes.data(), recv_bdisp.data(), MPI_BYTE, MPI_COMM_WORLD);
+  MPI_Alltoallv(send_label_owner.data(), send_bytes.data(), send_bdisp.data(), MPI_BYTE,
+                total_recv > 0 ? pool.ghost_label_owner.data() : NULL, recv_bytes.data(), recv_bdisp.data(), MPI_BYTE, MPI_COMM_WORLD);
 }
 
 void group_search_import_particles_around_points(int import_type_mask, const std::vector<double> &centers,
@@ -329,7 +328,7 @@ void group_search_import_particles_around_points(int import_type_mask, const std
   pool.ghost_home_task.clear();
   pool.ghost_home_index.clear();
   pool.ghost_label_id.clear();
-  pool.ghost_label_task.clear();
+  pool.ghost_label_owner.clear();
 
   int npoints = radii.size();
   if((int)centers.size() != 3 * npoints)

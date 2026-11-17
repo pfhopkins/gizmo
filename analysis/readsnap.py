@@ -128,7 +128,7 @@ def readsnap(sdir,snum,ptype,
         header_topdict = file["Header"] # Load header dictionary (to parse below)
         header_toparse = header_topdict.attrs
     else:
-        file = open(fname) # Open binary snapshot file
+        file = open(fname,'rb') # Open binary snapshot file
         header_toparse = load_gadget_format_binary_header(file)
 
     npart = header_toparse["NumPart_ThisFile"]
@@ -193,7 +193,7 @@ def readsnap(sdir,snum,ptype,
             if(fname_ext=='.hdf5'):
                 file = h5py.File(fname,'r') # Open hdf5 snapshot file
             else:
-                file = open(fname) # Open binary snapshot file
+                file = open(fname,'rb') # Open binary snapshot file
                 header_toparse = load_gadget_format_binary_header(file)
                 
         if (fname_ext=='.hdf5'):
@@ -394,7 +394,7 @@ def load_gadget_format_binary_header(f):
     return {'NumPart_ThisFile':Npart, 'MassTable':Massarr, 'Time':a, 'Redshift':z, \
     'Flag_Sfr':FlagSfr[0], 'Flag_Feedback':FlagFeedback[0], 'NumPart_Total':Nall, \
     'Flag_Cooling':FlagCooling[0], 'NumFilesPerSnapshot':NumFiles[0], 'BoxSize':BoxSize[0], \
-    'Omega_Matter':OmegaMatter[0], 'Omega_Lambda':OmegaLambda[0], 'HubbleParam':h, \
+    'Omega_Matter':Omega_Matter[0], 'Omega_Lambda':Omega_Lambda[0], 'HubbleParam':h, \
     'Flag_StellarAge':FlagAge[0], 'Flag_Metals':FlagMetals[0], 'Nall_HW':NallHW, \
     'Flag_EntrICs':flag_entr_ics[0]}
 

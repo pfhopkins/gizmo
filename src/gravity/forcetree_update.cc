@@ -13,21 +13,10 @@
 #include "force_node_drift_sync.h"
 #include "gpu_gravity_tree.h"        /* SoA mirror: vmax coherence for widen-on-open */
 #include "gravtree_moment_kernel.h"   /* the shared node-motion arithmetic */
+#include "gravity_box_distance.h"     /* gravity's periodicity, for the box a relocated particle needs */
 
 /* GPU replacement for force_update_tree. */
 extern "C" void gpu_force_update_tree(void);
-
-/* Atomic max for doubles using integer CAS (clang doesn't support __atomic on floats) */
-static inline void atomic_max_double(double* addr, double val) {
-    uint64_t val_bits; memcpy(&val_bits, &val, sizeof(double));
-    uint64_t old_bits; memcpy(&old_bits, addr, sizeof(double));
-    double old_val; memcpy(&old_val, &old_bits, sizeof(double));
-    while(val > old_val) {
-        if(__atomic_compare_exchange_n((uint64_t*)addr, &old_bits, val_bits, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {break;}
-        memcpy(&old_val, &old_bits, sizeof(double));
-    }
-}
-static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64-bit for atomic CAS");
 
 
 
@@ -143,6 +132,17 @@ static inline int force_soa_raise_vmax(int no, MyFloat vmax_aos)   /* returns th
     const MyGravFloat v = (MyGravFloat) vmax_aos;
     if(soa->vmax[k] < v) {soa->vmax[k] = v;}
     return k;
+}
+
+/* Raise the SoA mirror of a node's box length to the AoS value, as for vmax above: a longer length on the mirror's own (equal or older)
+ * node time can only over-widen the walk, so this needs neither a drift nor the mirror's time, and it holds on a tree already
+ * certified current, whose mirror no later repair would revisit. */
+static inline void force_soa_raise_len(int no, MyFloat len_aos)
+{
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->len) {return;}
+    const int k = gpu_gravity_tree_mirror_slot(no);
+    if(k >= 0 && soa->len[k] < len_aos) {soa->len[k] = len_aos;}
 }
 
 /* The same raise for a node that has just been kicked, which also marks the mirror as holding a
@@ -294,6 +294,7 @@ inline int marked_top_level_slot(const int *node_slot, int no)
  * and are re-sized when the top-level tree changes size. */
 static int  *g_pending_topnode_list  = NULL;   /* [NTopnodes] */
 static int  *g_pending_topnode_stamp = NULL;   /* [NTopnodes]: == g_pending_stamp when listed */
+static MyFloat *g_pending_topnode_cover = NULL; /* [NTopnodes]: side length a listed node must reach to hold a placed particle, 0 if none */
 static int   g_pending_topnode_n     = 0;
 static int   g_pending_topnode_cap   = 0;
 static int   g_pending_stamp         = 1;
@@ -301,10 +302,11 @@ static int   g_pending_stamp         = 1;
 static void pending_topnodes_ensure(void)
 {
     if(g_pending_topnode_cap == NTopnodes && g_pending_topnode_list) {return;}
-    free(g_pending_topnode_list); free(g_pending_topnode_stamp);
+    free(g_pending_topnode_list); free(g_pending_topnode_stamp); free(g_pending_topnode_cover);
     g_pending_topnode_cap   = NTopnodes;
     g_pending_topnode_list  = (int *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(int));
     g_pending_topnode_stamp = (int *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(int));
+    g_pending_topnode_cover = (MyFloat *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(MyFloat));
     g_pending_topnode_n = 0;
     g_pending_stamp = 1;
 }
@@ -323,6 +325,36 @@ static inline void raise_node_motion_bound(int no, MyFloat vmax)
     (void) force_soa_raise_vmax(no, Extnodes[no].vmax);
 }
 
+/* Raise every node above particle i to its speed bound.  With stop_at_bounded, a node already holding
+ * the bound ends the walk, since its ancestors hold it too; an insertion walks the whole chain instead,
+ * because the node it joins may bound a speed its ancestors were never told of. */
+/* A top-level node is shared with every rank: listed once for the flush.  The rest of a chain is raised
+ * locally as well, so this rank's own walks see it before the exchange. */
+static inline void list_pending_topnode(int no)
+{
+    const int t = no - All.TreeNodeIndexBase;
+    if(t >= 0 && t < g_pending_topnode_cap && g_pending_topnode_stamp[t] != g_pending_stamp)
+    {
+        g_pending_topnode_stamp[t] = g_pending_stamp;
+        g_pending_topnode_cover[t] = 0;
+        g_pending_topnode_list[g_pending_topnode_n++] = no;
+    }
+}
+
+static void raise_chain_motion_bound(int i, int stop_at_bounded)
+{
+    const MyFloat vmax = (MyFloat) particle_motion_speed_bound(i, P, CellP);
+    for(int no = Father[i]; no >= 0; no = Nodes[no].u.d.father)
+    {
+        const int bounded = (Extnodes[no].vmax >= vmax);
+        if(bounded && stop_at_bounded) {break;}
+        if(!bounded) {raise_node_motion_bound(no, vmax);}
+        /* An insertion lists its top-level nodes whether or not they were raised here, so other ranks'
+         * copies never depend on how an earlier local raise was published. */
+        if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) {list_pending_topnode(no);}
+    }
+}
+
 void gravity_note_motion_bound(const int *idx, int n)
 {
     if(n <= 0 || !idx || !Father || !Nodes || !Extnodes) {return;}
@@ -330,29 +362,68 @@ void gravity_note_motion_bound(const int *idx, int n)
     for(int k = 0; k < n; k++)
     {
         const int i = idx[k];
-        /* Father[] covers the slots the standing tree was built for; a particle
-         * created since then has no node above it until the next build. */
+        /* Father[] covers the slots the standing tree was built for.  A particle inserted since then
+         * was raised at its insertion and is reachable here once its creator re-sequences it under
+         * NumPart; nothing changes its velocity in between. */
         if(i < 0 || i >= NumPart || i >= All.TreeParticleSlots) {continue;}
-        const MyFloat vmax = (MyFloat) particle_motion_speed_bound(i, P, CellP);
-        int no = Father[i];
-        while(no >= 0)
+        raise_chain_motion_bound(i, 1);
+    }
+}
+
+/* A particle force_add_element_to_tree has just linked into the standing tree.  Its slot may lie past
+ * NumPart until the creating routine re-sequences the particles, so it is admitted up to the tree's
+ * particle slots.  Other ranks' copies of its top-level node receive the bound at the next flush. */
+void gravity_note_inserted_motion_bound(int i)
+{
+    if(i < 0 || i >= All.TreeParticleSlots || !Father || !Nodes || !Extnodes) {return;}
+    /* A gas-typed copy past the gas cells is a provisional type (star formation copies the gas element
+     * and settles the type afterwards): its speed cannot be read yet, and its creator calls this again
+     * once the type is final. */
+    if(P[i].Type == 0 && i >= All.MaxPartGas) {return;}
+    pending_topnodes_ensure();
+    raise_chain_motion_bound(i, 0);
+}
+
+/* A particle relocated discontinuously in a standing tree -- spawned beside its parent, or a sink re-centred on its accreted mass or
+ * moved toward its potential minimum -- can sit outside node boxes, which otherwise grow only with their members' motion. Widen every
+ * box above each to hold it: the whole chain, since a widened box need not lie inside its father's. A node's centre is fixed between
+ * builds and its length only grows, so a length that holds the particle now still holds it after any later drift, on this rank or on
+ * another rank's copy of a top-level node. Continuous motion (drifts, the Hermite predictor and corrector) belongs to the speed bound,
+ * not here. A new site that relocates a particle in a standing tree calls this too. Serial. */
+/* Side length node `no` needs to hold particle i. The box serves both the neighbour walks and gravity, whose periodicity can differ
+ * (GRAVITY_NOT_PERIODIC in a periodic box), so each axis takes the larger of the two distances. */
+static double node_length_to_hold(int no, int i)
+{
+    double xtmp, ytmp, ztmp; (void) xtmp; (void) ytmp; (void) ztmp; /* scratch for the periodic macros */
+    const double dx = P[i].Pos[0] - Nodes[no].center[0], dy = P[i].Pos[1] - Nodes[no].center[1], dz = P[i].Pos[2] - Nodes[no].center[2];
+    const double ngb_x = NGB_PERIODIC_BOX_LONG_X(dx,dy,dz,-1);
+    const double ngb_y = NGB_PERIODIC_BOX_LONG_Y(dx,dy,dz,-1);
+    const double ngb_z = NGB_PERIODIC_BOX_LONG_Z(dx,dy,dz,-1);
+    const double ax = DMAX(ngb_x, gravity_box_long_abs_x(dx,dy,dz,-1));
+    const double ay = DMAX(ngb_y, gravity_box_long_abs_y(dx,dy,dz,-1));
+    const double az = DMAX(ngb_z, gravity_box_long_abs_z(dx,dy,dz,-1));
+    return 2. * DMAX(ax, DMAX(ay, az));
+}
+
+void gravity_note_set_positions(const int *idx, int n)
+{
+    if(n <= 0 || !idx || !force_tree_is_allocated() || !Father || !Nodes) {return;}
+    for(int k = 0; k < n; k++)
+    {
+        const int i = idx[k];
+        if(i < 0 || i >= All.TreeParticleSlots) {continue;}
+        for(int no = Father[i]; no >= 0; no = Nodes[no].u.d.father)
         {
-            /* A node already holding the bound has ancestors that do too. */
-            if(Extnodes[no].vmax >= vmax) {break;}
-            raise_node_motion_bound(no, vmax);
+            const double need = node_length_to_hold(no, i);
+            if(Nodes[no].len >= need) {continue;}
+            Nodes[no].len = (MyFloat) (need * (1. + 1.e-6)); /* slack for roundoff */
+            force_soa_raise_len(no, Nodes[no].len);
             if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
             {
-                /* Shared with every rank: listed once for the flush.  The rest of
-                 * the chain is raised here too, so this rank's own walks see it
-                 * before the exchange. */
+                pending_topnodes_ensure(); list_pending_topnode(no);
                 const int t = no - All.TreeNodeIndexBase;
-                if(t >= 0 && t < g_pending_topnode_cap && g_pending_topnode_stamp[t] != g_pending_stamp)
-                {
-                    g_pending_topnode_stamp[t] = g_pending_stamp;
-                    g_pending_topnode_list[g_pending_topnode_n++] = no;
-                }
+                if(t >= 0 && t < g_pending_topnode_cap && g_pending_topnode_cover[t] < Nodes[no].len) {g_pending_topnode_cover[t] = Nodes[no].len;}
             }
-            no = Nodes[no].u.d.father;
         }
     }
 }
@@ -377,15 +448,7 @@ void gravity_note_radius_growth_rates(const int *idx, int n)
             /* A node already bounding the rate has ancestors that do too. */
             if(Extnodes[no].divVmax >= rate) {break;}
             Extnodes[no].divVmax = rate;
-            if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
-            {
-                const int t = no - All.TreeNodeIndexBase;
-                if(t >= 0 && t < g_pending_topnode_cap && g_pending_topnode_stamp[t] != g_pending_stamp)
-                {
-                    g_pending_topnode_stamp[t] = g_pending_stamp;
-                    g_pending_topnode_list[g_pending_topnode_n++] = no;
-                }
-            }
+            if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) {list_pending_topnode(no);}
         }
     }
 #else
@@ -404,7 +467,7 @@ void gravity_flush_pending_motion_bounds(void)
     for(int ta = 0; ta < NTask; ta++) {total += counts[ta];}
     if(total > 0)
     {
-        struct NodeBound {int node; MyFloat vmax;
+        struct NodeBound {int node; MyFloat vmax; MyFloat cover; /* gravity_note_set_positions */
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
             MyFloat divVmax;   /* gravity_note_radius_growth_rates */
 #endif
@@ -416,6 +479,7 @@ void gravity_flush_pending_motion_bounds(void)
         for(int k = 0; k < n_local; k++)
         {
             loc[k].node = g_pending_topnode_list[k]; loc[k].vmax = Extnodes[g_pending_topnode_list[k]].vmax;
+            loc[k].cover = g_pending_topnode_cover[g_pending_topnode_list[k] - All.TreeNodeIndexBase];
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
             loc[k].divVmax = Extnodes[g_pending_topnode_list[k]].divVmax;
 #endif
@@ -432,6 +496,8 @@ void gravity_flush_pending_motion_bounds(void)
             /* The record names a top-level node, which every rank holds at the
              * same index; validated rather than trusted, as the kick exchange does. */
             if(!(no >= All.TreeNodeIndexBase && no - All.TreeNodeIndexBase < NTopnodes)) {continue;}
+            /* the same centre on every rank, so the length that holds the placed particle holds it in this copy too */
+            if(Nodes[no].len < all[r].cover) {Nodes[no].len = all[r].cover; force_soa_raise_len(no, Nodes[no].len);}
             const MyFloat vmax = all[r].vmax;
             while(no >= 0)
             {
@@ -774,20 +840,12 @@ void force_update_hmax(void)
 #else
             double htmp = (P[i].Type == 0) ? DMIN(P[i].KernelRadius, All.MaxKernelRadius) : 0.0;
 #endif
-            int per_type_grew = 0;
-            if(per_type_htmp > Extnodes[no].hmax_per_type[per_type_band]) {
-                atomic_max_double(&Extnodes[no].hmax_per_type[per_type_band], per_type_htmp);
-                per_type_grew = 1;
-            }
-            int scalar_grew = 0;
-            if(scalar_eligible && htmp > Extnodes[no].hmax)
+            /* A walk climbs only while it raises something; one that stops here found a value at least its own,
+               and the thread that put it there carries it up the same chain. */
+            const int per_type_grew = atomic_max_double(&Extnodes[no].hmax_per_type[per_type_band], per_type_htmp);
+            int scalar_grew = scalar_eligible ? atomic_max_double(&Extnodes[no].hmax, htmp) : 0;
+            if(divv_eligible && atomic_max_double(&Extnodes[no].divVmax, divVel))
             {
-                atomic_max_double(&Extnodes[no].hmax, htmp);
-                scalar_grew = 1;
-            }
-            if(divv_eligible && divVel > Extnodes[no].divVmax)
-            {
-                atomic_max_double(&Extnodes[no].divVmax, divVel);
                 scalar_grew = 1;   /* a divVmax rise alone joins the cross-rank exchange like any other */
             }
             if(scalar_grew || per_type_grew)

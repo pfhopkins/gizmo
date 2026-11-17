@@ -11,6 +11,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "../core/timestep_functions.h"   /* the Hermite predicted state written by IO_HERMITE_SYNC */
+#include "../core/predict_functions.h"    /* box_wrap_position_to_primary_image: the shear-periodic image a snapshot writes */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 /* get_ISMDustChemEvo_bin_mass is KOKKOS_INLINE_FUNCTION (Chunk 1, 2026-05-26). */
 #include "../solids/ism_dust_chemistry_functions.h"
@@ -35,6 +36,57 @@
 static int n_type[6];
 static long long ntot_type_all[6];
 static int n_info;
+
+/* Whether a block present in this build is written in the current snapshot format. */
+static int block_written_in_snapshot(enum iofields blocknr)
+{
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+    if(blocknr == IO_NONIDEAL_FLUX && All.SnapFormat != 3) {return 0;} /* written to HDF5 snapshots only: legacy binary formats never carry it */
+#endif
+    return blockpresent(blocknr);
+}
+
+/* SnapFormat 1 and 2 frame every block with a 32-bit byte count and keep 32-bit per-file counts in their
+   header. Whether every file of this snapshot fits is decided identically on every rank, before any
+   directory or file is created, so a snapshot that cannot be represented never leaves a partial set. */
+static int binary_snapshot_records_fit(int filenr)
+{
+    const int nfiles = All.NumFilesPerSnapshot;
+    long long *counts_mine = (long long *) mymalloc("counts_mine", 6 * (size_t) nfiles * sizeof(long long));
+    long long *counts_file = (long long *) mymalloc("counts_file", 6 * (size_t) nfiles * sizeof(long long));
+    for(int k = 0; k < 6 * nfiles; k++) {counts_mine[k] = 0;}
+    for(int t = 0; t < 6; t++) {counts_mine[6 * filenr + t] = n_type[t];}
+    MPI_Allreduce(counts_mine, counts_file, 6 * nfiles, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    const long long marker_bytes = (All.SnapFormat == 2) ? 2 * (long long) sizeof(int) : 0;
+    int fits = 1;
+    for(int f = 0; f < nfiles && fits; f++)
+    {
+        /* every block is checked; the positions block alone (12+ bytes for every particle) also bounds each
+           per-type header count below INT_MAX */
+        const long long *counts = counts_file + 6 * (size_t) f;
+        for(int bnr = 0; bnr < 1000 && fits; bnr++)
+        {
+            enum iofields blocknr = (enum iofields) bnr;
+            if(blocknr == IO_LASTENTRY) {break;}
+            if(!block_written_in_snapshot(blocknr)) {continue;}
+            int typelist[6];
+            const long long bytes = get_particles_in_block(blocknr, typelist, counts) * (long long) get_bytes_per_blockelement(blocknr, 0) + marker_bytes;
+            if(bytes > INT_MAX)
+            {
+                fits = 0;
+                if(ThisTask == 0)
+                {
+                    char name[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+                    get_dataset_name(blocknr, name);
+                    printf("Snapshot file %d: block %s needs %lld bytes, more than the 32-bit record of SnapFormat %d can hold. Use SnapFormat 3 (HDF5) or a larger NumFilesPerSnapshot.\n", f, name, bytes, All.SnapFormat);
+                }
+            }
+        }
+    }
+    myfree(counts_file);
+    myfree(counts_mine);
+    return fits;
+}
 
 /*! This function writes a snapshot of the particle distribution to one or
  * several files using Gadget's default file format.  If
@@ -65,8 +117,7 @@ void savepositions(int num)
         if(ThisTask == 0)
             printf("\nwriting snapshot file #%d... \n", num);
 
-        size_t comm_chunk_mb = All.CommChunkSize;
-        bytes = comm_chunk_mb * 1024 * 1024;
+        bytes = comm_chunk_bytes();
         /* Collective OOM preflight (mirrors allocate_memory): mymalloc() does
          * NOT return NULL on capacity failure -- it routes to the TEMP-hard
          * path -- so check fit BEFORE the call and bad-stop gracefully. All-rank
@@ -74,6 +125,7 @@ void savepositions(int num)
         if(!gizmo_alloc_fits_all_ranks(gizmo_mymalloc_rounded_size(bytes), 1))
         {
             gizmo_request_controlled_stop(2, "savepositions: CommBuffer arena allocation won't fit on >=1 rank", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_exit_bad_stop_if_requested("io:snapshot_buffer");   /* collective decision; not every caller polls after savepositions */
             return;
         }
         if(!(CommBuffer = mymalloc("CommBuffer", bytes)))
@@ -101,8 +153,7 @@ void savepositions(int num)
 #if IO_SINKS_ONLY_SNAPSHOT_FREQUENCY > 0
         if( (All.SnapshotFileCount-1) % (IO_SINKS_ONLY_SNAPSHOT_FREQUENCY+1) )
         {
-            snprintf(outputdir, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/stars_only", All.OutputDir);
-            mkdir(outputdir, 02755);
+            snprintf(outputdir, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/stars_only", All.OutputDir);   /* created below, once the snapshot is known to fit */
         }
 #endif
 
@@ -117,6 +168,19 @@ void savepositions(int num)
 
         /* assign processors to output files */
         distribute_file(All.NumFilesPerSnapshot, 0, 0, NTask - 1, &filenr, &primaryTask, &lastTask);
+
+        if((All.SnapFormat == 1 || All.SnapFormat == 2) && !binary_snapshot_records_fit(filenr))
+        {
+            myfree(CommBuffer);
+            gizmo_request_controlled_stop(2, "savepositions: this snapshot does not fit the 32-bit records of SnapFormat 1/2", __FILE__, __LINE__, __FUNCTION__);
+            /* stop here: every rank reached the same decision, and some callers (snapshot conversion, the final
+               output) do not poll after savepositions */
+            gizmo_exit_bad_stop_if_requested("io:snapshot_record_limit");
+            return;
+        }
+#if IO_SINKS_ONLY_SNAPSHOT_FREQUENCY > 0
+        if( (All.SnapshotFileCount-1) % (IO_SINKS_ONLY_SNAPSHOT_FREQUENCY+1) ) {mkdir(outputdir, 02755);}
+#endif
 
         if(All.NumFilesPerSnapshot > 1)
         {
@@ -195,6 +259,26 @@ void savepositions(int num)
 
 /*! This function fills the write buffer with particle data. New output blocks can in principle be added here.
  */
+#ifdef BOX_SHEARING
+/* A snapshot can be written between domain decompositions, with particles still outside the box in x: it writes the image the box
+   wrapping would make (box_wrap_position_to_primary_image moves the shearing coordinate with each x fold), and the velocity offset
+   that wrapping applies across each fold. */
+static Vec3<double> snapshot_shear_image(const Vec3<double> &pos)
+{
+    Vec3<MyDouble> image = {(MyDouble) pos[0], (MyDouble) pos[1], (MyDouble) pos[2]};
+    box_wrap_position_to_primary_image(image);
+    return Vec3<double>{(double) image[0], (double) image[1], (double) image[2]};
+}
+/* the shearing-coordinate velocity offset that image carries (the folds down from above minus those up from below) */
+static double snapshot_shear_velocity_offset(const Vec3<MyDouble> &pos)
+{
+    const Vec3<double> reported = gizmo_reported_position(pos);
+    Vec3<MyDouble> image = {(MyDouble) reported[0], (MyDouble) reported[1], (MyDouble) reported[2]};
+    struct box_wrap_x_folds folds = box_wrap_position_to_primary_image(image);
+    return (folds.down_from_above - folds.up_from_below) * Shearing_Box_Vel_Offset;
+}
+#endif
+
 void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 {
     int n, k, pindex;
@@ -227,9 +311,15 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 if(P[pindex].Type == type)
                 {
                     Vec3<double> pos_reported = gizmo_reported_position(P[pindex].Pos);
+#ifdef BOX_SHEARING
+                    pos_reported = snapshot_shear_image(pos_reported);
+#endif
                     for(k = 0; k < 3; k++)
                     {
                         fp_pos[k] = (MyOutputPosFloat) pos_reported[k];
+#ifdef BOX_SHEARING
+                        if(k == 0) {continue;} /* x is already in the box (folded in double above); a float re-wrap here would move it without the shear offsets */
+#endif
 #ifdef BOX_PERIODIC
                         double box_length_xyz;
                         if(k==0) {box_length_xyz = boxSize_X;}
@@ -249,6 +339,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 if(P[pindex].Type == type)
                 {
                     for(k=0;k<3;k++) {fp[k] = (MyOutputFloat) (P[pindex].Vel[k] * sqrt(All.cf_a3inv));} // JUST write the conserved velocity here, not the drifted one in this manner //
+#ifdef BOX_SHEARING
+                    fp[BOX_SHEARING_PHI_COORDINATE] += (MyOutputFloat) snapshot_shear_velocity_offset(P[pindex].Pos); /* consistent with the written position */
+#endif
                     fp += 3;
                     n++;
                 }
@@ -628,12 +721,14 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     for(k=0;k<NUM_METAL_SPECIES;k++)
                     {
                         MyOutputFloat val = (MyOutputFloat) P[pindex].Metallicity[k];
-#ifndef OUTPUT_IN_DOUBLEPRECISION
-                        /* Quantize to ~3.3 significant decimal digits (10-bit mantissa) by zeroing
-                           the low 13 mantissa bits of the float32. This is lossless at the precision
-                           level meaningful for metal abundances, and makes the data ~2x more
-                           compressible with shuffle+deflate (IO_COMPRESS_HDF5). */
-                        {unsigned int *ibits = (unsigned int *)&val; *ibits &= 0xFFFFE000u;}
+#if defined(IO_COMPRESS_HDF5) && !defined(OUTPUT_IN_DOUBLEPRECISION)
+                        if(All.SnapFormat == 3) /* only with HDF5 compression: the low 13 mantissa bits of the float32, rounded to nearest even (masking alone would bias every value low), leave about 3 significant digits but let deflate compress this field. memcpy, not a pointer cast, avoids a strict-aliasing violation */
+                        {
+                            uint32_t b; memcpy(&b, &val, sizeof(b));
+                            b += 0xFFFu + ((b >> 13) & 1u);
+                            b &= 0xFFFFE000u;
+                            memcpy(&val, &b, sizeof(b));
+                        }
 #endif
                         fp[k] = val;
                     }
@@ -913,7 +1008,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     {
                         Vec3<double> r_out = P[pindex].Pos, v_out = P[pindex].Vel;
                         /* the eligibility predicate, not the type bitmask alone: a star being
-                           super-timestepped, or one that just accreted, is advanced by something
+                           super-timestepped, or one born within the last two steps, is advanced by something
                            other than this series, so its retained base does not describe where it
                            goes and the plain values are the honest answer for it */
                         if((P[pindex].Mass > 0) && eligible_for_hermite(pindex, P)) {
@@ -1099,6 +1194,18 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     n++;
                 }
 #endif	    
+            break;
+
+        case IO_NONIDEAL_FLUX:   /* evolved non-ideal MHD field (B x velocity: Gauss times physical code velocity) */
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k=0;k<3;k++) {fp[k] = (MyOutputFloat) (CellP[pindex].NonIdealMHDFluxPred[k] * gizmo2gauss);} /* the drifted value, at the same time as the written B */
+                    fp += 3;
+                    n++;
+                }
+#endif
             break;
 
         case IO_VDIV:		/* Divergence of Vel */
@@ -1652,6 +1759,39 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp_pos++ = (MyOutputPosFloat) CellP[pindex].TensileFlawsPerMass; /* double, as the positions */
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_EOS_RECENT_YIELD_MEMORY:
+#ifdef EOS_ELASTIC
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].RecentYieldMemory;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_EOS_STRENGTH_FRACTION:
+#ifdef EOS_ELASTIC_MELT
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].StrengthFraction;
+                    n++;
+                }
+#endif
+            break;
+
             case IO_EOSPHASE:
 #ifdef EOS_ANEOS
             for(n = 0; n < pc; pindex++)
@@ -1669,6 +1809,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 if(P[pindex].Type == type)
                 {
                     for(k = 0; k < 3; k++) {fp[k] = (MyOutputFloat) CellP[pindex].ParticleVel[k];}
+#ifdef BOX_SHEARING
+                    fp[BOX_SHEARING_PHI_COORDINATE] += (MyOutputFloat) snapshot_shear_velocity_offset(P[pindex].Pos);
+#endif
                     fp += 3;
                     n++;
                 }
@@ -2020,10 +2163,16 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
  *  typedefs describe the unformatted-binary layout, which must be known to the bit, and apply only
  *  to that path. Single source of truth for the read-side element width.
  */
+static size_t binary_input_float_bytes(enum iofields blocknr) /* element width of a float block in the unformatted-binary layout */
+{
+    if(blocknr == IO_POS) {return sizeof(MyInputPosFloat);}
+    if(blocknr == IO_DAMAGE_POROSITY_FLAWSPERMASS) {return sizeof(double);} /* a fixed per-element value: always double, so it round-trips exactly */
+    return sizeof(MyInputFloat);
+}
 size_t get_input_float_bytes(enum iofields blocknr)
 {
     if(All.ICFormat == 3) {return sizeof(double);}
-    return (blocknr == IO_POS) ? sizeof(MyInputPosFloat) : sizeof(MyInputFloat);
+    return binary_input_float_bytes(blocknr);
 }
 
 
@@ -2064,6 +2213,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_ACCEL:
         case IO_HYDROACCEL:
         case IO_BFLD:
+        case IO_NONIDEAL_FLUX:
         case IO_GRADPHI:
         case IO_GRADRHO:
         case IO_RAD_ACCEL:
@@ -2099,10 +2249,16 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_DAMAGE_POROSITY_DAMAGE:
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+        case IO_EOS_RECENT_YIELD_MEMORY:
+        case IO_EOS_STRENGTH_FRACTION:
             if(mode)
                 bytes_per_blockelement = sizeof(MyInputFloat);
             else
                 bytes_per_blockelement = sizeof(MyOutputFloat);
+            break;
+
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+            bytes_per_blockelement = sizeof(double); /* written and read in double precision always */
             break;
             
         case IO_AGE_PROTOSTAR:
@@ -2403,7 +2559,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         int typekey_read = get_datatype_in_block(blocknr);
         if(typekey_read == 1 || typekey_read == 3)
         {
-            size_t width_binary = (blocknr == IO_POS) ? sizeof(MyInputPosFloat) : sizeof(MyInputFloat);
+            size_t width_binary = binary_input_float_bytes(blocknr);
             /* every float-valued case above is a whole number of input elements wide; if some future
              * block is not, the rescale would silently mis-size it against empty_read_buffer's unpack */
             if(bytes_per_blockelement % ((int) width_binary)) {endrun(219);}
@@ -2450,7 +2606,13 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_DAMAGE_POROSITY_DAMAGE:
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+        case IO_EOS_RECENT_YIELD_MEMORY:
+        case IO_EOS_STRENGTH_FRACTION:
             typekey = 1;		/* native MyOutputFloat */
+            break;
+
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+            typekey = 3;		/* double, whatever the output precision */
             break;
             
         default:
@@ -2484,6 +2646,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_ACCEL:
         case IO_HYDROACCEL:
         case IO_BFLD:
+        case IO_NONIDEAL_FLUX:
         case IO_GRADPHI:
         case IO_GRADRHO:
         case IO_RAD_ACCEL:
@@ -2597,6 +2760,9 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_DAMAGE_POROSITY_DAMAGE:
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+        case IO_EOS_RECENT_YIELD_MEMORY:
+        case IO_EOS_STRENGTH_FRACTION:
             values = 1;
             break;
 
@@ -2735,12 +2901,12 @@ int get_values_per_blockelement(enum iofields blocknr)
 
 
 /*! This function determines how many particles there are in a given block,
- *  based on the information in the header-structure.  It also flags particle
+ *  given the file's particle counts per type.  It also flags particle
  *  types that are present in the block in the typelist array.
  */
-long get_particles_in_block(enum iofields blocknr, int *typelist)
+long long get_particles_in_block(enum iofields blocknr, int *typelist, const long long *npart_in_file)
 {
-    long i, nall, nsel, ntot_withmasses, ngas, nstars, nngb, nstars_tot;
+    long long i, nall, nsel, ntot_withmasses, ngas, nstars, nngb, nstars_tot;
     nall = 0; nsel = 0; ntot_withmasses = 0; nstars_tot=0;
 
     /* NOTE: this is an I/O-block membership bitmask (which types write e.g. the ages block),
@@ -2754,16 +2920,16 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
     for(i = 0; i < 6; i++)
     {
         typelist[i] = 0;
-        if(header.npart[i] > 0)
+        if(npart_in_file[i] > 0)
         {
-            nall += header.npart[i];
+            nall += npart_in_file[i];
             typelist[i] = 1;
-            if((1 << i) & (valid_star_types)) {nstars_tot += header.npart[i];}
+            if((1 << i) & (valid_star_types)) {nstars_tot += npart_in_file[i];}
         }
-        if(All.MassTable[i] == 0) {ntot_withmasses += header.npart[i];}
+        if(All.MassTable[i] == 0) {ntot_withmasses += npart_in_file[i];}
     }
-    ngas = header.npart[0];
-    nstars = header.npart[4];
+    ngas = npart_in_file[0];
+    nstars = npart_in_file[4];
 
 
     switch (blocknr)
@@ -2796,7 +2962,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
             for(i = 0; i < 6; i++)
             {
                 typelist[i] = 0;
-                if(All.MassTable[i] == 0 && header.npart[i] > 0) {typelist[i] = 1;}
+                if(All.MassTable[i] == 0 && npart_in_file[i] > 0) {typelist[i] = 1;}
             }
             return ntot_withmasses;
             break;
@@ -2809,11 +2975,11 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
                tested because they are independent -- the output flag can be set on a build whose
                integrator is disabled, where the blocks are absent altogether. */
             {
-                int n_hermite = 0;
+                long long n_hermite = 0;
                 for(i = 0; i < 6; i++)
                 {
                     typelist[i] = ((1 << i) & (HERMITE_INTEGRATION)) ? 1 : 0;
-                    if(typelist[i]) {n_hermite += header.npart[i];}
+                    if(typelist[i]) {n_hermite += npart_in_file[i];}
                 }
                 return n_hermite;
             }
@@ -2853,6 +3019,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_BFLD:
         case IO_AMBIPOLAR:
         case IO_HALL:
+        case IO_NONIDEAL_FLUX:
         case IO_OHMIC:        
         case IO_VDIV:
         case IO_VORT:
@@ -2918,6 +3085,9 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_DAMAGE_POROSITY_DAMAGE:
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+        case IO_EOS_RECENT_YIELD_MEMORY:
+        case IO_EOS_STRENGTH_FRACTION:
             for(i = 1; i < 6; i++) {typelist[i] = 0;}
             return ngas;
             break;
@@ -2946,31 +3116,31 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_GRAINTYPE:
             nngb=0;
 #ifdef GRAIN_FLUID
-            for(i=0;i<6;i++) {if((1 << i) & (GRAIN_PTYPES)) {nngb+=header.npart[i];} else {typelist[i]=0;}}
+            for(i=0;i<6;i++) {if((1 << i) & (GRAIN_PTYPES)) {nngb+=npart_in_file[i];} else {typelist[i]=0;}}
 #endif
             return nngb;
             break;
 
         case IO_IMF:
             for(i = 1; i < 6; i++) {if(i != 4 && i != 5) {typelist[i] = 0;}}
-            return nstars + header.npart[5];
+            return nstars + npart_in_file[5];
             break;
 
         case IO_Z:
             for(i = 0; i < 6; i++) {if(i != 0 && i != 4 && i != 5) {typelist[i] = 0;}}
-            return ngas + nstars + header.npart[5];
+            return ngas + nstars + npart_in_file[5];
             break;
 
         case IO_CHIMES_STAR_SIGMA:
             nngb = nstars;
             typelist[0]=typelist[1]=typelist[5]=0;
-            if(All.ComovingIntegrationOn) {typelist[2]=typelist[3]=0;} else {nngb += header.npart[2] + header.npart[3];}
+            if(All.ComovingIntegrationOn) {typelist[2]=typelist[3]=0;} else {nngb += npart_in_file[2] + npart_in_file[3];}
             return nngb;
             break;
 
         case IO_DENS_AROUND_STAR:
             typelist[0] = 0;
-            return header.npart[1]+header.npart[2]+header.npart[3]+header.npart[4]+header.npart[5];
+            return npart_in_file[1]+npart_in_file[2]+npart_in_file[3]+npart_in_file[4]+npart_in_file[5];
             break;
 
         case IO_SINKMASS:
@@ -2991,7 +3161,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_LUM_SINGLESTAR:
         case IO_SINKPROGS:
             for(i = 0; i < 6; i++) {if(i != 5) {typelist[i] = 0;}}
-            return header.npart[5];
+            return npart_in_file[5];
             break;
 
         case IO_LASTENTRY:
@@ -3228,6 +3398,24 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+            return 1;
+#endif
+            break;
+
+        case IO_EOS_RECENT_YIELD_MEMORY:
+#ifdef EOS_ELASTIC
+            return 1;
+#endif
+            break;
+
+        case IO_EOS_STRENGTH_FRACTION:
+#ifdef EOS_ELASTIC_MELT
+            return 1;
+#endif
+            break;
+
         case IO_HII:
 #if defined(RT_CHEM_PHOTOION)
             return 1;
@@ -3335,6 +3523,11 @@ int blockpresent(enum iofields blocknr)
             break;
         case IO_HALL:
 #if defined(MHD_NON_IDEAL) && defined(OUTPUT_MHD_RESISTIVITY)
+            return 1;
+#endif
+            break;
+        case IO_NONIDEAL_FLUX:  /* evolved state: always written (to HDF5 snapshots), so a snapshot restart can resume it */
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
             return 1;
 #endif
             break;        
@@ -3837,6 +4030,15 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
             strncpy(label, "ACTV", 4);
             break;
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+            strncpy(label, "FLAW", 4);
+            break;
+        case IO_EOS_RECENT_YIELD_MEMORY:
+            strncpy(label, "RYMM", 4);
+            break;
+        case IO_EOS_STRENGTH_FRACTION:
+            strncpy(label, "STRF", 4);
+            break;
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strncpy(label, "DBNU", 4);
             break;
@@ -3913,6 +4115,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
         case IO_HALL:
             strncpy(label, "HALL", 4);
+            break;
+        case IO_NONIDEAL_FLUX:
+            strncpy(label, "NIMF", 4);
             break;            
         case IO_VDIV:
             strncpy(label, "VDIV", 4);
@@ -4312,6 +4517,15 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
             strcpy(buf, "ActiveCracks");
             break;
+        case IO_DAMAGE_POROSITY_FLAWSPERMASS:
+            strcpy(buf, "TensileFlawsPerMass");
+            break;
+        case IO_EOS_RECENT_YIELD_MEMORY:
+            strcpy(buf, "RecentYieldMemory");
+            break;
+        case IO_EOS_STRENGTH_FRACTION:
+            strcpy(buf, "StrengthFraction");
+            break;
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strcpy(buf, "DustBinNumbers");
             break;
@@ -4388,6 +4602,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;            
         case IO_HALL:
             strcpy(buf, "HallResistivity");
+            break;
+        case IO_NONIDEAL_FLUX:
+            strcpy(buf, "NonIdealMHDFlux");
             break;                        
         case IO_VDIV:
             strcpy(buf, "VelocityDivergence");
@@ -4661,10 +4878,12 @@ void get_dataset_name_legacy_alias(enum iofields blocknr, char *buf)
  */
 void write_file(char *fname, int writeTask, int lastTask)
 {
-    int type, bytes_per_blockelement, npart, nextblock, typelist[6];
+    int type, bytes_per_blockelement, nextblock, typelist[6];
+    long long npart;
     int n_for_this_task, n, p, pc, offset = 0, task, i;
     size_t blockmaxlen;
-    int ntot_type[6], nn[6];
+    long long ntot_type[6];   /* particles of each type in this file: summed over the ranks feeding it, so 64-bit */
+    int nn[6];
     enum iofields blocknr;
     char label[8];
     int bnr;
@@ -4680,7 +4899,8 @@ void write_file(char *fname, int writeTask, int lastTask)
     hid_t hdf5_datatype = 0, hdf5_dataspace_in_file = 0, hdf5_dataset = 0;
     herr_t hdf5_status;
     hsize_t dims[2], count[2], start[2];
-    int rank = 0, pcsum = 0;
+    int rank = 0;
+    long long pcsum = 0;
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 
 #define SKIP  {my_fwrite(&blksize,sizeof(int),1,fd);}
@@ -4700,18 +4920,18 @@ void write_file(char *fname, int writeTask, int lastTask)
         }
 
         for(task = writeTask + 1; task <= lastTask; task++)
-            MPI_Send(&ntot_type[0], 6, MPI_INT, task, TAG_N, MPI_COMM_WORLD);
+            MPI_Send(&ntot_type[0], 6, MPI_LONG_LONG, task, TAG_N, MPI_COMM_WORLD);
     }
     else
     {
         MPI_Send(&n_type[0], 6, MPI_INT, writeTask, TAG_LOCALN, MPI_COMM_WORLD);
-        MPI_Recv(&ntot_type[0], 6, MPI_INT, writeTask, TAG_N, MPI_COMM_WORLD, &status);
+        MPI_Recv(&ntot_type[0], 6, MPI_LONG_LONG, writeTask, TAG_N, MPI_COMM_WORLD, &status);
     }
 
     /* fill file header */
     for(n = 0; n < 6; n++)
     {
-        header.npart[n] = (int) ntot_type[n];
+        header.npart[n] = (ntot_type[n] > INT_MAX) ? INT_MAX : (int) ntot_type[n];   /* the binary header only: SnapFormat 1/2 were checked to fit, HDF5 writes ntot_type */
         header.npartTotal[n] = (unsigned int) ntot_type_all[n];
         header.npartTotalHighWord[n] = (unsigned int) (ntot_type_all[n] >> 32);
     }
@@ -4772,14 +4992,14 @@ void write_file(char *fname, int writeTask, int lastTask)
 
             for(type = 0; type < 6; type++)
             {
-                if(header.npart[type] > 0)
+                if(ntot_type[type] > 0)
                 {
                     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "/PartType%d", type);
                     hdf5_grp[type] = H5Gcreate(hdf5_file, buf, 0);
                 }
             }
 
-            write_header_attributes_in_hdf5(hdf5_headergrp);
+            write_header_attributes_in_hdf5(hdf5_headergrp, ntot_type);
 
         }
         else
@@ -4822,10 +5042,10 @@ void write_file(char *fname, int writeTask, int lastTask)
             if(blocknr == IO_LASTENTRY)
                 break;
 
-            if(blockpresent(blocknr))
+            if(block_written_in_snapshot(blocknr))
             {
                 bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 0);
-                npart = get_particles_in_block(blocknr, &typelist[0]);
+                npart = get_particles_in_block(blocknr, &typelist[0], ntot_type);
 
                 if(npart > 0)
                 {
@@ -4878,12 +5098,11 @@ void write_file(char *fname, int writeTask, int lastTask)
         blocknr = (enum iofields) bnr;
         if(blocknr == IO_LASTENTRY) {break;}
 
-        if(blockpresent(blocknr))
+        if(block_written_in_snapshot(blocknr))
         {
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 0);
-            size_t comm_chunk_mb = All.CommChunkSize;
-            blockmaxlen = (size_t) ((comm_chunk_mb * 1024 * 1024) / bytes_per_blockelement);
-            npart = get_particles_in_block(blocknr, &typelist[0]);
+            blockmaxlen = (size_t) (comm_chunk_bytes() / bytes_per_blockelement);
+            npart = get_particles_in_block(blocknr, &typelist[0], ntot_type);
 
             if(npart > 0)
             {
@@ -4905,11 +5124,11 @@ void write_file(char *fname, int writeTask, int lastTask)
                             SKIP;
                             get_Tab_IO_Label(blocknr, label);
                             my_fwrite(label, sizeof(char), 4, fd);
-                            nextblock = npart * bytes_per_blockelement + 2 * sizeof(int);
+                            nextblock = (int) (npart * bytes_per_blockelement + 2 * (long long) sizeof(int));   /* fits: checked before the file was opened */
                             my_fwrite(&nextblock, sizeof(int), 1, fd);
                             SKIP;
                         }
-                        blksize = npart * bytes_per_blockelement;
+                        blksize = (int) (npart * bytes_per_blockelement);
                         SKIP;
                     }
                 }
@@ -4923,7 +5142,7 @@ void write_file(char *fname, int writeTask, int lastTask)
 #endif
                     {
 
-                        if(ThisTask == writeTask && All.SnapFormat == 3 && header.npart[type] > 0)
+                        if(ThisTask == writeTask && All.SnapFormat == 3 && ntot_type[type] > 0)
                         {
                             switch(get_datatype_in_block(blocknr))
                             {
@@ -4948,7 +5167,7 @@ void write_file(char *fname, int writeTask, int lastTask)
                                     break;
                             }
 
-                            dims[0] = header.npart[type];
+                            dims[0] = ntot_type[type];
                             dims[1] = get_values_per_blockelement(blocknr);
                             if(dims[1] == 1) {rank = 1;} else {rank = 2;}
 
@@ -5044,7 +5263,7 @@ void write_file(char *fname, int writeTask, int lastTask)
                         }
 
 
-                        if(ThisTask == writeTask && All.SnapFormat == 3 && header.npart[type] > 0)
+                        if(ThisTask == writeTask && All.SnapFormat == 3 && ntot_type[type] > 0)
                         {
                             if(All.SnapFormat == 3)
                             {
@@ -5078,7 +5297,7 @@ void write_file(char *fname, int writeTask, int lastTask)
         if(All.SnapFormat == 3)
         {
 
-            for(type = 5; type >= 0; type--) {if(header.npart[type] > 0) {H5Gclose(hdf5_grp[type]);}}
+            for(type = 5; type >= 0; type--) {if(ntot_type[type] > 0) {H5Gclose(hdf5_grp[type]);}}
             H5Gclose(hdf5_headergrp);
             H5Fclose(hdf5_file);
 
@@ -5094,7 +5313,7 @@ void write_file(char *fname, int writeTask, int lastTask)
 
 
 
-void write_header_attributes_in_hdf5(hid_t handle)
+void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_file)
 {
     hsize_t adim[1] = { 6 }; hid_t hdf5_dataspace, hdf5_attribute;
 
@@ -5102,8 +5321,8 @@ void write_header_attributes_in_hdf5(hid_t handle)
         H5Awrite(hdf5_attribute, H5T_NATIVE_INT, &tmp); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
     
     hdf5_dataspace = H5Screate(H5S_SIMPLE); H5Sset_extent_simple(hdf5_dataspace, 1, adim, NULL);
-    hdf5_attribute = H5Acreate(handle, "NumPart_ThisFile", H5T_NATIVE_INT, hdf5_dataspace, H5P_DEFAULT);
-    H5Awrite(hdf5_attribute, H5T_NATIVE_INT, header.npart); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+    hdf5_attribute = H5Acreate(handle, "NumPart_ThisFile", H5T_NATIVE_LLONG, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_LLONG, npart_this_file); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
 
     hdf5_dataspace = H5Screate(H5S_SIMPLE); H5Sset_extent_simple(hdf5_dataspace, 1, adim, NULL);
     hdf5_attribute = H5Acreate(handle, "NumPart_Total", H5T_NATIVE_UINT, hdf5_dataspace, H5P_DEFAULT);
@@ -5159,7 +5378,33 @@ void write_header_attributes_in_hdf5(hid_t handle)
 #ifdef MAGNETIC
     {double tmp=UNIT_B_IN_GAUSS; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Internal_UnitB_In_Gauss", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
         H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &tmp); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+    /* unit of the MagneticField dataset (not the internal unit above) */
+    {double tmp=All.UnitMagneticField_in_gauss; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "UnitMagneticField_In_Gauss", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &tmp); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
 #endif
+    /* how this run's code was built: the literal Config.sh, every option in effect (with the defaults and derived
+       options it switched on), a hash of those, the build and compiler, and a fingerprint of the executable */
+    {
+        auto write_string_attribute = [handle](const char *name, const char *value) {
+            hid_t string_type = H5Tcopy(H5T_C_S1); H5Tset_size(string_type, strlen(value) + 1);
+            hid_t space = H5Screate(H5S_SCALAR); hid_t attribute = H5Acreate(handle, name, string_type, space, H5P_DEFAULT);
+            H5Awrite(attribute, string_type, value); H5Aclose(attribute); H5Sclose(space); H5Tclose(string_type);};
+        write_string_attribute("Compile_Config_Options", compile_time_config_literal());
+        write_string_attribute("Compile_Effective_Options", compile_time_effective_options());
+        unsigned long long options_hash = compile_time_effective_options_fnv1a64();
+        hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Compile_Effective_Options_FNV1a64", H5T_NATIVE_ULLONG, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_ULLONG, &options_hash); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+#ifdef BUILDINFO
+        write_string_attribute("Build_Info", BUILDINFO);
+#endif
+        write_string_attribute("Compiler_Version", compile_time_compiler_version());
+        unsigned long long executable_hash = executable_fnv1a64(); long long executable_size = executable_size_in_bytes();
+        hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Executable_FNV1a64", H5T_NATIVE_ULLONG, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_ULLONG, &executable_hash); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+        hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Executable_Size_In_Bytes", H5T_NATIVE_LLONG, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_LLONG, &executable_size); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+    }
+
     hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Gravitational_Constant_In_Code_Inits", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &All.G); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
 
@@ -5580,9 +5825,21 @@ void write_header_attributes_in_hdf5(hid_t handle)
 #endif
 
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
-    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={7,12}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
+    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={N_TILLOTSON_MATERIALS,10}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
     hdf5_attribute = H5Acreate(handle, "Tillotson_EOS_parameters_for_all_species", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.Tillotson_EOS_params); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+#endif
+#ifdef EOS_ELASTIC
+    /* per CompositionType: shear modulus, yield strength, Weibull k, Weibull m, internal friction, initial distention, P_e, P_s, reference density (code units), fracture law (0 tensile flaws, 1 shear-activated), cohesion, high-pressure strength limit */
+    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={N_SOLID_MATERIAL_IDS, N_SOLID_MATERIAL_PROPERTIES}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
+    hdf5_attribute = H5Acreate(handle, "Solid_material_properties_by_composition", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.SolidMaterial); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+#endif
+#ifdef EOS_ELASTIC_MELT
+    /* per CompositionType: thermal-softening form (0 none, 1 specific energy, 2 temperature), u_melt, T_m0 [K], Simon a, Simon c, Ohnaka xi, cavitation strength (code units) */
+    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={N_SOLID_MATERIAL_IDS, N_SOLID_STRENGTH_MODEL_PROPERTIES}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
+    hdf5_attribute = H5Acreate(handle, "Solid_melt_model_by_composition", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.SolidStrengthModel); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
 #endif
 
 #ifdef SINK_PARTICLES

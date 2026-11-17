@@ -21,7 +21,7 @@
  * unconditionally; the atomic policy (moment_atomic_ops) is defined in gpu_moment_refresh.cc where
  * Kokkos is already in scope, and passed in as the Ops template argument. forcetree.cc therefore
  * acquires NO Kokkos dependency from including this header (it consumes only the plain per-particle
- * hmax/vmax bound primitives at force_add_element_to_tree).
+ * hmax bound primitives at force_add_element_to_tree).
  *
  * Three source forms (_source_from_leaf / _source_from_node split):
  *   - from_particle           : a leaf particle's contribution (gas/sink/RT/sink-distance gates).
@@ -221,8 +221,9 @@ struct moment_node_ref {
 
 /* ==========================================================================================
  * Per-particle bound primitives — the textually-duplicated hmax/vmax formulas. Also consumed by
- * force_add_element_to_tree (forcetree.cc), which incrementally bounds a father node by one inserted
- * leaf. Plain scalars only -> no Kokkos, no storage knowledge.
+ * force_add_element_to_tree (forcetree.cc), which bounds a father node's hmax by one inserted leaf
+ * (its speed goes up the whole chain through gravity_note_inserted_motion_bound). Plain scalars only
+ * -> no Kokkos, no storage knowledge.
  * ========================================================================================== */
 
 /* Gas leaf's hmax contribution: its smoothing length capped at the global max kernel radius. */

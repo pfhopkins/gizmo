@@ -4,7 +4,7 @@
  * AGSForce iterative neighbor loop closes).
  *
  * Both entries follow the same shape as solids/grain_drag.cc:
- *   - tiny-N (num_active < GPU_MIN_PARTICLES_FOR_OFFLOAD): direct host call
+ *   - tiny-N (num_active below the per-particle-loop offload count): direct host call
  *     in an OMP parallel-for loop. No arena, no Kokkos allocation, no
  *     compact gather. Each active index is unique → thread-safe.
  *   - large-N: compact gather of particle_data[num_active] in
@@ -70,7 +70,7 @@ void cbe_drift_kick_evaluate_gpu(struct particle_data *P_host,
 {
     if(num_active <= 0) return;
 
-    if(num_active < GPU_MIN_PARTICLES_FOR_OFFLOAD)
+    if(!gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, num_active))
     {
         /* Tiny-N OMP path: pure host calls, no arena, no Kokkos. Each
          * active index writes its own particle (unique by construction). */
@@ -207,7 +207,7 @@ void cbe_postgravity_evaluate_gpu(struct particle_data *P_host,
 {
     if(num_active <= 0) return;
 
-    if(num_active < GPU_MIN_PARTICLES_FOR_OFFLOAD)
+    if(!gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, num_active))
     {
         PRINT_STATUS("  CBE postgravity (OMP): %d active", num_active);
 #ifdef _OPENMP

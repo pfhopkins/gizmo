@@ -35,6 +35,7 @@
 #include "../core/proto.h"
 #include "../core/timestep_functions.h"
 #include "../mesh/kernel.h"
+#include "../declarations/multifluid_helpers.h"
 #include "../mesh/neighbor_list.h"
 #include "../mesh/sfc_tiles.h"
 #include "../mesh/sfc_tiles_functions.h"
@@ -236,6 +237,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             local.SoundSpeed = kc[ii].effective_soundspeed();
             local.dt_hydrostep_i = get_particle_timestep_in_physical(ii, kp);
             local.DrkernNgbFactor = kp[ii].DrkernNgbFactor;
+#ifdef EOS_ANEOS
+            local.Temperature = kc[ii].Temperature;
+#endif
             local.Gradients.Density = kc[ii].Gradients.Density;
             local.Gradients.Pressure = kc[ii].Gradients.Pressure;
             local.Gradients.Velocity = kc[ii].Gradients.Velocity;
@@ -257,6 +261,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 #ifdef MHD_MODIFIED_GRADIENT
             local.MG_cgcoeff = kc[ii].MG_cgcoeff;
             local.MG_piece_token = kc[ii].MG_piece_token;
+            local.MG_envelope = kc[ii].MG_envelope;
 #endif
 #endif
 #ifdef DOGRAD_INTERNAL_ENERGY
@@ -299,6 +304,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             local.Eta_MHD_OhmicResistivity_Coeff = kc[ii].Eta_MHD_OhmicResistivity_Coeff;
             local.Eta_MHD_HallEffect_Coeff = kc[ii].Eta_MHD_HallEffect_Coeff;
             local.Eta_MHD_AmbiPolarDiffusion_Coeff = kc[ii].Eta_MHD_AmbiPolarDiffusion_Coeff;
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+            local.NonIdealMHDFlux = kc[ii].NonIdealMHDFluxPred;
+#endif
 #endif
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
             local.Balpha = kc[ii].Balpha;
@@ -313,7 +321,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             for(int ki=0;ki<ismdc_n;ki++) {local.Metallicity[ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY+ki] = ismdc[aa*ismdc_n+ki];}
 #endif
 #ifdef CHIMES_TURB_DIFF_IONS
-            for(int k=0;k<ChimesGlobalVars.totalNumberOfSpecies;k++) {local.ChimesNIons[k] = kc[ii].ChimesNIons[k];}
+            for(int k=0;k<All.ChimesNumSpecies;k++) {local.ChimesNIons[k] = kc[ii].ChimesNIons[k];}
 #endif
 #if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
             for(int k=0;k<N_RT_FREQ_BINS;k++) {local.Gradients.Rad_E_gamma_ET[k] = kc[ii].Gradients.Rad_E_gamma_ET[k];}
@@ -356,11 +364,15 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
 #endif
             }
 #endif
-#if defined(EOS_ELASTIC) || defined(EOS_ANEOS)
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
             local.CompositionType = kc[ii].CompositionType;
 #endif
 #ifdef EOS_ELASTIC
             for(int k=0;k<3;k++) {for(int k2=0;k2<3;k2++) {local.Elastic_Stress_Tensor[k][k2] = kc[ii].Elastic_Stress_Tensor_Pred[k][k2];}}
+            local.RecentYieldMemory = kc[ii].RecentYieldMemory;
+#ifdef EOS_ELASTIC_MELT
+            local.StrengthFraction = kc[ii].StrengthFractionPred;
+#endif
 #endif
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
             local.Damage = kc[ii].Damage;
@@ -393,6 +405,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             for(int64_t idx = offsets[aa]; idx < offsets[aa + 1]; idx++)
             {
                 int j = neighbors[idx];
+#ifdef HYDRO_MULTIFLUID
+                if(!same_lagrangian_fluid_id(kp[ii].FluidType, kp[j].FluidType)) {continue;} /* different fluids exchange no fluxes, as in the hydro pass */
+#endif
                 memset(&Fluxes, 0, sizeof(Fluxes));
                 hydro_accumulate_neighbor(local, out, kernel, Fluxes, j,
                                           local.dt_hydrostep_i, kp, kc,

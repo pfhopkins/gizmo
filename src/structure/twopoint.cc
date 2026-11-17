@@ -6,6 +6,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 
 #if defined(OUTPUT_TWOPOINT_ENABLED)
 #include <vector>
@@ -60,8 +61,7 @@ void twopoint(void)
     scaled_frac = FRACTION_TP * 1.0e7 / All.TotNumPart; logR0 = log(R0); binfac = BINS_TP / (log(R1) - log(R0));
     for(i = 0; i < BINS_TP; i++) {Count[i] = 0; CountSpheres[i] = 0;}
 
-    gizmo_rng_t saved_rng = random_generator;
-    gizmo_rng_init(&random_generator, (uint64_t)P[0].ID + (uint64_t)ThisTask);
+    static constexpr uint64_t SAMPLE_CENTRE_RNG_SALT = gizmo_loop_rng_salt("twopoint_sample_centre"); /* which particles are sample centres: keyed on each particle, so independent of the decomposition */
     /* Modern path: prebuilt CSR NL, per-source rs, all-types search pool.
      *
      * INTERIM IMPLEMENTATION: drops the legacy tree-mass-aggregation
@@ -101,8 +101,8 @@ void twopoint(void)
         active_radii.reserve(NumPart);
 
         for(i = 0; i < NumPart; i++) {
-            if(gizmo_rng_uniform(&random_generator) < scaled_frac) {
-                p = gizmo_rng_uniform(&random_generator);
+            if(particle_random_number(i, SAMPLE_CENTRE_RNG_SALT, (uint64_t)All.Ti_Current, 0) < scaled_frac) {
+                p = particle_random_number(i, SAMPLE_CENTRE_RNG_SALT, (uint64_t)All.Ti_Current, 1);
                 rs = pow(pow(R0, ALPHA) + p * (pow(R1, ALPHA) - pow(R0, ALPHA)), 1 / ALPHA);
                 bin = (int) ((log(rs) - logR0) * binfac);
                 rs = exp((bin + 1) / binfac + logR0);
@@ -113,14 +113,14 @@ void twopoint(void)
         }
 
         int num_src = (int)active_idx.size();
-        int num_src_global = 0;
-        MPI_Allreduce(&num_src, &num_src_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        int any_src_local = (num_src > 0) ? 1 : 0, any_src = 0;
+        MPI_Allreduce(&any_src_local, &any_src, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         gpu_neighbor_list_t gnl = {};
         std::vector<int> gnl_neighbors_host;
         int local_count = ghost_get_num_local();
         if(local_count <= 0) local_count = NumPart;
         int ghost_imported = 0;
-        if(num_src_global > 0) {
+        if(any_src) {
             int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
             int need_import = 0;
             MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -170,13 +170,12 @@ void twopoint(void)
             }
         }
 
-        if(num_src_global > 0) {
+        if(any_src) {
             gpu_ngb_list_free(&gnl);
             gpu_particles_arena_invalidate();
         }
         if(ghost_imported) ghost_exchange_cleanup();
     }
-    random_generator = saved_rng;
 
     /* Now compute the actual correlation function */
     countbuf = (long long int *) mymalloc("countbuf", NTask * BINS_TP * sizeof(long long));

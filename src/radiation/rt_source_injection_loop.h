@@ -160,7 +160,7 @@ static void rt_source_injection_pair_body(
     for (kx = 0; kx < N_RT_INTENSITY_BINS; kx++) {
         double cos_t = 0;
         for (int kq = 0; kq < 3; kq++) {
-            cos_t += All.Rad_Intensity_Direction[kx][kq] * dp[kq] / r;
+            cos_t -= All.Rad_Intensity_Direction[kx][kq] * dp[kq] / r; /* dp points from this cell to the source; photons travel along -dp */
         }
         double wt = cos_t * cos_t * cos_t * cos_t;
         if (cos_t < 0) wt = 0;
@@ -241,12 +241,20 @@ static void rt_source_injection_pair_body(
 #endif
 #ifdef RT_EVOLVE_INTENSITIES
         {
-            double dflux_int = dE / angle_wt_Inu_sum;
+            double dflux_int = dE / (angle_wt_Inu_sum * RT_INTENSITY_BINS_DOMEGA); /* intensities hold energy/DOMEGA per bin */
             for (int kv = 0; kv < N_RT_INTENSITY_BINS; kv++) {
                 double dI_temp = dflux_int * angle_wt_Inu[kv];
                 Kokkos::atomic_add(&Cj.Rad_Intensity[k][kv], dI_temp);
                 Kokkos::atomic_add(&Cj.Rad_Intensity_Pred[k][kv], dI_temp);
             }
+#ifdef RT_REPROCESS_INJECTED_PHOTONS
+            if (donation_bin > -1) { /* reprocessed light is re-emitted isotropically */
+                for (int kv = 0; kv < N_RT_INTENSITY_BINS; kv++) {
+                    Kokkos::atomic_add(&Cj.Rad_Intensity[donation_bin][kv], dE_donation / (4. * M_PI));
+                    Kokkos::atomic_add(&Cj.Rad_Intensity_Pred[donation_bin][kv], dE_donation / (4. * M_PI));
+                }
+            }
+#endif
         }
 #endif
 #if defined(RT_EVOLVE_FLUX)

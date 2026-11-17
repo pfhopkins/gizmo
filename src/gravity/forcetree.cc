@@ -6,6 +6,7 @@
 #include <time.h>
 #include <limits.h>
 #include "../declarations/allvars.h"
+#include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "forcetree.h"               /* GIZMO_EWALD_EN + Ewald-table accessor decls */
@@ -173,6 +174,13 @@ static int tree_allocated_flag = 0;
  *  must know (the particle-storage resize, which may not release capacity under a standing tree)
  *  ask here rather than inferring it from MaxNodes or a live pointer. */
 int force_tree_is_allocated(void) {return tree_allocated_flag;}
+/* Imported foreign subtrees are read only by the gravity walks and SUBFIND's potential walk; every neighbour
+   walk skips them and stops at a remote top leaf.  Without either consumer no subtree is imported, the foreign
+   index range is empty, and foreign top leaves keep pointing at their pseudo-particles. */
+#if !defined(SELFGRAVITY_OFF) || defined(SUBFIND)
+#define TREE_IMPORTS_FOREIGN_SUBTREES
+#endif
+
 /* The foreign storage this rank reserves for the gravity tree, derived from its own past demand: raised whenever a
    force_treebuild_gravity build that finished its LET exchange over the whole tree needed more, to that import or a
    quarter above the old reservation, whichever is larger (so it can exceed any import seen so far).  The gravity
@@ -188,6 +196,9 @@ int force_treebuild_gravity(void)
     building_gravity_tree = 1;
     const int status = force_treebuild(NumPart, NULL);
     building_gravity_tree = 0;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    hermite_local_sources_rebuild();   /* the Hermite-type particles this tree exports, listed while the build has visited every particle */
+#endif
     return status;
 }
 
@@ -287,6 +298,10 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
      * particles, are skipped by the test just below instead: every slot the tree does not contain
      * carries -1, which is what a ghost's slot holds. */
     const int nseed = (NumPart < All.TreeParticleSlots) ? NumPart : All.TreeParticleSlots;
+    const int seed_threaded = gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, nseed);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(seed_threaded)
+#endif
     for(int i = 0; i < nseed; i++) {
         int no = Father[i];
         if(no < 0) continue;
@@ -294,7 +309,8 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
         if(pa->Mass <= 0) continue;
         double htmp = force_hmax_per_type_particle_radius(i);
         int t = (int)pa->Type;
-        if(htmp > Extnodes[no].hmax_per_type[t]) Extnodes[no].hmax_per_type[t] = (MyFloat)htmp;
+        if(seed_threaded) {atomic_max_double(&Extnodes[no].hmax_per_type[t], htmp);}   /* particles of one node may sit on different threads */
+        else if(htmp > Extnodes[no].hmax_per_type[t]) {Extnodes[no].hmax_per_type[t] = (MyFloat)htmp;}
     }
     /* Step 3: bottom-up max-over-children via father chain. Children always
      * allocated at higher indices than parents, so reverse iteration gives
@@ -600,7 +616,11 @@ let_build_attempt:
      * receiver needed. The pseudodata Iallgatherv posted just above must still be
      * completed regardless, so no early return here. */
     long long foreign_needed = 0;
+#ifdef TREE_IMPORTS_FOREIGN_SUBTREES
     let_exchange_status_t let_status = let_run_exchange(&foreign_needed);
+#else
+    let_exchange_status_t let_status = LET_OK;   /* no consumer of imported subtrees in this build */
+#endif
     int pseudo_status = force_exchange_pseudodata_complete();
 
     /* Classify globally (worst status wins). A send-buffer malloc failure
@@ -627,7 +647,7 @@ let_build_attempt:
     if(hardfail_any)
     {
         /* Non-retryable. The failing rank records the cause; pseudodata failures
-         * already soft-stopped inside force_exchange_pseudodata_complete(). Skip the
+         * already soft-stopped in force_exchange_pseudodata_post() or _complete(). Skip the
          * foreign-moment scatter/finalize/resum; drains at gravtree:after_treebuild. */
         if(let_status == LET_PACK_OOM)
         {
@@ -688,7 +708,9 @@ let_build_attempt:
         /* Success: foreign moments complete. Scatter AoS→SoA, finalize LET
          * completeness, then re-sum ancestor topnode moments. */
         if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(90000073);}
+#ifdef TREE_IMPORTS_FOREIGN_SUBTREES
         let_finalize_unredirected_foreign_topleaves();
+#endif
         if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
         if(building_gravity_tree && !not_whole_tree_any && foreign_needed > remembered_foreign_slots)
         {
@@ -703,19 +725,25 @@ let_build_attempt:
        under a top node owned by another task is detached and then appears in NO rank's tree:
        absent from every multipole moment, contributing to no force, and otherwise silent. The
        test is on the count rather than the mass because node masses are MyFloat, so one particle
-       lost in a million falls below the accumulated summation error. Warn rather than abort, so a
-       false positive cannot kill a long run. Group finding builds over subsets, whose root
-       legitimately holds fewer, hence the veto reduced above. */
+       lost in a million falls below the accumulated summation error. A failure stops the run: the
+       forces after it are wrong, and the count is exact, so there is no false positive to tolerate.
+       Every rank holds the same root count (the top-leaf counts are exchanged), so every rank
+       requests the stop. Group finding builds over subsets, whose root legitimately holds fewer,
+       hence the veto reduced above. */
     if(!not_whole_tree_any)
     {
         long long in_tree = (long long) Nodes[All.TreeNodeIndexBase].N_part;
-        if(in_tree != (long long) All.TotNumPart && ThisTask == 0)
+        if(in_tree != (long long) All.TotNumPart)
         {
-            printf("WARNING: tree integrity check failed: root node holds %lld particles, expected %lld. "
-                   "Particles missing from the tree contribute to no rank's multipole moments, so the "
-                   "forces on everything else are wrong by their mass.\n",
-                   in_tree, (long long) All.TotNumPart);
-            fflush(stdout);
+            if(ThisTask == 0)
+            {
+                printf("STOP: tree integrity check failed: root node holds %lld particles, expected %lld. "
+                       "Particles missing from the tree contribute to no rank's multipole moments, so the "
+                       "forces on everything else are wrong by their mass. Stopping.\n",
+                       in_tree, (long long) All.TotNumPart);
+                fflush(stdout);
+            }
+            endrun(90000102);
         }
     }
 
@@ -769,6 +797,8 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     MyFloat lenhalf;
     peanokey key, morton, th_key, *morton_list;
     
+    nlr_mode_d_packet_tree_rebuilt();   /* every build, in place or not: the packet walk's top-level order is recomputed */
+    gx_top_leaf_map_tree_rebuilt();     /* and Mode D's top-leaf map is rebuilt on its next use */
     /* create an empty root node  */
     nfree = All.TreeNodeIndexBase;        /* index of first free node */
     nfreep = &Nodes[nfree];    /* select first node */
@@ -1088,23 +1118,32 @@ struct DomainNODE
 #endif
     };
 
-/*! State shared between force_exchange_pseudodata_issue() and
- *  ..._complete() for the non-blocking-overlap pattern.  let_run_exchange
- *  runs concurrently with the pseudodata Iallgathervs in the GPU build path. */
+/*! State shared between force_exchange_pseudodata_post() and ..._complete().
+ *  In the tree build, let_run_exchange runs between the two, concurrently with
+ *  the nonblocking pseudodata all-gathers. */
 static struct DomainNODE *DomainMoment_pending = NULL;
 static MPI_Request *pseudo_requests_pending = NULL;
 static int *pseudo_recvcounts_pending = NULL;
 static int *pseudo_recvoffset_pending = NULL;
 static int  pseudo_n_requests_pending = 0;
+static int  pseudo_post_failed = 0;   /* the post stopped before every segment was exchanged */
 
-void force_exchange_pseudodata_issue(void)
+static void force_exchange_pseudodata_post(int blocking);
+void force_exchange_pseudodata_issue(void) {force_exchange_pseudodata_post(0);}
+
+/* blocking=1 for the synchronous wrapper, whose caller (the moment refresh) has no work to overlap with the
+ * exchange: a blocking Allgatherv can use MPI's tuned algorithms, and it was the faster form in a measured
+ * many-rank case. The segments are then exchanged one after another rather than together. The same bytes land
+ * in the same places either way. */
+static void force_exchange_pseudodata_post(int blocking)
 {
     int i, no, m;
     /* Re-entrant issue() (a prior issue had no matching complete()): soft
-     * bad-stop + return BEFORE allocating/posting a second Iallgatherv, so the
-     * already-pending exchange is left intact for its complete(). No poll here
+     * bad-stop + return BEFORE allocating/posting a second exchange, so the
+     * already-pending one is left intact for its complete(). No poll here
      * (a nonblocking collective may be outstanding); drains at a later poll. */
     if(DomainMoment_pending != NULL) {endrun(90000075); return;}
+    pseudo_post_failed = 0;
 
     DomainMoment_pending = (struct DomainNODE *) mymalloc("DomainMoment", NTopleaves * sizeof(struct DomainNODE));
     struct DomainNODE *DomainMoment = DomainMoment_pending;
@@ -1175,13 +1214,16 @@ void force_exchange_pseudodata_issue(void)
 #endif
         }
 
-    /* Post one MPI_Iallgatherv per All.DomainSegmentsPerRank slice; the requests
-     * are stored in static pseudo_requests_pending and waited on in _complete().
+    /* Post one all-gather per All.DomainSegmentsPerRank slice; the requests (null for a
+     * blocking one) are stored in static pseudo_requests_pending and waited on in _complete().
      * Per-slice recvcounts/recvoffset arrays must remain valid until Wait, so
      * we allocate one set per slice and free them all in _complete(). */
     pseudo_n_requests_pending = All.DomainSegmentsPerRank;
     pseudo_requests_pending = (MPI_Request *) mymalloc("pseudo_requests",
                                   All.DomainSegmentsPerRank * sizeof(MPI_Request));
+    /* null until posted: a blocking post leaves its entry null, and a stop requested part-way through the loop
+     * below leaves _complete() waiting only on what was actually posted */
+    for(m = 0; m < All.DomainSegmentsPerRank; m++) {pseudo_requests_pending[m] = MPI_REQUEST_NULL;}
     pseudo_recvcounts_pending = (int *) mymalloc("pseudo_recvcounts",
                                   All.DomainSegmentsPerRank * NTask * sizeof(int));
     pseudo_recvoffset_pending = (int *) mymalloc("pseudo_recvoffset",
@@ -1196,7 +1238,7 @@ void force_exchange_pseudodata_issue(void)
                 (DomainEndList[recvTask * All.DomainSegmentsPerRank + m] -
                  DomainStartList[recvTask * All.DomainSegmentsPerRank + m] + 1)
                 * sizeof(struct DomainNODE);
-            /* MPI_Iallgatherv takes int byte counts and displacements, so the whole pseudodata
+            /* MPI's all-gathers take int byte counts and displacements, so the whole pseudodata
              * block has to stay under 2 GB.  That ceiling is a property of this exchange, not of
              * the caller, and silently wrapping it would hand MPI a negative displacement -- so
              * check it here, where the number is formed. */
@@ -1211,21 +1253,26 @@ void force_exchange_pseudodata_issue(void)
                     printf("There are %d top-tree leaves; lower DOMAIN_SEGMENTS_SCALE or run on fewer ranks.\n", NTopleaves);
                     fflush(stdout);
                   }
+                pseudo_post_failed = 1;
                 endrun(90000025);
                 return;
               }
             ro[recvTask] = (int) offset_bytes;
         }
-        MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
-                        &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
-                        &pseudo_requests_pending[m]);
+        if(blocking) {MPI_Allgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE, &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD);}
+        else
+        {
+            MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
+                            &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
+                            &pseudo_requests_pending[m]);
+        }
     }
 }
 
-/*! Waits on the Iallgathervs posted by force_exchange_pseudodata_issue() and
+/*! Waits on the all-gathers posted by force_exchange_pseudodata_post() (done already when posted blocking) and
  *  unpacks the received topleaf moments into the AoS Nodes_base / Extnodes_base.
- *  GPU build path calls let_run_exchange() in between to overlap MPI; CPU and
- *  refresh paths call the sync wrapper force_exchange_pseudodata() below. */
+ *  The tree build calls let_run_exchange() in between to overlap MPI; the moment
+ *  refresh calls the sync wrapper force_exchange_pseudodata() below. */
 int force_exchange_pseudodata_complete(void)
 {
     /* Unmatched complete (pending==NULL = complete without a matching issue, or a
@@ -1247,6 +1294,8 @@ int force_exchange_pseudodata_complete(void)
     pseudo_recvcounts_pending = NULL;
     pseudo_recvoffset_pending = NULL;
     pseudo_n_requests_pending = 0;
+    /* A post that stopped part-way left segments unexchanged: unpack nothing, report failure like an unmatched complete */
+    if(pseudo_post_failed) {myfree(DomainMoment); DomainMoment_pending = NULL; pseudo_post_failed = 0; return 1;}
 
     int i, no, m, ta;
     /* The segment count this exchange was posted with, not whatever it is now: the domain lists
@@ -1331,13 +1380,13 @@ int force_exchange_pseudodata_complete(void)
     return 0;
 }
 
-/*! Synchronous wrapper (begin + complete in one call) for the CPU and
- *  refresh code paths (which do not have a LET round to overlap with).
- *  Returns the complete() status (nonzero = unmatched; caller skips dependent
+/*! Synchronous wrapper (begin + complete in one call) for the moment refresh,
+ *  which has no LET round to overlap with.
+ *  Returns the complete() status (nonzero = unmatched or not fully posted; caller skips dependent
  *  pseudo-update work and drains at its poll). */
 int force_exchange_pseudodata(void)
 {
-    force_exchange_pseudodata_issue();
+    force_exchange_pseudodata_post(1);
     return force_exchange_pseudodata_complete();
 }
 
@@ -1792,13 +1841,16 @@ void force_add_element_to_tree(int iparent, int ichild)
     Nextnode[iparent] = ichild; // insert new particle into linked list
     Nextnode[ichild] = no; // order correctly
     Father[ichild] = father; // set parent node to be the same
-    // update parent node properties [maximum softening, speed] for opening criteria
+    /* The child's speed bound goes up its whole chain, to the top-level node other ranks route by; the
+     * parent's node alone would let it outrun every ancestor box until its first kick or the next build. */
+    gravity_note_inserted_motion_bound(ichild);
+    /* update parent node property [maximum softening] for opening criteria. The bound and the per-type band below are raised
+       from the PARENT's radius and type, not the inserted child's: a spawned child's own band reaches the tree when it is
+       next active (force_update_hmax) or at the next build. Known and accepted: measured on a FIRE galaxy run, no neighbour pair depended on the stale band
+       (checks after 13 spawns, none locally or remotely); change this only if a missed pair is shown. */
     MyFloat new_hmax = DMAX(Extnodes[father].hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[iparent].KernelRadius, All.MaxKernelRadius));
     Extnodes[father].hmax = new_hmax;
-    /* Mode B per-type incremental update — only the band corresponding to
-     * iparent's type. Other bands unchanged (correct: this insertion adds
-     * one particle, only its type's band can grow). Conservative across every
-     * leaf-policy-selectable source via the shared helper. */
+    /* Mode B per-type incremental update -- the band of the parent's type, as for the bound above. */
     {
         int ptype = (int)P[iparent].Type;
         double htmp = force_hmax_per_type_particle_radius(iparent);
@@ -1806,13 +1858,9 @@ void force_add_element_to_tree(int iparent, int ichild)
             Extnodes[father].hmax_per_type[ptype] = (MyFloat)htmp;
         }
     }
-    double new_vmax = DMAX((double) Extnodes[father].vmax, particle_motion_speed_bound(ichild, P, CellP));
-    Extnodes[father].vmax = (MyFloat) new_vmax;
-
     /* Keep SoA walk-mirror coherent with the AoS Extnodes
-     * change above.  hmax and vmax are read by the walk's opening criteria
-     * (and vmax drives bbox expansion in subsequent drifts via Nodes[].len).
-     * Indexing matches the local-or-foreign convention from gpu_force_drift_nodes:
+     * change above.  hmax is read by the walk's opening criteria (vmax was
+     * mirrored by the chain raise above).  Indexing matches the local-or-foreign convention from gpu_force_drift_nodes:
      * SoA slot k = father - All.TreeNodeIndexBase for both local nodes (k < MaxNodes) and
      * foreign nodes (MaxNodes <= k < MaxNodes + AllocatedForeignNodes) -- bounded by the mirror
      * that exists, not by the index range it sits in. */
@@ -1821,7 +1869,6 @@ void force_add_element_to_tree(int iparent, int ichild)
         const int k_soa = gpu_gravity_tree_mirror_slot(father);
         if(soa && k_soa >= 0) {
             if(soa->hmax) {soa->hmax[k_soa] = (MyGravFloat) new_hmax;}
-            if(soa->vmax) {soa->vmax[k_soa] = (MyGravFloat) new_vmax;}
             /* ⛔ node_ti is deliberately NOT written here. It must pair with the
                LENGTH it describes, and this site does not write soa->len: stamping a
                newer time onto an older length makes the walk widen by too little --
@@ -1836,6 +1883,7 @@ void force_add_element_to_tree(int iparent, int ichild)
      * final type call this as well; the raise is monotone, so the repeat can only over-claim. */
     force_tree_note_type_presence(ichild);
     gizmo_mark_position_dirty_indices(&ichild, 1);   /* the child is now reachable at its position */
+    gravity_note_set_positions(&ichild, 1);           /* placed beside its parent, not drifted there: its boxes must hold it */
 
     /* Each insertion stales the LET / pseudo-particle
      * moments shipped on the last full build.  Mass+CoM remain conserved at
@@ -2194,6 +2242,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
         mem.tgt = tgt;
 #ifdef RT_USE_GRAVTREE
         mem.valid_gas_particle_for_rt = grav_target_valid_gas_for_rt(mem.open.ptype, mem.open.soft, mem.pmass);
+#ifdef HYDRO_MULTIFLUID_DM
+        if(mem.valid_gas_particle_for_rt && P[tm].FluidType == FLUID_DM) {mem.valid_gas_particle_for_rt = 0;} /* the dark fluid takes no baryonic radiation */
+#endif
 #if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
         if(mem.valid_gas_particle_for_rt)
         {
@@ -2505,6 +2556,26 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                     dv = Extnodes[no].vs - vel;
 #endif
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+                    int k_gh = -1;   /* owner-side Hermite state of a foreign leaf, when one replaces the snapshot */
+                    /* A foreign real leaf of a Hermite type, on a Hermite pass: take the owner-side state
+                       (hermite_ghost_entry) in place of the imported snapshot. */
+                    if(fl_tag == 1 && HermiteGhostTab && ForeignLeafID && (HERMITE_INTEGRATION & (1 << fl_type)) && mass > 0)
+                    {
+                        /* A miss is a source whose owner zeroed it since the tree build (a sink merged away or
+                           swallowed: the table skips Mass <= 0). Keep the snapshot, as the device walk does. */
+                        k_gh = hermite_ghost_lookup(HermiteGhostTab, NHermiteGhost, ForeignLeafID[no - (treeBase + maxNodes)]);
+                        if(k_gh >= 0)
+                        {
+                            dr = HermiteGhostTab[k_gh].pos - pos;
+                            GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                            r2 = dr.norm_sq();
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+                            dv = HermiteGhostTab[k_gh].vel - vel;
+#endif
+                        }
+                    }
+#endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                     cr_injection = nop->cr_injection;
 #endif
@@ -2549,6 +2620,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                     if(nop->sink_mass > 0)        /* found a node with non-zero BH mass */
                     {
                         Vec3<double> sink_dr = nop->sink_pos - pos;  /* SHEA:  now using sink_pos instead of center */
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+                        if(k_gh >= 0) {sink_dr = HermiteGhostTab[k_gh].pos - pos;}   /* the singleton sink IS the leaf: same state as the force */
+#endif
                         GRAVITY_NEAREST_XYZ(sink_dr[0],sink_dr[1],sink_dr[2],-1);
                         grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
 #if defined(SINGLE_STAR_TIMESTEPPING)
@@ -2560,6 +2634,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
                         prox_src.motion.vel = nop->sink_vel;
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+                        if(k_gh >= 0) {prox_src.motion.vel = HermiteGhostTab[k_gh].vel;}
+#endif
 #endif
 #if defined(SPECIAL_POINT_MOTION)
                         prox_src.motion.acc = nop->sink_acc;
@@ -3589,7 +3666,8 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
      * and serializes nothing, so it derives normally.
      * Numforeignnodes (current count, <= AllocatedForeignNodes <= MaxForeignNodes) is reset on each
      * LET exchange.  The range is empty (MaxForeignNodes = 0) only before the first tree is
-     * allocated, or when a restart file carries none. */
+     * allocated, when a restart file carries none, or in a build that never imports
+     * (TREE_IMPORTS_FOREIGN_SUBTREES undefined). */
     if(foreign_node_slots_exact >= 0)
     {
         /* Restart read: the index ceiling the file's node pointers were written against, not an
@@ -3610,6 +3688,9 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
          * when an import does not fit the index range). This is the SOLE place MaxForeignNodes is
          * derived. */
         long long want = (base > RuntimeMinLETForeignNodes) ? base : RuntimeMinLETForeignNodes;
+#ifndef TREE_IMPORTS_FOREIGN_SUBTREES
+        want = 0;   /* nothing is ever imported */
+#endif
         if(want < 0) want = 0;
         if(want > (long long)INT_MAX)
         {
@@ -3997,6 +4078,8 @@ void force_treefree(void)
         gpu_gravity_tree_invalidate_currency();
         gpu_gravity_tree_release();
         gpu_leaf_mirror_release();   /* the device leaf mirror lives and dies with the tree */
+        nlr_mode_d_packet_workspace_release();   /* so does the packet walk's workspace (its top-level order is this tree's) */
+        gx_top_leaf_map_release();               /* and Mode D's top-leaf map */
         if(Nextnode)      {gpu_tree_free_bytes(Nextnode);      Nextnode      = NULL;}
         if(Extnodes_base) {gpu_tree_free_bytes(Extnodes_base); Extnodes_base = NULL;}
         if(Nodes_base)    {gpu_tree_free_bytes(Nodes_base);    Nodes_base    = NULL;}
@@ -4307,7 +4390,7 @@ void force_refresh_node_moments(void)
         force_refresh_hmax_per_type_host(Numnodestree);
         if(gpu_force_flag_localnodes() != 0)     {endrun(90000087);}
         int pseudo_status = force_exchange_pseudodata();
-        /* skip dependent pseudo-update on an unmatched complete (soft bad-stop set);
+        /* skip dependent pseudo-update on an unmatched complete or a post stopped part-way (soft bad-stop set);
          * drains at gravtree:after_refresh_moments. */
         if(!pseudo_status) {
             if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(90000088);}

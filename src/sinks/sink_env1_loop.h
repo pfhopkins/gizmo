@@ -22,7 +22,7 @@
 #define SINK_ENV1_LOOP_H
 
 /* Kokkos_Core.hpp must precede allvars.h (its macros may conflict with stdlib
- * names); the inline pair body below emits Kokkos::atomic_min. */
+ * names); the inline pair body below emits Kokkos::atomic_min and atomic_max. */
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 
@@ -76,7 +76,7 @@ struct SinkEnv1ActiveState {
     Vec3<double>  pos;                  /* P[i].Pos */
     Vec3<double>  vel;                  /* P[i].Vel */
     MyIDType      id;                   /* P[i].ID — physics identity, not a self-skip */
-    MyIDType      claim_token;          /* sink ownership token; see gizmo_sink_claim_token */
+    MyIDType      claim_token;          /* sink ownership token; see gizmo_claim_token */
     double        h_search;             /* per-active radius */
     double        ags_h;                /* AGS_KernelRadius if defined, else sink_radius_grav */
 #if defined(SINK_GRAVCAPTURE_GAS) || (SINK_GRAVACCRETION == 8)
@@ -116,6 +116,8 @@ struct SinkEnv1DeviceContext : NeighborLoopDeviceContextBase {
  *     bundle in sinks/sink_env1_loop.cc.
  *   - SINK_GRAVCAPTURE_GAS (without SINGLE_STAR_SINK_DYNAMICS):
  *     accum.mass_to_swallow_edd accumulates i-side; no j-write.
+ *   - SINGLE_STAR_SINK_FORMATION & 8: an atomic max on neighbor_particle.Sink_Ngb_Flag
+ *     (GHOST_WRITEBACK_PARTICLE_MAX(Sink_Ngb_Flag) in the same bundle).
  * ========================================================================== */
 
 KOKKOS_INLINE_FUNCTION
@@ -165,6 +167,18 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
 #endif
 
     if(neighbor_particle.Type == 0) {
+#if (SINGLE_STAR_SINK_FORMATION & 8)
+        /* sink-formation veto (sfr_eff.cc): gas inside this sink's kernel and within max(h_j, sink softening) may not
+           form a new sink. The density loop clears the flag for active gas earlier in the step. This is the current-step
+           test; the nearest-sink distance star formation also checks comes from the gravity walk, which an active cell
+           may skip under ADAPTIVE_TREEFORCE_UPDATE and so carry from an earlier step. */
+        {
+            const double r_j = dP.norm();
+            if(r_j < h_i && r_j < DMAX((double)neighbor_particle.KernelRadius, scalars.sink_radius_grav)) {
+                Kokkos::atomic_max(&neighbor_particle.Sink_Ngb_Flag, 1);
+            }
+        }
+#endif
         accum.Mgas_in_Kernel += wt;
         if(neighbor_cell) { accum.Sink_SurroudingGasInternalEnergy += wt * neighbor_cell->InternalEnergy; }
         Vec3<double> J_gas = cross(dP, dv);
@@ -298,7 +312,7 @@ struct SinkEnv1Spec {
 
     /* (1) Loop identity. Supplies the PHASE0_NLR `loop=` field. */
     static constexpr const char *loop_name = "sink_env1";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: sole j-write gated atomic_min(SwallowTime) (order-invariant), no read-back; tiny-N usually below threshold */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: j-writes are atomic_min(SwallowTime) and atomic_max(Sink_Ngb_Flag) (order-invariant), no read-back; tiny-N usually below threshold */
     /* Legacy detector label preserved; differs from loop_name. Predates the
      * runner-template loop_name convention. Without this, the runner default
      * would label this Spec's detector "sink_env1" instead of the historical
@@ -329,7 +343,7 @@ struct SinkEnv1Spec {
     using DeviceContext = SinkEnv1DeviceContext;        /* file-scope struct above */
 
     struct NeighborData {
-        struct particle_data       *neighbor_particle;  /* non-const: pair body atomic-min's SwallowTime */
+        struct particle_data       *neighbor_particle;  /* non-const: pair body writes SwallowTime, Sink_Ngb_Flag */
         const struct gas_cell_data *neighbor_cell;      /* nullptr for non-gas / when no CellP */
     };
 
@@ -413,7 +427,7 @@ struct SinkEnv1Spec {
         /* The rank comes from the per-call scalar, not from the global: this body is compiled into
          * the device kernel, where a host global has no value.  populate_call_scalars runs on the
          * rank whose local particles this call loads, so the scalar IS that owner's rank. */
-        active.claim_token = gizmo_sink_claim_token(scalars.owner_task, i);
+        active.claim_token = gizmo_claim_token(scalars.owner_task, i);
         active.h_search = h_search;
 #if (ADAPTIVE_GRAVSOFT_FORALL & 32)
         active.ags_h    = (double)ctx.P[i].AGS_KernelRadius;

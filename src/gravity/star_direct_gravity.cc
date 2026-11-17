@@ -130,10 +130,7 @@ void star_direct_gravity_compute(void)
     for(int ii = 0; ii < n_active; ii++)
     {
         int i = ActiveParticleList[ii];
-        if(P[i].Type != 5 || P[i].Mass <= 0) {continue;}
-#ifdef HERMITE_INTEGRATION
-        if(HermiteOnlyFlag) {if(!eligible_for_hermite(i, P)) {continue;}}
-#endif
+        if(P[i].Type != 5 || !gravity_treewalk_candidate_prewalk(i, ii)) {continue;}
         Vec3<double> pos = P[i].Pos, acc = {};
         double h_i = ForceSoftening_KernelRadius(i);
         MyIDType id_i = P[i].ID;

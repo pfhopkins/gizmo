@@ -29,6 +29,16 @@ from gizmo.test import (
     default_mpi_ranks,
     default_omp_threads,
     get_final_snapshot,
+    stash_baseline_output,
+    finalize_variant_output,
+    variant_output_dir,
+)
+
+# Non-ideal MHD variants run by this test: the standard diffusive solver, and the evolved non-ideal field
+# (reduced speed of light 30 cm/s here, i.e. well above the shock speed)
+NIMHD_VARIANTS = (
+    ("MHD_NON_IDEAL",),
+    ("MHD_NON_IDEAL=2", "MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION=(30./2.99792458e10)"),
 )
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -146,35 +156,40 @@ def plot_c_shock_overview(snap1, snap2, output_dir, label1="Reference", label2="
 
 @pytest.mark.parametrize("num_mpi_ranks", (1,))
 @pytest.mark.parametrize("num_omp_threads", (1,))
-def test_c_shock(num_mpi_ranks, num_omp_threads):
+@pytest.mark.parametrize("extra_config_flags", NIMHD_VARIANTS)
+def test_c_shock(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "c_shock"
-    clean_test_outputs(test_name)
+    clean_test_outputs(test_name, extra_config_flags)
 
     # Patch eos.cc with C-shock non-ideal MHD coefficients, build, then restore
     patched = False
     try:
         patched = _patch_eos()
-        build_gizmo_for_test(test_name, num_omp_threads)
+        build_gizmo_for_test(test_name, num_omp_threads, extra_config_flags)
     finally:
         if patched:
             _restore_eos()
 
-    # Download ICs and reference if not present, then run
+    # Download ICs and reference if not present, then run (each variant writes its own output directory)
     from os import chdir
-    chdir(f"test/{test_name}/")
-    _download_if_missing("c_shock_ics.hdf5")
-    _download_if_missing("c_shock_exact.hdf5")
-    run_test(test_name, num_mpi_ranks, num_omp_threads)
-    chdir("../../")
+    stash_baseline_output(test_name, extra_config_flags)
+    try:
+        chdir(f"test/{test_name}/")
+        _download_if_missing("c_shock_ics.hdf5")
+        _download_if_missing("c_shock_exact.hdf5")
+        run_test(test_name, num_mpi_ranks, num_omp_threads)
+        chdir("../../")
+    finally:
+        finalize_variant_output(test_name, extra_config_flags)
 
     # Verify the simulation completed
-    final_snap = get_final_snapshot(test_name)
+    final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
 
     # Plot 6-panel overview zoomed to the shock region
     plot_c_shock_overview(
         REFERENCE_SNAP, final_snap,
-        output_dir=f"test/{test_name}",
+        output_dir=variant_output_dir(test_name, extra_config_flags),
     )
     
     # Compare final snapshot against reference numerical solution

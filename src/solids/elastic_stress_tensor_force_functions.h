@@ -1,7 +1,8 @@
 /* elastic_stress_tensor_force_functions.h -- per-pair elastic-stress force for
  * solids. Replaces the fragment solids/elastic_stress_tensor_force.h.
  *
- * Body guarded by EOS_ELASTIC. Pure i-accumulation into Fluxes.v / Fluxes.p.
+ * Body guarded by EOS_ELASTIC. Pure i-accumulation into Fluxes.v / Fluxes.p. Returns 1 if the pair is within the
+ * scope of the face impedance dissipation below (whether or not it puts a force on the pair this time), else 0.
  *
  * Requires allvars.h, kernel.h, hydro_structs.h, hydro_pair_types.h, and
  * system/eigen_symmetric.h (for the GPU-callable eigen_symmetric() routine).
@@ -16,12 +17,13 @@
 #include "../system/eigen_symmetric.h"
 
 KOKKOS_INLINE_FUNCTION
-void elastic_stress_tensor_force_compute_pair(
+int elastic_stress_tensor_force_compute_pair(
     const struct hydro_data_in &local,
     const struct particle_data &Pj,
     const struct gas_cell_data &CPj,
     const Vec3<MyDouble> &VelPred_j,
     const struct kernel_hydra &kernel,
+    const Vec3<double> &face_velocity_jump,
     double rinv,
     const Vec3<double> &Face_Area_Vec,
     double Face_Area_Norm,
@@ -30,29 +32,47 @@ void elastic_stress_tensor_force_compute_pair(
     struct Conserved_var_Riemann &Fluxes)
 {
 #ifdef EOS_ELASTIC
-    (void)rinv; (void)dt_hydrostep;  /* only consumed by commented-out limiter in original */
+    (void)dt_hydrostep;  /* not used by this force */
 
-    if(!((local.Mass>0) && (Pj.Mass>0))) { return; }
+    if(!((local.Mass>0) && (Pj.Mass>0))) { return 0; }
+    if(!solid_material_is_elastic(local.CompositionType) && !solid_material_is_elastic(CPj.CompositionType)) { return 0; } /* gas-gas face of a gas+solid build */
 
     double FNormT = Face_Area_Norm;
     double FVec[3] = {Face_Area_Vec[0], Face_Area_Vec[1], Face_Area_Vec[2]};
 
     double cmag[3] = {0}, v_interface[3];
     double wt_i = -0.5, wt_j = -0.5;
-    for(int k=0; k<3; k++) { v_interface[k] = (wt_i*local.Vel[k] + wt_j*VelPred_j[k]) / All.cf_atime; }
+    /* cmag is added to Fluxes.v (momentum gained by i), so its work is +cmag.v at the face, as for the hydro flux;
+       the material velocity at the face, not the moving-mesh velocity, and not the stress weights above */
+    for(int k=0; k<3; k++) { v_interface[k] = 0.5*(local.Vel[k] + VelPred_j[k]) / All.cf_atime; }
     double rho_i = local.Density * All.cf_a3inv;
     double rho_j = CPj.Density * All.cf_a3inv;
 
     double wt_r = rho_i*local.SoundSpeed * rho_j*CPj.SoundSpeed
                 / (rho_i*local.SoundSpeed + rho_j*CPj.SoundSpeed) * FNormT;
-    double cT_i = sqrt(All.Tillotson_EOS_params[local.CompositionType][10] / rho_i);
-    double cT_j = sqrt(All.Tillotson_EOS_params[CPj.CompositionType][10] / rho_j);
-    double wt_t  = rho_i*cT_i * rho_j*cT_j / (rho_i*cT_i + rho_j*cT_j) * FNormT;
+#ifdef EOS_ELASTIC_MELT
+    double strength_fraction_i = local.StrengthFraction; /* thermal softening: the shear wave speed falls with the modulus (molten: none) */
+#else
+    double strength_fraction_i = 1;
+#endif
+    double cT_i = sqrt(solid_material_of(local.CompositionType).ShearModulus * strength_fraction_i / rho_i);
+    double cT_j = sqrt(solid_material_of(CPj.CompositionType).ShearModulus * CPj.strength_fraction() / rho_j);
+    double wt_t = (rho_i*cT_i + rho_j*cT_j > 0) ? rho_i*cT_i * rho_j*cT_j / (rho_i*cT_i + rho_j*cT_j) * FNormT : 0; /* shear impedance; zero if neither side has strength */
     double wt_rt = (wt_r - wt_t) * kernel.vdotr2 * rinv*rinv * All.cf_atime*All.cf_atime;
 
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+    volatile int gas_solid_face = (solid_material_is_elastic(local.CompositionType) != solid_material_is_elastic(CPj.CompositionType)); /* a face between a solid and the gas; volatile: a runtime gate in device code */
+#endif
     for(int ij_switch=0; ij_switch<2; ij_switch++) {
         double nvt[NUMDIMS*NUMDIMS] = {0}, norm_m = 0, wtfac = 0;
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+        double side_force[3] = {0, 0, 0};
+        double *force_sum = gas_solid_face ? side_force : cmag; /* a gas-solid face transforms this side's force below */
+#else
+        double *force_sum = cmag;
+#endif
         if(ij_switch == 0) { wtfac = wt_i; } else { wtfac = wt_j; }
+        if(!solid_material_is_elastic(ij_switch == 0 ? local.CompositionType : CPj.CompositionType)) { continue; } /* gas side: no deviatoric stress */
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
         /* damaged material carries (1-D) of its deviatoric stress */
         {
@@ -72,7 +92,7 @@ void elastic_stress_tensor_force_compute_pair(
             for(int j_v=0; j_v<NUMDIMS; j_v++) {
                 double S_dot_A = 0;
                 for(int k_v=0; k_v<NUMDIMS; k_v++) { S_dot_A += nvt[NUMDIMS*j_v + k_v] * FVec[k_v]; }
-                cmag[j_v] += wtfac * S_dot_A * All.cf_a2inv;
+                force_sum[j_v] += wtfac * S_dot_A * All.cf_a2inv;
             }
 #else
             /* tensile correction acts on the positive principal stresses only, so this path needs the eigenpairs */
@@ -87,17 +107,31 @@ void elastic_stress_tensor_force_compute_pair(
                 double prefac = wtfac * eigenval_k * (A_dot_v * All.cf_a2inv);
                 if(eigenval_k > 0) { prefac *= 1. - tensile_correction_factor; }
                 if(!isnan(eigenval_k)) {
-                    for(int j_v=0; j_v<NUMDIMS; j_v++) { cmag[j_v] += prefac * eigenvec_k[j_v]; }
+                    for(int j_v=0; j_v<NUMDIMS; j_v++) { force_sum[j_v] += prefac * eigenvec_k[j_v]; }
                 }
             }
 #endif
         }
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+        if(gas_solid_face) {
+            /* the traction at a solid-gas interface is the acoustic interface state: its normal part is weighted by the two
+               longitudinal impedances, Z_gas/(Z_gas+Z_solid) of the solid's stress rather than one half, and its tangential part by
+               the two shear impedances, zero for the gas (an inviscid gas carries no shear traction) */
+            double z_i = rho_i*local.SoundSpeed, z_j = rho_j*CPj.effective_soundspeed(); /* local.SoundSpeed is the effective sound speed */
+            double z_solid = (ij_switch == 0) ? z_i : z_j, z_gas = (ij_switch == 0) ? z_j : z_i;
+            double A2 = FVec[0]*FVec[0] + FVec[1]*FVec[1] + FVec[2]*FVec[2];
+            double f_normal = (A2 > 0 && z_solid + z_gas > 0) ? 2. * z_gas / (z_solid + z_gas) * (side_force[0]*FVec[0] + side_force[1]*FVec[1] + side_force[2]*FVec[2]) / A2 : 0;
+            for(int k=0; k<3; k++) { cmag[k] += f_normal * FVec[k]; }
+        }
+#endif
     }
+#ifdef HYDRO_SPH
+    /* SPH: the impedance operator on the raw velocity difference, plus zero-energy-mode (hourglass) control on the part of it the
+       gradients do not predict (Ganzenmuller 2015 / Kugelstadt 2021) */
+    (void)face_velocity_jump;
     for(int j_v=0; j_v<3; j_v++) {
         cmag[j_v] -= wt_rt * kernel.dp[j_v] * All.cf_atime + wt_t * kernel.dv[j_v] / All.cf_atime;
     }
-
-    /* zero-energy-mode (hourglass) control: Ganzenmuller 2015 / Kugelstadt 2021 */
     {
         double cT_hg = 0.5 * wt_t / All.cf_atime;
         for(int j_v=0; j_v<3; j_v++) {
@@ -110,11 +144,43 @@ void elastic_stress_tensor_force_compute_pair(
             cmag[j_v] -= cT_hg * dv_err;
         }
     }
+#else
+    /* Meshless methods: the impedance operator (longitudinal impedance wt_r along the separation, shear impedance wt_t across it)
+       acts on the velocity jump left between the two limited face reconstructions, which vanishes for a resolved field, so resolved
+       shear and expanding motion are not damped by it. The longitudinal part of an APPROACHING pair acts on the full velocity
+       difference instead (with the Hubble flow, as the original operator): the isotropic Riemann solve does not carry the deviatoric
+       stress, and without this a compressive front in a solid overshoots (a porous solid then compacts past its Rankine-Hugoniot
+       state). The compressive half of a resolved longitudinal wave is therefore damped, at a rate that falls with resolution. The
+       pairwise work F.dv is kept dissipative and no larger than that of the operator on the full difference (the force is zeroed or
+       scaled, never redirected). Acting on the unresolved jump, the same term controls zero-energy (hourglass) modes; a separate
+       hourglass term (as in the SPH branch above) would double-count it outside the work limit, and none was needed in the elastic
+       plate and colliding-ring tests. */
+    {
+        double jump_l[3], jump_t[3];
+        volatile int approaching = (kernel.vdotr2 < 0) ? 1 : 0; /* volatile: a runtime gate in device code */
+        for(int j_v=0; j_v<3; j_v++) {jump_l[j_v] = face_velocity_jump[j_v]; jump_t[j_v] = face_velocity_jump[j_v];}
+        double l_dot_r = approaching ? kernel.vdotr2 * rinv*rinv : (jump_l[0]*kernel.dp[0] + jump_l[1]*kernel.dp[1] + jump_l[2]*kernel.dp[2]) * rinv*rinv;
+        double t_dot_r = (jump_t[0]*kernel.dp[0] + jump_t[1]*kernel.dp[1] + jump_t[2]*kernel.dp[2]) * rinv*rinv;
+        double f_res[3], f_raw[3], work_res = 0, work_raw = 0;
+        for(int j_v=0; j_v<3; j_v++) {
+            double jl_par = l_dot_r * kernel.dp[j_v], jt_perp = jump_t[j_v] - t_dot_r * kernel.dp[j_v]; /* longitudinal and shear parts */
+            f_res[j_v] = -((wt_r - wt_t) * jl_par * All.cf_atime*All.cf_atime*All.cf_atime + wt_t * (jl_par + jt_perp) / All.cf_atime);
+            f_raw[j_v] = -(wt_rt * kernel.dp[j_v] * All.cf_atime + wt_t * kernel.dv[j_v] / All.cf_atime);
+            work_res += f_res[j_v] * kernel.dv[j_v]; work_raw += f_raw[j_v] * kernel.dv[j_v];
+        }
+        double lim = 1;
+        if(work_res >= 0 || work_raw >= 0) {lim = 0;} else if(work_res < work_raw) {lim = work_raw / work_res;}
+        for(int j_v=0; j_v<3; j_v++) {cmag[j_v] += lim * f_res[j_v];}
+    }
+#endif
 
     double cmag_E = cmag[0]*v_interface[0] + cmag[1]*v_interface[1] + cmag[2]*v_interface[2];
 
     for(int k=0; k<3; k++) { Fluxes.v[k] += cmag[k]; }
     Fluxes.p += cmag_E;
+    return 1;
+#else
+    return 0;
 #endif /* EOS_ELASTIC */
 }
 

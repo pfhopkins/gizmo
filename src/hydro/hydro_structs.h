@@ -86,6 +86,9 @@ struct hydro_data_in
     MyFloat SoundSpeed;
     MyFloat dt_hydrostep_i;
     MyFloat DrkernNgbFactor;
+#ifdef EOS_ANEOS
+    MyFloat Temperature;    /* orders the two sides of a face in the entropic energy switch */
+#endif
 #ifdef HYDRO_SPH
     MyFloat DrkernHydroSumFactor;
     MyFloat alpha;
@@ -174,6 +177,9 @@ struct hydro_data_in
     MyFloat Eta_MHD_OhmicResistivity_Coeff;
     MyFloat Eta_MHD_HallEffect_Coeff;
     MyFloat Eta_MHD_AmbiPolarDiffusion_Coeff;
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+    Vec3<MyFloat> NonIdealMHDFlux;
+#endif
 #endif
 
 #ifdef VISCOSITY
@@ -192,6 +198,7 @@ struct hydro_data_in
 #ifdef MHD_MODIFIED_GRADIENT
     MyFloat MG_cgcoeff;
     long long MG_piece_token;
+    MyDouble MG_envelope;
 #endif
 #endif // MAGNETIC //
 
@@ -211,14 +218,18 @@ struct hydro_data_in
     MyDouble DelayTime;
 #endif
 
-#if defined(EOS_ELASTIC) || defined(EOS_ANEOS)
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
     int CompositionType;
 #endif
 #ifdef EOS_ELASTIC
     MyFloat Elastic_Stress_Tensor[3][3];
+    MyFloat RecentYieldMemory;
+#ifdef EOS_ELASTIC_MELT
+    MyFloat StrengthFraction; /* the predicted state's strength fraction (thermal softening) */
+#endif
 #endif
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
-    MyFloat Damage; /* Grady-Kipp scalar D in [0,1] for i-particle */
+    MyFloat Damage; /* fracture damage D in [0,1] for i-particle */
 #endif
 
     int TimeBin;
@@ -242,6 +253,12 @@ struct hydro_data_out
 #endif
 #ifdef GENERAL_RELATIVITY
     MyDouble DtVolume;              /*!< rate of change of the volume from the Riemann problems (used by the GR kick/predict) */
+#endif
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    signed char ElasticImpedanceNeighbour; /*!< 1 if any of the cell's pairs is within the scope of the elastic face impedance dissipation */
+#endif
+#ifdef EOS_ELASTIC
+    MyDouble ElasticFaceSignalSum; /*!< sum over the cell's faces of (face area x face signal speed), for the solids' finite-volume step limit */
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     MyDouble DtMass;

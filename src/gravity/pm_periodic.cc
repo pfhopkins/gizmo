@@ -313,7 +313,7 @@ void pmforce_periodic(int mode, int *typelist)
   int slab_xx, slab_yy, slab_zz;
   int num_on_grid, num_field_points, pindex, xx, yy, zz;
   MPI_Status status;
-  int *localfield_count, *localfield_first, *localfield_offset, *localfield_togo;
+  int *localfield_count, *localfield_first, *localfield_offset, *localfield_recv;
   MyDouble pp[3], *pos;
   large_array_offset offset, *localfield_globalindex, *import_globalindex;
   d_fftw_real *localfield_d_data, *import_d_data;
@@ -427,7 +427,7 @@ void pmforce_periodic(int mode, int *typelist)
       localfield_first = (int *) mymalloc("localfield_first", NTask * sizeof(int));
       localfield_count = (int *) mymalloc("localfield_count", NTask * sizeof(int));
       localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
-      localfield_togo = (int *) mymalloc("localfield_togo", NTask * NTask * sizeof(int));
+      localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
       for(i = 0; i < NTask; i++)
 	{
@@ -520,7 +520,7 @@ void pmforce_periodic(int mode, int *typelist)
 
       /* exchange data and add contributions to the local mesh-path */
 
-      MPI_Allgather(localfield_count, NTask, MPI_INT, localfield_togo, NTask, MPI_INT, MPI_COMM_WORLD);
+      MPI_Alltoall(localfield_count, 1, MPI_INT, localfield_recv, 1, MPI_INT, MPI_COMM_WORLD);
 
       for(level = 0; level < (1 << PTask); level++)	/* note: for level=0, target is the same task */
 	{
@@ -532,26 +532,25 @@ void pmforce_periodic(int mode, int *typelist)
 	      if(level > 0)
 		{
 		  import_d_data =
-		    (d_fftw_real *) mymalloc("import_d_data", localfield_togo[recvTask * NTask + ThisTask] *
+		    (d_fftw_real *) mymalloc("import_d_data", localfield_recv[recvTask] *
 					     sizeof(d_fftw_real));
 		  import_globalindex =
 		    (large_array_offset *) mymalloc("import_globalindex",
-						    localfield_togo[recvTask * NTask +
-								    ThisTask] * sizeof(large_array_offset));
+						    localfield_recv[recvTask] * sizeof(large_array_offset));
 
-		  if(localfield_togo[sendTask * NTask + recvTask] > 0
-		     || localfield_togo[recvTask * NTask + sendTask] > 0)
+		  if(localfield_count[recvTask] > 0
+		     || localfield_recv[recvTask] > 0)
 		    {
 		      MPI_Sendrecv(localfield_d_data + localfield_offset[recvTask],
-				   localfield_togo[sendTask * NTask + recvTask] * sizeof(d_fftw_real),
+				   localfield_count[recvTask] * sizeof(d_fftw_real),
 				   MPI_BYTE, recvTask, TAG_PERIODIC_A, import_d_data,
-				   localfield_togo[recvTask * NTask + sendTask] * sizeof(d_fftw_real),
+				   localfield_recv[recvTask] * sizeof(d_fftw_real),
 				   MPI_BYTE, recvTask, TAG_PERIODIC_A, MPI_COMM_WORLD, &status);
 
 		      MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-				   localfield_togo[sendTask * NTask + recvTask] * sizeof(large_array_offset),
+				   localfield_count[recvTask] * sizeof(large_array_offset),
 				   MPI_BYTE, recvTask, TAG_PERIODIC_B, import_globalindex,
-				   localfield_togo[recvTask * NTask + sendTask] * sizeof(large_array_offset),
+				   localfield_recv[recvTask] * sizeof(large_array_offset),
 				   MPI_BYTE, recvTask, TAG_PERIODIC_B, MPI_COMM_WORLD, &status);
 		    }
 		}
@@ -561,7 +560,7 @@ void pmforce_periodic(int mode, int *typelist)
 		  import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
 		}
 
-	      for(i = 0; i < localfield_togo[recvTask * NTask + sendTask]; i++)
+	      for(i = 0; i < localfield_recv[recvTask]; i++)
 		{
 		  /* determine offset in local FFT slab */
 		  offset =
@@ -674,23 +673,19 @@ void pmforce_periodic(int mode, int *typelist)
 		    {
 		      import_data =
 			(fftw_real *) mymalloc("import_data",
-					       localfield_togo[recvTask * NTask +
-							       ThisTask] * sizeof(fftw_real));
+					       localfield_recv[recvTask] * sizeof(fftw_real));
 		      import_globalindex =
 			(large_array_offset *) mymalloc("import_globalindex",
-							localfield_togo[recvTask * NTask +
-									ThisTask] *
+							localfield_recv[recvTask] *
 							sizeof(large_array_offset));
 
-		      if(localfield_togo[sendTask * NTask + recvTask] > 0
-			 || localfield_togo[recvTask * NTask + sendTask] > 0)
+		      if(localfield_count[recvTask] > 0
+			 || localfield_recv[recvTask] > 0)
 			{
 			  MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-				       localfield_togo[sendTask * NTask +
-						       recvTask] * sizeof(large_array_offset), MPI_BYTE,
+				       localfield_count[recvTask] * sizeof(large_array_offset), MPI_BYTE,
 				       recvTask, TAG_PERIODIC_C, import_globalindex,
-				       localfield_togo[recvTask * NTask +
-						       sendTask] * sizeof(large_array_offset), MPI_BYTE,
+				       localfield_recv[recvTask] * sizeof(large_array_offset), MPI_BYTE,
 				       recvTask, TAG_PERIODIC_C, MPI_COMM_WORLD, &status);
 			}
 		    }
@@ -700,7 +695,7 @@ void pmforce_periodic(int mode, int *typelist)
 		      import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
 		    }
 
-		  for(i = 0; i < localfield_togo[recvTask * NTask + sendTask]; i++)
+		  for(i = 0; i < localfield_recv[recvTask]; i++)
 		    {
 		      offset =
 			import_globalindex[i] -
@@ -711,10 +706,10 @@ void pmforce_periodic(int mode, int *typelist)
 		  if(level > 0)
 		    {
 		      MPI_Sendrecv(import_data,
-				   localfield_togo[recvTask * NTask + sendTask] * sizeof(fftw_real), MPI_BYTE,
+				   localfield_recv[recvTask] * sizeof(fftw_real), MPI_BYTE,
 				   recvTask, TAG_PERIODIC_A,
 				   localfield_data + localfield_offset[recvTask],
-				   localfield_togo[sendTask * NTask + recvTask] * sizeof(fftw_real), MPI_BYTE,
+				   localfield_count[recvTask] * sizeof(fftw_real), MPI_BYTE,
 				   recvTask, TAG_PERIODIC_A, MPI_COMM_WORLD, &status);
 
 		      myfree(import_globalindex);
@@ -853,23 +848,19 @@ void pmforce_periodic(int mode, int *typelist)
 			{
 			  import_data =
 			    (fftw_real *) mymalloc("import_data",
-						   localfield_togo[recvTask * NTask +
-								   ThisTask] * sizeof(fftw_real));
+						   localfield_recv[recvTask] * sizeof(fftw_real));
 			  import_globalindex =
 			    (large_array_offset *) mymalloc("import_globalindex",
-							    localfield_togo[recvTask * NTask +
-									    ThisTask] *
+							    localfield_recv[recvTask] *
 							    sizeof(large_array_offset));
 
-			  if(localfield_togo[sendTask * NTask + recvTask] > 0
-			     || localfield_togo[recvTask * NTask + sendTask] > 0)
+			  if(localfield_count[recvTask] > 0
+			     || localfield_recv[recvTask] > 0)
 			    {
 			      MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-					   localfield_togo[sendTask * NTask +
-							   recvTask] * sizeof(large_array_offset), MPI_BYTE,
+					   localfield_count[recvTask] * sizeof(large_array_offset), MPI_BYTE,
 					   recvTask, TAG_PERIODIC_C, import_globalindex,
-					   localfield_togo[recvTask * NTask +
-							   sendTask] * sizeof(large_array_offset), MPI_BYTE,
+					   localfield_recv[recvTask] * sizeof(large_array_offset), MPI_BYTE,
 					   recvTask, TAG_PERIODIC_C, MPI_COMM_WORLD, &status);
 			    }
 			}
@@ -879,7 +870,7 @@ void pmforce_periodic(int mode, int *typelist)
 			  import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
 			}
 
-		      for(i = 0; i < localfield_togo[recvTask * NTask + sendTask]; i++)
+		      for(i = 0; i < localfield_recv[recvTask]; i++)
 			{
 			  /* determine offset in local FFT slab */
 			  offset =
@@ -891,10 +882,10 @@ void pmforce_periodic(int mode, int *typelist)
 		      if(level > 0)
 			{
 			  MPI_Sendrecv(import_data,
-				       localfield_togo[recvTask * NTask + sendTask] * sizeof(fftw_real),
+				       localfield_recv[recvTask] * sizeof(fftw_real),
 				       MPI_BYTE, recvTask, TAG_PERIODIC_A,
 				       localfield_data + localfield_offset[recvTask],
-				       localfield_togo[sendTask * NTask + recvTask] * sizeof(fftw_real),
+				       localfield_count[recvTask] * sizeof(fftw_real),
 				       MPI_BYTE, recvTask, TAG_PERIODIC_A, MPI_COMM_WORLD, &status);
 
 			  myfree(import_globalindex);
@@ -947,7 +938,7 @@ void pmforce_periodic(int mode, int *typelist)
 	}
 
       /* free locallist */
-      myfree(localfield_togo);
+      myfree(localfield_recv);
       myfree(localfield_offset);
       myfree(localfield_count);
       myfree(localfield_first);
@@ -979,7 +970,7 @@ void pmpotential_periodic(void)
   int num_on_grid, num_field_points, pindex, xx, yy, zz;
   MyDouble pp[3];
   MPI_Status status;
-  int *localfield_count, *localfield_first, *localfield_offset, *localfield_togo;
+  int *localfield_count, *localfield_first, *localfield_offset, *localfield_recv;
   large_array_offset offset, *localfield_globalindex, *import_globalindex;
   d_fftw_real *localfield_d_data, *import_d_data;
   fftw_real *localfield_data, *import_data;
@@ -1058,7 +1049,7 @@ void pmpotential_periodic(void)
   localfield_first = (int *) mymalloc("localfield_first", NTask * sizeof(int));
   localfield_count = (int *) mymalloc("localfield_count", NTask * sizeof(int));
   localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
-  localfield_togo = (int *) mymalloc("localfield_togo", NTask * NTask * sizeof(int));
+  localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
   for(i = 0; i < NTask; i++)
     {
@@ -1133,7 +1124,7 @@ void pmpotential_periodic(void)
 
   /* exchange data and add contributions to the local mesh-path */
 
-  MPI_Allgather(localfield_count, NTask, MPI_INT, localfield_togo, NTask, MPI_INT, MPI_COMM_WORLD);
+  MPI_Alltoall(localfield_count, 1, MPI_INT, localfield_recv, 1, MPI_INT, MPI_COMM_WORLD);
 
   for(level = 0; level < (1 << PTask); level++)	/* note: for level=0, target is the same task */
     {
@@ -1146,26 +1137,25 @@ void pmpotential_periodic(void)
 	    {
 	      import_d_data =
 		(d_fftw_real *) mymalloc("import_d_data",
-					 localfield_togo[recvTask * NTask + ThisTask] * sizeof(d_fftw_real));
+					 localfield_recv[recvTask] * sizeof(d_fftw_real));
 	      import_globalindex =
 		(large_array_offset *) mymalloc("import_globalindex",
-						localfield_togo[recvTask * NTask +
-								ThisTask] * sizeof(large_array_offset));
+						localfield_recv[recvTask] * sizeof(large_array_offset));
 
-	      if(localfield_togo[sendTask * NTask + recvTask] > 0
-		 || localfield_togo[recvTask * NTask + sendTask] > 0)
+	      if(localfield_count[recvTask] > 0
+		 || localfield_recv[recvTask] > 0)
 		{
 		  MPI_Sendrecv(localfield_d_data + localfield_offset[recvTask],
-			       localfield_togo[sendTask * NTask + recvTask] * sizeof(d_fftw_real), MPI_BYTE,
+			       localfield_count[recvTask] * sizeof(d_fftw_real), MPI_BYTE,
 			       recvTask, TAG_PERIODIC_A,
 			       import_d_data,
-			       localfield_togo[recvTask * NTask + sendTask] * sizeof(d_fftw_real), MPI_BYTE,
+			       localfield_recv[recvTask] * sizeof(d_fftw_real), MPI_BYTE,
 			       recvTask, TAG_PERIODIC_A, MPI_COMM_WORLD, &status);
 
 		  MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-			       localfield_togo[sendTask * NTask + recvTask] * sizeof(large_array_offset),
+			       localfield_count[recvTask] * sizeof(large_array_offset),
 			       MPI_BYTE, recvTask, TAG_PERIODIC_B, import_globalindex,
-			       localfield_togo[recvTask * NTask + sendTask] * sizeof(large_array_offset),
+			       localfield_recv[recvTask] * sizeof(large_array_offset),
 			       MPI_BYTE, recvTask, TAG_PERIODIC_B, MPI_COMM_WORLD, &status);
 		}
 	    }
@@ -1175,7 +1165,7 @@ void pmpotential_periodic(void)
 	      import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
 	    }
 
-	  for(i = 0; i < localfield_togo[recvTask * NTask + sendTask]; i++)
+	  for(i = 0; i < localfield_recv[recvTask]; i++)
 	    {
 	      /* determine offset in local FFT slab */
 	      offset =
@@ -1273,19 +1263,18 @@ void pmpotential_periodic(void)
 	    {
 	      import_data =
 		(fftw_real *) mymalloc("import_data",
-				       localfield_togo[recvTask * NTask + ThisTask] * sizeof(fftw_real));
+				       localfield_recv[recvTask] * sizeof(fftw_real));
 	      import_globalindex =
 		(large_array_offset *) mymalloc("import_globalindex",
-						localfield_togo[recvTask * NTask +
-								ThisTask] * sizeof(large_array_offset));
+						localfield_recv[recvTask] * sizeof(large_array_offset));
 
-	      if(localfield_togo[sendTask * NTask + recvTask] > 0
-		 || localfield_togo[recvTask * NTask + sendTask] > 0)
+	      if(localfield_count[recvTask] > 0
+		 || localfield_recv[recvTask] > 0)
 		{
 		  MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-			       localfield_togo[sendTask * NTask + recvTask] * sizeof(large_array_offset),
+			       localfield_count[recvTask] * sizeof(large_array_offset),
 			       MPI_BYTE, recvTask, TAG_PERIODIC_C, import_globalindex,
-			       localfield_togo[recvTask * NTask + sendTask] * sizeof(large_array_offset),
+			       localfield_recv[recvTask] * sizeof(large_array_offset),
 			       MPI_BYTE, recvTask, TAG_PERIODIC_C, MPI_COMM_WORLD, &status);
 		}
 	    }
@@ -1295,7 +1284,7 @@ void pmpotential_periodic(void)
 	      import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
 	    }
 
-	  for(i = 0; i < localfield_togo[recvTask * NTask + sendTask]; i++)
+	  for(i = 0; i < localfield_recv[recvTask]; i++)
 	    {
 	      /* determine offset in local FFT slab */
 	      offset =
@@ -1307,10 +1296,10 @@ void pmpotential_periodic(void)
 	  if(level > 0)
 	    {
 	      MPI_Sendrecv(import_data,
-			   localfield_togo[recvTask * NTask + sendTask] * sizeof(fftw_real), MPI_BYTE,
+			   localfield_recv[recvTask] * sizeof(fftw_real), MPI_BYTE,
 			   recvTask, TAG_PERIODIC_A,
 			   localfield_data + localfield_offset[recvTask],
-			   localfield_togo[sendTask * NTask + recvTask] * sizeof(fftw_real), MPI_BYTE,
+			   localfield_count[recvTask] * sizeof(fftw_real), MPI_BYTE,
 			   recvTask, TAG_PERIODIC_A, MPI_COMM_WORLD, &status);
 
 	      myfree(import_globalindex);
@@ -1356,7 +1345,7 @@ void pmpotential_periodic(void)
     }
 
   /* free locallist */
-  myfree(localfield_togo);
+  myfree(localfield_recv);
   myfree(localfield_offset);
   myfree(localfield_count);
   myfree(localfield_first);
@@ -1620,7 +1609,7 @@ void pmtidaltensor_periodic_diff(void)
   int slab_xx, slab_yy, slab_zz;
   int num_on_grid, num_field_points, pindex, xx, yy, zz;
   MPI_Status status;
-  int *localfield_count, *localfield_first, *localfield_offset, *localfield_togo;
+  int *localfield_count, *localfield_first, *localfield_offset, *localfield_recv;
   large_array_offset offset, *localfield_globalindex, *import_globalindex;
   d_fftw_real *localfield_d_data, *import_d_data;
   fftw_real *localfield_data, *import_data;
@@ -1719,7 +1708,7 @@ void pmtidaltensor_periodic_diff(void)
       localfield_first = (int *) mymalloc("localfield_first", NTask * sizeof(int));
       localfield_count = (int *) mymalloc("localfield_count", NTask * sizeof(int));
       localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
-      localfield_togo = (int *) mymalloc("localfield_togo", NTask * NTask * sizeof(int));
+      localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
       for(i = 0; i < NTask; i++)
 	{
@@ -1794,7 +1783,7 @@ void pmtidaltensor_periodic_diff(void)
 
       /* exchange data and add contributions to the local mesh-path */
 
-      MPI_Allgather(localfield_count, NTask, MPI_INT, localfield_togo, NTask, MPI_INT, MPI_COMM_WORLD);
+      MPI_Alltoall(localfield_count, 1, MPI_INT, localfield_recv, 1, MPI_INT, MPI_COMM_WORLD);
 
       for(level = 0; level < (1 << PTask); level++)	/* note: for level=0, target is the same task */
 	{
@@ -1806,26 +1795,25 @@ void pmtidaltensor_periodic_diff(void)
 	      if(level > 0)
 		{
 		  import_d_data =
-		    (d_fftw_real *) mymalloc("import_d_data", localfield_togo[recvTask * NTask + ThisTask] *
+		    (d_fftw_real *) mymalloc("import_d_data", localfield_recv[recvTask] *
 					     sizeof(d_fftw_real));
 		  import_globalindex =
 		    (large_array_offset *) mymalloc("import_globalindex",
-						    localfield_togo[recvTask * NTask +
-								    ThisTask] * sizeof(large_array_offset));
+						    localfield_recv[recvTask] * sizeof(large_array_offset));
 
-		  if(localfield_togo[sendTask * NTask + recvTask] > 0
-		     || localfield_togo[recvTask * NTask + sendTask] > 0)
+		  if(localfield_count[recvTask] > 0
+		     || localfield_recv[recvTask] > 0)
 		    {
 		      MPI_Sendrecv(localfield_d_data + localfield_offset[recvTask],
-				   localfield_togo[sendTask * NTask + recvTask] * sizeof(d_fftw_real),
+				   localfield_count[recvTask] * sizeof(d_fftw_real),
 				   MPI_BYTE, recvTask, TAG_PERIODIC_A, import_d_data,
-				   localfield_togo[recvTask * NTask + sendTask] * sizeof(d_fftw_real),
+				   localfield_recv[recvTask] * sizeof(d_fftw_real),
 				   MPI_BYTE, recvTask, TAG_PERIODIC_A, MPI_COMM_WORLD, &status);
 
 		      MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-				   localfield_togo[sendTask * NTask + recvTask] * sizeof(large_array_offset),
+				   localfield_count[recvTask] * sizeof(large_array_offset),
 				   MPI_BYTE, recvTask, TAG_PERIODIC_B, import_globalindex,
-				   localfield_togo[recvTask * NTask + sendTask] * sizeof(large_array_offset),
+				   localfield_recv[recvTask] * sizeof(large_array_offset),
 				   MPI_BYTE, recvTask, TAG_PERIODIC_B, MPI_COMM_WORLD, &status);
 		    }
 		}
@@ -1835,7 +1823,7 @@ void pmtidaltensor_periodic_diff(void)
 		  import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
 		}
 
-	      for(i = 0; i < localfield_togo[recvTask * NTask + sendTask]; i++)
+	      for(i = 0; i < localfield_recv[recvTask]; i++)
 		{
 		  /* determine offset in local FFT slab */
 		  offset =
@@ -1937,19 +1925,18 @@ void pmtidaltensor_periodic_diff(void)
 		{
 		  import_data =
 		    (fftw_real *) mymalloc("import_data",
-					   localfield_togo[recvTask * NTask + ThisTask] * sizeof(fftw_real));
+					   localfield_recv[recvTask] * sizeof(fftw_real));
 		  import_globalindex =
 		    (large_array_offset *) mymalloc("import_globalindex",
-						    localfield_togo[recvTask * NTask +
-								    ThisTask] * sizeof(large_array_offset));
+						    localfield_recv[recvTask] * sizeof(large_array_offset));
 
-		  if(localfield_togo[sendTask * NTask + recvTask] > 0
-		     || localfield_togo[recvTask * NTask + sendTask] > 0)
+		  if(localfield_count[recvTask] > 0
+		     || localfield_recv[recvTask] > 0)
 		    {
 		      MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-				   localfield_togo[sendTask * NTask + recvTask] * sizeof(large_array_offset),
+				   localfield_count[recvTask] * sizeof(large_array_offset),
 				   MPI_BYTE, recvTask, TAG_PERIODIC_C, import_globalindex,
-				   localfield_togo[recvTask * NTask + sendTask] * sizeof(large_array_offset),
+				   localfield_recv[recvTask] * sizeof(large_array_offset),
 				   MPI_BYTE, recvTask, TAG_PERIODIC_C, MPI_COMM_WORLD, &status);
 		    }
 		}
@@ -1959,7 +1946,7 @@ void pmtidaltensor_periodic_diff(void)
 		  import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
 		}
 
-	      for(i = 0; i < localfield_togo[recvTask * NTask + sendTask]; i++)
+	      for(i = 0; i < localfield_recv[recvTask]; i++)
 		{
 		  offset =
 		    import_globalindex[i] -
@@ -1970,10 +1957,10 @@ void pmtidaltensor_periodic_diff(void)
 	      if(level > 0)
 		{
 		  MPI_Sendrecv(import_data,
-			       localfield_togo[recvTask * NTask + sendTask] * sizeof(fftw_real), MPI_BYTE,
+			       localfield_recv[recvTask] * sizeof(fftw_real), MPI_BYTE,
 			       recvTask, TAG_PERIODIC_A,
 			       localfield_data + localfield_offset[recvTask],
-			       localfield_togo[sendTask * NTask + recvTask] * sizeof(fftw_real), MPI_BYTE,
+			       localfield_count[recvTask] * sizeof(fftw_real), MPI_BYTE,
 			       recvTask, TAG_PERIODIC_A, MPI_COMM_WORLD, &status);
 
 		  myfree(import_globalindex);
@@ -2184,23 +2171,20 @@ void pmtidaltensor_periodic_diff(void)
 		  if(level > 0)
 		    {
 		      import_data =
-			(fftw_real *) mymalloc("import_data", localfield_togo[recvTask * NTask + ThisTask] *
+			(fftw_real *) mymalloc("import_data", localfield_recv[recvTask] *
 					       sizeof(fftw_real));
 		      import_globalindex =
 			(large_array_offset *) mymalloc("import_globalindex",
-							localfield_togo[recvTask * NTask +
-									ThisTask] *
+							localfield_recv[recvTask] *
 							sizeof(large_array_offset));
 
-		      if(localfield_togo[sendTask * NTask + recvTask] > 0
-			 || localfield_togo[recvTask * NTask + sendTask] > 0)
+		      if(localfield_count[recvTask] > 0
+			 || localfield_recv[recvTask] > 0)
 			{
 			  MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-				       localfield_togo[sendTask * NTask +
-						       recvTask] * sizeof(large_array_offset), MPI_BYTE,
+				       localfield_count[recvTask] * sizeof(large_array_offset), MPI_BYTE,
 				       recvTask, TAG_PERIODIC_C, import_globalindex,
-				       localfield_togo[recvTask * NTask +
-						       sendTask] * sizeof(large_array_offset), MPI_BYTE,
+				       localfield_recv[recvTask] * sizeof(large_array_offset), MPI_BYTE,
 				       recvTask, TAG_PERIODIC_C, MPI_COMM_WORLD, &status);
 			}
 		    }
@@ -2214,7 +2198,7 @@ void pmtidaltensor_periodic_diff(void)
                 first few dims, but when the dims gets down to dim=1, some task or tasks
                 seem to segfault in the operation below. can't isolate it yet. using Fourier
                 method instead for this step, as its cheap in our cosmological runs */
-		  for(i = 0; i < localfield_togo[recvTask * NTask + sendTask]; i++)
+		  for(i = 0; i < localfield_recv[recvTask]; i++)
 		    {
 		      /* determine offset in local FFT slab */
 		      offset =
@@ -2226,10 +2210,10 @@ void pmtidaltensor_periodic_diff(void)
 		  if(level > 0)
 		    {
 		      MPI_Sendrecv(import_data,
-				   localfield_togo[recvTask * NTask + sendTask] * sizeof(fftw_real), MPI_BYTE,
+				   localfield_recv[recvTask] * sizeof(fftw_real), MPI_BYTE,
 				   recvTask, TAG_PERIODIC_A,
 				   localfield_data + localfield_offset[recvTask],
-				   localfield_togo[sendTask * NTask + recvTask] * sizeof(fftw_real), MPI_BYTE,
+				   localfield_count[recvTask] * sizeof(fftw_real), MPI_BYTE,
 				   recvTask, TAG_PERIODIC_A, MPI_COMM_WORLD, &status);
 
 		      myfree(import_globalindex);
@@ -2301,7 +2285,7 @@ void pmtidaltensor_periodic_diff(void)
 	}
 
       /* free locallist */
-      myfree(localfield_togo);
+      myfree(localfield_recv);
       myfree(localfield_offset);
       myfree(localfield_count);
       myfree(localfield_first);
@@ -2343,7 +2327,7 @@ void pmtidaltensor_periodic_fourier(int component)
   int slab_xx, slab_yy, slab_zz;
   int num_on_grid, num_field_points, pindex, xx, yy, zz;
   MPI_Status status;
-  int *localfield_count, *localfield_first, *localfield_offset, *localfield_togo;
+  int *localfield_count, *localfield_first, *localfield_offset, *localfield_recv;
   large_array_offset offset, *localfield_globalindex, *import_globalindex;
   d_fftw_real *localfield_d_data, *import_d_data;
   fftw_real *localfield_data, *import_data;
@@ -2420,7 +2404,7 @@ void pmtidaltensor_periodic_fourier(int component)
   localfield_first = (int *) mymalloc("localfield_first", NTask * sizeof(int));
   localfield_count = (int *) mymalloc("localfield_count", NTask * sizeof(int));
   localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
-  localfield_togo = (int *) mymalloc("localfield_togo", NTask * NTask * sizeof(int));
+  localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
   for(i = 0; i < NTask; i++)
     {
@@ -2495,7 +2479,7 @@ void pmtidaltensor_periodic_fourier(int component)
 
   /* exchange data and add contributions to the local mesh-path */
 
-  MPI_Allgather(localfield_count, NTask, MPI_INT, localfield_togo, NTask, MPI_INT, MPI_COMM_WORLD);
+  MPI_Alltoall(localfield_count, 1, MPI_INT, localfield_recv, 1, MPI_INT, MPI_COMM_WORLD);
 
   for(level = 0; level < (1 << PTask); level++)	/* note: for level=0, target is the same task */
     {
@@ -2508,26 +2492,25 @@ void pmtidaltensor_periodic_fourier(int component)
 	    {
 	      import_d_data =
 		(d_fftw_real *) mymalloc("import_d_data",
-					 localfield_togo[recvTask * NTask + ThisTask] * sizeof(d_fftw_real));
+					 localfield_recv[recvTask] * sizeof(d_fftw_real));
 	      import_globalindex =
 		(large_array_offset *) mymalloc("import_globalindex",
-						localfield_togo[recvTask * NTask +
-								ThisTask] * sizeof(large_array_offset));
+						localfield_recv[recvTask] * sizeof(large_array_offset));
 
-	      if(localfield_togo[sendTask * NTask + recvTask] > 0
-		 || localfield_togo[recvTask * NTask + sendTask] > 0)
+	      if(localfield_count[recvTask] > 0
+		 || localfield_recv[recvTask] > 0)
 		{
 		  MPI_Sendrecv(localfield_d_data + localfield_offset[recvTask],
-			       localfield_togo[sendTask * NTask + recvTask] * sizeof(d_fftw_real), MPI_BYTE,
+			       localfield_count[recvTask] * sizeof(d_fftw_real), MPI_BYTE,
 			       recvTask, TAG_PERIODIC_A,
 			       import_d_data,
-			       localfield_togo[recvTask * NTask + sendTask] * sizeof(d_fftw_real), MPI_BYTE,
+			       localfield_recv[recvTask] * sizeof(d_fftw_real), MPI_BYTE,
 			       recvTask, TAG_PERIODIC_A, MPI_COMM_WORLD, &status);
 
 		  MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-			       localfield_togo[sendTask * NTask + recvTask] * sizeof(large_array_offset),
+			       localfield_count[recvTask] * sizeof(large_array_offset),
 			       MPI_BYTE, recvTask, TAG_PERIODIC_B, import_globalindex,
-			       localfield_togo[recvTask * NTask + sendTask] * sizeof(large_array_offset),
+			       localfield_recv[recvTask] * sizeof(large_array_offset),
 			       MPI_BYTE, recvTask, TAG_PERIODIC_B, MPI_COMM_WORLD, &status);
 		}
 	    }
@@ -2537,7 +2520,7 @@ void pmtidaltensor_periodic_fourier(int component)
 	      import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
 	    }
 
-	  for(i = 0; i < localfield_togo[recvTask * NTask + sendTask]; i++)
+	  for(i = 0; i < localfield_recv[recvTask]; i++)
 	    {
 	      /* determine offset in local FFT slab */
 	      offset =
@@ -2670,19 +2653,18 @@ void pmtidaltensor_periodic_fourier(int component)
 	    {
 	      import_data =
 		(fftw_real *) mymalloc("import_data",
-				       localfield_togo[recvTask * NTask + ThisTask] * sizeof(fftw_real));
+				       localfield_recv[recvTask] * sizeof(fftw_real));
 	      import_globalindex =
 		(large_array_offset *) mymalloc("import_globalindex",
-						localfield_togo[recvTask * NTask +
-								ThisTask] * sizeof(large_array_offset));
+						localfield_recv[recvTask] * sizeof(large_array_offset));
 
-	      if(localfield_togo[sendTask * NTask + recvTask] > 0
-		 || localfield_togo[recvTask * NTask + sendTask] > 0)
+	      if(localfield_count[recvTask] > 0
+		 || localfield_recv[recvTask] > 0)
 		{
 		  MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-			       localfield_togo[sendTask * NTask + recvTask] * sizeof(large_array_offset),
+			       localfield_count[recvTask] * sizeof(large_array_offset),
 			       MPI_BYTE, recvTask, TAG_PERIODIC_C, import_globalindex,
-			       localfield_togo[recvTask * NTask + sendTask] * sizeof(large_array_offset),
+			       localfield_recv[recvTask] * sizeof(large_array_offset),
 			       MPI_BYTE, recvTask, TAG_PERIODIC_C, MPI_COMM_WORLD, &status);
 		}
 	    }
@@ -2692,7 +2674,7 @@ void pmtidaltensor_periodic_fourier(int component)
 	      import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
 	    }
 
-	  for(i = 0; i < localfield_togo[recvTask * NTask + sendTask]; i++)
+	  for(i = 0; i < localfield_recv[recvTask]; i++)
 	    {
 	      /* determine offset in local FFT slab */
 	      offset =
@@ -2704,10 +2686,10 @@ void pmtidaltensor_periodic_fourier(int component)
 	  if(level > 0)
 	    {
 	      MPI_Sendrecv(import_data,
-			   localfield_togo[recvTask * NTask + sendTask] * sizeof(fftw_real), MPI_BYTE,
+			   localfield_recv[recvTask] * sizeof(fftw_real), MPI_BYTE,
 			   recvTask, TAG_PERIODIC_A,
 			   localfield_data + localfield_offset[recvTask],
-			   localfield_togo[sendTask * NTask + recvTask] * sizeof(fftw_real), MPI_BYTE,
+			   localfield_count[recvTask] * sizeof(fftw_real), MPI_BYTE,
 			   recvTask, TAG_PERIODIC_A, MPI_COMM_WORLD, &status);
 
 	      myfree(import_globalindex);
@@ -2776,7 +2758,7 @@ void pmtidaltensor_periodic_fourier(int component)
     }
 
   /* free locallist */
-  myfree(localfield_togo);
+  myfree(localfield_recv);
   myfree(localfield_offset);
   myfree(localfield_count);
   myfree(localfield_first);
@@ -3112,7 +3094,7 @@ void foldonitself(int *typelist)
 {
   int i, j, level, sendTask, recvTask, istart, nbuf, n, rest, iter = 0;
   int slab_x, slab_xx, slab_y, slab_yy, slab_z, slab_zz;
-  int *nsend_local, *nsend_offset, *nsend, count, buf_capacity;
+  int *nsend_local, *nsend_offset, *nsend_recv, count, buf_capacity;
   double to_slab_fac_folded, dx, dy, dz;
   double tstart0, tstart, tend, t0, t1;
   MyDouble pp[3];
@@ -3124,7 +3106,7 @@ void foldonitself(int *typelist)
 
   nsend_local = (int *) mymalloc("nsend_local", NTask * sizeof(int));
   nsend_offset = (int *) mymalloc("nsend_offset", NTask * sizeof(int));
-  nsend = (int *) mymalloc("nsend", NTask * NTask * sizeof(int));
+  nsend_recv = (int *) mymalloc("nsend_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
   buf_capacity = (maxfftsize * sizeof(d_fftw_real)) / (4 * sizeof(MyFloat));
   buf_capacity /= 2;
@@ -3225,7 +3207,7 @@ void foldonitself(int *typelist)
       istart = i;
 
 
-      MPI_Allgather(nsend_local, NTask, MPI_INT, nsend, NTask, MPI_INT, MPI_COMM_WORLD);
+      MPI_Alltoall(nsend_local, 1, MPI_INT, nsend_recv, 1, MPI_INT, MPI_COMM_WORLD);
 
       t1 = my_second();
 	  PRINT_STATUS("buffer filled (took %g sec)", timediff(t0, t1));
@@ -3243,11 +3225,11 @@ void foldonitself(int *typelist)
 			       4 * nsend_local[recvTask] * sizeof(MyFloat), MPI_BYTE,
 			       recvTask, TAG_PM_FOLD,
 			       &pos_recvbuf[0],
-			       4 * nsend[recvTask * NTask + ThisTask] * sizeof(MyFloat), MPI_BYTE,
+			       4 * nsend_recv[recvTask] * sizeof(MyFloat), MPI_BYTE,
 			       recvTask, TAG_PM_FOLD, MPI_COMM_WORLD, &status);
 
 		  pos = &pos_recvbuf[0];
-		  count = nsend[recvTask * NTask + ThisTask];
+		  count = nsend_recv[recvTask];
 		}
 	      else
 		{
@@ -3333,7 +3315,7 @@ void foldonitself(int *typelist)
   tend = my_second();
 
   PRINT_STATUS("FFT for folded density done (took %g seconds)", timediff(tstart, tend));
-  myfree(nsend);
+  myfree(nsend_recv);
   myfree(nsend_offset);
   myfree(nsend_local);
 

@@ -66,12 +66,15 @@ void rt_source_injection_initial_operations_preloop(void)
      Active-gas loop: each cell's own source function updates on its own timestep;
      ActiveParticleList also never contains ghost slots, so this stays correct
      while a ghost pool is materialized inside NumPart. */
-    if(!(RT_SOURCES & 1)) return; // we skip this if gas cells don't have explicit source terms
+#ifdef RT_INJECT_PHOTONS_DISCRETELY
+    if(!(RT_SOURCES & 1)) return; // gas cells have no explicit source terms and discrete injection does not write Rad_Je: nothing to do
+#endif
 
     for(int j : ActiveParticleList) {
         if(P[j].Type==0) {
             double lum[N_RT_FREQ_BINS]; int k;
-            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[j].Rad_Je[k]=0;} // need to zero -before- calling injection //
+            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[j].Rad_Je[k]=0;} // need to zero -before- calling injection: continuous injection adds to it //
+            if(!(RT_SOURCES & 1)) {continue;} // gas cells have no explicit source terms
             int active_check = rt_get_source_luminosity(j,0,lum, P, CellP);
             /* here is where we would need to code some source luminosity for the gas */
             for(k=0;k<N_RT_FREQ_BINS;k++) if(active_check) {CellP[j].Rad_Je[k]=lum[k];}
@@ -98,8 +101,8 @@ void rt_source_injection_initial_operations_preloop(void)
  * for future test problems anyways"). Codebase convention `boxSize_Z` is used
  * for the z-slab (see e.g. rt_utilities.cc:108-110 for the same convention).
  *
- * Runs unconditionally on every rank — does NOT short-circuit on
- * global_num_active==0. This is INTENTIONAL: the helper imposes a problem-
+ * Runs unconditionally on every rank — does NOT short-circuit when
+ * no rank has an active source. This is INTENTIONAL: the helper imposes a problem-
  * specific boundary CONDITION on flux fields in the testproblem's z-slab
  * boundary layer regardless of which sources fired this step. It is boundary
  * maintenance, NOT "touched by source" cleanup. (The legacy in-pair
@@ -173,9 +176,9 @@ void rt_source_injection(void)
     /* Collective-symmetry: every rank must enter the runner so MPI collectives
      * inside (ghost_exchange, Allreduce, ghost_writeback Alltoallv) stay in
      * lockstep on multi-rank runs. Short-circuit only when globally zero. */
-    int global_num_active = 0;
-    MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    if (global_num_active > 0) {
+    int any_local = (num_active > 0) ? 1 : 0, any_active = 0;
+    MPI_Allreduce(&any_local, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (any_active) {
         rt_source_injection_run_loop(active_src.data(), host_locals.data(), num_active);
     }
 

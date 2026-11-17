@@ -8,6 +8,10 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
+static constexpr uint64_t NEW_SINK_SPIN_RNG_SALT = gizmo_loop_rng_salt("new_sink_spin"); /* the spin direction of a sink made here */
+#endif
+static constexpr uint64_t SINK_SEED_MASS_RNG_SALT = gizmo_loop_rng_salt("sink_seed_mass"); /* also drawn under this name in fof.cc */
 #include "../core/wakeup_sidecar.h"
 #include "../mesh/kernel.h"
 #define GRAVTREE_SOURCE_HOST_OWNER_TU  /* expose the source-helper core bodies (host-inline) for the wrappers below */
@@ -109,7 +113,8 @@ void assign_imf_properties_from_starforming_gas(int i, int i_star)
 
 #ifdef GALSF_SFR_IMF_SAMPLING
     double mu = 0.0115 * P[i].Mass * UNIT_MASS_IN_SOLAR; // 1 O-star per 100 Msun [more exactly calculated here as number of stars per solar mass with mass > 8 Msun, from our adopted Kroupa IMF from 0.01-100 Msun]
-    unsigned int kk = (unsigned int)gizmo_gpu_rand_poisson((uint64_t)P[i].ID, (uint64_t)(121 + All.NumCurrentTiStep) << 8, mu);
+    static constexpr uint64_t MASSIVE_STAR_COUNT_RNG_SALT = gizmo_loop_rng_salt("massive_star_count_at_formation");
+    unsigned int kk = (unsigned int)gizmo_gpu_rand_poisson(particle_event_rng_key(i), gizmo_rng_event_counter(MASSIVE_STAR_COUNT_RNG_SALT, (uint64_t)All.Ti_Current, 0), mu);
     P[i_star].IMF_NumMassiveStars = (double)kk;
 #ifdef GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF
     P[i_star].IMF_NumMassiveStars = 0; // set to zero, these will increase with time now
@@ -231,7 +236,7 @@ double get_starformation_rate(int i, int mode)
             gradv[3*j + k]=vt; dv2abs+=vt*vt; if(j==k) {divv+=vt;} // save for possible use below
         }}
     dv2abs_0=dv2abs; // save for possible use below
-#if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION) && ((defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY)) || defined(RT_INFRARED) || defined(EOS_GMC_BAROTROPIC)) // if we have to deal with optically-thick thermo
+#if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION) && defined(SINK_OPACITY_LIMIT_THERMODYNAMICS) // if we have to deal with optically-thick thermo
     double nHcgs = HYDROGEN_MASSFRAC * (CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS);
     if(nHcgs > 1e13) {v_fast = DMIN(v_fast, 0.2/UNIT_VEL_IN_KMS);} // limiter to permit sink formation in simulations that really resolve the opacity limit and bog down when an optically-thick core forms. Modify this if you want to follow first collapse more/less - scale as c_s ~ n^(1/5)
 #endif
@@ -334,7 +339,7 @@ double get_starformation_rate(int i, int mode)
 
 #if (SINGLE_STAR_SINK_FORMATION & 8) /* restrict to cell which neither 'sees' or 'is seen by' a sink too close */
     if(P[i].Sink_Ngb_Flag) {rateOfSF=0;} /* cell cannot be 'seen' by -any- sink as a potential interacting neighbor */
-    if(P[i].Min_Distance_to_Sink < P[i].KernelRadius) {rateOfSF=0;} /* cell does not overlap with a sink */
+    if(P[i].Min_Distance_to_Sink < DMAX(P[i].KernelRadius, SinkParticle_GravityKernelRadius)) {rateOfSF=0;} /* cell does not overlap with a sink, nor lie within any sink's softening (holds even when that sink is inactive this step) */
 #if (defined(COOLING) || defined(EOS_GMC_BAROTROPIC)) // if the simulation has opacity limit physics
     if(P[i].Min_Distance_to_Sink * All.cf_atime * UNIT_LENGTH_IN_AU < 0.1) {rateOfSF=0;} /* distance to nearest sink is much greater than the size of a Larson core (at least a few AU), else the core should be accreted by the pre-existing protostar star */
 #endif
@@ -379,7 +384,7 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
     /* now update the thermal variables */
     CellP[i].InternalEnergy = (egyeff + (egycurrent - egyeff) * exp(-dtime / trelax));
     CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
-    set_eos_pressure(i, P, CellP);
+    refresh_eos_and_project(i, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED);
     //CellP[i].dInternalEnergy = 0;
     CellP[i].DtInternalEnergy = 0; /* HERE, it's ok, b/c effective EOS is designed to model new pressure even under compressions,
                                  (since we're zero'ing the second-half-step from the hydro step) */
@@ -393,11 +398,10 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
 void star_formation_parent_routine(void)
 {
     if(ghost_require_no_live_pool_for_layout_change("star_formation_parent_routine")) {return;}
-    int i, bin, flag, stars_spawned, tot_spawned, stars_converted, tot_converted, number_of_stars_generated;
+    int i, bin, flag, stars_spawned, stars_converted, number_of_stars_generated;
+    long long tot_spawned, tot_converted;   /* summed over ranks */
     unsigned int bits; double dtime, mass_of_star, p, prob, rate_in_msunperyear, sfrrate, totsfrrate, sum_sm, total_sm, sm=0, rate, sum_mass_stars, total_sum_mass_stars;
-#if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
-    int num_sink_formed=0, tot_sink_formed=0;
-#endif
+    int num_sink_formed=0, tot_sink_formed=0;   /* zero in builds that cannot form sinks; counted with the stars below */
     for(bin = 0; bin < TIMEBINS; bin++) {if(TimeBinActive[bin]) {TimeBinSfr[bin] = 0;}}
     stars_spawned = stars_converted = 0; sum_sm = sum_mass_stars = 0;
     for(bits = 0; GALSF_GENERATIONS > (1 << bits); bits++);
@@ -442,18 +446,21 @@ void star_formation_parent_routine(void)
                 prob = P[i].Mass / mass_of_star * pfac;
                 
 #if defined(METALS) && defined(GALSF_EFFECTIVE_EQS) // does instantaneous enrichment //
-                double w = get_random_number(P[i].ID);
+                static constexpr uint64_t SF_ENRICHMENT_RNG_SALT = gizmo_loop_rng_salt("star_formation_enrichment");
+                double w = particle_random_number(i, SF_ENRICHMENT_RNG_SALT, (uint64_t)All.Ti_Current, 0);
                 P[i].Metallicity[0] += w * All.SolarAbundances[0] * pfac;
                 if(NUM_METAL_SPECIES>=10) {int k; for(k=1;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] += w * All.SolarAbundances[k] * pfac;}}
 #endif
                 
-                if(get_random_number(P[i].ID + 1) < prob)    /* ok, make a star */
+                static constexpr uint64_t STAR_FORMATION_RNG_SALT = gizmo_loop_rng_salt("star_formation");
+                if(particle_random_number(i, STAR_FORMATION_RNG_SALT, (uint64_t)All.Ti_Current, 0) < prob)    /* ok, make a star */
                 {
                     
 #ifdef SINK_SEED_FROM_LOCALGAS
                     /* before making a star, assess whether or not we can instead make a sink seed particle */
                     p = return_probability_of_this_forming_sink_from_seed_model(i);
-                    if(get_random_number(P[i].ID + 2) < p)
+                    static constexpr uint64_t SINK_SEED_CHOICE_RNG_SALT = gizmo_loop_rng_salt("sink_seed_instead_of_star");
+                    if(particle_random_number(i, SINK_SEED_CHOICE_RNG_SALT, (uint64_t)All.Ti_Current, 0) < p)
                     {
                         /* make a sink particle */
                         P[i].Mass = CellP[i].Mass; /* sync mass before type conversion */
@@ -461,6 +468,7 @@ void star_formation_parent_routine(void)
                         if(P[i].FluidType == FLUID_DM) { P[i].Type = 3; } else /* dark fluid -> inert collisionless Type=3 */
 #endif
                         { P[i].Type = 5; }
+                        P[i].ForceSoftening = compute_force_softening_kernel_radius(i); /* the cached softening still holds the gas cell's; the sink radius below must see the new type's */
                         force_tree_note_type_presence(i);  /* the element's type is final here, so tell the standing tree before anything walks it looking for that type */
                         TimeBinCountGas[P[i].TimeBin]--;
                         num_sink_formed++;
@@ -470,7 +478,7 @@ void star_formation_parent_routine(void)
                         P[i].Sink_Mass = All.SeedSinkMass;
                         if(All.SeedSinkMassSigma > 0)
                         {
-                            P[i].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + gizmo_gpu_rand_gaussian((uint64_t)P[i].ID, (uint64_t)(17 + All.NumCurrentTiStep)) * All.SeedSinkMassSigma );
+                            P[i].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + gizmo_gpu_rand_gaussian(particle_event_rng_key(i), gizmo_rng_event_counter(SINK_SEED_MASS_RNG_SALT, (uint64_t)All.Ti_Current, 0)) * All.SeedSinkMassSigma );
                         }
                         P[i].Sink_Formation_Mass = P[i].Mass; // save the mass we had at the time of sink formation, because we will use this later to understand how the sink has grown
                         if(p>1) P[i].Sink_Mass *= p; /* assume multiple seeds in particle merge */
@@ -487,7 +495,7 @@ void star_formation_parent_routine(void)
                         P[i].Sink_AccretionDeficit = 0;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-                        double sink_mu=2.0*get_random_number(P[i].ID+3)-1.0, sink_phi=2*M_PI*get_random_number(P[i].ID+4), sink_sin=sqrt(1-sink_mu*sink_mu);
+                        double sink_mu=2.0*particle_random_number(i, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 0)-1.0, sink_phi=2*M_PI*particle_random_number(i, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 1), sink_sin=sqrt(1-sink_mu*sink_mu);
                         double spin_prefac = All.G * P[i].Sink_Mass / C_LIGHT_CODE; // assume initially maximally-spinning BH with random orientation
                         P[i].Sink_Specific_AngMom[0]=spin_prefac * sink_sin*cos(sink_phi); P[i].Sink_Specific_AngMom[1]=spin_prefac * sink_sin*sin(sink_phi); P[i].Sink_Specific_AngMom[2]=spin_prefac * sink_mu;
 #endif
@@ -582,7 +590,7 @@ void star_formation_parent_routine(void)
                         P[i_star].NewStar_Momentum_For_JetFeedback = P[i_star].Mass * 40./UNIT_VEL_IN_KMS;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-                        double sink_mu=2.0*get_random_number(P[i].ID+3)-1.0, sink_phi=2*M_PI*get_random_number(P[i].ID+4), sink_sin=sqrt(1-sink_mu*sink_mu);
+                        double sink_mu=2.0*particle_random_number(i_star, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 0)-1.0, sink_phi=2*M_PI*particle_random_number(i_star, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 1), sink_sin=sqrt(1-sink_mu*sink_mu);
                         P[i_star].Sink_Specific_AngMom[0]=sink_sin*cos(sink_phi); P[i_star].Sink_Specific_AngMom[1]=sink_sin*sin(sink_phi); P[i_star].Sink_Specific_AngMom[2]=sink_mu;
 #endif
 #ifdef SINK_WIND_SPAWN
@@ -606,6 +614,7 @@ void star_formation_parent_routine(void)
                             if(P[i_star].FluidType == FLUID_DM) { P[i_star].Type = 3; } else /* dark fluid -> inert collisionless Type=3 */
 #endif
                             { P[i_star].Type = 5; }
+                            P[i_star].ForceSoftening = compute_force_softening_kernel_radius(i_star); /* the cached softening still holds the gas cell's; the sink radius below must see the new type's */
                             force_tree_note_type_presence(i_star);  /* the element's type is final here, so tell the standing tree before anything walks it looking for that type */
                             num_sink_formed++;
                             P[i_star].Sink_Mass = DMAX(All.SeedSinkMass, DMIN(0.5*P[i_star].Mass , 0.01/UNIT_MASS_IN_SOLAR)); // if desired to make this appreciable fraction of particle mass, please do so in params file
@@ -621,13 +630,13 @@ void star_formation_parent_routine(void)
 #endif
                             TreeMomentsStaleFlag = 1; /* particle changed type/mass: tree pointers maintained by MAINTAIN_TREE_IN_REARRANGE, just refresh moments */
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
-                            P[i_star].SinkRadius = ForceSoftening_KernelRadius(i);
+                            P[i_star].SinkRadius = ForceSoftening_KernelRadius(i_star);
                             double cs = 0.2 / UNIT_VEL_IN_KMS;
 #if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED)) || defined(EOS_GMC_BAROTROPIC)
                             double nHcgs = HYDROGEN_MASSFRAC * (CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS);
                             if(nHcgs > 1e10) cs *= pow(nHcgs/1e10, 1./5); // if we're getting opacity-limited then we can set a smaller sink radius, since cs ~ n^1/5
 #endif
-                            P[i_star].SinkRadius = DMAX(0.79 * P[i_star].Mass * All.G / (cs * cs), ForceSoftening_KernelRadius(i)); // volume-equivalent particle radius R= (3V/(4PI))^(1/3) at the density where cell length = Jeans length/2
+                            P[i_star].SinkRadius = DMAX(0.79 * P[i_star].Mass * All.G / (cs * cs), ForceSoftening_KernelRadius(i_star)); // volume-equivalent particle radius R= (3V/(4PI))^(1/3) at the density where cell length = Jeans length/2
 #endif
 #ifdef SINGLE_STAR_FIND_BINARIES
                             P[i_star].Min_Sink_OrbitalTime=MAX_REAL_NUMBER; P[i_star].comp_dx = {}; P[i_star].comp_dv = {}; P[i_star].is_in_a_binary = 0;
@@ -639,7 +648,7 @@ void star_formation_parent_routine(void)
                             P[i_star].Sink_Mass_Reservoir = DMAX(DMAX(0, P[i_star].Mass-P[i_star].Sink_Mass), All.SeedReservoirMass);
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-                            double sink_mu=2.0*get_random_number(P[i].ID+3)-1.0, sink_phi=2*M_PI*get_random_number(P[i].ID+4), sink_sin=sqrt(1-sink_mu*sink_mu);
+                            double sink_mu=2.0*particle_random_number(i_star, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 0)-1.0, sink_phi=2*M_PI*particle_random_number(i_star, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 1), sink_sin=sqrt(1-sink_mu*sink_mu);
                             double spin_prefac = All.G * P[i_star].Sink_Mass / C_LIGHT_CODE; // assume initially maximally-spinning BH with random orientation
                             P[i_star].Sink_Specific_AngMom[0]=spin_prefac*sink_sin*cos(sink_phi); P[i_star].Sink_Specific_AngMom[1]= spin_prefac * sink_sin*sin(sink_phi); P[i_star].Sink_Specific_AngMom[2]=spin_prefac * sink_mu;
 #endif
@@ -684,7 +693,11 @@ void star_formation_parent_routine(void)
                         if(P[i_star].FluidType == FLUID_DM) { if(P[i_star].Type != 3) {P[i_star].Type = 3;} } else /* dark fluid -> inert collisionless Type=3 */
 #endif
                         { if(P[i_star].Type != 5) {P[i_star].Type = 4;} } // if we didn't set to type 5 above, default to type 4
+                        /* a new star (type 4; a sink formed above has already asked for a refresh) enters the type-conditioned node
+                           moments, its luminosity among them, only at the next build or refresh, deliberately: its luminosity keys off its
+                           age, zero at formation (see the moment-refresh note in gravtree.cc) */
                         force_tree_note_type_presence(i_star);  /* the element's type is final here, so tell the standing tree before anything walks it looking for that type */
+                        if(i_star != i) {gravity_note_inserted_motion_bound(i_star);}  /* a spawned element's speed is readable only now */
 
 #ifdef SINK_SEED_FROM_LOCALGAS
                     } /* closes else for decision to make a sink particle */
@@ -714,20 +727,22 @@ void star_formation_parent_routine(void)
     
     
     
+    {   /* every count this pass changed, in one reduction */
+        long long local[3] = {stars_spawned, stars_converted, num_sink_formed}, total[3];
+        MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        tot_spawned = total[0]; tot_converted = total[1]; tot_sink_formed = (int) total[2];
+    }
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
-    MPI_Allreduce(&num_sink_formed, &tot_sink_formed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if( (ThisTask==0) && (tot_sink_formed > 0) )
     {
         printf("Sink formation: %d gas particles converted into sinks\n",tot_sink_formed);
-        All.TotSinks += tot_sink_formed;
     } // if(tot_sink_formed > 0)
+    All.TotSinks += tot_sink_formed;   /* on every rank, so every rank's copy of the total agrees */
 #endif
-    
-    MPI_Allreduce(&stars_spawned, &tot_spawned, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&stars_converted, &tot_converted, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+
     if(tot_spawned > 0 || tot_converted > 0)
     {
-        if(ThisTask==0) printf("SFR: spawned %d stars, converted %d gas particles into stars\n", tot_spawned, tot_converted);
+        if(ThisTask==0) printf("SFR: spawned %lld stars, converted %lld gas particles into stars\n", tot_spawned, tot_converted);
         All.TotNumPart += tot_spawned;
         All.TotN_gas -= tot_converted;
         NumPart += stars_spawned;
@@ -741,9 +756,9 @@ void star_formation_parent_routine(void)
     if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
 #endif
     {
-        MPI_Allreduce(&sfrrate, &totsfrrate, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Reduce(&sum_sm, &total_sm, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        MPI_Reduce(&sum_mass_stars, &total_sum_mass_stars, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        double local_log[3] = {sum_sm, sfrrate, sum_mass_stars}, total_log[3] = {0};   /* read only by rank 0's log line */
+        MPI_Reduce(local_log, total_log, 3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        total_sm = total_log[0]; totsfrrate = total_log[1]; total_sum_mass_stars = total_log[2];
         if(ThisTask == 0)
         {
             if(All.TimeStep > 0) {rate = total_sm / (All.TimeStep / (All.cf_atime*All.cf_hubble_a));} else {rate = 0;}
@@ -825,21 +840,22 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
     prob = 1 - exp(-p);
 #endif
 
-    if(get_random_number(P[i].ID + 2) < prob)	/* ok, make the particle go into the wind */
+    static constexpr uint64_t WIND_RNG_SALT = gizmo_loop_rng_salt("subgrid_wind_launch");
+    if(particle_random_number(i, WIND_RNG_SALT, (uint64_t)All.Ti_Current, 0) < prob)	/* ok, make the particle go into the wind */
     {
 #if !defined(GALSF_WINDS_ORIENTATION)
 #define GALSF_WINDS_ORIENTATION 0   // determine the wind acceleration orientation //
 #endif
 
 #if (GALSF_WINDS_ORIENTATION==0) // random wind direction
-        double theta = acos(2 * get_random_number(P[i].ID + 3) - 1);
-        double phi = 2 * M_PI * get_random_number(P[i].ID + 4);
+        double theta = acos(2 * particle_random_number(i, WIND_RNG_SALT, (uint64_t)All.Ti_Current, 1) - 1);
+        double phi = 2 * M_PI * particle_random_number(i, WIND_RNG_SALT, (uint64_t)All.Ti_Current, 2);
         dir[0] = sin(theta) * cos(phi); dir[1] = sin(theta) * sin(phi); dir[2] = cos(theta);
-        if(get_random_number(P[i].ID + 5) < 0.5) {dir = -dir;}
+        if(particle_random_number(i, WIND_RNG_SALT, (uint64_t)All.Ti_Current, 3) < 0.5) {dir = -dir;}
 #endif
 #if (GALSF_WINDS_ORIENTATION==1) // polar wind (defined by accel.cross.vel)
         dir = cross(P[i].GravAccel, P[i].Vel);
-        if(get_random_number(P[i].ID + 5) < 0.5) {dir = -dir;}
+        if(particle_random_number(i, WIND_RNG_SALT, (uint64_t)All.Ti_Current, 3) < 0.5) {dir = -dir;}
 #endif
 #if (GALSF_WINDS_ORIENTATION==2) // along density gradient //
         dir = -P[i].GradRho;
@@ -855,7 +871,7 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
             CellP[i].VelPred[j] += v * All.cf_atime * dir[j];
         }
         CellP[i].DelayTime = All.WindFreeTravelMaxTimeFactor / All.cf_hubble_a;
-    } /* if(get_random_number(P[i].ID + 2) < prob) */
+    } /* if(wind launched) */
 }
 #endif // defined(GALSF_SUBGRID_WINDS)
 

@@ -53,10 +53,9 @@ GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho,
 #if defined(EOS_TRUELOVE_PRESSURE) || defined(TRUELOVE_CRITERION_PRESSURE)
 /* mesh/kernel.h needed BEFORE eos_functions.h: KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER
  * macro is used inside eos_functions.h's set_eos_pressure_impl Truelove
- * pressure branch. Cannot be included from inside eos_functions.h itself —
- * kernel.h has no header guards and would trigger same-TU
- * redefinition/reinclude errors if pulled in by both eos_functions.h and
- * any other consumer in the same TU. */
+ * pressure branch. It is included here rather than from inside
+ * eos_functions.h, whose other includers do not all need it (kernel.h
+ * carries #pragma once, so a second inclusion below is harmless). */
 #include "../mesh/kernel.h"
 #endif
 /* Outside the conditional above: the shutdown release is needed in every build,
@@ -84,6 +83,10 @@ KOKKOS_FUNCTION double gas_dust_heating_coeff(int i, double T, double Tdust, str
 #endif
 /* Simple steady-state chemistry — single source in simple_chemistry.h */
 #include "./simple_chemistry.h"
+#ifdef ELASTIC_STATE_DEPENDENT_STRENGTH
+#include "../mesh/kernel.h"                        /* kernel_main, for the tensile-instability factor elastic_physics_functions.h defines */
+#include "../solids/elastic_physics_functions.h" /* elastic_project_after_eos_P, in the post-cooling tail */
+#endif
 /* NOTE: set_eos_pressure and finish_cooling_host_deferred_dust_updates are
  * intentionally NOT called inside do_the_cooling_for_particle (host or device).
  * Their bodies call ThermalProperties (which calls convert_u_to_temp ->
@@ -230,7 +233,16 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
    KOKKOS_FUNCTION marks them __device__ __host__ so nvcc recognizes them as device-callable
    when they appear in call expressions within other KOKKOS_FUNCTION bodies in this TU.
    nvcc may issue advisory warning #20040 (consistent redeclaration) but this is harmless. */
-KOKKOS_FUNCTION double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
+/* CHIMES and Grackle solve the cooling in host-only external libraries. Their builds cool on the host loop alone, and the
+   entry points that reach the library are compiled for the host only; every other build keeps them device-callable. */
+#if defined(CHIMES) || defined(COOL_GRACKLE)
+#define COOLING_SOLVE_IN_HOST_LIBRARY
+#define COOLING_SOLVE_FUNCTION
+#else
+#define COOLING_SOLVE_FUNCTION KOKKOS_FUNCTION
+#endif
+COOLING_SOLVE_FUNCTION void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
+COOLING_SOLVE_FUNCTION double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double CoolingRate(double logT, double rho, double n_elec_guess, double *n_elec_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
@@ -354,11 +366,18 @@ void cooling_parent_routine(void)
     for (int i : ActiveParticleList)
     {
         if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+        if(eos_branch_of(CellP[i].CompositionType) != EOS_BRANCH_NONE) {continue;} /* a solid material of a gas+solid build is not gas: no gas cooling or chemistry (its hydro work is applied in the kick) */
+#endif
 #ifdef GALSF_EFFECTIVE_EQS
         if((CellP[i].Density*All.cf_a3inv > All.PhysDensThresh) && ((All.ComovingIntegrationOn==0) || (CellP[i].Density>=All.OverDensThresh))) {continue;} /* no cooling for effective-eos star-forming particles */
 #endif
 #ifdef GALSF_FB_TURNOFF_COOLING
-        if(CellP[i].DelayTimeCoolingSNe > 0) {continue;} /* no cooling for particles marked in delayed cooling */
+        if(CellP[i].DelayTimeCoolingSNe > 0) { /* no cooling for particles marked in delayed cooling */
+#if defined(RT_INFRARED) && !defined(COOLING_OPERATOR_SPLIT)
+            CellP[i].InternalEnergy += CellP[i].InternalEnergy_FromIR_Pending; CellP[i].InternalEnergyPred += CellP[i].InternalEnergy_FromIR_Pending; CellP[i].InternalEnergy_FromIR_Pending = 0; set_eos_pressure(i, P, CellP); /* with cooling off there is nothing to balance the absorbed IR against: heat the gas directly */
+#endif
+            continue;}
 #endif
         cool_indices.push_back(i);
     }
@@ -377,8 +396,8 @@ void cooling_parent_routine(void)
      * The compact arrays are also kept small (GPU_COOL_BATCH_SIZE × struct_size) rather
      * than N_active × struct_size, further reducing UVM pressure.
      */
-#if !defined(CHIMES)
-  if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
+#if !defined(COOLING_SOLVE_IN_HOST_LIBRARY)
+  if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
     GIZMO_GPU_ENSURE_ALL_FRESH(); /* device cooling reads All mirrors; tiny-N CPU path reads host All directly */
     static const int GPU_COOL_BATCH_SIZE = 32768;
 
@@ -474,6 +493,9 @@ void cooling_parent_routine(void)
             struct EosTableView eos_tables = eos_tables_view();
             gizmo_gpu_kernel_launch("post_cooling_tail", batch.count, KOKKOS_LAMBDA(int j) {
                 set_eos_pressure_impl(j, kp, kc, &eos_tables);
+#ifdef ELASTIC_STATE_DEPENDENT_STRENGTH
+                elastic_project_after_eos_P(j, kc, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED); /* the accepted state: as refresh_eos_and_project on the host */
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
                 if((kdt[j] > 0) && (kc[j].Mass > 0) && (kp[j].Type == 0)) {
                     update_dust_processes(j, kdt[j] * UNIT_TIME_IN_MYR * 0.001, kp, kc);
@@ -527,7 +549,7 @@ void cooling_parent_routine(void)
     for(int j = 0; j < N_active; j++)
     {
         int i = cool_indices[j];
-        set_eos_pressure(i, P, CellP);
+        refresh_eos_and_project(i, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED);
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
         double dtime = get_particle_timestep_in_physical(i, P);
 #ifdef TRANSPORT_SUBCYCLE_COOLING
@@ -537,12 +559,6 @@ void cooling_parent_routine(void)
 #endif
     }
   } /* end CPU/GPU path selection */
-
-
-#ifdef CHIMES /* CHIMES records some extra timing information here owing to large possible imbalances */
-  CPU_Step[CPU_COOLINGSFR] += measure_time(); MPI_Barrier(MPI_COMM_WORLD);
-  CPU_Step[CPU_COOLSFRIMBAL] += measure_time(); PRINT_STATUS("CHIMES chemistry and cooling finished");
-#endif
 }
 
 
@@ -554,7 +570,7 @@ void cooling_parent_routine(void)
    conditional blocks — unlike OpenMP 'declare target' on NVC++ 24.7. */
 
 /* subroutine which actually sends the particle data to the cooling routine and updates the entropies */
-KOKKOS_FUNCTION
+COOLING_SOLVE_FUNCTION
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef HYDRO_MULTIFLUID_DM
@@ -584,11 +600,14 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         double uion=HIIRegion_Temp/(MEAN_MOLECULAR_WEIGHT_IONIZED*(GAMMA_DEFAULT-1.)*U_TO_TEMP_UNITS); if(cell[i].DelayTimeHII>0) {if(uold<uion) {uold=uion;}} /* u_old should be >= ionized temp if used here [unless using newer model] */
 #else
         if(cell[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
-            cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= MEAN_MOLECULAR_WEIGHT_IONIZED/MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
+            cell[i].DelayTimeHII = 0;
+#ifndef CHIMES /* the energy rescaling below holds the temperature through a change of composition that CHIMES carries in its own abundances */
+            cell[i].InternalEnergy *= MEAN_MOLECULAR_WEIGHT_IONIZED/MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
             cell[i].InternalEnergyPred = cell[i].InternalEnergy;
             cell[i].HI = DMAX(0, DMIN(1, 1. - cell[i].Ne / 1.2)); // keep the neutral fraction consistent with the recombined electron fraction. the temperature is unchanged here by construction
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
             cell[i].u_anchor = cell[i].InternalEnergy; /* the energy and the molecular weight above were rescaled together precisely to hold the temperature fixed, so the anchor has to move with them, or the cached pair would report the change this branch exists to avoid */
+#endif
 #endif
             }
 #endif
@@ -611,7 +630,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #ifdef PMGRID
         grav_acc += All.cf_a2inv * pp[i].GravPM;
 #endif
-        DtInternalEnergyEffCGS -= All.cf_atime * dot(cell[i].GravWorkTerm, grav_acc);
+        DtInternalEnergyEffCGS += All.cf_atime * dot(cell[i].GravWorkTerm, grav_acc);
 #endif
         /* limit the magnitude of the hydro dtinternalenergy */
         if(DtInternalEnergyEffCGS < 0) {
@@ -625,6 +644,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
             }
         }
         DtInternalEnergyEffCGS = DMIN(DtInternalEnergyEffCGS ,  1.e4*cell[i].InternalEnergy/dtime ); // equivalent to saying we cant massively enhance internal energy in a single timestep from the hydro work terms: should be big, since just numerical [shocks are real!]
+#ifdef RT_INFRARED
+        if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {double du_IR = cell[i].InternalEnergy_FromIR_Pending; cell[i].InternalEnergy_FromIR_Pending = 0; DtInternalEnergyEffCGS += du_IR / dtime;} /* IR absorbed since the last cooling call, as a heating rate over this call: a real energy input, not a numerical hydro term, so it is added after the hydro-work limits */
+#endif
         /* and convert to cgs before use in the cooling sub-routine */
         DtInternalEnergyEffCGS *= (UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC);
         if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy = DtInternalEnergyEffCGS;} // if unsplit, send this converted variable to cooling below
@@ -715,7 +737,11 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
                         cell[i].Rad_E_gamma[k] += de_rad; /* energy gained by gas is lost here (or vice versa if dust is acting as a net coolant) */
                         cell[i].Rad_E_gamma_Pred[k] = cell[i].Rad_E_gamma[k]; /* updated drifted */
 #if defined(RT_EVOLVE_INTENSITIES)
-                        int k_tmp; for(k_tmp=0;k_tmp<N_RT_INTENSITY_BINS;k_tmp++) {cell[i].Rad_Intensity[k][k_tmp] += de_rad/RT_INTENSITY_BINS_DOMEGA; cell[i].Rad_Intensity_Pred[k][k_tmp] += de_rad/RT_INTENSITY_BINS_DOMEGA;}
+                        { /* emission is isotropic: each of the N bins gets de_rad/N of energy. absorption takes the same fraction from every bin, keeping them positive and the angular shape intact */
+                            int k_tmp; double e_bins=0; for(k_tmp=0;k_tmp<N_RT_INTENSITY_BINS;k_tmp++) {e_bins += RT_INTENSITY_BINS_DOMEGA*cell[i].Rad_Intensity[k][k_tmp];}
+                            double f_keep = (e_bins > 0) ? DMAX(e_bins+de_rad, 0)/e_bins : 1;
+                            for(k_tmp=0;k_tmp<N_RT_INTENSITY_BINS;k_tmp++) {if(de_rad > 0) {cell[i].Rad_Intensity[k][k_tmp] += de_rad/(4.*M_PI); cell[i].Rad_Intensity_Pred[k][k_tmp] += de_rad/(4.*M_PI);} else {cell[i].Rad_Intensity[k][k_tmp] *= f_keep; cell[i].Rad_Intensity_Pred[k][k_tmp] *= f_keep;}}
+                        }
 #endif
                         int kv; // add leading-order relativistic corrections here, accounting for gas motion in the addition/subtraction to the flux
 #if defined(RT_EVOLVE_FLUX)
@@ -820,7 +846,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 /* returns new internal energy per unit mass.
  * Arguments are passed in code units, density is proper density.
  */
-KOKKOS_FUNCTION
+COOLING_SOLVE_FUNCTION
 double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double u, du; u=0; du=0;
@@ -842,13 +868,16 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
         double r=u/u_old; if(r>1) {r=1/r;} if(fabs(r-1)>1.e-4) {r=(r-1)/log(r);} r=DMAX(0,DMIN(r,1));
         du *= 0.5*r; if(du<-0.5*u) {du=-0.5*u;} u+=du;
     }
-#else
-    /* with full operator splitting we just call grackle normally. note this is usually fine,
-     but can lead to artificial noise at high densities and low temperatures, especially if something
-     like artificial pressure (but not temperature) floors are used such that the temperature gets
+    else
+#endif
+    {
+    /* with full operator splitting (or when the kick has already applied this step's hydro work) we just call grackle
+     normally. note this is usually fine, but can lead to artificial noise at high densities and low temperatures, especially
+     if something like artificial pressure (but not temperature) floors are used such that the temperature gets
      'contaminated' by the pressure terms */
     u = CallGrackle(u_old, rho, dt, ne_guess, target, 0);
-#endif
+    }
+    if(ne_eval) {*ne_eval = cell[target].Ne;} /* the electron abundance grackle just solved, which CallGrackle saved; the caller stores what comes back here */
     return DMAX(u,All.MinEgySpec);
 #endif
 
@@ -867,7 +896,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     chimes_update_turbulent_abundances(target, 1, pp, cell); 
 #endif 
 
-    return DMAX(u, All.MinEgySpec);
+    u = DMAX(u, All.MinEgySpec);
+    chimes_cache_solved_state(target, u, cell); /* the rest of the code reads the chemistry from the cell, at the energy the cell will hold */
+    return u;
 
 #else // CHIMES
 
@@ -1000,9 +1031,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(COOL_GRACKLE) && !defined(GALSF_EFFECTIVE_EQS)
-    double LambdaNet = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1);
-    if(LambdaNet >= 0) LambdaNet = 0.0;
-    return LambdaNet / UNIT_TIME_IN_CGS;
+    double t_grackle = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1); /* Grackle's cooling time, in code units: negative for net cooling, positive for net heating */
+    if(t_grackle >= 0) {return 0;} /* net heating */
+    return -t_grackle;
 #else
     rho *= UNIT_DENSITY_IN_CGS;	/* convert to physical cgs units */
     u_old *= UNIT_SPECEGY_IN_CGS;
@@ -1019,8 +1050,8 @@ double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval
 double GetNetCoolingRate(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(COOL_GRACKLE) && !defined(GALSF_EFFECTIVE_EQS)
-    double tcool = GetCoolingTime(u_old, rho, ne_guess, ne_eval, target, pp, cell); /* the Grackle interface gives only the cooling time */
-    return (tcool != 0) ? u_old / tcool : 0;
+    double t_grackle = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1); /* Grackle's signed cooling time u/(du/dt), in code units */
+    return (t_grackle != 0) ? -u_old / t_grackle : 0;
 #else
     rho *= UNIT_DENSITY_IN_CGS;	/* convert to physical cgs units */
     double u_cgs = u_old * UNIT_SPECEGY_IN_CGS;
@@ -1095,6 +1126,16 @@ double chimes_convert_u_to_temp(double u, double rho, int target, struct particl
 {
   return u * (cell[target].gamma_eos_value()-1) * PROTONMASS_CGS * ((double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars)) / BOLTZMANN_CGS;
 }
+
+/* This function hands the chemistry CHIMES holds for a cell to the cell's shared cache (store_solved_chemistry), which is what
+ * the rest of the code reads. u_code is the specific energy the abundances belong to. */
+void chimes_cache_solved_state(int target, double u_code, struct gas_cell_data *cell)
+{
+  const ChimesFloat *abundance = ChimesGasVars[target].abundances; const int *species = ChimesGlobalVars.speciesIndices;
+  cell[target].store_solved_chemistry(u_code, (double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars), cell[target].gamma_eos_value(),
+                                      abundance[species[sp_elec]], abundance[species[sp_HI]], abundance[species[sp_HII]],
+                                      DMIN(1, DMAX(0, 2. * abundance[species[sp_H2]]))); /* factor 2: the mass fraction of the hydrogen that is in H2 */
+}
 // CHIMES
 #elif  defined(EOS_SUBSTELLAR_ISM)
 /*
@@ -1138,9 +1179,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 {
     double n_elec=n_elec_guess, nH0, nHe0, nHp, nHep, nHepp, mu; /* ionization states [computed below] */
     double Lambda, Heat, LambdaFF, LambdaCompton, LambdaExc, LambdaExcH0, LambdaExcHep, LambdaIon, LambdaIonH0, LambdaIonHe0, LambdaIonHep;
-    double LambdaRec, LambdaRecHp, LambdaRecHep, LambdaRecHepp, LambdaRecHepd, T, T_cmb_radeff, shieldfac, LambdaMol, LambdaMetal, LambdaPElec, LambdaDust, Heat_Ion_from_UVB, Heat_Ion_from_RHD;
+    double LambdaRec, LambdaRecHp, LambdaRecHep, LambdaRecHepp, LambdaRecHepd, T, T_cmb_radeff, shieldfac, LambdaMol, LambdaMetal, LambdaNeb, LambdaPElec, LambdaDust, Heat_Ion_from_UVB, Heat_Ion_from_RHD;
     double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;	/* hydrogen number dens in cgs units */
-    Lambda=0; Heat=0; LambdaMol=0; LambdaFF=0; LambdaRec=0; LambdaExc=0; LambdaIon=0; LambdaMetal=0; LambdaCompton=0; LambdaPElec=0; LambdaDust=0; Heat_Ion_from_UVB=0; Heat_Ion_from_RHD=0; /* make sure these are all initialized to zero */
+    Lambda=0; Heat=0; LambdaMol=0; LambdaFF=0; LambdaRec=0; LambdaExc=0; LambdaIon=0; LambdaMetal=0; LambdaNeb=0; LambdaCompton=0; LambdaPElec=0; LambdaDust=0; Heat_Ion_from_UVB=0; Heat_Ion_from_RHD=0; /* make sure these are all initialized to zero */
     if(logT <= CoolTables.Tmin) {logT = CoolTables.Tmin + 0.5 * CoolTables.deltaT;}	/* floor at CoolTables.Tmin */
     if(!isfinite(rho)) {return 0;}
     T = pow(10.0, logT);
@@ -1186,21 +1227,41 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         *n_elec_eval = n_elec; /* save this value for the output cycle */
         LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
+        double metal_table_weight = 1; /* share of the tabulated metal-line cooling kept, after the handover to the nebular term below */
 
 #if defined(RT_CHEM_PHOTOION) && defined(METALS)
         /* Nebular (photoionized forbidden-line) cooling from O+, O++, N+, S+, Ne+: Kim, Gong, Kim &
-           Ostriker 2023 (ApJS 264, 10), Eq. 47. The tabulated metal-line cooling below assumes collisional
-           ionization, which under-predicts the forbidden-line cooling of PHOTOIONIZED gas; this supplies
-           the coolant that sets the ~1e4 K equilibrium of an HII region. The rate is per nH^2 like the
-           other channels, since the volumetric rate goes as n_e*n_H+. METALS is in the guard because the
-           metallicity arrays exist only under it, and the term is metallicity-scaled in any case. */
+           Ostriker 2023 (ApJS 264, 10), Eq. 47. Two models of the metal-line cooling: the tables assume every species is ionized
+           by the UV background and collisions; in gas ionized by the local radiation followed here that is wrong for all of them, and
+           this term (dominated by N, O, Ne, S, which set its normalization) gives the ~1e4 K equilibrium of an HII region instead.
+           The share of the ionization owed to the local radiation selects between them: that share, times the ionized fraction, of the
+           table cooling hands over to this term, and gas ionized by the background or by collisions keeps the tables. The rate is per nH^2 like the
+           other channels, since the volumetric rate goes as n_e*n_H+. METALS is in the guard because the metallicity arrays exist
+           only under it. */
         if(T > 2.0e3 && T < 5.0e4 && n_elec > 0 && nHp > 0 && target >= 0) {
             double T4 = T * 1.0e-4, lnT4 = log(T4), ne_100 = nHcgs * n_elec / 100.; /* electron density in units of 100 cm^-3 */
             double log10_fneb = 0.692 + lnT4*(-0.586 + lnT4*(0.816 + lnT4*(-0.505 + lnT4*(0.118 + lnT4*(0.00766 - 0.00508*lnT4)))));
-            double LambdaNeb = n_elec * nHp * (pp[target].Metallicity[0] / All.SolarAbundances[0])
+            double neb_metals = pp[target].Metallicity[0] / All.SolarAbundances[0]; /* the fit's ions (N, O, Ne, S) relative to solar: total metallicity, or the species themselves where tracked */
+#ifdef COOL_METAL_LINES_BY_SPECIES
+            neb_metals = (Z[3] + Z[4] + Z[5] + Z[8]) / (All.SolarAbundances[3] + All.SolarAbundances[4] + All.SolarAbundances[5] + All.SolarAbundances[8]);
+#endif
+            LambdaNeb = n_elec * nHp * neb_metals
                 * 3.68e-23 * exp(-DMIN(3.86/T4, 100.)) / sqrt(T4) * pow(10., log10_fneb)
                 / (1. + 0.12*pow(ne_100, 0.38 - 0.12*lnT4)); /* collisional de-excitation: multi-line, so a temperature-dependent power rather than a single critical density */
-            LambdaNeb *= 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* taper out over 2e4-3.5e4 K, handing off to the collisional metal-line tables below so this is not double-counted through the transition */
+            double neb_weight = 1. / ((1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))) * (1. + exp(DMIN(10.*(3.e3 - T)/2.e3, 60.)))); /* taper out over 2e4-3.5e4 K, and over 4e3-2e3 K where the fit no longer applies */
+            double ionization_rate_local = 0; /* per neutral H atom, cgs */
+            for(int k_band = 0; k_band < N_RT_FREQ_BINS; k_band++) {if(RT_BAND_IS_IONIZING(k_band) && (All.rt_ion_G_HI[k_band] > 0)) {ionization_rate_local += All.rt_ion_sigma_HI[k_band] * (C_LIGHT_CGS / UNIT_LENGTH_IN_CGS) * rt_ionizing_band_photon_number_density(target, k_band, cell);}}
+            double table_position = (logT - CoolTables.Tmin) / CoolTables.deltaT; int j_table = (int)table_position; double f_table = table_position - j_table;
+            double ionization_rate_other = n_elec * nHcgs * ((1.-f_table) * CoolTables.GammaeH0[j_table] + f_table * CoolTables.GammaeH0[j_table+1]); /* collisions */
+            { /* the background counts as other; what the long-range local flux multiplies it by is local radiation */
+                struct PhysicsTablesView tables_view = cooling_owner_tables_view(); /* device-callable, unlike gizmo_physics_tables_view */
+                double rate_uvb = return_uvb_HI_rate_unshielded(1., &tables_view) * shieldfac;
+                ionization_rate_other += rate_uvb;
+                ionization_rate_local += return_uvb_HI_rate_unshielded(local_gammamultiplier, &tables_view) * shieldfac - rate_uvb;
+            }
+            double local_share = neb_weight * ionization_rate_local / (ionization_rate_local + ionization_rate_other + MIN_REAL_NUMBER);
+            LambdaNeb *= local_share;
+            metal_table_weight = 1. - local_share * DMIN(1., DMAX(0., nHp));
             if(LambdaNeb > 0) {Lambda += LambdaNeb;}
         }
 #endif
@@ -1218,6 +1279,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             /* tables normalized so ne*ni/(nH*nH) included already, so just multiply by nH^2 */
             /* (sorry, -- dont -- multiply by nH^2 here b/c that's how everything is normalized in this function) */
             LambdaMetal *= n_elec;
+            LambdaMetal *= metal_table_weight;
             /* (modified now to correct out tabulated ne so that calculated ne can be inserted; ni not used b/c it should vary species-to-species */
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
             if(logT<2) {LambdaMetal *= exp(-DMIN((2.-logT)*(2.-logT)/0.1,40.));}
@@ -1330,10 +1392,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             {
                 if(RT_BAND_IS_IONIZING(k))
                 {
-                    double n_gamma_tot = cell[target].rt_photon_number_density(k);
-#ifdef RT_INFRARED
-                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(All.rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
-#endif
+                    double n_gamma_tot = rt_ionizing_band_photon_number_density(target, k, cell);
                     double c_nH_time_n_photons_vol = c_light_nH * n_gamma_tot; // gives photon flux
                     double cross_section_ion, kappa_ion, dummy;
                     if(All.rt_ion_G_HI[k] > 0)
@@ -1408,13 +1467,14 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     if(target >= 0) { /* attempt to account for gas-phase absorption self-opacity to cooling radiation here in limit where optically-thick regions are poorly resolved: only valid in some limits, so not really general here */
         double gas_self_absorption_opacity = rt_kappa_adaptive_IR_band(target,T,T,-1,-1, pp, cell), surface_density_fromcenter = 0.5 * (cell[target].Density*All.cf_a3inv) * (pp[target].Get_Particle_Size()*All.cf_atime);
         double tau_self = gas_self_absorption_opacity * surface_density_fromcenter, fcorr = 1./(1.+tau_self*tau_self);
-        Heat*=fcorr; Lambda*=fcorr; LambdaMetal*=fcorr; LambdaExc*=fcorr; LambdaRec*=fcorr; LambdaIon*=fcorr; LambdaPElec*=fcorr; LambdaFF*=fcorr; LambdaMol*=fcorr; LambdaDust*=fcorr; LambdaCompton*=fcorr;
+        Heat*=fcorr; Lambda*=fcorr; LambdaMetal*=fcorr; LambdaNeb*=fcorr; LambdaExc*=fcorr; LambdaRec*=fcorr; LambdaIon*=fcorr; LambdaPElec*=fcorr; LambdaFF*=fcorr; LambdaMol*=fcorr; LambdaDust*=fcorr; LambdaCompton*=fcorr;
     }
 #endif
 
 
 #if defined(RT_NUV)
     double Lambda_rad_NUV = LambdaMetal; // most of LambdaMetal coming out in the NUV, as we define it
+    Lambda_rad_NUV += LambdaNeb; // the nebular forbidden lines of photoionized gas, handed over from the metal tables above: they come out with the rest of LambdaMetal
     Lambda_rad_NUV += LambdaExc; // this represents gas kinetic energy lost to collisional excitation. but each is assumed to produce a cascade back to the ground state, which should emit. note collisional ionization is not included here since the thermal energy is lost to the ionization energy, not to radiation, and the recombination luminosity is tallied separately.
     //Lambda_rad_NUV += LambdaIon; // this is the collisional ionization, distinct from the recombination luminosity. per above, this isn't directly into radiation. if you assumed it did lead to recombination, could use instead of LambdaRec, though would then ignore all but collisional ionization equilibrium. we're usually assuming case B recombination (UV emitted photons re-absorbed), so we'll assume a cascade for these into NUV/optical and other bands [otherwise should be added to photo-ionizing band]. still ignore LambdaRec, because otherwise this will double-count the UV background
     Lambda_rad_NUV += LambdaRec * DMAX(1.-shieldfac,0.) * DMIN(1.,DMAX(0.,Heat_Ion_from_RHD/(Heat_Ion_from_UVB+Heat_Ion_from_RHD+MIN_REAL_NUMBER))); // recombination radiation -- needs to be rate-limited to avoid 2x-counting the UVB, which is what the shieldfac and local_gammamultiplier terms attempt to account for here
@@ -1718,12 +1778,22 @@ static int nheattab;		/* length of table */
 void ReadIonizeParams(const char *fname)
 {
     int i; FILE *fdcool;
-    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456); return;}
+    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory.\n", fname); endrun(456); return;}
     for(i=0; i<TABLESIZE; i++) {inlogz[i]=100; gH0[i]=0; gHe[i]=0; gHep[i]=0; eH0[i]=0; eHe[i]=0; eHep[i]=0;}
-    for(i=0; i<TABLESIZE; i++) {if(fscanf(fdcool, "%g %lg %lg %lg %lg %lg %lg", &inlogz[i], &gH0[i], &gHe[i], &gHep[i], &eH0[i], &eHe[i], &eHep[i]) == EOF) {break;}}
+    char line[1024]; int n_rows = 0;
+    while(fgets(line, sizeof(line), fdcool))
+    {
+        const char *text = line + strspn(line, " \t\r\n");
+        if(*text == '\0' || *text == '#') {continue;} /* blank lines and comments (e.g. the citation header of the distributed tables) */
+        char extra; /* the table keeps one row past the last entry (see TABLESIZE), and the extra conversion refuses anything after the seventh number */
+        if(n_rows >= TABLESIZE-1 || sscanf(text, "%g %lg %lg %lg %lg %lg %lg %c", &inlogz[n_rows], &gH0[n_rows], &gHe[n_rows], &gHep[n_rows], &eH0[n_rows], &eHe[n_rows], &eHep[n_rows], &extra) != 7)
+            {printf(" Ionization table `%s': row %d is not exactly 7 numbers, or the table has more than %d rows:\n %s\n", fname, n_rows+1, (int)TABLESIZE-1, text); fclose(fdcool); endrun(456); return;}
+        n_rows++;
+    }
     fclose(fdcool);
     for(i=0, nheattab=0; i<TABLESIZE; i++) {if(gH0[i] != 0.0) {nheattab++;} else {break;}} /*  nheattab is the number of entries in the table */
     if(ThisTask == 0) printf(" ..read ionization table [TREECOOL] with %d non-zero UVB entries in file `%s'. Make sure to cite the authors from which the UV background was compiled! (See user guide for the correct references).\n", nheattab, fname);
+    if((ThisTask == 0) && (nheattab == 0)) {printf(" WARNING: the ionization table `%s' has no non-zero entries: this run has no UV background, and with it no tabulated metal-line cooling.\n", fname);}
 }
 
 
@@ -1873,6 +1943,7 @@ void IonizeParamsFunction(void)
 #endif // !(CHIMES)
 
 
+#if !defined(CHIMES) /* the in-code network's tables; CHIMES reads its own */
 /* Check for required cooling data files and provide them from defaults if missing */
 static bool file_exists(const char *path) {FILE *f = fopen(path, "r"); if(f) {fclose(f); return true;} return false;}
 
@@ -1897,6 +1968,7 @@ static void ensure_cooling_tables_exist(void) {
     }
     MPI_Barrier(MPI_COMM_WORLD);
 }
+#endif /* !CHIMES */
 
 
 void InitCool(void)
@@ -1953,6 +2025,7 @@ void InitCool(void)
 
     // Initialise the CHIMES module.
     init_chimes(&ChimesGlobalVars);
+    All.ChimesNumSpecies = ChimesGlobalVars.totalNumberOfSpecies;
 
 #ifdef CHIMES_METAL_DEPLETION
     chimes_init_depletion_data();
@@ -2072,6 +2145,9 @@ void selfshield_local_incident_uv_flux(void)
     for(int idx = 0; idx < n_act; ++idx)
     {
         int i = ActiveParticleList[idx];
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+        if(!gravity_treeforce_candidate_frozen(idx)) {continue;} /* tree walk skipped this step: the cell still holds the last walk's flux, already converted and attenuated below, so keep it as is */
+#endif
         if(P[i].Type==0)
         {
             if((CellP[i].Rad_Flux_UV>0) && (P[i].KernelRadius>0) && (CellP[i].Density>0) && (P[i].Mass>0) && (All.Time>0))
@@ -2532,7 +2608,7 @@ void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cel
 #ifdef COOL_METAL_LINES_BY_SPECIES
   double H_mass_fraction = 1.0 - (pp[target].Metallicity[0] + pp[target].Metallicity[1]);
 #else
-  double H_mass_fraction = XH;
+  double H_mass_fraction = HYDROGEN_MASSFRAC;
 #endif
 
   ChimesGasVars[target].temperature = (ChimesFloat) chimes_convert_u_to_temp(u_old_cgs, rho_cgs, target, pp, cell);
@@ -2859,9 +2935,16 @@ void gizmo_kokkos_finalize(void)
        finalizing with allocations still tracked is what this ordering avoids.
        This is the single chokepoint every shutdown path already routes through. */
     gx_touched_set_release();
+    gx_mode_d_staging_release();
+    nlr_mode_d_packet_workspace_release();
+    gx_top_leaf_map_release();
     gx_motion_target_release();
     gpu_node_dirty_release();
     gpu_topology_build_release();
+#ifdef HERMITE_FOREIGN_SOURCE_TABLE
+    hermite_ghost_table_release();
+    let_foreign_leaf_id_release();
+#endif
     Kokkos::finalize();
 }
 /* Best-effort drain of in-flight device work. Used by the reviewed hard-abort

@@ -290,9 +290,6 @@ void rt_set_simple_inits(int RestartFlag)
                 CellP[i].Rad_Flux[k] = CellP[i].Rad_Flux_Pred[k];
                 CellP[i].Dt_Rad_Flux[k] = {};
 #endif
-#ifdef RT_EVOLVE_INTENSITIES
-                int k_dir; for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++) {CellP[i].Rad_Intensity_Pred[k][k_dir] = CellP[i].Rad_Intensity[k][k_dir] = MIN_REAL_NUMBER; CellP[i].Dt_Rad_Intensity[k][k_dir] = 0;}
-#endif
                 
 #ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION
                 double q_a = (0.75*All.Grain_Q_at_MaxGrainSize) / ((All.Grain_Internal_Density/UNIT_DENSITY_IN_CGS)*(All.Grain_Size_Max/UNIT_LENGTH_IN_CGS)), e0 = All.Vertical_Grain_Accel / q_a, kappa_0 = All.Grain_Absorbed_Fraction_vs_Total_Extinction * q_a * All.Dust_to_Gas_Mass_Ratio, cell_vol = (P[i].Mass/CellP[i].Density);
@@ -307,6 +304,9 @@ void rt_set_simple_inits(int RestartFlag)
                 CellP[i].Rad_Flux_Pred[k][2]=CellP[i].Rad_Flux[k][2] = E_cell_thin*C_LIGHT_CODE_REDUCED;
                 CellP[i].Rad_Flux[k][0]=CellP[i].Rad_Flux[k][1]=CellP[i].Rad_Flux_Pred[k][0]=CellP[i].Rad_Flux_Pred[k][1]=0;
 #endif
+#endif
+#ifdef RT_EVOLVE_INTENSITIES
+                int k_dir; for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++) {CellP[i].Rad_Intensity_Pred[k][k_dir] = CellP[i].Rad_Intensity[k][k_dir] = DMAX(CellP[i].Rad_E_gamma[k], MIN_REAL_NUMBER)/(4.*M_PI); CellP[i].Dt_Rad_Intensity[k][k_dir] = 0;} // intensities are not in snapshots: start isotropic, from the band energy set or read above
 #endif
                 CellP[i].Rad_Kappa[k] = rt_kappa(i,k, P, CellP); // let everything else get reset first before calling this //
             }

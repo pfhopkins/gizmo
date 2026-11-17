@@ -25,6 +25,10 @@ GIZMO_GPU_FUNCTION double return_local_gammamultiplier(int target, struct gas_ce
 GIZMO_GPU_FUNCTION double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs, double n_elec, double shielding_factor_for_exgalbg, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell);
 void   InitCool(void);
+#ifdef COOL_GRACKLE
+void   InitGrackle(void);
+double CallGrackle(double u_old, double rho, double dt, double ne_guess, int target, int mode);
+#endif
 #ifndef CHIMES
 int    InitCoolMemory(void);
 void   IonizeParams(void);

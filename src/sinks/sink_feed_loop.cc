@@ -9,8 +9,6 @@
  * SinkFeedLocalIn), apply_active_writeback, merge_accum, and the
  * ghost-writeback manifest + lifecycle hooks.
  *
- * Replaces sinks/sink_feed_gpu.cc + sinks/sink_feed_functions.h.
- *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
@@ -34,15 +32,16 @@
 
 /* ============================================================================
  * ACTIVE PREDICATE
- * Mirrors sink_isactive + extra guards from the legacy particle2in
- * (sink_feed_gpu.cc:38–46).
+ * sink_isactive plus a TimeBin guard.
  * ========================================================================== */
 
 int sink_feed_is_active(int i)
 {
-    if(P[i].Type != 5) return 0;
-    if(P[i].Mass <= 0) return 0;
-    if(P[i].KernelRadius <= 0) return 0;
+    /* The same predicate sink_start() used to assign P[i].IndexMapToTempStruc and size
+       SinkTempInfo (sink_isactive: Type 5, mass, kernel, and under SINK_INTERACT_ON_GAS_TIMESTEP
+       a density pass this step). A sink active here but skipped there carries a stale index
+       and reads/writes SinkTempInfo out of bounds. */
+    if(!sink_isactive(i)) return 0;
     if(P[i].TimeBin < 0) return 0;
     return 1;
 }
@@ -57,10 +56,7 @@ double SinkFeedSpec::search_radius(const neighbor_loop_args& args,
     return (double)args.P[i].KernelRadius;
 }
 
-/* Per-call scalars + sink_feed-unique RNG shift. The 0xfeed5117ULL XOR
- * shift on top of NumCurrentTiStep makes per-particle draws disjoint
- * across different sink loops in the same timestep — see
- * feedback_rng_loop_uniqueness.md in project memory. */
+/* Per-call scalars, including the event time of the stochastic draws. */
 SinkFeedSpec::CallScalars
 SinkFeedSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 {
@@ -80,7 +76,7 @@ SinkFeedSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
                                               readers are all under matching #ifdefs, so the
                                               fallback value is never observed. */
 #endif
-    scalars.rng_step               = (uint64_t)h->NumCurrentTiStep ^ 0xfeed5117ULL;
+    scalars.rng_ti                 = (uint64_t)h->Ti_Current;
     return scalars;
 }
 

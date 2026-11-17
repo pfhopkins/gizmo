@@ -5,15 +5,16 @@
  *
  *   1. Compute a 126-bit Morton key per local particle from its global
  *      domain-bbox-relative position (this header / TU).
- *   2. For each topleaf, sort the local particles assigned to it by their
- *      Morton key (this header / TU).
+ *   2. Within each topleaf, order the local particles assigned to it by their
+ *      Morton key: on a GPU all topleaf ranges in one sort (gpu_topology_build.cc),
+ *      otherwise one sort per range (gpu_morton_sort_indices, this header / TU).
  *   3. LCP-analyse the sorted keys to find octree split points
  *      (gpu_morton_functions.h).
  *   4. Emit tree topology into the SoA `Nodes_dev` mirror.
  *
  * The Morton encoding mirrors GIZMO's CPU build precision: 42 bits per axis
- * via the IEEE-754 mantissa-bit-trick (matches host domain_double_to_int
- * with BITS_PER_DIMENSION = 42).  Keys are stored as the Morton128 struct
+ * from the position -> integer coordinate mapping shared with the host
+ * (domain/domain_key_functions.h).  Keys are stored as the Morton128 struct
  * defined in gpu_morton_functions.h: a (hi, lo) pair of uint64_t,
  * lexicographically equivalent to the full 126-bit Morton ordering.
  *

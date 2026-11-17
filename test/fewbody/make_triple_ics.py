@@ -180,6 +180,11 @@ def make_triple_ics(m1, m2, m3, a_in_au, a_out_au, e_in, e_out, i_mut, seed, box
         g.create_dataset("Velocities", data=vel)
         g.create_dataset("Masses", data=mass)
         g.create_dataset("ParticleIDs", data=np.array([1, 2, 3], dtype=np.uint32))
+        # Mature stars, formed before t=0: eligible_for_hermite() KDK-integrates a star for a
+        # ~2*dt settling window after its formation time, so an unset (zero) age would mix KDK
+        # into the early orbits for an eta-dependent duration and corrupt the convergence order
+        # this test measures. Written explicitly because the reader zero-fills absent datasets.
+        g.create_dataset("StellarFormationTime", data=np.array([-1.0, -1.0, -1.0]))
 
 
 if __name__ == "__main__":

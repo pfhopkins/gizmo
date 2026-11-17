@@ -9,6 +9,8 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "domain_key_functions.h"
+#include "../declarations/gpu_rng.h"
 #include "../core/wakeup_sidecar.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_range */
@@ -94,12 +96,10 @@ static double *list_workgas;
 extern int old_MaxPart, new_MaxPart;
 #define N_DOMAINDECOMP_QUEUES 4
 
-/* Adaptive domain balance weights: these are updated after each decomposition based
-   on measured imbalance, following the GADGET-4 approach of dynamically adjusting
-   the relative importance of work vs memory balance. */
-static double domain_fac_work = 0.5;    /* weight for gravity work */
-static double domain_fac_workgas = 0.0; /* weight for hydro work (set >0 when gas is present) */
-static double domain_fac_load = 0.5;    /* weight for particle count (memory) */
+/* The adaptive domain balance weights (All.DomainFacWork/WorkGas/Load) are updated after each
+   decomposition from the measured imbalance, following the GADGET-4 approach of dynamically adjusting
+   the relative importance of work vs memory balance. They live in All, not here: they are moving
+   averages over the decomposition history, and a resume that reset them would split differently. */
 
 static struct local_topnode_data
 {
@@ -158,7 +158,8 @@ static int DomainMaxPartLocal, DomainMaxGasLocal;	/*!< domain local-particle ass
  * The check reads counts that domain_sumCost has already reduced across all ranks, so these end up
  * holding the same values everywhere -- the agreement comes from those inputs, not from anything the
  * check itself does. */
-static int domain_bound_needed = 0, domain_bound_limit = 0;
+static long long domain_bound_needed = 0;   /* a candidate's per-rank load: a sum of leaf counts, so it can pass INT_MAX */
+static int domain_bound_limit = 0;
 static double totgravcost, gravcost, totgascost, gascost;
 static void domain_compute_particle_costs(void);
 /* The timebin a particle's recorded work is balanced under: the smallest bin it did that work on, or
@@ -176,6 +177,14 @@ static double domain_stellar_prior_scale = 0; /*!< C, set by domain_compute_part
    particle's cost from the a-priori estimate instead (domain_a_priori_cost_multiplier), and the per-timebin attribution
    below uses that estimate in place of the recorded work. */
 static int domain_no_work_recorded = 0;
+/* A decomposition made by the step loop is made for the step about to run, whose active set is known; the recorded work
+   only covers the steps since the previous decomposition, in which a gas cell that was not active carries no hydro
+   weight. So such a decomposition also costs its own step: one step's hydro weight for each currently active gas cell,
+   in the costs it balances on and nowhere else. The step is still recorded in the fresh history afterwards, as usual.
+   Under DOMAIN_TIMEBINS the weight is attributed with the cell's recorded work, to its finest recorded bin or, with no
+   history, its current one. */
+static int domain_prepay_armed = 0;
+void domain_arm_step_prepay(int on) {domain_prepay_armed = on;}
 static inline double domain_gravity_work(int i) {return domain_no_work_recorded ? (double) particle_total_cost[i] : 0.1 + (double) P[i].GravWork;}
 static inline double domain_stellar_work(int i)
 {
@@ -199,7 +208,9 @@ static int UseAllParticles;
 static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviving between domain decompositions, used by lightweight repartition */
 static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array */
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
+#ifndef MAX_LIGHT_REPARTITIONS
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
+#endif
 /* A lightweight repartition keeps the top tree, so it cannot split a top leaf that carries too much of a balanced quantity.
    It gives way to a full decomposition, which refines the top tree with the work recorded so far, when all of these hold:
    a refinable leaf holds more than LIGHT_REPARTITION_LEAF_SHARE_LIMIT times the fair share 1/NTask; that leaf is what limits
@@ -213,11 +224,30 @@ static int LightRepartitionCount = 0; /*!< number of consecutive lightweight rep
  * counts a node's cost is dominated by one/few particles whose work is NOT divisible by further
  * spatial splitting, so refining only wastes topnodes + downstream per-leaf work (Morton sort,
  * DomainNodeIndex, LET subtree headers, routing band checks) without improving load balance.
- * Count-driven refinement is unaffected. Internal constant, not a user parameter. */
+ * Count-driven refinement has its own low-count rule below. Internal constant, not a user parameter. */
 static const int DOMAIN_COST_REFINE_MIN_COUNT = 16;
+/* When the count limit falls below DOMAIN_TINY_COUNT_LIMIT particles per requested leaf (few particles per rank), the
+ * count rules (over the limit, or holding most of the parent) chain nodes of a few particles -- a single particle, a
+ * tight pair -- down to the finest key level, eight nodes a level, giving more top leaves than particles that every
+ * decomposition, tree build and small-step neighbour search then carries; so does the cost rule of the pass after the
+ * combine, which has no low-count floor. There, a node holding at most DOMAIN_TINY_MIN_SPLIT_COUNT particles is not
+ * split by count, nor by cost after the combine (local cost refinement already needs DOMAIN_COST_REFINE_MIN_COUNT).
+ * Applied only when the problem has more than DOMAIN_TINY_COUNT_LIMIT particles per domain segment: leaves then hold
+ * about DOMAIN_TINY_MIN_SPLIT_COUNT particles or fewer (up to ~9 where the pass after the combine splits on rounded-down
+ * estimates), so there are still more leaves than segments and the root splits. Internal constants, not user parameters. */
+static const int DOMAIN_TINY_COUNT_LIMIT = 16;
+static const int DOMAIN_TINY_MIN_SPLIT_COUNT = 8;
+static long long g_domain_tiny_split_min = 0; /* set per top-tree build; 0 = rule off */
+static inline int domain_tiny_rule_allows_split(long long count) {return (g_domain_tiny_split_min == 0) || (count > g_domain_tiny_split_min);}
+#ifndef LIGHT_REPARTITION_LEAF_SHARE_LIMIT
 #define LIGHT_REPARTITION_LEAF_SHARE_LIMIT 20.0
+#endif
+#ifndef LIGHT_REPARTITION_LEAF_LIMITED_FRACTION
 #define LIGHT_REPARTITION_LEAF_LIMITED_FRACTION 0.85
+#endif
+#ifndef LIGHT_REPARTITION_LEAF_SHARE_GROWTH
 #define LIGHT_REPARTITION_LEAF_SHARE_GROWTH 2.0
+#endif
 static double domain_assigned_objective = -1;      /*!< largest share of a balanced quantity any task holds after the last work-balanced assignment, -1 if none */
 static double domain_leaf_share_after_full = -1;   /*!< largest share of a balanced quantity in one refinable top leaf, after the last full decomposition */
 static double domain_largest_refinable_leaf_share(void);
@@ -225,7 +255,9 @@ static void domain_light_free_work_arrays(void);
 static int domain_light_keep_owners(int multipledomains, const int *prev_start, const int *prev_end, const int *prev_owner);
 /* Share of a rank's particle (and gas-cell) capacity a domain assignment may fill, leaving room for what arrives before the next one. */
 static const double DOMAIN_MEMORY_SAFETY_FRACTION = 0.9;
+#ifndef MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS
 #define MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS 20 /*!< re-establish Peano-Hilbert order at most this far apart. The reorder moves nearly every element of P and CellP and is expensive, especially where those arrays are device-accessible, but particle exchange decays the ordering that the SFC tiles and the tree build rely on, so it cannot be dropped entirely */
+#endif
 static int DomainCallsSincePeanoOrder = MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS; /*!< domain decompositions, full or lightweight, since the last ordering. Starts at the interval so the first decomposition of a run always orders, including after a restart, which does not take the startup one */
 
 /*! How much particle storage this rank should hold for the coming epoch.
@@ -440,28 +472,64 @@ void domain_init_timebin_costs(void)
 }
 #endif /* DOMAIN_TIMEBINS == 1 */
 
-/*! This is the main routine for the domain decomposition.  It acts as a driver routine that allocates various temporary buffers, maps the
- *  particles back onto the periodic box if needed, and then does the domain decomposition, and a final Peano-Hilbert order of all particles as a tuning measure.
- *  With allow_peano_order_cadence set, the caller permits that final ordering to be taken on a cadence rather than on every call (see MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS);
- *  the routine-driven decompositions of the main loop set it, while startup, restart and group finding order every time. */
-/*! Choose how many contiguous Peano-Hilbert segments each rank is given.  The decomposition
- *  balances work by distributing these, so more of them balance more finely while costing extra
- *  top-tree refinement, an extra pseudo-particle all-gather apiece, and more spatially fragmented
- *  rank territory.  Holding a roughly fixed number of particles per segment is what keeps those in
- *  balance across problem sizes.  Settled once, from the particle count in the initial conditions.
- */
-int domain_segments_per_rank_for_particles(long long total_particles)
+/* top-tree leaves asked for per domain segment; below 1 a top tree could hold fewer leaves than segments */
+static double domain_toptree_refinement_scale(void)
 {
-  const double ideal = (double) total_particles / ((double) DOMAIN_TARGET_PARTICLES_PER_SEGMENT * (double) NTask);
-  int segments = 1;
-  while(segments < DOMAIN_MAX_SEGMENTS_PER_RANK && (double) segments * 1.5 < ideal) {segments *= 2;}
+  const double scale = (double) DOMAIN_TOPTREE_REFINEMENT_SCALE;
+  return (scale < 1.0) ? 1.0 : scale;
+}
+
+/* The floor on top-tree leaves asked for per rank: DOMAIN_MIN_TOPLEAVES_PER_RANK, lowered (never below
+ * one) where the rank count alone would take the total request past DOMAIN_MAX_REQUESTED_TOPLEAVES. */
+static double domain_min_toptree_leaves_per_rank(void)
+{
+  const double within_request = (double) DOMAIN_MAX_REQUESTED_TOPLEAVES / (double) NTask;
+  double floor = (double) DOMAIN_MIN_TOPLEAVES_PER_RANK;
+  if(floor > within_request) {floor = (within_request > 1.0) ? within_request : 1.0;}
+  return floor;
+}
+
+/* the explicit user controls, applied after the automatic choice */
+static int domain_segments_with_user_bounds(int segments)
+{
   segments *= DOMAIN_SEGMENTS_SCALE;
   if(segments < DOMAIN_MIN_SEGMENTS_PER_RANK) {segments = DOMAIN_MIN_SEGMENTS_PER_RANK;}
   if(segments > DOMAIN_MAX_SEGMENTS_PER_RANK) {segments = DOMAIN_MAX_SEGMENTS_PER_RANK;}
   return segments;
 }
 
+/*! Choose how many contiguous Peano-Hilbert segments each rank is given.  The decomposition
+ *  balances work by distributing these, so more of them balance more finely while costing extra
+ *  top-tree refinement, an extra pseudo-particle all-gather apiece, and more spatially fragmented
+ *  rank territory.  Holding a roughly fixed number of particles per segment is what keeps those in
+ *  balance across problem sizes, until the top-tree leaves that asks for in total (segments x ranks x
+ *  refinement scale) would pass DOMAIN_MAX_REQUESTED_TOPLEAVES; it cannot go below one segment per
+ *  rank, so a very large rank count can still exceed it.  Chosen when the initial conditions are
+ *  read and revisited at every full decomposition.  lowered_by_leaf_request (may be NULL) is set
+ *  when that limit changed the outcome: fewer segments than without it, or a lowered leaf floor.
+ */
+int domain_segments_per_rank_for_particles(long long total_particles, int *lowered_by_leaf_request)
+{
+  const double ideal = (double) total_particles / ((double) DOMAIN_TARGET_PARTICLES_PER_SEGMENT * (double) NTask);
+  int automatic = 1;
+  while(automatic < DOMAIN_MAX_SEGMENTS_PER_RANK && (double) automatic * 1.5 < ideal) {automatic *= 2;}
+  int segments = automatic;
+  const double leaves_per_segment_everywhere = (double) NTask * domain_toptree_refinement_scale();
+  while(segments > 1 && (double) segments * leaves_per_segment_everywhere > (double) DOMAIN_MAX_REQUESTED_TOPLEAVES) {segments /= 2;}
+  const int chosen = domain_segments_with_user_bounds(segments);
+  if(lowered_by_leaf_request)
+    {
+      *lowered_by_leaf_request = (chosen < domain_segments_with_user_bounds(automatic))
+                                 || (domain_min_toptree_leaves_per_rank() < (double) DOMAIN_MIN_TOPLEAVES_PER_RANK);
+    }
+  return chosen;
+}
 
+
+/*! This is the main routine for the domain decomposition.  It acts as a driver routine that allocates various temporary buffers, maps the
+ *  particles back onto the periodic box if needed, and then does the domain decomposition, and a final Peano-Hilbert order of all particles as a tuning measure.
+ *  With allow_peano_order_cadence set, the caller permits that final ordering to be taken on a cadence rather than on every call (see MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS);
+ *  the routine-driven decompositions of the main loop set it, while startup, restart and group finding order every time. */
 void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key, int allow_peano_order_cadence)
 {
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition")) {return;}
@@ -578,11 +646,13 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
      * never reached by the lightweight repartition, which reuses the existing arrays. */
     if(!domain_layout_parked)
       {
-        const int segments_wanted = domain_segments_per_rank_for_particles(All.TotNumPart);
+        int lowered_by_leaf_request = 0;
+        const int segments_wanted = domain_segments_per_rank_for_particles(All.TotNumPart, &lowered_by_leaf_request);
         if(segments_wanted != All.DomainSegmentsPerRank)
           {
-            PRINT_STATUS(" ..domain segments per rank: %d -> %d (%lld particles over %d ranks)",
-                         All.DomainSegmentsPerRank, segments_wanted, (long long) All.TotNumPart, NTask);
+            PRINT_STATUS(" ..domain segments per rank: %d -> %d (%lld particles over %d ranks%s)",
+                         All.DomainSegmentsPerRank, segments_wanted, (long long) All.TotNumPart, NTask,
+                         lowered_by_leaf_request ? "; top-leaf request lowered by DOMAIN_MAX_REQUESTED_TOPLEAVES" : "");
             All.DomainSegmentsPerRank = segments_wanted;
           }
       }
@@ -772,7 +842,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
 {
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition_light")) {return;}
     gpu_step_sidx_invalidate_full();   /* as in domain_Decomposition: released before any allocation here */
-    int i, no; size_t bytes; double t0, t1;
+    int i; size_t bytes; double t0, t1;
 
     /* fall back to full decomposition if persistent state is not available, or if
        too many consecutive lightweight repartitions have occurred (top tree may be stale) */
@@ -821,19 +891,33 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
                  t_light_mergesplit, t_light_rearrange, t_light_drift, t_light_boxwrap, t_light_barrier, t_light_total);
 
     /* The lightweight repartition reuses the extent the last full decomposition measured, and the
-       Peano key is only meaningful for a particle inside it: domain_double_to_int() reads the
-       mantissa of (Pos-DomainCorner)/DomainLen + 1.0, which encodes the position only while that
-       value stays in [1,2).  A particle outside the extent leaves that range, and the key it gets
-       is a valid-looking key for somewhere else -- the top tree spans every Peano cell, so nothing
-       downstream can notice.  Only a full decomposition re-measures the extent, so check it here,
+       Peano key is only meaningful for a particle inside it: the key is read from the mantissa of
+       (Pos-DomainCorner)/DomainLen + 1.0 (domain_key_functions.h), which encodes the position only
+       while that value stays in [1,2).  A particle outside the extent leaves that range, and the
+       key it gets is a valid-looking key for somewhere else -- the top tree spans every Peano cell,
+       so nothing downstream can notice.  Only a full decomposition re-measures the extent, so check it here,
        after this step's drift and wrapping have settled the positions the keys will be built from,
        and before anything has been freed or rebuilt.  The test is the exact validity condition
        rather than a padded one, so it fires only when a key would actually be wrong. */
     int extent_outgrown_local = 0;
-    for(i = 0; i < NumPart; i++)
+    if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, NumPart))
+    {   /* on all threads: only whether any particle fails the test matters, so there is no early exit to keep */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(|:extent_outgrown_local)
+#endif
+        for(int k = 0; k < NumPart; k++)
+        {
+            if(position_outside_domain_extent(P[k].Pos[0], P[k].Pos[1], P[k].Pos[2], DomainCorner[0], DomainCorner[1], DomainCorner[2], DomainLen))
+                {extent_outgrown_local = 1;}
+        }
+    }
+    else
     {
-        if(position_outside_domain_extent(P[i].Pos[0], P[i].Pos[1], P[i].Pos[2], DomainCorner[0], DomainCorner[1], DomainCorner[2], DomainLen))
-            {extent_outgrown_local = 1; break;}
+        for(i = 0; i < NumPart; i++)
+        {
+            if(position_outside_domain_extent(P[i].Pos[0], P[i].Pos[1], P[i].Pos[2], DomainCorner[0], DomainCorner[1], DomainCorner[2], DomainLen))
+                {extent_outgrown_local = 1; break;}
+        }
     }
     int extent_outgrown = 0;
     MPI_Allreduce(&extent_outgrown_local, &extent_outgrown, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -868,12 +952,12 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
 
     /* recompute keys for particles that may have drifted across cell boundaries */
     Key = PersistentKey; /* reuse persistent key storage directly */
-    for(i = 0; i < NumPart; i++)
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, NumPart))
+#endif
+    for(int k = 0; k < NumPart; k++)
     {
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+        Key[k] = domain_peano_key(k);
     }
 
     /* temporarily reconstruct the local topNodes from the persistent TopNodes for domain_sumCost.
@@ -984,11 +1068,12 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     }
 
     /* flag particles that need to move */
-    for(i = 0; i < NumPart; i++)
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, NumPart))
+#endif
+    for(int k = 0; k < NumPart; k++)
     {
-        no = domain_toptree_leaf(Key[i], topNodes);
-        int task = DomainTask[no];
-        if(task != ThisTask) {P[i].Type |= 32;}
+        if(DomainTask[domain_toptree_leaf(Key[k], topNodes)] != ThisTask) {P[k].Type |= 32;}
     }
 
     /* exchange particles */
@@ -1031,12 +1116,12 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     CPU_Step[CPU_DOMAIN] += measure_time();
 
     /* update persistent keys for moved particles */
-    for(i = 0; i < NumPart; i++)
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, NumPart))
+#endif
+    for(int k = 0; k < NumPart; k++)
     {
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        PersistentKey[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+        PersistentKey[k] = domain_peano_key(k);
     }
     Key = NULL; /* no longer valid as a mymalloc pointer */
 
@@ -1200,7 +1285,8 @@ static int domain_light_keep_owners(int multipledomains, const int *prev_start, 
         std::copy(DomainTask, DomainTask + NTopleaves, fresh_layout + 2 * (size_t) n_segments);
         std::vector<int> fresh_load(list_load, list_load + NTask), fresh_loadgas(list_loadgas, list_loadgas + NTask);
         std::vector<double> fresh_work(list_work, list_work + NTask), fresh_workgas(list_workgas, list_workgas + NTask);
-        const int fresh_bound_needed = domain_bound_needed, fresh_bound_limit = domain_bound_limit;
+        const long long fresh_bound_needed = domain_bound_needed;
+        const int fresh_bound_limit = domain_bound_limit;
 
         for(int t = 0; t < NTask; t++) {per_task[t] = 0;}
         for(int s = 0; s < n_segments; s++) {
@@ -1452,7 +1538,8 @@ void domain_merge_work_history(int i, int j)
    denominator and not the numerator, a star whose age weight changed during the interval is weighted
    by its current one, and a star formed during the interval brings its gas cell's walks into the
    numerator but only its own steps into the denominator. The 0.1 floor keeps a particle that never walked
-   from costing nothing. Hydro work of a gas cell is its hydro work estimate.
+   from costing nothing. Hydro work of a gas cell is its hydro work estimate (plus, in a step-loop decomposition, one step's
+   weight if it is active now: domain_prepay_armed).
    particle_total_cost -- the work queue and the cost-driven top-tree refinement -- is the sum of the
    two, each normalized to its global total, the same construction normalized_load uses, so a region
    heavy in either kind of work is refined and spread. particle_hydro_cost -- the gas-work queue -- is
@@ -1476,6 +1563,7 @@ static void domain_compute_particle_costs(void)
        [4] all recorded work */
     double sums[5] = {0, 0, 0, 0, 0};
     domain_no_work_recorded = 0;
+    const int prepay = domain_prepay_armed && !UseAllParticles;   /* step-loop decompositions only */
     for(int i = 0; i < NumPart; i++)
     {
 #ifdef SUBFIND
@@ -1488,6 +1576,7 @@ static void domain_compute_particle_costs(void)
 #endif
         if(P[i].Type == 0) {sums[4] += (double) CellP[i].HydroWorkEstimate;}
         if(P[i].Type == 0) {sums[3] += (double) CellP[i].HydroWorkEstimate;}
+        if(prepay && P[i].Type == 0 && TimeBinActive[P[i].TimeBin]) {sums[3] += domain_gas_work_weight(i);}
 #if defined(GALSF) && !defined(CHIMES)
         if(P[i].ExtraWorkEstimate > 0) {sums[0] += domain_star_age_work_weight(i) * (double) P[i].GravWork; sums[1] += (double) P[i].ExtraWorkEstimate;}
 #endif
@@ -1527,7 +1616,8 @@ static void domain_compute_particle_costs(void)
 #endif
         NtypeLocal[P[i].Type]++;
         const double grav = domain_gravity_work(i) + domain_stellar_work(i);
-        const double hydro = (P[i].Type == 0) ? (double) CellP[i].HydroWorkEstimate : 0;
+        double hydro = (P[i].Type == 0) ? (double) CellP[i].HydroWorkEstimate : 0;
+        if(prepay && P[i].Type == 0 && TimeBinActive[P[i].TimeBin]) {hydro += domain_gas_work_weight(i);}
         const double total = grav * inv_grav_total + hydro * inv_hydro_total;
         particle_total_cost[i] = (float) total;
         particle_hydro_cost[i] = (float) hydro;
@@ -1573,17 +1663,17 @@ void domain_update_adaptive_weights(void)
     target_workgas /= target_total;
 
     /* exponential moving average update */
-    domain_fac_work = (1.0 - alpha) * domain_fac_work + alpha * target_work;
-    domain_fac_load = (1.0 - alpha) * domain_fac_load + alpha * target_load;
-    domain_fac_workgas = (1.0 - alpha) * domain_fac_workgas + alpha * target_workgas;
+    All.DomainFacWork = (1.0 - alpha) * All.DomainFacWork + alpha * target_work;
+    All.DomainFacLoad = (1.0 - alpha) * All.DomainFacLoad + alpha * target_load;
+    All.DomainFacWorkGas = (1.0 - alpha) * All.DomainFacWorkGas + alpha * target_workgas;
 
     /* ensure minimum floor */
-    if(domain_fac_work < eps) domain_fac_work = eps;
-    if(domain_fac_load < eps) domain_fac_load = eps;
+    if(All.DomainFacWork < eps) All.DomainFacWork = eps;
+    if(All.DomainFacLoad < eps) All.DomainFacLoad = eps;
 
     if(ThisTask == 0) {
         printf("Domain adaptive weights: work=%.3f  load=%.3f  workgas=%.3f  (imbalance: work=%.3f load=%.3f gas=%.3f)\n",
-               domain_fac_work, domain_fac_load, domain_fac_workgas, imbal_work, imbal_load, imbal_workgas);
+               All.DomainFacWork, All.DomainFacLoad, All.DomainFacWorkGas, imbal_work, imbal_load, imbal_workgas);
     }
 }
 
@@ -1656,7 +1746,7 @@ int domain_decompose(void)
               printf("\n");
               printf("  per-rank cap:   %d = %g x PartAllocFactor %g x that average\n",
                      domain_bound_limit, (double) REDUC_FAC_FOR_MEMORY_IN_DOMAIN, All.PartAllocFactor);
-              printf("  best attempt:   %d per rank, over the cap by %d\n", domain_bound_needed, domain_bound_needed - domain_bound_limit);
+              printf("  best attempt:   %lld per rank, over the cap by %lld\n", domain_bound_needed, domain_bound_needed - domain_bound_limit);
               /* Changing PartAllocFactor on a restart re-derives the cap from the CURRENT particle count,
                * so what is needed is a factor over the CURRENT average -- NOT the old factor scaled by
                * how much the run has grown, which would reserve that much again and exhaust the node.
@@ -1728,9 +1818,9 @@ int domain_decompose(void)
 
     /* update adaptive weights for next decomposition based on current imbalance */
     if(ThisTask == 0) {domain_update_adaptive_weights();}
-    MPI_Bcast(&domain_fac_work, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&domain_fac_load, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&domain_fac_workgas, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&All.DomainFacWork, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&All.DomainFacLoad, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&All.DomainFacWorkGas, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     /* flag the particles that need to be exported */
 
@@ -1800,7 +1890,7 @@ int domain_decompose(void)
 int domain_check_memory_bound(int multipledomains)
 {
   int ta, m, i;
-  int load, gasload, max_load, max_gasload;
+  long long load, gasload, max_load, max_gasload;   /* sums of leaf counts for a candidate assignment: checked before any is narrowed */
   double work, workgas;
 
   max_load = max_gasload = 0;
@@ -1819,8 +1909,9 @@ int domain_check_memory_bound(int multipledomains)
 	    workgas += domainWorkGas[i];
 	  }
 
-      list_load[ta] = load;
-      list_loadgas[ta] = gasload;
+      /* stored as int; a load past INT_MAX also exceeds DomainMaxPartLocal, so that candidate is rejected below */
+      list_load[ta] = (load > INT_MAX) ? INT_MAX : (int) load;
+      list_loadgas[ta] = (gasload > INT_MAX) ? INT_MAX : (int) gasload;
       list_work[ta] = work;
       list_workgas[ta] = workgas;
 
@@ -1842,22 +1933,22 @@ int domain_check_memory_bound(int multipledomains)
 	      if(P[i].Type == 0) {gasload++;}
 	    }
 	  }
-      MPI_Allreduce(&load, &max_load, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-      MPI_Allreduce(&gasload, &max_gasload, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+      MPI_Allreduce(&load, &max_load, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+      MPI_Allreduce(&gasload, &max_gasload, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
     }
 #endif
 
     if(max_load > DomainMaxPartLocal)
     {
       domain_bound_needed = max_load; domain_bound_limit = DomainMaxPartLocal;
-      if(ThisTask == 0) {printf("desired memory imbalance=%g  (limit=%d, needed=%d)\n", (max_load * All.PartAllocFactor) / DomainMaxPartLocal, DomainMaxPartLocal, max_load);}
+      if(ThisTask == 0) {printf("desired memory imbalance=%g  (limit=%d, needed=%lld)\n", (max_load * All.PartAllocFactor) / DomainMaxPartLocal, DomainMaxPartLocal, max_load);}
       return 1;
     }
 
     if(max_gasload > DomainMaxGasLocal)
     {
       domain_bound_needed = max_gasload; domain_bound_limit = DomainMaxGasLocal;
-      if(ThisTask == 0) {printf("desired memory imbalance=%g  (GAS/FLUID) (limit=%d, needed=%d)\n", (max_gasload * All.PartAllocFactor) / DomainMaxGasLocal, DomainMaxGasLocal, max_gasload);}
+      if(ThisTask == 0) {printf("desired memory imbalance=%g  (GAS/FLUID) (limit=%d, needed=%lld)\n", (max_gasload * All.PartAllocFactor) / DomainMaxGasLocal, DomainMaxGasLocal, max_gasload);}
       return 1;
     }
 
@@ -2174,19 +2265,19 @@ void domain_findSplit_work_balanced(int ncpu, int ndomain)
     }
  
       /* Use adaptive weights that are updated after each decomposition based on measured
-         imbalance (GADGET-4 approach). The static variables domain_fac_work/workgas/load
-         are adjusted in domain_update_adaptive_weights() after each decomposition. */
+         imbalance (GADGET-4 approach). All.DomainFacWork/WorkGas/Load are adjusted in
+         domain_update_adaptive_weights() after each decomposition. */
       if(workgas <= 0) {
           /* no gas work: redistribute gas weight to gravity and load */
-          double total = domain_fac_work + domain_fac_load + domain_fac_workgas;
-          fac_work = (domain_fac_work + 0.5 * domain_fac_workgas) / (total * work);
-          fac_load = (domain_fac_load + 0.5 * domain_fac_workgas) / (total * load);
+          double total = All.DomainFacWork + All.DomainFacLoad + All.DomainFacWorkGas;
+          fac_work = (All.DomainFacWork + 0.5 * All.DomainFacWorkGas) / (total * work);
+          fac_load = (All.DomainFacLoad + 0.5 * All.DomainFacWorkGas) / (total * load);
           fac_workgas = 0.0;
       } else {
-          double total = domain_fac_work + domain_fac_load + domain_fac_workgas;
-          fac_work = domain_fac_work / (total * work);
-          fac_load = domain_fac_load / (total * load);
-          fac_workgas = domain_fac_workgas / (total * workgas);
+          double total = All.DomainFacWork + All.DomainFacLoad + All.DomainFacWorkGas;
+          fac_work = All.DomainFacWork / (total * work);
+          fac_load = All.DomainFacLoad / (total * load);
+          fac_workgas = All.DomainFacWorkGas / (total * workgas);
       }
 
   workavg = 1.0 / ncpu;
@@ -3037,12 +3128,12 @@ int domain_check_for_local_refine(int i, double countlimit, double costlimit)
       if(topNodes[i].Cost  > 0.8 * topNodes[topNodes[i].Parent].Cost)  {flag_cost  = 1;}
     }
 
-  /* Count-driven refinement is unguarded (particle count is spatially divisible). Cost-driven
+  /* Count-driven refinement is guarded only on tiny problems (domain_tiny_rule_allows_split). Cost-driven
    * refinement is guarded: below DOMAIN_COST_REFINE_MIN_COUNT the node's cost is dominated by
    * indivisible per-particle work that further splitting cannot redistribute. Full particle cost
    * is still used unchanged for domain ASSIGNMENT (domain_sumCost) -- only the refinement DECISION
    * here is guarded. */
-  int count_refine = (topNodes[i].Count > countlimit) || flag_count;
+  int count_refine = ((topNodes[i].Count > countlimit) || flag_count) && domain_tiny_rule_allows_split(topNodes[i].Count);
   int cost_wants   = (topNodes[i].Cost > costlimit) || flag_cost;
   int cost_refine  = (topNodes[i].Count > DOMAIN_COST_REFINE_MIN_COUNT) && cost_wants;
   if(cost_wants && !cost_refine && !count_refine)
@@ -3288,10 +3379,7 @@ int domain_determineTopTree(void)
   #endif
   for(i = 0; i < NumPart; i++)
     {
-      peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-      peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-      peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-      Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+      Key[i] = domain_peano_key(i);
     }
   for(i = 0, count = 0; i < NumPart; i++)
     {
@@ -3307,10 +3395,7 @@ int domain_determineTopTree(void)
   #endif
   for(i = 0; i < NumPart; i++)
     {
-      peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-      peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-      peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-      mp[i].key = Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+      mp[i].key = Key[i] = domain_peano_key(i);
       mp[i].index = i;
     }
   count = NumPart;
@@ -3334,23 +3419,26 @@ int domain_determineTopTree(void)
 
   /* Refine the top tree until no leaf holds more than this share of the particles or of the cost.
    * Expressed per domain segment, because the segments are what the leaves get distributed between.
-   * The floor is a feasibility bound for small problems, where a rank holds a single segment and
-   * would otherwise have almost nothing to balance with. */
-  double refinement_scale = (double) DOMAIN_TOPTREE_REFINEMENT_SCALE;
-  if(refinement_scale < 1.0) {refinement_scale = 1.0;}
-  double leaves_per_rank = refinement_scale * (double) multipledomains;
-  if(leaves_per_rank < (double) DOMAIN_MIN_TOPLEAVES_PER_RANK) {leaves_per_rank = DOMAIN_MIN_TOPLEAVES_PER_RANK;}
+   * The floor is a feasibility bound for a rank holding few segments, which would otherwise have
+   * almost nothing to balance with; it is lowered (never below one leaf per rank) where the rank
+   * count alone would take the total request past DOMAIN_MAX_REQUESTED_TOPLEAVES. */
+  double leaves_per_rank = domain_toptree_refinement_scale() * (double) multipledomains;
+  const double min_leaves_per_rank = domain_min_toptree_leaves_per_rank();
+  if(leaves_per_rank < min_leaves_per_rank) {leaves_per_rank = min_leaves_per_rank;}
   const double target_top_leaves = leaves_per_rank * (double) NTask;
   costlimit = totgravcost / target_top_leaves;
   countlimit = totpartcount / target_top_leaves;
+  const int tiny_rule = (countlimit < DOMAIN_TINY_COUNT_LIMIT)
+                        && ((double) totpartcount > (double) DOMAIN_TINY_COUNT_LIMIT * (double) multipledomains * (double) NTask);
+  g_domain_tiny_split_min = tiny_rule ? DOMAIN_TINY_MIN_SPLIT_COUNT : 0;
 
   g_domain_cost_suppressed = 0; g_domain_cost_suppressed_maxratio = 0;
   errflag = domain_check_for_local_refine(0, countlimit, costlimit);
   /* Compact aggregate report when the indivisible-cost floor suppressed cost-driven refinement,
-   * so the guard's effect is visible without per-node spam. Count-driven refinement is unaffected. */
+   * so the guard's effect is visible without per-node spam. */
   if(ThisTask == 0 && g_domain_cost_suppressed > 0)
-    PRINT_STATUS(" ..top-tree: suppressed cost refinement in %ld low-count node(s) (min_count=%d, max Cost/costlimit=%.1f); count refinement unchanged",
-                 g_domain_cost_suppressed, DOMAIN_COST_REFINE_MIN_COUNT, g_domain_cost_suppressed_maxratio);
+    PRINT_STATUS(" ..top-tree: suppressed cost refinement in %ld low-count node(s) (min_count=%d, max Cost/costlimit=%.1f); tiny-problem split minimum=%lld",
+                 g_domain_cost_suppressed, DOMAIN_COST_REFINE_MIN_COUNT, g_domain_cost_suppressed_maxratio, g_domain_tiny_split_min);
 
   myfree(mp);
 
@@ -3440,7 +3528,7 @@ int domain_determineTopTree(void)
   for(i = 0, errflag = 0; i < NTopnodes; i++)
     {
       if(topNodes[i].Daughter < 0)
-	if(topNodes[i].Count > countlimit || topNodes[i].Cost > costlimit)	/* ok, let's add nodes if we can */
+	if(((topNodes[i].Count > countlimit) || (topNodes[i].Cost > costlimit)) && domain_tiny_rule_allows_split(topNodes[i].Count))	/* ok, let's add nodes if we can */
 	  if(topNodes[i].Size > 1)
 	    {
 	      if((NTopnodes + 8) <= MaxTopNodes)
@@ -3499,7 +3587,7 @@ int domain_determineTopTree(void)
 
 void domain_sumCost(void)
 {
-  int i, n, no;
+  int i, n;
   float *local_domainWork;
   float *local_domainWorkGas;
   int *local_domainCount;
@@ -3586,8 +3674,8 @@ void domain_sumCost(void)
 #ifdef SUBFIND
         if(GrNr >= 0 && P[n].GrNr != GrNr) {continue;}
 #endif
-        no = domain_toptree_leaf(Key[n], topNodes);
-        DOMAIN_SUMCOST_PARTICLE_BODY(n, no, my_domainWork, my_domainWorkGas, my_domainCount, my_domainCountGas)
+        int leaf = domain_toptree_leaf(Key[n], topNodes); /* loop-local, so each thread has its own */
+        DOMAIN_SUMCOST_PARTICLE_BODY(n, leaf, my_domainWork, my_domainWorkGas, my_domainCount, my_domainCountGas)
       }
 
     #pragma omp critical
@@ -3617,13 +3705,13 @@ void domain_sumCost(void)
 #ifdef SUBFIND
       if(GrNr >= 0 && P[n].GrNr != GrNr) {continue;}
 #endif
-      no = domain_toptree_leaf(Key[n], topNodes);
+      int leaf = domain_toptree_leaf(Key[n], topNodes);
 #if (DOMAIN_TIMEBINS == 1)
       /* In the serial path, my_binGravCost/my_binHydroCost are just the global arrays */
       float *my_binGravCost = domainBinGravCost;
       float *my_binHydroCost = domainBinHydroCost;
 #endif
-      DOMAIN_SUMCOST_PARTICLE_BODY(n, no, local_domainWork, local_domainWorkGas, local_domainCount, local_domainCountGas)
+      DOMAIN_SUMCOST_PARTICLE_BODY(n, leaf, local_domainWork, local_domainWorkGas, local_domainCount, local_domainCountGas)
     }
 #endif
 #undef DOMAIN_SUMCOST_PARTICLE_BODY
@@ -3646,16 +3734,13 @@ void domain_sumCost(void)
 }
 
 
-/*! Coordinate conversion to integer. d is coordinate in double precision. returns coordinate in integer of type peano1D. written as part of arepo code dev, from public arepo code by V Springel. */
-peano1D domain_double_to_int(double d)
+/*! Peano key of particle i's current position: the host's one route from a position to a key, through the
+ *  mapping in domain_key_functions.h that the device tree build and the neighbour-list index also use. */
+peanokey domain_peano_key(int i)
 {
-    union
-    {
-        double d;
-        unsigned long long ull;
-    } u;
-    u.d = d;
-    return (peano1D)((u.ull & 0xFFFFFFFFFFFFFllu) >> (52 - BITS_PER_DIMENSION));
+    uint64_t c[3];
+    domain_key_integer_coordinates(P[i].Pos[0], P[i].Pos[1], P[i].Pos[2], DomainCorner[0], DomainCorner[1], DomainCorner[2], DomainLen, BITS_PER_DIMENSION, c);
+    return peano_hilbert_key((peano1D) c[0], (peano1D) c[1], (peano1D) c[2], BITS_PER_DIMENSION);
 }
 
 
@@ -3706,9 +3791,9 @@ void domain_findExtent(void)
       DomainCorner[j] = 0.5 * (xmin_glob[j] + xmax_glob[j]) - 0.5 * len;
     }
 #if defined(RANDOMIZE_GRAVTREE) && !defined(RANDOMIZE_GRAVTREE_PERIODIC) // double the size of the root node and pick a random offset for its center, so that forcetree errors get decorrelated each time the tree is rebuilt. Where gravity is periodic the coordinates are translated instead (domain_apply_random_shift), which leaves the root node the size of the box
-  double dx[3];
-  if(ThisTask == 0) { for(j = 0; j < 3; j++) {dx[j] = len * (get_random_number((MyIDType) (All.NumCurrentTiStep) + j) - 0.5);}}
-  MPI_Bcast(dx, 3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  double dx[3]; static constexpr uint64_t TREE_OFFSET_RNG_SALT = gizmo_loop_rng_salt("random_tree_offset");
+  for(j = 0; j < 3; j++) {dx[j] = len * (gizmo_gpu_rand_double((uint64_t)All.RandomTreeDraws, gizmo_rng_event_counter(TREE_OFFSET_RNG_SALT, (uint64_t)All.Ti_Current, j)) - 0.5);} /* every rank draws the same offset */
+  All.RandomTreeDraws++; /* every rank rebuilds together, so the count agrees */
   for(j=0; j<3; j++) {
       DomainCenter[j] += dx[j];
       DomainCorner[j] = DomainCenter[j] - len;
@@ -3735,7 +3820,7 @@ void domain_findExtent(void)
  *  anchored in space are refused at compile time (precompiler_logic.h), because there is no
  *  frame in which both they and the shifted matter are right.
  *
- *  Drawn on rank 0 and broadcast, since every rank has to key against the same frame. Called
+ *  A function of the time and of how many shifts came before, so every rank draws the same shift, as it must to key against the same frame. Called
  *  from the full decomposition only, with the tree already freed and no ghosts imported, and
  *  before the box wrapping and the keys that follow it. */
 void domain_apply_random_shift(void)
@@ -3743,8 +3828,9 @@ void domain_apply_random_shift(void)
     int i, j;
     double box[3], delta[3], u[3] = {0,0,0};
     box[0] = boxSize_X; box[1] = boxSize_Y; box[2] = boxSize_Z;
-    if(ThisTask == 0) {for(j = 0; j < 3; j++) {u[j] = get_random_number((MyIDType) All.NumCurrentTiStep);}}
-    MPI_Bcast(u, 3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    static constexpr uint64_t FRAME_SHIFT_RNG_SALT = gizmo_loop_rng_salt("random_frame_shift");
+    for(j = 0; j < 3; j++) {u[j] = gizmo_gpu_rand_double((uint64_t)All.RandomTreeDraws, gizmo_rng_event_counter(FRAME_SHIFT_RNG_SALT, (uint64_t)All.Ti_Current, j));}
+    All.RandomTreeDraws++; /* every rank decomposes together, so the count agrees */
 
     for(j = 0; j < 3; j++)
     {

@@ -72,7 +72,7 @@ int transport_subcycle_keep_topology(void)
     /* Ghosts are expected wherever the corridor imported (NTask > 1 with active gas anywhere);
        then every rank must hold a live pool to park, or none keeps. The active list was built in
        the working pool; it moves to the heap with the list. One collective decides both. */
-    const int need_pool = (NTask > 1 && gizmo_sym_num_active_global > 0) ? 1 : 0;
+    const int need_pool = (NTask > 1 && gizmo_sym_any_active_global) ? 1 : 0;
     const size_t active_bytes = (size_t)(gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int);
     int *active_heap = (int *) malloc(active_bytes);
     int got = (active_heap && (!need_pool || ghost_pool_is_live())) ? 1 : 0, all_got = 0;
@@ -270,11 +270,11 @@ void transport_subcycle_kick(void)
      * CosmicRay_Update_DriftKick) already have OMP exposure via
      * do_kick_for_extra_physics (core/kicks.cc), and the auxiliary
      * per-cell calls here (rt_eddington_update_calculation, rt_kappa)
-     * read/write only per-i state. Guard by n_act >= 16 to avoid OMP
-     * overhead on tiny active sets (matches sink_properties_loop, F2). */
+     * read/write only per-i state. Threaded only from the shared host-thread
+     * count, so tiny active sets do not pay to start the threads. */
     const int n_act = (int)ActiveParticleList.size();
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) if(n_act >= 16)
+#pragma omp parallel for schedule(dynamic) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n_act))
 #endif
     for(int _a = 0; _a < n_act; _a++) {
         int idx = ActiveParticleList[_a];
@@ -284,10 +284,7 @@ void transport_subcycle_kick(void)
         if(sub_dt <= 0) continue;
 
 #ifdef RADTRANSFER
-        /* rt_update_driftkick adds IR gas heating to DtInternalEnergy as a rate.
-           Since we call it N times, the rate would accumulate N-fold. Save/restore
-           DtInternalEnergy each sub-step to prevent accumulation, but keep the final
-           sub-step's contribution so the cooling function sees the correct IR heating rate. */
+        /* the IR energy the gas absorbs in each sub-step is held per unsplit cell until its next cooling call */
         rt_update_driftkick(i, sub_dt, 0, P, CellP); /* kick: advance conserved variables */
         rt_eddington_update_calculation(i, P, CellP);
         /* update opacities — Rad_Kappa (especially IR band) depends on Dust_Temperature and

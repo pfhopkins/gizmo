@@ -279,20 +279,23 @@ def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, 
     if "COOLING" in cooling_flags:
         get_cooling_tables(str(TEST_DIR))
 
-    # Set Sink_outflow_particlemass = 1e-2 * gas mass resolution
+    # Set the spawned wind-cell mass = 1e-2 * gas mass resolution. A main-sequence star's winds spawn cells of
+    # Sink_outflow_particlemass_MS (absolute code mass in this Config); Sink_outflow_particlemass is for other spawning.
     m_gas = 50000.0 / res**3
     params_file = TEST_DIR / f"{TEST_NAME}.params"
     params_text = params_file.read_text()
     import re
 
-    params_text = re.sub(
-        r"Sink_outflow_particlemass\s+\S+",
-        f"Sink_outflow_particlemass {1e-2 * m_gas:.6g}",
+    params_text, n_set = re.subn(
+        r"^Sink_outflow_particlemass_MS\s+\S+",
+        f"Sink_outflow_particlemass_MS {1e-2 * m_gas:.6g}",
         params_text,
+        flags=re.M,
     )
+    assert n_set == 1, f"expected Sink_outflow_particlemass_MS exactly once in {params_file}, found {n_set}"
 
     # The params file is tracked, so restore it afterwards rather than leaving this run's rewritten
-    # Sink_outflow_particlemass behind for the next run or for a manual invocation. GIZMO records what
+    # Sink_outflow_particlemass_MS behind for the next run or for a manual invocation. GIZMO records what
     # it actually used in <name>.params-usedvalues, so provenance is kept.
     original_params = params_file.read_text()
     params_file.write_text(params_text)

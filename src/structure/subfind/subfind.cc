@@ -89,7 +89,8 @@ void subfind(int num)
 
 #ifdef FOF_DENSITY_SPLIT_TYPES
   struct unbind_data *d;
-  int j, n, count[6], countall[6];
+  int j, n;
+  long long count[6], countall[6];   /* countall is summed over ranks */
 #endif
 
   if(ThisTask == 0)
@@ -105,7 +106,7 @@ void subfind(int num)
   for(i = 0; i < NumPart; i++)
     count[P[i].Type]++;
 
-  MPI_Allreduce(count, countall, 6, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  MPI_Allreduce(count, countall, 6, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
 
   /* do first loop: basically just defining the rkern for different species */
   for(j = 0; j < 6; j++)
@@ -126,7 +127,7 @@ void subfind(int num)
 
 	      t0 = my_second();
 	      if(ThisTask == 0)
-		printf("Tree construction for species %d (%d).\n", j, countall[j]);
+		printf("Tree construction for species %d (%lld).\n", j, countall[j]);
 
 	      CPU_Step[CPU_FOF] += measure_time();
 
@@ -187,7 +188,7 @@ void subfind(int num)
 
 	  t0 = my_second();
 	  if(ThisTask == 0)
-	    printf("Tree construction for species %d (%d).\n", j, countall[j]);
+	    printf("Tree construction for species %d (%lld).\n", j, countall[j]);
 
 	  CPU_Step[CPU_FOF] += measure_time();
 
@@ -580,10 +581,6 @@ void subfind_save_final(int num)
   for(i = 0; i < Ngroups; i++)
     Group[i].FirstSub += Send_offset[ThisTask];
 
-
-  MPI_Allgather(&Nids, 1, MPI_INT, Send_count, 1, MPI_INT, MPI_COMM_WORLD);
-  for(j = 1, Send_offset[0] = 0; j < NTask; j++)
-    Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1];
 
   if(ThisTask == 0)
     {
@@ -1027,13 +1024,16 @@ int get_datatype_in_sub(enum siofields blocknr)
       typekey = 2;		/* native long long */
       break;
 
-    case SIO_GLEN:
     case SIO_GOFF:
+    case SIO_SOFF:
+      typekey = 2;		/* native long long: offsets into the global ID list */
+      break;
+
+    case SIO_GLEN:
     case SIO_NCON:
     case SIO_NSUB:
     case SIO_FSUB:
     case SIO_SLEN:
-    case SIO_SOFF:
     case SIO_PFOF:
     case SIO_GRNR:
     case SIO_PTYP:
@@ -1119,6 +1119,7 @@ void subfind_save_local_catalogue(int num)
   MyOutputFloat *fp;
   int *fp_int, nwrite, ndim, bytes_per_blockelement, bnr, type, datatype, bytes;
   MyIDType *fp_id;
+  long long *fp_ll;
   enum siofields blocknr;
   unsigned int blksize;
 
@@ -1207,7 +1208,8 @@ void subfind_save_local_catalogue(int num)
     }
   if(All.SnapFormat == 3)
     {
-      write_header_attributes_in_hdf5(hdf5_headergrp);
+      const long long npart_this_file[6] = {Ngroups, Nsubgroups, Nids, 0, 0, 0};
+      write_header_attributes_in_hdf5(hdf5_headergrp, npart_this_file);
     }
   else
     {
@@ -1411,6 +1413,7 @@ void subfind_save_local_catalogue(int num)
 	  fp = (MyOutputFloat *) IOBuffer;
 	  fp_int = (int *) IOBuffer;
 	  fp_id = (MyIDType *) IOBuffer;
+	  fp_ll = (long long *) IOBuffer;
 
 	  switch (blocknr)
 	    {
@@ -1420,7 +1423,7 @@ void subfind_save_local_catalogue(int num)
 	      break;
 	    case SIO_GOFF:
 	      for(i = 0; i < nwrite; i++)
-		fp_int[i] = Group[i].Offset;
+		fp_ll[i] = Group[i].Offset;
 	      break;
 	    case SIO_MTOT:
 	      for(i = 0; i < nwrite; i++)
@@ -1472,7 +1475,7 @@ void subfind_save_local_catalogue(int num)
 	      for(i = 0; i < nwrite; i++) fp_int[i] = SubGroup[i].Len;
 	      break;
 	    case SIO_SOFF:
-	      for(i = 0; i < nwrite; i++) fp_int[i] = SubGroup[i].Offset;
+	      for(i = 0; i < nwrite; i++) fp_ll[i] = SubGroup[i].Offset;
 	      break;
 	    case SIO_PFOF:
 	      for(i = 0; i < nwrite; i++) fp_int[i] = SubGroup[i].SubParent;

@@ -708,7 +708,7 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         // Need to curtail Mach number for grain velocities to be below coagulation threshold
         Mach=1;
     }
-    uint64_t dust_rng_key = (uint64_t)pp[i].ID, dust_rng_ctr = (uint64_t)(11 + All.NumCurrentTiStep);
+    static constexpr uint64_t DUST_IMPACT_ANGLE_RNG_SALT = gizmo_loop_rng_salt("dust_impact_angle"); const uint64_t dust_rng_key = gizmo_rng_particle_event_key(pp[i]);
 
     for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++)  {
         if (cell[i].ISMDustChem_Dust_Species[k] <= 0) {continue;} // No dust nothin to do
@@ -736,12 +736,8 @@ void update_dust_shattering_and_coagulation(int i, double dtime_gyr, double temp
         // Calculate relative velocities between grain bins given random impact angle
         // Cant randomize for each term in each sum since this would change vrel for interactions between the same 2 bins
 
-        // WARNING
-        // For some reason using the global random number generator leads to undefined behaviour in the sim at large.
-        // In my case the mechanical feedback routine is producing very large injection masses that don't match up with the expected yields!
-        // Using a new random number generator fixes this for now. Will need to investigate.
-        //cos_imp_angle = 2.0*(get_random_number((MyIDType) (pp[i].ID+5+k))-0.5);
-        cos_imp_angle = 2.0*gizmo_gpu_rand_double(dust_rng_key, dust_rng_ctr++)-1.0;
+        // one impact angle per cell, step and species
+        cos_imp_angle = 2.0*gizmo_gpu_rand_double(dust_rng_key, gizmo_rng_event_counter(DUST_IMPACT_ANGLE_RNG_SALT, (uint64_t)All.Ti_Current, (uint64_t)k))-1.0;
 
         for (bin_i=0;bin_i<NUM_ISMDUSTCHEM_SIZE_BINS;bin_i++) {
             double aic_i = All.ISMDustChem_GrainBinCenters[bin_i];

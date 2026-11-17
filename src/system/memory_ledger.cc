@@ -12,6 +12,7 @@
 #include <limits.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../gravity/gpu_topology_build.h"   /* the optional device memory reported by the preflight */
 
 /* Size of the working memory pool when the run's particle count cannot be read up front, which
    normally means the input is missing or unreadable and the run is about to stop and say so. Large
@@ -126,6 +127,16 @@ int gizmo_node_headroom_admits(long long bytes_this_rank)
     return all_ok;
 }
 
+/* Whether bytes fit within fraction of this rank's device's free memory: 1 when they do, or when that
+   memory is not known (a refused allocation is then the backstop). Advisory -- ranks sharing a device
+   can allocate between this and their own use. */
+int gizmo_device_has_room(size_t bytes, double fraction)
+{
+    size_t free_bytes = 0, total_bytes = 0;
+    if(!gizmo_gpu_device_memory(&free_bytes, &total_bytes)) {return 1;}
+    return (double) bytes <= fraction * (double) free_bytes;
+}
+
 /* Per-process virtual and resident size from /proc/self/status (Linux; 0 elsewhere).
    VIRTUAL/committed (VmSize) is what mmap reserved -- the quantity strict-overcommit
    nodes (Frontera) fail on -- and can far exceed RESIDENT (VmRSS), the pages actually
@@ -197,9 +208,10 @@ static void report_memory_ledger_impl(const char *when, int always)
        "Kokkos observed" superset is decomposed into SoA / tree / tree-build scratch /
        moment scratch / NGL / unclassified, split by memory-space class. */
     const int NCELL = GIZMO_KOKCELL_COUNT;
-    long long bkt_cur[NCELL], bkt_hw[NCELL], node_bkt[NCELL];
+    long long bkt_cur[NCELL], bkt_hw[NCELL], node_bkt[NCELL], node_bkt_hw[NCELL];
     gizmo_kokkos_mem_buckets(bkt_cur, bkt_hw);
     MPI_Reduce(bkt_cur, node_bkt, NCELL, MPI_LONG_LONG, MPI_SUM, 0, GizmoNodeComm);
+    MPI_Reduce(bkt_hw, node_bkt_hw, NCELL, MPI_LONG_LONG, MPI_SUM, 0, GizmoNodeComm);   /* summed rank peaks: transient buckets read 0 when current */
 
     /* Tree byte breakdown (local vs foreign-LET vs aux) + foreign capacity/used-HW/floor.
        MB totals sum over the node; the node-count fields take the per-rank MAX (the
@@ -338,22 +350,29 @@ static void report_memory_ledger_impl(const char *when, int always)
         if(gizmo_kokkos_mem_available()) {
             /* Per-bucket totals (sum over space class) and per-space totals (sum over
                buckets) from the classified node array. */
-            double bkt_mb[GIZMO_KOKBUCKET_COUNT] = {0}, spc_mb[GIZMO_KOKSPACE_COUNT] = {0};
+            double bkt_mb[GIZMO_KOKBUCKET_COUNT] = {0}, bkt_hw_mb[GIZMO_KOKBUCKET_COUNT] = {0}, spc_mb[GIZMO_KOKSPACE_COUNT] = {0};
             for(int b = 0; b < GIZMO_KOKBUCKET_COUNT; b++)
                 for(int s = 0; s < GIZMO_KOKSPACE_COUNT; s++) {
                     double mb = node_bkt[b * GIZMO_KOKSPACE_COUNT + s] / (1024.0 * 1024.0);
                     bkt_mb[b] += mb; spc_mb[s] += mb;
+                    bkt_hw_mb[b] += node_bkt_hw[b * GIZMO_KOKSPACE_COUNT + s] / (1024.0 * 1024.0);
                 }
             n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0,
                           "  kokkos %.0f cur / %.0f hw: SoA %.0f tree-AoS %.0f tree-SoA %.0f walk %.0f runner %.0f sidecar %.0f"
-                          " tscratch-b %.0f tscratch-m %.0f ngl-sidx %.0f ngl-pairs %.0f ngl-other %.0f unclass %.0f\n",
+                          " tscratch-b %.0f tscratch-m %.0f ngl-sidx %.0f ngl-pairs %.0f ngl-packet %.0f (peak %.0f) ngl-moded %.0f (peak %.0f) ngl-other %.0f"
+                          " mg-graph %.0f (peak %.0f) mg-insert %.0f (peak %.0f; HYPRE's own memory is not observed) unclass %.0f\n",
                           node_kok_cur / (1024.0 * 1024.0), node_kok_hw / (1024.0 * 1024.0),
                           bkt_mb[GIZMO_KOKBUCKET_PARTICLE_SOA], bkt_mb[GIZMO_KOKBUCKET_TREE_ARRAYS],
                           bkt_mb[GIZMO_KOKBUCKET_GRAVITY_TREE_SOA], bkt_mb[GIZMO_KOKBUCKET_GRAVITY_WALK],
                           bkt_mb[GIZMO_KOKBUCKET_MODEA_RUNNER], bkt_mb[GIZMO_KOKBUCKET_FINE_SIDECAR],
                           bkt_mb[GIZMO_KOKBUCKET_TREESCRATCH_BUILD], bkt_mb[GIZMO_KOKBUCKET_TREESCRATCH_MOMENT],
                           bkt_mb[GIZMO_KOKBUCKET_NGL_SIDX], bkt_mb[GIZMO_KOKBUCKET_NGL_PAIRS],
-                          bkt_mb[GIZMO_KOKBUCKET_NGL], bkt_mb[GIZMO_KOKBUCKET_UNCLASSIFIED]);
+                          bkt_mb[GIZMO_KOKBUCKET_NGL_PACKET], bkt_hw_mb[GIZMO_KOKBUCKET_NGL_PACKET],
+                          bkt_mb[GIZMO_KOKBUCKET_NGL_MODE_D_CALL], bkt_hw_mb[GIZMO_KOKBUCKET_NGL_MODE_D_CALL],
+                          bkt_mb[GIZMO_KOKBUCKET_NGL],
+                          bkt_mb[GIZMO_KOKBUCKET_MG_GRAPH], bkt_hw_mb[GIZMO_KOKBUCKET_MG_GRAPH],
+                          bkt_mb[GIZMO_KOKBUCKET_MG_INSERT], bkt_hw_mb[GIZMO_KOKBUCKET_MG_INSERT],
+                          bkt_mb[GIZMO_KOKBUCKET_UNCLASSIFIED]);
             /* Space split only when more than one space class is nonzero (on a CPU/OpenMP
                backend everything is host/shared, so this line is suppressed). */
             int nspace_nz = 0;
@@ -432,6 +451,17 @@ double comm_chunk_megabytes_default(void)
     return (raised > customary_megabytes) ? raised : customary_megabytes;
 }
 
+/* The communication chunk in bytes.  CommChunkSize is a floating-point number of megabytes and is not always a whole
+   one (the default above is not), so the conversion is done in floating point; truncating it to whole megabytes first
+   turns 0.5 into 0.  Every byte conversion of the parameter goes through here. */
+size_t comm_chunk_bytes(void)
+{
+    const double bytes = All.CommChunkSize * 1024.0 * 1024.0;
+    const double largest = (double) ((size_t) 1 << 60);   /* far past any message, and leaves room to multiply */
+    if(!(bytes >= 1.0)) {return 1;}
+    return (bytes > largest) ? ((size_t) 1 << 60) : (size_t) bytes;
+}
+
 /* How big to make the memory arena when the parameter file does not say. Called once, before the
    arena is created, which is the only moment early enough: the arena is the first thing built and
    everything else is allocated out of it.
@@ -488,7 +518,7 @@ static int arena_megabytes_from_tenants(long long total_particles, const char **
        coupling between a communication setting and the run's memory footprint, and the report at
        the end of this file names whichever tenant set the figure so it is visible rather than
        surprising. */
-    long long step = (long long) All.CommChunkSize * 1024 * 1024
+    long long step = (long long) comm_chunk_bytes()
                    + (long long) GRAVITY_LET_DETECTOR_ENTRIES
                      * (long long) (sizeof(struct data_index) + sizeof(struct data_nodelist))
                    + maxpart * (long long) (2 * sizeof(MyFloat));
@@ -751,7 +781,7 @@ int gizmo_memory_preflight(void)
             if(share > particles_per_rank + tree_per_rank && nopt < maxopt)
             {
                 long long fits_mb = (share - particles_per_rank - tree_per_rank) / (1024 * 1024);
-                if(fits_mb > (long long) All.CommChunkSize && fits_mb < All.WorkingMemoryPoolSize)
+                if((double) fits_mb > All.CommChunkSize && fits_mb < All.WorkingMemoryPoolSize)
                     {snprintf(optbuf[nopt], sizeof(optbuf[0]), "WorkingMemoryPoolSize %lld", fits_mb); nopt++;}
             }
             for(int k = 0; k < nopt; k++)
@@ -776,6 +806,17 @@ int gizmo_memory_preflight(void)
                "  room for the memory a run needs while running. Consider fewer ranks/node or more nodes.\n",
                GizmoRanksThisNode, node_persistent / 1.0e9, node_phys / 1.0e9,
                100.0 * (double) node_persistent / (double) node_phys);
+        fflush(stdout);
+    }
+    /* Device memory taken only when there is room at the time, so it is reported, never required. */
+    long long sort_buffers = 0, sort_workspace_estimate = 0;
+    gpu_topology_build_optional_device_bytes((long long) All.MaxPart, &sort_buffers, &sort_workspace_estimate);
+    if(sort_buffers > 0 && ThisTask == 0)
+    {
+        printf("MEMORY PREFLIGHT: optional device memory, outside the reserve above, to sort a tree build's top-leaf ranges in one pass:\n"
+               "  %.1f MB per rank of sort keys and values, plus an estimated %.1f MB for the GPU library's own working space (not\n"
+               "  accounted by GIZMO); taken for each build only when the device has room, otherwise the ranges are sorted one by one.\n",
+               sort_buffers / 1.0e6, sort_workspace_estimate / 1.0e6);
         fflush(stdout);
     }
     return 0;

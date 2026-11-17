@@ -23,8 +23,8 @@ Tillotson_EOS_params_u_s           1e+20
 Tillotson_EOS_params_u_s_prime     1e+20
 Tillotson_EOS_params_alpha         0
 Tillotson_EOS_params_beta          0
-Tillotson_EOS_params_mu            0.22
-Tillotson_EOS_params_Y0            1e+20
+SolidMaterial_ShearModulus         0.22
+SolidMaterial_YieldStrength        1e+20
 ErrTolIntAccuracy                  0.01
 CourantFac                         0.2
 MaxRMSDisplacementFac              0.1

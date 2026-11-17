@@ -160,7 +160,6 @@ double  Max_Unspawned_MassUnits_fromSink;
 long long Ntype[6];		/*!< total number of particles of each type */
 int NtypeLocal[6];		/*!< local number of particles of each type */
 
-gizmo_rng_t random_generator;	/*!< the random number generator used */
 
 int Gas_split;           /*!< current number of newly-spawned gas particles outside block */
 #ifdef GALSF
@@ -201,7 +200,7 @@ int NumPartGroup;
 /* variables for input/output , usually only used on process 0 */
 
 
-char ParameterFile[100];	/*!< file name of parameterfile used for starting the simulation */
+char ParameterFile[256];	/*!< file name of parameterfile used for starting the simulation */
 
 FILE
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
@@ -262,6 +261,9 @@ FILE *FdCbeDiagnostics;
  * PartType inside read_ic.cc's `if(hdf5_dataset >= 0)` block on
  * successful H5Dread of the VlasovMoments dataset. */
 int CBE_Moments_LoadedFromIC_PType[6] = {0, 0, 0, 0, 0, 0};
+#endif
+#ifdef METALS
+int Metallicity_LoadedFromIC_PType[6] = {0, 0, 0, 0, 0, 0};
 #endif
 
 

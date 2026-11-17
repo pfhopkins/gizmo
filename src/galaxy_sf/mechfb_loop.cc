@@ -105,6 +105,25 @@ void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
     if ((P[i].DensityAroundParticle > 0) && (P[i].Mass > 0)) {
         if (loop_iteration < 0) {
             fb.Msne = P[i].Mass;
+            if (loop_iteration == -1) {
+                /* this pass builds the mass-loading weights 1/(1 + w Msne/m_j), so it needs the ejecta mass the
+                 * coupling pass will use: SNe if any this step, else stellar mass loss. A star with both shares
+                 * these weights between them; separate ones would cost a neighbour pass per channel. */
+                int channel = 0;
+#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+                channel = (P[i].SNe_ThisTimeStep > 0) ? 0 : ((P[i].MassReturn_ThisTimeStep > 0) ? 1 : -1);
+#endif
+                if (channel >= 0) {
+#ifdef SNE_NONSINK_SPAWN
+                    const MyFloat unspawned_before = P[i].unspawned_wind_mass; /* the SN routine books the spawned fraction; the coupling pass does that */
+#endif
+                    particle2in_addFB_fromstars(&fb, i, channel);
+#ifdef SNE_NONSINK_SPAWN
+                    P[i].unspawned_wind_mass = unspawned_before;
+#endif
+                    if (fb.Msne <= 0) {fb.Msne = P[i].Mass;}
+                }
+            }
             fb.unit_mom_SNe = 1.0e-4;
             fb.SNe_v_ejecta = 1.0e-4;
         } else {
@@ -767,7 +786,7 @@ void mechfb_run_iterative(int *active_list, int num_active,
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Caller (mechanical_fb_calc_toplevel) has already short-circuited the
-     * global_num_active == 0 case. A rank reaching here may still have local
+     * case where no rank has an active source. A rank reaching here may still have local
      * num_active == 0 (single subgroup with num_active_local=0); the runner's
      * collective-symmetry invariant requires every rank to enter so that
      * Allreduce/Alltoallv calls inside the runner stay in lock-step. */

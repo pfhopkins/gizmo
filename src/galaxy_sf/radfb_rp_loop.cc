@@ -10,12 +10,9 @@
  * + ctx.iter_index_snapshot — THE single source of truth for iter-gated
  * writeback), apply_active_writeback (source-side jet_momentum_used decrement
  * under STELLAREVOLUTION>2), merge_accum (sum wt_sum + sum jet_momentum_used),
- * after_iter (iter-0 writes ctx.scratch.wt_sum = accum.wt_sum, returns
- * Converged/NeedsMore; iter-1 always Converged — no P/CellP writes), and
- * after_iter_global (post-iter staging hook, NO physics-side writes;
- * bridges drv.scratch_uvm[sg][slot].wt_sum/wt_area into
- * drv.ctx.per_active_local[slot].wt_sum, then Kokkos::fence(),
- * so iter-1's device kernels read the staged denominator).
+ * and after_iter (iter 0 stages accum.wt_sum / wt_area into the source's own
+ * entry of ctx.per_active_local, which iter 1's kernels read, and returns
+ * Converged/NeedsMore; iter 1 always Converged — no P/CellP writes).
  *
  * Also holds: ghost-writeback bundle (PARTICLE_ADD_VEC3 on Vel/dp +
  * GAS_ADD_VEC3 on VelPred — new generic op landed for this port), and the
@@ -159,9 +156,8 @@ void RadFBRPSpec::populate_device_context(const neighbor_loop_args& args,
     }
     std::memcpy(uvm, aux->host_locals, N * sizeof(RadFBRPLocalIn));
     /* wt_sum field starts at 0 (carried through from radfb_rp_local_fill).
-     * iter-0 device kernel accumulates into accum.wt_sum; iter-0 after_iter
-     * stashes that into ctx.scratch.wt_sum; iter-0 after_iter_global bridges
-     * scratch→loc.wt_sum before iter-1 dispatches. */
+     * iter-0 kernels accumulate into accum.wt_sum; iter-0 after_iter stages
+     * it into the source's own entry here before iter 1 dispatches. */
     ctx.per_active_local = uvm;
 }
 
@@ -181,8 +177,7 @@ void RadFBRPSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
  * guarantee in the runner's iterative driver). Aux::iter_index is shared
  * (one Aux per call) and mirrors ctx.iter_index_snapshot.
  *
- * NO data staging here — that happens in after_iter_global of the PREVIOUS
- * iter (which bridges from drv.scratch_uvm into ctx.per_active_local).
+ * NO data staging here — iteration 0's after_iter stages the weights.
  * ========================================================================== */
 
 void RadFBRPSpec::reset_per_iter_device_context(
@@ -199,13 +194,11 @@ void RadFBRPSpec::reset_per_iter_device_context(
 }
 
 /* ============================================================================
- * AFTER_ITER — writes ctx.scratch.wt_sum on iter 0 (the only allowed write —
- * scratch IS the runner's per-active iterative state; no P/CellP/source-side
- * writes).
+ * AFTER_ITER — the only write is the source's own entry of per_active_local
+ * (no P/CellP/source-side writes).
  *
- * iter 0: stash accum.wt_sum into ctx.scratch.wt_sum (after_iter writes
- *         drv.scratch_uvm[sg][slot], bridged into ctx.per_active_local in
- *         after_iter_global).
+ * iter 0: stage accum.wt_sum / wt_area into ctx.per_active_local[call slot],
+ *         read by iter 1's kernels as the kick denominator.
  *         Return NeedsMore if wt_sum > 0; Converged otherwise (source had
  *         no valid neighbors → skip iter 1).
  * iter 1: Converged (always; no third iter).
@@ -214,78 +207,9 @@ void RadFBRPSpec::reset_per_iter_device_context(
 IterResult RadFBRPSpec::after_iter(const AfterIterContext<RadFBRPSpec>& ctx,
                                     const AccumData& accum)
 {
-    if (ctx.iter_index == 0) {
-        ctx.scratch.wt_sum  = accum.wt_sum;
-        ctx.scratch.wt_area = accum.wt_area;
-        if (accum.wt_sum <= 0) {
-            return IterResult{IterStatus::Converged, ctx.h_search_current};
-        }
-        return IterResult{IterStatus::NeedsMore, ctx.h_search_current};
-    }
-    /* iter >= 1 — kicks applied; we're done. */
-    return IterResult{IterStatus::Converged, ctx.h_search_current};
+    return after_iter_body(ctx.iter_index, ctx.h_search_current, ctx.device_ctx.per_active_local, ctx.call_slot, accum);
 }
 
-/* ============================================================================
- * AFTER_ITER_GLOBAL — post-iter staging hook. NO physics-side writes.
- *
- * Mutates the per_active_local UVM buffer on drv.ctx. Does NOT touch
- * P[i], CellP[i], or any source/neighbor physics state — this is pure
- * iter-to-iter scalar bridging through the runner's intended per-active
- * iterative state (IterScratch → per_active_local).
- *
- * Fires once per iter, after the after_iter loop. For iter 0 only, copies
- * IterScratch.wt_sum (set by after_iter into drv.scratch_uvm[sg]) into
- * ctx.per_active_local[slot].wt_sum so iter-1's device kernel reads the
- * staged denominator.
- *
- * Reading from scratch_uvm (the runner's intended per-active iter-state)
- * rather than directly from accum_uvm is the more stable contract — if the
- * runner later changes when/whether accum_uvm is zeroed between hooks,
- * this hook still works. accum.wt_sum was already routed into scratch by
- * after_iter (which is the hook with both accum AND scratch in scope).
- *
- * drv is const-ref. per_active_local-pointee mutation is legal through the
- * const pointer (pointer itself is fixed; pointed-to UVM buffer writable).
- * Same idiom as mechfb_loop.cc::after_iter_global.
- *
- * Kokkos::fence() AFTER host writes — required for SharedSpace/UVM ordering
- * before iter-1's device dispatch reads the staged values.
- *
- * No-op for iter >= 1 (no iter-2 to stage for).
- * ========================================================================== */
-
-void RadFBRPSpec::after_iter_global(const neighbor_loop_args& args,
-                                     const NlrIterDriver<RadFBRPSpec>& drv)
-{
-    (void)args;
-    if (drv.iter_index != 0) return;
-    if (drv.args.num_subgroups < 1) return;
-    const int sg = 0;
-    const NlrSubgroup& subgroup = drv.args.subgroups[sg];
-    const int N = subgroup.num_active_local;
-    if (N <= 0) return;
-
-    bool wrote_any = false;
-
-    /* Bridge production: drv.scratch_uvm[sg][slot].wt_sum
-     *                 → drv.ctx.per_active_local[slot].wt_sum */
-    if (drv.ctx.per_active_local != nullptr
-        && (int)drv.scratch_uvm.size() > sg
-        && drv.scratch_uvm[sg] != nullptr) {
-        for (int slot = 0; slot < N; slot++) {
-            drv.ctx.per_active_local[slot].wt_sum =
-                drv.scratch_uvm[sg][slot].wt_sum;
-            drv.ctx.per_active_local[slot].wt_area =
-                drv.scratch_uvm[sg][slot].wt_area;
-        }
-        wrote_any = true;
-    }
-
-
-    /* Fence host writes to UVM before iter-1's device dispatch reads them. */
-    if (wrote_any) Kokkos::fence();
-}
 
 /* ============================================================================
  * SOURCE-SIDE HOST WRITEBACK
@@ -352,12 +276,9 @@ void RadFBRPSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
  * runner. Returns 1 if the source passes the gate (fills *loc + *radius);
  * 0 if it doesn't fire this step (skip — not added to runner active list).
  *
- * Ported verbatim from radfb_local_gpu.cc::radfb_rp_local_fill (legacy
- * `static` helper, now public). RNG draw inside the gate retains the
- * legacy single-rank ordering (`get_random_number(P[i].ID + ThisTask + i + 2)`)
- * — that's a source-level stochastic acceptance, NOT a per-pair RNG, so
- * the runner's order-independent per-pair RNG shift (RADFBRP_RNG_SHIFT in
- * radfb_rp_loop.h) doesn't apply here.
+ * The gate's random number is one draw per source per step, keyed on the
+ * source and the current time -- a source-level acceptance, separate from
+ * the per-pair draw in radfb_rp_loop.h.
  * ========================================================================== */
 
 int radfb_rp_local_fill(int i,
@@ -458,7 +379,8 @@ int radfb_rp_local_fill(int i,
     if (prob < 1.0 && prob > 0) dE_over_c /= prob;
 #endif
 
-    double p_random = get_random_number(P_host[i].ID + ThisTask + i + 2);
+    static constexpr uint64_t RP_SOURCE_GATE_RNG_SALT = gizmo_loop_rng_salt("radiation_pressure_source_gate");
+    double p_random = gizmo_gpu_rand_double(gizmo_rng_particle_event_key(P_host[i]), gizmo_rng_event_counter(RP_SOURCE_GATE_RNG_SALT, (uint64_t)HostAll->Ti_Current, 0));
     if (p_random > prob) return 0;     /* doesn't fire this step */
 
     /* fill struct */
@@ -467,10 +389,10 @@ int radfb_rp_local_fill(int i,
     loc->SourceKernelRadius = (MyFloat)P_host[i].KernelRadius;
     loc->dE_over_c    = (MyFloat)dE_over_c;
     loc->f_lum_ion    = (MyFloat)f_lum_ion;
-    loc->ID           = P_host[i].ID;
+    loc->rng_key      = gizmo_rng_particle_event_key(P_host[i]);
     loc->wt_sum       = 0;
     loc->wt_area      = 0;                /* zero at iter-0 entry; filled by
-                                           * after_iter_global before iter 1 */
+                                           * iteration 0's after_iter before iter 1 */
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
     loc->delta_v_imparted_rp = (MyFloat)delta_v;
 #endif
@@ -670,9 +592,9 @@ void radiation_pressure_winds_consolidated(void)
      * collectives inside (ghost_exchange, Allreduce, Alltoallv) stay in
      * lockstep. The runner accepts num_active=0 as a no-op participant.
      * Short-circuit ONLY if globally zero firing sources. */
-    int global_num_active = 0;
-    MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    if (global_num_active == 0) {radfb_rp_write_momwinds_log(num_active); return;}
+    int any_local = (num_active > 0) ? 1 : 0, any_active = 0;
+    MPI_Allreduce(&any_local, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (!any_active) {radfb_rp_write_momwinds_log(num_active); return;}
 
     /* Aux carries non-owning pointers to the toplevel-owned active arrays.
      * iter_index is set by reset_per_iter_device_context on every iter.

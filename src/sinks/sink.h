@@ -87,6 +87,7 @@ extern struct sink_temp_particle_data       // sinkdata_topass
 
 /* sink_utils.c */
 void sink_start(void);
+int sink_tempinfo_index(int i, const char *caller);   /* checked P[i].IndexMapToTempStruc */
 void sink_end(void);
 void sink_properties_loop(void);
 double sink_eddington_mdot(double sink_mass);
@@ -114,8 +115,6 @@ double* active_unspawned_mass_ptr(int i);
 /* sink_feed.c */
 void sink_feed_loop(void);
 
-int sink_check_boundedness(int j, double vrel, double vesc, double dr_code, double sink_radius);
-double sink_vesc(int j, double mass, double r_code, double sink_softening);
 void set_sink_mdot(int i, int n, double dt);
 void set_sink_new_mass(int i, int n, double dt);
 void set_sink_drag(int i, int n, double dt);

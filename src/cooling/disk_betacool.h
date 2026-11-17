@@ -49,6 +49,9 @@ static inline void disk_betacool_parent_routine(void)
     {
         int i = ActiveParticleList[idx];
         if(P[i].Type != 0 || P[i].Mass <= 0) continue;
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+        if(eos_branch_of(CellP[i].CompositionType) != EOS_BRANCH_NONE) continue; /* solid materials are not gas: no beta-cooling */
+#endif
         double dt = get_particle_timestep_in_physical(i, P);
         if(dt <= 0) continue;
 

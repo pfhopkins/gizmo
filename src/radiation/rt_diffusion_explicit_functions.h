@@ -96,7 +96,7 @@ void rt_diffusion_explicit_compute_pair(
         double A_dot_grad_alignment = cmag*cmag / (Face_Area_Norm*Face_Area_Norm * grad_norm);
         cmag *= -conduction_wt;
 
-        double v_eff_touse = DMIN(c_light_eff, kappa_ij / Particle_Size_j);
+        double v_eff_touse = DMIN(c_light_eff, kappa_ij / DMIN(Particle_Size_i, Particle_Size_j));
         double c_hll = DMIN(0.5*fabs(face_vel_i - face_vel_j) + v_eff_touse, c_light_eff);
         double q = 0.5 * c_hll * kernel.r * All.cf_atime / fabs(1.e-37 + kappa_ij);
         q = (0.2 + q) / (0.2 + q + q*q);
@@ -250,7 +250,7 @@ void rt_diffusion_explicit_compute_pair(
         }
 #endif
 
-        double v_eff_touse = DMIN(c_light_eff, kappa_ij / Particle_Size_j);
+        double v_eff_touse = DMIN(c_light_eff, kappa_ij / DMIN(Particle_Size_i, Particle_Size_j));
         double c_hll = DMIN(0.5 * fabs(face_vel_i - face_vel_j) + DMAX(1., hlle_wtfac_u) * v_eff_touse, c_light_eff);
         double tau_c_j = Particle_Size_j * CellP[j].Rad_Kappa[k_freq] * (CellP[j].Density * All.cf_a3inv);
         double hll_corr = 1. / (1. + 1.5 * DMAX(tau_c_i[k_freq], tau_c_j));

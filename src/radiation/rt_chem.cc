@@ -43,6 +43,9 @@ void rt_update_chemistry_for_particle(int i, struct particle_data *pp, struct ga
 {
     if(pp[i].Type != 0) return;
     double dtime = get_particle_timestep_in_physical(i, pp);
+#if defined(TRANSPORT_SUBCYCLE_COOLING) && defined(COOLING)
+    dtime *= All.Transport_Subcycle_dt_fraction; /* called N times in the subcycle loop, each with dt/N, as cooling is */
+#endif
     if(dtime <= 0 || cell[i].Mass <= 0) return;
 
     double fac = UNIT_TIME_IN_CGS / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);
@@ -294,7 +297,7 @@ void rt_update_chemistry(void)
     int *chem_indices = (int *) malloc(N_active * sizeof(int));
     {int j = 0; for(int i : ActiveParticleList) {if(P[i].Type == 0) chem_indices[j++] = i;}}
 
-    if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD)
+    if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active))
     {
         GIZMO_GPU_ENSURE_ALL_FRESH(); /* device RT chemistry kernel reads All mirrors; tiny-N CPU path reads host All directly */
         /* Gather into compact SharedSpace arrays */

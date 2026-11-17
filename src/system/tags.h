@@ -117,8 +117,11 @@
  * other GIZMO collectives/exchanges. Base is well above existing 104 so
  * a future TAG_FOO=105 doesn't collide. */
 #define TAG_MODE_B_BASE              200
-#define TAG_MODE_B_QUERY_COUNT       (TAG_MODE_B_BASE + 1)
 #define TAG_MODE_B_QUERY_PAYLOAD     (TAG_MODE_B_BASE + 2)
 #define TAG_MODE_B_REPLY_COUNT       (TAG_MODE_B_BASE + 3)
 #define TAG_MODE_B_REPLY_PAYLOAD     (TAG_MODE_B_BASE + 4)
+/* Mode D carries the same round in fixed-size segments received from any source, so its two payload kinds
+ * need tags of their own: a wildcard receive must never match the other kind or a Mode B payload. */
+#define TAG_MODE_D_QUERY_SEGMENT     (TAG_MODE_B_BASE + 5)
+#define TAG_MODE_D_REPLY_SEGMENT     (TAG_MODE_B_BASE + 6)
 
