@@ -2466,6 +2466,10 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.TestFBNoGasUntilTime;
       id[nt++] = REAL;
 
+      strcpy(tag[nt], "TestIaTime");
+      addr[nt] = &All.TestIaTime;
+      id[nt++] = REAL;
+
       strcpy(tag[nt], "TestStarMass");
       addr[nt] = &All.TestStarMass;
       id[nt++] = REAL;
@@ -3117,6 +3121,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("TestFixedQion",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set in parameter file: ionizing Q from tables as normal (variable; =0)\n",tag[i]); continue;}
                 if(strcmp("TestStarBenchIso",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set in parameter file: full thermochemistry as normal (=0; >0 = StarBench benchmark mode, neutral gas isothermal at this T [K])\n",tag[i]); continue;}
                 if(strcmp("TestFBNoGasUntilTime",tag[i])==0) {*((double *)addr[i])=0; continue;}
+                if(strcmp("TestIaTime",tag[i])==0) {*((double *)addr[i])=0; continue;}
                 if(strcmp("TestStarInitAgeYr",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set in parameter file: stars born at age 0 as normal (=0)\n",tag[i]); continue;}
                 if(strcmp("TestFixedLbol",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set in parameter file: bolometric L from tables as normal (variable; =0)\n",tag[i]); continue;}
                 if(strcmp("TestFixedWindMdot",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set in parameter file: wind Mdot from tables as normal (variable; =0)\n",tag[i]); continue;}

@@ -58,6 +58,10 @@ struct INPUT_STRUCT_NAME
 }
 *DATAIN_NAME, *DATAGET_NAME;
 
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+double FB_TestIaFe = 0; /* test: Ia-composition iron delivered (code mass) */
+#endif
+
 void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
     int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k]; in->StarVel[k]=P[i].Vel[k];}
@@ -500,6 +504,12 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     double dbg_sumdMX = 0;
                     for(int kk = 1; kk < NUM_METAL_SPECIES; kk++) dbg_sumX_pre += P[j].Metallicity[kk];
                     for(int kk = 0; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) dbg_sumdMX += wk * local.ElemYields[kk];
+#endif
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    if(local.fb_channel == 3) {
+                        #pragma omp atomic
+                        FB_TestIaFe += wk * local.ElemYields[ELEM_Fe];
+                    }
 #endif
                     for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
                         int m = MET_OF(k);

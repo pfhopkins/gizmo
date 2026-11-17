@@ -516,6 +516,12 @@ void resolvedism_determine_SNe(void)
                 STELLA_FB_EVENT(P[i]) = 4; n_ia_local++;
                 continue;
             }
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+            if(All.TestIaTime > 0 && All.Time >= All.TestIaTime && P[i].ID >= 1 && P[i].ID <= (MyIDType)((All.TestNumStars > 0) ? All.TestNumStars : 1) && P[i].ID_generation == 0) {
+                STELLA_FB_EVENT(P[i]) = 4; P[i].M_at_SN_trigger = (MyFloat)(P[i].Mass * UNIT_MASS_IN_SOLAR); n_ia_local++; /* test: forced Ia of a site WD */
+                continue;
+            }
+#endif
 
             double star_age_Gyr = resolvedism_star_age_yr(i) * 1.0e-9;
             if(star_age_Gyr < IA_T_MIN_GYR) continue; /* below minimum delay time */
@@ -636,8 +642,9 @@ MyIDType FB_SerialEventID = 0;
 int FB_WindBatchOnly = 0;   /* 1 = momentum walk admits ONLY flag-3 (wind) stars, batch mode */
 #endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
-extern double FB_TestWindPabs, FB_TestWindPvec[3], FB_TestWindMcoupled;
+extern double FB_TestWindPabs, FB_TestWindPvec[3], FB_TestWindMcoupled, FB_TestWindZcoupled;
 extern double FB_TestRadpPabs, FB_TestRadpPvec[3];
+extern double FB_TestIaFe;
 #endif
 #ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
 /* test: raw double state of all local particles (ID,type,m,v,u) appended to <OutputDir>/wind_dep_dump.<task>.bin */
@@ -956,6 +963,14 @@ void resolvedism_inject_fb_energy(void)
     resolvedism_fb_serialized_pass(resolvedism_fb_thermal_calc, 1, 4);
     ESTEP_END(ESTEP_FB_SN_IA);
     MBARY_STEP("post_fb_thermal");
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    { /* test: iron of Ia composition delivered this step [Msun] */
+        double fe_loc = FB_TestIaFe * UNIT_MASS_IN_SOLAR, fe_glob = 0;
+        MPI_Allreduce(&fe_loc, &fe_glob, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && fe_glob > 0) {printf("IAFE t=%.17e Fe=%.17e Fe_table=%.17e\n", All.Time, fe_glob, stellar_type_ia_yield(ELEM_Fe)); fflush(stdout);}
+        FB_TestIaFe = 0;
+    }
+#endif
     ESTEP_BEGIN(ESTEP_FB_POST);
 #if defined(STELLA_FIRE_YIELD_SLOTS) && defined(STELLA_SELFCHECK)
     { /* every step: each gas cell keeps sum(C..Fe) <= Z and non-negative FIRE slots */
@@ -1354,6 +1369,14 @@ void resolvedism_inject_fb_energy(void)
     myfree(wind_log_mstar); myfree(wind_log_z); myfree(wind_log_y); myfree(wind_log_x);
 
     ESTEP_END(ESTEP_FB_POST);
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    { /* test: wind metals booked (FeedbackBudget) vs delivered by the walk this step [Msun] */
+        double loc[2] = {Z_injected[2], FB_TestWindZcoupled * UNIT_MASS_IN_SOLAR}, glob[2];
+        MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && (glob[0] > 0 || glob[1] > 0)) {printf("WINDZLEDGER t=%.17e Z_book=%.17e Z_dep=%.17e\n", All.Time, glob[0], glob[1]); fflush(stdout);}
+        FB_TestWindZcoupled = 0;
+    }
+#endif
     /* energy step trace: what each pass books it deposits (E_injected is erg, on the star's rank) */
     ESTEP_BOOK(EBK_FB_WIND, E_injected[2] / UNIT_ENERGY_IN_CGS); ESTEP_BOOK(EBK_FB_AGB, E_injected[1] / UNIT_ENERGY_IN_CGS);
     ESTEP_BOOK(EBK_FB_SN, E_injected[0] / UNIT_ENERGY_IN_CGS); ESTEP_BOOK(EBK_FB_IA, E_injected[4] / UNIT_ENERGY_IN_CGS);
@@ -1373,6 +1396,9 @@ void resolvedism_inject_fb_energy(void)
      * momentum kicks → Σ wk = 1 exactly → Σ Δp_j = p_radpressure exactly. */
     FB_ZERO_AWS();
     resolvedism_fb_momentum_calc(-2);   /* weighting pre-pass for radpressure */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    for(int ii : ActiveParticleList) {if(STELLA_OWNS_STAR(P[ii]) && All.Time < All.TestFBNoGasUntilTime) {P[ii].FB_Area_weighted_sum = 0;}} /* test: no gas in reach */
+#endif
     resolvedism_fb_momentum_calc(1);    /* radpressure injection (IR-trapping boost; DIRECT term
                                          * offloaded to the per-cell tree-flux pass below) */
     resolvedism_fb_apply_recoil();
@@ -1384,19 +1410,19 @@ void resolvedism_inject_fb_energy(void)
         if(dp_code_led > 0) {RadPressure_dp_thisStep += dp_code_led * (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);}
     }
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
-    { /* test: star-side radp booked vs delivered this step, full precision (code units) */
+    { /* test: star-side radp booked (channel 3, every star) vs delivered this step, full precision (code units) */
         double loc[6] = {0}, glob[6];
+        loc[0] = RadPressure_dp_thisStep / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
         for(int i : ActiveParticleList) {
             if(!STELLA_OWNS_STAR(P[i]) || P[i].Mass <= 0) continue;
             double aws = P[i].FB_Area_weighted_sum, m2 = 0;
             if(aws <= 0) continue;
-            loc[0] += resolvedism_radp_starside_dp_code(i);
             for(int k_ = 0; k_ < 3; k_++) {m2 += (P[i].FB_VecSum[k_] / aws) * (P[i].FB_VecSum[k_] / aws);}
             loc[5] += m2;
         }
         loc[1] = FB_TestRadpPabs; for(int k_ = 0; k_ < 3; k_++) {loc[2 + k_] = FB_TestRadpPvec[k_];}
         MPI_Allreduce(loc, glob, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        if(ThisTask == 0 && glob[0] > 0) {
+        if(ThisTask == 0 && (glob[0] > 0 || glob[1] > 0)) {
             double pv = sqrt(glob[2]*glob[2] + glob[3]*glob[3] + glob[4]*glob[4]);
             printf("RADPLEDGER t=%.17e p_book=%.17e p_abs=%.17e p_vec=%.17e m2=%.17e\n", All.Time, glob[0], glob[1], pv, glob[5]);
             fflush(stdout);

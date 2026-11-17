@@ -26,7 +26,7 @@
 #ifdef GALSF_RESOLVEDISM_FB
 
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
-double FB_TestWindPabs = 0, FB_TestWindPvec[3] = {0, 0, 0}, FB_TestWindMcoupled = 0; /* test: wind momentum/mass delivered by the walk (code units) */
+double FB_TestWindPabs = 0, FB_TestWindPvec[3] = {0, 0, 0}, FB_TestWindMcoupled = 0, FB_TestWindZcoupled = 0; /* test: wind momentum/mass delivered by the walk (code units) */
 double FB_TestRadpPabs = 0, FB_TestRadpPvec[3] = {0, 0, 0}; /* test: star-side radp momentum delivered by the walk (code units) */
 #endif
 
@@ -775,6 +775,10 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                      * on the dying star (FIRE pattern); see out2particle. */
                     out.M_coupled += dM;
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    if(loop_iteration == 0 && local.fb_channel == 2) {
+                        #pragma omp atomic
+                        FB_TestWindZcoupled += wk * yield_metals;
+                    }
                     if(loop_iteration == 0 && local.fb_channel == 2) {
                         #pragma omp atomic
                         FB_TestWindMcoupled += dM;
