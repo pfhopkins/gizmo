@@ -35,6 +35,9 @@ extern double RadPressure_dp_thisStep;
 /*  Shared helper functions                                                    */
 /* =========================================================================== */
 
+/* per-event serialization token: one star, keyed by its unique (ID, child number, generation) */
+static inline int resolvedism_fb_token_admits(int i) {return FB_SerialEventID == 0 || (P[i].ID == FB_SerialEventID && P[i].ID_child_number == FB_SerialEventChild && (long long)P[i].ID_generation == FB_SerialEventGen);}
+
 /* Get stellar mass and metallicity for the single star in particle i */
 static inline int get_star_info(int i, double *Mstar_out, double *logM_out, double *logZ_out)
 {

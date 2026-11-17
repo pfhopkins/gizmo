@@ -294,7 +294,7 @@ int resolvedismFB_thermal_active_check(int i)
     if(P[i].NumNgb <= 0) return 0;
     /* per-event serialization (see resolvedism_fb_serialized_pass in resolvedism_fb.cc):
      * when the token is set, only that single event is active in this walk */
-    if(FB_SerialEventID != 0 && P[i].ID != FB_SerialEventID) return 0;
+    if(!resolvedism_fb_token_admits(i)) return 0;
     if(STELLA_FB_EVENT(P[i]) == 1 || STELLA_FB_EVENT(P[i]) == 4) return 1;
     return 0;
 }

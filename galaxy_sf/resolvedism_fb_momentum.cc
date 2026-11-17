@@ -505,7 +505,7 @@ int resolvedismFB_momentum_active_check(int i, int loop_iteration)
          * when the token is set, only that single event is active. Radpressure pair
          * (-2,1) below is deliberately NOT gated — it stays batched (momentum-only,
          * many low-rate sources; runs with the token released). */
-        if(FB_SerialEventID != 0 && P[i].ID != FB_SerialEventID) return 0;
+        if(!resolvedism_fb_token_admits(i)) return 0;
         /* AGB (2) and wind (3) */
         if(STELLA_FB_EVENT(P[i]) == 2 || STELLA_FB_EVENT(P[i]) == 3) return 1;
     }

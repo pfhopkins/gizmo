@@ -638,6 +638,16 @@ void resolvedism_determine_SNe(void)
  * weighting pre-pass against the CURRENT neighbor masses immediately before its own
  * injection. 0 = no restriction (radpressure and any legacy batched passes). */
 MyIDType FB_SerialEventID = 0;
+MyIDType FB_SerialEventChild = 0; long long FB_SerialEventGen = 0;
+
+/* lexicographic minimum of (ID, child number, generation) keys, the unique particle identity */
+static void fb_event_key_min(void *in, void *inout, int *len, MPI_Datatype *dt)
+{
+    unsigned long long *a = (unsigned long long *)in, *b = (unsigned long long *)inout;
+    for(int n = 0; n < *len; n++, a += 3, b += 3) {
+        if(a[0] < b[0] || (a[0] == b[0] && (a[1] < b[1] || (a[1] == b[1] && a[2] < b[2])))) {b[0] = a[0]; b[1] = a[1]; b[2] = a[2];}
+    }
+}
 
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
 /* a dying star's SN deposit carries mass or energy (failed SNe and direct collapse without ejecta carry neither) */
@@ -764,16 +774,21 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
 
     while(1)
     {
-        /* pick globally-smallest unprocessed event ID (sentinel = max) */
-        unsigned long long my_min = ~0ULL, glob_min = ~0ULL; int my_idx = -1;
+        /* pick the globally smallest unprocessed event key (ID, child number, generation); sentinel = max */
+        static MPI_Datatype key_type = MPI_DATATYPE_NULL; static MPI_Op key_min_op = MPI_OP_NULL;
+        if(key_type == MPI_DATATYPE_NULL) {MPI_Type_contiguous(3, MPI_UNSIGNED_LONG_LONG, &key_type); MPI_Type_commit(&key_type); MPI_Op_create(fb_event_key_min, 1, &key_min_op);}
+        unsigned long long my_key[3] = {~0ULL, ~0ULL, ~0ULL}, glob_key[3]; int my_idx = -1;
         for(ii = 0; ii < ncand; ii++) {
             if(done[ii]) continue;
-            if((unsigned long long)P[cand[ii]].ID < my_min) {my_min = (unsigned long long)P[cand[ii]].ID; my_idx = ii;}
+            unsigned long long k_[3] = {(unsigned long long)P[cand[ii]].ID, (unsigned long long)P[cand[ii]].ID_child_number, (unsigned long long)P[cand[ii]].ID_generation};
+            int s_ = 1; fb_event_key_min(k_, my_key, &s_, &key_type);
+            if(my_key[0] == k_[0] && my_key[1] == k_[1] && my_key[2] == k_[2]) {my_idx = ii;}
         }
-        MPI_Allreduce(&my_min, &glob_min, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
-        if(glob_min == ~0ULL) break; /* no events left anywhere */
-        FB_SerialEventID = (MyIDType)glob_min;
-        int i_owner = (my_idx >= 0 && (unsigned long long)P[cand[my_idx]].ID == glob_min) ? cand[my_idx] : -1;
+        MPI_Allreduce(my_key, glob_key, 1, key_type, key_min_op, MPI_COMM_WORLD);
+        if(glob_key[0] == ~0ULL && glob_key[1] == ~0ULL && glob_key[2] == ~0ULL) break; /* no events left anywhere */
+        unsigned long long glob_min = glob_key[0];
+        FB_SerialEventID = (MyIDType)glob_key[0]; FB_SerialEventChild = (MyIDType)glob_key[1]; FB_SerialEventGen = (long long)glob_key[2];
+        int i_owner = (my_idx >= 0 && my_key[0] == glob_key[0] && my_key[1] == glob_key[1] && my_key[2] == glob_key[2]) ? cand[my_idx] : -1;
 
         /* fresh weighting for THIS event against current neighbor masses,
          * with bubble retry (kernel growth) if no gas weight was found */
@@ -870,7 +885,7 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
 #endif
         if(i_owner >= 0) {done[my_idx] = 1;} /* owner retires the event */
     }
-    FB_SerialEventID = 0; /* release: subsequent passes see all particles */
+    FB_SerialEventID = 0; FB_SerialEventChild = 0; FB_SerialEventGen = 0; /* release: subsequent passes see all particles */
     myfree(done);
     myfree(cand);
 }
