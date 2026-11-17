@@ -2894,6 +2894,16 @@ void read_parameter_file(char *fname)
 #endif
 #endif
 
+#if defined(SINK_WIND_SPAWN) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && !defined(SINGLE_STAR_FB_JETS)
+    /* single stars tie an outflow to accretion only through jets. Winds or SNe still compile in SINK_WIND_SPAWN, under which
+       a fraction f < 1 would re-eject (1-f) of every accretion as isotropic spawned cells at Sink_outflow_velocity, and cap
+       the reservoir drain at f. Without jets all accreted mass stays in the star. Set here, so restarts get it too. */
+    if(All.Sink_accreted_fraction != 1) {
+        if(ThisTask == 0) {printf("Sink_accreted_fraction = %g ignored: without SINGLE_STAR_FB_JETS all accreted mass stays in the star (using 1)\n", All.Sink_accreted_fraction);}
+        All.Sink_accreted_fraction = 1;
+    }
+#endif
+
 
 
 
