@@ -188,6 +188,7 @@ extern ALIGN(32) struct particle_data
     MyDouble FB_QnormSum;   /* Σ_j |w_j (r̂_j - m)| from the wind/AGB or radp normalisation pass */
     MyDouble FB_RecoilAccum[3]; /* momentum deposited this walk (all returns); applied once after the walk */
     char FB_Deposited;      /* this step's flagged event reached gas (set by the FB passes) */
+    MyDouble FB_DepositedP, FB_DepositedZ; /* momentum (sum |dp_j|, physical code units) and metal mass the walks delivered for this star: what the ledger books */
     short FB_NoDepositCount; /* consecutive steps an event found no gas; reset on success */
 #ifdef GALSF_RESOLVEDISM_SN_SPAWN
     /* SN ejecta-spawn prototype (2026-07-05): when the FB kernel holds less gas than

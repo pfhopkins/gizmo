@@ -914,7 +914,7 @@ void resolvedism_inject_fb_energy(void)
     #define FB_ZERO_AWS() do { for(int ii : ActiveParticleList) { if(STELLA_OWNS_STAR(P[ii])) P[ii].FB_Area_weighted_sum = 0; } } while(0)
 #endif
 
-    for(int ii : ActiveParticleList) {if(STELLA_OWNS_STAR(P[ii])) {P[ii].FB_Deposited = 0;}}
+    for(int ii : ActiveParticleList) {if(STELLA_OWNS_STAR(P[ii])) {P[ii].FB_Deposited = 0; P[ii].FB_DepositedP = P[ii].FB_DepositedZ = 0;}}
     double E_mech0 = resolvedism_mech_energy_local(), E_mech1 = E_mech0, E_mech2, E_mech3;
 #ifdef COSMIC_RAY_FLUID
     double E_cr0 = resolvedism_cr_energy_local(), E_cr3 = E_cr0; /* CR injection by winds and SNe */
@@ -1417,6 +1417,7 @@ void resolvedism_inject_fb_energy(void)
     /* Radpressure is mass-neutral, but follow same two-pass pattern for the kernel-weighted
      * momentum kicks → Σ wk = 1 exactly → Σ Δp_j = p_radpressure exactly. */
     FB_ZERO_AWS();
+    for(int ii : ActiveParticleList) {if(STELLA_OWNS_STAR(P[ii])) {P[ii].FB_DepositedP = 0;}}
     resolvedism_fb_momentum_calc(-2);   /* weighting pre-pass for radpressure */
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     for(int ii : ActiveParticleList) {if(STELLA_OWNS_STAR(P[ii]) && All.Time < All.TestFBNoGasUntilTime) {P[ii].FB_Area_weighted_sum = 0;}} /* test: no gas in reach */
@@ -1424,12 +1425,11 @@ void resolvedism_inject_fb_energy(void)
     resolvedism_fb_momentum_calc(1);    /* radpressure injection (IR-trapping boost; DIRECT term
                                          * offloaded to the per-cell tree-flux pass below) */
     resolvedism_fb_apply_recoil();
-    /* channel-3 ledger, ONCE per local star (LEDGER FIX 2026-07-28: the old
-     * accumulation inside particle2in counted once per export entry too). */
+    /* channel-3 ledger: the momentum each star's walk delivered (sum |dp_j|, all returns) */
     for(int i : ActiveParticleList) {
-        if(!STELLA_OWNS_STAR(P[i]) || P[i].Mass <= 0) continue;
-        double dp_code_led = resolvedism_radp_starside_dp_code(i);
-        if(dp_code_led > 0) {RadPressure_dp_thisStep += dp_code_led * (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);}
+        if(!STELLA_OWNS_STAR(P[i]) || P[i].FB_DepositedP <= 0) continue;
+        RadPressure_dp_thisStep += P[i].FB_DepositedP * (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
+        n_events[3] += 1;
     }
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     { /* test: star-side radp booked (channel 3, every star) vs delivered this step, full precision (code units) */
@@ -1460,19 +1460,7 @@ void resolvedism_inject_fb_energy(void)
     resolvedism_radpressure_treerad();
 #endif
 
-    /* Count radiation pressure events */
-    for(int i : ActiveParticleList) {
-        if(!STELLA_OWNS_STAR(P[i]) || P[i].Mass <= 0) continue;
-        double Mstar_rp = 0;
-#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-        if(P[i].sampled) Mstar_rp = P[i].MstarSampleIMF[0];
-#endif
-#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
-        Mstar_rp = P[i].Mstar;
-#endif
-        if(Mstar_rp >= 2.0) n_events[3] += 1;
-    }
-    dp_injected[3] = RadPressure_dp_thisStep; /* exact dp from particle2in */
+    dp_injected[3] = RadPressure_dp_thisStep; /* delivered: star-side walk plus the per-cell term */
     E_coupled[3] = resolvedism_mech_energy_local() - E_mech3;
 #else
     E_mech3 = resolvedism_mech_energy_local();

@@ -437,6 +437,7 @@ struct OUTPUT_STRUCT_NAME
      * and total mass deposited (for star mass reduction). */
     MyFloat MomentumInjected[3];
     MyFloat M_coupled;
+    MyDouble P_dep, Z_dep; /* delivered sum |dp_j| and metal mass */
     /* Weighting-pass accumulator: Σ_j (Mass_j × kernel.wk) over neighbors walked. */
     MyDouble FB_Area_weighted_sum_accum;
     MyDouble FB_VecSum_accum[3];
@@ -470,6 +471,8 @@ void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, 
 #ifdef METALS
         double m_before = P[i].Mass;
 #endif
+        P[i].FB_DepositedP += out->P_dep;
+        P[i].FB_DepositedZ += out->Z_dep;
         P[i].Mass -= out->M_coupled;
         if((P[i].Mass < 0) || (isnan(P[i].Mass))) P[i].Mass = 0;
 #ifdef METALS
@@ -774,6 +777,9 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     /* Accumulate actual deposition for measured-coupling reduction
                      * on the dying star (FIRE pattern); see out2particle. */
                     out.M_coupled += dM;
+#ifdef METALS
+                    out.Z_dep += wk * yield_metals;
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     if(loop_iteration == 0 && local.fb_channel == 2) {
                         #pragma omp atomic
@@ -822,6 +828,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     CellP[j].InternalEnergy += du_full;
                     #pragma omp atomic
                     CellP[j].InternalEnergyPred += du_full;
+                    out.P_dep += wk * local.WindMomentum; /* momentum equivalent of the heat */
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                     wakeup_list_note(j);
@@ -847,6 +854,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         out.MomentumInjected[k] += dp_k;
                         dv_mag2 += dv_k * dv_k;
                     }
+                    out.P_dep += dp_share * sqrt(dir_[0]*dir_[0] + dir_[1]*dir_[1] + dir_[2]*dir_[2]);
                     force_note_motion_change(j);
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     if(loop_iteration == 0 && local.fb_channel == 2) {

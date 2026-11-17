@@ -226,6 +226,7 @@ struct OUTPUT_STRUCT_NAME
     /* Mass actually deposited to gas neighbors during the injection walk.
      * out2particle subtracts this from the star → bit-exact mass conservation. */
     MyFloat M_coupled;
+    MyDouble Z_dep; /* delivered metal mass */
     /* Weighting-pass accumulator: out.FB_Area_weighted_sum_accum = Σ_j (Mass_j × kernel.wk)
      * over neighbors walked on this rank/iteration.  Out2particle sums these across all
      * mode=0/mode=1 calls into P[i].FB_Area_weighted_sum for the next (injection) pass. */
@@ -264,6 +265,7 @@ void out2particle_resolvedismFB_thermal(struct OUTPUT_STRUCT_NAME *out, int i, i
 #ifdef METALS
         double m_before = P[i].Mass;
 #endif
+        P[i].FB_DepositedZ += out->Z_dep;
         P[i].Mass -= out->M_coupled;
         if((P[i].Mass < 0) || (isnan(P[i].Mass))) P[i].Mass = 0;
 #ifdef METALS
@@ -607,6 +609,9 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     /* Accumulate actual deposition for measured-coupling reduction
                      * on the dying star (FIRE pattern); see out2particle. */
                     out.M_coupled += dM;
+#ifdef METALS
+                    out.Z_dep += wk * yield_metals;
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     out.SumWK += wk; out.Nrecv++;
 #endif
