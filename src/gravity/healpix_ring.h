@@ -61,21 +61,23 @@ KOKKOS_INLINE_FUNCTION int treecol_hpx_ring_pix_checked(int nside, double z, dou
     return (int)((z > 0) ? 2 * ir * (ir - 1) + ip : 12 * nside * nside - 2 * ir * (ir + 1) + ip);
 }
 
-/* unit vector of HEALPix RING pixel ip, NSIDE 1 (pix2vec_ring) */
+/* unit vector of the centre of RING pixel ip at nside (pix2ang_ring; Gorski+05 eqs. 4-9) */
 KOKKOS_INLINE_FUNCTION void treecol_hpx_pixel_centre(int nside, int ip, double *n)
 {
-    (void) nside;
-    const double q = 0.7453559924999299; /* sqrt(1 - (2/3)^2) / 1 */
-    const double c = 0.7071067811865476; /* cos(pi/4) */
-    n[0] = n[1] = n[2] = 0;
-    if(ip < 4 || ip >= 8)
-    {
-        const int k = (ip < 4) ? ip : ip - 8; /* phi = pi/4 + k pi/2 */
-        n[0] = q * ((k == 0 || k == 3) ? c : -c); n[1] = q * ((k < 2) ? c : -c); n[2] = (ip < 4) ? 2.0 / 3.0 : -2.0 / 3.0;
-        return;
+    const long ns = nside, npix = 12 * ns * ns, ncap = 2 * ns * (ns - 1);
+    long iring, iphi; double z, phi;
+    if(ip < ncap) { /* north polar cap: ring iring holds 4 iring pixels */
+        iring = (long)((1 + sqrt(1.0 + 2.0 * ip)) / 2); while(2 * iring * (iring - 1) > ip) {iring--;} while(2 * (iring + 1) * iring <= ip) {iring++;}
+        iphi = ip + 1 - 2 * iring * (iring - 1); z = 1.0 - (double)(iring * iring) / (3.0 * ns * ns); phi = (iphi - 0.5) * M_PI / (2.0 * iring);
+    } else if(ip < npix - ncap) { /* equatorial belt: 4 nside pixels per ring, every other ring shifted by half a pixel */
+        const long ip2 = ip - ncap; iring = ip2 / (4 * ns) + ns; iphi = ip2 % (4 * ns) + 1;
+        z = (2.0 * ns - iring) * 2.0 / (3.0 * ns); phi = (iphi - (((iring + ns) % 2) ? 1.0 : 0.5)) * M_PI / (2.0 * ns);
+    } else { /* south polar cap, counted from the pole */
+        const long ip2 = npix - ip; iring = (long)((1 + sqrt(2.0 * ip2 - 1.0)) / 2); while(2 * iring * (iring - 1) >= ip2) {iring--;} while(2 * (iring + 1) * iring < ip2) {iring++;}
+        iphi = 4 * iring + 1 - (ip2 - 2 * iring * (iring - 1)); z = -1.0 + (double)(iring * iring) / (3.0 * ns * ns); phi = (iphi - 0.5) * M_PI / (2.0 * iring);
     }
-    const int k = ip - 4; /* phi = k pi/2 */
-    n[0] = (k == 0) ? 1.0 : ((k == 2) ? -1.0 : 0.0); n[1] = (k == 1) ? 1.0 : ((k == 3) ? -1.0 : 0.0);
+    const double st = sqrt((1.0 - z) * (1.0 + z));
+    n[0] = st * cos(phi); n[1] = st * sin(phi); n[2] = z;
 }
 
 #endif
