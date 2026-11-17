@@ -231,9 +231,10 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     struct ChemOutputs out;
     double rho = CellP[i].Density * All.cf_a3inv, divv = 0;
     for(int k = 0; k < 3; k++) {divv += CellP[i].Gradients.Velocity[k][k];}
-    divv *= All.cf_a2inv;
+    const double hf = All.ComovingIntegrationOn ? All.cf_hubble_a : 0; /* Hubble flow per axis */
+    divv = divv * All.cf_a2inv + 3 * hf;
 #if CHEMISTRYNETWORK == 20
-    {double g = 0; for(int k = 0; k < 3; k++) {g += fabs(CellP[i].Gradients.Velocity[k][k] * All.cf_a2inv);} in.dvdr_cgs = g / 3.0 * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;}
+    {double g = 0; for(int k = 0; k < 3; k++) {g += fabs(CellP[i].Gradients.Velocity[k][k] * All.cf_a2inv + hf);} in.dvdr_cgs = g / 3.0 * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;}
 #endif
     sgchem_gas_abundances(i, &in);
     in.abundD = All.SGChemDeuteriumAbundance;
