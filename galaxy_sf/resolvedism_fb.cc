@@ -799,6 +799,9 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
         for(try_num = 0; try_num < 4; try_num++) {
             for(int ii : ActiveParticleList) {
                 if(STELLA_OWNS_STAR(P[ii])) {P[ii].FB_Area_weighted_sum = 0;
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+                    P[ii].FB_KernelMass = 0;
+#endif
 #ifdef GALSF_RESOLVEDISM_SN_SPAWN
                     P[ii].FB_KernelGasMass = 0;
 #endif
@@ -1156,16 +1159,15 @@ void resolvedism_inject_fb_energy(void)
             /* Use pre-walk snapshot — P[i].Mass has already been drained by thermal walk */
             double M_WD = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger
                                                      : P[i].Mass * UNIT_MASS_IN_SOLAR;
-            double yield_rescale = M_WD / stellar_type_ia_yield_total();
             n_events[4] += 1;
             M_injected[4] += M_WD;     /* actual injected mass (= WD mass) */
             M_removed[4] += M_WD;      /* particle mass removed */
             E_injected[4] += IA_ENERGY_ERG;
-            double Z_ia = 0;
-            for(int kk = ELEM_C; kk < STBL_NELEM; kk++) Z_ia += stellar_type_ia_yield(kk) * yield_rescale;
+            double Z_ia = 0; /* the table's Ia metals: the deposit delivers the full M_Ch of Ia matter */
+            for(int kk = ELEM_C; kk < STBL_NELEM; kk++) Z_ia += stellar_type_ia_yield(kk);
             Z_injected[4] += P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR; /* metals the walk delivered */
-            {double yia[6] = {M_WD, Z_ia, stellar_type_ia_yield(ELEM_C) * yield_rescale, stellar_type_ia_yield(ELEM_O) * yield_rescale,
-                              stellar_type_ia_yield(ELEM_Si) * yield_rescale, stellar_type_ia_yield(ELEM_Fe) * yield_rescale};
+            {double yia[6] = {M_WD, Z_ia, stellar_type_ia_yield(ELEM_C), stellar_type_ia_yield(ELEM_O),
+                              stellar_type_ia_yield(ELEM_Si), stellar_type_ia_yield(ELEM_Fe)};
              fb_death_row_push(i, 0, 7, FB_LOG_EXPLODED, IA_ENERGY_ERG, yia, resolvedism_star_age_yr(i), 0.0);}
             printf("RESOLVEDISM TYPE_IA: Task=%d ID=%llu M_WD=%.3f E=%.2e[erg]\n",
                 ThisTask, (unsigned long long)P[i].ID, M_WD, IA_ENERGY_ERG);

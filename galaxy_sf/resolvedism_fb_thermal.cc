@@ -42,6 +42,9 @@ struct INPUT_STRUCT_NAME
     MyDouble FB_Area_weighted_sum_in;
     MyDouble MetalMass;
     int fb_channel; /* 0=SN, 3=Ia */
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+    MyDouble IaConvertFrac; /* Ia: fraction of each receiver's gas that becomes Ia ejecta (the companion's share of M_Ch) */
+#endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     MyDouble ElemYields[NUM_RESOLVEDISM_ELEMENTS];
 #endif
@@ -67,6 +70,9 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k]; in->StarVel[k]=P[i].Vel[k];}
     in->KernelRadius = P[i].KernelRadius;
     in->Esne = 0; in->Mej = 0; in->MetalMass = 0;
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+    in->IaConvertFrac = 0;
+#endif
     /* Load measured AWS from prior weighting pass (or 0 if this is the weighting pass). */
     in->FB_Area_weighted_sum_in = (loop_iteration >= 0) ? (MyDouble)P[i].FB_Area_weighted_sum : 0;
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
@@ -91,12 +97,9 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
     if(STELLA_FB_EVENT(P[i]) == 4) {
         in->Esne = IA_ENERGY_ERG / UNIT_ENERGY_IN_CGS;
-        /* Eject the entire WD progenitor mass.  In our single-star sampling the
-         * WD's P[i].Mass evolved through prior wind/AGB phases and may not equal
-         * the canonical Chandrasekhar mass (1.378 Msun); injecting the actual
-         * particle mass guarantees the star is fully disrupted to 0 and no excess
-         * mass is created.  Yields are rescaled by the actual-to-Chandrasekhar
-         * ratio so Σ yields = actual ejecta mass (preserves Fe-peak composition). */
+        /* The explosion is the table's M_Ch of Ia matter (0.744 Msun Fe): the WD particle (M_WD, moved to the gas with Ia
+         * composition) plus M_Ch - M_WD of the receivers' own gas turned into Ia composition in place (the companion's share;
+         * mass, momentum and energy of each cell unchanged by it). */
         /* same export-repack freeze as the SN path (2026-07-05) */
         double MIa_solar = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger
                                                       : P[i].Mass * UNIT_MASS_IN_SOLAR;
@@ -118,6 +121,11 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
             if(k >= ELEM_C) metal_mass_solar += y_k;
         }
         in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
+        {
+            double dM_conv = DMAX(stellar_type_ia_yield_total() - MIa_solar, 0) / UNIT_MASS_IN_SOLAR;
+            if(dM_conv > 0 && P[i].FB_KernelMass > 0) {in->IaConvertFrac = DMIN(dM_conv / P[i].FB_KernelMass, 1.0);}
+            if(loop_iteration >= 0 && dM_conv > P[i].FB_KernelMass) {printf("RESOLVEDISM TYPE_IA: ID=%llu kernel gas %g Msun < companion share %g Msun: all of it converted\n", (unsigned long long)P[i].ID, P[i].FB_KernelMass * UNIT_MASS_IN_SOLAR, dM_conv * UNIT_MASS_IN_SOLAR);}
+        }
 #ifdef STELLA_FIRE_YIELD_SLOTS
         in->MetalMass = stella_pack_fire_yields(y_fire, in->FireYields, P[i].ID); /* Z deposit = sum of the packed table metals */
 #ifdef STELLA_SELFCHECK
@@ -227,6 +235,9 @@ struct OUTPUT_STRUCT_NAME
      * out2particle subtracts this from the star → bit-exact mass conservation. */
     MyFloat M_coupled;
     MyDouble Z_dep; /* delivered metal mass */
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+    MyDouble KernelMass; /* weighting pass: gas mass in the kernel */
+#endif
     /* Weighting-pass accumulator: out.FB_Area_weighted_sum_accum = Σ_j (Mass_j × kernel.wk)
      * over neighbors walked on this rank/iteration.  Out2particle sums these across all
      * mode=0/mode=1 calls into P[i].FB_Area_weighted_sum for the next (injection) pass. */
@@ -250,6 +261,9 @@ void out2particle_resolvedismFB_thermal(struct OUTPUT_STRUCT_NAME *out, int i, i
          * mode=0 (local walk) AND mode=1 (per-remote-rank import return) — both
          * contributions sum into P[i].FB_Area_weighted_sum for the upcoming injection. */
         P[i].FB_Area_weighted_sum += out->FB_Area_weighted_sum_accum;
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+        P[i].FB_KernelMass += out->KernelMass;
+#endif
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
         {int hp_; for(hp_=0;hp_<12;hp_++) {P[i].FB_HpxCount[hp_] += out->HpxCount[hp_];}}
 #endif
@@ -352,6 +366,9 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                  * uses that measured sum as denominator → Σ wk_j = 1 by construction. */
                 if(loop_iteration < 0) {
                     out.FB_Area_weighted_sum_accum += Mass_j * kernel.wk;
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+                    out.KernelMass += Mass_j;
+#endif
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
                 {double v_hp[3]; long ip_hp; v_hp[0]=-kernel.dp[0]; v_hp[1]=-kernel.dp[1]; v_hp[2]=-kernel.dp[2];
                  vec2pix_ring(1, v_hp, &ip_hp); out.HpxCount[(int)ip_hp] += 1;}
@@ -446,6 +463,10 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                 /* ---- Mass + metals injection ---- */
                 if(local.Mej > 0) {
                     double dM = wk * local.Mej;
+                    double c_ia = 0; /* Ia: this cell's gas turned into Ia composition (no mass moves) */
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+                    c_ia = local.IaConvertFrac * Mass_j;
+#endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
                     /* SINGLE SOURCE OF TRUTH for total-Z: the summed METAL part of the
                      * SAME ElemYields[] the per-element blend consumes below.  Using the
@@ -464,7 +485,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         double Z_old, M_old = Mass_j;
                         #pragma omp atomic read
                         Z_old = P[j].Metallicity[0];   /* total Z in FIRE-pattern layout */
-                        double dMZ = wk * yield_metals;
+                        double dMZ = wk * yield_metals + c_ia * (yield_metals / local.Mej - Z_old);
                         double dZ = (dMZ - Z_old * dM) / (M_old + dM);
                         #pragma omp atomic
                         P[j].Metallicity[0] += dZ;
@@ -482,8 +503,8 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                             double F_old;
                             #pragma omp atomic read
                             F_old = CellP[j].MetalMassFrom[c];
-                            double dMZ_c = (c == ch) ? wk * yield_metals : 0;
-                            double dF = (dMZ_c - F_old * dM) / Mnew_j;
+                            double dMZ_c = (c == ch) ? (wk + c_ia / local.Mej) * yield_metals : 0;
+                            double dF = (dMZ_c - F_old * (dM + c_ia)) / Mnew_j;
                             #pragma omp atomic
                             CellP[j].MetalMassFrom[c] += dF;
                         }
@@ -510,7 +531,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     if(local.fb_channel == 3) {
                         #pragma omp atomic
-                        FB_TestIaFe += wk * local.ElemYields[ELEM_Fe];
+                        FB_TestIaFe += (wk + c_ia / local.Mej) * local.ElemYields[ELEM_Fe];
                     }
 #endif
                     for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
@@ -518,7 +539,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         double X_old;
                         #pragma omp atomic read
                         X_old = P[j].Metallicity[m];
-                        double dMX = wk * local.ElemYields[k];
+                        double dMX = wk * local.ElemYields[k] + c_ia * (local.ElemYields[k] / local.Mej - X_old);
                         double dX = (dMX - X_old * dM) / (Mass_j + dM);
                         #pragma omp atomic
                         P[j].Metallicity[m] += dX;
@@ -610,7 +631,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                      * on the dying star (FIRE pattern); see out2particle. */
                     out.M_coupled += dM;
 #ifdef METALS
-                    out.Z_dep += wk * yield_metals;
+                    out.Z_dep += (wk + c_ia / local.Mej) * yield_metals; /* metals of Ia/SN composition delivered */
 #endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     out.SumWK += wk; out.Nrecv++;
@@ -658,6 +679,9 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         D_old = CellP[j].Dust[k];
                         double dMD = wk * local.DustYields[k];
                         double dD = (dMD - D_old * dM) / Mnew_j;
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+                        dD -= D_old * local.IaConvertFrac * Mass_j / Mnew_j; /* converted gas keeps no dust */
+#endif
                         #pragma omp atomic
                         CellP[j].Dust[k] += dD;
                     }
