@@ -371,7 +371,7 @@ void resolvedism_determine_SNe(void)
             { /* what fb_thermal injects (stellar_death_ejecta of the pre-walk mass) */
                 double m_log[STBL_NELEM];
                 double rem_log = stellar_death_ejecta(logM, logZ, P[i].M_at_SN_trigger, m_log);
-                mej_log = DMAX(P[i].M_at_SN_trigger - rem_log, 0);
+                for(int kk = 0; kk < STBL_NELEM; kk++) {mej_log += m_log[kk];} /* = M - rem_log */
                 for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {zej_log += m_log[kk];}
                 yC_log = m_log[ELEM_C]; yO_log = m_log[ELEM_O]; ySi_log = m_log[ELEM_Si]; yFe_log = m_log[ELEM_Fe];
             }
@@ -638,6 +638,20 @@ void resolvedism_determine_SNe(void)
  * weighting pre-pass against the CURRENT neighbor masses immediately before its own
  * injection. 0 = no restriction (radpressure and any legacy batched passes). */
 MyIDType FB_SerialEventID = 0;
+
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+/* a dying star's SN deposit carries mass or energy (failed SNe and direct collapse without ejecta carry neither) */
+static int resolvedism_death_has_payload(int i)
+{
+    double Ms, lM, lZ, m[STBL_NELEM], s = 0;
+    if(!get_star_info(i, &Ms, &lM, &lZ)) {return 1;}
+    int rt = stellar_remnant_type(lM, lZ);
+    if(rt != REM_FSN && rt != REM_DBH) {return 1;}
+    stellar_death_ejecta(lM, lZ, (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger : P[i].Mass * UNIT_MASS_IN_SOLAR, m);
+    for(int k = 0; k < STBL_NELEM; k++) {s += m[k];}
+    return s > 0;
+}
+#endif
 #ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
 int FB_WindBatchOnly = 0;   /* 1 = momentum walk admits ONLY flag-3 (wind) stars, batch mode */
 #endif
@@ -801,7 +815,7 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
                 double m_k_sp[STBL_NELEM];
                 double rem_sp = stellar_death_ejecta(logM_sp, logZ_sp, Mpre_sp, m_k_sp);
                 if(rt_sp != REM_FSN && rt_sp != REM_DBH) {   /* explosive only (Esne>0) */
-                    double Mej_sp = DMAX(Mpre_sp - rem_sp, 0.0);
+                    double Mej_sp = 0; for(int ksp = 0; ksp < STBL_NELEM; ksp++) {Mej_sp += m_k_sp[ksp];}
                     double f_thresh = (double)(GALSF_RESOLVEDISM_SN_SPAWN);
                     if(P[i_owner].FB_KernelGasMass*UNIT_MASS_IN_SOLAR < f_thresh*Mej_sp && Mej_sp > 0) {
                         /* payload: the same death ejecta as fb_thermal */
@@ -1021,15 +1035,7 @@ void resolvedism_inject_fb_energy(void)
         if(STELLA_OWNS_STAR(P[i]) && STELLA_FB_EVENT(P[i]) >= 1 && STELLA_FB_EVENT(P[i]) <= 4) {
             int has_payload = 1; /* silent collapse with no ejecta has nothing to deposit */
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
-            if(STELLA_FB_EVENT(P[i]) == 1) {
-                double Ms_, lM_, lZ_;
-                if(get_star_info(i, &Ms_, &lM_, &lZ_)) {
-                    int rt_ = stellar_remnant_type(lM_, lZ_);
-                    double rm_ = (rt_ == REM_PISN) ? 0 : stellar_remnant_mass(lM_, lZ_);
-                    double Mpre_ = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger : P[i].Mass * UNIT_MASS_IN_SOLAR;
-                    if((rt_ == REM_FSN || rt_ == REM_DBH) && Mpre_ - rm_ <= 0) has_payload = 0;
-                }
-            }
+            if(STELLA_FB_EVENT(P[i]) == 1) {has_payload = resolvedism_death_has_payload(i);}
 #endif
             if(has_payload && !P[i].FB_Deposited) {
                 /* no gas reached: book nothing, keep the star's mass, retry next step */
@@ -1056,11 +1062,11 @@ void resolvedism_inject_fb_energy(void)
                 n_selfcheck_book++;
             }
             if(STELLA_FB_EVENT(P[i]) != 3 && P[i].M_at_SN_trigger > 0) { /* a booked event with ejecta must have left the star */
-                double Ms_, lM_, lZ_, rm_ = 0;
+                double Ms_, lM_, lZ_, ej_ = P[i].M_at_SN_trigger, m_[STBL_NELEM];
                 if(STELLA_FB_EVENT(P[i]) != 4 && get_star_info(i, &Ms_, &lM_, &lZ_)) {
-                    rm_ = (stellar_remnant_type(lM_, lZ_) == REM_PISN) ? 0 : stellar_remnant_mass(lM_, lZ_);}
+                    ej_ = P[i].M_at_SN_trigger - stellar_death_ejecta(lM_, lZ_, P[i].M_at_SN_trigger, m_);}
                 double Mtrig_ = P[i].M_at_SN_trigger, Mnow_ = P[i].Mass * UNIT_MASS_IN_SOLAR;
-                if(Mtrig_ - rm_ > 1.0e-6) {
+                if(ej_ > 1.0e-6) {
                     STELLA_CHECK("fb_booked_deposited", Mnow_ < Mtrig_ * (1 - 1.0e-6), "flag=%d ID=%llu M_trigger=%g M_now=%g",
                                  (int)STELLA_FB_EVENT(P[i]), (unsigned long long)P[i].ID, Mtrig_, Mnow_);
                     n_selfcheck_book++;
@@ -1200,7 +1206,8 @@ void resolvedism_inject_fb_energy(void)
             int rem_type = stellar_remnant_type(logM, logZ);
             double m_led[STBL_NELEM]; /* the deposit's element ejecta (stellar_death_ejecta of the pre-walk mass) */
             double rem_mass = stellar_death_ejecta(logM, logZ, M_star_old, m_led);
-            double Mej_solar = DMAX(M_star_old - rem_mass, 0), Z_ej = 0;
+            double Mej_solar = 0, Z_ej = 0;
+            for(int kk = 0; kk < STBL_NELEM; kk++) {Mej_solar += m_led[kk];}
             for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {Z_ej += m_led[kk];}
             if(channel == 0 && (rem_type == REM_FSN || rem_type == REM_DBH)) {channel = 5;} /* failed SN: recorded, zero energy */
             double Esne_erg = resolvedism_sn_energy_erg(rem_type == REM_PISN, rem_type != REM_FSN && rem_type != REM_DBH, Mstar);

@@ -166,7 +166,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
                                                     : P[i].Mass * UNIT_MASS_IN_SOLAR;
     double m_k_table[STBL_NELEM]; /* element ejecta of this star at death (stellar_death_ejecta; lifetime winds included without WINDS) */
     double rem_mass = stellar_death_ejecta(logM, logZ, M_pre_solar, m_k_table);
-    double Mej_actual = DMAX(M_pre_solar - rem_mass, 0);
+    double Mej_actual = 0; for(k = 0; k < STBL_NELEM; k++) {Mej_actual += m_k_table[k];} /* = M_pre - rem */
 
     double metal_mass_solar = 0;
 #ifdef STELLA_FIRE_YIELD_SLOTS

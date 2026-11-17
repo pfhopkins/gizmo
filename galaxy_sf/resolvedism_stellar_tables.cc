@@ -13,6 +13,7 @@
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
 
 struct StellarTables StellarTbl;
+static void stbl_build_death_fractions(void);
 
 /* ========================================================================
  *  Index computation: binary search for non-uniform grids (M, Z),
@@ -430,6 +431,7 @@ void resolvedism_load_stellar_tables(void)
     StellarTbl.dlog_age    = 0;  /* non-uniform grid — binary search used, dlog_age unused */
 
     StellarTbl.loaded = 1;
+    stbl_build_death_fractions();
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
     stellar_ia_fdead_init();
 #endif
@@ -952,27 +954,43 @@ double stellar_M_preSN(double logM, double logZ)
     return interp2d_rt_aware(StellarTbl.M_preSN, logM, logZ);
 }
 
-/* Death ejecta (SN, or AGB for WD remnants) of a star holding M_death [Msun] at death: table composition rescaled to M_death - rem. */
+/* Death ejecta as fractions of the mass at death: e_k = ej_k / (rem + sum ej) per grid star (AGB table for WD remnants; PISN
+ * rem = 0; without WINDS the lifetime winds are part of ej). Interpolated like the other remnant-type quantities, so
+ * m_k = e_k M_death and rem = M_death - sum m_k add up to the star's mass at any (M, Z); zero-ejecta collapses eject 0. */
+static double DeathEjFrac[STBL_NZ * STBL_NM * STBL_NELEM];
+
+static void stbl_build_death_fractions(void)
+{
+    for(int iz = 0; iz < STBL_NZ; iz++) {
+        for(int im = 0; im < STBL_NM; im++) {
+            int rt = StellarTbl.remnant_type[IDX2(iz, im)];
+            const double *ej = (rt == REM_WD) ? StellarTbl.elem_ej_AGB_mass : StellarTbl.elem_ej_SN_mass;
+#ifndef GALSF_RESOLVEDISM_WINDS
+            double log_end = log10(DMAX(StellarTbl.lifetime_yr[IDX2(iz, im)], 100.0));
+#endif
+            double e[STBL_NELEM], sum = 0;
+            for(int k = 0; k < STBL_NELEM; k++) {
+                e[k] = DMAX(ej[IDX2(iz, im) * STBL_NELEM + k], 0);
+#ifndef GALSF_RESOLVEDISM_WINDS
+                e[k] += stellar_elem_ej_wind_cumulative(StellarTbl.log_M[im], StellarTbl.log_Z[iz], log_end, k);
+#endif
+                sum += e[k];
+            }
+            double D = sum + ((rt == REM_PISN) ? 0 : DMAX(StellarTbl.remnant_mass[IDX2(iz, im)], 0));
+            for(int k = 0; k < STBL_NELEM; k++) {DeathEjFrac[IDX2(iz, im) * STBL_NELEM + k] = (D > 0) ? e[k] / D : 0;}
+        }
+    }
+}
+
+/* Element ejecta m_k [Msun] of a star holding M_death [Msun] at death; returns the remnant mass, M_death - sum m_k. */
 double stellar_death_ejecta(double logM, double logZ, double M_death, double *m_k)
 {
+    double sum = 0, Mej = 0;
+    for(int k = 0; k < STBL_NELEM; k++) {m_k[k] = DMAX(interp2d_elem_rt_aware(DeathEjFrac, logM, logZ, k), 0); sum += m_k[k];}
     int rt = stellar_remnant_type(logM, logZ);
-    double rem = (rt == REM_PISN) ? 0 : stellar_remnant_mass(logM, logZ), m_tab = 0;
-#ifndef GALSF_RESOLVEDISM_WINDS
-    double log_age_end = log10(DMAX(stellar_lifetime(logM, logZ), 100.0));
-#endif
-    for(int k = 0; k < STBL_NELEM; k++) {
-        if(rt == REM_WD) {m_k[k] = stellar_elem_ej_AGB(logM, logZ, k);}
-        else {
-            m_k[k] = stellar_elem_ej_SN(logM, logZ, k);
-#ifndef GALSF_RESOLVEDISM_WINDS
-            m_k[k] += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end, k);
-#endif
-        }
-        m_tab += m_k[k];
-    }
-    double Mej = DMAX(M_death - rem, 0), scale = (m_tab > 0) ? Mej / m_tab : 0;
-    for(int k = 0; k < STBL_NELEM; k++) {m_k[k] *= scale;}
-    return rem;
+    double norm = (rt == REM_PISN || sum > 1) ? ((sum > 0) ? 1 / sum : 0) : 1; /* PISN: complete disruption */
+    for(int k = 0; k < STBL_NELEM; k++) {m_k[k] *= norm * DMAX(M_death, 0); Mej += m_k[k];}
+    return (rt == REM_PISN) ? 0 : DMAX(M_death, 0) - Mej;
 }
 
 /* --- PMS duration / feedback delay (2D bilinear) --- */

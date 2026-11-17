@@ -376,7 +376,7 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
                                                          : P[i].Mass * UNIT_MASS_IN_SOLAR;
     double m_k_ej[STBL_NELEM]; /* AGB element ejecta of this star (stellar_death_ejecta) */
     double rem_mass = stellar_death_ejecta(logM, logZ, M_particle_solar, m_k_ej);
-    double Mej_solar = DMAX(M_particle_solar - rem_mass, 0);
+    double Mej_solar = 0; for(k = 0; k < STBL_NELEM; k++) {Mej_solar += m_k_ej[k];} /* = M_particle - rem */
     in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;
 
     /* AGB momentum: planetary nebula ejection at 30 km/s */
