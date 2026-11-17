@@ -53,6 +53,13 @@ void compute_grav_accelerations(void)
 #if defined(KETJU_REGULARIZATION) && defined(KETJU_TYPE4_STARS)
   ketju_snapshot_tree_softening(); /* softening/zeta this gravity call used, for the KETJU pair subtraction */
 #endif
+#ifdef TEST_KETJU_HALVE_STAR1_MASS_AFTER_GRAVITY /* test: feedback-like mass loss of star ID 1 right after the first gravity call at t >= the flag value */
+  {static int done = 0; int any = 0;
+   if(!done && All.Time >= (TEST_KETJU_HALVE_STAR1_MASS_AFTER_GRAVITY)) {
+       for(int i : ActiveParticleList) {if(P[i].ID == 1) {P[i].Mass *= 0.5; any = 1;}}
+       MPI_Allreduce(MPI_IN_PLACE, &any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+       if(any) {done = 1; if(ThisTask == 0) {char f[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(f, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%stest_mass_loss.txt", All.OutputDir); FILE *fd = fopen(f, "w"); if(fd) {fprintf(fd, "%.17g\n", All.Time); fclose(fd);}}}}}
+#endif
 
   PRINT_STATUS(" ..gravity force computation done");
 }
