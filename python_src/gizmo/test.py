@@ -494,6 +494,8 @@ def write_params_with_overrides(paramsfile: str, overrides: dict) -> str:
                 lines.append(f"{key[0]}    {remaining.pop(key[0])}\n")
             else:
                 lines.append(line)
+    if lines and not lines[-1].endswith("\n"):  # else the first appended override joins the file's last line
+        lines[-1] += "\n"
     lines += [f"{k}    {v}\n" for k, v in remaining.items()]
     with open(out, "w") as f:
         f.write(f"% generated from {paramsfile}; overrides: {overrides}\n")
