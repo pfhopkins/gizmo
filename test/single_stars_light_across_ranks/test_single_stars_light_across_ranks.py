@@ -43,6 +43,23 @@ def built():
     return t
 
 
+def faint_star(tab):
+    """(mass, age) of a star whose 6-13.6 eV luminosity changes most over the run (at least 4 %), staying below 0.1 of the
+    bright star's, so its change stays under 1 % of the root's"""
+    lZ = np.log10(Z)
+    L_b = sum(tab.bands(M_STAR, Z, tab._i2(tab.t_pms, np.log10(M_STAR), lZ) + 0.3 * tab._i2(tab.life, np.log10(M_STAR), lZ))[[0, 2]])
+    best = (0.0, None)
+    for M in (8.0, 9.0, 10.0, 12.0, 15.0, 20.0):
+        t_pms, life = tab._i2(tab.t_pms, np.log10(M), lZ), tab._i2(tab.life, np.log10(M), lZ)
+        for x in np.concatenate((np.geomspace(100.0, 0.99 * life, 300), life - np.geomspace(3.0e3, 0.01 * life, 100))):
+            a, b = sum(tab.bands(M, Z, t_pms + x)[[0, 2]]), sum(tab.bands(M, Z, t_pms + x + 2000.0)[[0, 2]])
+            if a > 0 and b > 0 and max(a, b) < 0.1 * L_b and abs(b - a) < 0.005 * L_b and abs(b / a - 1) > best[0]:
+                best = (abs(b / a - 1), (M, t_pms + x))
+    print(f"faint star: M {best[1][0]} Msun, age {best[1][1]:.6g} yr, 6-13.6 eV change over the run {best[0]:.3f}")
+    assert best[0] > 0.04
+    return best[1]
+
+
 def run(tables, case, ranks):
     key = (case, ranks)
     if key in RES:
@@ -55,6 +72,10 @@ def run(tables, case, ranks):
     assert t_pms > T_EVENT
     if case == "switch":
         stars = [(M_STAR, t_pms - T_EVENT, np.full(3, 0.3 * L)), (M_STAR, t_pms + life - T_EVENT, np.full(3, 0.7 * L))]
+    elif case.startswith("faint"):
+        M_f, age_f = faint_star(tab)  # a group of 8 faint stars, seen through its tree node from a few cells away
+        stars = [(M_STAR, t_pms + 0.3 * life, np.full(3, 0.15 * L))] + [(M_f, age_f, np.full(3, 0.85 * L) + 0.25 * dx * np.array(o))
+                                                                      for o in np.array(np.meshgrid([-1, 1], [-1, 1], [-1, 1])).reshape(3, -1).T]
     else:
         stars = [(M_STAR, t_pms + 0.3 * life, np.full(3, 0.3 * L))]
     d = HERE / f"run_{case}_r{ranks}"
@@ -70,7 +91,7 @@ def run(tables, case, ranks):
     p = p.replace("StellarTablesFile           SET_BY_TEST", f"StellarTablesFile           {T}")
     p = p.replace("SGChemTablesPath            SET_BY_TEST", f"SGChemTablesPath            {os.environ.get('SGCHEM_TABLES_DIR', os.path.dirname(T))}")
     over = {"BoxSize": L, "TimeMax": 2e-3, "TimeBetSnapshot": 2e-3, "MaxSizeTimestep": 1e-4, "DesNumNgb": 32,
-            "DomainBuild_ActiveFraction": 1e4, "TreeRebuild_ActiveFraction": 1e4}
+            "DomainBuild_ActiveFraction": 1e4, "TreeRebuild_ActiveFraction": 0 if case == "faint_ref" else 1e4}
     p = "\n".join([l for l in p.splitlines() if not (l.split() and l.split()[0] in over)] + [f"{k:27s} {v}" for k, v in over.items()]) + "\n"
     (d / f"{NAME}.params").write_text(p)
     with open(d / f"test_{NAME}.out", "w") as out:
@@ -129,3 +150,31 @@ def test_mass_and_energy(built, case):
               f"residual / E_th(0) {res / eth0:.2e}")
         assert abs(m[1] / m[0] - 1) < 1e-12
         assert abs(res) < 1e-3 * eth0
+
+
+def test_faint_star_drift_seen(built):
+    """faint stars drifting by more than the refresh tolerance of their own light are seen: a 40 Msun star and a group of 8
+    faint ones (each changing by at least 4 % over the run, below 1 % of the root's luminosity) at opposite corners, 1 rank,
+    no rebuild, against a run that rebuilds the tree every step; G0_FUV within 2 % in the cells more than 2.5 cells from
+    the group where the group gives more 6-13.6 eV flux than the bright star (there the walk uses the group's node; the old
+    rule, 1 % of the root's luminosity, never refreshed it)"""
+    a, ref = run(built, "faint", 1), run(built, "faint_ref", 1)
+    with h5py.File(ref["snaps"][-1], "r") as F:
+        g = F["PartType0"]; o = np.argsort(g["ParticleIDs"][()]); x = g["Coordinates"][()][o]
+        s = F["PartType4"]; xs, ms = s["Coordinates"][()], s["Masses"][()]
+        L = F["Header"].attrs["BoxSize"]
+    faint, bright = ms < M_STAR, np.argmax(ms)
+    assert faint.sum() == 8
+    tab = Tables(built["StellarTablesFile"])
+    lZ = np.log10(Z)
+    M_f, age_f = faint_star(tab)
+    t_end = 2e-3 * 3.085678e13 / 3.155e7
+    L_f = sum(tab.bands(M_f, Z, age_f + t_end)[[0, 2]])
+    L_b = sum(tab.bands(M_STAR, Z, tab._i2(tab.t_pms, np.log10(M_STAR), lZ) + 0.3 * tab._i2(tab.life, np.log10(M_STAR), lZ) + t_end)[[0, 2]])
+    c = xs[faint].mean(0); r_c = np.sqrt(((x - c) ** 2).sum(1))
+    f_f = 8 * L_f / r_c ** 2; f_b = L_b / ((x - xs[bright]) ** 2).sum(1)
+    sel = np.logical_and(f_f > f_b, r_c > 2.5 * L / NGRID)
+    dev = np.abs(a["g0"][sel] / ref["g0"][sel] - 1)
+    print(f"{sel.sum()} cells lit mainly by the faint group, beyond 2.5 cells: max |G0/G0_ref - 1| {dev.max():.3e}, median {np.median(dev):.2e}; "
+          f"tree builds {a['builds']} vs reference {ref['builds']}")
+    assert sel.sum() > 0 and dev.max() < 0.02

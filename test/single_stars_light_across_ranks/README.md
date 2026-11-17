@@ -16,3 +16,8 @@ both near 1 kyr, at (0.3, 0.3, 0.3) L and (0.7, 0.7, 0.7) L. `control`: one 40 M
   rows below 1e-3 of the initial thermal energy.
 
 Inputs: `SUNDIALS_DIR`; tables from `GIZMO_STELLA_TABLES_DIR` (else `scripts/get_stella_tables.sh`).
+- `test_faint_star_drift_seen` (1 rank): a bright 40 Msun star and a group of 8 faint stars at the opposite corner, each faint
+  star's 6-13.6 eV luminosity changing by at least 4 % over the run (mass and age picked from the tables, change below 1 % of
+  the root's); against a run that rebuilds the tree every step, G0_FUV agrees to 2 % in the cells beyond 2.5 cells from the
+  group that the group lights most (there the walk uses the group's node). The refresh tolerance used to be 1 % of the root's
+  luminosity, so faint stars never triggered a refresh.
