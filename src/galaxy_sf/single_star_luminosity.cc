@@ -178,8 +178,8 @@ double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR
 
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
 /* direct radiation pressure in the absorbing cell: L_abs = sum_b sigma_b F_b DGR N_H(cell) / 4 pi, pushed away from the pixel
-   centres, all deposits scaled by L_emit / sum(L_abs) when above 1 (photon cap). The sum over cells is kept running:
-   an active cell swaps its share, full recount on all-active steps. L_emit is the root node, so no star loop. The sum is reduced
+   centres, all deposits scaled by L_emit / sum(L_abs) when above 1 (photon cap). The sum runs over every gas cell
+   with its last flux, current mass and dust (as stella_dev). L_emit is the root node, so no star loop. The sum is reduced
    with the source count in radiation_pressure_winds_consolidated: no collective here. */
 static std::vector<double> radp_lum_abs; /* per active cell, absorbed_local to per_cell */
 static double radp_cell_dgr(int i) /* the cell's dust-to-gas ratio for the direct term; hot gas none */
@@ -192,27 +192,19 @@ static double radp_cell_dgr(int i) /* the cell's dust-to-gas ratio for the direc
 }
 double single_star_radpressure_absorbed_local(void)
 {
-    static double abs_sum_local = 0; static int counted = 0;
     const double to_L = 1.0e-21 * All.cf_a2inv / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS * 4.0 * M_PI); /* sum x DGR N_H -> code lum */
-    const int all_active = (All.HighestActiveTimeBin == All.HighestOccupiedTimeBin);
-    if(!counted || all_active)
-    {
-        abs_sum_local = 0; counted = 1;
-        for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {abs_sum_local += CellP[i].RadpAbsorbedLum;}}
-    }
+    double abs_sum_local = 0; /* every gas cell now: current mass and dust, last flux (as stella_dev) */
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {abs_sum_local += to_L * radp_cell_dgr(i) * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS * CellP[i].TreeColRadpFlux[3];}}
     std::vector<double> &lum_abs = radp_lum_abs; lum_abs.assign(ActiveParticleList.size(), 0.);
     for(size_t a = 0; a < ActiveParticleList.size(); a++)
     {
         const int i = ActiveParticleList[a];
         if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
         lum_abs[a] = to_L * radp_cell_dgr(i) * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
-        const double l = lum_abs[a] * CellP[i].TreeColRadpFlux[3];
-        abs_sum_local += l - CellP[i].RadpAbsorbedLum;
-        CellP[i].RadpAbsorbedLum = (float) l;
     }
 #ifdef TEST_SINGLE_STARS_RADPRESSURE_PRINT_CAP_SUM
     { /* reference: every gas cell now, current mass and dust, last flux (stella_dev resolvedism_fb_momentum.cc photon cap) */
-        double rc = 0;
+        double rc = 0; const int all_active = (All.HighestActiveTimeBin == All.HighestOccupiedTimeBin);
         for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {rc += to_L * radp_cell_dgr(i) * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS * CellP[i].TreeColRadpFlux[3];}}
         printf("RADP_CAP_SUM: rank=%d t=%.10g all_active=%d n_active=%d used=%.17g recount=%.17g\n", ThisTask, All.Time, all_active, (int) ActiveParticleList.size(), abs_sum_local, rc);
     }
