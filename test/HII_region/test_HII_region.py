@@ -77,3 +77,55 @@ def test_warm_neutral_gas_keeps_metal_line_cooling(num_omp_threads):
           f"metal-line share of the cooling: median {np.median(share[warm]):.3g}, min {share[warm].min():.3g}")
     assert warm.sum() > 0.9 * len(T), "the box did not stay warm and neutral: the check is not exercised"
     assert np.median(share[warm]) > 0.1, f"metal lines are only {np.median(share[warm]):.2g} of the warm neutral gas's cooling"
+
+
+def make_starless_ics(src, dst):
+    """copy of the HII_region IC without the star"""
+    with h5py.File(src, "r") as fi, h5py.File(dst, "w") as fo:
+        fi.copy("PartType0", fo)
+        h = fo.create_group("Header")
+        for k, v in fi["Header"].attrs.items():
+            h.attrs[k] = v
+        npart = np.array(fi["Header"].attrs["NumPart_ThisFile"]).copy()
+        npart[5] = 0
+        h.attrs["NumPart_ThisFile"] = npart
+        h.attrs["NumPart_Total"] = npart.astype(np.uint32)
+
+
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_stellar_luminosity_factor(num_omp_threads):
+    """StellarLuminosityFactor multiplies what single-star sources emit into RT, in every band. At 0 the radiation field
+    within 2 pc of the star (which holds all of the stellar photons after 0.02 code units, ~20 kyr) must match the
+    same box without the star, while the ISRF and IR field still evolve; at 1 the star must dominate it. Totals are
+    compared locally because the star's own timestep (46 vs 8 steps here) perturbs the far-field ISRF/IR evolution
+    at ~1e-5 of the band totals."""
+    hii.prepare_inputs(TEST_DIR, TEST_NAME)
+    build_gizmo_for_test(TEST_NAME, num_omp_threads)
+    make_starless_ics(TEST_DIR / f"{TEST_NAME}_ics.hdf5", TEST_DIR / "starless_ics.hdf5")
+    runs = {"factor1": (f"{TEST_NAME}_ics", "1"), "factor0": (f"{TEST_NAME}_ics", "0"), "nostar": ("starless_ics", "1")}
+    E, M_ion = {}, {}
+    cwd = os.getcwd()
+    try:
+        os.chdir(TEST_DIR)
+        for name, (ic, factor) in runs.items():
+            run_test(TEST_NAME, default_mpi_ranks(), num_omp_threads, restart_flag=0, param_overrides={
+                "InitCondFile": ic, "OutputDir": f"output_lumfactor_{name}", "StellarLuminosityFactor": factor,
+                "TimeMax": "0.02", "TimeBetSnapshot": "0.02"})
+            used = (TEST_DIR / f"{TEST_NAME}_override.params-usedvalues").read_text().split()
+            assert float(used[used.index("StellarLuminosityFactor") + 1]) == float(factor), f"{name}: factor not applied"
+            snap = sorted((TEST_DIR / f"output_lumfactor_{name}").glob("snapshot_*.hdf5"))[-1]
+            with h5py.File(snap, "r") as f:
+                assert abs(f["Header"].attrs["Time"] - 0.02) < 1e-6, f"{name}: {snap.name} is not at TimeMax"
+                near = np.linalg.norm(f["PartType0/Coordinates"][:] - 10.0, axis=1) < 2.0  # star at the box centre
+                E[name] = f["PartType0/PhotonEnergy"][:][near].astype(np.float64).sum(axis=0)
+                M_ion[name] = np.sum(f["PartType0/Masses"][:].astype(np.float64) * f["PartType0/HII"][:])
+    finally:
+        os.chdir(cwd)
+    d1, d0 = E["factor1"] - E["nostar"], E["factor0"] - E["nostar"]
+    for k in range(len(d1)):
+        print(f"band {k} (r < 2 pc): E_nostar {E['nostar'][k]:.6g}  E_factor1 - E_nostar {d1[k]:.6g}  E_factor0 - E_nostar {d0[k]:.6g}")
+    print(f"ionized mass [Msun]: nostar {M_ion['nostar']:.6g}  factor1 {M_ion['factor1']:.6g}  factor0 {M_ion['factor0']:.6g}")
+    assert np.all(d1 > E["nostar"]), "the star does not dominate every band near it at factor 1: the check is not exercised"
+    assert np.all(np.abs(d0) < 1e-3 * d1), f"factor 0 leaves a stellar contribution: {d0 / d1} of the factor-1 one per band"
+    assert abs(M_ion["factor0"] - M_ion["nostar"]) < 1e-3 * abs(M_ion["factor1"] - M_ion["nostar"]), \
+        "factor 0 still ionizes gas around the star"
