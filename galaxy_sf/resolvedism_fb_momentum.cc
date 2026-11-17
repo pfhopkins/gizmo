@@ -780,6 +780,9 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
 #ifdef METALS
                     out.Z_dep += wk * yield_metals;
 #endif
+#ifdef FB_G17_BOUNDARY_INJECTION
+                    CellP[j].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     if(loop_iteration == 0 && local.fb_channel == 2) {
                         #pragma omp atomic
@@ -829,6 +832,9 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     #pragma omp atomic
                     CellP[j].InternalEnergyPred += du_full;
                     out.P_dep += wk * local.WindMomentum; /* momentum equivalent of the heat */
+#ifdef FB_G17_BOUNDARY_INJECTION
+                    CellP[j].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
+#endif
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                     wakeup_list_note(j);
@@ -856,6 +862,9 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     }
                     out.P_dep += dp_share * sqrt(dir_[0]*dir_[0] + dir_[1]*dir_[1] + dir_[2]*dir_[2]);
                     force_note_motion_change(j);
+#ifdef FB_G17_BOUNDARY_INJECTION
+                    CellP[j].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     if(loop_iteration == 0 && local.fb_channel == 2) {
                         double dpa = 0; for(k = 0; k < 3; k++) {dpa += (dp_share * dir_[k]) * (dp_share * dir_[k]);}
@@ -1157,6 +1166,9 @@ void resolvedism_radpressure_treerad(void)
             CellP[i].VelPred[k] += dv;
         }
         force_raise_motion_bound(i);
+#ifdef FB_G17_BOUNDARY_INJECTION
+        CellP[i].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
+#endif
         RadPressure_dp_thisStep += dpmag_cgs; /* channel-3 ledger (FeedbackBudget) */
     }
 }
