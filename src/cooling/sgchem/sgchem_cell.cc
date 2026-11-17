@@ -314,7 +314,7 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #if CHEMISTRYNETWORK == 18
     temp = chem_cxx_net18_temp(ab, energy, yn, in.abhe);
 #else
-    temp = chem_cxx_calc_temp(abh2, in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + ab[IHP]) * yn));
+    temp = chem_cxx_calc_temp(abh2, in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + sgchem_temperature_electrons(ab, &in)) * yn));
 #endif
     if(temp > 1.0e5) {in.dust_to_gas_ratio = 0;} /* hot gas: grains sputtered */
 #if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
@@ -406,7 +406,7 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #elif CHEMISTRYNETWORK == 20
     chem_cxx_net20_finish(ab, energy, &temp);
 #else
-    temp = chem_cxx_calc_temp(ab[IH2], in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + ab[IHP]) * yn));
+    temp = chem_cxx_calc_temp(ab[IH2], in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + sgchem_temperature_electrons(ab, &in)) * yn));
 #endif
     if(temp < All.MinGasTemp && temp > 0) {energy *= All.MinGasTemp / temp; temp = All.MinGasTemp;}
 #ifdef TEST_RT_STARBENCH_SGCHEM_TEMPERATURE_FROM_IONISED_FRACTION
@@ -443,7 +443,8 @@ double sgchem_startup_temperature(int i)
 #if CHEMISTRYNETWORK == 18
     temp = chem_cxx_net18_temp(ab, energy, yn, chem_cxx_abhe_default());
 #else
-    temp = chem_cxx_calc_temp(ab[IH2], chem_cxx_abhe_default(), energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + ab[IHP]) * yn));
+    struct ChemInputs in = {}; sgchem_gas_abundances(i, &in); in.abundD = All.SGChemDeuteriumAbundance;
+    temp = chem_cxx_calc_temp(ab[IH2], chem_cxx_abhe_default(), energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + sgchem_temperature_electrons(ab, &in)) * yn));
 #endif
     if(temp < All.MinGasTemp && temp > 0) {temp = All.MinGasTemp;}
     return temp;

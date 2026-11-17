@@ -46,6 +46,19 @@ static inline double sgchem_electrons(const double *ab, const struct ChemInputs 
 #endif
 }
 
+/* electrons per H as the network counts them for its temperature (chem_rhs_net5.cc:55, chem_rhs_net17.cc:82); H+ only elsewhere */
+static inline double sgchem_temperature_electrons(const double *ab, const struct ChemInputs *in)
+{
+#if CHEMISTRYNETWORK == 5
+    return ab[IHP] + DMAX(in->abundc - ab[ICO], 0.) + in->abundsi;
+#elif CHEMISTRYNETWORK == 17
+    return ab[IHP] + ab[IHEP] + 2.0 * ab[IHEPP] + DMAX(in->abundc - ab[ICO], 0.) + ((in->abundD > 0) ? ab[IDP] : 0.) + in->abundsi;
+#else
+    (void)in;
+    return ab[IHP];
+#endif
+}
+
 /* uniform ISRF-shaped (Draine 1978) field of strength G0 (6-13.6 eV) and G0_LW (11.2-13.6 eV), Habing units: band energies
    through the shared chem_fuv_field_from_band_energy, floors 0.324e-2 G0_bg (LW: a tenth in 6-13.6 eV energy) */
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
