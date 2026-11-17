@@ -2924,7 +2924,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 if(colmass[TREECOL_GAS] > 0 && r_col > 0 && r_col < All.ShieldingLength / All.cf_atime) /* physical shielding length in comoving coords */
                 {
                     int iheal = treecol_angular_bin(dr_col[0], dr_col[1], dr_col[2]), ks;
-                    double area = (4.0*M_PI / NPIX) * r2_col;
+                    double fac_col = 1./r2_col, h_col = DMAX(h, h_p); /* gravity-softened 1/r^2 inside h, as the upstream column above */
+                    if(r_col < h_col) {double h_col_inv = 1./h_col; fac_col = r_col * kernel_gravity(r_col*h_col_inv, h_col_inv, h_col_inv*h_col_inv*h_col_inv, 1);}
+                    double area = (4.0*M_PI / NPIX) / fac_col;
                     for(ks=0; ks<TREECOL_NSPECIES; ks++) {treecol_angular_bins[ks][iheal] += colmass[ks] / area;}
 #ifdef TREE_RAY
                     /* absorber deposit: same Sigma contribution, binned by COM distance */

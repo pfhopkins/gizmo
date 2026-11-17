@@ -46,7 +46,7 @@
 #define NPIX RT_USE_TREECOL_FOR_NH
 #endif
 
-/* deposit m/(4pi/NPIX r^2) for 0<r<ShieldingLength, unsoftened, stored for gas cells only; no SigmaEff */
+/* deposit m/(4pi/NPIX r^2) for 0<r<ShieldingLength, 1/r^2 gravity-softened inside h, stored for gas cells only; no SigmaEff */
 #if defined(RT_TREECOL_HEALPIX) && (defined(GALSF_RESOLVEDISM) || defined(SGCHEM))
 #define RT_TREECOL_SHIELDINGLENGTH
 #define RT_TREECOL_GAS_TARGETS_ONLY
