@@ -124,6 +124,7 @@ GasReturnEnergy             1.0
 CosmicRay_SNeFraction       0.1
 
 InterstellarRadiationFieldStrength  1.0
+StellarLuminosityFactor             1.0
 
 %---- Sink particle accretion, formation & feedback
 SeedSinkMass                 5.00e-01
