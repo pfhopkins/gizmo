@@ -722,6 +722,26 @@ void begrun(void)
  */
 void set_units(void)
 {
+#ifdef GENERAL_RELATIVITY
+  /* GR: geometric units, G = c = 1. The mass unit M_u is UnitMass_in_g (as usual divided by HubbleParam); the velocity unit is c and the
+     length unit the gravitational radius G M_u/c^2 (time unit G M_u/c^3), so that every module working in cgs (cooling, radiation, tabulated
+     equations of state) is consistent with the GR equations. UnitLength_in_cm, UnitVelocity_in_cm_per_s and GravityConstantInternal from the
+     parameter file are overridden. */
+  {
+      const double M_u = UNIT_MASS_IN_CGS, L_par = UNIT_LENGTH_IN_CGS, V_par = UNIT_VEL_IN_CGS, G_par = All.G;
+      All.UnitVelocity_in_cm_per_s = C_LIGHT_CGS;
+      All.UnitLength_in_cm = GRAVITY_G_CGS * M_u / (C_LIGHT_CGS*C_LIGHT_CGS) * All.HubbleParam;
+      All.G = 1;
+      if(ThisTask == 0)
+      {
+          printf("\nGR: geometric units (G = c = 1) from the mass unit UnitMass_in_g = %g g = %g M_sun: length unit G M_u/c^2 = %g cm, time unit G M_u/c^3 = %g s\n",
+                 M_u, M_u/SOLAR_MASS_CGS, UNIT_LENGTH_IN_CGS, UNIT_TIME_IN_CGS);
+          if(fabs(L_par/UNIT_LENGTH_IN_CGS - 1) > 1e-6 || fabs(V_par/UNIT_VEL_IN_CGS - 1) > 1e-6 || (G_par > 0 && fabs(G_par - 1) > 1e-6))
+          {printf("GR: WARNING: the parameter file sets UnitLength_in_cm = %g, UnitVelocity_in_cm_per_s = %g, GravityConstantInternal = %g: overridden by the geometric units above\n",
+                  L_par*All.HubbleParam, V_par, G_par);}
+      }
+  }
+#endif
   /* convert some physical input parameters to internal units */
   if(All.G <= 0) {All.G = GRAVITY_G_CGS * UNIT_MASS_IN_CGS / (UNIT_LENGTH_IN_CGS * UNIT_VEL_IN_CGS*UNIT_VEL_IN_CGS);}
 #ifdef GR_TABULATED_COSMOLOGY_G

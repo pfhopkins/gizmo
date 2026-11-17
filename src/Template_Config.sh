@@ -108,7 +108,7 @@
 # --------------------------------------- General relativity
 # ------------------------------- users of these routines should cite Lupi 2023, MNRAS, 519, 1115 (GR hydro)
 ####################################################################################################
-#GENERAL_RELATIVITY=0           # turns on general relativistic hydrodynamics; 0=HLL solver/1=HLLC solver (Mignone & Bodo 2005). Does not work with SPH; forces SELFGRAVITY_OFF
+#GENERAL_RELATIVITY=0           # turns on general relativistic hydrodynamics; 0=HLL solver/1=HLLC solver (Mignone & Bodo 2005). Does not work with SPH; forces SELFGRAVITY_OFF. Code units G = c = 1: the mass unit is UnitMass_in_g, the length (G M/c^2) and velocity (c) units follow from it (begrun.cc, set_units)
 #GR_METRIC=1                    # metric: 0=Minkowski, 1=Kerr (default; GR_Mass/GR_Spin in the parameterfile, in code units G=c=1), <0=tabulated static spherically symmetric metric (TOV: GR_MetricTableFile in the parameterfile, header "# N log" then rows "r M(r) -g_tt r_iso")
 #USE_ISOTROPIC_RADIUS           # GR_METRIC<0: the table is indexed by the isotropic radius (conformally flat spatial metric) instead of the areal radius
 #USE_BOYERLINDQUIST             # force Boyer-Lindquist coordinates for GR_METRIC=1 (otherwise Kerr-Schild coordinates, which are regular at the horizon)
