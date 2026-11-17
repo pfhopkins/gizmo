@@ -53,6 +53,11 @@ Checks:
   source's rank in one exchange per pass. Four separate stars on 4 ranks with a 0.02 MB communication chunk trigger no
   'cap ineffective' round (before the change: 2 records of 12.6 kB from one source already exceeded a round), and
   give the cells and fronts of 1 rank. All other photoion logs are bitwise unchanged by the change.
+- `test_pool_slots_lost_to_claim_races` (`TEST_PHOTOIONIZATION_POOL_LOST_CLAIM_RACE`): a thread that loses the claim race
+  for a source's histogram slot (routine on GPUs) leaves the slot it took unwritten. 24 stars of 20 Msun on 2 ranks, every
+  first claim losing once, so the pool fills, grows and is allocated anew: at each pool clear every used slot holds -1 or
+  the index of the source that owns it (`PI_POOL_CHECK ... bad=0`), and cells, sources and passes equal the plain build's.
+  Before the fix a fresh pool held uninitialised indices, which the clear wrote through.
 
 Performance (`run_performance.sh`, not part of pytest): one source, 10 steps with every cell
 active; log column 13 is the wall time of each solve on the slowest rank.

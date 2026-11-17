@@ -108,6 +108,10 @@ static void pi_pool_reset(int n_g, int cap)
 static void pi_pool_clear(void)
 {
     int n = DMIN(pi_pool_ctl[0], pi_pool_cap);
+#ifdef TEST_PHOTOIONIZATION_POOL_LOST_CLAIM_RACE
+    {int bad = 0; for(int s = 0; s < n; s++) {int g = pi_pool_g[s]; if(g != -1 && (g < 0 || g >= pi_pool_ng || pi_pool_slot[g] != s)) {bad++;}} /* each used slot: -1 or its owner's */
+     printf("PI_POOL_CHECK: used=%d bad=%d\n", n, bad); fflush(stdout);}
+#endif
     for(int s = 0; s < n; s++) {
         if(pi_pool_g[s] >= 0) {pi_pool_slot[pi_pool_g[s]] = -1;}
         pi_pool_g[s] = -1;
