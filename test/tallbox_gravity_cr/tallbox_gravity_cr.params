@@ -24,8 +24,6 @@ ComovingIntegrationOn           0                 % non-cosmological
 MaxSizeTimestep                 0.001           % ~1 Myr
 MinSizeTimestep                 0
 
-%---- Tall box (GRAVITY_PERIODIC_XY_IMAGES)
-GravityPeriodicXYImages         8               % x/y image rings, 288 images per interaction: sheet gravity within 3% of 2 pi G Sigma at z = H_g, slab stays bound
 
 %---- Tree & domain
 TreeDomainUpdateFrequency       0.05

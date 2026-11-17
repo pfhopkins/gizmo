@@ -4,7 +4,7 @@
 BOX_PERIODIC
 BOX_LONG_Z=20
 BOX_OUTFLOW_Z
-GRAVITY_PERIODIC_XY_IMAGES        % x/y-periodic self-gravity by image sums (GravityPeriodicXYImages), open z; tree radiation/columns use the x/y nearest image
+GRAVITY_PERIODIC_XY               % x/y-periodic self-gravity by 2D Ewald (upstream ewald_xy.cc, exact sheet field at any height), open z; tree radiation/columns use the x/y nearest image
 GALSF_RESOLVEDISM_TALLBOX         % Hu+21 stellar-disk + vertical NFW potential (gravity/analytic_gravity.h)
 #!/bin/bash
 # Config.sh for resolved-ISM single-star galaxy formation (gizmo-cpp)
