@@ -17,6 +17,7 @@
 //   PHASE O  one-zone trajectory parity (as test_onezone_ab PHASE O): final T
 //            within 1% between the backends.
 //   PHASE I  sgchem_set_ionized with a per-cell abhe != ABHE.
+//   PHASE C and I fail when an overdraft or a negative species exceeds 1e-14 of the pool.
 //
 // Usage: test_conservation [conservation.csv]   (run where gizmo/cooling/sgchem exists)
 
@@ -649,7 +650,9 @@ static int run_forked(int backend, double dt, double nH, double* en, double* y, 
 struct Worst { double v = 0.0; char where[160] = ""; };
 static void upd(Worst& w, double v, const char* where) { if (v > w.v) { w.v = v; std::snprintf(w.where, sizeof(w.where), "%s", where); } }
 
-static void phase_C(const char* csvname)
+static const double CONS_BAR = 1e-14;   // overdraft and negative species after a completed call, relative to the pool
+
+static int phase_C(const char* csvname)
 {
     const double nHs[] = {1e-2, 1.0, 1e2, 1e4, 1e6};
     const double Ts[]  = {10.0, 100.0, 1e3, 1e4, 1e5, 1e6, 1e7};
@@ -729,6 +732,11 @@ static void phase_C(const char* csvname)
         if (w_out[1][e].v > 0) std::printf("        worst cxx at %s\n", w_out[1][e].where);
         if (w_in[e].v > 0)     std::printf("        worst into-solver at %s\n", w_in[e].where);
     }
+    int ok = 1;
+    for (int e = 0; e < NEL; e++) if (el_active(e))
+        for (int b = 0; b < 2; b++) if (w_out[b][e].v > CONS_BAR || w_neg[b][e].v > CONS_BAR) ok = 0;
+    std::printf("  PHASE C %s (overdraft and negatives after each completed call <= %g of the pool)\n", ok ? "PASS" : "FAIL", CONS_BAR);
+    return ok;
 }
 
 // ===========================================================================
@@ -796,8 +804,9 @@ static int phase_O()
 // ===========================================================================
 // PHASE I -- sgchem_set_ionized pool check with abhe != ABHE
 // ===========================================================================
-static void phase_I()
+static int phase_I()
 {
+    int ok = 1;
     std::printf("\nPHASE I -- sgchem_set_ionized element pools (per-cell abhe 0.07 and 0.12, ABHE = %g)\n", (double)ABHE);
     const double ahes[] = {0.07, 0.12};
     for (double ahe : ahes) {
@@ -811,9 +820,12 @@ static void phase_I()
         for (int e = 0; e < NEL; e++) if (el_active(e)) {
             double s = 0; for (int i = 0; i < TRAC_NUM; i++) s += SP[i].n[e] * y[i];
             std::printf("  abhe=%.3f %-3s tracked/pool = %.6f  overdraft %.3e\n", ahe, ELNAME[e], P[e] > 0 ? s / P[e] : 0.0, v.over[e]);
+            if (v.over[e] > CONS_BAR || v.neg[e] > CONS_BAR) ok = 0;
         }
         CHEM_COMP.abhe = save;
     }
+    std::printf("  PHASE I %s (overdraft and negatives <= %g of the pool)\n", ok ? "PASS" : "FAIL", CONS_BAR);
+    return ok;
 }
 
 static void report_probes()
@@ -1174,9 +1186,9 @@ int main(int argc, char** argv)
     auto want = [&](char p) { return !only || std::strchr(only, p); };
     int ok = 1;
     if (want('R')) { ok &= phase_R(Ft, "R1 (Fortran tables)"); ok &= phase_R(Cx, "R2 (C++-built tables)"); }
-    if (want('C')) phase_C(csv);
+    if (want('C')) ok &= phase_C(csv);
     if (want('O')) { std::printf("\nPHASE O -- one-zone trajectories to 300 Myr\n"); ok &= phase_O(); }
-    if (want('I')) phase_I();
+    if (want('I')) ok &= phase_I();
     if (want('M')) ok &= phase_M(Cx);
     if (want('F')) ok &= phase_F();
     report_probes();
