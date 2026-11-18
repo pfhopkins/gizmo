@@ -675,9 +675,9 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     }
 #endif
 #ifdef STELLA_FIRE_YIELD_SLOTS
-                    stella_blend_fire_slots(j, Mass_j, dM, wk, local.FireYields); /* FIRE layout: no H slot, no closure */
+                    stella_blend_fire_slots(j, Mass_j, dM, wk, local.FireYields, 0, local.Mej); /* FIRE layout: no H slot, no closure */
 #ifdef STELLA_SELFCHECK
-                    stella_fire_receiver_check(j, Mass_j, dM, wk, local.FireYields, X_fire_old, local.StarID);
+                    stella_fire_receiver_check(j, Mass_j, dM, wk, local.FireYields, X_fire_old, local.StarID, 0, local.Mej);
 #endif
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
