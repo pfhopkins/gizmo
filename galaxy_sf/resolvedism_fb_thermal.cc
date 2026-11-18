@@ -505,7 +505,16 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     }
 #endif
 #ifdef STELLA_FIRE_YIELD_SLOTS
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    double fe_old_ia = P[j].Metallicity[STELLA_FIRE_YIELD_SLOTS - 1]; /* Fe slot */
+#endif
                     stella_blend_fire_slots(j, Mass_j, dM, wk, local.FireYields); /* FIRE layout: no H slot, no closure */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    if(local.fb_channel == 3) { /* test: Fe of Ia composition = the cell's Fe gain + the Fe of the gas converted */
+                        #pragma omp atomic
+                        FB_TestIaFe += (Mass_j + dM) * P[j].Metallicity[STELLA_FIRE_YIELD_SLOTS - 1] - Mass_j * fe_old_ia + c_ia * fe_old_ia;
+                    }
+#endif
 #ifdef STELLA_SELFCHECK
                     stella_fire_receiver_check(j, Mass_j, dM, wk, local.FireYields, X_fire_old, (MyIDType)FB_SerialEventID);
 #endif
