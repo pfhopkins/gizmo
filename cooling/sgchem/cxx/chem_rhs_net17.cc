@@ -310,7 +310,7 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     }
 
     // --- protons (.F:717-744) ---
-    // H+ above 1: collisional, CR and photo ionization of the unclipped HI fraction stay restoring (D-30, D-58)
+    // over-filled H (1 - 2 H2 - H+ - HD < 0): collisional, CR and photo ionization of that HI fraction stay restoring (D-30, D-58)
     const double abHI_ion = (abHI_ph < 0.0) ? abHI_ph : abHI;
     ydot[ihp] = (ch11 * abe   * abHI_ion
               + ch144 * abHI  * abHI

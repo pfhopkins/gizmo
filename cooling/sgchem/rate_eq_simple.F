@@ -325,7 +325,7 @@ c HI:
 c
 c Protons
 c 
-c H+ above 1: collisional, CR and photo ionization stay restoring (D-30, D-58)
+c over-filled H: collisional, CR and photo ionization stay restoring (D-30, D-58)
       ydot(ihp) = (ch11 * abe   * abHI_ph       ! Collisional ion: H  + e-
      $          -  ch13 * abhp  * abe           ! Gas-phase H recomb.(case B)
      $          -  h_gr * abhp  * 1d0) * yn     ! Grain H recomb.

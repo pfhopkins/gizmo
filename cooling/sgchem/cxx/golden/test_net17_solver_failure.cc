@@ -4,10 +4,12 @@
 // above 1 + EPS_MAX are rejected by validate_input, the step collapses to the floor and the substep loop
 // can run out of budget.
 //   PHASE A  the 66 cells whose CVODE step hit the floor in the run (net17_wlm_floor_cells.txt, from run.log),
-//            replayed from the logged substep state over the rest of the call, C++ CVODE and Fortran DVODE.
+//            replayed from the logged substep state over the rest of the call, C++ CVODE and Fortran DVODE
+//            (states logged at %.9e, pools at %g; abhe = 0.1 in every row, the run's fixed ABHE).
 //   PHASE H  the hand-off state (H+ = 1, He++ = abhe, D+ = abundD) at bypass T 4.5e5..5e5 K,
 //            nH 1e-2..10, call dt 1e10..3e12 s, with the run's pools and rates.
-//   PASS: every call rc = 0, no validate_input excess rejection, no CVODE floor hit, T within 1% of DVODE.
+//   PASS: every call rc = 0 on both backends, no validate_input excess rejection, no CVODE floor hit,
+//         T within 1% of DVODE.  Build and run: build_net17_solver_failure.sh.
 //   PHASE R  (built with -DCHEM_NSTEP=1, and SGCHEM_SOLVER_FAILURE_ENERGY_ONLY_COOLING to pass) every phase-A cell
 //            with a forced solver failure: rc = 0, species within their pools, finite positive energy.
 //
@@ -255,7 +257,7 @@ static int check_pair(const char* tag, const LoggedCell& L, double dt, double yn
     Res c = run_cxx(L, dt, yn, e0, y0, &ph1);
     Res f = run_fortran(L, dt, yn, e0, y0);
     double relT = (f.rc == 0) ? std::fabs(c.T - f.T) / f.T : 0.0;
-    int bad = (c.rc != 0) || (c.excess != 0) || (c.floors != 0) || (relT > 0.01);
+    int bad = (c.rc != 0) || (f.rc != 0) || (c.excess != 0) || (c.floors != 0) || (relT > 0.01);
     std::printf("  %-10s %8ld %10.4g %9.4g %9.4g | %4d %6ld %6ld %7ld %5ld %10.4g | %4d %10.4g %8.1e%s\n",
                 tag, L.id, dt, yn, temp_of(*g_cx, yn, e0, y0), c.rc, c.substeps, c.retries, c.excess, c.floors, c.T,
                 f.rc, f.T, relT, bad ? "  <-- FAIL" : "");

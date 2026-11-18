@@ -804,15 +804,19 @@ hand-off writes x_H+ = 1 exactly; the one-sided difference-quotient Jacobian mis
 overshoots past 1 + EPS_MAX, CVODE cuts h to the floor (flag -10) and the driver halves the substep. In the WLM
 net 17 run (2026-11-17) this hit 66 cells and one exhausted the 9e6 substep budget (ID 4819441, abort 78101);
 the net 5 twin hit the floor in 7 hot ionized cells (same H+ terms; not replayed). ch11 n_e abHI and cr1 abHI
-now use the unclipped HI fraction when it is negative, as ph38 does. Unchanged for every x_H+ <= 1; at rtol 1e-8
-the old and new RHS give the same trajectories. C++ chem_rhs_net5/17, Fortran rate_eq_simple/ulli.
+now use the unclipped HI fraction 1 - 2 x_H2 - x_H+ - x_HD when it is negative, as ph38 does: unchanged whenever
+that fraction is >= 0 (over-filled H budgets, e.g. x_H+ > 1, now lose H+). As in D-30 the ionization cooling
+(rc[7] / rates_chem[4]) and CR heating keep the floored HI fraction: no energy term for the H+ removed, bounded by
+the over-fill (<= EPS_MAX). At rtol 1e-8 the old and new RHS give the same hand-off trajectories. C++ chem_rhs_net5/17, Fortran rate_eq_simple/ulli.
 Test: golden/test_net17_solver_failure.cc (66 logged cells + hand-off grid). Not changed: net 3, He (He++ at abhe).
 
 ## D-59. (2026-11-18) Optional recovery of C++ solver failures (SGCHEM_SOLVER_FAILURE_ENERGY_ONLY_COOLING)
 Off by default (the run aborts, as Arepo and the Fortran path do). With the flag, a dt collapse (100) or a spent
 substep budget (1) finishes the step from the last accepted state with the TNOCHEM explicit energy-only
 subcycle at frozen composition; the cell context and a per-thread count are printed. Species are not touched,
-the energy change goes through the cooling ledger like any chemistry step.
+the energy change goes through the cooling ledger like any chemistry step. Limits: steps of 0.1 e/|edot| can
+overshoot thermal equilibrium by up to 10% in cold gas; a flagged RHS at the accepted state leaves the energy
+frozen but books the last evaluation's CR heating; the test forces code 1 only (code 100 not exercised).
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
