@@ -210,12 +210,13 @@ static int topo_acquire_(int npart, const struct unbind_data *mp, const char *si
     ctx->dni = gpu_peano_walk_domain_node_index();
     if(!ctx->tn || !ctx->dni) {printf("gpu_topology_build: peano-walk mirrors null\n"); return 1;}
 
-    /* Grow per-particle scratch. */
-    if(g_npart_cap < npart) {
-        g_sorted_idx       = grow_int_buffer(g_sorted_idx,       g_npart_cap, npart, "treescratch_build_sorted_idx");
-        g_particle_topleaf = grow_int_buffer(g_particle_topleaf, g_npart_cap, npart, "treescratch_build_particle_topleaf");
+    /* Grow per-particle scratch (at least one slot, so a rank holding no particles has storage). */
+    const int npart_cap_needed = (npart > 1) ? npart : 1;
+    if(g_npart_cap < npart_cap_needed) {
+        g_sorted_idx       = grow_int_buffer(g_sorted_idx,       g_npart_cap, npart_cap_needed, "treescratch_build_sorted_idx");
+        g_particle_topleaf = grow_int_buffer(g_particle_topleaf, g_npart_cap, npart_cap_needed, "treescratch_build_particle_topleaf");
         if(!g_sorted_idx || !g_particle_topleaf) {g_npart_cap = 0; return 1;}
-        g_npart_cap = npart;
+        g_npart_cap = npart_cap_needed;
     }
 #if TREE_LEAF_BUCKET_SIZE > 1
     /* The particle count THIS build sorts.  Set here, where the sorted order is established, so it
@@ -372,7 +373,8 @@ extern "C" void gpu_topology_build_optional_device_bytes(long long npart, long l
 
 extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data *mp)
 {
-    if(npart <= 0) {g_slot_map_active = 0; return 0;}
+    /* A rank holding no particles runs this too, over zero particles: that leaves zero counts for the emit
+     * instead of the previous build's. */
     struct topo_build_ctx ctx;
     int rc = topo_acquire_(npart, mp, "gpu_topology_build_data_path", &ctx);
     if(rc) {return rc;}
@@ -849,11 +851,6 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
     {
         /* Sized to the particles THIS build covers, which for a subset build is far fewer than the
          * tree's capacity; a recorded leaf holds at least two of them, so half is an exact bound. */
-        if(g_sorted_npart <= 0) {
-            printf("gpu_topology_emit_bfs: rank %d has no sorted order to describe leaves against\n", ThisTask);
-            fflush(stdout);
-            return 3;
-        }
         const int cap_needed = g_sorted_npart / 2 + 1;
         if(g_leaf_chain_cap < cap_needed) {
             if(g_leaf_chain) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_leaf_chain);}

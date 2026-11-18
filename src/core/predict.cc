@@ -346,10 +346,9 @@ double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell
     {
         double area_norm_min_threshold = 0.001;
         double area_norm_weight = 200.0;
-        double max_tol = 0.01;
         if(area_sum/area_norm > area_norm_min_threshold)
         {
-            double tol = (All.CourantFac/0.2) * DMAX( max_tol, area_norm/(area_norm_weight * area_sum) );
+            double tol = (All.CourantFac/0.2) * DMAX( 0.01, area_norm/(area_norm_weight * area_sum) );
             tol *= Bmag_max; /* give the limiter dimensions */
             if(dBmag > tol) {return tol/dBmag;} /* now actually check if we exceed this */
         }

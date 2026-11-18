@@ -82,8 +82,6 @@ double Get_Gas_PhiField_P(int i_particle_id, struct particle_data *pp, struct ga
 #endif /* DIVBCLEANING_DEDNER */
 
 
-
-
 #ifdef DIVBCLEANING_DEDNER
 KOKKOS_INLINE_FUNCTION
 double Get_Gas_PhiField_DampingTimeInv_P(int i_particle_id, struct particle_data *pp, struct gas_cell_data *cell)

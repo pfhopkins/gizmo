@@ -105,7 +105,7 @@ void hydro_accumulate_neighbor(
     {double Wlorentz_j = lorentz_factor(gr_j->gamma, VelPred_j, grj.gr_limiter_j); grj.FourVelocity_j = Wlorentz_j*VelPred_j;} /* (the velocity is limited in place where required) */
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    Vec3<MyDouble> ParticleVel_j = CellP[j].ParticleVel; /* the velocity of the mesh-generating point of j, not of the fluid (Lupi fix 2022 of the original C code) */
+    Vec3<MyDouble> ParticleVel_j = CellP[j].ParticleVel; /* the mesh-generating point of j, as for i */
     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos, P[j].Pos, ParticleVel_j, -1);
 #ifdef GENERAL_RELATIVITY
     ParticleVel_j = Vphys(ParticleVel_j, gr_j);
@@ -442,6 +442,18 @@ void hydro_accumulate_neighbor(
 #endif
     out.Acc += Fluxes.v;
     out.DtInternalEnergy += Fluxes.p;
+#if defined(GENERAL_RELATIVITY) && !defined(FREEZE_HYDRO)
+    {
+        /* the volume variation from the Riemann problems: the drift predicts the density and kernel radius of GR cells with it, and the
+           kick/predict use it for the volume that multiplies the conserved variables (with an ideal gas the inversion depends only on S/D
+           and tau/D, so the volume leaves the kicked primitives unchanged) */
+        double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel + face_vel_i);
+#ifdef HYDRO_MESHLESS_FINITE_MASS
+        wt_face_sum = Face_Area_Norm * (-Riemann_out.S_M + face_vel_i);
+#endif
+        out.DtVolume += wt_face_sum;
+    }
+#endif
 #ifdef MAGNETIC
 #ifndef HYDRO_SPH
     out.Face_Area += Face_Area_Vec;

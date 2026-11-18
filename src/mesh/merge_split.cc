@@ -165,8 +165,7 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
 #if defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
     ref_factor = 1; // need to determine appropriate desired refinement criterion, if resolution is not strictly pre-defined //
 #endif
-
-
+    
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     if(P[i].Type==0)
     {
@@ -1176,21 +1175,21 @@ int merge_particles_ij(int i, int j, double target_share)
     double gr_Vi = P[i].Mass/CellP[i].Density, gr_Vj = P[j].Mass/CellP[j].Density;
     double gr_Vtot = ((target_share >= 0) && (target_share <= 1)) ? gr_Vj + target_share*gr_Vi : DMAX(gr_Vi, gr_Vj);
     {
-        struct gr_primitives pr; double W; Vec3<double> BVi = {0,0,0}, BVj = {0,0,0}, BVPi = {0,0,0}, BVPj = {0,0,0};
+        struct gr_primitives pr; double W;
         /* predicted states */
-        W = gr_primitives_of_cell(i, CellP[i].VelPred, P[i].Mass, gr_Vi, CellP[i].InternalEnergyPred, BVPi, &pr, P, CellP);
+        W = gr_primitives_of_cell(i, CellP[i].VelPred, P[i].Mass, gr_Vi, CellP[i].InternalEnergyPred, &pr, P, CellP);
         gr_get_conservative_variables(&pr, &gr_cons_i, W, &(CellP[i].gr));
         gr_Si_check = log(pr.u) + (1.0 - GAMMA_DEFAULT)*log(pr.rho0); gr_ui_tmp = pr.u;
-        W = gr_primitives_of_cell(j, CellP[j].VelPred, P[j].Mass, gr_Vj, CellP[j].InternalEnergyPred, BVPj, &pr, P, CellP);
+        W = gr_primitives_of_cell(j, CellP[j].VelPred, P[j].Mass, gr_Vj, CellP[j].InternalEnergyPred, &pr, P, CellP);
         gr_get_conservative_variables(&pr, &gr_cons_j_pred, W, &(CellP[j].gr));
         gr_Sj_check = log(pr.u) + (1.0 - GAMMA_DEFAULT)*log(pr.rho0); gr_uj_tmp = pr.u;
         gr_cons_j_pred.D = (gr_cons_j_pred.D*gr_Vj + gr_cons_i.D*gr_Vi)/gr_Vtot;
         gr_cons_j_pred.tau = (gr_cons_j_pred.tau*gr_Vj + gr_cons_i.tau*gr_Vi)/gr_Vtot;
         gr_cons_j_pred.S = (gr_Vj*gr_cons_j_pred.S + gr_Vi*gr_cons_i.S)/gr_Vtot;
         /* kicked states */
-        W = gr_primitives_of_cell(i, P[i].Vel, P[i].Mass, gr_Vi, CellP[i].InternalEnergy, BVi, &pr, P, CellP);
+        W = gr_primitives_of_cell(i, P[i].Vel, P[i].Mass, gr_Vi, CellP[i].InternalEnergy, &pr, P, CellP);
         gr_get_conservative_variables(&pr, &gr_cons_i, W, &(CellP[i].gr));
-        W = gr_primitives_of_cell(j, P[j].Vel, P[j].Mass, gr_Vj, CellP[j].InternalEnergy, BVj, &pr, P, CellP);
+        W = gr_primitives_of_cell(j, P[j].Vel, P[j].Mass, gr_Vj, CellP[j].InternalEnergy, &pr, P, CellP);
         gr_get_conservative_variables(&pr, &gr_cons_j, W, &(CellP[j].gr));
         gr_cons_j.D = (gr_cons_j.D*gr_Vj + gr_cons_i.D*gr_Vi)/gr_Vtot;
         gr_cons_j.tau = (gr_cons_j.tau*gr_Vj + gr_cons_i.tau*gr_Vi)/gr_Vtot;
@@ -1203,8 +1202,8 @@ int merge_particles_ij(int i, int j, double target_share)
     dm_i += CellP[i].DtMass;
     dm_j += CellP[j].DtMass;
 #endif
-    de_i = P[i].Mass * CellP[i].DtInternalEnergy + dm_i*CellP[i].InternalEnergy;
-    de_j = P[j].Mass * CellP[j].DtInternalEnergy + dm_j*CellP[j].InternalEnergy;
+    de_i = P[i].Mass * CellP[i].DtInternalEnergy + dm_i*CellP[i].InternalEnergyPred; /* undo the conversion of hydro_final_operations_and_cleanup, which removed DtMass*InternalEnergyPred */
+    de_j = P[j].Mass * CellP[j].DtInternalEnergy + dm_j*CellP[j].InternalEnergyPred;
     dp_i = CellP[i].HydroAccel * P[i].Mass + CellP[i].VelPred * (dm_i / All.cf_atime);
     dp_j = CellP[j].HydroAccel * P[j].Mass + CellP[j].VelPred * (dm_j / All.cf_atime);
     de_i += dot(dp_i, CellP[i].VelPred) / All.cf_atime - 0.5 * dm_i * CellP[i].VelPred.norm_sq() * All.cf_a2inv;
@@ -1320,6 +1319,9 @@ int merge_particles_ij(int i, int j, double target_share)
     P[j].Pos = pos_new; // center-of-mass conserving //
     P[j].Vel = P[j].Vel * wt_j + P[i].Vel * wt_i; // momentum-conserving //
     CellP[j].VelPred = CellP[j].VelPred * wt_j + CellP[i].VelPred * wt_i; // momentum-conserving //
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    CellP[j].ParticleVel = CellP[j].ParticleVel * wt_j + CellP[i].ParticleVel * wt_i; /* the merged mesh-generating point: its faces move with this until the next density pass sets it */
+#endif
     P[j].GravAccel = P[j].GravAccel * wt_j + P[i].GravAccel * wt_i; // force-conserving //
 #ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
     P[j].GravAccel_Retained = P[j].GravAccel_Retained * wt_j + P[i].GravAccel_Retained * wt_i;
@@ -1368,7 +1370,7 @@ int merge_particles_ij(int i, int j, double target_share)
         if(!(Schild >= S_lo))
         {
             pr_floor.v = Vphys(CellP[j].VelPred, &(CellP[j].gr)); /* initial guess: the mass-weighted velocity */
-            res_con2prim = gr_drift_reinvert(&gr_cons_j_pred, u_lo, CellP[j].gamma_eos_value(), &(CellP[j].gr), CellP[j].gr.limiter, &pr_floor, &cons_floor);
+            res_con2prim = gr_drift_reinvert(&gr_cons_j_pred, u_lo, GAMMA_DEFAULT, &(CellP[j].gr), CellP[j].gr.limiter, &pr_floor, &cons_floor);
             pr = pr_floor; Schild = S_lo; floor_used = 1;
         }
         if(res_con2prim < 0) {printf("Warning: failed inversion with code %g in merge/split\n", res_con2prim); endrun(2488);}
@@ -1378,7 +1380,7 @@ int merge_particles_ij(int i, int j, double target_share)
         if(floor_used || (res_con2prim < 0) || !(log(pr.u) + (1.0 - GAMMA_DEFAULT)*log(pr.rho0) >= S_lo))
         {
             pr_floor.v = Vphys(P[j].Vel, &(CellP[j].gr));
-            res_con2prim = gr_drift_reinvert(&gr_cons_j, u_lo, CellP[j].gamma_eos_value(), &(CellP[j].gr), CellP[j].gr.limiter, &pr_floor, &cons_floor);
+            res_con2prim = gr_drift_reinvert(&gr_cons_j, u_lo, GAMMA_DEFAULT, &(CellP[j].gr), CellP[j].gr.limiter, &pr_floor, &cons_floor);
             pr = pr_floor;
         }
         if(res_con2prim < 0) {printf("Warning: failed inversion with code %g in merge/split\n", res_con2prim); endrun(2488);}
@@ -1426,7 +1428,7 @@ int merge_particles_ij(int i, int j, double target_share)
     de_ij -= dm_ij * CellP[j].InternalEnergyPred;
     CellP[j].HydroAccel = (dp_ij - CellP[j].VelPred * (dm_ij / All.cf_atime)) * (1.0 / mtot);
     de_ij -= mtot * dot(CellP[j].VelPred, CellP[j].HydroAccel) / All.cf_atime + 0.5 * dm_ij * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
-    CellP[j].DtInternalEnergy = de_ij / mtot; /* de_ij is the total (thermal) energy rate of the merged cell: convert to the specific rate the kick expects, consistently with HydroAccel above (P[j].Mass is still the pre-merger mass here) */
+    CellP[j].DtInternalEnergy = de_ij / mtot; /* de_ij is the merged cell's total energy rate: the kick wants the rate per unit mass, as HydroAccel above */
 #endif /* GENERAL_RELATIVITY */
     // to be conservative adopt the maximum signal velocity and kernel length //
 #ifdef GENERAL_RELATIVITY

@@ -328,12 +328,10 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             {
                 /* GR: update the conserved variables (fluxes from the hydro loop + metric source terms) and convert the result back into
                    rates of change of the primitive velocity and specific internal energy (HydroAccel, DtInternalEnergy), applied below */
-                double mass_prekick = P[i].Mass, mass_postkick = P[i].Mass;
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                if(mode == 1) {mass_prekick = CellP[i].MassTrue - CellP[i].DtMass*dt_hydrokick;}
-                mass_postkick = mass_prekick + CellP[i].DtMass*dt_hydrokick;
-#endif
-                gr_kick_impl(i, dt_hydrokick, mass_prekick, mass_postkick, mode, P, CellP);
+                /* the masses before and after this half-kick are those of the mass update above (MFV: MassTrue before and after the
+                   limited dMass; MFM: P.Mass), so that D = mass/V in the inversion is the mass the cell actually has, whatever the limiter
+                   or the remainder of dMass do) */
+                gr_kick_impl(i, dt_hydrokick, mass_old, mass_new, mode, P, CellP);
             }
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -553,7 +551,7 @@ void set_predicted_quantities_for_extra_physics(int i)
 #if defined(MAGNETIC)
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
         CellP[i].BPred = CellP[i].B;
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER)
         CellP[i].PhiPred = CellP[i].Phi;
 #endif
 #endif

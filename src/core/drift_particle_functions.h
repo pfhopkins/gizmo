@@ -154,7 +154,7 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             dt_entr = dt_hydrokick = (time1 - time0) * unit_integertime_in_physical(i, pp);
             dt_gravkick = get_gravkick_factor_impl(time0, time1, timestep_dilation_factor(i, pp), tables);
 #ifdef GENERAL_RELATIVITY
-#if defined(HYDRO_MESHLESS_FINITE_MASS) || (defined(HYDRO_MESHLESS_FINITE_VOLUME) && (HYDRO_FIX_MESH_MOTION>=5))
+#ifdef GR_DRIFT_REINVERTS
             gr_drift_impl(i, dt_drift, pp, cell); /* corrects the position drift and the kicked variables for the metric change along the path */
 #endif
             gr_predict_impl(i, dt_hydrokick, pp, cell); /* predicts VelPred/InternalEnergyPred from the conserved variables (and zeroes HydroAccel/DtInternalEnergy) */
@@ -216,9 +216,7 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             
 #if (HYDRO_FIX_MESH_MOTION > 0)
 #ifdef GENERAL_RELATIVITY
-            /* GR: the kernel radius and the density follow the volume variation DtVolume. It is not computed in this hydro-only version (it enters
-               only the GR MHD update), so during the drift the density and kernel radius of GR cells are not predicted: the density pass of
-               the active cells recomputes them */
+            /* GR: the kernel radius and the density follow the volume variation computed in the Riemann problems (DtVolume, hydro/hydro_functions.h) */
             const double divv_fac_gr = kernel_radius_drift_log_change(cell[i].DtVolume*dt_hydrokick/pow(pp[i].Get_Particle_Size(), NUMDIMS));
             pp[i].KernelRadius *= exp(divv_fac_gr/((double)NUMDIMS));
 #else

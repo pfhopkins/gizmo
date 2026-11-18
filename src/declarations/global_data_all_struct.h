@@ -672,8 +672,6 @@ struct global_data_all_processes
 #ifdef DIVBCLEANING_DEDNER
   double FastestWaveSpeed;
   double FastestWaveDecay;
-#endif
-#ifdef DIVBCLEANING_DEDNER
   double DivBcleanParabolicSigma;
   double DivBcleanHyperbolicSigma;
 #endif

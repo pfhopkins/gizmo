@@ -602,7 +602,6 @@ void set_non_standard_physics_for_current_time(void)
 #if defined(GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF)
     update_stellarnumber_and_timedistribofstarformation();
 #endif
-
 }
 
 

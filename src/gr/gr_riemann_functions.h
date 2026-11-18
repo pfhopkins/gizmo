@@ -15,7 +15,6 @@
 #define GR_RIEMANN_FUNCTIONS_H
 #ifdef GENERAL_RELATIVITY
 
-#define GR_DEDNER_IMPLICIT_LIMITER (0.75) /* the psi jump may change the face-normal field by at most this fraction of it */
 
 /* components of a symmetric tensor in the rotated basis whose rows are R: g' = R g R^T (R orthonormal) */
 KOKKOS_INLINE_FUNCTION SymmetricTensor2<double> gr_rotate_tensor(const SymmetricTensor2<double> &g, const Mat3<double> &R)
@@ -87,7 +86,8 @@ KOKKOS_INLINE_FUNCTION int gr_starstate(const struct gr_conservatives &cons_L, c
         {
             double tmp = (b > 0) ? -0.5*(b + sqrt(discr)) : -0.5*(b - sqrt(discr)); /* the negative root (Mignone & Bodo) */
             lamstar = c/tmp;
-            if(fabs(lamstar) > 1) {if(gr_limiter) {lamstar = sqrt(1. - 1./GR_GAMMA_LIMITER/GR_GAMMA_LIMITER);} else {return 1;}}
+            /* lambda* is the Eulerian velocity component along the coordinate normal, bounded by sqrt(gamma^nn) (|v^n| <= sqrt(gamma^nn) |v|) */
+            if(fabs(lamstar) > sqrt(g_nn)) {if(gr_limiter) {lamstar = copysign(sqrt(g_nn*(1. - 1./GR_GAMMA_LIMITER/GR_GAMMA_LIMITER)), lamstar);} else {return 1;}} /* (keeps the direction of the contact) */
         }
     }
     *P_M = (AL*lamstar + BL)/((CL + EL*lamstar)*gr->gdet); /* the pressure is continuous across the contact */
@@ -124,6 +124,7 @@ KOKKOS_INLINE_FUNCTION void gr_hydro_hll_flux(const struct gr_conservatives &con
     double F_D = (S_R*cons_L.D*vline_L - S_L*cons_R.D*vline_R + S_L*S_R*(cons_R.D - cons_L.D))*facLR;
 #ifdef HYDRO_MESHLESS_FINITE_MASS
     v_frame_line = F_D/U_hll.D; /* the HLL equivalent of the zero-mass-flux face velocity */
+    Riemann_out->S_M = v_frame_line;
     Riemann_out->Fluxes.rho = 0;
 #else
     Riemann_out->Fluxes.rho = F_D - v_frame_line*U_hll.D;
@@ -138,14 +139,9 @@ KOKKOS_INLINE_FUNCTION void gr_hydro_hllc_flux(const struct gr_conservatives &co
                                                double v_frame_line, const struct gr_metric *gr, double beta_n, const Vec3<double> &n_unit, struct Riemann_outputs *Riemann_out)
 {
     double alpha = gr->alpha, gdet = gr->gdet, S_M = Riemann_out->S_M, P_M = Riemann_out->P_M;
-    if((S_M == S_L) || (S_M == S_R))
-    {
-        Riemann_out->Fluxes.rho = 0;
-        Riemann_out->Fluxes.p = gdet*P_M*S_M;
-        Riemann_out->Fluxes.v = (alpha*gdet*P_M)*n_unit;
-        return;
-    }
-    if(S_L > v_frame_line)
+    /* a face at or beyond an edge of the fan takes the outer state; the star branches then always have S_L < v_frame < S_R, so their
+       denominators S_M - S_L and S_R - S_M cannot vanish (a contact on an outer wave, S_M = S_L or S_R, needs no special case) */
+    if(S_L >= v_frame_line)
     {
         Riemann_out->Fluxes.rho = cons_L.D*(vline_L - v_frame_line);
         Riemann_out->Fluxes.p   = cons_L.tau*(vline_L - v_frame_line) + gdet*cons_L.p*(vline_L + beta_n);
@@ -162,7 +158,7 @@ KOKKOS_INLINE_FUNCTION void gr_hydro_hllc_flux(const struct gr_conservatives &co
         Riemann_out->Fluxes.p   = U.tau*(S_M - v_frame_line) + gdet*P_M*(S_M + beta_n);
         Riemann_out->Fluxes.v   = (S_M - v_frame_line)*U.S + (alpha*gdet*P_M)*n_unit;
     }
-    else if(v_frame_line <= S_R)
+    else if(v_frame_line < S_R)
     {
         double v_fac = (S_R - vline_R)/(S_R - S_M); if(v_fac < 0) {v_fac = 0;}
         struct gr_conservatives U;
@@ -196,9 +192,9 @@ KOKKOS_INLINE_FUNCTION void gr_hydro_riemann(const struct Input_vec_Riemann &Rie
     gr_lambda_hydro(L.v, Riemann_vec.L.cs, gnn, beta_n, gr->alpha, n_unit, L.W, lam_l, gr_limiter);
     gr_lambda_hydro(R.v, Riemann_vec.R.cs, gnn, beta_n, gr->alpha, n_unit, R.W, lam_r, gr_limiter);
     double S_L = DMIN(lam_r[1], lam_l[1]), S_R = DMAX(lam_r[0], lam_l[0]);
+#if (GENERAL_RELATIVITY==1)
     if(gr_starstate(L.cons, R.cons, n_unit, vline_L, vline_R, gr, beta_n, gnn, S_L, S_R, &(Riemann_out->S_M), &(Riemann_out->P_M), gr_limiter) != 0) {Riemann_out->P_M = -1; return;}
     if(Riemann_out->P_M < 0) {return;}
-#if (GENERAL_RELATIVITY==1)
 #ifdef HYDRO_MESHLESS_FINITE_MASS
     /* the face moves with the contact (v_frame = S_M): no mass flux, pressure work and force of the star state (the finite-volume
        form below with v_frame_line = S_M; the C/C++ GR code omitted the alpha*sqrt(gamma) factors here) */
@@ -209,6 +205,10 @@ KOKKOS_INLINE_FUNCTION void gr_hydro_riemann(const struct Input_vec_Riemann &Rie
     gr_hydro_hllc_flux(L.cons, R.cons, vline_L, vline_R, S_L, S_R, v_frame_line, gr, beta_n, n_unit, Riemann_out);
 #endif
 #else
+    /* HLL needs no star state (as the MHD HLL): P_M, the mean face pressure, only tells the caller that the solution is valid, and S_M is
+       the mean signal speed or, for MFM, the zero-mass-flux face velocity the flux uses (set in gr_hydro_hll_flux) */
+    Riemann_out->S_M = 0.5*(S_L + S_R);
+    Riemann_out->P_M = 0.5*(L.cons.p + R.cons.p);
     gr_hydro_hll_flux(L.cons, R.cons, vline_L, vline_R, S_L, S_R, v_frame_line, gr, beta_n, n_unit, Riemann_out);
 #endif
 }
@@ -226,9 +226,6 @@ KOKKOS_INLINE_FUNCTION void gr_riemann_solver(struct Input_vec_Riemann Riemann_v
     Riemann_vec.R.cs = gr_sound_speed(GAMMA_DEFAULT, Riemann_vec.R.p, Riemann_vec.R.rho, Riemann_vec.R.u);
 #endif
     gr_hydro_riemann(Riemann_vec, Riemann_out, n_unit, gr_limiter);
-#ifdef SAVE_FACE_DENSITY
-    Riemann_out->Face_Density = 0.5*(Riemann_vec.L.rho + Riemann_vec.R.rho);
-#endif
 }
 
 #endif /* GENERAL_RELATIVITY */

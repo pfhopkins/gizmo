@@ -4,7 +4,7 @@
  *   -1 : rho0 <= 0 or u <= 0 after the inversion
  *   -3 : W out of range,  -4 : v^2 >= 1,  -5 : the initial Lorentz factor is not finite
  *   -(100*r + 1) : the Newton-Raphson iteration returned r (1 = not converged, 2 = non-finite residual)
- * It never prints: a host caller reports a failure with gr_con2prim_report_failure() (gr/gr_utils.cc).
+ * It never prints: the callers report a failure.
  *
  * gr_drift_reinvert() is the inversion at fixed specific internal energy (the energy slaved to the momentum), used by the energy-holding
  * drift (GR_DRIFT_HOLD_INTERNAL_ENERGY, the default) for the drifted and predicted states and for the drift part of the energy source.
@@ -143,19 +143,13 @@ KOKKOS_INLINE_FUNCTION double gr_get_primitive_variables(const struct gr_conserv
     return gamma;
 }
 
-#ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
 /* Inversion with the energy slaved to the momentum: the conserved D, S_j (and sqrt(gamma) B^i) and the specific internal energy u are
    held fixed, and the Lorentz factor, the rest-mass density, the pressure and tau are recomputed with the metric gr. It is used by the
-   drift (the metric changes along the path at fixed S_j and u), the kick removing the corresponding rate from the Valencia energy
-   source (gr_drift_tau_path_rate). Carrying tau through the drift unchanged leaves (D, S_j, tau) inconsistent with the new metric by
+   default drift (the metric changes along the path at fixed S_j and u), the kick removing the corresponding rate from the Valencia energy
+   source (gr_drift_tau_path_rate), and, with either drift, by the entropy floor of merged cells (mesh/merge_split.cc). Carrying tau through the drift unchanged leaves (D, S_j, tau) inconsistent with the new metric by
    O(dt), which makes the velocity of the drifted state first-order accurate (circular geodesics in Kerr-Schild coordinates drift);
    for a test particle the modified scheme is the Hamiltonian splitting in the covariant momentum, second order. Ideal gas: h = 1 + Gamma u does not depend on rho0,
-   so S_i S^i = (D h)^2 (W^2 - 1) gives W directly; with a field W solves the momentum equation in Noble's variables (Wn = rho0 h W^2 = D h W),
-   (Wn + B^2)^2 (1 - 1/W^2) - (S.B)^2 (2 Wn + B^2)/Wn^2 = S^2, which increases monotonically with W from a non-positive value at W = 1: it is
-   solved by Newton's method from the Lorentz factor of the input velocity, safeguarded by the bracket [1, 1e8] that the sign of f keeps
-   updated (a step leaving it is replaced by the geometric midpoint; a fixed-point iteration on v does not converge in magnetically
-   dominated gas), and v follows from the closing
-   formula of the Noble inversion, v^i = (S^i + (S.B/Wn) B^i)/(Wn + B^2).
+   so S_i S^i = (D h)^2 (W^2 - 1) gives W directly, and v^i = S^i/(D h W).
    On input prims->v is the velocity before the drift (initial guess); returns the Lorentz factor, or -1 if the iteration failed. */
 KOKKOS_INLINE_FUNCTION double gr_drift_reinvert(const struct gr_conservatives *cons, double u, double gamma_eos, const struct gr_metric *gr, int gr_limiter, struct gr_primitives *prims, struct gr_conservatives *cons_new)
 {
@@ -173,7 +167,6 @@ KOKKOS_INLINE_FUNCTION double gr_drift_reinvert(const struct gr_conservatives *c
     gr_get_conservative_variables(prims, cons_new, W, gr);
     return W;
 }
-#endif /* GR_DRIFT_HOLD_INTERNAL_ENERGY */
 
 #endif /* GENERAL_RELATIVITY */
 #endif /* GR_CON2PRIM_FUNCTIONS_H */

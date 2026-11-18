@@ -32,14 +32,11 @@
 #if defined(HYDRO_DENSITY_SPH) || defined(HYDRO_PRESSURE_SPH)
 #error "GENERAL_RELATIVITY does not work with the SPH solvers"
 #endif
-#if (GENERAL_RELATIVITY==2)
-#error "GENERAL_RELATIVITY=2 is not available: use 0 (HLL) or 1 (HLLC)"
-#endif
 #ifndef GR_METRIC
 #define GR_METRIC (1)                 /* default: Kerr (Schwarzschild for GR_Spin=0) */
 #endif
-#ifndef SELFGRAVITY_OFF
-#define SELFGRAVITY_OFF               /* the metric is prescribed: no Newtonian self-gravity */
+#if ((GENERAL_RELATIVITY != 0) && (GENERAL_RELATIVITY != 1)) || (GR_METRIC > 1)
+#error "GENERAL_RELATIVITY must be 0 (HLL) or 1 (HLLC), and GR_METRIC 0 (Minkowski), 1 (Kerr) or negative (tabulated)"
 #endif
 #if (GR_METRIC==1)
 #ifndef USE_BOYERLINDQUIST
@@ -1036,6 +1033,11 @@
 #define EOS_GENERAL /*! needs to be on for this to work */
 #endif
 #endif
+/* GR assumes an ideal gas with the constant adiabatic index GAMMA_DEFAULT (EOS_GAMMA) everywhere: inversion (h = 1 + Gamma u), pressure,
+   sound speed, Riemann solvers and the drift re-inversion */
+#if defined(GENERAL_RELATIVITY) && defined(EOS_GENERAL)
+#error "GENERAL_RELATIVITY assumes an ideal gas with a constant adiabatic index (EOS_GAMMA): it does not work with the general equations of state (EOS_GENERAL)"
+#endif
 #define GAMMA_DEFAULT (EOS_GAMMA)
 
 
@@ -1424,20 +1426,13 @@
 #endif
 
 #if defined(GENERAL_RELATIVITY) && !defined(GR_DRIFT_LEGACY) && !defined(GR_DRIFT_HOLD_INTERNAL_ENERGY)
-#define GR_DRIFT_HOLD_INTERNAL_ENERGY /* GR: the drift holds D, S_j, sqrt(gamma)B^i and u fixed and recomputes W and tau at the new metric (default); GR_DRIFT_LEGACY restores the drift of Lupi (2023) */
+#define GR_DRIFT_HOLD_INTERNAL_ENERGY /* GR: the drift holds D, S_j and u fixed and recomputes W and tau at the new metric (default); GR_DRIFT_LEGACY restores the drift of Lupi (2023) */
 #endif
 
 #ifdef MAGNETIC /* recommended MHD switches -- only turn these off for de-bugging */
 #define DIVBCLEANING_DEDNER         /* hyperbolic/parabolic div-cleaing (Dedner 2002), with TP improvements */
 #ifdef HYDRO_SPH /* MHD switches specific to SPH MHD */
 #define SPH_TP12_ARTIFICIAL_RESISTIVITY   /* turns on magnetic dissipation ('artificial resistivity'): uses tricco switch =h*|gradB|/|B| */
-#endif
-#else
-/* the divergence-cleaning flags only make sense with MAGNETIC (they are set automatically above): if a Config lists one of them
-   without MAGNETIC, ignore it here, since several files test only the cleaning flags while the fields they need are declared inside
-   the MAGNETIC blocks */
-#ifdef DIVBCLEANING_DEDNER
-#undef DIVBCLEANING_DEDNER
 #endif
 #endif
 

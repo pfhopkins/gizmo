@@ -8,7 +8,8 @@
    energy error than f=4 on Sedov, at roughly twice the cost -- and otherwise it follows the slope
    limiter, which is the choice this code has always made. */
 #ifndef WAKEUP
-#if (SLOPE_LIMITER_TOLERANCE > 0) && !defined(GENERAL_RELATIVITY)
+#if (SLOPE_LIMITER_TOLERANCE > 0) && !defined(GENERAL_RELATIVITY) /* GR: 2.1, as in Lupi (2023): neighbouring cells at most one time-bin apart, since
+                                                                      the conserved variables of inactive neighbours are only predicted to first order */
 #define WAKEUP   4.1            /* allows 2 timestep bins within kernel */
 #else
 #define WAKEUP   2.1            /* allows only 1-separated timestep bins within kernel */

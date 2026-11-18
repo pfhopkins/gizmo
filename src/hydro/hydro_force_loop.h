@@ -238,7 +238,7 @@ struct HydroForceSpec
         local.Pos = kp[i].Pos;
         local.Vel = kc[i].VelPred;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-        local.ParticleVel = kc[i].ParticleVel; /* the velocity of the mesh-generating point, not of the fluid (as in the original C code: Lupi fix 2022) */
+        local.ParticleVel = kc[i].ParticleVel; /* the faces move with the mesh-generating points, not with the fluid */
 #endif
         local.KernelRadius      = kp[i].KernelRadius;
         local.Mass              = kp[i].Mass;
@@ -578,7 +578,7 @@ struct HydroForceSpec
         for(int kv = 0; kv < 3; kv++) { dst.Face_Area[kv] += src.Face_Area[kv]; }
         for(int kv = 0; kv < 3; kv++) { dst.DtB[kv] += src.DtB[kv]; }
         MERGE_ADD(divB);
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         MERGE_ADD(DtPhi);
 #endif

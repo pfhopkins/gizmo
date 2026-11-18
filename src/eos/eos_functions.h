@@ -834,13 +834,10 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     if(pp[i].FluidType == FLUID_DM) { set_dark_eos_pressure(i, pp, cell); return; }
 #endif
     double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = GAMMA_DEFAULT; soundspeed=0;
-#ifdef GENERAL_RELATIVITY /* GR: pressure from the rest-mass density (density_for_energy()), with the EOS of the con2prim (gr/gr_functions.h) */
-    if(All.Time > All.TimeBegin) {gamma_eos_index = cell[i].gamma_eos_value();} /* can only safely set this after initial startup, not on first call before proper cooling pass */
+#ifdef GENERAL_RELATIVITY /* GR: pressure from the rest-mass density (density_for_energy()), with the EOS of the con2prim (gr/gr_functions.h):
+                             an ideal gas with the constant adiabatic index GAMMA_DEFAULT (EOS_GENERAL is excluded in declarations/precompiler_logic.h) */
     cell[i].Gamma = gamma_eos_index;
     press = gr_pressure_rho0_u(cell[i].density_for_energy(), cell[i].InternalEnergyPred);
-#ifdef EOS_GENERAL
-    cell[i].SoundSpeed = gr_sound_speed(gamma_eos_index, press, cell[i].density_for_energy(), cell[i].InternalEnergyPred);
-#endif
     cell[i].Pressure = press;
     return;
 #endif

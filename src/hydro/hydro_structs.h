@@ -293,7 +293,7 @@ struct hydro_data_out
     Vec3<MyDouble> Face_Area;
     Vec3<MyFloat> DtB;
     MyFloat divB;
-#ifdef DIVBCLEANING_DEDNER
+#if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     MyFloat DtPhi;
 #endif

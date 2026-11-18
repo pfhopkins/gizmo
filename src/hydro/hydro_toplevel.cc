@@ -153,7 +153,7 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #endif
 
-#ifdef MAGNETIC
+#if defined(MAGNETIC)
             /* need to subtract out the source terms proportional to the (non-zero) B-field divergence; to stabilize the scheme */
             {
                 Vec3<double> Bi = CellP[i].Bfield() * All.cf_a2inv;
@@ -334,8 +334,9 @@ void hydro_final_operations_and_cleanup(void)
 #endif
             
             
-#if (defined(COSMIC_RAY_FLUID) && !defined(COOLING_OPERATOR_SPLIT)) || defined(COSMIC_RAY_SUBGRID_LEBRON)
-            /* with the spectrum model, we account here the adiabatic heating/cooling of the 'fluid', here, which was solved in the hydro solver but doesn't resolve which portion goes to CRs and which to internal energy, with gamma=GAMMA_COSMICRAY */
+#if (defined(COSMIC_RAY_FLUID) && !defined(COOLING_OPERATOR_SPLIT) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES)) || defined(COSMIC_RAY_SUBGRID_LEBRON)
+            /* with the spectrum model, we account here the adiabatic heating/cooling of the 'fluid', here, which was solved in the hydro solver but doesn't resolve which portion goes to CRs and which to internal energy, with gamma=GAMMA_COSMICRAY.
+               (Not with explicitly-evolved scattering waves: their solver does the whole gas/CR/wave adiabatic exchange itself.) */
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
             double P_cr_spec = (1./3.)*CellP[i].SubGrid_CosmicRayEnergyDensity/CellP[i].Density, P_tot_spec = P_cr_spec + (2./3.)*CellP[i].InternalEnergyPred + (1./2.)*pow(CellP[i].Alfven_speed(),2); // just include CR+thermal+magnetic here
             CellP[i].DtInternalEnergy *= (1.-P_cr_spec/P_tot_spec); /* approximate correction, valid to level here [more sophisticated correction can cause problems since the PdV energy isn't actually being taken -out- of the CR field, as it would be if followed explicitly] */
@@ -344,6 +345,9 @@ void hydro_final_operations_and_cleanup(void)
             double dCR_div = CR_calculate_adiabatic_gasCR_exchange_term(i, dt, gamma_minus_eCR_tmp, 1, P, CellP); // this will handle the update below - separate subroutine b/c we want to allow it to appear in a couple different places
             double u0=DMAX(CellP[i].InternalEnergyPred, All.MinEgySpec) , uf=DMAX(u0 - dCR_div/P[i].Mass , All.MinEgySpec); // final updated value of internal energy per above
             CellP[i].DtInternalEnergy += (uf - u0) / (dt + MIN_REAL_NUMBER); // update gas quantities to be used in cooling function
+#if !defined(CRFLUID_EVOLVE_SPECTRUM) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) /* the spectrum and scattering-wave solvers apply the CRs' adiabatic term themselves; otherwise the CRs receive here exactly what the gas gave up, shared between bins by their (gamma-1)*E */
+            if(gamma_minus_eCR_tmp > 0) {for(k=0;k<N_CR_PARTICLE_BINS;k++) {CellP[i].DtCosmicRayEnergy[k] += ((GAMMA_COSMICRAY(k)-1.)*CellP[i].CosmicRayEnergyPred[k] / gamma_minus_eCR_tmp) * (u0 - uf) * P[i].Mass / (dt + MIN_REAL_NUMBER);}}
+#endif
 #endif
 #endif
 #if defined(COSMIC_RAY_FLUID)

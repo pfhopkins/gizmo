@@ -160,8 +160,6 @@ void hydro_core_meshless_compute_pair(
 
 #ifdef GENERAL_RELATIVITY
     face_vel_i += dot(local.VelCoord, n_unit); face_vel_j += dot(grj.VelCoord_j, n_unit); /* GR: coordinate (dx/dt) velocities of the mesh-generating points */
-#elif defined(HYDRO_MESHLESS_FINITE_VOLUME)
-    face_vel_i += dot(local.ParticleVel, n_unit); face_vel_j += dot(ParticleVel_j, n_unit); /* MFV: the faces move with the mesh-generating points */
 #else
     face_vel_i += dot(local.Vel, n_unit); face_vel_j += dot(VelPred_j, n_unit);
 #endif
@@ -303,13 +301,8 @@ void hydro_core_meshless_compute_pair(
 #endif
 
 #ifdef GENERAL_RELATIVITY
-    /* metric at the face position (j is the origin of distance_from_j) */
+    /* metric at the face position (j is the origin of distance_from_j; the metric takes the nearest periodic image itself) */
     Vec3<double> xface = P[j].Pos + Vec3<double>{distance_from_j[0], distance_from_j[1], distance_from_j[2]};
-#ifdef BOX_PERIODIC
-    if(xface[0] > boxSize_X) {xface[0] -= boxSize_X;} else if(xface[0] < 0) {xface[0] += boxSize_X;}
-    if(xface[1] > boxSize_Y) {xface[1] -= boxSize_Y;} else if(xface[1] < 0) {xface[1] += boxSize_Y;}
-    if(xface[2] > boxSize_Z) {xface[2] -= boxSize_Z;} else if(xface[2] < 0) {xface[2] += boxSize_Z;}
-#endif
     set_metric_coefficients(xface, P[j].Potential, &(Riemann_vec.gr));
     if((Riemann_vec.gr.alpha < 1e-3) || isnan(Riemann_vec.gr.alpha)) {set_metric_coefficients(P[j].Pos, P[j].Potential, &(Riemann_vec.gr));} /* too close to a singularity: use the metric of j */
     /* convert the reconstructed four-velocities back to three-velocities with the face metric */
@@ -511,7 +504,6 @@ void hydro_core_meshless_compute_pair(
     else               { Fluxes.phi = Fluxes.rho * Riemann_vec.L.phi; }
 #endif
 #endif
-
 
 /* the face entropic switch: on slow faces, replace the Riemann energy flux by the PdV form, unless that would move energy
    against the thermal ordering of the two sides. It edits only the isotropic (P_M) energy flux, so with EOS_ELASTIC the

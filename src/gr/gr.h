@@ -16,14 +16,22 @@
 #include "../math_types/mat3.h"
 #include "../math_types/symmetric_tensor2.h"
 
+/* the GR drift (gr_drift_impl) re-inverts the conserved variables of every moving cell at the metric of its new position: MFM implicitly (the
+   cell moves with the fluid), MFV once (the cell moves with its mesh-generating point, whatever the mesh motion); a fixed MFV mesh needs
+   nothing. With the energy-holding drift it then accounts for part of the energy source along the path, which the kick removes */
+#if defined(GENERAL_RELATIVITY) && (defined(HYDRO_MESHLESS_FINITE_MASS) || (defined(HYDRO_MESHLESS_FINITE_VOLUME) && (HYDRO_FIX_MESH_MOTION>0)))
+#define GR_DRIFT_REINVERTS
+#ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
+#define GR_DRIFT_PATH_SOURCE
+#endif
+#endif
 /* kick/drift of the conserved variables: implicit solver tolerance and iteration cap (otherwise a predictor-corrector) */
-#define IMPLICIT_SOLVER (1e-8)
-#define IMPLICIT_MAX_NITER 100
+#define GR_IMPLICIT_TOLERANCE (1e-8)   /* convergence tolerance of the implicit iterations (drift position correction, source terms, beta cooling) */
+#define GR_IMPLICIT_MAX_NITER 100      /* their maximum number of iterations */
 #define GR_EPS_TOLERANCE (1e-8) /* finite-difference step of the metric derivatives */
 
-#define PARTICLE (25487837)           /* ID of one particle for which the GR solver prints diagnostics (debug) */
 #define GR_GAMMA_LIMITER (1000)       /* maximum Lorentz factor enforced inside GAMMA_LIMITER_RADIUS */
-#define GAMMA_LIMITER_RADIUS (0.0)    /* radius (from the origin) inside which the Lorentz factor is limited */
+#define GAMMA_LIMITER_RADIUS (0.0)    /* radius (from the hole, gr_hole_displacement) inside which the Lorentz factor is limited */
 /* time step of the gas (core/timestep.cc), on top of the Courant and acceleration criteria (not in the original code, whose 10% limit on the change of tau is removed) */
 #define GR_TIMESTEP_ENERGY_FRAC (0.02) /* the kinetic-energy error of a first-order sub-step, (1/2) rho0 h* W^3 (|a| dt)^2, is at most this fraction of rho0 u */
 
@@ -53,7 +61,7 @@ struct gr_conservatives
     double D;                         /*!< sqrt(gamma) rho0 W */
     Vec3<double> S;                   /*!< sqrt(gamma) S_i (covariant momentum density) */
     double tau;                       /*!< sqrt(gamma) (energy density - D) */
-    double p;                         /*!< total (gas + magnetic) pressure, carried along for the Riemann solvers */
+    double p;                         /*!< pressure, carried along for the Riemann solvers */
 };
 
 struct gr_primitives
@@ -72,7 +80,7 @@ struct kernel_NR
 };
 
 #if (GR_METRIC>0)
-#define EHradius(M,a) ((M)*(1+sqrt(1-(a)[0]*(a)[0]-(a)[1]*(a)[1]-(a)[2]*(a)[2]))) /* event-horizon radius of a Kerr hole of mass M and spin vector a (dimensionless) */
+#define GR_HORIZON_RADIUS(M,a) ((M)*(1+sqrt(1-(a)[0]*(a)[0]-(a)[1]*(a)[1]-(a)[2]*(a)[2]))) /* event-horizon radius of a Kerr hole of mass M and spin vector a (dimensionless) */
 #endif
 
 /* --- host routines (gr/gr_utils.cc) --- */
@@ -82,9 +90,7 @@ void gr_load_metric_table(void); /* reads All.GR_MetricTableFile into All.GR_Met
 #ifdef PARTICLE_EXCISION
 /* apply_excision() (gravity/analytic_gravity.h, called once per step) uses check_boundary() to remove the cells inside GR_EXCISION_RADIUS horizon radii */
 void check_boundary(int target);
-void smooth_conservatives_inside_horizon(int i, double r, double r_EH, double M);
 #endif
-void gr_con2prim_report_failure(const char *where, int code, const struct gr_conservatives *cons, const struct gr_primitives *prims, const struct gr_metric *gr); /* prints the state of a failed inversion (host) */
 
 /* --- the integration of the conserved variables is in gr/gr_kick_functions.h (device-callable: gr_kick_impl, gr_drift_impl, gr_predict_impl) --- */
 void compute_initial_accelerations(void); /* host (gr/gr_utils.cc): the first kick of every cell, to seed HydroAccel/DtInternalEnergy from the initial fluxes */

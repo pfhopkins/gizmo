@@ -362,6 +362,145 @@ endif
 endif
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Viper_GPU")
+## Viper-GPU (MPCDF), AMD MI300A APU (gfx942) via the Kokkos HIP backend; modelled on "Frontier".
+## Device TUs (GPU_OBJS) are compiled by hipcc (defines __HIPCC__ => GIZMO_GPU_COMPILER); host TUs
+## and the final link use the Open MPI wrappers pointed at ROCm's amdclang (OMPI_CC/OMPI_CXX below),
+## as Frontier uses the AMD PE: -fopenmp is always on (CONFIGVARS += OPENMP above), and gcc host
+## objects would bring libgomp next to the libomp that hipcc objects need.
+## Load: gcc/14 rocm/7.1 openmpi_gpu/5.0 hdf5-serial/1.14.1 fftw-mpi/3.3.10 gsl/2.7
+## ROCm 7.1, not 7.2: with ROCm 7.2.4 (clang 22) at -O2 the Mode D packet walk in mesh/neighbor_loop_runner.cc does not
+## end at about 2e6 cells, so start-up hangs (#166); 6.4.3, 7.0.2 and 7.1.0 at -O2 run, as does 7.2 with that file at -O1.
+## There is no Kokkos module on Viper; build Kokkos 5.0.0 once with the same ROCm (login node, ~1 minute):
+##   module load gcc/14 rocm/7.1 openmpi_gpu/5.0 cmake/4.0
+##   cmake -S kokkos-5.0.0 -B build -DCMAKE_INSTALL_PREFIX=<prefix> -DCMAKE_BUILD_TYPE=Release
+##     -DCMAKE_CXX_COMPILER=hipcc -DCMAKE_CXX_STANDARD=20 -DBUILD_SHARED_LIBS=ON
+##     -DKokkos_ENABLE_HIP=ON -DKokkos_ENABLE_SERIAL=ON -DKokkos_ARCH_AMD_GFX942_APU=ON -DKokkos_ARCH_ZEN4=ON
+##     -DKokkos_ENABLE_IMPL_HIP_MALLOC_ASYNC=OFF
+##   cmake --build build -j 32 && cmake --install build
+## IMPL_HIP_MALLOC_ASYNC=OFF is required: with AMD_GFX942_APU Kokkos treats HIPSpace as host-accessible and writes each
+## allocation's header from the host, which hipMallocAsync memory (Kokkos 5's default) does not allow -- the first
+## kokkos_malloc<HIPSpace> segfaults (SEGV_ACCERR in fill_host_accessible_header_info). Plain hipMalloc memory is.
+## KOKKOS_PATH: make command line > environment > $(HOME)/opt/kokkos-5.0.0-hip-gfx942apu.
+## gfx942:xnack+ as on Frontier: the code uses HIP managed memory (static __managed__ mirrors +
+## SharedSpace=HIPManagedSpace). Requires HSA_XNACK=1 at run time. Submit to partition apu (or apudev).
+export OMPI_CC  = $(ROCM_PATH)/llvm/bin/amdclang
+export OMPI_CXX = $(ROCM_PATH)/llvm/bin/amdclang++
+CC       =  mpicc
+CXX      =  mpicxx -std=c++20
+FC       =  mpifort
+OPTIMIZE = -O2 -g -Wall
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(shell echo $$KOKKOS_PATH)
+endif
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(HOME)/opt/kokkos-5.0.0-hip-gfx942apu
+endif
+KOKKOS_CPPFLAGS = -I$(KOKKOS_PATH)/include
+KOKKOS_CXXFLAGS = --offload-arch=gfx942:xnack+ -march=znver4 -I$(OPENMPI_HOME)/include
+KOKKOS_LDFLAGS  = -L$(KOKKOS_PATH)/lib64 -Wl,-rpath,$(KOKKOS_PATH)/lib64 -L$(ROCM_PATH)/lib -Wl,-rpath,$(ROCM_PATH)/lib -Wl,-rpath,$(ROCM_PATH)/llvm/lib
+KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers -lamdhip64
+GPU_CXX     = hipcc -std=c++20
+GPU_CFLAGS  = $(KOKKOS_CPPFLAGS) $(KOKKOS_CXXFLAGS)
+GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
+MKL_INCL =
+MKL_LIBS =
+HDF5INCL = -I$(HDF5_HOME)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_HOME)/lib -Wl,-rpath,$(HDF5_HOME)/lib -lhdf5 -lz
+FFTW_INCL= -I$(FFTW_HOME)/include
+FFTW_LIBS= -L$(FFTW_HOME)/lib -Wl,-rpath,$(FFTW_HOME)/lib
+GSL_INCL = -I$(GSL_HOME)/include
+GSL_LIBS = -L$(GSL_HOME)/lib -Wl,-rpath,$(GSL_HOME)/lib -lgsl -lgslcblas
+MPICHLIB = #
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
+ifeq (yes,$(MG_USES_HYPRE))
+## MHD_MODIFIED_GRADIENT: no HYPRE module on Viper; build HYPRE 3.1.0 (CPU, MPI, shared) with this block's MPI and
+## export HYPRE_ROOT=<prefix> (lib or lib64 searched; run path set).
+ifdef HYPRE_ROOT
+HYPRE_INCL = -I$(HYPRE_ROOT)/include
+HYPRE_LIBS = -L$(HYPRE_ROOT)/lib -L$(HYPRE_ROOT)/lib64 -Wl,-rpath,$(HYPRE_ROOT)/lib -Wl,-rpath,$(HYPRE_ROOT)/lib64 -lHYPRE
+endif
+endif
+endif
+
+#----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Viper_CPU")
+## Viper (MPCDF) CPU nodes (AMD Genoa, Zen4) with the Kokkos OpenMP backend: the OpenMP reference
+## for "Viper_GPU" (same source, kernels on CPU threads). Flags as RUSTY_GENOA (plain -O2, no -march).
+## Load: gcc/14 openmpi/5.0 hdf5-serial/1.14.1 fftw-mpi/3.3.10 gsl/2.7
+## No Kokkos module on Viper; build Kokkos 5.0.0 once with g++ (-DCMAKE_CXX_STANDARD=20
+##   -DBUILD_SHARED_LIBS=ON -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_SERIAL=ON -DKokkos_ARCH_ZEN4=ON).
+## KOKKOS_PATH: make command line > environment > $(HOME)/opt/kokkos-5.0.0-openmp-zen4.
+CC       =  mpicc
+CXX      =  mpicxx -std=c++20
+FC       =  mpifort
+OPTIMIZE = -O2 -g -Wall
+OPTIMIZE += -fopenmp   # the Kokkos OpenMP backend needs it whether or not OPENMP is set
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(shell echo $$KOKKOS_PATH)
+endif
+ifeq ($(strip $(KOKKOS_PATH)),)
+KOKKOS_PATH := $(HOME)/opt/kokkos-5.0.0-openmp-zen4
+endif
+KOKKOS_CPPFLAGS = -I$(KOKKOS_PATH)/include
+KOKKOS_LIBS_PATH = -L$(KOKKOS_PATH)/lib64 -Wl,-rpath,$(KOKKOS_PATH)/lib64
+KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers
+GPU_CXX    = mpicxx -std=c++20
+GPU_CFLAGS = $(KOKKOS_CPPFLAGS) -fopenmp
+GPU_LDFLAGS = $(KOKKOS_LIBS_PATH)
+MKL_INCL =
+MKL_LIBS =
+HDF5INCL = -I$(HDF5_HOME)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_HOME)/lib -Wl,-rpath,$(HDF5_HOME)/lib -lhdf5 -lz
+FFTW_INCL= -I$(FFTW_HOME)/include
+FFTW_LIBS= -L$(FFTW_HOME)/lib -Wl,-rpath,$(FFTW_HOME)/lib
+GSL_INCL = -I$(GSL_HOME)/include
+GSL_LIBS = -L$(GSL_HOME)/lib -Wl,-rpath,$(GSL_HOME)/lib -lgsl -lgslcblas
+MPICHLIB = #
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
+ifeq (yes,$(MG_USES_HYPRE))
+## MHD_MODIFIED_GRADIENT: no HYPRE module on Viper; build HYPRE 3.1.0 (CPU, MPI, shared) with this block's MPI and
+## export HYPRE_ROOT=<prefix> (lib or lib64 searched; run path set).
+ifdef HYPRE_ROOT
+HYPRE_INCL = -I$(HYPRE_ROOT)/include
+HYPRE_LIBS = -L$(HYPRE_ROOT)/lib -L$(HYPRE_ROOT)/lib64 -Wl,-rpath,$(HYPRE_ROOT)/lib -Wl,-rpath,$(HYPRE_ROOT)/lib64 -lHYPRE
+endif
+endif
+endif
+
+#----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Orion_Kokkos")
+## MPCDF Orion CPU nodes with the Kokkos OpenMP backend. Flags as RUSTY_GENOA: plain -O2, no -march and no -ffast-math
+## (the position->key contract in declarations/typedefs.h). Kokkos 5.0.0 with the OpenMP backend, built by each user
+## (no module): KOKKOS_HOME_ORION is its prefix (environment, Makefile.systype or make line).
+## Load the MPCDF gcc, Open MPI, hdf5-serial, fftw-mpi and gsl modules (they set HDF5_HOME, FFTW_HOME, GSL_HOME); the run
+## paths below mean LD_LIBRARY_PATH need not be set at run time.
+CC       =  mpicc
+CXX      =  mpicxx -std=c++20
+FC       =  mpifort
+OPTIMIZE = -O2 -funroll-loops -g -Wall
+OPTIMIZE += -fopenmp   # the Kokkos OpenMP backend needs it whether or not OPENMP is set
+KOKKOS_CPPFLAGS = -I$(KOKKOS_HOME_ORION)/include
+KOKKOS_LIBS_PATH = -L$(KOKKOS_HOME_ORION)/lib64
+KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers -ldl
+GPU_CXX    = mpicxx -std=c++20
+GPU_CFLAGS = -I$(KOKKOS_HOME_ORION)/include
+GPU_LDFLAGS = -L$(KOKKOS_HOME_ORION)/lib64 -Wl,-rpath,$(KOKKOS_HOME_ORION)/lib64
+MKL_INCL = #
+MKL_LIBS = #
+FFTW_INCL= -I$(FFTW_HOME)/include
+FFTW_LIBS= -L$(FFTW_HOME)/lib -Wl,-rpath,$(FFTW_HOME)/lib
+GSL_INCL = -I$(GSL_HOME)/include
+GSL_LIBS = -L$(GSL_HOME)/lib -Wl,-rpath,$(GSL_HOME)/lib
+HDF5INCL = -I$(HDF5_HOME)/include -DH5_USE_16_API
+HDF5LIB  = -L$(HDF5_HOME)/lib -Wl,-rpath,$(HDF5_HOME)/lib -lhdf5 -lz
+MPICHLIB = #
+endif
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Vista_CPU")
 ## Vista Grace ARM with Kokkos OpenMP backend (debug oracle for the GPU build).
 ## Same source code path as Vista (Kokkos kernels), just dispatched to OpenMP
@@ -676,36 +815,6 @@ HDF5INCL = -I/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/include -DH5_USE_16_API
 HDF5LIB  = -L/opt/homebrew/Cellar/hdf5/$(HDF5_VERSION)/lib -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DCHIMES_USE_DOUBLE_PRECISION -DGIZMO_GPU_ARENA_DEBUG
-endif
-
-#----------------------------
-## Apple Silicon with the toolchain from a conda environment (MPICH, Kokkos OpenMP backend, llvm-openmp):
-##   make SYSTYPE=MacBookConda_Kokkos GIZMO_CONDA_ENV=/path/to/env [GIZMO_HDF5_ROOT=/path/to/hdf5/prefix]
-## The device TUs are compiled by the same host compiler plus the Kokkos includes (OpenMP backend).
-ifeq ($(SYSTYPE),"MacBookConda_Kokkos")
-GIZMO_CONDA_ENV ?= $(CONDA_PREFIX)
-GIZMO_HDF5_ROOT ?= $(GIZMO_CONDA_ENV)
-CC       =  mpicc
-CXX      =  mpicxx -std=c++20
-OPTIMIZE = -O2 -funroll-loops   # no -ffast-math: see the position->key contract in declarations/typedefs.h
-OPTIMIZE += -Wno-unused-command-line-argument -Wno-unknown-pragmas
-OPTIMIZE += -Xpreprocessor -fopenmp -I$(GIZMO_CONDA_ENV)/include
-OPTIMIZE += -L$(GIZMO_CONDA_ENV)/lib -Wl,-rpath,$(GIZMO_CONDA_ENV)/lib -lomp
-KOKKOS_INCL = -I$(GIZMO_CONDA_ENV)/include -I$(GIZMO_CONDA_ENV)/include/kokkos
-KOKKOS_CPPFLAGS = $(KOKKOS_INCL)
-KOKKOS_LIBS_PATH = -L$(GIZMO_CONDA_ENV)/lib -Wl,-rpath,$(GIZMO_CONDA_ENV)/lib
-KOKKOS_LIBS = -lkokkoscore -lkokkoscontainers
-GPU_CXX    = mpicxx -std=c++20
-GPU_CFLAGS = $(KOKKOS_INCL)
-GPU_LDFLAGS = $(KOKKOS_LIBS_PATH)
-MKL_INCL = #
-MKL_LIBS = #
-FFTW_INCL= -I$(GIZMO_CONDA_ENV)/include
-FFTW_LIBS= -L$(GIZMO_CONDA_ENV)/lib
-HDF5INCL = -I$(GIZMO_HDF5_ROOT)/include -DH5_USE_16_API
-HDF5LIB  = -L$(GIZMO_HDF5_ROOT)/lib -Wl,-rpath,$(GIZMO_HDF5_ROOT)/lib -lhdf5 -lz
-MPICHLIB = #
-OPT     += -DDISABLE_ALIGNED_ALLOC
 endif
 
 #----------------------------

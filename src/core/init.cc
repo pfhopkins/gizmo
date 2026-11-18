@@ -586,7 +586,6 @@ void init(void)
     All.PM_Ti_endstep = All.PM_Ti_begstep = 0;
 #endif
 
-
     for(i = 0; i < N_gas; i++)	/* initialize gas/fluid cell properties */
     {
         CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;

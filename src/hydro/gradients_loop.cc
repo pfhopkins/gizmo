@@ -84,17 +84,16 @@ void local_slopelimiter(double *grad, double valmax, double valmin, double alim,
         if(abs_max < abs_min) { abs_max = fabs_min; abs_min = fabs_max; }
         f_corr_overshoot = DMIN(abs_min + shoot_tol * abs_max, abs_max);
         cfac *= f_corr_overshoot;
-        if(pos_preserve >= 1) {
-            /* positivity over a fraction of the maximum neighbour distance d_max: SLOPELIMITER_POSITIVITY_RANGE_FAC (default 0.25; 0.5 in GR, as in the
-               original GR code: at 0.25 the poorly resolved surface of a low-resolution TOV star launches a noise front that crosses the star in
-               ~7 t_dyn, while at 0.5 the star stays quiet and only its surface expands slowly).
-               fmin is at most half the smallest neighbour value (valmin is a difference from val_cen). Over the full d_max the pressure
-               step over-limits smooth stratified profiles: a TOV star or a Newtonian polytrope then develops an inward density wave
-               (outer layers drain, the core contracts); at 0.5 the wave is only slowed (TOV: outer shell at 0.7 of its initial density
-               after t=20), at 0.25 smooth profiles are left alone. The GR densities also need 0.5, where faces lie at the farthest
-               neighbour's midpoint: with 0.25 for the densities the gas pressure of the relativistic magnetic rotor collapses in its dense,
-               magnetically dominated shell (t~0.22). The pairwise face limiter of reconstruct_face_states keeps the face states positive. */
+        if(pos_preserve == 1) {
+#ifdef GENERAL_RELATIVITY
+            /* GR: positivity over a fraction SLOPELIMITER_POSITIVITY_RANGE_FAC (default 0.5, as in Lupi 2023) of the maximum
+               neighbour distance d_max (Newtonian builds use the full d_max). fmin is at most half the smallest neighbour value (valmin is a
+               difference from val_cen). Over the full d_max the pressure step over-limits smooth stratified profiles: a TOV star develops an
+               inward density wave (outer layers drain, the core contracts); at 0.5 the wave is only slowed (outer shell at 0.7 of its initial
+               density after t=20), while at 0.25 the poorly resolved surface of a low-resolution TOV star launches a noise front that crosses
+               the star in ~7 t_dyn. The pairwise face limiter of reconstruct_face_states keeps the face states positive. */
             d_max *= SLOPELIMITER_POSITIVITY_RANGE_FAC;
+#endif
             double fmin = DMIN(val_cen, DMAX(0, DMAX(MIN_REAL_NUMBER * val_cen,
                                                     DMIN(0.5 * (val_cen + valmin),
                                                          val_cen - f_corr_overshoot))));
@@ -919,7 +918,6 @@ void hydro_gradient_calc(void)
         }
 #endif
 
-
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
         {
             double ngb_eff = pow(P[i].NumNgb, NUMDIMS);
@@ -1093,17 +1091,6 @@ void hydro_gradient_calc(void)
 #if (SLOPE_LIMITER_TOLERANCE == 0)
             a_limiter *= 2.0; stol = 0.0;
 #endif
-#if defined(GENERAL_RELATIVITY) && (SLOPE_LIMITER_TOLERANCE == 1)
-            /* GR: the cell limiter of SLOPE_LIMITER_TOLERANCE=0 (twice as strict), with the default face tolerances. In the relativistic
-               cylindrical blast the default 0.25 lets the extrapolation of the magnetically dominated cells at the shell corners drain their
-               thermal energy (MFM: the run fails at t~0.9 unless the drained states are repaired with an energy injection; MFV: u falls to
-               ~1e-4 of its value at sigma ~ 200 and the energy time-step limit takes the step to ~1e-6); at 0.5 the drain is transient
-               (MFM: t~1.05-1.7, the inversion keeps the previous u; the run reaches t=4 with the paper's low-pressure lobes) or absent (MFV, to t=1.1).
-               The TOV star, the magnetic rotor, Balsara 4 and the magnetised Bondi flow are unchanged or slightly better with MFM. With MFV the
-               stricter limiter lets the mass fluxes carry mass out of the core of a TOV star, a resolution effect that converges away
-               (rho_c after 5 t_dyn: 0.92, 0.985 and 1.000 with 4e3, 3.1e4 and 2.5e5 particles on an FCC lattice). */
-            a_limiter *= 2.0;
-#endif
 
 #if (SINGLE_STAR_SINK_FORMATION & 4)
             CellP[i].Density_Relative_Maximum_in_Kernel = passer_base[i].Maxima.Density;
@@ -1111,14 +1098,10 @@ void hydro_gradient_calc(void)
 #ifdef GENERAL_RELATIVITY
             local_slopelimiter(CellP[i].Gradients.RestMassDensity, passer_base[i].Maxima.RestMassDensity, passer_base[i].Minima.RestMassDensity,
                                a_limiter, h_lim, 0., 1, d_max, gr_get_primitive_density(CellP[i].Density, CellP[i].VelPred, &(CellP[i].gr), CellP[i].gr.limiter));
-            local_slopelimiter(CellP[i].Gradients.Density, passer_base[i].Maxima.Density, passer_base[i].Minima.Density,
-                               a_limiter, h_lim, 0, 1, d_max, CellP[i].Density);
-            int pressure_is_positive_definite = 1;
-#else
-            local_slopelimiter(CellP[i].Gradients.Density, passer_base[i].Maxima.Density, passer_base[i].Minima.Density,
-                               a_limiter, h_lim, 0, 1, d_max, CellP[i].Density);
-            int pressure_is_positive_definite = 1;
 #endif
+            local_slopelimiter(CellP[i].Gradients.Density, passer_base[i].Maxima.Density, passer_base[i].Minima.Density,
+                               a_limiter, h_lim, 0, 1, d_max, CellP[i].Density);
+            int pressure_is_positive_definite = 1;
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
             pressure_is_positive_definite = 0;
 #endif

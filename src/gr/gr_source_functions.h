@@ -2,8 +2,8 @@
  *
  * gr_source_term() evaluates them for a cell from the stress-energy tensor of its primitives; gr_add_source_term() adds them to the
  * conserved variables over a time interval (predictor, plus an implicit corrector), for the kick and the predict (gr/gr_kick_functions.h).
- * With the energy-holding drift (GR_DRIFT_HOLD_INTERNAL_ENERGY) the part of the energy source that the re-inversion of the drifted state
- * produces (gr_drift_tau_path_rate) is removed from it.
+ * With the energy-holding drift, where the drift re-inverts the moved cells (GR_DRIFT_PATH_SOURCE), the part of the energy source that the
+ * re-inversion of the drifted state produces (gr_drift_tau_path_rate) is removed from it.
  *
  * Port of gr/gr_source.h of the C/C++ GIZMO branches (A. Lupi, G. Fedrigo). */
 #ifndef GR_SOURCE_FUNCTIONS_H
@@ -11,21 +11,26 @@
 #ifdef GENERAL_RELATIVITY
 
 
-#ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
-/* rate of change of tau along the drift of cell i at fixed (D, S_j, sqrt(gamma) B^i, u), (d tau/d x^k) v^k with v the coordinate
-   velocity of the state (the particle is drifted with it): the Valencia energy source is the total rate along the path, of which this part is now
-   produced by the re-inversion of the drifted state, so it is removed from the source applied in the kick. Centred finite differences
-   of the slaved inversion along the direction of motion. */
+#ifdef GR_DRIFT_PATH_SOURCE
+/* rate of change of tau along the drift of cell i at fixed (D, S_j, sqrt(gamma) B^i, u), (d tau/d x^k) w^k with w the coordinate
+   velocity the cell is displaced with: the fluid velocity of the state for MFM, the velocity of the mesh-generating point (ParticleVel) for
+   MFV. The Valencia energy source is the total rate along the path, of which this part is produced by the re-inversion of the drifted
+   state, so it is removed from the source applied in the kick. Centred finite differences of the slaved inversion along the direction of
+   motion. Only where the drift re-inverts the moved cells (GR_DRIFT_PATH_SOURCE): elsewhere the kick applies the whole source. */
 KOKKOS_INLINE_FUNCTION double gr_drift_tau_path_rate(int i, const struct gr_conservatives *cons, const struct gr_primitives *prims, struct particle_data *pp, struct gas_cell_data *cell)
 {
     /* chain rule in the coordinates: the drift displaces the particle by dt vc^k, so the rate is (d tau/d x^k) vc^k with vc^k = dx^k/dt
        the coordinate velocity of the state; the finite-difference step is the coordinate displacement GR_EPS_TOLERANCE vc/|vc| (|vc| the
        Euclidean norm, a parametrisation of the step that cancels out: no spatial metric is involved) */
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    const Vec3<double> vc = cell[i].ParticleVel; /* MFV: the cell is a mesh point, displaced with its own velocity */
+#else
     const Vec3<double> vc = Vcoord(prims->v, &(cell[i].gr));
+#endif
     const double vnorm = vc.norm();
     if(vnorm == 0) {return 0;}
     const Vec3<double> dx = (GR_EPS_TOLERANCE/vnorm)*vc;
-    const double gamma_eos = cell[i].gamma_eos_value();
+    const double gamma_eos = GAMMA_DEFAULT; /* GR: ideal gas with a constant adiabatic index */
     double tau_pm[2];
     for(int k = 0; k < 2; k++)
     {
@@ -61,11 +66,6 @@ KOKKOS_INLINE_FUNCTION void gr_source_term(int i, struct gr_primitives *prims, s
     Src->D = 0.; /* no mass source */
     Src->S = (0.5*alpha*gr->gdet)*Vec3<double>{gr_sym4_contract(T, dg[0]), gr_sym4_contract(T, dg[1]), gr_sym4_contract(T, dg[2])};
     double t = T.tt*Kij.quad(gr->beta) + 2.*dot(T.ti, Kij.matvec(gr->beta)) + Kij.double_contract(T.ij) - dot(T.tt*gr->beta + T.ti, d_alpha);
-#ifndef SELFGRAVITY_OFF
-    /* Newtonian self-gravity as a metric perturbation */
-    Src->S += (alpha*gr->gdet*T.tt)*pp[i].GravAccel;
-    t += dot(T.tt*gr->beta + T.ti, pp[i].GravAccel)/alpha;
-#endif
     Src->tau = alpha*gr->gdet*t;
     Src->p = 0;
 }
@@ -80,7 +80,7 @@ KOKKOS_INLINE_FUNCTION int gr_add_source_term(int i, struct gr_primitives *prims
     const struct gr_metric *gr = &(cell[i].gr);
     struct gr_conservatives Src;
     gr_source_term(i, prims, &Src, pp, cell);
-#ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
+#ifdef GR_DRIFT_PATH_SOURCE
     Src.tau -= gr_drift_tau_path_rate(i, cons, prims, pp, cell); /* the part of the energy source the drift accounts for */
 #endif
     /* predictor */
@@ -103,7 +103,7 @@ KOKKOS_INLINE_FUNCTION int gr_add_source_term(int i, struct gr_primitives *prims
             p_err = cons->S/cons->D;
             Src = Src_corr;
             gr_source_term(i, prims, &Src_corr, pp, cell);
-#ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
+#ifdef GR_DRIFT_PATH_SOURCE
             Src_corr.tau -= gr_drift_tau_path_rate(i, cons, prims, pp, cell);
 #endif
             cons->S += dtime*(Src_corr.S - Src.S);
@@ -118,12 +118,12 @@ KOKKOS_INLINE_FUNCTION int gr_add_source_term(int i, struct gr_primitives *prims
             error = fmax(fmax(p_err[0]*p_err[0], p_err[1]*p_err[1]), p_err[2]*p_err[2]);
             error = sqrt(cons->D*cons->D*error/cons->S.norm_sq());
             iter++;
-            if(iter > IMPLICIT_MAX_NITER)
+            if(iter > GR_IMPLICIT_MAX_NITER)
             {
-                printf("GR WARNING: %d iterations adding the sources: S/D %2.15g %2.15g %2.15g rho0 %g u %g error %g\n", IMPLICIT_MAX_NITER, cons->S[0]/cons->D, cons->S[1]/cons->D, cons->S[2]/cons->D, prims->rho0, prims->u, error);
+                printf("GR WARNING: %d iterations adding the sources: S/D %2.15g %2.15g %2.15g rho0 %g u %g error %g\n", GR_IMPLICIT_MAX_NITER, cons->S[0]/cons->D, cons->S[1]/cons->D, cons->S[2]/cons->D, prims->rho0, prims->u, error);
                 break;
             }
-        } while(error > IMPLICIT_SOLVER);
+        } while(error > GR_IMPLICIT_TOLERANCE);
     }
     return 0;
 }

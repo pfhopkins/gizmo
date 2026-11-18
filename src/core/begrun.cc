@@ -153,6 +153,7 @@ void begrun(void)
   All.Time = All.TimeBegin;
 #if defined(GENERAL_RELATIVITY) && (GR_METRIC<0)
   gr_load_metric_table(); /* the tabulated metric into shared memory (the pointer travels with the All mirror) */
+  if(gizmo_poll_controlled_stop()) return; /* a bad or missing table stops here, before any metric is evaluated */
 #endif
 
   gizmo_gpu_sync_all();  /* sync All to GPU managed copies before any EOS/cooling calls */
@@ -648,7 +649,7 @@ void begrun(void)
     for(i = 0; i < NumPart; i++)
     {
 #ifdef GENERAL_RELATIVITY
-      P[i].Pos[2] = P[i].GravAccel[2] = 0; /* GR: the z-velocity is kept (as in the original GR code) */
+      P[i].Pos[2] = P[i].GravAccel[2] = 0; /* GR: the z-velocity is kept: it is part of the state, since it enters the Lorentz factor */
       if(P[i].Type == 0) {CellP[i].HydroAccel[2] = 0;}
 #else
       P[i].Pos[2] = P[i].Vel[2] = P[i].GravAccel[2] = 0;
@@ -3537,7 +3538,7 @@ void read_parameter_file(char *fname)
 
     All.CourantFac = 0.4;
     All.ErrTolIntAccuracy = 0.02;
-#ifdef GENERAL_RELATIVITY
+#ifdef GENERAL_RELATIVITY /* the more conservative defaults of Lupi (2023) */
     All.CourantFac = 0.2;
     All.ErrTolIntAccuracy = 0.01;
 #endif
@@ -3914,6 +3915,7 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
 	{
         P[i].Ti_begstep /= 2;
         P[i].Ti_current /= 2;
+        P[i].dt_step /= 2;
         if(P[i].TimeBin > 0)
 	    {
 	      P[i].TimeBin--;

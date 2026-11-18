@@ -55,7 +55,7 @@ struct Quantities_for_Gradients
     MyDouble RestMassDensity;
 #endif
 #ifdef MAGNETIC
-    Vec3<MyDouble> B;               /*!< GR: the primitive field B^i */
+    Vec3<MyDouble> B;
 #ifdef DIVBCLEANING_DEDNER
     MyDouble Phi;
 #endif

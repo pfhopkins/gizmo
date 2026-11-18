@@ -3506,8 +3506,12 @@ int blockpresent(enum iofields blocknr)
 
 #ifdef GENERAL_RELATIVITY
         case IO_RHO0:
-        case IO_METRIC:
             return 1;
+            break;
+        case IO_METRIC: /* follows from the positions: written only on request */
+#ifdef OUTPUT_GR_METRIC
+            return 1;
+#endif
             break;
 #endif
         case IO_BFLD:

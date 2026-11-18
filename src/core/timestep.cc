@@ -124,7 +124,6 @@ void find_timesteps(void)
 #endif
 
 
-
     /* This step's work, before any timebin below changes.  Each record reads and writes only its own particle,
        and nothing in the loop below writes a field a record reads, so when there are enough of them they all
        come first, on all threads; otherwise each is made in the loop. */
@@ -695,24 +694,21 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
 #ifdef GENERAL_RELATIVITY
             {
                 /* (the original code also limited the change of the conserved energy tau per step to 10% of tau: removed, since with the two limits
-                   below it binds only in a handful of cell-steps in the rotor, the cylindrical blast, Balsara 4 and the magnetised Bondi flow,
-                   and none of them changes without it) */
+                   below it binds only in a handful of cell-steps and no test changes without it) */
                 const struct gr_metric *gr = &(CellP[p].gr);
                 Vec3<double> vphys = Vphys(P[p].Vel, gr);
                 double rho = gr_get_primitive_density(CellP[p].Density, P[p].Vel, gr, gr->limiter);
                 double hstar = 1.0 + CellP[p].InternalEnergy + CellP[p].Pressure/rho, Vi = P[p].Mass/CellP[p].Density;
                 double Wl = lorentz_factor(gr->gamma, vphys, gr->limiter);
-                /* (not in the original code) where the internal energy is a small part of the energy of the cell (magnetically dominated gas, fast
+                /* (not in the original code) where the internal energy is a small part of the energy of the cell (fast or cold
                    flows), the inversion amplifies the error of the conserved variables in u by ~ tau/(rho0 u): the conserved update of the first-order
-                   sub-steps (the half-kicks and the drift prediction) then drains u until no positive u exists for the given D, S_j, B (tau < tau_min).
-                   Two limits bound that error; without them the kernel-radius acceleration criterion (SELFGRAVITY_OFF) lets the relativistic rotor,
-                   the cylindrical blast and Balsara 4 fail or overheat. */
+                   sub-steps (the half-kicks and the drift prediction) then drains u until no positive u exists for the given D, S_j (tau < tau_min).
+                   Two limits bound that error. */
                 /* (2) energy consistency of the first-order sub-steps: the conserved variables are advanced linearly, so the kinetic energy recovered
                    from S + dS exceeds the work v.dS by ~ (1/2) rho0 h* W^3 dv^2 (W^3 along v), which the inversion takes from the internal energy;
-                   with dv = |a| dt (a = the coordinate dv/dt of the last kick) this is at most GR_TIMESTEP_ENERGY_FRAC of rho0 u. h* includes the
-                   magnetic enthalpy b^2/rho0, so the limit tightens as ~1/sqrt(sigma) in magnetically dominated gas (acceleration from rest).
+                   with dv = |a| dt (a = the coordinate dv/dt of the last kick) this is at most GR_TIMESTEP_ENERGY_FRAC of rho0 u.
                    Not applied where the inversion of a kick found no admissible u (tau < tau_min) and kept the previous one (gr_kick_impl): that u carries
-                   no information, and a limit ~ sqrt(u) would shrink the step without bound while a drain of u (Lorentz-force work at sigma >> 1) goes on.
+                   no information, and a limit ~ sqrt(u) would shrink the step without bound while a drain of u goes on.
                    Not applied to test particles (GR_TEST_PARTICLE: geodesics, no hydro; their u is a placeholder) */
 #ifndef GR_TEST_PARTICLE
                 if((ac > MIN_REAL_NUMBER) && (CellP[p].InternalEnergy > 0) && (CellP[p].InversionKeptU == 0))
@@ -1305,7 +1301,9 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
 
     if(dt >= dt_displacement) {dt = dt_displacement;}
 
-    if((dt < All.MinSizeTimestep)||(((integertime) (dt / All.Timebase_interval)) <= 1))
+    /* "Below two ticks of the integer timeline", compared in floating point: a step far longer than the run
+       (MaxSizeTimestep >> TimeMax - TimeBegin) would overflow the integer conversion; the cap below handles it. */
+    if((dt < All.MinSizeTimestep) || !(dt / All.Timebase_interval >= 2.0))
     {
         PRINT_WARNING("Timestep wants to be below the limit `MinSizeTimestep'");
         double agrav_pm=0, agrav = P[p].GravAccel.norm() * All.cf_a2inv;

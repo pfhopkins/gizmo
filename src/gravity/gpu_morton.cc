@@ -43,19 +43,19 @@ static int        g_morton_keys_cap = 0;
 
 extern "C" struct Morton128 *gpu_morton_keys_acquire(int npart)
 {
-    if(npart <= 0) {return g_morton_keys;}
-    if(g_morton_keys_cap < npart) {
+    const int cap_needed = (npart > 1) ? npart : 1;   /* a rank holding no particles still gets storage: NULL means a failed allocation */
+    if(g_morton_keys_cap < cap_needed) {
         if(g_morton_keys) {
             Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_morton_keys);
             g_morton_keys = NULL;
         }
-        g_morton_keys = (Morton128 *) gizmo_gpu_alloc_shared((long)npart * sizeof(Morton128), "treescratch_build_morton");
+        g_morton_keys = (Morton128 *) gizmo_gpu_alloc_shared((long)cap_needed * sizeof(Morton128), "treescratch_build_morton");
         if(!g_morton_keys) {
             printf("gpu_morton: keys alloc failed (npart=%d)\n", npart);
             g_morton_keys_cap = 0;
             return NULL;
         }
-        g_morton_keys_cap = npart;
+        g_morton_keys_cap = cap_needed;
     }
     return g_morton_keys;
 }

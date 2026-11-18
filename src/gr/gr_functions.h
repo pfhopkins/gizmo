@@ -44,28 +44,37 @@ KOKKOS_INLINE_FUNCTION Vec3<double> Vphys(const Vec3<double> &vcoord, const stru
 KOKKOS_INLINE_FUNCTION Vec3<double> Vcoord(const Vec3<double> &vphys, const struct gr_metric *gr) {return gr->alpha*vphys - gr->beta;}
 
 /* ------------------------------------------------------------------ metric */
-/* 1 inside GAMMA_LIMITER_RADIUS of the origin (where the Lorentz factor is limited), measured from the raw coordinates as in the original code */
-KOKKOS_INLINE_FUNCTION int gr_limiter_flag(const Vec3<double> &pos)
-{
-    return (pos.norm_sq() <= (double)GAMMA_LIMITER_RADIUS*(double)GAMMA_LIMITER_RADIUS) ? 1 : 0;
-}
-
-
-/* covariant 4-metric at pos; the source is at the box centre if the box is periodic */
-KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct gr_sym4 *g)
+/* displacement of pos from the black hole of the single-hole metrics: the hole sits at the origin, or at the box centre if the box is
+   periodic (nearest image). Every distance from the hole (metric, excision, Lorentz-factor limiter, test-particle cut) uses it */
+KOKKOS_INLINE_FUNCTION Vec3<double> gr_hole_displacement(const Vec3<double> &pos)
 {
     Vec3<double> dp = pos;
 #ifdef BOX_PERIODIC
     dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y; dp[2] -= boxHalf_Z;
     NEAREST_XYZ(dp[0],dp[1],dp[2],1);
 #endif
+    return dp;
+}
+
+/* 1 inside GAMMA_LIMITER_RADIUS of the hole (where the Lorentz factor is limited) */
+KOKKOS_INLINE_FUNCTION int gr_limiter_flag(const Vec3<double> &pos)
+{
+    return (gr_hole_displacement(pos).norm_sq() <= (double)GAMMA_LIMITER_RADIUS*(double)GAMMA_LIMITER_RADIUS) ? 1 : 0;
+}
+
+
+/* covariant 4-metric at pos; the source is at the box centre if the box is periodic */
+KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct gr_sym4 *g)
+{
+    Vec3<double> dp = gr_hole_displacement(pos);
 #if (GR_METRIC==0) /* Minkowski */
     g->tt = -1; g->ti = Vec3<double>{0,0,0}; g->ij.set_isotropic(1.);
 #elif (GR_METRIC==1) /* Kerr: Boyer-Lindquist (USE_BOYERLINDQUIST) or Kerr-Schild coordinates */
     double M = All.MetricParams[0], a = All.MetricParams[1]*M, a2 = a*a;
     double x2 = dp[0]*dp[0], y2 = dp[1]*dp[1], z2 = dp[2]*dp[2], R2 = x2 + y2 + z2;
     double r2 = (R2 - a2 + sqrt((R2-a2)*(R2-a2) + 4*a2*z2))/2.;
-#ifndef USE_KERRSCHILD_COORDINATES
+#ifndef USE_KERRSCHILD_COORDINATES /* Boyer-Lindquist in Cartesian components (Liptai & Price 2019): singular on the axis x = y = 0, where the
+                                      1/(x^2+y^2) terms cancel only analytically; for particle distributions that avoid the axis */
     double sinth2 = 1. - z2/r2, rho2 = r2 + a2*z2/r2, delta = r2 - 2*M*sqrt(r2) + a2, Att = 2.0*M*sqrt(r2)/rho2, xy2 = x2 + y2;
     g->tt = Att - 1.0;
     double gtp = -Att*a*sinth2, gpp = (r2 + a2 + Att*a2*sinth2)*sinth2;
@@ -88,26 +97,31 @@ KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct
 #elif (GR_METRIC<0) /* tabulated static spherically symmetric metric (All.GR_MetricTable: r, M(r), -g_tt, r_iso; see gr_load_metric_table) */
     const int N = All.GR_MetricTableN;
     const double *rb = All.GR_MetricTable, *mass = rb + N, *gtt = rb + 2*N;
-    double r = dp.norm(); int ir;
+    double r = dp.norm();
+    /* the row is found by bisection (the radii are strictly increasing, checked by the loader): no assumption on the spacing; the radius is
+       floored at the first row, or at the second if the first is r = 0 (where the interpolated quantities are singular); beyond the last
+       row the metric is the exterior Schwarzschild one with the mass of the last row */
 #ifdef USE_ISOTROPIC_RADIUS /* isotropic coordinates: the table is indexed by r_iso, the spatial metric is conformally flat, e^{4 phi} = (r_areal/r_iso)^2 */
     const double *riso = rb + 3*N;
-    if(r <= riso[0]) {r = riso[0];}
-    if(All.GR_MetricTableLog) {ir = (int)(log10(r/riso[0])/log10(riso[N-1]/riso[0])*(N-1));}
-    else {int il = 0, ih = N-1; while(ih > il+1) {ir = (il+ih)/2; if(riso[ir] > r) {ih = ir;} else {il = ir;}} ir = il; if(r > riso[N-1]) {ir = N-1;}} /* beyond the table: exterior Schwarzschild g_tt below, as the original */
-    if(ir < 0) {ir = 0;} if(ir > N-1) {ir = N-1;}
+    {double r_floor = (riso[0] > 0) ? riso[0] : riso[1]; if(r <= r_floor) {r = r_floor;}}
     double e4phi, g00;
-    if(ir < N-1) {double f = (r - riso[ir])/(riso[ir+1] - riso[ir]); e4phi = rb[ir] + f*(rb[ir+1] - rb[ir]); g00 = -(gtt[ir] + f*(gtt[ir+1] - gtt[ir]));}
-    else {e4phi = fmax(rb[N-2] + (rb[N-1] - rb[N-2])/(riso[N-1] - riso[N-2])*(r - riso[N-2]), 1.0); g00 = -(1 - 2*mass[N-1]/r);}
-    e4phi = e4phi*e4phi/(r*r);
+    if(r < riso[N-1])
+    {
+        int il = 0, ih = N-1; while(ih > il+1) {int im = (il+ih)/2; if(riso[im] > r) {ih = im;} else {il = im;}}
+        double f = (r - riso[il])/(riso[il+1] - riso[il]), r_areal = rb[il] + f*(rb[il+1] - rb[il]);
+        e4phi = (r_areal/r)*(r_areal/r); g00 = -(gtt[il] + f*(gtt[il+1] - gtt[il]));
+    }
+    else {double q = 0.5*mass[N-1]/r, lapse = (1 - q)/(1 + q); e4phi = (1 + q)*(1 + q)*(1 + q)*(1 + q); g00 = -lapse*lapse;} /* exterior Schwarzschild, isotropic */
     g->tt = g00; g->ti = Vec3<double>{0,0,0}; g->ij.set_isotropic(e4phi);
 #else /* areal (Schwarzschild-like) radius: g_rr = 1/(1 - 2M(r)/r), gamma_ij = delta_ij + (g_rr - 1) x_i x_j/r^2 */
-    {double r_floor = (rb[0] > 0) ? rb[0] : rb[1]; if(r <= r_floor) {r = r_floor;}} /* floor at the first row (as the original), or at the second if the first is r = 0, where M/r^3 of the linear interpolation is singular */
-    if(All.GR_MetricTableLog) {ir = (r < rb[0]) ? 0 : (int)(log10(r/rb[0])/log10(rb[N-1]/rb[0])*(N-1));}
-    else {ir = (int)(r*(N-1)/rb[N-1]);}
-    if(ir < 0) {ir = 0;} if(ir > N-1) {ir = N-1;}
+    {double r_floor = (rb[0] > 0) ? rb[0] : rb[1]; if(r <= r_floor) {r = r_floor;}}
     double Mr, g00;
-    if(ir < N-1) {double f = (r - rb[ir])/(rb[ir+1] - rb[ir]); Mr = mass[ir] + f*(mass[ir+1] - mass[ir]); g00 = -(gtt[ir] + f*(gtt[ir+1] - gtt[ir]));}
-    else {Mr = mass[N-1]; g00 = -(1 - 2*mass[N-1]/r);}
+    if(r < rb[N-1])
+    {
+        int il = 0, ih = N-1; while(ih > il+1) {int im = (il+ih)/2; if(rb[im] > r) {ih = im;} else {il = im;}}
+        double f = (r - rb[il])/(rb[il+1] - rb[il]); Mr = mass[il] + f*(mass[il+1] - mass[il]); g00 = -(gtt[il] + f*(gtt[il+1] - gtt[il]));
+    }
+    else {Mr = mass[N-1]; g00 = -(1 - 2*mass[N-1]/r);} /* exterior Schwarzschild, areal radius */
     double grr = 1./(1 - 2*Mr/r), omega = 2*Mr/(r*r*r);
     Vec3<double> dp2 = {dp[0]*dp[0], dp[1]*dp[1], dp[2]*dp[2]};
     g->tt = g00; g->ti = Vec3<double>{0,0,0};
@@ -133,7 +147,7 @@ KOKKOS_INLINE_FUNCTION int gr_segment_crosses_excised_hole(const Vec3<double> &d
 {
     double proj = dot(dpBH, dp), t = proj/normdp2;
     if(t <= 0 || t >= 1) {return 0;} /* the closest point is one of the two cells, which are outside the excised region */
-    double perpBH2 = dpBH.norm_sq() - proj*proj/normdp2, R_block = EHradius(M, spin) - R_common;
+    double perpBH2 = dpBH.norm_sq() - proj*proj/normdp2, R_block = GR_HORIZON_RADIUS(M, spin) - R_common;
     if(R_block <= 0) {return 0;}
     return (perpBH2 < R_block*R_block) ? 1 : 0;
 }
@@ -142,10 +156,7 @@ KOKKOS_INLINE_FUNCTION int gr_pair_crosses_excised_hole(const Vec3<double> &pos_
     double normdp2 = dp.norm_sq();
     if(normdp2 <= 0) {return 0;}
     double R_common = 0.5*(h_i + h_j)/pow((double)All.DesNumNgb, 1./NUMDIMS);
-    Vec3<double> dpBH = pos_i, spin = {0, 0, All.MetricParams[1]};
-#ifdef BOX_PERIODIC /* the black hole sits at the box centre */
-    dpBH[0] -= boxHalf_X; dpBH[1] -= boxHalf_Y; dpBH[2] -= boxHalf_Z;
-#endif
+    Vec3<double> dpBH = gr_hole_displacement(pos_i), spin = {0, 0, All.MetricParams[1]};
     return gr_segment_crosses_excised_hole(dp, normdp2, dpBH, All.MetricParams[0], spin, R_common);
 }
 #endif
@@ -166,9 +177,6 @@ KOKKOS_INLINE_FUNCTION void set_metric_coefficients(const Vec3<double> &pos, dou
     struct gr_sym4 g;
     get_covariant_metric(pos, &g);
     gr_metric_from_4metric(&g, gr);
-#ifndef SELFGRAVITY_OFF
-    gr->alpha = sqrt(gr->alpha*gr->alpha + 2*potential);
-#endif
     gr->limiter = gr_limiter_flag(pos);
 }
 
