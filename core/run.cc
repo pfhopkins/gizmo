@@ -683,9 +683,11 @@ void run(void)
 
 
 #ifdef KETJU_REGULARIZATION
+        MBARY_STEP("pre_ketju");
         ketju_find_regions();       /* detect chain regions around massive stars/BHs */
         ketju_run_integration();    /* subtract tree force, run MSTAR, apply velocity trick */
         ketju_write_output();       /* write KETJU diagnostics to HDF5 */
+        MBARY_STEP("post_ketju");
 #endif
 
         ESTEP_BEGIN(ESTEP_INT_DRIFT);
