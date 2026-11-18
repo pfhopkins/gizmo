@@ -40,8 +40,12 @@
 #include <cstdlib>
 
 #define DTCOOL_SCALE_FACTOR 0.3
+#ifndef CHEM_RTOL
 #define CHEM_RTOL 1e-4
+#endif
+#ifndef CHEM_NSTEP
 #define CHEM_NSTEP 9000000
+#endif
 #ifndef SGCHEM_TNOCHEM
 #define SGCHEM_TNOCHEM 5e5
 #endif
@@ -53,6 +57,8 @@
 thread_local long cxx_stat_calls = 0, cxx_stat_substeps = 0, cxx_stat_retries = 0;
 thread_local long cxx_stat_rhs_evals = 0, cxx_stat_cvode_steps = 0;
 thread_local long chem_nan_states = 0;
+thread_local long chem_excess_states = 0;
+thread_local long cxx_stat_floor_hits = 0;    // CVODE substeps rejected at the step-size floor
 
 // CVODE step floor: 10 x the double resolution of the time coordinate at the substep end. Below it
 // t + h no longer advances t; CVODE's own first-step lower bound is 100 x that. A failure at the floor
@@ -579,7 +585,9 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
             if (flag < 0) {
                 double hcur = 0.0;
                 CVodeGetCurrentStep(w->mem, &hcur);
-                if (std::fabs(hcur) <= hmin * (1.0 + 1e-6) && floor_hits++ == 0) {
+                const int at_floor = (std::fabs(hcur) <= hmin * (1.0 + 1e-6));
+                cxx_stat_floor_hits += at_floor;
+                if (at_floor && floor_hits++ == 0) {
                     std::fprintf(stderr, "cxx_evolve: CVODE step reached the floor h=%g (time resolution at t=%g, substep dt=%g, flag %d) of %g; substep rejected\n",
                                  hcur, t_start + dt, dt, flag, t_end);
                     chem_print_cell_context("CVODE step-size floor", time, yn, dl, divv, y_old, nspec, c);
