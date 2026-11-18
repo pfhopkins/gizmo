@@ -653,6 +653,9 @@ void init(void)
 
 
 
+#if defined(SINK_APPROACH_TIME_TRACKED) && !defined(SINK_PARTICLES) /* stars' approach-time step without sinks: no walk has filled it yet (none at all with SELFGRAVITY_OFF) */
+        P[i].Min_Sink_Approach_Time = P[i].Min_Sink_Freefall_time = MAX_REAL_NUMBER;
+#endif
 #ifdef SINK_PARTICLES
 #if (SINGLE_STAR_SINK_FORMATION & 8)
         P[i].Sink_Ngb_Flag = 0;
