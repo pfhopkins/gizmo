@@ -2084,11 +2084,14 @@
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
 #error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
 #endif
-#if defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB) && !defined(FB_G17_BOUNDARY_INJECTION)
-#error "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB extends the hydro recompute of FB_G17_BOUNDARY_INJECTION: set both"
+#ifdef FB_G17_BOUNDARY_INJECTION
+#error "FB_G17_BOUNDARY_INJECTION was renamed RESOLVED_ISM_FB_AFTER_CLOSING_KICK"
 #endif
-#if defined(FB_G17_BOUNDARY_INJECTION) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
-#error "FB_G17_BOUNDARY_INJECTION repeats the hydro pass on feedback steps: MFV mass fluxes are applied in that pass and would be applied twice"
+#if defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB) && !defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK)
+#error "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB extends the hydro recompute of RESOLVED_ISM_FB_AFTER_CLOSING_KICK: set both"
+#endif
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
+#error "RESOLVED_ISM_FB_AFTER_CLOSING_KICK repeats the hydro pass on feedback steps: MFV mass fluxes are applied in that pass and would be applied twice"
 #endif
 
 /* coupled mode: upstream RT bins next to FIRE-3 break FIRE's all-bins consumers (docs/stella_hybrid/P4_DESIGN.md) until P4 masks them */

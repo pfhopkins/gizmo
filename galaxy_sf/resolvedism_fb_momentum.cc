@@ -780,7 +780,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
 #ifdef METALS
                     out.Z_dep += wk * yield_metals;
 #endif
-#if defined(FB_G17_BOUNDARY_INJECTION) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
                     CellP[j].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
 #endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
@@ -832,7 +832,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     #pragma omp atomic
                     CellP[j].InternalEnergyPred += du_full;
                     out.P_dep += wk * local.WindMomentum; /* momentum equivalent of the heat */
-#if defined(FB_G17_BOUNDARY_INJECTION) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
                     CellP[j].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
 #endif
                     P[j].wakeup = -1;
@@ -862,7 +862,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     }
                     out.P_dep += dp_share * sqrt(dir_[0]*dir_[0] + dir_[1]*dir_[1] + dir_[2]*dir_[2]);
                     force_note_motion_change(j);
-#if defined(FB_G17_BOUNDARY_INJECTION) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
                     CellP[j].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
 #endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
@@ -1166,7 +1166,7 @@ void resolvedism_radpressure_treerad(void)
             CellP[i].VelPred[k] += dv;
         }
         force_raise_motion_bound(i);
-#if defined(FB_G17_BOUNDARY_INJECTION) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
         CellP[i].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
 #endif
         RadPressure_dp_thisStep += dpmag_cgs; /* channel-3 ledger (FeedbackBudget) */

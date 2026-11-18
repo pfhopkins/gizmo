@@ -27,7 +27,7 @@ GALSF_RESOLVEDISM_WINDS_THERMAL      % ADOPTED 2026-07-05: inelastic-residual he
 GALSF_RESOLVEDISM_METALS_INDIVIDUAL
 GALSF_RESOLVEDISM_RADPRESSURE
 GALSF_RESOLVEDISM_TYPE_IA
-FB_G17_BOUNDARY_INJECTION        % zoom: feedback deposited after the closing kick, then the hydro pass is redone (gizmo2017 order)
+RESOLVED_ISM_FB_AFTER_CLOSING_KICK        % zoom: feedback deposited after the closing kick, then the hydro pass is redone (gizmo2017 order)
 #GALSF_RESOLVEDISM_DUST          % off: dust-to-gas ratio fixed from metallicity
 #SGCHEM_DGR_INDEPENDENT_OF_METALLICITY  % off: DGR = DGRnormalized x MW at every Z; with DGRnormalized 0.01 (relative to MW) reproduces gizmo2017
 SGCHEM_DGR_REMY_RUYER14          % DGR: Remy-Ruyer+14 broken power law below 0.26 Zsun (linear in Z above)

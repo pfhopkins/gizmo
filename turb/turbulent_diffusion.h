@@ -19,7 +19,7 @@
 {
 #ifdef TURB_DIFF_METALS // turbulent diffusion of metals (passive scalar mixing) //
         
-#ifdef FB_G17_BOUNDARY_INJECTION
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
     if(!HydroPassRepeatsStep) /* exchange applied directly to Metallicity: not again in the feedback recompute */
 #endif
     if((local.Mass>0)&&(P[j].Mass>0)&&((local.TD_DiffCoeff>MIN_REAL_NUMBER)||(CellP[j].TD_DiffCoeff>MIN_REAL_NUMBER)))

@@ -1,4 +1,4 @@
-"""Boundary feedback (FB_G17_BOUNDARY_INJECTION, the zoom production build): with RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB, wind, AGB
+"""Boundary feedback (RESOLVED_ISM_FB_AFTER_CLOSING_KICK, the zoom production build): with RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB, wind, AGB
 and radiation-pressure deposits made after the closing kick redo the hydro pass as SN deposits do; without it only SN/Ia deposits
 do (the control arm).
 

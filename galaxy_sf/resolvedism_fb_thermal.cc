@@ -427,7 +427,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                     wakeup_list_note(j);
-#ifdef FB_G17_BOUNDARY_INJECTION
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
                     CellP[j].FBinjFlag = 1; /* gizmo2017-mimicry: triggers boundary hydro recompute */
 #endif
 #ifdef COSMIC_RAY_FLUID
@@ -643,7 +643,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                     wakeup_list_note(j);
-#ifdef FB_G17_BOUNDARY_INJECTION
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
                     CellP[j].FBinjFlag = 1; /* gizmo2017-mimicry: triggers boundary hydro recompute */
 #endif
                 }

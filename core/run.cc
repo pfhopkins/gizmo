@@ -988,7 +988,7 @@ void set_non_standard_physics_for_current_time(void)
 
 void calculate_non_standard_physics(void)
 {
-#if defined(GALSF) && defined(FB_G17_BOUNDARY_INJECTION)
+#if defined(GALSF) && defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK)
     /* ---- gizmo2017-mimicry boundary injection (2026-07-10) ----
      * Restores the upstream ordering (gizmo2017 run.c:114-118 + 220): the FB walk AND
      * deposit run here, AFTER do_second_halfstep_kick() and BEFORE cooling, so no

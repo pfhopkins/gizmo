@@ -762,7 +762,7 @@ void init(void)
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
         CellP[i].SFCooldown = 0; /* not in snapshots: snapshot restarts start with no cooldown */
 #endif
-#ifdef FB_G17_BOUNDARY_INJECTION
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
         CellP[i].FBinjFlag = 0; /* gizmo2017-mimicry FB-receiver flag starts clear */
 #endif
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME

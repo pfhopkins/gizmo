@@ -132,7 +132,7 @@ Checks (reports/sn_boundary_and_approach_dt.md): 1 + 10 Msun flyby, eps = b = 0.
 50 kyr step cap the deflection is 0.31 deg off and dE/E = -4e-3; with no cap 63 deg off. With the switch, 0.002 deg and
 |dE/E| <= 5e-5 at any cap. Cost in the 1e4 Msun cloud: 9% more steps, 19% more time per step.
 
-## FB_G17_BOUNDARY_INJECTION: feedback at the step boundary
+## RESOLVED_ISM_FB_AFTER_CLOSING_KICK: feedback at the step boundary
 
 Feedback is deposited after the closing kick, and the hydro pass is redone on feedback steps (gizmo2017 order). The redone
 pass no longer repeats the turbulent metal exchange, which is applied in the pass itself rather than by the kicks. Not
@@ -141,9 +141,9 @@ deposit, +0.40% at the boundary.
 
 ## RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB: hydro recompute after every boundary deposit
 
-With FB_G17_BOUNDARY_INJECTION alone, the hydro pass is redone after SN and Ia deposits only. With this switch, wind, AGB and
+With RESOLVED_ISM_FB_AFTER_CLOSING_KICK alone, the hydro pass is redone after SN and Ia deposits only. With this switch, wind, AGB and
 radiation-pressure deposits (star-side walk and the per-cell tree term) also flag their receivers, so the next opening kick
-uses forces from the post-deposit state there too. Requires FB_G17_BOUNDARY_INJECTION. Off by default; with continuous winds
+uses forces from the post-deposit state there too. Requires RESOLVED_ISM_FB_AFTER_CLOSING_KICK. Off by default; with continuous winds
 the recompute then runs on almost every step (cost on the zoom: see the 2026-11-17 feedback audit section below).
 Test: test/stella_fb_boundary_wind (flag on and off).
 

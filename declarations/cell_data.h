@@ -28,7 +28,7 @@ extern struct gas_cell_data
 #ifdef GALSF_RESOLVEDISM_FB
     MyDouble FB_WeightMass;         /*!< cell mass frozen at the wind/AGB weighting pass: same weights in every pass of one batch */
 #endif
-#ifdef FB_G17_BOUNDARY_INJECTION
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
     /* gizmo2017-mimicry (2026-07-10): set by the FB thermal walk on every receiver
      * (mirrors gizmo2017 SphP.flagFBinj); consumed by the conditional hydro recompute
      * at the sync boundary (run.cc calculate_non_standard_physics); reset to 0 there. */
