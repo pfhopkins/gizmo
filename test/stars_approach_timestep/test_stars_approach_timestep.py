@@ -7,7 +7,14 @@ Problem: Stella cloud production flags; two 2 Msun main-sequence stars 1 pc apar
 the 10 pc box), 40 kyr; MaxStellarTimestep 1e4 yr, MaxSizeTimestep 5 kyr (code units pc, km/s: 1 = 0.978 Myr).
 Derivation: without the approach step the stars' steps follow the acceleration criterion sqrt(2 eta eps / a), about 7 kyr at
 closest approach (a = G 2 Msun / (0.05 pc)^2), against an encounter time b / v = 1 kyr.
-test_encounter_kick (bars set from the derivation, before the runs): the change of the pair's relative velocity
+Record: these bars replace a first version (final pair energy within 1e-3 of E_kin) that passed with and without the step. They
+were set after seeing that version's outputs, and were checked against those outputs before the rerun. Physics behind them: the
+encounter's only observable effect on the pair is the perpendicular kick, which the exact two-body orbit gives; a leapfrog step
+that skips the closest approach samples the force at one phase, so its kick error is of order unity, while a resolved encounter
+(about 25 steps per b / v) is second-order accurate, (dt / t_enc)^2 ~ 2e-3, below 1 %. The pair energy at any snapshot measures
+the same error on the scale of the energy exchanged, G m1 m2 / b; 5 % allows the resolved error with margin and is far below a
+skipped approach.
+test_encounter_kick: the change of the pair's relative velocity
   perpendicular to the approach over the run equals the exact two-body orbit's (scipy, rtol 1e-12, from the first snapshot)
   to 1 %; the largest change of the pair energy m v^2 / 2 - G m1 m2 / r over the snapshots stays below 5 % of G m1 m2 / b
   (the potential at closest approach; the kinetic energy is 3600 x larger, so the final pair energy is not a check:
