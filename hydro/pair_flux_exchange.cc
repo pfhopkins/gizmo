@@ -23,6 +23,8 @@ static std::vector<pairflux_record> PairFluxRecords;
 static int PairFluxClosingKickExpected = 0;  /* set before the main-loop hydro pass: its records carry closing-kick shares */
 static long long PairFluxNFloor = 0, PairFluxNLost = 0, PairFluxNNegW2 = 0; /* diagnostics */
 static double PairFluxEFloor = 0;
+static int PairFluxPath = 0; static long long PairFluxNFloorPath[5] = {0}; static double PairFluxEFloorPath[5] = {0}; /* floor per path: closing self, closing records, opening records, wake, kick */
+void pairflux_note_kick_floor(double de) {PairFluxNFloorPath[4]++; PairFluxEFloorPath[4] += de;}
 static std::vector<int> PairFluxSlot;       /* receiver -> aggregation slot, -1 when unused */
 
 /* closing-kick weight of i's pair fluxes: the time since its delivered coverage ends (= dt_old/2 without wake-ups) */
@@ -86,7 +88,7 @@ static void pairflux_apply_impulse(int i, Vec3<double> dmom, double dE, Vec3<dou
     double de_floor = (CellP[i].InternalEnergy - u_target) * m;
     if(de_floor != 0)
     {
-        PairFluxNFloor++; PairFluxEFloor += de_floor;
+        PairFluxNFloor++; PairFluxEFloor += de_floor; PairFluxNFloorPath[PairFluxPath]++; PairFluxEFloorPath[PairFluxPath] += de_floor;
 #if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
         CumulKickFloorEnergy += de_floor; /* booked with the kick floor */
 #endif
@@ -131,6 +133,7 @@ void pairflux_after_closing_kick(void)
 #endif
         pairflux_sum_add(i, 1, CellP[i].PairFluxSumMom * dw, CellP[i].PairFluxSumEgy * dw, B);
     }
+    PairFluxPath = 0; pairflux_sums_apply(); PairFluxPath = 1;
     for(auto &rec : PairFluxRecords)
     {
         if(rec.c2 == 0) {continue;}
@@ -172,7 +175,7 @@ void pairflux_after_opening_kick(void)
 #endif
         pairflux_sum_add(rec.r, !rec.r_active, rec.mom * c1, rec.egy * c1, B); /* active r: opening-kick type change, prediction as GIZMO's */
     }
-    pairflux_sums_apply();
+    PairFluxPath = 2; pairflux_sums_apply();
     for(int i : ActiveParticleList) {if(P[i].Type == 0) {CellP[i].Ti_PairFluxCoveredP1 = P[i].Ti_begstep + P[i].integertime_step()/2 + 1;}}
     std::vector<pairflux_record>().swap(PairFluxRecords); /* free: a full sync can hold many records */
     PairFluxClosingKickExpected = 0;
@@ -186,7 +189,7 @@ void pairflux_wake_kick_correction(int i, double dt_wake, int to_pred)
 #ifdef MAGNETIC
     B = CellP[i].PairFluxSumB * (-dt_wake);
 #endif
-    pairflux_apply_impulse(i, CellP[i].PairFluxSumMom * (-dt_wake), CellP[i].PairFluxSumEgy * (-dt_wake), B, to_pred);
+    PairFluxPath = 3; pairflux_apply_impulse(i, CellP[i].PairFluxSumMom * (-dt_wake), CellP[i].PairFluxSumEgy * (-dt_wake), B, to_pred);
 }
 
 #endif /* HYDRO_EXACT_PAIR_FLUX_EXCHANGE */
@@ -210,23 +213,24 @@ void print_gas_conserved_totals(void)
         add(6, 0.5 * CellP[i].B.norm_sq() * rho_over_m / a); add(8, CellP[i].B[0]); add(9, CellP[i].B[1]); add(10, CellP[i].B[2]);
 #endif
     }
-    double loc[16], glob[16];
+    double loc[26] = {0}, glob[26];
     for(int k = 0; k < 12; k++) {loc[k] = s[k] + c[k];}
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
     loc[12] = (double) PairFluxNFloor; loc[13] = PairFluxEFloor; loc[14] = (double) PairFluxNLost; loc[15] = (double) PairFluxNNegW2;
+    for(int k = 0; k < 5; k++) {loc[16+2*k] = (double) PairFluxNFloorPath[k]; loc[17+2*k] = PairFluxEFloorPath[k];}
 #else
     loc[12] = loc[13] = loc[14] = loc[15] = 0;
 #endif
-    MPI_Reduce(loc, glob, 16, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(loc, glob, 26, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
     if(!fd)
     {
         char buf[1000]; snprintf(buf, sizeof(buf), "%s/conserved_totals.txt", All.OutputDir);
         fd = fopen(buf, "w");
-        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_lost n_negW2 (gas, conserved variables, physical, after the sync's kicks)\n");
+        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_lost n_negW2 [n,E floor: closing-self closing-rec opening-rec wake kick] (gas, conserved variables, physical, after the sync's kicks)\n");
     }
     fprintf(fd, "%lld %.17e", (long long) All.NumCurrentTiStep, All.Time);
-    for(int k = 0; k < 16; k++) {fprintf(fd, " %.17e", glob[k]);}
+    for(int k = 0; k < 26; k++) {fprintf(fd, " %.17e", glob[k]);}
     fprintf(fd, "\n"); fflush(fd);
 }
 #endif

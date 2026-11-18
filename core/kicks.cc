@@ -437,6 +437,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             CellP[i].InternalEnergy = internal_energy_positivity_catch(CellP[i].InternalEnergy, dEnt, u_floor);
 #endif
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            if(CellP[i].InternalEnergy != dEnt) {pairflux_note_kick_floor((CellP[i].InternalEnergy - dEnt) * P[i].Mass);} /* diagnostic */
+#endif
 #if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
             {double de_floor = (CellP[i].InternalEnergy - dEnt) * P[i].Mass; if(de_floor != 0) { /* ledger: energy the 0.5u limiter and the floor add */
                 #pragma omp atomic

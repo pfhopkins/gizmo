@@ -1085,6 +1085,7 @@ void hydro_force(void);
 double pairflux_closing_weight(int i);
 void pairflux_begin_hydro_pass(void);
 void pairflux_note_rearrange(void);
+void pairflux_note_kick_floor(double de);
 void pairflux_mark_closing_kick_expected(void);
 void pairflux_record_add(int r, int r_active, int e_task, int e_index, double W2_e, Vec3<double> mom, double egy, Vec3<double> B);
 void pairflux_after_closing_kick(void);
