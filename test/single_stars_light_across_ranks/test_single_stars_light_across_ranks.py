@@ -8,7 +8,7 @@ life (goes dark), both near 1 kyr, at (0.3, 0.3, 0.3) L and (0.7, 0.7, 0.7) L; '
 momentum per step (MomWinds.txt) of N ranks are compared with 1 rank.
 Bar (set before the first run): in 'switch', for every cell with G0_FUV(1 rank) above 1e-3 of its maximum and for every step,
 |X_N / X_1 - 1| <= max(2 x the control's largest deviation, 1 %) (1 % = the node refresh tolerance), for X = G0_FUV and the momentum.
-Mass constant to 1e-12; gas energy change minus the ledger's chemistry and floor rows below 1e-3 of the initial thermal energy.
+Mass constant to 1e-12; gas energy change minus the ledger's chemistry, floor and radiation-pressure kick rows below 1e-3 of the initial thermal energy.
 """
 import os
 import shutil
@@ -144,7 +144,7 @@ def test_mass_and_energy(built, case):
             eth0 = np.sum(a["PartType0/Masses"][()] * a["PartType0/InternalEnergy"][()]) * MSUN * 1e10
         led = np.atleast_2d(np.loadtxt(r["d"] / "output" / "ledger.txt"))
         names = [c for c in open(r["d"] / "output" / "ledger.txt").readline().split()[1:] if c != "(cumulative;"]
-        booked = sum(led[-1, names.index(n)] * s for n, s in (("E_chem_heating_erg", 1), ("E_chem_cooling_erg", -1), ("E_kick_floor_erg", 1)))
+        booked = sum(led[-1, names.index(n)] * s for n, s in (("E_chem_heating_erg", 1), ("E_chem_cooling_erg", -1), ("E_kick_floor_erg", 1), ("E_radiation_pressure_kick_erg", 1)))
         res = (e[1] - e[0]) - booked
         print(f"{case} r{ranks}: mass change {m[1] / m[0] - 1:.1e}, gas energy change {e[1] - e[0]:.4e} erg, booked {booked:.4e}, "
               f"residual / E_th(0) {res / eth0:.2e}")

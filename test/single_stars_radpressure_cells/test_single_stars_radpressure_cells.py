@@ -201,7 +201,7 @@ def test_cap_sum_over_all_cells(tables):
     8 cold cells of 2.5 Msun next to the first moving out at 500 km/s (finer Courant steps than the rest, max step 0.02) that
     split (cap 2 Msun) at the first decomposition after the start; DomainBuild_ActiveFraction 1e-6 decomposes on every step,
     so the split falls on a step where the rest of the gas is inactive. Every RADP_CAP_SUM line: used = recount to 1e-5
-    (float storage); mass constant to 1e-12; gas energy change minus the ledger's chemistry and floor rows below 1e-3 of the
+    (float storage); mass constant to 1e-12; gas energy change minus the ledger's chemistry, floor and radiation-pressure kick rows below 1e-3 of the
     initial gas energy (thermal + kinetic)"""
     def stars(tab, L, dx):
         lM, lZ = np.log10(M_STAR), np.log10(Z)
@@ -232,7 +232,7 @@ def test_cap_sum_over_all_cells(tables):
         e = [np.sum(F["PartType0/Masses"][()] * (F["PartType0/InternalEnergy"][()] + 0.5 * np.sum(F["PartType0/Velocities"][()] ** 2, axis=1))) * MSUN * 1e10 for F in (A, B)]
     led = np.atleast_2d(np.loadtxt(d / "output" / "ledger.txt"))
     names = [c for c in open(d / "output" / "ledger.txt").readline().split()[1:] if c != "(cumulative;"]
-    booked = sum(led[-1, names.index(k)] * s for k, s in (("E_chem_heating_erg", 1), ("E_chem_cooling_erg", -1), ("E_kick_floor_erg", 1)))
+    booked = sum(led[-1, names.index(k)] * s for k, s in (("E_chem_heating_erg", 1), ("E_chem_cooling_erg", -1), ("E_kick_floor_erg", 1), ("E_radiation_pressure_kick_erg", 1)))
     print(f"{len(a)} cap sums, {int((a[:, 2] == 0).sum())} on steps not all active; cells {n0} -> {n1}; max |used/recount - 1| {dev.max():.3e}; "
           f"mass change {m[1] / m[0] - 1:.1e}; energy residual / E(0) {((e[1] - e[0]) - booked) / e[0]:.2e}")
     assert (a[:, 2] == 0).sum() > 0 and n1 > n0
