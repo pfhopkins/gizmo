@@ -2097,9 +2097,6 @@
 #error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE: MFM only; conduction, viscosity, CR fluid, explicit RT, turbulent energy/velocity diffusion, elastic EOS, non-ideal MHD, subgrid winds, per-step merge/split, the entropy switch, conservative psi cleaning and non-split cooling are not exchanged"
 #endif
 #endif
-#if defined(HYDRO_TIMESTEP_FROM_PAIR_FORCE) && !defined(HYDRO_EXACT_PAIR_FLUX_EXCHANGE)
-#error "HYDRO_TIMESTEP_FROM_PAIR_FORCE requires HYDRO_EXACT_PAIR_FLUX_EXCHANGE"
-#endif
 #if defined(HYDRO_TIMESTEP_FROM_PAIR_FORCE) && !defined(HYDRO_PAIR_FORCE_DT_ETA)
 #define HYDRO_PAIR_FORCE_DT_ETA 0.1 /* allowed kinetic-energy change of one half-kick, in units of u */
 #endif
