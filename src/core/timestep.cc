@@ -632,7 +632,7 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
     dt=DMIN(dt,dt_tidal);
 #endif
 
-#ifdef SINGLE_STAR_TIMESTEPPING // this ensures that binaries advance in lock-step, which gives superior conservation
+#ifdef SINK_APPROACH_TIME_TRACKED // this ensures that binaries advance in lock-step, which gives superior conservation
     if(P[p].Type == 5)
     {
         double dt_2body = sqrt(2*All.ErrTolIntAccuracy) * SINK_TIMESTEP_SAFETY_FACTOR / (1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
@@ -661,10 +661,17 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
         if(eligible_for_hermite(p, P)) dt *= 1.4; // gives 10^-6 energy error per orbit for a 0.9 eccentricity binary
 #endif
     }
+#ifdef STARS_APPROACH_TIMESTEP
+    if(P[p].Type == 4) /* the Type-5 dt_2body above for stars; walk times are comoving (r, Vel = a^2 dx/dt): to physical */
+    {
+        double t_app = All.cf_atime * All.cf_atime * P[p].Min_Sink_Approach_Time, t_ff = All.cf_atime * sqrt(All.cf_atime) * P[p].Min_Sink_Freefall_time;
+        dt = DMIN(dt, sqrt(2*All.ErrTolIntAccuracy) * SINK_TIMESTEP_SAFETY_FACTOR / (1./t_app + 1./t_ff));
+    }
+#endif
 #if defined(SINGLE_STAR_FB_TIMESTEPLIMIT) && !defined(SELFGRAVITY_OFF)
     if(P[p].Type == 0) {dt = DMIN(dt, 0.5 * All.CourantFac * DMIN(P[p].Min_Sink_FeedbackTime, P[p].Min_Sink_Approach_Time));}
 #endif    
-#endif // SINGLE_STAR_TIMESTEPPING
+#endif // SINK_APPROACH_TIME_TRACKED
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
     /* Particles using the adaptive kernel radius need a kernel-size signal-speed

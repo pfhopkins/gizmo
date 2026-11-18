@@ -451,7 +451,7 @@ struct gpu_grav_member_inputs_t {
     /* pair evaluation inputs */
     double pmass, zeta;
     grav_pair_tgt_t tgt;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
     Vec3<double> vel;
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
@@ -726,7 +726,7 @@ gpu_grav_member_inputs_init(const gpu_grav_walk_ctx_t &ctx, int target, gpu_grav
      * symmetrize-by-averaging #if); matches the CPU walk's unconditional precompute. */
     const int ags_bitflag_primary = gravtree_ags_kernel_shared_bitflag(ptype);
 
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
     in.vel = P_dev[target].Vel;
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
@@ -1323,7 +1323,7 @@ gpu_grav_evaluate_leaf(const gpu_grav_walk_ctx_t &ctx, int no, const gpu_grav_me
     if((src.r2 > 0) && (src.mass > 0))
     {
         grav_sink_prox_target_t prox_target = {}; prox_target.ptype = in.open.ptype; prox_target.pmass = in.pmass; prox_target.soft = in.open.soft;
-#if defined(SINGLE_STAR_TIMESTEPPING)
+#if defined(SINK_APPROACH_TIME_TRACKED)
         prox_target.vel = in.vel;
 #endif
         grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P_dev[no].Type; prox_src.src_mass = motion.mass; prox_src.motion.vel = src_vel;   /* the state this interaction was evaluated at, mirroring forcetree.cc, so (dr, vel) stays a consistent pair on a Hermite pass */
@@ -1496,14 +1496,17 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
 #endif
         gravity_box_nearest_image(sink_dr[0], sink_dr[1], sink_dr[2], -1);
         grav_sink_prox_target_t prox_target = {}; prox_target.ptype = in.open.ptype; prox_target.pmass = in.pmass; prox_target.soft = in.open.soft;
-#if defined(SINGLE_STAR_TIMESTEPPING)
+#if defined(SINK_APPROACH_TIME_TRACKED)
         prox_target.vel = in.vel;
+#endif
+#ifdef KETJU_REGULARIZATION
+        prox_target.ketju_chain = P_dev[in.target].KetjuChainID;
 #endif
         grav_sink_prox_node_src_t prox_src = {}; prox_src.sink_mass = (double) tree_soa->sink_mass[idx];
 #if defined(SINGLE_STAR_FIND_BINARIES)
         prox_src.n_sink = (int) tree_soa->N_SINK[idx];
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(SPECIAL_POINT_MOTION)
         prox_src.motion.vel = Vec3<double>{(double)nd.motion.sink_vel_[0], (double)nd.motion.sink_vel_[1], (double)nd.motion.sink_vel_[2]};
 #ifdef HERMITE_FOREIGN_SOURCE_TABLE
         if(k_gh >= 0) {prox_src.motion.vel = ctx.hermite.ghost[k_gh].vel;}
@@ -1596,7 +1599,7 @@ gpu_grav_member_finish(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
         P_dev[target].comp_dv = optional.sink_prox.comp_dv;
     }
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
     P_dev[target].Min_Sink_Approach_Time = sqrt(optional.sink_prox.Min_Sink_Approach_Time);
     P_dev[target].Min_Sink_Freefall_time = sqrt(sqrt(optional.sink_prox.Min_Sink_Freefall_time) / All.G);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
@@ -3190,7 +3193,7 @@ extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
                 P[i].comp_dv   = P_dev[i].comp_dv;
             }
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
             P[i].Min_Sink_Approach_Time = P_dev[i].Min_Sink_Approach_Time;
             P[i].Min_Sink_Freefall_time = P_dev[i].Min_Sink_Freefall_time;
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT

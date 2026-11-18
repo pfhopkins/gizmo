@@ -60,6 +60,9 @@
 #ifndef TIDAL_TIMESTEP_CRITERION
 #define TIDAL_TIMESTEP_CRITERION
 #endif
+#if !defined(STARS_APPROACH_TIMESTEP) && !defined(STARS_APPROACH_TIMESTEP_OFF) && !defined(SINK_CALC_DISTANCES) && !defined(SINGLE_STAR_TIMESTEPPING) && !defined(SINK_PARTICLES) && !defined(STARS_HERMITE_DIRECT_GRAVITY) && !defined(STARS_INTEGRATED_BY_RUMI) && !defined(SPECIAL_POINT_MOTION) && !defined(GRAVITY_ANALYTIC)
+#define STARS_APPROACH_TIMESTEP /* star encounters resolved in clusters; skipped where the sink node moments are taken, opt out with STARS_APPROACH_TIMESTEP_OFF */
+#endif
 #ifndef DO_DENSITY_AROUND_NONGAS_PARTICLES
 #define DO_DENSITY_AROUND_NONGAS_PARTICLES
 #endif
@@ -869,6 +872,16 @@
 #define STAR_DIRECT_GRAVITY_TYPE 4
 #define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
 #endif
+#ifdef STARS_APPROACH_TIMESTEP /* Type-4 stars: STARFORGE's two-body step (approach and free-fall time to the nearest star, from the gravity walk) */
+#ifndef STARS_APPROACH_TIMESTEP_CHECKED /* first pass only: this file is read twice */
+#define STARS_APPROACH_TIMESTEP_CHECKED
+#if defined(STARS_APPROACH_TIMESTEP_OFF) || defined(SINK_CALC_DISTANCES) || defined(SINGLE_STAR_TIMESTEPPING) || defined(SINK_PARTICLES) || defined(STARS_HERMITE_DIRECT_GRAVITY) || defined(STARS_INTEGRATED_BY_RUMI) || defined(SPECIAL_POINT_MOTION)
+#error "STARS_APPROACH_TIMESTEP uses the tree's sink node moments for Type 4: not combinable with STARS_APPROACH_TIMESTEP_OFF, sinks, STARFORGE timestepping, other SINK_CALC_DISTANCES users, STARS_HERMITE_DIRECT_GRAVITY or STARS_INTEGRATED_BY_RUMI"
+#endif
+#endif
+#define SINK_CALC_DISTANCES
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#endif
 #ifndef STAR_DIRECT_GRAVITY_TYPE
 #define STAR_DIRECT_GRAVITY_TYPE 5 /* particle type whose mutual gravity SINGLE_STAR_DIRECT_GRAVITY sums directly */
 #endif
@@ -1031,8 +1044,19 @@
    already inside #ifdef SINK_CALC_DISTANCES, so that conjunct is what the name adds rather than
    a narrowing. Tested here because this is past the last place SINK_CALC_DISTANCES can be set
    (the GRAVITY_ANALYTIC block just above). */
-#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION))
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(STARS_APPROACH_TIMESTEP))
 #define SINK_NODE_MOTION_TRACKED
+#endif
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(STARS_APPROACH_TIMESTEP)
+#define SINK_APPROACH_TIME_TRACKED /* the gravity walk fills Min_Sink_Approach_Time / Min_Sink_Freefall_time */
+#endif
+#ifdef STARS_APPROACH_TIMESTEP
+#if defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE)
+#error "STARS_APPROACH_TIMESTEP: GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE uses the sink node moments"
+#endif
+#define SINK_APPROACH_SOURCE_SOFTENING (All.ForceSoftening[4])
+#else
+#define SINK_APPROACH_SOURCE_SOFTENING SinkParticle_GravityKernelRadius
 #endif
 
 
@@ -1055,7 +1079,7 @@
    SINGLE_STAR_DIRECT_GRAVITY is in the list because it subtracts the sink monopole from mixed nodes and
    so needs sink_pos on the same clock as u.d.s; it can be set without SINGLE_STAR_TIMESTEPPING, and
    where it is, the sink_vel declaration and the moment sums that fill it widen to match this macro. */
-#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(STARS_APPROACH_TIMESTEP))
 #define SINK_NODE_MOTION_TRACKED
 #endif
 #if defined(STARS_INTEGRATED_BY_RUMI) && (((SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) != 4) || defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE))
