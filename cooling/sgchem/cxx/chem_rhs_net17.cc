@@ -310,7 +310,9 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     }
 
     // --- protons (.F:717-744) ---
-    ydot[ihp] = (ch11 * abe   * abHI
+    // H+ above 1: collisional, CR and photo ionization of the unclipped HI fraction stay restoring (D-30, D-58)
+    const double abHI_ion = (abHI_ph < 0.0) ? abHI_ph : abHI;
+    ydot[ihp] = (ch11 * abe   * abHI_ion
               + ch144 * abHI  * abHI
               + ch158 * abheI * abHI
               + T.cst[0] * abh2p * abHI
@@ -327,8 +329,8 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
               + h2p_cdh * abh2p * abM
               +  ch9  * abhep * abh2) * yn
               +  ph5  * abh2p
-              +  cr1  * abHI
-              +  ph38 * ((abHI_ph < 0.0) ? abHI_ph : abHI);
+              +  cr1  * abHI_ion
+              +  ph38 * abHI_ion;
     if (c.no_dchem == 0 && c.abundD > 0.0) {
         ydot[ihp] += (ch99  * abdp * abHI
                    -  ch98  * abhp * abDI

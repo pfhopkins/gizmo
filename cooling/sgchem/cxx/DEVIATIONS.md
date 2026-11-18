@@ -797,6 +797,17 @@ where O + H2 -> OH + H (barrier ~3150 K) is dead. The O+ ion chain gives +0.15 d
 N ~ 1e21 cm^-2, more only at N ~ 1e22. Her large effect needs warm (~1000 K) gas in chemical equilibrium (>~ 100 Myr).
 If needed later (solar Z, MW-like CR): add the ion chain as four algebraic species (reaction list in the report).
 
+## D-58. (2026-11-18) nets 5, 17: H+ collisional and CR ionization stay restoring above x_H+ = 1, both backends
+D-30 for collisionally ionized gas. Above x_H+ = 1 validate_input clips H+ to 1 and abHI is floored at 0, so with
+ph38 = 0 the H+ RHS is flat above 1 and steeply restoring below (ch11 n_e ~ 2e-9 s^-1 at 4.5e5 K). The TNOCHEM
+hand-off writes x_H+ = 1 exactly; the one-sided difference-quotient Jacobian misses the stiffness, Newton
+overshoots past 1 + EPS_MAX, CVODE cuts h to the floor (flag -10) and the driver halves the substep. In the WLM
+net 17 run (2026-11-17) this hit 66 cells and one exhausted the 9e6 substep budget (ID 4819441, abort 78101);
+the net 5 twin hit the floor in 7 hot ionized cells (same H+ terms; not replayed). ch11 n_e abHI and cr1 abHI
+now use the unclipped HI fraction when it is negative, as ph38 does. Unchanged for every x_H+ <= 1; at rtol 1e-8
+the old and new RHS give the same trajectories. C++ chem_rhs_net5/17, Fortran rate_eq_simple/ulli.
+Test: golden/test_net17_solver_failure.cc (66 logged cells + hand-off grid). Not changed: net 3, He (He++ at abhe).
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

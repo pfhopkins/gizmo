@@ -718,7 +718,9 @@ c
 c
 c Protons
 c
-      ydot(ihp) = (ch11 * abe   * abHI          ! Collisional ion: H  + e-
+c H+ above 1: collisional, CR and photo ionization stay restoring (D-30, D-58)
+      ydot(ihp) = (ch11 * abe                   ! Collisional ion: H  + e-
+     $                * merge(abHI_ph, abHI, abHI_ph .lt. 0d0)
      $          + ch144 * abHI  * abHI          ! Collisional ion: H + H
      $          + ch158 * abheI * abHI          ! Collisional ion: H + He
      $         + cst(1) * abh2p * abHI          ! Charge transfer: H  + H2+
@@ -735,7 +737,7 @@ c
      $          + h2p_cdh * abh2p * abM         ! Collisional dissoc. of H2+
      $          + ch9 * abhep * abh2) * yn      ! DiCT: He+ + H2
      $          +  ph5  * abh2p                 ! Photodissoc:    H2+ + PH
-     $          +  cr1  * abHI                  ! Cosmic ray ion.:  H + CR
+     $          +  cr1  * merge(abHI_ph, abHI, abHI_ph .lt. 0d0)
      $          + ph38  * merge(abHI_ph, abHI, abHI_ph .lt. 0d0)
 c
 c D coupling to H+
