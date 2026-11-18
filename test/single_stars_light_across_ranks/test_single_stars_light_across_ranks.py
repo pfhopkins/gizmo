@@ -152,13 +152,14 @@ def test_mass_and_energy(built, case):
         assert abs(res) < 1e-3 * eth0
 
 
-def test_faint_star_drift_seen(built):
+@pytest.mark.parametrize("ranks", RANKS)
+def test_faint_star_drift_seen(built, ranks):
     """faint stars drifting by more than the refresh tolerance of their own light are seen: a 40 Msun star and a group of 8
-    faint ones (each changing by at least 4 % over the run, below 1 % of the root's luminosity) at opposite corners, 1 rank,
-    no rebuild, against a run that rebuilds the tree every step; G0_FUV within 2 % in the cells more than 2.5 cells from
+    faint ones (each changing by at least 4 % over the run, below 1 % of the root's luminosity) at opposite corners, 1, 2 and
+    4 ranks, no rebuild, against a run that rebuilds the tree every step; G0_FUV within 2 % in the cells more than 2.5 cells from
     the group where the group gives more 6-13.6 eV flux than the bright star (there the walk uses the group's node; the old
     rule, 1 % of the root's luminosity, never refreshed it)"""
-    a, ref = run(built, "faint", 1), run(built, "faint_ref", 1)
+    a, ref = run(built, "faint", ranks), run(built, "faint_ref", 1)
     with h5py.File(ref["snaps"][-1], "r") as F:
         g = F["PartType0"]; o = np.argsort(g["ParticleIDs"][()]); x = g["Coordinates"][()][o]
         s = F["PartType4"]; xs, ms = s["Coordinates"][()], s["Masses"][()]
@@ -175,6 +176,6 @@ def test_faint_star_drift_seen(built):
     f_f = 8 * L_f / r_c ** 2; f_b = L_b / ((x - xs[bright]) ** 2).sum(1)
     sel = np.logical_and(f_f > f_b, r_c > 2.5 * L / NGRID)
     dev = np.abs(a["g0"][sel] / ref["g0"][sel] - 1)
-    print(f"{sel.sum()} cells lit mainly by the faint group, beyond 2.5 cells: max |G0/G0_ref - 1| {dev.max():.3e}, median {np.median(dev):.2e}; "
+    print(f"{ranks} ranks: {sel.sum()} cells lit mainly by the faint group, beyond 2.5 cells: max |G0/G0_ref - 1| {dev.max():.3e}, median {np.median(dev):.2e}; "
           f"tree builds {a['builds']} vs reference {ref['builds']}")
     assert sel.sum() > 0 and dev.max() < 0.02
