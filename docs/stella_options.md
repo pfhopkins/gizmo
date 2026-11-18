@@ -183,3 +183,24 @@ Tests: test/merge_split_conservation_stella_default (with the Stella default con
 ### Star softening rule (in development)
 Stars use a fixed gravitational softening (adaptive softening for gas only), set per run from the gas mass resolution:
 eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = the hard star-formation threshold (1e6 cm^-3), i.e. eps_star = 0.1 pc x (m_gas/Msun)^(1/3) (0.1 pc at 1 Msun, 0.047 pc at 0.1 Msun). This is 3x the Hopkins et al. (2018) / RIGEL scaling: it keeps stars clearly above the smallest gas cells, so birth clusters do not shrink below the softening and set the global timestep. Comoving runs set it as a physical cap (SofteningStarsMaxPhys) with a comoving value large enough that the cap binds before the first stars form. The gas smoothing length is not capped (tiny gas softening floor).
+
+## Feedback audit 2026-11-17: changes that affect runs
+
+- **Restart files.** The restart layout changed: the element ledger (CumulElemToGas, CumulElemFromStars) is written after
+  the metal ledger, and every particle carries FB_DepositedP, FB_DepositedZ and, with Type Ia, FB_KernelMass. Restart files
+  written before this change cannot be read by this code and vice versa (no size check guards it). Resume running
+  productions from a snapshot (RestartFlag 2). Reading ElementAbundance now sets H = 1 - Z - Y, so single-precision
+  snapshots and ICs start with a closed composition (an IC with an all-zero ElementAbundance becomes pure H; fresh starts
+  still take the composition from InitMetallicity).
+- **Explosion energies.** Every PISN gets the He-core energy (5-95e51 erg; table PISNe below M_ZAMS ~ 138 Msun are held at
+  5e51) and every ECSN 1e50 erg. Runs with Pop III or ECSNe are not comparable with earlier ones.
+- **Death ejecta.** Remnant and ejecta are fractions of the star's mass at death. Failed SNe and direct collapse eject
+  nothing (all table ejecta are 0). Remnants between grid points differ from the earlier absolute table values.
+- **Type Ia.** Each Ia delivers the table's 1.378 Msun of Ia matter (0.744 Msun Fe): the white dwarf particle plus
+  1.378 - M_WD of the receivers' gas turned into Ia composition in place, shared in proportion to cell mass (cell mass,
+  momentum and specific internal energy unchanged; its dust removed). The mean molecular weight, and so T at fixed u,
+  changes in the converted part. At 0.1 Msun cells the kernel holds a few Msun, so up to ~25 % of the kernel gas becomes
+  Ia matter. The rate normalisation is unchanged, so Ia iron per formed mass is rate x table yield.
+- **Mass trace.** mass_balance_steps.txt counts mass leaving through an outflow boundary in M_bary (also in non-Stella
+  builds), and mass_balance_elements.txt closes every element; MbaryOutflow is not restarted (the trace re-baselines after a
+  restart).
