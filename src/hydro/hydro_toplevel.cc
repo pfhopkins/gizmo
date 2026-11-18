@@ -338,7 +338,7 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
             if(HydroPassRepeatsStep) {for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] = 0;}} /* applied once per step, by the first pass */
 #endif
-            for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] =DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
+            for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
 #if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange: offsets within Dyield match Metallicity layout */
             {int dc0 = ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY; /* base offset for dustchem in Metallicity/Dyield */
             for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[dc0+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
