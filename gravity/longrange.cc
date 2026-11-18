@@ -72,7 +72,7 @@ void long_range_force(void)
         P[i].PM_Potential = 0;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-        {int k1,k2; for(k1=0;k1<3;k1++) {for(k2=0;k2<3;k2++) {P[i].tidal_tensorpsPM[k1][k2]=0;}}}
+        P[i].tidal_tensorpsPM = {};
 #endif
     }
 
@@ -138,10 +138,15 @@ void long_range_force(void)
 
         /* try again */
 
-        for(i = 0; i < NumPart; i++) {P[i].GravPM = {};}
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-        {int k1,k2; for(k1=0;k1<3;k1++) {for(k2=0;k2<3;k2++) {P[i].tidal_tensorpsPM[k1][k2]=0;}}}
+        for(i = 0; i < NumPart; i++) {
+            P[i].GravPM = {};
+#ifdef EVALPOTENTIAL
+            P[i].PM_Potential = 0;
 #endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+            P[i].tidal_tensorpsPM = {};
+#endif
+        }
         i = pmforce_nonperiodic(0) + pmforce_nonperiodic(1);
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
         //pmtidaltensor_nonperiodic_fourier(0, 0); pmtidaltensor_nonperiodic_fourier(0, 1); pmtidaltensor_nonperiodic_fourier(0, 2); pmtidaltensor_nonperiodic_fourier(0, 3); pmtidaltensor_nonperiodic_fourier(0, 4); pmtidaltensor_nonperiodic_fourier(0, 5);
