@@ -23,7 +23,7 @@ static std::vector<pairflux_record> PairFluxRecords;
 static int PairFluxClosingKickExpected = 0;  /* set before the main-loop hydro pass: its records carry closing-kick shares */
 static long long PairFluxNFloor = 0, PairFluxNLost = 0, PairFluxNNegW2 = 0; /* diagnostics */
 static double PairFluxEFloor = 0;
-static int PairFluxPath = 0; static long long PairFluxNFloorPath[5] = {0}; static double PairFluxEFloorPath[5] = {0}; /* floor per path: closing self, closing records, opening records, wake, kick */
+static int PairFluxPath = 0; static long long PairFluxNFloorPath[5] = {0}; static double PairFluxEFloorPath[5] = {0}; /* floor per path: closing kick (self + records), unused, opening records, wake, kick */
 void pairflux_note_kick_floor(double de) {PairFluxNFloorPath[4]++; PairFluxEFloorPath[4] += de;}
 static std::vector<int> PairFluxSlot;       /* receiver -> aggregation slot, -1 when unused */
 
@@ -133,7 +133,6 @@ void pairflux_after_closing_kick(void)
 #endif
         pairflux_sum_add(i, 1, CellP[i].PairFluxSumMom * dw, CellP[i].PairFluxSumEgy * dw, B);
     }
-    PairFluxPath = 0; pairflux_sums_apply(); PairFluxPath = 1;
     for(auto &rec : PairFluxRecords)
     {
         if(rec.c2 == 0) {continue;}
@@ -143,7 +142,7 @@ void pairflux_after_closing_kick(void)
 #endif
         pairflux_sum_add(rec.r, 1, rec.mom * rec.c2, rec.egy * rec.c2, B); /* active r: Pred = conserved just after its closing kick */
     }
-    pairflux_sums_apply();
+    PairFluxPath = 0; pairflux_sums_apply(); /* self and receiver shares summed per cell, then applied once */
     PairFluxClosingKickExpected = 0;
 }
 
@@ -227,7 +226,7 @@ void print_gas_conserved_totals(void)
     {
         char buf[1000]; snprintf(buf, sizeof(buf), "%s/conserved_totals.txt", All.OutputDir);
         fd = fopen(buf, "w");
-        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_lost n_negW2 [n,E floor: closing-self closing-rec opening-rec wake kick] (gas, conserved variables, physical, after the sync's kicks)\n");
+        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_lost n_negW2 [n,E floor: closing - opening wake kick] (gas, conserved variables, physical, after the sync's kicks)\n");
     }
     fprintf(fd, "%lld %.17e", (long long) All.NumCurrentTiStep, All.Time);
     for(int k = 0; k < 26; k++) {fprintf(fd, " %.17e", glob[k]);}

@@ -728,6 +728,12 @@ integertime get_timestep(int p,		/*!< particle index */
             if(P[p].ID == All.SpawnedWindCellID) {dt_courant *= 0.5;} // be more careful if this is a spawned-in gas cell
 #endif
             if(dt_courant < dt) dt = dt_courant;
+#ifdef HYDRO_TIMESTEP_FROM_PAIR_FORCE
+            { /* one half-kick of the hydro force changes the kinetic energy by at most a fraction of u: (a dt/2)^2/2 <= eta u */
+                double a2 = CellP[p].HydroAccel.norm_sq();
+                if(a2 > 0) {double dt_pf = 2. * sqrt(2. * HYDRO_PAIR_FORCE_DT_ETA * CellP[p].InternalEnergy / a2); if(dt_pf < dt) {dt = dt_pf;}}
+            }
+#endif
 
             double dt_prefac_diffusion;
             dt_prefac_diffusion = 0.5;
