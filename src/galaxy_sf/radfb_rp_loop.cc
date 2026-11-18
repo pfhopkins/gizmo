@@ -559,8 +559,23 @@ static void radfb_rp_write_momwinds_log(int num_firing_local)
                  mom_supply, mom_coupled, avg_v, avg_taufac);
 }
 
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+static double radfb_rp_gas_kinetic_energy(void) /* this rank's gas kinetic energy, physical [code] */
+{
+    double ke = 0; const double a2inv = gizmo_host_all_ptr()->cf_a2inv;
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {ke += 0.5 * P[i].Mass * P[i].Vel.norm_sq() * a2inv;}}
+    return ke;
+}
+#define RADFB_RP_BOOK_KICK_WORK(ke0) ledger_add(LEDGER_E_RADP_KICK, radfb_rp_gas_kinetic_energy() - (ke0))
+#else
+#define RADFB_RP_BOOK_KICK_WORK(ke0)
+#endif
+
 void radiation_pressure_winds_consolidated(void)
 {
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+    const double radp_ke0 = radfb_rp_gas_kinetic_energy(); /* the kicks' work: gas kinetic energy after the call minus before */
+#endif
     /* Build the gated active list with per-source LocalIn. Mirrors legacy
      * radfb_local_gpu.cc:162-182 (deterministic stochastic gate; only firing
      * sources flow into ActiveData). Search radius is SSOT in
@@ -632,7 +647,7 @@ void radiation_pressure_winds_consolidated(void)
 #else
     MPI_Allreduce(&any_local, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
 #endif
-    if (!any_active) {radfb_rp_write_momwinds_log(num_active); return;}
+    if (!any_active) {radfb_rp_write_momwinds_log(num_active); RADFB_RP_BOOK_KICK_WORK(radp_ke0); return;}
 
     /* Aux carries non-owning pointers to the toplevel-owned active arrays.
      * iter_index is set by reset_per_iter_device_context on every iter.
@@ -667,6 +682,7 @@ void radiation_pressure_winds_consolidated(void)
     run_neighbor_loop_iterative<RadFBRPSpec>(args);
 
     radfb_rp_write_momwinds_log(num_active);
+    RADFB_RP_BOOK_KICK_WORK(radp_ke0);
 
     /* host_locals + active_src are stack-local std::vectors; their lifetime
      * extends through the runner call. apply_active_writeback reads
