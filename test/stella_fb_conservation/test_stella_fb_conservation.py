@@ -6,8 +6,9 @@ bars fixed there). Units: kpc, 1e10 Msun, km/s. Boxes: n_H = 10, 1e4 K, 1 Msun c
 
 test_death_ejecta_table (no run): the death ejecta the deposit uses (stellar_death_ejecta), on 1500 masses (0.9-300 Msun)
   x the table metallicities and their midpoints, with M_death = M_init - lifetime winds. For every sample
-  rem + sum_k m_k = M_death (1e-12), no m_k < 0, rem >= 0 (the star never ejects more than it holds) and no ejecta
-  without composition; at grid stars rem / M_death = rem_tab / (rem_tab + sum ej_tab).
+  0 <= rem <= M_death (the remnant never exceeds the star, which the absolute table remnant did between grid points) and no
+  m_k < 0; at grid stars rem / M_death = rem_tab / (rem_tab + sum ej_tab) (1e-12). rem + sum_k m_k = M_death holds by
+  construction (rem is returned as M_death - sum m_k) and is not a check.
 test_failed_sn_composition: a failed SN (42.3 Msun, log Z = -1.70, table ejecta 0 at the nearest grid star) and a direct
   collapse (a table grid star), each in its own box of gas with 1 km/s random velocities; element ledger, mass and energy
   traces close. Every failed SN and direct collapse in the table ejects nothing, so with exact death ejecta they deposit
@@ -19,6 +20,8 @@ test_agb_energy / test_wind_metals / test_ia_iron / test_ecsn_energy: one run wi
   a forced Type Ia), a 60 Msun star (forced death: its remaining wind leaves first) and an ECSN.
   AGB: the deposit delivers 1/2 M_ej (30 km/s)^2 (kick + inelastic heat); booked as 1/2 p^2 / M_ej with the delivered p,
   so the fb_wind_agb stage closes. Wind metals: FeedbackBudget books the metals the walk delivered (WINDZLEDGER, 1e-12).
+  WINDZLEDGER compares two accumulations of the walk's own deposit, so it guards against a return to the old surface-abundance
+  booking; that the gas gains the booked metals is checked by the element ledger of the trace.
   Ia: the event delivers the table's M_Ch of Ia matter, 0.744 Msun Fe (IAFE, 1e-12): the WD particle plus
   M_Ch - M_WD of receiver gas converted in place. With the rate normalised to IA_DTD_NORM per formed mass, Ia iron per
   formed mass is then rate x table yield. ECSN: 1e50 erg (Kitaura, Janka & Hillebrandt 2006, A&A 450, 345: 1.2e50 erg
@@ -166,14 +169,14 @@ def test_death_ejecta_table(build):
     grid = np.array([l.split()[1:] for l in r.stdout.splitlines() if l.startswith("GRID ")], dtype=float)
     assert len(ej) >= 29 * 1501 and len(grid) > 100  # 1501 masses x 15 grid metallicities and 14 midpoints
     M, rem, s, mn = ej[:, 3], ej[:, 4], ej[:, 5], ej[:, 6]
-    closure = np.abs(rem + s - M) / M
-    n_bad = int((closure > BAR).sum()); n_neg = int((mn < 0).sum()); n_rem_neg = int((rem < -BAR * M).sum())
+    over = (rem - M) / M
+    n_over = int((over > BAR).sum()); n_neg = int((mn < 0).sum()); n_rem_neg = int((rem < -BAR * M).sum())
     grid_err = np.abs(grid[:, 3] - grid[:, 4]).max()
-    worst = ej[np.argmax(closure)]
-    print(f"{len(ej)} samples: closure fails {n_bad} (max {closure.max():.3e} at logM={worst[0]:.3f} logZ={worst[1]:.3f} type={int(worst[2])} "
-          f"M_death={worst[3]:.3f} rem={worst[4]:.3f} sum_m={worst[5]:.3f}), negative m_k {n_neg}, negative rem {n_rem_neg}; "
+    worst = ej[np.argmax(over)]
+    print(f"{len(ej)} samples: remnant above the star {n_over} (max {over.max():+.3e} at logM={worst[0]:.3f} logZ={worst[1]:.3f} "
+          f"type={int(worst[2])} M_death={worst[3]:.3f} rem={worst[4]:.3f}), negative m_k {n_neg}, negative rem {n_rem_neg}; "
           f"grid remnant fraction max |err| {grid_err:.3e}")
-    assert n_bad == 0 and n_neg == 0 and n_rem_neg == 0
+    assert n_over == 0 and n_neg == 0 and n_rem_neg == 0
     assert grid_err < 1e-12
 
 

@@ -1,7 +1,7 @@
 /* Driver for test_stella_fb_conservation.py::test_death_ejecta_table: GIZMO's startup (loads the stellar tables), then the
    death ejecta the feedback deposits (stellar_death_ejecta) on a dense (M, Z) scan off and on the table grid.
    M_death = M_init - lifetime winds, as the wind channel leaves the star at death. One line per sample:
-     EJ logM logZ rem_type M_death rem sum_m min_m nzero_comp
+     EJ logM logZ rem_type M_death rem sum_m min_m
    then a summary line. */
 #include <mpi.h>
 #include <cstdio>
