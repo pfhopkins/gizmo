@@ -25,3 +25,4 @@ SELFGRAVITY_OFF
 BOX_PERIODIC
 OUTPUT_TIMESTEP
 OUTPUT_ENERGY_STEP_TRACE                 % energy step trace (gizmo.conservation_trace)
+STARS_APPROACH_TIMESTEP_OFF      % no gravity walk here (SELFGRAVITY_OFF): the approach time is never filled and a new star gets dt = 0
