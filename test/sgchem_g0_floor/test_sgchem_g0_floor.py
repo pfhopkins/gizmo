@@ -3,8 +3,8 @@ on the production configuration (Config_stella_default.sh), one gas cell without
 
 The floor is the z = 0 UV background value 0.324e-2 Habing. It was written 0.324e-2 x All.G0 at every site, so G0 = 0 removed it and
 the cell saw G0 = 0. Now G0_FLOOR_BACKGROUND = max(0.324e-2 x All.G0, 0.324e-2): unchanged for All.G0 >= 1 (production 1.7),
-never below the z = 0 value. CR_SCALE_WITH_G0 then gives zeta = (G0/1.7) CosmicRayIonRate (clamped to [1e-21, 2e-16]).
-Bars (1e-12 relative): G0 = 0.324e-2 and zeta = max(1e-21, 0.324e-2/1.7 x 3e-18) = 5.72e-21 s^-1.
+never below the z = 0 value. The default configuration has no CR_SCALE_WITH_G0, so zeta is the configured rate.
+Bars (1e-12 relative): G0 = 0.324e-2 and zeta = CosmicRayIonRate = 3e-18 s^-1.
 Driver: test/tallbox_gravity_cr/zeta_gravity_driver.cc."""
 
 import os
@@ -41,7 +41,7 @@ def test_sgchem_g0_floor():
     z = [l.split() for l in r.stdout.splitlines() if l.startswith("ZETA")]
     assert z, "driver did not finish:\n" + (r.stdout + r.stderr)[-3000:]
     zeta, g0, rate = float(z[0][1]), float(z[0][3]), float(z[0][4])
-    zeta_ref = max(1e-21, 0.324e-2 / 1.7 * rate)
+    zeta_ref = rate
     print(f"G0 = {g0:.6e} (floor 3.24e-3), zeta = {zeta:.6e} (expected {zeta_ref:.6e}), CosmicRayIonRate {rate:.1e}")
     assert rate == 3e-18
     assert abs(g0 / 0.324e-2 - 1) < 1e-12

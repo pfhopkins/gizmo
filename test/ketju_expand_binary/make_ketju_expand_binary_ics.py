@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ICs for test/ketju_expand_binary: a hard 1.2 + 0.8 Msun binary (a = 2 AU, e = 0.6, P ~ 2 yr) and a 1 Msun star 400 AU away on
+"""ICs for test/ketju_expand_binary: a hard 1.2 + 0.8 Msun binary (a = 2 AU, e = 0.6, P ~ 2 yr) and a 1 Msun star 900 AU away on
 a circular orbit about it, all in one KETJU region (radius 1000 AU), plus a 0.5 Msun star at 1.45 pc (kpc, km/s, 1e10 Msun)."""
 import sys
 import numpy as np
@@ -8,7 +8,7 @@ from make_ketju_star_collision_ics import write, AU, G
 sys.path.insert(0, "../ketju_snapshot_midstep")
 from make_ketju_snapshot_midstep_ics import kepler_state
 
-M1, M2, M3, A_AU, E, F0, R3 = 1.2, 0.8, 1.0, 2.0, 0.6, 0.3, 400.0
+M1, M2, M3, A_AU, E, F0, R3 = 1.2, 0.8, 1.0, 2.0, 0.6, 0.3, 900.0
 
 
 def main():
