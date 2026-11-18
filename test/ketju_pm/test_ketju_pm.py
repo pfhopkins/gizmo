@@ -1,16 +1,16 @@
 """KETJU region members under PMGRID: the ketju_tide pair (1 + 1 Msun, a = 200 AU, in a KETJU region) and a 20 Msun star 5000 AU
-away on a circular outer orbit, in a periodic box L = 50000 AU with PMGRID = 64, for a quarter of the outer orbit.
+away on a circular outer orbit, in a periodic box L = 50000 AU with PMGRID = 256, for a quarter of the outer orbit.
 
 Derivation. GIZMO splits gravity (Springel 2005, eq. 21-22): the tree applies F_N(r) S(r) with
 S = erfc(r/2r_s) + (r/(r_s sqrt(pi))) exp(-r^2/4r_s^2) (shortrange_table), the mesh the rest F_N (1 - S) (GravPM),
-r_s = ASMTH L/PMGRID = 1.25 x 781 AU = 977 AU and the tree cuts at RCUT r_s = 4400 AU. A member's kick must be
+r_s = ASMTH L/PMGRID = 1.25 x 195 AU = 244 AU and the tree cuts at RCUT r_s = 1100 AU. A member's kick must be
 tree + PM + KETJU internal: the tree half-kicks are applied to members (kicks.cc), KETJU's negative half-kicks subtract the full
 softened Newtonian pair force F_N between members (tree_pair_gravity_factors, no S), and MSTAR integrates F_N inside the chain.
 Chain-internal sum: S F_N (tree) + (1 - S) F_N (mesh) - F_N (negative kicks) + F_N (MSTAR) = F_N, counted once. Without the PM
 kick on members the chain gets F_N - (1 - S) F_N and, here, the pair feels no 20 Msun star at all (5000 AU > RCUT r_s: its force
 is entirely in the mesh), so the pair moves on a straight line. In a quarter outer orbit, t = (pi/2) r/v, a missing central force
 displaces the pair by 1/2 (v^2/r) t^2 = 1.23 r. Bars, set before running: the pair CoM relative to the 20 Msun star within
-0.05 r_out of the open-box DOP853 three-body solution (PM force errors are ~1 %, periodic images change the field by
+0.05 r_out of the open-box DOP853 three-body solution (25 mesh cells between the bodies; periodic images change the field by
 (r_out/L)^3 ~ 1e-3), the pair's semi-major axis within 1e-2 of the reference; mass and energy step traces close."""
 
 import glob
@@ -68,17 +68,27 @@ def test_ketju_pm():
 
 
 def test_ketju_pm_comoving():
-    """Production combination of item K1: comoving (a = 0.5, Omega0 = 1), PMGRID, 2 ranks, 2 KETJU regions. Two binaries at
+    """Production combination of item K1: comoving (a = 0.5), PMGRID, 2 ranks, 2 KETJU regions. Two binaries at
     +x and +y, 5000 AU physical from a 20 Msun star (force on them entirely in the mesh), single 2 Msun stars at the mirror
     positions. The box and the mesh are mirror-symmetric about the 20 Msun star, so each binary's CoM must stay the mirror image
     of its single star: |CoM_pair + x_single - 2 x_centre| / r < 1e-3 after a quarter outer orbit (the binaries' own tide,
-    (a/r)^2 = 1e-4 of the force, is far below). Without the PM kick the binaries do not orbit at all (1.2 r off)."""
+    (a/r)^2 = 1e-4 of the force, is far below). Without the PM kick the binaries do not orbit at all (1.2 r off).
+    GIZMO requires Omega0 to match the box's mean density (check_omega), so Omega0 is that of the 24 Msun in the box
+    (Omega_Lambda = 0, h = 1) and a_end = a0 (1 + H(a0) dt) with H(a0) = H0 sqrt(Omega0 / a0^3), dt a quarter outer orbit;
+    the mirror symmetry the bar tests holds for any background."""
     subprocess.run([sys.executable, "make_ketju_pm_ics.py"], cwd=TEST_DIR, check=True)  # the harness expects <name>_ics.hdf5
     subprocess.run([sys.executable, "make_ketju_pm_comoving_ics.py"], cwd=TEST_DIR, check=True)
     clean_test_outputs(TEST_NAME)
-    t_end = 0.5 * (1 + 0.5 * 0.2828427 * 1.8e-5)  # a after a quarter outer orbit (H(a=0.5) = 0.283 / code time)
+    with h5py.File(f"{TEST_DIR}/ketju_pm_comoving_ics.hdf5", "r") as f:
+        m_tot = float(np.sum(f["PartType4"]["Masses"]))
+    # exactly GIZMO's check_omega (absolute tolerance 1e-2): G and H0 from constants.h with the params' units, h = 1
+    L = 1e5 * AU
+    G_code = 6.672e-8 * 1.989e43 / (3.085678e21 * (1e5 * 1e5))
+    H0 = 3.2407789e-18 * (3.085678e21 / 1e5)
+    omega = m_tot / (L * L * L) / (3 * H0 * H0 / (8 * np.pi * G_code))
+    t_end = 0.5 * (1 + H0 * np.sqrt(omega / 0.5 ** 3) * 1.8e-5)  # a after a quarter outer orbit
     build_and_run_test(TEST_NAME, 2, 1, param_overrides={"InitCondFile": "ketju_pm_comoving_ics", "ComovingIntegrationOn": 1,
-                       "Omega0": 1, "TimeBegin": 0.5, "TimeMax": t_end, "TimeOfFirstSnapshot": t_end, "TimeBetSnapshot": 1.1,
+                       "Omega0": omega, "TimeBegin": 0.5, "TimeMax": t_end, "TimeOfFirstSnapshot": t_end, "TimeBetSnapshot": 1.1,
                        "TimeBetStatistics": 1.1, "BoxSize": 1e5 * AU, "SofteningGasMaxPhys": 1.0e-4, "SofteningHaloMaxPhys": 0.05,
                        "SofteningDiskMaxPhys": 0.02, "SofteningBulgeMaxPhys": 0.02, "SofteningStarsMaxPhys": 1e-6, "SofteningBndryMaxPhys": 0.005})
     with h5py.File(sorted(glob.glob(f"{TEST_DIR}/output/snapshot_*.hdf5"))[-1], "r") as f:
