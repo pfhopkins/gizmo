@@ -201,7 +201,8 @@ def test_cap_sum_over_all_cells(tables):
     8 cold cells of 2.5 Msun next to the first moving out at 500 km/s (finer Courant steps than the rest, max step 0.02) that
     split (cap 2 Msun) at the first decomposition after the start; DomainBuild_ActiveFraction 1e-6 decomposes on every step,
     so the split falls on a step where the rest of the gas is inactive. Every RADP_CAP_SUM line: used = recount to 1e-5
-    (float storage); mass constant to 1e-12; gas energy change minus the ledger's chemistry, floor and radiation-pressure kick rows below 1e-3 of the
+    (float storage); the last cap sum equals an independent sum over the final snapshot's cells from the table luminosities
+    (3 %, as test_thin); mass constant to 1e-12; gas energy change minus the ledger's chemistry, floor and radiation-pressure kick rows below 1e-3 of the
     initial gas energy (thermal + kinetic)"""
     def stars(tab, L, dx):
         lM, lZ = np.log10(M_STAR), np.log10(Z)
@@ -237,4 +238,21 @@ def test_cap_sum_over_all_cells(tables):
           f"mass change {m[1] / m[0] - 1:.1e}; energy residual / E(0) {((e[1] - e[0]) - booked) / e[0]:.2e}")
     assert (a[:, 2] == 0).sum() > 0 and n1 > n0
     assert dev.max() < 1e-5
+    # independent of the code: at the final snapshot, sum over gas cells of 1e-21 DGR N_H(cell) sum_stars sigma L / (4 pi r^2),
+    # band luminosities from the tables, DGR = Z / 0.014 (none above 1e5 K), against the code's last cap sum (all ranks)
+    t_last = a[:, 1].max()
+    used_last = a[a[:, 1] == t_last, 4].sum()
+    with h5py.File(snaps[-1], "r") as F:
+        g, st = F["PartType0"], F["PartType4"]
+        x, m, Zg, T = g["Coordinates"][()], g["Masses"][()], g["Metallicity"][()][:, 0], g["Temperature"][()]
+        xs, t_now = st["Coordinates"][()], F["Header"].attrs["Time"]
+        ages0 = np.array([s_[1] for s_ in stars(tab, L, dx)])
+    lZ = np.log10(Z)
+    sig_l = np.array([sum(sigma_lum(bands(tab, age + t_now * 3.085678e13 / 3.155e7), False)) for age in ages0])  # erg/s cm^2 per H
+    r2 = np.maximum(((x[:, None, :] - xs[None, :, :]) ** 2).sum(2), 0.01 ** 2) * PC ** 2
+    flux = (sig_l[None, :] / (4 * np.pi * r2)).sum(1)
+    dgr = np.where(T > 1.0e5, 0.0, Zg / 0.014)
+    want = np.sum(dgr * m * MSUN * 0.7065 / MP * flux) / (MSUN * 1e10 / (PC / 1e5))  # erg/s -> code luminosity
+    print(f"cap sum at t = {t_last:.6g}: code {used_last:.6e}, independent sum at the final snapshot {want:.6e}, ratio {used_last / want:.4f}")
+    assert abs(used_last / want - 1) < 0.03
     assert abs(m[1] / m[0] - 1) < 1e-12 and abs((e[1] - e[0]) - booked) < 1e-3 * e[0]
