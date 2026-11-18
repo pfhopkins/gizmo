@@ -31,6 +31,7 @@ test_agb_energy / test_wind_metals / test_ia_iron / test_ecsn_energy: one run wi
 import os
 import re
 import shutil
+import signal
 import subprocess
 from os.path import abspath, dirname, join
 
@@ -46,6 +47,7 @@ TEST_DIR = dirname(abspath(__file__))
 REPO = abspath(join(TEST_DIR, "..", ".."))
 EXTRA_FLAGS = ("BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "GALSF_RESOLVEDISM_ISOLATED_FB_TEST", "OUTPUT_ENERGY_STEP_TRACE")
 BAR = 1e-12
+RUN_TIMEOUT = 5400  # s
 ZSUN = 1 - 0.7375 - 0.2485  # metal mass fraction of resolvedism_solar_massfrac (fresh starts take the composition from InitMetallicity)
 PC, M_P, K_B, MSUN = 3.085678e18, 1.6726e-24, 1.3807e-16, 1.989e33
 SOLAR = {2: 2.53e-3, 3: 7.41e-4, 4: 6.13e-3, 5: 1.34e-3, 6: 7.57e-4, 7: 7.12e-4, 8: 3.31e-4, 9: 6.87e-5, 10: 1.38e-3}
@@ -120,6 +122,16 @@ def make_box(fname, Z_abs, n_H=10.0, box_pc=16.0, m_cell=1.0, T=1.0e4, sigma_v=0
     return n
 
 
+def run_killable(cmd, timeout, **kw):
+    """subprocess.run in its own process group; on timeout the whole group (the launcher and GIZMO) is killed."""
+    p = subprocess.Popen(cmd, start_new_session=True, **kw)
+    try:
+        return subprocess.CompletedProcess(cmd, p.wait(timeout=timeout))
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL); p.wait()
+        raise
+
+
 def zpar(logZ):
     return {"InitMetallicity": 10 ** logZ / ZSUN, "InitialMetallicity": 10 ** logZ / ZSUN}
 
@@ -139,7 +151,7 @@ def run_case(name, binary, params, nranks=2, restart_flag=0):
     if restart_flag == 0:
         shutil.rmtree(out, ignore_errors=True); os.makedirs(out)
     with open(join(d, "run.log"), "w") as log:
-        r = subprocess.run(mpi_launch_command(nranks) + [binary, "run.params", str(restart_flag)], stdout=log, stderr=subprocess.STDOUT, cwd=d)
+        r = run_killable(mpi_launch_command(nranks) + [binary, "run.params", str(restart_flag)], RUN_TIMEOUT, stdout=log, stderr=subprocess.STDOUT, cwd=d)
     text = open(join(d, "run.log")).read()
     assert r.returncode == 0 and "Simulation ends." in text, f"{name}: GIZMO did not reach TimeMax ({r.returncode}): " + text[-1500:]
     return text, out
@@ -163,7 +175,7 @@ def test_death_ejecta_table(build):
     make_box(join(d, "box_ics.hdf5"), ZSUN)
     base = open(join(TEST_DIR, f"{TEST_NAME}.params")).read().splitlines()
     open(join(d, "run.params"), "w").write("\n".join([l for l in base if not l.startswith("InitCondFile")] + ["InitCondFile box_ics"]) + "\n")
-    r = subprocess.run(mpi_launch_command(1) + [join(TEST_DIR, "death_ejecta_driver"), "run.params"], capture_output=True, text=True, cwd=d)
+    r = subprocess.run(mpi_launch_command(1) + [join(TEST_DIR, "death_ejecta_driver"), "run.params"], capture_output=True, text=True, cwd=d, timeout=RUN_TIMEOUT)
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
     ej = np.array([l.split()[1:] for l in r.stdout.splitlines() if l.startswith("EJ ")], dtype=float)
     grid = np.array([l.split()[1:] for l in r.stdout.splitlines() if l.startswith("GRID ")], dtype=float)

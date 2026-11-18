@@ -53,7 +53,7 @@ def _run(binary, fbc, name, T):
     lines = [l for l in base if not (l.split() and l.split()[0] in over)] + [f"{k} {v}" for k, v in over.items()]
     open(join(d, "run.params"), "w").write("\n".join(lines) + "\n")
     with open(join(d, "run.log"), "w") as log:
-        r = subprocess.run(mpi_launch_command(2) + [binary, "run.params"], stdout=log, stderr=subprocess.STDOUT, cwd=d, timeout=RUN_TIMEOUT)
+        r = fbc.run_killable(mpi_launch_command(2) + [binary, "run.params"], RUN_TIMEOUT, stdout=log, stderr=subprocess.STDOUT, cwd=d)
     text = open(join(d, "run.log")).read()
     assert r.returncode == 0 and "Simulation ends." in text, f"{name}: " + text[-1500:]
     assert "RESOLVEDISM AGB:" in text and "RESOLVEDISM WIND:" in text and "RESOLVEDISM SN:" not in text

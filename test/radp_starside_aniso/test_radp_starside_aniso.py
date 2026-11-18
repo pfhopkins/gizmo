@@ -8,6 +8,7 @@ and a second run has a 1.9 Msun main-sequence star (back-dated 30 Myr past its p
 Neither may book momentum it does not deliver."""
 
 import os
+import signal
 import subprocess
 import sys
 
@@ -27,7 +28,12 @@ def _run(extra, out):
     open("run.params", "w").write("\n".join(lines + [f"{k} {v}" for k, v in extra.items()]) + "\n")
     subprocess.run(["rm", "-rf", out]); os.makedirs(out)
     cmd = " ".join(mpi_launch_command(2, 1) + ["./GIZMO", "run.params"]) + f" 2>&1 | head -c {LOG_CAP} > {out}.log; exit ${{PIPESTATUS[0]}}"
-    res = subprocess.run(["bash", "-c", cmd], timeout=RUN_TIMEOUT)  # a stalled step floods the log: capped, the run then dies on SIGPIPE
+    p = subprocess.Popen(["bash", "-c", cmd], start_new_session=True)  # a stalled step floods the log: capped, the run then dies on SIGPIPE
+    try:
+        res = subprocess.CompletedProcess(cmd, p.wait(timeout=RUN_TIMEOUT))
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL); p.wait()  # the whole group, launcher and GIZMO included
+        raise
     assert res.returncode == 0 and "Simulation ends." in open(f"{out}.log").read()[-20000:], "run failed: " + open(f"{out}.log").read()[-400:]
     rows = [dict(kv.split("=") for kv in l.split()[1:]) for l in open(f"{out}.log") if l.startswith("RADPLEDGER")]
     return [{k: float(v) for k, v in r.items()} for r in rows]

@@ -30,7 +30,7 @@ TEST_DIR = dirname(abspath(__file__))
 REPO = abspath(join(TEST_DIR, "..", ".."))
 CONFIG = ("HYDRO_MESHLESS_FINITE_MASS", "GALSF_RESOLVEDISM_HYBRID_DEFAULTS=(10.)", "GALSF_RESOLVEDISM_INSTANT_SN", "N_STELLAR_MASS=5",
           "METALS", "MULTIPLEDOMAINS=16", "EVALPOTENTIAL", "DO_DENSITY_AROUND_NONGAS_PARTICLES", "OUTPUT_TEMPERATURE",
-          "OUTPUT_IN_DOUBLEPRECISION", "BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "GALSF_RESOLVEDISM_ISOLATED_FB_TEST", "STELLA_SELFCHECK",
+          "OUTPUT_IN_DOUBLEPRECISION", "GALSF_RESOLVEDISM_TREE_BANDS_PIXEL_FLUX_ONLY", "BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "GALSF_RESOLVEDISM_ISOLATED_FB_TEST", "STELLA_SELFCHECK",
           "OUTPUT_ENERGY_STEP_TRACE")
 BAR = 1e-12
 RUN_TIMEOUT = 5400  # s
@@ -60,8 +60,8 @@ def test_hybrid_ia_iron():
     fbc.make_box(join(d, "box_ics.hdf5"), fbc.ZSUN)
     shutil.copy(join(TEST_DIR, f"{TEST_NAME}.params"), d)
     with open(join(d, "run.log"), "w") as log:
-        r = subprocess.run(mpi_launch_command(2) + [join(TEST_DIR, "GIZMO"), f"{TEST_NAME}.params"], stdout=log, stderr=subprocess.STDOUT,
-                           cwd=d, timeout=RUN_TIMEOUT)
+        r = fbc.run_killable(mpi_launch_command(2) + [join(TEST_DIR, "GIZMO"), f"{TEST_NAME}.params"], RUN_TIMEOUT, stdout=log,
+                             stderr=subprocess.STDOUT, cwd=d)
     text = open(join(d, "run.log")).read()
     assert r.returncode == 0 and "Simulation ends." in text, text[-1500:]
     rows = fbc.kv_lines(text, "IAFE")
