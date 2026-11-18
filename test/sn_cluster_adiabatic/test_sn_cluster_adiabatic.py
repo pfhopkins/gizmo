@@ -13,7 +13,8 @@ supernovae inject. Each case is checked in two independent halves, from GIZMO's 
 
 Their product is the full budget (E - E0 - N_SN*1e51)/(N_SN*1e51), which is printed for each case.
 
-  test_sne_broadcast_timestep_conserves_energy:  the hydro half again, built with SNE_BROADCAST_TIMESTEP.
+  test_sne_broadcast_timestep_conserves_energy:  the hydro half again in the default build, which has
+      SNE_BROADCAST_TIMESTEP. The other two are built with SNE_BROADCAST_TIMESTEP_DISABLE.
 
 Cases differ in gas cell mass and in TimeMax at fixed physical duration (TimeMax sets the integer
 timestep ladder; the long-TimeMax runs stop at T_END on a 'stop' file). The 'resolved' case caps the
@@ -59,7 +60,7 @@ TOL_HYDRO = 0.05
 # superbubble that is percent-level (0.4% at 100 Msun, 1.9% at 10 Msun), so 5% bounds it with margin. It caught the
 # weighting pass using the star particle's mass for the ejecta mass (E_fb/(N_SN*1e51 erg) = 1.06-1.08 at 100 Msun).
 TOL_FEEDBACK = 0.05
-# Hydro with SNE_BROADCAST_TIMESTEP. It removes the error at the explosion (+45% to +280% without it), but
+# Hydro with SNE_BROADCAST_TIMESTEP. It removes the error at the explosion (+37% to +340% without it), but
 # the blast's expansion through cells on steps set by the unchanged CourantFac leaves +5% to +16% (100 and
 # 10 Msun), comparable to the coupling error above at 100 Msun. A 4x smaller Courant factor, or a non-local
 # Courant condition broadcast through the gravity tree, takes it below 1% at 1.3-2x the cost: see the PR.
@@ -76,7 +77,7 @@ CASES = {
 
 _HYDRO_XFAIL = (
     "Supernova energy coupled into cells on long timesteps is not conserved: measured (dE - E_fb)/E_fb = "
-    "+0.45 (m100, TimeMax 1x; -0.48 on 1 rank), +2.78 (m100, 100x), +2.49 (m10, 1x), +1.63 (m10, 100x), "
+    "+0.37 (m100, TimeMax 1x), +3.40 (m100, 100x), +2.46 (m10, 1x), +1.59 (m10, 100x), varying by tenths between runs, "
     "nearly all of it at the first supernova into quiescent gas. Feedback is deposited after the density "
     "pass and before the hydro force pass, so the closing half-kick of a receiving cell's old (long) step "
     "applies the post-explosion pressure forces; capping the step at 5 kyr closes the budget to <0.3%."
@@ -90,7 +91,7 @@ def _param(case, xfail_cases, reason):
     return pytest.param(case, marks=marks, id=case)
 
 
-VARIANTS = {"": (), "_sbt": ("SNE_BROADCAST_TIMESTEP",)}  # suffix: extra Config.sh flags
+VARIANTS = {"_off": ("SNE_BROADCAST_TIMESTEP_DISABLE",), "": ()}  # suffix: extra Config.sh flags
 _BUILT = set()
 _RESULTS = {}
 
@@ -193,7 +194,8 @@ def energy_budget(case, variant=""):
 
 @pytest.mark.parametrize("case", [_param(c, HYDRO_XFAIL_CASES, _HYDRO_XFAIL) for c in CASES])
 def test_hydro_conserves_energy(case):
-    dE, E_fb, n_sn = energy_budget(case)
+    """Built without SNE_BROADCAST_TIMESTEP, which is otherwise on by default"""
+    dE, E_fb, n_sn = energy_budget(case, "_off")
     err = (dE - E_fb) / E_fb
     assert abs(err) < TOL_HYDRO, (
         f"{case}: gas energy change differs from the energy feedback deposited: (dE - E_fb)/E_fb = {err:+.4f} "
@@ -201,20 +203,22 @@ def test_hydro_conserves_energy(case):
     )
 
 
-@pytest.mark.parametrize("case", list(CASES))
-def test_feedback_delivers_sn_energy(case):
-    dE, E_fb, n_sn = energy_budget(case)
+# every case without the timestep broadcast, and the default build on the cases it is run for anyway
+@pytest.mark.parametrize("case,variant", [pytest.param(c, "_off", id=f"{c}-disabled") for c in CASES]
+                         + [pytest.param(c, "", id=f"{c}-default") for c in sorted(HYDRO_XFAIL_CASES)])
+def test_feedback_delivers_sn_energy(case, variant):
+    dE, E_fb, n_sn = energy_budget(case, variant)
     err = E_fb / (n_sn * E51_CODE) - 1
     assert abs(err) < TOL_FEEDBACK, (
-        f"{case}: mechanical feedback deposited {E_fb / E51_CODE:.3f} E51 for {n_sn:g} supernovae: "
+        f"{case}{variant}: mechanical feedback deposited {E_fb / E51_CODE:.3f} E51 for {n_sn:g} supernovae: "
         f"E_fb/(N_SN*1e51 erg) - 1 = {err:+.4f} (tolerance {TOL_FEEDBACK:.0%})"
     )
 
 
 @pytest.mark.parametrize("case", sorted(HYDRO_XFAIL_CASES))
 def test_sne_broadcast_timestep_conserves_energy(case):
-    """The cases the default build fails, with SNE_BROADCAST_TIMESTEP"""
-    dE, E_fb, n_sn = energy_budget(case, "_sbt")
+    """The cases that fail without SNE_BROADCAST_TIMESTEP, in the default build"""
+    dE, E_fb, n_sn = energy_budget(case)
     err = (dE - E_fb) / E_fb
     assert abs(err) < TOL_HYDRO_SBT, (
         f"{case} (SNE_BROADCAST_TIMESTEP): (dE - E_fb)/E_fb = {err:+.4f} (tolerance {TOL_HYDRO_SBT:.0%}); "

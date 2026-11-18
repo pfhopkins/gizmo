@@ -67,11 +67,13 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
     if(pp[i].Type == 5)
     {   // here we have type=5, treat as a sink particle/single-star
         if(pp[i].ProtoStellarStage != 7) {active_check += rt_get_lum_band_singlestar(i,mode,lum, pp, cell); /* stars and protostars */} else {active_check += rt_get_lum_band_agn(i,mode,lum, pp, cell); /* relics */}
+        {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {lum[k] *= All.StellarLuminosityFactor;}} // scales emission only: the source stays active, so accreted-photon reinjection is unaffected
     } else { // otherwise, treat as a stellar population particle
         active_check += rt_get_lum_band_stellarpopulation(i,mode,lum, pp, cell); // get luminosities for star particles assuming they represent IMF-averaged populations
     }
 #else
     active_check += rt_get_lum_band_singlestar(i,mode,lum, pp, cell); // get luminosities for individual star/sink particles assuming they are protostars or stars
+    {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {lum[k] *= All.StellarLuminosityFactor;}}
 #endif
 #else
 #if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL)
@@ -886,11 +888,12 @@ void rt_diag_ir_double_count_report(void)
 {
     static double t_last = -1, t_row = -1; static long long n_call = 0; static FILE *fd = NULL;
     int i, k, c, stride = ((RT_DIAG_IR_DOUBLE_COUNT+0) > 1) ? (RT_DIAG_IR_DOUBLE_COUNT+0) : 1;
-    double lum_now = 0, dt = (t_last < 0) ? 0 : All.Time - t_last; t_last = All.Time;
+    double lum_now = 0, lum_fac = 1, dt = (t_last < 0) ? 0 : All.Time - t_last; t_last = All.Time;
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
     for(i=0;i<NumPart;i++) {if((P[i].Type==5) && (P[i].Mass>0)) {lum_now += P[i].StarLuminosity_Solar;}}
+    lum_fac = All.StellarLuminosityFactor; // injected, unlike the L_sinks column
 #endif
-    rt_diag_lum_dt += lum_now / UNIT_LUM_IN_SOLAR * (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * dt;
+    rt_diag_lum_dt += lum_now * lum_fac / UNIT_LUM_IN_SOLAR * (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * dt;
     if((n_call++ % stride) != 0) {return;}
     const int nv = 5 + (1+RT_DIAG_NCHAN)*N_RT_FREQ_BINS + 2, nall = nv + RT_DIAG_NSC;
     double loc[nall], glob[nall]; for(i=0;i<nall;i++) {loc[i] = 0;}

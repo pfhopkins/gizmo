@@ -217,6 +217,7 @@ extern int NumGasUpdate;	/*!< number of active gas cells on local processor in c
 extern int MaxTopNodes;	        /*!< Maximum number of nodes in the top-level tree used for domain decomposition */
 extern int RestartFlag;		/*!< taken from command line used to start code. 0 is normal start-up from initial conditions, 1 is resuming a run from a set of restart files, while 2 marks a restart from a snapshot file. */
 extern int RestartSnapNum;
+extern int IC_Metallicity_Columns[6]; /*!< columns of the Metallicity dataset the ICs hold for each particle type on a fresh start (0 = absent, 1 = total only) */
 extern int SelRnd;
 extern int TakeLevel;
 extern int *Exportflag;	        /*!< Buffer used for flagging whether a particle needs to be exported to another process */
@@ -822,6 +823,9 @@ extern struct global_data_all_processes
 #ifdef GHOSDT_G0_CR
     double Mgas0;     /*!< GHOSDT: total gas mass in the initial conditions */
     double FactorG0;  /*!< GHOSDT: ISRF and CR-rate scale factor, SFR(<30 Myr) / (Mgas0 / 4 Gyr) */
+#endif
+#if defined(SINGLE_STAR_SINK_DYNAMICS) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+    double StellarLuminosityFactor; /* multiplies the radiation single-star sinks emit into RT, all bands */
 #endif
 #ifdef RT_INFRARED
     double InitRadiationTemp;
