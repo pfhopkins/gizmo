@@ -1,8 +1,8 @@
 """Star-side radiation pressure, anisotropic neighbours (production cooling and chemistry as radp_starside): one 40 Msun star on the face
 of a dusty gas half-space (n_H = 300, solar Z, 0.8 Msun cells, no gravity), so the weighted mean neighbour direction has |m| near 0.5.
 Every step that books momentum in the radiation pressure channel (FeedbackBudget channel 3, star-side part), the walk must deliver it:
-Σ_j |Δp_j| over the gas equals the booked p and Σ_j Δp_j = 0 (no net push, no star recoil), both to round-off (bar 1e-12 relative,
-set before running). Kicks along r̂ − m without the Σ|q| normalisation deliver Σ|Δp| ≤ p (1 − |m|²)^{1/2}.
+Σ_j |Δp_j| over the gas equals the booked p and the stars' budget (resolvedism_radp_starside_dp_code of each star that deposited), and
+Σ_j Δp_j = 0 (no net push, no star recoil), all to round-off (bar 1e-12 relative, set before running). Kicks along r̂ − m without the Σ|q| normalisation deliver Σ|Δp| ≤ p (1 − |m|²)^{1/2}.
 The ledger covers every star, including those that deposit nothing: the first 15 kyr no gas is in reach (TestFBNoGasUntilTime),
 and a second run has a 1.9 Msun main-sequence star (back-dated 30 Myr past its pre-main sequence), below the walk's 2 Msun cut.
 Neither may book momentum it does not deliver."""
@@ -46,9 +46,10 @@ def test_radp_starside_aniso():
         os.chdir(repo)
     assert len(rows) > 0, "no step booked radiation pressure momentum"
     for name, rs in (("40 Msun", rows), ("1.9 Msun", rows_low)):
-        bad = [r for r in rs if r["p_book"] <= 0 or abs(r["p_abs"] / r["p_book"] - 1) >= BAR]
-        print(f"{name}: {len(rs)} steps with booked or delivered momentum, {len(bad)} where booked != delivered"
-              + (f" (first t={bad[0]['t']:.4e}: booked {bad[0]['p_book']:.4e}, delivered {bad[0]['p_abs']:.4e})" if bad else ""))
+        bad = [r for r in rs if r["p_book"] <= 0 or abs(r["p_abs"] / r["p_book"] - 1) >= BAR
+               or r["p_budget"] <= 0 or abs(r["p_abs"] / r["p_budget"] - 1) >= BAR]
+        print(f"{name}: {len(rs)} steps with booked or delivered momentum, {len(bad)} where booked, delivered and budget differ"
+              + (f" (first t={bad[0]['t']:.4e}: booked {bad[0]['p_book']:.4e}, delivered {bad[0]['p_abs']:.4e}, budget {bad[0]['p_budget']:.4e})" if bad else ""))
         assert not bad
     err_vec = max(r["p_vec"] / r["p_book"] for r in rows)
     m2 = sum(r["m2"] for r in rows) / len(rows)

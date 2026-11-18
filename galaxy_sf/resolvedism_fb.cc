@@ -1424,20 +1424,21 @@ void resolvedism_inject_fb_energy(void)
     }
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     { /* test: star-side radp booked (channel 3, every star) vs delivered this step, full precision (code units) */
-        double loc[6] = {0}, glob[6];
+        double loc[7] = {0}, glob[7];
         loc[0] = RadPressure_dp_thisStep / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
         for(int i : ActiveParticleList) {
             if(!STELLA_OWNS_STAR(P[i]) || P[i].Mass <= 0) continue;
+            if(P[i].FB_DepositedP > 0) {loc[6] += resolvedism_radp_starside_dp_code(i);} /* the budget of each star that deposited */
             double aws = P[i].FB_Area_weighted_sum, m2 = 0;
             if(aws <= 0) continue;
             for(int k_ = 0; k_ < 3; k_++) {m2 += (P[i].FB_VecSum[k_] / aws) * (P[i].FB_VecSum[k_] / aws);}
             loc[5] += m2;
         }
         loc[1] = FB_TestRadpPabs; for(int k_ = 0; k_ < 3; k_++) {loc[2 + k_] = FB_TestRadpPvec[k_];}
-        MPI_Allreduce(loc, glob, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(loc, glob, 7, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         if(ThisTask == 0 && (glob[0] > 0 || glob[1] > 0)) {
             double pv = sqrt(glob[2]*glob[2] + glob[3]*glob[3] + glob[4]*glob[4]);
-            printf("RADPLEDGER t=%.17e p_book=%.17e p_abs=%.17e p_vec=%.17e m2=%.17e\n", All.Time, glob[0], glob[1], pv, glob[5]);
+            printf("RADPLEDGER t=%.17e p_book=%.17e p_abs=%.17e p_vec=%.17e m2=%.17e p_budget=%.17e\n", All.Time, glob[0], glob[1], pv, glob[5], glob[6]);
             fflush(stdout);
         }
         FB_TestRadpPabs = 0; FB_TestRadpPvec[0] = FB_TestRadpPvec[1] = FB_TestRadpPvec[2] = 0;
