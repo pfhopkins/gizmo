@@ -24,7 +24,8 @@
 //    1e-10 relative completion tolerance + ipar-clear == ignore RHS retval).
 //  R7 KEEP: failure taxonomy: dt < 1e-8 s -> return 100 ("ABORT(100)");
 //    substep budget 9e6 -> return 1 ("ABORT(0)"); negative dt -> return 2.
-//    The one-zone harness maps nonzero to the sgchem_fatal exit path.
+//    With SGCHEM_SOLVER_FAILURE_ENERGY_ONLY_COOLING, 100 and 1 instead finish the step as
+//    energy-only cooling at frozen composition from the last accepted state (logged, counted).
 
 #include "chem_types.h"
 #include "chem_net20.h"
@@ -58,6 +59,7 @@ thread_local long cxx_stat_calls = 0, cxx_stat_substeps = 0, cxx_stat_retries = 
 thread_local long cxx_stat_rhs_evals = 0, cxx_stat_cvode_steps = 0;
 thread_local long chem_nan_states = 0;
 thread_local long chem_excess_states = 0;
+thread_local long cxx_stat_recoveries = 0;   // solver failures finished as energy-only cooling
 thread_local long cxx_stat_floor_hits = 0;    // CVODE substeps rejected at the step-size floor
 
 // CVODE step floor: 10 x the double resolution of the time coordinate at the substep end. Below it
@@ -69,19 +71,23 @@ static const double CHEM_HMIN_EPS = 10.0 * DBL_EPSILON;
 static void chem_print_cell_context(const char* why, double time, double yn, double dl, double divv,
                                     const double* y, int nspec, const ChemCell& c)
 {
-    std::fprintf(stderr, "cxx_evolve: %s (ID %ld): dt=%g yn=%g dl=%g divv=%g net=%d\n",
+    std::fprintf(stderr, "cxx_evolve: %s (ID %ld): dt=%.17g yn=%.17g dl=%.17g divv=%.17g net=%d\n",
                  why, c.id_current, time, yn, dl, divv, c.net);
     std::fprintf(stderr, "  state (species..., energy):");
-    for (int i = 0; i < nspec; i++) std::fprintf(stderr, " %.9e", y[i]);
+    for (int i = 0; i < nspec; i++) std::fprintf(stderr, " %.17g", y[i]);
     double temp = -1, gamma = 0, ntot = (1.0 + c.abhe - y[CIH2]) * yn;
     int finite = (yn > 0 && std::isfinite(yn) && std::isfinite(y[nspec - 1]) && std::isfinite(y[CIH2]));
     if (finite) cxx_lookup_temp_gamma(y[CIH2], c.abhe, y[nspec - 1] / (ntot * CHEM_KBOLTZ), &temp, &gamma, *c.tab);
-    std::fprintf(stderr, "\n  T=%g (from energy, H2 and abhe; -1 = not computable) tdust=%g\n", temp, c.tdust);
-    std::fprintf(stderr, "  pools abhe=%g abundc=%g abundo=%g abundsi=%g abundD=%g dgr=%g\n",
+    std::fprintf(stderr, "\n  T=%g (from energy, H2 and abhe; -1 = not computable) tdust=%.17g\n", temp, c.tdust);
+    std::fprintf(stderr, "  pools abhe=%.17g abundc=%.17g abundo=%.17g abundsi=%.17g abundD=%.17g dgr=%.17g\n",
                  c.abhe, c.abundc, c.abundo, c.abundsi, c.abundD, c.dust_to_gas_ratio);
-    std::fprintf(stderr, "  rates G0=%g G0_LW=%g G0_dust=%g crir=%g rt_phot=%g %g %g rt_heat=%g %g %g ph1=%g ph38=%g ph42=%g\n",
+    std::fprintf(stderr, "  rates G0=%.17g G0_LW=%.17g G0_dust=%.17g crir=%.17g rt_phot=%.17g %.17g %.17g rt_heat=%.17g %.17g %.17g ph1=%.17g ph38=%.17g ph42=%.17g\n",
                  c.G0, c.G0_LW, c.G0_dust, c.cosmic_ray_ion_rate, c.rt_phot_HI, c.rt_phot_HeI, c.rt_phot_HeII,
                  c.rt_heat_HI, c.rt_heat_HeI, c.rt_heat_HeII, c.phrates[0], c.phrates[37], c.phrates[41]);
+    std::fprintf(stderr, "  Zmass");
+    for (int k = 0; k < 12; k++) std::fprintf(stderr, " %.17g", c.Zmass[k]);
+    std::fprintf(stderr, "\n  redshift=%.17g G_dust=%.17g chi_isrf=%.17g npix=%d col_tot[0]=%.17g\n",
+                 c.redshift, c.G_dust, c.chi_isrf, c.npix, c.npix > 0 ? c.col_tot[0] : 0.0);
     std::fflush(stderr);
 }
 
@@ -335,10 +341,34 @@ static CvWork* cv_get(int nspec, const double* atol, double t0, const double* y)
     return w;
 }
 
+// Explicit energy-only subcycle at frozen composition (TNOCHEM bypass, .F:296-320): 10% of e/|edot| per
+// step, RHS retval ignored (a flagged evaluation leaves ydot zero, as the Fortran ipar-clear path).
+// Returns 1 at t_end, 0 when stop() asks to hand off, 2 when the budget is spent, -1 on an RHS ABORT.
+template <class Stop>
+static int energy_only_subcycle(double& t_start, double t_end, double* y, double* ydot, int itmp,
+                                ChemCell& c, Stop stop)
+{
+    for (long n = 1; n <= 100000; n++) {
+        rhs_dispatch(t_start, y, ydot, c);
+        if (c.fatal_code) return -1;
+        double dt_byp;
+        if (std::fabs(ydot[itmp]) > 0.0)
+            dt_byp = std::fmin(t_end - t_start, 1e-1 * std::fabs(y[itmp] / ydot[itmp]));
+        else
+            dt_byp = t_end - t_start;
+        c.cr_ion_heat_int += c.cr_ion_heat * dt_byp; // explicit step: exactly the applied heating
+        y[itmp] += dt_byp * ydot[itmp];
+        t_start += dt_byp;
+        if (t_start >= t_end - 1e-10 * t_end) return 1;  // WEDGEFIX 3
+        if (stop()) return 0;
+    }
+    return 2;
+}
+
 // evolve_abundances port.
 // non_eq_abundances has c.trac_num entries; energy in/out [erg cm^-3].
-// Returns 0 ok; 100 = dt collapse (ABORT(100)); 1 = nstep exceeded (ABORT(0));
-// 2 = negative/zero dt (ABORT(1)/(2)); 3 = CVODE setup failure.
+// Returns 0 ok; 100 = dt collapse (ABORT(100)); 1 = nstep exceeded (ABORT(0)) (both recovered under
+// SGCHEM_SOLVER_FAILURE_ENERGY_ONLY_COOLING, see R7); 2 = negative/zero dt (ABORT(1)/(2)); 3 = CVODE setup failure.
 // 101 = non-finite input state.
 // Net 3: an RHS ABORT (comp_equilib 9751/9752, index 1) returns that code.
 int cxx_evolve_abundances(double time, double dl, double yn, double divv,
@@ -488,26 +518,10 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                 y[C3_IHEPP] = c.abhe;
                 y[C3_IDP]   = c.abundD;
             }
-            int done = 0;
-            for (long nbyp = 1; nbyp <= 100000; nbyp++) {
-                // ipar-clear semantics: RHS retval ignored; a flagged eval
-                // left ydot all-zero, exactly like the Fortran zero-ydot path
-                // (net 15 builds the full ydot, as rate_eq_nl99 does).
-                rhs_dispatch(t_start, y, ydot, c);
-                if (c.fatal_code) return c.fatal_code;      // Fortran ABORT inside rate_eq
-                double dt_byp;
-                if (std::fabs(ydot[itmp]) > 0.0)
-                    dt_byp = std::fmin(t_end - t_start,
-                                       1e-1 * std::fabs(y[itmp] / ydot[itmp]));
-                else
-                    dt_byp = t_end - t_start;
-                c.cr_ion_heat_int += c.cr_ion_heat * dt_byp; // explicit step: exactly the applied heating
-                y[itmp] += dt_byp * ydot[itmp];
-                t_start += dt_byp;
-                if (t_start >= t_end - 1e-10 * t_end) { done = 1; break; }  // WEDGEFIX 3
-                temp_byp = bypass_temp();
-                if (temp_byp <= SGCHEM_TNOCHEM) break;    // hand off to stiff path
-            }
+            // net 15 builds the full ydot, as rate_eq_nl99 does
+            int done = (energy_only_subcycle(t_start, t_end, y, ydot, itmp, c,
+                            [&]() { return bypass_temp() <= SGCHEM_TNOCHEM; }) == 1);   // hand off to stiff path
+            if (c.fatal_code) return c.fatal_code;          // Fortran ABORT inside rate_eq
             // budget exhausted while hot: accept state (.F:257-259)
             if (done || t_start >= t_end - 1e-10 * t_end) {
                 for (int i = 0; i < c.trac_num; i++) non_eq_abundances[i] = y[i];
@@ -552,7 +566,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                 // afterwards; here we take the failure path directly.
                 c.tdust = tdust_old;
                 dt = dt / 2.0;
-                if (dt < 1e-8) { retcode = 100; goto out; }
+                if (dt < 1e-8) { retcode = 100; goto recover; }
                 cxx_stat_retries++;
                 new_step = 0; need_reinit = 1;
                 continue;
@@ -609,7 +623,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                         "cxx_evolve: excessively small timestep! dt=%g dt_est=%g "
                         "t=[%g,%g] ID=%ld yn=%g\n",
                         dt, dt_est, t_start, t_end, c.id_current, yn);
-                    retcode = 100; goto out;
+                    retcode = 100; goto recover;
                 }
                 cxx_stat_retries++;
                 new_step = 0;
@@ -629,6 +643,28 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
     }
     std::fprintf(stderr, "cxx_evolve: nstep exceeded (ID %ld)\n", c.id_current);
     retcode = 1;
+
+recover:
+    // solver failure (1, 100): the rest of the step from the last accepted state as energy-only cooling at frozen composition
+#ifndef SGCHEM_SOLVER_FAILURE_ENERGY_ONLY_COOLING
+    goto out;                                         // default: the caller aborts
+#endif
+    {
+        cxx_stat_recoveries++;
+        std::fprintf(stderr, "cxx_evolve: solver failure code %d at t=%g of %g s (ID %ld, recovery %ld on this thread); "
+                     "rest of the step as energy-only cooling at frozen composition\n",
+                     retcode, t_start, t_end, c.id_current, cxx_stat_recoveries);
+        chem_print_cell_context("solver failure, state at the last accepted time", time, yn, dl, divv, y, nspec, c);
+        rhs_dispatch(t_start, y, ydot, c);            // CR heating at the accepted state closes the pending trapezoid
+        if (c.fatal_code) { retcode = c.fatal_code; goto out; }
+        c.cr_ion_heat_int += 0.5 * (crh_prev + c.cr_ion_heat) * crh_dt; crh_prev = c.cr_ion_heat; crh_dt = 0.0;
+        const int s = energy_only_subcycle(t_start, t_end, y, ydot, itmp, c, []() { return false; });
+        if (c.fatal_code) { retcode = c.fatal_code; goto out; }
+        if (s == 2)
+            std::fprintf(stderr, "cxx_evolve: energy-only budget spent at t=%g of %g s (ID %ld); state accepted\n",
+                         t_start, t_end, c.id_current);
+        retcode = 0;
+    }
 
 out:
     if (retcode == 0 || retcode == 1) {

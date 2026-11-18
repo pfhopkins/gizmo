@@ -808,6 +808,12 @@ now use the unclipped HI fraction when it is negative, as ph38 does. Unchanged f
 the old and new RHS give the same trajectories. C++ chem_rhs_net5/17, Fortran rate_eq_simple/ulli.
 Test: golden/test_net17_solver_failure.cc (66 logged cells + hand-off grid). Not changed: net 3, He (He++ at abhe).
 
+## D-59. (2026-11-18) Optional recovery of C++ solver failures (SGCHEM_SOLVER_FAILURE_ENERGY_ONLY_COOLING)
+Off by default (the run aborts, as Arepo and the Fortran path do). With the flag, a dt collapse (100) or a spent
+substep budget (1) finishes the step from the last accepted state with the TNOCHEM explicit energy-only
+subcycle at frozen composition; the cell context and a per-thread count are printed. Species are not touched,
+the energy change goes through the cooling ledger like any chemistry step.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1
