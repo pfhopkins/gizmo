@@ -245,8 +245,8 @@ void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code)
 #define SINGLE_STAR_TREE_LUM_TOL 1.e-2 /* a star's band luminosity may drift this fraction of its own before the nodes are refreshed */
 /* before a gravity call: refresh the tree node moments (luminosities) if a single star started to shine, started to ionise or went
    dark since the last call, or its band luminosity moved by more than SINGLE_STAR_TREE_LUM_TOL of its own since the nodes last
-   saw it; reduced in gravity_tree, so no collective here. A switch sets 2: on several ranks gravity_tree then rebuilds, which
-   re-sends the node light to the ranks holding copies; a drift sets 1 (local refresh) */
+   saw it; reduced in gravity_tree, so no collective here. A switch or a drift sets 2: on several ranks gravity_tree then
+   rebuilds, which re-sends the node light to the ranks holding copies (one rank: a refresh) */
 void single_star_light_switch_check(void)
 {
     static double t_last = -1; double t0 = t_last; t_last = All.Time;
@@ -260,7 +260,7 @@ void single_star_light_switch_check(void)
         for(int b = 0; b < N_RT_FREQ_BINS; b++) {
             const double l0 = SingleStars.tree_lum[s].L[b], lb = (float) lum[b]; /* as stored */
             if((l0 == 0) != (lb == 0)) {TreeMomentsStaleFlag = 2; return;} /* a band switched on or off */
-            if(fabs(lb - l0) > SINGLE_STAR_TREE_LUM_TOL * DMAX(fabs(lb), fabs(l0))) {if(TreeMomentsStaleFlag < 1) {TreeMomentsStaleFlag = 1;}}
+            if(fabs(lb - l0) > SINGLE_STAR_TREE_LUM_TOL * DMAX(fabs(lb), fabs(l0))) {TreeMomentsStaleFlag = 2; return;}
         }
         if(SingleStars.M_drawn[s] <= All.IMFSampleStellarMassCut) {continue;}
 #if defined(GALSF_FB_MECHANICAL)
