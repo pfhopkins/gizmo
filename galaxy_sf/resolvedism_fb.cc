@@ -1174,6 +1174,8 @@ void resolvedism_inject_fb_energy(void)
              fb_death_row_push(i, 0, 7, FB_LOG_EXPLODED, IA_ENERGY_ERG, yia, resolvedism_star_age_yr(i), 0.0);}
             printf("RESOLVEDISM TYPE_IA: Task=%d ID=%llu M_WD=%.3f E=%.2e[erg]\n",
                 ThisTask, (unsigned long long)P[i].ID, M_WD, IA_ENERGY_ERG);
+            if(P[i].FB_KernelMass * UNIT_MASS_IN_SOLAR < stellar_type_ia_yield_total() - M_WD) {
+                printf("RESOLVEDISM TYPE_IA: ID=%llu kernel gas %g Msun < companion share %g Msun: all of it converted\n", (unsigned long long)P[i].ID, P[i].FB_KernelMass * UNIT_MASS_IN_SOLAR, stellar_type_ia_yield_total() - M_WD);}
             resolvedism_zero_disrupted_star(i, M_WD, "Ia");
             P[i].M_drawn_Ia = 0; /* no longer eligible */
             P[i].M_at_SN_trigger = -1; /* reset bookkeeping snapshot */

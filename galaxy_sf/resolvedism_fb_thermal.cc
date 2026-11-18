@@ -124,7 +124,6 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
         {
             double dM_conv = DMAX(stellar_type_ia_yield_total() - MIa_solar, 0) / UNIT_MASS_IN_SOLAR;
             if(dM_conv > 0 && P[i].FB_KernelMass > 0) {in->IaConvertFrac = DMIN(dM_conv / P[i].FB_KernelMass, 1.0);}
-            if(loop_iteration >= 0 && dM_conv > P[i].FB_KernelMass) {printf("RESOLVEDISM TYPE_IA: ID=%llu kernel gas %g Msun < companion share %g Msun: all of it converted\n", (unsigned long long)P[i].ID, P[i].FB_KernelMass * UNIT_MASS_IN_SOLAR, dM_conv * UNIT_MASS_IN_SOLAR);}
         }
 #ifdef STELLA_FIRE_YIELD_SLOTS
         in->MetalMass = stella_pack_fire_yields(y_fire, in->FireYields, P[i].ID); /* Z deposit = sum of the packed table metals */
@@ -458,6 +457,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                 if(local.Mej > 0) {
                     double dM = wk * local.Mej;
                     double c_ia = 0; /* Ia: this cell's gas turned into Ia composition (no mass moves) */
+                    double dMZ_net = 0; /* metal mass the cell gains (net of the converted gas's own metals) */
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
                     c_ia = local.IaConvertFrac * Mass_j;
 #endif
@@ -480,6 +480,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         #pragma omp atomic read
                         Z_old = P[j].Metallicity[0];   /* total Z in FIRE-pattern layout */
                         double dMZ = wk * yield_metals + c_ia * (yield_metals / local.Mej - Z_old);
+                        dMZ_net = dMZ;
                         double dZ = (dMZ - Z_old * dM) / (M_old + dM);
                         #pragma omp atomic
                         P[j].Metallicity[0] += dZ;
@@ -634,7 +635,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                      * on the dying star (FIRE pattern); see out2particle. */
                     out.M_coupled += dM;
 #ifdef METALS
-                    out.Z_dep += (wk + c_ia / local.Mej) * yield_metals; /* metals of Ia/SN composition delivered */
+                    out.Z_dep += dMZ_net; /* net metals delivered, as the gas gains them */
 #endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     out.SumWK += wk; out.Nrecv++;
