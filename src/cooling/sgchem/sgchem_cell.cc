@@ -394,8 +394,12 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
         energy = (All.TestTreeRayNeutralTemp + (1.0e4 - All.TestTreeRayNeutralTemp) * x) * 1.5 * BOLTZMANN_CGS * yn * (1.0 + ABHE + x);
     }
 #endif
-    } else { /* no network: this cell's photo rates and shielding (as stella_dev), no cooling */
-        chem_cxx_begin_cell(&in, temp, abh2, abhd, abco);
+    } else { /* no network: this cell's photo rates and shielding at its current (ionised) abundances, no cooling */
+#if CHEMISTRYNETWORK == 17
+        chem_cxx_begin_cell(&in, temp, ab[IH2], ab[IHD], ab[ICO]);
+#else
+        chem_cxx_begin_cell(&in, temp, ab[IH2], 0, ab[ICO]);
+#endif
         chem_cxx_read_outputs(&out);
         for(int k = 0; k < 28; k++) {out.lambda[k] = 0;}
         for(int k = 0; k < NRATES_CHEM; k++) {out.lambda_chem[k] = 0;}

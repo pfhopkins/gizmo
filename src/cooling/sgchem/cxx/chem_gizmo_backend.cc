@@ -170,7 +170,7 @@ void chem_cxx_evolve_cell(double timestep, double dl, double yn, double divv, do
     if (rc != 0) sgchem_fatal_(&rc);  // same funnel as the Fortran driver
 }
 
-// unsolved (PHOTOION-ionized) cells keep the last solved cell's rates, as the Fortran path does
+// rates of the cell's last solve; a cell without one (photoionised) has run begin_cell only and zeroes its cooling rates
 void chem_cxx_read_outputs(struct ChemOutputs* out)
 {
     const ChemCell& c = tl_cell;
