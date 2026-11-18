@@ -79,3 +79,21 @@ def test_ketju_coupling_compiles_without_or_with_merge_flags(merge):
         assert r.returncode == 0, r.stderr[-1500:]
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+def test_stella_zoom_config_has_no_radiation_pressure():
+    """The zoom reference configuration has no radiation pressure (Uli 2026-11-18): after precompiler_logic.h no star-side,
+    tree or M1 radiation-pressure macro is defined, and the files that use the band fields still compile."""
+    d = prepare("Config_stella_zoom.sh", "")
+    try:
+        r = subprocess.run(["make", "GIZMO_config.h"], cwd=d, capture_output=True, text=True)
+        assert r.returncode == 0, r.stderr[-1500:]
+        defs = subprocess.run(dry_compile(d, "core/timestep.cc").replace(" -c ", " -E -dM ").split(" -o ")[0], shell=True, cwd=d, capture_output=True, text=True, check=True).stdout
+        for m in ("GALSF_RESOLVEDISM_RADPRESSURE", "GALSF_RESOLVEDISM_RADPRESSURE_TREERAD", "RT_RAD_PRESSURE_FORCES"):
+            assert not re.search(r"^#define " + m + r"\b", defs, re.M), "zoom config defines " + m
+        for src in ["galaxy_sf/resolvedism_fb.cc", "galaxy_sf/resolvedism_fb_momentum.cc", "cooling/sgchem/chem_interface.cc", "gravity/forcetree.cc"]:
+            cmd = dry_compile(d, src).replace(" -c ", " -fsyntax-only ").split(" -o ")[0]
+            r = subprocess.run(cmd, shell=True, cwd=d, capture_output=True, text=True)
+            assert r.returncode == 0, f"{src}:\n" + r.stderr[-1500:]
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
