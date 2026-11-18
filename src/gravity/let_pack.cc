@@ -54,6 +54,8 @@
 #include "../core/timestep_functions.h"   /* dilation, for the motion bound */
 
 #include "gravtree_opening.h"   /* shared opening predicate (cell/AABB variant) */
+#include "../mesh/kernel.h"
+#include "gravtree_force_kernel.h"   /* grav_target_select_soft_and_zeta: the walk's target softening */
 #include "gravtree_moment_kernel.h"  /* shared node-moment CONSTRUCTION SSOT (add_particle/finalize) */
 #include "gravtree_moment_sources.h" /* shared per-particle RT/sink/CR source-input gates */
 
@@ -375,6 +377,9 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
 
         double oa = (double) P[i].OldAcc;
         double soft = (double) ForceSoftening_KernelRadius(i);
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
+        {double zeta_unused; grav_target_select_soft_and_zeta(t, P[i].AGS_zeta, soft, zeta_unused);} /* the walk's target softening: not below the type's fixed one */
+#endif
         /* How far this target may move, per axis, before the tree is expected to be rebuilt: the walk evaluates it
            where it is then, not where it is now.  The same bound and the same horizon the pack uses to widen its own
            nodes (TREE_NODE_WIDENING_DELTA widens a node's full width, so one side moves by half of it). */
