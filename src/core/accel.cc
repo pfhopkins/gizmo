@@ -323,7 +323,9 @@ void compute_stellar_feedback(void)
 #endif
 
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    ESTEP_BEGIN(ESTEP_PHOTOION);
     photoionization_per_direction(); /* per-direction Stromgren photoionisation around single stars */
+    ESTEP_END(ESTEP_PHOTOION);
     gizmo_exit_bad_stop_if_requested("accel:after_photoionization"); CPU_Step[CPU_HIIHEATING] += measure_time();
 #endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
@@ -332,7 +334,9 @@ void compute_stellar_feedback(void)
 #endif
 
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
+    ESTEP_BEGIN(ESTEP_FB_RADP);
     radiation_pressure_winds_consolidated(); /* local radiation pressure */
+    ESTEP_END(ESTEP_FB_RADP);
     gizmo_exit_bad_stop_if_requested("accel:after_local_rp"); CPU_Step[CPU_LOCALWIND] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
     

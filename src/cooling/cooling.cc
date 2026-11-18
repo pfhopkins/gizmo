@@ -631,6 +631,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
     if((dtime>0)&&(cell[i].Mass>0)&&(pp[i].Type==0))  // upon start-up, need to protect against dt==0 //
     {
         double uold = DMAX(All.MinEgySpec, cell[i].InternalEnergy); int k; k=0; ne_in=0; ne_out=0;
+        ESTEP_BOOK(EBK_COOL_FLOOR, (uold - cell[i].InternalEnergy) * pp[i].Mass); /* input floor */
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
         double uion=HIIRegion_Temp/(MEAN_MOLECULAR_WEIGHT_IONIZED*(GAMMA_DEFAULT-1.)*U_TO_TEMP_UNITS); if(cell[i].DelayTimeHII>0) {if(uold<uion) {uold=uion;}} /* u_old should be >= ionized temp if used here [unless using newer model] */

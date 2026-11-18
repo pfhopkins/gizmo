@@ -1493,6 +1493,30 @@ enum ledger_rows {LEDGER_ROWS(LEDGER_ROW_ENUM) LEDGER_NROWS};
 void ledger_init(void);
 void ledger_add(int row, double x);
 void ledger_output(void);
+#endif
+/* Energy step trace (system/energy_step_trace.cc): rank-local stage brackets, booked sources/sinks, one reduce per window */
+enum {ESTEP_MERGE_SPLIT, ESTEP_FB_MECH, ESTEP_FB_RADP, ESTEP_PHOTOION, ESTEP_COOLING, ESTEP_SF,
+      ESTEP_INT_GRAV, ESTEP_INT_HYDRO, ESTEP_INT_KICK1, ESTEP_INT_KICK2, ESTEP_INT_DRIFT, ESTEP_INT_NBODY, ESTEP_NSTAGE};
+enum {EBK_FB_SN, EBK_FB_WIND, EBK_FB_REMNANT_KIN, EBK_COOL_SOLVE, EBK_COOL_PI, EBK_COOL_FLOOR, EBK_COOL_CR_LOSS,
+      EBK_KICK_FLOOR, EBK_CR_CLIP, EBK_INFO_MHD_NUM, EBK_INFO_CR_SHOCK, EBK_N};
+#ifdef OUTPUT_ENERGY_STEP_TRACE
+extern double EstepBooked[EBK_N];
+void estep_begin(int stage);
+void estep_end(int stage);
+void energy_step_trace_report(void);
+void estep_ledger_hook(int row, double x);
+double estep_cell_mag_energy(int i);
+#define ESTEP_BEGIN(s) estep_begin(s)
+#define ESTEP_END(s) estep_end(s)
+#define ESTEP_BOOK(ch, x) do {double estep_x_ = (x); _Pragma("omp atomic") EstepBooked[ch] += estep_x_;} while(0)
+#define ESTEP_REPORT() energy_step_trace_report()
+#else
+#define ESTEP_BEGIN(s)
+#define ESTEP_END(s)
+#define ESTEP_BOOK(ch, x)
+#define ESTEP_REPORT()
+#endif
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
 void ledger_restart_io(void (*io)(void *, size_t, int), int modus);
 #ifdef OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS
 void ledger_step_checkpoint(const char *tag);

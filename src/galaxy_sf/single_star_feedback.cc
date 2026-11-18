@@ -555,6 +555,7 @@ void single_star_feedback_finalize(const int *list, int n)
          {double e = (ev.E > 0) ? dm * (ev.E / UNIT_ENERGY_IN_CGS) / (ev.Mej / UNIT_MASS_IN_SOLAR) : 0.5 * dm * pow(ev.v_kms / UNIT_VEL_IN_KMS, 2);
           if(ev.E > 0 || ev.v_kms > 1000.) {ledger_add(LEDGER_E_CR_OFFERED, All.CosmicRay_SNeFraction * e);}}
 #endif
+         ESTEP_BOOK((ev.E > 0) ? EBK_FB_SN : EBK_FB_WIND, (ev.E > 0) ? dm * (ev.E / UNIT_ENERGY_IN_CGS) / (ev.Mej / UNIT_MASS_IN_SOLAR) : 0.5 * dm * pow(ev.v_kms / UNIT_VEL_IN_KMS, 2)); /* energy trace: what the event gives, at the star */
          if(kind != SSE_WIND) {double dr = P[i].Mass - ev.M_rem / UNIT_MASS_IN_SOLAR; ledger_add(LEDGER_M_REMNANT_RESET, dr); ledger_add(LEDGER_MZ_STARS_LOST, dr * P[i].Metallicity[0]);}}
 #endif
         double residual = (kind == SSE_WIND) ? removed - ev.Mej : P[i].Mass * UNIT_MASS_IN_SOLAR - ev.M_rem;
@@ -570,6 +571,7 @@ void single_star_feedback_finalize(const int *list, int n)
             continue; /* winds are frequent: not logged per step */
         }
         ssfb_rows.insert(ssfb_rows.end(), row, row + SSFB_LOG_COLS);
+        ESTEP_BOOK(EBK_FB_REMNANT_KIN, 0.5 * (ev.M_rem / UNIT_MASS_IN_SOLAR - P[i].Mass) * P[i].Vel.norm_sq() * All.cf_a2inv); /* kinetic energy of the mass the remnant reset removes */
         P[i].Mass = ev.M_rem / UNIT_MASS_IN_SOLAR; /* exactly the table remnant; 0 (PISN, Type Ia) removes the particle */
 #ifdef TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS
         if(ev.M_trigger - ev.M_rem > 1.0e-6) {SINGLE_STAR_CHECK("fb_booked_deposited", P[i].Mass * UNIT_MASS_IN_SOLAR < ev.M_trigger * (1 - 1.0e-6), "kind=%d ID=%llu M_trigger=%g M_now=%g", kind, (unsigned long long)P[i].ID, ev.M_trigger, P[i].Mass * UNIT_MASS_IN_SOLAR);}

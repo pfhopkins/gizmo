@@ -1870,6 +1870,15 @@
 #endif
 #endif
 
+#ifdef OUTPUT_ENERGY_STEP_TRACE
+#ifndef EVALPOTENTIAL
+#define EVALPOTENTIAL /* energy step trace: E_pot at full syncs closes the time-integration budget */
+#endif
+#if !defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+#error "OUTPUT_ENERGY_STEP_TRACE needs OUTPUT_MASS_METAL_ENERGY_LEDGER (its cooling, PI, floor and CR bookings are ledger rows)"
+#endif
+#endif
+
 #ifdef EVALPOTENTIAL
 #ifndef COMPUTE_POTENTIAL_ENERGY
 #define COMPUTE_POTENTIAL_ENERGY
