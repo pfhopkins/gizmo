@@ -9,6 +9,7 @@ Problem: the sgchem_box lattice at n_H = 1 cm^-3, network 17, solar metals witho
 fully ionised H with x_He+ = x_He++ = 0.05 (SGCHEM_KEEP_IC_ABUNDANCES), about 5e4 K, 1 kyr, 2 ranks.
 test_temperature_counts_all_electrons: at both snapshots after the start Temperature = (2/3) e / (k_B n_tot) to 1e-3, with
   x_C, x_Si from the snapshot metals (C/12, Si/28 per H nucleus, H mass fraction 1/1.4).
+  The snapshot ElectronAbundance is that same x_e to 1e-6 (Ne and the temperature count the same electrons).
 test_mass_and_energy: gas mass constant to 1e-12; thermal energy change = ledger chemistry heating - cooling + floor to 1e-6.
 """
 import glob
@@ -55,7 +56,7 @@ def run():
 def state(s):
     with h5py.File(s, "r") as f:
         g = f["PartType0"]
-        return {k: g[k][()] for k in ("Masses", "InternalEnergy", "Temperature", "SGChemTracAbund", "Metallicity")}
+        return {k: g[k][()] for k in ("Masses", "InternalEnergy", "Temperature", "SGChemTracAbund", "Metallicity", "ElectronAbundance")}
 
 
 def test_temperature_counts_all_electrons(run):
@@ -71,6 +72,9 @@ def test_temperature_counts_all_electrons(run):
         print(f"{path.basename(s)}: T {g['Temperature'].mean():.5g} K, network T {t_net.mean():.5g} K, ratio {r.min():.5f}..{r.max():.5f}, "
               f"x_He+ {ab[:, 3].mean():.3g}, x_He++ {ab[:, 4].mean():.3g}")
         assert np.all(np.abs(r - 1) < 1e-3)
+        dne = np.max(np.abs(g["ElectronAbundance"] / xe - 1))
+        print(f"  ElectronAbundance vs the network's electrons per H: max relative difference {dne:.2e}")
+        assert dne < 1e-6  # Ne and the temperature count the same electrons (float output)
 
 
 def test_mass_and_energy(run):

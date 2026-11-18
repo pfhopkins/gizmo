@@ -7,7 +7,8 @@ n_tot = (1 + x_He + x_e - x_H2) n_H with x_e = x_H+ + x_He+ + 2 x_He++ + (x_C - 
 Problem: the `sgchem_box` lattice at n_H = 1 cm^-3, network 17, solar metals without depletion, starting fully ionised
 with x_He+ = x_He++ = 0.05 (`SGCHEM_KEEP_IC_ABUNDANCES`), about 5e4 K, 1 kyr on 2 ranks.
 
-- `test_temperature_counts_all_electrons`: Temperature = (2/3) e / (k_B n_tot) to 1e-3 at the snapshots after the start.
+- `test_temperature_counts_all_electrons`: Temperature = (2/3) e / (k_B n_tot) to 1e-3 at the snapshots after the start, and
+  ElectronAbundance = x_e to 1e-6 (Ne counts the same electrons).
 - `test_mass_and_energy`: gas mass constant to 1e-12; thermal energy change = ledger chemistry rows + floor to 1e-6.
 
 Inputs: `SUNDIALS_DIR`; chemistry tables from `SGCHEM_TABLES_DIR` (else `scripts/get_stella_tables.sh`).
