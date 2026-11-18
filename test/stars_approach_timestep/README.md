@@ -10,8 +10,8 @@ Problem: Stella cloud production flags; two 2 Msun main-sequence stars 1 pc apar
 Without the approach step the stars step with the acceleration criterion, about 7 kyr at closest approach, against an
 encounter time of 1 kyr.
 
-- `test_pair_energy_through_the_encounter`: pair energy (kinetic minus G m1 m2 / r) changes by less than 1e-3 of the initial
-  kinetic energy; the closest sampled separation is below 0.1 pc.
-- `test_mass`: gas plus star mass constant to 1e-12.
+- `test_encounter_kick`: the perpendicular change of the pair's relative velocity equals the exact two-body orbit's to 1 %;
+  the pair energy never moves by more than 5 % of G m1 m2 / b; the closest sampled separation is below 0.1 pc.
+- `test_mass`: gas plus star mass constant to 1e-12 (double-precision snapshots).
 
 Inputs: `SUNDIALS_DIR`; tables from `GIZMO_STELLA_TABLES_DIR` (else `scripts/get_stella_tables.sh`).

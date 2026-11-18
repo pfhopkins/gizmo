@@ -7,10 +7,12 @@ Problem: Stella cloud production flags; two 2 Msun main-sequence stars 1 pc apar
 the 10 pc box), 40 kyr; MaxStellarTimestep 1e4 yr, MaxSizeTimestep 5 kyr (code units pc, km/s: 1 = 0.978 Myr).
 Derivation: without the approach step the stars' steps follow the acceleration criterion sqrt(2 eta eps / a), about 7 kyr at
 closest approach (a = G 2 Msun / (0.05 pc)^2), against an encounter time b / v = 1 kyr.
-test_pair_energy_through_the_encounter (bar set before the run): the pair energy sum m v^2 / 2 - G m1 m2 / r changes by less
-  than 1e-3 of the initial kinetic energy from the first to the last snapshot, and the closest separation sampled is below
-  0.1 pc (the encounter happened).
-test_mass: gas plus star mass constant to 1e-12.
+test_encounter_kick (bars set from the derivation, before the runs): the change of the pair's relative velocity
+  perpendicular to the approach over the run equals the exact two-body orbit's (scipy, rtol 1e-12, from the first snapshot)
+  to 1 %; the largest change of the pair energy m v^2 / 2 - G m1 m2 / r over the snapshots stays below 5 % of G m1 m2 / b
+  (the potential at closest approach; the kinetic energy is 3600 x larger, so the final pair energy is not a check:
+  the leapfrog returns it whatever the step); the closest sampled separation is below 0.1 pc.
+test_mass: gas plus star mass constant to 1e-12 (snapshots in double precision).
 """
 import glob
 import os
@@ -77,13 +79,28 @@ def pair(s):
     return 0.5 * np.sum(m * np.sum(v ** 2, axis=1)) - G * m[0] * m[1] / r, r, 0.5 * np.sum(m * np.sum(v ** 2, axis=1)), mt
 
 
-def test_pair_energy_through_the_encounter(run):
+def stars(s):
+    with h5py.File(s, "r") as f:
+        st = f["PartType4"]; o = np.argsort(st["ParticleIDs"][()])
+        return st["Coordinates"][()][o], st["Velocities"][()][o], st["Masses"][()][o], f["Header"].attrs["Time"]
+
+
+def test_encounter_kick(run):
+    from scipy.integrate import solve_ivp
     p = [pair(s) for s in run]
-    e, r, k = np.array([q[0] for q in p]), np.array([q[1] for q in p]), p[0][2]
-    print(f"{len(run)} snapshots; closest sampled separation {r.min():.4f} pc; pair energy change {(e[-1] - e[0]) / k:.3e} of E_kin(0), "
-          f"largest excursion {np.max(np.abs(e - e[0])) / k:.3e}")
+    e, r = np.array([q[0] for q in p]), np.array([q[1] for q in p])
+    (x0, v0, m, t0), (x1, v1, _, t1) = stars(run[0]), stars(run[-1])
+    gm = G * m.sum()
+    orbit = solve_ivp(lambda t, y: np.r_[y[3:], -gm * y[:3] / np.linalg.norm(y[:3]) ** 3], (t0, t1),
+                      np.r_[x0[1] - x0[0], v0[1] - v0[0]], rtol=1e-12, atol=1e-14).y[:, -1]
+    kick_ref = orbit[4] - (v0[1, 1] - v0[0, 1])
+    kick = (v1[1, 1] - v1[0, 1]) - (v0[1, 1] - v0[0, 1])
+    phi_b = G * m[0] * m[1] / B
+    print(f"{len(run)} snapshots; closest sampled separation {r.min():.4f} pc; perpendicular kick code {kick:.6e}, two-body {kick_ref:.6e}, "
+          f"rel. error {kick / kick_ref - 1:.3e}; largest pair-energy change {np.max(np.abs(e - e[0])) / phi_b:.3e} of G m1 m2 / b")
     assert r.min() < 0.1 and r[-1] > 0.5
-    assert abs(e[-1] - e[0]) < 1e-3 * k
+    assert abs(kick / kick_ref - 1) < 1e-2
+    assert np.max(np.abs(e - e[0])) < 0.05 * phi_b
 
 
 def test_mass(run):
