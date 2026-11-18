@@ -3,7 +3,9 @@
 `Config_stella_{default,cloud,galaxy,zoom,tallbox}.sh`, `stella_{cloud,galaxy,zoom,tallbox}.params`: the production
 set in this tree's flag and parameter names; `Template_Config_stella.sh` lists the options of the paper runs
 (CR fluid, KETJU, nets 15 and 17, moment transport). `STELLA_DEFAULTS` is the default set; the configs add the
-opt-ins for the production runs: `GALSF_FB_PHOTOIONIZATION_PER_DIRECTION`, `GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE`.
+opt-ins for the production runs: `GALSF_FB_PHOTOIONIZATION_PER_DIRECTION`, and radiation pressure
+(`GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS` with `GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE`) in cloud, default, galaxy and tall box (the
+tall box without the 6-8 eV option); the zoom has no radiation pressure (zoom reference, Uli 2026-11-18).
 Set `InitCondFile` (and `BoxSize` for the zoom) in the params. `StellarTablesFile` and `SGChemTablesPath` stay `SET_ME`:
 GIZMO then reads the tables from the cache of `scripts/get_stella_deps.sh`.
 
