@@ -14,3 +14,7 @@ The zoom needs the SGChem UV background (comoving floor): SGChem stops on `Comov
 - `test_gas_kernel_radius_uncapped`: every tracked params file of a Stella build (`STELLA_DEFAULTS` or `GALSF_SINGLE_STARS_FROM_IMF`)
   with adaptive gas softening sets `MinGasKernelRadiusFractional`: unset, it defaults to 1 there (`begrun.cc`) and floors every gas
   kernel radius at 2.8 x `SofteningGas` (`gravtree.cc`). The floor it gives (`SofteningGasMaxPhys` / h for comoving runs) is below 1e-3 pc.
+- `test_radiation_pressure_per_config`: each production Config through the preprocessor with `precompiler_logic.h`: cloud,
+  default, galaxy and tall box set `GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS` themselves and push the gas; the zoom build defines
+  no radiation-pressure macro (zoom reference, Uli 2026-11-18). `test_stella_defaults_without_radiation_pressure`:
+  `STELLA_DEFAULTS` alone sets none.
