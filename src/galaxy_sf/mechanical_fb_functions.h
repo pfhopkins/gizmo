@@ -701,6 +701,9 @@ static void mechanical_fb_pair_kernel(
         mechfb_target_gas_delta(j, num_local_gas, num_local_particles,
                                 home_gas_delta, ghost_gas_delta);
     Kokkos::atomic_add(&gd->N_injected, 1);
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
+    if(loop_iteration == 0) {Kokkos::atomic_add(&gd->N_injected_sn, 1);}
+#endif
     /* Track max wakeup_val across all source events into this receiver,
      * for the host-side direct-dU branch in mechanical_fb.cc to apply as
      * P[j].wakeup = max(P[j].wakeup, max_source_wakeup). Standard hydro-

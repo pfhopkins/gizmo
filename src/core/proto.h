@@ -57,8 +57,10 @@ long long report_comittable_memory(long long *MemTotal,
                                    long long *SwapTotal,
                                    long long *SwapFree);
 
-#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
-extern int MechFBCellsReceived, MechFBAnyCellReceived, HydroRecomputeAfterFeedback;
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
+extern int FBHydroRedoReceivers; /* this rank's feedback receivers this step that ask for the hydro pass to be repeated */
+extern int HydroPassRepeatsStep; /* 1 during that repeat: the metal exchange was applied this step already */
+void resolved_ism_fb_after_closing_kick(void);
 #endif
 void merge_and_split_particles(void);
 int does_particle_need_to_be_merged(int i);

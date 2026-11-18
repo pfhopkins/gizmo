@@ -69,9 +69,30 @@ void compute_grav_accelerations(void)
 
 
 
-#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
-int HydroRecomputeAfterFeedback = 0; /* set while the hydro pass is repeated after a feedback deposit */
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
+int FBHydroRedoReceivers = 0; /* this rank's receivers this step of deposits that repeat the hydro pass */
+int HydroPassRepeatsStep = 0; /* 1 during the repeat: the metal exchange is applied in the pass itself, so once per step */
+
+/* stella_dev RESOLVED_ISM_FB_AFTER_CLOSING_KICK (gizmo2017 run.c order): after the closing kick and the mechanical deposit, the rest
+   of the stellar feedback (radiation pressure, photoionisation, thermal), then the full synchronous hydro pass again if any rank's
+   deposit asked for it: SN/Ia receivers, and with RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB also wind, AGB and radiation-pressure ones.
+   The next opening kick then uses forces from the post-deposit state. */
+void resolved_ism_fb_after_closing_kick(void)
+{
+    LEDGER_STEP_BREAKDOWN("pre_local_feedback");
+    LEDGER_FB(compute_stellar_feedback());
+    LEDGER_STEP_BREAKDOWN("post_local_feedback");
+    int n_tot = 0;
+    MPI_Allreduce(&FBHydroRedoReceivers, &n_tot, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    FBHydroRedoReceivers = 0;
+    if(n_tot > 0)
+    {
+        if(ThisTask == 0) {printf("RESOLVED_ISM_FB_AFTER_CLOSING_KICK: %d feedback receivers, repeating the hydro pass\n", n_tot);}
+        HydroPassRepeatsStep = 1; compute_hydro_densities_and_forces(); HydroPassRepeatsStep = 0;
+    }
+}
 #endif
+
 void compute_hydro_densities_and_forces(void)
 {
   if(All.TotN_gas > 0)
@@ -102,14 +123,13 @@ void compute_hydro_densities_and_forces(void)
         CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif
 #ifdef GALSF /* PFH set of feedback routines (thermal, photo-ionization, radiation pressure), coupled discretely just -before- the hydro force is computed; mechanical feedback is coupled after the closing kick (run.cc) */
-#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
-        if(!HydroRecomputeAfterFeedback) /* the repeat refreshes the hydro state only; this step's feedback is done */
-#endif
+#ifndef RESOLVED_ISM_FB_AFTER_CLOSING_KICK /* with it, after the closing kick (resolved_ism_fb_after_closing_kick) */
         {
         LEDGER_STEP_BREAKDOWN("pre_local_feedback");
         LEDGER_FB(compute_stellar_feedback());
         LEDGER_STEP_BREAKDOWN("post_local_feedback");
         }
+#endif
 #endif
 
         /* Hydro corridor begin: in Mode A (any rank count) imports the gas

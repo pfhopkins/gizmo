@@ -508,6 +508,9 @@ static int mechfb_gas_delta_nonzero(const struct MechFBGasDelta *d) {
 KOKKOS_INLINE_FUNCTION
 static void mechfb_gas_delta_zero(struct MechFBGasDelta *d) {
     d->N_injected         = 0;
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
+    d->N_injected_sn      = 0;
+#endif
     d->max_source_wakeup  = 0;  /* MAX identity */
     d->m_injected  = 0;
     d->KE_injected = 0;
@@ -533,6 +536,9 @@ KOKKOS_INLINE_FUNCTION
 static void mechfb_gas_delta_add(struct MechFBGasDelta *dst,
                                  const struct MechFBGasDelta *src) {
     dst->N_injected  += src->N_injected;
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
+    dst->N_injected_sn += src->N_injected_sn;
+#endif
     dst->max_source_wakeup = IMAX(dst->max_source_wakeup, src->max_source_wakeup);
     dst->m_injected  += src->m_injected;
     dst->KE_injected += src->KE_injected;

@@ -5,6 +5,8 @@
 #CRFLUID_DIFFUSION_MODEL=7
 #CRFLUID_INJECTION_AT_SHOCKS=(0.1)
 #KETJU_REGULARIZATION                   # KETJU regularisation of close star encounters (stars use fixed softening)
+#RESOLVED_ISM_FB_AFTER_CLOSING_KICK      # all feedback after the closing kick, hydro pass redone after SN/Ia deposits (gizmo2017 order); on in Config_stella_zoom.sh; not with MFV
+#RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB    # with RESOLVED_ISM_FB_AFTER_CLOSING_KICK: wind, AGB and radiation-pressure deposits also redo the hydro pass (almost every step with continuous winds)
 #KETJU_MERGE_STARS
 #KETJU_MERGE_BH
 #GALSF_SINGLE_STARS_BH_PROMOTION
