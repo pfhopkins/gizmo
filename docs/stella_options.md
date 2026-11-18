@@ -139,6 +139,14 @@ pass no longer repeats the turbulent metal exchange, which is applied in the pas
 combinable with MFV. On in Config_stella_zoom.sh. Adiabatic SN at 1 Msun: energy excess +0.96% (max) with mid-step
 deposit, +0.40% at the boundary.
 
+## RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB: hydro recompute after every boundary deposit
+
+With FB_G17_BOUNDARY_INJECTION alone, the hydro pass is redone after SN and Ia deposits only. With this switch, wind, AGB and
+radiation-pressure deposits (star-side walk and the per-cell tree term) also flag their receivers, so the next opening kick
+uses forces from the post-deposit state there too. Requires FB_G17_BOUNDARY_INJECTION. Off by default; with continuous winds
+the recompute then runs on almost every step (cost on the zoom: see the 2026-11-17 feedback audit section below).
+Test: test/stella_fb_boundary_wind (flag on and off).
+
 ## TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS (test only)
 
 Each step, recomputes the KETJU limiting-particle steps by a full particle scan and aborts if the cell grid gives a

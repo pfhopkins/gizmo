@@ -2084,6 +2084,9 @@
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
 #error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
 #endif
+#if defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB) && !defined(FB_G17_BOUNDARY_INJECTION)
+#error "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB extends the hydro recompute of FB_G17_BOUNDARY_INJECTION: set both"
+#endif
 #if defined(FB_G17_BOUNDARY_INJECTION) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
 #error "FB_G17_BOUNDARY_INJECTION repeats the hydro pass on feedback steps: MFV mass fluxes are applied in that pass and would be applied twice"
 #endif
