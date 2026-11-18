@@ -26,26 +26,6 @@ static_assert(sizeof(sgchem_trac_molwt)/sizeof(sgchem_trac_molwt[0]) == TRAC_NUM
 
 #ifdef CHEM_INTERFACE_H
 
-/* electrons per H; species not tracked by the network count as singly ionized at their full pool */
-static inline double sgchem_electrons(const double *ab, const struct ChemInputs *in)
-{
-#if CHEMISTRYNETWORK == 18
-    (void)in;
-    return n18_electrons_trac(ab);
-#elif CHEMISTRYNETWORK == 20
-    (void)ab; (void)in;
-    return chem_cxx_net20_electrons();   /* equilibrium x_e of the cell just finished */
-#elif CHEMISTRYNETWORK == 5
-    return ab[IHP] + in->abundc + in->abundsi;
-#elif CHEMISTRYNETWORK == 17
-    return ab[IHP] + ab[IHEP] + 2.0*ab[IHEPP] + in->abundc + in->abundsi;
-#elif CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
-    return ab[IHP] + ab[IC] + ab[IHCOP] + ab[IHEP] + ab[IMP];
-#elif CHEMISTRYNETWORK == 3
-    return ab[IHP] + ab[IDP] + ab[IHEP] + ab[IC] + ab[IO] + ab[ISi] + ab[IHCOP] + 2.0*ab[ISIPP] + ab[ICH3P] + 2.0*ab[IHEPP];
-#endif
-}
-
 /* electrons per H as the network counts them for its temperature (chem_rhs_net5.cc:55, chem_rhs_net17.cc:82); H+ only elsewhere */
 static inline double sgchem_temperature_electrons(const double *ab, const struct ChemInputs *in)
 {
@@ -56,6 +36,24 @@ static inline double sgchem_temperature_electrons(const double *ab, const struct
 #else
     (void)in;
     return ab[IHP];
+#endif
+}
+
+/* electrons per H; species not tracked by the network count as singly ionized at their full pool */
+static inline double sgchem_electrons(const double *ab, const struct ChemInputs *in)
+{
+#if CHEMISTRYNETWORK == 18
+    (void)in;
+    return n18_electrons_trac(ab);
+#elif CHEMISTRYNETWORK == 20
+    (void)ab; (void)in;
+    return chem_cxx_net20_electrons();   /* equilibrium x_e of the cell just finished */
+#elif CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 17
+    return sgchem_temperature_electrons(ab, in); /* the network's own count */
+#elif CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
+    return ab[IHP] + ab[IC] + ab[IHCOP] + ab[IHEP] + ab[IMP];
+#elif CHEMISTRYNETWORK == 3
+    return ab[IHP] + ab[IDP] + ab[IHEP] + ab[IC] + ab[IO] + ab[ISi] + ab[IHCOP] + 2.0*ab[ISIPP] + ab[ICH3P] + 2.0*ab[IHEPP];
 #endif
 }
 

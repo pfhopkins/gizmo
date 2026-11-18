@@ -455,7 +455,7 @@ double sgchem_startup_temperature(int i)
 double sgchem_startup_electrons(int i)
 {
     struct ChemInputs in; memset(&in, 0, sizeof(in));
-    sgchem_gas_abundances(i, &in);
+    sgchem_gas_abundances(i, &in); in.abundD = All.SGChemDeuteriumAbundance;
     double ab[TRAC_NUM]; for(int k = 0; k < TRAC_NUM; k++) {ab[k] = CellP[i].TracAbund[k];}
 #if CHEMISTRYNETWORK == 20
     return ab[IHP]; /* its electrons come from the last solve */
