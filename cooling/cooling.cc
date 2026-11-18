@@ -745,6 +745,7 @@ double convert_temp_to_u(double temp, double rho, int target, double *cv, double
    and root-find to solve it = u
 */
 double convert_u_to_temp(double u, double rho, int target, double *ne, double *nH0, double *nHp, double *nHe0, double *nHep, double *nHepp, double *mu, struct particle_data *pp, struct gas_cell_data *cell) {
+    if(target < 0 || pp[target].Type != 0) {printf("convert_u_to_temp: target=%d is not a gas cell; this EOS starts from the cell's cached temperature\n", target); endrun(91744);}
     double dT = 1e100, dT_old = 1e100, du=1e100, du_old=1e100, temp = 0.9 * u * PROTONMASS_CGS / BOLTZMANN_CGS, cv, u_from_temp;
     double temp_min_0 = DMAX(DMIN(1.e-3,pow(10.,Tmin)), 0.1*temp), temp_max_0=DMIN(DMAX(1.e12,pow(10.,Tmax)),temp*10), temp_min=temp_min_0, temp_max=temp_max_0;
     temp = cell[target].Temperature * u / (cell[target].InternalEnergy * UNIT_SPECEGY_IN_CGS);
@@ -788,13 +789,18 @@ double convert_u_to_temp(double u, double rho, int target, double *ne, double *n
  * Ionization abundances and the rates for the emission are also computed */
 double convert_u_to_temp(double u, double rho, int target, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, double *mu_guess, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#if defined(COOL_MOLECFRAC_NONEQM) || defined(SIMPLE_STEADYSTATE_CHEMISTRY)
+    if(target < 0) {printf("convert_u_to_temp: target=%d has no gas cell, but this build's chemistry reads the cell\n", target); endrun(91745);}
+#endif
+    if(target >= 0 && pp[target].Type != 0) {printf("convert_u_to_temp: target=%d is not a gas cell (Type=%d)\n", target, (int)pp[target].Type); endrun(91745);}
+    auto gamma_eos = [&]() {return (target >= 0) ? cell[target].gamma_eos_value() : GAMMA_DEFAULT;}; /* target = -1: one-zone call without a cell (GALSF_EFFECTIVE_EQS init) */
     int iter = 0;
     double temp, temp_old, temp_old_old = 0, temp_new, prefac_fun_old, prefac_fun, fac, err_old, err_new, T_bracket_errneg = 0, T_bracket_errpos = 0, T_bracket_min = 0, T_bracket_max = 1.e20, bracket_sign = 0, Lambda_filler = 0; // double max = 0;
     double u_input = u, rho_input = rho, temp_guess;
     double T_0 = u * PROTONMASS_CGS / BOLTZMANN_CGS; // this is the dimensional temperature, which since u is fixed is -frozen- in this calculation: we can work dimensionlessly below
-    temp_guess = (cell[target].gamma_eos_value()-1) * T_0; // begin assuming mu ~ 1
+    temp_guess = (gamma_eos()-1) * T_0; // begin assuming mu ~ 1
     *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp_guess, rho, nH0_guess, ne_guess, 0., target, pp, cell); // get mu with that temp
-    prefac_fun = (cell[target].gamma_eos_value()-1) * (*mu_guess); // dimensionless pre-factor determining the temperature
+    prefac_fun = (gamma_eos()-1) * (*mu_guess); // dimensionless pre-factor determining the temperature
     err_new = prefac_fun - temp_guess / T_0; // define initial error from this iteration
     if(err_new < 0) {T_bracket_errneg = temp_guess;} else {T_bracket_errpos = temp_guess;}
     temp = prefac_fun * T_0; // re-calculate temp with the new mu
@@ -806,7 +812,7 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
         prefac_fun_old = prefac_fun;
         err_old = err_new; // error from previous timestep
         find_abundances_and_rates(log10(temp), rho, target, -1, 0, ne_guess, nH0_guess, nHp_guess, nHe0_guess, nHep_guess, nHepp_guess, mu_guess, &Lambda_filler, &Lambda_filler, &Lambda_filler, &Lambda_filler, pp, cell); // all the thermo variables for this T
-        prefac_fun = (cell[target].gamma_eos_value()-1) * (*mu_guess); // new value of the dimensionless pre-factor we need to solve
+        prefac_fun = (gamma_eos()-1) * (*mu_guess); // new value of the dimensionless pre-factor we need to solve
         temp_old = temp; // guess for T we just used
         temp_new = prefac_fun * T_0; // updated temp using the new values from the iteration of find_abundances_and_rates above
         err_new = (temp_new - temp_old) / T_0; // new error
@@ -2470,7 +2476,7 @@ double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_
         double T0=2.92, q=pow(T0*e_IR,0.25), y=(T_cmb*e_CMB + T_hiegy*e_HiEgy)/(T0*e_IR*q); if(y<=1) {Tdust_eqm=T0*q*(0.8+sqrt(0.04+0.1*y));} else {double y5=pow(y,0.2), y5_3=y5*y5*y5, y5_4=y5_3*y5; Tdust_eqm=T0*q*(1.+15.*y5_4+sqrt(1.+30.*y5_4+25.*y5_4*y5_4))/(20.*y5_3);} // this gives an extremely accurate and exactly-joined solution to the full quintic equation assuming T_rad_IR=T_dust
     }
 #if defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
-    cell[i].Dust_Temperature = DMAX(DMIN(Tdust_eqm , 2000.) , 1.);
+    if(i >= 0) {cell[i].Dust_Temperature = DMAX(DMIN(Tdust_eqm , 2000.) , 1.);}
 #endif
     return DMAX(DMIN(Tdust_eqm , 2000.) , 1.); // limit at sublimation temperature or some very low temp //
 }
