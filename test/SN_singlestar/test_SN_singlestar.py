@@ -217,12 +217,13 @@ def test_SN_thermo_fidelity():
     """Guard the u->T conversion in the regimes the SN remnant actually exercises.
 
     The suite's dynamics assertions (density profile, outflow, injected energy) are
-    insensitive to the cached-EOS defect that retained +64% remnant thermal energy
-    the cooling loop solved correctly while consumers
-    read T from a chord through the origin with the differential Gamma. These checks
-    are the sensitive ones, calibrated on runs with a correct temperature inversion,
-    four of which agree to <=2.5% on every quantity while a build with the defective
-    inversion fails all three by wide margins.
+    insensitive to the cached-EOS defect in which consumers read T from a chord through
+    the origin with the differential Gamma instead of the anchored relation. These checks
+    are the sensitive ones. Calibrated on the anchored build (identical at 2 and 3 ranks);
+    the same build with the anchor removed (the defect) reads 7.4% off in the warm
+    molecular shell and carries +34% thermal energy while the remnant cools through
+    1e5-1e6 K (t = 0.018). By the final snapshot that excess has radiated away, which is
+    why the energy check reads the earlier snapshot.
 
     Reads the COOLING variant's existing output; skips if that variant has not run.
     """
@@ -233,7 +234,6 @@ def test_SN_thermo_fidelity():
     with h5py.File(snaps[-1], "r") as F:
         T = F["PartType0/Temperature"][:].astype(float)
         u = F["PartType0/InternalEnergy"][:].astype(float)
-        m = F["PartType0/Masses"][:].astype(float)
         fmol = F["PartType0/MolecularMassFraction"][:].astype(float)
 
     # (A hot-band T/u dispersion assert was tried and dropped: the He-ionization spread
@@ -241,31 +241,37 @@ def test_SN_thermo_fidelity():
     #  was ~1%. The Eth budget below guards that regime's integrated consequence instead.)
 
     # 1. Warm molecular shell T(u). The shell-formed H2 layer (fH2>0.3, ~100-600 K) is
-    #    where the H2 rotational dof make u(T) most nonlinear; the defective conversion
-    #    read 6.7-8.5% cold at matched u. Expected medians from the reference run at the
-    #    final snapshot; inversion-correct arms deviate <=2.5% (aggregate), decomposition
-    #    scatter <=2%.
+    #    where the H2 rotational dof make u(T) most nonlinear. Expected medians from the
+    #    reference run at the final snapshot (identical at 2 and 3 ranks); the defective
+    #    conversion reads 7.4% off in aggregate. At least three bins must be populated:
+    #    with fewer the shell did not form as in the reference, and the check would mean nothing.
     u_edges = [0.5, 0.794, 1.26, 2.0, 3.175, 5.04]
-    T_expected = [90.97, 132.38, 199.34, 294.97, 417.79]
+    T_expected = [100.7, 137.9, 213.0, 302.4, 429.6]
     devs = []
     for lo, hi, Texp in zip(u_edges[:-1], u_edges[1:], T_expected):
         sel = (u >= lo) & (u < hi) & (fmol > 0.3)
         if sel.sum() >= 20:
             devs.append(abs(np.median(T[sel]) / Texp - 1))
-    if len(devs) >= 3:
-        agg = float(np.mean(devs))
-        assert agg < 0.045, (
-            f"warm-molecular T(u) off by {100*agg:.1f}% aggregate (>{4.5}%): the shell's "
-            f"H2-bearing gas is mislabeled at matched u (defective conversion measured 7-9%)"
-        )
+    assert len(devs) >= 3, (
+        f"only {len(devs)} of 5 warm-molecular u bins hold >= 20 cells: the shell's H2 layer did not form "
+        f"as in the reference run, so its temperatures cannot be checked"
+    )
+    agg = float(np.mean(devs))
+    assert agg < 0.045, (
+        f"warm-molecular T(u) off by {100*agg:.1f}% aggregate (>{4.5}%): the shell's "
+        f"H2-bearing gas is mislabeled at matched u (the defective conversion reads 7.4%)"
+    )
 
-    # 2. Remnant thermal energy. Inversion-correct arms: 4.96-5.21e5 across machines and
-    #    decompositions (+-5%); the cached-chord defect retained 8.39e5 (+64%). The band is
-    #    wide enough for decomposition scatter and narrow enough to catch percent-tens errors.
-    E_therm = float((m * u).sum())
-    assert 3.8e5 < E_therm < 6.4e5, (
-        f"remnant thermal energy {E_therm:.3e} outside [3.8e5, 6.4e5]: cooling through the "
-        f"1e5-1e6 K band is off (inversion-correct ~5.1e5; the u->T chord defect gave 8.4e5)"
+    # 2. Remnant thermal energy while it cools through 1e5-1e6 K (t = 0.018), where the
+    #    chord defect retains it: reference 8.09e5, the defect 1.08e6 (+34%). By the final
+    #    snapshot the excess has radiated away (+1%), so the final energy cannot tell them apart.
+    #    The band is +-20% about the reference: generous for machine and compiler differences,
+    #    still clear of the defect.
+    with h5py.File(get_snapshot_nearest_time(TEST_NAME, 0.018, ("COOLING",)), "r") as F:
+        E_therm = float((F["PartType0/Masses"][:].astype(float) * F["PartType0/InternalEnergy"][:].astype(float)).sum())
+    assert 6.5e5 < E_therm < 9.7e5, (
+        f"thermal energy at t=0.018 {E_therm:.3e} outside [6.5e5, 9.7e5]: cooling through the "
+        f"1e5-1e6 K band is off (reference 8.09e5; the u->T chord defect gives 1.08e6)"
     )
 
 

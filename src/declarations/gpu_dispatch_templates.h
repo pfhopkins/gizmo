@@ -21,6 +21,7 @@
 #define GIZMO_GPU_DISPATCH_TEMPLATES_H
 
 
+#include <stdexcept>
 #include <utility>
 #include <type_traits>
 #include "gpu_error_check.h"
@@ -102,7 +103,11 @@ inline int gizmo_gpu_team_size_max(const F& f, size_t scratch_bytes)
 {
     Kokkos::TeamPolicy<> probe(1, 1, 1);
     probe.set_scratch_size(0, Kokkos::PerTeam(scratch_bytes));
-    return probe.team_size_max(f, Kokkos::ParallelForTag());
+    /* When no team size fits the request, Kokkos 5 on HIP throws instead of returning 0; both mean "this
+     * does not fit this backend".  (Comparing against scratch_size_max(0) instead would refuse requests
+     * CUDA launches today: that bound is the default per-block shared memory, not the opt-in maximum.) */
+    try {return probe.team_size_max(f, Kokkos::ParallelForTag());}
+    catch(const std::runtime_error &) {return 0;}
 }
 
 /* How many work items the default execution space can have in flight at once:

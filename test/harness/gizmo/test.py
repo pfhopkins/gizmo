@@ -392,6 +392,20 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
         _check_gizmo_exit(test_name, proc.returncode, outfile, errfile, paramsfile)
 
 
+def _find_repo_root():
+    """The GIZMO checkout the tests run in. The harness runs from the repository root (the builds and the
+    tests use paths relative to it), so that is the directory pytest was started in, taken here at import,
+    before any test changes directory. This file's own location is only the fallback: after `pip install .`
+    it is site-packages, and an editable install shared by several checkouts points at only one of them."""
+    cwd = path.abspath(".")
+    if path.isfile(path.join(cwd, "src", "Makefile")) and path.isdir(path.join(cwd, "test", "harness")):
+        return cwd
+    return path.dirname(path.dirname(path.dirname(path.dirname(path.abspath(__file__)))))
+
+
+REPO_ROOT = _find_repo_root()
+
+
 def get_cooling_tables(test_directory="."):
     """Downloads spcool_tables.tar.gz and copies TREECOOL to test directory.
     Idempotent: skips steps whose targets already exist (supports symlinks as well as
@@ -412,10 +426,8 @@ def get_cooling_tables(test_directory="."):
     if not (path.isfile(treecool_dst) or path.islink(treecool_dst)):
         # Resolve the TREECOOL source against the repo root, not the cwd: callers
         # that chdir into the test dir before calling (e.g. isodisk) would otherwise
-        # look for data/cooling/TREECOOL under the test dir. __file__ is
-        # test/harness/gizmo/test.py, so the repo root is four dirnames up.
-        repo_root = path.dirname(path.dirname(path.dirname(path.dirname(path.abspath(__file__)))))
-        treecool_src = path.join(repo_root, "data", "cooling", "TREECOOL")
+        # look for data/cooling/TREECOOL under the test dir.
+        treecool_src = path.join(REPO_ROOT, "data", "cooling", "TREECOOL")
         system(f"cp {treecool_src} {test_directory}")
 
 
@@ -472,10 +484,8 @@ def _test_dir(test_name: str, caller: str):
     directory, where every relative path misses -- turning a clean skip into a RuntimeError
     and leaving the baseline stashed with the variant's output standing in for it.
 
-    __file__ is test/harness/gizmo/test.py, so the repo root is four dirnames up (same
-    derivation as get_cooling_tables)."""
-    repo_root = path.dirname(path.dirname(path.dirname(path.dirname(path.abspath(__file__)))))
-    d = path.join(repo_root, "test", test_name)
+    The repo root is REPO_ROOT (same as get_cooling_tables)."""
+    d = path.join(REPO_ROOT, "test", test_name)
     if not path.isdir(d):
         raise RuntimeError(f"{caller}('{test_name}'): no such test directory {d}")
     return d
