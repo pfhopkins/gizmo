@@ -25,7 +25,7 @@ GALSF_RESOLVEDISM_WINDS_THERMAL      % ADOPTED 2026-07-05: inelastic-residual he
 #GALSF_RESOLVEDISM_FB_HEALPIX  % HEALPix FB weighting (candidate default; enable deliberately)
 #RESOLVEDISM_HOTSYNC_CLAMP     % hot-region timebin clamp (validated with spawn; production adoption undecided)
 GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-GALSF_RESOLVEDISM_RADPRESSURE
+#GALSF_RESOLVEDISM_RADPRESSURE   % zoom reference: no radiation pressure (Uli 2026-11-18)
 GALSF_RESOLVEDISM_TYPE_IA
 #GALSF_RESOLVEDISM_DUST          % off: dust-to-gas ratio fixed from metallicity
 #SGCHEM_DGR_INDEPENDENT_OF_METALLICITY  % off: DGR = DGRnormalized x MW at every Z; with DGRnormalized 0.01 (relative to MW) reproduces gizmo2017
