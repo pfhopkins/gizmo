@@ -118,6 +118,13 @@ void begrun(void)
    * those bad-stops. */
   if(gizmo_poll_controlled_stop()) return;
 
+#ifdef STELLA_DEFAULTS
+#ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
+  if(ThisTask == 0) {printf("Stella: radiation pressure of single stars ON (GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)\n");}
+#else
+  if(ThisTask == 0) {printf("Stella: radiation pressure of single stars OFF (STELLA_DEFAULTS does not set it; GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS turns it on)\n");}
+#endif
+#endif
 #ifdef RANDOMIZE_GRAVTREE
   if(ThisTask == 0)
     {
