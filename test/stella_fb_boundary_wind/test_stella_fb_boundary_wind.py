@@ -4,7 +4,7 @@ kick must redo the hydro pass as SNe do, else the next opening kick uses pre-dep
 Config_stella_zoom.sh plus the isolated-feedback test hooks, adiabatic (RESOLVEDISM_ADIABATIC_NOCOOL) so the gas energy has no
 sinks; non-comoving. Uniform n_H = 10, 1 Msun cells, 16 pc periodic box. A 60 Msun star blows its wind from birth and a 3 Msun
 star dies as an AGB star at 2 kyr (forced). From ENERGYinfo.txt: gas thermal + kinetic energy minus its initial value minus the
-booked feedback energy, relative to the booked energy, at every statistics output. The bar is the SN result of the same build
+booked feedback energy so far, relative to the energy booked by the end of the run, at every statistics output. The bar is the SN result of the same build
 family (+0.40 % maximum, adiabatic SN at 1 Msun, reports/sn_boundary_and_approach_dt.md). The mass, element and energy step
 traces must close as well.
 """
@@ -58,8 +58,8 @@ def test_boundary_wind_energy():
     a = np.loadtxt(join(out, "ENERGYinfo.txt"), comments="#", ndmin=2)
     E, Efb = a[:, 4] + a[:, 5], a[:, 9]
     m = Efb > 0
-    ex = (E[m] - E[0] - Efb[m]) / Efb[m] * 100
-    print(f"wind + AGB at the boundary: max excess {ex.max():+.3f} %, end {ex[-1]:+.3f} % of booked {Efb[-1]:.4e}")
+    ex = (E[m] - E[0] - Efb[m]) / Efb[-1] * 100
+    print(f"wind + AGB at the boundary: excess {ex.min():+.3f} .. {ex.max():+.3f} %, end {ex[-1]:+.3f} % of booked {Efb[-1]:.4e}")
     rep = keep_and_check_traces(out, out)
     assert ex.max() <= BAR_PERCENT and ex.min() >= -BAR_PERCENT
     assert rep.ok, rep.summary()

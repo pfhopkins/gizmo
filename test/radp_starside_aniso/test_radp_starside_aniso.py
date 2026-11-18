@@ -20,8 +20,9 @@ BAR = 1e-12
 
 
 def _run(extra, out):
+    extra = dict(extra, OutputDir=out)
     lines = [l for l in open(f"{TEST_NAME}.params").read().splitlines() if not (l.split() and l.split()[0] in extra)]
-    open("run.params", "w").write("\n".join(lines + [f"{k} {v}" for k, v in extra.items()] + [f"OutputDir {out}"]) + "\n")
+    open("run.params", "w").write("\n".join(lines + [f"{k} {v}" for k, v in extra.items()]) + "\n")
     subprocess.run(["rm", "-rf", out]); os.makedirs(out)
     res = subprocess.run(mpi_launch_command(2, 1) + ["./GIZMO", "run.params"], stdout=open(f"{out}.log", "w"), stderr=subprocess.STDOUT)
     assert res.returncode == 0, "run failed: " + open(f"{out}.log").read()[-400:]

@@ -2,7 +2,7 @@
 the energy step trace): every channel deposits what it books, mass and every element close, and the death ejecta add up.
 
 One build serves all tests. Every run also checks the mass, element and energy step traces (gizmo.conservation_trace,
-bars fixed there). Units: kpc, 1e10 Msun, km/s.
+bars fixed there). Units: kpc, 1e10 Msun, km/s. Boxes: n_H = 10, 1e4 K, 1 Msun cells, 16 pc, periodic.
 
 test_death_ejecta_table (no run): the death ejecta the deposit uses (stellar_death_ejecta), on 1500 masses (0.9-300 Msun)
   x the table metallicities and their midpoints, with M_death = M_init - lifetime winds. For every sample
@@ -84,7 +84,7 @@ def build():
     return join(TEST_DIR, "GIZMO")
 
 
-def make_box(fname, Z_abs, n_H=10.0, box_pc=16.0, m_cell=1.0, T=100.0, sigma_v=0.0, seed=1, child_ids=None):
+def make_box(fname, Z_abs, n_H=10.0, box_pc=16.0, m_cell=1.0, T=1.0e4, sigma_v=0.0, seed=1):
     """Uniform lattice, gas only, element mass fractions scaled-solar to total metallicity Z_abs; the cells nearest the
     centre and at +-L/4 carry IDs 1, 2, 3 (the test sites). sigma_v: random velocities [km/s]."""
     X_Z = Z_abs; X_He = 0.25 + 1.6 * X_Z; X_H = 1 - X_He - X_Z
@@ -164,7 +164,7 @@ def test_death_ejecta_table(build):
     assert r.returncode == 0, r.stdout[-2000:] + r.stderr[-2000:]
     ej = np.array([l.split()[1:] for l in r.stdout.splitlines() if l.startswith("EJ ")], dtype=float)
     grid = np.array([l.split()[1:] for l in r.stdout.splitlines() if l.startswith("GRID ")], dtype=float)
-    assert len(ej) > 50000 and len(grid) > 100
+    assert len(ej) >= 29 * 1501 and len(grid) > 100  # 1501 masses x 15 grid metallicities and 14 midpoints
     M, rem, s, mn = ej[:, 3], ej[:, 4], ej[:, 5], ej[:, 6]
     closure = np.abs(rem + s - M) / M
     n_bad = int((closure > BAR).sum()); n_neg = int((mn < 0).sum()); n_rem_neg = int((rem < -BAR * M).sum())
