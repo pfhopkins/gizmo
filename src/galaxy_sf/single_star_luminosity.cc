@@ -258,9 +258,9 @@ void single_star_light_switch_check(void)
         int s = single_star_slot(P[i].StarIdx);
         double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, P, CellP);
         for(int b = 0; b < N_RT_FREQ_BINS; b++) {
-            const double l0 = SingleStars.tree_lum[s].L[b];
-            if((l0 == 0) != (lum[b] == 0)) {TreeMomentsStaleFlag = 2; return;} /* a band switched on or off */
-            if(fabs(lum[b] - l0) > SINGLE_STAR_TREE_LUM_TOL * DMAX(fabs(lum[b]), fabs(l0))) {if(TreeMomentsStaleFlag < 1) {TreeMomentsStaleFlag = 1;}}
+            const double l0 = SingleStars.tree_lum[s].L[b], lb = (float) lum[b]; /* as stored */
+            if((l0 == 0) != (lb == 0)) {TreeMomentsStaleFlag = 2; return;} /* a band switched on or off */
+            if(fabs(lb - l0) > SINGLE_STAR_TREE_LUM_TOL * DMAX(fabs(lb), fabs(l0))) {if(TreeMomentsStaleFlag < 1) {TreeMomentsStaleFlag = 1;}}
         }
         if(SingleStars.M_drawn[s] <= All.IMFSampleStellarMassCut) {continue;}
 #if defined(GALSF_FB_MECHANICAL)
@@ -273,12 +273,10 @@ void single_star_light_switch_check(void)
     }
 }
 
-/* after a gravity call: if it rebuilt or refreshed the node luminosities (the root changed), they are the stars' current ones */
-void single_star_tree_lum_store(const double *root_before)
+/* after a gravity call: if it built the tree or refreshed the node moments, the node luminosities are the stars' current ones */
+void single_star_tree_lum_store(void)
 {
-    static int first = 1; int changed = first; first = 0;
-    for(int b = 0; b < N_RT_FREQ_BINS; b++) {if(Nodes[All.TreeNodeIndexBase].stellar_lum[b] != root_before[b]) {changed = 1;}}
-    if(!changed) {return;}
+    if(!TreeMomentsRenewed) {return;}
     for(int i = 0; i < NumPart; i++) {
         if(P[i].Type != 4 || P[i].StarIdx <= 0) {continue;}
         double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, P, CellP);

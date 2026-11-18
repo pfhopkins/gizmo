@@ -305,6 +305,7 @@ static void gravity_tree_build_main(void)
     TreeMomentsStaleFlag = 0;
     TypePresenceMaskTrusted = 1;   /* the build recomputed the per-node type bits exactly */
     All.NumForcesSinceLastTreeBuild = 0;   /* the counter this build answers */
+    TreeMomentsRenewed = 1;
     PRINT_STATUS(" ..Tree construction done.");
 }
 
@@ -376,7 +377,7 @@ void gravity_tree(void)
             force_refresh_node_moments();
             gizmo_exit_bad_stop_if_requested("gravtree:after_refresh_moments"); /* drain refresh bad-stop before any gravity walk */
             CPU_Step[CPU_TREEBUILD] += measure_time();
-            TreeMomentsStaleFlag = 0;
+            TreeMomentsStaleFlag = 0; TreeMomentsRenewed = 1;
             TypePresenceMaskTrusted = 1;   /* the refresh recomputed the per-node type bits exactly */
         }
     }
