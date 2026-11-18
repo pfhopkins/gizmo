@@ -79,7 +79,8 @@ def test_ketju_pm_comoving():
     t_end = 0.5 * (1 + 0.5 * 0.2828427 * 1.8e-5)  # a after a quarter outer orbit (H(a=0.5) = 0.283 / code time)
     build_and_run_test(TEST_NAME, 2, 1, param_overrides={"InitCondFile": "ketju_pm_comoving_ics", "ComovingIntegrationOn": 1,
                        "Omega0": 1, "TimeBegin": 0.5, "TimeMax": t_end, "TimeOfFirstSnapshot": t_end, "TimeBetSnapshot": 1.1,
-                       "TimeBetStatistics": 1.1, "BoxSize": 1e5 * AU})
+                       "TimeBetStatistics": 1.1, "BoxSize": 1e5 * AU, "SofteningGasMaxPhys": 1.0e-4, "SofteningHaloMaxPhys": 0.05,
+                       "SofteningDiskMaxPhys": 0.02, "SofteningBulgeMaxPhys": 0.02, "SofteningStarsMaxPhys": 1e-6, "SofteningBndryMaxPhys": 0.005})
     with h5py.File(sorted(glob.glob(f"{TEST_DIR}/output/snapshot_*.hdf5"))[-1], "r") as f:
         a = f["Header"].attrs["Time"]; g = f["PartType4"]; o = np.argsort(np.array(g["ParticleIDs"]))
         x = np.array(g["Coordinates"])[o] * a; m = np.array(g["Masses"])[o]

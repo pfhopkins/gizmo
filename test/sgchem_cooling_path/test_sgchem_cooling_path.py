@@ -13,7 +13,7 @@ from os.path import abspath, dirname, join
 
 import pytest
 
-from gizmo.test import build_gizmo_for_test
+from gizmo.test import build_gizmo_for_test, mpi_launch_command
 
 DRIVER_DIR = dirname(abspath(__file__))  # driver and IC generator, shared by the variants
 REPO = abspath(join(DRIVER_DIR, "..", ".."))
@@ -57,7 +57,7 @@ def run_cooling_path_checks(test_name):
     os.makedirs(join(run, "output"))
     os.symlink(REPO, join(run, "gizmo"))  # SGCHEM and the stellar tables open their data under gizmo/
     subprocess.run(["python3", join(DRIVER_DIR, f"make_{DRIVER}_ics.py"), join(run, f"{DRIVER}_ics.hdf5")], check=True)
-    r = subprocess.run(["mpirun", "-np", "1", join(test_dir, "output", f"{DRIVER}_driver"), join(test_dir, f"{test_name}.params")],
+    r = subprocess.run(mpi_launch_command(1) + [join(test_dir, "output", f"{DRIVER}_driver"), join(test_dir, f"{test_name}.params")],
                        capture_output=True, text=True, cwd=run)
     with open(join(test_dir, "output", "checks.txt"), "w") as f:
         f.write(r.stdout)
