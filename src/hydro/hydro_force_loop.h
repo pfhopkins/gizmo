@@ -238,7 +238,7 @@ struct HydroForceSpec
         local.Pos = kp[i].Pos;
         local.Vel = kc[i].VelPred;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-        local.ParticleVel = kc[i].VelPred;
+        local.ParticleVel = kc[i].ParticleVel; /* the faces move with the mesh-generating points, not with the fluid */
 #endif
         local.KernelRadius      = kp[i].KernelRadius;
         local.Mass              = kp[i].Mass;

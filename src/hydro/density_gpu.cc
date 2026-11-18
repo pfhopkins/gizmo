@@ -222,7 +222,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             local.Pos = kp[ii].Pos;
             local.Vel = kc[ii].VelPred;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-            local.ParticleVel = kc[ii].VelPred;
+            local.ParticleVel = kc[ii].ParticleVel; /* the faces move with the mesh-generating points, not with the fluid */
 #endif
             local.KernelRadius = kp[ii].KernelRadius;
             local.Mass = kp[ii].Mass;

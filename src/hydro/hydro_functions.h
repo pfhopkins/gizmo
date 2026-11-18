@@ -89,7 +89,7 @@ void hydro_accumulate_neighbor(
     Vec3<MyDouble> VelPred_j = CellP[j].VelPred;
     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos, P[j].Pos, VelPred_j, -1);
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    Vec3<MyDouble> ParticleVel_j = CellP[j].VelPred;
+    Vec3<MyDouble> ParticleVel_j = CellP[j].ParticleVel; /* the mesh-generating point of j, as for i */
     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos, P[j].Pos, ParticleVel_j, -1);
 #endif
     kernel.dv = local.Vel - VelPred_j;
