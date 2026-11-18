@@ -17,6 +17,8 @@ from gizmo.conservation_trace import keep_and_check_traces
 TEST_NAME = "radp_starside_aniso"
 TEST_DIR = f"test/{TEST_NAME}"
 BAR = 1e-12
+LOG_CAP = 2_000_000_000  # bytes
+RUN_TIMEOUT = 3600  # s
 
 
 def _run(extra, out):
@@ -24,8 +26,9 @@ def _run(extra, out):
     lines = [l for l in open(f"{TEST_NAME}.params").read().splitlines() if not (l.split() and l.split()[0] in extra)]
     open("run.params", "w").write("\n".join(lines + [f"{k} {v}" for k, v in extra.items()]) + "\n")
     subprocess.run(["rm", "-rf", out]); os.makedirs(out)
-    res = subprocess.run(mpi_launch_command(2, 1) + ["./GIZMO", "run.params"], stdout=open(f"{out}.log", "w"), stderr=subprocess.STDOUT)
-    assert res.returncode == 0, "run failed: " + open(f"{out}.log").read()[-400:]
+    cmd = " ".join(mpi_launch_command(2, 1) + ["./GIZMO", "run.params"]) + f" 2>&1 | head -c {LOG_CAP} > {out}.log; exit ${{PIPESTATUS[0]}}"
+    res = subprocess.run(["bash", "-c", cmd], timeout=RUN_TIMEOUT)  # a stalled step floods the log: capped, the run then dies on SIGPIPE
+    assert res.returncode == 0 and "Simulation ends." in open(f"{out}.log").read()[-20000:], "run failed: " + open(f"{out}.log").read()[-400:]
     rows = [dict(kv.split("=") for kv in l.split()[1:]) for l in open(f"{out}.log") if l.startswith("RADPLEDGER")]
     return [{k: float(v) for k, v in r.items()} for r in rows]
 
