@@ -26,9 +26,9 @@ test_agb_energy / test_wind_metals / test_ia_iron / test_ecsn_energy: one run wi
   M_Ch - M_WD of receiver gas converted in place. With the rate normalised to IA_DTD_NORM per formed mass, Ia iron per
   formed mass is then rate x table yield.
 test_sn_energies_default / _variable: a PISN, an ECSN and a CCSN in one box. Default: all 1e51 erg. With
-  RESOLVED_ISM_VARIABLE_SN_ENERGY: PISN [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to 64-133 Msun
-  (Heger & Woosley 2002 eq. 1 via the Wise et al. 2012a fit), ECSN 5e50 erg (Uli's choice 2026-11-19; Kitaura, Janka &
-  Hillebrandt 2006, A&A 450, 345, give ~1e50 erg for the 8.8 Msun O-Ne-Mg core collapse), CCSN 1e51. Both: booked = deposited (no exact-stage line in the trace).
+  RESOLVED_ISM_VARIABLE_SN_ENERGY (Uli's choice 2026-11-19): PISN 1e52 erg, ECSN 5e50 erg, CCSN 1e51 (for reference: the He-core
+  fit of Heger & Woosley 2002 via Wise+12a gives 4.87e52 erg at 200 Msun; Kitaura, Janka & Hillebrandt 2006 ~1e50 erg for an
+  ECSN). Both: booked = deposited (no exact-stage line in the trace).
 """
 
 import os
@@ -283,12 +283,6 @@ def test_ecsn_energy(late_run):
     traces_ok(out)
 
 
-def pisn_energy_erg(M):
-    """Heger & Woosley 2002 via the Wise+12a fit: E = [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20), held to 64-133."""
-    M_He = min(max(13.0 / 24.0 * (M - 20.0), 64.0), 133.0)
-    return (5.0 + 1.304 * (M_He - 64.0)) * 1e51
-
-
 def sn_energy_run(binary, name):
     """A PISN, an ECSN and a CCSN (table grid stars at one metallicity) explode in one box (forced, 1 kyr apart)."""
     M_pisn, logZ = table_star(5, True, -4.0, np.log10(200.0))
@@ -322,9 +316,9 @@ def test_sn_energies_default(build):
 
 
 def test_sn_energies_variable(build_variable_sn_energy):
-    """RESOLVED_ISM_VARIABLE_SN_ENERGY: PISN from the He core (HW02 via Wise+12a), ECSN 5e50 (Uli 2026-11-19), CCSN 1e51."""
+    """RESOLVED_ISM_VARIABLE_SN_ENERGY (Uli 2026-11-19): PISN 1e52, ECSN 5e50, CCSN 1e51."""
     e, out, M_pisn = sn_energy_run(build_variable_sn_energy, "sn_energy_variable")
     assert set(e) == {5, 1, 2}, e
-    assert abs(e[5] / pisn_energy_erg(M_pisn) - 1) < 0.006 and e[1] == 5.0e50 and e[2] == 1.0e51, e  # log prints 3 digits
+    assert e == {5: 1.0e52, 1: 5.0e50, 2: 1.0e51}, e
     rep = stages_closed(out)
     assert rep.ok, rep.summary()
