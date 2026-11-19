@@ -195,8 +195,8 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
   productions from a snapshot (RestartFlag 2). Reading ElementAbundance now sets H = 1 - Z - Y, so single-precision
   snapshots and ICs start with a closed composition (an IC with an all-zero ElementAbundance becomes pure H; fresh starts
   still take the composition from InitMetallicity).
-- **Explosion energies.** Default: every SN 1e51 erg, as before the audit. With RESOLVED_ISM_VARIABLE_SN_ENERGY: PISN from the
-  PISN 1e52 erg, ECSN 5e50 erg.
+- **Explosion energies.** Default: every SN 1e51 erg, as before the audit. With RESOLVED_ISM_VARIABLE_SN_ENERGY: PISN 1e52 erg,
+  ECSN 5e50 erg.
 - **Death ejecta.** Remnant and ejecta are fractions of the star's mass at death. Failed SNe and direct collapse eject
   nothing (all table ejecta are 0). Remnants between grid points differ from the earlier absolute table values.
 - **Type Ia.** Each Ia delivers the table's 1.378 Msun of Ia matter (0.744 Msun Fe): the white dwarf particle plus

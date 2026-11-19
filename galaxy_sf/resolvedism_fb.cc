@@ -1226,7 +1226,7 @@ void resolvedism_inject_fb_energy(void)
             M_injected[channel] += Mej_solar;
             M_removed[channel] += Mej_solar;
             Z_injected[channel] += P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR; /* metals the walk delivered */
-            if(channel == 0) { /* SN: 1e51 for explosive remnants, the He-core energy for PISN, 0 for FSN/DBH */
+            if(channel == 0) { /* SN: resolvedism_sn_energy_erg (1e51; PISN 1e52 and ECSN 5e50 with RESOLVED_ISM_VARIABLE_SN_ENERGY), 0 for FSN/DBH */
                 E_injected[channel] += Esne_erg;
             }
             if(channel == 1 && Mej_solar > 0) { /* AGB: delivered momentum and its kinetic energy 1/2 p^2 / M_ej (kick + inelastic heat), as winds */
