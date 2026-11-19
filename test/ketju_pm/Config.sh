@@ -1,5 +1,5 @@
 ########################################
-# ketju_tide -- a 200 AU pair in a KETJU region tidally perturbed by a 20 Msun star at 5000 AU; region steps
+# ketju_pm -- copy of test/ketju_tide/Config.sh with PMGRID, BOX_PERIODIC and the energy step trace
 # span several pair orbits, so the external field reaches the pair as kicks at random orbital phases.
 ########################################
 ADAPTIVE_GRAVSOFT_FORALL=1

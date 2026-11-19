@@ -1,5 +1,5 @@
 ########################################
-# ketju_snapshot_midstep -- an isolated binary whose region steps span many orbits, written at times inside them.
+# ketju_mass_loss -- copy of test/ketju_snapshot_midstep/Config.sh with the mass-loss test hook
 ########################################
 ADAPTIVE_GRAVSOFT_FORALL=1
 TIDAL_TIMESTEP_CRITERION

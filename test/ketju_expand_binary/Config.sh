@@ -1,5 +1,5 @@
 ########################################
-# ketju_snapshot_midstep -- an isolated binary whose region steps span many orbits, written at times inside them.
+# ketju_expand_binary -- copy of test/ketju_snapshot_midstep/Config.sh with the energy step trace
 ########################################
 ADAPTIVE_GRAVSOFT_FORALL=1
 TIDAL_TIMESTEP_CRITERION
