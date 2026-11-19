@@ -190,19 +190,21 @@ def test_no_mass_gain_at_death(built):
 
 
 def test_cold_ejecta(built):
-    """1e7 K gas: the ejecta carry no ambient u, so the gas gains the two explosions (20 and 150 Msun, 1e51 erg each; the failed
-    40 Msun SN gives none) and no more. The 320 Msun PISN is left out since its He-core energy (9.5e52 erg, F6) would hide the
-    ejecta's ambient u (about 0.8 % of 2e51 erg here; 2 % of 3e51 with the PISN at 1e51 before F6) below the 1e-3 bar"""
-    import sys; sys.path.insert(0, str(TEST_DIR)); from make_single_stars_supernovae_ics import STARS
-    ic, snap, _ = run("hot", built, ic_args={"T": 1.0e7, "stars": [s for s in STARS if s[0] != 320.0]})
+    """1e7 K gas, where the ejecta mass x ambient u is 2 % of the explosion energy: the ejecta carry no ambient u, so the gas
+    gains the three explosions (20, 150 and 320 Msun; the failed SN gives none) and no more"""
+    ic, snap, _ = run("hot", built, ic_args={"T": 1.0e7})
     dE = (totals(snap)["E"] - totals(ic)["E"]) * E_UNIT
-    assert abs(dE / 2.0e51 - 1) < 1e-3, dE / 2.0e51
+    assert abs(dE / 3.0e51 - 1) < 1e-3, dE / 3.0e51
 
 
 def test_pisn_energy_from_helium_core(built):
-    """default build (stella_dev F6, 61f0f5902): the 320 Msun pair-instability SN carries [5 + 1.304 (M_He - 64)] 1e51 erg with
-    M_He = (13/24)(M - 20) held to 64-133 Msun (9.498e52 erg here); CCSN and PPISN 1e51, the failed SN 0 (ECSN 1e50: test/unit)"""
-    _, _, rows = run("pisn", built)
+    """GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE: the 320 Msun pair-instability SN carries [5 + 1.304 (M_He - 64)] 1e51 erg with
+    M_He = (13/24)(M - 20) held to 64-133 Msun (9.498e52 erg here); the other classes keep 1e51 (or 0 for the failed SN)"""
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=("GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE",))
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_pisn")
+        build_gizmo_for_test(TEST_NAME)
+    _, _, rows = run("pisn", built, exe="GIZMO_pisn")
     rows = rows[rows[:, 2] == 1]  # supernovae (time ID kind remnant_type M_drawn M_trigger M_ejecta M_remnant E ...)
     for r in rows:
         M_He = min(max(13 / 24 * (r[4] - 20), 64), 133)
