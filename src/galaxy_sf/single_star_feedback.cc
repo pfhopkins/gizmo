@@ -172,26 +172,32 @@ static void single_star_wind_owed(int s, double logM, double logZ, double la_to,
     ev->log_age_to = la_to;
 }
 
-/* element ejecta of a death, sum Mej, from the table's y[]: below 8 Msun with the winds not returned during the life, scaled
-   together; above, the winds still owed up to the end of life as a wind delivery would return them, the table ejecta
-   scaled to the rest */
+/* death ejecta as fractions of the star's mass at death (stella_dev F1, 8837629e8): element k leaves as e_k / (rem + sum e) of
+   the mass at death, e the table's death ejecta in y[] (below SINGLE_STAR_WIND_MIN_MASS with the winds not returned during the
+   life), rem the table remnant (PISN: 0); at and above it the winds still owed up to the end of life leave first, as a wind
+   delivery would return them, and the fractions apply to the rest. Remnant + ejecta = the mass at death at any (M, Z); a
+   collapse without table ejecta ejects only owed winds. Sets y[], Mej and M_rem. */
 static void single_star_death_ejecta(int s, double logM, double logZ, struct single_star_event *ev)
 {
-    if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS) {
-        struct single_star_event w; memset(&w, 0, sizeof(w));
-        single_star_wind_owed(s, logM, logZ, log10(DMAX(stellar_lifetime(logM, logZ), 100.)), &w);
-        if(w.Mej < ev->Mej) {
-            single_star_scale(ev->y, ev->Mej - w.Mej);
-            for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] += w.y[k];}
-            return;
-        }
+    double la_end = log10(DMAX(stellar_lifetime(logM, logZ), 100.)), M = ev->M_trigger;
+    struct single_star_event w; memset(&w, 0, sizeof(w));
+    if(SingleStars.M_drawn[s] >= SINGLE_STAR_WIND_MIN_MASS) {single_star_wind_owed(s, logM, logZ, la_end, &w);}
+    else {
+        double la_from = SingleStars.last_wind_log_age[s];
+        for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] += DMAX(stellar_elem_ej_wind_cumulative(logM, logZ, la_end, k) - ((la_from > 0) ? stellar_elem_ej_wind_cumulative(logM, logZ, la_from, k) : 0), 0);}
+    }
+    if(w.Mej >= M) { /* the owed winds are the whole star */
         for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = w.y[k];}
-        single_star_scale(ev->y, ev->Mej);
+        single_star_scale(ev->y, M);
+        ev->Mej = M; ev->M_rem = 0;
         return;
     }
-    double la_end = log10(DMAX(stellar_lifetime(logM, logZ), 100.)), la_from = SingleStars.last_wind_log_age[s];
-    for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] += DMAX(stellar_elem_ej_wind_cumulative(logM, logZ, la_end, k) - ((la_from > 0) ? stellar_elem_ej_wind_cumulative(logM, logZ, la_from, k) : 0), 0);}
-    single_star_scale(ev->y, ev->Mej);
+    double sum = 0, rem = (ev->remnant_type == REM_PISN) ? 0 : DMAX(stellar_remnant_mass(logM, logZ), 0);
+    for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = DMAX(ev->y[k], 0); sum += ev->y[k];}
+    const double f = (sum + rem > 0) ? (M - w.Mej) / (sum + rem) : 0;
+    ev->Mej = 0;
+    for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = ev->y[k] * f + w.y[k]; ev->Mej += ev->y[k];}
+    ev->M_rem = M - ev->Mej;
 }
 
 /* the event of star i this step (the kind set by single_star_eventrates), all from the record and the tables */
@@ -213,14 +219,12 @@ static void single_star_event_of(int i, int kind, struct single_star_event *ev)
         single_star_scale(ev->y, ev->Mej);
         return;
     }
-    ev->M_rem = DMIN(stellar_remnant_mass(logM, logZ), ev->M_trigger); /* a star never gains mass at death */
-    ev->Mej = ev->M_trigger - ev->M_rem;
     if(kind == SSE_AGB) {
         ev->v_kms = SINGLE_STAR_AGB_SPEED_KMS;
         for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_elem_ej_AGB(logM, logZ, k);}
     } else {
         ev->E = 1.e51;
-        if(ev->remnant_type == REM_PISN) {ev->M_rem = 0; ev->Mej = ev->M_trigger;
+        if(ev->remnant_type == REM_PISN) {
 #ifdef GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE /* Heger & Woosley 2002 via the Wise+12a fit: M_He = (13/24)(M - 20), held to 64-133 Msun */
             double M_He = DMIN(DMAX((13. / 24.) * (SingleStars.M_drawn[s] - 20.), 64.), 133.); ev->E = (5.0 + 1.304 * (M_He - 64.)) * 1.e51;
 #endif
