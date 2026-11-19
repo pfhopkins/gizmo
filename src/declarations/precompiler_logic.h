@@ -57,7 +57,7 @@
 #ifndef TIDAL_TIMESTEP_CRITERION
 #define TIDAL_TIMESTEP_CRITERION
 #endif
-#if !defined(STARS_APPROACH_TIMESTEP) && !defined(STARS_APPROACH_TIMESTEP_OFF) && !defined(SINK_CALC_DISTANCES) && !defined(SINGLE_STAR_TIMESTEPPING) && !defined(SINK_PARTICLES) && !defined(STARS_HERMITE_DIRECT_GRAVITY) && !defined(STARS_INTEGRATED_BY_RUMI) && !defined(SPECIAL_POINT_MOTION) && !defined(GRAVITY_ANALYTIC)
+#if !defined(STARS_APPROACH_TIMESTEP) && !defined(STARS_APPROACH_TIMESTEP_OFF) && !defined(SINK_CALC_DISTANCES) && !defined(SINGLE_STAR_TIMESTEPPING) && !defined(SINGLE_STAR_DIRECT_GRAVITY) && !defined(SINK_PARTICLES) && !defined(STARS_HERMITE_DIRECT_GRAVITY) && !defined(STARS_INTEGRATED_BY_RUMI) && !defined(SPECIAL_POINT_MOTION) && !defined(GRAVITY_ANALYTIC)
 #define STARS_APPROACH_TIMESTEP /* star encounters resolved in clusters; skipped where the sink node moments are taken, opt out with STARS_APPROACH_TIMESTEP_OFF */
 #endif
 #ifndef DO_DENSITY_AROUND_NONGAS_PARTICLES
@@ -872,8 +872,8 @@
 #ifdef STARS_APPROACH_TIMESTEP /* Type-4 stars: STARFORGE's two-body step (approach and free-fall time to the nearest star, from the gravity walk) */
 #ifndef STARS_APPROACH_TIMESTEP_CHECKED /* first pass only: this file is read twice */
 #define STARS_APPROACH_TIMESTEP_CHECKED
-#if defined(STARS_APPROACH_TIMESTEP_OFF) || defined(SINK_CALC_DISTANCES) || defined(SINGLE_STAR_TIMESTEPPING) || defined(SINK_PARTICLES) || defined(STARS_HERMITE_DIRECT_GRAVITY) || defined(STARS_INTEGRATED_BY_RUMI) || defined(SPECIAL_POINT_MOTION)
-#error "STARS_APPROACH_TIMESTEP uses the tree's sink node moments for Type 4: not combinable with STARS_APPROACH_TIMESTEP_OFF, sinks, STARFORGE timestepping, other SINK_CALC_DISTANCES users, STARS_HERMITE_DIRECT_GRAVITY or STARS_INTEGRATED_BY_RUMI"
+#if defined(STARS_APPROACH_TIMESTEP_OFF) || defined(SINK_CALC_DISTANCES) || defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(SINK_PARTICLES) || defined(STARS_HERMITE_DIRECT_GRAVITY) || defined(STARS_INTEGRATED_BY_RUMI) || defined(SPECIAL_POINT_MOTION)
+#error "STARS_APPROACH_TIMESTEP uses the tree's sink node moments for Type 4: not combinable with STARS_APPROACH_TIMESTEP_OFF, sinks, SINGLE_STAR_DIRECT_GRAVITY (Type-5 direct sum), STARFORGE timestepping, other SINK_CALC_DISTANCES users, STARS_HERMITE_DIRECT_GRAVITY or STARS_INTEGRATED_BY_RUMI"
 #endif
 #endif
 #define SINK_CALC_DISTANCES
@@ -1199,6 +1199,9 @@
 #endif
 #if defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB) && !defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK)
 #error "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB extends the hydro recompute of RESOLVED_ISM_FB_AFTER_CLOSING_KICK: set both"
+#endif
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(DM_HEATING)
+#error "RESOLVED_ISM_FB_AFTER_CLOSING_KICK repeats the hydro pass, which resets DtInternalEnergy: DM_HEATING's addition after the first pass would be lost"
 #endif
 #if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
 #error "RESOLVED_ISM_FB_AFTER_CLOSING_KICK repeats the hydro pass on feedback steps: MFV mass fluxes are applied in that pass and would be applied twice"
