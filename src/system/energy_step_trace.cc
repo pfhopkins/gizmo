@@ -36,12 +36,17 @@ static const int estep_stage_exact[] = {
     1,
 #endif
     1, 0, 1, /* fb_mech, fb_radp (measured: the radiation's work), photoion (marks cells; the heat is booked in cooling) */
-#ifdef SGCHEM
+#if defined(SGCHEM) && !defined(TRANSPORT_SUBCYCLE_COOLING) /* subcycled cooling runs outside the cooling bracket */
     1,
 #else
     0,
 #endif
-    1, 2, 2, 2, 2, 2, 2};
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) /* the single-star spawn and gas collection book their changes; other SF paths do not yet */
+    1,
+#else
+    0,
+#endif
+    2, 2, 2, 2, 2, 2};
 
 static const char *estep_book_name[] = {"fb_sn", "fb_wind", "fb_remnant_kin", "cool_solve", "cool_pi", "cool_floor", "cool_cr_loss",
     "sf_th_locked", "sf_donor", "sf_star_kin", "sf_cr", "merge_heat_not_returned", "ketju_chain_pot", "ketju_collision", "kick_floor", "cr_clip", "info_mhd_num", "info_cr_shock"};

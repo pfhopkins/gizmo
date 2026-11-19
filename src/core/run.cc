@@ -422,10 +422,10 @@ void run(void)
         ESTEP_END(ESTEP_INT_NBODY);
         ESTEP_BEGIN(ESTEP_INT_DRIFT);
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
-        ESTEP_END(ESTEP_INT_DRIFT);
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
+        ESTEP_END(ESTEP_INT_DRIFT);
         CPU_Step[CPU_DRIFT] += measure_time();
         {   /* new sync point: the gas SIDX is kept across the drift (every walk
              * reads it at the time of the search); the all-types SIDX is
