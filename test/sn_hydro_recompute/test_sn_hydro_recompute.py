@@ -136,13 +136,13 @@ def test_sn_repeats_winds_only_with_the_second_flag(ladder):
 
 
 def test_metal_exchange_once_per_step(ladder):
-    for m in (1.0, 0.1):
-        a, b = ladder[("default", m)], ladder[("closing", m)]
+    for arm, m in (("closing", 1.0), ("closing", 0.1), ("all", 1.0)):  # "all": the wind steps repeat the pass too
+        a, b = ladder[("default", m)], ladder[(arm, m)]
         (_, x, z0), (_, _, za), (_, _, zb) = by_unique_id([metals(a, "snapshot_000.hdf5"), metals(a, "snapshot_001.hdf5"), metals(b, "snapshot_001.hdf5")])
         d = x - star_pos(a["L"], m); d -= a["L"] * np.round(d / a["L"])
         far = np.linalg.norm(d, axis=1) > 0.4 * a["L"]
         exch, diff = np.max(np.abs(za - z0)[far]), np.max(np.abs(zb - za)[far])
-        print(f"{m} Msun: {far.sum()} cells beyond 0.4 L; metal exchange max |dZ| {exch:.3e}; flag vs default max |dZ| {diff:.3e} ({diff / exch:.2e})")
+        print(f"{arm} {m} Msun: {far.sum()} cells beyond 0.4 L; metal exchange max |dZ| {exch:.3e}; flag vs default max |dZ| {diff:.3e} ({diff / exch:.2e})")
         assert exch > 0 and diff <= 1e-6 * exch
 
 

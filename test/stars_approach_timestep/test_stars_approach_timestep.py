@@ -20,6 +20,7 @@ test_encounter_kick: the change of the pair's relative velocity
   (the potential at closest approach; the kinetic energy is 3600 x larger, so the final pair energy is not a check:
   the leapfrog returns it whatever the step); the closest sampled separation is below 0.1 pc.
 test_mass: gas plus star mass constant to 1e-12 (snapshots in double precision).
+test_control_without_the_step_fails_the_bar: negative control, built with STARS_APPROACH_TIMESTEP_OFF the kick error exceeds 1 %.
 """
 import glob
 import os
@@ -43,15 +44,14 @@ G = 4.300917e-3  # pc (km/s)^2 / Msun
 L, NG, M_STAR, V, B = 10.0, 8, 2.0, 25.0, 0.05
 
 
-@pytest.fixture(scope="module")
-def run():
+def _run(tag, flags=()):
     if not os.environ.get("SUNDIALS_DIR"):
         pytest.skip("set SUNDIALS_DIR (SGCHEM builds against SUNDIALS 6.x or 7.x)")
     tables = get_stellar_evolution_tables()
     get_cooling_tables(str(HERE))
     if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
-        build_gizmo_for_test(NAME)
-    d = HERE / "run"
+        build_gizmo_for_test(NAME, extra_config_flags=flags)
+    d = HERE / tag
     if d.exists():
         shutil.rmtree(d)
     (d / "output").mkdir(parents=True)
@@ -72,7 +72,7 @@ def run():
     (d / f"{NAME}.params").write_text(p)
     with open(d / f"test_{NAME}.out", "w") as out:
         subprocess.run(mpi_launch_command(2) + [str(HERE / "GIZMO"), f"{NAME}.params", "2", "0"], cwd=d, stdout=out,
-                       stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True)
+                       stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True, timeout=1500)
     assert "Final time=" in (d / f"test_{NAME}.out").read_text(), "run did not reach TimeMax"
     return sorted(glob.glob(str(d / "output" / "snapshot_*.hdf5")))
 
@@ -84,6 +84,32 @@ def pair(s):
         mt = m.sum() + f["PartType0/Masses"][()].sum()
     r = np.linalg.norm(x[1] - x[0])
     return 0.5 * np.sum(m * np.sum(v ** 2, axis=1)) - G * m[0] * m[1] / r, r, 0.5 * np.sum(m * np.sum(v ** 2, axis=1)), mt
+
+
+@pytest.fixture(scope="module")
+def run_off():
+    return _run("run_off", ("STARS_APPROACH_TIMESTEP_OFF",))
+
+
+@pytest.fixture(scope="module")
+def run(run_off):  # the control first: both builds share src/ and the test directory's GIZMO
+    return _run("run")
+
+
+def kick_error(snaps):
+    from scipy.integrate import solve_ivp
+    (x0, v0, m, t0), (x1, v1, _, t1) = stars(snaps[0]), stars(snaps[-1])
+    gm = G * m.sum()
+    orbit = solve_ivp(lambda t, y: np.r_[y[3:], -gm * y[:3] / np.linalg.norm(y[:3]) ** 3], (t0, t1),
+                      np.r_[x0[1] - x0[0], v0[1] - v0[0]], rtol=1e-12, atol=1e-14).y[:, -1]
+    return ((v1[1, 1] - v1[0, 1]) - (v0[1, 1] - v0[0, 1])) / (orbit[4] - (v0[1, 1] - v0[0, 1])) - 1
+
+
+def test_control_without_the_step_fails_the_bar(run_off):
+    """negative control: built with STARS_APPROACH_TIMESTEP_OFF the encounter is under-resolved and the kick bar fails"""
+    err = kick_error(run_off)
+    print(f"step off: perpendicular kick rel. error {err:.3e}")
+    assert abs(err) > 1e-2
 
 
 def stars(s):

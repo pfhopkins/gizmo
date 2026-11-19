@@ -9,7 +9,8 @@ Bars (fixed; do not loosen per test):
                        create or destroy baryons or metals)
   exact energy stages: the code writes a STAGE line only when |dE - booked| > 1e-12 (E_abs + |booked|),
                        so every STAGE line is a finding
-  time integration   : |int_res| / scale <= 1e-2 at every full sync (kick-drift-kick + tree gravity
+  time integration   : must have been checked (a SYNC line with a valid potential and a finite residual; require_integration=False
+                       opts out) and |int_res| / scale <= 1e-2 at every full sync (kick-drift-kick + tree gravity
                        accuracy; int_res excludes all stage changes). scale at a sync = max(E_scale of the
                        first SYNC (|E| + |E_pot| at the start, fixed), SN + Ia energy booked up to this sync):
                        nothing that grows with cooling or other bookings, and no SN scale before the SN
@@ -78,7 +79,7 @@ def _check_mass(path, groups, rep, bar):
     rep.notes.append(f"mass trace: {len(rows)} checkpoint rows")
 
 
-def _check_energy(path, groups, rep, bar):
+def _check_energy(path, groups, rep, bar, require_integration=True):
     pot_valid = True
     n_sync = 0
     worst = None
@@ -113,15 +114,20 @@ def _check_energy(path, groups, rep, bar):
         rep.notes.append(f"cooling solve vs reported rate x dt (non-stiff cells): {a:+.4e} vs {b:+.4e} (rel {(b - a) / a:+.3e})")
         if abs(b - a) > COOL_RATE_BAR * abs(a):
             _add(groups, "cooling_rate", "cooling", (b - a) / a, b - a, last["t"])
+    else:
+        rep.notes.append("cooling-rate check not run: the trace writes no info_cool_solve_ns / info_cool_rate_ns")
     if not pot_valid:
         rep.notes.append("integration not checked: no valid potential (EVALPOTENTIAL off, comoving, or adaptive tree-force)")
     elif worst is not None:
         rep.notes.append(f"integration: worst |int_res|/scale = {worst[0]:.3e} at t={worst[1]['t']:.6e} ({n_sync} syncs)")
     if n_sync == 0:
         rep.notes.append("energy trace has no SYNC line")
+    if require_integration and worst is None:  # nothing was checked: no SYNC line, no valid potential, or no finite residual
+        groups[("energy_integration_not_checked", "kick_drift_grav")] = {"kind": "energy_integration_not_checked", "stage": "kick_drift_grav",
+                                                                          "count": 1, "max_rel": float("inf"), "sum_res": 0.0, "first_t": 0.0}
 
 
-def check_conservation_traces(output_dir, require_energy=True, mass_bar=MASS_BAR, integration_bar=INTEGRATION_BAR, require_mass=True):
+def check_conservation_traces(output_dir, require_energy=True, mass_bar=MASS_BAR, integration_bar=INTEGRATION_BAR, require_mass=True, require_integration=True):
     """Return a TraceReport; findings are ranked by largest relative magnitude."""
     rep = TraceReport()
     groups = OrderedDict()
@@ -132,7 +138,7 @@ def check_conservation_traces(output_dir, require_energy=True, mass_bar=MASS_BAR
     elif require_mass:
         groups[("missing", "mass")] = {"kind": "missing", "stage": "mass_trace", "count": 1, "max_rel": float("inf"), "sum_res": 0.0, "first_t": 0.0}
     if os.path.exists(epath):
-        _check_energy(epath, groups, rep, integration_bar)
+        _check_energy(epath, groups, rep, integration_bar, require_integration)
     elif require_energy:
         groups[("missing", "energy")] = {"kind": "missing", "stage": "energy_trace", "count": 1, "max_rel": float("inf"), "sum_res": 0.0, "first_t": 0.0}
     rep.findings = sorted(groups.values(), key=lambda g: -g["max_rel"])

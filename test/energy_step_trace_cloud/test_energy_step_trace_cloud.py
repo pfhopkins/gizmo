@@ -49,6 +49,7 @@ def run():
     with open(d / "run.out", "w") as f:
         subprocess.run(mpi_launch_command(2) + [str(HERE / "GIZMO"), f"{NAME}.params"], cwd=d, stdout=f,
                        stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True, timeout=RUN_TIMEOUT)
+    assert "Final time=" in (d / "run.out").read_text(), "run did not reach TimeMax"
     return d / "output"
 
 

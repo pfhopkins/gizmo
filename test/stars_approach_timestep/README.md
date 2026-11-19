@@ -12,6 +12,7 @@ encounter time of 1 kyr.
 
 - `test_encounter_kick`: the perpendicular change of the pair's relative velocity equals the exact two-body orbit's to 1 %;
   the pair energy never moves by more than 5 % of G m1 m2 / b; the closest sampled separation is below 0.1 pc.
+- `test_control_without_the_step_fails_the_bar`: built with `STARS_APPROACH_TIMESTEP_OFF` the kick error exceeds 1 % (negative control).
 - `test_mass`: gas plus star mass constant to 1e-12 (double-precision snapshots).
 
 Inputs: `SUNDIALS_DIR`; tables from `GIZMO_STELLA_TABLES_DIR` (else `scripts/get_stella_tables.sh`).
