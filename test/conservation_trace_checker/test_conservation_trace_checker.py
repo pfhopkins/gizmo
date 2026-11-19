@@ -127,3 +127,10 @@ def test_inflight_column_is_not_the_ledger(tmp_path):
     (read from the last two columns it would be a jump of 3e-9 on a ledger of 1e-21)."""
     rep = check_conservation_traces(write(tmp_path, [mass_line(0, "a", 1.0, 0.0, 1e-8, 0.0), mass_line(1, "b", 1.0, 0.0, 1e-8, 1e-21)], CLEAN_ENERGY))  # 1e-13 of the ledger
     assert rep.ok, rep.summary()
+
+
+def test_mass_trace_optional_for_builds_without_it(tmp_path):
+    """Builds without OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS (no GALSF, e.g. zeldovich) check the energy trace alone."""
+    (tmp_path / "energy_step_trace.txt").write_text(ENERGY_HDR + "".join(CLEAN_ENERGY))
+    assert not check_conservation_traces(tmp_path).ok
+    assert check_conservation_traces(tmp_path, require_mass=False).ok
