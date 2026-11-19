@@ -1658,7 +1658,7 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
 
     /* expand tight binaries before integration to prevent stalling; compute root only, then positions and velocities to all
      * compute tasks. The energy it injects goes into the coupling ledger, not into MSTAR's error term. */
-    {double dE_exp = expand_tight_binaries(reg, dt_physical); KetjuEnergyLedger[0] += dE_exp; KetjuEnergyLedger[1] += fabs(dE_exp);}
+    {double dE_exp = expand_tight_binaries(reg, dt_physical); KetjuEnergyLedger[0] += dE_exp; KetjuEnergyLedger[1] += fabs(dE_exp); ESTEP_BOOK(EBK_KETJU_EXPAND, dE_exp);}
     if(reg.compute_tasks.is_member() && reg.integrator && reg.compute_tasks.size > 1) {
         int n = reg.integrator->num_particles;
         MPI_Bcast(reg.integrator->physical_state->pos, 3 * n, MPI_DOUBLE,
