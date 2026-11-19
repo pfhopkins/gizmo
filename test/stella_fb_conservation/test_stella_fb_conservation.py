@@ -17,15 +17,18 @@ test_failed_sn_composition: a failed SN (42.3 Msun, log Z = -1.70, table ejecta 
 test_sibling_sne: two stars with the same ID (one parent cell), different child numbers, explode in the same step on one
   rank: each is injected once (2 x 1e51 erg booked = deposited), mass and elements close.
 test_agb_energy / test_wind_metals / test_ia_iron / test_ecsn_energy: one run with a 3 Msun star (forced AGB death, then
-  a forced Type Ia), a 60 Msun star (forced death: its remaining wind leaves first) and an ECSN.
+  a forced Type Ia), a 60 Msun star (forced death: its remaining wind leaves first) and an ECSN (1e51 erg by default).
   AGB: the deposit delivers 1/2 M_ej (30 km/s)^2 (kick + inelastic heat); booked as 1/2 p^2 / M_ej with the delivered p,
   so the fb_wind_agb stage closes. Wind metals: FeedbackBudget books the metals the walk delivered (WINDZLEDGER, 1e-12).
   WINDZLEDGER compares two accumulations of the walk's own deposit, so it guards against a return to the old surface-abundance
   booking; that the gas gains the booked metals is checked by the element ledger of the trace.
   Ia: the event delivers the table's M_Ch of Ia matter, 0.744 Msun Fe (IAFE, 1e-12): the WD particle plus
   M_Ch - M_WD of receiver gas converted in place. With the rate normalised to IA_DTD_NORM per formed mass, Ia iron per
-  formed mass is then rate x table yield. ECSN: 1e50 erg (Kitaura, Janka & Hillebrandt 2006, A&A 450, 345: 1.2e50 erg
-  for the 8.8 Msun O-Ne-Mg core collapse), booked = deposited.
+  formed mass is then rate x table yield.
+test_sn_energies_default / _variable: a PISN, an ECSN and a CCSN in one box. Default: all 1e51 erg. With
+  RESOLVED_ISM_VARIABLE_SN_ENERGY: PISN [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to 64-133 Msun
+  (Heger & Woosley 2002 eq. 1 via the Wise et al. 2012a fit), ECSN 1e50 erg (Kitaura, Janka & Hillebrandt 2006, A&A 450, 345:
+  1.2e50 erg for the 8.8 Msun O-Ne-Mg core collapse), CCSN 1e51. Both: booked = deposited (no exact-stage line in the trace).
 """
 
 import os
@@ -84,9 +87,24 @@ def build():
     cwd = os.getcwd(); os.chdir(REPO)
     try:
         build_gizmo_for_test(TEST_NAME, post_build=lambda: link_test_driver(join(TEST_DIR, "death_ejecta_driver.cc"), join(TEST_DIR, "death_ejecta_driver")))
+        shutil.move(join(TEST_DIR, "GIZMO"), join(TEST_DIR, "GIZMO_default"))
     finally:
         os.chdir(cwd)
-    return join(TEST_DIR, "GIZMO")
+    return join(TEST_DIR, "GIZMO_default")
+
+
+@pytest.fixture(scope="module")
+def build_variable_sn_energy():
+    if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        pytest.skip("builds GIZMO")
+    _write_config()
+    cwd = os.getcwd(); os.chdir(REPO)
+    try:
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=("RESOLVED_ISM_VARIABLE_SN_ENERGY",))
+        shutil.move(join(TEST_DIR, "GIZMO"), join(TEST_DIR, "GIZMO_variable_sn_energy"))
+    finally:
+        os.chdir(cwd)
+    return join(TEST_DIR, "GIZMO_variable_sn_energy")
 
 
 def make_box(fname, Z_abs, n_H=10.0, box_pc=16.0, m_cell=1.0, T=1.0e4, sigma_v=0.0, seed=1):
@@ -261,5 +279,52 @@ def test_ia_iron(late_run):
 def test_ecsn_energy(late_run):
     text, out = late_run
     e = [float(x) for x in re.findall(r"RESOLVEDISM SN: .* rem_type=1 E=([0-9.e+]+)\[erg\]", text)]
-    assert e == [1.0e50], f"ECSN energies {e}"
+    assert e == [1.0e51], f"ECSN energies {e} (default: fixed 1e51)"
     traces_ok(out)
+
+
+def pisn_energy_erg(M):
+    """Heger & Woosley 2002 via the Wise+12a fit: E = [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20), held to 64-133."""
+    M_He = min(max(13.0 / 24.0 * (M - 20.0), 64.0), 133.0)
+    return (5.0 + 1.304 * (M_He - 64.0)) * 1e51
+
+
+def sn_energy_run(binary, name):
+    """A PISN, an ECSN and a CCSN (table grid stars at one metallicity) explode in one box (forced, 1 kyr apart)."""
+    M_pisn, logZ = table_star(5, True, -4.0, np.log10(200.0))
+    M_ecsn, z2 = table_star(1, True, logZ, np.log10(9.0))
+    M_ccsn, z3 = table_star(2, True, logZ, np.log10(20.0))
+    assert z2 == logZ and z3 == logZ
+    d = join(TEST_DIR, "run_" + name); os.makedirs(d, exist_ok=True)
+    make_box(join(d, "box_ics.hdf5"), 10 ** logZ)
+    text, out = run_case(name, binary, {"InitCondFile": "box_ics", "TestNumStars": 3, "TestStarMass": M_pisn, "TestStarMass2": M_ecsn,
+                                        "TestStarMass3": M_ccsn, "TestSNTime0": 1.0e-6, "TestSNSpacing": 1.0e-6, "TimeMax": 4.5e-6,
+                                        "TestFUVZero": 1, **zpar(logZ)})
+    e = {int(t): float(x) for t, x in re.findall(r"RESOLVEDISM SN: .* rem_type=(\d+) E=([0-9.e+]+)\[erg\]", text)}
+    print(f"{name}: PISN {M_pisn:.0f} Msun, ECSN {M_ecsn:.0f}, CCSN {M_ccsn:.0f} at log Z {logZ:.2f}: energies by remnant type {e}")
+    return e, out, M_pisn
+
+
+def stages_closed(out):
+    """booked = deposited: no exact-stage line in the energy trace, and the mass and element ledgers close."""
+    rep = keep_and_check_traces(out, out)
+    bad = [f for f in rep.findings if f["kind"] in ("energy_stage", "mass", "element_ledger", "metal_ledger")]
+    assert not bad, rep.summary()
+    return rep
+
+
+def test_sn_energies_default(build):
+    """Default: every explosive SN type deposits and books 1e51 erg."""
+    e, out, M_pisn = sn_energy_run(build, "sn_energy_default")
+    assert e == {5: 1.0e51, 1: 1.0e51, 2: 1.0e51}, e
+    rep = stages_closed(out)
+    assert rep.ok, rep.summary()
+
+
+def test_sn_energies_variable(build_variable_sn_energy):
+    """RESOLVED_ISM_VARIABLE_SN_ENERGY: PISN from the He core (HW02 via Wise+12a), ECSN 1e50 (Kitaura+06), CCSN 1e51."""
+    e, out, M_pisn = sn_energy_run(build_variable_sn_energy, "sn_energy_variable")
+    assert set(e) == {5, 1, 2}, e
+    assert abs(e[5] / pisn_energy_erg(M_pisn) - 1) < 0.006 and e[1] == 1.0e50 and e[2] == 1.0e51, e  # log prints 3 digits
+    rep = stages_closed(out)
+    assert rep.ok, rep.summary()
