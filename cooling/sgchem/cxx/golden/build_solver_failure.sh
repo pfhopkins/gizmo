@@ -1,12 +1,14 @@
 #!/bin/bash
-# Net 17 solver-failure test (WLM run 2026-11-17): golden/test_net17_solver_failure.cc, two builds:
-#   default   phases A + H (66 logged floor cells, TNOCHEM hand-off grid), C++ vs Fortran DVODE
-#   recovery  phase R: -DCHEM_NSTEP=1 -DSGCHEM_SOLVER_FAILURE_ENERGY_ONLY_COOLING on the driver and the test
+# Solver-failure test (WLM runs 2026-11-17; D-58, D-59): golden/test_solver_failure.cc, nets 5 and 17, two builds:
+#   default   phases A + H (logged floor cells, TNOCHEM hand-off grid), C++ vs Fortran DVODE; CSV at %.17g
+#   forced    phase R: -DTEST_SGCHEM_FORCED_SOLVER_FAILURE on the driver and the test (retry, TNOCHEM finish,
+#             abort, dump replay)
 #
-# usage: build_net17_solver_failure.sh TREE OUT [SUNDIALS_DIR]
-#   TREE  a COPY of the gizmo tree: net 17 GIZMO_config.h at its root and the SGChem tables
+# usage: build_solver_failure.sh TREE OUT [SUNDIALS_DIR]
+#   TREE  a COPY of the gizmo tree: net 5 or 17 GIZMO_config.h at its root and the SGChem tables
 #         (eh2-table.txt, energy-table-x.txt, H2-cooling-ratios.dat, wss_z_collis.txt) in cooling/sgchem
-#   OUT   objects, binaries and results
+#   OUT   objects, binaries and results (OUT/<build>/result.txt, OUT/default/AH.csv)
+#   BUILDS="default forced" (default), EXTRA_CXXFLAGS for both builds (e.g. -DTEST_PARENT_DRIVER, default only)
 # Run inside a batch job (never on the login node).
 set -e
 TREE=$(readlink -f "$1"); OUT=$(readlink -f -m "$2")
@@ -14,12 +16,13 @@ SUN=${3:-/orion/ptmp/uli/orion/fb_tests/_sundials/install}
 SUNLIB=$(ls -d "$SUN/lib64" "$SUN/lib" 2>/dev/null | head -1)
 CC_DIR=$TREE/cooling/sgchem; CX=$CC_DIR/cxx
 J=${JOBS:-2}
-grep -q "^#define CHEMISTRYNETWORK 17" "$TREE/GIZMO_config.h" || { echo "TREE is not a net 17 tree"; exit 1; }
+NET=$(sed -n 's/^#define CHEMISTRYNETWORK \([0-9]*\).*/\1/p' "$TREE/GIZMO_config.h")
+[ "$NET" = 5 ] || [ "$NET" = 17 ] || { echo "TREE is net $NET, not 5 or 17"; exit 1; }
 SUNLIBS="-L$SUNLIB -lsundials_cvode -lsundials_nvecserial -lsundials_sunmatrixdense \
          -lsundials_sunlinsoldense -lsundials_sunnonlinsolnewton -lsundials_generic"
 STATUS=0
-for B in default recovery; do
-    X=""; [ $B = recovery ] && X="-DCHEM_NSTEP=1 -DSGCHEM_SOLVER_FAILURE_ENERGY_ONLY_COOLING"
+for B in ${BUILDS:-default forced}; do
+    X="${EXTRA_CXXFLAGS:-}"; [ $B = forced ] && X="$X -DTEST_SGCHEM_FORCED_SOLVER_FAILURE"
     O=$OUT/$B; mkdir -p $O/obj $O/rundir; ln -sfn "$TREE" $O/rundir/gizmo
     FO=""; CO=""
     for f in coolinmo cheminmo spline cool_func photoinit_ism dvode evolve_abundances rate_eq_simple rate_eq_ulli \
@@ -36,9 +39,9 @@ for B in default recovery; do
         while [ "$(jobs -r | wc -l)" -ge "$J" ]; do wait -n; done
     done
     wait
-    g++ -O2 -std=c++14 -Wall $X -I"$CX" -I"$TREE" -I"$SUN/include" -c "$CX/golden/test_net17_solver_failure.cc" -o $O/obj/test.o
-    gfortran $O/obj/test.o $CO $FO $SUNLIBS -lstdc++ -lm -o $O/test_net17_solver_failure
-    ( cd $O/rundir && $O/test_net17_solver_failure ) > $O/result.txt 2> $O/result.err || STATUS=1
-    echo "== $B: $(grep -E 'GATE|===.*:' $O/result.txt | tr '\n' ' ')"
+    g++ -O2 -std=c++14 -Wall $X -I"$CX" -I"$TREE" -I"$SUN/include" -c "$CX/golden/test_solver_failure.cc" -o $O/obj/test.o
+    gfortran $O/obj/test.o $CO $FO $SUNLIBS -lstdc++ -lm -o $O/test_solver_failure
+    ( cd $O/rundir && timeout --kill-after=60 3600 $O/test_solver_failure $O/AH.csv ) > $O/result.txt 2> $O/result.err || STATUS=1
+    echo "== net $NET $B: $(grep -E 'GATE|===.*:' $O/result.txt | tr '\n' ' ')"
 done
 exit $STATUS

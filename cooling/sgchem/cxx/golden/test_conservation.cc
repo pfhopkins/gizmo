@@ -890,7 +890,18 @@ static int phase_M(const ChemTables& TT)
     }
     { int pass = rfl.npass == rfl.n; ok &= pass; std::printf("  flag (0/1)   %5ld/%-5ld %s\n", rfl.npass, rfl.n, pass ? "PASS" : "FAIL"); }
     // one-zone: the B2 cell 3782 solve (n 4.4, 1.65e5 K, x_H+ 0.9999951, dt 1.017e11 s) at three Gamma_HI
-    std::printf("  one-zone (n=4.4, T0=1.65e5 K, dt=1.017e11 s), Fortran DVODE vs C++ CVODE, gate final T and x_H+ within 1%%:\n");
+    // Uli 2026-11-19: each backend against the converged solution (both backends at rtol 1e-8, before and after D-58),
+    // 1% bar; production rtol unchanged. Networks without a committed reference keep the backend-vs-backend gate.
+#if CHEMISTRYNETWORK == 17
+    const double Tref[3] = {1.790966e4, 1.804222e4, 1.805765e4}, xref[3] = {0.999893760, 0.999989428, 0.999998943};
+    const int have_ref = 1;
+#else
+    const double Tref[3] = {0, 0, 0}, xref[3] = {0, 0, 0};
+    const int have_ref = 0;
+#endif
+    std::printf("  one-zone (n=4.4, T0=1.65e5 K, dt=1.017e11 s), gate final T and x_H+ within 1%% of %s:\n",
+                have_ref ? "the converged rtol-1e-8 solution, each backend" : "Fortran DVODE (C++ CVODE)");
+    int kG = 0;
     for (double G : Gs) {
         COOLRC.rt_phot_HI = G; COOLRC.rt_heat_HI = G * eps_ion;
         double y0[NSPEC]; initial_state(2, y0); y0[IH2] = 0.0; y0[IHP] = 0.9999951259;
@@ -904,10 +915,17 @@ static int phase_M(const ChemTables& TT)
         int rcC = run_cxx(dt, yn, &eC, yC, &tdC);
         long nrhs = cxx_stat_rhs_evals - n0;
         double TF = temp_of(*g_cx, yn, eF, yF), TC = temp_of(*g_cx, yn, eC, yC);
-        double dT = std::fabs(TF - TC) / TF, dx = std::fabs(yF[IHP] - yC[IHP]) / yF[IHP];
+        double dT, dx;
+        if (have_ref) {
+            dT = std::max(std::fabs(TF - Tref[kG]), std::fabs(TC - Tref[kG])) / Tref[kG];
+            dx = std::max(std::fabs(yF[IHP] - xref[kG]), std::fabs(yC[IHP] - xref[kG])) / xref[kG];
+        } else {
+            dT = std::fabs(TF - TC) / TF; dx = std::fabs(yF[IHP] - yC[IHP]) / yF[IHP];
+        }
         int pass = !rcF && !rcC && std::isfinite(TC) && dT < 1e-2 && dx < 1e-2; ok &= pass;
-        std::printf("  Gamma_HI=%.0e  rc f77/cxx %d/%d  T %.6e / %.6e (rel %.2e)  x_H+ %.9f / %.9f  C++ RHS evals %ld  %s\n",
-                    G, rcF, rcC, TF, TC, dT, yF[IHP], yC[IHP], nrhs, pass ? "PASS" : "FAIL");
+        std::printf("  Gamma_HI=%.0e  rc f77/cxx %d/%d  T %.6e / %.6e (ref %.6e, worst rel %.2e)  x_H+ %.9f / %.9f  C++ RHS evals %ld  %s\n",
+                    G, rcF, rcC, TF, TC, have_ref ? Tref[kG] : TF, dT, yF[IHP], yC[IHP], nrhs, pass ? "PASS" : "FAIL");
+        kG++;
     }
     COOLRC.rt_phot_HI = COOLRC.rt_heat_HI = 0.0;
     return ok;
