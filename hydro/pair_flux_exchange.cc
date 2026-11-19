@@ -47,7 +47,8 @@ static double pf_opening_applied(int i) /* what do_first_halfstep_kick applied t
 }
 static long long pf_step_end(int i) {return (long long)(P[i].Ti_begstep + P[i].integertime_step());}
 
-static void pf_free_records(void) {if(PairFluxRecords) {myfree_movable(PairFluxRecords); PairFluxRecords = NULL;} PairFluxNRecords = 0;}
+static void pf_free_records(void) {if(PairFluxRecords) {myfree_movable(PairFluxRecords); PairFluxRecords = NULL;} std::vector<pairflux_record>().swap(PairFluxLoopRecords); PairFluxNRecords = 0;}
+static pairflux_record *pf_records(void) {return PairFluxRecords ? PairFluxRecords : PairFluxLoopRecords.data();} /* records read from a restart stay in the vector */
 
 void pairflux_begin_hydro_pass(void) {pf_free_records(); PairFluxLoopRecords.clear(); PairFluxRearranged = 0;}
 
@@ -218,7 +219,7 @@ void pairflux_after_closing_kick(void)
     std::vector<std::vector<pairflux_corr>> out(NTask);
     for(long long k = 0; k < PairFluxNRecords; k++)
     {
-        pairflux_record &rec = PairFluxRecords[k];
+        pairflux_record &rec = pf_records()[k];
         Vec3<double> B = {}, Bd = {};
 #ifdef MAGNETIC
         B = rec.B; Bd = rec.Bded;
@@ -240,7 +241,8 @@ void pairflux_after_opening_kick(void)
     long long t = (long long) All.Ti_Current; double U = pf_U();
     /* the evaluators' new step ends and applied opening weights, from their ranks */
     std::vector<std::vector<pairflux_req>> rq(NTask); std::vector<long long> slot(PairFluxNRecords);
-    for(long long k = 0; k < PairFluxNRecords; k++) {slot[k] = (long long) rq[PairFluxRecords[k].e_task].size(); pairflux_req q; q.idx = PairFluxRecords[k].e_index; rq[PairFluxRecords[k].e_task].push_back(q);}
+    pairflux_record *R = pf_records();
+    for(long long k = 0; k < PairFluxNRecords; k++) {slot[k] = (long long) rq[R[k].e_task].size(); pairflux_req q; q.idx = R[k].e_index; rq[R[k].e_task].push_back(q);}
     std::vector<pairflux_req> qin; std::vector<int> qfrom; pf_sparse_exchange(rq, qin, qfrom);
     std::vector<std::vector<pairflux_rep>> rp(NTask);
     for(size_t k = 0; k < qin.size(); k++)
@@ -254,7 +256,7 @@ void pairflux_after_opening_kick(void)
     std::vector<std::vector<pairflux_corr>> out(NTask);
     for(long long k = 0; k < PairFluxNRecords; k++)
     {
-        pairflux_record &rec = PairFluxRecords[k];
+        pairflux_record &rec = pf_records()[k];
         if(off[rec.e_task] < 0) {printf("HYDRO_EXACT_PAIR_FLUX_EXCHANGE: no reply from task %d\n", rec.e_task); endrun(97536);}
         pairflux_rep &rep = rin[off[rec.e_task] + slot[k]];
         int r_active = rec.flags & 1;
@@ -302,8 +304,8 @@ void pairflux_wake_kick_correction(int i, double dt_wake, int to_pred)
 long long pairflux_restart_count(void) {return PairFluxNRecords;}
 void *pairflux_restart_buffer(long long n_read)
 {
-    if(n_read >= 0) {pf_free_records(); PairFluxNRecords = n_read; if(n_read > 0) {PairFluxRecords = (pairflux_record *) mymalloc_movable(&PairFluxRecords, "PairFluxRecords", n_read * sizeof(pairflux_record));}}
-    return (void *) PairFluxRecords;
+    if(n_read >= 0) {pf_free_records(); PairFluxLoopRecords.resize(n_read); PairFluxNRecords = n_read;} /* not in the movable heap: blocks allocated after a restart would pin it */
+    return (void *) pf_records();
 }
 size_t pairflux_record_size(void) {return sizeof(pairflux_record);}
 
