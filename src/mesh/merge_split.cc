@@ -1225,8 +1225,8 @@ int merge_particles_ij(int i, int j)
     dm_i += CellP[i].DtMass;
     dm_j += CellP[j].DtMass;
 #endif
-    de_i = P[i].Mass * CellP[i].DtInternalEnergy + dm_i*CellP[i].InternalEnergy;
-    de_j = P[j].Mass * CellP[j].DtInternalEnergy + dm_j*CellP[j].InternalEnergy;
+    de_i = P[i].Mass * CellP[i].DtInternalEnergy + dm_i*CellP[i].InternalEnergyPred; /* undo the conversion of hydro_final_operations_and_cleanup, which removed DtMass*InternalEnergyPred */
+    de_j = P[j].Mass * CellP[j].DtInternalEnergy + dm_j*CellP[j].InternalEnergyPred;
     dp_i = CellP[i].HydroAccel * P[i].Mass + CellP[i].VelPred * (dm_i / All.cf_atime);
     dp_j = CellP[j].HydroAccel * P[j].Mass + CellP[j].VelPred * (dm_j / All.cf_atime);
     de_i += dot(dp_i, CellP[i].VelPred) / All.cf_atime - 0.5 * dm_i * CellP[i].VelPred.norm_sq() * All.cf_a2inv;
@@ -1348,6 +1348,9 @@ int merge_particles_ij(int i, int j)
     P[j].Pos = pos_new; // center-of-mass conserving //
     P[j].Vel = P[j].Vel * wt_j + P[i].Vel * wt_i; // momentum-conserving //
     CellP[j].VelPred = CellP[j].VelPred * wt_j + CellP[i].VelPred * wt_i; // momentum-conserving //
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    CellP[j].ParticleVel = CellP[j].ParticleVel * wt_j + CellP[i].ParticleVel * wt_i; /* the merged mesh-generating point: its faces move with this until the next density pass sets it */
+#endif
     P[j].GravAccel = P[j].GravAccel * wt_j + P[i].GravAccel * wt_i; // force-conserving //
 #ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
     P[j].GravAccel_Retained = P[j].GravAccel_Retained * wt_j + P[i].GravAccel_Retained * wt_i;
@@ -1407,7 +1410,7 @@ int merge_particles_ij(int i, int j)
     de_ij -= dm_ij * CellP[j].InternalEnergyPred;
     CellP[j].HydroAccel = (dp_ij - CellP[j].VelPred * (dm_ij / All.cf_atime)) * (1.0 / mtot);
     de_ij -= mtot * dot(CellP[j].VelPred, CellP[j].HydroAccel) / All.cf_atime + 0.5 * dm_ij * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
-    CellP[j].DtInternalEnergy = de_ij;
+    CellP[j].DtInternalEnergy = de_ij / mtot; /* de_ij is the merged cell's total energy rate: the kick wants the rate per unit mass, as HydroAccel above */
     // to be conservative adopt the maximum signal velocity and kernel length //
     CellP[j].MaxSignalVel = sqrt(CellP[j].MaxSignalVel*CellP[j].MaxSignalVel + CellP[i].MaxSignalVel*CellP[i].MaxSignalVel); /* need to be conservative */
     P[j].KernelRadius = pow(pow(P[j].KernelRadius,NUMDIMS)+pow(P[i].KernelRadius,NUMDIMS),1.0/NUMDIMS); /* sum the volume of the two particles */
