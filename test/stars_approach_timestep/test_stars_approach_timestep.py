@@ -161,13 +161,16 @@ def effective_macros(lines):
 @pytest.mark.parametrize("flags", [("SINGLE_STAR_DIRECT_GRAVITY",), ("STARS_APPROACH_TIMESTEP", "SINGLE_STAR_DIRECT_GRAVITY")], ids=["default", "explicit"])
 def test_direct_star_gravity(flags):
     """SINGLE_STAR_DIRECT_GRAVITY sums Type 5 directly against the tree's sink node moments: with STELLA_DEFAULTS it does not switch
-    the approach step on (no STARS_APPROACH_TIMESTEP, no SINK_CALC_DISTANCES); asked for explicitly with it, the build stops"""
+    the approach step on (no STARS_APPROACH_TIMESTEP, node distances not on Type 4; SINK_CALC_DISTANCES stays, the direct sum's
+    own node mask needs it); asked for explicitly with it, the build stops"""
     rc, out = effective_macros((HERE / "Config.sh").read_text().splitlines() + list(flags))
     msg = "STARS_APPROACH_TIMESTEP uses the tree's sink node moments for Type 4: not combinable with STARS_APPROACH_TIMESTEP_OFF, sinks, SINGLE_STAR_DIRECT_GRAVITY"
     if flags[0] == "STARS_APPROACH_TIMESTEP":
         assert rc != 0 and msg in out
     else:
-        names = {l.split()[1] for l in out.splitlines() if l.startswith("#define ")}
-        seen = {k: k in names for k in ("STELLA_DEFAULTS", "SINGLE_STAR_DIRECT_GRAVITY", "STARS_APPROACH_TIMESTEP", "SINK_CALC_DISTANCES")}
-        print(f"rc {rc}: {seen}" + ("" if rc == 0 else out[-1500:]))
-        assert rc == 0 and seen["STELLA_DEFAULTS"] and not seen["STARS_APPROACH_TIMESTEP"] and not seen["SINK_CALC_DISTANCES"]
+        defs = {l.split()[1]: " ".join(l.split()[2:]) for l in out.splitlines() if l.startswith("#define ")}
+        seen = {k: k in defs for k in ("STELLA_DEFAULTS", "SINGLE_STAR_DIRECT_GRAVITY", "SINK_CALC_DISTANCES", "STARS_APPROACH_TIMESTEP", "STARS_APPROACH_TIMESTEP_CHECKED")}
+        node_type = defs.get("SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES")
+        print(f"rc {rc}: {seen}, node distance type {node_type}" + ("" if rc == 0 else out[-1500:]))
+        assert rc == 0 and seen["STELLA_DEFAULTS"] and seen["SINGLE_STAR_DIRECT_GRAVITY"] and seen["SINK_CALC_DISTANCES"]
+        assert not seen["STARS_APPROACH_TIMESTEP"] and not seen["STARS_APPROACH_TIMESTEP_CHECKED"] and node_type != "(4)"
