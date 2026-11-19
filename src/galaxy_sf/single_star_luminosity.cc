@@ -255,6 +255,7 @@ int let_light_foreign_node(int sender, int wire);
 struct single_star_light_change {int target, kind; double dl[N_RT_FREQ_BINS], x[3], v[3];};
 static std::vector<int> light_pending; /* local stars whose light the nodes do not hold yet */
 static double light_stats[4];          /* exchanges, changed stars, bytes sent, seconds (this rank, cumulative) */
+static double light_scan_seconds;      /* the scans before every gravity call (this rank, cumulative) */
 
 /* after a whole gravity-tree build: the nodes (and every rank's imported copies) hold each star's light as of now */
 void single_star_tree_lum_set_from_build(void)
@@ -273,6 +274,7 @@ int single_star_light_exchange_scan(double tol)
 {
     light_pending.clear();
     if(!force_tree_is_allocated()) {return 0;}
+    const double t0 = MPI_Wtime();
     for(int i = 0; i < NumPart && i < All.TreeParticleSlots; i++) {
         if(P[i].Type != 4 || P[i].StarIdx <= 0) {continue;}
         int s = single_star_slot(P[i].StarIdx);
@@ -282,6 +284,7 @@ int single_star_light_exchange_scan(double tol)
             if(((l0 == 0) != (lb == 0)) || fabs(lb - l0) > tol * DMAX(fabs(lb), fabs(l0))) {light_pending.push_back(i); break;}
         }
     }
+    light_scan_seconds += MPI_Wtime() - t0;
     return (int) light_pending.size();
 }
 
@@ -376,10 +379,10 @@ void single_star_light_exchange(void)
     if(missing) {printf("SINGLE_STAR_LIGHT_EXCHANGE: rank %d received %lld changes for imported nodes it does not hold\n", ThisTask, missing); fflush(stdout); endrun(90001101);}
     const double here[3] = {(double) light_pending.size(), (double) (nsend - scount[ThisTask]), MPI_Wtime() - t0};
     light_stats[0] += 1; for(int k = 0; k < 3; k++) {light_stats[k + 1] += here[k];}
-    double sum[2] = {0, 0}, tmax = 0;
+    double sum[2] = {0, 0}, tloc[2] = {here[2], light_scan_seconds}, tmax[2] = {0, 0};
     MPI_Reduce(here, sum, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(here + 2, &tmax, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-    if(ThisTask == 0) {printf("SINGLE_STAR_LIGHT_EXCHANGE: t=%.10g stars=%.0f bytes=%.0f seconds_max=%.3e\n", All.Time, sum[0], sum[1], tmax);}
+    MPI_Reduce(tloc, tmax, 2, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    if(ThisTask == 0) {printf("SINGLE_STAR_LIGHT_EXCHANGE: t=%.10g stars=%.0f bytes=%.0f seconds_max=%.3e scan_seconds_cumulative_max=%.3e\n", All.Time, sum[0], sum[1], tmax[0], tmax[1]);}
     light_pending.clear();
 }
 
