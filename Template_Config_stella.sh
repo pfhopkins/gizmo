@@ -25,6 +25,7 @@ GALSF_RESOLVEDISM_INSTANT_SN             % SNe before TimeInstantSN (param) expl
 ########## Supernovae / Type Ia / mass return ##########
 # SN energies (resolvedism_sn_energy.h): 1e51 erg for CCSN, ECSN, PPISN and PISN (flat by design); 0 for failed SNe and direct BHs
 GALSF_RESOLVEDISM_TYPE_IA                % Type Ia SNe from WD DTD (W7 yields)
+#RESOLVED_ISM_VARIABLE_SN_ENERGY        % Stella SN energies by type: PISN from the He core (Heger & Woosley 2002 via Wise+12a), ECSN 1e50 erg (Kitaura+06); default: every SN 1e51 erg
 #RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB    % with RESOLVED_ISM_FB_AFTER_CLOSING_KICK: wind, AGB and radiation-pressure deposits also redo the hydro pass (not only SN/Ia); off by default and in no production config: +15 % per step on the L10 zoom, energy gain not measurable (docs/stella_options.md)
 #RESOLVED_ISM_FB_AFTER_CLOSING_KICK               % feedback deposited after the closing kick, then the hydro pass is redone on feedback steps (gizmo2017 order); on in Config_stella_zoom.sh  [excl MFV]
 #GALSF_RESOLVEDISM_SN_SPAWN              % spawn ejecta cells when the FB kernel holds too little gas (prototype)

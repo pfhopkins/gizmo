@@ -60,14 +60,16 @@ Not with TREE_RAY or RADTRANSFER. No parameters.
 On in: Config_stella_zoom.sh (with RT_NUV and RT_OPTICAL_NIR). Tests: test/unit/test_hminus_bands.cc (blackbody field
 against the spectral integral, upstream bin edges), test/unit/test_band_flags_without_radpressure.cc.
 
-## Explosion energies (no switch)
+## RESOLVED_ISM_VARIABLE_SN_ENERGY: explosion energies by type (off by default)
 
-A PISN injects [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to 64-133 Msun (Heger & Woosley 2002, as
-fitted by Wise+12a). An ECSN injects 1e50 erg (Kitaura, Janka & Hillebrandt 2006). CCSNe and PPISNe inject 1e51 erg; failed
-SNe and direct collapse nothing. The same energy goes to an ejecta cell (see the ejecta-cell rule below). The former opt-in
-switch GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE is gone: the He-core energy is the only PISN energy.
+By default every exploding death (CCSN, ECSN, PPISN, PISN) injects 1e51 erg (Uli 2026-11-19); failed SNe and direct
+collapse inject nothing. With this switch a PISN injects [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to
+64-133 Msun (Heger & Woosley 2002, as fitted by Wise+12a), and an ECSN 1e50 erg (Kitaura, Janka & Hillebrandt 2006); CCSNe and
+PPISNe stay at 1e51. Deposit, FeedbackBudget, the energy trace, SNinfo and the ejecta-cell payload use the same energy. It
+replaces the former GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE.
 
-Tests: test/unit/test_pisn_energy.cc; test/stella_fb_conservation (ECSN booked = deposited).
+Tests: test/unit/test_pisn_energy.cc and test_sn_energy_variable.cc; test/stella_fb_conservation (a PISN, an ECSN and a
+CCSN with and without the switch, booked = deposited).
 
 ## SGCHEM_UVB_TREECOL_SHIELDING: self-shielding of the UV background
 
@@ -193,8 +195,8 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
   productions from a snapshot (RestartFlag 2). Reading ElementAbundance now sets H = 1 - Z - Y, so single-precision
   snapshots and ICs start with a closed composition (an IC with an all-zero ElementAbundance becomes pure H; fresh starts
   still take the composition from InitMetallicity).
-- **Explosion energies.** Every PISN gets the He-core energy (5-95e51 erg; table PISNe below M_ZAMS ~ 138 Msun are held at
-  5e51) and every ECSN 1e50 erg. Runs with Pop III or ECSNe are not comparable with earlier ones.
+- **Explosion energies.** Default: every SN 1e51 erg, as before the audit. With RESOLVED_ISM_VARIABLE_SN_ENERGY: PISN from the
+  He core (5-95e51 erg; table PISNe below M_ZAMS ~ 138 Msun are held at 5e51), ECSN 1e50 erg.
 - **Death ejecta.** Remnant and ejecta are fractions of the star's mass at death. Failed SNe and direct collapse eject
   nothing (all table ejecta are 0). Remnants between grid points differ from the earlier absolute table values.
 - **Type Ia.** Each Ia delivers the table's 1.378 Msun of Ia matter (0.744 Msun Fe): the white dwarf particle plus
