@@ -8,8 +8,9 @@ Asserted: pair CoM relative to the perturber within 0.05 R_out, pair semi-major 
 Comoving variant (a = 0.5, 2 ranks, 2 regions): two binaries and their mirror single stars; CoM mirror symmetry within 1e-3 R_out,
 traces close.
 
-Energy: mass trace and exact stages asserted; the 1e-2 integration bar applies to the KETJU part (difference to a single-star
-twin), the twin's TreePM residual (~2e-2) is printed, not asserted.
+Energy: the step trace's own bars (mass 1e-12, exact stages, integration residual 1e-2 of E_scale). The trace's E_pot leaves out
+the particles' own mesh self-potential, which inflated E_scale ~14x (2026-11-19: residual 1.84e-2 of it with KETJU, 1.98e-2 for a
+single-star twin without; a split of the bar into a KETJU part was tried and withdrawn).
 
 History: PMGRID = 64 with R_out = 5000 AU passed the orbit bars but left a 2.6e-2 integration residual from the coarse mesh (also with
 KETJU off); PMGRID = 256 there put r_s (244 AU) at the pair separation (|da/a| 2.4e-2). Redesigned 2026-11-19 (Uli).

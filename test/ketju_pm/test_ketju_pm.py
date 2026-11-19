@@ -13,11 +13,10 @@ the mesh's relative error (the run-time guard keeps KetjuRegionRadius <= r_s/2, 
 members the pair feels no 20 Msun star at all and moves on a straight line, 1.23 R_out off after a quarter orbit.
 Bars, set before running: the pair CoM relative to the 20 Msun star within 0.05 R_out of the open-box DOP853 three-body solution
 (periodic images change the field by (R_out/L)^3 = 1e-3), the pair's semi-major axis within 1e-2 of the reference, the mass trace and
-the exact energy stages close (gizmo.conservation_trace bars).
-Energy integration, split: the TreePM integration of the outer orbit alone leaves |int_res|/E_scale ~ 2e-2 (a twin run with the pair
-replaced by one 2 Msun star at its CoM, no KETJU: 1.98e-2; the KETJU run 1.84e-2; 2026-11-19), so the trace's 1e-2 integration bar
-is applied to the KETJU part: per full sync, |int_res(KETJU run) - int_res(twin)| / E_scale < 1e-2. The twin's own residual is printed,
-not asserted (TreePM, not KETJU)."""
+the energy step trace closes with its own bars (integration residual 1e-2 of E_scale), as set before the first run.
+The trace's E_pot leaves out each particle's own mesh self-potential (-G m/(sqrt(pi) r_s), 5.1e-9 for the 20 Msun star, more than
+the problem's physical energies); with it, E_scale was inflated about 14x and the residual (1.84e-2 of it at 2026-11-19) the same
+with and without KETJU (single-star twin 1.98e-2)."""
 
 import glob
 import os
@@ -79,18 +78,10 @@ def test_ketju_pm():
     print(f"t = {t:.3e}: pair CoM vs reference {d_rel:.3e} r_out, |da/a| {da:.3e}")
     assert d_rel < 0.05
     assert da < 1e-2
-    rep = keep_and_check_traces(os.path.join(TEST_DIR, "output"), os.path.join(TEST_DIR, "output"), integration_bar=float("inf"))
+    res = _sync_res(f"{TEST_DIR}/output/energy_step_trace.txt")
+    print(f"integration residual: max {max(abs(r) / s for r, s in res.values()):.3e} of E_scale over {len(res)} syncs, E_scale {max(s for r, s in res.values()):.3e}")
+    rep = keep_and_check_traces(os.path.join(TEST_DIR, "output"), os.path.join(TEST_DIR, "output"))
     assert rep.ok, rep.summary()
-    res_k = _sync_res(f"{TEST_DIR}/output/energy_step_trace.txt")
-    clean_test_outputs(TEST_NAME)
-    build_and_run_test(TEST_NAME, 1, 1, param_overrides={"InitCondFile": "ketju_pm_single_ics"})
-    res_t = _sync_res(f"{TEST_DIR}/output/energy_step_trace.txt")
-    common = sorted(set(res_k) & set(res_t))
-    assert len(common) >= 0.9 * len(res_k), "the twin's full syncs do not match the KETJU run's"
-    d_ketju = max(abs(res_k[t][0] - res_t[t][0]) / res_k[t][1] for t in common)
-    twin = max(abs(r) / s for r, s in res_t.values())
-    print(f"integration residual: KETJU part {d_ketju:.3e} of E_scale over {len(common)} syncs, TreePM twin {twin:.3e} (not asserted)")
-    assert d_ketju < 1e-2
 
 
 def test_ketju_pm_comoving():
