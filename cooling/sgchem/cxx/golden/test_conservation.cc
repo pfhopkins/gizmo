@@ -555,7 +555,7 @@ static int phase_R(const ChemTables& TT, const char* tag)
 // ===========================================================================
 // PHASE C -- conservation grid
 // Each (state, backend) call runs in a forked child with a wall-clock limit
-// (C++: CONS_MAX_RHS right-hand-side evaluations, default 2e6, a deterministic limit; wall clock CONS_TIMEOUT s, default 3600,
+// (C++: CONS_MAX_RHS right-hand-side evaluations, default 2e6, a deterministic limit; wall clock CONS_TIMEOUT s, default 120, for stalls outside the RHS,
 // only as a safety net); the child returns the state and its probe
 // deltas through a pipe.  Solver output of the child goes to /dev/null.
 // ===========================================================================
@@ -595,7 +595,7 @@ static int run_forked(int backend, double dt, double nH, double* en, double* y, 
 {
     static const char* to = std::getenv("CONS_TIMEOUT");
     static const char* mr = std::getenv("CONS_MAX_RHS");
-    const double tmax = to ? std::atof(to) : 3600.0;
+    const double tmax = to ? std::atof(to) : 120.0;
     int fd[2];
     if (pipe(fd)) { std::perror("pipe"); std::exit(1); }
     std::fflush(stdout);
