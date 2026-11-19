@@ -44,10 +44,10 @@ static const int estep_stage_exact[] = {
     1, 2, 2, 2, 2, 2, 2};
 
 static const char *estep_book_name[] = {"fb_sn", "fb_wind", "fb_remnant_kin", "cool_solve", "cool_pi", "cool_floor", "cool_cr_loss",
-    "sf_th_locked", "sf_donor", "sf_star_kin", "sf_cr", "merge_heat_not_returned", "kick_floor", "cr_clip", "info_mhd_num", "info_cr_shock"};
+    "sf_th_locked", "sf_donor", "sf_star_kin", "sf_cr", "merge_heat_not_returned", "ketju_chain_pot", "ketju_collision", "kick_floor", "cr_clip", "info_mhd_num", "info_cr_shock"};
 /* stage each booking belongs to; -1 = time integration (kicks/drift), -2 = information only (in no closure) */
 static const int estep_book_stage[] = {ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_COOLING, ESTEP_COOLING, ESTEP_COOLING,
-    ESTEP_COOLING, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_MERGE_SPLIT, -1, -1, -2, -2};
+    ESTEP_COOLING, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_MERGE_SPLIT, -1, -1, -1, -1, -2, -2};
 
 static_assert(sizeof(estep_stage_name) / sizeof(estep_stage_name[0]) == ESTEP_NSTAGE, "stage names");
 static_assert(sizeof(estep_stage_exact) / sizeof(estep_stage_exact[0]) == ESTEP_NSTAGE, "stage kinds");
@@ -196,7 +196,7 @@ void energy_step_trace_report(void)
             fprintf(fd, "# Comoving: LI = int (2 E_kin + E_pot + sum 3(gamma-1) m u + E_mag + 3(gamma_CR-1) E_cr + E_rad) dln a (Layzer-Irvine), trapezoid over syncs; 0 if not comoving.\n");
             fprintf(fd, "# STAGE: exact stage whose window residual = dE(kin+th+cr+rad) - booked exceeds bar = %.1e x (E_abs + |booked|).\n", ESTEP_BAR_EXACT);
             fprintf(fd, "#        d_mag is shown but not closed per stage: tree walks drift Density, and E_B = 1/2|BV|^2 m/rho moves with it.\n");
-            fprintf(fd, "# SYNC: full sync. int_res = (E_tot - E_tot0) + LI - sum(stage dE) - integration bookings (kick_floor, cr_clip).\n");
+            fprintf(fd, "# SYNC: full sync. int_res = (E_tot - E_tot0) + LI - sum(stage dE) - integration bookings (ketju_chain_pot, ketju_collision, kick_floor, cr_clip).\n");
             fprintf(fd, "#       b_info_*: information only, in no closure. tot_res = (E_tot - E_tot0) - all bookings - measured stages.\n");
             fprintf(fd, "#       E_scale: |E| + |E_pot| at the first sync, fixed for the run (the checker adds the booked SN energy from the SN on).\n");
             fprintf(fd, "# cooling stage: the solve (ledger), PI raise, input and output floors, CR losses booked from their formulas at the site;\n");
