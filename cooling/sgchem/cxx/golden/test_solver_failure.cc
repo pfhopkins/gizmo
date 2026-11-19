@@ -6,12 +6,17 @@
 //            replayed from the logged substep state over the rest of the call, C++ CVODE and Fortran DVODE
 //            (states logged at %.9e, pools at %g; abhe = 0.1 in every row, the runs' fixed ABHE).
 //   PHASE H  the hand-off state (hot-CIE ions) at bypass T 4.5e5..5e5 K, nH 1e-2..10, call dt 1e10..3e12 s.
-//   PASS A/H: every call rc = 0 on both backends, no validate_input excess rejection, no CVODE floor hit, and the
+//   PASS A/H: every call rc = 0 on both backends, no validate_input excess rejection, no CVODE floor hit, net 17: no
+//            substep rejected for a D+ excess (the D+ kink, D-60), and the
 //            final T of EACH backend within 1% of the converged solution (Uli 2026-11-19: against the converged
 //            reference, not backend vs backend; production rtol unchanged). The reference is committed with the
 //            test, golden/net<N>_converged_reference.txt: both backends at rtol 1e-8, written by this test built with
 //            -DTEST_WRITE_CONVERGED_REFERENCE (one line per A/H call: tag id dt nH T_C T_F).
 //            Every A/H result goes to the CSV (argument 1) at %.17g for a bitwise comparison.
+//            Known harmless case (Uli's decision 2026-11-19): net 5 keeps Arepo's EPS_MAX = 1e-4, so in gas at
+//            x_H+ ~ 0.9999+ CVODE's error-tolerated H+ overshoot can cross it; the recoverable validate_input rejections of
+//            these four net-5 calls are recorded, not failed: logged cells 6796375 and 1080890, hand-off (cell 1080890's
+//            inputs) nH 10, bypass T 4.99e5 K, dt 7.7044e11 and 3e12 s. rc, floor hits and the 1% T bar stay hard.
 //   PHASE R  (TEST_SGCHEM_FORCED_SOLVER_FAILURE) failures forced per attempt (1 = substep budget of one,
 //            100 = every substep rejected), D-59:
 //            R1/R2  first attempt fails with code 1 / 100 on the logged cells: the retry rescues (rc 0, T within 1% of
@@ -92,6 +97,11 @@ void chem_bind_tables(ChemTables& T);
 void chem_bind_cell(ChemCell& c, const ChemTables& T, int net);
 extern thread_local long cxx_stat_substeps, cxx_stat_retries, cxx_stat_floor_hits;
 extern thread_local long chem_excess_states;
+#ifdef TEST_PARENT_DRIVER
+static long chem_clip_excess_fail[CHEM_NSPEC_MAX];
+#else
+extern thread_local long chem_clip_excess_fail[CHEM_NSPEC_MAX];
+#endif
 #ifdef TEST_PARENT_DRIVER   // bitwise comparison against the driver before D-59
 static long cxx_stat_failure_retries = 0, cxx_stat_tnochem_finishes = 0;
 #else
@@ -270,7 +280,7 @@ static void hot_cie(double* y, double abundD)
 
 static ChemTables* g_cx = nullptr;
 
-struct Res { int rc; long substeps, retries, floors, excess, fretries, tfinish; double e, T, crh; double y[NSPEC]; };
+struct Res { int rc; long substeps, retries, floors, excess, fretries, tfinish, dpfail; double e, T, crh; double y[NSPEC]; };
 
 #ifndef TEST_SGCHEM_FORCED_SOLVER_FAILURE
 static Res run_fortran(const LoggedCell& L, double dt, double yn, double e0, const double* y0)
@@ -295,7 +305,7 @@ static Res run_fortran(const LoggedCell& L, double dt, double yn, double e0, con
     if (setjmp(g_fatal_jmp) == 0) EVOLVE_ABUNDANCES(&dts, &dl, &yn, &dv, &e, y, &ce);
     else r.rc = g_fatal_code ? g_fatal_code : -1;
     g_fatal_armed = 0;
-    r.substeps = r.retries = r.floors = r.excess = r.fretries = r.tfinish = -1; r.crh = 0.0;
+    r.substeps = r.retries = r.floors = r.excess = r.fretries = r.tfinish = r.dpfail = -1; r.crh = 0.0;
     r.e = e; for (int i = 0; i < NSPEC; i++) r.y[i] = y[i];
     r.y[ITMP] = e;
     r.T = temp_of(*g_cx, yn, e, y);
@@ -324,10 +334,18 @@ static Res solve_cell(ChemCell& c, double dt, double yn, double e0, const double
     double e = e0;
     const long s0 = cxx_stat_substeps, r0 = cxx_stat_retries, f0 = cxx_stat_floor_hits;
     const long x0 = chem_excess_states, q0 = cxx_stat_failure_retries, t0 = cxx_stat_tnochem_finishes;
+#if CHEMISTRYNETWORK == 17
+    const long d0 = chem_clip_excess_fail[IDP];
+#endif
     r.rc = cxx_evolve_abundances(dt, c.dl, yn, c.divv, &e, y, c);
     r.substeps = cxx_stat_substeps - s0; r.retries = cxx_stat_retries - r0; r.floors = cxx_stat_floor_hits - f0;
     r.excess = chem_excess_states - x0; r.fretries = cxx_stat_failure_retries - q0; r.tfinish = cxx_stat_tnochem_finishes - t0;
     r.crh = c.cr_ion_heat_int;
+#if CHEMISTRYNETWORK == 17
+    r.dpfail = chem_clip_excess_fail[IDP] - d0;
+#else
+    r.dpfail = 0;
+#endif
     r.e = e; for (int i = 0; i < NSPEC; i++) r.y[i] = y[i];
     r.y[ITMP] = e;
     r.T = temp_of(*g_cx, yn, e, y);
@@ -379,10 +397,19 @@ static int check_pair(const char* tag, const LoggedCell& L, double dt, double yn
     const double Tref = (k < g_refT.size()) ? g_refT[k] : NAN;
 #endif
     double relC = std::fabs(c.T - Tref) / Tref, relF = std::fabs(f.T - Tref) / Tref;
-    int bad = (c.rc != 0) || (f.rc != 0) || (c.excess != 0) || (c.floors != 0) || !(relC <= 0.01) || !(relF <= 0.01);
+    // net 5 calls with known recoverable H+ rejections (Uli 2026-11-19, see the header)
+    int known = 0;
+#if CHEMISTRYNETWORK == 5
+    known = (std::strcmp(tag, "logged") == 0 && (L.id == 6796375 || L.id == 1080890))
+         || (std::strcmp(tag, "hand-off") == 0 && L.id == 1080890 && yn == 10.0 && (dt == 7.7044e11 || dt == 3e12)
+             && std::fabs(bypass_T(*g_cx, yn, e0, y0) - 4.99e5) < 1.0);
+#endif
+    int bad = (c.rc != 0) || (f.rc != 0) || (c.excess != 0 && !known) || (c.floors != 0) || (c.dpfail != 0)
+           || !(relC <= 0.01) || !(relF <= 0.01);
     std::printf("  %-10s %8ld %10.4g %9.4g %9.4g | %4d %6ld %6ld %7ld %5ld %10.4g %8.1e | %4d %10.4g %8.1e | %10.4g%s\n",
                 tag, L.id, dt, yn, temp_of(*g_cx, yn, e0, y0), c.rc, c.substeps, c.retries, c.excess, c.floors, c.T, relC,
-                f.rc, f.T, relF, Tref, bad ? "  <-- FAIL" : "");
+                f.rc, f.T, relF, Tref, bad ? "  <-- FAIL" : (known && c.excess ? "  (known: recoverable H+ rejections)" : ""));
+    if (c.dpfail) std::printf("      %ld substeps rejected for a D+ excess\n", c.dpfail);
     if (bad)
         for (const Res* r : {&c, &f}) {
             std::printf("      %s y:", r == &c ? "C++    " : "Fortran");
@@ -688,8 +715,8 @@ int main(int argc, char** argv)
     }
     std::printf("  GATE H: %d of 60 calls fail\n", nbadH);
     const int ok = (nbadA == 0) && (nph1 == 0) && (nbadH == 0);
-    std::printf("  GATE rc = 0, no validate_input excess rejection, no CVODE floor hit, each backend's T within 1%% of the "
-                "converged reference: %s\n", ok ? "PASS" : "FAIL");
+    std::printf("  GATE rc = 0, no validate_input excess rejection (net 5: four known calls recorded), no CVODE floor hit, "
+                "no D+ excess rejection, each backend's T within 1%% of the converged reference: %s\n", ok ? "PASS" : "FAIL");
 #endif
     if (g_csv) std::fclose(g_csv);
     chem_tables_free(Cx);

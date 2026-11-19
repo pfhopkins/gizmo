@@ -67,6 +67,7 @@ thread_local long chem_excess_states = 0;
 thread_local long cxx_stat_failure_retries = 0;    // solver failures (1, 100) retried with tighter tolerances (D-59)
 thread_local long cxx_stat_tnochem_finishes = 0;   // failed retries above TNOCHEM finished via the TNOCHEM path (D-59)
 thread_local long cxx_stat_floor_hits = 0;         // CVODE substeps rejected at the step-size floor
+thread_local long chem_clip_excess_fail[CHEM_NSPEC_MAX];   // substeps check_abundances rejected for a large excess, per species
 #ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
 thread_local int chem_test_force_failure[2] = {0, 0}; // per attempt: 1 = substep budget of one, 100 = every substep rejected
 thread_local double chem_test_retry_start_y[CHEM_NSPEC_MAX];   // state and time the retry started from
@@ -346,7 +347,7 @@ static int chem_check_abundances(double* y, ChemCell& c, const double* atol)
         if (j != itmp && y[j] > max_abundance[j]) {
             double diff = y[j] - max_abundance[j];
             if (diff < CHEM_RTOL * y[j]) y[j] = max_abundance[j];
-            else return 1;                                  // large excess
+            else { chem_clip_excess_fail[j]++; return 1; }  // large excess
         }
     }
     // the caps bound each species singly, not their sum: project over-subscribed
