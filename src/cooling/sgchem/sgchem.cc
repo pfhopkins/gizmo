@@ -20,12 +20,13 @@ static_assert(SGCHEM_NUM_TRACKED_SPECIES == TRAC_NUM, "SGCHEM_NUM_TRACKED_SPECIE
 #error "TEST_SGCHEM_ONEZONE_WITH_12_PIXEL_COLUMNS is for the standalone one-zone drivers (test/sgchem_onezone) only"
 #endif
 
-/* target of the backend's fatal errors (one rank, possibly inside the threaded cooling loop): abort the whole job, visibly */
+/* target of the backend's fatal errors (one rank, possibly inside the threaded cooling loop): a stop request, drained by the next
+   all-rank poll (endrun; no MPI call here); the caller returns */
 extern "C" void sgchem_fatal_(int *code)
 {
     printf("SGCHEM FATAL: code %d on task %d\n", *code, ThisTask);
     fflush(stdout);
-    MPI_Abort(MPI_COMM_WORLD, 78100 + *code);
+    endrun(78100 + *code);
 }
 
 /* rank 0 checks the installed tables against the hashes these sources expect; a mismatch stops the run */

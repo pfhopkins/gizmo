@@ -80,15 +80,14 @@ static void chem_print_cell_context(const char* why, double time, double yn, dou
     std::fflush(stderr);
 }
 
-// switch: 1 = keep the Fortran "last RHS evaluation wins" semantics
+// TEST_SGCHEM_LEGACY_LAST_RHS_LAMBDA: keep the Fortran "last RHS evaluation wins" semantics (comparisons with the reference only)
 static int chem_legacy_lambda()
 {
-    static int cached = -1;
-    if (cached < 0) {
-        const char* e = std::getenv("CHEMCXX_LEGACY_LAMBDA");
-        cached = (e && e[0] == '1') ? 1 : 0;
-    }
-    return cached;
+#ifdef TEST_SGCHEM_LEGACY_LAST_RHS_LAMBDA
+    return 1;
+#else
+    return 0;
+#endif
 }
 
 static inline int rhs_dispatch(double t, const double* y, double* ydot, ChemCell& c)
@@ -119,12 +118,15 @@ static int cvode_rhs(sunrealtype t, N_Vector yy, N_Vector yp, void* user_data)
 }
 
 // DVODE is silent about recoverable trouble; keep CVODE equally quiet so the
-// benchmark logs stay readable.  Set CHEMCXX_VERBOSE=1 to restore the chatter.
+// benchmark logs stay readable.  SGCHEM_PRINT_CVODE_ERRORS restores the chatter.
 static void cvode_err_handler(int error_code, const char* module,
                               const char* function, char* msg, void* /*eh_data*/)
 {
-    static int verbose = -1;
-    if (verbose < 0) { const char* e = std::getenv("CHEMCXX_VERBOSE"); verbose = (e && *e != '0'); }
+#ifdef SGCHEM_PRINT_CVODE_ERRORS
+    const int verbose = 1;
+#else
+    const int verbose = 0;
+#endif
     if (verbose && error_code < 0)
         std::fprintf(stderr, "[CVODE] %s::%s: %s\n", module, function, msg);
 }

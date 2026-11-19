@@ -30,7 +30,7 @@ bool kj_kokkos_owned = false;
 void kj_abort(const char *msg)
 {
     fprintf(stderr, "KETJU MSTAR: %s\n", msg); fflush(stderr);
-    MPI_Abort(MPI_COMM_WORLD, 1);
+    endrun(91990); /* a stop request, drained by the next all-rank poll; rank 0 of the region still broadcasts its state */
 }
 
 void kj_kokkos_finalize()

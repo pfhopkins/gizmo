@@ -57,10 +57,10 @@ void chem_cxx_tables_init(const struct ChemInitParams* p)
     cfg.dust_to_gas_ratio = p->dust_to_gas_ratio;
     cfg.cosmic_ray_ion_rate = p->cosmic_ray_ion_rate;
     cfg.abhe = g_abhe;
-    const char* dd = (p->tables_dir && *p->tables_dir) ? p->tables_dir : std::getenv("CHEMCXX_DATADIR"); // parameter, else environment (standalone drivers)
-    if (!dd || chem_cxx_tables_init(cfg, dd)) { int c = 3; sgchem_fatal_(&c); }
+    const char* dd = p->tables_dir; // SGChemTablesPath (GIZMO) or the driver's argument; no environment fallback
+    if (!dd || !*dd || chem_cxx_tables_init(cfg, dd)) { int c = 3; sgchem_fatal_(&c); return; } // the stop request returns: no table use after it
 #if CHEMISTRYNETWORK == 18
-    if (n18_tables_load(dd)) { int c = 3; sgchem_fatal_(&c); }
+    if (n18_tables_load(dd)) { int c = 3; sgchem_fatal_(&c); return; }
 #endif
 
     // init-time constants; per-cell fields are overwritten in chem_cxx_begin_cell
