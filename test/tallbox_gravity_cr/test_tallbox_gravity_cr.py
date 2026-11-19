@@ -8,8 +8,10 @@ One build, one driver run (startup + one gravity pass): a uniform gas slab of Si
     Bar (Uli): |g_self/(-2 pi G Sigma) - 1| < 1e-3 at all three, g_self = probe g_z minus the Hu+21 field (formula below).
 (b) Hu+21 field (stellar disk a_z = -2 pi G Sigma_* tanh(z/H_*), vertical NFW a_z = -G M(<r) z/r^3, r = sqrt(z^2 + R0^2)): the tidal
     term must be T_zz = d a_z/dz and the potential Phi with a_z = -dPhi/dz, Phi(0) = 0, so E_pot can carry sum m Phi_ext. Central
-    differences with dz = 1e-4 kpc (error (dz/H_*)^2 ~ 2e-7): bars 1e-5 of max|T_zz| and of max|a_z|. global.cc's E_pot of the
-    probes must equal sum(1/2 m Phi_self + m Phi_ext) to 1e-10 (external potential at full weight, not halved as pair sums).
+    differences with dz = 1e-4 kpc (error (dz/H_*)^2 ~ 2e-7): bars 1e-5 of max|T_zz| and of max|a_z|. One call of the production
+    GravAccel_HuTallbox adds exactly T_zz(z) to each probe's tidal_tensorps[2][2] (1e-12). global.cc's E_pot of the probes equals
+    sum(1/2 m Phi_self + m Phi_ext) with Phi_ext from this test's own formula (1e-10; full weight, not halved as pair sums):
+    Phi_ext = 2 pi G Sigma_* H_* ln cosh(z/H_*) - 4 pi G rho_s r_s^3 [ln(1 + r/r_s)/r - ln(1 + R0/r_s)/R0], r = sqrt(z^2 + R0^2).
 (c) GHOSDT field as Hu, Sternberg & van Dishoeck 2021 (ApJ 920, 44; arXiv:2103.03889) Sec. 2.2: u_UV = I_UV u_UV,0 with
     I_UV = max(Sigma_SFR/Sigma_SFR,0, I_UV,min), u_UV,0 = 8.94e-14 erg cm^-3 (Draine field), Sigma_SFR,0 = 2.4e-3 Msun yr^-1 kpc^-2
     (Fuchs+09), SFR = M(stars younger than 30 Myr)/30 Myr over the box area. Floor: G0 = 0.324e-2 Habing, the one floor of all paths
@@ -65,6 +67,12 @@ def hu_az(z, G):
     return -two_pi_G_sig * np.tanh(z / 0.25) - fourpiG * (np.log(1 + x) - x / (1 + x)) * z / r ** 3
 
 
+def hu_phi(z, G):
+    two_pi_G_sig = 2 * np.pi * G * 4.0e-3; fourpiG = 4 * np.pi * G * 9.5e-4 * 17.0 ** 3
+    r = np.sqrt(z * z + 64.0)
+    return two_pi_G_sig * 0.25 * np.log(np.cosh(z / 0.25)) - fourpiG * (np.log(1 + r / 17.0) / r - np.log(1 + 8.0 / 17.0) / 8.0)
+
+
 def test_sheet_gravity(out):
     G = float([l for l in out if l and l[0] == "G"][0][1])
     g0 = 2 * np.pi * G * SIGMA
@@ -84,8 +92,17 @@ def test_hu_tidal_and_potential(out):
     e_t = np.abs(tzz - daz).max() / np.abs(tzz).max(); e_p = np.abs(az - mdphi).max() / np.abs(az).max()
     print(f"T_zz vs d a_z/dz: {e_t:.2e}; a_z vs -dPhi/dz: {e_p:.2e}; Phi(0) = {phi[z == 0][0]:.2e}")
     assert e_t < 1e-5 and e_p < 1e-5 and phi[z == 0][0] == 0
-    ep = [l for l in out if l and l[0] == "EPOT3"][0]
-    assert abs(float(ep[1]) / float(ep[2]) - 1) < 1e-10, ep
+    G = float([l for l in out if l and l[0] == "G"][0][1])
+    tz = np.array([[float(v) for v in l[1:]] for l in out if l and l[0] == "TZZ"])
+    assert len(tz) == 3, "no tidal tensor lines"
+    for zz, dt, ref in tz:
+        print(f"z = {zz:.2f}: tidal_tensorps[2][2] gained {dt:.12e}, T_zz {ref:.12e}")
+        assert abs(dt / ref - 1) < 1e-12
+    e3 = float([l for l in out if l and l[0] == "EPOT3"][0][1])
+    pp = np.array([[float(v) for v in l[2:]] for l in out if l and l[0] == "PPOT"])
+    e_ref = sum(0.5 * m * pot + m * hu_phi(zz, G) for zz, m, pot in pp)
+    print(f"E_pot of the probes {e3:.12e}, expected {e_ref:.12e}")
+    assert abs(e3 / e_ref - 1) < 1e-10
 
 
 def test_ghosdt_field_hu21(out):

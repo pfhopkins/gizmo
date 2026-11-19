@@ -4,7 +4,8 @@ CR_BACKGROUND_IONRATE_ATTENUATED scales CosmicRayIonRate by STARFORGE's column a
 (2.23e-3 g cm^-2), else exp(-Sigma/100 g cm^-2) Sigma_0/Sigma, pixel mean. Upstream's Get_CosmicRayIonizationRate_cgs adds the
 radioactive ionisation that no column shields: 1e-21 Z/Zsun (K-40 and other long-lived species) plus 1e-19 Fe/Fe_sun (short-lived
 isotopes, Adams+2014). At Sigma = 1e3 g cm^-2 in every pixel the attenuated rate is 3e-17 x e^-10 x 2.2e-6 ~ 3e-27 s^-1.
-Bar, set before running: the chemistry's zeta for that cell >= 1e-21 Z/Zsun. Driver: test/tallbox_gravity_cr/zeta_gravity_driver.cc
+Bar, set before running: zeta = 3e-17 f_cr + 1e-21 Z/Zsun + 1e-19 Fe/Fe_sun to 1e-12, f_cr = exp(-10) 2.23e-3/1e3 (same in
+every pixel), Z/Zsun and Fe/Fe_sun of the cell as GIZMO stores them. Driver: test/tallbox_gravity_cr/zeta_gravity_driver.cc
 (startup, one gravity pass, then chem_fill_inputs for gas cell 0 with its TreeCol gas columns set)."""
 
 import os
@@ -14,6 +15,7 @@ import sys
 import tempfile
 from os.path import abspath, dirname, join
 
+import numpy as np
 import pytest
 
 from gizmo.test import build_gizmo_for_test, link_test_driver
@@ -40,6 +42,7 @@ def test_sgchem_cr_floor():
     shutil.rmtree(run, ignore_errors=True)
     z = [l.split() for l in r.stdout.splitlines() if l.startswith("ZETA")]
     assert z, "driver did not finish:\n" + (r.stdout + r.stderr)[-3000:]
-    zeta, zrel = float(z[0][1]), float(z[0][2])
-    print(f"zeta at Sigma = 1e3 g/cm^2: {zeta:.3e} (floor 1e-21 Z/Zsun = {1e-21 * zrel:.3e})")
-    assert zeta >= 1e-21 * zrel
+    zeta, zrel, rate, fe = float(z[0][1]), float(z[0][2]), float(z[0][4]), float(z[0][5])
+    ref = rate * np.exp(-10.0) * 2.23e-3 / 1e3 + 1e-21 * zrel + 1e-19 * fe
+    print(f"zeta at Sigma = 1e3 g/cm^2: {zeta:.12e}, expected {ref:.12e} (attenuated {rate * np.exp(-10.0) * 2.23e-3 / 1e3:.3e}, Z/Zsun {zrel:.4f}, Fe/Fe_sun {fe:.4f})")
+    assert abs(zeta / ref - 1) < 1e-12

@@ -5,9 +5,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 #include "declarations/allvars.h"
 #include "core/proto.h"
 #include "cooling/sgchem/chem_interface.h"
+#ifdef GALSF_RESOLVEDISM_TALLBOX
+void GravAccel_HuTallbox(void); /* gravity/analytic_gravity.h, compiled into gravtree.o */
+#endif
 
 int main(int argc, char **argv)
 {
@@ -31,8 +35,15 @@ int main(int argc, char **argv)
         printf("HU %.17g %.17g %.17g %.17g %.17g %.17g\n", z, az, tzz, phi, (azp - azm) / (2 * d), -(phip - phim) / (2 * d));
     }
     compute_global_quantities_of_system();
-    double epot_probes = 0; for(int i = 0; i < NumPart; i++) {if(P[i].Type == 3) {epot_probes += 0.5 * P[i].Mass * P[i].Potential + P[i].Mass * analytic_external_potential(i);}}
-    printf("EPOT3 %.17g %.17g\n", SysState.EnergyPotComp[3], epot_probes);
+    printf("EPOT3 %.17g\n", SysState.EnergyPotComp[3]);
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type == 3) {printf("PPOT %llu %.17g %.17g %.17g\n", (unsigned long long)P[i].ID, P[i].Pos[2] - boxHalf_Z, P[i].Mass, P[i].Potential);}}
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+    { /* what one call of the production routine adds to each probe's tidal tensor */
+        std::vector<double> t0(NumPart); for(int i = 0; i < NumPart; i++) {t0[i] = P[i].tidal_tensorps[2][2];}
+        GravAccel_HuTallbox();
+        for(int i = 0; i < NumPart; i++) {if(P[i].Type == 3) {double az_, tzz_, phi_; hu_tallbox_field(P[i].Pos[2] - boxHalf_Z, &az_, &tzz_, &phi_); printf("TZZ %.17g %.17g %.17g\n", P[i].Pos[2] - boxHalf_Z, P[i].tidal_tensorps[2][2] - t0[i], tzz_);}}
+    }
+#endif
 #endif
 #if defined(GHOSDT_G0_CR) && defined(HU21_SIGMA_SFR0)
     {double m = HU21_SIGMA_SFR0 * 3.0e7 * (boxSize_X * UNIT_LENGTH_IN_KPC) * (boxSize_Y * UNIT_LENGTH_IN_KPC) / UNIT_MASS_IN_SOLAR; /* Sigma_SFR,0 over 30 Myr */
@@ -45,7 +56,11 @@ int main(int argc, char **argv)
         struct ChemInputs in; memset(&in, 0, sizeof(in));
         in.dt_code = 1e-6; in.u_code = CellP[c].InternalEnergy;
         chem_fill_inputs(c, &in);
-        printf("ZETA %.17g %.17g %.17g %.17g\n", in.cosmic_ray_ion_rate, (double)P[c].Metallicity[0] / All.SolarAbundances[0], in.G0, All.CosmicRayIonRate);
+        double fe = 0;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+        fe = P[c].Metallicity[MET_OF(ELEM_Fe)] / resolvedism_solar_massfrac[ELEM_Fe];
+#endif
+        printf("ZETA %.17g %.17g %.17g %.17g %.17g\n", in.cosmic_ray_ion_rate, (double)P[c].Metallicity[0] / All.SolarAbundances[0], in.G0, All.CosmicRayIonRate, fe);
     }
     fflush(stdout);
     MPI_Finalize();
