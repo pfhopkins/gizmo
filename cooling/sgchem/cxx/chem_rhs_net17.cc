@@ -399,16 +399,18 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     if (c.abundD == 0.0 || c.no_dchem == 1) {
         ydot[idp] = 0.0;
     } else {
-        ydot[idp] = (ch98  * abhp  * abDI
+        // over-filled D (D+ + HD > abundD): ionization of that DI fraction stays restoring (D-60)
+        const double abDI_ion = std::min(abDI, c.abundD - abdp - abhd);
+        ydot[idp] = (ch98  * abhp  * abDI_ion
                   -  ch99  * abdp  * abHI
                   -  ch100 * abdp  * abh2
                   +  ch101 * abhd  * abhp
                   -  ch13  * abdp  * abe
-                  +  ch11  * abDI  * abe
-                  +  ch32  * abhep * abDI
+                  +  ch11  * abDI_ion  * abe
+                  +  ch32  * abhep * abDI_ion
                   -  ch33  * abheI * abdp) * yn
-                  +  cr1a  * abDI
-                  +  ph38  * abDI;
+                  +  cr1a  * abDI_ion
+                  +  ph38  * abDI_ion;
     }
 
     // --- HD (.F:848-860) ---

@@ -737,6 +737,7 @@ attempt_start:
             const double hmin = CHEM_HMIN_EPS * (t_start + dt);
             CVodeSetMinStep(w->mem, hmin);
             const long nan_before = chem_nan_states;
+            if (c.net == 17) CVodeSetStopTime(w->mem, t_start + dt);   // net 17: no step past the substep end (D-60)
             int flag = CVode(w->mem, t_start + dt, w->yv, &tret, CV_NORMAL);
             if (force == 100) flag = CV_ERR_FAILURE;          // test: every substep rejected
             cxx_stat_substeps++;

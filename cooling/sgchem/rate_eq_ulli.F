@@ -45,7 +45,7 @@ c
 c
 c D+/HD abundances
 c
-      REAL abdp, abhd, abDI
+      REAL abdp, abhd, abDI, abDI_ion
 c
       REAL num, denom
       REAL comp_equilib
@@ -834,16 +834,18 @@ c
       if (abundD .eq. 0d0 .or. no_dchem .eq. 1) then
         ydot(idp) = 0d0
       else
-        ydot(idp) = (ch98   * abhp  * abDI          ! Charge transfer: D + H+
+c over-filled D: ionization of that DI fraction stays restoring (D-60)
+        abDI_ion = min(abDI, abundD - abdp - abhd)
+        ydot(idp) = (ch98   * abhp  * abDI_ion      ! Charge transfer: D + H+
      $             - ch99   * abdp  * abHI          ! Charge transfer: H + D+
      $             - ch100  * abdp  * abh2          ! HD form: D+ + H2
      $             + ch101  * abhd  * abhp          ! HD dest: HD + H+
      $             - ch13   * abdp  * abe           ! Case B recomb.
-     $             + ch11   * abDI  * abe           ! Collisional ionization
-     $             + ch32   * abhep * abDI          ! Charge transfer: He+ + D
+     $             + ch11   * abDI_ion  * abe       ! Collisional ionization
+     $             + ch32   * abhep * abDI_ion      ! Charge transfer: He+ + D
      $             - ch33   * abheI * abdp) * yn    ! Charge transfer: He  + D+
-     $             + cr1a   * abDI                  ! Cosmic ray ion: D + CR
-     $             + ph38   * abDI                  ! Photoionization
+     $             + cr1a   * abDI_ion              ! Cosmic ray ion: D + CR
+     $             + ph38   * abDI_ion              ! Photoionization
       endif
 c
 c Hydrogen deuteride (HD)
