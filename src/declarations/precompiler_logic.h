@@ -1200,6 +1200,9 @@
 #if defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB) && !defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK)
 #error "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB extends the hydro recompute of RESOLVED_ISM_FB_AFTER_CLOSING_KICK: set both"
 #endif
+#if defined(TEST_PRINT_METAL_CHANGE_OF_REPEATED_HYDRO_PASS) && !(defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(METALS))
+#error "TEST_PRINT_METAL_CHANGE_OF_REPEATED_HYDRO_PASS reports on the hydro pass RESOLVED_ISM_FB_AFTER_CLOSING_KICK repeats (needs METALS)"
+#endif
 #if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(DM_HEATING)
 #error "RESOLVED_ISM_FB_AFTER_CLOSING_KICK repeats the hydro pass, which resets DtInternalEnergy: DM_HEATING's addition after the first pass would be lost"
 #endif

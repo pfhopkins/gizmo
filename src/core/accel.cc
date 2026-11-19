@@ -88,7 +88,18 @@ void resolved_ism_fb_after_closing_kick(void)
     if(n_tot > 0)
     {
         if(ThisTask == 0) {printf("RESOLVED_ISM_FB_AFTER_CLOSING_KICK: %d feedback receivers, repeating the hydro pass\n", n_tot);}
+#ifdef TEST_PRINT_METAL_CHANGE_OF_REPEATED_HYDRO_PASS
+        double *z0 = (double *) mymalloc("z0_repeat", (NumPart + 1) * sizeof(double));
+        for(int i = 0; i < NumPart; i++) {z0[i] = (P[i].Type == 0) ? P[i].Metallicity[0] : 0;}
+#endif
         HydroPassRepeatsStep = 1; compute_hydro_densities_and_forces(); HydroPassRepeatsStep = 0;
+#ifdef TEST_PRINT_METAL_CHANGE_OF_REPEATED_HYDRO_PASS
+        double dz = 0, dz_all = 0; /* the metal exchange was applied by the step's first pass: the repeat changes no metallicity */
+        for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0) {dz = DMAX(dz, fabs(P[i].Metallicity[0] - z0[i]));}}
+        myfree(z0);
+        MPI_Allreduce(&dz, &dz_all, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        if(ThisTask == 0) {printf("TEST_PRINT_METAL_CHANGE_OF_REPEATED_HYDRO_PASS: max |dZ| %.6e\n", dz_all);}
+#endif
     }
 }
 #endif
