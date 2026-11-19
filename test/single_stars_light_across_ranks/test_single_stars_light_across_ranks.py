@@ -9,6 +9,11 @@ momentum per step (MomWinds.txt) of N ranks are compared with 1 rank.
 Bar (set before the first run): in 'switch', for every cell with G0_FUV(1 rank) above 1e-3 of its maximum and for every step,
 |X_N / X_1 - 1| <= max(2 x the control's largest deviation, 1 %) (1 % = the node refresh tolerance), for X = G0_FUV and the momentum.
 Mass constant to 1e-12; gas energy change minus the ledger's chemistry, floor and radiation-pressure kick rows below 1e-3 of the initial thermal energy.
+These runs use the opt-in GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE (Uli 2026-11-19: trunk's bounded staleness by default).
+Default build (no flag), bar set before the run: star light alone never causes a tree build: on 2 and 4 ranks 'switch' has as
+many tree builds as 'control'; the nodes keep the light of the last build on every rank, so G0_FUV and the momentum per step of N
+ranks agree with 1 rank within the same bar as above. The faint group's G0_FUV deviation from the rebuild-every-step reference
+without any build in the run (the staleness the default accepts over 2 kyr) is printed, not a bar.
 """
 import os
 import shutil
@@ -21,6 +26,7 @@ import pytest
 from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, get_cooling_tables, mpi_launch_command
 
 NAME = "single_stars_light_across_ranks"
+OPT_IN = "GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE"
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parent / "treecol_pixels"))
 from make_treecol_pixels_ics import make_treecol_pixels_ics, lattice  # noqa: E402
@@ -40,6 +46,8 @@ def built():
     get_cooling_tables(str(HERE))
     if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         build_gizmo_for_test(NAME)
+        os.replace(HERE / "GIZMO", HERE / "GIZMO_default")
+        build_gizmo_for_test(NAME, extra_config_flags=(OPT_IN,))
     return t
 
 
@@ -60,8 +68,8 @@ def faint_star(tab):
     return best[1]
 
 
-def run(tables, case, ranks):
-    key = (case, ranks)
+def run(tables, case, ranks, exe="GIZMO"):
+    key = (case, ranks, exe)
     if key in RES:
         return RES[key]
     rho = 1.0 * MP / 0.7065 * PC ** 3 / MSUN
@@ -78,7 +86,7 @@ def run(tables, case, ranks):
                                                                       for o in np.array(np.meshgrid([-1, 1], [-1, 1], [-1, 1])).reshape(3, -1).T]
     else:
         stars = [(M_STAR, t_pms + 0.3 * life, np.full(3, 0.3 * L))]
-    d = HERE / f"run_{case}_r{ranks}"
+    d = HERE / f"run_{case}_r{ranks}{'' if exe == 'GIZMO' else '_' + exe}"
     if d.exists():
         shutil.rmtree(d)
     (d / "output").mkdir(parents=True)
@@ -95,7 +103,7 @@ def run(tables, case, ranks):
     p = "\n".join([l for l in p.splitlines() if not (l.split() and l.split()[0] in over)] + [f"{k:27s} {v}" for k, v in over.items()]) + "\n"
     (d / f"{NAME}.params").write_text(p)
     with open(d / f"test_{NAME}.out", "w") as out:
-        subprocess.run(mpi_launch_command(ranks) + [str(HERE / "GIZMO"), f"{NAME}.params", "2", "0"], cwd=d, stdout=out,
+        subprocess.run(mpi_launch_command(ranks) + [str(HERE / exe), f"{NAME}.params", "2", "0"], cwd=d, stdout=out,
                        stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True)
     snaps = sorted((d / "output").glob("snapshot_*.hdf5"))
     with h5py.File(snaps[-1], "r") as F:
@@ -107,8 +115,8 @@ def run(tables, case, ranks):
     return RES[key]
 
 
-def deviations(tables, case, ranks):
-    a, b = run(tables, case, 1), run(tables, case, ranks)
+def deviations(tables, case, ranks, exe="GIZMO"):
+    a, b = run(tables, case, 1, exe), run(tables, case, ranks, exe)
     lit = a["g0"] > 1e-3 * a["g0"].max()
     dg = np.abs(b["g0"][lit] / a["g0"][lit] - 1)
     ta, tb = a["rows"][:, 0], b["rows"][:, 0]
@@ -179,3 +187,21 @@ def test_faint_star_drift_seen(built, ranks):
     print(f"{ranks} ranks: {sel.sum()} cells lit mainly by the faint group, beyond 2.5 cells: max |G0/G0_ref - 1| {dev.max():.3e}, median {np.median(dev):.2e}; "
           f"tree builds {a['builds']} vs reference {ref['builds']}")
     assert sel.sum() > 0 and dev.max() < 0.02
+
+
+@pytest.mark.parametrize("ranks", RANKS[1:])
+def test_default_light_causes_no_tree_build(built, ranks):
+    """default build: light switches cause no build and the ranks still agree (all hold the last build's light)"""
+    exe = "GIZMO_default"
+    cg, cp, _ = deviations(built, "control", ranks, exe)
+    bar = max(2 * max(cg.max(), cp.max() if cp.size else 0), 0.01)
+    dg, dp, onoff = deviations(built, "switch", ranks, exe)
+    sw, ct = run(built, "switch", ranks, exe), run(built, "control", ranks, exe)
+    print(f"default {ranks} ranks: tree builds switch {sw['builds']}, control {ct['builds']}; switch vs 1 rank: max |dG0| {dg.max():.3e}, "
+          f"max |dp| {dp.max() if dp.size else 0:.3e}, one-sided momentum steps {int(onoff.sum())}; bar {bar:.2e}")
+    a, ref = run(built, "faint", ranks, exe), run(built, "faint_ref", 1)
+    sel = ref["g0"] > 1e-3 * ref["g0"].max()
+    dev = np.abs(a["g0"][sel] / ref["g0"][sel] - 1)
+    print(f"default {ranks} ranks, faint group without a build for 2 kyr: G0_FUV vs rebuild-every-step max {dev.max():.3e}, median {np.median(dev):.2e} (not a bar)")
+    assert sw["builds"] == ct["builds"]
+    assert dg.max() <= bar and (dp.max() if dp.size else 0) <= bar and not onoff.any()

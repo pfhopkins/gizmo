@@ -1,8 +1,10 @@
 # single_stars_light_across_ranks
 
-A star that starts to shine or goes dark between tree builds must light the gas the same on every rank. The light switch
-refreshes the node luminosities without a build; other ranks' copies of a rank's nodes (imported subtrees) are refreshed
-only by the exchange in a build.
+A star that starts to shine or goes dark between tree builds must light the gas the same on every rank. By default (trunk's
+bounded staleness, Uli 2026-11-19) the nodes keep the light of the last build on every rank. With the opt-in
+`GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE` a light switch or a drift of more than 1 % of a star's own light refreshes the node
+luminosities (one rank) or rebuilds the tree (several ranks: other ranks' copies of a rank's nodes are re-sent only by a build).
+All tests below except the default one use the opt-in build.
 
 Problem: 16^3 lattice of 1 Msun cells at n_H = 1 (thin), SGChem network 5, TreeCol band fluxes from the gravity walk,
 radiation pressure per cell, 2 kyr, no tree or domain rebuild after the start (`DomainBuild_ActiveFraction`,
@@ -21,3 +23,7 @@ Inputs: `SUNDIALS_DIR`; tables from `GIZMO_STELLA_TABLES_DIR` (else `scripts/get
   the root's); against a run that rebuilds the tree every step, G0_FUV agrees to 2 % in the cells beyond 2.5 cells from the
   group that the group lights most (there the walk uses the group's node). The refresh tolerance used to be 1 % of the root's
   luminosity, so faint stars never triggered a refresh.
+- `test_default_light_causes_no_tree_build` (2, 4 ranks; build without the flag): bar set before the run: `switch` has as many
+  tree builds as `control`, and G0_FUV and the momentum per step of N ranks agree with 1 rank within the bar of
+  `test_light_switch_seen_across_ranks`. The faint group's G0_FUV deviation from the rebuild-every-step reference with no build
+  for 2 kyr (the staleness the default accepts) is printed, not a bar.
