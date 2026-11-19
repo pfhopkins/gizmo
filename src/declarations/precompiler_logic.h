@@ -45,9 +45,6 @@
 #ifndef GALSF_FB_MECHANICAL
 #define GALSF_FB_MECHANICAL
 #endif
-#ifndef SNE_BROADCAST_TIMESTEP
-#define SNE_BROADCAST_TIMESTEP
-#endif
 #if !defined(SGCHEM_DGR_REMY_RUYER14) && !defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY) && !defined(GALSF_ISMDUSTCHEM_MODEL)
 #define SGCHEM_DGR_REMY_RUYER14 /* dust-to-gas ratio of Remy-Ruyer+14 below 0.26 Zsun */
 #endif

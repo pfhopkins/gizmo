@@ -1,5 +1,6 @@
-# Stella cloud production flags plus turbulent driving; star formation off by parameter (CritPhysDensity 1e30)
+# Stella cloud production flags plus turbulent driving and the opt-in supernova causal wake (SNE_BROADCAST_TIMESTEP, no longer in STELLA_DEFAULTS); star formation off by parameter (CritPhysDensity 1e30)
 STELLA_DEFAULTS
+SNE_BROADCAST_TIMESTEP
 GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
 SGCHEM
 CHEMISTRYNETWORK=5
