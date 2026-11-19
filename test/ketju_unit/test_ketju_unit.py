@@ -1,5 +1,5 @@
-"""KETJU integrator (MSTAR) unit tests against GIZMO's submodules ketju-integrator (C++/Kokkos, fork main) and
-ketju-integrator-c (C library, fork branch ketju-c).
+"""KETJU integrator (MSTAR) unit tests against source checkouts of ketju-integrator (C++/Kokkos, branch main; KETJU_SOURCE_DIR)
+and ketju-integrator-c (C library, branch ketju-c; KETJU_C_SOURCE_DIR): KETJU is a separate install, not part of GIZMO.
 
 Default: the C++/Kokkos library's tests (tests/, ctest): KETJU's unit tests and the GIZMO additions on mstar::mstar,
 C vs Kokkos against stored C results (mstar_compare_c), extra forces, embedded tide, driver.
@@ -17,8 +17,10 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-KETJU_SRC = REPO_ROOT / "ketju-integrator"
-KETJU_C_SRC = REPO_ROOT / "ketju-integrator-c"
+KETJU_SRC = Path(os.environ.get("KETJU_SOURCE_DIR", "/nonexistent"))      # checkout of ketju-integrator at the Makefile's KETJU_REF
+KETJU_C_SRC = Path(os.environ.get("KETJU_C_SOURCE_DIR", "/nonexistent"))  # checkout of ketju-integrator at KETJU_C_REF (with --recurse-submodules)
+if not (KETJU_SRC.is_dir() and KETJU_C_SRC.is_dir()):
+    pytest.skip("set KETJU_SOURCE_DIR and KETJU_C_SOURCE_DIR to the ketju-integrator source checkouts", allow_module_level=True)
 EXE = "ketju-integrator-unit-tests"
 NUM_MAKE_JOBS = 4
 
@@ -72,7 +74,7 @@ def _kokkos_root():
 def test_ketju_kokkos_ctests(tmp_path):
     for tool in ("cmake", "make", "g++"):
         assert shutil.which(tool), f"{tool} not on PATH (load the gcc and cmake modules)"
-    assert (KETJU_SRC / "include" / "mstar" / "mstar.hpp").is_file(), "ketju-integrator not at the pinned commit (git submodule update --init)"
+    assert (KETJU_SRC / "include" / "mstar" / "mstar.hpp").is_file(), "KETJU_SOURCE_DIR has no include/mstar/mstar.hpp"
     build = tmp_path / "build"
     _run(["cmake", "-S", str(KETJU_SRC), "-B", str(build), "-DCMAKE_CXX_COMPILER=g++",
           f"-DKokkos_ROOT={_kokkos_root()}", "-DCMAKE_BUILD_TYPE=Release"], tmp_path, 600)
@@ -87,7 +89,7 @@ def test_ketju_kokkos_ctests(tmp_path):
 def unit_test_exe(tmp_path_factory):
     for tool in ("cmake", "make", "mpicc", "mpicxx", "mpiexec"):
         assert shutil.which(tool), f"{tool} not on PATH (load the gcc, openmpi and cmake modules)"
-    assert (KETJU_C_SRC / "thirdparty" / "googletest" / "CMakeLists.txt").is_file(), "vendored googletest missing (git submodule update --init --recursive ketju-integrator-c)"
+    assert (KETJU_C_SRC / "thirdparty" / "googletest" / "CMakeLists.txt").is_file(), "vendored googletest missing in KETJU_C_SOURCE_DIR (clone it with --recurse-submodules)"
     work = tmp_path_factory.mktemp("ketju_unit")
     src = work / "ketju-integrator-c"
     shutil.copytree(KETJU_C_SRC, src, ignore=shutil.ignore_patterns("bin", "lib", "build*", "*.so", "*.a"))
