@@ -3523,6 +3523,9 @@ void read_parameter_file(char *fname)
     }
 #endif
 #endif
+#if defined(GHOSDT_G0_CR) && defined(SGCHEM)
+    if(All.ComovingIntegrationOn) {if(ThisTask == 0) {printf("GHOSDT_G0_CR with SGCHEM (Hu+21 field per box area) is for non-comoving boxes only\n");} endrun(8861);}
+#endif
 
 
 #ifdef GR_TABULATED_COSMOLOGY_W

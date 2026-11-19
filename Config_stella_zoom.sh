@@ -1,4 +1,4 @@
-# Stella cosmological zoom configuration (the z = 6 zoom chains: net 17, periodic box with PM, G0 floor 0, CR_SCALE_WITH_G0)
+# Stella cosmological zoom configuration (the z = 6 zoom chains: net 17, periodic box with PM, G0 floor 0.324e-2 (fixed, G0 param 0), CR_SCALE_WITH_G0)
 # plus Pop III star formation, the Remy-Ruyer+14 dust-to-gas ratio and primordial helium.
 #!/bin/bash
 # Config.sh for resolved-ISM single-star galaxy formation (gizmo-cpp)
@@ -125,4 +125,4 @@ OUTPUT_INDIVIDUAL_COOLRATES
 BOX_PERIODIC
 PMGRID=256
 PM_PLACEHIGHRESREGION=1+2        % gas (type 0) + high-res DM (type 1) on the high-res PM grid
-CR_SCALE_WITH_G0                 % zoom: zeta = clamp(G0/1.7 x CosmicRayIonRate, 1e-21, 2e-16); 1e-21 in pristine gas (Uli 2026-11-10)
+CR_SCALE_WITH_G0                 % zoom: zeta = clamp(G0/1.7 x CosmicRayIonRate, 1e-21, 2e-16); minimum 0.324e-2/1.7 x 3e-17 = 5.7e-20 through the fixed G0 floor (CR rule open, Uli)

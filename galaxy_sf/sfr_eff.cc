@@ -1428,7 +1428,6 @@ void init_clouds(void)
 /* Hu+21 Sec. 2.2: Sigma_SFR / Sigma_SFR,0, with Sigma_SFR = FactorG0 (Mgas0 / 4 Gyr) over the x-y box area (non-comoving tallbox) */
 double ghosdt_hu21_sigma_sfr_ratio(void)
 {
-    if(All.ComovingIntegrationOn) {endrun(8861);} /* box area in physical units only */
     double sigma_sfr = All.FactorG0 * All.Mgas0 * UNIT_MASS_IN_SOLAR / 4.0e9 / ((boxSize_X * UNIT_LENGTH_IN_KPC) * (boxSize_Y * UNIT_LENGTH_IN_KPC)); /* Msun yr^-1 kpc^-2 */
     return sigma_sfr / HU21_SIGMA_SFR0;
 }

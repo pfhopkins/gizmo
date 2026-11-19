@@ -381,7 +381,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 
     double UV_flux_tot = 0.0;
     double LW_flux_tot = 0.0;
-    double UV_flux_min_pix = G0_FLOOR_BACKGROUND / NPIX / (fac_flux2energy / u_Hab_FUV); /* All.G0 scales only the background floor */
+    double UV_flux_min_pix = G0_FLOOR_BACKGROUND / NPIX / (fac_flux2energy / u_Hab_FUV); /* the fixed background floor G0_FLOOR_BACKGROUND */
     double LW_flux_min_pix = 0.1 * UV_flux_min_pix;
     for(i = 0; i < NPIX; i++) {
 #if defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED) && !defined(RADTRANSFER)
@@ -480,9 +480,9 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         double u_NUV_cgs = 0;
 #endif
 #ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
-        /* Stella M1 hand-off as TREE_RAD: G0 = u(6-13.6 eV)/u_Hab, G0_LW = u_LW/u_Hab_LW, same per-pixel floors (x All.G0); stellar pixels arrive attenuated (pix_att=0) */
+        /* Stella M1 hand-off as TREE_RAD: G0 = u(6-13.6 eV)/u_Hab, G0_LW = u_LW/u_Hab_LW, same per-pixel floors (G0_FLOOR_BACKGROUND); stellar pixels arrive attenuated (pix_att=0) */
         double u_Hab_FUV = HABING_EGY_DENSITY_6_13P6EV_CGS;
-        struct ChemFUVField fuv = chem_fuv_field_from_band_energy(u_NUV_cgs + u_PE_cgs, u_Hab_FUV, u_LW_cgs, 0, 0, 0, 0, 0); /* stellar field unscaled; All.G0 in the floors */
+        struct ChemFUVField fuv = chem_fuv_field_from_band_energy(u_NUV_cgs + u_PE_cgs, u_Hab_FUV, u_LW_cgs, 0, 0, 0, 0, 0); /* stellar field unscaled; the fixed floor */
         double G0_star = fuv.G0;
         double G0_LW_star = fuv.G0_LW;
         /* direction split: (1-f) isotropic + f from the pixel facing the M1 flux source */
@@ -527,7 +527,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         /* G0: FUV field (8-13.6 eV, already includes LW) in Habing units — drives the
            molecular photochemistry (H2/CO dissociation, C ionization).
            FLOOR (2026-07-04, Uli): use the SAME floor as the tree-column/G0_VARIABLE path
-           (G0_FLOOR_BACKGROUND = 5.508e-3 for All.G0=1.7; see UV_flux_min_pix above), so
+           (G0_FLOOR_BACKGROUND = 0.324e-2; see UV_flux_min_pix above), so
            M1 and subgrid share one far-field floor. RT_ISRF_BACKGROUND must be OFF —
            the diffuse field is represented by this floor, identically in both schemes. */
         double G0_floor_treerad = G0_FLOOR_BACKGROUND;

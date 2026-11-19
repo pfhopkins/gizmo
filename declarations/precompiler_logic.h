@@ -1459,6 +1459,9 @@
 #define GRAVITY_ANALYTIC
 #endif
 
+#if defined(SGCHEM_ELECTRONS_AND_HYDROGEN_FRACTION_FROM_NETWORK) && (!defined(SGCHEM) || CHEMISTRYNETWORK != 5)
+#error "SGCHEM_ELECTRONS_AND_HYDROGEN_FRACTION_FROM_NETWORK is complete for CHEMISTRYNETWORK 5 only"
+#endif
 #ifdef GRAVITY_PERIODIC_XY /* self-gravity (shear-)periodic in x/y, open in z, by a 2D Ewald correction on the tree */
 #if !defined(BOX_PERIODIC) || defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_X) || defined(BOX_REFLECT_Y) || defined(BOX_OUTFLOW_Y)
 #error "GRAVITY_PERIODIC_XY requires BOX_PERIODIC with periodic x and y boundaries"

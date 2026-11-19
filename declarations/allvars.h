@@ -142,7 +142,7 @@ extern short int special_boundary_condition_xyz_def_outflow[3];
 #ifdef GHOSDT_G0_CR /* GHOSDT; the SGCHEM field follows Hu+21 Sec. 2.2: u_UV = (Sigma_SFR/Sigma_SFR,0) u_UV,0, SFR over 30 Myr, floor G0_FLOOR_Z0 */
 #define HU21_SIGMA_SFR0 2.4e-3 /* Msun yr^-1 kpc^-2, solar neighbourhood (Fuchs+09) */
 #define HU21_U_UV0 8.94e-14    /* erg cm^-3, Draine field */
-#define ISRF_BACKGROUND_STRENGTH (DMAX(All.FactorG0 * All.InterstellarRadiationFieldStrength, 0.324e-2/1.7))
+#define ISRF_BACKGROUND_STRENGTH (DMAX(All.FactorG0 * All.InterstellarRadiationFieldStrength, G0_FLOOR_Z0/1.7))
 #else
 #define ISRF_BACKGROUND_STRENGTH (All.InterstellarRadiationFieldStrength)
 #endif

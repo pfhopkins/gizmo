@@ -13,7 +13,7 @@ One build, one driver run (startup + one gravity pass): a uniform gas slab of Si
     sum(1/2 m Phi_self + m Phi_ext) with Phi_ext from this test's own formula (1e-10; full weight, not halved as pair sums):
     Phi_ext = 2 pi G Sigma_* H_* ln cosh(z/H_*) - 4 pi G rho_s r_s^3 [ln(1 + r/r_s)/r - ln(1 + R0/r_s)/R0], r = sqrt(z^2 + R0^2).
 (c) GHOSDT field as Hu, Sternberg & van Dishoeck 2021 (ApJ 920, 44; arXiv:2103.03889) Sec. 2.2: u_UV = I_UV u_UV,0 with
-    I_UV = max(Sigma_SFR/Sigma_SFR,0, I_UV,min), u_UV,0 = 8.94e-14 erg cm^-3 (Draine field), Sigma_SFR,0 = 2.4e-3 Msun yr^-1 kpc^-2
+    I_UV = Sigma_SFR/Sigma_SFR,0, u_UV,0 = 8.94e-14 erg cm^-3 (Draine field), Sigma_SFR,0 = 2.4e-3 Msun yr^-1 kpc^-2
     (Fuchs+09), SFR = M(stars younger than 30 Myr)/30 Myr over the box area. Floor: G0 = 0.324e-2 Habing, the one floor of all paths
     (Uli 2026-11-19; Hu+21's I_UV,min = 0.002 would be 3.40e-3).
     In Habing units (u_Hab = 5.257e-14 erg cm^-3, 6-13.6 eV) G0 = max(Sigma_SFR/Sigma_SFR,0 u_UV,0/u_Hab, 0.324e-2).

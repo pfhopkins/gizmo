@@ -65,7 +65,7 @@ BiniX                           0
 BiniY                           0
 BiniZ                           1.0e-12         % physical Gauss at z=50 (seed; first guess)
 ShieldingLength                 0.034           % 50 pc physical in kpc/h
-G0                              0.0             % no FUV floor in the zooms (Uli 2026-11-10); UVB from TREECOOL
+G0                              0.0             % G0 param 0; the code's fixed floor G0 = 0.324e-2 still applies; UVB from TREECOOL
 CosmicRayIonRate                3.0e-17         % scaled by G0_local/1.7 (CR_SCALE_WITH_G0), floor 1e-21
 DGRnormalized                   1.0
 DeutAbund                       2.6e-5
