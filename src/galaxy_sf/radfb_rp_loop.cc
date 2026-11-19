@@ -412,6 +412,9 @@ int radfb_rp_local_fill(int i,
     loc->f_lum_ion    = (MyFloat)f_lum_ion;
     loc->rng_key      = rp_draw_rng_key(P_host[i]);
     loc->wt_sum       = 0;
+#if RADFB_RP_KICK_ITER == 2
+    loc->q_abs_sum    = 0;
+#endif
     loc->wt_area      = 0;                /* zero at iter-0 entry; filled by
                                            * iteration 0's after_iter before iter 1 */
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
@@ -466,7 +469,7 @@ void RadFBRPSpec::ghost_write_detector_begin(const neighbor_loop_args& args,
                                               const NeighborLoopPlan& /*plan*/)
 {
     Aux *aux = nlr_aux<RadFBRPSpec>(args);
-    if (aux == nullptr || aux->iter_index != 1) return;
+    if (aux == nullptr || aux->iter_index != RADFB_RP_KICK_ITER) return;
     ::ghost_write_detector_begin("radfbrp");
 }
 
@@ -474,7 +477,7 @@ void RadFBRPSpec::ghost_write_detector_end(const neighbor_loop_args& args,
                                             const NeighborLoopPlan& /*plan*/)
 {
     Aux *aux = nlr_aux<RadFBRPSpec>(args);
-    if (aux == nullptr || aux->iter_index != 1) return;
+    if (aux == nullptr || aux->iter_index != RADFB_RP_KICK_ITER) return;
     ::ghost_write_detector_end();
 }
 
@@ -482,7 +485,7 @@ void RadFBRPSpec::ghost_writeback_begin(const neighbor_loop_args& args,
                                          const NeighborLoopPlan& /*plan*/)
 {
     Aux *aux = nlr_aux<RadFBRPSpec>(args);
-    if (aux == nullptr || aux->iter_index != 1) return;
+    if (aux == nullptr || aux->iter_index != RADFB_RP_KICK_ITER) return;
     ghost_writeback_begin_bundle(radfbrp_ghost_writeback_bundle_ptr());
 }
 
@@ -490,7 +493,7 @@ void RadFBRPSpec::ghost_writeback_end(const neighbor_loop_args& args,
                                        const NeighborLoopPlan& /*plan*/)
 {
     Aux *aux = nlr_aux<RadFBRPSpec>(args);
-    if (aux == nullptr || aux->iter_index != 1) return;
+    if (aux == nullptr || aux->iter_index != RADFB_RP_KICK_ITER) return;
     ghost_writeback_end_bundle(radfbrp_ghost_writeback_bundle_ptr());
 }
 

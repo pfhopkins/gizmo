@@ -13,6 +13,8 @@
  *             iteration 0's after_iter; atomic_add to P[j].Vel, CellP[j].VelPred,
  *             P[j].dp; accumulate source-side jet_momentum_used into
  *             AccumData; ghost-writeback bundle fires normally.
+ *   With single-star bands and mass-kernel weights (RADFB_RP_KICK_ITER 2) iter 1 sums
+ *             |w (r - m)| and the kicks move to iter 2, normalised by that sum.
  *
  * SSOT for radfb_rp physics types and per-pair kernel — supersedes the
  * pre-port `radfb_local_functions.h` and the legacy `radfb_local_gpu.cc`,
@@ -102,6 +104,12 @@ RadFBRPCallScalars radfb_rp_build_call_scalars(void);
  * route through scalars; canonical rt_kappa retains legacy transitive All.*
  * reach (matches legacy radfb_local_gpu.cc; cleanup still pending).
  * ========================================================================== */
+#if defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) && defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS)
+#define RADFB_RP_KICK_ITER 2 /* iter 1 sums |w (r - m)|, the norm of the balanced kick directions, as the winds' (stella_dev 14c0d2795) */
+#else
+#define RADFB_RP_KICK_ITER 1
+#endif
+
 struct RadFBRPCallScalars {
     NlrCommonScalars common;             /* cf_atime, cf_a2inv, cf_a3inv, ... */
 
@@ -143,6 +151,9 @@ struct RadFBRPLocalIn {
 #ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
     double         mean_dir[3];           /* staged weighted mean of the directions to the cells */
 #endif
+#if RADFB_RP_KICK_ITER == 2
+    double         q_abs_sum;             /* staged sum |w (r - m)| from iter 1: the kick normalisation */
+#endif
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
     MyFloat        delta_v_imparted_rp;   /* per-kick target velocity (stochastic threshold) */
 #endif
@@ -168,6 +179,9 @@ struct RadFBRPAccum {
                                   * the absorbed-fraction estimate needs a bare cell count. */
 #ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
     double   wt_dir[3];          /* iter 0 output: Sum w r, r the unit vector to the cell */
+#endif
+#if RADFB_RP_KICK_ITER == 2
+    double   q_abs;              /* iter 1 output: Sum |w (r - m)| */
 #endif
     double   n_touched;          /* gas cells actually kicked */
     double   mom_coupled;        /* Sum of mass * |dv| given to those cells */
@@ -266,7 +280,11 @@ static void radfb_rp_pair_kick(
     double h_j   = Pj.Get_Particle_Size();
     double rkern = (double)loc.KernelRadius;
 #ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
+#if RADFB_RP_KICK_ITER == 2
+    double wk    = (loc.q_abs_sum > 0) ? radfb_rp_mass_kernel_weight(Mass_j, r2, rkern) / loc.q_abs_sum : 0; /* |dp_j| = wk |r - m| dE sums to dE */
+#else
     double wk    = radfb_rp_mass_kernel_weight(Mass_j, r2, rkern) / (double)loc.wt_sum;
+#endif
 #else
     double eps   = (double)loc.SourceKernelRadius;
     double wk    = radfb_rp_kernel_weight(h_j, r2, rkern * rkern, eps * eps)
@@ -463,7 +481,7 @@ struct RadFBRPSpec {
      * no per-active scratch. */
     using IterControl  = Iterative;
     using IterScratch  = NoIterScratch;
-    static constexpr int    max_iters                    = 2;
+    static constexpr int    max_iters                    = RADFB_RP_KICK_ITER + 1;
     static constexpr bool   mode_a_rebuild_csr_every_iter = false;
     /* Single j-mask subgroup (gas-only); SupportsSubgroups omitted →
      * default false_type. Runner runtime-asserts single subgroup at
@@ -549,6 +567,9 @@ struct RadFBRPSpec {
 #ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
         for(int k = 0; k < 3; k++) {ACCUM_ADD(wt_dir[k])}
 #endif
+#if RADFB_RP_KICK_ITER == 2
+        ACCUM_ADD(q_abs)
+#endif
         ACCUM_ADD(wt_sum)
         ACCUM_ADD(jet_momentum_used)
         ACCUM_ADD(wt_area)
@@ -599,6 +620,12 @@ struct RadFBRPSpec {
             }
             return IterResult{IterStatus::NeedsMore, h_search_current};
         }
+#if RADFB_RP_KICK_ITER == 2
+        if (iter == 1) {
+            if (per_active_local != nullptr) {per_active_local[call_slot].q_abs_sum = accum.q_abs;}
+            return IterResult{(accum.q_abs > 0) ? IterStatus::NeedsMore : IterStatus::Converged, h_search_current};
+        }
+#endif
         /* iter >= 1 — kicks applied; we're done. */
         return IterResult{IterStatus::Converged, h_search_current};
     }
@@ -617,6 +644,9 @@ struct RadFBRPSpec {
         accum.sum_taufac        = 0;
 #ifdef GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS
         for(int k = 0; k < 3; k++) {accum.wt_dir[k] = 0;}
+#endif
+#if RADFB_RP_KICK_ITER == 2
+        accum.q_abs = 0;
 #endif
     }
 
@@ -711,6 +741,13 @@ struct RadFBRPSpec {
             accum.wt_sum  += radfb_rp_kernel_weight(h_j, r2, h2, eps * eps);
 #endif
             accum.wt_area += h_j * h_j;
+#if RADFB_RP_KICK_ITER == 2
+        } else if (active.iter_index == 1) {
+            /* iter 1 : sum |w (r - m)| with the staged mean direction m */
+            double w_mk = radfb_rp_mass_kernel_weight((double)Pj.Mass, r2, sqrt(h2)), r_inv = 1.0 / sqrt(r2), q2 = 0;
+            for(int k = 0; k < 3; k++) {double qk = dp[k] * r_inv - active.local.mean_dir[k]; q2 += qk * qk;}
+            accum.q_abs += w_mk * sqrt(q2);
+#endif
         } else {
             /* iter 1 : apply kicks using staged active.local.wt_sum */
             radfb_rp_pair_kick(active.local, cs, Pj, Cj,

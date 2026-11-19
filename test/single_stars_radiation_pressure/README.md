@@ -8,6 +8,7 @@ kernel column, IR boost on the absorbed light), distributed with the loop's own 
 |---|---|
 | `test_momentum_budget` | momentum offered per step (MomWinds.txt) = the estimator from the tables, disjoint bands (2 %); coupled = offered on average (5 %); 2 ranks |
 | `test_sources` | 40 and 3 Msun stars push, a 1.5 Msun star does not (sources from 2 Msun), nor a 40 Msun star particle without a single-star record: two sources every step, offered = sum of the two estimators (2 %) |
+| `test_anisotropic_budget` | production weighting (`GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS`), cells on the -x side of the star 100 x lighter: coupled = offered every step (1e-4, the log's digits); the balanced kick directions are normalised by sum |w (r - m)| (stella_dev 14c0d2795); bar set before the run |
 | `test_count_6_8ev_twice` | `GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE` (6-8 eV also in the NUV term): budget ratio = table ratio (1e-3) |
 
 Inputs: `SUNDIALS_DIR`; tables from `GIZMO_STELLA_TABLES_DIR` (else `scripts/get_stella_tables.sh`).
