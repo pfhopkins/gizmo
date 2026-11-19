@@ -10,12 +10,14 @@ Bar (set before the first run): in 'switch', for every cell with G0_FUV(1 rank) 
 |X_N / X_1 - 1| <= max(2 x the control's largest deviation, 1 %) (1 % = the node refresh tolerance), for X = G0_FUV and the momentum.
 Mass constant to 1e-12; gas energy change minus the ledger's chemistry, floor and radiation-pressure kick rows below 1e-3 of the initial thermal energy.
 These runs use the opt-in GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE.
-Default build (no flag: GALSF_SINGLE_STARS_LIGHT_EXCHANGE, Uli 2026-11-19, GKS-95 option c: a star's light change is added up
-its node chain and sent to the ranks holding copies of those nodes, no build), bars set before the run: star light alone never
-causes a tree build: on 2 and 4 ranks 'switch' has as many tree builds as 'control'; G0_FUV and the momentum per step of N ranks
-agree with 1 rank within the same bar as above; and on 1, 2 and 4 ranks the final G0_FUV of 'switch' agrees with the opt-in
-build's (which refreshes or rebuilds) to 1 % (the drift tolerance of both). The exchange's cost (calls, stars, bytes, seconds)
-and the faint group's G0_FUV deviation from the rebuild-every-step reference are printed, not bars.
+Opt-in GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES (Uli 2026-11-19, GKS-95 option c: a star's light change is added up its
+node chain and sent to the ranks holding copies of those nodes, no build), bars set before the run: star light alone never
+causes a tree build (on 2 and 4 ranks 'switch' has as many builds as 'control'); G0_FUV and the momentum per step of N ranks
+agree with 1 rank within the same bar as above; on 1, 2 and 4 ranks the final G0_FUV of 'switch' agrees with the refresh
+build's to 1 % (the drift tolerance of both). Its cost (calls, stars, bytes, seconds) is printed.
+Default build (no flag; Phil's bounded staleness, Uli 2026-11-19): star light causes no build ('switch' has as many builds as
+'control'); the ranks' disagreement (G0_FUV, momentum per step against 1 rank) is measured and printed as the documented
+default behaviour, not a bar; so is the faint group's G0_FUV deviation from the rebuild-every-step reference.
 """
 import os
 import shutil
@@ -29,6 +31,7 @@ from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, get_c
 
 NAME = "single_stars_light_across_ranks"
 OPT_IN = "GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE"
+COPIES = "GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES"
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE.parent / "treecol_pixels"))
 from make_treecol_pixels_ics import make_treecol_pixels_ics, lattice  # noqa: E402
@@ -49,6 +52,8 @@ def built():
     if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         build_gizmo_for_test(NAME)
         os.replace(HERE / "GIZMO", HERE / "GIZMO_default")
+        build_gizmo_for_test(NAME, extra_config_flags=(COPIES,))
+        os.replace(HERE / "GIZMO", HERE / "GIZMO_copies")
         build_gizmo_for_test(NAME, extra_config_flags=(OPT_IN,))
     return t
 
@@ -195,30 +200,46 @@ def test_faint_star_drift_seen(built, ranks):
 
 
 @pytest.mark.parametrize("ranks", RANKS)
-def test_default_light_matches_refresh(built, ranks):
-    """default build: the light the walk sees after the switches equals the opt-in refresh's on the same ranks to 1 %"""
-    a, b = run(built, "switch", ranks, "GIZMO_default"), run(built, "switch", ranks)
+def test_node_copies_match_refresh(built, ranks):
+    """GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES: the light the walk sees after the switches equals the refresh build's on
+    the same ranks to 1 %"""
+    a, b = run(built, "switch", ranks, "GIZMO_copies"), run(built, "switch", ranks)
     lit = b["g0"] > 1e-3 * b["g0"].max()
     dev = np.abs(a["g0"][lit] / b["g0"][lit] - 1)
     n, st, by, sec = a["xcost"]
-    print(f"default {ranks} ranks: G0_FUV vs opt-in max {dev.max():.3e}, median {np.median(dev):.2e} over {lit.sum()} cells; "
+    print(f"node copies {ranks} ranks: G0_FUV vs refresh max {dev.max():.3e}, median {np.median(dev):.2e} over {lit.sum()} cells; "
           f"exchange: {n} calls, {st:.0f} star changes, {by:.0f} bytes to other ranks, {sec:.3e} s (sum of per-call max); tree builds {a['builds']}")
     assert dev.max() <= 0.01
 
 
 @pytest.mark.parametrize("ranks", RANKS[1:])
-def test_default_light_causes_no_tree_build(built, ranks):
-    """default build: light switches cause no build and the ranks agree (the light changes reach every copy of the nodes)"""
-    exe = "GIZMO_default"
+def test_node_copies_ranks_agree(built, ranks):
+    """GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES: light switches cause no build and the ranks agree (the changes reach every
+    copy of the nodes)"""
+    exe = "GIZMO_copies"
     cg, cp, _ = deviations(built, "control", ranks, exe)
     bar = max(2 * max(cg.max(), cp.max() if cp.size else 0), 0.01)
     dg, dp, onoff = deviations(built, "switch", ranks, exe)
     sw, ct = run(built, "switch", ranks, exe), run(built, "control", ranks, exe)
-    print(f"default {ranks} ranks: tree builds switch {sw['builds']}, control {ct['builds']}; switch vs 1 rank: max |dG0| {dg.max():.3e}, "
+    print(f"node copies {ranks} ranks: tree builds switch {sw['builds']}, control {ct['builds']}; switch vs 1 rank: max |dG0| {dg.max():.3e}, "
           f"max |dp| {dp.max() if dp.size else 0:.3e}, one-sided momentum steps {int(onoff.sum())}; bar {bar:.2e}")
+    assert sw["builds"] == ct["builds"]
+    assert dg.max() <= bar and (dp.max() if dp.size else 0) <= bar and not onoff.any()
+
+
+@pytest.mark.parametrize("ranks", RANKS[1:])
+def test_default_light_causes_no_tree_build(built, ranks):
+    """default build (bounded staleness): light switches cause no build; the ranks' disagreement is measured and printed (the
+    documented default behaviour, not a bar)"""
+    exe = "GIZMO_default"
+    cg, cp, _ = deviations(built, "control", ranks, exe)
+    dg, dp, onoff = deviations(built, "switch", ranks, exe)
+    sw, ct = run(built, "switch", ranks, exe), run(built, "control", ranks, exe)
+    print(f"default {ranks} ranks (measured, not a bar): tree builds switch {sw['builds']}, control {ct['builds']}; switch vs 1 rank: "
+          f"max |dG0| {dg.max():.3e} ({np.sum(dg > 0.01)} of {dg.size} cells above 1 %), max |dp| {dp.max() if dp.size else 0:.3e}, "
+          f"one-sided momentum steps {int(onoff.sum())}; control max |dG0| {cg.max():.2e}")
     a, ref = run(built, "faint", ranks, exe), run(built, "faint_ref", 1)
     sel = ref["g0"] > 1e-3 * ref["g0"].max()
     dev = np.abs(a["g0"][sel] / ref["g0"][sel] - 1)
     print(f"default {ranks} ranks, faint group without a build for 2 kyr: G0_FUV vs rebuild-every-step max {dev.max():.3e}, median {np.median(dev):.2e} (not a bar)")
     assert sw["builds"] == ct["builds"]
-    assert dg.max() <= bar and (dp.max() if dp.size else 0) <= bar and not onoff.any()

@@ -64,7 +64,7 @@
 #include "gpu_topology_finalize.h"       /* gpu_tree_alloc_bytes / gpu_tree_free_bytes */
 #include "gpu_gravity_tree.h"            /* suns_backup: the tree's own direct-child slots; the node mirror's foreign capacity */
 
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
 #include <algorithm>
 /* Single-star light exchange: per destination, the wire index each shipped node (key = node index) and each shipped star leaf or
    star inside a shipped aggregate (key = -1 - particle index) took, sorted by key; per sender, where its records were installed */
@@ -569,7 +569,7 @@ static void let_refresh_open_constants(void)
  * one's storage instead of reallocating. */
 struct LETPackContext {
     struct LETCoverNode *cover;          /* AABB-tree nodes, root at index 0 */
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
     std::vector<std::pair<int,int>> *light_map; /* this destination's entry of g_light_wire_map */
 #endif
 #if defined(KETJU_REGULARIZATION)
@@ -1420,7 +1420,7 @@ static int let_emit_leaf_group(struct LETPackContext *pk, int no, int child, int
         if(pk->pack_oom) return -1;
         *first_wire = *last_wire = (*count)++;
         (*buf)[*first_wire] = cand;
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
         if(pk->light_map) {for(int m = 0; m < n; m++) {if(P[pk->member_idx[m]].Type == 4) {pk->light_map->push_back({-1 - pk->member_idx[m], *first_wire});}}}
 #endif
     }
@@ -2917,7 +2917,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const unsigned char *rec
         const int hcount = recv_hdr_count_per_rank[r];
         if(rcount == 0) {continue;}   /* and then no headers either, checked above */
         const int slot_base = All.TreeNodeIndexBase + MaxNodes + foreign_slot_prefix[r];
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
         if(r < (int) g_light_slot_base.size()) {g_light_slot_base[r] = slot_base; g_light_recv_count[r] = rcount;}
 #endif
         for(int hh = 0; hh < hcount; hh++)
@@ -2943,7 +2943,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const unsigned char *rec
 extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 {
     if(foreign_needed_out) *foreign_needed_out = 0;
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
     let_light_maps_reset();
 #endif
     /* Defensive no-op if no foreign-node index range has been established yet -- before the
@@ -3148,13 +3148,13 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 #else
         struct LETPackContext *pk = &g_pack_ctx[0];
 #endif
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
         pk->light_map = &g_light_wire_map[r];
 #endif
         n = let_pack_for_rank(pk, r, all_payloads, own_topleaves.data(), (int) own_topleaves.size(),
                               &pk->scratch, &pk->scratch_cap,
                               &send_hdr_per_rank[r], &hcap, &hcnt);
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
         pk->light_map = NULL;
         for(int j = 0; j < n && !pk->pack_oom; j++) { /* nodes and single star leaves; aggregates were keyed by their star members */
             const struct LETNodeWire &w = pk->scratch[j];
@@ -3169,7 +3169,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
         {
             if(send_per_rank[r]) {free(send_per_rank[r]); send_per_rank[r] = NULL;}
             n = 0; hcnt = 0;
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
             g_light_wire_map[r].clear();
 #endif
         }

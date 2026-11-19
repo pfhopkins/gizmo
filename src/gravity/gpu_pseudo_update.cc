@@ -755,7 +755,7 @@ extern "C" int gpu_set_soa_sibling(int abs_idx, int new_sibling)
     return 0;
 }
 
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
 extern "C" int gpu_mirror_put_node_light(int no)
 {
     struct gpu_gravity_tree_soa_t *m = gpu_gravity_tree_soa();

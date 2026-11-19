@@ -359,12 +359,12 @@ void gravity_tree(void)
        all-node pass on the smallest steps. A build is forced once insertions pass 1% of the particles. */
     {
         int TreeMomentsStaleFlag_global;
-#if defined(KETJU_REGULARIZATION) || defined(GALSF_SINGLE_STARS_LIGHT_EXCHANGE)
+#if defined(KETJU_REGULARIZATION) || defined(GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES)
         int stale_loc[3] = {TreeMomentsStaleFlag, 0, 0}, stale_glob[3] = {0, 0, 0}; /* no collective of their own on steps without a chain candidate or a light change */
 #ifdef KETJU_REGULARIZATION
         stale_loc[1] = ketju_active_candidates();
 #endif
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
         stale_loc[2] = (single_star_light_exchange_scan(SINGLE_STAR_TREE_LUM_TOL) > 0);
 #endif
         MPI_Allreduce(stale_loc, stale_glob, 3, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -382,7 +382,7 @@ void gravity_tree(void)
         if(HermiteOnlyFlag) {light_switch_rebuild = 0;}
 #endif
 #endif
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
         if(stale_glob[2] || TreeMomentsStaleFlag_global)
         {
             if(TreeMomentsStaleFlag_global) {single_star_light_exchange_scan(0);} /* the refresh below recomputes the home rank's nodes from the live light: every copy takes it first */

@@ -1510,11 +1510,14 @@
 #if defined(GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE) && !(defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES))
 #error "GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE needs single stars (GALSF_SINGLE_STARS_FROM_IMF, GALSF_SINGLE_STARS_EVOLUTION_TABLES) whose light the gravity tree carries"
 #endif
-#if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && !defined(GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE) && !defined(GALSF_SINGLE_STARS_LIGHT_EXCHANGE)
-#define GALSF_SINGLE_STARS_LIGHT_EXCHANGE /* between builds a single star's light change (switch, or drift > 1 % of its own) is added up its node chain on its rank and sent to the ranks holding copies of those nodes; no build (Uli 2026-11-19, GKS-95) */
+#if defined(GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES) && !(defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES))
+#error "GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES needs single stars (GALSF_SINGLE_STARS_FROM_IMF, GALSF_SINGLE_STARS_EVOLUTION_TABLES) whose light the gravity tree carries"
 #endif
-#if defined(GALSF_SINGLE_STARS_LIGHT_EXCHANGE) && defined(MAINTAIN_TREE_IN_REARRANGE)
-#error "GALSF_SINGLE_STARS_LIGHT_EXCHANGE finds a star's imported copies by its particle index, which MAINTAIN_TREE_IN_REARRANGE moves while the tree stands"
+#if defined(GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES) && defined(GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE)
+#error "GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES and GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE are two answers to the same staleness: choose one"
+#endif
+#if defined(GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES) && defined(MAINTAIN_TREE_IN_REARRANGE)
+#error "GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES finds a star's imported copies by its particle index, which MAINTAIN_TREE_IN_REARRANGE moves while the tree stands"
 #endif
 
 /* M1-specific options [make sure to add the flux moment */

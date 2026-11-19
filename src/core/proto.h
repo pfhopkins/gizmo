@@ -1148,14 +1148,14 @@ void particle2in_addFB_fromstars(struct addFB_evaluate_data_in_ *in, int i, int 
 double single_star_ionizing_luminosity_cgs(int i);
 double single_star_ionizing_photon_rate(int i);
 double single_star_ionizing_onset_yr(int i);
-#if defined(GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE) || defined(GALSF_SINGLE_STARS_LIGHT_EXCHANGE)
+#if defined(GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE) || defined(GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES)
 #define SINGLE_STAR_TREE_LUM_TOL 1.e-2 /* a star's band luminosity may drift this fraction of its own before the nodes follow it */
 #endif
 #ifdef GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE
 void single_star_light_switch_check(void);
 void single_star_tree_lum_store(void);
 #endif
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
 void single_star_tree_lum_set_from_build(void);
 int single_star_light_exchange_scan(double tol);
 void single_star_light_exchange(void);

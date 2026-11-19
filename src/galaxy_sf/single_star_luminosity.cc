@@ -244,7 +244,7 @@ void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code)
 }
 #endif
 
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE /* default for single stars (Uli 2026-11-19, GKS-95 option c) */
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES /* opt-in (Uli 2026-11-19, GKS-95 option c); default: bounded staleness */
 #include "../gravity/forcetree.h"
 #include "../gravity/gpu_pseudo_update.h"
 int let_light_wire_of(int R, int key);

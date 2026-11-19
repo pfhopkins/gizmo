@@ -59,7 +59,7 @@ int gpu_set_soa_nextnode(int abs_idx, int new_nextnode);
  * with their AoS edits between full tree builds. */
 int gpu_set_soa_sibling(int abs_idx, int new_sibling);
 
-#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
 /* Mirror node `no`'s light (band luminosities, luminosity-weighted centre and its velocity) from AoS into its SoA slot,
  * after the single-star light exchange changed them between builds.  Returns 0 on success or when there is no mirror. */
 int gpu_mirror_put_node_light(int no);
