@@ -241,7 +241,7 @@ void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code)
 }
 #endif
 
-#if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#ifdef GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE /* opt-in: by default the nodes keep the light of the last build (trunk's bounded staleness) */
 #define SINGLE_STAR_TREE_LUM_TOL 1.e-2 /* a star's band luminosity may drift this fraction of its own before the nodes are refreshed */
 /* before a gravity call: refresh the tree node moments (luminosities) if a single star started to shine, started to ionise or went
    dark since the last call, or its band luminosity moved by more than SINGLE_STAR_TREE_LUM_TOL of its own since the nodes last

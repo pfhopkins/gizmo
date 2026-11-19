@@ -366,9 +366,12 @@ void gravity_tree(void)
 #else
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
 #endif
-        int light_switch_rebuild = (TreeMomentsStaleFlag_global >= 2 && NTask > 1); /* a star's light changed: other ranks hold copies of the nodes, only a build re-sends them */
+        int light_switch_rebuild = 0;
+#ifdef GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE
+        light_switch_rebuild = (TreeMomentsStaleFlag_global >= 2 && NTask > 1); /* a star's light changed: other ranks hold copies of the nodes, only a build re-sends them */
 #ifdef HERMITE_INTEGRATION
         if(HermiteOnlyFlag) {light_switch_rebuild = 0;}
+#endif
 #endif
         if(light_switch_rebuild) {gravity_tree_build_main();}
         else if(TreeMomentsStaleFlag_global)

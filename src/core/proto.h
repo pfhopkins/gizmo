@@ -1146,8 +1146,10 @@ void particle2in_addFB_fromstars(struct addFB_evaluate_data_in_ *in, int i, int 
 double single_star_ionizing_luminosity_cgs(int i);
 double single_star_ionizing_photon_rate(int i);
 double single_star_ionizing_onset_yr(int i);
+#ifdef GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE
 void single_star_light_switch_check(void);
 void single_star_tree_lum_store(void);
+#endif
 int force_tree_is_allocated(void);
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION

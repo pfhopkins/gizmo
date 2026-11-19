@@ -46,12 +46,12 @@ void compute_grav_accelerations(void)
 #endif
 
   {
-#if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#ifdef GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE
     single_star_light_switch_check(); /* node luminosities follow a star that starts to shine, goes dark or drifts */
     TreeMomentsRenewed = 0;
 #endif
     gravity_tree();		/* computes gravity accel. */
-#if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#ifdef GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE
     single_star_tree_lum_store();
 #endif
 

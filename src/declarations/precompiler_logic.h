@@ -1465,6 +1465,10 @@
 #endif
 #endif /* end of otvet-specific options */
 
+#if defined(GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE) && !(defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES))
+#error "GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE needs single stars (GALSF_SINGLE_STARS_FROM_IMF, GALSF_SINGLE_STARS_EVOLUTION_TABLES) whose light the gravity tree carries"
+#endif
+
 /* M1-specific options [make sure to add the flux moment */
 #if defined(RT_M1)
 #define RT_EVOLVE_FLUX // evolve flux moment [not just energy moment assumed by FLD/OTVET]
