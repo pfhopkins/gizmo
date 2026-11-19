@@ -132,6 +132,7 @@ def test_ketju_pm_guard():
     and GIZMO must abort with the guard's message (endrun 8862). KetjuRegionRadius 240 AU (< r_s/2, a = 200 AU pair still captured): a
     check on the radius alone would pass; the members' separation does not."""
     import pytest
+    subprocess.run([sys.executable, "make_ketju_pm_ics.py"], cwd=TEST_DIR, check=True)  # the harness expects <name>_ics.hdf5
     subprocess.run([sys.executable, "make_ketju_pm_ics.py", "ketju_pm_guard_ics.hdf5", "5e4"], cwd=TEST_DIR, check=True)
     clean_test_outputs(TEST_NAME)
     with pytest.raises(RuntimeError):
