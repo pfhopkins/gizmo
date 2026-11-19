@@ -211,6 +211,7 @@ void GravAccel_RayleighTaylorTest()
  * the box midplane (boxHalf_Z, periodic x/y + long/outflow z).  All constants in
  * Stella code units (kpc, 1e10 Msun, km/s); this potential is for NON-comoving
  * runs only (the tallbox is a physical-coordinate patch). */
+#ifdef GALSF_RESOLVEDISM_TALLBOX
 /* field at height zc above the midplane: a_z, T_zz = d a_z/dz and Phi with a_z = -dPhi/dz, Phi(0) = 0
  *   disk: Phi = 2 pi G Sigma_* H_* ln cosh(z/H_*),  T_zz = -2 pi G Sigma_* / (H_* cosh^2(z/H_*))
  *   NFW:  Phi = -4 pi G rho_s r_s^3 [ln(1+x)/r - ln(1+R0/r_s)/R0], x = r/r_s,
@@ -252,6 +253,7 @@ void GravAccel_HuTallbox()
 #endif
     }
 }
+#endif
 
 
 
