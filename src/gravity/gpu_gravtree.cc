@@ -1500,7 +1500,7 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
         prox_target.vel = in.vel;
 #endif
 #ifdef KETJU_REGULARIZATION
-        prox_target.ketju_chain = P_dev[in.target].KetjuChainID;
+        prox_target.ketju_chain = ctx.P_dev[in.target].KetjuChainID;
 #endif
         grav_sink_prox_node_src_t prox_src = {}; prox_src.sink_mass = (double) tree_soa->sink_mass[idx];
 #if defined(SINGLE_STAR_FIND_BINARIES)
