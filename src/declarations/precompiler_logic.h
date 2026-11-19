@@ -1507,9 +1507,6 @@
 #endif
 #endif /* end of otvet-specific options */
 
-#ifdef GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE
-#error "GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE is the default now (PISN energy from the He core): remove it"
-#endif
 #if defined(GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE) && !(defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES))
 #error "GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE needs single stars (GALSF_SINGLE_STARS_FROM_IMF, GALSF_SINGLE_STARS_EVOLUTION_TABLES) whose light the gravity tree carries"
 #endif
