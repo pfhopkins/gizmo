@@ -124,3 +124,17 @@ def test_ketju_pm_comoving():
         assert d < 1e-3
     rep = keep_and_check_traces(os.path.join(TEST_DIR, "output"), os.path.join(TEST_DIR, "output"))
     assert rep.ok, rep.summary()
+
+
+def test_ketju_pm_guard():
+    """Run-time guard: KETJU members' mutual force must stay tree-dominated, i.e. member separations <= r_s/2 (mesh share
+    1 - S <= 1.1e-2). In a box of 5e4 AU, r_s = 1.25 x 5e4/128 AU = 488 AU, so the 200 AU pair (apocentre 300 AU) exceeds r_s/2 = 244 AU
+    and GIZMO must abort with the guard's message (endrun 8862). KetjuRegionRadius 240 AU (< r_s/2, a = 200 AU pair still captured): a
+    check on the radius alone would pass; the members' separation does not."""
+    import pytest
+    subprocess.run([sys.executable, "make_ketju_pm_ics.py", "ketju_pm_guard_ics.hdf5", "5e4"], cwd=TEST_DIR, check=True)
+    clean_test_outputs(TEST_NAME)
+    with pytest.raises(RuntimeError):
+        build_and_run_test(TEST_NAME, 1, 1, param_overrides={"InitCondFile": "ketju_pm_guard_ics", "BoxSize": 5e4 * AU, "KetjuRegionRadius": 240 * AU})
+    out = open(f"{TEST_DIR}/test_{TEST_NAME}.out").read()
+    assert "exceed half the PM split scale" in out

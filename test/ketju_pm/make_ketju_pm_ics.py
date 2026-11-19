@@ -34,12 +34,15 @@ def write(name, m, x, v, box, time=0.0, comoving=False):
         g["ParticleIDs"] = np.arange(1, n + 1, dtype=np.uint64)
 
 
-def main(name="ketju_pm_ics.hdf5"):
-    m, x, v = state(); write(name, m, x, v, L)
+def main(name="ketju_pm_ics.hdf5", box=L):
+    m, x, v = state(); write(name, m, x, v, box)
     # twin: the pair replaced by one 2 Msun star at its CoM (same outer orbit, no KETJU region)
     xc = (m[0] * x[0] + m[1] * x[1]) / (m[0] + m[1]); vc = (m[0] * v[0] + m[1] * v[1]) / (m[0] + m[1])
     write(name.replace("_ics", "_single_ics"), np.array([m[0] + m[1], m[2]]), np.array([xc, x[2]]), np.array([vc, v[2]]), L)
 
 
 if __name__ == "__main__":
-    main()
+    if len(sys.argv) > 2:
+        main(sys.argv[1], float(sys.argv[2]) * AU)
+    else:
+        main()
