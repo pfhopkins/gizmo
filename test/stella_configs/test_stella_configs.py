@@ -10,6 +10,8 @@
   test_radiation_pressure_per_config: Config through the preprocessor with precompiler_logic.h: cloud, default, galaxy and tall
     box set GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS themselves, the zoom build has no radiation pressure (Uli 2026-11-18).
   test_stella_defaults_without_radiation_pressure: STELLA_DEFAULTS alone sets no radiation pressure.
+  test_no_sn_broadcast_by_default: STELLA_DEFAULTS alone and every production config build without SNE_BROADCAST_TIMESTEP
+    (Uli 2026-11-19: opt-in only, never a default; the form trunk declined).
 """
 import math
 import re
@@ -128,3 +130,12 @@ def test_stella_defaults_without_radiation_pressure(tmp_path):
     """STELLA_DEFAULTS alone (the compile-suite set) defines no radiation-pressure macro"""
     m = macros(tmp_path, "SGCHEM CHEMISTRYNETWORK=5 METALS GALSF_RESOLVEDISM_TREECOL_PIXELS=12 GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES STELLA_DEFAULTS".split())
     assert "GALSF_SINGLE_STARS_FROM_IMF" in m and not [k for k in RADP if k in m], [k for k in RADP if k in m]
+
+
+@pytest.mark.parametrize("c", ["defaults_only", "cloud", "default", "galaxy", "tallbox", "zoom"])
+def test_no_sn_broadcast_by_default(tmp_path, c):
+    """SNE_BROADCAST_TIMESTEP is an opt-in option: neither STELLA_DEFAULTS nor a production config switches it on"""
+    lines = ("SGCHEM CHEMISTRYNETWORK=5 METALS GALSF_RESOLVEDISM_TREECOL_PIXELS=12 GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES STELLA_DEFAULTS".split()
+             if c == "defaults_only" else (CFG / f"Config_stella_{c}.sh").read_text().splitlines())
+    m = macros(tmp_path, lines)
+    assert "GALSF_SINGLE_STARS_FROM_IMF" in m and "SNE_BROADCAST_TIMESTEP" not in m
