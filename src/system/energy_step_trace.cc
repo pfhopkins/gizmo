@@ -35,7 +35,7 @@ static const int estep_stage_exact[] = {
 #else
     1,
 #endif
-    1, 0, 0,
+    1, 0, 1, /* fb_mech, fb_radp (measured: the radiation's work), photoion (marks cells; the heat is booked in cooling) */
 #ifdef SGCHEM
     1,
 #else
@@ -73,6 +73,7 @@ double estep_cell_mag_energy(int i)
 }
 
 /* ledger rows that are trace bookings: the row's own sign convention turned into the energy the stage adds */
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
 void estep_ledger_hook(int row, double x)
 {
     switch(row) {
@@ -98,6 +99,7 @@ void estep_ledger_hook(int row, double x)
         default: break;
     }
 }
+#endif
 
 /* Neumaier-compensated local sums of the components (and of 1/2 m Phi when pot != NULL) */
 static void estep_local_sums(double e[EC_N], double *pot)

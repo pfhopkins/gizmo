@@ -121,7 +121,7 @@ def _check_energy(path, groups, rep, bar):
         rep.notes.append("energy trace has no SYNC line")
 
 
-def check_conservation_traces(output_dir, require_energy=True, mass_bar=MASS_BAR, integration_bar=INTEGRATION_BAR):
+def check_conservation_traces(output_dir, require_energy=True, mass_bar=MASS_BAR, integration_bar=INTEGRATION_BAR, require_mass=True):
     """Return a TraceReport; findings are ranked by largest relative magnitude."""
     rep = TraceReport()
     groups = OrderedDict()
@@ -129,7 +129,7 @@ def check_conservation_traces(output_dir, require_energy=True, mass_bar=MASS_BAR
     epath = os.path.join(output_dir, "energy_step_trace.txt")
     if os.path.exists(mpath):
         _check_mass(mpath, groups, rep, mass_bar)
-    else:
+    elif require_mass:
         groups[("missing", "mass")] = {"kind": "missing", "stage": "mass_trace", "count": 1, "max_rel": float("inf"), "sum_res": 0.0, "first_t": 0.0}
     if os.path.exists(epath):
         _check_energy(epath, groups, rep, integration_bar)

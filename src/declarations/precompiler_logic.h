@@ -1874,8 +1874,8 @@
 #ifndef EVALPOTENTIAL
 #define EVALPOTENTIAL /* energy step trace: E_pot at full syncs closes the time-integration budget */
 #endif
-#if !defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
-#error "OUTPUT_ENERGY_STEP_TRACE needs OUTPUT_MASS_METAL_ENERGY_LEDGER (its cooling, PI, floor and CR bookings are ledger rows)"
+#if !defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && (defined(SGCHEM) || defined(GALSF) || defined(COSMIC_RAY_FLUID))
+#error "OUTPUT_ENERGY_STEP_TRACE with SGCHEM, GALSF or COSMIC_RAY_FLUID needs OUTPUT_MASS_METAL_ENERGY_LEDGER (its cooling, PI, floor and CR bookings are ledger rows)"
 #endif
 #endif
 
