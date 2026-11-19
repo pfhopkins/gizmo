@@ -144,7 +144,7 @@ deposit, +0.40% at the boundary.
 With RESOLVED_ISM_FB_AFTER_CLOSING_KICK alone, the hydro pass is redone after SN and Ia deposits only. With this switch, wind, AGB and
 radiation-pressure deposits (star-side walk and the per-cell tree term) also flag their receivers, so the next opening kick
 uses forces from the post-deposit state there too. Requires RESOLVED_ISM_FB_AFTER_CLOSING_KICK. Off by default; with continuous winds
-the recompute then runs on almost every step (cost on the zoom: see the 2026-11-17 feedback audit section below).
+the recompute then runs on almost every step. Cost on the zoom smoke test (L10 zoom, 17.7M particles, restart from snapshot 17, 8 ranks, 23 steps): 245 s without, 282 s with the flag (+15 %, a recompute on 23 of 23 steps). Adiabatic 60 Msun wind + AGB box (test/stella_fb_boundary_wind): energy excess +0.0017/+0.0020 % with, +0.0028/+0.0031 % without (100 K / 1e4 K), so no measurable energy gain there.
 Test: test/stella_fb_boundary_wind (flag on and off).
 
 ## TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS (test only)
