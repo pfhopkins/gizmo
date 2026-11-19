@@ -247,7 +247,7 @@
 # ---- SN feedback, and optionally full Kroupa IMF sampling or stochastic single-star IMF assignment.
 #GALSF_RESOLVEDISM              # master switch: auto-enables GALSF, COOLING, METALS; undefs FIRE FB flags
 #GALSF_RESOLVEDISM_FB           # SN energy injection from resolved massive stars
-#RESOLVED_ISM_VARIABLE_SN_ENERGY        # Stella SN energies by type: PISN from the He core (Heger & Woosley 2002 via Wise+12a), ECSN 1e50 erg (Kitaura+06); default: every SN 1e51 erg
+#RESOLVED_ISM_VARIABLE_SN_ENERGY        # Stella SN energies by type: PISN from the He core (Heger & Woosley 2002 via Wise+12a), ECSN 5e50 erg; default: every SN 1e51 erg
 #RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB    # with RESOLVED_ISM_FB_AFTER_CLOSING_KICK: wind, AGB and radiation-pressure deposits also redo the hydro pass (not only SN/Ia); off by default and in no production config: +15 % per step on the L10 zoom, energy gain not measurable (docs/stella_options.md)
 #GALSF_RESOLVEDISM_FB_HEALPIX   # solid-angle-uniform (HEALPix) FB weighting alternative to kernel wk; G17-matrix-validated; was undefinable before audit 2026-07-28
 #RESOLVEDISM_HOTSYNC_CLAMP      # hot-region timebin sync clamp (one-sided pair-flux guard, timestep.cc); was undefinable before audit 2026-07-28

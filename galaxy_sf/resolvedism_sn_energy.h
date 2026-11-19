@@ -14,13 +14,13 @@ static inline double resolvedism_pisn_energy_erg(double M_zams)
 }
 
 /* by death type: 1e51 for every explosion, 0 for failed SNe and direct collapse; with RESOLVED_ISM_VARIABLE_SN_ENERGY the PISN
- * energy from the He core and ECSN 1e50 (Kitaura, Janka & Hillebrandt 2006) */
+ * energy from the He core and ECSN 5e50 (Uli 2026-11-19; Kitaura, Janka & Hillebrandt 2006 give ~1e50) */
 static inline double resolvedism_sn_energy_erg(int is_pisn, int is_ecsn, int explodes, double M_zams)
 {
     if(!explodes) {return 0;}
 #ifdef RESOLVED_ISM_VARIABLE_SN_ENERGY
     if(is_pisn) {return resolvedism_pisn_energy_erg(M_zams);}
-    if(is_ecsn) {return 1.0e50;}
+    if(is_ecsn) {return 5.0e50;}
 #else
     (void)is_pisn; (void)is_ecsn; (void)M_zams;
 #endif
