@@ -10,15 +10,19 @@ Bars (set before the runs):
 - built without the flags: no repeat;
 - RESOLVED_ISM_FB_AFTER_CLOSING_KICK: at least one repeat (the SN), fewer than with RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB added
   (its wind steps repeat too);
-- the repeated pass applies no second metal exchange: cells beyond the remnant (at least 0.4 L from the star; the Sedov radius
-  after 5 kyr is about 0.2 L) end with the metallicity of the run without the flag, max |Z_flag - Z_default| <= 1e-6 x
-  max |Z_default - Z_start| over those cells (a second exchange on a repeat step adds a whole step's exchange); the exchange is
-  non-zero there. Cells are matched by ID; IDs that a split repeats are left out.
+- the repeated pass applies no second metal exchange: every repeated pass of the flag runs (TEST_PRINT_METAL_CHANGE_OF_REPEATED_HYDRO_PASS,
+  largest change of any gas cell's metallicity in that pass) changes no metallicity by more than 1e-6 x max |Z_default - Z_start|
+  over the cells beyond the remnant (at least 0.4 L from the star; the Sedov radius after 5 kyr is about 0.2 L), which must be
+  non-zero; one such line per repeat. Cells are matched by ID; IDs that a split repeats are left out. The far cells' flag vs
+  default difference is printed, not a bar: feedback after the closing kick changes the flow the far shear layer sees, so the two
+  runs differ there by about 1e-2 of the exchange with or without a second exchange (job 231836 at 2f8805d23: 1.02e-2 with the
+  guard, 3.20e-2 with the guard removed, b1; one repeat in 33 steps).
   A shear layer (v_y = 2 km/s exp(-(d/0.1 L)^2), d the distance to the x = 0 interface) drives the exchange there.
   Record: the first version (job 231729) selected cells beyond 0.2 L, inside the remnant, and wrote 11 metal slots into this
   one-slot build's ICs, which the reader took as a flattened array; the second (job 231819) had static gas at the interface, where
   the exchange was 5e-13 (round-off of the shear-driven coefficient) and the flag and default runs differed by 7e-14 with or without
-  the guard; shear layer added after that run. The 1e-6 bar is unchanged throughout;
+  the guard; shear layer added after that run (job 231836: the flag-vs-default comparison then failed by the flow difference
+  above); the comparison moved to the repeated pass itself (2026-11-19). The 1e-6 bar is unchanged throughout;
 - the old names (FB_G17_BOUNDARY_INJECTION, GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK), RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB alone,
   the flag with MFV and the flag with DM_HEATING stop the build with their message.
 The gas energy excess over start + 1e51 erg at full synchronisation is printed for the runs, not a bar."""
@@ -43,6 +47,7 @@ L1, N_SIDE, M, Z, T_DEATH = 28.6, 20, 10.0, 0.0142, 200.0
 FLAG = "RESOLVED_ISM_FB_AFTER_CLOSING_KICK"
 FLAG_ALL = "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB"
 REPEAT = "repeating the hydro pass"
+HOOK = "TEST_PRINT_METAL_CHANGE_OF_REPEATED_HYDRO_PASS"
 V_SHEAR = 2.0  # km/s, shear layer at the x = 0 interface
 RUN_TIMEOUT = 1800  # s
 
@@ -112,9 +117,9 @@ def ladder():
     t = get_stellar_evolution_tables()
     build_gizmo_for_test(NAME)
     os.replace(HERE / "GIZMO", HERE / "GIZMO_default")
-    build_gizmo_for_test(NAME, extra_config_flags=(FLAG, FLAG_ALL))
+    build_gizmo_for_test(NAME, extra_config_flags=(FLAG, FLAG_ALL, HOOK))
     os.replace(HERE / "GIZMO", HERE / "GIZMO_all")
-    build_gizmo_for_test(NAME, extra_config_flags=(FLAG,))
+    build_gizmo_for_test(NAME, extra_config_flags=(FLAG, HOOK))
     out = {}
     for m in (1.0, 0.1):
         out[("default", m)] = run(f"default_{m}", "GIZMO_default", m, t)
@@ -142,8 +147,10 @@ def test_metal_exchange_once_per_step(ladder):
         d = x - star_pos(a["L"], m); d -= a["L"] * np.round(d / a["L"])
         far = np.linalg.norm(d, axis=1) > 0.4 * a["L"]
         exch, diff = np.max(np.abs(za - z0)[far]), np.max(np.abs(zb - za)[far])
-        print(f"{arm} {m} Msun: {far.sum()} cells beyond 0.4 L; metal exchange max |dZ| {exch:.3e}; flag vs default max |dZ| {diff:.3e} ({diff / exch:.2e})")
-        assert exch > 0 and diff <= 1e-6 * exch
+        rep = [float(l.split()[-1]) for l in (b["dir"] / "run.out").read_text().splitlines() if l.startswith(HOOK + ": max |dZ|")]
+        print(f"{arm} {m} Msun: {far.sum()} cells beyond 0.4 L; metal exchange max |dZ| {exch:.3e}; flag vs default max |dZ| {diff:.3e} "
+              f"({diff / exch:.2e}, not a bar); {len(rep)} repeated passes, their largest metallicity change {max(rep, default=np.nan):.3e}")
+        assert exch > 0 and len(rep) == b["repeats"] >= 1 and max(rep) <= 1e-6 * exch
 
 
 BUILD_ERRORS = [
