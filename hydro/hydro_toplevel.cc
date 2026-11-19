@@ -179,8 +179,8 @@ struct INPUT_STRUCT_NAME
     MyFloat dt_hydrostep_i;
     MyCommFloat DrkernNgbFactor;
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
-    MyDouble PairFluxW2;            /* closing-kick weight of this cell's pair fluxes (physical time) */
-    int PairFluxTask, PairFluxIndex; /* home rank and index, to fetch the opening-kick weight */
+    long long PairFluxS;            /* start of the step that ends now (integer time) */
+    int PairFluxTask, PairFluxIndex; /* home rank and index: corrections and the opening weight go there */
 #endif
 #ifdef EOS_ANEOS
     MyFloat Temperature; /* orders the two sides of a face in the MFM entropic energy switch */
@@ -335,7 +335,7 @@ struct OUTPUT_STRUCT_NAME
     Vec3<MyDouble> PairFluxSumMom;
     MyDouble PairFluxSumEgy;
 #ifdef MAGNETIC
-    Vec3<MyDouble> PairFluxSumB;
+    Vec3<MyDouble> PairFluxSumB, PairFluxSumBded;
 #endif
 #endif
 #ifdef OUTPUT_SHOCK_MACH_NUMBER
@@ -435,7 +435,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     in->SoundSpeed = CellP[i].effective_soundspeed();
     in->dt_hydrostep_i = get_particle_timestep_in_physical(i);
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
-    in->PairFluxW2 = pairflux_closing_weight(i); in->PairFluxTask = ThisTask; in->PairFluxIndex = i;
+    in->PairFluxS = (long long) P[i].Ti_begstep; in->PairFluxTask = ThisTask; in->PairFluxIndex = i;
 #endif
     in->ConditionNumber = CellP[i].ConditionNumber;
     in->FaceClosureError = CellP[i].FaceClosureError;
@@ -649,7 +649,7 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
     CellP[i].PairFluxSumMom += out->PairFluxSumMom; CellP[i].PairFluxSumEgy += out->PairFluxSumEgy;
 #ifdef MAGNETIC
-    CellP[i].PairFluxSumB += out->PairFluxSumB;
+    CellP[i].PairFluxSumB += out->PairFluxSumB; CellP[i].PairFluxSumBded += out->PairFluxSumBded;
 #endif
 #endif
 
@@ -894,7 +894,12 @@ void hydro_final_operations_and_cleanup(void)
             /* ok, now: HydroAccel = dv/dt, DtInternalEnergy = du/dt (energy per unit mass), GravWorkTerm.g = du/dt from mass moved through the potential */
 
             /* zero out hydrodynamic PdV work terms if the particle is at the maximum smoothing, these will be incorrect */
+#ifndef HYDRO_EXACT_PAIR_FLUX_EXCHANGE /* the pair records assume the kick applies the energy rate */
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            CellP[i].PairFluxMassRef = P[i].Mass; /* mass the rates are per unit of */
+#endif
 #if defined(MAGNETIC) && defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
             { /* ledger: d(E_th+E_kin+E_B)/dt of this step (Powell/Dedner terms, the -B^2/2 dV/dt the u-equation omits); booked in do_the_kick */
                 Vec3<double> Bp = CellP[i].Bfield() * All.cf_a2inv; double V_phys = P[i].Mass / (CellP[i].Density * All.cf_a3inv);
@@ -1195,7 +1200,7 @@ void hydro_force_initial_operations_preloop(void)
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
             CellP[i].PairFluxSumMom = {}; CellP[i].PairFluxSumEgy = 0; CellP[i].PairFluxRecvMom = {}; CellP[i].PairFluxRecvEgy = 0;
 #ifdef MAGNETIC
-            CellP[i].PairFluxSumB = {}; CellP[i].PairFluxRecvB = {};
+            CellP[i].PairFluxSumB = {}; CellP[i].PairFluxSumBded = {}; CellP[i].PairFluxRecvB = {};
 #endif
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -1302,6 +1307,9 @@ void hydro_force(void)
     double t_demalloc = timediff(t_demalloc_start, my_second());
     double t_postloop_start = my_second();
     hydro_final_operations_and_cleanup(); /* do final operations on results */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    pairflux_end_hydro_pass(); /* records into the memory budget until the opening kick */
+#endif
 #ifdef NGB_PAIR_CACHE
     ngb_pair_cache_free();
 #endif

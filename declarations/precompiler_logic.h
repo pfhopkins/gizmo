@@ -2093,8 +2093,8 @@
 #ifndef HYDRO_KICK_TOTAL_ENERGY_EXACT
 #define HYDRO_KICK_TOTAL_ENERGY_EXACT /* u takes the exact kinetic-energy complement of the hydro kick */
 #endif
-#if !defined(HYDRO_MESHLESS_FINITE_MASS) || defined(CONDUCTION) || defined(VISCOSITY) || defined(COSMIC_RAY_FLUID) || defined(RT_SOLVER_EXPLICIT) || defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(EOS_ELASTIC) || defined(MHD_NON_IDEAL) || defined(GALSF_SUBGRID_WINDS) || defined(PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP) || defined(ENERGY_ENTROPY_SWITCH_IS_ACTIVE) || defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) || (defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT))
-#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE: MFM only; conduction, viscosity, CR fluid, explicit RT, turbulent energy/velocity diffusion, elastic EOS, non-ideal MHD, subgrid winds, per-step merge/split, the entropy switch, conservative psi cleaning and non-split cooling are not exchanged"
+#if !defined(HYDRO_MESHLESS_FINITE_MASS) || defined(CONDUCTION) || defined(VISCOSITY) || defined(COSMIC_RAY_FLUID) || defined(RT_SOLVER_EXPLICIT) || defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(EOS_ELASTIC) || defined(MHD_NON_IDEAL) || defined(GALSF_SUBGRID_WINDS) || defined(PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP) || defined(ENERGY_ENTROPY_SWITCH_IS_ACTIVE) || defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) || (defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)) || defined(SINK_PARTICLES) || defined(BOX_BND_PARTICLES) || (defined(COMPUTE_POTENTIAL_ENERGY) && !defined(EVALPOTENTIAL))
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE: MFM only; sinks, boundary particles and a potential pass that rearranges particles between the kicks hold stale record indices; conduction, viscosity, CR fluid, explicit RT, turbulent energy/velocity diffusion, elastic EOS, non-ideal MHD, subgrid winds, per-step merge/split, the entropy switch, conservative psi cleaning and non-split cooling are not exchanged"
 #endif
 #endif
 #if defined(HYDRO_TIMESTEP_FROM_PAIR_FORCE) && !defined(HYDRO_PAIR_FORCE_DT_ETA)

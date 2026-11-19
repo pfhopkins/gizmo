@@ -628,6 +628,12 @@ void merge_and_split_particles(void)
             double u_sp = (P[i_sp].SpawnEjMass > 0) ? (P[i_sp].SpawnEjEnergy / P[i_sp].SpawnEjMass) : 0;
             CellP[j_sp].InternalEnergy = CellP[j_sp].InternalEnergyPred = u_sp;
             CellP[j_sp].DtInternalEnergy = 0;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            CellP[j_sp].PairFluxSumMom = {}; CellP[j_sp].PairFluxSumEgy = 0; CellP[j_sp].PairFluxRecvMom = {}; CellP[j_sp].PairFluxRecvEgy = 0; CellP[j_sp].PairFluxMassRef = 0; /* none of the template's pair fluxes */
+#ifdef MAGNETIC
+            CellP[j_sp].PairFluxSumB = {}; CellP[j_sp].PairFluxSumBded = {}; CellP[j_sp].PairFluxRecvB = {};
+#endif
+#endif
             ESTEP_BOOK(EBK_SN_CELL_TH, P[i_sp].SpawnEjEnergy); ESTEP_BOOK(EBK_SN_CELL_MAG, estep_cell_mag_energy(j_sp)); /* the SN energy the cell should carry; field copied from the template */
             /* metallicity: ejecta composition (slot0 = total Z; slots 1..27 = elements) */
             {double minv_sp = 1./DMAX(P[i_sp].SpawnEjMass, 1e-30), zs_sp = 0; int ke_sp;
@@ -853,6 +859,7 @@ int split_particle_i(int i, int n_particles_split, double r_near)
             CellP[j].PairFluxRecvEgy = CellP[i].PairFluxRecvEgy * f; CellP[i].PairFluxRecvEgy -= CellP[j].PairFluxRecvEgy;
 #ifdef MAGNETIC
             CellP[j].PairFluxSumB = CellP[i].PairFluxSumB * f; CellP[i].PairFluxSumB -= CellP[j].PairFluxSumB;
+            CellP[j].PairFluxSumBded = CellP[i].PairFluxSumBded * f; CellP[i].PairFluxSumBded -= CellP[j].PairFluxSumBded;
             CellP[j].PairFluxRecvB = CellP[i].PairFluxRecvB * f; CellP[i].PairFluxRecvB -= CellP[j].PairFluxRecvB;
 #endif
         }
@@ -1229,6 +1236,12 @@ int merge_particles_ij(int i, int j)
     CellP[j].HydroAccel = (dp_ij - CellP[j].VelPred * (dm_ij / All.cf_atime)) * (1.0 / mtot);
     de_ij -= mtot * dot(CellP[j].VelPred, CellP[j].HydroAccel) / All.cf_atime + 0.5 * dm_ij * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
     CellP[j].DtInternalEnergy = de_ij;
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+    CellP[j].HydroVelRef = CellP[j].VelPred / All.cf_atime; /* the velocity the merged du/dt was formed with */
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    CellP[j].PairFluxMassRef = mtot;
+#endif
     // to be conservative adopt the maximum signal velocity and kernel length //
     CellP[j].MaxSignalVel = sqrt(CellP[j].MaxSignalVel*CellP[j].MaxSignalVel + CellP[i].MaxSignalVel*CellP[i].MaxSignalVel); /* need to be conservative */
     P[j].KernelRadius = pow(pow(P[j].KernelRadius,NUMDIMS)+pow(P[i].KernelRadius,NUMDIMS),1.0/NUMDIMS); /* sum the volume of the two particles */
@@ -1289,7 +1302,7 @@ int merge_particles_ij(int i, int j)
     CellP[j].PairFluxSumMom += CellP[i].PairFluxSumMom; CellP[j].PairFluxSumEgy += CellP[i].PairFluxSumEgy; /* pair-flux sums add */
     CellP[j].PairFluxRecvMom += CellP[i].PairFluxRecvMom; CellP[j].PairFluxRecvEgy += CellP[i].PairFluxRecvEgy;
 #ifdef MAGNETIC
-    CellP[j].PairFluxSumB += CellP[i].PairFluxSumB; CellP[j].PairFluxRecvB += CellP[i].PairFluxRecvB;
+    CellP[j].PairFluxSumB += CellP[i].PairFluxSumB; CellP[j].PairFluxSumBded += CellP[i].PairFluxSumBded; CellP[j].PairFluxRecvB += CellP[i].PairFluxRecvB;
 #endif
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL

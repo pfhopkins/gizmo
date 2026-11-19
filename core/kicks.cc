@@ -759,6 +759,9 @@ void apply_special_boundary_conditions(int i, double mass_for_dp, int mode, inte
                 if(P[i].Type==0)
                 {
                     CellP[i].VelPred[j]=P[i].Vel[j]; CellP[i].HydroAccel[j]=0;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+                    CellP[i].PairFluxSumMom[j] = 0; /* the boundary replaces this momentum component */
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                     CellP[i].ParticleVel[j] = -CellP[i].ParticleVel[j];
 #endif

@@ -456,22 +456,22 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
                 { /* the pair's exchanged fluxes: summed into both cells' rates as before, and recorded for j's exact share */
-                    Vec3<double> pf_B = {};
+                    Vec3<double> pf_B = {}, pf_Bded = {};
 #if defined(MAGNETIC) && !defined(FREEZE_HYDRO)
-                    pf_B = Fluxes.B;
 #ifdef DIVBCLEANING_DEDNER
-                    pf_B += Face_Area_Vec * Riemann_out.phi_normal_mean;
+                    pf_Bded = Face_Area_Vec * Riemann_out.phi_normal_mean;
 #endif
+                    pf_B = Fluxes.B + pf_Bded;
 #endif
                     out.PairFluxSumMom += Fluxes.v; out.PairFluxSumEgy += Fluxes.p;
 #ifdef MAGNETIC
-                    out.PairFluxSumB += pf_B;
+                    out.PairFluxSumB += pf_B; out.PairFluxSumBded += pf_Bded;
 #endif
                     if(j_is_active_for_fluxes)
                     {
                         CellP[j].PairFluxSumMom -= Fluxes.v; CellP[j].PairFluxSumEgy -= Fluxes.p;
 #ifdef MAGNETIC
-                        CellP[j].PairFluxSumB -= pf_B;
+                        CellP[j].PairFluxSumB -= pf_B; CellP[j].PairFluxSumBded -= pf_Bded;
 #endif
                         if(dt_hydrostep_i < dt_hydrostep_j) /* cross-bin: i delivers this flux to j as impulses until j's next step */
                         {
@@ -481,7 +481,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
                         }
                     }
-                    pairflux_record_add(j, j_is_active_for_fluxes, local.PairFluxTask, local.PairFluxIndex, local.PairFluxW2, -1.*Fluxes.v, -Fluxes.p, -1.*pf_B);
+                    pairflux_record_add(j, j_is_active_for_fluxes, (dt_hydrostep_i < dt_hydrostep_j), local.PairFluxTask, local.PairFluxIndex, local.PairFluxS, -1.*Fluxes.v, -Fluxes.p, -1.*pf_B, -1.*pf_Bded);
                 }
 #endif
                 /* if this is particle j's active timestep, you should sent them the time-derivative information as well, for their subsequent drift operations */

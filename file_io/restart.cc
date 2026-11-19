@@ -298,6 +298,12 @@ void restart(int modus)
 		}
 	      /* fluid-cell data  */
 	      byten(&CellP[0], N_gas * sizeof(struct gas_cell_data), modus);
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+	      { /* pair-flux records waiting for the opening kick */
+		  long long npf = pairflux_restart_count(); byten(&npf, sizeof(npf), modus);
+		  void *pf = pairflux_restart_buffer(modus ? npf : -1); if(npf > 0) {byten(pf, npf * pairflux_record_size(), modus);}
+	      }
+#endif
 
 #ifdef CHIMES 
 	      gasAbundancesBuf = (ChimesFloat *) malloc(N_gas * ChimesGlobalVars.totalNumberOfSpecies * sizeof(ChimesFloat));

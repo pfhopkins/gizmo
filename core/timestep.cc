@@ -731,7 +731,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef HYDRO_TIMESTEP_FROM_PAIR_FORCE
             { /* one half-kick of the hydro force changes the kinetic energy by at most a fraction of u: (a dt/2)^2/2 <= eta u */
                 double a2 = CellP[p].HydroAccel.norm_sq();
-                if(a2 > 0) {double dt_pf = 2. * sqrt(2. * HYDRO_PAIR_FORCE_DT_ETA * CellP[p].InternalEnergy / a2); if(dt_pf < dt) {dt = dt_pf;}}
+                if(a2 > 0 && CellP[p].InternalEnergy > All.MinEgySpec) {double dt_pf = 2. * sqrt(2. * HYDRO_PAIR_FORCE_DT_ETA * CellP[p].InternalEnergy / a2); if(dt_pf < dt) {dt = dt_pf;}}
             }
 #endif
 

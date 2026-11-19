@@ -49,11 +49,12 @@ extern struct gas_cell_data
     MyDouble PairFluxSumEgy;        /*!< sum of the pair total-energy fluxes in this cell's rates (physical) */
 #ifdef MAGNETIC
     Vec3<MyDouble> PairFluxSumB;    /*!< sum of the pair B*V fluxes in this cell's rates (physical) */
+    Vec3<MyDouble> PairFluxSumBded; /*!< part of PairFluxSumB from the Dedner mean-phi face term */
     Vec3<MyDouble> PairFluxRecvB;   /*!< part of PairFluxSumB received from smaller-step cells */
 #endif
     Vec3<MyDouble> PairFluxRecvMom; /*!< part of PairFluxSumMom received from smaller-step cells (they deliver it as impulses; not predicted) */
     MyDouble PairFluxRecvEgy;       /*!< part of PairFluxSumEgy received from smaller-step cells */
-    long long Ti_PairFluxCoveredP1; /*!< 1 + integer time up to which this cell's pair fluxes are delivered (0: not set) */
+    MyDouble PairFluxMassRef;       /*!< cell mass at the hydro pass (rates are per unit of it) */
 #endif
     
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
