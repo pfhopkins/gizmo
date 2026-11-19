@@ -32,8 +32,7 @@ stops) and checks them against exact values.
   test_radial_shells_host_equals_device: device walk repeats bitwise and equals the host walk to float sums (1e-5).
   test_far_field_g0: after five steps with chemistry, during which one star dies, the tree 6-13.6 eV field of every cell
     equals the direct sum over the stars' current luminosities (median |ratio - 1| <= 1e-2, p99 <= 5e-2): node
-    luminosities are refreshed, the dead star is dark (2 ranks; opt-in GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE, by default the
-    nodes keep the light of the last build).
+    luminosities are refreshed, the dead star is dark (2 ranks).
   test_cosmic_ray_rate: the SGChem cosmic-ray ionisation rate of every cell: with CR_SCALE_WITH_G0
     (G0 / 1.7) x SGChemCosmicRayIonRate from the stars' field, clamped to [1e-21, 2e-16] (1e-12); with
     CR_BACKGROUND_IONRATE_ATTENUATED SGChemCosmicRayIonRate x the STARFORGE attenuation of the 12-pixel gas column
@@ -610,7 +609,7 @@ def test_far_field_g0(tables):
         stars.append((M, tab._i2(tab.t_pms, lM, lZ) + f * tab._i2(tab.life, lM, lZ), rng.uniform(0.15, 0.85, 3) * L))
     lM, lZ = np.log10(60.0), np.log10(0.0142)
     stars.append((60.0, tab._i2(tab.t_pms, lM, lZ) + tab._i2(tab.life, lM, lZ) - 150.0, np.array([0.5, 0.5, 0.5]) * L))  # dies at ~150 yr
-    exe = build("pix12_step5_refresh", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "TEST_DUMP_TREECOL_PIXELS_AT_STEP=5", "GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE"))
+    exe = build("pix12_step5", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "TEST_DUMP_TREECOL_PIXELS_AT_STEP=5"))
     out = run(exe, "far_field", tables, L, pos, stars, ranks=2, z_gas=z, tracabund=ab, overrides={"MaxSizeTimestep": 1e-4})
     cells = load(out, "cells"); cells = cells[np.argsort(cells[:, 0])]
     st = load(out, "stars"); st = st[np.argsort(st[:, 0])]
