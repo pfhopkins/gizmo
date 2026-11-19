@@ -6,7 +6,7 @@ Feedback after the closing kick with the hydro pass redone (stella_dev `RESOLVED
 
 - no repeat without the flags; with `RESOLVED_ISM_FB_AFTER_CLOSING_KICK` the SN step repeats, and with
   `RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB` also the wind steps (more repeats);
-- the repeated pass applies no second metal exchange: cells beyond the remnant (0.4 L) end with the metallicity of the run without the flag (1e-6 of the exchange); one metal slot in the ICs, as the build;
+- the repeated pass applies no second metal exchange: cells beyond the remnant (0.4 L) end with the metallicity of the run without the flag (1e-6 of the exchange); one metal slot in the ICs, as the build; a shear layer at that interface drives the exchange;
 - old names, the second flag alone and the flag with MFV stop the build.
 
 The energy excess of the runs (the single-SN ladder) is printed.
