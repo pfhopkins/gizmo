@@ -12,11 +12,12 @@ One build, one driver run (startup + one gravity pass): a uniform gas slab of Si
     probes must equal sum(1/2 m Phi_self + m Phi_ext) to 1e-10 (external potential at full weight, not halved as pair sums).
 (c) GHOSDT field as Hu, Sternberg & van Dishoeck 2021 (ApJ 920, 44; arXiv:2103.03889) Sec. 2.2: u_UV = I_UV u_UV,0 with
     I_UV = max(Sigma_SFR/Sigma_SFR,0, I_UV,min), u_UV,0 = 8.94e-14 erg cm^-3 (Draine field), Sigma_SFR,0 = 2.4e-3 Msun yr^-1 kpc^-2
-    (Fuchs+09), SFR = M(stars younger than 30 Myr)/30 Myr over the box area, I_UV,min = 0.002 (UV background, Haardt & Madau 2012).
-    In Habing units (u_Hab = 5.257e-14 erg cm^-3, 6-13.6 eV) G0 = I_UV u_UV,0/u_Hab. Before the first star I_UV = I_UV,min.
-    Cosmic rays stay ours (CR_SCALE_WITH_G0: zeta scales with the field): zeta = I_UV CosmicRayIonRate, so 0.002 CosmicRayIonRate
-    before the first star (it was exactly 0). Bars (1e-12 relative): G0 = 0.002 x 8.94e-14/5.257e-14, zeta = 0.002 x rate, and
-    I_UV = 1 for the young-star mass that gives Sigma_SFR,0 over the 1 kpc^2 box."""
+    (Fuchs+09), SFR = M(stars younger than 30 Myr)/30 Myr over the box area. Floor: G0 = 0.324e-2 Habing, the one floor of all paths
+    (Uli 2026-11-19; Hu+21's I_UV,min = 0.002 would be 3.40e-3).
+    In Habing units (u_Hab = 5.257e-14 erg cm^-3, 6-13.6 eV) G0 = max(Sigma_SFR/Sigma_SFR,0 u_UV,0/u_Hab, 0.324e-2).
+    Cosmic rays stay ours (CR_SCALE_WITH_G0: zeta scales with the field): zeta = (G0 u_Hab/u_UV,0) CosmicRayIonRate, so
+    0.324e-2 x 5.257/8.94 x rate before the first star (it was exactly 0). Bars (1e-12 relative): G0 = 0.324e-2, that zeta, and
+    Sigma_SFR/Sigma_SFR,0 = 1 for the young-star mass that gives Sigma_SFR,0 over the 1 kpc^2 box."""
 
 import os
 import shutil
@@ -90,10 +91,11 @@ def test_hu_tidal_and_potential(out):
 def test_ghosdt_field_hu21(out):
     z = [l for l in out if l and l[0] == "ZETA"][0]
     zeta, g0, rate = float(z[1]), float(z[3]), float(z[4])
-    g0_ref = 0.002 * 8.94e-14 / 5.257e-14
+    g0_ref = 0.324e-2  # the one G0 floor of all paths (Uli 2026-11-19), Habing
+    zeta_ref = rate * g0_ref * 5.257e-14 / 8.94e-14  # zeta = I_UV x rate with I_UV = G0 u_Hab / u_UV,0
     iuv = [float(l[1]) for l in out if l and l[0] == "IUV1"]
-    print(f"GHOSDT before the first star: G0 = {g0:.6e} (Hu+21 {g0_ref:.6e}), zeta = {zeta:.6e} (expected {0.002 * rate:.6e}); I_UV at Sigma_SFR,0: {iuv}")
+    print(f"GHOSDT before the first star: G0 = {g0:.6e} (floor {g0_ref:.6e}), zeta = {zeta:.6e} (expected {zeta_ref:.6e}); I_UV at Sigma_SFR,0: {iuv}")
     assert abs(g0 / g0_ref - 1) < 1e-12
     assert rate == 3e-17  # tallbox: solar neighbourhood
-    assert abs(zeta / (0.002 * rate) - 1) < 1e-12
+    assert abs(zeta / zeta_ref - 1) < 1e-12
     assert len(iuv) == 1 and abs(iuv[0] - 1) < 1e-12
