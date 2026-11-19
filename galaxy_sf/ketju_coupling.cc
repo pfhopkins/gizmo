@@ -1340,6 +1340,11 @@ static double do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, in
                 dv[3*i + k] += ps->mass[j] * fac * dr[k];
                 dv[3*j + k] -= ps->mass[i] * fac * dr[k];
             }
+            { /* unsoftened minus softened pair potential, physical (r and h physical) */
+                double phi_soft = -1.0 / r;
+                if(h > 0 && r < h) {double h_inv = 1.0 / h; phi_soft = kernel_gravity(r * h_inv, h_inv, h_inv * h_inv * h_inv, -1);}
+                D_loc += All.G * ps->mass[i] * ps->mass[j] * (-1.0 / r - phi_soft);
+            }
             (void)at_start;
 #endif
         }
