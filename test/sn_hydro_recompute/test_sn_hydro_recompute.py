@@ -19,8 +19,8 @@ Bars (set before the runs):
   one-slot build's ICs, which the reader took as a flattened array; the second (job 231819) had static gas at the interface, where
   the exchange was 5e-13 (round-off of the shear-driven coefficient) and the flag and default runs differed by 7e-14 with or without
   the guard; shear layer added after that run. The 1e-6 bar is unchanged throughout;
-- the old names (FB_G17_BOUNDARY_INJECTION, GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK), RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB alone
-  and the flag with MFV stop the build with their message.
+- the old names (FB_G17_BOUNDARY_INJECTION, GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK), RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB alone,
+  the flag with MFV and the flag with DM_HEATING stop the build with their message.
 The gas energy excess over start + 1e51 erg at full synchronisation is printed for the runs, not a bar."""
 import os
 import shutil
@@ -151,10 +151,11 @@ BUILD_ERRORS = [
     (("GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK",), "GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK was replaced by RESOLVED_ISM_FB_AFTER_CLOSING_KICK"),
     ((FLAG_ALL,), "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB extends the hydro recompute of RESOLVED_ISM_FB_AFTER_CLOSING_KICK: set both"),
     ((FLAG, "HYDRO_MESHLESS_FINITE_VOLUME"), "RESOLVED_ISM_FB_AFTER_CLOSING_KICK repeats the hydro pass on feedback steps: MFV"),
+    ((FLAG, "DM_HEATING"), "RESOLVED_ISM_FB_AFTER_CLOSING_KICK repeats the hydro pass, which resets DtInternalEnergy: DM_HEATING's addition"),
 ]
 
 
-@pytest.mark.parametrize("flags,message", BUILD_ERRORS, ids=["old_name", "old_port_name", "second_alone", "mfv"])
+@pytest.mark.parametrize("flags,message", BUILD_ERRORS, ids=["old_name", "old_port_name", "second_alone", "mfv", "dm_heating"])
 def test_build_stops(flags, message):
     cfg = [l for l in (HERE / "Config.sh").read_text().splitlines() if not (flags[-1] == "HYDRO_MESHLESS_FINITE_VOLUME" and l.strip() == "HYDRO_MESHLESS_FINITE_MASS")]
     (REPO / "src" / "Config.sh").write_text("\n".join(cfg + list(flags)) + "\n")

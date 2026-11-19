@@ -139,3 +139,33 @@ def test_encounter_kick(run):
 def test_mass(run):
     m0, m1 = pair(run[0])[3], pair(run[-1])[3]
     assert abs(m1 / m0 - 1) < 1e-12
+
+
+
+def effective_macros(lines):
+    """macros after precompiler_logic.h for these Config.sh lines (c++ -E -dM, no build)"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as t:
+        hdr = ["#ifndef GIZMO_config_H", "#define GIZMO_config_H"]
+        for l in lines:
+            f = l.split()
+            if f and f[0][0] != "#":
+                k, _, v = f[0].partition("=")
+                hdr.append(f"#define {k} {v}")
+        (Path(t) / "GIZMO_config.h").write_text("\n".join(hdr + ["#endif"]) + "\n")
+        (Path(t) / "probe.cc").write_text('#include "GIZMO_config.h"\n#include "declarations/precompiler_logic.h"\n')
+        r = subprocess.run(["c++", "-std=c++20", "-E", "-dM", f"-I{t}", f"-I{HERE.parent.parent / 'src'}", str(Path(t) / "probe.cc")], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+
+@pytest.mark.parametrize("flags", [("SINGLE_STAR_DIRECT_GRAVITY",), ("STARS_APPROACH_TIMESTEP", "SINGLE_STAR_DIRECT_GRAVITY")], ids=["default", "explicit"])
+def test_direct_star_gravity(flags):
+    """SINGLE_STAR_DIRECT_GRAVITY sums Type 5 directly against the tree's sink node moments: with STELLA_DEFAULTS it does not switch
+    the approach step on (no STARS_APPROACH_TIMESTEP, no SINK_CALC_DISTANCES); asked for explicitly with it, the build stops"""
+    rc, out = effective_macros((HERE / "Config.sh").read_text().splitlines() + list(flags))
+    msg = "STARS_APPROACH_TIMESTEP uses the tree's sink node moments for Type 4: not combinable with STARS_APPROACH_TIMESTEP_OFF, sinks, SINGLE_STAR_DIRECT_GRAVITY"
+    if flags[0] == "STARS_APPROACH_TIMESTEP":
+        assert rc != 0 and msg in out
+    else:
+        names = {l.split()[1] for l in out.splitlines() if l.startswith("#define ")}
+        assert rc == 0 and "STELLA_DEFAULTS" in names and "STARS_APPROACH_TIMESTEP" not in names and "SINK_CALC_DISTANCES" not in names
