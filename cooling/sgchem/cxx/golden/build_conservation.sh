@@ -15,7 +15,7 @@
 #   the phase-M one-zone and writes OUT/onezone_reference_netN.txt (golden/make_converged_references.sh)
 set -e
 XC=""; XF=""
-if [ "${REFERENCE:-0}" = 1 ]; then XC="-DCHEM_RTOL=1e-8 -DTEST_WRITE_CONVERGED_REFERENCE"; XF="-DRTOL=1d-8"; fi
+if [ "${REFERENCE:-0}" = 1 ]; then XC="-DCHEM_RTOL=1e-8 -DTEST_WRITE_CONVERGED_REFERENCE"; XF="-DSGCHEM_FORTRAN_RTOL=1d-8"; fi
 SRC=$(readlink -f "$1"); OUT=$(readlink -f -m "$2"); NET=$3
 SUN=${4:-/orion/ptmp/uli/orion/fb_tests/_sundials/install}
 SUNLIB=$(ls -d "$SUN/lib64" "$SUN/lib" 2>/dev/null | head -1)

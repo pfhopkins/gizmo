@@ -609,14 +609,17 @@ int main(int argc, char** argv)
             nbadR += !ok;
         }
     }
-    // R7c: flagged evaluation at the failure point (one accepted substep pending), then the retry
+    // R7c: flagged evaluation at the failure point with an accepted substep pending (retry starts at t > 0), then the retry
     {
-        const LoggedCell* Lm = &cells[0];
+        const LoggedCell* Lm = nullptr;
         long most = 0;
         for (const LoggedCell& L : cells) {
+            force(1, 0); chem_test_retry_start_t = -1.0;
             Res u = run_cxx(L, L.dt, L.yn, L.y[ITMP], L.y, nullptr);
-            if (u.substeps > most) { most = u.substeps; Lm = &L; }
+            force(0, 0);
+            if (chem_test_retry_start_t > 0.0 && u.substeps > most) { most = u.substeps; Lm = &L; }
         }
+        if (!Lm) { std::printf("PHASE R7c -- no logged cell retries from t > 0: FAIL\n"); nbadR++; Lm = &cells[0]; }
         force(1, 0);
         Res ref = run_cxx(*Lm, Lm->dt, Lm->yn, Lm->y[ITMP], Lm->y, nullptr);
         chem_test_flag_rhs[2] = 1;

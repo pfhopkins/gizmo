@@ -24,7 +24,7 @@ SUNLIBS="-L$SUNLIB -lsundials_cvode -lsundials_nvecserial -lsundials_sunmatrixde
          -lsundials_sunlinsoldense -lsundials_sunnonlinsolnewton -lsundials_generic"
 STATUS=0
 XF=""; BL=${BUILDS:-default forced}
-if [ "${REFERENCE:-0}" = 1 ]; then BL=default; XF="-DRTOL=1d-8"; fi
+if [ "${REFERENCE:-0}" = 1 ]; then BL=default; XF="-DSGCHEM_FORTRAN_RTOL=1d-8"; fi
 for B in $BL; do
     X="${EXTRA_CXXFLAGS:-}"; [ $B = forced ] && X="$X -DTEST_SGCHEM_FORCED_SOLVER_FAILURE"
     [ "${REFERENCE:-0}" = 1 ] && X="$X -DCHEM_RTOL=1e-8 -DTEST_WRITE_CONVERGED_REFERENCE"
