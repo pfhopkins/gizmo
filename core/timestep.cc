@@ -682,7 +682,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef GRAIN_FLUID
     if((1 << P[p].Type) & (GRAIN_PTYPES))
     {
-        csnd = CellP[p].soundspeed2_from_u(P[p].Gas_InternalEnergy);
+        csnd = GAMMA_DEFAULT*(GAMMA_DEFAULT-1.)*P[p].Gas_InternalEnergy; /* p is a grain, not a gas cell */
         csnd += (P[p].Gas_Velocity - P[p].Vel).norm_sq();
 #if defined(GRAIN_LORENTZFORCE)
         csnd += P[p].Gas_B.norm_sq() / (2.0 * P[p].Gas_Density);

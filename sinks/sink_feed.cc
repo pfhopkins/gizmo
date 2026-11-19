@@ -25,6 +25,9 @@
 struct INPUT_STRUCT_NAME
 {
     int NodeList[NODELISTLENGTH]; Vec3<MyDouble> Pos; Vec3<MyFloat> Vel; MyFloat KernelRadius, Mass, Sink_Mass, Dt, Density, Mdot; MyIDType ID;
+#ifdef SINK_THERMALFEEDBACK
+    MyFloat Luminosity;
+#endif
     uint64_t RngKey; /* the sink's random-number key (particle_event_rng_key), for the per-neighbour draws */
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS)
     Vec3<MyFloat> Jgas_in_Kernel;
@@ -92,6 +95,9 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
     in->Dt = get_particle_feedback_timestep_in_physical(i);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
     in->Dt = P[i].dt_since_last_gas_search;
+#endif
+#ifdef SINK_THERMALFEEDBACK
+    in->Luminosity = sink_lum_bol(in->Mdot, in->Sink_Mass, i);
 #endif
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS)
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
@@ -360,7 +366,7 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                             }
 #endif
 #ifdef SINK_THERMALFEEDBACK
-                            double energy = sink_lum_bol(local.Mdot, local.Sink_Mass, -1) * local.Dt;
+                            double energy = local.Luminosity * local.Dt;
                             if(local.Density > 0) {
                                 #pragma omp atomic
                                 CellP[j].Injected_Sink_Energy += (wk/local.Density) * energy * P[j].Mass;
