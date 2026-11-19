@@ -810,9 +810,9 @@ keep the floored HI fraction: no energy term for the H+ removed, bounded by the 
 1e-8 the old and new RHS give the same hand-off trajectories. C++ chem_rhs_net5/17, Fortran rate_eq_simple/ulli.
 Test: golden/test_solver_failure.cc, nets 5 and 17 (the 66 + 7 logged cells replayed, hand-off grid), each backend
 against the committed converged reference (Uli 2026-11-19). Not changed: net 3, He (He++ at abhe).
-Open (gate fails, bar unchanged): net 17 hand-off nH 10, dt 7.7e11 s, bypass T 4.38e5 / 4.56e5 K: C++ 1.2% / 1.9%
-off the converged T (DVODE 0.3% / 0.1%); net 5 logged cells 6796375, 1080890 and hand-off nH 10, Tb 4.99e5 K,
-dt 7.7e11 / 3e12 s: T within 0.13%, but 1-2 recoverable validate_input rejections per solve (also at c4ce572d5).
+Net 5 logged cells 6796375, 1080890 and hand-off nH 10, Tb 4.99e5 K, dt 7.7e11 / 3e12 s: T within 0.13%, 1-2
+recoverable validate_input H+ rejections per solve (EPS_MAX = 1e-4 = rtol; kept as Arepo, Uli 2026-11-19; recorded in
+the test as a known harmless case). Net 17 hand-off rows: see D-60.
 
 ## D-59. (2026-11-19) C++ solver failures: one retry, TNOCHEM finish in hot gas, else abort (Uli 2026-11-18)
 Nets 3, 5, 15, 16, 17 and 20 (the shared driver; net 18 has its own); tested for nets 5 and 17.
@@ -839,6 +839,21 @@ Tests: golden/test_solver_failure.cc (nets 5 and 17) phase R, TEST_SGCHEM_FORCED
 and 100 per attempt; retry rescue and its start state; TNOCHEM finish after heating across TNOCHEM in attempt 0
 and in the retry; abort at 100 K; dump-and-replay into a NaN-filled cell; flagged-RHS CR heating at all four
 booking sites.
+
+## D-60. (2026-11-19) net 17: D+ ionization stays restoring above D+ = abundD, both backends; C++ stop time per substep
+D-58 for deuterium (Uli 2026-11-19, option D). The TNOCHEM hand-off writes D+ = abundD exactly; with the neutral D
+fraction floored at 0 the D+ RHS is flat above it, CVODE overshoots and check_abundances rejects the substep for a D+
+excess (554 of 568 substep rejections in the 126 A/H test calls). ch98 x_H+ x_D, ch11 n_e x_D, ch32 x_He+ x_D, cr1a x_D
+and ph38 x_D in the D+ equation use the unclipped D fraction abundD - x_D+ - x_HD when it is negative; unchanged
+otherwise (the H+/He+ charge-exchange partners keep the floored value: imbalance bounded by the over-fill,
+<= rtol x abundD). C++ chem_rhs_net17, Fortran rate_eq_ulli. The C++ driver also stops CVODE at each net-17 substep end
+(CVodeSetStopTime) instead of stepping past it and interpolating back. Converged references change by <= 5e-7.
+Test: golden/test_solver_failure.cc (no substep rejected for a D+ excess; each backend within 1% of the converged T).
+Measured: C++ phase-H worst error 1.9% -> 1.5e-4. Cost: r26 cloud (net 17, 12 Myr) RHS evaluations 497.2e6 -> 543.0e6
+(+9%), wall 403 -> 455 s (single runs).
+Open (gate fails, bar unchanged): nH 10 hand-off, bypass T 4.11e5 / 4.38e5 K, dt 7.7e11 / 3e12 s: one recoverable C++ H+
+validate_input rejection each (comes with the stop time); bypass T 4.56e5 K, dt 7.7e11 s: DVODE 1.1% off the converged
+T (0.1% before D-60 in the Fortran RHS).
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
