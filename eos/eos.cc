@@ -238,9 +238,9 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 #elif defined(SGCHEM) && defined(GALSF_RESOLVEDISM)
     { /* ions per H nucleus from the chemistry's electrons; ThermalProperties' nH0 is atomic H only, so 1-nH0 would count H2 as ionized */
 #ifdef SGCHEM_ELECTRONS_AND_HYDROGEN_FRACTION_FROM_NETWORK
-        double x_ion = cell[i].TracAbund[IHP]; /* the H ionised fraction */
-        if(!isfinite(x_ion)) {x_ion = 0;}
-        return DMIN(DMAX(x_ion, 1.e-12), 1.);
+        double x_hii = cell[i].TracAbund[IHP]; /* the H ionised fraction */
+        if(!isfinite(x_hii)) {x_hii = 0;}
+        return DMIN(DMAX(x_hii, 1.e-12), 1.);
 #endif
         double x_ion = cell[i].Ne;
 #if CHEMISTRYNETWORK == 5
