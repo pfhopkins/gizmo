@@ -194,7 +194,8 @@ extern "C" void probe_floor(int fileid, int line, const char* var, double v)
     static const char* tr = std::getenv("CONS_FLOOR_TRACE");
     if (tr && s.n <= std::atol(tr)) std::printf("  FLOORTRACE %d:%d %s v=%.3e rel=%.3e at %s\n", fileid, line, var, v, r, g_where);
 }
-extern "C" void probe_rhs() { g_rhs_calls++; }
+static long g_rhs_budget = 0; /* in a forked call: C++ RHS evaluations allowed (0 = no limit) */
+extern "C" void probe_rhs() { g_rhs_calls++; if (g_rhs_budget > 0 && g_rhs_calls > g_rhs_budget) _exit(99); } /* deterministic limit */
 extern "C" void probe_h3p(double abh3p, double abHI)
 {
     if (3.0 * abh3p > g_h3p_max) g_h3p_max = 3.0 * abh3p;
@@ -554,7 +555,8 @@ static int phase_R(const ChemTables& TT, const char* tag)
 // ===========================================================================
 // PHASE C -- conservation grid
 // Each (state, backend) call runs in a forked child with a wall-clock limit
-// (CONS_TIMEOUT s, default 120); the child returns the state and its probe
+// (C++: CONS_MAX_RHS right-hand-side evaluations, default 2e6, a deterministic limit; wall clock CONS_TIMEOUT s, default 3600,
+// only as a safety net); the child returns the state and its probe
 // deltas through a pipe.  Solver output of the child goes to /dev/null.
 // ===========================================================================
 struct FloorRec { int key; long n; double maxrel; long bin[4]; char var[16]; };
@@ -592,7 +594,8 @@ static void merge_child(const ChildResult& r)
 static int run_forked(int backend, double dt, double nH, double* en, double* y, double* td, double* wsec)
 {
     static const char* to = std::getenv("CONS_TIMEOUT");
-    const double tmax = to ? std::atof(to) : 120.0;
+    static const char* mr = std::getenv("CONS_MAX_RHS");
+    const double tmax = to ? std::atof(to) : 3600.0;
     int fd[2];
     if (pipe(fd)) { std::perror("pipe"); std::exit(1); }
     std::fflush(stdout);
@@ -600,7 +603,7 @@ static int run_forked(int backend, double dt, double nH, double* en, double* y, 
     if (pid == 0) {
         close(fd[0]);
         int dn = open("/dev/null", O_WRONLY); dup2(dn, 1); dup2(dn, 2);
-        g_floor.clear(); g_clip = ClipStat(); g_rhs_calls = 0;
+        g_floor.clear(); g_clip = ClipStat(); g_rhs_calls = 0; g_rhs_budget = mr ? std::atol(mr) : 2000000;
         g_h3p_max = g_h3p_rel_max = 0.0; g_h3p_cap = g_h3p_capped = 0;
         ChildResult r = ChildResult();
         double w0 = wall();
@@ -641,6 +644,7 @@ static int run_forked(int backend, double dt, double nH, double* en, double* y, 
     if (timed_out) kill(pid, SIGKILL);
     int st; waitpid(pid, &st, 0);
     if (timed_out) { *wsec = tmax; return -9; }
+    if (got < sizeof(r) && WIFEXITED(st) && WEXITSTATUS(st) == 99) { *wsec = wall() - w0; return -9; } /* RHS budget used up */
     if (got < sizeof(r)) { *wsec = wall() - w0; return -8; }     // child died
     merge_child(r);
     *en = r.en; *td = r.td; for (int i = 0; i < TRAC_NUM; i++) y[i] = r.y[i];
@@ -719,7 +723,7 @@ static int phase_C(const char* csvname)
     if (f) std::fclose(f);
     std::printf("\nPHASE C -- conservation, %ld states x 2 backends (failures: f77 %ld, cxx %ld)\n",
                 ntot, nfail[0], nfail[1]);
-    std::printf("  wall-clock timeouts (excluded from the statistics below): f77 %ld, cxx %ld\n", ntimeout[0], ntimeout[1]);
+    std::printf("  calls over the C++ RHS budget or the wall-clock safety limit (excluded from the statistics below): f77 %ld, cxx %ld\n", ntimeout[0], ntimeout[1]);
     std::printf("  slowest call: f77 %.1f s (%s), cxx %.1f s (%s)\n", wmax[0], wwhere[0], wmax[1], wwhere[1]);
     std::printf("  element | presolve clamp removed (max, #states) | overdraft into solver | "
                 "overdraft after call f77 / cxx (#states > 1e-14) | negative after call f77 / cxx\n");
