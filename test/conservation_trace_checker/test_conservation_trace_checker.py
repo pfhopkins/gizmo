@@ -63,8 +63,9 @@ def test_integration_drift_beyond_bar_fails(tmp_path):
 def test_integration_not_checked_without_potential(tmp_path):
     hdr = "# Energy step trace\n# pot_valid=0 every=1\n"
     lines = [l.replace("int_res=+0.000000e+00", "int_res=nan") for l in CLEAN_ENERGY]
-    rep = check_conservation_traces(write(tmp_path, CLEAN_MASS, lines, hdr))
+    rep = check_conservation_traces(write(tmp_path, CLEAN_MASS, lines, hdr), require_integration=False)
     assert rep.ok and "integration not checked" in rep.summary()
+    assert not check_conservation_traces(tmp_path).ok  # by default an unchecked integration is a finding
 
 
 def test_mass_jump_fails(tmp_path):
@@ -134,3 +135,14 @@ def test_mass_trace_optional_for_builds_without_it(tmp_path):
     (tmp_path / "energy_step_trace.txt").write_text(ENERGY_HDR + "".join(CLEAN_ENERGY))
     assert not check_conservation_traces(tmp_path).ok
     assert check_conservation_traces(tmp_path, require_mass=False).ok
+
+
+def test_trace_without_sync_line_fails(tmp_path):
+    """A trace that never reached a full sync checks nothing: a finding."""
+    rep = check_conservation_traces(write(tmp_path, CLEAN_MASS, []))
+    assert not rep.ok and rep.findings[0]["kind"] == "energy_integration_not_checked"
+
+
+def test_cooling_rate_check_absence_is_noted(tmp_path):
+    rep = check_conservation_traces(write(tmp_path, CLEAN_MASS, CLEAN_ENERGY))
+    assert rep.ok and "cooling-rate check not run" in rep.summary()
