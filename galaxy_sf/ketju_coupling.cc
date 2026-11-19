@@ -1444,8 +1444,8 @@ static double expand_tight_binaries(KetjuRegion &reg, double dt_physical)
     }
     double dE = kj_region_internal_energy(ps, n) - E0;
 
-    printf("KETJU: expanded tight binary (period=%g -> %g, dt=%g, dE=%g) in region with %d particles\n",
-           min_period, min_period * 2.0 * sqrt(2.0), dt_physical, dE, n);
+    printf("KETJU: expanded tight binary (t=%.10g period=%g -> %g, dt=%g, dE=%.10g) in region with %d particles\n",
+           All.Time, min_period, min_period * 2.0 * sqrt(2.0), dt_physical, dE, n);
     return dE;
 }
 
