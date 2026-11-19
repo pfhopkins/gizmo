@@ -92,7 +92,7 @@ static const double CHEM_HMIN_EPS = 10.0 * DBL_EPSILON;
     X(dust_to_gas_ratio) X(cosmic_ray_ion_rate) X(cr_energy_density) X(redshift) X(AV_ext) \
     X(deff) X(phi_pah) X(h2_form_ex) X(h2_form_kin) X(f_rsc) X(AV_conversion_factor) \
     X(iphoto) X(isrf_option) X(no_dchem) X(iflag_mn) X(iflag_ad) X(iflag_atom) X(iflag_3bh2a) X(iflag_3bh2b) \
-    X(iflag_h3pra) X(iflag_h2opc) X(irad_heat) X(id_current) X(G_dust) X(chi_isrf) X(fshield_CO) X(npix) X(NH_cell) \
+    X(iflag_h3pra) X(iflag_h2opc) X(irad_heat) X(G_dust) X(chi_isrf) X(fshield_CO) X(npix) X(NH_cell) \
     X(diffuse_dust_heat) X(rt_phot_HI) X(rt_phot_HeI) X(rt_phot_HeII) X(rt_heat_HI) X(rt_heat_HeI) X(rt_heat_HeII) \
     X(rt_phot_H2) X(rt_heat_H2) X(dvdr) X(Zg) X(n20_kgr_const) X(n20_tbb) X(n20_sig_lw) X(n20_chi_pe) X(n20_chi_lw) \
     X(n20_chi_fuv) X(n20_xi) X(n20_gd_uv) X(n20_gd_ext) X(n20_xe)
@@ -118,9 +118,9 @@ static void chem_dump_cell(const char* why, const ChemCell& c, const ChemCellEnt
     std::string s = head;
     std::snprintf(head, sizeof(head), "  cell %ld entry:", c.id_current);
     s += head;
-    const double sc[] = {e.time, e.t_start, e.t_end, e.tdust_entry, (double)e.attempt, (double)e.code, e.tdust_now};
-    const char* sk[] = {"dt", "t_start", "t_end", "tdust_entry", "attempt", "code", "tdust_now"};
-    for (int i = 0; i < 7; i++) dump_add(s, sk[i], &sc[i], 1);
+    const double sc[] = {e.time, e.t_start, e.t_end, e.tdust_entry, (double)e.attempt, (double)e.code, e.tdust_now, e.n20_xe_entry};
+    const char* sk[] = {"dt", "t_start", "t_end", "tdust_entry", "attempt", "code", "tdust_now", "n20_xe_entry"};
+    for (int i = 0; i < 8; i++) dump_add(s, sk[i], &sc[i], 1);
     dump_add(s, "y_entry", e.y_entry, c.nspec);
     dump_add(s, "y_now", e.y_now, c.nspec);
     std::snprintf(head, sizeof(head), "\n  cell %ld inputs:", c.id_current);
@@ -128,6 +128,8 @@ static void chem_dump_cell(const char* why, const ChemCell& c, const ChemCellEnt
 #define DUMP_S(f) { const double v = (double)c.f; dump_add(s, #f, &v, 1); }
 #define DUMP_A(f, n) { double v[n]; for (int i = 0; i < (n); i++) v[i] = (double)c.f[i]; dump_add(s, #f, v, n); }
     CHEM_CELL_SCALARS(DUMP_S)
+    std::snprintf(head, sizeof(head), " id_current=%ld", c.id_current);
+    s += head;
     std::snprintf(head, sizeof(head), "\n  cell %ld arrays:", c.id_current);
     s += head;
     CHEM_CELL_ARRAYS(DUMP_A)
@@ -168,18 +170,23 @@ static int parse_key(const char* text, const char* key, double* v, int nmax)
 int chem_cell_parse(const char* text, ChemCell& c, ChemCellEntry& e)
 {
     int bad = 0;
-    double v[CHEM_NPHTAB > CHEM_NSPEC_MAX ? CHEM_NPHTAB : CHEM_NSPEC_MAX];
+    double v[CHEM_NPHTAB + CHEM_NPIX + CHEM_NSPEC_MAX];   // longer than any dumped array
 #define PARSE_S(f) { if (parse_key(text, #f, v, 1) == 1) c.f = (decltype(c.f))v[0]; else bad++; }
 #define PARSE_A(f, n) { if (parse_key(text, #f, v, n) == (n)) { for (int i = 0; i < (n); i++) c.f[i] = v[i]; } else bad++; }
     CHEM_CELL_SCALARS(PARSE_S)
     CHEM_CELL_ARRAYS(PARSE_A)
 #undef PARSE_S
 #undef PARSE_A
-    const char* sk[] = {"dt", "t_start", "t_end", "tdust_entry", "attempt", "code", "tdust_now"};
-    double sc[7];
-    for (int i = 0; i < 7; i++) { if (parse_key(text, sk[i], v, 1) == 1) sc[i] = v[0]; else { sc[i] = 0; bad++; } }
+    const char* sk[] = {"dt", "t_start", "t_end", "tdust_entry", "attempt", "code", "tdust_now", "n20_xe_entry"};
+    double sc[8];
+    for (int i = 0; i < 8; i++) { if (parse_key(text, sk[i], v, 1) == 1) sc[i] = v[0]; else { sc[i] = 0; bad++; } }
     e.time = sc[0]; e.t_start = sc[1]; e.t_end = sc[2]; e.tdust_entry = sc[3];
-    e.attempt = (int)sc[4]; e.code = (int)sc[5]; e.tdust_now = sc[6];
+    e.attempt = (int)sc[4]; e.code = (int)sc[5]; e.tdust_now = sc[6]; e.n20_xe_entry = sc[7];
+    c.n20_xe = e.n20_xe_entry;
+    {
+        const char* p = std::strstr(text, " id_current=");
+        if (p) c.id_current = std::strtol(p + 12, nullptr, 10); else bad++;
+    }
     if (parse_key(text, "y_entry", e.y_entry, c.nspec) != c.nspec) bad++;
     if (parse_key(text, "y_now", e.y_now, c.nspec) != c.nspec) bad++;
     c.tdust = e.tdust_entry;
@@ -444,8 +451,11 @@ static int energy_only_subcycle(double& t_start, double t_end, double* y, double
                                 ChemCell& c, Stop stop)
 {
     for (long n = 1; n <= 100000; n++) {
-        const int rerr = rhs_dispatch(t_start, y, ydot, c);
+        int rerr = rhs_dispatch(t_start, y, ydot, c);
         if (c.fatal_code) return -1;
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+        if (chem_test_flag_rhs[3] && n == 1) { rerr = 1; c.cr_ion_heat = 1e30; for (int i = 0; i <= itmp; i++) ydot[i] = 0.0; }
+#endif
         if (rerr && ydot[itmp] == 0.0) c.cr_ion_heat = 0.0;   // flagged evaluation: nothing applied, nothing booked
         double dt_byp;
         if (std::fabs(ydot[itmp]) > 0.0)
@@ -495,7 +505,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
     int dumped = 0;              // full cell state already printed for this call
     ChemCellEntry ent;           // call-entry state for chem_dump_cell
     ent.time = time; ent.t_start = 0.0; ent.t_end = time; ent.tdust_entry = c.tdust; ent.tdust_now = c.tdust;
-    ent.attempt = 0; ent.code = 0;
+    ent.attempt = 0; ent.code = 0; ent.n20_xe_entry = c.n20_xe;
     for (int i = 0; i < nspec; i++) { ent.y_entry[i] = y[i]; ent.y_now[i] = y[i]; }
     auto dump = [&](const char* why, int code, double ts, const double* ynow) {
         ent.code = code; ent.t_start = ts; ent.attempt = attempt; ent.tdust_now = c.tdust;
@@ -629,6 +639,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
     CvWork* w = nullptr;
     int retcode = 1;             // if the loop exhausts: "nstep exceeded"
     double crh_prev = 0.0, crh_dt = 0.0; // CR ionisation heating at the last accepted state, pending accepted interval
+    int crh_valid = 0;           // crh_prev holds an unflagged evaluation (else the pending interval is booked as a rectangle)
 
 attempt_start:
 #ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
@@ -686,7 +697,8 @@ attempt_start:
             if (chem_test_flag_rhs[0] == nsub_start) { rerr = 1; c.cr_ion_heat = 1e30; }   // test: flagged, stale CR heating
 #endif
             if (rerr) c.cr_ion_heat = crh_prev;          // flagged evaluation: no fresh CR heating
-            c.cr_ion_heat_int += 0.5 * (crh_prev + c.cr_ion_heat) * crh_dt; crh_prev = c.cr_ion_heat; crh_dt = 0.0; // trapezoid over the accepted substep
+            c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : c.cr_ion_heat) + c.cr_ion_heat) * crh_dt; // trapezoid over the accepted substep
+            crh_valid |= !rerr; crh_prev = c.cr_ion_heat; crh_dt = 0.0;
             dt_est = 1e18;
             for (int j = 0; j < nspec; j++) {
                 if (used[j] && ydot[j] != 0.0 && safety[j] != 0.0 && y[j] > ctrl_floor[j]) {
@@ -785,10 +797,16 @@ attempt_start:
 recover:
     // solver failure (1, 100), y = state at the last accepted time t_start (D-59)
     {
-        const int rerr = rhs_dispatch(t_start, y, ydot, c);   // CR heating at the accepted state closes the pending trapezoid
+        const double tdust_acc = c.tdust;                     // the evaluation must not move the accepted dust temperature
+        int rerr = rhs_dispatch(t_start, y, ydot, c);         // CR heating at the accepted state closes the pending trapezoid
+        c.tdust = tdust_acc;
         if (c.fatal_code) { retcode = c.fatal_code; goto out; }
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+        if (chem_test_flag_rhs[2]) { rerr = 1; c.cr_ion_heat = 1e30; }   // test: flagged, stale CR heating
+#endif
         if (rerr) c.cr_ion_heat = crh_prev;
-        c.cr_ion_heat_int += 0.5 * (crh_prev + c.cr_ion_heat) * crh_dt; crh_prev = c.cr_ion_heat; crh_dt = 0.0;
+        c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : c.cr_ion_heat) + c.cr_ion_heat) * crh_dt;
+        crh_valid |= !rerr; crh_prev = c.cr_ion_heat; crh_dt = 0.0;
         long ns = 0;
         if (w && w->mem && CVodeGetNumSteps(w->mem, &ns) == CV_SUCCESS) cxx_stat_cvode_steps += ns;
         if (attempt == 0) {
@@ -846,7 +864,8 @@ out:
 #endif
             if (rerr_final) c.cr_ion_heat = crh_prev;    // flagged: no fresh CR heating
         }
-        c.cr_ion_heat_int += 0.5 * (crh_prev + (chem_legacy_lambda() ? crh_prev : c.cr_ion_heat)) * crh_dt; // last accepted substep
+        const double crh_end = chem_legacy_lambda() ? crh_prev : c.cr_ion_heat;
+        c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : crh_end) + crh_end) * crh_dt; // last accepted substep
     }
 out_nocopy:
     if (retcode != 0 && !dumped) dump("solver failure returned to the caller", retcode, t_start, y);

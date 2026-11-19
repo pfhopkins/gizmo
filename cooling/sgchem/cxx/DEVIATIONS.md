@@ -803,12 +803,16 @@ ph38 = 0 the H+ RHS is flat above 1 and steeply restoring below (ch11 n_e ~ 2e-9
 hand-off writes x_H+ = 1 exactly; the one-sided difference-quotient Jacobian misses the stiffness, Newton
 overshoots past 1 + EPS_MAX, CVODE cuts h to the floor (flag -10) and the driver halves the substep. In the WLM
 net 17 run (2026-11-17) this hit 66 cells and one exhausted the 9e6 substep budget (ID 4819441, abort 78101);
-the net 5 twin hit the floor in 7 hot ionized cells (same H+ terms; not replayed). ch11 n_e abHI and cr1 abHI
-now use the unclipped HI fraction 1 - 2 x_H2 - x_H+ - x_HD when it is negative, as ph38 does: unchanged whenever
-that fraction is >= 0 (over-filled H budgets, e.g. x_H+ > 1, now lose H+). As in D-30 the ionization cooling
-(rc[7] / rates_chem[4]) and CR heating keep the floored HI fraction: no energy term for the H+ removed, bounded by
-the over-fill (<= EPS_MAX). At rtol 1e-8 the old and new RHS give the same hand-off trajectories. C++ chem_rhs_net5/17, Fortran rate_eq_simple/ulli.
-Test: golden/test_net17_solver_failure.cc (66 logged cells + hand-off grid). Not changed: net 3, He (He++ at abhe).
+the net 5 twin hit the floor in 7 hot ionized cells. ch11 n_e abHI and cr1 abHI now use the unclipped HI fraction
+1 - 2 x_H2 - x_H+ - x_HD when it is negative, as ph38 does: unchanged whenever that fraction is >= 0 (over-filled
+H budgets, e.g. x_H+ > 1, now lose H+). As in D-30 the ionization cooling (rc[7] / rates_chem[4]) and CR heating
+keep the floored HI fraction: no energy term for the H+ removed, bounded by the over-fill (<= EPS_MAX). At rtol
+1e-8 the old and new RHS give the same hand-off trajectories. C++ chem_rhs_net5/17, Fortran rate_eq_simple/ulli.
+Test: golden/test_solver_failure.cc, nets 5 and 17 (the 66 + 7 logged cells replayed, hand-off grid), each backend
+against the committed converged reference (Uli 2026-11-19). Not changed: net 3, He (He++ at abhe).
+Open (gate fails, bar unchanged): net 17 hand-off nH 10, dt 7.7e11 s, bypass T 4.38e5 / 4.56e5 K: C++ 1.2% / 1.9%
+off the converged T (DVODE 0.3% / 0.1%); net 5 logged cells 6796375, 1080890 and hand-off nH 10, Tb 4.99e5 K,
+dt 7.7e11 / 3e12 s: T within 0.13%, but 1-2 recoverable validate_input rejections per solve (also at c4ce572d5).
 
 ## D-59. (2026-11-19) C++ solver failures: one retry, TNOCHEM finish in hot gas, else abort (Uli 2026-11-18)
 Nets 3, 5, 15, 16, 17 and 20 (the shared driver; net 18 has its own); tested for nets 5 and 17.
@@ -816,19 +820,25 @@ A dt collapse (100) or a spent substep budget (1) no longer aborts at once:
 (1) Retry from the last accepted state with CVODE, rtol/atol and the substep safety factors x0.1, budget
     CHEM_NSTEP_RETRY = 1e6 substeps (a code-1 cell can otherwise cost a second 9e6 budget). The retry is always
     a CVODE retry, also when attempt 0 heated the cell above TNOCHEM. Logged; counted (cxx_stat_failure_retries).
+    The accepted dust temperature is kept across the evaluation at the failure point.
 (2) If the retry fails and the state's bypass temperature is above TNOCHEM: finish the step through the TNOCHEM
     path (hot-CIE ions, explicit energy-only subcycle), full cell dump, counted (cxx_stat_tnochem_finishes). The
     energy change is booked by the cooling ledger like any chemistry step.
 (3) Otherwise return the code (the caller aborts, as Arepo) after the full cell dump.
-The dump (chem_dump_cell, one write per cell so threads do not interleave) holds the call-entry state, t_start,
-t_end, the current state and every ChemCell input at %.17g (all photorates, all pixel columns, CR energy density,
-...); chem_cell_parse rebuilds the cell from it. Every non-zero return dumps the cell. Each rank prints its
-retried/TNOCHEM counts after the cooling step when they change (cooling.cc, no collective).
-A flagged RHS evaluation books no fresh CR ionisation heating (the last accepted value is held) at every booking
-site: substep start, failure point, final evaluation, explicit subcycle. Fortran DVODE path unchanged (aborts).
+The dump (chem_dump_cell, one write per cell so threads do not interleave) holds the call-entry state (incl. tdust
+and the net-20 x_e start value), t_start, t_end, the current state and every ChemCell input at %.17g (all
+photorates, all pixel columns, CR energy density, ...; the particle ID as an integer); chem_cell_parse rebuilds the
+cell from it alone. Every non-zero return dumps the cell; the first CVODE floor hit of a call also dumps it (about
+2.8 kB per event instead of the former 0.6 kB). Each rank prints its retried/TNOCHEM counts after the cooling step
+when they change (cooling.cc, no collective).
+CR ionisation heating of a flagged RHS evaluation: at a substep start, at the failure point and at the final
+evaluation the last unflagged value is held (before the first unflagged value of a call, the pending interval is
+booked as a rectangle with the next one); in the explicit subcycle a flagged evaluation applies nothing (ydot = 0)
+and books zero. Fortran DVODE path unchanged (aborts).
 Tests: golden/test_solver_failure.cc (nets 5 and 17) phase R, TEST_SGCHEM_FORCED_SOLVER_FAILURE: forced codes 1
 and 100 per attempt; retry rescue and its start state; TNOCHEM finish after heating across TNOCHEM in attempt 0
-and in the retry; abort at 100 K; dump-and-replay.
+and in the retry; abort at 100 K; dump-and-replay into a NaN-filled cell; flagged-RHS CR heating at all four
+booking sites.
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 

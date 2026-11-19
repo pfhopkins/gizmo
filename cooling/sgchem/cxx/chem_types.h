@@ -383,7 +383,7 @@ struct ChemCell {
 
 // call of a dumped cell (cvode_driver.cc chem_dump_cell / chem_cell_parse)
 struct ChemCellEntry {
-    double time, t_start, t_end, tdust_entry, tdust_now;
+    double time, t_start, t_end, tdust_entry, tdust_now, n20_xe_entry;
     int attempt, code;
     double y_entry[CHEM_NSPEC_MAX], y_now[CHEM_NSPEC_MAX];
 };
