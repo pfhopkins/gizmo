@@ -3,7 +3,7 @@
 // With RESOLVED_ISM_VARIABLE_SN_ENERGY (test_sn_energy_variable.cc):
 //   PISN: Heger & Woosley 2002 (ApJ 567, 532) via the Wise et al. 2012a fit, E = [5.0 + 1.304 (M_He/Msun - 64)] 1e51 erg with
 //   M_He = (13/24)(M_ZAMS - 20) Msun (HW02 eq. 1), He core held to HW02's PISN range 64-133 Msun;
-//   ECSN: 1e50 erg (Kitaura, Janka & Hillebrandt 2006, A&A 450, 345: 1.2e50 erg for the O-Ne-Mg core of an 8.8 Msun star).
+//   ECSN: 5e50 erg, Uli's choice 2026-11-19 (Kitaura, Janka & Hillebrandt 2006, A&A 450, 345, give ~1e50 erg for the 8.8 Msun O-Ne-Mg core).
 #include "test_harness.h"
 #include "galaxy_sf/resolvedism_sn_energy.h"
 
@@ -22,7 +22,7 @@ TEST_CASE("energy by death type") {
     CHECK(resolvedism_sn_energy_erg(0, 0, 1, 15.) == 1e51);  // CCSN, PPISN
     CHECK(resolvedism_sn_energy_erg(0, 0, 0, 40.) == 0);     // failed SN, direct collapse
 #ifdef RESOLVED_ISM_VARIABLE_SN_ENERGY
-    CHECK(resolvedism_sn_energy_erg(0, 1, 1, 8.5) == 1e50);  // ECSN
+    CHECK(resolvedism_sn_energy_erg(0, 1, 1, 8.5) == 5e50);  // ECSN
     CHECK(resolvedism_sn_energy_erg(1, 0, 1, 200.) == resolvedism_pisn_energy_erg(200.)); // PISN: He core
 #else
     CHECK(resolvedism_sn_energy_erg(0, 1, 1, 8.5) == 1e51);  // ECSN: fixed
