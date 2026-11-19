@@ -10,9 +10,12 @@ Bars (set before the runs):
 - built without the flags: no repeat;
 - RESOLVED_ISM_FB_AFTER_CLOSING_KICK: at least one repeat (the SN), fewer than with RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB added
   (its wind steps repeat too);
-- the repeated pass applies no second metal exchange: cells at least 0.2 L from the star end with the metallicity of the run
-  without the flag, max |Z_flag - Z_default| <= 1e-6 x max |Z_default - Z_start| over those cells (a second exchange on a repeat
-  step adds a whole step's exchange); the exchange is non-zero there;
+- the repeated pass applies no second metal exchange: cells beyond the remnant (at least 0.4 L from the star; the Sedov radius
+  after 5 kyr is about 0.2 L) end with the metallicity of the run without the flag, max |Z_flag - Z_default| <= 1e-6 x
+  max |Z_default - Z_start| over those cells (a second exchange on a repeat step adds a whole step's exchange); the exchange is
+  non-zero there. Cells are matched by ID; IDs that a split repeats are left out.
+  Record: the first version (job 231729) selected cells beyond 0.2 L, inside the remnant, and wrote 11 metal slots into this
+  one-slot build's ICs, which the reader took as a flattened array; both corrected after that run, the 1e-6 bar unchanged;
 - the old names (FB_G17_BOUNDARY_INJECTION, GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK), RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB alone
   and the flag with MFV stop the build with their message.
 The gas energy excess over start + 1e51 erg at full synchronisation is printed for the runs, not a bar."""
@@ -55,6 +58,12 @@ def run(tag, exe, m_cell, tables):
     x = lattice(N_SIDE, L)
     make_treecol_pixels_ics(str(d / "output" / "snapshot_000.hdf5"), L, x, [(M, age, star_pos(L, m_cell))],
                             gas_mass=m_cell, hsml=2.5 * m_cell ** (1 / 3), z_gas=np.where(x[:, 0] < 0.25 * L, 3 * Z, Z))
+    with h5py.File(d / "output" / "snapshot_000.hdf5", "r+") as f:  # this build carries total Z only: one metal slot
+        for t in ("PartType0", "PartType4"):
+            z = f[f"{t}/Metallicity"][()][:, 0]
+            del f[f"{t}/Metallicity"]
+            f[f"{t}/Metallicity"] = z
+        f["Header"].attrs["Flag_Metals"] = 1
     p = (HERE / f"{NAME}.params").read_text().replace("SET_BY_TEST", tables["StellarTablesFile"])
     p = "\n".join(l for l in p.splitlines() if not (l.split() and l.split()[0] == "BoxSize")) + f"\nBoxSize {L}\n"
     (d / "run.params").write_text(p)
@@ -71,8 +80,23 @@ def run(tag, exe, m_cell, tables):
 
 def metals(r, snap):
     with h5py.File(r["dir"] / "output" / snap, "r") as f:
-        g = f["PartType0"]; o = np.argsort(g["ParticleIDs"][()])
-        return g["ParticleIDs"][()][o], g["Coordinates"][()][o], g["Metallicity"][()][o][:, 0]
+        g = f["PartType0"]
+        z = g["Metallicity"][()]
+        return g["ParticleIDs"][()], g["Coordinates"][()], (z if z.ndim == 1 else z[:, 0])
+
+
+def by_unique_id(runs):
+    """the (ID, x, Z) of every run on the IDs that occur once in each run, sorted by ID"""
+    keep = None
+    for ids, _, _ in runs:
+        u, c = np.unique(ids, return_counts=True)
+        keep = set(u[c == 1]) if keep is None else keep & set(u[c == 1])
+    keep = np.array(sorted(keep))
+    out = []
+    for ids, x, z in runs:
+        sel = np.isin(ids, keep); o = np.argsort(ids[sel])
+        out.append((ids[sel][o], x[sel][o], z[sel][o]))
+    return out
 
 
 @pytest.fixture(scope="module")
@@ -106,14 +130,11 @@ def test_sn_repeats_winds_only_with_the_second_flag(ladder):
 def test_metal_exchange_once_per_step(ladder):
     for m in (1.0, 0.1):
         a, b = ladder[("default", m)], ladder[("closing", m)]
-        ida, x, z0 = metals(a, "snapshot_000.hdf5")
-        ida1, _, za = metals(a, "snapshot_001.hdf5")
-        idb1, _, zb = metals(b, "snapshot_001.hdf5")
-        assert np.array_equal(ida, ida1) and np.array_equal(ida, idb1)
+        (_, x, z0), (_, _, za), (_, _, zb) = by_unique_id([metals(a, "snapshot_000.hdf5"), metals(a, "snapshot_001.hdf5"), metals(b, "snapshot_001.hdf5")])
         d = x - star_pos(a["L"], m); d -= a["L"] * np.round(d / a["L"])
-        far = np.linalg.norm(d, axis=1) > 0.2 * a["L"]
+        far = np.linalg.norm(d, axis=1) > 0.4 * a["L"]
         exch, diff = np.max(np.abs(za - z0)[far]), np.max(np.abs(zb - za)[far])
-        print(f"{m} Msun: {far.sum()} far cells; metal exchange max |dZ| {exch:.3e}; flag vs default max |dZ| {diff:.3e} ({diff / exch:.2e})")
+        print(f"{m} Msun: {far.sum()} cells beyond 0.4 L; metal exchange max |dZ| {exch:.3e}; flag vs default max |dZ| {diff:.3e} ({diff / exch:.2e})")
         assert exch > 0 and diff <= 1e-6 * exch
 
 
