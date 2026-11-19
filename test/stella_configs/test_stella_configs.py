@@ -10,6 +10,9 @@
   test_radiation_pressure_per_config: Config through the preprocessor with precompiler_logic.h: cloud, default, galaxy and tall
     box set GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS themselves, the zoom build has no radiation pressure (Uli 2026-11-18).
   test_stella_defaults_without_radiation_pressure: STELLA_DEFAULTS alone sets no radiation pressure.
+  test_stella_with_fire_or_starforge_stops: single stars (GALSF_SINGLE_STARS_FROM_IMF) with FIRE stellar evolution or with
+    STARFORGE sinks stop the build with the message (Uli 2026-11-19: no hybrid yet; a star without a single-star record is no
+    feedback source in a single-star build); FIRE-3 and STARFORGE defaults alone preprocess.
   test_no_sn_broadcast_by_default: STELLA_DEFAULTS alone and every production config build without SNE_BROADCAST_TIMESTEP
     (Uli 2026-11-19: opt-in only, never a default; the form trunk declined).
 """
@@ -139,3 +142,22 @@ def test_no_sn_broadcast_by_default(tmp_path, c):
              if c == "defaults_only" else (CFG / f"Config_stella_{c}.sh").read_text().splitlines())
     m = macros(tmp_path, lines)
     assert "GALSF_SINGLE_STARS_FROM_IMF" in m and "SNE_BROADCAST_TIMESTEP" not in m
+
+
+STELLA_SET = "SGCHEM CHEMISTRYNETWORK=5 METALS GALSF_RESOLVEDISM_TREECOL_PIXELS=12 GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES STELLA_DEFAULTS".split()
+NO_HYBRID = "single stars (GALSF_SINGLE_STARS_FROM_IMF) are not combined with FIRE stellar evolution or STARFORGE sinks"
+
+
+@pytest.mark.parametrize("lines", [STELLA_SET + ["FIRE_PHYSICS_DEFAULTS=3"], ["GALSF", "GALSF_SINGLE_STARS_FROM_IMF", "GALSF_FB_FIRE_STELLAREVOLUTION=3"],
+                                   STELLA_SET + ["SINGLE_STAR_SINK_DYNAMICS"], ["SINGLE_STAR_STARFORGE_DEFAULTS", "GALSF_SINGLE_STARS_FROM_IMF"],
+                                   ["FIRE_PHYSICS_DEFAULTS=3"], ["SINGLE_STAR_STARFORGE_DEFAULTS"]],
+                         ids=["stella_fire3", "imf_fire_stellarevolution", "stella_sink_dynamics", "starforge_imf", "fire3_alone", "starforge_alone"])
+def test_stella_with_fire_or_starforge_stops(tmp_path, lines):
+    hdr = ["#ifndef GIZMO_config_H", "#define GIZMO_config_H"] + [f"#define {l.partition('=')[0]} {l.partition('=')[2]}" for l in lines] + ["#endif"]
+    (tmp_path / "GIZMO_config.h").write_text("\n".join(hdr) + "\n")
+    (tmp_path / "probe.cc").write_text('#include "GIZMO_config.h"\n#include "declarations/precompiler_logic.h"\n')
+    r = subprocess.run(["c++", "-std=c++20", "-E", "-dM", f"-I{tmp_path}", f"-I{REPO / 'src'}", str(tmp_path / "probe.cc")], capture_output=True, text=True)
+    if "GALSF_SINGLE_STARS_FROM_IMF" in lines or "STELLA_DEFAULTS" in lines:
+        assert r.returncode != 0 and NO_HYBRID in r.stderr
+    else:
+        assert r.returncode == 0 and NO_HYBRID not in r.stderr
