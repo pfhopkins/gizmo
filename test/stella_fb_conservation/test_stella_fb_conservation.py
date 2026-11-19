@@ -307,6 +307,30 @@ def stages_closed(out):
     return rep
 
 
+def test_metal_ledger_catches_a_real_change(build):
+    """The PISN box (production build): one cell gains 1.001e-12 of the box's metal mass, unbooked, at 2 kyr (test hook). The mass
+    trace must report exactly that change and nothing else: one metal_ledger finding at pre_fb_mom_p0 with |dL|/L = 1.001e-12
+    (bar 1e-12, unchanged), no other mass, metal or element finding. Before the ledger sums were exact enough, the double summation
+    of the ~1e-8 metal terms left jumps of up to 5e-12 of L at later checkpoints."""
+    M_pisn, logZ = table_star(5, True, -4.0, np.log10(200.0))
+    M_ecsn, _ = table_star(1, True, logZ, np.log10(9.0))
+    M_ccsn, _ = table_star(2, True, logZ, np.log10(20.0))
+    d = join(TEST_DIR, "run_metal_kick"); os.makedirs(d, exist_ok=True)
+    make_box(join(d, "box_ics.hdf5"), 10 ** logZ)
+    with h5py.File(join(d, "box_ics.hdf5"), "r") as f:
+        L = float(f["PartType0/Masses"][:].astype(np.float64).sum()) * 10 ** logZ  # the box's metal mass (InitMetallicity sets every cell)
+    kick = 1.001e-12 * L
+    text, out = run_case("metal_kick", build, {"InitCondFile": "box_ics", "TestNumStars": 3, "TestStarMass": M_pisn, "TestStarMass2": M_ecsn,
+                                               "TestStarMass3": M_ccsn, "TestSNTime0": 1.0e-6, "TestSNSpacing": 1.0e-6, "TimeMax": 4.5e-6,
+                                               "TestFUVZero": 1, "TestMetalKickTime": 2.0e-6, "TestMetalKickMass": f"{kick:.17e}", **zpar(logZ)})
+    assert text.count("TESTMETALKICK") == 1
+    rep = keep_and_check_traces(out, out)
+    found = [f for f in rep.findings if f["kind"] in ("mass", "metal_ledger", "element_ledger")]
+    print(rep.summary())
+    assert len(found) == 1 and found[0]["kind"] == "metal_ledger" and found[0]["stage"] == "pre_fb_mom_p0" and found[0]["count"] == 1, rep.summary()
+    assert abs(found[0]["max_rel"] / 1.001e-12 - 1) < 0.02, found[0]
+
+
 def test_sn_energies_default(build):
     """Default: every explosive SN type deposits and books 1e51 erg."""
     e, out, M_pisn = sn_energy_run(build, "sn_energy_default")

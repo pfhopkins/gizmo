@@ -928,6 +928,15 @@ void resolvedism_inject_fb_energy(void)
 
     /* ---- Pass 0: wind + AGB (momentum + mass + metals).  Fires first so final
      *      winds happen before the star explodes as SN. Serialized per event. ---- */
+#if defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST) && defined(METALS)
+    { /* test: one unbooked metal change, which the mass trace must catch */
+        static int kicked = 0;
+        if(!kicked && All.TestMetalKickTime > 0 && All.Time >= All.TestMetalKickTime) {
+            kicked = 1;
+            for(int q = 0; q < NumPart; q++) {if(P[q].Type == 0 && P[q].ID == 10 && P[q].Mass > 0) {P[q].Metallicity[0] += All.TestMetalKickMass / P[q].Mass; printf("TESTMETALKICK t=%.10e dMZ=%.17e\n", All.Time, All.TestMetalKickMass);}}
+        }
+    }
+#endif
     MBARY_STEP("pre_fb_mom_p0");
     ESTEP_BEGIN(ESTEP_FB_WIND_AGB);
 #ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
