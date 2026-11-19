@@ -55,8 +55,10 @@ def out():
     r = subprocess.run([DRIVER, join(TEST_DIR, f"{TEST_NAME}.params")], capture_output=True, text=True, cwd=run)
     with open(join(TEST_DIR, "output", "driver.txt"), "w") as f:
         f.write(r.stdout + r.stderr)
+    trace = join(run, "output", "energy_step_trace.txt")
+    sync = [l for l in open(trace)] if os.path.exists(trace) else []
     shutil.rmtree(run, ignore_errors=True)
-    lines = [l.split() for l in r.stdout.splitlines()]
+    lines = [l.split() for l in r.stdout.splitlines()] + [["TRACE"] + l.split() for l in sync if l.startswith("SYNC")]
     assert any(l and l[0] == "ZETA" for l in lines), "driver did not finish:\n" + (r.stdout + r.stderr)[-3000:]
     return lines
 
@@ -103,6 +105,25 @@ def test_hu_tidal_and_potential(out):
     e_ref = sum(0.5 * m * pot + m * hu_phi(zz, G) for zz, m, pot in pp)
     print(f"E_pot of the probes {e3:.12e}, expected {e_ref:.12e}")
     assert abs(e3 / e_ref - 1) < 1e-10
+
+
+def test_external_potential_in_energy_reports(out):
+    """The production energy reports carry the external potential at full weight: the step trace's E_pot (energy_step_trace.cc,
+    1/2 sum m Phi + sum m Phi_ext) and the BUDGET gravity report (run.cc energy_budget_gravity_report) must equal
+    sum over all particles of (1/2 m Phi_self + m Phi_ext(z)) with Phi_ext from this test's formula; bars 1e-10 (trace, 16 printed
+    digits) and 1e-8 (BUDGET, 10 printed digits)."""
+    G = float([l for l in out if l and l[0] == "G"][0][1])
+    pa = np.array([[float(v) for v in l[1:]] for l in out if l and l[0] == "PALL"])
+    assert len(pa) > 0, "no particle potentials"
+    e_ref = float(np.sum(0.5 * pa[:, 1] * pa[:, 2] + pa[:, 1] * hu_phi(pa[:, 0], G)))
+    budget = [l for l in out if l[:2] == ["Energy", "(synced,grav)"]]
+    tr = [l for l in out if l and l[0] == "TRACE"]
+    assert budget and tr, "no BUDGET line or no step-trace SYNC line"
+    e_budget = float([tok for tok in budget[-1] if tok.startswith("E_pot=")][0][6:])
+    e_trace = float([tok for tok in tr[-1] if tok.startswith("E_pot=")][0][6:])
+    print(f"E_pot: expected {e_ref:.12e}, step trace {e_trace:.12e}, BUDGET {e_budget:.10e}")
+    assert abs(e_trace / e_ref - 1) < 1e-10
+    assert abs(e_budget / e_ref - 1) < 1e-8
 
 
 def test_ghosdt_field_hu21(out):
