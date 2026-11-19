@@ -168,4 +168,6 @@ def test_direct_star_gravity(flags):
         assert rc != 0 and msg in out
     else:
         names = {l.split()[1] for l in out.splitlines() if l.startswith("#define ")}
-        assert rc == 0 and "STELLA_DEFAULTS" in names and "STARS_APPROACH_TIMESTEP" not in names and "SINK_CALC_DISTANCES" not in names
+        seen = {k: k in names for k in ("STELLA_DEFAULTS", "SINGLE_STAR_DIRECT_GRAVITY", "STARS_APPROACH_TIMESTEP", "SINK_CALC_DISTANCES")}
+        print(f"rc {rc}: {seen}" + ("" if rc == 0 else out[-1500:]))
+        assert rc == 0 and seen["STELLA_DEFAULTS"] and not seen["STARS_APPROACH_TIMESTEP"] and not seen["SINK_CALC_DISTANCES"]
