@@ -35,13 +35,13 @@ static const int estep_stage_exact[] = {0, 1, 0, 0,
 #else
     0,
 #endif
-    0, 2, 2, 2, 2, 2, 2};
+    1, 2, 2, 2, 2, 2, 2};
 
 static const char *estep_book_name[] = {"fb_sn", "fb_wind", "fb_remnant_kin", "cool_solve", "cool_pi", "cool_floor", "cool_cr_loss",
-    "kick_floor", "cr_clip", "info_mhd_num", "info_cr_shock"};
+    "sf_th_locked", "sf_donor", "sf_star_kin", "sf_cr", "kick_floor", "cr_clip", "info_mhd_num", "info_cr_shock"};
 /* stage each booking belongs to; -1 = time integration (kicks/drift), -2 = information only (in no closure) */
 static const int estep_book_stage[] = {ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_COOLING, ESTEP_COOLING, ESTEP_COOLING,
-    ESTEP_COOLING, -1, -1, -2, -2};
+    ESTEP_COOLING, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, -1, -1, -2, -2};
 
 static_assert(sizeof(estep_stage_name) / sizeof(estep_stage_name[0]) == ESTEP_NSTAGE, "stage names");
 static_assert(sizeof(estep_stage_exact) / sizeof(estep_stage_exact[0]) == ESTEP_NSTAGE, "stage kinds");
@@ -87,6 +87,7 @@ void estep_ledger_hook(int row, double x)
 #ifdef COSMIC_RAY_FLUID
         case LEDGER_E_CR_CLIP: ESTEP_BOOK(EBK_CR_CLIP, x); break;
         case LEDGER_E_CR_SHOCK: ESTEP_BOOK(EBK_INFO_CR_SHOCK, x); break; /* thermal -> CR at shocks: a transfer */
+        case LEDGER_E_CR_COLLECTED: ESTEP_BOOK(EBK_SF_CR, -x); break;     /* CR energy that leaves with the donated gas */
 #endif
         default: break;
     }
