@@ -79,7 +79,7 @@
 #define ELASTIC_STATE_DEPENDENT_STRENGTH
 #endif
 
-#if defined(PLANET_HEATING)
+#if defined(COOL_PLANET_HEATING)
 /* radiogenic + accretional heating; solid material required */
 #ifndef EOS_TILLOTSON
 #define EOS_TILLOTSON
@@ -1497,11 +1497,11 @@
 #endif // BOX_SHEARING
 
 
-#ifdef DISK_BETA_COOL
+#ifdef COOL_DISK_BETA
 /* minimal beta-cooling for protoplanetary-disk problems; mutually exclusive with COOLING.
  * see cooling/disk_betacool.h for the actual operator and design notes. */
 #if defined(COOLING)
-#error "DISK_BETA_COOL is mutually exclusive with COOLING (both write CellP.InternalEnergy)."
+#error "COOL_DISK_BETA is mutually exclusive with COOLING (both write CellP.InternalEnergy)."
 #endif
 #endif
 

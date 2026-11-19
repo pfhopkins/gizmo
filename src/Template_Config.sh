@@ -78,7 +78,7 @@
 #EOS_DAMAGE_POROSITY=7          # damage + porosity for EOS_ELASTIC solids (turns on EOS_ELASTIC + EOS_TILLOTSON): sum of 1 = fracture damage (per material: tensile-flaw model of Benz & Asphaug by default, or the shear-activated law), 2 = pressure-dependent strength of intact rock (Collins et al. 2004), 4 = P-alpha porosity (Tillotson materials only). Per-material values from the presets or the parameterfile.
 #EOS_ELASTIC_MELT               # thermal softening (melt) of the EOS_ELASTIC solids: per material (MeltModel 1), the shear modulus and yield strength fall to zero at melt (energy form for Tillotson materials, Simon melt curve + Ohnaka softening for ANEOS tables); molten material holds at most its cavitation strength in tension. Cited preset defaults; off for every material unless switched on.
 #EOS_TYPES_DEFAULTGAS_AND_SOLIDS # for hybrid gas+solid setups (e.g. grain-fluid promotion): make CompositionType=0 Type-0 cells behave as the standard gas fluid instead of a Tillotson/ANEOS material (solid materials then use CompositionType>=1). auto-enabled by GRAIN_FLUID_PROMOTION.
-#PLANET_HEATING                 # radiogenic-decay + background accretional heating of solid bodies: du/dt = Q_rad*exp(-t/tau_rad) + Q_acc (params PlanetHeating_RadQ0_cgs, PlanetHeating_RadTau_cgs, PlanetHeating_AccQ0_cgs). auto-enables EOS_TILLOTSON
+#COOL_PLANET_HEATING                 # radiogenic-decay + background accretional heating of solid bodies: du/dt = Q_rad*exp(-t/tau_rad) + Q_acc (params PlanetHeating_RadQ0_cgs, PlanetHeating_RadTau_cgs, PlanetHeating_AccQ0_cgs). auto-enables EOS_TILLOTSON
 ## ----------------------------------------------------------------------------------------------------
 # --------------------------------------- Nuclear Reaction Networks
 #NUCLEAR_NETWORK                 # top-level switch: enables nuclear burning and species tracking. requires EOS_HELMHOLTZ.
@@ -367,7 +367,7 @@
 ## ----------------------------------------------------------------------------------------------------
 #COOLING                        # top-level switch to enable radiative cooling and heating. if nothing else enabled, uses Hopkins et al. arXiv:1702.06148 cooling physics. if GALSF, also external UV background read from file "TREECOOL" (included in the cooling folder; be sure to cite its source as well, given in the TREECOOL file)
 #METALS                         # top-level switch to enable tracking metallicities / different heavy elements (with multiple species optional) for gas and stars [must be included in ICs or injected via dynamical feedback; needed for some routines]
-#DISK_BETA_COOL                 # simple 'beta-cooling' for protoplanetary-disk problems: relax gas internal energy to a constant irradiation floor on t_cool=beta/Omega (params BetaCool_Beta, BetaCool_Tirr). mutually exclusive with COOLING
+#COOL_DISK_BETA                 # simple 'beta-cooling' for protoplanetary-disk problems: relax gas internal energy to a constant irradiation floor on t_cool=beta/Omega (params BetaCool_Beta, BetaCool_Tirr). mutually exclusive with COOLING
 ## ----------------------------------------------------------------------------------------------------
 # ---- additional cooling physics options within the default COOLING (Hopkins et al. 2017) module
 ## ----------------------------------------------------------------------------------------------------
@@ -588,7 +588,7 @@
 #COOL_LOWTEMP_THIN_ONLY            # in the COOL_LOW_TEMPERATURES module, neglect the suppression of cooling at very high surface densities due to the opacity limit (disables limiter in Eqs B29-B30, Hopkins et al arXiv:1702.06148)
 #SUPER_TIMESTEP_DIFFUSION          # use super-timestepping to accelerate integration of diffusion operators [for testing or if there are stability concerns]
 #TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE # if this is enabled, we only update as frequently as the driving phases are recomputed, as set by TurbDrive_TimeBetweenTurbUpdates. Only enable as an optimization if the cost of evaluating the turbulent force is large. To avoid large errors, TurbDrive_TimeBetweenTurbUpdates must be set by-hand to be << lambda_min / V where V is the typical turbulent velocity and lambda_min is the smallest driven wavelength.
-#ANEOS_MAX_MATERIALS=40         # with EOS_ANEOS: the most tables a run can load (default 7); each slot adds ~0.5 KB to the global struct copied to the device per dispatch, and every loaded table is held in memory on every rank
+#EOS_ANEOS_MAX_MATERIALS=40         # with EOS_ANEOS: the most tables a run can load (default 7); each slot adds ~0.5 KB to the global struct copied to the device per dispatch, and every loaded table is held in memory on every rank
 # --------------------
 # ----- Gravity (force/timestep/potential/gravity-tree related options)
 #EVALPOTENTIAL                     # computes gravitational potential (even if not otherwise needed)
@@ -629,8 +629,8 @@
 #MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION=(0.5)  # max KE_com/(KE_com+E_light) allowed by the above; lower is stricter (~0.34 is Mach 1 on the lighter cell)
 #MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION  # opt out of MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
 #PARTICLE_EXCISION                 # enable dynamical excision (remove particles within some radius)
-#MERGESPLIT_HARDCODE_MAX_MASS=(1.0e-6)   # manually set maximum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
-#MERGESPLIT_HARDCODE_MIN_MASS=(1.0e-7)   # manually set minimum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
+#MERGE_SPLIT_HARDCODE_MAX_MASS=(1.0e-6)   # manually set maximum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
+#MERGE_SPLIT_HARDCODE_MIN_MASS=(1.0e-7)   # manually set minimum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
 #MHD_CONSERVE_B_ON_REFINEMENT      # redefine B after density step after a refinement/de-refinement operation so as to exactly conserve "B" between the steps, as compared to conserving the code "VB" between the steps [the default conserved integrated quantity]
 # --------------------
 # ----- Radiation-Hydrodynamics Special Options for Test Problems + Disabled or Other Special Features
@@ -669,10 +669,10 @@
 #STARFORGE_FEEDBACK_TRACERS         # passive tracer fields for the three feedback channels (0=jets, 1=winds, 2=SNe); on automatically with STARFORGE jets/winds/SNe
 #SINGLE_STAR_FB_SNE_N_EJECTA_QUADRANT=2  # determines the maximum number of ejecta particles spawned per timestep in the supernova shell approximation for spawning. only needs to be modified for testing purposes.
 #DISABLE_HERMITE_INTEGRATION    # negate the HERMITE_INTEGRATION that SINGLE_STAR_STARFORGE_DEFAULTS would otherwise switch on, leaving sinks on plain KDK leapfrog. Useful as a convergence control, leapfrog being 2nd order.
-#SINGLE_STAR_WIND_MODE=1        # pin the jets/winds discrete-spawn channel (1=winds spawn, 2=winds injected continuously) instead of letting the momentum-rate comparison choose, to exercise one injection path on its own
-#JET_DIRECTION_FIXED_Z          # TESTING ONLY: launch spawned jets along +/-z instead of the accreted angular-momentum axis, so a launch geometry can be checked against a known direction. Not physical for production.
-#WIND_MDOT=1e-7                 # TESTING ONLY: hard-code the stellar wind mass-loss rate [Msun/yr] instead of taking it from the stellar evolution model, for controlled wind tests.
-#WIND_LUMINOSITY=1e36           # TESTING ONLY: hard-code the wind luminosity [erg/s]; with WIND_MDOT this sets the wind speed via L_w=(1/2) Mdot v_w^2.
+#SINGLE_STAR_FB_WINDS_TEST_MODE=1        # pin the jets/winds discrete-spawn channel (1=winds spawn, 2=winds injected continuously) instead of letting the momentum-rate comparison choose, to exercise one injection path on its own
+#SINGLE_STAR_FB_JETS_TEST_FIXED_Z          # TESTING ONLY: launch spawned jets along +/-z instead of the accreted angular-momentum axis, so a launch geometry can be checked against a known direction. Not physical for production.
+#SINGLE_STAR_FB_WINDS_TEST_MDOT=1e-7                 # TESTING ONLY: hard-code the stellar wind mass-loss rate [Msun/yr] instead of taking it from the stellar evolution model, for controlled wind tests.
+#SINGLE_STAR_FB_WINDS_TEST_LUMINOSITY=1e36           # TESTING ONLY: hard-code the wind luminosity [erg/s]; with SINGLE_STAR_FB_WINDS_TEST_MDOT this sets the wind speed via L_w=(1/2) Mdot v_w^2.
 # --------------------
 # ----- Dust grain/particulate/aerosol module special options
 #GRAIN_RDI_TESTPROBLEM             # top-level flag to enable a variety of test problem behaviors, customized for the idealized studies of dust dynamics in Moseley et al 2019MNRAS.489..325M, Seligman et al 2019MNRAS.485.3991S, Steinwandel et al arXiv:2111.09335, Ji et al arXiv:2112.00752, Hopkins et al 2020MNRAS.496.2123H and arXiv:2107.04608, Squire et al 2022MNRAS.510..110S. Cite these if used.
@@ -715,8 +715,8 @@
 #USE_TIMESTEP_DILATION_FOR_ZOOMS            #- enable time dilation modules, need to customize for applications, cannot be simply generically turned on without coding how they will work
 #DILATION_FOR_STELLAR_KINEMATICS_ONLY       #- special version of time dilation designed for stellar kinematics in e.g. dense star clusters or galaxy centers
 #SINK_RIAF_SUBEDDINGTON_MODEL=(0.01)        #- enable an arbitrary modular variation in the radiative efficiency of BHs as a function of eddington ratio or other particle properties, with the critical transition to the jet mode at this eddington ratio (defined in terms of mdot/mdot_crit)
-#GIZMO_MIXED_PRECISION_GRAVITY  # reserve mixed-precision gravity path: positions stay double, force-carrying fields become single. Default OFF. The typedef MyGravFloat=float is exposed when this flag is set; individual gravity fields will be migrated to MyGravFloat as the GPU tree walk is ported. Follows pkdgrav3/Bonsai conventions.
+#GRAVITY_MIXED_PRECISION  # reserve mixed-precision gravity path: positions stay double, force-carrying fields become single. Default OFF. The typedef MyGravFloat=float is exposed when this flag is set; individual gravity fields will be migrated to MyGravFloat as the GPU tree walk is ported. Follows pkdgrav3/Bonsai conventions.
 #CBE_INTEGRATOR_HEATFLUX        # extend to the 13-moment closure by additionally evolving a contracted third-moment (heat-flux) vector per basis. Implies CBE_INTEGRATOR_SECONDMOMENT. More accurate near-Maxwellian, but requires more careful realizability handling far from equilibrium; still experimental.
-#SNE_NONSINK_SPAWN              # (experimental) supernovae from ordinary star particles (type 4) deliver half their ejecta mass as spawned gas cells of 0.5 Msun, the rest coupled as mechanical feedback. Requires GALSF_FB_MECHANICAL and SINK_WIND_SPAWN (whose value sets how many cells are spawned at once).
+#GALSF_FB_MECHANICAL_SNE_SPAWN              # (experimental) supernovae from ordinary star particles (type 4) deliver half their ejecta mass as spawned gas cells of 0.5 Msun, the rest coupled as mechanical feedback. Requires GALSF_FB_MECHANICAL and SINK_WIND_SPAWN (whose value sets how many cells are spawned at once).
 ####################################################################################################-
 

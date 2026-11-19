@@ -1,6 +1,6 @@
 /* planet_heating.h — radiogenic decay and accretional background heating for solid bodies.
  *
- * Activated by PLANET_HEATING. Auto-implies EOS_TILLOTSON (see precompiler_logic.h).
+ * Activated by COOL_PLANET_HEATING. Auto-implies EOS_TILLOTSON (see precompiler_logic.h).
  * Applied to every active Type-0 cell, whatever its EOS; with COOLING on, the cooling step acts on top of it.
  *
  * du/dt = Q_rad * exp(-t / tau_rad) + Q_acc
@@ -19,7 +19,7 @@
 #ifndef PLANET_HEATING_H
 #define PLANET_HEATING_H
 
-#ifdef PLANET_HEATING
+#ifdef COOL_PLANET_HEATING
 
 #include <math.h>
 
@@ -59,5 +59,5 @@ static inline void planet_heating_parent_routine(void)
     }
 }
 
-#endif /* PLANET_HEATING */
+#endif /* COOL_PLANET_HEATING */
 #endif /* PLANET_HEATING_H */

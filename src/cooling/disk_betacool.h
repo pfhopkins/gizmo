@@ -1,6 +1,6 @@
 /* disk_betacool.h — minimal beta-cooling + constant irradiation floor.
  *
- * Activated by DISK_BETA_COOL. Mutually exclusive with COOLING.
+ * Activated by COOL_DISK_BETA. Mutually exclusive with COOLING.
  *
  * du/dt = -(u - u_irr) / t_cool, with t_cool = beta / Omega.
  * Integrated as exact exponential per cell per timestep:
@@ -25,7 +25,7 @@
 #ifndef DISK_BETACOOL_H
 #define DISK_BETACOOL_H
 
-#ifdef DISK_BETA_COOL
+#ifdef COOL_DISK_BETA
 
 /* Relies on includer (currently core/run.cc) having already pulled in
  * declarations/allvars.h and core/proto.h. Those headers are not double-include
@@ -78,5 +78,5 @@ static inline void disk_betacool_parent_routine(void)
     }
 }
 
-#endif // DISK_BETA_COOL
+#endif // COOL_DISK_BETA
 #endif // DISK_BETACOOL_H

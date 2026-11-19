@@ -114,11 +114,11 @@ void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
                 channel = (P[i].SNe_ThisTimeStep > 0) ? 0 : ((P[i].MassReturn_ThisTimeStep > 0) ? 1 : -1);
 #endif
                 if (channel >= 0) {
-#ifdef SNE_NONSINK_SPAWN
+#ifdef GALSF_FB_MECHANICAL_SNE_SPAWN
                     const MyFloat unspawned_before = P[i].unspawned_wind_mass; /* the SN routine books the spawned fraction; the coupling pass does that */
 #endif
                     particle2in_addFB_fromstars(&fb, i, channel);
-#ifdef SNE_NONSINK_SPAWN
+#ifdef GALSF_FB_MECHANICAL_SNE_SPAWN
                     P[i].unspawned_wind_mass = unspawned_before;
 #endif
                     if (fb.Msne <= 0) {fb.Msne = P[i].Mass;}

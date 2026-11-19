@@ -29,8 +29,8 @@
 #endif
 #endif
 
-#ifndef ANEOS_MAX_MATERIALS
-#define ANEOS_MAX_MATERIALS 7  /* the most SESAME tables a run can load (AneosNumMaterials); Config.sh may set more. Each slot costs ~0.5 KB of
+#ifndef EOS_ANEOS_MAX_MATERIALS
+#define EOS_ANEOS_MAX_MATERIALS 7  /* the most SESAME tables a run can load (AneosNumMaterials); Config.sh may set more. Each slot costs ~0.5 KB of
                                   the global struct (copied to the device at every dispatch), and every LOADED table ~40 nrho nT bytes on every rank. */
 #endif
 
@@ -209,7 +209,7 @@ static KOKKOS_INLINE_FUNCTION double aneos_energy_at_logT_floor(const struct ane
 KOKKOS_INLINE_FUNCTION
 double aneos_min_specific_energy(const struct aneos_table *tables, int mat_index, double rho_cgs)
 {
-    if(mat_index < 0 || mat_index >= ANEOS_MAX_MATERIALS) return 0;
+    if(mat_index < 0 || mat_index >= EOS_ANEOS_MAX_MATERIALS) return 0;
     const struct aneos_table *tbl = &tables[mat_index];
     if(!tbl->loaded) return 0;
     double lr = log10(rho_cgs > 0 ? rho_cgs : 1e-30);
@@ -227,7 +227,7 @@ int aneos_lookup_rhoT_P(const struct aneos_table *tables, int mat_index,
                       double *entropy_cgs, double *cs_cgs,
                       int *phase_out)
 {
-    if(mat_index < 0 || mat_index >= ANEOS_MAX_MATERIALS) return 1;
+    if(mat_index < 0 || mat_index >= EOS_ANEOS_MAX_MATERIALS) return 1;
     const struct aneos_table *tbl = &tables[mat_index];
     if(!tbl->loaded) return 1;
 
@@ -347,7 +347,7 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
     struct aneos_inversion_report unused_report;
     if(!report) {report = &unused_report;}
     report->flags = 0; report->n_roots = 0; report->plateau_logT_width = 0; report->plateau_P_spread = 0;
-    if(mat_index < 0 || mat_index >= ANEOS_MAX_MATERIALS) return 1;
+    if(mat_index < 0 || mat_index >= EOS_ANEOS_MAX_MATERIALS) return 1;
     const struct aneos_table *tbl = &tables[mat_index];
     if(!tbl->loaded) return 1;
 

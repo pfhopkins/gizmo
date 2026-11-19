@@ -43,12 +43,12 @@ static int aneos_tables_ready(void)
 {
     if(ANEOS_Tables) {return 1;}
     ANEOS_Tables = (struct aneos_table *) gizmo_gpu_alloc_shared(
-        ANEOS_MAX_MATERIALS * sizeof(struct aneos_table), "aneos_tables");
+        EOS_ANEOS_MAX_MATERIALS * sizeof(struct aneos_table), "aneos_tables");
     if(!ANEOS_Tables) {
         fprintf(stderr, "ANEOS: could not allocate the table descriptors\n");
         return 0;
     }
-    memset(ANEOS_Tables, 0, ANEOS_MAX_MATERIALS * sizeof(struct aneos_table));
+    memset(ANEOS_Tables, 0, EOS_ANEOS_MAX_MATERIALS * sizeof(struct aneos_table));
     return 1;
 }
 
@@ -127,8 +127,8 @@ static double aneos_axis_nonuniformity(const double *axis, int n)
 
 int aneos_read_table(const char *filename, int mat_index)
 {
-    if(mat_index < 0 || mat_index >= ANEOS_MAX_MATERIALS) {
-        fprintf(stderr, "ANEOS: mat_index %d out of range [0, %d)\n", mat_index, ANEOS_MAX_MATERIALS);
+    if(mat_index < 0 || mat_index >= EOS_ANEOS_MAX_MATERIALS) {
+        fprintf(stderr, "ANEOS: mat_index %d out of range [0, %d)\n", mat_index, EOS_ANEOS_MAX_MATERIALS);
         return 1;
     }
 
@@ -282,7 +282,7 @@ int aneos_read_table(const char *filename, int mat_index)
 /* Bytes one loaded table holds (the same on every rank: each reads every table into memory the host and the device share). */
 size_t aneos_table_bytes(int mat_index)
 {
-    if(!ANEOS_Tables || mat_index < 0 || mat_index >= ANEOS_MAX_MATERIALS || !ANEOS_Tables[mat_index].loaded) return 0;
+    if(!ANEOS_Tables || mat_index < 0 || mat_index >= EOS_ANEOS_MAX_MATERIALS || !ANEOS_Tables[mat_index].loaded) return 0;
     const struct aneos_table *tbl = &ANEOS_Tables[mat_index];
     size_t ntot = (size_t)tbl->nrho * (size_t)tbl->nT;
     size_t bytes = ((size_t)tbl->nrho + (size_t)tbl->nT) * sizeof(double) + ((size_t)tbl->nmap_rho + (size_t)tbl->nmap_T + 2) * sizeof(int)
@@ -297,7 +297,7 @@ size_t aneos_table_bytes(int mat_index)
 /* What a loaded table holds, for the startup log (begrun prints it once, on the first rank). */
 void aneos_report_table(int mat_index, const char *filename)
 {
-    if(!ANEOS_Tables || mat_index < 0 || mat_index >= ANEOS_MAX_MATERIALS || !ANEOS_Tables[mat_index].loaded) return;
+    if(!ANEOS_Tables || mat_index < 0 || mat_index >= EOS_ANEOS_MAX_MATERIALS || !ANEOS_Tables[mat_index].loaded) return;
     const struct aneos_table *tbl = &ANEOS_Tables[mat_index];
     double nonuni_rho = aneos_axis_nonuniformity(tbl->logrho, tbl->nrho), nonuni_T = aneos_axis_nonuniformity(tbl->logT, tbl->nT);
     printf("ANEOS: table %d = material %d from \"%s\" (%d x %d grid, %d columns%s, %.1f MB)\n", mat_index, tbl->mat_id, filename, tbl->nrho, tbl->nT,
@@ -312,7 +312,7 @@ void aneos_report_table(int mat_index, const char *filename)
 int aneos_cleanup(void)
 {
     if(!ANEOS_Tables) {return 0;}
-    for(int k = 0; k < ANEOS_MAX_MATERIALS; k++) {
+    for(int k = 0; k < EOS_ANEOS_MAX_MATERIALS; k++) {
         struct aneos_table *tbl = &ANEOS_Tables[k];
         if(!tbl->loaded) continue;
         aneos_free_table_arrays(tbl);

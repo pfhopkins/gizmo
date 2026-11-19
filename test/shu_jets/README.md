@@ -39,7 +39,7 @@ without `SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION` the code uses
 protostellar radius, following Federrath et al. (2014).
 
 Compile-time flags. `Config.sh` carries only `SINGLE_STAR_STARFORGE_DEFAULTS`; the test appends
-`SINGLE_STAR_FB_JETS`, `JET_DIRECTION_FIXED_Z`, `COOLING`, `OUTPUT_COOLRATE_DETAIL`, plus
+`SINGLE_STAR_FB_JETS`, `SINGLE_STAR_FB_JETS_TEST_FIXED_Z`, `COOLING`, `OUTPUT_COOLRATE_DETAIL`, plus
 `SINK_SPAWN_NO_MERGE` for the nomerge runs and `SINGLE_STAR_FB_RAD` for the rad runs.
 `SINK_SPAWN_MERGE_WHEN_AMBIENT` and `MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION` are auto-enabled by
 `SINGLE_STAR_FB_JETS`.
