@@ -1,16 +1,16 @@
 """KETJU region members under PMGRID: the ketju_tide pair (1 + 1 Msun, a = 200 AU, in a KETJU region) and a 20 Msun star 5000 AU
-away on a circular outer orbit, in a periodic box L = 50000 AU with PMGRID = 256, for a quarter of the outer orbit.
+away on a circular outer orbit, in a periodic box L = 50000 AU with PMGRID = 64, for a quarter of the outer orbit.
 
 Derivation. GIZMO splits gravity (Springel 2005, eq. 21-22): the tree applies F_N(r) S(r) with
 S = erfc(r/2r_s) + (r/(r_s sqrt(pi))) exp(-r^2/4r_s^2) (shortrange_table), the mesh the rest F_N (1 - S) (GravPM),
-r_s = ASMTH L/PMGRID = 1.25 x 195 AU = 244 AU and the tree cuts at RCUT r_s = 1100 AU. A member's kick must be
+r_s = ASMTH L/PMGRID = 1.25 x 781 AU = 977 AU and the tree cuts at RCUT r_s = 4400 AU. A member's kick must be
 tree + PM + KETJU internal: the tree half-kicks are applied to members (kicks.cc), KETJU's negative half-kicks subtract the full
 softened Newtonian pair force F_N between members (tree_pair_gravity_factors, no S), and MSTAR integrates F_N inside the chain.
 Chain-internal sum: S F_N (tree) + (1 - S) F_N (mesh) - F_N (negative kicks) + F_N (MSTAR) = F_N, counted once. Without the PM
 kick on members the chain gets F_N - (1 - S) F_N and, here, the pair feels no 20 Msun star at all (5000 AU > RCUT r_s: its force
 is entirely in the mesh), so the pair moves on a straight line. In a quarter outer orbit, t = (pi/2) r/v, a missing central force
 displaces the pair by 1/2 (v^2/r) t^2 = 1.23 r. Bars, set before running: the pair CoM relative to the 20 Msun star within
-0.05 r_out of the open-box DOP853 three-body solution (25 mesh cells between the bodies; periodic images change the field by
+0.05 r_out of the open-box DOP853 three-body solution (6.4 mesh cells between the bodies; periodic images change the field by
 (r_out/L)^3 ~ 1e-3), the pair's semi-major axis within 1e-2 of the reference; mass and energy step traces close."""
 
 import glob
