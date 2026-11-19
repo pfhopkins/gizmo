@@ -2580,6 +2580,21 @@ void ketju_limit_timesteps(void)
 void ketju_find_regions(void)
 {
     KjClock clk(CPU_KETJUFIND);
+#ifdef PMGRID
+    { /* members' mutual force must be tree-dominated: mesh share 1 - S(r) <= 1.1e-2 for r <= r_s/2, on every PM level (physical) */
+        int nlev = 1;
+#ifdef PM_PLACEHIGHRESREGION
+        nlev = 2;
+#endif
+        for(int l = 0; l < nlev; l++) {
+            double rs_phys = All.Asmth[l] * All.cf_atime;
+            if(rs_phys > 0 && All.KetjuRegionRadius > 0.5 * rs_phys) {
+                if(ThisTask == 0) {printf("KETJU: KetjuRegionRadius %g exceeds half the PM split scale r_s = %g (level %d, physical code length)\n", All.KetjuRegionRadius, rs_phys, l);}
+                endrun(8862);
+            }
+        }
+    }
+#endif
     /* Clear the chain flags of particles whose step has ended, and only theirs: a member of a region
      * on a longer bin is still inside the step MSTAR integrated, and its flags keep it out of Hermite
      * and mark it for the velocity swap at the end of that step. KetjuIntegrated is cleared here, not
