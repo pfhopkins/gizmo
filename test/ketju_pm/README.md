@@ -4,9 +4,12 @@ KETJU region members under PMGRID. A 1 + 1 Msun, 200 AU pair in an 800 AU region
 2e5 AU box with PMGRID = 128 (r_s = 1953 AU): the perturber's pull lives entirely in the mesh, about 13 cells away. A quarter outer
 orbit against an open-box DOP853 three-body integration.
 
-Asserted: pair CoM relative to the perturber within 0.05 R_out, pair semi-major axis within 1e-2, mass and energy step traces close.
+Asserted: pair CoM relative to the perturber within 0.05 R_out, pair semi-major axis within 1e-2.
 Comoving variant (a = 0.5, 2 ranks, 2 regions): two binaries and their mirror single stars; CoM mirror symmetry within 1e-3 R_out,
 traces close.
+
+Energy: mass trace and exact stages asserted; the 1e-2 integration bar applies to the KETJU part (difference to a single-star
+twin), the twin's TreePM residual (~2e-2) is printed, not asserted.
 
 History: PMGRID = 64 with R_out = 5000 AU passed the orbit bars but left a 2.6e-2 integration residual from the coarse mesh (also with
 KETJU off); PMGRID = 256 there put r_s (244 AU) at the pair separation (|da/a| 2.4e-2). Redesigned 2026-11-19 (Uli).

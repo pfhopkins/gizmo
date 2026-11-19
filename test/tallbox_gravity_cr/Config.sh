@@ -117,3 +117,4 @@ OUTPUT_TEMPERATURE
 OUTPUT_COOLRATE
 OUTPUT_INDIVIDUAL_COOLRATES
 OUTPUT_ENERGY_STEP_TRACE                 % test only: the step trace's E_pot is checked
+ENERGY_BUDGET_DIAGNOSTIC                 % test only: the BUDGET gravity report's E_pot is checked

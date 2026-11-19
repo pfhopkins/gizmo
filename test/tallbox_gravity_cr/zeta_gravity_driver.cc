@@ -38,7 +38,9 @@ int main(int argc, char **argv)
     printf("EPOT3 %.17g\n", SysState.EnergyPotComp[3]);
     for(int i = 0; i < NumPart; i++) {if(P[i].Type == 3) {printf("PPOT %llu %.17g %.17g %.17g\n", (unsigned long long)P[i].ID, P[i].Pos[2] - boxHalf_Z, P[i].Mass, P[i].Potential);}}
     for(int i = 0; i < NumPart; i++) {if(P[i].Mass > 0) {printf("PALL %.17g %.17g %.17g\n", P[i].Pos[2] - boxHalf_Z, P[i].Mass, P[i].Potential);}}
+#if defined(ENERGY_BUDGET_DIAGNOSTIC) && defined(EVALPOTENTIAL)
     energy_budget_gravity_report(); /* BUDGET: "Energy (synced,grav) ... E_pot=" */
+#endif
 #ifdef OUTPUT_ENERGY_STEP_TRACE
     energy_step_trace_report(); /* step trace: SYNC line with E_pot */
 #endif
