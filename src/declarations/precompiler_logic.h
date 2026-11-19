@@ -1176,6 +1176,9 @@
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(CRFLUID_STREAMING_LOSS_CAPPED_AT_CR_SPEED)
 #define CRFLUID_STREAMING_LOSS_CAPPED_AT_CR_SPEED /* single stars: the Alfven speed in the streaming loss is at most the CR speed */
 #endif
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && (defined(GALSF_FB_FIRE_STELLAREVOLUTION) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_SINK_FORMATION)) /* no hybrid yet: a star without a single-star record is no feedback source in a single-star build, and the SF entry is shared */
+#error "single stars (GALSF_SINGLE_STARS_FROM_IMF) are not combined with FIRE stellar evolution or STARFORGE sinks (GALSF_FB_FIRE_STELLAREVOLUTION, FIRE_PHYSICS_DEFAULTS, SINGLE_STAR_SINK_DYNAMICS, SINGLE_STAR_SINK_FORMATION or GALSF_SFR_CRITERION)"
+#endif
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_MECHANICAL) && (defined(GALSF_FB_FIRE_STELLAREVOLUTION) || (defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)))
 #define MECHFB_CR_INJECTION /* the mechanical feedback loop injects CRs (supernovae and fast winds) */
 #endif
