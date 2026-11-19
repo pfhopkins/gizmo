@@ -90,7 +90,7 @@ double calculate_individual_stellar_luminosity(double mdot, double mass, long i)
         else {lum_sol = 32000. * m_solar;}
     }
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && (SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION == 1) // now, account for pre-main sequence evolution and calculate accretion luminosity using protostellar radius
-    if(i > 0) {if(P[i].Type == 5) {
+    if(i >= 0) {if(P[i].Type == 5) {
         double eps_protostar=1.0, T4000_4 = pow(m_solar , 0.55), l_kh = 0.2263 * P[i].ProtoStellarRadius_inSolar*P[i].ProtoStellarRadius_inSolar * T4000_4; // protostellar temperature along Hayashi track and luminosity from KH contraction
         lum = DMAX(lum_sol,l_kh) / UNIT_LUM_IN_SOLAR + eps_protostar * (All.G * P[i].Mass / (P[i].ProtoStellarRadius_inSolar / UNIT_LENGTH_IN_SOLAR)) * mdot; // assume GM/r liberated per unit mass. Note we need radius in code units here since everything else in 'lum' is code-units as well. for pre-ms evolution, if Hayashi-temp luminosity exceeds MS luminosity, use it. otherwise use main sequence luminosity, and assume the star is moving along the Henyey track
         P[i].StarLuminosity_Solar = lum * UNIT_LUM_IN_SOLAR; //store total luminosity of the star in solar units
@@ -966,7 +966,7 @@ void singlestar_subgrid_protostellar_evolution_update_track(int n, double dm, do
                 P[n].Mass_final = P[n].Sink_Mass; // record the final mass the star had
                 double n_stars_within_star_particle = 1; // allow for compact binary representations that might evolve differently
 #if defined(SINK_COUNTPROGS) && defined(SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES)
-                n_stars_within_star_particle = (double)P[i].Sink_CountProgs; // this was our tracker of binary consolidation events
+                n_stars_within_star_particle = (double)P[n].Sink_CountProgs; // this was our tracker of binary consolidation events
 #endif
                 if(P[n].Sink_Mass/n_stars_within_star_particle <= 1.4/UNIT_MASS_IN_SOLAR) {P[n].ProtoStellarStage = 7;} // should collapse to WD, no explosion
 #ifdef SINGLE_STAR_RELICS

@@ -51,7 +51,7 @@ struct INPUT_STRUCT_NAME
     Vec3<MyFloat> B;
     MyFloat kernel_norm_topass_in_swallowloop;
 #endif
-#ifdef SINGLE_STAR_FB_LOCAL_RP
+#if defined(SINGLE_STAR_FB_LOCAL_RP) || defined(SINK_CALC_LOCAL_ANGLEWEIGHTS)
     MyFloat Luminosity;
 #endif    
 }
@@ -88,7 +88,7 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
     in->B = P[i].B;
     in->kernel_norm_topass_in_swallowloop = SinkTempInfo[j_tempinfo].kernel_norm_topass_in_swallowloop;
 #endif
-#ifdef SINGLE_STAR_FB_LOCAL_RP
+#if defined(SINGLE_STAR_FB_LOCAL_RP) || defined(SINK_CALC_LOCAL_ANGLEWEIGHTS)
     in->Luminosity = sink_lum_bol(in->Mdot, in->Sink_Mass, i);
 #endif    
 }
@@ -179,11 +179,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
     double h_i=local.KernelRadius, hinv=1/h_i, hinv3, f_accreted; hinv3=hinv*hinv*hinv; f_accreted=0;
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS)
     double kernel_zero,dwk; kernel_main(0.0,1.0,1.0,&kernel_zero,&dwk,-1); dwk=0;
-#ifdef SINGLE_STAR_FB_LOCAL_RP
     double mom = local.Luminosity * local.Dt / C_LIGHT_CODE, mom_wt = 0;
-#else    
-    double mom = sink_lum_bol(local.Mdot, local.Sink_Mass, -1) * local.Dt / C_LIGHT_CODE, mom_wt = 0;
-#endif
 #endif
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS) || defined(SINK_WIND_KICK)
     Vec3<double> J_dir{(double)local.Jgas_in_Kernel[0], (double)local.Jgas_in_Kernel[1], (double)local.Jgas_in_Kernel[2]};
@@ -832,9 +828,6 @@ void get_wind_spawn_magnetic_field(int j, int mode, Vec3<double>& ny, Vec3<doubl
 #ifdef MHD_B_SET_IN_PARAMS
     double Bmag_IC = sqrt(All.BiniX*All.BiniX + All.BiniY*All.BiniY + All.BiniZ*All.BiniZ) * All.UnitMagneticField_in_gauss / UNIT_B_IN_GAUSS; // IC B-field sets floor as well
     Bmag = DMAX(Bmag , 0.1 * Bmag_IC);
-#endif
-#if defined(SINGLE_STAR_FB_SNE)
-    if(P[j].Type==5) {if(P[j].ProtoStellarStage == 6) {Bmag *= 1.e-3;}} // No need to have flux in SN ejecta - note that this assumes we inherited this attribute from the spawning sink before calling this routine
 #endif
     Bmag = DMAX(Bmag, MIN_REAL_NUMBER); // floor to prevent underflow errors
     /* add magnetic flux here to 'Bmag' if desired */
