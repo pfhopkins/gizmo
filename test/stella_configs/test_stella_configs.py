@@ -13,6 +13,8 @@
   test_stella_with_fire_or_starforge_stops: single stars (GALSF_SINGLE_STARS_FROM_IMF) with FIRE stellar evolution or with
     STARFORGE sinks stop the build with the message (Uli 2026-11-19: no hybrid yet; a star without a single-star record is no
     feedback source in a single-star build); FIRE-3 and STARFORGE defaults alone preprocess.
+  test_no_environment_options_or_abort: the SGChem host code and the KETJU coupling read no option from the environment and stop
+    through endrun, not MPI_Abort (#154; the standalone Fortran reference tool is not GIZMO code).
   test_no_sn_broadcast_by_default: STELLA_DEFAULTS alone and every production config build without SNE_BROADCAST_TIMESTEP
     (Uli 2026-11-19: opt-in only, never a default; the form trunk declined).
 """
@@ -161,3 +163,12 @@ def test_stella_with_fire_or_starforge_stops(tmp_path, lines):
         assert r.returncode != 0 and NO_HYBRID in r.stderr
     else:
         assert r.returncode == 0 and NO_HYBRID not in r.stderr
+
+
+@pytest.mark.parametrize("tree", ["cooling/sgchem", "gravity/ketju"])
+def test_no_environment_options_or_abort(tree):
+    files = [f for f in (REPO / "src" / tree).rglob("*") if f.suffix in (".cc", ".h", ".c", ".cpp", ".hpp") and "fortran_reference" not in f.parts]
+    assert files
+    bad = [f"{f.relative_to(REPO)}:{i + 1}" for f in files for i, l in enumerate(f.read_text(errors="replace").splitlines())
+           if re.search(r"\bgetenv\s*\(|\bMPI_Abort\s*\(", l.split("//")[0])]
+    assert not bad, bad
