@@ -11,6 +11,11 @@ lattice at n_H ~ 100 cm^-3 (dust optical depths 0.2-0.8 over the kernel column),
     a 40 Msun star particle without a single-star record: two sources every step, offered momentum = the sum of the two
     estimators (2 %).
   test_outward: the gas around the star gains radial momentum away from it, over half the momentum coupled.
+  test_anisotropic_budget (build with the production weighting, GALSF_FB_MECHANICAL + GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS,
+    which STELLA_DEFAULTS sets): cells on the -x side of the star 100 x lighter (u 100 x higher), so the neighbour weights are
+    one-sided: every step the momentum coupled (sum m |dv|) equals the momentum offered to 1e-4 (the log's 6 digits); the
+    kick directions balanced by the weighted mean direction are normalised by sum |w (r - m)|, as the winds' (stella_dev
+    14c0d2795). Normalised by sum w instead, the gas received sum w |r - m| / sum w of the budget. Bar set before the run.
 """
 import os
 import shutil
@@ -50,8 +55,8 @@ def build(tag, extra=()):
     return BUILDS[tag]
 
 
-def run(exe, tag, tables, n=16, stars=((M_STAR, (0.5, 0.5, 0.5), True),)):
-    """stars: (M, position in box units, with a record)"""
+def run(exe, tag, tables, n=16, stars=((M_STAR, (0.5, 0.5, 0.5), True),), light_side=False):
+    """stars: (M, position in box units, with a record); light_side: gas with x below the first star 100 x lighter, u 100 x higher"""
     rho = N_H * 1.4 * MP * PC ** 3 / MSUN  # Msun / pc^3 (H nuclei per mass as the chemistry)
     dx = (1.0 / rho) ** (1.0 / 3.0); L = n * dx
     tab = Tables(tables["StellarTablesFile"])
@@ -66,6 +71,11 @@ def run(exe, tag, tables, n=16, stars=((M_STAR, (0.5, 0.5, 0.5), True),)):
     make_treecol_pixels_ics(str(ic), L, lattice(n, L), [(M, a, np.asarray(x) * L + 0.31 * dx) for (M, x, _), a in zip(stars, ages)], hsml=2 * dx)
     with h5py.File(ic, "a") as F:
         F["PartType4/SingleStarDrawnMass"][...] = [M if rec else 0.0 for M, _, rec in stars]  # 0: no record
+        if light_side:
+            x = F["PartType0/Coordinates"][:, 0]; low = x < F["PartType4/Coordinates"][0, 0]
+            m, u = F["PartType0/Masses"][()], F["PartType0/InternalEnergy"][()]
+            m[low] *= 0.01; u[low] *= 100.0
+            F["PartType0/Masses"][...] = m; F["PartType0/InternalEnergy"][...] = u
     for f in ("TREECOOL", "spcool_tables"):
         if (TEST_DIR / f).exists():
             os.symlink(TEST_DIR / f, d / f)
@@ -143,3 +153,11 @@ def test_outward(tables):
     pr = (m * (v * x).sum(1) / np.sqrt((x ** 2).sum(1))).sum()
     print(f"radial momentum {pr:.4g}, coupled {rows[:, 6].sum():.4g}")
     assert pr > 0.5 * rows[:, 6].sum(), "pushed away from the star"
+
+
+def test_anisotropic_budget(tables):
+    rows, _, _, _ = run(build("mass_kernel", ("GALSF_FB_MECHANICAL", "GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS")), "anisotropic", tables, light_side=True)
+    fired = rows[:, 5] > 0
+    ratio = rows[fired, 6] / rows[fired, 5]
+    print(f"{fired.sum()} steps: coupled / offered min {ratio.min():.6f}, max {ratio.max():.6f}")
+    assert fired.sum() >= 5 and np.all(np.abs(ratio - 1) < 1e-4), ratio
