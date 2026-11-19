@@ -1,5 +1,6 @@
 /* Copyright (c) 2026 Ulrich Steinwandel
    Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
+#include "single_star_sn_energy.h"
 #include <mpi.h>
 #include <stdio.h>
 #include <string.h>
@@ -26,7 +27,8 @@
  *   - death: at the first star step past PMS time + table lifetime, with the wind mass still owed up to the
  *     end of life in its ejecta; the star's mass at the death trigger is stored in the record (M_at_SN_trigger), and every
  *     pack of the event recomputes ejecta, energy and yields from it;
- *   - supernova classes (table remnant type): CCSN, ECSN, PPISN and PISN 1e51 erg; failed SN and direct BH no energy;
+ *   - supernova classes (table remnant type): CCSN and PPISN 1e51 erg, ECSN 1e50, PISN from the He core (single_star_sn_energy.h);
+ *     failed SN and direct BH no energy;
  *     ejecta = stored mass - table remnant, composition from the table's SN element ejecta scaled to that mass;
  *   - white-dwarf remnants (AGB death): ejecta = stored mass - table remnant at 30 km/s, AGB element ejecta scaled;
  *   - with GALSF_SINGLE_STARS_TYPE_IA a white dwarf explodes with the per-step hazard
@@ -219,13 +221,9 @@ static void single_star_event_of(int i, int kind, struct single_star_event *ev)
         ev->v_kms = SINGLE_STAR_AGB_SPEED_KMS;
         for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_elem_ej_AGB(logM, logZ, k);}
     } else {
-        ev->E = 1.e51;
-        if(ev->remnant_type == REM_PISN) {ev->M_rem = 0; ev->Mej = ev->M_trigger;
-#ifdef GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE /* Heger & Woosley 2002 via the Wise+12a fit: M_He = (13/24)(M - 20), held to 64-133 Msun */
-            double M_He = DMIN(DMAX((13. / 24.) * (SingleStars.M_drawn[s] - 20.), 64.), 133.); ev->E = (5.0 + 1.304 * (M_He - 64.)) * 1.e51;
-#endif
-        }
-        if(ev->remnant_type == REM_FSN || ev->remnant_type == REM_DBH) {ev->E = 0;}
+        if(ev->remnant_type == REM_PISN) {ev->M_rem = 0; ev->Mej = ev->M_trigger;}
+        ev->E = single_star_sn_energy_erg(ev->remnant_type == REM_PISN, ev->remnant_type == REM_ECSN,
+                                          ev->remnant_type != REM_FSN && ev->remnant_type != REM_DBH, SingleStars.M_drawn[s]);
         for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_elem_ej_SN(logM, logZ, k);}
     }
     single_star_death_ejecta(s, logM, logZ, ev);
