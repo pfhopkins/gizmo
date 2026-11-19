@@ -403,7 +403,7 @@ double INLINE_FUNC Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *p
 double CR_gas_heating(int target, double n_elec, double nH0, double nHcgs, struct particle_data *pp, struct gas_cell_data *cell);
 double Get_CosmicRayIonizationRate_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef GHOSDT_G0_CR
-double ghosdt_iuv_unfloored(double m_young_code); /* Sigma_SFR / Sigma_SFR,0 for young-star mass m over 30 Myr and the x-y box area */
+double ghosdt_hu21_sigma_sfr_ratio(void); /* Sigma_SFR / Sigma_SFR,0 (Hu+21) from FactorG0 and the x-y box area */
 #endif
 #ifdef GALSF_RESOLVEDISM_TALLBOX
 #define HU_TALLBOX_FIELD_DEFINED

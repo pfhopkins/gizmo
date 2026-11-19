@@ -36,7 +36,8 @@ int main(int argc, char **argv)
 #endif
 #if defined(GHOSDT_G0_CR) && defined(HU21_SIGMA_SFR0)
     {double m = HU21_SIGMA_SFR0 * 3.0e7 * (boxSize_X * UNIT_LENGTH_IN_KPC) * (boxSize_Y * UNIT_LENGTH_IN_KPC) / UNIT_MASS_IN_SOLAR; /* Sigma_SFR,0 over 30 Myr */
-     printf("IUV1 %.17g\n", ghosdt_iuv_unfloored(m));}
+     double f_save = All.FactorG0; All.FactorG0 = (m / 0.03) / (All.Mgas0 / 4.0); /* as sfr_eff.cc */
+     printf("IUV1 %.17g\n", ghosdt_hu21_sigma_sfr_ratio()); All.FactorG0 = f_save;}
 #endif
     int c = -1; for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0) {c = i; break;}}
     if(c >= 0) {

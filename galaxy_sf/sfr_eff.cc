@@ -1099,7 +1099,7 @@ void star_formation_parent_routine(void)
     
     
 #ifdef GHOSDT_G0_CR
-    /* GHOSDT (Hu+21 Sec. 2.2): FactorG0 = Sigma_SFR / Sigma_SFR,0, SFR = M(type-4 stars younger than 30 Myr) / 30 Myr */
+    /* GHOSDT (Hu+21): FactorG0 = [M(type-4 stars younger than 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr] */
     static double m_young_last = 0, m_young_tot = 0; static int m_young_have = 0;
     double m_young = 0; int ghosdt_changed = 0;
     {
@@ -1139,7 +1139,7 @@ void star_formation_parent_routine(void)
     
 #ifdef GHOSDT_G0_CR
     if(ghosdt_changed_tot) {MPI_Allreduce(&m_young, &m_young_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); m_young_last = m_young; m_young_have = 1;} /* unchanged local sums give the same total */
-    All.FactorG0 = ghosdt_iuv_unfloored(m_young_tot);
+    All.FactorG0 = (m_young_tot / 0.03) / (All.Mgas0 / 4.0);
     if(ThisTask == 0) {printf("GHOSDT: Time=%.17g Mgas0=%.17g M_young=%.17g FactorG0=%.17g\n", All.Time, All.Mgas0, m_young_tot, All.FactorG0);}
 #endif
     if(tot_spawned > 0 || tot_converted > 0)
@@ -1419,10 +1419,11 @@ void init_clouds(void)
 #endif // GALSF
 
 #ifdef GHOSDT_G0_CR
-/* Hu+21 Sec. 2.2: Sigma_SFR / Sigma_SFR,0 with SFR = m / 30 Myr over the x-y box area (non-comoving) */
-double ghosdt_iuv_unfloored(double m_young_code)
+/* Hu+21 Sec. 2.2: Sigma_SFR / Sigma_SFR,0, with Sigma_SFR = FactorG0 (Mgas0 / 4 Gyr) over the x-y box area (non-comoving tallbox) */
+double ghosdt_hu21_sigma_sfr_ratio(void)
 {
-    double sigma_sfr = m_young_code * UNIT_MASS_IN_SOLAR / 3.0e7 / ((boxSize_X * UNIT_LENGTH_IN_KPC) * (boxSize_Y * UNIT_LENGTH_IN_KPC)); /* Msun yr^-1 kpc^-2 */
+    if(All.ComovingIntegrationOn) {endrun(8861);} /* box area in physical units only */
+    double sigma_sfr = All.FactorG0 * All.Mgas0 * UNIT_MASS_IN_SOLAR / 4.0e9 / ((boxSize_X * UNIT_LENGTH_IN_KPC) * (boxSize_Y * UNIT_LENGTH_IN_KPC)); /* Msun yr^-1 kpc^-2 */
     return sigma_sfr / HU21_SIGMA_SFR0;
 }
 #endif

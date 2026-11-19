@@ -365,13 +365,12 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 
 #ifdef GHOSDT_G0_CR
     { /* GHOSDT: uniform field as Hu+21 Sec. 2.2 (I_UV, Draine-normalised, in Habing), zeta scaled with it (CR_SCALE_WITH_G0); dynamic fields below override */
-        double I_uv = DMAX(All.FactorG0, HU21_IUV_MIN);
-        double g0 = I_uv * HU21_U_UV0 / HABING_EGY_DENSITY_6_13P6EV_CGS;
+        double g0 = DMAX(ghosdt_hu21_sigma_sfr_ratio() * HU21_U_UV0 / HABING_EGY_DENSITY_6_13P6EV_CGS, G0_FLOOR_Z0);
         in->G0 = g0; in->G0_LW = g0; in->G0_dust = g0;
 #if defined(COSMIC_RAY_FLUID)
         chem_zeta_from_crfluid(target, in); /* transported CRs win over the SFR scaling */
 #elif defined(CR_SCALE_WITH_G0)
-        in->cosmic_ray_ion_rate = I_uv * All.CosmicRayIonRate; /* the field's I_UV, floor included */
+        in->cosmic_ray_ion_rate = g0 * HABING_EGY_DENSITY_6_13P6EV_CGS / HU21_U_UV0 * All.CosmicRayIonRate; /* zeta follows the field, floor included */
 #endif
     }
 #endif
