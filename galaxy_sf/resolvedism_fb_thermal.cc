@@ -153,7 +153,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     int rem_type = stellar_remnant_type(logM, logZ);
 
     switch(rem_type) {
-        default: in->Esne = resolvedism_sn_energy_erg(rem_type == REM_PISN, rem_type == REM_ECSN, rem_type != REM_FSN && rem_type != REM_DBH, Mstar) / UNIT_ENERGY_IN_CGS; break;
+        default: in->Esne = resolvedism_sn_energy_erg(rem_type == REM_PISN, rem_type == REM_ECSN, rem_type != REM_FSN && rem_type != REM_DBH) / UNIT_ENERGY_IN_CGS; break;
     }
 
     /* EXPORT-REPACK FIX (2026-07-05, found by check_twin_sn + FBOUT ledger):

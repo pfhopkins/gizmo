@@ -63,10 +63,9 @@ against the spectral integral, upstream bin edges), test/unit/test_band_flags_wi
 ## RESOLVED_ISM_VARIABLE_SN_ENERGY: explosion energies by type (off by default)
 
 By default every exploding death (CCSN, ECSN, PPISN, PISN) injects 1e51 erg (Uli 2026-11-19); failed SNe and direct
-collapse inject nothing. With this switch a PISN injects [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to
-64-133 Msun (Heger & Woosley 2002, as fitted by Wise+12a), and an ECSN 5e50 erg (Uli's choice 2026-11-19; Kitaura, Janka &
-Hillebrandt 2006 give ~1e50 erg for reference); CCSNe and
-PPISNe stay at 1e51. Deposit, FeedbackBudget, the energy trace, SNinfo and the ejecta-cell payload use the same energy. It
+collapse inject nothing. With this switch (Uli's choice 2026-11-19) a PISN injects 1e52 erg and an ECSN 5e50 erg; CCSNe and
+PPISNe stay at 1e51. For reference: the He-core fit of Heger & Woosley 2002 (via Wise+12a) gives 4.87e52 erg for a 200 Msun
+PISN, and Kitaura, Janka & Hillebrandt 2006 ~1e50 erg for an ECSN; the fit is no longer in the code. Deposit, FeedbackBudget, the energy trace, SNinfo and the ejecta-cell payload use the same energy. It
 replaces the former GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE.
 
 Tests: test/unit/test_pisn_energy.cc and test_sn_energy_variable.cc; test/stella_fb_conservation (a PISN, an ECSN and a
@@ -197,7 +196,7 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
   snapshots and ICs start with a closed composition (an IC with an all-zero ElementAbundance becomes pure H; fresh starts
   still take the composition from InitMetallicity).
 - **Explosion energies.** Default: every SN 1e51 erg, as before the audit. With RESOLVED_ISM_VARIABLE_SN_ENERGY: PISN from the
-  He core (5-95e51 erg; table PISNe below M_ZAMS ~ 138 Msun are held at 5e51), ECSN 5e50 erg.
+  PISN 1e52 erg, ECSN 5e50 erg.
 - **Death ejecta.** Remnant and ejecta are fractions of the star's mass at death. Failed SNe and direct collapse eject
   nothing (all table ejecta are 0). Remnants between grid points differ from the earlier absolute table values.
 - **Type Ia.** Each Ia delivers the table's 1.378 Msun of Ia matter (0.744 Msun Fe): the white dwarf particle plus
