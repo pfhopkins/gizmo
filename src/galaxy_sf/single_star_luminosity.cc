@@ -244,8 +244,150 @@ void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code)
 }
 #endif
 
+#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE /* default for single stars (Uli 2026-11-19, GKS-95 option c) */
+#include "../gravity/forcetree.h"
+#include "../gravity/gpu_pseudo_update.h"
+int let_light_wire_of(int R, int key);
+int let_light_foreign_node(int sender, int wire);
+
+/* one light change for one node copy: kind 0 = a top-level node (the same index on every rank; applied up its chain to the
+   root), kind 1 = the receiver's imported copy of one of the sender's nodes or star leaves (wire index in the sender's import) */
+struct single_star_light_change {int target, kind; double dl[N_RT_FREQ_BINS], x[3], v[3];};
+static std::vector<int> light_pending; /* local stars whose light the nodes do not hold yet */
+static double light_stats[4];          /* exchanges, changed stars, bytes sent, seconds (this rank, cumulative) */
+
+/* after a whole gravity-tree build: the nodes (and every rank's imported copies) hold each star's light as of now */
+void single_star_tree_lum_set_from_build(void)
+{
+    light_pending.clear();
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].Type != 4 || P[i].StarIdx <= 0) {continue;}
+        double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, P, CellP);
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) {SingleStars.tree_lum[single_star_slot(P[i].StarIdx)].L[b] = (float) lum[b];}
+    }
+}
+
+/* local stars whose band light differs from what the nodes hold by more than tol of their own in some band, or switched a band
+   on or off (tol 0: any difference); returns their number. No collective. */
+int single_star_light_exchange_scan(double tol)
+{
+    light_pending.clear();
+    if(!force_tree_is_allocated()) {return 0;}
+    for(int i = 0; i < NumPart && i < All.TreeParticleSlots; i++) {
+        if(P[i].Type != 4 || P[i].StarIdx <= 0) {continue;}
+        int s = single_star_slot(P[i].StarIdx);
+        double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, P, CellP);
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) {
+            const double l0 = SingleStars.tree_lum[s].L[b], lb = (float) lum[b];
+            if(((l0 == 0) != (lb == 0)) || fabs(lb - l0) > tol * DMAX(fabs(lb), fabs(l0))) {light_pending.push_back(i); break;}
+        }
+    }
+    return (int) light_pending.size();
+}
+
+/* add one change to node `no` (local, top-level or imported copy) at the current time: band luminosities, and the
+   luminosity-weighted centre and velocity re-weighted with the star's position and velocity; the walk's mirror follows */
+static void single_star_light_apply(int no, const struct single_star_light_change *c)
+{
+    if(Nodes[no].Ti_current != All.Ti_Current) {force_drift_node(no, All.Ti_Current);}
+    double L0 = 0, L1 = 0;
+    for(int b = 0; b < N_RT_FREQ_BINS; b++) {
+        L0 += (double) Nodes[no].stellar_lum[b];
+        double l = (double) Nodes[no].stellar_lum[b] + c->dl[b];
+        Nodes[no].stellar_lum[b] = (MyFloat) ((l > 0) ? l : 0);
+        L1 += (double) Nodes[no].stellar_lum[b];
+    }
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    if(L1 > 0) {
+        const double h = Nodes[no].len; /* guard against cancellation when the dominant source goes dark: stay near the node */
+        for(int k = 0; k < 3; k++) {
+            double sk = (L0 * (double) Nodes[no].rt_source_lum_s[k] + (L1 - L0) * c->x[k]) / L1;
+            sk = DMIN(DMAX(sk, (double) Nodes[no].center[k] - h), (double) Nodes[no].center[k] + h);
+            Nodes[no].rt_source_lum_s[k] = (MyFloat) sk;
+            Extnodes[no].rt_source_lum_vs[k] = (MyFloat) ((L0 * (double) Extnodes[no].rt_source_lum_vs[k] + (L1 - L0) * c->v[k]) / L1);
+        }
+    } else {
+        for(int k = 0; k < 3; k++) {Nodes[no].rt_source_lum_s[k] = Nodes[no].center[k]; Extnodes[no].rt_source_lum_vs[k] = 0;}
+    }
+#endif
+    gpu_mirror_put_node_light(no);
+}
+
+static inline int single_star_top_level_node(int no) {return no >= All.TreeNodeIndexBase && no - All.TreeNodeIndexBase < NTopnodes;}
+
+/* collective, on every rank when any rank has pending stars (or before a node-moment refresh): each pending star's light change
+   is added to its rank's nodes below the top level, sent to the ranks holding imported copies of those nodes or of the star's
+   leaf, and to every rank for the top-level nodes above it; all ranks apply the top-level changes in rank order, so their
+   copies of the top tree stay identical. The nodes then hold every pending star's current light. */
+void single_star_light_exchange(void)
+{
+    const double t0 = MPI_Wtime();
+    std::vector<std::vector<struct single_star_light_change>> out(NTask);
+    for(int p : light_pending) {
+        int s = single_star_slot(P[p].StarIdx);
+        struct single_star_light_change c; memset(&c, 0, sizeof(c));
+        double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(p, 1, lum, P, CellP);
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) {
+            const float lb = (float) lum[b];
+            c.dl[b] = (double) lb - (double) SingleStars.tree_lum[s].L[b];
+            SingleStars.tree_lum[s].L[b] = lb;
+        }
+        const double dt = get_drift_factor(P[p].Ti_current, All.Ti_Current, p, 0);
+        for(int k = 0; k < 3; k++) {c.x[k] = (double) P[p].Pos[k] + (double) P[p].Vel[k] * dt; c.v[k] = (double) P[p].Vel[k];}
+        for(int R = 0; R < NTask; R++) {
+            if(R == ThisTask) {continue;}
+            const int j = let_light_wire_of(R, -1 - p);
+            if(j >= 0) {c.kind = 1; c.target = j; out[R].push_back(c);}
+        }
+        int no = Father[p];
+        while(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes) {
+            for(int R = 0; R < NTask; R++) {
+                if(R == ThisTask) {continue;}
+                const int j = let_light_wire_of(R, no);
+                if(j >= 0) {c.kind = 1; c.target = j; out[R].push_back(c);}
+            }
+            if(single_star_top_level_node(no)) {c.kind = 0; c.target = no; for(int R = 0; R < NTask; R++) {out[R].push_back(c);} break;}
+            single_star_light_apply(no, &c);
+            no = Nodes[no].u.d.father;
+        }
+    }
+    std::vector<int> scount(NTask), rcount(NTask), soff(NTask), roff(NTask);
+    long long nsend = 0, nrecv = 0;
+    for(int R = 0; R < NTask; R++) {scount[R] = (int) (out[R].size() * sizeof(struct single_star_light_change)); soff[R] = (int) nsend; nsend += scount[R];}
+    MPI_Alltoall(scount.data(), 1, MPI_INT, rcount.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    for(int R = 0; R < NTask; R++) {roff[R] = (int) nrecv; nrecv += rcount[R];}
+    std::vector<char> sbuf(nsend > 0 ? nsend : 1), rbuf(nrecv > 0 ? nrecv : 1);
+    for(int R = 0; R < NTask; R++) {if(scount[R] > 0) {memcpy(sbuf.data() + soff[R], out[R].data(), scount[R]);}}
+    MPI_Alltoallv(sbuf.data(), scount.data(), soff.data(), MPI_BYTE, rbuf.data(), rcount.data(), roff.data(), MPI_BYTE, MPI_COMM_WORLD);
+    long long missing = 0;
+    for(int r = 0; r < NTask; r++) {
+        const int n = rcount[r] / (int) sizeof(struct single_star_light_change);
+        for(int m = 0; m < n; m++) {
+            struct single_star_light_change c; memcpy(&c, rbuf.data() + roff[r] + (size_t) m * sizeof(c), sizeof(c));
+            if(c.kind == 1) {
+                const int no = let_light_foreign_node(r, c.target);
+                if(no < 0) {missing++; continue;}
+                single_star_light_apply(no, &c);
+            } else {
+                for(int no = c.target; single_star_top_level_node(no); no = Nodes[no].u.d.father) {single_star_light_apply(no, &c);}
+            }
+        }
+    }
+    if(missing) {printf("SINGLE_STAR_LIGHT_EXCHANGE: rank %d received %lld changes for imported nodes it does not hold\n", ThisTask, missing); fflush(stdout); endrun(90001101);}
+    const double here[3] = {(double) light_pending.size(), (double) (nsend - scount[ThisTask]), MPI_Wtime() - t0};
+    light_stats[0] += 1; for(int k = 0; k < 3; k++) {light_stats[k + 1] += here[k];}
+    double sum[2] = {0, 0}, tmax = 0;
+    MPI_Reduce(here, sum, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(here + 2, &tmax, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    if(ThisTask == 0) {printf("SINGLE_STAR_LIGHT_EXCHANGE: t=%.10g stars=%.0f bytes=%.0f seconds_max=%.3e\n", All.Time, sum[0], sum[1], tmax);}
+    light_pending.clear();
+}
+
+/* this rank's cumulative exchange cost: calls, changed stars, bytes sent to other ranks, seconds */
+void single_star_light_exchange_stats(double *out4) {for(int k = 0; k < 4; k++) {out4[k] = light_stats[k];}}
+#endif
+
 #ifdef GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE /* opt-in: by default the nodes keep the light of the last build (trunk's bounded staleness) */
-#define SINGLE_STAR_TREE_LUM_TOL 1.e-2 /* a star's band luminosity may drift this fraction of its own before the nodes are refreshed */
 /* before a gravity call: refresh the tree node moments (luminosities) if a single star started to shine, started to ionise or went
    dark since the last call, or its band luminosity moved by more than SINGLE_STAR_TREE_LUM_TOL of its own since the nodes last
    saw it; reduced in gravity_tree, so no collective here. A switch or a drift sets 2: on several ranks gravity_tree then

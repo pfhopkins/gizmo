@@ -755,3 +755,18 @@ extern "C" int gpu_set_soa_sibling(int abs_idx, int new_sibling)
     return 0;
 }
 
+#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+extern "C" int gpu_mirror_put_node_light(int no)
+{
+    struct gpu_gravity_tree_soa_t *m = gpu_gravity_tree_soa();
+    if(!m || !m->stellar_lum) {return 0;}
+    const long k = gpu_gravity_tree_mirror_slot(no);
+    if(k < 0) {return 1;}
+    for(int b = 0; b < N_RT_FREQ_BINS; b++) {m->stellar_lum[k * N_RT_FREQ_BINS + b] = (MyGravFloat) Nodes[no].stellar_lum[b];}
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    m->rt_source_lum_s[k]  = {(MyGravFloat) Nodes[no].rt_source_lum_s[0], (MyGravFloat) Nodes[no].rt_source_lum_s[1], (MyGravFloat) Nodes[no].rt_source_lum_s[2]};
+    m->rt_source_lum_vs[k] = {(MyGravFloat) Extnodes[no].rt_source_lum_vs[0], (MyGravFloat) Extnodes[no].rt_source_lum_vs[1], (MyGravFloat) Extnodes[no].rt_source_lum_vs[2]};
+#endif
+    return 0;
+}
+#endif

@@ -199,6 +199,9 @@ int force_treebuild_gravity(void)
     building_gravity_tree = 1;
     const int status = force_treebuild(NumPart, NULL);
     building_gravity_tree = 0;
+#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+    if(status >= 0) {single_star_tree_lum_set_from_build();} /* the nodes and their imported copies now hold every star's light */
+#endif
 #ifdef HERMITE_FOREIGN_SOURCE_TABLE
     hermite_local_sources_rebuild();   /* the Hermite-type particles this tree exports, listed while the build has visited every particle */
 #endif

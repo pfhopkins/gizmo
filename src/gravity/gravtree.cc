@@ -359,10 +359,19 @@ void gravity_tree(void)
        all-node pass on the smallest steps. A build is forced once insertions pass 1% of the particles. */
     {
         int TreeMomentsStaleFlag_global;
+#if defined(KETJU_REGULARIZATION) || defined(GALSF_SINGLE_STARS_LIGHT_EXCHANGE)
+        int stale_loc[3] = {TreeMomentsStaleFlag, 0, 0}, stale_glob[3] = {0, 0, 0}; /* no collective of their own on steps without a chain candidate or a light change */
 #ifdef KETJU_REGULARIZATION
-        int ketju_loc[2] = {TreeMomentsStaleFlag, ketju_active_candidates()}, ketju_glob[2]; /* no collective of its own on steps without a chain candidate */
-        MPI_Allreduce(ketju_loc, ketju_glob, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        TreeMomentsStaleFlag_global = ketju_glob[0]; ketju_note_candidates(ketju_glob[1]);
+        stale_loc[1] = ketju_active_candidates();
+#endif
+#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+        stale_loc[2] = (single_star_light_exchange_scan(SINGLE_STAR_TREE_LUM_TOL) > 0);
+#endif
+        MPI_Allreduce(stale_loc, stale_glob, 3, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        TreeMomentsStaleFlag_global = stale_glob[0];
+#ifdef KETJU_REGULARIZATION
+        ketju_note_candidates(stale_glob[1]);
+#endif
 #else
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
 #endif
@@ -372,6 +381,13 @@ void gravity_tree(void)
 #ifdef HERMITE_INTEGRATION
         if(HermiteOnlyFlag) {light_switch_rebuild = 0;}
 #endif
+#endif
+#ifdef GALSF_SINGLE_STARS_LIGHT_EXCHANGE
+        if(stale_glob[2] || TreeMomentsStaleFlag_global)
+        {
+            if(TreeMomentsStaleFlag_global) {single_star_light_exchange_scan(0);} /* the refresh below recomputes the home rank's nodes from the live light: every copy takes it first */
+            single_star_light_exchange();
+        }
 #endif
         if(light_switch_rebuild) {gravity_tree_build_main();}
         else if(TreeMomentsStaleFlag_global)

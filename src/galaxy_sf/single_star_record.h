@@ -45,7 +45,7 @@
     SINGLE_STAR_RECORD_KETJU_FIELDS(X) \
     SINGLE_STAR_RECORD_RUMI_FIELDS(X)
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
-#ifdef GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE
+#if defined(GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE) || defined(GALSF_SINGLE_STARS_LIGHT_EXCHANGE)
 struct single_star_tree_lum {float L[N_RT_FREQ_BINS];};
 #define SINGLE_STAR_RECORD_TREE_FIELDS(X) X(struct single_star_tree_lum, tree_lum, "band luminosities as the gravity-tree nodes last saw them [code]")
 #else
