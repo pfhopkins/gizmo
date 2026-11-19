@@ -46,6 +46,9 @@ struct MechFBGasDelta
     double CR_energy_from_sn; /* the supernova part of the sum over CR_energy_injected, for the ledger */
 #endif
 #endif
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
+    int N_injected_sn; /* SN and Ia deposits (mode 0) among N_injected: they repeat the hydro pass */
+#endif
 };
 
 

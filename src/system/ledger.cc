@@ -81,6 +81,9 @@ void ledger_add(int row, double x) /* from inside a module's (threaded) loop; no
 #endif
     if(!ledger_thread || t >= ledger_nthreads) {endrun(78201);}
     ledger_add_exact(&ledger_thread[(size_t) t * LEDGER_NROWS + row], x);
+#ifdef OUTPUT_ENERGY_STEP_TRACE
+    estep_ledger_hook(row, x); /* the rows that are energy-trace bookings */
+#endif
 }
 
 #ifdef COSMIC_RAY_FLUID

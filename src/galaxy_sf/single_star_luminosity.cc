@@ -237,6 +237,9 @@ void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code)
             dpmag2 += dp_k * dp_k;
         }
         *dp_total_code += sqrt(dpmag2);
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
+        if(dpmag2 > 0) {FBHydroRedoReceivers++;} /* a cell the tree term pushed repeats the hydro pass */
+#endif
     }
 }
 #endif

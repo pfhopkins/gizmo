@@ -383,7 +383,10 @@ void run(void)
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
 #endif
+        ESTEP_BEGIN(ESTEP_INT_KICK1);
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+        ESTEP_END(ESTEP_INT_KICK1);
+        ESTEP_BEGIN(ESTEP_INT_NBODY);
 #ifdef STARS_INTEGRATED_BY_RUMI
         rumi_integrate();        /* stars' mutual gravity over their step by RUMI++, chord velocities for the drift */
 #endif
@@ -416,10 +419,13 @@ void run(void)
 #endif
         CPU_Step[CPU_KICKS] += measure_time();
 
+        ESTEP_END(ESTEP_INT_NBODY);
+        ESTEP_BEGIN(ESTEP_INT_DRIFT);
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
+        ESTEP_END(ESTEP_INT_DRIFT);
         CPU_Step[CPU_DRIFT] += measure_time();
         {   /* new sync point: the gas SIDX is kept across the drift (every walk
              * reads it at the time of the search); the all-types SIDX is
@@ -575,7 +581,9 @@ void run(void)
 #ifdef TEST_TREE_NODE_BOX_AUDIT
         if(!reconstructed_tree) {tree_node_box_audit();}
 #endif
+        ESTEP_BEGIN(ESTEP_INT_GRAV);
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
+        ESTEP_END(ESTEP_INT_GRAV);
 #ifdef TEST_KETJU_TREE_MOTION_AUDIT
         ketju_tree_audit_imports();
 #endif
@@ -604,13 +612,17 @@ void run(void)
 #endif
 
         LEDGER_STEP("pre_hydro_fb");
+        ESTEP_BEGIN(ESTEP_INT_HYDRO);
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+        ESTEP_END(ESTEP_INT_HYDRO);
 #ifdef DM_HEATING
         apply_dm_heating();  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
         CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 
+        ESTEP_BEGIN(ESTEP_INT_KICK2);
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
+        ESTEP_END(ESTEP_INT_KICK2);
         CPU_Step[CPU_KICKS] += measure_time();
 
 #if defined(GALSF) && defined(GALSF_FB_MECHANICAL)
@@ -624,20 +636,18 @@ void run(void)
         if(mechanical_fb_this_step)
         {
             LEDGER_STEP_BREAKDOWN("pre_feedback");
+            ESTEP_BEGIN(ESTEP_FB_MECH);
             LEDGER_FB(mechanical_fb_calc_toplevel());
 #ifdef SNE_BROADCAST_TIMESTEP
             sne_causal_wake(); /* gas the SNe of this step can reach before its step ends is woken */
 #endif
+            ESTEP_END(ESTEP_FB_MECH);
             LEDGER_STEP_BREAKDOWN("post_feedback");
             gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
-#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
-            if(MechFBAnyCellReceived) { /* refresh densities, gradients and forces against the state after the deposit */
-                MechFBAnyCellReceived = 0;
-                if(ThisTask == 0) {printf("HYDRO_RECOMPUTE_AFTER_FEEDBACK: repeating the hydro pass after a deposit\n");}
-                HydroRecomputeAfterFeedback = 1; compute_hydro_densities_and_forces(); HydroRecomputeAfterFeedback = 0;
-            }
-#endif
         }
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
+        if(All.TotN_gas > 0) {resolved_ism_fb_after_closing_kick();} /* the rest of the feedback, then the hydro pass again if a deposit asks */
+#endif
 #endif
 
         LEDGER_STEP("post_hydro_fb"); /* after the mechanical feedback, which runs after the closing kick */
@@ -645,6 +655,7 @@ void run(void)
 #ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
         energy_ledger_report();
 #endif
+        ESTEP_REPORT(); /* energy step trace: window closure; E_tot at full syncs */
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();
@@ -924,7 +935,9 @@ void calculate_non_standard_physics(void)
 #error "TEST_SKIP_COOLING_AND_CHEMISTRY_UPDATE needs COOLING_OPERATOR_SPLIT (else the hydro work is applied by the cooling) and no TRANSPORT_SUBCYCLE_COOLING"
 #endif
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING) && !defined(TEST_SKIP_COOLING_AND_CHEMISTRY_UPDATE)
-    LEDGER_BRACKET(LG_COOL, cooling_parent_routine()); // top-level cooling and chemistry subroutine //
+    ESTEP_BEGIN(ESTEP_COOLING);
+    LEDGER_BRACKET(LG_COOL, cooling_parent_routine());
+    ESTEP_END(ESTEP_COOLING); // top-level cooling and chemistry subroutine //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
 #ifdef DISK_BETA_COOL
@@ -946,7 +959,9 @@ void calculate_non_standard_physics(void)
 #endif
 #ifdef GALSF /* star/sink particle formation */
     LEDGER_STEP("pre_star_formation");
-    LEDGER_BRACKET(LG_SF, star_formation_parent_routine()); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
+    ESTEP_BEGIN(ESTEP_SF);
+    LEDGER_BRACKET(LG_SF, star_formation_parent_routine());
+    ESTEP_END(ESTEP_SF); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
     LEDGER_STEP("post_star_formation");
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif

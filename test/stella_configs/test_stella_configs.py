@@ -2,7 +2,8 @@
   test_every_setting_is_read: each flag of Config_stella_*.sh and the template appears in src/ outside Template_Config.sh, each
     parameter of stella_*.params is registered in begrun.cc (scripts/stella/check_config_reads.py, exit 0).
   test_checker_reports_unread: a flag and a parameter the code does not know are named and the exit code is 1.
-  test_setups: default, cloud, galaxy and zoom start from STELLA_DEFAULTS; the zoom is comoving with TimeBetSnapshot > 1
+  test_setups: default, cloud, galaxy and zoom start from STELLA_DEFAULTS; the zoom is comoving with TimeBetSnapshot > 1 and has
+    RESOLVED_ISM_FB_AFTER_CLOSING_KICK without RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB (as stella_dev);
     (run.cc stops otherwise); cloud, galaxy and tall box are not.
   test_gas_kernel_radius_uncapped: every tracked params file of a Stella build with adaptive gas softening sets
     MinGasKernelRadiusFractional, and the gas kernel radius floor it gives is below 1e-3 pc.
@@ -52,6 +53,8 @@ def test_setups():
     assert z["ComovingIntegrationOn"] == "1" and float(z["TimeBetSnapshot"]) > 1.0 and float(z["OmegaBaryon"]) > 0
     for p in ("stella_cloud.params", "stella_galaxy.params", "stella_tallbox.params"):
         assert par(p)["ComovingIntegrationOn"] == "0", p
+    zf = active_flags(CFG / "Config_stella_zoom.sh")  # as stella_dev's zoom: feedback after the closing kick, SN/Ia redo the hydro pass
+    assert "RESOLVED_ISM_FB_AFTER_CLOSING_KICK" in zf and "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB" not in zf
 
 
 KERNEL_FAC = 2.8  # MinKernelRadius = MinGasKernelRadiusFractional x ForceSoftening[0], ForceSoftening = 2.8 x SofteningGas (cubic spline)

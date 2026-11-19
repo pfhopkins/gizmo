@@ -17,7 +17,10 @@ Details: Stella section of `docs/gizmo_documentation.md`; test: `test/stella_dep
 - cloud: periodic box with isolated gravity, `SGCHEM_KEEP_IC_ABUNDANCES`, attenuated CR rate (MakeCloud ICs).
 - galaxy: open boundaries; dwarf-galaxy parameters (0.1 solar, 400 kpc box, 1 Gyr).
 - zoom: comoving, periodic with a PM grid and nested PM grid; needs SGChem's UV background support. Softenings, `InitGasTemp`,
-  the PM grid and the split and merge masses are placeholders to be set from the IC.
+  the PM grid and the split and merge masses are placeholders to be set from the IC. `RESOLVED_ISM_FB_AFTER_CLOSING_KICK`: all
+  feedback after the closing kick, and the hydro pass redone after SN/Ia deposits (gizmo2017 order; the repeat applies no second
+  metal exchange). `RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB` (off; decision pending its cost) adds wind, AGB and radiation-pressure
+  deposits. The old names `FB_G17_BOUNDARY_INJECTION` and `GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK` stop the build.
 - tall box: `GRAVITY_PERIODIC_XY_IMAGES`, no band fluxes, scaled with the recent SFR.
 
 `check_config_reads.py SRC_DIR FILES...` lists every flag and parameter the code does not read (test/stella_configs).

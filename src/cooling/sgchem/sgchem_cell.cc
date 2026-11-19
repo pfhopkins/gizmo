@@ -491,6 +491,7 @@ double sgchem_docooling(int i, double u_old, double dt, double *ne_eval)
     if(All.TestTreeRayNeutralTemp > 0) {u = u_solve;} /* the pinned energy */
 #endif
     if(!isfinite(u)) {printf("SGCHEM: non-finite energy after cooling, ID=%llu u=%g, keeping %g\n", (unsigned long long) P[i].ID, u, u_before); u = u_solve = u_before;}
+    ESTEP_BOOK(EBK_COOL_FLOOR, (DMAX(u, All.MinEgySpec) - u) * P[i].Mass); /* output floor */
     u = DMAX(u, All.MinEgySpec);
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
     if(!sgchem_network_skipped) {double dE = (u_solve - u_in) * P[i].Mass; ledger_add(dE > 0 ? LEDGER_CHEM_HEATING : LEDGER_CHEM_COOLING, fabs(dE));} /* the solve only */

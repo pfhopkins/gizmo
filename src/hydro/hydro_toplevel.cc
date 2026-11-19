@@ -335,6 +335,9 @@ void hydro_final_operations_and_cleanup(void)
 
 
 #if (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE) /* update the metal masses from exchange */
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
+            if(HydroPassRepeatsStep) {for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] = 0;}} /* applied once per step, by the first pass */
+#endif
             for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
 #if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange: offsets within Dyield match Metallicity layout */
             {int dc0 = ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY; /* base offset for dustchem in Metallicity/Dyield */
@@ -477,6 +480,9 @@ void hydro_final_operations_and_cleanup(void)
         double m_metal_ref = CellP[i].MassTrue; /* metal mass is MassTrue*Z, kept by the kick under mass change */
 #else
         double m_metal_ref = P[i].Mass;
+#endif
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
+        if(HydroPassRepeatsStep) {for(int k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] = 0;}} /* applied once per step, by the first pass */
 #endif
 #ifdef OUTPUT_MASS_BALANCE_BREAKDOWN
         {double mz_new = P[i].Metallicity[0] + CellP[i].Dyield[0] / m_metal_ref, mz_floor = 0.01*P[i].Metallicity[0], floor_add = (mz_new < mz_floor) ? (mz_floor - mz_new) * m_metal_ref : 0;

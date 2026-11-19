@@ -30,3 +30,4 @@ SofteningDisk                      0.01
 SofteningBulge                     0.01
 SofteningStars                     0.01
 SofteningBndry                     0.01
+TurbDiffusionCoefficient           1.0

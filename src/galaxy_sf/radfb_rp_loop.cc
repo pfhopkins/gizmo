@@ -247,6 +247,9 @@ void RadFBRPSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     radfb_rp_log_mom_coupled += accum.mom_coupled;
     radfb_rp_log_sum_v_kick  += accum.sum_v_kick;
     radfb_rp_log_sum_taufac  += accum.sum_taufac;
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
+    if (accum.mom_coupled > 0) {FBHydroRedoReceivers += (int)DMAX(accum.n_touched, 1);} /* the cells this star pushed repeat the hydro pass */
+#endif
 
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
     if (P[i].NewStar_Momentum_For_JetFeedback > 0

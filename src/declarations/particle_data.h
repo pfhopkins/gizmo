@@ -305,7 +305,7 @@ extern ALIGN(32) struct particle_data
     MyDouble comp_Mass; //mass of binary companion
     int is_in_a_binary; // flag whether star is in a binary or not
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
     MyFloat Min_Sink_Freefall_time;
     MyFloat Min_Sink_Approach_Time;
 #if (SINGLE_STAR_TIMESTEPPING > 0)

@@ -1047,7 +1047,7 @@ struct grav_sink_prox_accum_t {
 #ifdef SINGLE_STAR_FIND_BINARIES
     double Min_Sink_OrbitalTime, comp_Mass; Vec3<double> comp_dx, comp_dv;
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
     double Min_Sink_Approach_Time, Min_Sink_Freefall_time;
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
@@ -1068,7 +1068,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_accum_init(grav_sink_prox_accum_t &pr
 #ifdef SINGLE_STAR_FIND_BINARIES
     prox.Min_Sink_OrbitalTime = MAX_REAL_NUMBER; prox.comp_Mass = 0; prox.comp_dx = {}; prox.comp_dv = {};
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
     prox.Min_Sink_Approach_Time = MAX_REAL_NUMBER; prox.Min_Sink_Freefall_time = MAX_REAL_NUMBER;
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
@@ -1105,7 +1105,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_accum_combine(grav_sink_prox_accum_t 
         a.Min_Sink_OrbitalTime = b.Min_Sink_OrbitalTime; a.comp_Mass = b.comp_Mass; a.comp_dx = b.comp_dx; a.comp_dv = b.comp_dv;
     }
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
     if(b.Min_Sink_Approach_Time < a.Min_Sink_Approach_Time) {a.Min_Sink_Approach_Time = b.Min_Sink_Approach_Time;}
     if(b.Min_Sink_Freefall_time < a.Min_Sink_Freefall_time) {a.Min_Sink_Freefall_time = b.Min_Sink_Freefall_time;}
 #endif
@@ -1117,7 +1117,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_accum_combine(grav_sink_prox_accum_t 
 /* Target-side state shared by the leaf + node sink-proximity helpers (by value). */
 struct grav_sink_prox_target_t {
     int ptype; double pmass, soft;
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
     Vec3<double> vel;
 #endif
 #ifdef KETJU_REGULARIZATION
@@ -1185,8 +1185,8 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_leaf_accumulate(double r2, const Vec3
                 prox.acc_of_nearest_special = src.motion.acc;
 #endif
             }
-#ifdef SINGLE_STAR_TIMESTEPPING
-        Vec3<double> sink_dv=src.motion.vel-target.vel; double vSqr=sink_dv.norm_sq(), M_total=src.src_mass+target.pmass, r2soft=SinkParticle_GravityKernelRadius;
+#ifdef SINK_APPROACH_TIME_TRACKED
+        Vec3<double> sink_dv=src.motion.vel-target.vel; double vSqr=sink_dv.norm_sq(), M_total=src.src_mass+target.pmass, r2soft=SINK_APPROACH_SOURCE_SOFTENING;
         r2soft = DMAX(r2soft, target.soft);
         r2soft *= KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER;
         r2soft = r2 + r2soft*r2soft;
@@ -1228,7 +1228,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_leaf_accumulate(double r2, const Vec3
             } /* specific_energy < 0 */
         } /* ptype == 5 */
 #endif //#ifdef SINGLE_STAR_FIND_BINARIES
-#endif //#ifdef SINGLE_STAR_TIMESTEPPING
+#endif //#ifdef SINK_APPROACH_TIME_TRACKED
     }
 }
 
@@ -1277,9 +1277,9 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_accumulate(double r2, const Vec3
             prox.acc_of_nearest_special = src.motion.acc;
 #endif
         }
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
     Vec3<double> sink_dv = src.motion.vel - target.vel; double vSqr=sink_dv.norm_sq(), M_total=src.sink_mass+target.pmass, r2soft;
-    r2soft = DMAX(SinkParticle_GravityKernelRadius, target.soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = sink_r2 + r2soft*r2soft; /* the node's sink, as in the leaf form, not the node's mass centre */
+    r2soft = DMAX(SINK_APPROACH_SOURCE_SOFTENING, target.soft) * KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER; r2soft = sink_r2 + r2soft*r2soft; /* the node's sink, as in the leaf form, not the node's mass centre */
     double tSqr = r2soft/(vSqr + MIN_REAL_NUMBER), tff4 = r2soft*r2soft*r2soft/(M_total*M_total);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
     if(target.ptype == 0) {
@@ -1287,8 +1287,15 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_accumulate(double r2, const Vec3
         if(tSqr_fb < prox.Min_Sink_FeedbackTime) {prox.Min_Sink_FeedbackTime = tSqr_fb;}
     } // for gas, add the signal velocity of feedback from the star
 #endif
+#ifdef KETJU_REGULARIZATION
+    /* nodes carry no IDs: within the region radius of a chain member they may hold its partners, which MSTAR integrates */
+    if((target.ketju_chain == 0) || (sink_r2 >= All.KetjuRegionRadius * All.KetjuRegionRadius * All.cf_a2inv)) {
+#endif
     if(tSqr < prox.Min_Sink_Approach_Time) {prox.Min_Sink_Approach_Time = tSqr;}
     if(tff4 < prox.Min_Sink_Freefall_time) {prox.Min_Sink_Freefall_time = tff4;}
+#ifdef KETJU_REGULARIZATION
+    }
+#endif
 #ifdef SINGLE_STAR_FIND_BINARIES
     if(target.ptype == 5 && src.n_sink == 1) // only do it if we're looking at a single star in the node
     {
@@ -1305,7 +1312,7 @@ KOKKOS_INLINE_FUNCTION void grav_sink_prox_node_accumulate(double r2, const Vec3
         } /* specific_energy < 0 */
     } /* ptype == 5 */
 #endif //#ifdef SINGLE_STAR_FIND_BINARIES
-#endif //#ifdef SINGLE_STAR_TIMESTEPPING
+#endif //#ifdef SINK_APPROACH_TIME_TRACKED
 }
 #endif /* SINK_CALC_DISTANCES */
 

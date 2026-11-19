@@ -2043,7 +2043,7 @@ struct grav_walk_member_t {
     int resume_at;              /* GRAV_WALK_MEMBER_IN_PLAY; the index at which this member re-joins the traversal; or GRAV_WALK_MEMBER_NEVER for a massless target that takes part in nothing and writes nothing */
     struct grav_walk_open_inputs_t open;   /* what the opening decision reads at every node */
     double pmass, zeta;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
     Vec3<double> vel;
 #endif
     grav_pair_tgt_t tgt;
@@ -2232,7 +2232,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
         mem.open.ketju_open_radius = P[tm].KetjuOpenRadius;
 #endif
         mem.pmass = P[tm].Mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
         mem.vel = P[tm].Vel;
 #endif
         double sink_mass = 0; (void) sink_mass;
@@ -2359,7 +2359,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
             }
             /* the member's inputs, fixed for the walk */
             const Vec3<double> pos = mem.open.pos; const int ptype = mem.open.ptype; const double soft = mem.open.soft, pmass = mem.pmass; (void) soft; (void) pmass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
             const Vec3<double> vel = mem.vel;
 #endif
             const grav_pair_tgt_t tgt = mem.tgt;
@@ -2475,7 +2475,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #ifdef SINK_CALC_DISTANCES
                         /* nearest-sink + single-star timestep/binary tracking via the shared helper (gravtree_force_kernel.h) */
                         grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
-#if defined(SINGLE_STAR_TIMESTEPPING)
+#if defined(SINK_APPROACH_TIME_TRACKED)
                         prox_target.vel = vel;
 #endif
                         grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P[no].Type; prox_src.src_mass = P[no].Mass; prox_src.motion.vel = src_vel;   /* the state this interaction was evaluated at, so the pair (dr, vel) feeding Min_Sink_Approach_Time stays mutually consistent on a Hermite pass */
@@ -2675,14 +2675,17 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #endif
                         GRAVITY_NEAREST_XYZ(sink_dr[0],sink_dr[1],sink_dr[2],-1);
                         grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
-#if defined(SINGLE_STAR_TIMESTEPPING)
+#if defined(SINK_APPROACH_TIME_TRACKED)
                         prox_target.vel = vel;
+#endif
+#ifdef KETJU_REGULARIZATION
+                        prox_target.ketju_chain = P[mem.target].KetjuChainID;
 #endif
                         grav_sink_prox_node_src_t prox_src = {}; prox_src.sink_mass = nop->sink_mass;
 #if defined(SINGLE_STAR_FIND_BINARIES)
                         prox_src.n_sink = (int)nop->N_SINK;
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_APPROACH_TIME_TRACKED) || defined(SPECIAL_POINT_MOTION)
                         prox_src.motion.vel = nop->sink_vel;
 #ifdef HERMITE_FOREIGN_SOURCE_TABLE
                         if(k_gh >= 0) {prox_src.motion.vel = HermiteGhostTab[k_gh].vel;}
@@ -3203,7 +3206,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
             P[target_m].comp_dx = sink_prox.comp_dx; P[target_m].comp_dv = sink_prox.comp_dv;
         }
 #endif
-#ifdef SINGLE_STAR_TIMESTEPPING
+#ifdef SINK_APPROACH_TIME_TRACKED
         P[target_m].Min_Sink_Approach_Time = sqrt(sink_prox.Min_Sink_Approach_Time);
         P[target_m].Min_Sink_Freefall_time = sqrt(sqrt(sink_prox.Min_Sink_Freefall_time)/All.G);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT

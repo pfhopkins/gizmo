@@ -1341,9 +1341,11 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 
 /* Subtract softened pairwise gravity between chain members from their velocities.
  * This undoes the tree force contribution so MSTAR can replace it with exact forces. */
-static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int at_start, std::vector<double> *dv_out = NULL)
+/* returns D = sum over member pairs of (unsoftened - tree-softened) pair potential energy, physical, at the kick's positions */
+static double do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int at_start, std::vector<double> *dv_out = NULL)
 {
-    if(!reg.compute_tasks.is_member() || !reg.integrator) return;
+    if(!reg.compute_tasks.is_member() || !reg.integrator) return 0;
+    double D_loc = 0;
 
     int n = reg.integrator->num_particles;
     struct ketju_system_physical_state *ps = reg.integrator->physical_state;
@@ -1393,7 +1395,9 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
                 double r2c = drc[0]*drc[0] + drc[1]*drc[1] + drc[2]*drc[2], rc = sqrt(r2c), f_ij, f_ji, d0, d1, d2;
                 if(rc <= 0) continue;
                 tree_pair_gravity_factors(rc, r2c, ps->mass[j], si[0], sj[1], pi.Type, pj.Type, zi[0], zj[1], ps->mass[i], ags_gravity_kernel_shared_BITFLAG(pi.Type), f_ij, d0, d1, d2);
+                const double fp_ij = d0;
                 tree_pair_gravity_factors(rc, r2c, ps->mass[i], sj[0], si[1], pj.Type, pi.Type, zj[0], zi[1], ps->mass[j], ags_gravity_kernel_shared_BITFLAG(pj.Type), f_ji, d0, d1, d2);
+                D_loc += All.G * (-ps->mass[i] * ps->mass[j] / rc - 0.5 * (ps->mass[i] * fp_ij + ps->mass[j] * d0)) / a_kick; /* as 1/2 sum m Phi / a of the step trace */
                 double fac_c = kick_factor * All.G / (a_kick * a_kick); /* comoving pair force -> physical acceleration */
                 for(int k = 0; k < 3; k++) {
                     dv[3*i + k] += fac_c * f_ij * drc[k];
@@ -1406,6 +1410,7 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
 
     /* collect results across compute tasks and apply */
     MPI_Allreduce(MPI_IN_PLACE, dv.data(), 3 * n, MPI_DOUBLE, MPI_SUM, reg.compute_tasks.comm);
+    MPI_Allreduce(MPI_IN_PLACE, &D_loc, 1, MPI_DOUBLE, MPI_SUM, reg.compute_tasks.comm);
     if(dv_out) *dv_out = dv;
 
     for(int i = 0; i < n; i++) {
@@ -1413,6 +1418,7 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
             ps->vel[i][k] += dv[3*i + k];
         }
     }
+    return D_loc;
 }
 
 /* ============================================================
@@ -1643,7 +1649,7 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
 
     /* subtract first half of tree force */
     std::vector<double> pair_dv;
-    do_negative_halfstep_kick(reg, first_halfkick, 1, &pair_dv);
+    double D_start = do_negative_halfstep_kick(reg, first_halfkick, 1, &pair_dv);
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE)
     if(All.KetjuSmoothTide && reg.compute_tasks.is_member() && reg.integrator && reg.integrator->num_particles >= 2) {
         /* Smooth tide: T = mass-weighted mean over members of (tree tidal tensor - the other members' pair tides, with the
@@ -1765,7 +1771,8 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         for(int i = 0; i < n; i++) for(int j = 0; j < 3; j++) reg.true_vel[3*i+j] = reg.integrator->physical_state->vel[i][j];
     }
     /* subtract second half of tree force */
-    do_negative_halfstep_kick(reg, second_halfkick, 0);
+    double D_end = do_negative_halfstep_kick(reg, second_halfkick, 0);
+    if(reg.compute_tasks.is_root()) {ESTEP_BOOK(EBK_KETJU_CHAIN_POT, -(D_end - D_start));} /* the step trace's softened pair potential vs MSTAR's 1/r */
     if(reg.tide_on) ketju_region_tide_kick(reg, -second_halfkick); /* the host's end kick by the linear tide, pre-subtracted */
 }
 
@@ -2010,6 +2017,7 @@ static void scatter_results(KetjuRegion &reg)
                 if(info->is_collision) {
                     double mu = KJ_MASS_TO_NAT, eu = mu * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT; /* MSTAR natural -> host units */
                     KetjuCollisionEnergy += info->dE_collision / eu;
+                    ESTEP_BOOK(EBK_KETJU_COLLISION, info->dE_collision / eu);
 #ifdef KJ_STAR_COLLISIONS
                     const ketju_extra_data &x1 = reg.extra_data[info->extra_index1], &x2 = reg.extra_data[info->extra_index2];
                     double age1 = evaluate_time_since_t_initial_in_Gyr(x1.BirthTime) * 1e9, age2 = evaluate_time_since_t_initial_in_Gyr(x2.BirthTime) * 1e9;

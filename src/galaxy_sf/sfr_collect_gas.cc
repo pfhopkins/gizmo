@@ -288,6 +288,11 @@ double single_stars_collect_gas(long long tot_spawned)
 #if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(COSMIC_RAY_FLUID)
         double e_cr_0 = ssc_local_cr_energy();
 #endif
+#ifdef OUTPUT_ENERGY_STEP_TRACE
+        for(int j = 0; j < DMIN(N_gas, ssc_donor_cap); j++) { /* each donor loses grant x mu with its own u and v (the apply below keeps them) */
+            if(ssc_donor[j].grant > 0 && P[j].Type == 0) {double dm = (double)ssc_donor[j].grant * mu; ESTEP_BOOK(EBK_SF_DONOR, -dm * (CellP[j].InternalEnergy + 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv));}
+        }
+#endif
         ssc_run<SscApplySpec>(list, in, aux);
 #ifdef TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS
         for(const SscGrantRecord& r : records) { /* donors keep more than the collection floor */
@@ -309,8 +314,10 @@ double single_stars_collect_gas(long long tot_spawned)
         int ok = !t.active;
         if(ok) {
             double M = (double)t.N_got * mu;
+            ESTEP_BOOK(EBK_SF_STAR_KIN, -0.5 * P[t.i].Mass * P[t.i].Vel.norm_sq() * All.cf_a2inv);
             P[t.i].Mass = M;
             for(int k = 0; k < 3; k++) {P[t.i].Vel[k] = (double)t.p[k] * ssc_pow2_at_least(t.N_drawn * mu) * ldexp(1.0, -60) / M;}
+            ESTEP_BOOK(EBK_SF_STAR_KIN, 0.5 * M * P[t.i].Vel.norm_sq() * All.cf_a2inv); /* the donors' momentum: their kinetic energy less this is the inelastic loss */
 #ifdef METALS
             for(int k = 0; k < NUM_METAL_SPECIES; k++) {P[t.i].Metallicity[k] = (double)t.Z[k] * ssc_pow2_at_least(t.N_drawn * mu) * ldexp(1.0, -100) / M;}
             SingleStars.Z_birth[single_star_slot(P[t.i].StarIdx)] = P[t.i].Metallicity[0];
@@ -327,6 +334,7 @@ double single_stars_collect_gas(long long tot_spawned)
             if(All.SFCooldownFreeFallFraction > 0) {CellP[t.parent].SingleStarSFCooldown = All.SFCooldownFreeFallFraction * sqrt(3. * M_PI / (32. * All.G * t.rho_form * All.cf_a3inv));}
 #endif
         } else {
+            ESTEP_BOOK(EBK_SF_STAR_KIN, -0.5 * P[t.i].Mass * P[t.i].Vel.norm_sq() * All.cf_a2inv);
             P[t.i].Mass = 0; /* removed with the next rearrangement */
             single_star_record_free(P[t.i].StarIdx); P[t.i].StarIdx = 0;
         }
