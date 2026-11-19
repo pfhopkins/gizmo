@@ -38,4 +38,4 @@ KetjuMinStarMass                0.5e-11
 KetjuUseStarStarSoftening       0
 KetjuTimestepLimitingFactor     10
 MaxMemSize                      4000
-KetjuExpandBinariesFactor       0.03              % expand when the tightest period < 0.03 x the region step (fires a few times while the step grows)
+KetjuExpandBinariesFactor       0.1               % expand when the tightest period < 0.1 x the region step (fires a few times while the step grows, one after the trace baseline)

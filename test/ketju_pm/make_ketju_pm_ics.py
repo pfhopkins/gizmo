@@ -28,7 +28,6 @@ def write(name, m, x, v, box, time=0.0, comoving=False):
         h.attrs["NumPart_Total_HighWord"] = [0] * 6; h.attrs["MassTable"] = [0.0] * 6
         h.attrs["Time"] = time; h.attrs["Redshift"] = 1 / time - 1 if comoving else 0.0; h.attrs["BoxSize"] = box
         h.attrs["NumFilesPerSnapshot"] = 1; h.attrs["Omega0"] = 0.0; h.attrs["OmegaLambda"] = 0.0; h.attrs["HubbleParam"] = 1.0
-        h.attrs["Flag_DoublePrecision"] = 1
         for k in ("Flag_Sfr", "Flag_Cooling", "Flag_StellarAge", "Flag_Metals", "Flag_Feedback"): h.attrs[k] = 0
         g = f.create_group("PartType4")
         g["Coordinates"] = x + 0.5 * box; g["Velocities"] = v; g["Masses"] = m / 1e10
