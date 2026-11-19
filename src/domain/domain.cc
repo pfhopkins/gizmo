@@ -558,12 +558,12 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
         LEDGER_STEP_BREAKDOWN("pre_merge_split");
         ESTEP_BEGIN(ESTEP_MERGE_SPLIT);
         merge_and_split_particles(); /* do the particle split/merge operations: only do this on tree-building super-steps */
-        ESTEP_END(ESTEP_MERGE_SPLIT);
         LEDGER_STEP_BREAKDOWN("post_merge_split");
     }
     t_mergesplit = timediff(t_drift_start, my_second());
     double t_tmp = my_second();
     rearrange_particle_sequence(1); /* must be called after merge_and_split_particles, and should always be called before new domains are built; the tree is freed below */
+    ESTEP_END(ESTEP_MERGE_SPLIT); /* after the rearrange: gas daughters join NumPart there; no-op when no bracket is open */
 #ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
     LEDGER_ADD(LG_MERGE_SPLIT, ledger_local_gas_energy() - ledger_e_ms);
 #endif
@@ -872,12 +872,12 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
         LEDGER_STEP_BREAKDOWN("pre_merge_split");
         ESTEP_BEGIN(ESTEP_MERGE_SPLIT);
         merge_and_split_particles(); /* do the particle split/merge operations */
-        ESTEP_END(ESTEP_MERGE_SPLIT);
         LEDGER_STEP_BREAKDOWN("post_merge_split");
     }
     t_light_mergesplit = timediff(t_light_start, my_second());
     double t_tmp_light = my_second();
     rearrange_particle_sequence(1); /* must be called after merge_and_split_particles, and should always be called before new domains are built; the tree is freed below */
+    ESTEP_END(ESTEP_MERGE_SPLIT); /* after the rearrange: gas daughters join NumPart there; no-op when no bracket is open */
     t_light_rearrange = timediff(t_tmp_light, my_second());
     UseAllParticles = UseAllTimeBins;
 
