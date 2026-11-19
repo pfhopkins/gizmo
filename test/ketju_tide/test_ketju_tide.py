@@ -52,3 +52,8 @@ def test_ketju_tide(overrides, da_max):
     a_ref, _ = _elements(m, y[:9].reshape(3, 3), y[9:].reshape(3, 3)); a, _ = _elements(m, x, v)
     print(f"{overrides}: |da/a| = {abs(a / a_ref - 1):.2e}")
     assert abs(a / a_ref - 1) < da_max
+    # step trace: the 200 AU pair moves inside the star softening (1e-6 kpc = 206 AU), so the trace's softened pair potential
+    # differs from MSTAR's 1/r; the ketju_chain_pot booking must close it (gizmo.conservation_trace bars)
+    from gizmo.conservation_trace import keep_and_check_traces
+    rep = keep_and_check_traces(f"{TEST_DIR}/output", f"{TEST_DIR}/output")
+    assert rep.ok, rep.summary()

@@ -1,8 +1,8 @@
 """KETJU/RUMI++ star merger with a heavier compact remnant as survivor (audit K4), on Config_stella_default.sh + KETJU star mergers.
 
 MSTAR keeps the heavier body (ketju-integrator mergers.cpp); with an 8 Msun remnant (sampled, MstarSampleIMF[0] = 0, the state
-resolvedism_fb.cc leaves after a star's death) and a 3 Msun live star the remnant survives. It must stay a remnant: mass the sum
-(11 Msun, mass conserved exactly), metals mass-weighted, MstarSampleIMF[0] = 0 so no feedback treats it as a star; the victim is
+resolvedism_fb.cc leaves after a star's death) and a 3 Msun live star the remnant survives. It must stay a remnant: the summed mass
+handed over by the caller (11 Msun, as KETJU does after MSTAR's merger) left unchanged, metals mass-weighted, MstarSampleIMF[0] = 0 so no feedback treats it as a star; the victim is
 emptied. Before the fix the survivor took the victim's ZAMS mass (MstarSampleIMF[0] = 3): a live 3 Msun star of the remnant's
 age holding 11 Msun, whose later winds/SN would return the remnant's mass to the gas. Bars: exact (mass 1e-12, metals 1e-6
 for float storage)."""

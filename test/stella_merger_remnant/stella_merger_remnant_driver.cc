@@ -37,7 +37,7 @@ int main(int argc, char **argv)
     star_mergers_apply(acts, "TEST");
     fflush(stdout);
     check("survivor:stays_remnant", P[s].MstarSampleIMF[0] == 0, P[s].MstarSampleIMF[0], 0);
-    check("survivor:mass_is_sum", fabs(P[s].Mass / (Ms + Mv) - 1) < 1e-12, P[s].Mass, Ms + Mv);
+    check("survivor:mass_left_as_handed_over", P[s].Mass == Ms + Mv, P[s].Mass, Ms + Mv); /* the caller sums the mass (MSTAR); apply must not change it */
     check("survivor:metals_mass_weighted", fabs(P[s].Metallicity[0] / ((Ms * Zs + Mv * Zv) / (Ms + Mv)) - 1) < 1e-6, P[s].Metallicity[0], (Ms * Zs + Mv * Zv) / (Ms + Mv));
     check("victim:removed", P[v].Mass == 0 && P[v].MstarSampleIMF[0] == 0, P[v].Mass, 0);
     printf("DONE failed=%d\n", n_fail);

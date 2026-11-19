@@ -5,9 +5,11 @@ region steps; the region step grows as the binary widens, so it fires a few time
 Derivation (Mannerkoski+ 2023 intent: double a, keep e). About the pair CoM, r -> 2r and v -> v/sqrt(2): the pair's specific
 energy eps = v^2/2 - G M/r -> eps/2, so a = -G M/(2 eps) -> 2a; the specific angular momentum h = |r x v| -> sqrt(2) h, and from
 h^2 = G M a (1 - e^2) e stays the same; CoM position and velocity are unchanged. Each expansion doubles a: after k events
-(counted from the "expanded tight binary" log lines) a = 2^k a0 and e = e0. The third star at 400 AU perturbs a by
+(counted from the "expanded tight binary" log lines) a = 2^k a0 and e = e0. The third star at 900 AU perturbs a by
 ~(a/r)^3 per orbit-averaged step: bars, set before running, |a/(2^k a0) - 1| < 1e-3 and |e - e0| < 1e-3 at t = 1e-6, k >= 1.
-Each event's energy (dE = -E_pair/2 > 0 plus the tiny change of the pair-third star term) is booked in the coupling ledger."""
+Energy: each event injects dE = -E_pair/2 > 0 (plus the pair-third star term, ~(a/r3)^2 ~ 5e-6 of it). The first event's logged
+dE must equal G m1 m2 / (4 a0) to 1e-4 (6 printed digits); the step trace's booking b_ketju_expand must equal the sum of the logged
+events to 1e-5, and the mass and energy traces must close (gizmo.conservation_trace bars)."""
 
 import glob
 import re
@@ -44,3 +46,13 @@ def test_ketju_expand_binary():
     assert k >= 1
     assert abs(a / (2 ** k * a0) - 1) < 1e-3
     assert abs(e - e0) < 1e-3
+    dEs = [float(x) for x in re.findall(r"KETJU: expanded tight binary \(.*?dE=([-+0-9.eE]+)\)", open(f"{TEST_DIR}/test_{TEST_NAME}.out").read())]
+    dE_ref = G * m[0] * m[1] / (4 * a0) / 1e10  # code energy (1e10 Msun (km/s)^2)
+    sync = [l for l in open(f"{TEST_DIR}/output/energy_step_trace.txt") if l.startswith("SYNC")]
+    book = [float(tok.split("=")[1]) for tok in sync[-1].split() if tok.startswith("b_ketju_expand=")]
+    print(f"first dE {dEs[0]:.6e} (expected {dE_ref:.6e}), booked {book}, logged sum {sum(dEs):.6e}")
+    assert len(dEs) == k and abs(dEs[0] / dE_ref - 1) < 1e-4
+    assert len(book) == 1 and abs(book[0] / sum(dEs) - 1) < 1e-5
+    from gizmo.conservation_trace import keep_and_check_traces
+    rep = keep_and_check_traces(f"{TEST_DIR}/output", f"{TEST_DIR}/output")
+    assert rep.ok, rep.summary()
