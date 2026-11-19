@@ -780,6 +780,9 @@ void star_formation_parent_routine(void)
                             }
                             int ns = NumPart + stars_spawned;
                             P[ns] = P[i]; /* copy all properties from parent gas cell */
+#ifdef KETJU_TYPE4_STARS
+                            P[ns].KetjuTreeMass = 0; /* no gravity call as a star yet */
+#endif
                             /* give the star a unique ID: use child-number system like mesh split */
                             P[ns].ID_child_number = P[i].ID_child_number + (MyIDType)(1 << ((int)P[i].ID_generation));
                             P[i].ID_generation = P[i].ID_generation + 1;
@@ -874,6 +877,9 @@ void star_formation_parent_routine(void)
                             endrun(8888);
                         }
                         P[i_star] = P[i]; // copy the entire structure to the new particle, needed to initialize
+#ifdef KETJU_TYPE4_STARS
+                        P[i_star].KetjuTreeMass = 0; /* no gravity call as a star yet */
+#endif
                         ActiveParticleList.push_back(i_star);
                         NumForceUpdate++;
                         TimeBinCount[P[i_star].TimeBin]++;
