@@ -35,9 +35,9 @@ template<class Pick> static void run_pair(long long T, Pick pick, int &bad_new, 
     }
 }
 
-TEST_CASE("pair weights: explicit swap (old steps 2,4 -> new 4,2) tiles time; the per-cell rule does not") {
+TEST_CASE("pair weights: explicit swap at t=4 (steps 2,4 -> 4,2) tiles time; the per-cell rule does not") {
     int bad_new, bad_old; long long cov = 0;
-    auto pick = [](int k, long long t) -> long long {if(t == 0) {return k == 0 ? 4 : 2;} return 2 + 2 * (k == 0 && t % 4 == 0);};
+    auto pick = [](int k, long long t) -> long long {if(t < 4) {return k == 0 ? 2 : 4;} return (k == 0 && t % 4 == 0) ? 4 : 2;};
     run_pair(16, pick, bad_new, bad_old, cov);
     CHECK(bad_new == 0);
     CHECK(bad_old > 0);

@@ -2,6 +2,7 @@
 #include "../core/proto.h"
 #include "../gravity/forcetree.h"
 #include "pair_flux_weights.h"
+#include <cstring>
 
 /* Exact pair-flux exchange across timebins (HYDRO_EXACT_PAIR_FLUX_EXCHANGE) and the per-sync conserved-totals
    diagnostic (TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC). Each pair is evaluated once, at every sync where either cell is
