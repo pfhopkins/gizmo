@@ -651,6 +651,17 @@ struct global_data_all_processes
     double ElectronFreePathFactor;	/*!< Factor to get electron mean free path */
 #endif
 
+#ifdef GENERAL_RELATIVITY
+#if (GR_METRIC==1)
+  double MetricParams[2];       /*!< Kerr metric: mass and dimensionless spin of the black hole (GR_Mass, GR_Spin in the parameter file) */
+#endif
+#if (GR_METRIC<0)
+  char GR_MetricTableFile[100]; /*!< tabulated static spherically symmetric metric (TOV): "# N log" header, then N rows "r M(r) -g_tt r_iso" */
+  double *GR_MetricTable;       /*!< the table in shared (device-visible) memory: [0,N) r, [N,2N) M, [2N,3N) -g_tt, [3N,4N) r_iso */
+  int GR_MetricTableN, GR_MetricTableLog;
+#endif
+#endif
+
 #ifdef MAGNETIC
 #ifdef MHD_B_SET_IN_PARAMS
   double BiniX, BiniY, BiniZ;	/*!< Initial values for B */

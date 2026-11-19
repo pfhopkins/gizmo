@@ -599,6 +599,10 @@ void init(void)
         CellP[i].InternalEnergy_FromIR_Pending = 0;
 #endif
         CellP[i].FaceClosureError = 0;
+#ifdef GENERAL_RELATIVITY
+        set_metric_coefficients(P[i].Pos, P[i].Potential, &(CellP[i].gr));
+        CellP[i].DtMomentum = {}; CellP[i].DtEnergy = 0; CellP[i].DtVolume = 0; CellP[i].InversionKeptU = 0;
+#endif
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
         CellP[i].KernelDensityForVolumeRelaxation = 0; /* set by the first density pass */
         if(RestartFlag == 2) {CellP[i].Density_ExplicitInt = CellP[i].Density;} /* a snapshot's Density is the integrated density: continue it */
@@ -953,6 +957,10 @@ void init(void)
             CellP[i].HydroAccel[1] = CellP[i].HydroAccel[2] = 0;
         }
     }
+#endif
+
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+    for(i = 0; i < N_gas; i++) {if(P[i].Type == 0) {check_boundary(i);}} /* excise the cells inside the horizon (apply_excision does it every step) */
 #endif
 
 #ifdef TEST_FOR_IDUNIQUENESS

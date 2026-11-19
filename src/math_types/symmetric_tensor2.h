@@ -93,11 +93,41 @@ struct SymmetricTensor2 {
              + data[3]*(M[0][1]+M[1][0]) + data[4]*(M[1][2]+M[2][1]) + data[5]*(M[0][2]+M[2][0]);
     }
 
+    // Double contraction with another symmetric tensor: sum_ij S_ij * T_ij = diag products + 2 * off-diagonal products
+    GIZMO_GPU_FUNCTION T double_contract(const SymmetricTensor2& o) const noexcept {
+        return data[0]*o.data[0] + data[1]*o.data[1] + data[2]*o.data[2]
+             + T(2) * (data[3]*o.data[3] + data[4]*o.data[4] + data[5]*o.data[5]);
+    }
+
     // Set to scalar multiple of identity: diag = val, off-diag = 0
     GIZMO_GPU_FUNCTION void set_isotropic(T val) noexcept {
         data[0] = val; data[1] = val; data[2] = val;
         data[3] = T(0); data[4] = T(0); data[5] = T(0);
     }
+
+    // Determinant.  xx=0 yy=1 zz=2 xy=3 yz=4 xz=5
+    GIZMO_GPU_FUNCTION T det() const noexcept {
+        return data[0] * (data[1] * data[2] - data[4] * data[4])
+             - data[3] * (data[3] * data[2] - data[4] * data[5])
+             + data[5] * (data[3] * data[4] - data[1] * data[5]);
+    }
+
+    // Invert the tensor (the inverse of a symmetric matrix is symmetric), writing the result into `inv`; returns the determinant.
+    GIZMO_GPU_FUNCTION T invert(SymmetricTensor2& inv) const noexcept {
+        T d = det();
+        if(d == T(0) || d != d) { inv = SymmetricTensor2{}; return T(0); }
+        T inv_d = T(1) / d;
+        inv.data[0] = (data[1] * data[2] - data[4] * data[4]) * inv_d; // xx
+        inv.data[1] = (data[0] * data[2] - data[5] * data[5]) * inv_d; // yy
+        inv.data[2] = (data[0] * data[1] - data[3] * data[3]) * inv_d; // zz
+        inv.data[3] = (data[5] * data[4] - data[3] * data[2]) * inv_d; // xy
+        inv.data[4] = (data[3] * data[5] - data[0] * data[4]) * inv_d; // yz
+        inv.data[5] = (data[3] * data[4] - data[1] * data[5]) * inv_d; // xz
+        return d;
+    }
+
+    // Quadratic form: v . (this * v)
+    GIZMO_GPU_FUNCTION T quad(const Vec3<T>& v) const noexcept { return dot(matvec(v), v); }
 };
 
 template<typename T>

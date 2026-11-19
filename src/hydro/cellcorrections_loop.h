@@ -112,6 +112,9 @@ static void cellcorrections_pair_kernel(const CellcorrectionsActiveData &active,
     double r2 = dp.norm_sq();
     double h_j = nb.kernel_radius;
     if(r2 >= h_j * h_j) return;
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+    if(gr_pair_crosses_excised_hole(active.pos, active.h_search, dp, h_j)) return; /* a black hole lies between i and j */
+#endif
     double hinv, hinv3, hinv4, wk = 0, dwk = 0;
     kernel_hinv(h_j, &hinv, &hinv3, &hinv4);
     double u = sqrt(r2) * hinv;

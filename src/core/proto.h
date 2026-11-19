@@ -66,7 +66,7 @@ int is_particle_a_special_zoom_target(int i);
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
 void update_tag_anchor_refinement_center(void);
 #endif
-int merge_particles_ij(int i, int j);
+int merge_particles_ij(int i, int j, double target_share = -1);
 int split_particle_i(int i, int n_particles_split, double r_near);
 void do_first_halfstep_kick(void);
 void do_second_halfstep_kick(void);

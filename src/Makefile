@@ -1049,13 +1049,16 @@ EXEC   = GIZMO
 OPTIONS = $(OPTIMIZE) $(OPT)
 
 ## combine all the objects above
-OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) \
+GR_OBJS = gr/gr_utils.o
+
+OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) $(GR_OBJS) \
 		$(EOSCOOL_OBJS) $(STARFORM_OBJS) $(SINK_OBJS) $(RHD_OBJS) \
 		$(FOF_OBJS) $(MISC_OBJS)
 ## GPU_OBJS are kept separate so the pattern rule does not override their specific compile rules
 
 
 ## include files needed at compile time for the above objects
+INCL    += gr/gr.h gr/gr_functions.h gr/gr_con2prim_functions.h gr/gr_riemann_functions.h gr/gr_kick_functions.h gr/gr_source_functions.h
 INCL    += 	declarations/allvars.h \
 			core/proto.h \
 			gravity/forcetree.h \

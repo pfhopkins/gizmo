@@ -38,6 +38,10 @@ struct Input_vec_Riemann
 {
     struct Conserved_var_Riemann L;
     struct Conserved_var_Riemann R;
+#ifdef GENERAL_RELATIVITY
+    struct gr_metric gr;            /*!< metric coefficients at the face */
+    Vec3<double> v_frame;           /*!< Eulerian velocity of the face */
+#endif
 };
 struct Riemann_outputs
 {
@@ -163,7 +167,7 @@ static GIZMO_GPU_FUNCTION void reconstruct_face_states(double Q_i, MyFloat Grad_
 #else
     double fac_minmax = 0.5; /* 0.5, 0.1 works; 1.0 unstable; 0.75 is stable but begins to 'creep' */
     double fac_meddev = 0.375; /* 0.25,0.375 work well; 0.5 unstable; 0.44 is on-edge */
-#if (SLOPE_LIMITER_TOLERANCE == 2)
+#if (SLOPE_LIMITER_TOLERANCE == 2) && !defined(GENERAL_RELATIVITY) /* GR: no aggressive slope limiters */
     fac_minmax=0.75;
     fac_meddev=0.40;
 #endif
@@ -1595,3 +1599,6 @@ static GIZMO_GPU_FUNCTION void rotate_fluxes_back_to_lab(struct Riemann_outputs 
 
 #endif // MAGNETIC //
 
+#ifdef GENERAL_RELATIVITY
+#include "../gr/gr_riemann_functions.h" /* the GR solvers (gr_riemann_solver replaces Riemann_solver in the meshless core); needs the rotation routines above */
+#endif

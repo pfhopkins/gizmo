@@ -23,6 +23,16 @@
 #include "hydro_pair_types.h"
 #include "compute_finitevol_faces_functions.h"
 
+#ifdef GENERAL_RELATIVITY
+/* GR quantities of the neighbour j that the pair body derives once and the meshless core consumes */
+struct hydro_gr_pair_j
+{
+    Vec3<double> VelCoord_j;      /*!< coordinate velocity dx/dt of the mesh-generating point of j */
+    Vec3<double> FourVelocity_j;  /*!< W*v of j (Eulerian velocity, limited where required) */
+    int gr_limiter_j;             /*!< Lorentz-factor limiter flag of j (used for the whole pair, as in the original GR code) */
+};
+#endif
+
 #ifdef MHD_MODIFIED_GRADIENT
 /* Set the face-normal B of both Riemann input states to one value (lab frame, n_unit along the face). */
 KOKKOS_INLINE_FUNCTION
@@ -45,6 +55,9 @@ void hydro_core_meshless_compute_pair(
     const Vec3<MyDouble> &ParticleVel_j,
     const Vec3<double> &BPred_j,
     double PhiPred_j,
+#ifdef GENERAL_RELATIVITY
+    const struct hydro_gr_pair_j &grj,
+#endif
     struct kernel_hydra &kernel,
     double rinv, double r2,
     double V_i, double V_j,
@@ -145,7 +158,11 @@ void hydro_core_meshless_compute_pair(
     v_frame = rinv * (-s_i * ParticleVel_j + s_j * local.ParticleVel);
 #endif
 
+#ifdef GENERAL_RELATIVITY
+    face_vel_i += dot(local.VelCoord, n_unit); face_vel_j += dot(grj.VelCoord_j, n_unit); /* GR: coordinate (dx/dt) velocities of the mesh-generating points */
+#else
     face_vel_i += dot(local.Vel, n_unit); face_vel_j += dot(VelPred_j, n_unit);
+#endif
     face_vel_i /= All.cf_atime; face_vel_j /= All.cf_atime;
     face_area_dot_vel = rinv * (-s_i * face_vel_j + s_j * face_vel_i);
 
@@ -163,7 +180,12 @@ void hydro_core_meshless_compute_pair(
 #endif
     if(leak_vs_tol > 1) { recon_mode = 0; }
 
+#ifdef GENERAL_RELATIVITY /* GR: the Riemann problem is solved on the primitive (rest-mass) density; the limiter flag of j applies to the pair */
+    const int gr_limiter = grj.gr_limiter_j;
+    double rho_i = local.RestMassDensity, rho_j = gr_get_primitive_density(CellP[j].Density, CellP[j].VelPred, &(CellP[j].gr), CellP[j].gr.limiter);
+#else
     double rho_i = local.Density, rho_j = CellP[j].Density;
+#endif
     double P_i = Pressure_i, P_j = Pressure_j;
 #if defined(HYDRO_FACE_VOLUME_RECONSTRUCTION_CORRECTION)
     if(Vi_inv_corr * Vj_inv_corr < 0.999) { recon_mode = 0; }
@@ -180,8 +202,13 @@ void hydro_core_meshless_compute_pair(
     volatile int gas_solid_interface = (solid_i != solid_j) && (solid_material_of(solid_i ? local.CompositionType : CellP[j].CompositionType).ShearModulus > 0); /* volatile: a runtime gate in device code */
     if(gas_solid_interface) {scalar_recon_mode = 0;}
 #endif
+#ifdef GENERAL_RELATIVITY
+    reconstruct_face_states(rho_i, local.Gradients.RestMassDensity, rho_j, CellP[j].Gradients.RestMassDensity,
+                            distance_from_i, distance_from_j, &Riemann_vec.L.rho, &Riemann_vec.R.rho, scalar_recon_mode);
+#else
     reconstruct_face_states(rho_i, local.Gradients.Density, rho_j, CellP[j].Gradients.Density,
                             distance_from_i, distance_from_j, &Riemann_vec.L.rho, &Riemann_vec.R.rho, scalar_recon_mode);
+#endif
     reconstruct_face_states(P_i, local.Gradients.Pressure, P_j, CellP[j].Gradients.Pressure,
                             distance_from_i, distance_from_j, &Riemann_vec.L.p, &Riemann_vec.R.p, scalar_recon_mode);
 #ifdef EOS_GENERAL
@@ -190,11 +217,27 @@ void hydro_core_meshless_compute_pair(
                             distance_from_i, distance_from_j, &Riemann_vec.L.u, &Riemann_vec.R.u, scalar_recon_mode);
     reconstruct_face_states(kernel.sound_i, local.Gradients.SoundSpeed, kernel.sound_j, CellP[j].Gradients.SoundSpeed,
                             distance_from_i, distance_from_j, &Riemann_vec.L.cs, &Riemann_vec.R.cs, scalar_recon_mode);
+#ifdef GENERAL_RELATIVITY
+    /* GR: the face pressure follows from the reconstructed rest-mass density and internal energy through the equation of state, so that
+       the face state is thermodynamically consistent (the original code kept the independently reconstructed pressure: a bug) */
+    Riemann_vec.L.p = gr_pressure_rho0_u(Riemann_vec.L.rho, Riemann_vec.L.u);
+    Riemann_vec.R.p = gr_pressure_rho0_u(Riemann_vec.R.rho, Riemann_vec.R.u);
 #endif
-    for(k=0; k<3; k++) { /* reconstruct the velocity relative to the face: the limiter keeps a value's sign, and a velocity's sign depends on the frame */
+#endif
+    for(k=0; k<3; k++) {
+#ifdef GENERAL_RELATIVITY
+        /* GR: reconstruct the spatial four-velocity W*v and solve the Riemann problem in the lab frame, passing the face velocity separately */
+        reconstruct_face_states(local.FourVelocity[k], local.Gradients.Velocity[k], grj.FourVelocity_j[k], CellP[j].Gradients.Velocity[k],
+                                distance_from_i, distance_from_j, &Riemann_vec.L.v[k], &Riemann_vec.R.v[k], recon_mode);
+#else
+        /* reconstruct the velocity relative to the face: the limiter keeps a value's sign, and a velocity's sign depends on the frame */
         reconstruct_face_states(local.Vel[k] - v_frame[k], local.Gradients.Velocity[k], VelPred_j[k] - v_frame[k], CellP[j].Gradients.Velocity[k],
                                 distance_from_i, distance_from_j, &Riemann_vec.L.v[k], &Riemann_vec.R.v[k], recon_mode);
+#endif
     }
+#ifdef GENERAL_RELATIVITY
+    Riemann_vec.v_frame = v_frame;
+#endif
     face_velocity_jump = Riemann_vec.R.v - Riemann_vec.L.v; /* the reconstructed jump (i minus j), before any fallback below resets the states */
 #if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS) && defined(HYDRO_MESHLESS_FINITE_MASS)
     if(gas_solid_interface) {Riemann_vec.R.v = local.Vel - v_frame; Riemann_vec.L.v = VelPred_j - v_frame;} /* cell-centred, like the scalars above */
@@ -257,6 +300,26 @@ void hydro_core_meshless_compute_pair(
 #endif
 #endif
 
+#ifdef GENERAL_RELATIVITY
+    /* metric at the face position (j is the origin of distance_from_j; the metric takes the nearest periodic image itself) */
+    Vec3<double> xface = P[j].Pos + Vec3<double>{distance_from_j[0], distance_from_j[1], distance_from_j[2]};
+    set_metric_coefficients(xface, P[j].Potential, &(Riemann_vec.gr));
+    if((Riemann_vec.gr.alpha < 1e-3) || isnan(Riemann_vec.gr.alpha)) {set_metric_coefficients(P[j].Pos, P[j].Potential, &(Riemann_vec.gr));} /* too close to a singularity: use the metric of j */
+    /* convert the reconstructed four-velocities back to three-velocities with the face metric */
+    double WfaceL = sqrt(1 + Riemann_vec.gr.gamma.quad(Riemann_vec.L.v)), WfaceR = sqrt(1 + Riemann_vec.gr.gamma.quad(Riemann_vec.R.v));
+    Riemann_vec.L.v /= WfaceL; Riemann_vec.R.v /= WfaceR;
+    /* reconstructed velocity magnitude (unphysical values revert to constant states for stability) */
+    double v_check = DMAX(Riemann_vec.gr.gamma.quad(Riemann_vec.L.v), Riemann_vec.gr.gamma.quad(Riemann_vec.R.v));
+    if(gr_limiter == 1) { /* these calls limit the velocities in place to the maximum allowed Lorentz factor */
+        lorentz_factor(Riemann_vec.gr.gamma, Riemann_vec.L.v, gr_limiter);
+        lorentz_factor(Riemann_vec.gr.gamma, Riemann_vec.R.v, gr_limiter);
+        lorentz_factor(Riemann_vec.gr.gamma, Riemann_vec.v_frame, gr_limiter);
+    }
+    double press_tot_limiter = MAX_REAL_NUMBER, v_lim = 1. - MIN_REAL_NUMBER;
+    if(gr_limiter == 1) {v_lim = 1. - 1./GR_GAMMA_LIMITER;}
+    if(v_check >= v_lim) {press_tot_limiter = 0.;} /* forces the first-order reconstruction */
+    (void)v2_approach;
+#else
     double press_i_tot = Pressure_i + local.Density * v2_approach;
     double press_j_tot = Pressure_j + CellP[j].Density * v2_approach;
 #ifdef MAGNETIC
@@ -283,14 +346,27 @@ void hydro_core_meshless_compute_pair(
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
     press_tot_limiter = 1.e10 * (press_tot_limiter + 1.);
 #endif
+#endif /* GENERAL_RELATIVITY */
 
-    Riemann_solver(Riemann_vec, &Riemann_out, n_unit, press_tot_limiter);
+#ifdef GENERAL_RELATIVITY
+#define HYDRO_CORE_RIEMANN_SOLVER(ptl) gr_riemann_solver(Riemann_vec, &Riemann_out, n_unit, gr_limiter)
+#else
+#define HYDRO_CORE_RIEMANN_SOLVER(ptl) Riemann_solver(Riemann_vec, &Riemann_out, n_unit, (ptl))
+#endif
+    HYDRO_CORE_RIEMANN_SOLVER(press_tot_limiter);
     if((Riemann_out.P_M < 0) || (isnan(Riemann_out.P_M)) || (Riemann_out.P_M > 1.4 * press_tot_limiter))
     {
         /* retry with linear reconstruction */
         Riemann_vec.R.p = Pressure_i; Riemann_vec.L.p = Pressure_j;
+#ifdef GENERAL_RELATIVITY
+        Riemann_vec.R.rho = rho_i; Riemann_vec.L.rho = rho_j;
+        Riemann_vec.R.v = local.FourVelocity; Riemann_vec.L.v = grj.FourVelocity_j;
+        WfaceL = sqrt(1 + Riemann_vec.gr.gamma.quad(Riemann_vec.L.v)); WfaceR = sqrt(1 + Riemann_vec.gr.gamma.quad(Riemann_vec.R.v));
+        Riemann_vec.L.v /= WfaceL; Riemann_vec.R.v /= WfaceR;
+#else
         Riemann_vec.R.rho = local.Density; Riemann_vec.L.rho = CellP[j].Density;
         Riemann_vec.R.v = local.Vel - v_frame; Riemann_vec.L.v = VelPred_j - v_frame;
+#endif
 #ifdef MAGNETIC
         Riemann_vec.R.B = local.BPred; Riemann_vec.L.B = BPred_j;
 #ifdef MHD_MODIFIED_GRADIENT
@@ -304,13 +380,18 @@ void hydro_core_meshless_compute_pair(
         Riemann_vec.R.u = local.InternalEnergyPred; Riemann_vec.L.u = CellP[j].InternalEnergyPred;
         Riemann_vec.R.cs = kernel.sound_i; Riemann_vec.L.cs = kernel.sound_j;
 #endif
-        Riemann_solver(Riemann_vec, &Riemann_out, n_unit, 1.4 * press_tot_limiter);
+        HYDRO_CORE_RIEMANN_SOLVER(1.4 * press_tot_limiter);
         if((Riemann_out.P_M < 0) || (isnan(Riemann_out.P_M)))
         {
             /* zero-velocity fallback */
             Riemann_vec.R.p = Pressure_i; Riemann_vec.L.p = Pressure_j;
+#ifdef GENERAL_RELATIVITY
+            Riemann_vec.R.rho = rho_i; Riemann_vec.L.rho = rho_j;
+            Riemann_vec.R.v = Riemann_vec.v_frame; Riemann_vec.L.v = Riemann_vec.v_frame;
+#else
             Riemann_vec.R.rho = local.Density; Riemann_vec.L.rho = CellP[j].Density;
             Riemann_vec.R.v = {}; Riemann_vec.L.v = {};
+#endif
 #ifdef MAGNETIC
             Riemann_vec.R.B = local.BPred; Riemann_vec.L.B = BPred_j;
 #ifdef MHD_MODIFIED_GRADIENT
@@ -324,7 +405,7 @@ void hydro_core_meshless_compute_pair(
             Riemann_vec.R.u = local.InternalEnergyPred; Riemann_vec.L.u = CellP[j].InternalEnergyPred;
             Riemann_vec.R.cs = kernel.sound_i; Riemann_vec.L.cs = kernel.sound_j;
 #endif
-            Riemann_solver(Riemann_vec, &Riemann_out, n_unit, 2.0 * press_tot_limiter);
+            HYDRO_CORE_RIEMANN_SOLVER(2.0 * press_tot_limiter);
             if((Riemann_out.P_M < 0) || (isnan(Riemann_out.P_M)))
             {
 #if defined(MAGNETIC) && defined(DIVBCLEANING_DEDNER)
@@ -351,6 +432,7 @@ void hydro_core_meshless_compute_pair(
         }
     }
 
+#undef HYDRO_CORE_RIEMANN_SOLVER
 #ifdef EOS_ELASTIC
     if(Face_Area_Norm > 0) { /* the face-frame signal speed of the final face states, summed over the cell's faces for the solids' finite-volume step limit (timestep.cc) */
         double signal_L = fabs(dot(Riemann_vec.L.v, n_unit)) / All.cf_atime + Riemann_vec.L.cs, signal_R = fabs(dot(Riemann_vec.R.v, n_unit)) / All.cf_atime + Riemann_vec.R.cs; /* face velocities are in code units here; the solver converts only its own copy */
@@ -366,6 +448,7 @@ void hydro_core_meshless_compute_pair(
         return;
     }
 
+#ifndef GENERAL_RELATIVITY /* the GR solvers already return the fluxes in the lab (simulation) frame */
     if(All.ComovingIntegrationOn) { v_frame /= All.cf_atime; }
 #ifdef TURB_DIFF_METALS
     mdot_estimated = Riemann_out.Mdot_estimated * Face_Area_Norm;
@@ -388,6 +471,7 @@ void hydro_core_meshless_compute_pair(
 #ifdef MAGNETIC
     Riemann_out.Fluxes.B += -v_frame * Riemann_out.B_normal_corrected;
 #endif
+#endif /* GENERAL_RELATIVITY */
 
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME)
     Fluxes.rho = Face_Area_Norm * Riemann_out.Fluxes.rho;
@@ -434,7 +518,7 @@ void hydro_core_meshless_compute_pair(
      every other face (gas - solid, two different Tillotson materials, Tillotson - ANEOS) keeps the Riemann energy flux.
    On a mixed face the switch could ask a cold condensed cell at a contact for more internal energy than it holds, and the positivity
    guard would then put energy back. */
-#if defined(HYDRO_MESHLESS_FINITE_MASS) && (SLOPE_LIMITER_TOLERANCE < 2) && (!(defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)) || defined(EOS_ANEOS) || defined(EOS_TILLOTSON))
+#if defined(HYDRO_MESHLESS_FINITE_MASS) && (SLOPE_LIMITER_TOLERANCE < 2) && (!(defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)) || defined(EOS_ANEOS) || defined(EOS_TILLOTSON)) && !defined(GENERAL_RELATIVITY)
     {
         volatile int face_takes_switch = 1; /* volatile: a runtime gate in device code */
         volatile int face_thermal_order = 0; /* how the two sides are ordered: 0 P/rho, 1 specific internal energy, 2 temperature */

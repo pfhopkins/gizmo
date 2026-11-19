@@ -26,6 +26,9 @@
 #include "predict_functions.h"       /* Get_Gas_PhiField_DampingTimeInv_P */
 #include "../gravity/ags_functions.h"    /* ags_density_isactive_P, ags_return_{min,max}soft_P, dm_fuzzy */
 #include "../eos/eos_functions.h"        /* set_eos_pressure_impl */
+#ifdef GENERAL_RELATIVITY
+#include "../gr/gr_kick_functions.h"     /* gr_drift_impl, gr_predict_impl */
+#endif
 #ifdef COSMIC_RAY_FLUID
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
 #endif
@@ -150,6 +153,12 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             double dt_gravkick, dt_gravkick_pm, dt_hydrokick, dt_entr;
             dt_entr = dt_hydrokick = (time1 - time0) * unit_integertime_in_physical(i, pp);
             dt_gravkick = get_gravkick_factor_impl(time0, time1, timestep_dilation_factor(i, pp), tables);
+#ifdef GENERAL_RELATIVITY
+#ifdef GR_DRIFT_REINVERTS
+            gr_drift_impl(i, dt_drift, pp, cell); /* corrects the position drift and the kicked variables for the metric change along the path */
+#endif
+            gr_predict_impl(i, dt_hydrokick, pp, cell); /* predicts VelPred/InternalEnergyPred from the conserved variables (and zeroes HydroAccel/DtInternalEnergy) */
+#endif
             
 #ifdef PMGRID
             dt_gravkick_pm = get_gravkick_factor_impl(time0, time1, timestep_dilation_factor(-1, pp), tables);
@@ -172,11 +181,13 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             pp[i].Mass = mfv_drifted_mass(pp[i].Mass, cell[i].DtMass, cell[i].MassTrue, dt_entr); cell[i].Mass = pp[i].Mass;
 #endif
             
+#ifndef GENERAL_RELATIVITY /* GR: the density is predicted below, from the volume change computed in the Riemann problems */
             double divv_fac_density = divv_fac; /* the predicted density follows the volume's divergence */
 #ifdef SOLID_VOLUME_FROM_SOLID_NEIGHBOURS
             if(cell[i].SolidBesideGas) {divv_fac_density = kernel_radius_drift_log_change(cell[i].SolidVelocityDivergence * dt_drift);} /* a solid beside gas: its own material's (kicks.cc) */
 #endif
             cell[i].Density *= exp(-divv_fac_density);
+#endif
             double etmp = cell[i].InternalEnergyPred + cell[i].DtInternalEnergy * dt_entr;
             double u_floor = 0; /* the lowest energy the material's equation of state is valid at (0: none), at the predicted density */
 #ifdef EOS_ANEOS
@@ -204,11 +215,20 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
 #endif
             
 #if (HYDRO_FIX_MESH_MOTION > 0)
+#ifdef GENERAL_RELATIVITY
+            /* GR: the kernel radius and the density follow the volume variation computed in the Riemann problems (DtVolume, hydro/hydro_functions.h) */
+            const double divv_fac_gr = kernel_radius_drift_log_change(cell[i].DtVolume*dt_hydrokick/pow(pp[i].Get_Particle_Size(), NUMDIMS));
+            pp[i].KernelRadius *= exp(divv_fac_gr/((double)NUMDIMS));
+#else
             pp[i].KernelRadius *= h_drift_fac;
+#endif
             if(pp[i].KernelRadius < All.MinKernelRadius) {pp[i].KernelRadius = All.MinKernelRadius;}
             if(pp[i].KernelRadius > All.MaxKernelRadius) {pp[i].KernelRadius = All.MaxKernelRadius;}
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
             if(1 & ADAPTIVE_GRAVSOFT_FORALL) {pp[i].AGS_KernelRadius = pp[i].KernelRadius;} /* gas is AGS-active, so needs to be set here to match updated KernelRadius */
+#endif
+#ifdef GENERAL_RELATIVITY
+            cell[i].Density *= exp(-divv_fac_gr);
 #endif
 #endif
             drift_extra_physics_P(i, time0, time1, dt_entr, pp, cell);

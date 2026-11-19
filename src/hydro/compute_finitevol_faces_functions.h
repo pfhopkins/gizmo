@@ -73,6 +73,13 @@ void compute_finitevol_faces(
     if((fabs(V_i - V_j) / DMIN(V_i, V_j)) / NUMDIMS > 1.25) {
         wt_i = wt_j = V_i*V_j*(kernel.wk_i + kernel.wk_j) / (V_i*kernel.wk_i + V_j*kernel.wk_j);
     }
+#ifdef GENERAL_RELATIVITY
+    /* GR: face-area weights as in the original GR code: centered weights only for very large volume contrasts between elements not
+       mutually inside each other's kernels (kernel.wk_j = 0 where r >= h_j) */
+    if(((fabs(V_i - V_j) / DMIN(V_i, V_j)) / NUMDIMS > 5.5) && ((kernel.r > local.KernelRadius) || (kernel.wk_j == 0))) {
+        wt_i = wt_j = (V_i*Particle_Size_j + V_j*Particle_Size_i) / (Particle_Size_i + Particle_Size_j);
+    } else { wt_i = V_i; wt_j = V_j; }
+#endif
     Face_Area_Vec = (kernel.wk_i * wt_i * local.NV_T.matvec(kernel.dp)
                     + kernel.wk_j * wt_j * CPj.NV_T.matvec(kernel.dp))
                    * (All.cf_atime * All.cf_atime);
@@ -147,7 +154,7 @@ void compute_finitevol_faces(
     }
 #endif
 
-#if (SLOPE_LIMITER_TOLERANCE == 0)
+#if (SLOPE_LIMITER_TOLERANCE == 0) || (defined(GENERAL_RELATIVITY) && (HYDRO_FIX_MESH_MOTION >= 5)) /* GR: always on for moving meshes, as in the original GR code */
     {
         double Amax = DMIN(Get_Particle_Expected_Area(Particle_Size_i),
                            Get_Particle_Expected_Area(Particle_Size_j));
