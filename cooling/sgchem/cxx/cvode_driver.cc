@@ -39,6 +39,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <string>
 
 #define DTCOOL_SCALE_FACTOR 0.3
 #ifndef CHEM_RTOL
@@ -61,6 +62,15 @@ thread_local long chem_nan_states = 0;
 thread_local long chem_excess_states = 0;
 thread_local long cxx_stat_recoveries = 0;   // solver failures finished as energy-only cooling
 thread_local long cxx_stat_floor_hits = 0;    // CVODE substeps rejected at the step-size floor
+thread_local long cxx_stat_failure_retries = 0;    // solver failures (1, 100) retried with tighter tolerances (D-59)
+thread_local long cxx_stat_tnochem_finishes = 0;   // failed retries above TNOCHEM finished via the TNOCHEM path (D-59)
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+thread_local int chem_test_force_failure[2] = {0, 0}; // per attempt: 1 = substep budget of one, 100 = every substep rejected
+thread_local double chem_test_retry_start_y[CHEM_NSPEC_MAX];   // state and time the retry started from
+thread_local double chem_test_retry_start_t = -1.0;
+thread_local std::string chem_test_last_dump;                   // last full cell dump
+thread_local long chem_test_flag_rhs[2] = {0, 0};   // flag the evaluation at the start of substep [0] (0 = off), the final one [1]
+#endif
 
 // CVODE step floor: 10 x the double resolution of the time coordinate at the substep end. Below it
 // t + h no longer advances t; CVODE's own first-step lower bound is 100 x that. A failure at the floor
@@ -89,6 +99,112 @@ static void chem_print_cell_context(const char* why, double time, double yn, dou
     std::fprintf(stderr, "\n  redshift=%.17g G_dust=%.17g chi_isrf=%.17g npix=%d col_tot[0]=%.17g\n",
                  c.redshift, c.G_dust, c.chi_isrf, c.npix, c.npix > 0 ? c.col_tot[0] : 0.0);
     std::fflush(stderr);
+}
+
+// every ChemCell input the solve reads (tdust: its call-entry value is dumped separately)
+#ifdef SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS
+#define CHEM_CELL_HMINUS(X) X(hm_detach_stellar) X(G0_hm_isrf)
+#else
+#define CHEM_CELL_HMINUS(X)
+#endif
+#define CHEM_CELL_SCALARS(X) \
+    X(net) X(trac_num) X(nspec) X(abhe) X(yn) X(dl) X(divv) X(column_est) \
+    X(abundc) X(abundo) X(abundsi) X(abundN) X(abundD) X(abundM) X(G0) X(G0_LW) X(G0_dust) CHEM_CELL_HMINUS(X) \
+    X(dust_to_gas_ratio) X(cosmic_ray_ion_rate) X(cr_energy_density) X(redshift) X(AV_ext) \
+    X(deff) X(phi_pah) X(h2_form_ex) X(h2_form_kin) X(f_rsc) X(AV_conversion_factor) \
+    X(iphoto) X(isrf_option) X(no_dchem) X(iflag_mn) X(iflag_ad) X(iflag_atom) X(iflag_3bh2a) X(iflag_3bh2b) \
+    X(iflag_h3pra) X(iflag_h2opc) X(irad_heat) X(id_current) X(G_dust) X(chi_isrf) X(fshield_CO) X(npix) X(NH_cell) \
+    X(diffuse_dust_heat) X(rt_phot_HI) X(rt_phot_HeI) X(rt_phot_HeII) X(rt_heat_HI) X(rt_heat_HeI) X(rt_heat_HeII) \
+    X(rt_phot_H2) X(rt_heat_H2) X(dvdr) X(Zg) X(n20_kgr_const) X(n20_tbb) X(n20_sig_lw) X(n20_chi_pe) X(n20_chi_lw) \
+    X(n20_chi_fuv) X(n20_xi) X(n20_gd_uv) X(n20_gd_ext) X(n20_xe)
+#define CHEM_CELL_ARRAYS(X) \
+    X(Zmass, 12) X(phrates, CHEM_NPHTAB) X(col_h2, CHEM_NPIX) X(col_tot, CHEM_NPIX) X(col_co, CHEM_NPIX) \
+    X(fac_uv, CHEM_NPIX) X(pix_att, CHEM_NPIX) X(col_c, CHEM_NPIX) X(n20_wlw, CHEM_NPIX)
+
+static void dump_add(std::string& s, const char* key, const double* v, int n)
+{
+    char b[40];
+    s += ' '; s += key; s += '=';
+    for (int i = 0; i < n; i++) {
+        std::snprintf(b, sizeof(b), (i ? ",%.17g" : "%.17g"), v[i]);
+        s += b;
+    }
+}
+
+// The full cell state at %.17g, written with one fprintf (threads do not interleave); chem_cell_parse reads it back.
+static void chem_dump_cell(const char* why, const ChemCell& c, const ChemCellEntry& e)
+{
+    char head[256];
+    std::snprintf(head, sizeof(head), "cxx_evolve: %s (ID %ld, net %d); full cell state:\n", why, c.id_current, c.net);
+    std::string s = head;
+    std::snprintf(head, sizeof(head), "  cell %ld entry:", c.id_current);
+    s += head;
+    const double sc[] = {e.time, e.t_start, e.t_end, e.tdust_entry, (double)e.attempt, (double)e.code, e.tdust_now};
+    const char* sk[] = {"dt", "t_start", "t_end", "tdust_entry", "attempt", "code", "tdust_now"};
+    for (int i = 0; i < 7; i++) dump_add(s, sk[i], &sc[i], 1);
+    dump_add(s, "y_entry", e.y_entry, c.nspec);
+    dump_add(s, "y_now", e.y_now, c.nspec);
+    std::snprintf(head, sizeof(head), "\n  cell %ld inputs:", c.id_current);
+    s += head;
+#define DUMP_S(f) { const double v = (double)c.f; dump_add(s, #f, &v, 1); }
+#define DUMP_A(f, n) { double v[n]; for (int i = 0; i < (n); i++) v[i] = (double)c.f[i]; dump_add(s, #f, v, n); }
+    CHEM_CELL_SCALARS(DUMP_S)
+    std::snprintf(head, sizeof(head), "\n  cell %ld arrays:", c.id_current);
+    s += head;
+    CHEM_CELL_ARRAYS(DUMP_A)
+#undef DUMP_S
+#undef DUMP_A
+    std::snprintf(head, sizeof(head), "\n  cell %ld end\n", c.id_current);
+    s += head;
+    std::fprintf(stderr, "%s", s.c_str());
+    std::fflush(stderr);
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+    chem_test_last_dump = s;
+#endif
+}
+
+// values of key in text ("key=v1,v2,..."): returns how many were read (0 if the key is absent)
+static int parse_key(const char* text, const char* key, double* v, int nmax)
+{
+    const size_t kl = std::strlen(key);
+    for (const char* p = std::strstr(text, key); p; p = std::strstr(p + 1, key)) {
+        if ((p != text && p[-1] != ' ') || p[kl] != '=') continue;
+        const char* q = p + kl + 1;
+        int n = 0;
+        while (n < nmax) {
+            char* end;
+            v[n] = std::strtod(q, &end);
+            if (end == q) break;
+            n++;
+            if (*end != ',') break;
+            q = end + 1;
+        }
+        return n;
+    }
+    return 0;
+}
+
+// Rebuild a cell and its call from a chem_dump_cell text; c.tab is left to the caller. Returns 0 ok, else the
+// number of fields missing or short.
+int chem_cell_parse(const char* text, ChemCell& c, ChemCellEntry& e)
+{
+    int bad = 0;
+    double v[CHEM_NPHTAB > CHEM_NSPEC_MAX ? CHEM_NPHTAB : CHEM_NSPEC_MAX];
+#define PARSE_S(f) { if (parse_key(text, #f, v, 1) == 1) c.f = (decltype(c.f))v[0]; else bad++; }
+#define PARSE_A(f, n) { if (parse_key(text, #f, v, n) == (n)) { for (int i = 0; i < (n); i++) c.f[i] = v[i]; } else bad++; }
+    CHEM_CELL_SCALARS(PARSE_S)
+    CHEM_CELL_ARRAYS(PARSE_A)
+#undef PARSE_S
+#undef PARSE_A
+    const char* sk[] = {"dt", "t_start", "t_end", "tdust_entry", "attempt", "code", "tdust_now"};
+    double sc[7];
+    for (int i = 0; i < 7; i++) { if (parse_key(text, sk[i], v, 1) == 1) sc[i] = v[0]; else { sc[i] = 0; bad++; } }
+    e.time = sc[0]; e.t_start = sc[1]; e.t_end = sc[2]; e.tdust_entry = sc[3];
+    e.attempt = (int)sc[4]; e.code = (int)sc[5]; e.tdust_now = sc[6];
+    if (parse_key(text, "y_entry", e.y_entry, c.nspec) != c.nspec) bad++;
+    if (parse_key(text, "y_now", e.y_now, c.nspec) != c.nspec) bad++;
+    c.tdust = e.tdust_entry;
+    return bad;
 }
 
 // audit R10 switch: 1 = keep the Fortran "last RHS evaluation wins" semantics

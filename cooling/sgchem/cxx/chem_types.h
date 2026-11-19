@@ -381,6 +381,14 @@ struct ChemCell {
     const ChemTables* tab;
 };
 
+// call of a dumped cell (cvode_driver.cc chem_dump_cell / chem_cell_parse)
+struct ChemCellEntry {
+    double time, t_start, t_end, tdust_entry, tdust_now;
+    int attempt, code;
+    double y_entry[CHEM_NSPEC_MAX], y_now[CHEM_NSPEC_MAX];
+};
+int chem_cell_parse(const char* text, ChemCell& c, ChemCellEntry& e);
+
 // ---------------------------------------------------------------------------
 // Kernel interfaces
 // ---------------------------------------------------------------------------
