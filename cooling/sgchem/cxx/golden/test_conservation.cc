@@ -17,7 +17,8 @@
 //   PHASE O  one-zone trajectory parity (as test_onezone_ab PHASE O): final T
 //            within 1% between the backends.
 //   PHASE I  sgchem_set_ionized with a per-cell abhe != ABHE.
-//   PHASE C and I fail when an overdraft or a negative species exceeds 1e-14 of the pool.
+//   PHASE C and I fail when an overdraft or a negative species exceeds 1e-14 of the pool; PHASE C also on any failed or
+//   timed-out solver call.
 //
 // Usage: test_conservation [conservation.csv]   (run where gizmo/cooling/sgchem exists)
 
@@ -735,7 +736,8 @@ static int phase_C(const char* csvname)
     int ok = 1;
     for (int e = 0; e < NEL; e++) if (el_active(e))
         for (int b = 0; b < 2; b++) if (w_out[b][e].v > CONS_BAR || w_neg[b][e].v > CONS_BAR) ok = 0;
-    std::printf("  PHASE C %s (overdraft and negatives after each completed call <= %g of the pool)\n", ok ? "PASS" : "FAIL", CONS_BAR);
+    for (int b = 0; b < 2; b++) if (nfail[b] || ntimeout[b]) ok = 0; /* a failed or timed-out call is not a pass */
+    std::printf("  PHASE C %s (overdraft and negatives after each completed call <= %g of the pool; no failed or timed-out call)\n", ok ? "PASS" : "FAIL", CONS_BAR);
     return ok;
 }
 
