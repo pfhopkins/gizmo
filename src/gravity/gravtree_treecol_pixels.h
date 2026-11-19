@@ -9,6 +9,7 @@
 #include "../cooling/sgchem/sgchem_consts.h"
 #include "../cooling/sgchem/sgchem_dust_to_gas.h"
 #include "../cooling/sgchem/chem_interface.h" /* band energy densities of the Habing field */
+#include "healpix_ring.h"
 
 /* node species masses: dust-weighted gas (dust-to-gas ratio x mass), H2 and CO */
 #define TREECOL_PIXELS_DUST 0
@@ -43,59 +44,6 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_species_masses(const struct particle_
 
 #define TREECOL_PIXELS_N GALSF_RESOLVEDISM_TREECOL_PIXELS
 
-/* HEALPix RING pixel from z = cos(theta) and tt = phi/(pi/2) in [0,4] (Gorski+05) */
-KOKKOS_INLINE_FUNCTION int treecol_hpx_ring_pix(int nside, double z, double tt)
-{
-    double za = fabs(z);
-    if(za <= 2.0/3.0)
-    {
-        double t1 = nside * (0.5 + tt), t2 = nside * z * 0.75;
-        long jp = (long)(t1 - t2), jm = (long)(t1 + t2), ir = nside + 1 + jp - jm, kshift = 1 - (ir & 1);
-        long ip = ((jp + jm - nside + kshift + 1) / 2) % (4 * nside);
-        return (int)(nside * (nside - 1) * 2 + (ir - 1) * 4 * nside + ip);
-    }
-    double tp = tt - (long)tt, tmp = nside * sqrt(3.0 * (1.0 - za));
-    long jp = (long)(tp * tmp), jm = (long)((1.0 - tp) * tmp), ir = jp + jm + 1, ip = ((long)(tt * ir)) % (4 * ir);
-    return (int)((z > 0) ? 2 * ir * (ir - 1) + ip : 12 * nside * nside - 2 * ir * (ir + 1) + ip);
-}
-
-/* atan2-free tt = phi/(pi/2) in [0,4): polynomial atan on one octant, |error| < TREECOL_HPX_TT_ERR */
-#define TREECOL_HPX_TT_ERR 1e-8
-KOKKOS_INLINE_FUNCTION double treecol_hpx_tt_approx(double x, double y)
-{
-    double ax = fabs(x), ay = fabs(y), t = fmin(ax, ay) / fmax(ax, ay), q = t * t, a;
-    a = t * (0.9999999975460201 + q * (-0.3333328229551207 + q * (0.1999823064037613 + q * (-0.14261573680246378 + q * (0.10940198964830647
-        + q * (-0.0837206394697871 + q * (0.05746355782881671 + q * (-0.030717508884063723 + q * (0.010680719435017704 + q * (-0.0017437011413061324))))))))));
-    a += (ay > ax ? 1.0 : 0.0) * (0.5 * M_PI - 2.0 * a);
-    a += (x < 0 ? 1.0 : 0.0) * (M_PI - 2.0 * a);
-    a *= (y < 0 ? -1.0 : 1.0);
-    a += (a < 0 ? 2.0 * M_PI : 0.0);
-    return a * (2.0 / M_PI);
-}
-
-/* the ring pixel when no edge decision can change within the tt error, else -1 */
-KOKKOS_INLINE_FUNCTION int treecol_hpx_ring_pix_checked(int nside, double z, double tt)
-{
-    double M = (8.0 * nside + 8.0) * (TREECOL_HPX_TT_ERR * (2.0 / M_PI)) * 4.0, M1 = 1.0 - M, za = fabs(z);
-    if(za <= 2.0/3.0)
-    {
-        double t1 = nside * (0.5 + tt), t2 = nside * z * 0.75, a = t1 - t2, b = t1 + t2, fa = floor(a), fb = floor(b);
-        if(a - fa < M || a - fa > M1 || b - fb < M || b - fb > M1) {return -1;}
-        long jp = (long)fa, jm = (long)fb, ir = nside + 1 + jp - jm, kshift = 1 - (ir & 1);
-        long ip = ((jp + jm - nside + kshift + 1) / 2) % (4 * nside);
-        return (int)(nside * (nside - 1) * 2 + (ir - 1) * 4 * nside + ip);
-    }
-    double ft = floor(tt), tp = tt - ft;
-    if(tp < M || tp > M1) {return -1;}
-    double tmp = nside * sqrt(3.0 * (1.0 - za)), u = tp * tmp, v = (1.0 - tp) * tmp, fu = floor(u), fv = floor(v);
-    if(u - fu < M || u - fu > M1 || v - fv < M || v - fv > M1) {return -1;}
-    long ir = (long)fu + (long)fv + 1;
-    double w = tt * ir, fw = floor(w);
-    if(w - fw < M || w - fw > M1) {return -1;}
-    long ip = ((long)fw) % (4 * ir);
-    return (int)((z > 0) ? 2 * ir * (ir - 1) + ip : 12 * nside * nside - 2 * ir * (ir + 1) + ip);
-}
-
 /* HEALPix RING pixel of the direction d (= vec2pix_ring); atan2 only near pixel edges */
 KOKKOS_INLINE_FUNCTION int treecol_hpx_pixel_nside(const Vec3<double> &d, int nside)
 {
@@ -123,22 +71,6 @@ KOKKOS_INLINE_FUNCTION double treecol_radp_sigma_lum(const double *lum)
     return s;
 }
 
-/* unit vector of HEALPix RING pixel ip, NSIDE 1 (pix2vec_ring) */
-KOKKOS_INLINE_FUNCTION Vec3<double> treecol_radp_pixel_centre(int ip)
-{
-    const double q = 0.7453559924999299; /* sqrt(1 - (2/3)^2) / 1 */
-    const double c = 0.7071067811865476; /* cos(pi/4) */
-    Vec3<double> n = {};
-    if(ip < 4 || ip >= 8)
-    {
-        const int k = (ip < 4) ? ip : ip - 8; /* phi = pi/4 + k pi/2 */
-        n[0] = q * ((k == 0 || k == 3) ? c : -c); n[1] = q * ((k < 2) ? c : -c); n[2] = (ip < 4) ? 2.0 / 3.0 : -2.0 / 3.0;
-        return n;
-    }
-    const int k = ip - 4; /* phi = k pi/2 */
-    n[0] = (k == 0) ? 1.0 : ((k == 2) ? -1.0 : 0.0); n[1] = (k == 1) ? 1.0 : ((k == 3) ? -1.0 : 0.0);
-    return n;
-}
 #endif
 
 /* per-target sums during the walk: species columns and band fluxes per pixel, three band totals */
@@ -288,7 +220,7 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, 
 #endif
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
         const double fw = treecol_radp_sigma_lum(lum) / fmax(d_lum.norm_sq(), r_floor * r_floor);
-        const Vec3<double> nh = treecol_radp_pixel_centre(il);
+        double nh[3]; treecol_hpx_pixel_centre(TREECOL_PIXELS_NSIDE, il, nh);
         a.radp[0] += fw * nh[0]; a.radp[1] += fw * nh[1]; a.radp[2] += fw * nh[2]; a.radp[3] += fw;
 #endif
     }

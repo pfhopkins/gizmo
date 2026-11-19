@@ -1,5 +1,6 @@
 # Stella cloud production flags (scripts/stella/Config_stella_cloud.sh) plus the forced supernova and the wake-up audit
 STELLA_DEFAULTS
+GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
 SGCHEM
 CHEMISTRYNETWORK=5
 METALS

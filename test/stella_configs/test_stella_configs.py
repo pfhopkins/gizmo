@@ -6,6 +6,9 @@
     (run.cc stops otherwise); cloud, galaxy and tall box are not.
   test_gas_kernel_radius_uncapped: every tracked params file of a Stella build with adaptive gas softening sets
     MinGasKernelRadiusFractional, and the gas kernel radius floor it gives is below 1e-3 pc.
+  test_radiation_pressure_per_config: Config through the preprocessor with precompiler_logic.h: cloud, default, galaxy and tall
+    box set GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS themselves, the zoom build has no radiation pressure (Uli 2026-11-18).
+  test_stella_defaults_without_radiation_pressure: STELLA_DEFAULTS alone sets no radiation pressure.
 """
 import math
 import re
@@ -82,3 +85,43 @@ def test_gas_kernel_radius_uncapped(params):
     soft = float(p["SofteningGasMaxPhys"]) / float(p.get("HubbleParam", 1)) if comoving else float(p["SofteningGas"])
     floor_pc = float(p["MinGasKernelRadiusFractional"]) * KERNEL_FAC * soft * float(p.get("UnitLength_in_cm", 3.085678e21)) / 3.085678e18
     assert math.isfinite(floor_pc) and floor_pc < FLOOR_MAX_PC, f"{params}: gas kernel radius floored at {floor_pc:.3g} pc"
+
+
+RADP = ("GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS", "GALSF_FB_FIRE_RT_LOCALRP", "GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL",
+        "GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE", "GALSF_SINGLE_STARS_RT_TABLE_BANDS")
+WITH_RADP = ("cloud", "default", "galaxy", "tallbox")  # stella_dev: cloud, default, tallbox; the zoom reference has none (Uli 2026-11-18)
+
+
+def macros(tmp_path, lines):
+    """the macros a build of these Config.sh lines sees: GIZMO_config.h as file_io/prepare-config.perl writes it, then
+    declarations/precompiler_logic.h through the C preprocessor"""
+    hdr = ["#ifndef GIZMO_config_H", "#define GIZMO_config_H"]
+    for l in lines:
+        f = l.split()
+        if f and f[0][0] != "#":
+            k, _, v = f[0].partition("=")
+            hdr.append(f"#define {k} {v}")
+    (tmp_path / "GIZMO_config.h").write_text("\n".join(hdr + ["#endif"]) + "\n")
+    (tmp_path / "probe.cc").write_text('#include "GIZMO_config.h"\n#include "declarations/precompiler_logic.h"\n')
+    r = subprocess.run(["c++", "-std=c++20", "-E", "-dM", f"-I{tmp_path}", f"-I{REPO / 'src'}", str(tmp_path / "probe.cc")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2000:]
+    return {l.split()[1].split("(")[0] for l in r.stdout.splitlines() if l.startswith("#define ")}
+
+
+@pytest.mark.parametrize("c", ["cloud", "default", "galaxy", "tallbox", "zoom"])
+def test_radiation_pressure_per_config(tmp_path, c):
+    """radiation pressure is set by GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS in the configs that have it, not by STELLA_DEFAULTS:
+    cloud, default, galaxy and tall box push the gas, the zoom build defines no radiation-pressure macro"""
+    m = macros(tmp_path, (CFG / f"Config_stella_{c}.sh").read_text().splitlines())
+    if c in WITH_RADP:
+        assert "GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS" in m and "GALSF_FB_FIRE_RT_LOCALRP" in m
+        assert re.search(r"^GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS\b", (CFG / f"Config_stella_{c}.sh").read_text(), re.M)
+    else:
+        assert not [k for k in RADP if k in m], [k for k in RADP if k in m]
+
+
+def test_stella_defaults_without_radiation_pressure(tmp_path):
+    """STELLA_DEFAULTS alone (the compile-suite set) defines no radiation-pressure macro"""
+    m = macros(tmp_path, "SGCHEM CHEMISTRYNETWORK=5 METALS GALSF_RESOLVEDISM_TREECOL_PIXELS=12 GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES STELLA_DEFAULTS".split())
+    assert "GALSF_SINGLE_STARS_FROM_IMF" in m and not [k for k in RADP if k in m], [k for k in RADP if k in m]

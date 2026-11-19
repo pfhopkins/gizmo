@@ -178,35 +178,37 @@ double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR
 
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
 /* direct radiation pressure in the absorbing cell: L_abs = sum_b sigma_b F_b DGR N_H(cell) / 4 pi, pushed away from the pixel
-   centres, all deposits scaled by L_emit / sum(L_abs) when above 1 (photon cap). The sum over cells is kept running:
-   an active cell swaps its share, full recount on all-active steps. L_emit is the root node, so no star loop. The sum is reduced
+   centres, all deposits scaled by L_emit / sum(L_abs) when above 1 (photon cap). The sum runs over every gas cell
+   with its last flux, current mass and dust (as stella_dev). L_emit is the root node, so no star loop. The sum is reduced
    with the source count in radiation_pressure_winds_consolidated: no collective here. */
 static std::vector<double> radp_lum_abs; /* per active cell, absorbed_local to per_cell */
+static double radp_cell_dgr(int i) /* the cell's dust-to-gas ratio for the direct term; hot gas none */
+{
+#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
+    return (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_cell_dust_to_gas_ratio(P, CellP, i), 0.); /* the cell's live dust */
+#else
+    return (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_dust_to_gas_ratio(P[i].Metallicity[0]), 0.);
+#endif
+}
 double single_star_radpressure_absorbed_local(void)
 {
-    static double abs_sum_local = 0; static int counted = 0;
     const double to_L = 1.0e-21 * All.cf_a2inv / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS * 4.0 * M_PI); /* sum x DGR N_H -> code lum */
-    const int all_active = (All.HighestActiveTimeBin == All.HighestOccupiedTimeBin);
-    if(!counted || all_active)
-    {
-        abs_sum_local = 0; counted = 1;
-        for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {abs_sum_local += CellP[i].RadpAbsorbedLum;}}
-    }
+    double abs_sum_local = 0; /* every gas cell now: current mass and dust, last flux (as stella_dev) */
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {abs_sum_local += to_L * radp_cell_dgr(i) * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS * CellP[i].TreeColRadpFlux[3];}}
     std::vector<double> &lum_abs = radp_lum_abs; lum_abs.assign(ActiveParticleList.size(), 0.);
     for(size_t a = 0; a < ActiveParticleList.size(); a++)
     {
         const int i = ActiveParticleList[a];
         if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
-#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
-        const double dgr = (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_cell_dust_to_gas_ratio(P, CellP, i), 0.); /* the cell's live dust */
-#else
-        const double dgr = (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_dust_to_gas_ratio(P[i].Metallicity[0]), 0.);
-#endif
-        lum_abs[a] = to_L * dgr * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
-        const double l = lum_abs[a] * CellP[i].TreeColRadpFlux[3];
-        abs_sum_local += l - CellP[i].RadpAbsorbedLum;
-        CellP[i].RadpAbsorbedLum = (float) l;
+        lum_abs[a] = to_L * radp_cell_dgr(i) * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
     }
+#ifdef TEST_SINGLE_STARS_RADPRESSURE_PRINT_CAP_SUM
+    { /* reference: every gas cell now, current mass and dust, last flux (stella_dev resolvedism_fb_momentum.cc photon cap) */
+        double rc = 0; const int all_active = (All.HighestActiveTimeBin == All.HighestOccupiedTimeBin);
+        for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {rc += to_L * radp_cell_dgr(i) * P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS * CellP[i].TreeColRadpFlux[3];}}
+        printf("RADP_CAP_SUM: rank=%d t=%.10g all_active=%d n_active=%d used=%.17g recount=%.17g\n", ThisTask, All.Time, all_active, (int) ActiveParticleList.size(), abs_sum_local, rc);
+    }
+#endif
     return abs_sum_local;
 }
 
@@ -240,10 +242,11 @@ void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code)
 #endif
 
 #if defined(RT_USE_GRAVTREE) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
-#define SINGLE_STAR_TREE_LUM_TOL 1.e-2 /* a star's band luminosity may drift this fraction of the root's before the nodes are refreshed */
+#define SINGLE_STAR_TREE_LUM_TOL 1.e-2 /* a star's band luminosity may drift this fraction of its own before the nodes are refreshed */
 /* before a gravity call: refresh the tree node moments (luminosities) if a single star started to shine, started to ionise or went
-   dark since the last call, or its band luminosity moved by more than SINGLE_STAR_TREE_LUM_TOL of the root's since the nodes last
-   saw it; reduced in gravity_tree, so no collective here */
+   dark since the last call, or its band luminosity moved by more than SINGLE_STAR_TREE_LUM_TOL of its own since the nodes last
+   saw it; reduced in gravity_tree, so no collective here. A switch or a drift sets 2: on several ranks gravity_tree then
+   rebuilds, which re-sends the node light to the ranks holding copies (one rank: a refresh) */
 void single_star_light_switch_check(void)
 {
     static double t_last = -1; double t0 = t_last; t_last = All.Time;
@@ -254,7 +257,11 @@ void single_star_light_switch_check(void)
         if(P[i].Type != 4 || P[i].StarIdx <= 0 || P[i].Mass <= 0) {continue;}
         int s = single_star_slot(P[i].StarIdx);
         double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, P, CellP);
-        for(int b = 0; b < N_RT_FREQ_BINS; b++) {if(fabs(lum[b] - SingleStars.tree_lum[s].L[b]) > SINGLE_STAR_TREE_LUM_TOL * Nodes[All.TreeNodeIndexBase].stellar_lum[b]) {TreeMomentsStaleFlag = 1; return;}}
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) {
+            const double l0 = SingleStars.tree_lum[s].L[b], lb = (float) lum[b]; /* as stored */
+            if((l0 == 0) != (lb == 0)) {TreeMomentsStaleFlag = 2; return;} /* a band switched on or off */
+            if(fabs(lb - l0) > SINGLE_STAR_TREE_LUM_TOL * DMAX(fabs(lb), fabs(l0))) {TreeMomentsStaleFlag = 2; return;}
+        }
         if(SingleStars.M_drawn[s] <= All.IMFSampleStellarMassCut) {continue;}
 #if defined(GALSF_FB_MECHANICAL)
         if(SingleStars.event_bits[s] & (SINGLE_STAR_EVENT_SN_DONE | SINGLE_STAR_EVENT_AGB_DONE)) {continue;}
@@ -262,16 +269,14 @@ void single_star_light_switch_check(void)
         double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
         double age = evaluate_stellar_age_Gyr(i) * 1.e9, t_pms = stellar_t_PMS(logM, logZ), t_on = single_star_ionizing_onset_yr(i);
         double t_switch[3] = {t_pms, t_pms + stellar_lifetime(logM, logZ), t_on};
-        for(int k = 0; k < 3; k++) {if(t_switch[k] > 0 && age - dt_yr < t_switch[k] && t_switch[k] <= age) {TreeMomentsStaleFlag = 1; return;}}
+        for(int k = 0; k < 3; k++) {if(t_switch[k] > 0 && age - dt_yr < t_switch[k] && t_switch[k] <= age) {TreeMomentsStaleFlag = 2; return;}}
     }
 }
 
-/* after a gravity call: if it rebuilt or refreshed the node luminosities (the root changed), they are the stars' current ones */
-void single_star_tree_lum_store(const double *root_before)
+/* after a gravity call: if it built the tree or refreshed the node moments, the node luminosities are the stars' current ones */
+void single_star_tree_lum_store(void)
 {
-    static int first = 1; int changed = first; first = 0;
-    for(int b = 0; b < N_RT_FREQ_BINS; b++) {if(Nodes[All.TreeNodeIndexBase].stellar_lum[b] != root_before[b]) {changed = 1;}}
-    if(!changed) {return;}
+    if(!TreeMomentsRenewed) {return;}
     for(int i = 0; i < NumPart; i++) {
         if(P[i].Type != 4 || P[i].StarIdx <= 0) {continue;}
         double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, P, CellP);

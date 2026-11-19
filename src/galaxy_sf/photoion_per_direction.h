@@ -161,6 +161,9 @@ KOKKOS_INLINE_FUNCTION static int pi_pool_claim(const PiCallScalars& cs, int g)
 {
     int s = Kokkos::atomic_load(&cs.pool_slot[g]);
     if(s >= 0) {return s;}
+#ifdef TEST_PHOTOIONIZATION_POOL_LOST_CLAIM_RACE
+    if(Kokkos::atomic_fetch_add(cs.pool_n, 1) >= cs.pool_cap) {Kokkos::atomic_store(cs.pool_full, 1); return -1;} /* a lost race: slot taken, never written */
+#endif
     int n = Kokkos::atomic_fetch_add(cs.pool_n, 1);
     if(n >= cs.pool_cap) {Kokkos::atomic_store(cs.pool_full, 1); return -1;}
     int seen = Kokkos::atomic_compare_exchange(&cs.pool_slot[g], -1, n);

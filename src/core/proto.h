@@ -1147,7 +1147,7 @@ double single_star_ionizing_luminosity_cgs(int i);
 double single_star_ionizing_photon_rate(int i);
 double single_star_ionizing_onset_yr(int i);
 void single_star_light_switch_check(void);
-void single_star_tree_lum_store(const double *root_before);
+void single_star_tree_lum_store(void);
 int force_tree_is_allocated(void);
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
@@ -1485,7 +1485,12 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #else
 #define LEDGER_ROWS_MHD_TERMS(X)
 #endif
-#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X) LEDGER_ROWS_PI(X) LEDGER_ROWS_KICK_FLOOR(X) LEDGER_ROWS_MHD(X) LEDGER_ROWS_MHD_TERMS(X)
+#if defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) /* gas kinetic energy the radiation-pressure kicks add */
+#define LEDGER_ROWS_RADP(X) X(LEDGER_E_RADP_KICK, "E_radiation_pressure_kick_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_RADP(X)
+#endif
+#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X) LEDGER_ROWS_PI(X) LEDGER_ROWS_KICK_FLOOR(X) LEDGER_ROWS_RADP(X) LEDGER_ROWS_MHD(X) LEDGER_ROWS_MHD_TERMS(X)
 #define LEDGER_ROW_ENUM(id, name, unit, state) id,
 enum ledger_rows {LEDGER_ROWS(LEDGER_ROW_ENUM) LEDGER_NROWS};
 void ledger_init(void);

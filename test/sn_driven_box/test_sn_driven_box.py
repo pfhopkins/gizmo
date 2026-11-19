@@ -35,6 +35,7 @@ def run(d, env=None):
         rc = subprocess.run(mpi_launch_command(RANKS) + [str(TEST_DIR / "GIZMO"), f"{TEST_NAME}.params", "2", "0"], cwd=d, stdout=f,
                             stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1", **(env or {})}, check=False).returncode
     assert rc == 0, f"GIZMO exited with {rc}, see {d}/gizmo.out"
+    assert "Stella: radiation pressure of single stars ON" in (d / "gizmo.out").read_text()  # STELLA_DEFAULTS + GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS says so at start
 
 
 @pytest.fixture(scope="module")

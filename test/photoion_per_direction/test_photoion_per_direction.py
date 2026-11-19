@@ -448,3 +448,82 @@ def test_young_star_density_follows_the_gas_in_comoving_runs(built_dens):
     print(f"comoving density: start {rho0:.4g}, gas around the star now {rho_gas:.4g}, the star's {rho_star:.4g}")
     assert rho_gas < 0.7 * rho0  # the gas did thin out
     assert abs(rho_star / rho_gas - 1) < 0.2, (rho_star, rho_gas)
+
+
+POOL = ("TEST_PHOTOIONIZATION_POOL_LOST_CLAIM_RACE",)
+
+
+@pytest.fixture(scope="module")
+def built_pool(built):
+    """the same build where every first claim of a pool slot also loses a race, and the pool's indices are checked"""
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=POOL)
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_pool")
+        build_gizmo_for_test(TEST_NAME)
+    return built
+
+
+def test_pool_slots_lost_to_claim_races(built_pool):
+    """a thread that loses the claim race for a source's histogram slot leaves the slot it took unwritten (routine on GPUs):
+    24 stars of 20 Msun on 2 ranks, every claim losing once (the pool fills and grows); every used slot holds -1 or the
+    source that owns it, and fronts, cells and passes are those of the plain build"""
+    rng = np.random.default_rng(3)
+    stars = [(20.0, 1.0e6, tuple(rng.uniform(0.1, 0.9, 3))) for _ in range(24)]
+    ref = log(run("pool_ref", built_pool, stars=stars, ranks=2, threads=2)[0])
+    d = run("pool_lost", built_pool, stars=stars, ranks=2, threads=2, exe="GIZMO_pool")[0]
+    checks = [tuple(map(int, m)) for m in re.findall(r"PI_POOL_CHECK: used=(\d+) bad=(\d+)", (d / f"test_{TEST_NAME}.out").read_text())]
+    print(f"{len(checks)} pool checks, slots used up to {max(u for u, _ in checks)}, bad indices {sum(b for _, b in checks)}")
+    assert len(checks) > 0 and max(u for u, _ in checks) > 16
+    assert all(b == 0 for _, b in checks)
+    rows = log(d)
+    assert rows.shape == ref.shape and np.array_equal(rows[:, [1, 3, 8]], ref[:, [1, 3, 8]])
+
+
+SGCHEM_OUT = SGCHEM + ("OUTPUT_INDIVIDUAL_COOLRATES", "OUTPUT_CHEM_PHOTORATES")
+
+
+@pytest.fixture(scope="module")
+def built_sgchem_out(built_sgchem):
+    """the SGChem build with the cooling and photo rates in the snapshots"""
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=SGCHEM_OUT)
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_sgchem_out")
+        build_gizmo_for_test(TEST_NAME)
+    tables, extra = built_sgchem
+    field = {"SGChemG0": 1.7, "SGChemG0_LW": 1.7}
+    return tables, "".join(f"{l.split()[0]:34s} {field[l.split()[0]]}\n" if l.split()[0] in field else l + "\n" for l in extra.splitlines())
+
+
+def test_sgchem_outputs_of_ionised_cells(built_sgchem_out):
+    """the snapshot cooling and photo rates of photoionised cells (no network solve) are defined: no cooling (0), and the
+    photo rates of the uniform G0 = 1.7 field (no columns: the same in every cell); mass and energy as in the plain run"""
+    import h5py
+    tables, extra = built_sgchem_out
+    assert {l.split()[0]: l.split()[1] for l in extra.splitlines()}["SGChemG0_LW"] == "1.7"
+    d, dx, n_H = run("sgchem_out", tables, exe="GIZMO_sgchem_out", extra=extra, n_metals=11)
+    snaps = sorted((d / "output").glob("snapshot_*.hdf5"))
+    with h5py.File(snaps[-1], "r") as F:
+        g = F["PartType0"]
+        x, lam, lamc, ph = g["SGChemTracAbund"][()][:, 1], g["SGChemCoolRates"][()], g["SGChemChemCoolRates"][()], g["ChemPhotoRates"][()]
+    ion, neu = x > 0.999, x < 0.01
+    print(f"{ion.sum()} ionised, {neu.sum()} neutral cells; ionised: max |Lambda| {np.abs(lam[ion]).max():.3e}, "
+          f"max |Lambda_chem| {np.abs(lamc[ion]).max():.3e}; photo rates ionised/neutral - 1: "
+          f"{np.nanmax(np.abs(ph[ion] / np.median(ph[neu], axis=0) - 1)) if ion.any() else np.nan:.2e}")
+    assert ion.sum() > 100 and neu.sum() > 100
+    assert np.all(np.isfinite(lam)) and np.all(np.isfinite(lamc)) and np.all(np.isfinite(ph))
+    assert np.all(lam[ion] == 0) and np.all(lamc[ion] == 0)
+    assert np.any(np.abs(lam[neu]).sum(axis=1) > 0)  # the neutral cells do cool
+    ref = np.median(ph[neu], axis=0)
+    assert np.all(ref[[0, 1, 2, 4, 5]] > 0)
+    assert np.allclose(ph[neu], ref, rtol=1e-6, atol=0) and np.allclose(ph[ion], ref, rtol=1e-6, atol=0)
+    m = [h5py.File(s, "r")["PartType0/Masses"][()].sum() + h5py.File(s, "r")["PartType4/Masses"][()].sum() for s in snaps]
+    assert abs(m[-1] / m[0] - 1) < 1e-12, m
+    led = np.atleast_2d(np.loadtxt(d / "output" / "ledger.txt"))
+    names = [c for c in open(d / "output" / "ledger.txt").readline().split()[1:] if c != "(cumulative;"]
+    with h5py.File(snaps[0], "r") as a, h5py.File(snaps[-1], "r") as b:
+        e = [np.sum(f["PartType0/Masses"][()] * (f["PartType0/InternalEnergy"][()] + 0.5 * np.sum(f["PartType0/Velocities"][()] ** 2, axis=1)))
+             * 1.989e33 * 1e10 for f in (a, b)]  # thermal + kinetic
+    booked = sum(led[-1, names.index(n)] * s for n, s in (("E_photoionisation_heating_erg", 1), ("E_chem_heating_erg", 1),
+                                                         ("E_chem_cooling_erg", -1), ("E_kick_floor_erg", 1)))
+    print(f"gas energy change {e[1] - e[0]:.6e} erg, booked {booked:.6e} erg")
+    assert abs((e[1] - e[0]) / booked - 1) < 0.05, (e, booked)

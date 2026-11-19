@@ -228,12 +228,13 @@ static thread_local int sgchem_network_skipped = 0; /* the last cell step ran no
 static double sgchem_cell_step(int i, double u_code, double dt_code)
 {
     struct ChemInputs in = {};
-    struct ChemOutputs out;
+    struct ChemOutputs out = {};
     double rho = CellP[i].Density * All.cf_a3inv, divv = 0;
     for(int k = 0; k < 3; k++) {divv += CellP[i].Gradients.Velocity[k][k];}
-    divv *= All.cf_a2inv;
+    const double hf = All.ComovingIntegrationOn ? All.cf_hubble_a : 0; /* Hubble flow per axis */
+    divv = divv * All.cf_a2inv + 3 * hf;
 #if CHEMISTRYNETWORK == 20
-    {double g = 0; for(int k = 0; k < 3; k++) {g += fabs(CellP[i].Gradients.Velocity[k][k] * All.cf_a2inv);} in.dvdr_cgs = g / 3.0 * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;}
+    {double g = 0; for(int k = 0; k < 3; k++) {g += fabs(CellP[i].Gradients.Velocity[k][k] * All.cf_a2inv + hf);} in.dvdr_cgs = g / 3.0 * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;}
 #endif
     sgchem_gas_abundances(i, &in);
     in.abundD = All.SGChemDeuteriumAbundance;
@@ -292,6 +293,15 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     double timestep = dt_code * UNIT_TIME_IN_CGS;
     energy *= UNIT_ENERGY_IN_CGS / pow(UNIT_LENGTH_IN_CGS, 3);
     divv *= UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;
+#ifdef TEST_SGCHEM_PRINT_CELL_VELOCITY_DIVERGENCE /* the physical div v and net-20 dv/dr the solver gets, H(a) and the peculiar dv_k/dx_k [s^-1] */
+    {double dvdr = 0, g[3], c = All.cf_a2inv * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;
+#if CHEMISTRYNETWORK == 20
+     dvdr = in.dvdr_cgs;
+#endif
+     for(int k = 0; k < 3; k++) {g[k] = CellP[i].Gradients.Velocity[k][k] * c;}
+     printf("SGCHEM_DIVV: ID=%llu a=%.12g H=%.15e divv=%.15e dvdr=%.15e g=%.15e %.15e %.15e\n", (unsigned long long) P[i].ID, All.Time,
+            (All.ComovingIntegrationOn ? hubble_function(All.Time) : 0) * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS, divv, dvdr, g[0], g[1], g[2]);}
+#endif
     double *ab = in.abundances;
     for(int k = 0; k < TRAC_NUM; k++) {ab[k] = CellP[i].TracAbund[k];}
     in.abhe = chem_cxx_abhe_default(); in.X_H_chem = chem_cxx_xh_default();
@@ -304,7 +314,7 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #if CHEMISTRYNETWORK == 18
     temp = chem_cxx_net18_temp(ab, energy, yn, in.abhe);
 #else
-    temp = chem_cxx_calc_temp(abh2, in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + ab[IHP]) * yn));
+    temp = chem_cxx_calc_temp(abh2, in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + sgchem_temperature_electrons(ab, &in)) * yn));
 #endif
     if(temp > 1.0e5) {in.dust_to_gas_ratio = 0;} /* hot gas: grains sputtered */
 #if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
@@ -384,13 +394,23 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
         energy = (All.TestTreeRayNeutralTemp + (1.0e4 - All.TestTreeRayNeutralTemp) * x) * 1.5 * BOLTZMANN_CGS * yn * (1.0 + ABHE + x);
     }
 #endif
+    } else { /* no network: this cell's photo rates and shielding at its current (ionised) abundances, no cooling */
+#if CHEMISTRYNETWORK == 17
+        chem_cxx_begin_cell(&in, temp, ab[IH2], ab[IHD], ab[ICO]);
+#else
+        chem_cxx_begin_cell(&in, temp, ab[IH2], 0, ab[ICO]);
+#endif
+        chem_cxx_read_outputs(&out);
+        for(int k = 0; k < 28; k++) {out.lambda[k] = 0;}
+        for(int k = 0; k < NRATES_CHEM; k++) {out.lambda_chem[k] = 0;}
+        out.cr_ion_heat = 0; out.tdust = in.tdust;
     }
 #if CHEMISTRYNETWORK == 18
     chem_cxx_net18_finish(ab, energy, &temp);
 #elif CHEMISTRYNETWORK == 20
     chem_cxx_net20_finish(ab, energy, &temp);
 #else
-    temp = chem_cxx_calc_temp(ab[IH2], in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + ab[IHP]) * yn));
+    temp = chem_cxx_calc_temp(ab[IH2], in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + sgchem_temperature_electrons(ab, &in)) * yn));
 #endif
     if(temp < All.MinGasTemp && temp > 0) {energy *= All.MinGasTemp / temp; temp = All.MinGasTemp;}
 #ifdef TEST_RT_STARBENCH_SGCHEM_TEMPERATURE_FROM_IONISED_FRACTION
@@ -427,7 +447,8 @@ double sgchem_startup_temperature(int i)
 #if CHEMISTRYNETWORK == 18
     temp = chem_cxx_net18_temp(ab, energy, yn, chem_cxx_abhe_default());
 #else
-    temp = chem_cxx_calc_temp(ab[IH2], chem_cxx_abhe_default(), energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + ab[IHP]) * yn));
+    struct ChemInputs in = {}; sgchem_gas_abundances(i, &in); in.abundD = All.SGChemDeuteriumAbundance;
+    temp = chem_cxx_calc_temp(ab[IH2], chem_cxx_abhe_default(), energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + sgchem_temperature_electrons(ab, &in)) * yn));
 #endif
     if(temp < All.MinGasTemp && temp > 0) {temp = All.MinGasTemp;}
     return temp;
@@ -438,7 +459,7 @@ double sgchem_startup_temperature(int i)
 double sgchem_startup_electrons(int i)
 {
     struct ChemInputs in; memset(&in, 0, sizeof(in));
-    sgchem_gas_abundances(i, &in);
+    sgchem_gas_abundances(i, &in); in.abundD = All.SGChemDeuteriumAbundance;
     double ab[TRAC_NUM]; for(int k = 0; k < TRAC_NUM; k++) {ab[k] = CellP[i].TracAbund[k];}
 #if CHEMISTRYNETWORK == 20
     return ab[IHP]; /* its electrons come from the last solve */

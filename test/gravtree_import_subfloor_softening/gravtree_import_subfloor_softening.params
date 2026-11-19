@@ -1,0 +1,27 @@
+% gas kernels (about 2 cells) below the fixed gas softening (5 cells): the walk takes the fixed softening for its targets
+InitCondFile                       gravtree_import_subfloor_softening_ics
+OutputDir                          output
+TimeMax                            0.004
+TimeBetSnapshot                    0.002
+MaxSizeTimestep                    0.001
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+GravityConstantInternal            1
+SofteningGas                       5.0
+MinGasKernelRadiusFractional       0
+SofteningHalo                      5.0
+Softening_Type2                    5.0
+Softening_Type3                    5.0
+Softening_Type4                    5.0
+Softening_Type5                    5.0
+CourantFac                         0.1
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.0025
+TimeBetStatistics                  0.5
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.1
+DomainBuild_ActiveFraction         0.005
+AGS_DesNumNgb                      32
+AGS_MaxNumNgbDeviation             0.1

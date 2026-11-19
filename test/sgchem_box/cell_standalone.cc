@@ -76,14 +76,14 @@ int main(int argc, char **argv)
             in.rpar[0] = yn; in.rpar[1] = 0; in.rpar[2] = 0;
             double energy = rho_c * u; energy *= e_u / std::pow(L, 3);   // same operation order as GIZMO
             for(int k = 0; k < TRAC_NUM; k++) in.abundances[k] = ab[k];
-            double T0 = chem_cxx_calc_temp(ab[IH2], in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + ab[IHP]) * yn));
+            double T0 = chem_cxx_calc_temp(ab[IH2], in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + sgchem_temperature_electrons(ab, &in)) * yn));
             if(T0 > 1.0e5) in.dust_to_gas_ratio = 0;
             chem_cxx_begin_cell(&in, T0, ab[IH2], 0.0, ab[ICO]);
             sgchem_clamp_pools(in.abundances, &in);
             chem_cxx_evolve_cell(dt * t_u, 0, yn, 0, &energy, in.abundances);
             ChemOutputs out; chem_cxx_read_outputs(&out);
             for(int k = 0; k < TRAC_NUM; k++) ab[k] = in.abundances[k];
-            T = chem_cxx_calc_temp(ab[IH2], in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + ab[IHP]) * yn));
+            T = chem_cxx_calc_temp(ab[IH2], in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - ab[IH2] + sgchem_temperature_electrons(ab, &in)) * yn));
             if(T < Tmin && T > 0) {energy *= Tmin / T; T = Tmin;}
             tdust = out.tdust;
             u = energy * std::pow(L, 3) / e_u / (rho / rho_u);

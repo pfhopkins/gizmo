@@ -1,5 +1,6 @@
 # Stella cloud production flags plus turbulent driving; star formation off by parameter (CritPhysDensity 1e30)
 STELLA_DEFAULTS
+GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
 SGCHEM
 CHEMISTRYNETWORK=5
 METALS
