@@ -241,6 +241,18 @@ void cooling_parent_routine(void)
     CumulPIHeatErg += SGChemPIHeatErg; PIHeatPendingErg += SGChemPIHeatErg; PIHeatPendingCells += SGChemPIHeatCells;
     PRINT_STATUS("SGCHEM_DIAG: N_active=%d  dE_cool=%.4e[code]  E_cool_cum=%.4e[code]  T=[%.2e,%.2e]K  nH=[%.2e,%.2e]cm^-3",
         N_active, dE_cool_step, CumulCoolingEnergyLoss, T_min, T_max, nH_min, nH_max);
+#ifndef SGCHEM_FORTRAN
+    { /* D-59 solver failures on this rank (no collective): retried, and failed retries finished via TNOCHEM */
+        void chem_cxx_failure_counts(long *retried, long *tnochem_finished);
+        static long last_r = 0, last_f = 0; long r = 0, f = 0;
+        chem_cxx_failure_counts(&r, &f);
+        if(r != last_r || f != last_f) {
+            printf("SGCHEM: task %d: %ld solver failures retried, %ld finished via TNOCHEM this step (cumulative %ld, %ld)\n",
+                ThisTask, r - last_r, f - last_f, r, f);
+            last_r = r; last_f = f;
+        }
+    }
+#endif
     free(u_before_cool);
 #ifdef COSMIC_RAY_FLUID
     free(ecr_before_cool);

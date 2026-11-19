@@ -810,13 +810,25 @@ that fraction is >= 0 (over-filled H budgets, e.g. x_H+ > 1, now lose H+). As in
 the over-fill (<= EPS_MAX). At rtol 1e-8 the old and new RHS give the same hand-off trajectories. C++ chem_rhs_net5/17, Fortran rate_eq_simple/ulli.
 Test: golden/test_net17_solver_failure.cc (66 logged cells + hand-off grid). Not changed: net 3, He (He++ at abhe).
 
-## D-59. (2026-11-18) Optional recovery of C++ solver failures (SGCHEM_SOLVER_FAILURE_ENERGY_ONLY_COOLING)
-Off by default (the run aborts, as Arepo and the Fortran path do). With the flag, a dt collapse (100) or a spent
-substep budget (1) finishes the step from the last accepted state with the TNOCHEM explicit energy-only
-subcycle at frozen composition; the cell context and a per-thread count are printed. Species are not touched,
-the energy change goes through the cooling ledger like any chemistry step. Limits: steps of 0.1 e/|edot| can
-overshoot thermal equilibrium by up to 10% in cold gas; a flagged RHS at the accepted state leaves the energy
-frozen but books the last evaluation's CR heating; the test forces code 1 only (code 100 not exercised).
+## D-59. (2026-11-19) C++ solver failures: one retry, TNOCHEM finish in hot gas, else abort (Uli 2026-11-18)
+Nets 3, 5, 15, 16, 17 and 20 (the shared driver; net 18 has its own); tested for nets 5 and 17.
+A dt collapse (100) or a spent substep budget (1) no longer aborts at once:
+(1) Retry from the last accepted state with CVODE, rtol/atol and the substep safety factors x0.1, budget
+    CHEM_NSTEP_RETRY = 1e6 substeps (a code-1 cell can otherwise cost a second 9e6 budget). The retry is always
+    a CVODE retry, also when attempt 0 heated the cell above TNOCHEM. Logged; counted (cxx_stat_failure_retries).
+(2) If the retry fails and the state's bypass temperature is above TNOCHEM: finish the step through the TNOCHEM
+    path (hot-CIE ions, explicit energy-only subcycle), full cell dump, counted (cxx_stat_tnochem_finishes). The
+    energy change is booked by the cooling ledger like any chemistry step.
+(3) Otherwise return the code (the caller aborts, as Arepo) after the full cell dump.
+The dump (chem_dump_cell, one write per cell so threads do not interleave) holds the call-entry state, t_start,
+t_end, the current state and every ChemCell input at %.17g (all photorates, all pixel columns, CR energy density,
+...); chem_cell_parse rebuilds the cell from it. Every non-zero return dumps the cell. Each rank prints its
+retried/TNOCHEM counts after the cooling step when they change (cooling.cc, no collective).
+A flagged RHS evaluation books no fresh CR ionisation heating (the last accepted value is held) at every booking
+site: substep start, failure point, final evaluation, explicit subcycle. Fortran DVODE path unchanged (aborts).
+Tests: golden/test_solver_failure.cc (nets 5 and 17) phase R, TEST_SGCHEM_FORCED_SOLVER_FAILURE: forced codes 1
+and 100 per attempt; retry rescue and its start state; TNOCHEM finish after heating across TNOCHEM in attempt 0
+and in the retry; abort at 100 K; dump-and-replay.
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 

@@ -105,7 +105,6 @@ SGCHEM_DGR_REMY_RUYER14                  % no live dust: DGR follows Remy-Ruyer+
 #CRFLUID_SPEEDOFLIGHT_REDUCTION=(1.e8/C_LIGHT_CGS) % 1000 km/s CR transport speed (default c); transport along B, no isotropic fallback at B = 0 (Stella setups carry a field)
 #INPUT_READ_COSMICRAYENERGY              % keep IC CR energy on fresh starts
 #SGCHEM_KEEP_IC_ABUNDANCES             % keep IC SGChemTracAbund on fresh starts
-#SGCHEM_SOLVER_FAILURE_ENERGY_ONLY_COOLING      % C++ chemistry: solver failure finishes the step as energy-only cooling at frozen composition (logged), no abort
 
 ########## Gravity / N-body / KETJU ##########
 ADAPTIVE_GRAVSOFT_FORALL=1            % adaptive softening for gas only; stars use fixed SofteningStars
