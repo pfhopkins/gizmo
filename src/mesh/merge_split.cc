@@ -1385,7 +1385,9 @@ int merge_particles_ij(int i, int j)
        energy-conserving. */
     double egy_new = mtot * CellP[j].InternalEnergy + mtot * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv;
     egy_new = (egy_old - egy_new) / mtot; /* this residual needs to be put into the thermal energy */
+    double estep_res_raw = egy_new; (void)estep_res_raw;
     if(egy_new < -0.5*CellP[j].InternalEnergy) egy_new = -0.5 * CellP[j].InternalEnergy;
+    ESTEP_BOOK(EBK_MERGE_HEAT_NOT_RETURNED, mtot * (egy_new - estep_res_raw)); /* the -u/2 clamp */
     double egy_new_pred = mtot * CellP[j].InternalEnergyPred + mtot * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
     egy_new_pred = (egy_old_pred - egy_new_pred) / mtot;
     if(egy_new_pred < -0.5*CellP[j].InternalEnergyPred) egy_new_pred = -0.5 * CellP[j].InternalEnergyPred;
