@@ -10,6 +10,18 @@
 #define EXPAND_PREPROCESSOR_(VAL)     DO_PREPROCESSOR_EXPAND_(VAL) /* checks for a NON-ZERO value of this parameter */
 #define CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(VAL) !(EXPAND_PREPROCESSOR_(VAL) == 1) /* returns True if a non-zero int value of VAL is set */
 
+/* older spellings of renamed Config.sh flags that setups still use (or that are easy to type): accepted as aliases */
+#if defined(MERGESPLIT_HARDCODE_MAX_MASS) && defined(MERGE_SPLIT_HARDCODE_MAX_MASS)
+#error "Set only MERGE_SPLIT_HARDCODE_MAX_MASS (MERGESPLIT_HARDCODE_MAX_MASS is its older spelling)"
+#elif defined(MERGESPLIT_HARDCODE_MAX_MASS)
+#define MERGE_SPLIT_HARDCODE_MAX_MASS MERGESPLIT_HARDCODE_MAX_MASS
+#endif
+#if defined(MERGESPLIT_HARDCODE_MIN_MASS) && defined(MERGE_SPLIT_HARDCODE_MIN_MASS)
+#error "Set only MERGE_SPLIT_HARDCODE_MIN_MASS (MERGESPLIT_HARDCODE_MIN_MASS is its older spelling)"
+#elif defined(MERGESPLIT_HARDCODE_MIN_MASS)
+#define MERGE_SPLIT_HARDCODE_MIN_MASS MERGESPLIT_HARDCODE_MIN_MASS
+#endif
+
 /* set default slope limiters */
 #if !defined(SLOPE_LIMITER_TOLERANCE)
 #define SLOPE_LIMITER_TOLERANCE 1
