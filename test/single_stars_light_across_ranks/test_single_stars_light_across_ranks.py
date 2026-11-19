@@ -9,11 +9,13 @@ momentum per step (MomWinds.txt) of N ranks are compared with 1 rank.
 Bar (set before the first run): in 'switch', for every cell with G0_FUV(1 rank) above 1e-3 of its maximum and for every step,
 |X_N / X_1 - 1| <= max(2 x the control's largest deviation, 1 %) (1 % = the node refresh tolerance), for X = G0_FUV and the momentum.
 Mass constant to 1e-12; gas energy change minus the ledger's chemistry, floor and radiation-pressure kick rows below 1e-3 of the initial thermal energy.
-These runs use the opt-in GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE (Uli 2026-11-19: trunk's bounded staleness by default).
-Default build (no flag), bar set before the run: star light alone never causes a tree build: on 2 and 4 ranks 'switch' has as
-many tree builds as 'control'; the nodes keep the light of the last build on every rank, so G0_FUV and the momentum per step of N
-ranks agree with 1 rank within the same bar as above. The faint group's G0_FUV deviation from the rebuild-every-step reference
-without any build in the run (the staleness the default accepts over 2 kyr) is printed, not a bar.
+These runs use the opt-in GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE.
+Default build (no flag: GALSF_SINGLE_STARS_LIGHT_EXCHANGE, Uli 2026-11-19, GKS-95 option c: a star's light change is added up
+its node chain and sent to the ranks holding copies of those nodes, no build), bars set before the run: star light alone never
+causes a tree build: on 2 and 4 ranks 'switch' has as many tree builds as 'control'; G0_FUV and the momentum per step of N ranks
+agree with 1 rank within the same bar as above; and on 1, 2 and 4 ranks the final G0_FUV of 'switch' agrees with the opt-in
+build's (which refreshes or rebuilds) to 1 % (the drift tolerance of both). The exchange's cost (calls, stars, bytes, seconds)
+and the faint group's G0_FUV deviation from the rebuild-every-step reference are printed, not bars.
 """
 import os
 import shutil
@@ -110,8 +112,11 @@ def run(tables, case, ranks, exe="GIZMO"):
         g = F["PartType0"]; o = np.argsort(g["ParticleIDs"][()])
         g0 = g["G0_FUV"][()][o]
     rows = np.atleast_2d(np.loadtxt(d / "output" / "MomWinds.txt"))
-    builds = (d / f"test_{NAME}.out").read_text().count("Tree construction done")
-    RES[key] = dict(d=d, g0=g0, rows=rows, snaps=snaps, builds=builds)
+    text = (d / f"test_{NAME}.out").read_text()
+    builds = text.count("Tree construction done")
+    xl = [dict(kv.split("=") for kv in l.split()[1:]) for l in text.splitlines() if l.startswith("SINGLE_STAR_LIGHT_EXCHANGE: t=")]
+    xcost = (len(xl), sum(float(x["stars"]) for x in xl), sum(float(x["bytes"]) for x in xl), sum(float(x["seconds_max"]) for x in xl))
+    RES[key] = dict(d=d, g0=g0, rows=rows, snaps=snaps, builds=builds, xcost=xcost)
     return RES[key]
 
 
@@ -189,9 +194,21 @@ def test_faint_star_drift_seen(built, ranks):
     assert sel.sum() > 0 and dev.max() < 0.02
 
 
+@pytest.mark.parametrize("ranks", RANKS)
+def test_default_light_matches_refresh(built, ranks):
+    """default build: the light the walk sees after the switches equals the opt-in refresh's on the same ranks to 1 %"""
+    a, b = run(built, "switch", ranks, "GIZMO_default"), run(built, "switch", ranks)
+    lit = b["g0"] > 1e-3 * b["g0"].max()
+    dev = np.abs(a["g0"][lit] / b["g0"][lit] - 1)
+    n, st, by, sec = a["xcost"]
+    print(f"default {ranks} ranks: G0_FUV vs opt-in max {dev.max():.3e}, median {np.median(dev):.2e} over {lit.sum()} cells; "
+          f"exchange: {n} calls, {st:.0f} star changes, {by:.0f} bytes to other ranks, {sec:.3e} s (sum of per-call max); tree builds {a['builds']}")
+    assert dev.max() <= 0.01
+
+
 @pytest.mark.parametrize("ranks", RANKS[1:])
 def test_default_light_causes_no_tree_build(built, ranks):
-    """default build: light switches cause no build and the ranks still agree (all hold the last build's light)"""
+    """default build: light switches cause no build and the ranks agree (the light changes reach every copy of the nodes)"""
     exe = "GIZMO_default"
     cg, cp, _ = deviations(built, "control", ranks, exe)
     bar = max(2 * max(cg.max(), cp.max() if cp.size else 0), 0.01)

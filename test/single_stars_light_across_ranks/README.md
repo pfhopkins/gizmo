@@ -1,10 +1,10 @@
 # single_stars_light_across_ranks
 
-A star that starts to shine or goes dark between tree builds must light the gas the same on every rank. By default (trunk's
-bounded staleness, Uli 2026-11-19) the nodes keep the light of the last build on every rank. With the opt-in
-`GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE` a light switch or a drift of more than 1 % of a star's own light refreshes the node
-luminosities (one rank) or rebuilds the tree (several ranks: other ranks' copies of a rank's nodes are re-sent only by a build).
-All tests below except the default one use the opt-in build.
+A star that starts to shine or goes dark between tree builds must light the gas the same on every rank. By default
+(`GALSF_SINGLE_STARS_LIGHT_EXCHANGE`, Uli 2026-11-19, GKS-95 option c) such a change, or a drift of more than 1 % of a star's own
+light, is added up the star's node chain on its rank and sent only to the ranks holding copies of those nodes or of the star's
+leaf; no build. With the opt-in `GALSF_SINGLE_STARS_LIGHT_REFRESHES_TREE` the change refreshes the node luminosities (one rank)
+or rebuilds the tree (several ranks). All tests below except the default ones use the opt-in build.
 
 Problem: 16^3 lattice of 1 Msun cells at n_H = 1 (thin), SGChem network 5, TreeCol band fluxes from the gravity walk,
 radiation pressure per cell, 2 kyr, no tree or domain rebuild after the start (`DomainBuild_ActiveFraction`,
@@ -25,5 +25,7 @@ Inputs: `SUNDIALS_DIR`; tables from `GIZMO_STELLA_TABLES_DIR` (else `scripts/get
   luminosity, so faint stars never triggered a refresh.
 - `test_default_light_causes_no_tree_build` (2, 4 ranks; build without the flag): bar set before the run: `switch` has as many
   tree builds as `control`, and G0_FUV and the momentum per step of N ranks agree with 1 rank within the bar of
-  `test_light_switch_seen_across_ranks`. The faint group's G0_FUV deviation from the rebuild-every-step reference with no build
-  for 2 kyr (the staleness the default accepts) is printed, not a bar.
+  `test_light_switch_seen_across_ranks`. The faint group's G0_FUV deviation from the rebuild-every-step reference is printed.
+- `test_default_light_matches_refresh` (1, 2, 4 ranks): bar set before the run: the final G0_FUV of `switch` in the default build
+  agrees with the opt-in build's on the same ranks to 1 % (the drift tolerance of both). Prints the exchange's cost (calls, star
+  changes, bytes to other ranks, seconds).
