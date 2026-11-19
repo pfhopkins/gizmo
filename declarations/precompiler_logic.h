@@ -1469,6 +1469,9 @@
 #if defined(PMGRID) || defined(GRAVITY_NOT_PERIODIC) || defined(GRAVITY_SPHERICAL_SYMMETRY) || (defined(BOX_SHEARING) && (BOX_SHEARING < 3))
 #error "GRAVITY_PERIODIC_XY is incompatible with PMGRID, GRAVITY_NOT_PERIODIC, GRAVITY_SPHERICAL_SYMMETRY and 2D shearing sheets"
 #endif
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+#error "STARS_HERMITE_DIRECT_GRAVITY has no x/y Ewald correction (gravity/star_direct_gravity.cc): not combinable with GRAVITY_PERIODIC_XY"
+#endif
 #endif
 
 /* SNe injected one at a time below the scale of their ejecta need the timestep broadcast; single-star setups resolve the ejecta instead.
