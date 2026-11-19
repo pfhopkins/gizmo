@@ -20,9 +20,11 @@
 //            R3a    first attempt rejected (cold), the retry heats the cell above TNOCHEM and fails: TNOCHEM finish
 //            R3b    first attempt heats the cell above TNOCHEM and fails, the CVODE retry fails: TNOCHEM finish
 //            R4/R5  retry fails in a 100 K cell (code 100 / 1): abort with that code
-//            R6     the dumps of R3a/R3b/R4 rebuild the cell (chem_cell_parse) and replay it bit for bit
-//            R7     a flagged evaluation at a substep start / at the final evaluation (CR heating set to 1e30) books
-//                   no CR ionisation heating: the integral stays within 50% of the unflagged solve
+//            R6     the dumps of R3a/R3b/R4 rebuild a NaN-filled cell (chem_cell_parse) and replay it bit for bit
+//            R7     a flagged evaluation (CR heating set to 1e30) books no stale CR ionisation heating: at a substep
+//                   start (a), at the final evaluation (b), at the failure point before the retry (c), in the TNOCHEM
+//                   subcycle (d, nothing applied, nothing booked); (a)-(c) within 50% of the unflagged solve,
+//                   (d) at most 1.5 x the unflagged finish
 //
 // Usage: test_solver_failure [csv]      (run where gizmo/cooling/sgchem holds the tables)
 
@@ -100,7 +102,7 @@ extern thread_local int chem_test_force_failure[2];
 extern thread_local double chem_test_retry_start_y[CHEM_NSPEC_MAX];
 extern thread_local double chem_test_retry_start_t;
 extern thread_local std::string chem_test_last_dump;
-extern thread_local long chem_test_flag_rhs[2];
+extern thread_local long chem_test_flag_rhs[4];
 #endif
 
 static const int NET = CHEMISTRYNETWORK;
@@ -222,6 +224,7 @@ static double temp_of(const ChemTables& T, double yn, double energy, const doubl
     cxx_lookup_temp_gamma(y[IH2], CHEM_COMP.abhe, energy / (yntot * CHEM_KBOLTZ), &t, &g, T);
     return t;
 }
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
 static double energy_at(const ChemTables& T, double yn, double T0, const double* y)
 {
     double yntot = (1.0 + CHEM_COMP.abhe - y[IH2] + abe_of(y)) * yn;
@@ -233,6 +236,7 @@ static double energy_at(const ChemTables& T, double yn, double T0, const double*
     }
     return e;
 }
+#endif
 // TNOCHEM bypass temperature (H electrons only, cvode_driver.cc) and the energy that gives Tb
 static double bypass_T(const ChemTables& T, double yn, double e, const double* y)
 {
@@ -268,6 +272,7 @@ static ChemTables* g_cx = nullptr;
 
 struct Res { int rc; long substeps, retries, floors, excess, fretries, tfinish; double e, T, crh; double y[NSPEC]; };
 
+#ifndef TEST_SGCHEM_FORCED_SOLVER_FAILURE
 static Res run_fortran(const LoggedCell& L, double dt, double yn, double e0, const double* y0)
 {
     Res r; double y[NSPEC]; for (int i = 0; i < NSPEC; i++) y[i] = y0[i];
@@ -297,6 +302,7 @@ static Res run_fortran(const LoggedCell& L, double dt, double yn, double e0, con
     return r;
 }
 
+#endif
 // the C++ cell as GIZMO builds it (chem_bind_cell + cxx_calc_photo)
 static void make_cell(ChemCell& c, const LoggedCell& L, double yn, const double* y, double e)
 {
@@ -337,8 +343,11 @@ static Res run_cxx(const LoggedCell& L, double dt, double yn, double e0, const d
 
 static FILE* g_csv = nullptr;
 static std::vector<double> g_refT;   // converged final T per A/H call, in call order
+#ifndef TEST_SGCHEM_FORCED_SOLVER_FAILURE
 static size_t g_row = 0;
+#endif
 
+#ifndef TEST_WRITE_CONVERGED_REFERENCE
 static int load_reference(const char* path)
 {
     FILE* f = std::fopen(path, "r");
@@ -353,6 +362,8 @@ static int load_reference(const char* path)
     return (int)g_refT.size();
 }
 
+#endif
+#ifndef TEST_SGCHEM_FORCED_SOLVER_FAILURE
 // one C++/DVODE pair against the A/H gate; returns 1 if it fails
 static int check_pair(const char* tag, const LoggedCell& L, double dt, double yn, double e0, const double* y0)
 {
@@ -363,6 +374,7 @@ static int check_pair(const char* tag, const LoggedCell& L, double dt, double yn
 #ifdef TEST_WRITE_CONVERGED_REFERENCE
     if (g_csv) std::fprintf(g_csv, "%s %ld %.17g %.17g %.17g %.17g\n", tag, L.id, dt, yn, c.T, f.T);
     const double Tref = c.T;
+    (void)k;
 #else
     const double Tref = (k < g_refT.size()) ? g_refT[k] : NAN;
 #endif
@@ -387,6 +399,7 @@ static int check_pair(const char* tag, const LoggedCell& L, double dt, double yn
     std::fflush(stdout);
     return bad;
 }
+#endif
 
 int main(int argc, char** argv)
 {
@@ -401,6 +414,8 @@ int main(int argc, char** argv)
     std::snprintf(reffile, sizeof(reffile), "gizmo/cooling/sgchem/cxx/golden/net%d_converged_reference.txt", NET);
 #ifndef TEST_WRITE_CONVERGED_REFERENCE
     std::printf("converged reference: %d calls from %s\n", load_reference(reffile), reffile);
+#else
+    (void)reffile;
 #endif
     init_commons(cells[0]);
     COOLINMO(); CHEMINMO(); INIT_TOLERANCES();
@@ -551,7 +566,8 @@ int main(int argc, char** argv)
 
     // ---------------- R6: rebuild each dumped cell from its dump alone and replay it ----------------
     for (size_t k = 0; k < dumps.size(); k++) {
-        ChemCell c; chem_bind_cell(c, Cx, NET);
+        ChemCell c;
+        std::memset(static_cast<void*>(&c), 0xff, sizeof(c));   // every field the dump misses is NaN (or -1)
         ChemCellEntry e;
         const int missing = chem_cell_parse(dumps[k].c_str(), c, e);
         c.tab = &Cx;
@@ -592,6 +608,51 @@ int main(int argc, char** argv)
                         : "final evaluation", Lm->id, best.substeps, c.crh, best.crh, ratio, ok ? "PASS" : "FAIL");
             nbadR += !ok;
         }
+    }
+    // R7c: flagged evaluation at the failure point (one accepted substep pending), then the retry
+    {
+        const LoggedCell* Lm = &cells[0];
+        long most = 0;
+        for (const LoggedCell& L : cells) {
+            Res u = run_cxx(L, L.dt, L.yn, L.y[ITMP], L.y, nullptr);
+            if (u.substeps > most) { most = u.substeps; Lm = &L; }
+        }
+        force(1, 0);
+        Res ref = run_cxx(*Lm, Lm->dt, Lm->yn, Lm->y[ITMP], Lm->y, nullptr);
+        chem_test_flag_rhs[2] = 1;
+        Res c = run_cxx(*Lm, Lm->dt, Lm->yn, Lm->y[ITMP], Lm->y, nullptr);
+        chem_test_flag_rhs[2] = 0;
+        force(0, 0);
+        const double ratio = c.crh / ref.crh;
+        int ok = (ref.fretries == 1) && (ref.crh > 0.0) && std::isfinite(c.crh) && (ratio > 0.5) && (ratio < 1.5) && (c.rc == 0);
+        std::printf("PHASE R7c -- flagged evaluation at the failure point, CR heating 1e30 (cell %ld): integral %.6g vs unflagged "
+                    "%.6g (ratio %.4g): %s\n", Lm->id, c.crh, ref.crh, ratio, ok ? "PASS" : "FAIL");
+        nbadR += !ok;
+    }
+    // R7d: flagged first evaluation of the TNOCHEM subcycle after a failed retry (the R3a cell)
+    {
+        double y[NSPEC] = {0};
+        hot_cie(y, L0.abundD);
+#if CHEMISTRYNETWORK == 17
+        y[IHEPP] = 0.0; y[IHEP] = CHEM_COMP.abhe;
+        g_rt_heat = 1e-17;
+#else
+        y[IHP] = 0.5;
+        g_rt_heat = 1e-15;
+#endif
+        y[ITMP] = energy_bypass_T(Cx, 1.0, 4.97e5, y);
+        force(100, 1);
+        Res ref = run_cxx(L0, 1e11, 1.0, y[ITMP], y, nullptr);
+        chem_test_flag_rhs[3] = 1;
+        Res c = run_cxx(L0, 1e11, 1.0, y[ITMP], y, nullptr);
+        chem_test_flag_rhs[3] = 0;
+        force(0, 0);
+        g_rt_heat = 0.0;
+        int ok = (ref.tfinish == 1) && (c.tfinish == 1) && std::isfinite(c.crh) && (c.crh >= 0.0) && (c.crh <= 1.5 * ref.crh)
+              && (c.rc == 0);
+        std::printf("PHASE R7d -- flagged first TNOCHEM subcycle evaluation, CR heating 1e30: integral %.6g vs unflagged %.6g: %s\n",
+                    c.crh, ref.crh, ok ? "PASS" : "FAIL");
+        nbadR += !ok;
     }
     const int ok = (nbadR == 0);
     std::printf("  GATE R: %s\n", ok ? "PASS" : "FAIL");

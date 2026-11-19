@@ -72,7 +72,7 @@ thread_local int chem_test_force_failure[2] = {0, 0}; // per attempt: 1 = subste
 thread_local double chem_test_retry_start_y[CHEM_NSPEC_MAX];   // state and time the retry started from
 thread_local double chem_test_retry_start_t = -1.0;
 thread_local std::string chem_test_last_dump;                   // last full cell dump
-thread_local long chem_test_flag_rhs[2] = {0, 0};   // flag the evaluation at the start of substep [0] (0 = off), the final one [1]
+thread_local long chem_test_flag_rhs[4] = {0, 0, 0, 0};   // flag: substep-start evaluation number [0], final [1], at recover [2], first subcycle [3]
 #endif
 
 // CVODE step floor: 10 x the double resolution of the time coordinate at the substep end. Below it

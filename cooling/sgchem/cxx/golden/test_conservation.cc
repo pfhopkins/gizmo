@@ -890,14 +890,32 @@ static int phase_M(const ChemTables& TT)
     }
     { int pass = rfl.npass == rfl.n; ok &= pass; std::printf("  flag (0/1)   %5ld/%-5ld %s\n", rfl.npass, rfl.n, pass ? "PASS" : "FAIL"); }
     // one-zone: the B2 cell 3782 solve (n 4.4, 1.65e5 K, x_H+ 0.9999951, dt 1.017e11 s) at three Gamma_HI
-    // Uli 2026-11-19: each backend against the converged solution (both backends at rtol 1e-8, before and after D-58),
-    // 1% bar; production rtol unchanged. Networks without a committed reference keep the backend-vs-backend gate.
-#if CHEMISTRYNETWORK == 17
-    const double Tref[3] = {1.790966e4, 1.804222e4, 1.805765e4}, xref[3] = {0.999893760, 0.999989428, 0.999998943};
-    const int have_ref = 1;
+    // Uli 2026-11-19: each backend against the converged solution with the 1% bar; production rtol unchanged.
+    // Reference: golden/net<N>_onezone_converged_reference.txt, both backends at rtol 1e-8, written by this test built
+    // with -DTEST_WRITE_CONVERGED_REFERENCE (build_conservation.sh REFERENCE=1, golden/make_converged_references.sh).
+    // Required for nets 5 and 17; other networks without a reference keep the backend-vs-backend gate.
+    double Tref[3] = {0, 0, 0}, xref[3] = {0, 0, 0};
+    int have_ref = 0;
+#ifdef TEST_WRITE_CONVERGED_REFERENCE
+    FILE* refout = std::fopen(std::getenv("CONS_REF_OUT") ? std::getenv("CONS_REF_OUT") : "onezone_reference.txt", "w");
 #else
-    const double Tref[3] = {0, 0, 0}, xref[3] = {0, 0, 0};
-    const int have_ref = 0;
+    {
+        char rp[256];
+        std::snprintf(rp, sizeof(rp), "gizmo/cooling/sgchem/cxx/golden/net%d_onezone_converged_reference.txt", NET);
+        FILE* rf = std::fopen(rp, "r");
+        char line[512];
+        double g, tc, tf, xc, xf;
+        while (rf && std::fgets(line, sizeof(line), rf))
+            if (line[0] != '#' && std::sscanf(line, "%lf %lf %lf %lf %lf", &g, &tc, &tf, &xc, &xf) == 5 && have_ref < 3) {
+                Tref[have_ref] = tc; xref[have_ref] = xc; have_ref++;
+            }
+        if (rf) std::fclose(rf);
+        have_ref = (have_ref == 3);
+        if (!have_ref && (NET == 5 || NET == 17)) {
+            std::printf("  FAIL: no converged one-zone reference %s\n", rp);
+            ok = 0;
+        }
+    }
 #endif
     std::printf("  one-zone (n=4.4, T0=1.65e5 K, dt=1.017e11 s), gate final T and x_H+ within 1%% of %s:\n",
                 have_ref ? "the converged rtol-1e-8 solution, each backend" : "Fortran DVODE (C++ CVODE)");
@@ -916,6 +934,9 @@ static int phase_M(const ChemTables& TT)
         long nrhs = cxx_stat_rhs_evals - n0;
         double TF = temp_of(*g_cx, yn, eF, yF), TC = temp_of(*g_cx, yn, eC, yC);
         double dT, dx;
+#ifdef TEST_WRITE_CONVERGED_REFERENCE
+        if (refout) std::fprintf(refout, "%.17g %.17g %.17g %.17g %.17g\n", G, TC, TF, yC[IHP], yF[IHP]);
+#endif
         if (have_ref) {
             dT = std::max(std::fabs(TF - Tref[kG]), std::fabs(TC - Tref[kG])) / Tref[kG];
             dx = std::max(std::fabs(yF[IHP] - xref[kG]), std::fabs(yC[IHP] - xref[kG])) / xref[kG];
@@ -927,6 +948,9 @@ static int phase_M(const ChemTables& TT)
                     G, rcF, rcC, TF, TC, have_ref ? Tref[kG] : TF, dT, yF[IHP], yC[IHP], nrhs, pass ? "PASS" : "FAIL");
         kG++;
     }
+#ifdef TEST_WRITE_CONVERGED_REFERENCE
+    if (refout) std::fclose(refout);
+#endif
     COOLRC.rt_phot_HI = COOLRC.rt_heat_HI = 0.0;
     return ok;
 }

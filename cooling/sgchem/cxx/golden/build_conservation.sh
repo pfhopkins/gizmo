@@ -11,7 +11,11 @@
 #                                 are untouched, so PHASE R parity is unaffected
 #   test_gate3_netN               table/leaf-kernel golden (tol 1e-12)
 #   test_onezone_ab_netN          nets 3/15/16 only: existing RHS + one-zone A/B golden
+# REFERENCE=1: both backends at rtol 1e-8 (C++ CHEM_RTOL, Fortran RTOL) with TEST_WRITE_CONVERGED_REFERENCE; runs only
+#   the phase-M one-zone and writes OUT/onezone_reference_netN.txt (golden/make_converged_references.sh)
 set -e
+XC=""; XF=""
+if [ "${REFERENCE:-0}" = 1 ]; then XC="-DCHEM_RTOL=1e-8 -DTEST_WRITE_CONVERGED_REFERENCE"; XF="-DRTOL=1d-8"; fi
 SRC=$(readlink -f "$1"); OUT=$(readlink -f -m "$2"); NET=$3
 SUN=${4:-/orion/ptmp/uli/orion/fb_tests/_sundials/install}
 SUNLIB=$(ls -d "$SUN/lib64" "$SUN/lib" 2>/dev/null | head -1)
@@ -75,7 +79,7 @@ FSRC="coolinmo cheminmo spline cool_func photoinit_ism dvode evolve_abundances \
       wss_z_collis"
 FO=""
 for f in $FSRC; do
-    $FC -O2 -I"$TREE" -I"$CC_DIR" -c "$CC_DIR/$f.F" -o "$OUT/obj/$f.o" &
+    $FC -O2 $XF -I"$TREE" -I"$CC_DIR" -c "$CC_DIR/$f.F" -o "$OUT/obj/$f.o" &
     FO="$FO $OUT/obj/$f.o"
     while [ "$(jobs -r | wc -l)" -ge "$J" ]; do wait -n; done
 done
@@ -85,10 +89,10 @@ wait
 CO=""; CI=""
 for s in $(cd "$CX" && ls *.cc | sed 's/\.cc$//'); do
     [ "$s" = chem_gizmo_backend ] && continue
-    $CXX -O2 -std=c++14 -I"$CX" -I"$TREE" -I"$SUN/include" -c "$CX/$s.cc" -o "$OUT/obj/$s.o" &
+    $CXX -O2 $XC -std=c++14 -I"$CX" -I"$TREE" -I"$SUN/include" -c "$CX/$s.cc" -o "$OUT/obj/$s.o" &
     CO="$CO $OUT/obj/$s.o"
     if [ -f "$OUT/instr/$s.cc" ]; then
-        $CXX -O2 -std=c++14 -I"$CX" -I"$TREE" -I"$SUN/include" -c "$OUT/instr/$s.cc" -o "$OUT/obj/${s}_instr.o" &
+        $CXX -O2 $XC -std=c++14 -I"$CX" -I"$TREE" -I"$SUN/include" -c "$OUT/instr/$s.cc" -o "$OUT/obj/${s}_instr.o" &
         CI="$CI $OUT/obj/${s}_instr.o"
     else
         CI="$CI $OUT/obj/$s.o"
@@ -99,16 +103,22 @@ wait
 
 SUNLIBS="-L$SUNLIB -lsundials_cvode -lsundials_nvecserial -lsundials_sunmatrixdense \
          -lsundials_sunlinsoldense -lsundials_sunnonlinsolnewton -lsundials_generic"
-$CXX -O2 -std=c++14 -I"$CX" -I"$TREE" -I"$SUN/include" -c "$CX/golden/test_conservation.cc" -o "$OUT/obj/test_conservation.o"
+$CXX -O2 $XC -std=c++14 -I"$CX" -I"$TREE" -I"$SUN/include" -c "$CX/golden/test_conservation.cc" -o "$OUT/obj/test_conservation.o"
 $FC "$OUT/obj/test_conservation.o" $CI $FO $SUNLIBS -lstdc++ -lm -o "$OUT/test_conservation_net$NET"
 TESTS="test_gate3"
 [ "$NET" = 3 -o "$NET" = 15 -o "$NET" = 16 ] && TESTS="$TESTS test_onezone_ab"
 for t in $TESTS; do
-    $CXX -O2 -std=c++14 -I"$CX" -I"$TREE" -I"$SUN/include" -c "$CX/golden/$t.cc" -o "$OUT/obj/$t.o"
+    $CXX -O2 $XC -std=c++14 -I"$CX" -I"$TREE" -I"$SUN/include" -c "$CX/golden/$t.cc" -o "$OUT/obj/$t.o"
     $FC "$OUT/obj/$t.o" $CO $FO $SUNLIBS -lstdc++ -lm -o "$OUT/${t}_net$NET"
 done
 echo "== built: test_conservation_net$NET $TESTS"
 [ "${BUILD_ONLY:-0}" = 1 ] && exit 0
+if [ "${REFERENCE:-0}" = 1 ]; then
+    ( cd "$OUT/rundir" && CONS_PHASES=M CONS_REF_OUT="$OUT/onezone_reference_net$NET.txt" "$OUT/test_conservation_net$NET" "$OUT/conservation_net$NET.csv" ) \
+        > "$OUT/conservation_net$NET.txt" 2> "$OUT/conservation_net$NET.err"
+    echo "== net $NET reference: $(grep -c . "$OUT/onezone_reference_net$NET.txt") one-zone lines"
+    exit 0
+fi
 
 STATUS=0
 ( cd "$OUT/rundir" && "$OUT/test_conservation_net$NET" "$OUT/conservation_net$NET.csv" ) \

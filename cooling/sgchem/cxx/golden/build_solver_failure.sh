@@ -9,6 +9,8 @@
 #         (eh2-table.txt, energy-table-x.txt, H2-cooling-ratios.dat, wss_z_collis.txt) in cooling/sgchem
 #   OUT   objects, binaries and results (OUT/<build>/result.txt, OUT/default/AH.csv)
 #   BUILDS="default forced" (default), EXTRA_CXXFLAGS for both builds (e.g. -DTEST_PARENT_DRIVER, default only)
+#   REFERENCE=1: default build only, both backends at rtol 1e-8 (C++ CHEM_RTOL, Fortran RTOL), writes the converged
+#   A/H reference to OUT/default/AH.csv (golden/make_converged_references.sh)
 # Run inside a batch job (never on the login node).
 set -e
 TREE=$(readlink -f "$1"); OUT=$(readlink -f -m "$2")
@@ -21,14 +23,17 @@ NET=$(sed -n 's/^#define CHEMISTRYNETWORK \([0-9]*\).*/\1/p' "$TREE/GIZMO_config
 SUNLIBS="-L$SUNLIB -lsundials_cvode -lsundials_nvecserial -lsundials_sunmatrixdense \
          -lsundials_sunlinsoldense -lsundials_sunnonlinsolnewton -lsundials_generic"
 STATUS=0
-for B in ${BUILDS:-default forced}; do
+XF=""; BL=${BUILDS:-default forced}
+if [ "${REFERENCE:-0}" = 1 ]; then BL=default; XF="-DRTOL=1d-8"; fi
+for B in $BL; do
     X="${EXTRA_CXXFLAGS:-}"; [ $B = forced ] && X="$X -DTEST_SGCHEM_FORCED_SOLVER_FAILURE"
+    [ "${REFERENCE:-0}" = 1 ] && X="$X -DCHEM_RTOL=1e-8 -DTEST_WRITE_CONVERGED_REFERENCE"
     O=$OUT/$B; mkdir -p $O/obj $O/rundir; ln -sfn "$TREE" $O/rundir/gizmo
     FO=""; CO=""
     for f in coolinmo cheminmo spline cool_func photoinit_ism dvode evolve_abundances rate_eq_simple rate_eq_ulli \
              rate_eq_mol rate_eq_nl99 rate_eq_gong17 jac cool_util const_rates validate_rates calc_photo calc_temp \
              compute_gamma wss_z_collis; do
-        gfortran -O2 -I"$TREE" -I"$CC_DIR" -c "$CC_DIR/$f.F" -o $O/obj/$f.o 2>> $O/fortran_warnings.txt &
+        gfortran -O2 $XF -I"$TREE" -I"$CC_DIR" -c "$CC_DIR/$f.F" -o $O/obj/$f.o 2>> $O/fortran_warnings.txt &
         FO="$FO $O/obj/$f.o"
         while [ "$(jobs -r | wc -l)" -ge "$J" ]; do wait -n; done
     done

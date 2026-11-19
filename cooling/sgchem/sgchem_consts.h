@@ -631,7 +631,9 @@
 /* Used for rate_eq */ 
 #define  NRPAR 7
 #define  NIPAR 2
+#ifndef RTOL   /* gfortran -DRTOL=1d-8 for the converged references */
 #define  RTOL      1d-4
+#endif
 #define  ATOL_H2   1d-7
 #define  ATOL_HP   1d-12
 #define  ATOL_C    1d-16
