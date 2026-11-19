@@ -1,15 +1,15 @@
 InitCondFile                    ketju_pm_ics
 OutputDir                       output
-TimeBetSnapshot                 1.8e-5
-TimeBetStatistics               1.8e-5
+TimeBetSnapshot                 1.54e-4
+TimeBetStatistics               1.54e-4
 TimeOfFirstSnapshot             0
 SnapFormat                      3
 ICFormat                        3
-BoxSize                         2.4240684e-4
+BoxSize                         0.0009696273633806437
 TimeBegin                       0.0
-TimeMax                         1.8e-5
+TimeMax                         1.54e-4
 ComovingIntegrationOn           0
-MaxSizeTimestep                 2e-7
+MaxSizeTimestep                 1.6e-6
 MinSizeTimestep                 0
 TreeDomainUpdateFrequency       0.05
 PartAllocFactor                 5.0
@@ -33,7 +33,7 @@ SofteningBulge                  0.020
 SofteningStars                  1e-6
 SofteningBndry                  0.005
 TidalTimestepPrefac             1.0
-KetjuRegionRadius               4.85e-6
+KetjuRegionRadius               3.8785e-6       % 800 AU physical: below r_s/2 = 976 AU (PMGRID 128, L = 2e5 AU)
 KetjuMinStarMass                0.5e-11
 KetjuUseStarStarSoftening       0
 KetjuTimestepLimitingFactor     10
