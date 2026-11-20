@@ -40,12 +40,17 @@ UNIT_E = 1.989e33 * 1e10  # erg per code energy (Msun, km/s)
 
 @pytest.fixture(scope="module")
 def out():
+    return build_and_run("run")
+
+
+def build_and_run(tag, flags=()):
+    """build (with extra Config flags) and run the problem in HERE/<tag>; returns its output directory"""
     if not os.environ.get("SUNDIALS_DIR"):
         pytest.skip("set SUNDIALS_DIR (SGCHEM builds against SUNDIALS 6.x or 7.x)")
     tables = get_stellar_evolution_tables()
     get_cooling_tables(str(HERE))
-    build_gizmo_for_test(NAME)
-    d = HERE / "run"
+    build_gizmo_for_test(NAME, extra_config_flags=flags)
+    d = HERE / tag
     shutil.rmtree(d, ignore_errors=True)
     (d / "output").mkdir(parents=True)
     tab = Tables(tables["StellarTablesFile"])
@@ -89,3 +94,12 @@ def test_sn_and_winds_booked(out):
     e_sn = s[-1]["b_fb_sn"] * UNIT_E
     print(f"{len(s)} syncs; booked SN {e_sn:.6e} erg, winds {s[-1]['b_fb_wind'] * UNIT_E:.3e} erg; last int_res {s[-1]['int_res'] * UNIT_E:+.3e} erg")
     assert abs(e_sn / 1e51 - 1) < 1e-6 and s[-1]["b_fb_wind"] > 0
+
+
+def test_heat_after_chemistry_is_reported():
+    """bar (written before the run): heat added after the chemistry (TEST_COOLING_ADDS_1PCT_HEAT_AFTER_CHEMISTRY, u x 1.01 of every
+    cooled cell) is unbooked, so the exact cooling stage reports it: at least one cooling STAGE finding (the default run has none,
+    test_traces_close). Runs last: its build replaces the default binary (stella_dev 2758c8713)"""
+    rep = check_conservation_traces(str(build_and_run("run_heat_after_chemistry", ("TEST_COOLING_ADDS_1PCT_HEAT_AFTER_CHEMISTRY",))))
+    print(rep.summary())
+    assert any(f["kind"] == "energy_stage" and f["stage"] == "cooling" for f in rep.findings), rep.summary()

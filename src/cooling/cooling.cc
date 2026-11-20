@@ -562,6 +562,9 @@ void cooling_parent_routine(void)
     {
         do_the_cooling_for_particle(cool_indices[j], P, CellP);
     }
+#ifdef TEST_COOLING_ADDS_1PCT_HEAT_AFTER_CHEMISTRY /* test only: unbooked heat the energy trace must report */
+    for(int j = 0; j < N_active; j++) {CellP[cool_indices[j]].InternalEnergy *= 1.01; CellP[cool_indices[j]].InternalEnergyPred *= 1.01;}
+#endif
 #ifdef TEST_COOLING_COMPARE_THREADED_PASS_WITH_SERIAL_PASS
     {
         int n_bad = 0, j_bad = -1;
