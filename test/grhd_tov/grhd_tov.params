@@ -1,0 +1,29 @@
+% TOV star (Lupi 2023): polytrope K = 1, Gamma = 2, central rest-mass density 0.129285, in its own tabulated static metric
+% (areal radius). t_dyn = 1/sqrt(rho_c) = 2.78, so TimeMax = 20 is about 7 dynamical times. Geometric units (G = c = 1).
+InitCondFile                       grhd_tov_ics
+ICFormat                           3
+OutputDir                          output
+TimeLimitCPU                       3600
+PartAllocFactor                    2.0
+TimeBegin                          0
+TimeMax                            20
+ComovingIntegrationOn              0
+BoxSize                            0
+OutputListOn                       0
+TimeOfFirstSnapshot                0
+TimeBetSnapshot                    1.0
+MaxSizeTimestep                    0.05
+MinSizeTimestep                    1e-12
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.5
+UnitMass_in_g                      1
+SofteningGas                       0.001
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+TimeBetStatistics                  0.01
+MaxRMSDisplacementFac              0.125
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.0025
+ResubmitOn                         0
+ResubmitCommand                    none
+GR_MetricTableFile                 grhd_tov_exact.txt

@@ -154,6 +154,7 @@
     + [Continuum Vlasov (Collisionless Boltzmann) Tests](#tests-cbe)
     + [Magneto-Hydrodynamics Tests](#tests-mhd) (waves, shocktubes, field-loops, current sheets, Orszag-Tang vortex, rotors, MRI, jets, MHD-mixing/gravity)
         + [Non-Ideal MHD and Multi-Fluid Tests](#tests-mhd-nonideal)
+    + [General-Relativistic Hydrodynamics Tests](#tests-gr) (relativistic shock tube, TOV star, Michel accretion onto a black hole)
     + [Solid-Body, Elasto-Dynamics, and Equation-of-State Tests](#tests-elastic)
         + [Bouncing Rubber Cylinders](#tests-elastic-rubberrings), [Elastic Waves, Uniform Tension, Bending and Plastic Impact](#tests-elastic-dynamics), [Impact Cratering with Damage and Porosity](#tests-elastic-cratering), [Grain-to-Solid Promotion](#tests-elastic-grainpromotion)
         + [Self-Gravitating Planetary Bodies](#tests-elastic-planets), [Tabulated Equations of State](#tests-elastic-eos)
@@ -5581,6 +5582,18 @@ These problems exercise the non-ideal terms (`MHD_NON_IDEAL`: Ohmic resistivity,
 **Biermann Battery Growth** (`test/biermann_growth`): A 2D periodic box with $\mathbf{B}=0$ and orthogonal sinusoidal gradients in density and temperature, from which the electron Biermann battery must generate a $B_{z}$ field. Uses `MAGNETIC`, `MHD_BATTERY_MECHANISMS=1`, `MHD_B_SET_IN_PARAMS`, `BOX_SPATIAL_DIMENSION=2`; the IC is generated locally by `make_biermann_growth_ics.py`. The test compares the field near the source maximum against the analytic rate $\mathrm{d}B_{z}/\mathrm{d}t = -(c\,k_{B}/e)\,a\,b\,T_{0}\,k^{2}$, requiring the correct sign and a magnitude within a factor of 5. It is a sign and order-of-magnitude check on the battery source term, not a precision convergence test.
 
 **Ion-Neutral Ambipolar Drag Relaxation** (`test/ionneutral_drag`): Two interleaved Type=0 fluids in a 1D periodic box — 32 ions tagged `FluidType=FLUID_ION` (with $v_x = +10^{-4}$ and a small $B_x$) interleaved with 32 neutrals tagged `FluidType=FLUID_DEFAULT` ($v=0$, $B=0$) — relax exponentially via the Draine ambipolar drag with $\mathrm{d}(\Delta v)/\mathrm{d}t = -\gamma_{\rm AD}(\rho_i+\rho_n)\,\Delta v$. Code units are chosen so $\gamma_{\rm AD,code}=1$ and $\rho_{\rm total}=1$, yielding analytic $t_{\rm damp}=1$ in code time. The pytest gate fits the measured decay rate to $\exp(-t)$ across 5 e-folds and asserts $\max|B_{\rm neutral}|<10^{-12}$ throughout (the cross-fluid MHD terms are skipped for neutrals, which therefore stay at $B=0$ under induction). The IC is generated locally by `make_ionneutral_drag_ics.py` (no website download). A recorded run measures a decay rate of 0.9997 against the analytic 1 over the full 5 e-folds. Uses `HYDRO_MULTIFLUID`, `HYDRO_MULTIFLUID_IONNEUTRAL`, `MAGNETIC`, `HYDRO_MESHLESS_FINITE_MASS`, `BOX_SPATIAL_DIMENSION=1`.
+
+
+<a name="tests-gr"></a>
+## General-Relativistic Hydrodynamics Tests
+
+These problems validate the general-relativistic hydrodynamics module (`GENERAL_RELATIVITY`, see [General-Relativistic Hydrodynamics](#config-fluids-gr); Lupi 2023, MNRAS, 519, 1115). Each runs with the HLL solver for both MFM and MFV and compares the final state with an exact or analytic solution.
+
+**Relativistic Shock Tube** (`test/grhd_shocktube`): Problem 1 of Martí & Müller: rest-mass density 10 | 1, pressure 40/3 | $10^{-6}$, gas at rest, adiabatic index 5/3, in special relativity (`GR_METRIC=0`, 1D periodic). A mildly relativistic shell ($v=0.714\,c$) forms behind the shock. The rest-mass density, pressure and velocity at $t=0.3$ are compared with the exact Riemann solution.
+
+**TOV Star** (`test/grhd_tov`): A polytropic neutron-star-like star (K = 1, $\Gamma=2$) in hydrostatic equilibrium in its own tabulated static metric (`GR_METRIC=-1`), run for about 7 dynamical times. The central density must stay within about 8% of the tabulated value, and the final density profile must match the TOV solution.
+
+**Michel Accretion** (`test/grhd_michel`): Steady relativistic Bondi (Michel) accretion onto a Schwarzschild black hole in Kerr-Schild coordinates (`GR_METRIC=1`, `GR_Spin` 0), with the cells inside 1.05 horizon radii excised. The test is a short run ($t=30\,GM/c^{3}$): it compares the density, radial velocity and internal energy with the Michel solution at $6<r<30\,GM/c^{2}$, where the flow has relaxed from the initial conditions. For the full comparison down to the horizon, as in Lupi (2023), run to $t=200$.
 
 
 <a name="tests-elastic"></a>
