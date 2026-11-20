@@ -362,11 +362,6 @@ struct GradientsSpec
 #ifdef MHD_CONSTRAINED_GRADIENT
         local.ConditionNumber = kc[i].ConditionNumber;
         local.NV_T            = kc[i].NV_T;
-        for(int k = 0; k < 3; k++) {
-            for(int k2 = 0; k2 < 3; k2++) {
-                local.BGrad[k][k2] = kc[i].Gradients.B[k][k2];
-            }
-        }
 #ifdef MHD_MODIFIED_GRADIENT
         local.MG_cgcoeff = kc[i].MG_cgcoeff;
         local.MG_piece_token = kc[i].MG_piece_token;
