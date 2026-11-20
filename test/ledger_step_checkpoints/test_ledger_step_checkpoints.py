@@ -69,3 +69,17 @@ def test_ledger_step_checkpoints(steps):
     print(f"max |dM_bary|/M {np.max(np.abs(dmb)) / mb[0]:.2e}, max |dM_Z_ledger|/M_Z {np.max(np.abs(dzl)) / abs(zl[0]):.2e}")
     assert np.max(np.abs(dmb)) <= 1e-12 * mb[0]
     assert np.max(np.abs(dzl)) <= 1e-12 * abs(zl[0])
+
+
+def test_element_ledger(steps):
+    """mass_balance_elements.txt (stella_dev 8227ec120): per metal slot L = gas + stars - (deposited by feedback - taken from stars),
+    a line at the first call and where some slot's |dL|/S exceeds 1e-14 (S = gas + stars of that slot). Bars, as for M_Z_ledger: the
+    file exists, its first line is the first call, it has a column for every metal slot (11 here), no |dL|/S above 1e-12."""
+    f = steps / "mass_balance_elements.txt"
+    assert f.exists(), "mass_balance_elements.txt was not written"
+    rows = [l.split() for l in f.read_text().splitlines() if l and not l.startswith("#")]
+    assert int(rows[0][0]) == 0
+    rel = np.array([[float(x) for x in r[5:]] for r in rows])
+    assert rel.shape[1] == 11, rel.shape
+    print(f"{len(rows)} element-ledger lines, max |dL|/S {np.max(np.abs(rel)):.2e}")
+    assert np.max(np.abs(rel)) <= 1e-12, rows[int(np.argmax(np.max(np.abs(rel), axis=1)))]
