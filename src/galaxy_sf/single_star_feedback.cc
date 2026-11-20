@@ -387,6 +387,21 @@ double single_star_ejecta_mass_this_step(int i)
     return DMAX(ev.Mej, 0) / UNIT_MASS_IN_SOLAR;
 }
 
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+/* Type Ia (stella_dev 579e0bf93): the event is the table's M_Ch of Ia matter, the white dwarf's M_WD plus M_Ch - M_WD of the gas in
+   the star's kernel (the weighting pass's kernel gas sum) turned into Ia composition in place; the fraction of each such cell */
+double single_star_ia_convert_fraction(int i, int fb_loop_iteration)
+{
+    if(fb_loop_iteration != 0 || single_star_kind_this_step(i) != SSE_IA) {return 0;}
+    struct single_star_event ev; single_star_event_of(i, SSE_IA, &ev);
+    double M_ch = 0; for(int k = 0; k < STBL_NELEM; k++) {M_ch += stellar_type_ia_yield(k);}
+    double dM = DMAX(M_ch - ev.Mej, 0) / UNIT_MASS_IN_SOLAR, M_kernel = P[i].Area_weighted_sum[AREA_WEIGHTED_SUM_KERNEL_GAS];
+    if(dM <= 0 || M_kernel <= 0) {return 0;}
+    if(dM > M_kernel) {printf("SINGLE_STAR TYPE_IA: ID=%llu kernel gas %g Msun < companion share %g Msun: all of it converted\n", (unsigned long long)P[i].ID, M_kernel * UNIT_MASS_IN_SOLAR, dM * UNIT_MASS_IN_SOLAR);}
+    return DMIN(dM / M_kernel, 1.);
+}
+#endif
+
 #ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
 /* Metallicity slot holding table element k (-1: H, which has no slot) */
 int ledger_met_slot(int k)

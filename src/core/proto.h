@@ -1179,6 +1179,9 @@ double single_star_eventrates(int i, double dt);
 double single_star_max_timestep(int p);
 void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
 double single_star_ejecta_mass_this_step(int i);
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+double single_star_ia_convert_fraction(int i, int fb_loop_iteration);
+#endif
 void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);
 int single_star_feedback_log_rows_local(void);

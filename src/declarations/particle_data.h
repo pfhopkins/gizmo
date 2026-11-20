@@ -149,19 +149,25 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
 #ifdef GALSF_FB_MECHANICAL
+#if defined(GALSF_SINGLE_STARS_TYPE_IA) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#define SINGLE_STARS_IA_COMPANION_SHARE /* a Type Ia is the table's M_Ch of Ia matter: M_WD plus M_Ch - M_WD of the kernel gas converted in place */
+#endif
+#if defined(GALSF_SINGLE_STARS_SN_EJECTA_CELL) || defined(SINGLE_STARS_IA_COMPANION_SHARE)
+#define AREA_WEIGHTED_SUM_HAS_KERNEL_GAS /* the ejecta cell test and the Type Ia companion share need the gas mass in the star's kernel */
+#endif
 #ifdef GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS
 #define AREA_WEIGHTED_SUM_PIXELS 12 /* slot of the first of the 12 pixel cell counts */
-#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+#ifdef AREA_WEIGHTED_SUM_HAS_KERNEL_GAS
 #define AREA_WEIGHTED_SUM_ELEMENTS 25
 #else
 #define AREA_WEIGHTED_SUM_ELEMENTS 24 /* the 12 weights below plus the cell counts */
 #endif
-#elif defined(GALSF_SINGLE_STARS_SN_EJECTA_CELL)
+#elif defined(AREA_WEIGHTED_SUM_HAS_KERNEL_GAS)
 #define AREA_WEIGHTED_SUM_ELEMENTS 13
 #else
 #define AREA_WEIGHTED_SUM_ELEMENTS 12 /* number of weights needed for full momentum-and-energy conserving system */
 #endif
-#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+#ifdef AREA_WEIGHTED_SUM_HAS_KERNEL_GAS
 #define AREA_WEIGHTED_SUM_KERNEL_GAS (AREA_WEIGHTED_SUM_ELEMENTS - 1) /* last slot: gas mass in the star's kernel */
 #endif
     MyFloat Area_weighted_sum[AREA_WEIGHTED_SUM_ELEMENTS]; /* normalized weights for particles in kernel weighted by area, not mass */
