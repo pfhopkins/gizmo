@@ -600,7 +600,7 @@ void init(void)
 #endif
         CellP[i].FaceClosureError = 0;
 #ifdef GENERAL_RELATIVITY
-        set_metric_coefficients(P[i].Pos, P[i].Potential, &(CellP[i].gr));
+        set_metric_coefficients(P[i].Pos, &(CellP[i].gr));
         CellP[i].DtMomentum = {}; CellP[i].DtEnergy = 0; CellP[i].DtVolume = 0; CellP[i].InversionKeptU = 0;
 #endif
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME

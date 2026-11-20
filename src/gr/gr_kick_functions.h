@@ -67,8 +67,8 @@ KOKKOS_INLINE_FUNCTION void gr_kick_impl(int i, double dt_kick, double mass_old,
         endrun(9992405); return;
     }
     if(mode == 0) {cell[i].InversionKeptU = 0;} /* (a new step) */
-    /* (flag not in the original code) no admissible u exists for (D, S_j, B^i, tau) and the inversion kept the previous u (as in the
-       original code): the cell is exempt from the energy time-step limit (timestep.cc), since its u carries no information */
+    /* (flag not in the C/C++ GR code) no admissible u exists for (D, S_j, B^i, tau) and the inversion kept the previous u (as in the
+       C/C++ GR code): the cell is exempt from the energy time-step limit (timestep.cc), since its u carries no information */
     if(Prims.u_kept) {cell[i].InversionKeptU = 1;}
 #if !(defined(HYDRO_MESHLESS_FINITE_MASS) && (GENERAL_RELATIVITY==1))
     if(mode == 1) {if(gr_add_source_term(i, &Prims, &Cons, dt_kick, 1-mode, pp, cell) < 0) {return;} if(pp[i].Mass == 0) {return;}}
@@ -107,7 +107,7 @@ KOKKOS_INLINE_FUNCTION void gr_drift_impl(int i, double dt_drift, struct particl
     double error = MAX_REAL_NUMBER; int iter = 0;
     do {
         Vec3<double> x_err = pp[i].Pos;
-        set_metric_coefficients(pp[i].Pos, pp[i].Potential, &(cell[i].gr)); /* metric at the predicted location */
+        set_metric_coefficients(pp[i].Pos, &(cell[i].gr)); /* metric at the predicted location */
 #ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
         {struct gr_conservatives Ctmp; res_con2prim = gr_drift_reinvert(&Cons, cell[i].InternalEnergy, GAMMA_DEFAULT, &(cell[i].gr), cell[i].gr.limiter, &Prims, &Ctmp);}
 #else
@@ -134,7 +134,7 @@ KOKKOS_INLINE_FUNCTION void gr_drift_impl(int i, double dt_drift, struct particl
         }
     } while(error > GR_IMPLICIT_TOLERANCE);
     /* metric at the new location, kicked primitives (corrector) */
-    set_metric_coefficients(pp[i].Pos, pp[i].Potential, &(cell[i].gr));
+    set_metric_coefficients(pp[i].Pos, &(cell[i].gr));
 #ifdef GR_DRIFT_HOLD_INTERNAL_ENERGY
     res_con2prim = gr_drift_reinvert(&Cons, cell[i].InternalEnergy, GAMMA_DEFAULT, &(cell[i].gr), cell[i].gr.limiter, &Prims, &Cons);
 #else

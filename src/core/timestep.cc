@@ -693,18 +693,18 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
             if(dt_courant < dt) dt = dt_courant;
 #ifdef GENERAL_RELATIVITY
             {
-                /* (the original code also limited the change of the conserved energy tau per step to 10% of tau: removed, since with the two limits
-                   below it binds only in a handful of cell-steps and no test changes without it) */
+                /* (the C/C++ GR code also limited the change of the conserved energy tau per step to 10% of tau: removed, since with the Courant limit
+                   and the limit below it binds only in a handful of cell-steps and no test changes without it) */
                 const struct gr_metric *gr = &(CellP[p].gr);
                 Vec3<double> vphys = Vphys(P[p].Vel, gr);
                 double rho = gr_get_primitive_density(CellP[p].Density, P[p].Vel, gr, gr->limiter);
-                double hstar = 1.0 + CellP[p].InternalEnergy + CellP[p].Pressure/rho, Vi = P[p].Mass/CellP[p].Density;
+                double hstar = 1.0 + CellP[p].InternalEnergy + CellP[p].Pressure/rho;
                 double Wl = lorentz_factor(gr->gamma, vphys, gr->limiter);
-                /* (not in the original code) where the internal energy is a small part of the energy of the cell (fast or cold
+                /* (not in the C/C++ GR code) where the internal energy is a small part of the energy of the cell (fast or cold
                    flows), the inversion amplifies the error of the conserved variables in u by ~ tau/(rho0 u): the conserved update of the first-order
                    sub-steps (the half-kicks and the drift prediction) then drains u until no positive u exists for the given D, S_j (tau < tau_min).
-                   Two limits bound that error. */
-                /* (2) energy consistency of the first-order sub-steps: the conserved variables are advanced linearly, so the kinetic energy recovered
+                   The limit below bounds that error. */
+                /* energy consistency of the first-order sub-steps: the conserved variables are advanced linearly, so the kinetic energy recovered
                    from S + dS exceeds the work v.dS by ~ (1/2) rho0 h* W^3 dv^2 (W^3 along v), which the inversion takes from the internal energy;
                    with dv = |a| dt (a = the coordinate dv/dt of the last kick) this is at most GR_TIMESTEP_ENERGY_FRAC of rho0 u.
                    Not applied where the inversion of a kick found no admissible u (tau < tau_min) and kept the previous one (gr_kick_impl): that u carries

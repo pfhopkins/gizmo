@@ -60,7 +60,7 @@ extern ALIGN(32) struct particle_data
 #ifdef COUNT_MASS_IN_GRAVTREE
     MyFloat TreeMass;  /*!< Mass seen by the particle as it sums up the gravitational force from the tree - should be equal to total mass, a useful debug diagnostic  */
 #endif
-#if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL) || defined(GENERAL_RELATIVITY)
+#if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL)
     MyFloat Potential;        /*!< gravitational potential */
 #if defined(EVALPOTENTIAL) && defined(PMGRID)
     MyFloat PM_Potential;

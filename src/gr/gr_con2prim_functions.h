@@ -16,7 +16,6 @@
 
 #define GR_C2P_MAX_NEWT_ITER   (30)       /* maximum number of Newton-Raphson iterations */
 #define GR_C2P_NEWT_TOL        (1.0e-10)  /* convergence tolerance */
-#define GR_C2P_MIN_NEWT_TOL    (1.0e-10)
 #define GR_C2P_EXTRA_NEWT_ITER (2)        /* extra iterations once converged */
 #define GR_C2P_W_TOO_BIG       (1.e20)    /* gamma^2 (rho0 + u + p) above this is unphysical */
 #define GR_C2P_MIN_DV          (1.0e-15)
@@ -75,7 +74,6 @@ KOKKOS_INLINE_FUNCTION int gr_c2p_twod_newton_raphson(double x[], const struct k
     }
     if((!isfinite(f)) || (!isfinite(df))) {return 2;}
     if(fabs(errx) <= GR_C2P_NEWT_TOL) {return 0;}
-    if((fabs(errx) <= GR_C2P_MIN_NEWT_TOL) && (fabs(errx) > GR_C2P_NEWT_TOL)) {return 0;}
     return 1;
 }
 
@@ -130,8 +128,8 @@ KOKKOS_INLINE_FUNCTION double gr_get_primitive_variables(const struct gr_conserv
     rhoh = fmax(rho0, rhoh);
     p = gr_pressure_rho0_w(rho0, rhoh);
     u = rhoh - (rho0 + p);
-    /* (the original code skipped these two lines under EOS_GENERAL, although the GR equation of state is always the ideal gas of gr_functions.h: a bug) */
-    if(p <= 0 && fabs(p)/rhoh < 1e-10) {u = prims->u*rho0; p = gr_pressure_rho0_u(rho0, u/rho0); prims->u_kept = 1;} /* (as in the original code: no admissible u, the previous one is kept) */
+    /* (the C/C++ GR code skipped these two lines under EOS_GENERAL, although the GR equation of state is always the ideal gas of gr_functions.h: a bug) */
+    if(p <= 0 && fabs(p)/rhoh < 1e-10) {u = prims->u*rho0; p = gr_pressure_rho0_u(rho0, u/rho0); prims->u_kept = 1;} /* (as in the C/C++ GR code: no admissible u, the previous one is kept) */
     if(u <= 0) {u = p/(GAMMA_DEFAULT - 1);}
     prims->rho0 = rho0;
     prims->u = u/rho0;
@@ -150,7 +148,7 @@ KOKKOS_INLINE_FUNCTION double gr_get_primitive_variables(const struct gr_conserv
    O(dt), which makes the velocity of the drifted state first-order accurate (circular geodesics in Kerr-Schild coordinates drift);
    for a test particle the modified scheme is the Hamiltonian splitting in the covariant momentum, second order. Ideal gas: h = 1 + Gamma u does not depend on rho0,
    so S_i S^i = (D h)^2 (W^2 - 1) gives W directly, and v^i = S^i/(D h W).
-   On input prims->v is the velocity before the drift (initial guess); returns the Lorentz factor, or -1 if the iteration failed. */
+   On input prims->v is the velocity before the drift; returns the Lorentz factor (closed form: it cannot fail). */
 KOKKOS_INLINE_FUNCTION double gr_drift_reinvert(const struct gr_conservatives *cons, double u, double gamma_eos, const struct gr_metric *gr, int gr_limiter, struct gr_primitives *prims, struct gr_conservatives *cons_new)
 {
     const double D = cons->D, h = 1. + gamma_eos*u, gdet = gr->gdet;

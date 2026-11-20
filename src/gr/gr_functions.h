@@ -138,11 +138,11 @@ KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct
 
 #if (GR_METRIC>0)
 /* 1 if the excision region of a black hole lies between the cells at pos_i and pos_j (dp = pos_i - pos_j, periodic-wrapped), so that
-   they do not interact. Symmetric under i <-> j (as the test of the C++ branch, mesh/ngb.cc check_BH_intersection): the pair is excluded
+   they do not interact. Symmetric under i <-> j (as the test of the C/C++ GR code, mesh/ngb.cc check_BH_intersection): the pair is excluded
    if the point of the segment closest to the hole lies inside the segment and is nearer to the hole than r_H - R_c (the bare horizon,
    not the excision radius), with R_c = 0.5 (h_i + h_j)/DesNumNgb^(1/NUMDIMS) a size common to both cells. The margin is subtracted, so
    that cells at the edge of the excision region keep interacting with their neighbours along the edge (with GR_EXCISION_RADIUS r_H + R_c,
-   as in the C++ branch, the cells just outside the excision radius lost their tangential neighbours: Bondi with excision at 1.05 r_H had
+   as in the C/C++ GR code, the cells just outside the excision radius lost their tangential neighbours: Bondi with excision at 1.05 r_H had
    rho0 25% below Michel at r = 2.5) */
 KOKKOS_INLINE_FUNCTION int gr_segment_crosses_excised_hole(const Vec3<double> &dp, double normdp2, const Vec3<double> &dpBH, double M, const Vec3<double> &spin, double R_common)
 {
@@ -172,8 +172,8 @@ KOKKOS_INLINE_FUNCTION void gr_metric_from_4metric(const struct gr_sym4 *g, stru
     gr->gdet = sqrt(det);
 }
 
-/* fills the metric structure at pos (potential: Newtonian correction of the lapse, only with self-gravity) */
-KOKKOS_INLINE_FUNCTION void set_metric_coefficients(const Vec3<double> &pos, double potential, struct gr_metric *gr)
+/* fills the metric structure at pos */
+KOKKOS_INLINE_FUNCTION void set_metric_coefficients(const Vec3<double> &pos, struct gr_metric *gr)
 {
     struct gr_sym4 g;
     get_covariant_metric(pos, &g);
@@ -253,15 +253,6 @@ KOKKOS_INLINE_FUNCTION double gr_pressure_rho0_w(double rho0, double w) /* from 
     return 0;
 #else
     return (GAMMA_DEFAULT - 1.)*(w - rho0)/GAMMA_DEFAULT;
-#endif
-}
-
-KOKKOS_INLINE_FUNCTION double gr_get_u_from_p(double rho0, double p)
-{
-#ifdef GR_TEST_PARTICLE
-    return 0;
-#else
-    return p/rho0/(GAMMA_DEFAULT - 1.);
 #endif
 }
 

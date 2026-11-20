@@ -29,7 +29,7 @@ struct hydro_gr_pair_j
 {
     Vec3<double> VelCoord_j;      /*!< coordinate velocity dx/dt of the mesh-generating point of j */
     Vec3<double> FourVelocity_j;  /*!< W*v of j (Eulerian velocity, limited where required) */
-    int gr_limiter_j;             /*!< Lorentz-factor limiter flag of j (used for the whole pair, as in the original GR code) */
+    int gr_limiter_j;             /*!< Lorentz-factor limiter flag of j (used for the whole pair, as in the C/C++ GR code) */
 };
 #endif
 
@@ -217,12 +217,6 @@ void hydro_core_meshless_compute_pair(
                             distance_from_i, distance_from_j, &Riemann_vec.L.u, &Riemann_vec.R.u, scalar_recon_mode);
     reconstruct_face_states(kernel.sound_i, local.Gradients.SoundSpeed, kernel.sound_j, CellP[j].Gradients.SoundSpeed,
                             distance_from_i, distance_from_j, &Riemann_vec.L.cs, &Riemann_vec.R.cs, scalar_recon_mode);
-#ifdef GENERAL_RELATIVITY
-    /* GR: the face pressure follows from the reconstructed rest-mass density and internal energy through the equation of state, so that
-       the face state is thermodynamically consistent (the original code kept the independently reconstructed pressure: a bug) */
-    Riemann_vec.L.p = gr_pressure_rho0_u(Riemann_vec.L.rho, Riemann_vec.L.u);
-    Riemann_vec.R.p = gr_pressure_rho0_u(Riemann_vec.R.rho, Riemann_vec.R.u);
-#endif
 #endif
     for(k=0; k<3; k++) {
 #ifdef GENERAL_RELATIVITY
@@ -303,8 +297,8 @@ void hydro_core_meshless_compute_pair(
 #ifdef GENERAL_RELATIVITY
     /* metric at the face position (j is the origin of distance_from_j; the metric takes the nearest periodic image itself) */
     Vec3<double> xface = P[j].Pos + Vec3<double>{distance_from_j[0], distance_from_j[1], distance_from_j[2]};
-    set_metric_coefficients(xface, P[j].Potential, &(Riemann_vec.gr));
-    if((Riemann_vec.gr.alpha < 1e-3) || isnan(Riemann_vec.gr.alpha)) {set_metric_coefficients(P[j].Pos, P[j].Potential, &(Riemann_vec.gr));} /* too close to a singularity: use the metric of j */
+    set_metric_coefficients(xface, &(Riemann_vec.gr));
+    if((Riemann_vec.gr.alpha < 1e-3) || isnan(Riemann_vec.gr.alpha)) {set_metric_coefficients(P[j].Pos, &(Riemann_vec.gr));} /* too close to a singularity: use the metric of j */
     /* convert the reconstructed four-velocities back to three-velocities with the face metric */
     double WfaceL = sqrt(1 + Riemann_vec.gr.gamma.quad(Riemann_vec.L.v)), WfaceR = sqrt(1 + Riemann_vec.gr.gamma.quad(Riemann_vec.R.v));
     Riemann_vec.L.v /= WfaceL; Riemann_vec.R.v /= WfaceR;

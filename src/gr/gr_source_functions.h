@@ -35,7 +35,7 @@ KOKKOS_INLINE_FUNCTION double gr_drift_tau_path_rate(int i, const struct gr_cons
     for(int k = 0; k < 2; k++)
     {
         struct gr_metric gr_k; struct gr_primitives prims_k = *prims; struct gr_conservatives cons_k;
-        set_metric_coefficients((k == 0) ? pp[i].Pos + dx : pp[i].Pos - dx, pp[i].Potential, &gr_k);
+        set_metric_coefficients((k == 0) ? pp[i].Pos + dx : pp[i].Pos - dx, &gr_k);
         if(gr_drift_reinvert(cons, prims->u, gamma_eos, &gr_k, cell[i].gr.limiter, &prims_k, &cons_k) < 0) {return 0;}
         tau_pm[k] = cons_k.tau;
     }

@@ -26,7 +26,7 @@
 #endif
 #endif
 /* kick/drift of the conserved variables: implicit solver tolerance and iteration cap (otherwise a predictor-corrector) */
-#define GR_IMPLICIT_TOLERANCE (1e-8)   /* convergence tolerance of the implicit iterations (drift position correction, source terms, beta cooling) */
+#define GR_IMPLICIT_TOLERANCE (1e-8)   /* convergence tolerance of the implicit iterations (drift position correction, source terms) */
 #define GR_IMPLICIT_MAX_NITER 100      /* their maximum number of iterations */
 #define GR_EPS_TOLERANCE (1e-8) /* finite-difference step of the metric derivatives */
 

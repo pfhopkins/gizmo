@@ -1018,7 +1018,7 @@ int split_particle_i(int i, int n_particles_split, double r_near)
         Vec3<double> v = Vphys(P[i].Vel, gp), vp = Vphys(CellP[i].VelPred, gp);
         double W = lorentz_factor(gp->gamma, v, gp->limiter), Wp = lorentz_factor(gp->gamma, vp, gp->limiter);
         Vec3<double> u_cov = W*gp->gamma.matvec(v), up_cov = Wp*gp->gamma.matvec(vp);
-        set_metric_coefficients(P[i].Pos, P[i].Potential, &(CellP[i].gr)); set_metric_coefficients(P[j].Pos, P[j].Potential, &(CellP[j].gr));
+        set_metric_coefficients(P[i].Pos, &(CellP[i].gr)); set_metric_coefficients(P[j].Pos, &(CellP[j].gr));
         for(int kd = 0; kd < 2; kd++)
         {
             const auto id = (kd == 0) ? i : j; const struct gr_metric *g = &(CellP[id].gr);
@@ -1166,7 +1166,7 @@ int merge_particles_ij(int i, int j, double target_share)
     /* GR: the rates of the conserved variables add; the merged conserved variables (predicted and kicked states) are the volume-weighted
        sums divided by the volume the survivor will have, V_j + w V_i: the merged cell is not a new cell of volume V_i + V_j, since most of
        the volume of i goes to the other neighbours of i and the survivor inherits only the share w (target_share, computed with the
-       candidates; without it, max(V_i, V_j) as in the original code), which leaves u and v unchanged. They are inverted below with the
+       candidates; without it, max(V_i, V_j) as in the C/C++ GR code), which leaves u and v unchanged. They are inverted below with the
        metric at the merged position. The entropy proxy log(u) + (1-Gamma) log(rho0) of the merged state may not exceed that of the two
        parents (no artificial heating), nor fall below it (see the entropy floor below). */
     CellP[j].DtMomentum += CellP[i].DtMomentum; CellP[i].DtMomentum = {};
@@ -1333,7 +1333,7 @@ int merge_particles_ij(int i, int j, double target_share)
     P[j].GravPM = P[j].GravPM * wt_j + P[i].GravPM * wt_i; // force-conserving //
 #endif
 #ifdef GENERAL_RELATIVITY
-    set_metric_coefficients(pos_new, wt_i*P[i].Potential + wt_j*P[j].Potential, &(CellP[j].gr)); /* the metric at the merged position */
+    set_metric_coefficients(pos_new, &(CellP[j].gr)); /* the metric at the merged position */
 #endif
 #ifdef MAGNETIC
     // we evolve the conservative variables VB and Vpsi, these should simply add in particle-merge operations //
@@ -1568,7 +1568,7 @@ int merge_particles_ij(int i, int j, double target_share)
     P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
     P[j].dp += P[j].Vel * P[j].Mass - p_old_j;
 #ifdef GENERAL_RELATIVITY
-    CellP[j].Density = mtot/gr_Vtot; /* the volume assumed by the merge above, V_j + w V_i, until the next density pass (the original code guessed mtot/h^3) */
+    CellP[j].Density = mtot/gr_Vtot; /* the volume assumed by the merge above, V_j + w V_i, until the next density pass (the C/C++ GR code guessed mtot/h^3) */
 #endif
     /* call the pressure routine to re-calculate pressure (and sound speeds) as needed */
     refresh_eos_and_project(j, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED);

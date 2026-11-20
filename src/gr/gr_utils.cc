@@ -14,7 +14,7 @@
 #if (GR_METRIC<0)
 /* Tabulated static spherically symmetric metric (TOV solutions): the file holds a header "# N log_scale" and N rows
    "r M(r) -g_tt r_iso" (areal radius, enclosed gravitational mass, -g_tt = exp(nu), isotropic radius), r linearly spaced from 0
-   (log_scale 0) or logarithmically (1). Every rank reads the file, as in the original code; the table goes to shared memory so
+   (log_scale 0) or logarithmically (1). Every rank reads the file, as in the C/C++ GR code; the table goes to shared memory so
    that get_covariant_metric can read it on the device through the All mirror. */
 void gr_load_metric_table(void)
 {

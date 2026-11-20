@@ -16,20 +16,11 @@
 #ifdef GENERAL_RELATIVITY
 
 
-/* components of a symmetric tensor in the rotated basis whose rows are R: g' = R g R^T (R orthonormal) */
-KOKKOS_INLINE_FUNCTION SymmetricTensor2<double> gr_rotate_tensor(const SymmetricTensor2<double> &g, const Mat3<double> &R)
-{
-    SymmetricTensor2<double> gp;
-    for(int a = 0; a < 3; a++) {for(int b = a; b < 3; b++) {gp[a][b] = dot(R[a], g.matvec(R[b]));}}
-    return gp;
-}
-
 /* the left/right state of a face: conserved variables and the quantities of the primitives the fluxes need */
 struct gr_face_state
 {
     struct gr_conservatives cons;
     Vec3<double> v;        /*!< Eulerian velocity (possibly limited) */
-    Vec3<double> vcoord;   /*!< coordinate velocity alpha v - beta */
     double W;              /*!< Lorentz factor */
 };
 
@@ -55,7 +46,6 @@ KOKKOS_INLINE_FUNCTION void gr_face_state_from_primitives(const struct Conserved
     st->W = lorentz_factor(gr->gamma, prims.v, gr_limiter);
     gr_get_conservative_variables(&prims, &(st->cons), st->W, gr);
     st->v = prims.v;
-    st->vcoord = Vcoord(prims.v, gr);
 }
 
 
@@ -225,13 +215,11 @@ KOKKOS_INLINE_FUNCTION void gr_hydro_riemann(const struct Input_vec_Riemann &Rie
 KOKKOS_INLINE_FUNCTION void gr_riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_outputs *Riemann_out, const Vec3<double> &n_unit, int gr_limiter)
 {
     if((Riemann_vec.L.p < 0 && Riemann_vec.R.p < 0) || (Riemann_vec.L.rho < 0) || (Riemann_vec.R.rho < 0)) {Riemann_out->P_M = 0; return;}
-#ifndef EOS_GENERAL
     /* sound speeds and internal energies from pressure and rest-mass density (ideal gas, relativistic: c_s^2 = Gamma P/(rho0 h)) */
     Riemann_vec.L.u = Riemann_vec.L.p/((GAMMA_DEFAULT - 1.)*Riemann_vec.L.rho);
     Riemann_vec.R.u = Riemann_vec.R.p/((GAMMA_DEFAULT - 1.)*Riemann_vec.R.rho);
     Riemann_vec.L.cs = gr_sound_speed(GAMMA_DEFAULT, Riemann_vec.L.p, Riemann_vec.L.rho, Riemann_vec.L.u);
     Riemann_vec.R.cs = gr_sound_speed(GAMMA_DEFAULT, Riemann_vec.R.p, Riemann_vec.R.rho, Riemann_vec.R.u);
-#endif
     gr_hydro_riemann(Riemann_vec, Riemann_out, n_unit, gr_limiter);
 }
 
