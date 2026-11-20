@@ -142,12 +142,17 @@ def make_box(fname, Z_abs, n_H=10.0, box_pc=16.0, m_cell=1.0, T=1.0e4, sigma_v=0
 
 
 def run_killable(cmd, timeout, **kw):
-    """subprocess.run in its own process group; on timeout the whole group (the launcher and GIZMO) is killed."""
+    """subprocess.run in its own process group. On timeout: SIGTERM to the group (srun forwards it to the step's tasks and
+    cancels the step; mpirun forwards it too), then SIGKILL after 30 s."""
     p = subprocess.Popen(cmd, start_new_session=True, **kw)
     try:
         return subprocess.CompletedProcess(cmd, p.wait(timeout=timeout))
     except subprocess.TimeoutExpired:
-        os.killpg(p.pid, signal.SIGKILL); p.wait()
+        os.killpg(p.pid, signal.SIGTERM)
+        try:
+            p.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL); p.wait()
         raise
 
 

@@ -31,8 +31,12 @@ def _run(extra, out):
     p = subprocess.Popen(["bash", "-c", cmd], start_new_session=True)  # a stalled step floods the log: capped, the run then dies on SIGPIPE
     try:
         res = subprocess.CompletedProcess(cmd, p.wait(timeout=RUN_TIMEOUT))
-    except subprocess.TimeoutExpired:
-        os.killpg(p.pid, signal.SIGKILL); p.wait()  # the whole group, launcher and GIZMO included
+    except subprocess.TimeoutExpired:  # SIGTERM first: srun forwards it to the step and cancels it; SIGKILL after 30 s
+        os.killpg(p.pid, signal.SIGTERM)
+        try:
+            p.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            os.killpg(p.pid, signal.SIGKILL); p.wait()
         raise
     assert res.returncode == 0 and "Simulation ends." in open(f"{out}.log").read()[-20000:], "run failed: " + open(f"{out}.log").read()[-400:]
     rows = [dict(kv.split("=") for kv in l.split()[1:]) for l in open(f"{out}.log") if l.startswith("RADPLEDGER")]
