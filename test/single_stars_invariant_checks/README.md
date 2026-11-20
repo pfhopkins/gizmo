@@ -14,6 +14,7 @@ print; the run goes on. All of them run on the host (no check inside a device ke
 | `fb_booked_deposited` | end of a single-star event (`single_star_feedback.cc`) | the star lost the ejecta it booked (1e-6); after a death it is below its trigger mass |
 | `lifetime_consistent` | band luminosities (`single_star_luminosity.cc`) | a star that radiates has not died |
 | `donor_mass_floor` | gas collection (`sfr_collect_gas.cc`) | every donor keeps 0.01 `MinMassForParticleMerger` |
+| `donor_cooldown` | gas collection (`sfr_collect_gas.cc`) | every cell that gave mass is blocked until its density is recomputed and cools down for `SFCooldownFreeFallFraction` of its free-fall time, as the parent |
 | `tree_insert` | new single star (`single_star_attach_to_new_star`, `sfr_collect_gas.cc`) | the new star sits at its parent's position, in its parent's tree node |
 | `dgr_consistent` | SGChem cell step (`sgchem_cell.cc`) | hot gas (above 1e5 K in the chemistry and stored): no dust in the chemistry nor in the TreeCol columns |
 

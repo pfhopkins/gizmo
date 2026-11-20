@@ -20,7 +20,7 @@ from make_single_stars_metals_ics import make_single_stars_metals_ics  # noqa: E
 FIRE_ELEMENTS = [1, 2, 3, 4, 6, 8, 10, 12, 16, 22]
 EXTRA_ELEMENTS = [5, 7, 9, 11, 13, 14, 15, 17, 18, 19, 20, 21, 23, 24, 25, 26]
 TAGS = ("fire_slot_deposit", "fire_slot_invariant", "mass_sync", "fb_booked_deposited", "lifetime_consistent",
-        "donor_mass_floor", "tree_insert", "dgr_consistent")
+        "donor_mass_floor", "donor_cooldown", "tree_insert", "dgr_consistent")
 BIRTHS = "1101:20,3277:2"  # gas cells in two octants without stars: lattice index ix*256 + iy*16 + iz, ID = index + 1
 
 
@@ -89,7 +89,7 @@ def counts(log):
 
 def test_checks_pass_in_stella_run(tables):
     """bar (written before the run): births by the hook (2 stars collect their gas), a core collapse, an AGB death, two Type Ia
-    and winds, 5e-3 time units: every check site ran (RAN count > 0 for all 8 tags), none failed, and every source wrote its
+    and winds, 5e-3 time units: every check site ran (RAN count > 0 for all 9 tags), none failed, and every source wrote its
     yields trace"""
     d, log = run("stella", tables, solar27(tables["StellarTablesFile"]), {"TimeMax": 5e-3})
     ran, fail = counts(log)

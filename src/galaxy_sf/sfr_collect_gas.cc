@@ -276,6 +276,10 @@ double single_stars_collect_gas(long long tot_spawned)
     }
 #endif
 
+#if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(GALSF_SINGLE_STARS_SF_CRITERION)
+    std::vector<int> net_donors; /* donors that lose mass in this collection */
+    for(int j = 0; j < DMIN(N_gas, ssc_donor_cap); j++) {if(ssc_donor[j].grant > 0 && P[j].Type == 0) {net_donors.push_back(j);}}
+#endif
     /* apply: each donor loses its granted quanta once */
     {
         std::vector<int> list; std::vector<SscStarIn> in;
@@ -342,6 +346,14 @@ double single_stars_collect_gas(long long tot_spawned)
                          t.M_drawn, (double)t.N_got * mu * UNIT_MASS_IN_SOLAR, t.R, (double)t.passes, (double)ok, (double)t.n_split, (double)t.n_remote, t.rho_form};
         rows.insert(rows.end(), row, row + SSC_LOG_COLS);
     }
+#if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(GALSF_SINGLE_STARS_SF_CRITERION)
+    for(int j : net_donors) { /* every donor is blocked and cools down as the parent does */
+        double t_cool = (CellP[j].Density > 0) ? All.SFCooldownFreeFallFraction * sqrt(3. * M_PI / (32. * All.G * CellP[j].Density * All.cf_a3inv)) : 0;
+        SINGLE_STAR_CHECK("donor_cooldown", CellP[j].SingleStarSpawnBlock == 1 && CellP[j].SingleStarSFCooldown >= (1 - 1.0e-12) * t_cool,
+                          "donor ID=%llu block=%d cooldown=%.6e expected=%.6e", (unsigned long long)P[j].ID, (int)CellP[j].SingleStarSpawnBlock, (double)CellP[j].SingleStarSFCooldown, t_cool);
+    }
+    SINGLE_STAR_CHECK_RAN("donor_cooldown", (long)net_donors.size());
+#endif
     TreeMomentsStaleFlag = 1;
     if(!moved.empty()) {gizmo_motion_bound_raise(moved.data(), (int) moved.size());}
     gpu_particles_arena_invalidate();
