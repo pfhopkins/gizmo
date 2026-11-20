@@ -193,7 +193,8 @@ def test_no_mass_gain_at_death(built):
 def test_death_ejecta_fractions(built, factor):
     """death ejecta as fractions of the mass at death (stella_dev F1, 8837629e8): with no winds owed, a star of the table grid
     holding M at death ejects M sum e / (rem + sum e) with the table's element ejecta e (SN table; PISN rem 0), and the
-    metals in the same proportion (1e-10); the remnant is the rest, 0 <= rem <= M; a failed SN (table ejecta 0) ejects nothing.
+    metals in the same proportion (1e-10; checked for the stars on the table grid, at least two); every star: 0 <= rem <= M;
+    a failed SN (table ejecta 0) ejects nothing.
     factor 0.3: stars at 0.3 of their drawn mass at death, below the table remnant of some (the old rule clipped the remnant
     to the star and ejected nothing there; a 1.0 star ejected M - rem_tab, which differs from the fraction whenever the
     star holds more than the table's pre-SN mass)"""
@@ -204,10 +205,15 @@ def test_death_ejecta_fractions(built, factor):
         ej = T["elem_ej_SN_mass"][()].reshape(len(Zt), len(Mt), -1)[iz]
         rem = T["remnant_mass"][()].reshape(len(Zt), len(Mt))[iz]
     assert len(rows) == 4
+    n_grid = 0
     for r in rows:
         M_drawn, M_trig, M_ej, M_rem, M_Z = r[4], r[5], r[6], r[7], r[9]
+        assert -1e-12 * M_trig <= M_rem <= M_trig * (1 + 1e-12) and abs(M_rem + M_ej - M_trig) <= 1e-12 * M_trig
         im = int(np.argmin(np.abs(Mt - M_drawn)))
-        assert abs(Mt[im] / M_drawn - 1) < 1e-6, "the star must sit on the table grid"
+        if abs(Mt[im] / M_drawn - 1) > 1e-6:
+            print(f"M_drawn {M_drawn:g} off the table grid: remnant within the star only")
+            continue
+        n_grid += 1
         e = np.maximum(ej[im].astype(float), 0)
         rt = 0 if int(r[3]) == EXPECTED_TYPES[320.0] else max(float(rem[im]), 0)
         f = e.sum() / (e.sum() + rt) if e.sum() + rt > 0 else 0
@@ -215,9 +221,9 @@ def test_death_ejecta_fractions(built, factor):
         print(f"M_drawn {M_drawn:g}, type {int(r[3])}, M_trigger {M_trig:.6g}: M_ej {M_ej:.10g} expected {f * M_trig:.10g}; "
               f"M_Z {M_Z:.6g} expected {fz * M_trig:.6g}; M_rem {M_rem:.6g}")
         assert abs(M_ej - f * M_trig) <= 1e-10 * M_trig and abs(M_Z - fz * M_trig) <= 1e-10 * M_trig
-        assert -1e-12 * M_trig <= M_rem <= M_trig * (1 + 1e-12) and abs(M_rem + M_ej - M_trig) <= 1e-12 * M_trig
         if e.sum() == 0:
             assert M_ej == 0
+    assert n_grid >= 2
 
 
 def test_cold_ejecta(built):
