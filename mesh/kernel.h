@@ -729,7 +729,7 @@ static inline double kernel_gravity(double u, double hinv, double hinv3, int mod
     else if(mode == -1)
     {
         double uu = u*u;
-        wk = (1./16.) * (-245. + 910.*uu - uu*uu * (3003. - 8580.*uu + 35035.*uu*uu - 64064.*uu*uu*u + 57330.*uu*uu*uu - 29120.*uu*uu*uu*u + 8085.*uu*uu*uu*uu - 960.*uu*uu*uu*uu*u));
+        wk = (1./64.) * (-245. + 910.*uu - uu*uu * (3003. - 8580.*uu + 35035.*uu*uu - 64064.*uu*uu*u + 57330.*uu*uu*uu - 29120.*uu*uu*uu*u + 8085.*uu*uu*uu*uu - 960.*uu*uu*uu*uu*u));
         return wk * hinv;
     }
     else if(mode == 0)
