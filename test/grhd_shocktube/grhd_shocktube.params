@@ -1,0 +1,29 @@
+% Special-relativistic shock tube (Marti & Mueller problem 1; Lupi 2023): rho0 10|1, P 40/3|1e-6, at rest, adiabatic index 5/3.
+% 1D periodic box of length 2, discontinuities at x = 1 and at the wrap; the comparison uses the window 0.5 < x < 1.5.
+% Geometric units (G = c = 1): the problem is scale-free, UnitMass_in_g only sets the cgs conversion.
+InitCondFile                       grhd_shocktube_ics
+ICFormat                           3
+OutputDir                          output
+TimeLimitCPU                       900
+PartAllocFactor                    2.0
+TimeBegin                          0
+TimeMax                            0.3
+ComovingIntegrationOn              0
+BoxSize                            2
+OutputListOn                       0
+TimeOfFirstSnapshot                0
+TimeBetSnapshot                    0.1
+MaxSizeTimestep                    0.001
+MinSizeTimestep                    1e-14
+DesNumNgb                          4
+MaxNumNgbDeviation                 0.05
+UnitMass_in_g                      1
+SofteningGas                       0.0001
+ErrTolIntAccuracy                  0.0025
+CourantFac                         0.2
+TimeBetStatistics                  0.01
+MaxRMSDisplacementFac              0.125
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.0025
+ResubmitOn                         0
+ResubmitCommand                    none

@@ -1,0 +1,32 @@
+% Michel (relativistic Bondi) accretion onto a Schwarzschild black hole (GR_Spin = 0) in Kerr-Schild coordinates (Lupi 2023).
+% 2.7e5 equal-mass cells between 4M and 100M; cells inside 1.05 horizon radii are excised. Geometric units (G = c = 1), M = 1.
+% TimeMax = 30 is the short regression run of the test problem. For the science comparison (Lupi 2023) run to TimeMax = 200,
+% about 7 times the cost: the inner flow (r < 6) has then relaxed from the initial conditions, which start empty inside r ~ 4.
+InitCondFile                       grhd_michel_ics
+ICFormat                           3
+OutputDir                          output
+TimeLimitCPU                       3600
+PartAllocFactor                    2.0
+TimeBegin                          0
+TimeMax                            30
+ComovingIntegrationOn              0
+BoxSize                            0
+OutputListOn                       0
+TimeOfFirstSnapshot                0
+TimeBetSnapshot                    10
+MaxSizeTimestep                    0.5
+MinSizeTimestep                    1e-12
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.5
+UnitMass_in_g                      1
+SofteningGas                       0.001
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+TimeBetStatistics                  0.01
+MaxRMSDisplacementFac              0.125
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.0025
+ResubmitOn                         0
+ResubmitCommand                    none
+GR_Mass                            1.0
+GR_Spin                            0.0
