@@ -13,6 +13,8 @@ Metric and bars, fixed before the runs (2026-11-18):
     the hydro pass is redone (G17RECOMPUTE), and the mass, element and energy step traces close;
   - without the flag: no hydro recompute (no SN in the run), i.e. the SN-only behaviour;
   - the flag must matter: max|excess| without it minus max|excess| with it >= 0.05 percentage points in at least one box.
+Result (2026-11-18, job 231713): the last criterion is not met (0.0011 percentage points); it is kept as a strict expected
+failure (test_boundary_wind_flag_gain) and the flag stays opt-in.
 """
 
 import os
@@ -34,6 +36,7 @@ FLAG = "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB"
 BAR_PERCENT = 0.40
 DIFF_PERCENT = 0.05
 RUN_TIMEOUT = 5400  # s
+RECOMPUTE_TAG = "HYDRO_RECOMPUTE_POST_FB"  # log line of the feedback hydro recompute
 
 
 def _excess(out):
@@ -60,7 +63,8 @@ def _run(binary, fbc, name, T):
     return text, out
 
 
-def test_boundary_wind_energy():
+@pytest.fixture(scope="module")
+def runs():
     if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         pytest.skip("builds GIZMO")
     import importlib.util
@@ -82,16 +86,26 @@ def test_boundary_wind_energy():
         for arm in ("on", "off"):
             text, out = _run(binaries[arm], fbc, f"{arm}_T{int(T)}", T)
             ex = _excess(out)
-            res[(arm, T)] = (text.count("G17RECOMPUTE"), ex, out)
+            res[(arm, T)] = (text.count(RECOMPUTE_TAG), ex, out)
             print(f"T = {T:g} K, flag {arm}: {res[(arm, T)][0]} recomputes, excess {ex.min():+.4f} .. {ex.max():+.4f} %, end {ex[-1]:+.4f} %")
+    return res
+
+
+def test_boundary_wind_energy(runs):
     for T in (100.0, 1.0e4):
-        n_on, ex_on, out_on = res[("on", T)]
-        n_off, ex_off, _ = res[("off", T)]
+        n_on, ex_on, out_on = runs[("on", T)]
+        n_off, ex_off, _ = runs[("off", T)]
         assert n_on > 0, f"T = {T:g}: no hydro recompute with {FLAG}"
         assert n_off == 0, f"T = {T:g}: {n_off} recomputes without {FLAG} (SN-only behaviour expected)"
-        assert np.abs(ex_on).max() <= BAR_PERCENT, f"T = {T:g}: |excess| {np.abs(ex_on).max():.4f} % > {BAR_PERCENT} %"
+        assert np.abs(ex_on).max() <= BAR_PERCENT and np.abs(ex_off).max() <= BAR_PERCENT, f"T = {T:g}: |excess| above {BAR_PERCENT} %"
         rep = keep_and_check_traces(out_on, out_on)
         assert rep.ok, rep.summary()
-    gain = max(np.abs(res[("off", T)][1]).max() - np.abs(res[("on", T)][1]).max() for T in (100.0, 1.0e4))
+
+
+@pytest.mark.xfail(strict=True, reason="pre-registered 2026-11-18, not met: the flag lowers max|excess| by 0.0011 percentage points "
+                   "(+0.0028 -> +0.0017 % at 100 K, +0.0031 -> +0.0020 % at 1e4 K; job 231713, 948a5404a) against the 0.05 required; "
+                   "so the flag stays opt-in and in no production config. A pass means the result changed: re-examine, do not delete.")
+def test_boundary_wind_flag_gain(runs):
+    gain = max(np.abs(runs[("off", T)][1]).max() - np.abs(runs[("on", T)][1]).max() for T in (100.0, 1.0e4))
     print(f"largest improvement from {FLAG}: {gain:+.4f} percentage points")
     assert gain >= DIFF_PERCENT, f"{FLAG} changes max|excess| by only {gain:+.4f} percentage points"

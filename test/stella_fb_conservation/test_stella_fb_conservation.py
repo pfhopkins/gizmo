@@ -36,6 +36,7 @@ import re
 import shutil
 import signal
 import subprocess
+import time
 from os.path import abspath, dirname, join
 
 import h5py
@@ -148,6 +149,16 @@ def run_killable(cmd, timeout, **kw):
     except subprocess.TimeoutExpired:
         os.killpg(p.pid, signal.SIGKILL); p.wait()
         raise
+
+
+def test_timeout_kills_the_launched_step():
+    """run_killable on a step that would hang (sleep under the MPI launcher): after the timeout no process of it is left."""
+    tag = f"fbc_hang_{os.getpid()}"
+    with pytest.raises(subprocess.TimeoutExpired):
+        run_killable(mpi_launch_command(2) + ["bash", "-c", f"exec -a {tag} sleep 600"], 5)
+    time.sleep(10)
+    left = subprocess.run(["pgrep", "-f", tag], capture_output=True, text=True).stdout.split()
+    assert not left, f"processes of the timed-out step still running: {left}"
 
 
 def zpar(logZ):
@@ -329,6 +340,14 @@ def test_metal_ledger_catches_a_real_change(build):
     print(rep.summary())
     assert len(found) == 1 and found[0]["kind"] == "metal_ledger" and found[0]["stage"] == "pre_fb_mom_p0" and found[0]["count"] == 1, rep.summary()
     assert abs(found[0]["max_rel"] / 1.001e-12 - 1) < 0.02, found[0]
+    # residual floor (fixed 2026-11-20, before the run): every other checkpoint |dL|/L < 1e-13. Excepted: post_sf_spawn and
+    # post_imf_accrete, where the new star's 1e-10 Msun placeholder moves 2.2e-13 of L (gone with the zero-mass spawn of
+    # fix/trace-imf-2026-11-17, a13d49557)
+    rows = [l.split() for l in open(join(out, "mass_balance_steps.txt")) if l.strip() and not l.startswith("#")][1:]
+    floor = max((abs(float(r[-1])) / float(r[-2]) for r in rows if not (r[1] == "pre_fb_mom_p0" and abs(float(r[2]) - found[0]["first_t"]) < 1e-12)
+                 and r[1] not in ("post_sf_spawn", "post_imf_accrete")), default=0.0)
+    print(f"metal ledger residual floor (other checkpoints): {floor:.3e} of L")
+    assert floor < 1e-13, floor
 
 
 def test_sn_energies_default(build):
