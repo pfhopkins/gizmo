@@ -236,6 +236,9 @@ def test_cold_ejecta(built):
 
 def ecsn_stars(tables):
     """the IC stars plus the first table mass of an electron-capture SN (remnant type 1) at the IC metallicity, in a free corner"""
+    import sys
+    sys.path.insert(0, str(TEST_DIR))
+    from make_single_stars_supernovae_ics import STARS
     with h5py.File(tables["StellarTablesFile"], "r") as T:
         Zt, Mt = T["Z"][()], T["M_init"][()]
         rt = T["remnant_type"][()].reshape(len(Zt), len(Mt))[int(np.argmin(np.abs(np.log10(Zt) - np.log10(0.014))))]

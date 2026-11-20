@@ -132,6 +132,9 @@ struct MechFBLocalIn
 #ifdef METALS
     MyDouble yields[NUM_METAL_SPECIES];
 #endif
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+    MyDouble IaConvertFrac; /* Type Ia: fraction of each kernel cell's gas that becomes Ia matter in place (0: not an Ia) */
+#endif
 };
 
 /* Per-source (star) output from kernel. Area_weighted_sum[0..6] are written in
@@ -482,7 +485,7 @@ static void mechanical_fb_pair_kernel(
 
     double wk_vec[AREA_WEIGHTED_SUM_ELEMENTS] = {0};
     wk_vec[0] = wk;
-#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
+#ifdef AREA_WEIGHTED_SUM_HAS_KERNEL_GAS
     if(u < 1) {wk_vec[AREA_WEIGHTED_SUM_KERNEL_GAS] = Mass_j;}
 #endif
     if(dp[0] > 0) { wk_vec[1] = wk * dp[0] / r; wk_vec[2] = 0; } else { wk_vec[1] = 0; wk_vec[2] = wk * dp[0] / r; }
@@ -630,6 +633,19 @@ static void mechanical_fb_pair_kernel(
 #endif
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
         if(loop_iteration >= 2) couple_anything_but_scalar_mass_and_metals = 0;
+#endif
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+        if(local.IaConvertFrac > 0 && u < 1) { /* Type Ia: this cell's share of M_Ch - M_WD becomes Ia matter in place (no mass moves); the cells are those of the kernel gas sum */
+            double c_ia = (double)local.IaConvertFrac * Mass_j_0;
+            for(int k = 0; k < NUM_METAL_SPECIES; k++) {
+                if(k >= k_age_begin && k < k_age_end) {continue;}
+                double target = (double)local.yields[k];
+#ifdef GALSF_ISMDUSTCHEM_MODEL
+                if(k >= ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY && k < ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY + NUM_ISMDUSTCHEM_PASSIVE_SCALARS) {target = 0;} /* the converted gas keeps no dust */
+#endif
+                Metallicity_j[k] += c_ia * (target - Metallicity_j_0[k]) / Mass_j;
+            }
+        }
 #endif
     }
 #endif /* METALS */

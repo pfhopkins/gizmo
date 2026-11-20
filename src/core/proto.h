@@ -1179,6 +1179,9 @@ double single_star_eventrates(int i, double dt);
 double single_star_max_timestep(int p);
 void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
 double single_star_ejecta_mass_this_step(int i);
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+double single_star_ia_convert_fraction(int i, int fb_loop_iteration);
+#endif
 void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);
 int single_star_feedback_log_rows_local(void);
@@ -1539,6 +1542,11 @@ void ledger_restart_io(void (*io)(void *, size_t, int), int modus);
 #ifdef OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS
 void ledger_step_checkpoint(const char *tag);
 #define LEDGER_STEP(tag) ledger_step_checkpoint(tag)
+#if defined(METALS) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+#define LEDGER_SLOTS /* element ledger: per metal slot, mass deposited into gas by feedback and taken from stars (mass_balance_elements.txt) */
+enum {LEDGER_SLOT_TO_GAS, LEDGER_SLOT_FROM_STARS, LEDGER_SLOT_ROWS};
+void ledger_add_slot(int row, int k, double x);
+#endif
 #ifdef OUTPUT_MASS_BALANCE_BREAKDOWN
 void ledger_diffusion_breakdown(double dMZ_pair, double dMZ_clamp, double dMZ_gross);
 void ledger_element_balance(const char *tag);

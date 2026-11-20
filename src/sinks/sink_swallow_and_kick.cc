@@ -265,7 +265,7 @@ void spawn_sink_wind_feedback(void)
     for (int i : ActiveParticleList)
     {
         long nmax = (int)(0.99*All.MaxPart); if(All.MaxPart-20 < nmax) nmax=All.MaxPart-20; int ptype_can_spawn = 0; if(P[i].Type == 5) {ptype_can_spawn = 1;}
-#ifdef SNE_NONSINK_SPAWN
+#ifdef GALSF_FB_MECHANICAL_SNE_SPAWN
         if(P[i].Type == 4) {ptype_can_spawn = 1;}
 #endif
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4)
@@ -409,7 +409,7 @@ double get_spawned_cell_launch_speed(int i, struct particle_data *pp)
     if(is_particle_a_special_zoom_target(i)) {return 3.e4/UNIT_VEL_IN_KMS;} // need an initial velocity for launch here //
 #endif
     
-#ifdef SNE_NONSINK_SPAWN
+#ifdef GALSF_FB_MECHANICAL_SNE_SPAWN
     if(pp[i].Type == 4) {
         double t_gyr = evaluate_stellar_age_Gyr(i); int SNeIaFlag=0; if(t_gyr > 0.03753) {SNeIaFlag=1;}; /* assume SNe before critical time are core-collapse, later are Ia */
         double Msne=10.5/UNIT_MASS_IN_SOLAR; if(SNeIaFlag) {Msne=1.4/UNIT_MASS_IN_SOLAR;} // average ejecta mass for single event (normalized to give total mass loss correctly)
@@ -555,7 +555,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     if((((int)SINK_WIND_SPAWN) % 2) == 0) {if(( n_particles_split % 2 ) != 0) {n_particles_split -= 1;}} /* n_particles_split was not even. we'll wait to spawn this last particle, to keep an even number, rather than do it right now and break momentum conservation */	
     if( (n_particles_split == 0) || (n_particles_split < 1) ) {return 0;}
     int n0max = DMAX(20 , (int)(3.*(SINK_WIND_SPAWN)+0.1));
-#if defined(SNE_NONSINK_SPAWN)
+#if defined(GALSF_FB_MECHANICAL_SNE_SPAWN)
     n0max = DMAX(6 , (int)(3.*(SINK_WIND_SPAWN)+0.1)); // more conservative to spread over more timesteps to avoid nasty overlaps //
 #if (defined(SINGLE_STAR_FB_SNE) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)) || defined(SINGLE_STAR_FB_SNE_N_EJECTA_QUADRANT)
     n0max = DMAX(SINGLE_STAR_FB_SNE_N_EJECTA , (int)(3.*(SINK_WIND_SPAWN)+0.1)); if((n0max % 2) != 0) {n0max += 1;} // should ensure n0max is always an even number //
@@ -606,13 +606,13 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
     d_r = DMIN(P[i].SinkRadius, d_r); //launch close to the sink
 #endif
-#if (defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && defined(PARTICLE_EXCISION)) || defined(SNE_NONSINK_SPAWN)
+#if (defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && defined(PARTICLE_EXCISION)) || defined(GALSF_FB_MECHANICAL_SNE_SPAWN)
     static constexpr uint64_t SPAWN_RADIUS_RNG_SALT = gizmo_loop_rng_salt("spawn_radius");
 #endif
 #if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && defined(PARTICLE_EXCISION)
     if(is_particle_a_special_zoom_target(i)) {double rmin=All.ForceSoftening[3], r=sqrt(r2), r0=0.5*(rmin+r)*(1.+0.1*particle_random_number(i, SPAWN_RADIUS_RNG_SALT, (uint64_t)All.Ti_Current, 0)); d_r=r0;} // make sure to spawn OUTSIDE of the excision radius!
 #endif
-#if defined(SNE_NONSINK_SPAWN)
+#if defined(GALSF_FB_MECHANICAL_SNE_SPAWN)
     if(P[i].Type == 4) {double rmin=All.ForceSoftening[4], r=sqrt(r2), r0=0.5*(rmin+r)*(0.5+1.5*particle_random_number(i, SPAWN_RADIUS_RNG_SALT, (uint64_t)All.Ti_Current, 1)); d_r=r0;} // need a generous padding to ensure no overlaps
 #endif
     long bin, bin_0; for(bin = 0; bin < TIMEBINS; bin++) {if(TimeBinCount[bin] > 0) break;} /* gives minimum active timebin of any particle */
@@ -651,7 +651,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 
     // based on the mode we're in, let's pick a fixed orthonormal basis that all spawned elements are aware of
     Vec3<double> jz={0,0,1},jy={0,1,0},jx={1,0,0};  /* set up a coordinate system [xyz if we don't have any other information */
-#ifndef JET_DIRECTION_FIXED_Z  /* TESTING ONLY: pin the launch axis to +/-z by keeping the default
+#ifndef SINGLE_STAR_FB_JETS_TEST_FIXED_Z  /* TESTING ONLY: pin the launch axis to +/-z by keeping the default
                                   basis, skipping the angular-momentum reorientation and the
                                   precession below, so a launch geometry can be checked against a
                                   known axis. Real jets follow the disk/spin axis, so this is not
@@ -684,7 +684,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     new_dir[0]= jz[0]*cos(degree/180.*M_PI)-jz[2]*sin(degree/180.*M_PI); new_dir[1]= 1.0*jz[1]; new_dir[2]= jz[0]*sin(degree/180.*M_PI)+jz[2]*cos(degree/180.*M_PI);
     jz[0]= new_dir[0]*cos(2.*M_PI/period*All.Time)-new_dir[1]*sin(2.*M_PI/period*All.Time); jz[1]= new_dir[0]*sin(2.*M_PI/period*All.Time)+new_dir[1]*cos(2.*M_PI/period*All.Time); jz[2]= new_dir[2];
 #endif    
-#endif  /* closes !JET_DIRECTION_FIXED_Z */
+#endif  /* closes !SINGLE_STAR_FB_JETS_TEST_FIXED_Z */
 
     /* create the  new particles to be added to the end of the particle list :
         i is the sink particle tag, j is the new "spawed" particle's location, dummy_cell_i_to_clone is a dummy gas cell's tag to be used to init the wind particle */
@@ -850,7 +850,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         P[i].Mass -= P[j].Mass; /* make sure the operation is mass conserving! */ if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
         *unspawned_mass_ptr -= P[j].Mass; /* remove the mass successfully spawned, to update the remaining unspawned mass in whichever reservoir is active */
 
-#if defined(METALS) && (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE) || defined(SNE_NONSINK_SPAWN) || (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4))
+#if defined(METALS) && (defined(SINGLE_STAR_FB_JETS) || defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE) || defined(GALSF_FB_MECHANICAL_SNE_SPAWN) || (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4))
         double yields[NUM_METAL_SPECIES]={0}; get_jet_yields(yields,i); // default to jet-type
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(SINGLE_STAR_FB_WINDS)
         if(P[i].Type==5) {if((P[i].ProtoStellarStage == 5) && (P[i].wind_mode==1)) {get_wind_yields(yields,i);}} // get abundances in wind
@@ -1090,7 +1090,7 @@ double target_mass_for_wind_spawning(int i)
     if(is_particle_a_special_zoom_target(i)) {return 1.e-6/UNIT_MASS_IN_SOLAR;} //
 #endif
 
-#if defined(SNE_NONSINK_SPAWN)
+#if defined(GALSF_FB_MECHANICAL_SNE_SPAWN)
     if(P[i].Type==4) {return 0.5 / UNIT_MASS_IN_SOLAR;} // replace later as needed //
 #endif
     

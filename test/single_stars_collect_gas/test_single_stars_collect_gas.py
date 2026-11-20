@@ -1,7 +1,7 @@
 """single_stars_collect_gas test: new single stars collect their drawn IMF mass from the gas around them
 (GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS), with stars placed by TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS on a regular
 lattice of 1 Msun cells (uniform density and temperature; metallicity varying across the box; bulk velocity plus a shear
-v_y(x)). The main build switches merging of light cells off (MERGESPLIT_HARDCODE_MIN_MASS), so the snapshot after the
+v_y(x)). The main build switches merging of light cells off (MERGE_SPLIT_HARDCODE_MIN_MASS), so the snapshot after the
 first step shows the collection itself; one variant keeps the default merging. See README.md.
 """
 import os
@@ -16,7 +16,7 @@ from gizmo.test import build_gizmo_for_test, mpi_launch_command
 
 TEST_NAME = "single_stars_collect_gas"
 TEST_DIR = Path(__file__).parent
-NO_MERGING = ("MERGESPLIT_HARDCODE_MIN_MASS=(1.e-6)",)
+NO_MERGING = ("MERGE_SPLIT_HARDCODE_MIN_MASS=(1.e-6)",)
 TWO = [((12, 12, 12), 8.0), ((12, 12, 13), 40.0)]
 FIVE = [((12, 12, 12), 8.0), ((12, 12, 13), 40.0), ((12, 13, 12), 15.0), ((13, 12, 12), 60.0), ((11, 11, 11), 25.0)]
 EDGES = [((0, 0, 0), 30.0), ((0, 12, 23), 20.0), ((23, 23, 0), 12.0)]  # at the box edges: donors across the periodic wrap

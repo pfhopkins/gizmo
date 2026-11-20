@@ -387,6 +387,21 @@ double single_star_ejecta_mass_this_step(int i)
     return DMAX(ev.Mej, 0) / UNIT_MASS_IN_SOLAR;
 }
 
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+/* Type Ia (stella_dev 579e0bf93): the event is the table's M_Ch of Ia matter, the white dwarf's M_WD plus M_Ch - M_WD of the gas in
+   the star's kernel (the weighting pass's kernel gas sum) turned into Ia composition in place; the fraction of each such cell */
+double single_star_ia_convert_fraction(int i, int fb_loop_iteration)
+{
+    if(fb_loop_iteration != 0 || single_star_kind_this_step(i) != SSE_IA) {return 0;}
+    struct single_star_event ev; single_star_event_of(i, SSE_IA, &ev);
+    double M_ch = 0; for(int k = 0; k < STBL_NELEM; k++) {M_ch += stellar_type_ia_yield(k);}
+    double dM = DMAX(M_ch - ev.Mej, 0) / UNIT_MASS_IN_SOLAR, M_kernel = P[i].Area_weighted_sum[AREA_WEIGHTED_SUM_KERNEL_GAS];
+    if(dM <= 0 || M_kernel <= 0) {return 0;}
+    if(dM > M_kernel) {printf("SINGLE_STAR TYPE_IA: ID=%llu kernel gas %g Msun < companion share %g Msun: all of it converted\n", (unsigned long long)P[i].ID, M_kernel * UNIT_MASS_IN_SOLAR, dM * UNIT_MASS_IN_SOLAR);}
+    return DMIN(dM / M_kernel, 1.);
+}
+#endif
+
 #ifdef TEST_GAS_ENERGY_LEDGER_OUTPUT
 /* Metallicity slot holding table element k (-1: H, which has no slot) */
 int ledger_met_slot(int k)
@@ -554,12 +569,19 @@ void single_star_feedback_finalize(const int *list, int n)
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
         {double dm = ssfb_mass_before[a] - P[i].Mass; /* taken from the star by the loop [code] */
          ledger_add(LEDGER_M_EJECTA, dm); ledger_add(LEDGER_E_EJECTA, (ev.E > 0) ? dm * (ev.E / UNIT_ENERGY_IN_CGS) / (ev.Mej / UNIT_MASS_IN_SOLAR) : 0.5 * dm * pow(ev.v_kms / UNIT_VEL_IN_KMS, 2)); /* 1/2 dm v_ej^2, v_ej as the loop's */ ledger_add(LEDGER_MZ_EJECTA, (ev.Mej > 0) ? dm * z / ev.Mej : 0); ledger_add(LEDGER_MZ_STARS_LOST, dm * P[i].Metallicity[0]);
+#ifdef LEDGER_SLOTS
+         for(int k = 0; k < NUM_METAL_SPECIES; k++) {ledger_add_slot(LEDGER_SLOT_FROM_STARS, k, dm * P[i].Metallicity[k]);}
+#endif
 #if defined(COSMIC_RAY_FLUID) && defined(MECHFB_CR_INJECTION)
          {double e = (ev.E > 0) ? dm * (ev.E / UNIT_ENERGY_IN_CGS) / (ev.Mej / UNIT_MASS_IN_SOLAR) : 0.5 * dm * pow(ev.v_kms / UNIT_VEL_IN_KMS, 2);
           if(ev.E > 0 || ev.v_kms > 1000.) {ledger_add(LEDGER_E_CR_OFFERED, All.CosmicRay_SNeFraction * e);}}
 #endif
          ESTEP_BOOK((ev.E > 0) ? EBK_FB_SN : EBK_FB_WIND, (ev.E > 0) ? dm * (ev.E / UNIT_ENERGY_IN_CGS) / (ev.Mej / UNIT_MASS_IN_SOLAR) : 0.5 * dm * pow(ev.v_kms / UNIT_VEL_IN_KMS, 2)); /* energy trace: what the event gives, at the star */
-         if(kind != SSE_WIND) {double dr = P[i].Mass - ev.M_rem / UNIT_MASS_IN_SOLAR; ledger_add(LEDGER_M_REMNANT_RESET, dr); ledger_add(LEDGER_MZ_STARS_LOST, dr * P[i].Metallicity[0]);}}
+         if(kind != SSE_WIND) {double dr = P[i].Mass - ev.M_rem / UNIT_MASS_IN_SOLAR; ledger_add(LEDGER_M_REMNANT_RESET, dr); ledger_add(LEDGER_MZ_STARS_LOST, dr * P[i].Metallicity[0]);
+#ifdef LEDGER_SLOTS
+             for(int k = 0; k < NUM_METAL_SPECIES; k++) {ledger_add_slot(LEDGER_SLOT_FROM_STARS, k, dr * P[i].Metallicity[k]);}
+#endif
+         }}
 #endif
         double residual = (kind == SSE_WIND) ? removed - ev.Mej : P[i].Mass * UNIT_MASS_IN_SOLAR - ev.M_rem;
         double row[SSFB_LOG_COLS] = {All.Time, (double)P[i].ID, (double)kind, (double)ev.remnant_type, SingleStars.M_drawn[s],

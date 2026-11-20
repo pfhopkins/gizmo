@@ -246,7 +246,7 @@ KOKKOS_INLINE_FUNCTION static double moment_gas_hmax_from_kernelradius(double ke
 
 /* Component-wise weighted vector cast: reproduces atomic_add_vec3<AccT, NativeT>(&dst, w * x), i.e.
  * the product w*x is formed in the NATIVE (double) operand precision and only THEN cast to AccT.
- * Doing the multiply in AccT instead would (under GIZMO_MIXED_PRECISION_GRAVITY, AccT=float) round
+ * Doing the multiply in AccT instead would (under GRAVITY_MIXED_PRECISION, AccT=float) round
  * the operands first — a precision downgrade and a bit difference. Mass/positions/velocities are all
  * double in this codebase, so the product is always double here. */
 template <class AccT>

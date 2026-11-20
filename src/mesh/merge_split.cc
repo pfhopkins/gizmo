@@ -787,6 +787,15 @@ static int make_sn_ejecta_cell(int i, int n_particles_split)
 #ifdef METALS
     for(int k = 0; k < NUM_METAL_SPECIES; k++) {P[j].Metallicity[k] = in.yields[k];}
 #endif
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER /* the ejecta reach the gas as a new cell: booked as a deposit (the star side books in single_star_ejecta_cell_done) */
+    ledger_add(LEDGER_M_FB_TO_GAS, in.Msne);
+#ifdef METALS
+    ledger_add(LEDGER_MZ_FB_TO_GAS, in.Msne * in.yields[0]);
+#endif
+#ifdef LEDGER_SLOTS
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {ledger_add_slot(LEDGER_SLOT_TO_GAS, k, in.Msne * in.yields[k]);}
+#endif
+#endif
 #ifdef MAGNETIC /* the template's field strength, not its flux */
     CellP[j].B = CellP[tmpl].B * m_ratio; CellP[j].BPred = CellP[tmpl].BPred * m_ratio; CellP[j].DtB = {}; CellP[j].divB = 0;
 #ifdef DIVBCLEANING_DEDNER

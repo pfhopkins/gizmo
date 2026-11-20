@@ -43,7 +43,7 @@ typedef unsigned long long MyIDType;
 typedef double   MyFloat;
 typedef double  MyDouble;
 
-#ifdef GIZMO_MIXED_PRECISION_GRAVITY
+#ifdef GRAVITY_MIXED_PRECISION
 typedef float  MyGravFloat;
 #else
 typedef double MyGravFloat;

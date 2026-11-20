@@ -34,5 +34,5 @@ OUTPUT_SGCHEM_RADIATION_FIELDS
 OUTPUT_MASS_METAL_ENERGY_LEDGER
 # split and merge thresholds are 2.01 x the largest and 0.49 x the smallest gas mass in the IC (init.cc); a zoom IC
 # carries gas of several masses, so set them from the target cell mass instead (code units, 1e10 Msun/h per unit):
-#MERGESPLIT_HARDCODE_MAX_MASS=(2.01*1.0e-10)
-#MERGESPLIT_HARDCODE_MIN_MASS=(0.49*1.0e-10)
+#MERGE_SPLIT_HARDCODE_MAX_MASS=(2.01*1.0e-10)
+#MERGE_SPLIT_HARDCODE_MIN_MASS=(0.49*1.0e-10)

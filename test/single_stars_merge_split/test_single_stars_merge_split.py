@@ -1,6 +1,6 @@
 """single_stars_merge_split: cell merges and the split threshold under single stars, chemistry on. A uniform 12^3 lattice
 of 1 Msun cells at n_H ~ 100 cm^-3, a sparse sublattice of 0.3 Msun cells carrying their own H2, H+, CO abundances and
-dust temperature. The minimum merge mass is fixed at 0.5 Msun (MERGESPLIT_HARDCODE_MIN_MASS), the run takes a few steps of
+dust temperature. The minimum merge mass is fixed at 0.5 Msun (MERGE_SPLIT_HARDCODE_MIN_MASS), the run takes a few steps of
 1e-10 code time, so the network changes the species totals by less than 1e-6.
   test_chemistry_state_conserved: merges remove light cells; total m x of H2, H+, CO matches the IC to 1e-6 (the survivor
     takes the mass-weighted abundances).

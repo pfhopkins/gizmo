@@ -36,6 +36,19 @@ def built_elements(built):
     return built
 
 
+@pytest.fixture(scope="module")
+def built_ia_ledger(built):
+    """the FIRE metal layout with the mass and metal ledger and its step checkpoints (mass_balance_steps.txt, mass_balance_elements.txt)"""
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_base")
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=("COOLING", "COOL_METAL_LINES_BY_SPECIES", "OUTPUT_MASS_METAL_ENERGY_LEDGER",
+                                                            "OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS"))
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_ia_ledger")
+        os.replace(TEST_DIR / "GIZMO_base", TEST_DIR / "GIZMO")
+        get_cooling_tables(str(TEST_DIR))
+    return built
+
+
 def run(tag, tables, ranks=2, which=("wind", "agb", "wd"), ic_args={}, overrides=None, exe="GIZMO"):
     import sys
     sys.path.insert(0, str(TEST_DIR))
@@ -221,3 +234,40 @@ def test_wind_elements_independent_of_cadence(built_elements):
         (y1, M1), (y0, M0) = table(wa), table(la0)
         assert np.all(np.abs((z1 - z0) / (y1 - y0) - 1) < 1e-12), (cap, (z1 - z0) / (y1 - y0) - 1)
         assert abs((m1 - m0) / (40.0 - ms) - 1) < 1e-12 and abs((40.0 - ms) / (M1 - M0) - 1) < 1e-12
+
+
+def test_ia_delivers_m_ch_of_ia_matter(built_ia_ledger):
+    """Type Ia (stella_dev 579e0bf93): an event is the table's M_Ch of Ia matter. The white dwarf (M_WD) goes to the gas with the
+    table's Ia composition, and M_Ch - M_WD of the gas in the star's kernel becomes Ia composition in place (no mass moves). The
+    white dwarf alone in solar-scaled gas, 11 metal slots, 2 ranks. Bars, set before the first run: one Ia; gas mass gain = M_WD
+    (1e-12); each slot k of the gas gains M_Ch f_k - (M_Ch - M_WD) X_k (f_k the table's Ia fraction, X_k the gas's initial
+    fraction; 1e-10 of the larger term), so the gas gains the table's M_Ch of Fe less the converted gas's own Fe; the metal ledger
+    (mass_balance_steps.txt) and every slot of the element ledger (mass_balance_elements.txt) close to 1e-12 at every checkpoint."""
+    with h5py.File(built_ia_ledger["StellarTablesFile"], "r") as F:
+        y = F["type_ia_yields"][()].astype(np.float64)
+    M_ch = y.sum()
+    f = np.r_[y[2:].sum(), y[FIRE_ELEMENTS]] / M_ch
+    ic, snaps, rows = run("ia_m_ch", built_ia_ledger, which=("wd",), exe="GIZMO_ia_ledger", ic_args=dict(n_metals=11))
+    assert len(rows) == 1 and int(rows[0, 2]) == 4, rows
+    M_wd = rows[0, 6]
+
+    def gas(fname):
+        with h5py.File(fname, "r") as G:
+            g = G["PartType0"]
+            m = g["Masses"][()].astype(np.float64)
+            return m.sum(), (m[:, None] * g["Metallicity"][()].astype(np.float64)).sum(0), g["Metallicity"][()][0].astype(np.float64)
+    (m0, z0, X), (m1, z1, _) = gas(ic), gas(snaps[-1])
+    assert abs((m1 - m0) / M_wd - 1) < 1e-12, (m1 - m0, M_wd)
+    want = M_ch * f - (M_ch - M_wd) * X
+    scale = np.maximum(M_ch * f, (M_ch - M_wd) * X)
+    print(f"M_Ch {M_ch:.6f} M_WD {M_wd:.6f}; slot gain / expected - 1: {(z1 - z0) / want - 1}")
+    assert np.all(np.abs((z1 - z0) - want) <= 1e-10 * scale), ((z1 - z0) - want) / scale
+    out = TEST_DIR / "run_ia_m_ch" / "output"
+    steps = [l.split() for l in (out / "mass_balance_steps.txt").read_text().splitlines() if l and not l.startswith("#")]
+    zl, dzl = (np.array([float(r[k]) for r in steps]) for k in (9, 10))
+    assert np.max(np.abs(dzl)) <= 1e-12 * abs(zl[0]), np.max(np.abs(dzl)) / abs(zl[0])
+    el = [l.split() for l in (out / "mass_balance_elements.txt").read_text().splitlines() if l and not l.startswith("#")]
+    rel = np.array([[float(x) for x in r[5:]] for r in el])
+    assert rel.shape[1] >= 11 and int(el[0][0]) == 0
+    print(f"{len(el)} element-ledger lines, max |dL|/S {np.max(np.abs(rel)):.2e}")
+    assert np.max(np.abs(rel)) <= 1e-12, el[int(np.argmax(np.max(np.abs(rel), axis=1)))]
