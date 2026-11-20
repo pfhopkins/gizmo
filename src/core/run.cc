@@ -140,7 +140,7 @@ void run(void)
 
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
-#ifndef GR_TEST_PARTICLE
+#if !(defined(GENERAL_RELATIVITY) && defined(GR_TEST_PARTICLE)) /* GR geodesic test particles: no hydro */
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
 #endif
 #ifdef GENERAL_RELATIVITY
@@ -467,7 +467,7 @@ void run(void)
         CPU_Step[CPU_SNIIHEATING] += measure_time();
 #endif
 
-#ifndef GR_TEST_PARTICLE /* GR geodesic test particles: no hydro */
+#if !(defined(GENERAL_RELATIVITY) && defined(GR_TEST_PARTICLE)) /* GR geodesic test particles: no hydro */
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
 #endif
 #ifdef DM_HEATING

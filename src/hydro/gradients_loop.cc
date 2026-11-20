@@ -86,13 +86,13 @@ void local_slopelimiter(double *grad, double valmax, double valmin, double alim,
         cfac *= f_corr_overshoot;
         if(pos_preserve == 1) {
 #ifdef GENERAL_RELATIVITY
-            /* GR: positivity over a fraction SLOPELIMITER_POSITIVITY_RANGE_FAC (default 0.5, as in Lupi 2023) of the maximum
+            /* GR: positivity over a fraction SLOPE_LIMITER_POSITIVITY_RANGE_FAC (default 0.5, as in Lupi 2023) of the maximum
                neighbour distance d_max (Newtonian builds use the full d_max). fmin is at most half the smallest neighbour value (valmin is a
                difference from val_cen). Over the full d_max the pressure step over-limits smooth stratified profiles: a TOV star develops an
                inward density wave (outer layers drain, the core contracts); at 0.5 the wave is only slowed (outer shell at 0.7 of its initial
                density after t=20), while at 0.25 the poorly resolved surface of a low-resolution TOV star launches a noise front that crosses
                the star in ~7 t_dyn. The pairwise face limiter of reconstruct_face_states keeps the face states positive. */
-            d_max *= SLOPELIMITER_POSITIVITY_RANGE_FAC;
+            d_max *= SLOPE_LIMITER_POSITIVITY_RANGE_FAC;
 #endif
             double fmin = DMIN(val_cen, DMAX(0, DMAX(MIN_REAL_NUMBER * val_cen,
                                                     DMIN(0.5 * (val_cen + valmin),

@@ -323,7 +323,9 @@ void begrun(void)
 				 */
 
 #if defined(GENERAL_RELATIVITY) && (GR_METRIC<0)
-      All.GR_MetricTable = all.GR_MetricTable; /* the restart file holds the address of the previous run's table: keep the one loaded above */
+      /* the restart file holds the previous run's table address, size and file name: keep the table loaded above */
+      All.GR_MetricTable = all.GR_MetricTable; All.GR_MetricTableN = all.GR_MetricTableN; All.GR_MetricTableLog = all.GR_MetricTableLog;
+      strcpy(All.GR_MetricTableFile, all.GR_MetricTableFile);
 #endif
       /* P[].wakeup is serialized; the flag that gates process_wake_ups on it is not. Force one pass so the
          requests that came back are serviced, instead of resuming with the gate shut over them. */

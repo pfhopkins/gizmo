@@ -69,11 +69,11 @@ KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct
     Vec3<double> dp = gr_hole_displacement(pos);
 #if (GR_METRIC==0) /* Minkowski */
     g->tt = -1; g->ti = Vec3<double>{0,0,0}; g->ij.set_isotropic(1.);
-#elif (GR_METRIC==1) /* Kerr: Boyer-Lindquist (USE_BOYERLINDQUIST) or Kerr-Schild coordinates */
+#elif (GR_METRIC==1) /* Kerr: Boyer-Lindquist (GR_METRIC_USE_BOYER_LINDQUIST) or Kerr-Schild coordinates */
     double M = All.MetricParams[0], a = All.MetricParams[1]*M, a2 = a*a;
     double x2 = dp[0]*dp[0], y2 = dp[1]*dp[1], z2 = dp[2]*dp[2], R2 = x2 + y2 + z2;
     double r2 = (R2 - a2 + sqrt((R2-a2)*(R2-a2) + 4*a2*z2))/2.;
-#ifndef USE_KERRSCHILD_COORDINATES /* Boyer-Lindquist in Cartesian components (Liptai & Price 2019): singular on the axis x = y = 0, where the
+#ifndef GR_METRIC_USE_KERR_SCHILD /* Boyer-Lindquist in Cartesian components (Liptai & Price 2019): singular on the axis x = y = 0, where the
                                       1/(x^2+y^2) terms cancel only analytically; for particle distributions that avoid the axis */
     double sinth2 = 1. - z2/r2, rho2 = r2 + a2*z2/r2, delta = r2 - 2*M*sqrt(r2) + a2, Att = 2.0*M*sqrt(r2)/rho2, xy2 = x2 + y2;
     g->tt = Att - 1.0;
@@ -101,7 +101,7 @@ KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct
     /* the row is found by bisection (the radii are strictly increasing, checked by the loader): no assumption on the spacing; the radius is
        floored at the first row, or at the second if the first is r = 0 (where the interpolated quantities are singular); beyond the last
        row the metric is the exterior Schwarzschild one with the mass of the last row */
-#ifdef USE_ISOTROPIC_RADIUS /* isotropic coordinates: the table is indexed by r_iso, the spatial metric is conformally flat, e^{4 phi} = (r_areal/r_iso)^2 */
+#ifdef GR_METRIC_USE_ISOTROPIC_RADIUS /* isotropic coordinates: the table is indexed by r_iso, the spatial metric is conformally flat, e^{4 phi} = (r_areal/r_iso)^2 */
     const double *riso = rb + 3*N;
     {double r_floor = (riso[0] > 0) ? riso[0] : riso[1]; if(r <= r_floor) {r = r_floor;}}
     double e4phi, g00;

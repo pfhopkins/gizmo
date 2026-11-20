@@ -32,13 +32,17 @@ void gr_load_metric_table(void)
         if(fgets(line, 999, f) == NULL || sscanf(line, "%le %le %le %le", tab + i, tab + N + i, tab + 2*N + i, tab + 3*N + i) != 4)
         {printf("GR: bad row %d in the metric table '%s'\n", i, All.GR_MetricTableFile); fclose(f); endrun(9993005); return;}
         /* columns r, M(r), -g_tt, r_iso: finite, radii non-negative and strictly increasing, M >= 0, positive lapse (r_iso is used, and
-           checked, only with USE_ISOTROPIC_RADIUS: other tables may carry anything in that column, e.g. the density) */
+           checked, only with GR_METRIC_USE_ISOTROPIC_RADIUS: other tables may carry anything in that column, e.g. the density) */
         double r = tab[i], M = tab[N + i], mgtt = tab[2*N + i], riso = tab[3*N + i];
         int ok = isfinite(r) && isfinite(M) && isfinite(mgtt) && (r >= 0) && (M >= 0) && (mgtt > 0) && (i == 0 || r > tab[i-1]);
-#ifdef USE_ISOTROPIC_RADIUS
+#ifdef GR_METRIC_USE_ISOTROPIC_RADIUS
         ok = ok && isfinite(riso) && (riso >= 0) && (i == 0 || riso > tab[3*N + i-1]);
+        const char *radius_condition = "strictly increasing r_iso >= 0";
+#else
+        ok = ok && ((r == 0) || (2*M < r)); /* areal radius: g_rr = 1/(1 - 2M/r) needs every row outside its own horizon */
+        const char *radius_condition = "2M < r (areal radius)";
 #endif
-        if(!ok) {printf("GR: row %d of the metric table '%s' is not valid (r=%g M=%g -g_tt=%g r_iso=%g: need finite values, strictly increasing radii >= 0, M >= 0, -g_tt > 0)\n", i, All.GR_MetricTableFile, r, M, mgtt, riso); fclose(f); endrun(9993006); return;}
+        if(!ok) {printf("GR: row %d of the metric table '%s' is not valid (r=%g M=%g -g_tt=%g r_iso=%g: need finite values, strictly increasing radii >= 0, M >= 0, -g_tt > 0, %s)\n", i, All.GR_MetricTableFile, r, M, mgtt, riso, radius_condition); fclose(f); endrun(9993006); return;}
     }
     fclose(f);
     All.GR_MetricTable = tab; All.GR_MetricTableN = N; All.GR_MetricTableLog = logscale; /* (the spacing flag is informative: rows are found by bisection) */

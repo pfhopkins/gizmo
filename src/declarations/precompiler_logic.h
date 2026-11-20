@@ -50,15 +50,15 @@
 #if ((GENERAL_RELATIVITY != 0) && (GENERAL_RELATIVITY != 1)) || (GR_METRIC > 1)
 #error "GENERAL_RELATIVITY must be 0 (HLL) or 1 (HLLC), and GR_METRIC 0 (Minkowski), 1 (Kerr) or negative (tabulated)"
 #endif
+#ifndef SELFGRAVITY_OFF
+#define SELFGRAVITY_OFF               /* the metric is prescribed: no Newtonian self-gravity */
+#endif
 #if (GR_METRIC==1)
-#ifndef USE_BOYERLINDQUIST
-#define USE_KERRSCHILD_COORDINATES    /* Kerr-Schild coordinates by default for a single black hole */
+#ifndef GR_METRIC_USE_BOYER_LINDQUIST
+#define GR_METRIC_USE_KERR_SCHILD    /* Kerr-Schild coordinates by default for a single black hole */
 #endif
 #endif
 #if (GR_METRIC>0)
-#ifndef SINK_CALC_DISTANCES
-#define SINK_CALC_DISTANCES
-#endif
 #ifndef PARTICLE_EXCISION
 #define PARTICLE_EXCISION             /* the cells inside GR_EXCISION_RADIUS horizon radii are removed */
 #endif
