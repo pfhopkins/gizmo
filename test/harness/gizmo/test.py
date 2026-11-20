@@ -135,6 +135,8 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
     system("rm -f src/GIZMO test/*/GIZMO")
+    if not path.isfile(f"test/{test_name}/Config.sh"):
+        raise FileNotFoundError(f"test/{test_name}/Config.sh missing: not building whatever src/Config.sh holds instead")
     system(f"cp test/{test_name}/Config.sh src/")
     if num_openmp_threads > 0:
         with open("src/Config.sh", "a") as f:
