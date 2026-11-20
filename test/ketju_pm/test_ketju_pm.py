@@ -14,9 +14,9 @@ members the pair feels no 20 Msun star at all and moves on a straight line, 1.23
 Bars, set before running: the pair CoM relative to the 20 Msun star within 0.05 R_out of the open-box DOP853 three-body solution
 (periodic images change the field by (R_out/L)^3 = 1e-3), the pair's semi-major axis within 1e-2 of the reference, the mass trace and
 the energy step trace closes with its own bars (integration residual 1e-2 of E_scale), as set before the first run.
-The trace's E_pot leaves out each particle's own mesh self-potential (-G m/(sqrt(pi) r_s), 5.1e-9 for the 20 Msun star, more than
-the problem's physical energies); with it, E_scale was inflated about 14x and the residual (1.84e-2 of it at 2026-11-19) the same
-with and without KETJU (single-star twin 1.98e-2)."""
+The trace's E_pot leaves out each particle's own mesh self-potential, the exact CIC value (PM_EXACT_SELF_POTENTIAL_DIAG; the
+continuum -G m/(sqrt(pi) r_s) differs from it by up to ~20% with sub-cell position). 2026-11-20: residual 2.0e-2 of E_scale at one
+sync (pair at pericentre, step 9), all others <= 6.1e-3; with the continuum self term 4.9e-2 at 39 syncs. Still fails the 1e-2 bar."""
 
 import glob
 import os
