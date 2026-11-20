@@ -17,6 +17,10 @@
 //            x_H+ ~ 0.9999+ CVODE's error-tolerated H+ overshoot can cross it; the recoverable validate_input rejections of
 //            these four net-5 calls are recorded, not failed: logged cells 6796375 and 1080890, hand-off (cell 1080890's
 //            inputs) nH 10, bypass T 4.99e5 K, dt 7.7044e11 and 3e12 s. rc, floor hits and the 1% T bar stay hard.
+//            Known cases, net 17 (Uli's decision 2026-11-20): with the C++ stop time per substep (D-60) the hand-off
+//            calls nH 10, bypass T 4.5e5 and 4.8e5 K, dt 7.7044e11 and 3e12 s have one recoverable C++ H+ rejection each
+//            (recorded, not failed); hand-off nH 10, bypass T 4.99e5 K, dt 7.7044e11 s: DVODE is 1.1% off the converged
+//            T with D-60 in the Fortran RHS: legacy-solver accuracy, recorded, not failed (C++ stays gated at 1%).
 //   PHASE R  (TEST_SGCHEM_FORCED_SOLVER_FAILURE) failures forced per attempt (1 = substep budget of one,
 //            100 = every substep rejected), D-59:
 //            R1/R2  first attempt fails with code 1 / 100 on the logged cells: the retry rescues (rc 0, T within 1% of
@@ -398,17 +402,22 @@ static int check_pair(const char* tag, const LoggedCell& L, double dt, double yn
 #endif
     double relC = std::fabs(c.T - Tref) / Tref, relF = std::fabs(f.T - Tref) / Tref;
     // net 5 calls with known recoverable H+ rejections (Uli 2026-11-19, see the header)
-    int known = 0;
+    int known = 0, known_dvode = 0;
+    const int handoff10 = (std::strcmp(tag, "hand-off") == 0 && yn == 10.0 && (dt == 7.7044e11 || dt == 3e12));
+    const double Tb = bypass_T(*g_cx, yn, e0, y0);
 #if CHEMISTRYNETWORK == 5
     known = (std::strcmp(tag, "logged") == 0 && (L.id == 6796375 || L.id == 1080890))
-         || (std::strcmp(tag, "hand-off") == 0 && L.id == 1080890 && yn == 10.0 && (dt == 7.7044e11 || dt == 3e12)
-             && std::fabs(bypass_T(*g_cx, yn, e0, y0) - 4.99e5) < 1.0);
+         || (handoff10 && L.id == 1080890 && std::fabs(Tb - 4.99e5) < 1.0);
+#else
+    known = handoff10 && L.id == 3018810 && (std::fabs(Tb - 4.5e5) < 1.0 || std::fabs(Tb - 4.8e5) < 1.0);
+    known_dvode = handoff10 && L.id == 3018810 && dt == 7.7044e11 && std::fabs(Tb - 4.99e5) < 1.0;
 #endif
     int bad = (c.rc != 0) || (f.rc != 0) || (c.excess != 0 && !known) || (c.floors != 0) || (c.dpfail != 0)
-           || !(relC <= 0.01) || !(relF <= 0.01);
+           || !(relC <= 0.01) || (!(relF <= 0.01) && !known_dvode);
     std::printf("  %-10s %8ld %10.4g %9.4g %9.4g | %4d %6ld %6ld %7ld %5ld %10.4g %8.1e | %4d %10.4g %8.1e | %10.4g%s\n",
                 tag, L.id, dt, yn, temp_of(*g_cx, yn, e0, y0), c.rc, c.substeps, c.retries, c.excess, c.floors, c.T, relC,
-                f.rc, f.T, relF, Tref, bad ? "  <-- FAIL" : (known && c.excess ? "  (known: recoverable H+ rejections)" : ""));
+                f.rc, f.T, relF, Tref, bad ? "  <-- FAIL" : (known && c.excess ? "  (known: recoverable H+ rejections)"
+                                         : (known_dvode && relF > 0.01 ? "  (known: DVODE legacy accuracy)" : "")));
     if (c.dpfail) std::printf("      %ld substeps rejected for a D+ excess\n", c.dpfail);
     if (bad)
         for (const Res* r : {&c, &f}) {
