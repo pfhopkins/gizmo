@@ -186,7 +186,11 @@ void verify_and_assign_local_mechfb_integrals(void)
                 dTE += LocalGasMechFBInfoTemp[j].KE_injected - (pf_2/(2.*mf) - p0_2/(2.*m0));
             }
 #endif
-            if(dTE > 0 || dm > 0)
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+            if(dTE > 0 || dm > 0) /* the dilution of a cell given mass and no heat */
+#else
+            if(dTE > 0)
+#endif
             {
                 double TE_0=m0*CellP[j].InternalEnergy; dTE=DMAX(-TE_0,dTE); /* ensure against non-negative values */
                 double dU = (-dm/mf)*CellP[j].InternalEnergy + (1./mf)*dTE; /* using new mass get updated internal energy */
