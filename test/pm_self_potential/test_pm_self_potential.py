@@ -21,7 +21,7 @@ from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "pm_self_potential"
 TEST_DIR = f"test/{TEST_NAME}"
-G = 4.300710573e-6
+G = 6.672e-8 * 1.989e43 / (3.085678e21 * 1e10)  # code units (kpc, km/s, 1e10 Msun), constants.h values
 AU = 1.0 / 206264.806 / 1e3
 L, NGRID = 2e5 * AU, 32
 M = 20.0
