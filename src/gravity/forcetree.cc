@@ -3629,6 +3629,23 @@ int subfind_force_treeevaluate_potential(int target)
 
 
 
+/* Nextnode[] and Father[] keep their storage from one tree to the next.  Freeing them at every tree
+ * build and allocating them again hands the GPU physical pages the operating system has just
+ * recycled, and on a GPU that caches this memory without coherence with the CPU (the AMD MI300A
+ * APU) the GPU can go on reading lines of those pages' previous contents
+ * (https://github.com/pfhopkins/gizmo/issues/168).  Each array is one allocation, reused while it
+ * is large enough and replaced only when a tree needs more, so it is bounded by the largest tree
+ * of the run; force_tree_release_kept_storage frees both at shutdown. */
+static int   *kept_nextnode = NULL, *kept_father = NULL;
+static size_t kept_nextnode_bytes = 0, kept_father_bytes = 0;
+
+void force_tree_release_kept_storage(void)
+{
+    if(kept_nextnode) {gpu_tree_free_bytes(kept_nextnode); kept_nextnode = NULL; kept_nextnode_bytes = 0;}
+    if(kept_father)   {gpu_father_free(kept_father);       kept_father   = NULL; kept_father_bytes   = 0;}
+    Nextnode = NULL; Father = NULL;
+}
+
 /*! This function allocates the memory used for storage of the tree and of
  *  auxiliary arrays needed for tree-walk and link-lists.  Usually,
  *  maxnodes approximately equal to 0.7*tree_particle_slots is sufficient to
@@ -3844,7 +3861,13 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
      * pseudo-particle range stays in bounds after the index shift. */
     long long nextnode_slots = (long long) tree_particle_slots + (long long) NTopnodes + (long long) MaxForeignNodes;
     bytes = (size_t) nextnode_slots * sizeof(int);
-    Nextnode = (int *) gpu_tree_alloc_bytes(bytes, "tree_nextnode");
+    if(!kept_nextnode || kept_nextnode_bytes < bytes)
+    {
+        if(kept_nextnode) {gpu_tree_free_bytes(kept_nextnode); kept_nextnode = NULL; kept_nextnode_bytes = 0;}
+        kept_nextnode = (int *) gpu_tree_alloc_bytes(bytes, "tree_nextnode");
+        if(kept_nextnode) {kept_nextnode_bytes = bytes;}
+    }
+    Nextnode = kept_nextnode;
     if(!Nextnode)
     {
         printf("Failed to allocate %lld 'Nextnode' slots (%g MB) in SharedSpace\n",
@@ -3859,9 +3882,15 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
     /* Father[] is UVM (SharedSpace) so the GPU father kernel can
      * write into it directly and host readers (setup_smoothinglengths etc.)
      * page-fault on touch.  No per-tree-build deep_copy needed.  Skip the
-     * mymalloc accounting; the matching gpu_father_free lives in force_treefree. */
+     * mymalloc accounting; the storage is kept from tree to tree (see kept_father) and freed at shutdown. */
     bytes = (size_t)tree_particle_slots * sizeof(int);
-    Father = gpu_father_alloc(tree_particle_slots);
+    if(!kept_father || kept_father_bytes < bytes)
+    {
+        if(kept_father) {gpu_father_free(kept_father); kept_father = NULL; kept_father_bytes = 0;}
+        kept_father = gpu_father_alloc(tree_particle_slots);
+        if(kept_father) {kept_father_bytes = bytes;}
+    }
+    Father = kept_father;
     if(!Father)
     {
         printf("Failed to allocate %d spaces for 'Father' array (%g MB) in SharedSpace\n",
@@ -4134,7 +4163,7 @@ void force_treefree(void)
         /* SharedSpace (UVM) frees for GPU-addressable tree
          * storage.  Order is reverse-of-alloc (LIFO discipline preserved for
          * the residual mymalloc'd DomainNodeIndex). */
-        if(Father)        {gpu_father_free(Father); Father = NULL;}
+        Father = NULL;   /* its storage is kept for the next tree (see kept_father) */
         gpu_gravity_tree_alias_nextnode(NULL, 0);  /* clear SoA alias before free */
         /* Freeing the tree invalidates every GPU representation derived from it: the
          * node mirror the device walk reads, the drift and moment-refresh state keyed
@@ -4150,7 +4179,7 @@ void force_treefree(void)
         gpu_leaf_mirror_release();   /* the device leaf mirror lives and dies with the tree */
         nlr_mode_d_packet_workspace_release();   /* so does the packet walk's workspace (its top-level order is this tree's) */
         gx_top_leaf_map_release();               /* and Mode D's top-leaf map */
-        if(Nextnode)      {gpu_tree_free_bytes(Nextnode);      Nextnode      = NULL;}
+        Nextnode = NULL; /* its storage is kept for the next tree (see kept_nextnode) */
         if(Extnodes_base) {gpu_tree_free_bytes(Extnodes_base); Extnodes_base = NULL;}
         if(Nodes_base)    {gpu_tree_free_bytes(Nodes_base);    Nodes_base    = NULL;}
         /* Free the foreign-leaf sidecar (SharedSpace, same allocator as the foreign-node arena). */
