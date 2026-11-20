@@ -554,14 +554,16 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifdef WAKEUP
                 if(!(TimeBinActive[P[j].TimeBin]))
                 {
-                    int pf_wake = 0;
 #ifdef HYDRO_TIMESTEP_FROM_PAIR_FORCE
+                    int pf_wake = 0;
                     { /* this pair's push over half of j's step would change j's kinetic energy by more than a fraction of its u */
                         double a_pf = Fluxes.v.norm() / P[j].Mass, dt_half = 0.5 * dt_hydrostep_j;
                         if(0.5 * a_pf*a_pf * dt_half*dt_half > HYDRO_PAIR_FORCE_DT_ETA * CellP[j].InternalEnergyPred) {pf_wake = 1;}
                     }
-#endif
                     if(kernel.vsig > WAKEUP*CellP[j].MaxSignalVel || pf_wake) {
+#else
+                    if(kernel.vsig > WAKEUP*CellP[j].MaxSignalVel) {
+#endif
                         #pragma omp atomic write
                         P[j].wakeup = (short int)(local.TimeBin + 1);
                         #pragma omp atomic write
