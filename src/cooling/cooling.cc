@@ -3007,6 +3007,7 @@ void gizmo_kokkos_finalize(void)
     gx_motion_target_release();
     gpu_node_dirty_release();
     gpu_topology_build_release();
+    force_tree_release_kept_storage();
 #ifdef HERMITE_FOREIGN_SOURCE_TABLE
     hermite_ghost_table_release();
     let_foreign_leaf_id_release();
