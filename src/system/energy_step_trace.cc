@@ -206,10 +206,11 @@ void energy_step_trace_report(void)
             fprintf(fd, "#       b_info_*: information only, in no closure. tot_res = (E_tot - E_tot0) - all bookings - measured stages.\n");
             fprintf(fd, "#       E_scale: |E| + |E_pot| at the first sync, fixed for the run (the checker adds the booked SN energy from the SN on).\n");
             fprintf(fd, "# cooling stage: the solve (ledger), PI raise, input and output floors, CR losses booked from their formulas at the site;\n");
+            fprintf(fd, "#        unbooked, so a STAGE finding: the NaN revert, the hydro du around the solve without COOLING_OPERATOR_SPLIT.\n");
             fprintf(fd, "#        the solve, PI raise and CR loss rates are booked by construction. info_cool_id_*: at every RHS evaluation of the\n");
             fprintf(fd, "#        chemistry solve (explicit hot path, accepted substeps, final state) sum |energy RHS + reported net cooling| x dt,\n");
-            fprintf(fd, "#        the gross rates x dt, the evaluations; equal when every term of the energy equation is reported (not net 18).\n");
-            fprintf(fd, "#        unbooked, so a STAGE finding: the NaN revert, the hydro du around the solve without COOLING_OPERATOR_SPLIT.\n");
+            fprintf(fd, "#        the gross rates x dt (per evaluation, times the cell step: only their ratio is meaningful), the evaluations;\n");
+            fprintf(fd, "#        equal when every term of the energy equation is reported (not net 18).\n");
             fprintf(fd, "# exact stages:");
             for(int s = 0; s < ESTEP_NSTAGE; s++) {if(estep_stage_exact[s] == 1) {fprintf(fd, " %s", estep_stage_name[s]);}}
             fprintf(fd, "\n# pot_valid=%d every=%d\n", pot_ok, ESTEP_EVERY);
