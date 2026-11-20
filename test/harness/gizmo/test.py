@@ -46,8 +46,8 @@ def variant_output_dir(test_name: str, extra_config_flags=(), *, config_file="Co
 
 
 def clean_test_outputs(test_name: str, extra_config_flags=(), *, config_file="Config.sh"):
-    """Remove this variant's output directory and the test's log files from a previous test run.
-    Other variants' output directories (including the baseline plain "output") are left untouched.
+    """Remove this variant's output directory and log files from a previous test run.
+    Other variants' outputs and logs (including the baseline plain "output") are left untouched.
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
@@ -55,10 +55,10 @@ def clean_test_outputs(test_name: str, extra_config_flags=(), *, config_file="Co
     output_dir = variant_output_dir(test_name, extra_config_flags, config_file=config_file)
     if path.isdir(output_dir):
         rmtree(output_dir)
-    for f in glob(path.join(test_dir, f"test_{test_name}.out")):
-        remove(f)
-    for f in glob(path.join(test_dir, f"test_{test_name}.err")):
-        remove(f)
+    suffix = variant_suffix(extra_config_flags, config_file=config_file)
+    for f in (f"test_{test_name}{suffix}.out", f"test_{test_name}{suffix}.err"):
+        if path.isfile(path.join(test_dir, f)):
+            remove(path.join(test_dir, f))
 
 
 def physical_cores():
@@ -355,8 +355,10 @@ def mpi_launch_command(num_mpi_ranks: int, num_openmp_threads: int = 0) -> list:
 
 def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0,
              timeout: float = None, param_overrides: dict = None,
-             allow_nonzero_exit: bool = False, params_name: str = None):
+             allow_nonzero_exit: bool = False, params_name: str = None, *, log_suffix: str = ""):
     """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run.
+    The run's stdout/stderr go to test_<name><log_suffix>.out/.err (build_and_run_test passes the variant suffix,
+    so each Config variant keeps its own logs).
     If the GIZMO subprocess exceeds the timeout, it is killed and the test is skipped via
     pytest.skip; the timeout defaults to GIZMO_TEST_TIMEOUT, or to no timeout at all.
     param_overrides replaces parameter values for this run only, via a sibling params file.
@@ -383,7 +385,7 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     cmd = mpi_launch_command(num_mpi_ranks, num_openmp_threads) + ["./GIZMO", paramsfile, "0"]
 
     effective_timeout = _resolve_test_timeout(timeout)
-    outfile, errfile = f"test_{test_name}.out", f"test_{test_name}.err"
+    outfile, errfile = f"test_{test_name}{log_suffix}.out", f"test_{test_name}{log_suffix}.err"
     with open(outfile, "w") as out, open(errfile, "w") as err:
         # Record how the run was actually launched. Rank and thread counts and the binding
         # policy are decided here, so without this the only evidence of the geometry a given
@@ -547,7 +549,7 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
         download_test_files(test_name, params_name)
         run_test(test_name, num_mpi_ranks, num_openmp_threads, timeout=timeout,
                  param_overrides=param_overrides, allow_nonzero_exit=allow_nonzero_exit,
-                 params_name=params_name)
+                 params_name=params_name, log_suffix=variant_suffix(extra_config_flags, config_file=config_file))
         chdir("../../")
     finally:
         if params_name and params_name != test_name:
