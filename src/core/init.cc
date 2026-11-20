@@ -231,6 +231,12 @@ void init(void)
 #ifdef NO_CHILD_IDS_IN_ICS
     if(RestartFlag != 1) {for(i = 0; i < NumPart; i++) {P[i].ID_child_number = 0; P[i].ID_generation = 0;}}
 #endif
+#ifdef GALSF_SINGLE_STARS_FROM_IMF /* roll-over count and lineage key: read from snapshots (zero-filled when absent), zeroed with the child numbers */
+    if(RestartFlag == 0) {for(i = 0; i < NumPart; i++) {P[i].ID_wraps = 0; P[i].ID_lineage = 0;}}
+#if defined(NO_CHILD_IDS_IN_ICS) || defined(ASSIGN_NEW_IDS)
+    if(RestartFlag != 1) {for(i = 0; i < NumPart; i++) {P[i].ID_wraps = 0; P[i].ID_lineage = 0;}}
+#endif
+#endif
 
     for(i = 0; i < NumPart; i++)	/*  start-up initialization */
     {

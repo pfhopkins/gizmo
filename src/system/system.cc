@@ -13,6 +13,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../declarations/gpu_rng.h"
+#include "../galaxy_sf/single_star_identity.h"
 
 /*! various routines are collected here, needed to communicate with the 
  *  actual system, stdin/out, abort runs, etc
@@ -43,11 +44,13 @@ double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_
     return gizmo_gpu_rand_double(particle_event_rng_key(i), gizmo_rng_event_counter(site_salt, event, draw_index));
 }
 
-/* key of a single-star model draw: with GALSF_SINGLE_STARS_FROM_IMF the identity key, so runs on any rank count share the draws; else the event key */
+/* key of a single-star model draw: with GALSF_SINGLE_STARS_FROM_IMF the identity key, so runs on any rank count share the draws (with the
+   roll-over count and lineage key once nonzero, galaxy_sf/single_star_identity.h); else the event key */
 uint64_t single_star_draw_rng_key(int i)
 {
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
-    return gizmo_rng_particle_identity_key(P[i]);
+    const uint64_t x = single_star_identity_extra(P[i]);
+    return x ? gizmo_rng_combine(gizmo_rng_particle_identity_key(P[i]), x) : gizmo_rng_particle_identity_key(P[i]);
 #else
     return gizmo_rng_particle_event_key(P[i]);
 #endif

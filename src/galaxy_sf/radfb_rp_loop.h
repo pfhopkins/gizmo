@@ -43,13 +43,15 @@
 #include "../mesh/mode_b_local_walker.h"        /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
 #include "../declarations/gpu_rng.h"            /* gizmo_gpu_rand_double */
 #include "../radiation/rt_functions.h"          /* rt_kappa, RT_FREQ_BIN_FIRE_* */
+#include "single_star_identity.h"               /* single_star_identity_extra */
 
 /* key of a radiation-pressure draw: with GALSF_SINGLE_STARS_FROM_IMF the identity key (any rank count shares the draws), else the event key */
 template <class Particle>
 GIZMO_RNG_INLINE uint64_t rp_draw_rng_key(const Particle &p)
 {
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
-    return gizmo_rng_particle_identity_key(p);
+    const uint64_t x = single_star_identity_extra(p); /* roll-over count and lineage key, once nonzero */
+    return x ? gizmo_rng_combine(gizmo_rng_particle_identity_key(p), x) : gizmo_rng_particle_identity_key(p);
 #else
     return gizmo_rng_particle_event_key(p);
 #endif

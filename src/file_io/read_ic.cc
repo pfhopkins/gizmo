@@ -469,6 +469,18 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             if(RestartFlag == 2) {for(n = 0; n < pc; n++) {P[offset + n].ID_generation = *ip++;}}
             break;
 
+        case IO_ID_WRAPS:		/* identity, as the child and generation numbers: snapshot restarts only (absent: zero-filled) */
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+            if(RestartFlag == 2) {for(n = 0; n < pc; n++) {P[offset + n].ID_wraps = *ip_int++;}}
+#endif
+            break;
+
+        case IO_ID_LINEAGE:
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+            if(RestartFlag == 2) {for(n = 0; n < pc; n++) {P[offset + n].ID_lineage = *ip++;}}
+#endif
+            break;
+
         case IO_REFINE_FLAG:		// nuclear-zoom refinement tag; read on ALL restart flags (incl. fresh IC start) so tagged ICs work as intended //
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
             for(n = 0; n < pc; n++) {P[offset + n].Refinement_Flag = *ip++;}
@@ -1602,9 +1614,9 @@ int read_file(char *fname, int readTask, int lastTask)
                                 continue;	/* ignore all other blocks in initial conditions */
 
 
-            if(RestartFlag == 0 && (blocknr == IO_GENERATION_ID || blocknr == IO_CHILD_ID)) {continue;}
+            if(RestartFlag == 0 && (blocknr == IO_GENERATION_ID || blocknr == IO_CHILD_ID || blocknr == IO_ID_WRAPS || blocknr == IO_ID_LINEAGE)) {continue;}
 #if defined(NO_CHILD_IDS_IN_ICS) || defined(ASSIGN_NEW_IDS)
-            if(blocknr == IO_GENERATION_ID || blocknr == IO_CHILD_ID) {continue;}
+            if(blocknr == IO_GENERATION_ID || blocknr == IO_CHILD_ID || blocknr == IO_ID_WRAPS || blocknr == IO_ID_LINEAGE) {continue;}
 #endif
             if((RestartFlag == 0) && (All.InitGasTemp > 0) && (blocknr == IO_U)) {continue;}
 

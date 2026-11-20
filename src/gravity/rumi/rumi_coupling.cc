@@ -22,6 +22,7 @@
 #include "../../galaxy_sf/stellar_evolution_tables.h" /* star radii */
 #endif
 #include "rumi_lib.h"
+#include "../../galaxy_sf/single_star_identity.h" /* star identity beyond (ID, child, generation) */
 
 /*! \file rumi_coupling.cc
  *  \brief Type-4 stars integrated by the collisional N-body library RUMI++ (STARS_INTEGRATED_BY_RUMI), as a BRIDGE:
@@ -48,14 +49,15 @@ static_assert(RUMI_LIB_API_VERSION == RUMI_COUPLING_API_VERSION, "rumi_lib.h is 
 
 namespace {
 
-/* a star's identity: stars spawned from one gas cell share ID and differ in child number / generation */
+/* a star's identity: stars spawned from one gas cell share ID and differ in child number / generation, and past a roll-over of
+   the generation counter in the roll-over count and lineage key (galaxy_sf/single_star_identity.h; 0 without a roll-over) */
 struct StarKey {
-    unsigned long long id, child, gen;
-    bool operator<(const StarKey &o) const {return id != o.id ? id < o.id : (child != o.child ? child < o.child : gen < o.gen);}
-    bool operator==(const StarKey &o) const {return id == o.id && child == o.child && gen == o.gen;}
+    unsigned long long id, child, gen, extra;
+    bool operator<(const StarKey &o) const {return id != o.id ? id < o.id : (child != o.child ? child < o.child : (gen != o.gen ? gen < o.gen : extra < o.extra));}
+    bool operator==(const StarKey &o) const {return id == o.id && child == o.child && gen == o.gen && extra == o.extra;}
 };
-struct StarKeyHash {size_t operator()(const StarKey &k) const {return std::hash<unsigned long long>()(k.id * 0x9E3779B97F4A7C15ULL ^ (k.child << 20) ^ k.gen);}};
-inline StarKey star_key(int i) {return StarKey{(unsigned long long)P[i].ID, (unsigned long long)P[i].ID_child_number, (unsigned long long)P[i].ID_generation};}
+struct StarKeyHash {size_t operator()(const StarKey &k) const {return std::hash<unsigned long long>()(k.id * 0x9E3779B97F4A7C15ULL ^ (k.child << 20) ^ k.gen ^ k.extra);}};
+inline StarKey star_key(int i) {return StarKey{(unsigned long long)P[i].ID, (unsigned long long)P[i].ID_child_number, (unsigned long long)P[i].ID_generation, (unsigned long long)single_star_identity_extra(P[i])};}
 struct RumiStar { StarKey ID; int task, index, kw; integertime ti_step; double m, pos[3], vel[3], r_rsun; };
 struct RumiBack { StarKey ID; int index, has_mid; double m, pos[3], vel[3], mpos[3], mvel[3]; };
 struct Plan { int rebuild, n_new, do_mass, split, nsl; double dt, G, dt1; };   /* task 0 -> RUMI++ ranks, per step */

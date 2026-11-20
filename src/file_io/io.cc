@@ -387,6 +387,28 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 }
             break;
 
+        case IO_ID_WRAPS:	/* roll-overs of the generation counter (galaxy_sf/single_star_identity.h) */
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *ip_int++ = P[pindex].ID_wraps;
+                    n++;
+                }
+#endif
+            break;
+
+        case IO_ID_LINEAGE:	/* lineage key past a roll-over (galaxy_sf/single_star_identity.h) */
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *ip++ = (MyIDType) P[pindex].ID_lineage;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_REFINE_FLAG:	/* IC tag defining the nuclear-zoom refinement anchor */
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
             for(n = 0; n < pc; pindex++)
@@ -2313,6 +2335,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_ID:
         case IO_CHILD_ID:
         case IO_GENERATION_ID:
+        case IO_ID_LINEAGE:
             bytes_per_blockelement = sizeof(MyIDType);
             break;
 
@@ -2328,6 +2351,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
         case IO_FLUIDTYPE:
+        case IO_ID_WRAPS:
             bytes_per_blockelement = sizeof(int);
             break;
 
@@ -2733,6 +2757,7 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_ID:
         case IO_CHILD_ID:
         case IO_GENERATION_ID:
+        case IO_ID_LINEAGE:
             typekey = 2;		/* native long long */
             break;
 
@@ -2748,6 +2773,7 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
         case IO_FLUIDTYPE:
+        case IO_ID_WRAPS:
             typekey = 0;		/* native int */
             break;
 
@@ -2798,6 +2824,8 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_ID:
         case IO_CHILD_ID:
         case IO_GENERATION_ID:
+        case IO_ID_WRAPS:
+        case IO_ID_LINEAGE:
         case IO_REFINE_FLAG:
         case IO_MASS:
         case IO_SINK_DIST:
@@ -3144,6 +3172,8 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_ID:
         case IO_CHILD_ID:
         case IO_GENERATION_ID:
+        case IO_ID_WRAPS:
+        case IO_ID_LINEAGE:
         case IO_REFINE_FLAG:
         case IO_POT:
         case IO_SOFT:
@@ -3452,6 +3482,13 @@ int blockpresent(enum iofields blocknr)
         case IO_RHO:
         case IO_KERNELRADIUS:
             return 1;			/* always present */
+            break;
+
+        case IO_ID_WRAPS:
+        case IO_ID_LINEAGE:
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+            return 1;
+#endif
             break;
 
         case IO_REFINE_FLAG:
@@ -4232,6 +4269,12 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_GENERATION_ID:
             strncpy(label, "IDgn", 4);
             break;
+        case IO_ID_WRAPS:
+            strncpy(label, "IDwr", 4);
+            break;
+        case IO_ID_LINEAGE:
+            strncpy(label, "IDln", 4);
+            break;
         case IO_REFINE_FLAG:
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
             strncpy(label, "RefF", 4);
@@ -4791,6 +4834,12 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_GENERATION_ID:
             strcpy(buf, "ParticleIDGenerationNumber");
+            break;
+        case IO_ID_WRAPS:
+            strcpy(buf, "ParticleIDWraps");
+            break;
+        case IO_ID_LINEAGE:
+            strcpy(buf, "ParticleIDLineage");
             break;
         case IO_REFINE_FLAG:
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR

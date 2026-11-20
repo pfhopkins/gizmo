@@ -823,6 +823,8 @@ enum iofields
   IO_SINGLE_STAR_LOG_LYMAN_Q,
 #endif
 #endif
+  IO_ID_WRAPS,
+  IO_ID_LINEAGE,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 
