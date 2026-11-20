@@ -877,6 +877,7 @@ RHD_OBJS =  radiation/rt_utilities.o \
 			radiation/rt_dust_opacity.o 
 
 FOF_OBJS =	structure/fof.o \
+			structure/hbt/hbt_key_mpi.o \
 			structure/subfind/subfind.o \
 			structure/subfind/subfind_vars.o \
 			structure/subfind/subfind_collective.o \
@@ -956,6 +957,8 @@ INCL    += 	declarations/allvars.h \
 			eos/eos.h \
 			sinks/sink.h \
 			structure/fof.h \
+			structure/hbt/hbt_key.h \
+			structure/hbt/hbt_key_mpi.h \
 			structure/subfind/subfind.h \
 			cooling/cooling.h \
 			Makefile
