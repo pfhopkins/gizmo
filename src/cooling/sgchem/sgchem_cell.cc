@@ -384,6 +384,11 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     sgchem_clamp_pools(ab, &in);
     chem_cxx_evolve_cell(timestep, dl, yn, divv, &energy, ab);
     chem_cxx_read_outputs(&out);
+#if defined(OUTPUT_ENERGY_STEP_TRACE) && (CHEMISTRYNETWORK != 18) /* every term of the energy equation is reported: checked at every RHS evaluation of the solve */
+    {const double e2code = P[i].Mass * UNIT_MASS_IN_CGS / (rho * UNIT_ENERGY_IN_CGS);
+     ESTEP_BOOK(EBK_INFO_COOL_ID_DIFF, out.id_diff * timestep * e2code); ESTEP_BOOK(EBK_INFO_COOL_ID_GROSS, out.id_gross * timestep * e2code);
+     ESTEP_BOOK(EBK_INFO_COOL_ID_EVALS, out.id_n);}
+#endif
 #ifdef COSMIC_RAY_FLUID
     sgchem_cr_ionisation_from_fluid(i, &in, out.cr_ion_heat * (P[i].Mass / (CellP[i].Density * All.cf_a3inv)) * pow(UNIT_LENGTH_IN_CGS, 3) / UNIT_ENERGY_IN_CGS);
 #endif

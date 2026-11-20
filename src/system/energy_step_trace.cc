@@ -49,10 +49,11 @@ static const int estep_stage_exact[] = {
     2, 2, 2, 2, 2, 2};
 
 static const char *estep_book_name[] = {"fb_sn", "fb_wind", "fb_remnant_kin", "cool_solve", "cool_pi", "cool_floor", "cool_cr_loss",
-    "sf_th_locked", "sf_donor", "sf_star_kin", "sf_cr", "merge_heat_not_returned", "ketju_chain_pot", "ketju_collision", "kick_floor", "cr_clip", "info_mhd_num", "info_cr_shock"};
+    "sf_th_locked", "sf_donor", "sf_star_kin", "sf_cr", "merge_heat_not_returned", "ketju_chain_pot", "ketju_collision", "kick_floor", "cr_clip", "info_mhd_num", "info_cr_shock",
+    "info_cool_id_diff", "info_cool_id_gross", "info_cool_id_evals"};
 /* stage each booking belongs to; -1 = time integration (kicks/drift), -2 = information only (in no closure) */
 static const int estep_book_stage[] = {ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_COOLING, ESTEP_COOLING, ESTEP_COOLING,
-    ESTEP_COOLING, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_MERGE_SPLIT, -1, -1, -1, -1, -2, -2};
+    ESTEP_COOLING, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_MERGE_SPLIT, -1, -1, -1, -1, -2, -2, -2, -2, -2};
 
 static_assert(sizeof(estep_stage_name) / sizeof(estep_stage_name[0]) == ESTEP_NSTAGE, "stage names");
 static_assert(sizeof(estep_stage_exact) / sizeof(estep_stage_exact[0]) == ESTEP_NSTAGE, "stage kinds");
@@ -205,10 +206,16 @@ void energy_step_trace_report(void)
             fprintf(fd, "#       b_info_*: information only, in no closure. tot_res = (E_tot - E_tot0) - all bookings - measured stages.\n");
             fprintf(fd, "#       E_scale: |E| + |E_pot| at the first sync, fixed for the run (the checker adds the booked SN energy from the SN on).\n");
             fprintf(fd, "# cooling stage: the solve (ledger), PI raise, input and output floors, CR losses booked from their formulas at the site;\n");
+            fprintf(fd, "#        the solve, PI raise and CR loss rates are booked by construction. info_cool_id_*: at every RHS evaluation of the\n");
+            fprintf(fd, "#        chemistry solve (explicit hot path, accepted substeps, final state) sum |energy RHS + reported net cooling| x dt,\n");
+            fprintf(fd, "#        the gross rates x dt, the evaluations; equal when every term of the energy equation is reported (not net 18).\n");
             fprintf(fd, "#        unbooked, so a STAGE finding: the NaN revert, the hydro du around the solve without COOLING_OPERATOR_SPLIT.\n");
             fprintf(fd, "# exact stages:");
             for(int s = 0; s < ESTEP_NSTAGE; s++) {if(estep_stage_exact[s] == 1) {fprintf(fd, " %s", estep_stage_name[s]);}}
             fprintf(fd, "\n# pot_valid=%d every=%d\n", pot_ok, ESTEP_EVERY);
+#if defined(SGCHEM) && (CHEMISTRYNETWORK != 18)
+            fprintf(fd, "# cooling_identity=1\n"); /* the checker requires covered evaluations */
+#endif
         }
         if(RestartFlag == 1) {fprintf(fd, "RESTART t=%.16e\n", All.Time);}
     }

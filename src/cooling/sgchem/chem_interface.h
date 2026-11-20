@@ -229,6 +229,8 @@ struct ChemOutputs {
                                         rates [erg s^-1 cm^-3]               */
     double lambda_chem[NRATES_CHEM]; /* <- COOLRC.lambda_chem                 */
     double cr_ion_heat;              /* CR ionisation heating applied over the solve [erg cm^-3] (C++ backend; 0 otherwise) */
+    double heat_unreported;          /* heating the solve applies but lambda/lambda_chem omit (net 5 M1 + H2 photoheating, the T_CMB floor term) [erg cm^-3 s^-1] */
+    double id_diff, id_gross, id_n;  /* per solve: sum over RHS evaluations of |energy RHS + reported net cooling|, gross rates, count */
 #ifdef OUTPUT_SHIELD_FAC
     double fac_shield_h2;            /* <- COOLRC.fac_shield_h2 (calc_photo)  */
     double fac_shield_dust;          /* <- COOLRC.fac_shield_dust             */

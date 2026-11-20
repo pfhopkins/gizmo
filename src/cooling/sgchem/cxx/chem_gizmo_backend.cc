@@ -164,6 +164,7 @@ void chem_cxx_begin_cell(const struct ChemInputs* in, double temp, double abh2, 
 void chem_cxx_evolve_cell(double timestep, double dl, double yn, double divv, double* energy, double* abundances)
 {
     ChemCell& c = tl_cell;
+    c.heat_unreported = 0.0; // only networks with such terms set it
     int rc = cxx_evolve_abundances(timestep, dl, yn, divv, energy, abundances, c);
     std::memcpy(tl_lambda, c.lambda, sizeof(tl_lambda));
     std::memcpy(tl_lambda_chem, c.lambda_chem, sizeof(tl_lambda_chem));
@@ -176,6 +177,8 @@ void chem_cxx_read_outputs(struct ChemOutputs* out)
     const ChemCell& c = tl_cell;
     out->tdust = c.tdust;
     out->cr_ion_heat = c.cr_ion_heat_int;
+    out->heat_unreported = c.heat_unreported;
+    out->id_diff = c.id_diff; out->id_gross = c.id_gross; out->id_n = (double)c.id_n;
     std::memcpy(out->lambda, tl_lambda, sizeof(tl_lambda));
     std::memcpy(out->lambda_chem, tl_lambda_chem, sizeof(tl_lambda_chem));
 #ifdef OUTPUT_SHIELD_FAC

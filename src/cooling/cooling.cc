@@ -546,7 +546,13 @@ void cooling_parent_routine(void)
 #ifdef TEST_COOLING_COMPARE_THREADED_PASS_WITH_SERIAL_PASS /* serial reference on copies of the same inputs, then the threaded pass must reproduce it byte for byte */
     std::vector<struct particle_data> xin_P(N_active), xref_P(N_active); std::vector<struct gas_cell_data> xin_C(N_active), xref_C(N_active);
     for(int j = 0; j < N_active; j++) {xin_P[j] = P[cool_indices[j]]; xin_C[j] = CellP[cool_indices[j]];}
+#ifdef OUTPUT_ENERGY_STEP_TRACE
+    double estep_saved[EBK_N]; memcpy(estep_saved, EstepBooked, sizeof(estep_saved)); /* the serial reference pass is undone: so are its bookings */
+#endif
     for(int j = 0; j < N_active; j++) {do_the_cooling_for_particle(cool_indices[j], P, CellP);}
+#ifdef OUTPUT_ENERGY_STEP_TRACE
+    memcpy(EstepBooked, estep_saved, sizeof(estep_saved));
+#endif
     for(int j = 0; j < N_active; j++) {int i = cool_indices[j]; xref_P[j] = P[i]; xref_C[j] = CellP[i]; P[i] = xin_P[j]; CellP[i] = xin_C[j];}
 #endif
 #ifdef _OPENMP
