@@ -14,9 +14,14 @@ Bars (fixed; do not loosen per test):
                        accuracy; int_res excludes all stage changes). scale at a sync = max(E_scale of the
                        first SYNC (|E| + |E_pot| at the start, fixed), SN + Ia energy booked up to this sync):
                        nothing that grows with cooling or other bookings, and no SN scale before the SN
-  cooling rate       : SGCHEM cells whose solve changed e by < 1e-2: the solver's energy change and its own reported
-                       net rate x dt agree to 5e-2 (last SYNC, cumulative). This is the only check of the solve
-                       itself; the cooling stage books the solve, PI raise and CR loss rates by construction
+  cooling rate       : SGCHEM (C++ backend, header cooling_identity=1): at every RHS evaluation of every solve (stiff
+                       path, explicit hot path, final state) the energy RHS equals minus the reported net cooling
+                       (lambda + lambda_chem - heat_unreported): sum |difference| x dt <= 1e-12 of the gross rates
+                       (sum |terms|) x dt (last SYNC, cumulative). This checks that every term is reported, not the
+                       rates themselves; a declared trace with no covered evaluation is a finding. The cooling stage
+                       books the solve, PI raise and CR loss rates by construction.
+  note on the scale  : int_res is cumulative, so an integration error made in the last window before the first SN is
+                       first judged after it, against the SN scale
 
     python -m gizmo.conservation_trace <output_dir>
 """
@@ -28,7 +33,7 @@ from collections import OrderedDict
 
 MASS_BAR = 1.0e-12
 INTEGRATION_BAR = 1.0e-2
-COOL_RATE_BAR = 5.0e-2  # non-stiff cells (|de| < 1e-2 e): solve vs end-of-step rate x dt
+COOL_RATE_BAR = 1.0e-12  # energy RHS vs reported net cooling per evaluation, relative to the gross rates (round-off)
 
 
 def _kv(line):
@@ -83,11 +88,13 @@ def _check_energy(path, groups, rep, bar, require_integration=True):
     pot_valid = True
     n_sync = 0
     worst = None
-    scale0, last = None, None  # first SYNC's E_scale, again after a RESTART
+    scale0, last, identity = None, None, False  # first SYNC's E_scale, again after a RESTART
     for line in open(path):
         if line.startswith("#"):
             if "pot_valid=0" in line:
                 pot_valid = False
+            if "cooling_identity=1" in line:
+                identity = True
             continue
         if line.startswith("RESTART"):
             scale0 = None
@@ -109,13 +116,13 @@ def _check_energy(path, groups, rep, bar, require_integration=True):
             if abs(r) / s > bar:
                 _add(groups, "energy_integration", "kick_drift_grav", r / s, 0.0, d["t"])
                 groups[("energy_integration", "kick_drift_grav")]["sum_res"] = r  # cumulative: the latest residual above the bar, not a sum
-    a, b = (last or {}).get("b_info_cool_solve_ns"), (last or {}).get("b_info_cool_rate_ns")
-    if isinstance(a, float) and isinstance(b, float) and a != 0:
-        rep.notes.append(f"cooling solve vs reported rate x dt (non-stiff cells): {a:+.4e} vs {b:+.4e} (rel {(b - a) / a:+.3e})")
-        if abs(b - a) > COOL_RATE_BAR * abs(a):
-            _add(groups, "cooling_rate", "cooling", (b - a) / a, b - a, last["t"])
-    else:
-        rep.notes.append("cooling-rate check not run: the trace writes no info_cool_solve_ns / info_cool_rate_ns")
+    diff, gross, evals = ((last or {}).get(k, 0.0) for k in ("b_info_cool_id_diff", "b_info_cool_id_gross", "b_info_cool_id_evals"))
+    if identity and not (evals > 0 and gross > 0):
+        _add(groups, "cooling_rate", "no_covered_evaluation", float("inf"), 0.0, (last or {}).get("t", 0.0))
+    elif evals > 0 and gross > 0:
+        rep.notes.append(f"cooling RHS vs reported net cooling: {evals:.0f} evaluations, |diff| {diff:.3e} = {diff / gross:.3e} of the gross rates")
+        if diff > COOL_RATE_BAR * gross:
+            _add(groups, "cooling_rate", "cooling", diff / gross, diff, last["t"])
     if not pot_valid:
         rep.notes.append("integration not checked: no valid potential (EVALPOTENTIAL off, comoving, or adaptive tree-force)")
     elif worst is not None:
