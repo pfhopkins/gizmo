@@ -1,8 +1,9 @@
 ########################################
 # hernquist + continuum Vlasov (CBE) integrator (see hernquist_cbe.params).
 # 8 velocity-space bases per particle with per-basis second moments and
-# gradient (face) reconstruction. Add CBE_INTEGRATOR_RP_GAUSSIAN to compare the
-# exact Gaussian-basis flux against the default compact-support (top-hat) flux.
+# gradient (face) reconstruction, with the default compact-support (top-hat) flux.
+# Do not add CBE_INTEGRATOR_RP_GAUSSIAN: that flux is a method-comparison option
+# and is not suitable for this problem.
 ########################################
 ADAPTIVE_GRAVSOFT_FORALL=2
 CBE_INTEGRATOR=8

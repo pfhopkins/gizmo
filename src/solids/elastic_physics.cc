@@ -213,7 +213,7 @@ static void solid_strength_model_resolve(int id, const char *name, int is_aneos,
 void solid_material_resolve(void)
 {
 #ifdef EOS_ANEOS
-    static_assert(N_TILLOTSON_MATERIALS + ANEOS_MAX_MATERIALS + 1 <= N_SOLID_MATERIAL_IDS, "N_SOLID_MATERIAL_IDS must cover every CompositionType layout");
+    static_assert(N_TILLOTSON_MATERIALS + EOS_ANEOS_MAX_MATERIALS + 1 <= N_SOLID_MATERIAL_IDS, "N_SOLID_MATERIAL_IDS must cover every CompositionType layout");
 #endif
     struct solid_material none = {0, 0, 0, 1, 0, 1, 0, 0, 0, FRACTURE_ACTIVATION_TENSILE_FLAWS, 0, 0}; /* no strength, never damaged, compact */
     for(int id = 0; id < N_SOLID_MATERIAL_IDS; id++)

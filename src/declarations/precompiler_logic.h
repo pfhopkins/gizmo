@@ -66,6 +66,18 @@
 #endif
 
 
+/* older spellings of renamed Config.sh flags that setups still use (or that are easy to type): accepted as aliases */
+#if defined(MERGESPLIT_HARDCODE_MAX_MASS) && defined(MERGE_SPLIT_HARDCODE_MAX_MASS)
+#error "Set only MERGE_SPLIT_HARDCODE_MAX_MASS (MERGESPLIT_HARDCODE_MAX_MASS is its older spelling)"
+#elif defined(MERGESPLIT_HARDCODE_MAX_MASS)
+#define MERGE_SPLIT_HARDCODE_MAX_MASS MERGESPLIT_HARDCODE_MAX_MASS
+#endif
+#if defined(MERGESPLIT_HARDCODE_MIN_MASS) && defined(MERGE_SPLIT_HARDCODE_MIN_MASS)
+#error "Set only MERGE_SPLIT_HARDCODE_MIN_MASS (MERGESPLIT_HARDCODE_MIN_MASS is its older spelling)"
+#elif defined(MERGESPLIT_HARDCODE_MIN_MASS)
+#define MERGE_SPLIT_HARDCODE_MIN_MASS MERGESPLIT_HARDCODE_MIN_MASS
+#endif
+
 /* set default slope limiters */
 #if !defined(SLOPE_LIMITER_TOLERANCE)
 #define SLOPE_LIMITER_TOLERANCE 1
@@ -135,7 +147,7 @@
 #define ELASTIC_STATE_DEPENDENT_STRENGTH
 #endif
 
-#if defined(PLANET_HEATING)
+#if defined(COOL_PLANET_HEATING)
 /* radiogenic + accretional heating; solid material required */
 #ifndef EOS_TILLOTSON
 #define EOS_TILLOTSON
@@ -1905,11 +1917,11 @@
 #endif
 
 
-#ifdef DISK_BETA_COOL
+#ifdef COOL_DISK_BETA
 /* minimal beta-cooling for protoplanetary-disk problems; mutually exclusive with COOLING.
  * see cooling/disk_betacool.h for the actual operator and design notes. */
 #if defined(COOLING)
-#error "DISK_BETA_COOL is mutually exclusive with COOLING (both write CellP.InternalEnergy)."
+#error "COOL_DISK_BETA is mutually exclusive with COOLING (both write CellP.InternalEnergy)."
 #endif
 #endif
 

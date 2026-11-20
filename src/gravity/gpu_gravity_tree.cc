@@ -201,7 +201,7 @@ static void *tree_soa_alloc(size_t bytes)
 static int alloc_arrays_(int n)
 {
     /* moment/force fields retyped as MyGravFloat (flag-gated:
-     * float when GIZMO_MIXED_PRECISION_GRAVITY set, double otherwise).
+     * float when GRAVITY_MIXED_PRECISION set, double otherwise).
      * Geometric (center, len) stays MyFloat — opening-criterion precision. */
     soa_.center   = (Vec3<MyFloat>     *) tree_soa_alloc(n * sizeof(Vec3<MyFloat>));
     soa_.len      = (MyFloat           *) tree_soa_alloc(n * sizeof(MyFloat));

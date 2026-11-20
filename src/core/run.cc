@@ -791,7 +791,7 @@ void calculate_non_standard_physics(void)
             rearrange_particle_sequence();
             Max_Unspawned_MassUnits_fromSink=Max_Unspawned_MassUnits_fromSink_global=0.;
         }
-#if defined(SNE_NONSINK_SPAWN)
+#if defined(GALSF_FB_MECHANICAL_SNE_SPAWN)
         {int i; for(i=0;i<NumPart;i++) {if(P[i].Type != 4) {continue;}
             double n_unspawned = P[i].unspawned_wind_mass / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(i)); // number of spawned gas cells that can be made from the mass in the reservoir
             if(n_unspawned> Max_Unspawned_MassUnits_fromSink) {Max_Unspawned_MassUnits_fromSink = n_unspawned;} // track the maximum integer number of elements this sink could spawn
@@ -927,7 +927,7 @@ void calculate_non_standard_physics(void)
     LEDGER_BRACKET(LG_COOL, cooling_parent_routine()); // top-level cooling and chemistry subroutine //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
-#ifdef DISK_BETA_COOL
+#ifdef COOL_DISK_BETA
     disk_betacool_parent_routine(); // simple beta-cooling for disk problems (mutually exclusive with COOLING) //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
@@ -935,7 +935,7 @@ void calculate_non_standard_physics(void)
     cbe_collision_parent_routine(); // operator-split intra-cell CBE collision operators (relax basis DF toward local Maxwellian, etc.) //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
-#ifdef PLANET_HEATING
+#ifdef COOL_PLANET_HEATING
     planet_heating_parent_routine(); // radiogenic decay + accretional background heating for solid bodies //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif

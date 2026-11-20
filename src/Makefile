@@ -211,16 +211,26 @@ endif
 
 #----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Frontier")
-## Frontier (OLCF), AMD MI250X (gfx90a) via the Kokkos HIP backend.
-## Prebuilt module kokkos/4.6.02-gpu (Kokkos_ENABLE_HIP, ARCH_VEGA90A+ZEN3, built with
-## rocm-6.4.2 hipcc, shared libs, RDC off). Device TUs (GPU_OBJS) are compiled by hipcc
-## (defines __HIPCC__ => GIZMO_GPU_COMPILER, like nvcc_wrapper on Vista); host TUs + the
-## final link use the Cray CC wrapper (amd PE), which auto-adds GPU-aware MPI (GTL,
-## -lmpi_gtl_hsa), -lamdhip64, and cray-hdf5/fftw/gsl paths for the host objects.
-## Load: amd/6.4.2 rocm/6.4.2 cray-mpich/9.0.1 craype-accel-amd-gfx90a kokkos/4.6.02-gpu
-##       cray-hdf5 cray-fftw gsl hypre/3.0.0-mpi
-## (hypre only needed for MHD_MODIFIED_GRADIENT; see the HYPRE block at the end of this
-## section. cray-mpich/9.0.1 is what the hypre module is built against.)
+## Frontier (OLCF), AMD MI250X (gfx90a) via the Kokkos HIP backend. Device TUs (GPU_OBJS) are compiled
+## by hipcc (defines __HIPCC__ => GIZMO_GPU_COMPILER, like nvcc_wrapper on Vista); host TUs + the final link
+## use the Cray CC wrapper (amd PE), which auto-adds GPU-aware MPI (GTL, -lmpi_gtl_hsa), -lamdhip64, and
+## cray-hdf5/fftw/gsl paths for the host objects. Kokkos must be a HIP build (Kokkos_ENABLE_HIP,
+## ARCH_VEGA90A+ZEN3, shared libs, RDC off) made with the same ROCm as the run; OLCF_KOKKOS_ROOT names it.
+## A binary runs only under the module set it was built with. Two module sets:
+## * Current (the OLCF programming-environment default since 2026-11; validated for GPU runs):
+##     module load PrgEnv-amd amd/7.0.2 rocm/7.0.2 cray-mpich/9.1.0 craype-accel-amd-gfx90a cray-hdf5 cray-fftw gsl
+##   There is no Kokkos module for ROCm 7: build Kokkos 4.6.02 with the options above into a project
+##   directory and export OLCF_KOKKOS_ROOT=<that install> (and put its lib64 on LD_LIBRARY_PATH). GPU hypre
+##   (MHD_MODIFIED_GRADIENT) is the HIP build in the HYPRE block below, made under this module set
+##   (HYPRE_ROOT); CHIMES uses sundials/7.6.0-mpi. Not yet validated on ROCm 7: MHD_MODIFIED_GRADIENT
+##   with GPU hypre, CHIMES, and the Frontier_CPU build.
+## * Legacy: module load amd/6.4.2 rocm/6.4.2 cray-mpich/9.0.1 craype-accel-amd-gfx90a kokkos/4.6.02-gpu
+##           cray-hdf5 cray-fftw gsl hypre/3.0.0-mpi       (kokkos/4.6.02-gpu is the module built with rocm-6.4.2)
+##   The default GTL library (/opt/cray/pe/lib64/libmpi_gtl_hsa.so.0) now belongs to cray-mpich 9.1.0 and needs
+##   ROCm 7's libamdhip64.so.7, so a legacy binary fails at load unless the job script sets
+##     export LD_LIBRARY_PATH=/opt/cray/pe/mpich/9.0.1/gtl/lib:$LD_LIBRARY_PATH
+##   Never set that line for a ROCm 7 binary: it would pull ROCm 6 libraries into the run.
+## Before submitting either: `ldd ./GIZMO | grep 'not found'` must print nothing in the job's environment.
 CC       =  cc
 CXX      =  CC -std=c++17
 FC       =  ftn
@@ -254,20 +264,20 @@ GSL_LIBS = -L$(OLCF_GSL_ROOT)/lib
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
-## CHIMES: `module load sundials/7.4.0-mpi` (built for amd/6.4.2 + cray-mpich/9.0.1, as this block) sets OLCF_SUNDIALS_ROOT
+## CHIMES: `module load sundials/7.4.0-mpi` (legacy set: amd/6.4.2 + cray-mpich/9.0.1) or sundials/7.6.0-mpi (current ROCm 7 set) sets OLCF_SUNDIALS_ROOT
 CHIMESINCL = -I$(OLCF_SUNDIALS_ROOT)/include
 CHIMESLIBS = -L$(OLCF_SUNDIALS_ROOT)/lib64 -Wl,-rpath,$(OLCF_SUNDIALS_ROOT)/lib64 -lsundials_cvode -lsundials_nvecserial -lsundials_core
 endif
 ifeq (yes,$(MG_USES_HYPRE))
 ## Frontier: `module load hypre/3.0.0-mpi` sets OLCF_HYPRE_ROOT (the OLCF module
 ## convention, as for gsl/kokkos above); its libraries are under lib64. That version
-## builds against amd/6.4.2 + cray-mpich/9.0.1, which is the compiler the
-## kokkos/4.6.02-gpu module also requires; the newer hypre modules need amd/7.x and so
-## cannot be combined with that Kokkos build. HYPRE_ROOT/HYPRE_DIR are honored as
-## fallbacks for a hand-built install; both lib and lib64 are searched.
-## Every hypre module that fits this stack is a CPU build. To run the MG solve on the GPUs,
-## build hypre 3.1.0 with HIP once (login node, ~15 minutes) into a project directory, e.g.
-## APPS=/lustre/orion/proj-shared/<project>/apps (Umpire, its memory pool, is built with it):
+## builds against the legacy amd/6.4.2 + cray-mpich/9.0.1 set, as the kokkos/4.6.02-gpu module
+## requires. HYPRE_ROOT/HYPRE_DIR are honored as fallbacks for a hand-built install; both lib and
+## lib64 are searched. Every hypre module is a CPU build (with the current ROCm 7 set: `module unload hypre`).
+## To run the MG solve on the GPUs, build hypre 3.1.0 with HIP once (login node, ~15 minutes) into a project
+## directory, e.g. APPS=/lustre/orion/proj-shared/<project>/apps (Umpire, its memory pool, is built with it),
+## under the module set the run uses -- the legacy one as below, or the current ROCm 7 line above, into a
+## separate install directory:
 ##   module load amd/6.4.2 rocm/6.4.2 cray-mpich/9.0.1 craype-accel-amd-gfx90a cmake; module unload hypre
 ##   HV=3.1.0; mkdir -p $APPS/src && cd $APPS/src
 ##   git clone --branch v$HV --depth 1 https://github.com/hypre-space/hypre.git hypre-$HV
