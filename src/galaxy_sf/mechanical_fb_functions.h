@@ -639,11 +639,7 @@ static void mechanical_fb_pair_kernel(
             double c_ia = (double)local.IaConvertFrac * Mass_j_0;
             for(int k = 0; k < NUM_METAL_SPECIES; k++) {
                 if(k >= k_age_begin && k < k_age_end) {continue;}
-                double target = (double)local.yields[k];
-#ifdef GALSF_ISMDUSTCHEM_MODEL
-                if(k >= ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY && k < ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY + NUM_ISMDUSTCHEM_PASSIVE_SCALARS) {target = 0;} /* the converted gas keeps no dust */
-#endif
-                Metallicity_j[k] += c_ia * (target - Metallicity_j_0[k]) / Mass_j;
+                Metallicity_j[k] += c_ia * ((double)local.yields[k] - Metallicity_j_0[k]) / Mass_j;
             }
         }
 #endif

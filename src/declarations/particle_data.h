@@ -149,7 +149,7 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
 #ifdef GALSF_FB_MECHANICAL
-#if defined(GALSF_SINGLE_STARS_TYPE_IA) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#ifdef GALSF_SINGLE_STARS_TYPE_IA_CHANDRASEKHAR_MATTER
 #define SINGLE_STARS_IA_COMPANION_SHARE /* a Type Ia is the table's M_Ch of Ia matter: M_WD plus M_Ch - M_WD of the kernel gas converted in place */
 #endif
 #if defined(GALSF_SINGLE_STARS_SN_EJECTA_CELL) || defined(SINGLE_STARS_IA_COMPANION_SHARE)

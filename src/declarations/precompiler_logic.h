@@ -1165,6 +1165,14 @@
 #if defined(HOT_GAS_TIMESTEP_SYNC) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 #error "HOT_GAS_TIMESTEP_SYNC asks inactive cells for their step, which refreezes their dilation factor"
 #endif
+#ifdef GALSF_SINGLE_STARS_TYPE_IA_CHANDRASEKHAR_MATTER
+#if !defined(GALSF_SINGLE_STARS_TYPE_IA) || !defined(GALSF_FB_MECHANICAL) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_SINGLE_STARS_TYPE_IA_CHANDRASEKHAR_MATTER needs GALSF_SINGLE_STARS_TYPE_IA, GALSF_FB_MECHANICAL, GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#ifdef GALSF_ISMDUSTCHEM_MODEL
+#error "GALSF_SINGLE_STARS_TYPE_IA_CHANDRASEKHAR_MATTER does not convert the live dust state (CellP ISMDustChem fields) of the converted gas"
+#endif
+#endif
 #ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
 #ifndef HOT_GAS_TIMESTEP_SYNC
 #define HOT_GAS_TIMESTEP_SYNC /* one-sided hydro fluxes: the young blast of a cell needs its neighbours on its step */
