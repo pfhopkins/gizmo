@@ -190,7 +190,8 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
 ## Feedback audit 2026-11-17: changes that affect runs
 
 - **Restart files.** The restart layout changed: the element ledger (CumulElemToGas, CumulElemFromStars) is written after
-  the metal ledger, and every particle carries FB_DepositedP, FB_DepositedZ and, with Type Ia, FB_KernelMass. Restart files
+  the metal ledger, the metal-ledger accumulators are long double, and every particle carries FB_DepositedP, FB_DepositedZ and,
+  with Type Ia, FB_KernelMass. Restart files
   written before this change cannot be read by this code and vice versa (no size check guards it). Resume running
   productions from a snapshot (RestartFlag 2). Reading ElementAbundance now sets H = 1 - Z - Y, so single-precision
   snapshots and ICs start with a closed composition (an IC with an all-zero ElementAbundance becomes pure H; fresh starts

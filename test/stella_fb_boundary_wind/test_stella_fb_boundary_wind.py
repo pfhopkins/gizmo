@@ -10,7 +10,7 @@ Metric and bars, fixed before the runs (2026-11-18):
   excess(t) = [E_th + E_kin](t) - [E_th + E_kin](0) + E_sf_removed(t) - E_fb_booked(t), divided by E_fb_booked(t_end),
   at every ENERGYinfo.txt output (columns 5, 6, 14, 10). E_sf_removed is the booked gas energy taken by star formation.
   - with the flag: |excess| <= 0.40 % in both boxes (the SN bar of this build family, reports/sn_boundary_and_approach_dt.md),
-    the hydro pass is redone (G17RECOMPUTE), and the mass, element and energy step traces close;
+    the hydro pass is redone (log line HYDRO_RECOMPUTE_POST_FB, named G17RECOMPUTE until 2026-11-20), and the mass, element and energy step traces close;
   - without the flag: no hydro recompute (no SN in the run), i.e. the SN-only behaviour;
   - the flag must matter: max|excess| without it minus max|excess| with it >= 0.05 percentage points in at least one box.
 Result (2026-11-18, job 231713): the last criterion is not met (0.0011 percentage points); it is kept as a strict expected
