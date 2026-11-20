@@ -6,7 +6,7 @@ import subprocess
 from os import system, environ, path, chdir, cpu_count, remove, makedirs
 from urllib.error import HTTPError, URLError
 from urllib.request import urlretrieve
-from shutil import move, rmtree
+from shutil import move, rmtree, copyfile
 from glob import glob
 import pytest
 import numpy as np
@@ -25,27 +25,34 @@ def flush_colorbar(mappable, ax=None, label=None, **kwargs):
     return fig.colorbar(mappable, cax=cax, label=label, **kwargs)
 
 
-def variant_suffix(extra_config_flags=()):
-    """Return a filename-safe suffix encoding extra_config_flags (empty for no flags)."""
-    if not extra_config_flags:
+def variant_suffix(extra_config_flags=(), *, config_file="Config.sh"):
+    """Return a filename-safe suffix encoding the Config file and extra_config_flags (empty for the
+    test's own Config.sh with no flags). A test's alternative Config is named Config_<tag>.sh and
+    contributes <tag> (e.g. Config_mfv.sh -> "_mfv")."""
+    parts = []
+    if path.basename(config_file) != "Config.sh":
+        stem = path.splitext(path.basename(config_file))[0]
+        parts.append(stem[len("Config_"):] if stem.startswith("Config_") else stem)
+    parts += extra_config_flags
+    if not parts:
         return ""
-    sanitized = ["".join(c if c.isalnum() else "_" for c in f) for f in extra_config_flags]
+    sanitized = ["".join(c if c.isalnum() else "_" for c in f) for f in parts]
     return "_" + "__".join(sanitized)
 
 
-def variant_output_dir(test_name: str, extra_config_flags=()) -> str:
-    """Return the output directory used for a given (test, flag combination)."""
-    return f"test/{test_name}/output{variant_suffix(extra_config_flags)}"
+def variant_output_dir(test_name: str, extra_config_flags=(), *, config_file="Config.sh") -> str:
+    """Return the output directory used for a given (test, Config, flag combination)."""
+    return f"test/{test_name}/output{variant_suffix(extra_config_flags, config_file=config_file)}"
 
 
-def clean_test_outputs(test_name: str, extra_config_flags=()):
-    """Remove this variant's output directory, plot PNGs, and log files from a previous test run.
+def clean_test_outputs(test_name: str, extra_config_flags=(), *, config_file="Config.sh"):
+    """Remove this variant's output directory and the test's log files from a previous test run.
     Other variants' output directories (including the baseline plain "output") are left untouched.
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
     test_dir = f"test/{test_name}"
-    output_dir = variant_output_dir(test_name, extra_config_flags)
+    output_dir = variant_output_dir(test_name, extra_config_flags, config_file=config_file)
     if path.isdir(output_dir):
         rmtree(output_dir)
     for f in glob(path.join(test_dir, f"test_{test_name}.out")):
@@ -126,15 +133,17 @@ def _current_systype():
     return ""
 
 
-def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_config_flags: tuple = ()):
+def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_config_flags: tuple = (), *, config_file: str = "Config.sh"):
     """Sets environment variables and runs a script for building gizmo for a given test.
+    config_file names the Config in the test's directory to build from (default Config.sh); use an
+    alternative file where a variant must replace a flag rather than add one (e.g. another hydro method).
     If num_openmp_threads > 0, appends OPENMP=<num_openmp_threads> to Config.sh before building.
     extra_config_flags is a tuple of strings to append to Config.sh (e.g. ("TRANSPORT_SUBCYCLE=10",)).
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
     system("rm -f src/GIZMO test/*/GIZMO")
-    system(f"cp test/{test_name}/Config.sh src/")
+    copyfile(f"test/{test_name}/{config_file}", "src/Config.sh")  # raises if the Config is missing, rather than building a stale one
     if num_openmp_threads > 0:
         with open("src/Config.sh", "a") as f:
             f.write(f"\nOPENMP={num_openmp_threads}\n")
@@ -237,9 +246,9 @@ def mark_run_truncated(test_name: str, reason: str, paramsfile: str = None):
         pass  # best-effort: never mask the real failure with a bookkeeping error
 
 
-def run_truncated_reason(test_name: str, extra_config_flags=()):
+def run_truncated_reason(test_name: str, extra_config_flags=(), *, config_file="Config.sh"):
     """Why this variant's run did not finish, or None if it did. Call from the repo root."""
-    marker = path.join(variant_output_dir(test_name, extra_config_flags), TRUNCATED_MARKER)
+    marker = path.join(variant_output_dir(test_name, extra_config_flags, config_file=config_file), TRUNCATED_MARKER)
     if not path.isfile(marker):
         return None
     with open(marker) as f:
@@ -473,19 +482,19 @@ def _test_dir(test_name: str, caller: str):
     return d
 
 
-def problem_output_dir(test_name: str, params_name: str = None, extra_config_flags=()):
+def problem_output_dir(test_name: str, params_name: str = None, extra_config_flags=(), *, config_file="Config.sh"):
     """Where a problem's run ends up. Several problems share a directory when they are
     variants of one family, so the directory is keyed on the problem (its parameter file)
     rather than on the family, and the flag suffix distinguishes Config variants of it."""
     tdir = _test_dir(test_name, "problem_output_dir")
     stem = "output" if not params_name or params_name == test_name else f"output_{params_name}"
-    return path.join(tdir, stem + variant_suffix(extra_config_flags))
+    return path.join(tdir, stem + variant_suffix(extra_config_flags, config_file=config_file))
 
 
-def stash_baseline_output(test_name: str, extra_config_flags=()):
+def stash_baseline_output(test_name: str, extra_config_flags=(), *, config_file="Config.sh"):
     """If running a non-baseline variant, move an existing output/ aside so the variant
     run doesn't clobber it. Returns True if a stash was made."""
-    if not variant_suffix(extra_config_flags):
+    if not variant_suffix(extra_config_flags, config_file=config_file):
         return False
     tdir = _test_dir(test_name, "stash_baseline_output")
     plain = path.join(tdir, "output")
@@ -498,15 +507,15 @@ def stash_baseline_output(test_name: str, extra_config_flags=()):
     return False
 
 
-def finalize_variant_output(test_name: str, extra_config_flags=()):
+def finalize_variant_output(test_name: str, extra_config_flags=(), *, config_file="Config.sh"):
     """After a non-baseline run, rename output/ → variant dir, then restore the
     baseline stash (if any). Idempotent and safe to call in a finally block."""
-    if not variant_suffix(extra_config_flags):
+    if not variant_suffix(extra_config_flags, config_file=config_file):
         return
     tdir = _test_dir(test_name, "finalize_variant_output")
     plain = path.join(tdir, "output")
     stash = path.join(tdir, _BASELINE_STASH)
-    dst = path.join(tdir, "output" + variant_suffix(extra_config_flags))
+    dst = path.join(tdir, "output" + variant_suffix(extra_config_flags, config_file=config_file))
     if path.isdir(plain):
         if path.isdir(dst):
             rmtree(dst)
@@ -519,10 +528,10 @@ def finalize_variant_output(test_name: str, extra_config_flags=()):
 
 def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = (),
                        timeout: float = None, param_overrides: dict = None,
-                       allow_nonzero_exit: bool = False, params_name: str = None):
+                       allow_nonzero_exit: bool = False, params_name: str = None, *, config_file: str = "Config.sh"):
     """Top-level routine that does all necessary building, downloading, and running of the test.
-    When extra_config_flags is non-empty, the resulting output/ directory is renamed to a
-    variant-specific name so that multiple flag combinations can coexist on disk. The baseline
+    When extra_config_flags is non-empty or config_file is not the test's Config.sh, the resulting
+    output/ directory is renamed to a variant-specific name so that several variants can coexist on disk. The baseline
     output/ (if any) is temporarily stashed aside so it isn't overwritten by the variant run.
 
     Set env var GIZMO_TEST_SKIP_BUILD_RUN=1 to reuse snapshots already present in
@@ -530,9 +539,9 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
     the pytest assertions + plots without rebuilding/rerunning locally."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
-    clean_test_outputs(test_name, extra_config_flags)
-    build_gizmo_for_test(test_name, num_openmp_threads, extra_config_flags)
-    stash_baseline_output(test_name, extra_config_flags)
+    clean_test_outputs(test_name, extra_config_flags, config_file=config_file)
+    build_gizmo_for_test(test_name, num_openmp_threads, extra_config_flags, config_file=config_file)
+    stash_baseline_output(test_name, extra_config_flags, config_file=config_file)
     try:
         chdir(f"test/{test_name}/")
         download_test_files(test_name, params_name)
@@ -544,7 +553,7 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
         if params_name and params_name != test_name:
             # GIZMO always writes OutputDir "output"; move it under this problem's own name
             # so family members sharing the directory do not overwrite one another.
-            dst = problem_output_dir(test_name, params_name, extra_config_flags)
+            dst = problem_output_dir(test_name, params_name, extra_config_flags, config_file=config_file)
             src = path.join(_test_dir(test_name, "build_and_run_test"), "output")
             if path.isdir(src):
                 if path.isdir(dst):
@@ -555,7 +564,7 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
             if path.isdir(stash) and not path.isdir(src):
                 move(stash, src)
         else:
-            finalize_variant_output(test_name, extra_config_flags)
+            finalize_variant_output(test_name, extra_config_flags, config_file=config_file)
 
 
 def parse_params(params_file: str) -> dict:
@@ -572,13 +581,36 @@ def parse_params(params_file: str) -> dict:
     return params
 
 
-def get_final_snapshot(test_name: str, extra_config_flags=()) -> str:
+def get_final_snapshot(test_name: str, extra_config_flags=(), *, config_file="Config.sh") -> str:
     """Return the path to the last snapshot produced by a test (variant-aware)."""
-    output_dir = variant_output_dir(test_name, extra_config_flags)
+    output_dir = variant_output_dir(test_name, extra_config_flags, config_file=config_file)
     snaps = sorted(glob(f"{output_dir}/snapshot_*.hdf5"))
     if not snaps:
         raise RuntimeError(f"No snapshots found for test {test_name} in {output_dir}")
     return snaps[-1]
+
+
+def gas_conserved_totals(snapshot_file: str) -> dict:
+    """Total mass, momentum vector and energy sum m (u + v^2/2) of the gas in a snapshot. Without
+    gravity or external forces these are the hydro-conserved quantities (non-cosmological runs).
+    Note that under MFV the snapshot Masses are the masses predicted between kicks, not the
+    conserved ledger, so their sum is not exactly constant even when the scheme conserves mass."""
+    with h5py.File(snapshot_file, "r") as F:
+        gas = F["PartType0"]
+        m = gas["Masses"][:].astype(np.float64)
+        v = gas["Velocities"][:].astype(np.float64)
+        u = gas["InternalEnergy"][:].astype(np.float64)
+    return {"mass": m.sum(), "momentum": (m[:, None] * v).sum(axis=0),
+            "energy": (m * (u + 0.5 * (v * v).sum(axis=1))).sum()}
+
+
+def gas_conservation_errors(first_snapshot: str, last_snapshot: str) -> dict:
+    """Relative change of total gas mass and energy between two snapshots, and the change of total
+    momentum in units of sqrt(2 M E) at the first (the net momentum itself is often zero)."""
+    a, b = gas_conserved_totals(first_snapshot), gas_conserved_totals(last_snapshot)
+    return {"mass": abs(b["mass"] - a["mass"]) / a["mass"],
+            "energy": abs(b["energy"] - a["energy"]) / abs(a["energy"]),
+            "momentum": np.linalg.norm(b["momentum"] - a["momentum"]) / np.sqrt(2. * a["mass"] * abs(a["energy"]))}
 
 
 def assert_final_time(snapshot_file: str, test_name: str, rtol: float = 1e-6, time_max: float = None):
