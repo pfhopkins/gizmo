@@ -106,7 +106,8 @@ static inline double stella_pack_fire_yields(const double *y, MyDouble *fy, MyID
 }
 
 /* mass-fraction blend of slots 1..NUM_METAL_SPECIES-1 for ejecta dM; tracer slots get no yield, only dilution.
- * c: mass of the cell's own gas turned into ejecta composition in place (Ia companion share), of total ejecta Mej */
+ * c: mass of the cell's own gas turned into ejecta composition in place (Ia companion share), of total ejecta Mej;
+ * the converted gas keeps no tracer either (age or other tracer slots lose c X_old) */
 static inline void stella_blend_fire_slots(int j, double M_old, double dM, double wk, const MyDouble *fy, double c, double Mej)
 {
     int s;

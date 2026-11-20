@@ -6,9 +6,9 @@ bars fixed there). Units: kpc, 1e10 Msun, km/s. Boxes: n_H = 10, 1e4 K, 1 Msun c
 
 test_death_ejecta_table (no run): the death ejecta the deposit uses (stellar_death_ejecta), on 1500 masses (0.9-300 Msun)
   x the table metallicities and their midpoints, with M_death = M_init - lifetime winds. For every sample
-  0 <= rem <= M_death (the remnant never exceeds the star, which the absolute table remnant did between grid points) and no
-  m_k < 0; at grid stars rem / M_death = rem_tab / (rem_tab + sum ej_tab) (1e-12). rem + sum_k m_k = M_death holds by
-  construction (rem is returned as M_death - sum m_k) and is not a check.
+  0 <= rem <= M_death and no m_k < 0, and at grid stars rem / M_death = rem_tab / (rem_tab + sum ej_tab) (1e-12). With the
+  fractions, rem <= M_death, rem >= 0 and m_k >= 0 hold by construction (clipped fractions, sum <= 1, rem = M_death - sum m_k):
+  they fail only on the old absolute-remnant arithmetic. The grid remnant fraction is the check the new code can fail.
 test_failed_sn_composition: a failed SN (42.3 Msun, log Z = -1.70, table ejecta 0 at the nearest grid star) and a direct
   collapse (a table grid star), each in its own box of gas with 1 km/s random velocities; element ledger, mass and energy
   traces close. Every failed SN and direct collapse in the table ejects nothing, so with exact death ejecta they deposit

@@ -1022,7 +1022,7 @@ void calculate_non_standard_physics(void)
         MPI_Allreduce(&count_fb, &tot_count_fb, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         if(tot_count_fb > 0)
         {
-            if(ThisTask == 0) {printf("G17RECOMPUTE: %d feedback-affected cells -> re-running compute_hydro_densities_and_forces\n", tot_count_fb); fflush(stdout);}
+            if(ThisTask == 0) {printf("HYDRO_RECOMPUTE_POST_FB: %d feedback-affected cells -> re-running compute_hydro_densities_and_forces\n", tot_count_fb); fflush(stdout);}
             HydroPassRepeatsStep = 1; /* the metal exchange is applied in the hydro pass itself, not by the kicks: once per step */
             compute_hydro_densities_and_forces();
             HydroPassRepeatsStep = 0;

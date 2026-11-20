@@ -203,7 +203,8 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
   1.378 - M_WD of the receivers' gas turned into Ia composition in place, shared in proportion to cell mass (cell mass,
   momentum and specific internal energy unchanged; its dust removed). The mean molecular weight, and so T at fixed u,
   changes in the converted part. At 0.1 Msun cells the kernel holds a few Msun, so up to ~25 % of the kernel gas becomes
-  Ia matter. The rate normalisation is unchanged, so Ia iron per formed mass is rate x table yield.
+  Ia matter. The rate normalisation is unchanged, so Ia iron per formed mass is rate x table yield. In the Stella x FIRE-3
+  coupled mode the conversion acts on every FIRE slot, tracer slots included: the converted gas keeps no tracer.
 - **Mass trace.** mass_balance_steps.txt counts mass leaving through an outflow boundary in M_bary (also in non-Stella
   builds), and mass_balance_elements.txt closes every element; MbaryOutflow is not restarted (the trace re-baselines after a
   restart).
