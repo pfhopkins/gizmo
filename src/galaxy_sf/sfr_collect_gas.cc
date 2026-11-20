@@ -6,7 +6,8 @@
  * the parent cell's kernel radius, widened so it holds twice the mass still missing at the formation density; each
  * later pass widens the last radius by 1.5. A star is done when it holds its drawn mass to within 1%. A star still
  * short after 10 passes is a failed draw: everything granted to it goes back to its donors (exact integer quanta) and
- * the star is removed. No mass is created. The drawn mass is kept in the star record (single_star_record.h). */
+ * the star is removed. No mass is created. The drawn mass is kept in the star record (single_star_record.h). Every cell that gives
+ * mass gets the parent's spawn block and SF cool-down (GALSF_SINGLE_STARS_SF_CRITERION). */
 #include <mpi.h>
 #include <cstdio>
 #include <cstdlib>
@@ -279,6 +280,16 @@ double single_stars_collect_gas(long long tot_spawned)
 #if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(GALSF_SINGLE_STARS_SF_CRITERION)
     std::vector<int> net_donors; /* donors that lose mass in this collection */
     for(int j = 0; j < DMIN(N_gas, ssc_donor_cap); j++) {if(ssc_donor[j].grant > 0 && P[j].Type == 0) {net_donors.push_back(j);}}
+#endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION /* donors cool down like the parent: blocked until the density is recomputed, then a fraction of their own free-fall time */
+    for(int j = 0; j < DMIN(N_gas, ssc_donor_cap); j++) {
+        if(ssc_donor[j].grant <= 0 || P[j].Type != 0) {continue;}
+        CellP[j].SingleStarSpawnBlock = 1;
+        if(All.SFCooldownFreeFallFraction > 0 && CellP[j].Density > 0) {
+            double t_cool = All.SFCooldownFreeFallFraction * sqrt(3. * M_PI / (32. * All.G * CellP[j].Density * All.cf_a3inv));
+            if(t_cool > CellP[j].SingleStarSFCooldown) {CellP[j].SingleStarSFCooldown = t_cool;}
+        }
+    }
 #endif
     /* apply: each donor loses its granted quanta once */
     {
