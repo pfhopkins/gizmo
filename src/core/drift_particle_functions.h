@@ -177,11 +177,20 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             cell[i].VelPred += cell[i].Rad_Accel * (All.cf_atime * dt_hydrokick);
 #endif
             
+#ifdef GENERAL_RELATIVITY
+            /* GR: Density is the conserved density D = mass/volume. The volume V = mass/Density advances as V exp(DtVolume dt/V), with DtVolume the
+               volume rate of the Riemann problems: the same rule as gr_predict_impl and gr_kick_impl, so the density and the predicted primitives
+               describe one volume. The density follows the new volume and the drifted mass */
+            const double gr_volume_before_drift = pp[i].Mass / cell[i].Density;
+            const double gr_log_volume_change = cell[i].DtVolume * dt_hydrokick / gr_volume_before_drift;
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             pp[i].Mass = mfv_drifted_mass(pp[i].Mass, cell[i].DtMass, cell[i].MassTrue, dt_entr); cell[i].Mass = pp[i].Mass;
 #endif
             
-#ifndef GENERAL_RELATIVITY /* GR: the density is predicted below, from the volume change computed in the Riemann problems */
+#ifdef GENERAL_RELATIVITY
+            cell[i].Density = pp[i].Mass / (gr_volume_before_drift * exp(gr_log_volume_change));
+#else
             double divv_fac_density = divv_fac; /* the predicted density follows the volume's divergence */
 #ifdef SOLID_VOLUME_FROM_SOLID_NEIGHBOURS
             if(cell[i].SolidBesideGas) {divv_fac_density = kernel_radius_drift_log_change(cell[i].SolidVelocityDivergence * dt_drift);} /* a solid beside gas: its own material's (kicks.cc) */
@@ -216,9 +225,7 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             
 #if (HYDRO_FIX_MESH_MOTION > 0)
 #ifdef GENERAL_RELATIVITY
-            /* GR: the kernel radius and the density follow the volume variation computed in the Riemann problems (DtVolume, hydro/hydro_functions.h) */
-            const double divv_fac_gr = kernel_radius_drift_log_change(cell[i].DtVolume*dt_hydrokick/pow(pp[i].Get_Particle_Size(), NUMDIMS));
-            pp[i].KernelRadius *= exp(divv_fac_gr/((double)NUMDIMS));
+            pp[i].KernelRadius *= exp(kernel_radius_drift_log_change(gr_log_volume_change)/((double)NUMDIMS)); /* GR: the kernel radius follows the same volume change, with the usual cap on its predicted change (the cap acts on the radius only) */
 #else
             pp[i].KernelRadius *= h_drift_fac;
 #endif
@@ -226,9 +233,6 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             if(pp[i].KernelRadius > All.MaxKernelRadius) {pp[i].KernelRadius = All.MaxKernelRadius;}
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
             if(1 & ADAPTIVE_GRAVSOFT_FORALL) {pp[i].AGS_KernelRadius = pp[i].KernelRadius;} /* gas is AGS-active, so needs to be set here to match updated KernelRadius */
-#endif
-#ifdef GENERAL_RELATIVITY
-            cell[i].Density *= exp(-divv_fac_gr);
 #endif
 #endif
             drift_extra_physics_P(i, time0, time1, dt_entr, pp, cell);

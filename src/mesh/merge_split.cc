@@ -915,6 +915,7 @@ int split_particle_i(int i, int n_particles_split, double r_near)
         /* the rates of the conserved variables are extensive: partition them as the mass */
         CellP[j].DtMomentum = CellP[i].DtMomentum * mass_of_new_particle; CellP[i].DtMomentum -= CellP[j].DtMomentum;
         CellP[j].DtEnergy = mass_of_new_particle * CellP[i].DtEnergy; CellP[i].DtEnergy -= CellP[j].DtEnergy;
+        CellP[j].DtVolume = mass_of_new_particle * CellP[i].DtVolume; CellP[i].DtVolume -= CellP[j].DtVolume; /* the volumes are partitioned as the mass */
 #endif
 #if defined(SINK_THERMALFEEDBACK)
         CellP[j].Injected_Sink_Energy = mass_of_new_particle * CellP[i].Injected_Sink_Energy; CellP[i].Injected_Sink_Energy -= CellP[j].Injected_Sink_Energy; /* pending energy (not specific): partition with the mass */
@@ -1174,6 +1175,8 @@ int merge_particles_ij(int i, int j, double target_share)
     double gr_Si_check, gr_Sj_check, gr_ui_tmp, gr_uj_tmp;
     double gr_Vi = P[i].Mass/CellP[i].Density, gr_Vj = P[j].Mass/CellP[j].Density;
     double gr_Vtot = ((target_share >= 0) && (target_share <= 1)) ? gr_Vj + target_share*gr_Vi : DMAX(gr_Vi, gr_Vj);
+    /* the survivor inherits the share (V_tot - V_j)/V_i of the volume of i, and the same share of its volume rate */
+    CellP[j].DtVolume += DMAX(0., DMIN(1., (gr_Vtot - gr_Vj)/gr_Vi)) * CellP[i].DtVolume; CellP[i].DtVolume = 0;
     {
         struct gr_primitives pr; double W;
         /* predicted states */

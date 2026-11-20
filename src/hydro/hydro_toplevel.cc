@@ -424,7 +424,7 @@ void hydro_final_operations_and_cleanup(void)
                 CellP[i].DtInternalEnergy = 0;//CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
                 CellP[i].HydroAccel = {};
 #ifdef GENERAL_RELATIVITY
-                CellP[i].DtEnergy = 0; CellP[i].DtMomentum = {};
+                CellP[i].DtEnergy = 0; CellP[i].DtMomentum = {}; CellP[i].DtVolume = 0;
 #endif
 #ifdef MAGNETIC
                 CellP[i].DtB = {};

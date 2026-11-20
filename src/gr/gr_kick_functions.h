@@ -76,7 +76,7 @@ KOKKOS_INLINE_FUNCTION void gr_kick_impl(int i, double dt_kick, double mass_old,
     /* the rates from the old and new primitives */
     double rate_fac = 1./dt_kick;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    rate_fac *= cell[i].MassTrue/pp[i].Mass; /* account for the mass change */
+    rate_fac *= mass_new/pp[i].Mass; /* the generic kick applies the rates with the predicted mass P.Mass and divides by mass_new */
 #endif
     cell[i].DtInternalEnergy = (Prims.u - cell[i].InternalEnergy)*rate_fac;
     cell[i].HydroAccel = (Vcoord(Prims.v, gr) - pp[i].Vel)*rate_fac;
@@ -113,7 +113,7 @@ KOKKOS_INLINE_FUNCTION void gr_drift_impl(int i, double dt_drift, struct particl
 #else
         res_con2prim = gr_get_primitive_variables(&Cons, &Prims, &(cell[i].gr), cell[i].gr.limiter);
 #endif
-        if(res_con2prim < -1)
+        if(res_con2prim < 0)
         {
             printf("GR: failed inversion (code %g) in the drift: ID %llu at %g %g %g\n", res_con2prim, (unsigned long long) pp[i].ID, pp[i].Pos[0], pp[i].Pos[1], pp[i].Pos[2]);
             endrun(9992406); return;
@@ -168,7 +168,8 @@ KOKKOS_INLINE_FUNCTION void gr_predict_impl(int i, double dt_hydrokick, struct p
     struct gr_conservatives ConsPred;
     double Vi = pp[i].Mass/cell[i].Density, mass_new = pp[i].Mass, res_con2prim;
 #ifdef GR_TEST_PARTICLE
-    mass_new = pp[i].Mass = Vi = 1.0;
+    if(pp[i].Mass > 0) {pp[i].Mass = 1.0;} /* (an excised test particle keeps its zero mass) */
+    mass_new = pp[i].Mass; Vi = 1.0;
 #endif
 #ifdef PARTICLE_EXCISION
     if(pp[i].Mass == 0) {return;}
@@ -179,10 +180,8 @@ KOKKOS_INLINE_FUNCTION void gr_predict_impl(int i, double dt_hydrokick, struct p
 #endif
     gr_get_conservative_variables(&Prims, &ConsPred, Wlorentz, gr);
     double Vnew = Vi*exp(cell[i].DtVolume*dt_hydrokick/Vi);
-    if(gr_add_source_term(i, &Prims, &ConsPred, dt_hydrokick, 0, pp, cell) < 0) {return;}
+    if(gr_add_source_term(i, &Prims, &ConsPred, dt_hydrokick, 0, pp, cell) < 0) {return;} /* (also inverts the sourced state into Prims) */
     if(pp[i].Mass == 0) {return;}
-    res_con2prim = gr_get_primitive_variables(&ConsPred, &Prims, gr, gr->limiter);
-    if(res_con2prim < 0) {printf("GR: failed inversion (code %g) in the predict: ID %llu at %g %g %g\n", res_con2prim, (unsigned long long) pp[i].ID, pp[i].Pos[0], pp[i].Pos[1], pp[i].Pos[2]); endrun(99924091); return;}
     ConsPred.D = mass_new/Vnew;
     ConsPred.tau = (ConsPred.tau*Vi + cell[i].DtEnergy*dt_hydrokick)/Vnew;
     ConsPred.S = (Vi*ConsPred.S + dt_hydrokick*cell[i].DtMomentum)/Vnew;
