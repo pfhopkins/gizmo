@@ -76,15 +76,15 @@
 #if (KERNEL_FUNCTION == 4) // Morris 1996 quartic spline kernel
 #define KERNEL_CORE_SIZE (2.0/5.0)
 #if (NUMDIMS==1)
-#define  KERNEL_NORM  (243.0/40.0)       	    /*!< For 1D-normalized kernel */
+#define  KERNEL_NORM  (3125.0/768.0)       	    /*!< For 1D-normalized kernel */
 #define  KERNEL_NMIN  3
 #define  KERNEL_NMAX  8
 #elif (NUMDIMS==2)
-#define  KERNEL_NORM  (15309.0/(478.0*M_PI))	    /*!< For 2D-normalized kernel */
+#define  KERNEL_NORM  (46875.0/(2398.0*M_PI))	    /*!< For 2D-normalized kernel */
 #define  KERNEL_NMIN  16
 #define  KERNEL_NMAX  32
 #else
-#define  KERNEL_NORM  (2187.0/(40.0*M_PI))	    /*!< For 3D-normalized kernel */
+#define  KERNEL_NORM  (15625.0/(512.0*M_PI))	    /*!< For 3D-normalized kernel */
 #define  KERNEL_NMIN  40
 #define  KERNEL_NMAX  125
 #endif
@@ -94,15 +94,15 @@
 #if (KERNEL_FUNCTION == 5) // Morris 1996 quintic spline kernel
 #define KERNEL_CORE_SIZE (1.0/3.0)
 #if (NUMDIMS==1)
-#define  KERNEL_NORM  (3125.0/768.0)        	    /*!< For 1D-normalized kernel */
+#define  KERNEL_NORM  (243.0/40.0)        	    /*!< For 1D-normalized kernel */
 #define  KERNEL_NMIN  4
 #define  KERNEL_NMAX  12
 #elif (NUMDIMS==2)
-#define  KERNEL_NORM  (46875.0/(2398.0*M_PI))	    /*!< For 2D-normalized kernel */
+#define  KERNEL_NORM  (15309.0/(478.0*M_PI))	    /*!< For 2D-normalized kernel */
 #define  KERNEL_NMIN  20
 #define  KERNEL_NMAX  50
 #else
-#define  KERNEL_NORM  (15625.0/(512.0*M_PI))	    /*!< For 3D-normalized kernel */
+#define  KERNEL_NORM  (2187.0/(40.0*M_PI))	    /*!< For 3D-normalized kernel */
 #define  KERNEL_NMIN  60
 #define  KERNEL_NMAX  180
 #endif
@@ -193,6 +193,8 @@
 #define  KERNEL_AWPMHD_FD_ALPHA  (3.0/16.0)
 #elif (KERNEL_FUNCTION == 4) // quartic spline
 #define  KERNEL_AWPMHD_FD_ALPHA  (23.0/150.0)
+#elif (KERNEL_FUNCTION == 5) // quintic spline
+#define  KERNEL_AWPMHD_FD_ALPHA  (7.0/54.0)
 #elif (KERNEL_FUNCTION == 6) // Wendland C2
 #define  KERNEL_AWPMHD_FD_ALPHA  (1.0/6.0)
 #elif (KERNEL_FUNCTION == 7) // Wendland C4
@@ -303,6 +305,35 @@ GIZMO_GPU_FUNCTION static inline void kernel_main(double u, double hinv3, double
 #endif /* cubic spline */
 
 #if (KERNEL_FUNCTION == 4) /* quartic spline */
+    double t1 = (1.0 - u);
+    double t2 = t1 * t1;
+
+    if(mode >= 0)
+        *dwk = -4.0 * t2 * t1;
+    if(mode <= 0)
+        *wk = t2 * t2;
+
+    if (u < 0.6)
+    {
+        t1 = (0.6 - u);
+        t2 = t1 * t1;
+        if(mode >= 0)
+            *dwk += 20.0 * t2 * t1;
+        if(mode <= 0)
+            *wk -= 5.0 * t2 * t2;
+    }
+    if (u < 0.2)
+    {
+        t1 = (0.2 - u);
+        t2 = t1 * t1;
+        if(mode >= 0)
+            *dwk -= 40.0 * t2 * t1;
+        if(mode <= 0)
+            *wk += 10.0 * t2 * t2;
+    }
+#endif /* quartic spline */
+
+#if (KERNEL_FUNCTION == 5) /* quintic spline */
   double t1 = (1.0 - u);
   double t2 = t1 * t1;
   double t4 = t2 * t2;
@@ -331,35 +362,6 @@ GIZMO_GPU_FUNCTION static inline void kernel_main(double u, double hinv3, double
           *dwk -= 75.0 * t4;
       if(mode <= 0) 
           *wk += 15.0 * t4 * t1;
-    }
-#endif /* quartic spline */
-
-#if (KERNEL_FUNCTION == 5) /* quintic spline */
-    double t1 = (1.0 - u);
-    double t2 = t1 * t1;
-    
-    if(mode >= 0)
-        *dwk = -4.0 * t2 * t1;
-    if(mode <= 0)
-        *wk = t2 * t2;
-    
-    if (u < 0.6)
-    {
-        t1 = (0.6 - u);
-        t2 = t1 * t1;
-        if(mode >= 0)
-            *dwk += 20.0 * t2 * t1;
-        if(mode <= 0)
-            *wk -= 5.0 * t2 * t2;
-    }
-    if (u < 0.2)
-    {
-        t1 = (0.2 - u);
-        t2 = t1 * t1;
-        if(mode >= 0)
-            *dwk -= 40.0 * t2 * t1;
-        if(mode <= 0)
-            *wk += 10.0 * t2 * t2;
     }
 #endif /* quintic spline */
     
@@ -514,19 +516,19 @@ GIZMO_GPU_FUNCTION static inline double kernel_gravity(double u, double hinv, do
     if(mode == 1)
     {
         if(u < 0.5)
-            wk = (10.666666666667 + u * u * (32.0 * u - 38.4));
+            wk = (32./3. + u * u * (32.0 * u - 38.4));
         else
-            wk = (21.333333333333 - 48.0 * u +
-                  38.4 * u * u - 10.666666666667 * u * u * u - 0.066666666667 / (u * u * u));
+            wk = (64./3. - 48.0 * u +
+                  38.4 * u * u - (32./3.) * u * u * u - (1./15.) / (u * u * u));
         return wk * hinv3;
     }
     else if(mode == -1)
     {
         if(u < 0.5)
-            wk = -2.8 + u * u * (5.333333333333 + u * u * (6.4 * u - 9.6));
+            wk = -2.8 + u * u * (16./3. + u * u * (6.4 * u - 9.6));
         else
-            wk = -3.2 + 0.066666666667 / u + u * u * (10.666666666667 +
-                                                      u * (-16.0 + u * (9.6 - 2.133333333333 * u)));
+            wk = -3.2 + (1./15.) / u + u * u * (32./3. +
+                                                u * (-16.0 + u * (9.6 - (32./15.) * u)));
         return wk * hinv;
     }
     else if(mode == 0)
@@ -743,7 +745,7 @@ GIZMO_GPU_FUNCTION static inline double kernel_gravity(double u, double hinv, do
     else if(mode == -1)
     {
         double uu = u*u;
-        wk = (1./16.) * (-245. + 910.*uu - uu*uu * (3003. - 8580.*uu + 35035.*uu*uu - 64064.*uu*uu*u + 57330.*uu*uu*uu - 29120.*uu*uu*uu*u + 8085.*uu*uu*uu*uu - 960.*uu*uu*uu*uu*u));
+        wk = (1./64.) * (-245. + 910.*uu - uu*uu * (3003. - 8580.*uu + 35035.*uu*uu - 64064.*uu*uu*u + 57330.*uu*uu*uu - 29120.*uu*uu*uu*u + 8085.*uu*uu*uu*uu - 960.*uu*uu*uu*uu*u));
         return wk * hinv;
     }
     else if(mode == 0)

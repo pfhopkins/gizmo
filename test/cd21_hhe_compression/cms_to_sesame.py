@@ -54,12 +54,25 @@ we re-grid:
      validity boundary, not a repair: states below it are outside the table (GIZMO takes the state at the boundary and counts
      it). The conversion refuses if any fall remains above the floor, or if cs^2 <= 0 there. --no-defect-floor writes the table
      without it, for auditing only.
-  6. Emit SESAME-format file (with the lowest_valid_T_index block when a floor is set), and print the command, the input and
+  6. Dilute rows (on by default): GIZMO's table lookup evaluates a density below a table's lowest row AT that row, so a cell more
+     dilute than the table (an expanding envelope, ejecta) gets that row's pressure -- too high by rho_min / rho for a gas. The
+     lowest-density row of a CD21 table is an ideal gas, so the converter prepends rows below it down to --dilute-rho-min (every
+     converted row is kept unchanged), continuing that row at each temperature: P = P_0(T) rho / rho_0; u and cs equal to the row's;
+     S = S_0(T) - (dP_0/dT / rho_0) ln(rho / rho_0) (the Maxwell relation for P proportional to rho). This is exact where the
+     composition at the row does not change with density; in the H2-dissociation and ionisation bands it does (P / rho at fixed T
+     still rises as rho falls there), and the dilute rows keep the row's composition: at fixed temperature they under-estimate P there
+     by at most that change (about 2x); at fixed energy, which GIZMO solves at, they give a higher temperature, which partly offsets it.
+     The rows run downward from the table's lowest density, --dilute-dex apart, to at or below --dilute-rho-min. The conversion refuses if, at any temperature, d ln P / d ln rho between the two lowest rows differs from 1 by more
+     than --dilute-max-slope-error (a boundary that is not a dilute gas); the bands where it differs by more than 0.01 are printed.
+     --no-dilute-rows writes the table without them, for auditing only.
+  7. Emit SESAME-format file (with the lowest_valid_T_index block when a floor is set), and print the command, the input and
      output SHA-256 hashes and what the floor removed.
 
 Self-test:
   Run with --selftest to generate a synthetic ideal-gas (logT, logP) input,
-  convert it, and check thermodynamic consistency vs analytic gamma=5/3.
+  convert it, and check thermodynamic consistency vs analytic gamma=5/3,
+  including the dilute rows (exact for this gas) and their refusal of a
+  boundary that is not a dilute gas.
 
 Usage:
   python cms_to_sesame.py --input cms19_y0245.dat --output cms19_y0245.sesame
@@ -367,6 +380,43 @@ def convert(native, nrho, use_defect_floor=True):
     return rg, (rows if use_defect_floor else None), report
 
 
+DILUTE_BAND_SLOPE_ERROR = 0.01   # |d ln P / d ln rho - 1| above which a temperature is reported as a band where the dilute rows are approximate
+
+
+def add_dilute_rows(rg, rows, rho_min=1.0e-20, dex=0.5, max_slope_error=0.12):
+    """Prepend rows below the table's lowest density (see step 6 of the module docstring). Returns (regridded, floor rows or None,
+    report lines); raises ValueError, writing nothing, when the lowest-density row is not a dilute gas."""
+    logrho, T = rg['logrho'], 10.0 ** rg['logT']
+    rho0 = 10.0 ** logrho[0]
+    if not (dex > 0 and rho_min > 0): raise ValueError(f"dilute rows: need --dilute-dex > 0 and --dilute-rho-min > 0 (got {dex:g}, {rho_min:g})")
+    n_new = int(np.ceil((logrho[0] - np.log10(rho_min)) / dex))
+    if n_new < 1: raise ValueError(f"--dilute-rho-min {rho_min:g} is not below the table's lowest density {rho0:g}")
+    P0, u0, S0, cs0 = rg['P'][0], rg['u'][0], rg['S'][0], rg['cs'][0]
+    slope = np.log(rg['P'][1] / P0) / ((logrho[1] - logrho[0]) * np.log(10.0))
+    if rows is not None: slope = np.where(np.arange(T.size) >= max(rows[0], rows[1]), slope, 1.0)   # only where both rows are valid
+    worst = float(np.max(np.abs(slope - 1.0)))
+    off = np.abs(slope - 1.0) > DILUTE_BAND_SLOPE_ERROR; bands = []
+    for j in range(T.size):
+        if off[j] and (j == 0 or not off[j - 1]): lo = T[j]
+        if off[j] and (j == T.size - 1 or not off[j + 1]): bands.append(f"{lo:.3g}-{T[j]:.3g} K")
+    report = [f"dilute rows: d ln P / d ln rho between the two lowest rows within {worst:.2e} of 1 (allowed {max_slope_error:g}); "
+              f"approximate (composition still shifting with density) at {', '.join(bands) if bands else 'no temperature'}"]
+    if not worst <= max_slope_error:
+        raise ValueError("\n".join(report + ["refusing: the lowest-density row is not a dilute gas (dilute rows do not apply; --no-dilute-rows for auditing)"]))
+    new_logrho = logrho[0] - dex * np.arange(n_new, 0, -1)            # uniform spacing down from the lowest density
+    f = (10.0 ** new_logrho / rho0)[:, None]
+    dP0dT = np.gradient(P0, T)
+    out = dict(rg)
+    out['logrho'] = np.concatenate([new_logrho, logrho])
+    out['P'] = np.vstack([P0[None, :] * f, rg['P']])
+    out['u'] = np.vstack([np.repeat(u0[None, :], f.shape[0], 0), rg['u']])
+    out['cs'] = np.vstack([np.repeat(cs0[None, :], f.shape[0], 0), rg['cs']])
+    out['S'] = np.vstack([S0[None, :] - (dP0dT / rho0)[None, :] * np.log(f), rg['S']])
+    report.append(f"dilute rows: {new_logrho.size} prepended, rho {10.0 ** new_logrho[0]:.3e} .. {10.0 ** new_logrho[-1]:.3e} g/cc ({dex:g} dex apart) "
+                  f"below the converted table's {rho0:.6e}")
+    return out, (None if rows is None else np.concatenate([np.full(new_logrho.size, rows[0]), rows])), report
+
+
 def sha256(path):
     h = hashlib.sha256()
     with open(path, 'rb') as f:
@@ -509,6 +559,28 @@ def selftest(tmpdir=None):
     print(f"  injected defects: corrupt point masked {masked_ok}, floor above 2000 K {floor_ok}, block reads back {block_ok}, "
           f"audit mode reports the falls {audit_ok}")
     ok = ok and masked_ok and floor_ok and block_ok and audit_ok
+
+    # Dilute rows on the ideal gas (exact there): every converted row unchanged, P = rho R T, u and cs equal to the gas's,
+    # S = Cv ln T - R ln rho (up to the constant) in the new rows; and a boundary whose pressure does not follow the density
+    # (a condensed / two-phase edge, P independent of rho) is refused.
+    rg_d, rows_d, rep_d = add_dilute_rows(regridded, rows, rho_min=1.0e-24, dex=0.5)
+    print("\n".join(rep_d))
+    k = rg_d['logrho'].size - regridded['logrho'].size
+    kept = all(np.array_equal(rg_d[q][k:], regridded[q]) for q in ('P', 'u', 'S', 'cs')) and np.array_equal(rg_d['logrho'][k:], regridded['logrho'])
+    rho_d = 10.0 ** rg_d['logrho'][:k, None]; T_d = 10.0 ** rg_d['logT'][None, :]
+    relP_d = np.max(np.abs(rg_d['P'][:k] / (rho_d * R_specific * T_d) - 1.0))
+    relu_d = np.max(np.abs(rg_d['u'][:k] / (Cv * T_d) - 1.0))
+    dS_d = rg_d['S'][:k] - rg_d['S'][k][None, :]; dS_an = -R_specific * np.log(rho_d / 10.0 ** rg_d['logrho'][k])
+    relS_d = np.max(np.abs(dS_d - dS_an)) / R_specific
+    dil_ok = kept and k > 0 and relP_d < 1e-3 and relu_d < 1e-3 and relS_d < 1e-2
+    edge = dict(regridded); edge['P'] = regridded['P'].copy(); edge['P'][1] = edge['P'][0]
+    try:
+        add_dilute_rows(edge, rows); refused = False
+    except ValueError:
+        refused = True
+    print(f"  dilute rows: {k} added, converted rows unchanged {kept}, P {relP_d:.2e}, u {relu_d:.2e}, entropy change {relS_d:.2e} (in R); "
+          f"a pressure-flat edge refused {refused}")
+    ok = ok and dil_ok and refused
     print(f"  PASS" if ok else "  FAIL")
     return ok
 
@@ -532,6 +604,13 @@ def main():
                     help="use every native pressure, placeholder corners included (auditing only)")
     ap.add_argument("--no-defect-floor", action="store_true",
                     help="write the table without the validity floor (auditing only: one energy then names several temperatures in places)")
+    ap.add_argument("--dilute-rho-min", type=float, default=1.0e-20,
+                    help="lowest density of the dilute rows [g/cm^3] (default 1e-20)")
+    ap.add_argument("--dilute-dex", type=float, default=0.5, help="spacing of the dilute rows in log10(rho) (default 0.5)")
+    ap.add_argument("--dilute-max-slope-error", type=float, default=0.12,
+                    help="largest |d ln P / d ln rho - 1| allowed at the table's lowest density for the dilute rows (default 0.12; the CD21 tables reach 0.105)")
+    ap.add_argument("--no-dilute-rows", action="store_true",
+                    help="write the table without the dilute rows (auditing only: GIZMO then gives any lower density the lowest row's pressure)")
     ap.add_argument("--selftest", action="store_true",
                     help="run synthetic ideal-gas round-trip test and exit")
     args = ap.parse_args()
@@ -552,6 +631,11 @@ def main():
     print("\n".join(report))
     if args.no_defect_floor:
         print("WARNING: written WITHOUT the validity floor (--no-defect-floor): for auditing only")
+    if args.no_dilute_rows:
+        print("WARNING: written WITHOUT the dilute rows (--no-dilute-rows): for auditing only")
+    else:
+        regridded, rows, rep_dilute = add_dilute_rows(regridded, rows, args.dilute_rho_min, args.dilute_dex, args.dilute_max_slope_error)
+        print("\n".join(rep_dilute))
     write_sesame(args.output, regridded, mat_id=args.mat_id, floor_rows=rows)
     if args.y is not None:
         print(f"  (Y = {args.y})")

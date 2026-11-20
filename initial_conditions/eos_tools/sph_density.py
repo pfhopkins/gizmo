@@ -31,10 +31,10 @@ from scipy.spatial import cKDTree
 # GIZMO's 3D kernels (src/mesh/kernel.h), by KERNEL_FUNCTION: (normalisation, shape at q = r/h < 1); W = norm * shape / h^3
 _KERNELS_3D = {
     3: (8.0 / np.pi, lambda q: np.where(q < 0.5, 1.0 + 6.0 * (q - 1.0) * q * q, 2.0 * (1.0 - q) ** 3)),    # cubic spline
-    4: (2187.0 / (40.0 * np.pi), lambda q: (1.0 - q) ** 5 - 6.0 * np.clip(2.0 / 3.0 - q, 0, None) ** 5
-        + 15.0 * np.clip(1.0 / 3.0 - q, 0, None) ** 5),                                                    # quartic spline
-    5: (15625.0 / (512.0 * np.pi), lambda q: (1.0 - q) ** 4 - 5.0 * np.clip(0.6 - q, 0, None) ** 4
-        + 10.0 * np.clip(0.2 - q, 0, None) ** 4),                                                          # quintic spline
+    4: (15625.0 / (512.0 * np.pi), lambda q: (1.0 - q) ** 4 - 5.0 * np.clip(0.6 - q, 0, None) ** 4
+        + 10.0 * np.clip(0.2 - q, 0, None) ** 4),                                                          # quartic spline
+    5: (2187.0 / (40.0 * np.pi), lambda q: (1.0 - q) ** 5 - 6.0 * np.clip(2.0 / 3.0 - q, 0, None) ** 5
+        + 15.0 * np.clip(1.0 / 3.0 - q, 0, None) ** 5),                                                    # quintic spline
     6: (21.0 / (2.0 * np.pi), lambda q: (1.0 - q) ** 4 * (1.0 + 4.0 * q)),                                 # Wendland C2
     7: (495.0 / (32.0 * np.pi), lambda q: (1.0 - q) ** 6 * (1.0 + 6.0 * q + (35.0 / 3.0) * q * q)),       # Wendland C4
     9: (1365.0 / (64.0 * np.pi), lambda q: (1.0 - q) ** 8 * (1.0 + 8.0 * q + 25.0 * q * q + 32.0 * q ** 3)),  # Wendland C6

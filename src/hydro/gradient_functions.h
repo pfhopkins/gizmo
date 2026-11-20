@@ -114,7 +114,6 @@ struct GasGraddata_in_
 #ifdef MHD_CONSTRAINED_GRADIENT
     MyDouble ConditionNumber;
     SymmetricTensor2<MyDouble> NV_T;
-    MyFloat BGrad[3][3];
 #ifdef MHD_MODIFIED_GRADIENT
     MyFloat MG_cgcoeff;
     long long MG_piece_token;
@@ -223,10 +222,11 @@ double gradient_pair_weight(const struct kernel_GasGrad *kernel, int sph_gradien
 
 
 #if defined(MHD_CONSTRAINED_GRADIENT)
-/* Constrained-gradient per-component FaceDotB contribution: B_L/B_R state
+/* Constrained-gradient per-component FaceDotB contribution: j-side face state
  * reconstruction + slope limiting for component k, returning
- * Face_Area_Vec[k]*(GQuant.B[k]+Q_L). Extracted verbatim from the main pass
- * face loop; pass-neutral (grad_iter 0 and >0 call it identically). */
+ * Face_Area_Vec[k]*(GQuant.B[k]+Q_L). Pass-neutral (grad_iter 0 and >0 call it
+ * identically). Each cell evaluates only its own side of a face; j's term comes
+ * from j's own pass. */
 KOKKOS_INLINE_FUNCTION
 double constrained_facedotb_delta(int k, struct GasGraddata_in_ *local,
                                   struct gas_cell_data *CPj, struct particle_data *Pj,
@@ -235,15 +235,13 @@ double constrained_facedotb_delta(int k, struct GasGraddata_in_ *local,
     double Bjk = CPj->Bfield_component(k);
     NGB_SHEARBOX_BOUNDARY_BCORR_(local->Pos, Pj->Pos, Bjk, -1);
     double db_c = 0.5 * dot(CPj->Gradients.B[k], kernel->dp);
-    double db_cR = -0.5 * (local->BGrad[k][0]*kernel->dp[0] + local->BGrad[k][1]*kernel->dp[1] + local->BGrad[k][2]*kernel->dp[2]);
 
-    double Q_L, Q_R;
+    double Q_L;
     if(Bjk == local->GQuant.B[k])
     {
-        Q_L = Q_R = Bjk;
+        Q_L = Bjk;
     } else {
         Q_L = Bjk + db_c;
-        Q_R = local->GQuant.B[k] + db_cR;
         double Qmax, Qmin, Qmed = 0.5*(local->GQuant.B[k] + Bjk);
         if(local->GQuant.B[k] < Bjk) {Qmax=Bjk; Qmin=local->GQuant.B[k];} else {Qmax=local->GQuant.B[k]; Qmin=Bjk;}
         double fac = MHD_CONSTRAINED_GRADIENT_FAC_MINMAX * (Qmax-Qmin);
@@ -260,16 +258,11 @@ double constrained_facedotb_delta(int k, struct GasGraddata_in_ *local,
         {
             if(Q_L>Qmax_eff) Q_L=Qmax_eff;
             if(Q_L<Qmed_min) Q_L=Qmed_min;
-            if(Q_R<Qmin_eff) Q_R=Qmin_eff;
-            if(Q_R>Qmed_max) Q_R=Qmed_max;
         } else {
             if(Q_L<Qmin_eff) Q_L=Qmin_eff;
             if(Q_L>Qmed_max) Q_L=Qmed_max;
-            if(Q_R>Qmax_eff) Q_R=Qmax_eff;
-            if(Q_R<Qmed_min) Q_R=Qmed_min;
         }
     }
-    (void)Q_R;   /* legacy limiter cross-clamps Q_R but only Q_L feeds FaceDotB */
     return FA_k * (local->GQuant.B[k] + Q_L);
 }
 
