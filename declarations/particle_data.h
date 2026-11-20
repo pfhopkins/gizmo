@@ -60,6 +60,9 @@ extern ALIGN(32) struct particle_data
 #if defined(EVALPOTENTIAL) && defined(PMGRID)
     MyFloat PM_Potential;
 #endif
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+    MyFloat PM_SelfPotential; /*!< particle's own share of PM_Potential (energy diagnostics only) */
+#endif
 #endif
 #if defined(GALSF_SFR_TIDAL_HILL_CRITERION) || defined(TIDAL_TIMESTEP_CRITERION) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(OUTPUT_TIDAL_TENSOR) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
 #define COMPUTE_TIDAL_TENSOR_IN_GRAVTREE

@@ -324,16 +324,23 @@ void calculate_power_spectra(int num, long long *ntot_type_all);
 
 
 int pmforce_is_particle_high_res(int type, Vec3<double>& Pos);
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+double pm_exact_self_potential(double mass, double dx, double dy, double dz);
+#endif
 #if defined(PMGRID)
-/* a particle's own long-range mesh potential in P.Potential (comoving, with G): -G m / (sqrt(pi) r_s), the r -> 0 limit of the
-   Gaussian split's -G m erf(r / 2 r_s) / r; energy reports remove it from 1/2 sum m Phi */
+/* a particle's own long-range mesh potential in P.Potential (comoving, with G); energy reports remove it from 1/2 sum m Phi.
+   Periodic mesh with the energy diagnostics on: the exact CIC value; else -G m / (sqrt(pi) r_s), the continuum r -> 0 limit */
 static inline double pm_self_potential(int i)
 {
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+    return P[i].PM_SelfPotential; /* exact CIC mesh value at the last PM evaluation (pm_periodic.cc) */
+#else
     double rs = All.Asmth[0];
 #ifdef PM_PLACEHIGHRESREGION
     if(pmforce_is_particle_high_res(P[i].Type, P[i].Pos)) {rs = All.Asmth[1];}
 #endif
     return -All.G * P[i].Mass / (sqrt(M_PI) * rs);
+#endif
 }
 #endif
 

@@ -67,6 +67,48 @@ static struct part_slab_data
 
 static int *part_sortindex;
 
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+/* STELLA DIAGNOSTIC ADDITION to upstream PM code (energy step trace / BUDGET only; forces untouched):
+   a lone particle's mesh potential at its own position. With CIC weights w_a (a in {0,1}^3) and the deconvolved
+   Green's function g(d) = sum_{k!=0} smth(k) cos(2 pi k.d / PMGRID) used below, phi_self = G/(pi L) m sum_{a,b} w_a w_b g(a-b);
+   per axis the pair is equal with weight (1-d)^2+d^2 and adjacent with 2d(1-d), and by cubic symmetry g depends only on
+   the number n of adjacent axes, so phi_self = G/(pi L) m sum_n g_n e_n(d). */
+static double pm_self_g[4];
+
+static void pm_exact_self_potential_init(void)
+{
+  int x, y, z; double loc[4] = {0, 0, 0, 0}, asmth2 = (2 * M_PI) * All.Asmth[0] / All.BoxSize; asmth2 *= asmth2;
+  for(x = ThisTask; x < PMGRID; x += NTask)
+    for(y = 0; y < PMGRID; y++)
+      for(z = 0; z < PMGRID; z++)
+        {
+          double kx = (x > PMGRID / 2) ? x - PMGRID : x, ky = (y > PMGRID / 2) ? y - PMGRID : y, kz = (z > PMGRID / 2) ? z - PMGRID : z;
+          double k2 = kx * kx + ky * ky + kz * kz; if(k2 <= 0) {continue;}
+          double smth = -exp(-k2 * asmth2) / k2, fx = 1, fy = 1, fz = 1; /* same kernel and deconvolution as pmforce_periodic */
+          if(kx != 0) {fx = (M_PI * kx) / PMGRID; fx = sin(fx) / fx;}
+          if(ky != 0) {fy = (M_PI * ky) / PMGRID; fy = sin(fy) / fy;}
+          if(kz != 0) {fz = (M_PI * kz) / PMGRID; fz = sin(fz) / fz;}
+          double ff = 1 / (fx * fy * fz); smth *= ff * ff * ff * ff;
+          double t = 2 * M_PI / PMGRID;
+          loc[0] += smth; loc[1] += smth * cos(t * kx); loc[2] += smth * cos(t * (kx + ky)); loc[3] += smth * cos(t * (kx + ky + kz));
+        }
+  MPI_Allreduce(loc, pm_self_g, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  if(ThisTask == 0) {printf("PM exact self-potential (diagnostics): g_n = %g %g %g %g\n", pm_self_g[0], pm_self_g[1], pm_self_g[2], pm_self_g[3]);}
+}
+
+double pm_exact_self_potential(double mass, double dx, double dy, double dz)
+{
+  double d[3] = {dx, dy, dz}, e[4] = {1, 0, 0, 0}; int i, n; /* e_n: elementary symmetric sums of the per-axis equal/adjacent weights */
+  for(i = 0; i < 3; i++)
+    {
+      double ps = (1 - d[i]) * (1 - d[i]) + d[i] * d[i], pd = 2 * d[i] * (1 - d[i]);
+      for(n = 3; n > 0; n--) {e[n] = e[n] * ps + e[n - 1] * pd;}
+      e[0] *= ps;
+    }
+  return All.G / (M_PI * All.BoxSize) * mass * (pm_self_g[0] * e[0] + pm_self_g[1] * e[1] + pm_self_g[2] * e[2] + pm_self_g[3] * e[3]);
+}
+#endif
+
 
 /*! This routines generates the FFTW-plans to carry out the parallel FFTs
  *  later on. Some auxiliary variables are also initialized.
@@ -128,6 +170,9 @@ void pm_init_periodic(void)
 
   fft_inverse_plan = fftw_mpi_plan_dft_c2r_3d(PMGRID, PMGRID, PMGRID, fft_of_rhogrid, rhogrid, 
 	  MPI_COMM_WORLD, FFTW_ESTIMATE | FFTW_MPI_TRANSPOSED_IN);
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+  pm_exact_self_potential_init(); /* STELLA DIAGNOSTIC ADDITION */
+#endif
 }
 
 
@@ -678,6 +723,9 @@ void pmforce_periodic(int mode, int *typelist)
 
 	      P[i].PM_Potential += pot * fac * (2 * All.BoxSize / PMGRID);
 	      /* compensate the finite differencing factor */ ;
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+	      P[i].PM_SelfPotential = pm_exact_self_potential(P[i].Mass, dx, dy, dz); /* STELLA DIAGNOSTIC ADDITION: own share of PM_Potential */
+#endif
 	    }
 
 #endif
@@ -1262,6 +1310,9 @@ void pmpotential_periodic(void)
 
 #if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL)
       P[i].Potential += pot;
+#endif
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+      P[i].PM_SelfPotential = pm_exact_self_potential(P[i].Mass, dx, dy, dz); /* STELLA DIAGNOSTIC ADDITION: own share of the mesh potential */
 #endif
     }
 

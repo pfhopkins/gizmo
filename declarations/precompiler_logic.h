@@ -1384,6 +1384,10 @@
 #endif
 #endif
 
+#if defined(EVALPOTENTIAL) && defined(PMGRID) && defined(BOX_PERIODIC) && !defined(PM_PLACEHIGHRESREGION) && !defined(DM_SCALARFIELD_SCREENING) && (defined(OUTPUT_ENERGY_STEP_TRACE) || defined(ENERGY_BUDGET_DIAGNOSTIC))
+#define PM_EXACT_SELF_POTENTIAL_DIAG /* energy diagnostics only: exact CIC mesh self-potential per particle (gravity/pm_periodic.cc); no effect on forces */
+#endif
+
 #ifdef COOL_MOLECFRAC_NONEQM
 #ifndef OUTPUT_MOLECULAR_FRACTION
 #define OUTPUT_MOLECULAR_FRACTION
