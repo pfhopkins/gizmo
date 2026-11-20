@@ -191,6 +191,7 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
                      - (ph42 * abHI) * yn             // M1 photoheating add-on
                      - (ph45 * abh2) * yn;            // H2 photoheating (Arepo rate_eq_simple.F:404)
 
+    c.heat_unreported = (ph42 * abHI + ph45 * abh2) * yn;  // the two add-on terms above: not in lambda_chem (Fortran layout)
     for (int i = 0; i < 6; i++) c.lambda_chem[i] = rates_chem[i];  // .F:422-427
     for (int i = 6; i < CHEM_NRATES_CHEM_MAX; i++) c.lambda_chem[i] = 0.0;
 
@@ -224,6 +225,7 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
         return CHEM_RHS_RECOVERABLE;
 
     // pdv_term is hard-zeroed in production (sgchem.cc:721) -- not carried.
+    c.heat_unreported += ylam_floor; // the T_CMB floor enters as heating and is in no reported rate
     ydot[itmp] = -(ylam + ylam_chem - ylam_floor);
 
     // --- validate_output: NaN ydot (.F:502; unified recoverable) ---
