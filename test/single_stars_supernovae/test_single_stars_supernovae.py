@@ -234,17 +234,34 @@ def test_cold_ejecta(built):
     assert abs(dE / 3.0e51 - 1) < 1e-3, dE / 3.0e51
 
 
-def test_pisn_energy_from_helium_core(built):
-    """GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE: the 320 Msun pair-instability SN carries [5 + 1.304 (M_He - 64)] 1e51 erg with
-    M_He = (13/24)(M - 20) held to 64-133 Msun (9.498e52 erg here); the other classes keep 1e51 (or 0 for the failed SN)"""
-    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
-        build_gizmo_for_test(TEST_NAME, extra_config_flags=("GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE",))
-        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_pisn")
-        build_gizmo_for_test(TEST_NAME)
-    _, _, rows = run("pisn", built, exe="GIZMO_pisn")
+def ecsn_stars(tables):
+    """the IC stars plus the first table mass of an electron-capture SN (remnant type 1) at the IC metallicity, in a free corner"""
+    with h5py.File(tables["StellarTablesFile"], "r") as T:
+        Zt, Mt = T["Z"][()], T["M_init"][()]
+        rt = T["remnant_type"][()].reshape(len(Zt), len(Mt))[int(np.argmin(np.abs(np.log10(Zt) - np.log10(0.014))))]
+    ec = [float(m) for m, t in zip(Mt, rt) if int(t) == 1]
+    assert ec, "no ECSN in the table row"
+    return [(m, x) for m, x in STARS] + [(ec[0], (0.25, 0.75, 0.25))]
+
+
+@pytest.mark.parametrize("variable", [False, True], ids=["default", "variable"])
+def test_sn_energies(built, variable):
+    """SN energies (Uli 2026-11-19, stella_dev fix/fb-audit 97b488f26): by default every explosion deposits 1e51 erg (failed SN 0);
+    with RESOLVED_ISM_VARIABLE_SN_ENERGY a pair-instability SN 1e52 erg and an electron-capture SN 5e50 erg, the others 1e51.
+    Stars: the four IC stars and the first ECSN mass of the table row; energies from single_star_events.txt to 1e-6"""
+    exe = "GIZMO"
+    if variable:
+        if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+            build_gizmo_for_test(TEST_NAME, extra_config_flags=("RESOLVED_ISM_VARIABLE_SN_ENERGY",))
+            os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_variable")
+            build_gizmo_for_test(TEST_NAME)
+        exe = "GIZMO_variable"
+    _, _, rows = run(f"energies_{'variable' if variable else 'default'}", built, exe=exe, ic_args={"stars": ecsn_stars(built)})
     rows = rows[rows[:, 2] == 1]  # supernovae (time ID kind remnant_type M_drawn M_trigger M_ejecta M_remnant E ...)
+    types = sorted(int(r[3]) for r in rows)
+    print("remnant types", types, "energies", [f"{r[8]:.3e}" for r in rows])
+    assert 1 in types and 5 in types and len(rows) == 5
     for r in rows:
-        M_He = min(max(13 / 24 * (r[4] - 20), 64), 133)
-        want = (5 + 1.304 * (M_He - 64)) * 1e51 if int(r[3]) == 5 else (0 if int(r[3]) == 3 else 1e51)
-        assert abs(r[8] - want) <= 1e-6 * max(want, 1), (r[4], int(r[3]), r[8], want)
-    assert any(int(r[3]) == 5 for r in rows)
+        t = int(r[3])
+        want = 0.0 if t == 3 else (1e52 if (variable and t == 5) else (5e50 if (variable and t == 1) else 1e51))
+        assert abs(r[8] - want) <= 1e-6 * max(want, 1), (r[4], t, r[8], want)

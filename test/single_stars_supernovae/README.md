@@ -34,3 +34,6 @@ Reference: the tables (classes, remnants, element ejecta) and conservation laws.
 11. `test_death_ejecta_fractions` (stars at 1.0 and 0.3 of their drawn mass, no winds owed): each grid star ejects
     M sum e / (rem + sum e) and metals M sum_{C..} e / (rem + sum e) with the table's SN element ejecta e and remnant rem
     (PISN: rem 0), to 1e-10; 0 <= remnant <= M; the failed SN (table ejecta 0) ejects nothing (stella_dev F1, 8837629e8).
+12. `test_sn_energies` (the four stars plus the table's first ECSN mass): every SN 1e51 erg by default (failed SN 0); with
+    `RESOLVED_ISM_VARIABLE_SN_ENERGY` PISN 1e52 erg and ECSN 5e50 erg (Uli 2026-11-19; stella_dev 97b488f26). Replaces the He-core
+    PISN test (the fit is removed).
