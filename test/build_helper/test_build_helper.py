@@ -28,6 +28,26 @@ def test_missing_test_config_stops_the_build(tmp_path, monkeypatch):
     assert not any("make" in c for c in calls), f"make ran without the test's Config.sh: {calls}"
 
 
+def _flag_value(text, name):
+    m = re.search(rf"^\s*{name}\s*=\s*([0-9()+|\s]+?)\s*(?:#.*)?$", text, re.M)
+    return None if m is None else eval(m.group(1), {"__builtins__": {}})  # digits, +, |, brackets only
+
+
+def test_no_adaptive_star_softening_in_single_star_tests():
+    """bar: no test or Stella script config with single stars (STELLA_DEFAULTS or GALSF_SINGLE_STARS_*) gives stars (Type 4,
+    bit 16) adaptive softening; Stella runs use fixed star softening"""
+    files = sorted((ROOT / "test").glob("*/Config.sh")) + sorted((ROOT / "scripts" / "stella").glob("Config_stella_*.sh"))
+    bad = []
+    for f in files:
+        text = f.read_text(errors="ignore")
+        if not re.search(r"^\s*(STELLA_DEFAULTS|GALSF_SINGLE_STARS_\w+)\b", text, re.M):
+            continue
+        v = _flag_value(text, "ADAPTIVE_GRAVSOFT_FORALL")
+        if v is not None and v & 16:
+            bad.append(str(f.relative_to(ROOT)))
+    assert not bad, f"single-star configs with adaptive star softening: {bad}"
+
+
 def test_every_building_test_has_a_tracked_config():
     """bar: every test directory whose tests build through the helpers with their own name has its Config.sh in git (a build
     named after another test's module, mod.TEST_NAME, uses that test's file)"""
