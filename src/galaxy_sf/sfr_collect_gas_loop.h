@@ -37,13 +37,12 @@ struct SscStarIn {
     double R;            /* collection radius of this pass (comoving) */
     double f;            /* requested fraction of each donor's available quanta */
     double q_Z, q_p;     /* fixed-point quanta of this star's metal and momentum sums */
-    MyIDType id, child;  /* identity, for the grant records */
-    int gen;
-    int task;            /* rank that holds the star */
+    MyIDType id;         /* star ID, for the donor log */
+    int task, index;     /* rank holding the star and its local index: the grant key, unique within the call */
 };
 
 /* one grant, kept on the donor's rank so that a failed draw can be returned exactly */
-struct SscGrantRecord {MyIDType id, child; int gen; int j; long long g;};
+struct SscGrantRecord {MyIDType id; int task, index; int j; long long g;};
 
 /* per local gas cell: R_j (requested this pass), G'_j (granted this pass), G_j (granted in earlier passes) */
 struct SscDonorSums {long long request, grant_this_pass, grant;};
@@ -211,7 +210,7 @@ struct SscGrantSpec : SscSpecBase {
         if(g <= 0) {return;}
         Kokkos::atomic_add(&cs.donor[nb.j].grant_this_pass, g);
         long long w = Kokkos::atomic_fetch_add(cs.n_records, 1LL);
-        if(w < cs.capacity) {SscGrantRecord& rec = cs.records[w]; rec.id = a.star.id; rec.child = a.star.child; rec.gen = a.star.gen; rec.j = nb.j; rec.g = g;}
+        if(w < cs.capacity) {SscGrantRecord& rec = cs.records[w]; rec.id = a.star.id; rec.task = a.star.task; rec.index = a.star.index; rec.j = nb.j; rec.g = g;}
         out.N += g; out.n_pairs++; if(R > A) {out.n_split++;} if(a.star.task != cs.task) {out.n_remote++;}
         double dm = (double)g * cs.mu; /* exact */
         for(int k = 0; k < 3; k++) {out.p[k] += (ssc_i128)nearbyint(dm * (double)Pj.Vel[k] / a.star.q_p);}

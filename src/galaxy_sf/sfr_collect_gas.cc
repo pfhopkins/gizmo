@@ -187,7 +187,7 @@ double single_stars_collect_gas(long long tot_spawned)
             t.passes = pass + 1;
             SscStarIn x; std::memset(&x, 0, sizeof(x));
             for(int k = 0; k < 3; k++) {x.Pos[k] = P[t.i].Pos[k];}
-            x.R = t.R; x.id = P[t.i].ID; x.child = P[t.i].ID_child_number; x.gen = P[t.i].ID_generation; x.task = ThisTask;
+            x.R = t.R; x.id = P[t.i].ID; x.task = ThisTask; x.index = t.i;
             x.q_Z = ssc_pow2_at_least(t.N_drawn * mu) * ldexp(1.0, -100);   /* metal mass <= drawn mass */
             x.q_p = ssc_pow2_at_least(t.N_drawn * mu) * ldexp(1.0, -60);    /* momentum: |v| up to ~2^66 code units */
             list.push_back(t.i); in.push_back(x); which.push_back((int)s);
@@ -229,9 +229,9 @@ double single_stars_collect_gas(long long tot_spawned)
     }
 
     /* failed draws: hand their grants back, exactly, on the donors' ranks */
-    struct ssc_key {MyIDType id, child; int gen;};
+    struct ssc_key {int task, index;}; /* (ID, child, generation) repeats after 31 spawns of one cell; (rank, index) does not */
     std::vector<ssc_key> failed_mine, failed_all;
-    for(ssc_star& t : S) {if(t.active) {failed_mine.push_back({P[t.i].ID, P[t.i].ID_child_number, (int)P[t.i].ID_generation});}}
+    for(ssc_star& t : S) {if(t.active) {failed_mine.push_back({ThisTask, t.i});}}
     int n_failed_mine = (int) failed_mine.size();
     if(any_active) { /* some star is still short after the last pass, on some rank: return the failed grants */
         int nb = n_failed_mine * (int) sizeof(ssc_key); std::vector<int> counts(NTask), displs(NTask); int tot = 0;
@@ -241,7 +241,7 @@ double single_stars_collect_gas(long long tot_spawned)
         MPI_Allgatherv(failed_mine.data(), nb, MPI_BYTE, failed_all.data(), counts.data(), displs.data(), MPI_BYTE, MPI_COMM_WORLD);
         for(const SscGrantRecord& r : records) {
             for(const ssc_key& f : failed_all) {
-                if(r.id == f.id && r.child == f.child && r.gen == f.gen) {ssc_donor[r.j].grant -= r.g; break;}
+                if(r.task == f.task && r.index == f.index) {ssc_donor[r.j].grant -= r.g; break;}
             }
         }
         gpu_particles_arena_invalidate();
@@ -249,11 +249,11 @@ double single_stars_collect_gas(long long tot_spawned)
 
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
     { /* IMFinfo.txt: one row per (star, donor cell) with the mass taken over all passes (failed draws left out), written by rank 0 sorted by star and donor */
-        std::map<std::tuple<unsigned long long, unsigned long long, int, unsigned long long>, long long> taken;
+        std::map<std::tuple<unsigned long long, int, int, unsigned long long>, long long> taken;
         for(const SscGrantRecord& r : records) {
             bool failed = false;
-            for(const ssc_key& f : failed_all) {if(r.id == f.id && r.child == f.child && r.gen == f.gen) {failed = true; break;}}
-            if(!failed) {taken[std::make_tuple((unsigned long long)r.id, (unsigned long long)r.child, r.gen, (unsigned long long)P[r.j].ID)] += r.g;}
+            for(const ssc_key& f : failed_all) {if(r.task == f.task && r.index == f.index) {failed = true; break;}}
+            if(!failed) {taken[std::make_tuple((unsigned long long)r.id, r.task, r.index, (unsigned long long)P[r.j].ID)] += r.g;}
         }
         std::vector<double> mine; for(const auto& kv : taken) {mine.push_back((double)std::get<0>(kv.first)); mine.push_back((double)std::get<3>(kv.first)); mine.push_back((double)kv.second * mu * UNIT_MASS_IN_SOLAR);}
         int nm = (int) mine.size(), nall = 0; std::vector<int> cnt(NTask), dsp(NTask);
