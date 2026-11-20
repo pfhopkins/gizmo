@@ -149,6 +149,19 @@ def test_unreachable_and_reachable(built):
     assert abs(float(Z1 - Z0)) <= float(p1["PartType4"]["Masses"][0]) * np.spacing(float(p1["PartType4"]["Metallicity"][0, 0]))
 
 
+def test_failed_draw_past_31_spawns_of_one_cell(built):
+    """32 stars from one cell in one call: the 32nd has the 1st star's (ID, child, generation), since the parent's generation
+    counter rolls over after 31 spawns. Only the 32nd is unreachable; undoing it must return its own grants only, so the
+    total mass is exact (bar written before the run: 32 births, 31 kept, gas + stars == initial gas exactly)"""
+    stars = [((12, 12, 12), 2.0)] + [((12, 12, 12), 0.5)] * 30 + [((12, 12, 12), 3.0e4)]
+    ic, snap, rows = run("key_wrap", stars)
+    assert rows.shape[0] == 32, rows.shape  # every spawn placed in this call
+    assert sorted(rows[:, 8].tolist()) == [0.0] + [1.0] * 31 and rows[rows[:, 8] == 0, 4][0] == 3.0e4
+    p0, p1 = particles(ic), particles(snap)
+    assert len(p1["PartType4"]["Masses"]) == 31
+    assert exact_sum(p1["PartType0"]["Masses"]) + exact_sum(p1["PartType4"]["Masses"]) == exact_sum(p0["PartType0"]["Masses"])
+
+
 def final_state(snap):
     p = particles(snap)
     assert "PartType4" in p
