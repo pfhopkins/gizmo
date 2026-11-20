@@ -42,7 +42,7 @@ def built_ia_ledger(built):
     if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_base")
         build_gizmo_for_test(TEST_NAME, extra_config_flags=("COOLING", "COOL_METAL_LINES_BY_SPECIES", "OUTPUT_MASS_METAL_ENERGY_LEDGER",
-                                                            "OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS"))
+                                                            "OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS", "GALSF_SINGLE_STARS_TYPE_IA_CHANDRASEKHAR_MATTER"))
         os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_ia_ledger")
         os.replace(TEST_DIR / "GIZMO_base", TEST_DIR / "GIZMO")
         get_cooling_tables(str(TEST_DIR))
@@ -237,7 +237,7 @@ def test_wind_elements_independent_of_cadence(built_elements):
 
 
 def test_ia_delivers_m_ch_of_ia_matter(built_ia_ledger):
-    """Type Ia (stella_dev 579e0bf93): an event is the table's M_Ch of Ia matter. The white dwarf (M_WD) goes to the gas with the
+    """Type Ia with GALSF_SINGLE_STARS_TYPE_IA_CHANDRASEKHAR_MATTER (opt-in, stella_dev 579e0bf93): an event is the table's M_Ch of Ia matter. The white dwarf (M_WD) goes to the gas with the
     table's Ia composition, and M_Ch - M_WD of the gas in the star's kernel becomes Ia composition in place (no mass moves). The
     white dwarf alone in solar-scaled gas, 11 metal slots, 2 ranks. Bars, set before the first run: one Ia; gas mass gain = M_WD
     (1e-12); each slot k of the gas gains M_Ch f_k - (M_Ch - M_WD) X_k (f_k the table's Ia fraction, X_k the gas's initial

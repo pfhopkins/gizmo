@@ -7,8 +7,9 @@ mechanical feedback loop.
   between the last delivery and now, at the table wind speed; the delivery age advances only when the mass coupled.
 - AGB death (white-dwarf remnant): ejecta = mass - table remnant at 30 km/s, AGB element ejecta.
 - Type Ia (`GALSF_SINGLE_STARS_TYPE_IA`): per-step hazard of a white dwarf (t^-1 delay-time distribution normalised to the
-  dead-progenitor fraction, keyed random number); the whole mass at 1e51 erg with the table Type Ia composition, and the
-  table's M_Ch of Ia matter per event: M_Ch - M_WD of the gas in the star's kernel becomes Ia composition in place.
+  dead-progenitor fraction, keyed random number); the whole mass at 1e51 erg with the table Type Ia composition. With the
+  opt-in `GALSF_SINGLE_STARS_TYPE_IA_CHANDRASEKHAR_MATTER` the table's M_Ch of Ia matter per event: M_Ch - M_WD of the gas in
+  the star's kernel also becomes Ia composition in place.
 
 Problem: a 24^3 lattice of 1 Msun cells at n_H = 10 cm^-3, 100 K, Z = 0.014, no gravity, no cooling, with a 35 Msun star
 1 Myr old, a 3 Msun star just past its lifetime, and a 1 Gyr old white dwarf. The test-only flag
@@ -34,7 +35,7 @@ Checks:
    In both runs each metal slot gains exactly the table cumulative of its elements between the start and the last delivery age
    (1e-12), and the star loses what the gas gains (1e-12). Before winds were owed element by element, an interpolation
    rounding below zero in one element swapped the whole delivery to the surface composition: up to 2.4e-2 off.
-9. (`test_ia_delivers_m_ch_of_ia_matter`, FIRE metal layout with the ledger step checkpoints) the white dwarf alone in solar-scaled
+9. (`test_ia_delivers_m_ch_of_ia_matter`, FIRE metal layout with the ledger step checkpoints and the opt-in `GALSF_SINGLE_STARS_TYPE_IA_CHANDRASEKHAR_MATTER`) the white dwarf alone in solar-scaled
    gas: one Ia; gas mass gain = M_WD (1e-12); each slot gains M_Ch f_k - (M_Ch - M_WD) X_k (1e-10 of the larger term; f_k the
    table's Ia fraction, X_k the gas's initial fraction); the metal ledger and every slot of the element ledger close to 1e-12 at
    every checkpoint. Bars set before the first run.
