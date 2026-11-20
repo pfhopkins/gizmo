@@ -69,6 +69,8 @@ int main(int argc, char **argv)
     check(nroot_ok == (long)p.size(), "(a) lineage lookup reaches the original ancestor", nroot_ok, (long)p.size());
     check(npack_ok == (long)p.size(), "(a) pack64/unpack64 round trip", npack_ok, (long)p.size());
     uint64_t pk;
+    hbt_key_t edge = hbt_key_make((((uint64_t)1) << 31) - 1, (((uint64_t)1) << 32) - 1);
+    check(hbt_key_pack64(edge, &pk) && hbt_key_equal(hbt_key_unpack64(pk), edge) && pk < (((uint64_t)1) << 63), "(a) pack64 at the limits keeps the top bit free", 0, 0);
     check(!hbt_key_pack64(hbt_key_make(((uint64_t)1) << 31, 0), &pk) && !hbt_key_pack64(hbt_key_make(1, ((uint64_t)1) << 32), &pk), "(a) pack64 refuses ID >= 2^31 and child >= 2^32", 0, 0);
 
     /* (b) synthetic split of 10% of the particles: labels pass through lineage unchanged */

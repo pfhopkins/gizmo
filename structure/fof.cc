@@ -92,6 +92,9 @@ static float *fof_nearest_distance;
 static float *fof_nearest_rkern;
 
 #ifdef FOF_SECONDARY_LINK_TARGET_TYPES
+#if ((FOF_SECONDARY_LINK_TARGET_TYPES) & (FOF_SECONDARY_LINK_TYPES))
+#error "FOF_SECONDARY_LINK_TARGET_TYPES must not contain a secondary link type (a secondary would find itself)"
+#endif
 #define FOF_NEAREST_SEARCH_TYPES (MyFOF_PRIMARY_LINK_TYPES | (FOF_SECONDARY_LINK_TARGET_TYPES))
 #else
 #define FOF_NEAREST_SEARCH_TYPES (MyFOF_PRIMARY_LINK_TYPES)

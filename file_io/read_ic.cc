@@ -235,11 +235,11 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_CHILD_ID:		// particle child ID //
-            if(RestartFlag == 2) {for(n = 0; n < pc; n++) {P[offset + n].ID_child_number = *ip++;}}
+            if(RestartFlag == 2 || RestartFlag == 3) {for(n = 0; n < pc; n++) {P[offset + n].ID_child_number = *ip++;}} /* RestartFlag 3: group catalogues key on (ID, child) */
             break;
 
         case IO_GENERATION_ID:		// particle generation ID //
-            if(RestartFlag == 2) {for(n = 0; n < pc; n++) {P[offset + n].ID_generation = *ip++;}}
+            if(RestartFlag == 2 || RestartFlag == 3) {for(n = 0; n < pc; n++) {P[offset + n].ID_generation = *ip++;}}
             break;
 
         case IO_MASS:		/* particle mass */

@@ -25,14 +25,11 @@ long long hbt_count_duplicate_keys(const hbt_key_t *keys, long n, MPI_Comm comm)
     if(overflow) {return -1;}
     MPI_Alltoall(send_count.data(), 1, MPI_INT, recv_count.data(), 1, MPI_INT, comm);
     long long nsend = 0, nrecv = 0;
-    for(int t = 0; t < ntask; t++)
-    {
-        if(t > 0) {send_disp[t] = send_disp[t - 1] + send_count[t - 1]; recv_disp[t] = recv_disp[t - 1] + recv_count[t - 1];}
-        nsend += send_count[t]; nrecv += recv_count[t];
-    }
+    for(int t = 0; t < ntask; t++) {nsend += send_count[t]; nrecv += recv_count[t];}
     overflow = (nsend > INT_MAX || nrecv > INT_MAX);
     MPI_Allreduce(MPI_IN_PLACE, &overflow, 1, MPI_INT, MPI_MAX, comm);
     if(overflow) {return -1;}
+    for(int t = 1; t < ntask; t++) {send_disp[t] = send_disp[t - 1] + send_count[t - 1]; recv_disp[t] = recv_disp[t - 1] + recv_count[t - 1];}
     std::vector<hbt_key_t> sendbuf(nsend > 0 ? nsend : 1), recvbuf(nrecv > 0 ? nrecv : 1);
     std::vector<int> fill(send_disp);
     for(long i = 0; i < n; i++) {sendbuf[fill[dest[i]]++] = keys[i];}
