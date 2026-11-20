@@ -114,6 +114,8 @@
 #GR_TEST_PARTICLE               # forces the gas to behave like collisionless particles (tests of the source terms)
 #SLOPE_LIMITER_POSITIVITY_RANGE_FAC=0.5  # GR only: the positivity-preserving slope limiter acts over this fraction of the maximum neighbour distance (default 0.5, as in Lupi 2023; Newtonian builds use the full distance). The full distance excites an inward density wave in TOV stars, 0.25 lets a noise front from the poorly resolved surface of a low-resolution star cross it
 #GR_DRIFT_LEGACY                # GR: the drift of Lupi (2023), carrying tau through the drift (default off: the drift holds D, S_j and u fixed while the metric changes along the path and recomputes W and tau at the new metric, GR_DRIFT_HOLD_INTERNAL_ENERGY; second-order geodesics in Kerr-Schild coordinates)
+#GR_GAMMA_LIMITER_RADIUS=0      # GR (advanced): radius from the hole, in code length units (G M/c^2 of UnitMass_in_g), inside which the Lorentz factor of the gas is capped at GR_GAMMA_LIMITER (default 0 = off; must be >= 0). A protection against pathological reconstructed or numerical states near the hole, not a way to impose a lower Lorentz factor on a physically consistent flow (a cap below the flow's own Lorentz factor contradicts its conserved momentum and the inversions fail)
+#GR_GAMMA_LIMITER=1000          # GR (advanced): the maximum Lorentz factor inside GR_GAMMA_LIMITER_RADIUS (default 1000; must be > 1)
 #OUTPUT_GR_METRIC               # GR: write the covariant 4-metric, the lapse and sqrt(gamma) of every cell to the snapshots (GRMetricTensor, 12 values per cell; they follow from the positions, so they are off by default)
 ####################################################################################################
 

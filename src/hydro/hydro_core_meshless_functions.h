@@ -316,7 +316,7 @@ void hydro_core_meshless_compute_pair(
         lorentz_factor(Riemann_vec.gr.gamma, Riemann_vec.v_frame, gr_limiter);
     }
     double press_tot_limiter = MAX_REAL_NUMBER, v_lim = 1. - MIN_REAL_NUMBER;
-    if(gr_limiter == 1) {v_lim = 1. - 1./GR_GAMMA_LIMITER;}
+    if(gr_limiter == 1) {v_lim = 1. - 1./((double)GR_GAMMA_LIMITER*(double)GR_GAMMA_LIMITER);} /* v^2 at the maximum Lorentz factor: Gamma = (1 - v^2)^(-1/2) */
     if(v_check >= v_lim) {press_tot_limiter = 0.;} /* forces the first-order reconstruction */
     (void)v2_approach;
 #else

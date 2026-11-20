@@ -56,10 +56,11 @@ KOKKOS_INLINE_FUNCTION Vec3<double> gr_hole_displacement(const Vec3<double> &pos
     return dp;
 }
 
-/* 1 inside GAMMA_LIMITER_RADIUS of the hole (where the Lorentz factor is limited) */
+/* 1 inside GR_GAMMA_LIMITER_RADIUS of the hole (where the Lorentz factor is limited); never when the radius is not positive (off) */
 KOKKOS_INLINE_FUNCTION int gr_limiter_flag(const Vec3<double> &pos)
 {
-    return (gr_hole_displacement(pos).norm_sq() <= (double)GAMMA_LIMITER_RADIUS*(double)GAMMA_LIMITER_RADIUS) ? 1 : 0;
+    if(!((double)GR_GAMMA_LIMITER_RADIUS > 0)) {return 0;}
+    return (gr_hole_displacement(pos).norm_sq() <= (double)GR_GAMMA_LIMITER_RADIUS*(double)GR_GAMMA_LIMITER_RADIUS) ? 1 : 0;
 }
 
 

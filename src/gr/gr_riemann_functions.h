@@ -86,10 +86,10 @@ KOKKOS_INLINE_FUNCTION int gr_starstate(const struct gr_conservatives &cons_L, c
         {
             double tmp = (b > 0) ? -0.5*(b + sqrt(discr)) : -0.5*(b - sqrt(discr)); /* the negative root (Mignone & Bodo) */
             lamstar = c/tmp;
-            /* lambda* is the Eulerian velocity component along the coordinate normal, bounded by sqrt(gamma^nn) (|v^n| <= sqrt(gamma^nn) |v|) */
-            if(fabs(lamstar) > sqrt(g_nn)) {if(gr_limiter) {lamstar = copysign(sqrt(g_nn*(1. - 1./GR_GAMMA_LIMITER/GR_GAMMA_LIMITER)), lamstar);} else {return 1;}} /* (keeps the direction of the contact) */
         }
     }
+    /* lambda* is the Eulerian velocity component along the coordinate normal, bounded by sqrt(gamma^nn) (|v^n| <= sqrt(gamma^nn) |v|) */
+    if(fabs(lamstar) > sqrt(g_nn)) {if(gr_limiter) {lamstar = copysign(sqrt(g_nn*(1. - 1./GR_GAMMA_LIMITER/GR_GAMMA_LIMITER)), lamstar);} else {return 1;}} /* (keeps the direction of the contact) */
     *P_M = (AL*lamstar + BL)/((CL + EL*lamstar)*gr->gdet); /* the pressure is continuous across the contact */
     *S_M = gr->alpha*lamstar - beta_n;
     return 0;
@@ -207,9 +207,16 @@ KOKKOS_INLINE_FUNCTION void gr_hydro_riemann(const struct Input_vec_Riemann &Rie
 #else
     /* HLL needs no star state (as the MHD HLL): P_M, the mean face pressure, only tells the caller that the solution is valid, and S_M is
        the mean signal speed or, for MFM, the zero-mass-flux face velocity the flux uses (set in gr_hydro_hll_flux) */
+    if(!(S_R > S_L)) /* a degenerate (or non-finite) wave fan: the caller retries at lower order, except for two pressureless states (no flux, as before) */
+    {
+        const int pressureless_pair = (L.cons.p == 0) && (R.cons.p == 0) && isfinite(S_L) && isfinite(S_R) && (S_L == S_R);
+        Riemann_out->P_M = pressureless_pair ? 0 : -1; return;
+    }
     Riemann_out->S_M = 0.5*(S_L + S_R);
     Riemann_out->P_M = 0.5*(L.cons.p + R.cons.p);
     gr_hydro_hll_flux(L.cons, R.cons, vline_L, vline_R, S_L, S_R, v_frame_line, gr, beta_n, n_unit, Riemann_out);
+    if(!(isfinite(Riemann_out->Fluxes.rho) && isfinite(Riemann_out->Fluxes.p) && isfinite(Riemann_out->Fluxes.v[0]) && isfinite(Riemann_out->Fluxes.v[1]) && isfinite(Riemann_out->Fluxes.v[2])))
+        {Riemann_out->P_M = -1;} /* non-finite fluxes: the caller retries at lower order */
 #endif
 }
 

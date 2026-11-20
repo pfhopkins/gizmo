@@ -449,7 +449,7 @@ void hydro_accumulate_neighbor(
            and tau/D, so the volume leaves the kicked primitives unchanged) */
         double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel + face_vel_i);
 #ifdef HYDRO_MESHLESS_FINITE_MASS
-        wt_face_sum = Face_Area_Norm * (-Riemann_out.S_M + face_vel_i);
+        wt_face_sum = ((Riemann_out.P_M > 0) && !isnan(Riemann_out.P_M)) ? Face_Area_Norm * (-Riemann_out.S_M + face_vel_i) : 0; /* the face moves with the contact; none on a face without a valid solution */
 #endif
         out.DtVolume += wt_face_sum;
     }

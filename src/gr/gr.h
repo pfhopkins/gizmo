@@ -30,9 +30,13 @@
 #define GR_IMPLICIT_MAX_NITER 100      /* their maximum number of iterations */
 #define GR_EPS_TOLERANCE (1e-8) /* finite-difference step of the metric derivatives */
 
-#define GR_GAMMA_LIMITER (1000)       /* maximum Lorentz factor enforced inside GAMMA_LIMITER_RADIUS */
-#define GAMMA_LIMITER_RADIUS (0.0)    /* radius (from the hole, gr_hole_displacement) inside which the Lorentz factor is limited */
-/* time step of the gas (core/timestep.cc), on top of the Courant and acceleration criteria (not in the original code, whose 10% limit on the change of tau is removed) */
+#ifndef GR_GAMMA_LIMITER
+#define GR_GAMMA_LIMITER (1000)        /* maximum Lorentz factor enforced inside GR_GAMMA_LIMITER_RADIUS (Template_Config.sh) */
+#endif
+#ifndef GR_GAMMA_LIMITER_RADIUS
+#define GR_GAMMA_LIMITER_RADIUS (0.0)  /* radius from the hole (gr_hole_displacement), in code length units, inside which the Lorentz factor is limited: 0 = off */
+#endif
+/* time step of the gas (core/timestep.cc), on top of the Courant and acceleration criteria (not in the C/C++ GR code, whose 10% limit on the change of tau is removed) */
 #define GR_TIMESTEP_ENERGY_FRAC (0.02) /* the kinetic-energy error of a first-order sub-step, (1/2) rho0 h* W^3 (|a| dt)^2, is at most this fraction of rho0 u */
 
 
@@ -44,7 +48,7 @@ struct gr_metric
     Vec3<double> beta;                /*!< contravariant shift beta^i */
     double alpha;                     /*!< lapse */
     double gdet;                      /*!< sqrt of the spatial metric determinant */
-    int limiter;                      /*!< 1 where the Lorentz factor is limited to GR_GAMMA_LIMITER (inside GAMMA_LIMITER_RADIUS): set with the metric, so that no caller needs the position */
+    int limiter;                      /*!< 1 where the Lorentz factor is limited to GR_GAMMA_LIMITER (inside GR_GAMMA_LIMITER_RADIUS): set with the metric, so that no caller needs the position */
 };
 
 /* --- a symmetric 4-tensor in the 3+1 split (the covariant 4-metric g_{mu nu}, its derivatives, the stress-energy tensor T^{mu nu}) --- */
