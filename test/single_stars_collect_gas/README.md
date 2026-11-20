@@ -12,7 +12,7 @@ metallicity varying across the box (gradient in x, modulation in y), bulk veloci
 written as snapshot 0 and the run starts from it with start flag 2 (initial conditions proper do not carry metallicity).
 Stars of given drawn masses are placed at given cells at the first step by the test-only flag
 `TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS`. The main build switches merging of light cells off
-(`MERGESPLIT_HARDCODE_MIN_MASS`), so the snapshot after one step shows the collection itself.
+(`MERGE_SPLIT_HARDCODE_MIN_MASS`), so the snapshot after one step shows the collection itself.
 
 Checks:
 1. shared donors (two stars one cell apart; five stars of 8-60 Msun within two cells): every star within 1% of its drawn

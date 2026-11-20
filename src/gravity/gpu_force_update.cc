@@ -56,7 +56,7 @@ static_assert(sizeof(MyFloat) == sizeof(uint64_t),
  *
  * ⛔ gpu_atomic_max_myfloat below CANNOT be reused on soa->vmax: it static_asserts
  * MyFloat is 64-bit and does a 64-bit CAS, while MyGravFloat is `float` under
- * GIZMO_MIXED_PRECISION_GRAVITY (typedefs.h:46) and `double` otherwise. The
+ * GRAVITY_MIXED_PRECISION (typedefs.h:46) and `double` otherwise. The
  * mismatch is invisible in the default build and breaks only in that config, which
  * is exactly the kind of trap a single-config test never finds.
  *

@@ -1256,11 +1256,11 @@ void init(void)
 #else
         if(mpi_splitmerge_readmax <= 0) {All.MaxMassForParticleSplit  = 3.01 * mpi_mass_max;} else {All.MaxMassForParticleSplit = mpi_splitmerge_readmax;}
 #endif
-#ifdef MERGESPLIT_HARDCODE_MAX_MASS
-        All.MaxMassForParticleSplit = MERGESPLIT_HARDCODE_MAX_MASS;
+#ifdef MERGE_SPLIT_HARDCODE_MAX_MASS
+        All.MaxMassForParticleSplit = MERGE_SPLIT_HARDCODE_MAX_MASS;
 #endif
-#ifdef MERGESPLIT_HARDCODE_MIN_MASS
-        All.MinMassForParticleMerger = MERGESPLIT_HARDCODE_MIN_MASS;
+#ifdef MERGE_SPLIT_HARDCODE_MIN_MASS
+        All.MinMassForParticleMerger = MERGE_SPLIT_HARDCODE_MIN_MASS;
 #endif
 
 #if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT) || defined(SNE_BROADCAST_TIMESTEP) /* Get mean gas mass, used in various subroutines (GravAccel_GMCTurbInit reads it without sinks) */

@@ -49,7 +49,7 @@ struct gpu_gravity_tree_soa_t {
     Vec3<MyFloat>  *center;     /* geometric center of node */
     MyFloat        *len;        /* sidelength */
     /* Multipole (currently monopole): MyGravFloat (= float when
-     * GIZMO_MIXED_PRECISION_GRAVITY is set, double otherwise). Force-kernel
+     * GRAVITY_MIXED_PRECISION is set, double otherwise). Force-kernel
      * accumulators and moment storage. Narrowing cast happens at seed time
      * from the MyFloat-typed NODE. */
     Vec3<MyGravFloat> *s;       /* center of mass */

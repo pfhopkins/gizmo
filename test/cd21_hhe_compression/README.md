@@ -30,6 +30,11 @@ ANEOS dispatch (`EOS_ANEOS`) — no new C++ branch.
      where the published u falls as T rises (there one energy names several
      temperatures): a validity boundary, not a repair; it refuses if any such
      state remains above it;
+   - adds ideal-gas rows below the converted table's lowest density, down to
+     10⁻²⁰ g/cm³ (GIZMO evaluates any lower density at the lowest row, which
+     over-pressures dilute gas such as impact ejecta): at each temperature the
+     lowest row continued with P ∝ ρ and u, cs unchanged; refuses if that row
+     is not a dilute gas (`--no-dilute-rows` omits them, for auditing only);
    - emits ncols=6 SESAME (`rho T P u S cs`) with the `lowest_valid_T_index`
      block, and prints the command and the input and output SHA-256 hashes.
 3. Build the IC:
@@ -51,7 +56,10 @@ Passes when P, u, cs round-trip to <1e-3 against the analytic ideal-gas
 solution (measured ~3e-6), and when the same gas with an injected u that
 falls as T rises (and one corrupted density point) gets the point masked, a
 validity floor above the fall, a block that reads back exactly, and the falls
-reported with `--no-defect-floor`.
+reported with `--no-defect-floor`; and when the dilute rows on the same ideal
+gas are exact (P, u to <1e-3, the entropy change to <1e-2 of the gas constant),
+leave every converted row unchanged, and a boundary whose pressure does not
+follow the density is refused.
 
 ## Test Config / params
 

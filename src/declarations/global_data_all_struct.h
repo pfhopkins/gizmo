@@ -123,12 +123,12 @@ struct global_data_all_processes
   double ADM_ElectronMass;      /*!< m_e_ADM in g (SM value ELECTRONMASS) */
   double ADM_MolecularFraction; /*!< dark-H2 fraction by mass, 0..1 */
 #endif
-#ifdef DISK_BETA_COOL
+#ifdef COOL_DISK_BETA
   double BetaCool_Beta;         /*!< beta in t_cool = beta / Omega */
   double BetaCool_Tirr;         /*!< irradiation-floor temperature [K]; 0 disables floor */
   double BetaCool_u_irr;        /*!< derived: u corresponding to BetaCool_Tirr */
 #endif
-#ifdef PLANET_HEATING
+#ifdef COOL_PLANET_HEATING
   double PlanetHeating_RadQ0_cgs; /*!< input: initial radiogenic specific heating rate [erg/g/s] */
   double PlanetHeating_RadTau_cgs;/*!< input: radiogenic e-folding decay time [s] */
   double PlanetHeating_AccQ0_cgs; /*!< input: background accretional heating rate [erg/g/s]; 0=off */
@@ -808,12 +808,12 @@ struct global_data_all_processes
 
 #ifdef EOS_ANEOS
     int  AneosNumMaterials;                       /* number of ANEOS material tables to load */
-    char AneosTableFiles[ANEOS_MAX_MATERIALS][DEFAULT_PATH_BUFFERSIZE_TOUSE]; /* file paths for each material's SESAME table */
+    char AneosTableFiles[EOS_ANEOS_MAX_MATERIALS][DEFAULT_PATH_BUFFERSIZE_TOUSE]; /* file paths for each material's SESAME table */
 #ifdef EOS_ELASTIC
-    int  AneosSolidMaterialChoice[ANEOS_MAX_MATERIALS];                   /* per table: 1-6 = preset, 0 = the table's own values (AneosTable<N>_SolidMaterial) */
-    struct solid_material AneosSolidMaterialCustom[ANEOS_MAX_MATERIALS];  /* per table custom values (AneosTable<N>_ShearModulus etc.) */
+    int  AneosSolidMaterialChoice[EOS_ANEOS_MAX_MATERIALS];                   /* per table: 1-6 = preset, 0 = the table's own values (AneosTable<N>_SolidMaterial) */
+    struct solid_material AneosSolidMaterialCustom[EOS_ANEOS_MAX_MATERIALS];  /* per table custom values (AneosTable<N>_ShearModulus etc.) */
 #ifdef EOS_ELASTIC_MELT
-    struct solid_strength_model_input AneosSolidStrengthModel[ANEOS_MAX_MATERIALS]; /* per table AneosTable<N>_Melt* / _CavitationStrength parameters */
+    struct solid_strength_model_input AneosSolidStrengthModel[EOS_ANEOS_MAX_MATERIALS]; /* per table AneosTable<N>_Melt* / _CavitationStrength parameters */
 #endif
 #endif
 #endif

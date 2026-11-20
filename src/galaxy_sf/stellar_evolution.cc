@@ -421,7 +421,7 @@ void particle2in_addFB_SNe(struct addFB_evaluate_data_in_ *in, int i)
 #endif
 #endif
     in->SNe_v_ejecta = sqrt(2.0*SNeEgy/(in->Msne)); // v_ej in code units
-#ifdef SNE_NONSINK_SPAWN
+#ifdef GALSF_FB_MECHANICAL_SNE_SPAWN
     if(P[i].Type == 4) {
         double frac_spawned = 0.5;
         P[i].unspawned_wind_mass += frac_spawned * (in->Msne);
@@ -649,7 +649,7 @@ void update_stellarnumber_and_timedistribofstarformation(void)
 #ifdef METALS
 void get_jet_yields(double *yields, int i) {
     int k; for(k=0;k<NUM_METAL_SPECIES;k++) {yields[k]=P[i].Metallicity[k];} /* return surface abundances, to leading order */
-#ifdef SNE_NONSINK_SPAWN
+#ifdef GALSF_FB_MECHANICAL_SNE_SPAWN
     double t_gyr=evaluate_stellar_age_Gyr(i); int SNeIaFlag=0; if(t_gyr>0.03753) {SNeIaFlag=1;}; /* assume SNe before critical time are core-collapse, later are Ia */
     if(P[i].Type==4) {double Msne; get_SNe_yields(yields,i,t_gyr,SNeIaFlag,&Msne);}
 #endif
@@ -968,8 +968,8 @@ double single_star_wind_mdot(int n, int set_mode) { //if set_mode is zero then t
     logmdot_wind = DMAX(logmdot_wind, logmdot_wind_high);
 #endif
     wind_mass_loss_rate = pow(10.0,logmdot_wind) / (UNIT_MASS_IN_SOLAR/UNIT_TIME_IN_YR); //reducing the rate to be more in line with observations, see Nathan Smith 2014, conversion to code units from Msun/yr
-#ifdef WIND_MDOT
-    wind_mass_loss_rate = WIND_MDOT / (UNIT_MASS_IN_SOLAR/UNIT_TIME_IN_YR); /* hard-coded Mdot [Msun/yr], for controlled wind tests */
+#ifdef SINGLE_STAR_FB_WINDS_TEST_MDOT
+    wind_mass_loss_rate = SINGLE_STAR_FB_WINDS_TEST_MDOT / (UNIT_MASS_IN_SOLAR/UNIT_TIME_IN_YR); /* hard-coded Mdot [Msun/yr], for controlled wind tests */
 #endif
 
     // let's deal with the case of undefined wind mode (just promoted to MS or restart from snapshot)
@@ -980,8 +980,8 @@ double single_star_wind_mdot(int n, int set_mode) { //if set_mode is zero then t
         double N_wind = wind_mass_loss_rate * t_wind / target_mass_for_wind_spawning(n);
 
         int old_wind_mode = P[n].wind_mode;
-#ifdef SINGLE_STAR_WIND_MODE
-        P[n].wind_mode = SINGLE_STAR_WIND_MODE; /* pin the mode, so a run can exercise one injection path on its own */
+#ifdef SINGLE_STAR_FB_WINDS_TEST_MODE
+        P[n].wind_mode = SINGLE_STAR_FB_WINDS_TEST_MODE; /* pin the mode, so a run can exercise one injection path on its own */
 #else
         /* jets and main-sequence winds compete for the same discrete-spawn channel: whichever has the
            larger momentum injection rate gets to spawn particles, and the other is deposited by continuous
@@ -1023,8 +1023,8 @@ double singlestar_WR_lifetime_Gyr(int n) { // calculate lifetime for star in Wol
 
 
 double single_star_wind_velocity(int n) { /* Let's get the wind velocity for MS stars */
-#if defined(WIND_MDOT) && defined(WIND_LUMINOSITY)
-    return sqrt(2*WIND_LUMINOSITY/UNIT_LUM_IN_CGS/(WIND_MDOT / (UNIT_MASS_IN_SOLAR/UNIT_TIME_IN_YR))); /* v_w from L_w=(1/2) Mdot v_w^2, for controlled wind tests */
+#if defined(SINGLE_STAR_FB_WINDS_TEST_MDOT) && defined(SINGLE_STAR_FB_WINDS_TEST_LUMINOSITY)
+    return sqrt(2*SINGLE_STAR_FB_WINDS_TEST_LUMINOSITY/UNIT_LUM_IN_CGS/(SINGLE_STAR_FB_WINDS_TEST_MDOT / (UNIT_MASS_IN_SOLAR/UNIT_TIME_IN_YR))); /* v_w from L_w=(1/2) Mdot v_w^2, for controlled wind tests */
 #endif
     double T_eff = 5814.33 * pow( P[n].StarLuminosity_Solar/(P[n].ProtoStellarRadius_inSolar*P[n].ProtoStellarRadius_inSolar), 0.25 ); // effective temperature in K
     double v_esc = single_star_escape_speed(n); // surface escape velocity - wind escape velocity should be O(1) factor times this, factor given below

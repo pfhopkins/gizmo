@@ -275,9 +275,9 @@ void begrun(void)
 #endif
 
 #ifdef EOS_ANEOS
-    if(All.AneosNumMaterials < 0 || All.AneosNumMaterials > ANEOS_MAX_MATERIALS)
+    if(All.AneosNumMaterials < 0 || All.AneosNumMaterials > EOS_ANEOS_MAX_MATERIALS)
     {
-        if(ThisTask == 0) {printf("AneosNumMaterials = %d, but this build holds at most %d tables (set ANEOS_MAX_MATERIALS in Config.sh)\n", All.AneosNumMaterials, ANEOS_MAX_MATERIALS);}
+        if(ThisTask == 0) {printf("AneosNumMaterials = %d, but this build holds at most %d tables (set EOS_ANEOS_MAX_MATERIALS in Config.sh)\n", All.AneosNumMaterials, EOS_ANEOS_MAX_MATERIALS);}
         endrun(1);
         return; /* every rank reads the same AneosNumMaterials: none loads a table */
     }
@@ -289,8 +289,8 @@ void begrun(void)
             if(ThisTask == 0) {aneos_report_table(aneos_k, All.AneosTableFiles[aneos_k]);}
             aneos_bytes += aneos_table_bytes(aneos_k);
         }
-        if(ThisTask == 0) {printf("ANEOS: %d of %d table slots loaded (ANEOS_MAX_MATERIALS), %.1f MB on every rank (one allocation the host and the device share)\n",
-                                  All.AneosNumMaterials, ANEOS_MAX_MATERIALS, aneos_bytes / 1048576.0);}
+        if(ThisTask == 0) {printf("ANEOS: %d of %d table slots loaded (EOS_ANEOS_MAX_MATERIALS), %.1f MB on every rank (one allocation the host and the device share)\n",
+                                  All.AneosNumMaterials, EOS_ANEOS_MAX_MATERIALS, aneos_bytes / 1048576.0);}
     }
     if(gizmo_poll_controlled_stop()) return; /* a table that failed to load stops the run here, in every build */
 #endif
@@ -643,7 +643,7 @@ void begrun(void)
 #endif
 #ifdef EOS_ANEOS
         All.AneosNumMaterials = all.AneosNumMaterials;
-        for(int aneos_k = 0; aneos_k < ANEOS_MAX_MATERIALS; aneos_k++)
+        for(int aneos_k = 0; aneos_k < EOS_ANEOS_MAX_MATERIALS; aneos_k++)
             strcpy(All.AneosTableFiles[aneos_k], all.AneosTableFiles[aneos_k]);
 #endif
 
@@ -788,7 +788,7 @@ void set_units(void)
 #endif
     All.MinEgySpec = All.MinGasTemp / (meanweight * (GAMMA_DEFAULT-1) * U_TO_TEMP_UNITS);
 
-#ifdef DISK_BETA_COOL
+#ifdef COOL_DISK_BETA
     All.BetaCool_u_irr = All.BetaCool_Tirr / (meanweight * (GAMMA_DEFAULT-1) * U_TO_TEMP_UNITS);
 #endif
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
@@ -798,7 +798,7 @@ void set_units(void)
     endrun(1156);
 #endif
 #endif
-#ifdef PLANET_HEATING
+#ifdef COOL_PLANET_HEATING
     {
         double cgs_to_code_rate = UNIT_TIME_IN_CGS / UNIT_SPECEGY_IN_CGS;
         All.PlanetHeating_RadQ0  = All.PlanetHeating_RadQ0_cgs  * cgs_to_code_rate;
@@ -1467,7 +1467,7 @@ void read_parameter_file(char *fname)
 #define STRING 2
 #define INT 3
 #ifdef EOS_ANEOS
-#define MAXTAGS (500 + 18 * ANEOS_MAX_MATERIALS) /* the per-table tags (18 per table with strength, damage and melt) scale with the table count */
+#define MAXTAGS (500 + 18 * EOS_ANEOS_MAX_MATERIALS) /* the per-table tags (18 per table with strength, damage and melt) scale with the table count */
 #else
 #define MAXTAGS 500
 #endif
@@ -2402,7 +2402,7 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "ADM_MolecularFraction");  addr[nt] = &All.ADM_MolecularFraction;  id[nt++] = REAL;
 #endif
 
-#ifdef DISK_BETA_COOL
+#ifdef COOL_DISK_BETA
       strcpy(tag[nt], "BetaCool_Beta");
       addr[nt] = &All.BetaCool_Beta;
       id[nt++] = REAL;
@@ -2411,7 +2411,7 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.BetaCool_Tirr;
       id[nt++] = REAL;
 #endif
-#ifdef PLANET_HEATING
+#ifdef COOL_PLANET_HEATING
       strcpy(tag[nt], "PlanetHeating_RadQ0_cgs");
       addr[nt] = &All.PlanetHeating_RadQ0_cgs;
       id[nt++] = REAL;
@@ -2859,7 +2859,7 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.AneosNumMaterials;
         id[nt++] = INT;
 
-        for(int aneos_k = 0; aneos_k < ANEOS_MAX_MATERIALS; aneos_k++) {
+        for(int aneos_k = 0; aneos_k < EOS_ANEOS_MAX_MATERIALS; aneos_k++) {
             if(nt >= MAXTAGS) {printf("Parameter registry full at AneosTable%d (room for %d tags: raise MAXTAGS in begrun.cc)\n", aneos_k, MAXTAGS); errorFlag = 1; break;}
             char aneos_tagname[64];
             snprintf(aneos_tagname, sizeof(aneos_tagname), "AneosTable%d", aneos_k);
@@ -2910,7 +2910,7 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef EOS_ANEOS
         /* per ANEOS table: the solid material it names (preset 1-6, or 0 = its own values below) */
-        for(int aneos_k = 0; aneos_k < ANEOS_MAX_MATERIALS; aneos_k++) {
+        for(int aneos_k = 0; aneos_k < EOS_ANEOS_MAX_MATERIALS; aneos_k++) {
             if(nt + 17 > MAXTAGS) {printf("Parameter registry full at AneosTable%d_* (room for %d tags: raise MAXTAGS in begrun.cc)\n", aneos_k, MAXTAGS); errorFlag = 1; break;} /* at most 17 per table below */
             struct solid_material *custom = &All.AneosSolidMaterialCustom[aneos_k];
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_SolidMaterial", aneos_k); addr[nt] = &All.AneosSolidMaterialChoice[aneos_k]; id[nt++] = INT;

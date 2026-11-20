@@ -1261,7 +1261,7 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
         double dt_stellar_evol;
         dt_stellar_evol = DMAX(2.0e-4, star_age/250.); // restrict to small steps for young stars //
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
-#if defined(SNE_NONSINK_SPAWN)
+#if defined(GALSF_FB_MECHANICAL_SNE_SPAWN)
         double mcorr = 1.e-4 * (P[p].Mass*UNIT_MASS_IN_SOLAR) / 0.1; // expectation of ()/X SNe per timestep -- here 0.1
         if(star_age > 0.044) {mcorr *= 0.02;} // into Ia regime, lower SNR means we can substantially relax this mass-dependent criterion
         if(mcorr > 1) {dt_stellar_evol /= DMIN(mcorr, 100.);} // don't use - ok to have multiple at low-res, but don't want too-big a jump or miss key stellar evolution

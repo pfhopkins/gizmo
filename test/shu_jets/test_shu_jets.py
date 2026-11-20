@@ -1,7 +1,7 @@
 """Rotating Shu (1977) collapse with protostellar jets.
 
 Config.sh is the jets-free baseline (STARFORGE defaults, no COOLING); each variant appends
-SINGLE_STAR_FB_JETS + JET_DIRECTION_FIXED_Z, one merge treatment, and one eos_flags choice
+SINGLE_STAR_FB_JETS + SINGLE_STAR_FB_JETS_TEST_FIXED_Z, one merge treatment, and one eos_flags choice
 (COOLING, or COOLING + SINGLE_STAR_FB_RAD for the star's own radiative feedback) via
 extra_config_flags. Every run must form exactly one sink, launch a collimated outflow along
 the fixed +/-z axis, and produce the accreted-angular-momentum plot.
@@ -33,7 +33,7 @@ from gizmo.test import (
 
 TEST_NAME = "shu_jets"
 TEST_DIR = Path(__file__).parent
-JETS = ("SINGLE_STAR_FB_JETS", "JET_DIRECTION_FIXED_Z")
+JETS = ("SINGLE_STAR_FB_JETS", "SINGLE_STAR_FB_JETS_TEST_FIXED_Z")
 JETS_NOMERGE = JETS + ("SINK_SPAWN_NO_MERGE",)
 JETS_NOMERGE_ALL = JETS + ("PREVENT_PARTICLE_MERGE",)
 # Intended production behaviour: a spawned cell persists while still resolving the outflow and
@@ -221,7 +221,7 @@ def assert_collimated_outflow(final_snap, m_gas):
     # Positional collimation: where the jet material has GOT to. 0.9, not 0.5: measured 0.963-0.989
     # across every merging regime and both EOS, and 0.978 at TimeMax = 0.01, so 0.5 was nowhere
     # near binding. Since
-    # JET_DIRECTION_FIXED_Z pins the axis this is a launch-geometry check with a known answer.
+    # SINGLE_STAR_FB_JETS_TEST_FIXED_Z pins the axis this is a launch-geometry check with a known answer.
     cos2_theta = (dx[moving, 2] / r[moving]) ** 2
     assert np.mean(cos2_theta) > 0.9, (
         f"Outflow is not collimated along the z axis: <cos^2(theta)> = {np.mean(cos2_theta):.4g}, "
@@ -257,7 +257,7 @@ def assert_collimated_outflow(final_snap, m_gas):
 
 
 # Two variants of the non-RT jets setup, differing only in whether spawned jet cells may
-# merge. JET_DIRECTION_FIXED_Z pins the launch axis to +/-z in both, so
+# merge. SINGLE_STAR_FB_JETS_TEST_FIXED_Z pins the launch axis to +/-z in both, so
 # assert_collimated_outflow's <cos^2(theta)> test measures the launch geometry against a
 # known axis rather than the sink's emergent angular momentum.
 # Three merging regimes, to separate numerical diffusion from the physics:

@@ -3955,7 +3955,7 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
             printf("Gravity tree node sizes: sizeof(NODE)=%zu B, sizeof(extNODE)=%zu B; "
                    "MyGravFloat=%zu B (mixed-precision gravity %s). Active payload flags:",
                    sizeof(struct NODE), sizeof(struct extNODE), sizeof(MyGravFloat),
-#ifdef GIZMO_MIXED_PRECISION_GRAVITY
+#ifdef GRAVITY_MIXED_PRECISION
                    "ON"
 #else
                    "OFF"
