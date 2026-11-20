@@ -95,7 +95,7 @@ double CumulCRInjectedErg = 0;   /* CR energy measured at the feedback deposit [
 double CumulSFEnergyRemoved = 0; /* gas thermal+kinetic energy removed by star formation [erg] */
 double CumulFeedbackMass = 0;    /* cumulative mass returned to gas by feedback [Msun] */
 double CumulFeedbackMetals = 0;  /* cumulative metals returned to gas by feedback [Msun] */
-double CumulMetalYieldToGas = 0, CumulMetalEjectedFromStars = 0; /* metal ledger on this rank: yield metals deposited, star metal mass removed [code mass] */
+long double CumulMetalYieldToGas = 0, CumulMetalEjectedFromStars = 0; /* metal ledger on this rank: yield metals deposited, star metal mass removed [code mass] */
 #if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
 double CumulElemToGas[NUM_METAL_SPECIES], CumulElemFromStars[NUM_METAL_SPECIES]; /* element ledger on this rank, per Metallicity slot [code mass] */
 #endif

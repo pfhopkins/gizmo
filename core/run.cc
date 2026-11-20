@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <ctype.h>
 #include <vector>
+#include <float.h>
 
 #include "../declarations/allvars.h"
 #include "../mesh/kernel.h"   /* kernel_gravity: softened-potential metric in incode_total_energy */
@@ -88,7 +89,7 @@ void mbary_step_checkpoint(const char *tag)
     if(strcmp(tag, "pre_diff_unpack") == 0) {for(int j : ActiveParticleList) {if(P[j].Type == 0 && P[j].Mass > 0) {ml_loc[1] += CellP[j].Dyield[0];}}} /* walked, not yet unpacked */
 #endif
 #if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
-    ml_loc[2] = (long double)CumulMetalYieldToGas - (long double)CumulMetalEjectedFromStars;
+    ml_loc[2] = CumulMetalYieldToGas - CumulMetalEjectedFromStars;
 #endif
 #if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
     enum {EL_GAS, EL_STAR, EL_FLIGHT, EL_OUT, EL_NET, EL_N}; /* per slot: gas, stars + remnants, in-flight diffusion, outflow, booked net yield */
@@ -96,6 +97,12 @@ void mbary_step_checkpoint(const char *tag)
 #else
     const int NRED = 9;
 #endif
+    static int ld_checked = 0;
+    if(!ld_checked) {
+        ld_checked = 1; int sz = 0; MPI_Type_size(MPI_LONG_DOUBLE, &sz);
+        if(sz != (int)sizeof(long double)) {if(ThisTask == 0) {printf("mass trace: MPI_LONG_DOUBLE has %d bytes, long double %d\n", sz, (int)sizeof(long double));} endrun(8731);}
+        if(LDBL_MANT_DIG <= DBL_MANT_DIG && ThisTask == 0) {printf("WARNING: long double is not wider than double here: the mass-trace ledgers round at double precision\n");}
+    }
     std::vector<long double> red_loc(NRED, 0.0L), red(NRED, 0.0L); /* one reduction per checkpoint */
     red_loc[0] = ml_loc[0]; red_loc[1] = ml_loc[1]; red_loc[2] = ml_loc[2]; red_loc[3] = M_gas_loc; red_loc[4] = M_star_loc; red_loc[5] = M_Z_loc;
 #ifdef GALSF_RESOLVEDISM_DUST

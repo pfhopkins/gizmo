@@ -954,7 +954,7 @@ extern double CumulSFEnergyRemoved;  /* gas thermal+kinetic energy removed by st
 extern double CumulFeedbackMass;     /* cumulative mass returned to gas [Msun] */
 extern double CumulStarMassFormed;   /* cumulative stellar mass formed [Msun] */
 extern double CumulFeedbackMetals;   /* cumulative metals returned to gas [Msun] */
-extern double CumulMetalYieldToGas, CumulMetalEjectedFromStars; /* metal ledger on this rank [code mass] */
+extern long double CumulMetalYieldToGas, CumulMetalEjectedFromStars; /* metal ledger on this rank [code mass]; long double: ~1e-8 terms cancel to a much smaller total */
 #if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
 extern double CumulElemToGas[NUM_METAL_SPECIES], CumulElemFromStars[NUM_METAL_SPECIES]; /* element ledger on this rank, per Metallicity slot: deposited, removed from stars [code mass] */
 #endif
