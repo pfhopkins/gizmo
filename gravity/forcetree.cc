@@ -10,7 +10,6 @@
 #include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 #include "tree_pair_kernel.h"
-#include "./periodic_xy_images.h"
 #ifdef RT_TREECOL_HEALPIX
 #include "healpix_utils.h"     /* HEALPix pixel geometry: tree columns and per-pixel fluxes */
 #endif
@@ -162,7 +161,7 @@ static double fac_intp;
 #endif
 
 
-#if (defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)) || defined(GRAVITY_PERIODIC_XY_IMAGES) /* need to do box-wrapping, just refer to our standard box-wrapping macros */
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) /* need to do box-wrapping, just refer to our standard box-wrapping macros */
 #define GRAVITY_NEAREST_XYZ(x,y,z,sign) NEAREST_XYZ(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_X(x,y,z,sign) NGB_PERIODIC_BOX_LONG_X(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign) NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign)
@@ -2756,23 +2755,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     
                     /* actually add the accelerations, now that we've corrected for the ewald and other terms */
                     acc += fac_accel * dr;
-#ifdef GRAVITY_PERIODIC_XY_IMAGES
-                    gravity_periodic_xy_images(mass, dr, DMAX(h, h_p), [&](const Vec3<double>& d_im, double fac_accel_im, double fac2_tidal_im, double fac_pot_im) {
-                        acc += fac_accel_im * d_im;
-#ifdef EVALPOTENTIAL
-                        pot += fac_pot_im;
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                        for(int k1=0;k1<3;k1++) {for(int k2=k1;k2<3;k2++) {tidal_tensorps[k1][k2] += d_im[k1] * d_im[k2] * fac2_tidal_im - (k1==k2 ? fac_accel_im : 0);}}
-#endif
-#ifdef COMPUTE_JERK_IN_GRAVTREE
-#ifndef ADAPTIVE_TREEFORCE_UPDATE
-                        if(ptype > 0)
-#endif
-                        {jerk += fac_accel_im * dv - dot(dv, d_im) * fac2_tidal_im * d_im;}
-#endif
-                    });
-#endif
                     
                     
 #if defined(SINK_DYNFRICTION_FROMTREE)
@@ -4002,9 +3984,6 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                     pot += ( fac_pot * mass * kernel_gravity(u, h_inv, 1, -1) );
                 }
             }
-#ifdef GRAVITY_PERIODIC_XY_IMAGES
-            {Vec3<double> d0 = {dx, dy, dz}; gravity_periodic_xy_images(mass, d0, h, [&](const Vec3<double>&, double, double, double fac_pot_im) {pot += fac_pot_im;});}
-#endif
 #if defined(GRAVITY_PERIODIC_XY)
             {double drc[3] = {dx, dy, dz}, ac[3], pc; ewald_xy_corr(drc, ac, &pc); pot += mass * pc;}
 #elif defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
