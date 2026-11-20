@@ -114,13 +114,26 @@ def test_integration_finding_reports_latest_residual(tmp_path):
     assert f["count"] == 2 and f["sum_res"] == pytest.approx(0.05)
 
 
-def test_cooling_solve_checked_against_its_reported_rate(tmp_path):
-    """Non-stiff cells: the chemistry solve's energy change must match its own reported net cooling rate x dt (5e-2)."""
-    def line(solve, rate):
-        return sync_line(9, 1e-3, 0.0, 0.0).replace("\n", f" b_info_cool_solve_ns={solve:+.6e} b_info_cool_rate_ns={rate:+.6e}\n")
-    assert check_conservation_traces(write(tmp_path, CLEAN_MASS, [sync_line(1, 0.0, 0.0, 0.0), line(-1e-3, -1.02e-3)])).ok
-    rep = check_conservation_traces(write(tmp_path, CLEAN_MASS, [sync_line(1, 0.0, 0.0, 0.0), line(-1e-3, -2e-3)]))
+ID_HDR = "# Energy step trace\n# cooling_identity=1\n# pot_valid=1 every=1\n"
+
+
+def id_line(diff, gross, evals):
+    return sync_line(9, 1e-3, 0.0, 0.0).replace("\n", f" b_info_cool_id_diff={diff:+.16e} b_info_cool_id_gross={gross:+.16e} b_info_cool_id_evals={evals:+.16e}\n")
+
+
+def test_cooling_rhs_equals_reported_rates(tmp_path):
+    """SGCHEM: at every RHS evaluation of the solve the energy RHS equals minus the reported net cooling (every term
+    reported); |difference| x dt summed over evaluations <= 1e-12 of the gross rates (sum of |terms|) x dt."""
+    assert check_conservation_traces(write(tmp_path, CLEAN_MASS, [sync_line(1, 0.0, 0.0, 0.0), id_line(1e-16, 1.0, 50)], ID_HDR)).ok
+    rep = check_conservation_traces(write(tmp_path, CLEAN_MASS, [sync_line(1, 0.0, 0.0, 0.0), id_line(2e-10, 1.0, 50)], ID_HDR))
+    assert not rep.ok and rep.findings[0]["kind"] == "cooling_rate" and rep.findings[0]["max_rel"] == pytest.approx(2e-10)
+
+
+def test_cooling_identity_without_covered_cell_is_a_finding(tmp_path):
+    """A trace that declares the identity (SGCHEM C++ backend) but covered no RHS evaluation is a finding, not a silent pass."""
+    rep = check_conservation_traces(write(tmp_path, CLEAN_MASS, [sync_line(1, 0.0, 0.0, 0.0), id_line(0.0, 0.0, 0)], ID_HDR))
     assert not rep.ok and rep.findings[0]["kind"] == "cooling_rate"
+    assert check_conservation_traces(write(tmp_path, CLEAN_MASS, [sync_line(1, 0.0, 0.0, 0.0), sync_line(9, 1e-3, 0.0, 0.0)])).ok  # not declared
 
 
 def test_inflight_column_is_not_the_ledger(tmp_path):
@@ -141,8 +154,3 @@ def test_trace_without_sync_line_fails(tmp_path):
     """A trace that never reached a full sync checks nothing: a finding."""
     rep = check_conservation_traces(write(tmp_path, CLEAN_MASS, []))
     assert not rep.ok and rep.findings[0]["kind"] == "energy_integration_not_checked"
-
-
-def test_cooling_rate_check_absence_is_noted(tmp_path):
-    rep = check_conservation_traces(write(tmp_path, CLEAN_MASS, CLEAN_ENERGY))
-    assert rep.ok and "cooling-rate check not run" in rep.summary()
