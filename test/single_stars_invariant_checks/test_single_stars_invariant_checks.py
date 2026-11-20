@@ -100,6 +100,45 @@ def test_checks_pass_in_stella_run(tables):
         assert re.search(rf"^SINGLE_STAR_YIELDS ch={ch} ID=\d+ t=\S+ table( \S+){{27}} slots", log, re.M), ch
 
 
+def star_identities(snap):
+    """per star (ID, child, generation, wrap count, lineage key); the last two read as 0 when the file has no such block"""
+    with h5py.File(snap, "r") as F:
+        g = F["PartType4"]
+        n = len(g["ParticleIDs"])
+        cols = [g[k][()].astype(np.uint64) if k in g else np.zeros(n, dtype=np.uint64)
+                for k in ("ParticleIDs", "ParticleChildIDsNumber", "ParticleIDGenerationNumber", "ParticleIDWraps", "ParticleIDLineage")]
+    return [tuple(int(c[k]) for c in cols) for k in range(n)]
+
+
+def test_identities_unique_past_roll_over_and_restart(tables):
+    """bar (written before the run): 40 stars from one cell in one call (the 32nd would repeat the 1st star's ID, child and
+    generation, and so its random streams): every star identity in the snapshot distinct; a snapshot restart (start flag 2)
+    from that snapshot carries every star's identity unchanged"""
+    births = ",".join(["1101:0.3"] * 40)
+    d, log = run("ids", tables, solar27(tables["StellarTablesFile"]), {"TimeMax": 1e-4, "TimeBetSnapshot": 1e-4, "TestSingleStarBirths": births})
+    snap = sorted((d / "output").glob("snapshot_*.hdf5"))[-1]
+    ids = star_identities(snap)
+    born = [t for t in ids if t[0] == 1101]
+    assert len(born) == 40, len(born)
+    assert len(set(ids)) == len(ids), [t for t in ids if ids.count(t) > 1][:4]
+    # restart from that snapshot: the identities come back from the file
+    d2 = TEST_DIR / "run_ids_restart"
+    if d2.exists():
+        shutil.rmtree(d2)
+    shutil.copytree(d, d2, symlinks=True, ignore=shutil.ignore_patterns("snapshot_*.hdf5", "*.out", "*.txt"))
+    shutil.copy(snap, d2 / "output" / "snapshot_000.hdf5")
+    new = {"TimeMax": 1.1e-4, "TestSingleStarBirths": "none"}  # a little further, no births
+    p = (d2 / f"{TEST_NAME}.params").read_text()
+    p = "\n".join([l for l in p.splitlines() if l.split()[:1] not in ([k] for k in new)] + [f"{k:27s} {v}" for k, v in new.items()]) + "\n"
+    (d2 / f"{TEST_NAME}.params").write_text(p)
+    with open(d2 / "restart.out", "w") as f:
+        subprocess.run(mpi_launch_command(2) + [str(TEST_DIR / "GIZMO"), f"{TEST_NAME}.params", "2", "0"], cwd=d2, stdout=f,
+                       stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True)
+    after = set(star_identities(sorted((d2 / "output").glob("snapshot_*.hdf5"))[-1]))
+    missing = [t for t in ids if t not in after]
+    assert not missing, missing[:4]
+
+
 def test_broken_invariant_is_reported(tables):
     """bar (written before the run): gas whose C..Fe slots exceed its total Z (slot 0 set to half the sum of the 25 metals) gives
     FAIL lines of the step check fire_slot_invariant on the first feedback step (the Type Ia at once); the per-cell check
