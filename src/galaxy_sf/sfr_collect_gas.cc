@@ -427,7 +427,7 @@ void single_star_attach_to_new_star(int i_star, int i, double M_drawn)
 
 #ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
 /* test only: at the first star-formation step, a star of the given drawn mass at each listed gas cell
-   (parameter TestSingleStarBirths = "ID:M_drawn[Msun],ID:M_drawn,..."); stars_spawned = spawns so far this step;
+   (parameter TestSingleStarBirths = "ID:M_drawn[Msun],ID:M_drawn*count,...", at most 255 characters); stars_spawned = spawns so far this step;
    returns the number spawned here */
 int single_star_test_births(int stars_spawned)
 {
@@ -436,16 +436,22 @@ int single_star_test_births(int stars_spawned)
     done = 1;
     int n = 0;
     const char *s = All.TestSingleStarBirths;
+    if(strlen(s) >= sizeof(All.TestSingleStarBirths) - 1) {endrun(7814);} /* the list filled the parameter: probably cut; use ID:M*count */
     while(*s) {
         unsigned long long id; double m; int used = 0;
         if(sscanf(s, "%llu:%lf%n", &id, &m, &used) != 2) {break;}
-        for(int i = 0; i < N_gas; i++) {
-            if(P[i].Type == 0 && P[i].ID == (MyIDType)id && P[i].ID_child_number == 0) {
-                int i_star = spawn_star_from_gas(i, 0, stars_spawned + n);
-                if(i_star >= 0) {single_star_attach_to_new_star(i_star, i, m); n++;}
+        s += used;
+        int count = 1, used_c = 0; /* "ID:M*count": count stars of drawn mass M at that cell (the parameter holds 255 characters) */
+        if(*s == '*' && sscanf(s + 1, "%d%n", &count, &used_c) == 1) {s += 1 + used_c;}
+        for(int c = 0; c < count; c++) {
+            for(int i = 0; i < N_gas; i++) {
+                if(P[i].Type == 0 && P[i].ID == (MyIDType)id && P[i].ID_child_number == 0) {
+                    int i_star = spawn_star_from_gas(i, 0, stars_spawned + n);
+                    if(i_star >= 0) {single_star_attach_to_new_star(i_star, i, m); n++;}
+                }
             }
         }
-        s += used; if(*s == ',') {s++;}
+        if(*s == ',') {s++;}
     }
     return n;
 }

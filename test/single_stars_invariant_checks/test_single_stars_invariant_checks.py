@@ -114,7 +114,7 @@ def test_identities_unique_past_roll_over_and_restart(tables):
     """bar (written before the run): 40 stars from one cell in one call (the 32nd would repeat the 1st star's ID, child and
     generation, and so its random streams): every star identity in the snapshot distinct; a snapshot restart (start flag 2)
     from that snapshot carries every star's identity unchanged"""
-    births = ",".join(["1101:0.3"] * 40)
+    births = "1101:0.3*40"  # ID:M*count: the parameter holds 255 characters
     d, log = run("ids", tables, solar27(tables["StellarTablesFile"]), {"TimeMax": 1e-4, "TimeBetSnapshot": 1e-4, "TestSingleStarBirths": births})
     snap = sorted((d / "output").glob("snapshot_*.hdf5"))[-1]
     ids = star_identities(snap)
