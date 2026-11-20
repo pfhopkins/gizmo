@@ -1090,13 +1090,15 @@ size_t pairflux_record_size(void);
 void pairflux_note_rearrange(void);
 void pairflux_note_kick_floor(double de);
 void pairflux_mark_closing_kick_expected(void);
-void pairflux_record_add(int r, int r_active, int crossbin, int e_task, int e_index, long long S_e, Vec3<double> mom, double egy, Vec3<double> B, Vec3<double> Bded);
+void pairflux_record_add(int r, int r_active, int crossbin, int e_task, int e_index, long long S_e, long long ti_e, Vec3<double> mom, double egy, Vec3<double> B, Vec3<double> Bded);
 void pairflux_after_closing_kick(void);
 void pairflux_after_opening_kick(void);
 void pairflux_wake_kick_correction(int i, double dt_wake, int to_pred);
 #endif
 #ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
 void print_gas_conserved_totals(void);
+void test_kick_energy_split_add(int gas, double hydro, double floor_e, double total);
+void test_impulse_energy_add(double de);
 #endif
 void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);

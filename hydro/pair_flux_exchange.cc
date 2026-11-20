@@ -10,6 +10,15 @@
    through their rates; a record per pair supplies each side's difference as a conserved impulse, after the closing and
    after the opening kick. Corrections for an evaluator on another rank are sent there. */
 
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+static double TestKickSplit[5] = {0}; /* gas hydro part, gas rest (gravity...), gas floor, non-gas kinetic, pair-flux impulses */
+void test_kick_energy_split_add(int gas, double hydro, double floor_e, double total)
+{
+    if(gas) {TestKickSplit[0] += hydro; TestKickSplit[2] += floor_e; TestKickSplit[1] += total - hydro - floor_e;} else {TestKickSplit[3] += total;}
+}
+void test_impulse_energy_add(double de) {TestKickSplit[4] += de;}
+#endif
+
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
 
 struct pairflux_record
@@ -39,7 +48,7 @@ void pairflux_note_rearrange(void) {PairFluxRearranged = 1;}
 void pairflux_mark_closing_kick_expected(void) {PairFluxClosingKickExpected = 1;}
 
 static double pf_U(void) {return unit_integertime_in_physical(-1);}
-static double pf_closing_default(int i) {integertime ti = All.Ti_Current - P[i].Ti_begstep; return (double)(ti - ti/2) * pf_U();} /* what do_second_halfstep_kick applies */
+static double pf_closing_default(int i) {return (double) pairflux_kick_closing_ti((long long) P[i].integertime_step()) * pf_U();} /* what do_second_halfstep_kick applies */
 static double pf_opening_applied(int i) /* what do_first_halfstep_kick applied to i's rates (0 if it is no longer a kicked gas cell) */
 {
     if(P[i].Type != 0 || P[i].Mass <= 0 || !TimeBinActive[P[i].TimeBin]) {return 0;}
@@ -66,15 +75,15 @@ void pairflux_end_hydro_pass(void)
 }
 
 /* called in the hydro loop on j's rank for every evaluated pair; S_e = start of e's step that ends now */
-void pairflux_record_add(int r, int r_active, int crossbin, int e_task, int e_index, long long S_e, Vec3<double> mom, double egy, Vec3<double> B, Vec3<double> Bded)
+void pairflux_record_add(int r, int r_active, int crossbin, int e_task, int e_index, long long S_e, long long ti_e, Vec3<double> mom, double egy, Vec3<double> B, Vec3<double> Bded)
 {
     pairflux_record rec; rec.r = r; rec.flags = (r_active ? 1 : 0) | (crossbin ? 2 : 0); rec.e_task = e_task; rec.e_index = e_index;
     rec.c2_e = rec.c2_r = 0;
     if(PairFluxClosingKickExpected)
     {
         long long t = (long long) All.Ti_Current, S_r = (long long) P[r].Ti_begstep;
-        double W2p = (double) pairflux_pair_closing_ti(t, S_e, S_r) * pf_U(), de = (double)(t - S_e);
-        rec.c2_e = W2p - (de - (long long)de/2) * pf_U();
+        double W2p = (double) pairflux_pair_closing_ti(t, S_e, S_r) * pf_U();
+        rec.c2_e = W2p - (double) pairflux_kick_closing_ti(ti_e) * pf_U();
         rec.c2_r = W2p - (r_active ? pf_closing_default(r) : 0);
     }
     rec.mom = mom; rec.egy = egy;
@@ -101,6 +110,9 @@ static void pairflux_apply_impulse(int i, Vec3<double> dmom, double dE, Vec3<dou
         double dKE = 0.5 * m * (vn.norm_sq() - v.norm_sq());
         P[i].Vel = vn * a; P[i].dp += dmom * a; force_raise_motion_bound(i);
         ESTEP_BOOK(EBK_SF_TH_LOCKED, -(dE - dKE)); PairFluxNStar++;
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+        test_impulse_energy_add(dKE);
+#endif
         return;
     }
     double dEB = 0, dEded = 0;
@@ -141,6 +153,9 @@ static void pairflux_apply_impulse(int i, Vec3<double> dmom, double dE, Vec3<dou
     }
     P[i].Vel = vn * a; P[i].dp += dmom * a;
     if(mode == 1) {CellP[i].VelPred += dmom * (a / m);}
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+    test_impulse_energy_add(dKE + (CellP[i].InternalEnergy - (u_target - du)) * m); /* thermal + kinetic actually changed */
+#endif
     force_raise_motion_bound(i);
 }
 
@@ -260,7 +275,7 @@ void pairflux_after_opening_kick(void)
         if(off[rec.e_task] < 0) {printf("HYDRO_EXACT_PAIR_FLUX_EXCHANGE: no reply from task %d\n", rec.e_task); endrun(97536);}
         pairflux_rep &rep = rin[off[rec.e_task] + slot[k]];
         int r_active = rec.flags & 1;
-        long long N_r = r_active ? (long long)(t + P[rec.r].integertime_step()) : pf_step_end(rec.r);
+        long long N_r = r_active ? (long long)(t + P[rec.r].integertime_step()) : pairflux_next_sync_ti(t, pf_step_end(rec.r), (long long) GET_INTEGERTIME_FROM_TIMEBIN(P[rec.r].TimeBin));
         double w1p = (double) pairflux_pair_opening_ti(t, rep.N, N_r) * U;
         double c1_r = w1p - (r_active ? pf_opening_applied(rec.r) : 0), c1_e = w1p - rep.w1;
         Vec3<double> B = {}, Bd = {};
@@ -330,24 +345,27 @@ void print_gas_conserved_totals(void)
         add(6, 0.5 * CellP[i].B.norm_sq() * rho_over_m / a); add(8, CellP[i].B[0]); add(9, CellP[i].B[1]); add(10, CellP[i].B[2]);
 #endif
     }
-    double loc[28] = {0}, glob[28];
+    double loc[33] = {0}, glob[33];
     for(int k = 0; k < 12; k++) {loc[k] = s[k] + c[k];}
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
     loc[12] = (double) PairFluxNFloor; loc[13] = PairFluxEFloor; loc[14] = (double) PairFluxNStar; loc[15] = 0;
     for(int k = 0; k < 5; k++) {loc[16+2*k] = (double) PairFluxNFloorPath[k]; loc[17+2*k] = PairFluxEFloorPath[k];}
     loc[26] = PairFluxPeakMB; loc[27] = 0;
 #endif
+    for(int k = 0; k < 5; k++) {loc[28+k] = TestKickSplit[k];}
     MPI_Reduce(loc, glob, 26, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&loc[28], &glob[28], 5, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&loc[26], &glob[26], 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
     if(!fd)
     {
         char buf[1000]; snprintf(buf, sizeof(buf), "%s/conserved_totals.txt", All.OutputDir);
         fd = fopen(buf, "w");
-        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_to_star 0 [n,E floor: closing wake opening masschange kick] records_peak_MB_per_rank (gas, conserved variables, physical, after the sync's kicks)\n");
+        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_to_star 0 [n,E floor: closing wake opening masschange kick] records_peak_MB_per_rank 0 [cumulative kick energy: gas hydro, gas other (gravity), gas floor, non-gas kinetic, pair-flux impulses] (gas, conserved variables, physical, after the sync's kicks)\n");
     }
     fprintf(fd, "%lld %.17e", (long long) All.NumCurrentTiStep, All.Time);
-    for(int k = 0; k < 27; k++) {fprintf(fd, " %.17e", glob[k]);}
+    glob[27] = 0;
+    for(int k = 0; k < 33; k++) {fprintf(fd, " %.17e", glob[k]);}
     fprintf(fd, "\n"); fflush(fd);
 }
 #endif

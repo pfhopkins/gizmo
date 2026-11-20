@@ -65,4 +65,14 @@ TEST_CASE("pair weights: opening plus closing of one interval add up to the inte
     for(long long d = 1; d < 64; d++) {CHECK(pairflux_pair_opening_ti(0, d, 1000) + pairflux_pair_closing_ti(d, 0, -5) == d);}
 }
 
+TEST_CASE("pair weights: a woken cell truncated without a drift (step [0,3], evaluated at t=8)") {
+    long long S = 0, ti = 3, t = 8;
+    long long applied = ti - ti/2;                             /* do_second_halfstep_kick: Ti_begstep + ti/2 .. Ti_begstep + ti */
+    CHECK(pairflux_kick_closing_ti(ti) == applied);
+    CHECK((t - S) - (t - S)/2 != applied);                     /* the step-start rule the corrections used before */
+    CHECK(pairflux_next_sync_ti(t, S + ti, 4) == 12);          /* step end in the past: next sync of its bin */
+    CHECK(pairflux_next_sync_ti(t, 16, 8) == 16);              /* ordinary inactive cell: its step end */
+    CHECK(pairflux_pair_opening_ti(t, 12, pairflux_next_sync_ti(t, S + ti, 4)) >= 0);
+}
+
 TEST_MAIN()

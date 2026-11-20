@@ -179,7 +179,7 @@ struct INPUT_STRUCT_NAME
     MyFloat dt_hydrostep_i;
     MyCommFloat DrkernNgbFactor;
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
-    long long PairFluxS;            /* start of the step that ends now (integer time) */
+    long long PairFluxS, PairFluxTi; /* start and length of the step that ends now (integer time) */
     int PairFluxTask, PairFluxIndex; /* home rank and index: corrections and the opening weight go there */
 #endif
 #ifdef EOS_ANEOS
@@ -435,7 +435,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     in->SoundSpeed = CellP[i].effective_soundspeed();
     in->dt_hydrostep_i = get_particle_timestep_in_physical(i);
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
-    in->PairFluxS = (long long) P[i].Ti_begstep; in->PairFluxTask = ThisTask; in->PairFluxIndex = i;
+    in->PairFluxS = (long long) P[i].Ti_begstep; in->PairFluxTi = (long long) P[i].integertime_step(); in->PairFluxTask = ThisTask; in->PairFluxIndex = i;
 #endif
     in->ConditionNumber = CellP[i].ConditionNumber;
     in->FaceClosureError = CellP[i].FaceClosureError;

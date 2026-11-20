@@ -481,7 +481,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
                         }
                     }
-                    pairflux_record_add(j, j_is_active_for_fluxes, (dt_hydrostep_i < dt_hydrostep_j), local.PairFluxTask, local.PairFluxIndex, local.PairFluxS, -1.*Fluxes.v, -Fluxes.p, -1.*pf_B, -1.*pf_Bded);
+                    pairflux_record_add(j, j_is_active_for_fluxes, (dt_hydrostep_i < dt_hydrostep_j), local.PairFluxTask, local.PairFluxIndex, local.PairFluxS, local.PairFluxTi, -1.*Fluxes.v, -Fluxes.p, -1.*pf_B, -1.*pf_Bded);
                 }
 #endif
                 /* if this is particle j's active timestep, you should sent them the time-derivative information as well, for their subsequent drift operations */
