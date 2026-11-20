@@ -849,11 +849,12 @@ otherwise (the H+/He+ charge-exchange partners keep the floored value: imbalance
 <= rtol x abundD). C++ chem_rhs_net17, Fortran rate_eq_ulli. The C++ driver also stops CVODE at each net-17 substep end
 (CVodeSetStopTime) instead of stepping past it and interpolating back. Converged references change by <= 5e-7.
 Test: golden/test_solver_failure.cc (no substep rejected for a D+ excess; each backend within 1% of the converged T).
-Measured: C++ phase-H worst error 1.9% -> 1.5e-4. Cost: r26 cloud (net 17, 12 Myr) RHS evaluations 497.2e6 -> 543.0e6
-(+9%), wall 403 -> 455 s (single runs).
+Measured: C++ phase-H worst error 1.9% -> 1.5e-4. Cost, r26 cloud (net 17, 12 Myr, 8 tasks; runs repeat exactly): RHS
+evaluations 497.2e6 -> 543.0e6 (+9%), wall 401 -> 447 s (+11%), but the run takes 7590 instead of 5866 steps (different
+trajectory): per step -16% RHS evaluations, -13% wall. D-60 without the stop time: 695.3e6, 605 s, 12009 steps.
 Open (gate fails, bar unchanged): nH 10 hand-off, bypass T 4.11e5 / 4.38e5 K, dt 7.7e11 / 3e12 s: one recoverable C++ H+
 validate_input rejection each (comes with the stop time); bypass T 4.56e5 K, dt 7.7e11 s: DVODE 1.1% off the converged
-T (0.1% before D-60 in the Fortran RHS).
+T (0.1% before D-60 in the Fortran RHS; 0.098% with D-60 in C++ only).
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
