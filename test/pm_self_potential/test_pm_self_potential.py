@@ -1,6 +1,6 @@
 """The energy step trace's E_pot without the particles' own PM mesh self-potential (PM_EXACT_SELF_POTENTIAL_DIAG, diagnostics only).
 
-One 20 Msun particle in a periodic box L = 2e5 AU with PMGRID = 32 (cell 6250 AU, r_s = 1.25 cells), moving at (1.5, 1.1, 0.7) km/s
+One 20 Msun star particle (type 4: the mass trace counts gas and stars) in a periodic box L = 2e5 AU with PMGRID = 32 (cell 6250 AU, r_s = 1.25 cells), moving at (1.5, 1.1, 0.7) km/s
 so that over 1e-5 code time it crosses about half a cell per axis and its CIC weights sweep sub-cell offsets.
 
 Derivation. Alone in the box, the tree adds nothing (the walk skips r = 0) and PM_Potential is entirely the particle's own mesh
@@ -32,12 +32,12 @@ def _write_ics(path):
     x = np.array([[10.3, 17.6, 5.85]]) * cell
     with h5py.File(path, "w") as f:
         h = f.create_group("Header")
-        h.attrs["NumPart_ThisFile"] = [0, 1, 0, 0, 0, 0]; h.attrs["NumPart_Total"] = [0, 1, 0, 0, 0, 0]
+        h.attrs["NumPart_ThisFile"] = [0, 0, 0, 0, 1, 0]; h.attrs["NumPart_Total"] = [0, 0, 0, 0, 1, 0]
         h.attrs["NumPart_Total_HighWord"] = [0] * 6; h.attrs["MassTable"] = [0.0] * 6
         h.attrs["Time"] = 0.0; h.attrs["Redshift"] = 0.0; h.attrs["BoxSize"] = L
         h.attrs["NumFilesPerSnapshot"] = 1; h.attrs["Omega0"] = 0.0; h.attrs["OmegaLambda"] = 0.0; h.attrs["HubbleParam"] = 1.0
         for k in ("Flag_Sfr", "Flag_Cooling", "Flag_StellarAge", "Flag_Metals", "Flag_Feedback"): h.attrs[k] = 0
-        g = f.create_group("PartType1")
+        g = f.create_group("PartType4")
         g["Coordinates"] = x; g["Velocities"] = np.array([[1.5, 1.1, 0.7]]); g["Masses"] = np.array([M / 1e10])
         g["ParticleIDs"] = np.array([1], dtype=np.uint64)
 
