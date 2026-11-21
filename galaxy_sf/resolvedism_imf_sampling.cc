@@ -424,6 +424,9 @@ struct imf_grant {
     int j; imf_star_key star; double dM;
 #ifdef MAGNETIC
     double dB[3], dBPred[3], dDtB[3], ddivB;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    double dBScale;
+#endif
 #ifdef DIVBCLEANING_DEDNER
     double dPhi, dPhiPred, dDtPhi, dDtB_PhiCorr[3];
 #endif
@@ -631,6 +634,9 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
                                 g.dDtB[k] = frac * CellP[j].DtB[k]; CellP[j].DtB[k] -= g.dDtB[k];
                             }
                             g.ddivB = frac * CellP[j].divB; CellP[j].divB -= g.ddivB;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+                            g.dBScale = frac * CellP[j].PairFluxBScale; CellP[j].PairFluxBScale -= g.dBScale; /* DtB carries this factor of the pair B flux */
+#endif
 #ifdef DIVBCLEANING_DEDNER
                             g.dPhi = frac * CellP[j].Phi; CellP[j].Phi -= g.dPhi;
                             g.dPhiPred = frac * CellP[j].PhiPred; CellP[j].PhiPred -= g.dPhiPred;
@@ -728,6 +734,9 @@ static void imf_undo_failed_draws(std::vector<imf_star_key> &failed_mine)
 #ifdef MAGNETIC
         for(k = 0; k < 3; k++) {CellP[j].B[k] += g.dB[k]; CellP[j].BPred[k] += g.dBPred[k]; CellP[j].DtB[k] += g.dDtB[k];}
         CellP[j].divB += g.ddivB;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        CellP[j].PairFluxBScale += g.dBScale;
+#endif
 #ifdef DIVBCLEANING_DEDNER
         CellP[j].Phi += g.dPhi; CellP[j].PhiPred += g.dPhiPred; CellP[j].DtPhi += g.dDtPhi;
         for(k = 0; k < 3; k++) {CellP[j].DtB_PhiCorr[k] += g.dDtB_PhiCorr[k];}

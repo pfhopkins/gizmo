@@ -898,7 +898,7 @@ void hydro_final_operations_and_cleanup(void)
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}
 #endif
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
-            CellP[i].PairFluxMassRef = P[i].Mass; /* mass the rates are per unit of */
+            CellP[i].PairFluxMassRef = P[i].Mass; CellP[i].PairFluxBScale = 1; /* mass the rates are per unit of; DtB unscaled */
 #endif
 #if defined(MAGNETIC) && defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
             { /* ledger: d(E_th+E_kin+E_B)/dt of this step (Powell/Dedner terms, the -B^2/2 dV/dt the u-equation omits); booked in do_the_kick */
@@ -1200,7 +1200,7 @@ void hydro_force_initial_operations_preloop(void)
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
             CellP[i].PairFluxSumMom = {}; CellP[i].PairFluxSumEgy = 0; CellP[i].PairFluxRecvMom = {}; CellP[i].PairFluxRecvEgy = 0;
 #ifdef MAGNETIC
-            CellP[i].PairFluxSumB = {}; CellP[i].PairFluxSumBded = {}; CellP[i].PairFluxRecvB = {};
+            CellP[i].PairFluxSumB = {}; CellP[i].PairFluxSumBded = {}; CellP[i].PairFluxRecvB = {}; CellP[i].PairFluxRecvBded = {};
 #endif
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME

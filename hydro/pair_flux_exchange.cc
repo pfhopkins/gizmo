@@ -68,12 +68,12 @@ struct pairflux_req {int idx;};
 struct pairflux_rep {long long N; double w1;};
 
 static std::vector<pairflux_record> PairFluxLoopRecords; /* filled during the hydro loop */
-static pairflux_record *PairFluxRecords = NULL;           /* held from the end of the hydro pass to the opening kick (counted in MaxMemSize) */
-static long long PairFluxNRecords = 0;
+static pairflux_record *PairFluxRecords = NULL;           /* held from the end of the hydro pass to the opening kick (counted in MaxMemSize); movable, so no non-movable block may be allocated above it and kept past the opening kick */
+static long long PairFluxNRecords = 0, PairFluxCap = 0, PairFluxNSpill = 0; /* reserved capacity of the block; records that did not fit (counted) */
 static int PairFluxClosingKickExpected = 0, PairFluxRearranged = 0, PairFluxTag = 0;
 static long long PairFluxNFloor = 0, PairFluxNStar = 0; static double PairFluxEFloor = 0, PairFluxPeakMB = 0;
 static int PairFluxPath = 0; static long long PairFluxNFloorPath[5] = {0}; static double PairFluxEFloorPath[5] = {0}; /* closing, wake, opening, mass change, kick */
-static std::vector<pairflux_impulse> PairFluxSums; static std::vector<int> PairFluxSlot;
+static std::vector<pairflux_impulse> PairFluxSums;
 
 void pairflux_note_kick_floor(double de) {PairFluxNFloorPath[4]++; PairFluxEFloorPath[4] += de;}
 void pairflux_note_rearrange(void) {PairFluxRearranged = 1;}
@@ -88,21 +88,27 @@ static double pf_opening_applied(int i) /* what do_first_halfstep_kick applied t
 }
 static long long pf_step_end(int i) {return (long long)(P[i].Ti_begstep + P[i].integertime_step());}
 
-static void pf_free_records(void) {if(PairFluxRecords) {myfree_movable(PairFluxRecords); PairFluxRecords = NULL;} std::vector<pairflux_record>().swap(PairFluxLoopRecords); PairFluxNRecords = 0;}
+static void pf_free_records(void) {if(PairFluxRecords) {myfree_movable(PairFluxRecords); PairFluxRecords = NULL;} std::vector<pairflux_record>().swap(PairFluxLoopRecords); PairFluxNRecords = 0; PairFluxCap = 0;}
 static pairflux_record *pf_records(void) {return PairFluxRecords ? PairFluxRecords : PairFluxLoopRecords.data();} /* records read from a restart stay in the vector */
 
-void pairflux_begin_hydro_pass(void) {pf_free_records(); PairFluxLoopRecords.clear(); PairFluxRearranged = 0;}
+/* before the hydro loop: reserve a counted block for the records from the active cells' neighbour numbers; overflow spills */
+void pairflux_begin_hydro_pass(void)
+{
+    pf_free_records(); PairFluxLoopRecords.clear(); PairFluxRearranged = 0;
+    double est = 1024; for(int i : ActiveParticleList) {if(P[i].Type == 0) {est += DMAX(P[i].NumNgb, All.DesNumNgb);}}
+    PairFluxCap = (long long) est;
+    PairFluxRecords = (pairflux_record *) mymalloc_movable(&PairFluxRecords, "PairFluxRecords", PairFluxCap * sizeof(pairflux_record));
+}
 
-/* end of the hydro pass: move the records into GIZMO's memory budget */
+/* end of the hydro pass (the loop's transfer buffers are freed): resize the block to the records it holds, append any spill */
 void pairflux_end_hydro_pass(void)
 {
-    PairFluxNRecords = (long long) PairFluxLoopRecords.size();
-    if(PairFluxNRecords > 0)
-    {
-        PairFluxRecords = (pairflux_record *) mymalloc_movable(&PairFluxRecords, "PairFluxRecords", PairFluxNRecords * sizeof(pairflux_record));
-        memcpy(PairFluxRecords, PairFluxLoopRecords.data(), PairFluxNRecords * sizeof(pairflux_record));
-    }
-    double mb = (double)(PairFluxLoopRecords.capacity() * sizeof(pairflux_record)) / (1024.*1024.); if(mb > PairFluxPeakMB) {PairFluxPeakMB = mb;}
+    long long nb = PairFluxNRecords, ns = (long long) PairFluxLoopRecords.size(), n = nb + ns;
+    double mb = (double)((PairFluxCap + ns) * sizeof(pairflux_record)) / (1024.*1024.); if(mb > PairFluxPeakMB) {PairFluxPeakMB = mb;}
+    if(n == 0) {myfree_movable(PairFluxRecords); PairFluxRecords = NULL; PairFluxCap = 0; return;}
+    PairFluxRecords = (pairflux_record *) myrealloc_movable(PairFluxRecords, n * sizeof(pairflux_record));
+    if(ns > 0) {memcpy(PairFluxRecords + nb, PairFluxLoopRecords.data(), ns * sizeof(pairflux_record)); PairFluxNSpill += ns;}
+    PairFluxNRecords = n; PairFluxCap = n;
     std::vector<pairflux_record>().swap(PairFluxLoopRecords);
 }
 
@@ -124,7 +130,7 @@ void pairflux_record_add(int r, int r_active, int crossbin, int e_task, int e_in
 #else
     (void) B; (void) Bded;
 #endif
-    PairFluxLoopRecords.push_back(rec);
+    if(PairFluxRecords && PairFluxNRecords < PairFluxCap) {PairFluxRecords[PairFluxNRecords++] = rec;} else {PairFluxLoopRecords.push_back(rec);}
 }
 
 /* conserved-form impulse: momentum, total energy and B*V (physical); u takes dE minus the exact kinetic and magnetic
@@ -141,7 +147,7 @@ static void pairflux_apply_impulse(int i, Vec3<double> dmom, double dE, Vec3<dou
         Vec3<double> v = P[i].Vel / a, vn = v + dmom / m;
         double dKE = 0.5 * m * (vn.norm_sq() - v.norm_sq());
         P[i].Vel = vn * a; P[i].dp += dmom * a; force_raise_motion_bound(i);
-        ESTEP_BOOK(EBK_SF_TH_LOCKED, -(dE - dKE)); PairFluxNStar++;
+        ESTEP_BOOK(EBK_SF_TH_LOCKED, -(dE - dKE)); PairFluxNStar++; /* a B*V share to it has no cell to go to (counted with n_to_star) */
 #ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
         test_impulse_energy_add(dKE);
 #endif
@@ -195,16 +201,20 @@ static void pairflux_apply_impulse(int i, Vec3<double> dmom, double dE, Vec3<dou
 static void pf_add(int i, int mode, Vec3<double> mom, double egy, Vec3<double> B, Vec3<double> Bded)
 {
     if(i < 0 || i >= NumPart) {printf("HYDRO_EXACT_PAIR_FLUX_EXCHANGE: target %d outside [0,%d) on task %d\n", i, NumPart, ThisTask); endrun(97534);}
-    if((int)PairFluxSlot.size() < 3*NumPart) {PairFluxSlot.resize(3*NumPart, -1);}
-    int &s = PairFluxSlot[3*i + mode];
-    if(s < 0) {pairflux_impulse t; t.i = i; t.mode = mode; t.mom = {}; t.egy = 0; t.B = {}; t.Bded = {}; s = (int)PairFluxSums.size(); PairFluxSums.push_back(t);}
-    PairFluxSums[s].mom += mom; PairFluxSums[s].egy += egy; PairFluxSums[s].B += B; PairFluxSums[s].Bded += Bded;
+    pairflux_impulse t; t.i = i; t.mode = mode; t.mom = mom; t.egy = egy; t.B = B; t.Bded = Bded; PairFluxSums.push_back(t);
 }
 static void pf_apply_all(void)
 {
-    for(int mode : {1, 0, 2}) {for(auto &t : PairFluxSums) {if(t.mode == mode) {pairflux_apply_impulse(t.i, t.mom, t.egy, t.B, t.Bded, mode);}}}
-    for(auto &t : PairFluxSums) {PairFluxSlot[3*t.i + t.mode] = -1;}
-    PairFluxSums.clear();
+    static const int rank_of_mode[3] = {1, 0, 2}; /* conserved + predicted first, then conserved, then predicted only */
+    std::stable_sort(PairFluxSums.begin(), PairFluxSums.end(), [](const pairflux_impulse &x, const pairflux_impulse &y) {
+        return (rank_of_mode[x.mode] != rank_of_mode[y.mode]) ? (rank_of_mode[x.mode] < rank_of_mode[y.mode]) : (x.i < y.i);});
+    for(size_t k = 0; k < PairFluxSums.size();)
+    {
+        pairflux_impulse s = PairFluxSums[k]; size_t m = k + 1;
+        while(m < PairFluxSums.size() && PairFluxSums[m].i == s.i && PairFluxSums[m].mode == s.mode) {s.mom += PairFluxSums[m].mom; s.egy += PairFluxSums[m].egy; s.B += PairFluxSums[m].B; s.Bded += PairFluxSums[m].Bded; m++;}
+        pairflux_apply_impulse(s.i, s.mom, s.egy, s.B, s.Bded, s.mode); k = m;
+    }
+    std::vector<pairflux_impulse>().swap(PairFluxSums); /* not held between syncs */
 }
 
 /* sparse exchange (non-blocking consensus): send[t] goes to rank t; every rank returns with all messages addressed to it */
@@ -215,6 +225,7 @@ template<class T> static void pf_sparse_exchange(std::vector<std::vector<T>> &se
     {
         if(send[t].empty()) {continue;}
         if(t == ThisTask) {recv.insert(recv.end(), send[t].begin(), send[t].end()); from.insert(from.end(), send[t].size(), ThisTask); continue;}
+        if(send[t].size() * sizeof(T) > (size_t) 2000000000) {printf("HYDRO_EXACT_PAIR_FLUX_EXCHANGE: %zu corrections to one rank exceed one message (task %d)\n", send[t].size(), ThisTask); endrun(97537);}
         reqs.emplace_back(); MPI_Issend(send[t].data(), (int)(send[t].size() * sizeof(T)), MPI_BYTE, t, tag, MPI_COMM_WORLD, &reqs.back());
     }
     MPI_Request bar; int bar_active = 0, done = 0;
@@ -244,8 +255,11 @@ static void pf_send_evaluator_corrections(std::vector<std::vector<pairflux_corr>
 {
     std::vector<pairflux_corr> in; std::vector<int> from;
     pf_sparse_exchange(out, in, from);
-    for(auto &c : in)
+    std::vector<size_t> ord(in.size()); for(size_t k = 0; k < ord.size(); k++) {ord[k] = k;}
+    std::stable_sort(ord.begin(), ord.end(), [&from](size_t x, size_t y) {return from[x] < from[y];}); /* arrival order must not change the sums */
+    for(size_t k : ord)
     {
+        pairflux_corr &c = in[k];
         Vec3<double> mom = {c.mom[0], c.mom[1], c.mom[2]}, B = {c.B[0], c.B[1], c.B[2]}, Bd = {c.Bded[0], c.Bded[1], c.Bded[2]};
         pf_add(c.idx, c.mode, mom, c.egy, B, Bd);
     }
@@ -324,11 +338,14 @@ void pairflux_after_opening_kick(void)
     PairFluxPath = 3;
     for(int i : ActiveParticleList)
     {
-        if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].PairFluxMassRef <= 0 || P[i].Mass == CellP[i].PairFluxMassRef) {continue;}
-        double f = pf_opening_applied(i) * (1. - P[i].Mass / CellP[i].PairFluxMassRef);
+        if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].PairFluxMassRef <= 0) {continue;}
+        double w1 = pf_opening_applied(i), f = w1 * (1. - P[i].Mass / CellP[i].PairFluxMassRef);
         Vec3<double> B = {}, Bd = {};
 #ifdef MAGNETIC
-        B = CellP[i].PairFluxSumB * f; Bd = CellP[i].PairFluxSumBded * f;
+        double fb = w1 * (1. - CellP[i].PairFluxBScale); B = CellP[i].PairFluxSumB * fb; Bd = CellP[i].PairFluxSumBded * fb; /* DtB was scaled only where the mass change scaled it */
+        if(f == 0 && fb == 0) {continue;}
+#else
+        if(f == 0) {continue;}
 #endif
         pairflux_apply_impulse(i, CellP[i].PairFluxSumMom * f, CellP[i].PairFluxSumEgy * f, B, Bd, 0);
     }
@@ -342,9 +359,10 @@ void pairflux_wake_kick_correction(int i, double dt_wake, int to_pred)
     if(dt_wake == 0 || P[i].Type != 0) {return;}
     Vec3<double> B = {}, Bd = {};
 #ifdef MAGNETIC
-    B = CellP[i].PairFluxSumB * (-dt_wake); Bd = CellP[i].PairFluxSumBded * (-dt_wake);
+    B = CellP[i].PairFluxSumB * (-dt_wake * CellP[i].PairFluxBScale); Bd = CellP[i].PairFluxSumBded * (-dt_wake * CellP[i].PairFluxBScale); /* DtB carries this factor */
 #endif
-    PairFluxPath = 1; pairflux_apply_impulse(i, CellP[i].PairFluxSumMom * (-dt_wake), CellP[i].PairFluxSumEgy * (-dt_wake), B, Bd, to_pred);
+    double fm = (CellP[i].PairFluxMassRef > 0) ? P[i].Mass / CellP[i].PairFluxMassRef : 1; /* the kick applied rates per m_ref times the current mass */
+    PairFluxPath = 1; pairflux_apply_impulse(i, CellP[i].PairFluxSumMom * (-dt_wake * fm), CellP[i].PairFluxSumEgy * (-dt_wake * fm), B, Bd, to_pred);
 }
 
 /* restart: the records waiting for the opening kick (same NTask, nothing rearranges between write and read) */
@@ -382,24 +400,23 @@ void print_gas_conserved_totals(void)
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
     loc[12] = (double) PairFluxNFloor; loc[13] = PairFluxEFloor; loc[14] = (double) PairFluxNStar; loc[15] = 0;
     for(int k = 0; k < 5; k++) {loc[16+2*k] = (double) PairFluxNFloorPath[k]; loc[17+2*k] = PairFluxEFloorPath[k];}
-    loc[26] = PairFluxPeakMB; loc[27] = 0;
+    loc[26] = PairFluxPeakMB; loc[27] = (double) PairFluxNSpill;
 #endif
     for(int k = 0; k < 5; k++) {loc[28+k] = TestKickSplit[k];}
 #ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
     for(int k = 0; k < 5; k++) {loc[33+k] = TestInjected[k];}
 #endif
     MPI_Reduce(loc, glob, 26, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&loc[28], &glob[28], 10, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&loc[27], &glob[27], 11, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&loc[26], &glob[26], 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
     if(!fd)
     {
         char buf[1000]; snprintf(buf, sizeof(buf), "%s/conserved_totals.txt", All.OutputDir);
         fd = fopen(buf, "w");
-        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_to_star 0 [n,E floor: closing wake opening masschange kick] records_peak_MB_per_rank 0 [cumulative kick energy: gas hydro, gas other (gravity), gas floor, non-gas kinetic, pair-flux impulses] [added by the test hook: M Px Py Pz E] (gas, conserved variables, physical, after the sync's kicks)\n");
+        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_to_star 0 [n,E floor: closing wake opening masschange kick] records_peak_MB_per_rank records_spilled [cumulative kick energy: gas hydro, gas other (gravity), gas floor, non-gas kinetic, pair-flux impulses] [added by the test hook: M Px Py Pz E] (gas, conserved variables, physical, after the sync's kicks)\n");
     }
     fprintf(fd, "%lld %.17e", (long long) All.NumCurrentTiStep, All.Time);
-    glob[27] = 0;
     for(int k = 0; k < 38; k++) {fprintf(fd, " %.17e", glob[k]);}
     fprintf(fd, "\n"); fflush(fd);
 }

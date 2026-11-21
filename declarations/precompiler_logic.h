@@ -2086,6 +2086,9 @@
 #define HYDRO_PAIR_ONCE
 #endif
 /* every pair evaluated once from the smaller step; the other cell gets the opposite flux with the same time weights, active or not */
+#if defined(HYDRO_EXACT_PAIR_FLUX_EXCHANGE) && defined(HYDRO_PAIR_ONCE_OFF)
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE needs HYDRO_PAIR_ONCE: do not set HYDRO_PAIR_ONCE_OFF with it"
+#endif
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
 #ifndef HYDRO_PAIR_ONCE
 #define HYDRO_PAIR_ONCE

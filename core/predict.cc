@@ -225,7 +225,7 @@ void drift_particle(int i, integertime time1)
                 Vec3<double> a_recv = CellP[i].PairFluxRecvMom / P[i].Mass; CellP[i].VelPred -= a_recv * (dt_hydrokick*All.cf_atime);
                 double du_recv = CellP[i].PairFluxRecvEgy - dot(CellP[i].HydroVelRef, CellP[i].PairFluxRecvMom);
 #ifdef MAGNETIC
-                du_recv -= dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].PairFluxRecvB);
+                du_recv -= dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].PairFluxRecvB - CellP[i].PairFluxRecvBded); /* the rate charged u only for the non-Dedner part */
 #endif
                 etmp -= du_recv / P[i].Mass * dt_entr;
             }

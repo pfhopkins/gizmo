@@ -477,7 +477,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                         {
                             CellP[j].PairFluxRecvMom -= Fluxes.v; CellP[j].PairFluxRecvEgy -= Fluxes.p;
 #ifdef MAGNETIC
-                            CellP[j].PairFluxRecvB -= pf_B;
+                            CellP[j].PairFluxRecvB -= pf_B; CellP[j].PairFluxRecvBded -= pf_Bded;
 #endif
                         }
                     }
