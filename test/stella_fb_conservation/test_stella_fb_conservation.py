@@ -1,8 +1,10 @@
 """Stella feedback conservation on the production build (Config_stella_default.sh plus the isolated-feedback test hooks and
 the energy step trace): every channel deposits what it books, mass and every element close, and the death ejecta add up.
 
-One build serves all tests. Every run also checks the mass, element and energy step traces (gizmo.conservation_trace,
-bars fixed there). Units: kpc, 1e10 Msun, km/s. Boxes: n_H = 10, 1e4 K, 1 Msun cells, 16 pc, periodic.
+Built with HYDRO_EXACT_PAIR_FLUX_EXCHANGE and HYDRO_TIMESTEP_FROM_PAIR_FORCE (Uli 2026-11-21): the cross-timebin pair fluxes are
+exchanged exactly, so the energy traces test the feedback itself. Without them the default build leaves a 1-3 % time-integration
+residual after hot deposits (STL-55, STL-127); test_default_build_integration_residual records that as a strict expected
+failure. Every run also checks the mass, element and energy step traces (gizmo.conservation_trace, bars fixed there). Units: kpc, 1e10 Msun, km/s. Boxes: n_H = 10, 1e4 K, 1 Msun cells, 16 pc, periodic.
 
 test_death_ejecta_table (no run): the death ejecta the deposit uses (stellar_death_ejecta), on 1500 masses (0.9-300 Msun)
   x the table metallicities and their midpoints, with M_death = M_init - lifetime winds. For every sample
@@ -50,6 +52,8 @@ TEST_NAME = "stella_fb_conservation"
 TEST_DIR = dirname(abspath(__file__))
 REPO = abspath(join(TEST_DIR, "..", ".."))
 EXTRA_FLAGS = ("BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "GALSF_RESOLVEDISM_ISOLATED_FB_TEST", "OUTPUT_ENERGY_STEP_TRACE")
+# cross-timebin pair fluxes exchanged exactly, so the traces test the feedback itself (Uli 2026-11-21, B1 option a)
+PAIR_FLUX_FLAGS = ("HYDRO_EXACT_PAIR_FLUX_EXCHANGE", "HYDRO_TIMESTEP_FROM_PAIR_FORCE")
 BAR = 1e-12
 RUN_TIMEOUT = 5400  # s
 ZSUN = 1 - 0.7375 - 0.2485  # metal mass fraction of resolvedism_solar_massfrac (fresh starts take the composition from InitMetallicity)
@@ -87,7 +91,8 @@ def build():
     _write_config()
     cwd = os.getcwd(); os.chdir(REPO)
     try:
-        build_gizmo_for_test(TEST_NAME, post_build=lambda: link_test_driver(join(TEST_DIR, "death_ejecta_driver.cc"), join(TEST_DIR, "death_ejecta_driver")))
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=PAIR_FLUX_FLAGS,
+                             post_build=lambda: link_test_driver(join(TEST_DIR, "death_ejecta_driver.cc"), join(TEST_DIR, "death_ejecta_driver")))
         shutil.move(join(TEST_DIR, "GIZMO"), join(TEST_DIR, "GIZMO_default"))
     finally:
         os.chdir(cwd)
@@ -101,7 +106,7 @@ def build_variable_sn_energy():
     _write_config()
     cwd = os.getcwd(); os.chdir(REPO)
     try:
-        build_gizmo_for_test(TEST_NAME, extra_config_flags=("RESOLVED_ISM_VARIABLE_SN_ENERGY",))
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=PAIR_FLUX_FLAGS + ("RESOLVED_ISM_VARIABLE_SN_ENERGY",))
         shutil.move(join(TEST_DIR, "GIZMO"), join(TEST_DIR, "GIZMO_variable_sn_energy"))
     finally:
         os.chdir(cwd)
@@ -369,4 +374,31 @@ def test_sn_energies_variable(build_variable_sn_energy):
     assert set(e) == {5, 1, 2}, e
     assert e == {5: 1.0e52, 1: 5.0e50, 2: 1.0e51}, e
     rep = stages_closed(out)
+    assert rep.ok, rep.summary()
+
+
+@pytest.fixture(scope="module")
+def build_default_hydro():
+    """The production build without the pair-flux flags."""
+    if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        pytest.skip("builds GIZMO")
+    _write_config()
+    cwd = os.getcwd(); os.chdir(REPO)
+    try:
+        build_gizmo_for_test(TEST_NAME)
+        shutil.move(join(TEST_DIR, "GIZMO"), join(TEST_DIR, "GIZMO_default_hydro"))
+    finally:
+        os.chdir(cwd)
+    return join(TEST_DIR, "GIZMO_default_hydro")
+
+
+@pytest.mark.xfail(strict=True, reason="known property of the default build (STL-55, STL-127): with individual timesteps the one-sided "
+                   "cross-timebin pair fluxes leave a 1-3 % time-integration residual after hot deposits; measured at fix/fb-audit "
+                   "4748ca111 (fbfix_all10): sibling SNe 1.0e-2, AGB/Ia/ECSN box 1.7e-2, PISN box with RESOLVED_ISM_VARIABLE_SN_ENERGY "
+                   "2.3e-2, stella_fb_wakeup 2.3e-2, boundary-wind flag-on arm 2.9e-2 of E_scale against the 1e-2 bar; all close with "
+                   "HYDRO_EXACT_PAIR_FLUX_EXCHANGE + HYDRO_TIMESTEP_FROM_PAIR_FORCE. A pass means the default build changed: re-examine.")
+def test_default_build_integration_residual(build_default_hydro):
+    """The PISN, ECSN and CCSN box (fixed 1e51 each) on the default hydro: the time-integration bar of the trace."""
+    e, out, _ = sn_energy_run(build_default_hydro, "sn_energy_default_hydro")
+    rep = keep_and_check_traces(out, out)
     assert rep.ok, rep.summary()
