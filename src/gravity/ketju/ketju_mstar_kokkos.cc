@@ -6,6 +6,7 @@
 #include <cstring>
 #include <exception>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "../../declarations/allvars.h"
@@ -27,10 +28,12 @@ struct KjMstarSide {           /* kept in ketju_system::internal_state */
 std::set<KjMstarSide *> &kj_live = *new std::set<KjMstarSide *>;   /* systems to destroy before Kokkos::finalize; never destroyed */
 bool kj_kokkos_owned = false;
 
-void kj_abort(const char *msg)
+/* an integration that cannot go on: report it and request the controlled stop; the caller skips the rest of its work
+   on this region but still takes part in the state broadcast, so every rank reaches the all-task check */
+void kj_fail(const char *msg, int code)
 {
     fprintf(stderr, "KETJU MSTAR: %s\n", msg); fflush(stderr);
-    MPI_Abort(MPI_COMM_WORLD, 1);
+    endrun(code);
 }
 
 void kj_kokkos_finalize()
@@ -117,14 +120,21 @@ void kj_mstar_free_system(struct ketju_system *R)
     memset(R, 0, sizeof(*R));
 }
 
+/* the MSTAR systems hold Kokkos views: destroy them while Kokkos is still up.  Called from gizmo_kokkos_finalize; the
+   regions themselves (host data, communicators) go later, and freeing them then finds no system left to delete */
+void kj_mstar_release_device_state(void)
+{
+    for(KjMstarSide *s : kj_live) {delete s->sys; s->sys = nullptr;}
+}
+
 void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
 {
     KjMstarSide *side = kj_side(R);
     int rank = 0, size = 1;
     if(side->comm != MPI_COMM_NULL) {MPI_Comm_rank(side->comm, &rank); MPI_Comm_size(side->comm, &size);}
     const int n0 = R->num_particles, npn0 = R->num_pn_particles;
-    if(rank == 0) {
-        if(R->options->mst_algorithm != KETJU_MST_PRIM) kj_abort("only mst_algorithm = KETJU_MST_PRIM is ported");
+    if(rank == 0) do {
+        if(R->options->mst_algorithm != KETJU_MST_PRIM) {kj_fail("only mst_algorithm = KETJU_MST_PRIM is ported", 7811); break;}
         if(!side->sys) side->sys = new mstar::System(npn0, n0 - npn0); else side->sys->reset(npn0, n0 - npn0);
         mstar::System &S = *side->sys;
         S.constants.G = R->constants->G; S.constants.c = R->constants->c;
@@ -158,9 +168,9 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
         }
         for(int i = 0; i < npn0; i++) for(int k = 0; k < 3; k++) S.spin[3*i+k] = ps->spin[i][k];
         if(R->collision_radius) S.collision_radius.assign(R->collision_radius, R->collision_radius + n0);
-        bool ok = false;
-        try {ok = S.run(time_interval);} catch(const std::exception &e) {kj_abort(e.what());}
-        if(!ok) kj_abort("Exceeded options->max_step_count steps!");
+        bool ok = false; std::string why = "Exceeded options->max_step_count steps!";
+        try {ok = S.run(time_interval);} catch(const std::exception &e) {why = e.what();}
+        if(!ok) {kj_fail(why.c_str(), 7812); break;}
         /* state back; the tail slots of merged-away particles keep stale values as in the C library */
         const int n = S.num_particles, npn = S.num_pn_particles;
         R->num_particles = n; R->num_pn_particles = npn; ps->time = S.time;
@@ -204,7 +214,7 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
         R->perf->relative_energy_error = S.perf.relative_energy_error;
         R->perf->time_mst += S.perf.t_mst;
         R->perf->time_total += S.perf.t_total;
-    }
+    } while(0);
     if(size > 1) kj_bcast_state(R, n0, side->comm);
 }
 

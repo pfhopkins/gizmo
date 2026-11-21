@@ -30,6 +30,7 @@ void ketju_tree_audit_imports(void);
 void ketju_tree_audit_report(void);
 #endif
 struct ketju_member_state &ketju_member(int i);
+void kj_mstar_release_device_state(void);   /* before Kokkos::finalize (gizmo_kokkos_finalize) */
 void tree_pair_softening(int p, double *soft, double *zeta);
 void ketju_let_gather_spheres(void);
 int ketju_let_sphere_opens(int rank, double cx, double cy, double cz, double len);
