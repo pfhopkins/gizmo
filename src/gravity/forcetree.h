@@ -27,6 +27,9 @@
 #define BITFLAG_MULTIPLEPARTICLES          7
 #define BITFLAG_NODEHASBEENKICKED          8
 #define BITFLAG_INSIDE_LINKINGLENGTH       9
+#define BITFLAG_SUBTREE_NOT_IMPORTED       10  /* another rank's top leaf whose owner shipped nothing because no target here would open it:
+                                                  the replicated copy is used as a truncated aggregate (grav_classify_node).  Set or cleared
+                                                  for every foreign top leaf at each build by let_finalize_unredirected_foreign_topleaves. */
 
 /* Which particle TYPES are present below a node, one bit per type, packed into the spare high
  * bits of the same bitflags word the topology flags use.  Stored shifted so it cannot collide
