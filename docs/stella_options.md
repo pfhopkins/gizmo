@@ -189,6 +189,11 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
 
 ## Feedback audit 2026-11-17: changes that affect runs
 
+- **Feedback tests.** test/stella_fb_conservation, stella_fb_wakeup and stella_fb_boundary_wind build with
+  HYDRO_EXACT_PAIR_FLUX_EXCHANGE and HYDRO_TIMESTEP_FROM_PAIR_FORCE (Uli 2026-11-21), so their energy traces test the feedback,
+  not the cross-timebin integration error; the default build's 1-3 % residual after hot deposits is a recorded strict expected
+  failure (test_default_build_integration_residual; STL-55, STL-127).
+
 - **Restart files.** The restart layout changed: the element ledger (CumulElemToGas, CumulElemFromStars) is written after
   the metal ledger, the metal-ledger accumulators are long double, and every particle carries FB_DepositedP, FB_DepositedZ and,
   with Type Ia, FB_KernelMass. Restart files
