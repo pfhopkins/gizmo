@@ -604,11 +604,7 @@ gpu_grav_open_inputs_init(const gpu_grav_walk_ctx_t &ctx, int target,
     open.alive = 1;
     const int ptype = open.ptype;
 
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
     double soft = gpu_force_softening_kernel_radius(P_dev, target);
-#else
-    double soft = All.ForceSoftening[ptype];
-#endif
     /* zeta is set unconditionally (matches CPU walk); passed to the shared pair kernel,
      * consumed there only under #if AGS */
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
