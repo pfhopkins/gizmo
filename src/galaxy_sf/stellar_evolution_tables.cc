@@ -196,6 +196,9 @@ static MPI_Win stbl_win = MPI_WIN_NULL;
 
 /* the two broadcasts below send the plain-data head of the struct and the double arrays after the pointers as blocks */
 static_assert(offsetof(struct StellarEvolutionTables, v_wind) < offsetof(struct StellarEvolutionTables, elem_ej_SN_mass), "table struct layout");
+#if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
+static_assert(offsetof(struct StellarEvolutionTables, logR_cm) > offsetof(struct StellarEvolutionTables, v_wind), "table struct layout: logR_cm is a per-rank pointer, outside the broadcast block");
+#endif
 static_assert(offsetof(struct StellarEvolutionTables, elem_ej_AGB_mass) == offsetof(struct StellarEvolutionTables, elem_ej_SN_mass) + sizeof(StellarTbl.elem_ej_SN_mass), "table struct layout");
 static_assert(offsetof(struct StellarEvolutionTables, type_ia_yields) == offsetof(struct StellarEvolutionTables, elem_ej_AGB_mass) + sizeof(StellarTbl.elem_ej_AGB_mass), "table struct layout");
 

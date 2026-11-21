@@ -43,12 +43,15 @@ struct StellarEvolutionTables {
     double t_PMS[STBL_NZ * STBL_NM];   /* pre-main-sequence duration (feedback delay) [yr] */
 #if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
     double t_MS_start[STBL_NZ * STBL_NM], t_MS_end[STBL_NZ * STBL_NM]; /* table age of the main sequence [yr] */
-    float *logR_cm;                                                    /* log10 stellar radius [cm], node-shared */
 #endif
-    /* [NZ * NM * NAGE], node-shared */
+    /* [NZ * NM * NAGE], node-shared.  Pointers into each rank's own mapping of the node segment: all of them from
+       v_wind on, since the plain data above is broadcast from rank 0 as one block that ends at v_wind */
     float *v_wind, *log_L_LW, *log_L_FUV_total, *log_L_FUV_M1, *log_L_NUV, *log_L_OPT_NIR, *log_L_bol, *log_Q_ion, *log_L_ion_tot, *log_L_ion_H0, *log_L_ion_He0, *log_L_ion_He1, *log_L_ion_He2;
 #ifdef TREECOL_SHELLS_ION_HELIUM
     float *log_Q_ion_H0; /* 13.6-24.6 eV photons */
+#endif
+#if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
+    float *logR_cm;      /* log10 stellar radius [cm] */
 #endif
     /* [NZ * NM * NAGE * NELEM], node-shared */
     float *surface_abundances, *elem_ej_wind_cumulative; /* mass fraction; cumulative wind ejecta [Msun] */
