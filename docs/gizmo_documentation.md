@@ -4441,7 +4441,7 @@ Newer versions of the code include a wide range of additional flags in the heade
     Build_Info = host, user, branch and commit of the build (the commit is followed by -tracked-dirty if tracked source files had uncommitted changes)
     Compiler_Version = the compiler that built the code
     Executable_FNV1a64, Executable_Size_In_Bytes = 64-bit hash and size of the executable that wrote the file (to check whether two runs used the same build; an identity check, not a security hash)
-    Gravitational_Constant_In_Code_Units = gravity constant G in code units (written as Gravitational_Constant_In_Code_Inits before 2026-11)
+    Gravitational_Constant_In_Code_Units = gravity constant G in code units
     
     Minimum_Mass_For_Cell_Merge = minimum mass below which cells are merged
     Maximum_Mass_For_Cell_Split = maximum mass above which cells are split
