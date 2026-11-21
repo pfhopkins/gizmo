@@ -194,7 +194,10 @@ static void hermite_ghost_table_build(void)
     int n_local = (int) mine.size();
     std::vector<int> &counts = HermiteGhostCounts, &displs = HermiteGhostDispls;
     counts.resize(NTask); displs.resize(NTask);
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allgather");
     MPI_Allgather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    }
     int n_tot = 0;
     for(int t = 0; t < NTask; t++) {displs[t] = n_tot * esz; n_tot += counts[t]; counts[t] *= esz;}
     if(n_tot == 0) {return;}
@@ -203,7 +206,10 @@ static void hermite_ghost_table_build(void)
         const int capacity = n_tot + n_tot / 2;   /* headroom, so a run that keeps forming sinks does not regrow at each new count */
         struct hermite_ghost_entry *grown = (struct hermite_ghost_entry *) gpu_tree_alloc_bytes((size_t) capacity * esz, "hermite_ghost_table");
         int ok = (grown != NULL), all_ok = 0;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&ok, &all_ok, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        }
         if(!all_ok)   /* every rank stops here together, rather than one rank missing the exchange below */
         {
             if(grown) {gpu_tree_free_bytes(grown);}
@@ -214,7 +220,10 @@ static void hermite_ghost_table_build(void)
     }
     std::vector<struct hermite_ghost_entry> &gathered = HermiteGhostGathered;
     gathered.resize(n_tot);
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allgatherv");
     MPI_Allgatherv(mine.data(), n_local * esz, MPI_BYTE, gathered.data(), counts.data(), displs.data(), MPI_BYTE, MPI_COMM_WORLD);
+    }
     HermiteGhostTab = HermiteGhostStore;
     std::vector<int> &order = HermiteGhostOrder;
     int sorted = ((int) order.size() == n_tot);
@@ -955,8 +964,14 @@ gravity_walk_attempt:
     packet_fail[slot_exported] = 0;   /* no export round-trip remains to count */
     packet_fail[slot_nodesinlist] = N_nodesinlist;
     packet_fail[slot_numnodes] = Numnodestree;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Reduce");
     MPI_Reduce(packet_fail, packet_fail_sum, int_slots, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Reduce");
     MPI_Reduce(packet_fail, packet_fail_max, int_slots, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
+    }
     const long long n_exported = packet_fail_sum[slot_exported], nodesinlist_tot = packet_fail_sum[slot_nodesinlist];
     const int maxnumnodes = (int) packet_fail_max[slot_numnodes];
     /* The real-valued report, one sum and one maximum. The interaction total the walks recorded into GravWork
@@ -968,8 +983,14 @@ gravity_walk_attempt:
     const double timetree = timetree1 + timetree2, plb = (NumPart / ((double) All.TotNumPart)) * NTask;
     double sum_local[6] = {timetree, timetree1, timetree2, Costtotal, gravwork_new, Ewaldcount}, sum_tot[6] = {0};
     double max_local[4] = {timetree, timetree1, timetree2, plb}, max_tot[4] = {0};
+    {
+        GIZMO_TIMER_SCOPE("MPI_Reduce");
     MPI_Reduce(sum_local, sum_tot, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Reduce");
     MPI_Reduce(max_local, max_tot, 4, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    }
     const double sumt = sum_tot[0], sumt1 = sum_tot[1], sumt2 = sum_tot[2], sum_costtotal = sum_tot[3], sum_costtotal_new = sum_tot[4], ewaldtot = sum_tot[5];
     const double maxt = max_tot[0], maxt1 = max_tot[1], maxt2 = max_tot[2], plb_max = max_tot[3];
     if(ThisTask == 0)

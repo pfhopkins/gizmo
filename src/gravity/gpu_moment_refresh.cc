@@ -1160,6 +1160,7 @@ KOKKOS_INLINE_FUNCTION static void mr_writeback_node_(const struct gpu_gravity_t
 
 extern "C" void gpu_moment_writeback_to_aos(int n)
 {
+    GIZMO_TIMER_FUNCTION();   /* the host launch of the per-node kernel; the timer cannot sit inside the device function itself */
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
     if(!soa || n <= 0) {return;}
     const struct gpu_gravity_tree_soa_t soa_v = *soa;

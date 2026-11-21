@@ -159,27 +159,6 @@ int does_particle_need_to_be_split(int i)
 #endif
 }
 
-#ifdef MERGE_SPLIT_RESOLUTION_MULTIPLIER
-/*! Factor by which the target mass is lowered at distance r_pc (parsecs) from the nearest refinement centre, so that a run started from an IC
- *  that was itself resolved MERGE_SPLIT_RESOLUTION_MULTIPLIER times more finely (every particle mass ~1/N) finds the particles already at the target.
- *  Outside MERGE_SPLIT_RESOLUTION_MULTIPLIER_OUTER_PC the full multiplier applies; inside MERGE_SPLIT_RESOLUTION_MULTIPLIER_INNER_PC none does
- *  (the innermost, already finest, zone is not resolved further); between them the exponent of the multiplier ramps linearly in log radius. */
-static double merge_split_resolution_multiplier_at_radius(double r_pc)
-{
-#ifndef MERGE_SPLIT_RESOLUTION_MULTIPLIER_INNER_PC
-#define MERGE_SPLIT_RESOLUTION_MULTIPLIER_INNER_PC (2.0e-3)
-#endif
-#ifndef MERGE_SPLIT_RESOLUTION_MULTIPLIER_OUTER_PC
-#define MERGE_SPLIT_RESOLUTION_MULTIPLIER_OUTER_PC (6.0e-3)
-#endif
-    const double n = MERGE_SPLIT_RESOLUTION_MULTIPLIER, r_in = MERGE_SPLIT_RESOLUTION_MULTIPLIER_INNER_PC, r_out = MERGE_SPLIT_RESOLUTION_MULTIPLIER_OUTER_PC;
-    if(!(n > 0.) || !(r_pc > 0.) || !isfinite(r_pc)) {return 1.;}
-    if(r_pc >= r_out) {return n;}
-    if(r_pc <= r_in) {return 1.;}
-    return pow(n, log(r_pc / r_in) / log(r_out / r_in));
-}
-#endif
-
 /*! A multiplicative factor that determines the target mass of a particle for the (de)refinement routines; split_key tells you if this is for a split (1) or merge (0) */
 double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
 {
@@ -256,7 +235,16 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES < 4)
         f0minfac = DMAX(f0minfac , 0.005); // may need to be further lowered later
         minimum_refinement_mass_in_solar = 1.e-9;
+#ifdef FIF_CAAR_RESOLUTION_LEVEL
+        /* Problem-specific (forged-in-FIRE CAAR scaling series), fitted to the radial gas-mass profiles of the ICs at levels 1..128: the innermost,
+         * already finest zone keeps its level-1 mass (the inner decline f0minfac*f0 is untouched); the plateau and the outer rise are lowered by
+         * LEVEL^p, with p = 1.12 out to 0.5 pc and falling log-linearly to 0.55 at 40 pc, where the ICs are refined less than in proportion; and
+         * the target mass is 1/3.0 of the generic one, the level-1 amplitude of the ICs. */
+        f0 = DMIN(DMAX(1.,f0) / pow((double)(FIF_CAAR_RESOLUTION_LEVEL), 1.12 - 0.57 * DMIN(DMAX(log(r_pc / 0.5) / log(80.), 0.), 1.)), f0minfac*f0);
+        mcrit_0 /= 3.0; m_ref_mJ /= 3.0;
+#else
         f0 = DMIN(DMAX(1.,f0), f0minfac*f0);
+#endif
 #else
         f0minfac = DMAX(f0minfac , 0.015); // may need to be further lowered later
         f0 = DMIN(DMAX(DMAX(1.,f0),1./m_ref_mJ), f0minfac*f0);
@@ -271,9 +259,6 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
         ref_factor = DMAX(M_min_absolute / normal_median_mass, DMIN( M_target / normal_median_mass , 0.1/(normal_median_mass*UNIT_MASS_IN_SOLAR)));
 #else
         ref_factor = DMAX(M_min_absolute / normal_median_mass, DMIN( M_target / normal_median_mass , 1));
-#endif
-#ifdef MERGE_SPLIT_RESOLUTION_MULTIPLIER
-        ref_factor /= merge_split_resolution_multiplier_at_radius(r_pc);
 #endif
         return ref_factor;
     }

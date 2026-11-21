@@ -1854,9 +1854,18 @@ int domain_decompose(void)
 
     /* update adaptive weights for next decomposition based on current imbalance */
     if(ThisTask == 0) {domain_update_adaptive_weights();}
+    {
+        GIZMO_TIMER_SCOPE("MPI_Bcast");
     MPI_Bcast(&All.DomainFacWork, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Bcast");
     MPI_Bcast(&All.DomainFacLoad, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Bcast");
     MPI_Bcast(&All.DomainFacWorkGas, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    }
 
     /* flag the particles that need to be exported */
 

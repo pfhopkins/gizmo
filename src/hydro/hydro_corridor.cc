@@ -304,7 +304,10 @@ static void corridor_refresh(const char *stage, bool values_current)
      * down by an intervening loop's own ghost lifecycle, epoch mismatch, or
      * a refresh-guard failure — falls CLOSED to the full path below. */
     int same_pool = (ghost_pool_is_live() && ghost_provenance_epoch() == g_corridor_pool_epoch) ? 1 : 0;
-    MPI_Allreduce(MPI_IN_PLACE, &same_pool, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);   /* both paths are collective */
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
+        MPI_Allreduce(MPI_IN_PLACE, &same_pool, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);   /* both paths are collective */
+    }
     if(same_pool && values_current) {return;}
     if(same_pool) {
         int refresh_rc = ghost_refresh_values();

@@ -179,7 +179,10 @@ void sumup_large_ints(int n, int *src, long long *res)
 {
     GIZMO_TIMER_FUNCTION();
   for(int j = 0; j < n; j++) {res[j] = src[j];}   /* widened in place: nothing is allocated before the collective */
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(MPI_IN_PLACE, res, n, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+  }
 }
 
 void sumup_longs(int n, long long *src, long long *res)   /* src may be res */
@@ -273,7 +276,10 @@ double mpi_report_comittable_memory(long long BaseMem, int verbose)
     for(imem = 0; imem < 6; imem++)
     {
         sizelist = (long long *) malloc(NTask * sizeof(long long));
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allgather");
         MPI_Allgather(&Mem[imem], sizeof(long long), MPI_BYTE, sizelist, sizeof(long long), MPI_BYTE, MPI_COMM_WORLD);
+        }
         
         for(i = 1, mintask[imem] = 0, maxtask[imem] = 0, maxsize[imem] = minsize[imem] =
             sizelist[0], avgsize[imem] = sizelist[0]; i < NTask; i++)

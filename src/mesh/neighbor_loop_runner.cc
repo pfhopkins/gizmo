@@ -1681,7 +1681,10 @@ static void mode_b_remote_evaluate_into_buffer(
          * draining. */
         int ndone_flag = (cursor >= N) ? 1 : 0;
         {
+            {
+                GIZMO_TIMER_SCOPE("MPI_Allreduce");
             MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            }
         }
     } while(ndone < NTask);
 
@@ -3296,7 +3299,10 @@ static ModeDAdmission mode_d_admit(ModeDCallLease *lease, long long num_active, 
         if(status == GX_TOP_LEAF_MAP_MALFORMED) {map_wellformed = 0; why = "its top-leaf map does not describe the tree"; ok = 0;}
     }
     int local[5] = {ok, tree_ok, staging_ok, map_granted, map_wellformed}, all[5] = {0, 0, 0, 0, 0};
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(local, all, 5, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    }
     if(!all[4]) {
         /* Every rank is here, in step.  Nothing of Mode D is held across the stop, which drains at once. */
         lease->release();
@@ -3439,8 +3445,14 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
         const int local_act = args.num_active;
         const long long local_act_64 = local_act;
         long long sum_act = 0; int max_act = 0;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        }
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        }
         global_num_active = sum_act;
         selected_mode = nlr_select_mode<Spec>(sum_act, max_act);
         select_mode_b = (selected_mode == NlrMode::B);
@@ -3449,7 +3461,10 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
          * return below still needs the global count, so it is done here. */
         const long long local_act_64 = args.num_active;
         long long sum_act = 0;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        }
         global_num_active = sum_act;
     }
     /* Globally-zero-active call: do NO neighbor work. global_num_active is the
@@ -6026,7 +6041,10 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
         a_begin = a_end;
         /* the round's end: everyone done, or a stop raised anywhere */
         int local[2] = {(a_begin >= N && locals_done) ? 1 : 0, (stop_code || anomaly_round) ? 0 : 1}, all[2] = {0, 0};
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(local, all, 2, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        }
         if(!all[1]) {stop = 1; L.stopped = 1; break;}
         if(all[0]) {break;}
     }
@@ -6970,8 +6988,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         path = DispatchPath::ModeA_GPU_NGL;
     } else if (force_mode == NlrForceMode::B) {
         const long long local_act_64 = args.num_active;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&local_act_64, &global_active_sum, 1,
                       MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        }
         path = DispatchPath::ModeB_HostWalker;
     } else {
         /* Threshold dispatch: Allreduce sum + max of base args.num_active
@@ -6979,8 +7000,14 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         const int local_act = args.num_active;
         const long long local_act_64 = local_act;
         long long sum_act = 0; int max_act = 0;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        }
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        }
         global_active_sum = sum_act;
         const NlrMode mode = nlr_select_mode<Spec>(sum_act, max_act);
         path = (mode == NlrMode::B) ? DispatchPath::ModeB_HostWalker : DispatchPath::ModeA_GPU_NGL;
@@ -7209,7 +7236,10 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
              * collectives below (a lone asserting rank would otherwise desync). */
             int global_partition_bad = local_partition_bad;
             if (NTask > 1) {
+                {
+                    GIZMO_TIMER_SCOPE("MPI_Allreduce");
                 MPI_Allreduce(&local_partition_bad, &global_partition_bad, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                }
             }
             if (global_partition_bad) {
                 endrun(90001020);
@@ -7256,8 +7286,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             }
             int global_needs_rebuild = local_needs_rebuild;
             if (NTask > 1) {
+                {
+                    GIZMO_TIMER_SCOPE("MPI_Allreduce");
                 MPI_Allreduce(&local_needs_rebuild, &global_needs_rebuild, 1,
                               MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                }
             }
             if (global_needs_rebuild) {
                 drv.rebuild_mode_a_arena_and_ctx_for_current_active_union();
@@ -7422,15 +7455,24 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         int busiest_rank_actives = drv.local_active_total, agreed_stop_code = iteration_stop_code;
         if (NTask > 1 && path == DispatchPath::ModeD_DeviceFused && args.num_subgroups == 1) {
             long long mine[3] = {drv.local_active_per_sg[0], drv.local_active_per_sg[0], iteration_stop_code}, all[3] = {0, 0, 0};
+            {
+                GIZMO_TIMER_SCOPE("MPI_Allreduce");
             MPI_Allreduce(mine, all, 1, nlr_count_triple_type(), nlr_count_triple_op(), MPI_COMM_WORLD);
+            }
             drv.global_active_per_sg[0] = all[0]; busiest_rank_actives = (int) all[1]; agreed_stop_code = (int) all[2];
         } else if (NTask > 1) {
+            {
+                GIZMO_TIMER_SCOPE("MPI_Allreduce");
             MPI_Allreduce(drv.local_active_per_sg.data(),
                           drv.global_active_per_sg.data(),
                           args.num_subgroups, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            }
             if (path == DispatchPath::ModeD_DeviceFused) {
                 int mine2[2] = {drv.local_active_total, iteration_stop_code}, all2[2] = {0, 0};
+                {
+                    GIZMO_TIMER_SCOPE("MPI_Allreduce");
                 MPI_Allreduce(mine2, all2, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                }
                 busiest_rank_actives = all2[0]; agreed_stop_code = all2[1];
             }
         } else {

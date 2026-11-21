@@ -1282,9 +1282,12 @@ static void force_exchange_pseudodata_post(int blocking)
         if(blocking) {MPI_Allgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE, &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD);}
         else
         {
+            {
+                GIZMO_TIMER_SCOPE("MPI_Iallgatherv_post");
             MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
                             &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
                             &pseudo_requests_pending[m]);
+            }
         }
     }
 }
