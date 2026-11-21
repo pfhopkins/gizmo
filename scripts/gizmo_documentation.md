@@ -3381,7 +3381,7 @@ Newer versions of the code include a wide range of additional flags in the heade
     UnitVelocity_In_CGS = user-specified unit velocity in cgs (from parameterfile)
     UnitLength_In_CGS = user-specified unit length in cgs (from parameterfile)
     Internal_UnitB_In_Gauss = internal code B-units (not what is in the snapshot, but useful to check if desired setup is actually done, if MAGNETIC on) 
-    Gravitational_Constant_In_Code_Inits = gravity constant G in code units
+    Gravitational_Constant_In_Code_Units = gravity constant G in code units (written as Gravitational_Constant_In_Code_Inits before 2026-11)
     
     Minimum_Mass_For_Cell_Merge = minimum mass below which cells are merged
     Maximum_Mass_For_Cell_Split = maximum mass above which cells are split
