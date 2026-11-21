@@ -51,7 +51,10 @@ def test_no_adaptive_star_softening_in_single_star_tests():
 def test_every_building_test_has_a_tracked_config():
     """bar: every test directory whose tests build through the helpers with their own name has its Config.sh in git (a build
     named after another test's module, mod.TEST_NAME, uses that test's file)"""
-    tracked = set(subprocess.run(["git", "ls-files", "test/*/Config.sh"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.split())
+    r = subprocess.run(["git", "ls-files", "test/*/Config.sh"], cwd=ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        pytest.skip("not a git checkout (an exported tree): run this check in the repository")
+    tracked = set(r.stdout.split())
     missing = []
     for d in sorted(p for p in (ROOT / "test").iterdir() if p.is_dir() and p != Path(__file__).resolve().parent):
         args = [a.strip() for f in d.glob("test_*.py") for a in BUILDS.findall(f.read_text(errors="ignore"))]
