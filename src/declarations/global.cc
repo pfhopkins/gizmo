@@ -61,6 +61,20 @@ void compute_global_quantities_of_system(void)
         vel += P[i].GravPM * dt_gravkick_pm;
 #endif
         
+#ifdef GENERAL_RELATIVITY
+        if(P[i].Type == 0)
+        {
+            /* GR: the kinetic energy m h (W - 1), with m the conserved rest mass and W the Lorentz factor seen by the Eulerian observer:
+               the relativistic kinetic energy of the flow including the enthalpy it carries, which tends to (1/2) m v^2 for slow flows and is
+               m (W - 1) for a test particle */
+            const struct gr_metric *gr = &(CellP[i].gr);
+            double h = 1 + CellP[i].InternalEnergy + CellP[i].Pressure/gr_get_primitive_density(CellP[i].Density, P[i].Vel, gr, gr->limiter);
+            Vec3<double> vphys = Vphys(P[i].Vel, gr);
+            double W = lorentz_factor(gr->gamma, vphys, gr->limiter), v2 = gr->gamma.quad(vphys);
+            sys.EnergyKinComp[P[i].Type] += P[i].Mass * h * (W*W*v2/(W + 1.)); /* W - 1 = W^2 v^2/(W + 1), without the cancellation for slow flows */
+        }
+        else
+#endif
         sys.EnergyKinComp[P[i].Type] += 0.5 * P[i].Mass * vel.norm_sq() / a2;
         if(P[i].Type == 0) {egyspec = entr; sys.EnergyIntComp[0] += P[i].Mass * egyspec;}
         

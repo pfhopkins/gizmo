@@ -162,6 +162,10 @@ void begrun(void)
   set_units();
   set_cosmo_factors_for_current_time();
   All.Time = All.TimeBegin;
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC<0)
+  gr_load_metric_table(); /* the tabulated metric into shared memory (the pointer travels with the All mirror) */
+  if(gizmo_poll_controlled_stop()) return; /* a bad or missing table stops here, before any metric is evaluated */
+#endif
 
   gizmo_gpu_sync_all();  /* sync All to GPU managed copies before any EOS/cooling calls */
 
@@ -342,6 +346,11 @@ void begrun(void)
 				   Note:  All.PartAllocFactor is treated in restart() separately.
 				 */
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC<0)
+      /* the restart file holds the previous run's table address, size and file name: keep the table loaded above */
+      All.GR_MetricTable = all.GR_MetricTable; All.GR_MetricTableN = all.GR_MetricTableN; All.GR_MetricTableLog = all.GR_MetricTableLog;
+      strcpy(All.GR_MetricTableFile, all.GR_MetricTableFile);
+#endif
       /* P[].wakeup is serialized; the flag that gates process_wake_ups on it is not. Force one pass so the
          requests that came back are serviced, instead of resuming with the gate shut over them. */
       NeedToWakeupParticles_local = 1;
@@ -671,8 +680,13 @@ void begrun(void)
     int i;
     for(i = 0; i < NumPart; i++)
     {
+#ifdef GENERAL_RELATIVITY
+      P[i].Pos[2] = P[i].GravAccel[2] = 0; /* GR: the z-velocity is kept: it is part of the state, since it enters the Lorentz factor */
+      if(P[i].Type == 0) {CellP[i].HydroAccel[2] = 0;}
+#else
       P[i].Pos[2] = P[i].Vel[2] = P[i].GravAccel[2] = 0;
       if(P[i].Type == 0) {CellP[i].VelPred[2] = CellP[i].HydroAccel[2] = 0;}
+#endif
     }
 #endif
 #endif
@@ -741,6 +755,26 @@ void begrun(void)
  */
 void set_units(void)
 {
+#ifdef GENERAL_RELATIVITY
+  /* GR: geometric units, G = c = 1. The mass unit M_u is UnitMass_in_g (as usual divided by HubbleParam); the velocity unit is c and the
+     length unit the gravitational radius G M_u/c^2 (time unit G M_u/c^3), so that every module working in cgs (cooling, radiation, tabulated
+     equations of state) is consistent with the GR equations. UnitLength_in_cm, UnitVelocity_in_cm_per_s and GravityConstantInternal from the
+     parameter file are overridden. */
+  {
+      const double M_u = UNIT_MASS_IN_CGS, L_par = UNIT_LENGTH_IN_CGS, V_par = UNIT_VEL_IN_CGS, G_par = All.G;
+      All.UnitVelocity_in_cm_per_s = C_LIGHT_CGS;
+      All.UnitLength_in_cm = GRAVITY_G_CGS * M_u / (C_LIGHT_CGS*C_LIGHT_CGS) * All.HubbleParam;
+      All.G = 1;
+      if(ThisTask == 0)
+      {
+          printf("\nGR: geometric units (G = c = 1) from the mass unit UnitMass_in_g = %g g = %g M_sun: length unit G M_u/c^2 = %g cm, time unit G M_u/c^3 = %g s\n",
+                 M_u, M_u/SOLAR_MASS_CGS, UNIT_LENGTH_IN_CGS, UNIT_TIME_IN_CGS);
+          if(fabs(L_par/UNIT_LENGTH_IN_CGS - 1) > 1e-6 || fabs(V_par/UNIT_VEL_IN_CGS - 1) > 1e-6 || (G_par > 0 && fabs(G_par - 1) > 1e-6))
+          {printf("GR: WARNING: the parameter file sets UnitLength_in_cm = %g, UnitVelocity_in_cm_per_s = %g, GravityConstantInternal = %g: overridden by the geometric units above\n",
+                  L_par*All.HubbleParam, V_par, G_par);}
+      }
+  }
+#endif
   /* convert some physical input parameters to internal units */
   if(All.G <= 0) {All.G = GRAVITY_G_CGS * UNIT_MASS_IN_CGS / (UNIT_LENGTH_IN_CGS * UNIT_VEL_IN_CGS*UNIT_VEL_IN_CGS);}
 #ifdef GR_TABULATED_COSMOLOGY_G
@@ -2757,6 +2791,21 @@ void read_parameter_file(char *fname)
 #endif
 
 
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC==1)
+      strcpy(tag[nt], "GR_Mass");
+      addr[nt] = All.MetricParams;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "GR_Spin");
+      addr[nt] = All.MetricParams+1;
+      id[nt++] = REAL;
+#endif
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC<0)
+      strcpy(tag[nt], "GR_MetricTableFile");
+      addr[nt] = All.GR_MetricTableFile;
+      id[nt++] = STRING;
+#endif
+
 #ifdef MAGNETIC
 #ifdef MHD_B_SET_IN_PARAMS
       strcpy(tag[nt], "BiniX");
@@ -3802,6 +3851,10 @@ void read_parameter_file(char *fname)
 
     All.CourantFac = 0.4;
     All.ErrTolIntAccuracy = 0.02;
+#ifdef GENERAL_RELATIVITY /* the more conservative defaults of Lupi (2023) */
+    All.CourantFac = 0.2;
+    All.ErrTolIntAccuracy = 0.01;
+#endif
     All.ErrTolTheta = 0.7;
     All.ErrTolForceAcc = 0.0025;
     All.MaxRMSDisplacementFac = 0.25;
@@ -3887,7 +3940,7 @@ void read_parameter_file(char *fname)
     if(All.MaxNumNgbDeviation > 0.05) {All.MaxNumNgbDeviation = 0.05;}
 #endif
     
-#if defined(MAGNETIC) || defined(HYDRO_MESHLESS_FINITE_VOLUME) || defined(SINK_WIND_SPAWN)
+#if defined(MAGNETIC) || defined(HYDRO_MESHLESS_FINITE_VOLUME) || defined(SINK_WIND_SPAWN) || defined(GENERAL_RELATIVITY)
     if(All.CourantFac > 0.2) {All.CourantFac = 0.2;}
     /* (PFH) safety factor needed for MHD calc, because people keep using the same CFac as hydro! */
 #endif

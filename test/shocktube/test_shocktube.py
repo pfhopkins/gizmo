@@ -9,33 +9,20 @@ import numpy as np
 from scipy.interpolate import interp1d
 from matplotlib import pyplot as plt
 import h5py
-from os import chdir
-from os.path import isfile
-from urllib.request import urlretrieve
-from gizmo.test import build_gizmo_for_test, run_test, download_test_files, clean_test_outputs, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot
+from glob import glob
+from gizmo.test import (build_and_run_test, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot,
+                        variant_output_dir, variant_suffix, gas_conservation_errors)
 
 
-WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
-
-
+# Config.sh = meshless finite-mass (MFM); Config_mfv.sh = the same problem with meshless finite-volume (MFV)
+@pytest.mark.parametrize("config_file", ("Config.sh", "Config_mfv.sh"))
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=4),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-def test_shocktube(num_mpi_ranks, num_omp_threads):
+def test_shocktube(num_mpi_ranks, num_omp_threads, config_file):
     test_name = "shocktube"
-    clean_test_outputs(test_name)
-    build_gizmo_for_test(test_name, num_omp_threads)
-    chdir(f"test/{test_name}/")
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, config_file=config_file)
 
-    # Download ICs (non-standard name) and exact solution
-    for f in ("shocktube_ics_emass.hdf5", "shocktube_exact.txt"):
-        if not isfile(f):
-            urlretrieve(WEBSITE + f, f)
-
-    run_test(test_name, num_mpi_ranks, num_omp_threads)
-    chdir("../../")
-
-    outputdir = f"test/{test_name}/output"
-    final_snap = get_final_snapshot(test_name)
+    final_snap = get_final_snapshot(test_name, config_file=config_file)
     assert_final_time(final_snap, test_name)
 
     # Load simulation data
@@ -78,9 +65,20 @@ def test_shocktube(num_mpi_ranks, num_omp_threads):
         plt.xlabel("x")
         plt.ylabel(label)
         plt.legend()
-        plt.savefig(f"test/{test_name}/{label}.png")
+        plt.savefig(f"test/{test_name}/{label}{variant_suffix(config_file=config_file)}.png")
         plt.close()
 
     assert L1_rho < 0.05, f"Density L1 error {L1_rho:.4f} exceeds tolerance"
     assert L1_vel < 0.1, f"Velocity L1 error {L1_vel:.4f} exceeds tolerance"
     assert L1_u < 0.1, f"Internal energy L1 error {L1_u:.4f} exceeds tolerance"
+
+    # Conservation, first snapshot against last (periodic box, no gravity: mass, momentum and energy are all conserved).
+    # Energy changes only at time-integration accuracy (~1e-6 here); an MFV that loses energy at its faces showed ~6e-5.
+    first_snap = sorted(glob(f"{variant_output_dir(test_name, config_file=config_file)}/snapshot_*.hdf5"))[0]
+    err = gas_conservation_errors(first_snap, final_snap)
+    assert err["energy"] < 1e-5, f"Total energy changed by {err['energy']:.3e} (relative)"
+    assert err["momentum"] < 1e-10, f"Total momentum changed by {err['momentum']:.3e} (in units of sqrt(2 M E))"
+    # MFM masses are constant, so their sum is exact. Under MFV the snapshot masses are predicted between kicks
+    # (the conserved mass is not written out), so their sum is not checked.
+    if config_file == "Config.sh":
+        assert err["mass"] < 1e-12, f"Total mass changed by {err['mass']:.3e} (relative)"

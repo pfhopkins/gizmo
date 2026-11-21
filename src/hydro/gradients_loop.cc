@@ -85,6 +85,15 @@ void local_slopelimiter(double *grad, double valmax, double valmin, double alim,
         f_corr_overshoot = DMIN(abs_min + shoot_tol * abs_max, abs_max);
         cfac *= f_corr_overshoot;
         if(pos_preserve == 1) {
+#ifdef GENERAL_RELATIVITY
+            /* GR: positivity over a fraction SLOPE_LIMITER_POSITIVITY_RANGE_FAC (default 0.5, as in Lupi 2023) of the maximum
+               neighbour distance d_max (Newtonian builds use the full d_max). fmin is at most half the smallest neighbour value (valmin is a
+               difference from val_cen). Over the full d_max the pressure step over-limits smooth stratified profiles: a TOV star develops an
+               inward density wave (outer layers drain, the core contracts); at 0.5 the wave is only slowed (outer shell at 0.7 of its initial
+               density after t=20), while at 0.25 the poorly resolved surface of a low-resolution TOV star launches a noise front that crosses
+               the star in ~7 t_dyn. The pairwise face limiter of reconstruct_face_states keeps the face states positive. */
+            d_max *= SLOPE_LIMITER_POSITIVITY_RANGE_FAC;
+#endif
             double fmin = DMIN(val_cen, DMAX(0, DMAX(MIN_REAL_NUMBER * val_cen,
                                                     DMIN(0.5 * (val_cen + valmin),
                                                          val_cen - f_corr_overshoot))));
@@ -253,8 +262,15 @@ void GradientsSpec::apply_active_writeback(const neighbor_loop_args& args,
         MIN_ADD(passer[i].Minima.Density,  out->Minima.Density,  0);
         MAX_ADD(passer[i].Maxima.Pressure, out->Maxima.Pressure, 0);
         MIN_ADD(passer[i].Minima.Pressure, out->Minima.Pressure, 0);
+#ifdef GENERAL_RELATIVITY
+        MAX_ADD(passer[i].Maxima.RestMassDensity, out->Maxima.RestMassDensity, 0);
+        MIN_ADD(passer[i].Minima.RestMassDensity, out->Minima.RestMassDensity, 0);
+#endif
         for(k = 0; k < 3; k++) {
             ASSIGN_ADD_PRESET(CellP[i].Gradients.Density[k],  out->Gradients[k].Density,  0);
+#ifdef GENERAL_RELATIVITY
+            ASSIGN_ADD_PRESET(CellP[i].Gradients.RestMassDensity[k], out->Gradients[k].RestMassDensity, 0);
+#endif
             ASSIGN_ADD_PRESET(CellP[i].Gradients.Pressure[k], out->Gradients[k].Pressure, 0);
         }
 #ifdef DOGRAD_INTERNAL_ENERGY
@@ -541,6 +557,9 @@ void hydro_gradient_calc(void)
         CellP[i].Gradients.Density  = {};
         CellP[i].Gradients.Pressure = {};
         CellP[i].Gradients.Velocity = {};
+#ifdef GENERAL_RELATIVITY
+        CellP[i].Gradients.RestMassDensity = {};
+#endif
 #ifdef DOGRAD_INTERNAL_ENERGY
         CellP[i].Gradients.InternalEnergy = {};
 #endif
@@ -835,6 +854,9 @@ void hydro_gradient_calc(void)
         if(P[i].Type != 0) continue;
         int k, k1;
         construct_gradient(CellP[i].Gradients.Density, i);
+#ifdef GENERAL_RELATIVITY
+        construct_gradient(CellP[i].Gradients.RestMassDensity, i);
+#endif
         construct_gradient(CellP[i].Gradients.Pressure, i);
         for(k = 0; k < 3; k++) { construct_gradient(CellP[i].Gradients.Velocity[k], i); }
 #ifdef TURB_DIFF_DYNAMIC
@@ -1072,6 +1094,10 @@ void hydro_gradient_calc(void)
 
 #if (SINGLE_STAR_SINK_FORMATION & 4)
             CellP[i].Density_Relative_Maximum_in_Kernel = passer_base[i].Maxima.Density;
+#endif
+#ifdef GENERAL_RELATIVITY
+            local_slopelimiter(CellP[i].Gradients.RestMassDensity, passer_base[i].Maxima.RestMassDensity, passer_base[i].Minima.RestMassDensity,
+                               a_limiter, h_lim, 0., 1, d_max, gr_get_primitive_density(CellP[i].Density, CellP[i].VelPred, &(CellP[i].gr), CellP[i].gr.limiter));
 #endif
             local_slopelimiter(CellP[i].Gradients.Density, passer_base[i].Maxima.Density, passer_base[i].Minima.Density,
                                a_limiter, h_lim, 0, 1, d_max, CellP[i].Density);

@@ -789,6 +789,9 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
         {
             csnd = 0.5 * CellP[p].MaxSignalVel ;
             double L_particle = P[p].Get_Particle_Size();
+            /* GR: MaxSignalVel is measured by the Eulerian observer, L is a coordinate length and dt a coordinate time. A consistent
+               coordinate form would allow a step larger by sqrt(gamma_nn)/alpha (x2 at the Kerr-Schild horizon); that was too large near
+               the horizon (Bondi failed), so this mixed form is kept on purpose as a safety margin in strongly curved regions. */
             double courant_fac = All.CourantFac;
 #ifdef EOS_ELASTIC
 #ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
@@ -801,6 +804,31 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
             if(P[p].ID == All.SpawnedWindCellID) {dt_courant *= 0.5;} // be more careful if this is a spawned-in gas cell
 #endif
             if(dt_courant < dt) dt = dt_courant;
+#ifdef GENERAL_RELATIVITY
+            {
+                /* (the C/C++ GR code also limited the change of the conserved energy tau per step to 10% of tau: removed, since with the Courant limit
+                   and the limit below it binds only in a handful of cell-steps and no test changes without it) */
+                const struct gr_metric *gr = &(CellP[p].gr);
+                Vec3<double> vphys = Vphys(P[p].Vel, gr);
+                double rho = gr_get_primitive_density(CellP[p].Density, P[p].Vel, gr, gr->limiter);
+                double hstar = 1.0 + CellP[p].InternalEnergy + CellP[p].Pressure/rho;
+                double Wl = lorentz_factor(gr->gamma, vphys, gr->limiter);
+                /* (not in the C/C++ GR code) where the internal energy is a small part of the energy of the cell (fast or cold
+                   flows), the inversion amplifies the error of the conserved variables in u by ~ tau/(rho0 u): the conserved update of the first-order
+                   sub-steps (the half-kicks and the drift prediction) then drains u until no positive u exists for the given D, S_j (tau < tau_min).
+                   The limit below bounds that error. */
+                /* energy consistency of the first-order sub-steps: the conserved variables are advanced linearly, so the kinetic energy recovered
+                   from S + dS exceeds the work v.dS by ~ (1/2) rho0 h* W^3 dv^2 (W^3 along v), which the inversion takes from the internal energy;
+                   with dv = |a| dt (a = the coordinate dv/dt of the last kick) this is at most GR_TIMESTEP_ENERGY_FRAC of rho0 u.
+                   Not applied where the inversion of a kick found no admissible u (tau < tau_min) and kept the previous one (gr_kick_impl): that u carries
+                   no information, and a limit ~ sqrt(u) would shrink the step without bound while a drain of u goes on.
+                   Not applied to test particles (GR_TEST_PARTICLE: geodesics, no hydro; their u is a placeholder) */
+#ifndef GR_TEST_PARTICLE
+                if((ac > MIN_REAL_NUMBER) && (CellP[p].InternalEnergy > 0) && (CellP[p].InversionKeptU == 0))
+                    {dt = DMIN(dt, sqrt(2.*GR_TIMESTEP_ENERGY_FRAC*CellP[p].InternalEnergy/(hstar*Wl*Wl*Wl))/ac);}
+#endif
+            }
+#endif
 #ifdef EOS_ELASTIC
             if(solid_material_is_elastic(CellP[p].CompositionType) && CellP[p].ElasticFiniteVolumeTimestep > 0) /* the solids' finite-volume step limit (constants.h) */
             {

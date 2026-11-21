@@ -92,6 +92,38 @@
 #endif
 #endif
 
+/* ----- general relativity (gr/gr.h): Lupi 2023 (GR hydro). The metric is prescribed (no self-gravity) ----- */
+#ifdef GENERAL_RELATIVITY
+#ifdef MAGNETIC
+#error "GENERAL_RELATIVITY is hydrodynamics only in this version: GR MHD is not available"
+#endif
+#if defined(HYDRO_DENSITY_SPH) || defined(HYDRO_PRESSURE_SPH)
+#error "GENERAL_RELATIVITY does not work with the SPH solvers"
+#endif
+#ifndef GR_METRIC
+#define GR_METRIC (1)                 /* default: Kerr (Schwarzschild for GR_Spin=0) */
+#endif
+#if ((GENERAL_RELATIVITY != 0) && (GENERAL_RELATIVITY != 1)) || (GR_METRIC > 1)
+#error "GENERAL_RELATIVITY must be 0 (HLL) or 1 (HLLC), and GR_METRIC 0 (Minkowski), 1 (Kerr) or negative (tabulated)"
+#endif
+#ifndef SELFGRAVITY_OFF
+#define SELFGRAVITY_OFF               /* the metric is prescribed: no Newtonian self-gravity */
+#endif
+#if (GR_METRIC==1)
+#ifndef GR_METRIC_USE_BOYER_LINDQUIST
+#define GR_METRIC_USE_KERR_SCHILD    /* Kerr-Schild coordinates by default for a single black hole */
+#endif
+#endif
+#if (GR_METRIC>0)
+#ifndef PARTICLE_EXCISION
+#define PARTICLE_EXCISION             /* the cells inside GR_EXCISION_RADIUS horizon radii are removed */
+#endif
+#ifndef GR_EXCISION_RADIUS
+#define GR_EXCISION_RADIUS (2.1)      /* in units of the horizon radius */
+#endif
+#endif
+#endif
+
 /* define the default mesh-motion assumption, if this is not provided by the user */
 #if !defined(HYDRO_FIX_MESH_MOTION)
 #if defined(HYDRO_REGULAR_GRID)
@@ -1121,6 +1153,11 @@
 #define EOS_GENERAL /*! needs to be on for this to work */
 #endif
 #endif
+/* GR assumes an ideal gas with the constant adiabatic index GAMMA_DEFAULT (EOS_GAMMA) everywhere: inversion (h = 1 + Gamma u), pressure,
+   sound speed, Riemann solvers and the drift re-inversion */
+#if defined(GENERAL_RELATIVITY) && defined(EOS_GENERAL)
+#error "GENERAL_RELATIVITY assumes an ideal gas with a constant adiabatic index (EOS_GAMMA): it does not work with the general equations of state (EOS_GENERAL)"
+#endif
 #define GAMMA_DEFAULT (EOS_GAMMA)
 
 
@@ -1752,6 +1789,10 @@
 #else
 #define SINK_FOLLOW_ACCRETED_ANGMOM 1 // follow accreted AM from 'swallowed' BH particles, and from continuous/smooth properties [mdot] of kernel gas near BH
 #endif
+#endif
+
+#if defined(GENERAL_RELATIVITY) && !defined(GR_DRIFT_LEGACY) && !defined(GR_DRIFT_HOLD_INTERNAL_ENERGY)
+#define GR_DRIFT_HOLD_INTERNAL_ENERGY /* GR: the drift holds D, S_j and u fixed and recomputes W and tau at the new metric (default); GR_DRIFT_LEGACY restores the drift of Lupi (2023) */
 #endif
 
 #ifdef MAGNETIC /* recommended MHD switches -- only turn these off for de-bugging */

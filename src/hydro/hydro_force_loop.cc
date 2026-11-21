@@ -307,6 +307,9 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 
     CellP[i].HydroAccel       += out->Acc;
     CellP[i].DtInternalEnergy += out->DtInternalEnergy;
+#ifdef GENERAL_RELATIVITY
+    CellP[i].DtVolume += out->DtVolume;
+#endif
 #if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
     CellP[i].DtInternalEnergy_FromConduction += out->DtInternalEnergy_FromConduction;
 #endif

@@ -8,6 +8,10 @@
 #include "../solids/jutzi_crush_curve.h"
 #endif
 
+#ifdef GENERAL_RELATIVITY
+#include "../gr/gr_functions.h" /* device-callable GR physics: the cell methods below use the rest-mass density and the relativistic sound speed */
+#endif
+
 /* the following struture holds data that is stored for each fluid cell in addition to the collisionless variables.
    On Kokkos builds, the struct and its inline member functions must be device-compilable
    since they are called from within the GPU-offloaded cooling loop. */
@@ -171,6 +175,9 @@ extern struct gas_cell_data
         Vec3<MyDouble> Density;
         Vec3<MyDouble> Pressure;
         Mat3<MyDouble> Velocity;
+#ifdef GENERAL_RELATIVITY
+        Vec3<MyDouble> RestMassDensity;
+#endif
 #ifdef MAGNETIC
         Mat3<MyDouble> B;
 #ifdef DIVBCLEANING_DEDNER
@@ -208,6 +215,13 @@ extern struct gas_cell_data
     Vec3<MyDouble> NV_T_face_weights; /*!< weighted first moments sum(wk*dp[k]); used for face area estimation */
     MyDouble ConditionNumber;   /*!< condition number of the gradient matrix: needed to ensure stability */
     MyDouble FaceClosureError;      /*!< dimensionless measure of face closure */
+#ifdef GENERAL_RELATIVITY
+    struct gr_metric gr;            /*!< metric coefficients at the cell position */
+    MyDouble DtEnergy;              /*!< rate of change of the conserved energy (tau) from the hydro step */
+    Vec3<MyDouble> DtMomentum;      /*!< rate of change of the conserved momentum (S_j) from the hydro step */
+    MyDouble DtVolume;              /*!< rate of change of the volume from the hydro step */
+    int InversionKeptU;             /*!< 1 if the inversion of a kick of the current step found no admissible u and kept the previous one (gr_kick_impl) */
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     MyDouble MaxKineticEnergyNgb;   /*!< maximum kinetic energy (with respect to neighbors): use for entropy 'switch' */
 #endif
@@ -640,6 +654,9 @@ extern struct gas_cell_data
 #endif
 
     GIZMO_GPU_FUNCTION inline double density_for_energy() const { /*!< density used in energy equations (accounts for SPH pressure formulation) */
+#ifdef GENERAL_RELATIVITY
+        return gr_get_primitive_density(Density, VelPred, &gr, gr.limiter); /* GR: the rest-mass density */
+#endif
 #ifdef HYDRO_PRESSURE_SPH
         return EgyWtDensity;
 #endif
@@ -738,12 +755,18 @@ extern struct gas_cell_data
         double g = gamma_eos_value(); return g * (g-1.) * u;
     }
     GIZMO_GPU_FUNCTION inline double thermal_soundspeed() const { /*!< thermal sound speed */
+#ifdef GENERAL_RELATIVITY
+        return gr_sound_speed(gamma_eos_value(), Pressure, density_for_energy(), InternalEnergyPred); /* relativistic: c_s^2 = Gamma P/(rho0 h) */
+#else
         return sqrt(soundspeed2_from_u(InternalEnergyPred));
+#endif
     }
 
     GIZMO_GPU_FUNCTION inline double effective_soundspeed() const { /*!< effective soundspeed including non-thermal contributions */
 #ifdef EOS_GENERAL
         return SoundSpeed;
+#elif defined(GENERAL_RELATIVITY)
+        return thermal_soundspeed();
 #else
         double rho_for_soundspeed = density_for_energy(); /* pressure scales with density, so P/rho keeps a finite limit as rho->0: evaluate that limit rather than forming 0/0 */
         if(rho_for_soundspeed > 0) {return sqrt(gamma_eos_value() * Pressure / rho_for_soundspeed);}

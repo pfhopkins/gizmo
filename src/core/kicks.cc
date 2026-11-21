@@ -6,6 +6,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "timestep_functions.h" /* apply_special_boundary_conditions_P */
+#ifdef GENERAL_RELATIVITY
+#include "../gr/gr_kick_functions.h" /* gr_kick_impl */
+#endif
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h" /* gpu_sidx_notify_owned_changed */
 #include <vector>
@@ -343,11 +346,25 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             grav_acc += P[i].GravPM * All.cf_a2inv;
 #endif
 
+#ifdef GENERAL_RELATIVITY
+            {
+                /* GR: update the conserved variables (fluxes from the hydro loop + metric source terms) and convert the result back into
+                   rates of change of the primitive velocity and specific internal energy (HydroAccel, DtInternalEnergy), applied below */
+                /* the masses before and after this half-kick are those of the mass update above (MFV: MassTrue before and after the
+                   limited dMass; MFM: P.Mass), so that D = mass/V in the inversion is the mass the cell actually has, whatever the limiter
+                   or the remainder of dMass do) */
+                gr_kick_impl(i, dt_hydrokick, mass_old, mass_new, mode, P, CellP);
+            }
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             /* calculate the contribution to the energy change from the mass fluxes in the gravitation field */
             dEnt_Gravity += dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
+#ifdef GENERAL_RELATIVITY
+            double du_tot = mass_pred/mass_new*CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity; /* the GR kick rate is defined with this mass_pred/mass_new factor */
+#else
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
+#endif
 #ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
             { /* physical E_B = |VB_code|^2 (rho/m)_code / (2a) */
                 double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0;

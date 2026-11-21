@@ -81,6 +81,9 @@ void hydro_accumulate_neighbor(
 
     if((r2 >= kernel.h_i * kernel.h_i) && (r2 >= kernel.h_j * kernel.h_j)) return;
     if(r2 <= 0) return;
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+    if(gr_pair_crosses_excised_hole(local.Pos, kernel.h_i, kernel.dp, kernel.h_j)) return; /* a black hole lies between i and j */
+#endif
 
     kernel.r = sqrt(r2);
     double rinv = 1.0 / kernel.r;
@@ -88,9 +91,25 @@ void hydro_accumulate_neighbor(
 
     Vec3<MyDouble> VelPred_j = CellP[j].VelPred;
     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos, P[j].Pos, VelPred_j, -1);
+#ifdef GENERAL_RELATIVITY
+    /* GR: Eulerian velocity of j, its spatial four-velocity W*v (reconstructed in the core) and the coordinate velocity of its mesh-generating point */
+    struct hydro_gr_pair_j grj;
+    const struct gr_metric *gr_j = &(CellP[j].gr);
+    grj.gr_limiter_j = gr_j->limiter;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    grj.VelCoord_j = CellP[j].ParticleVel;
+#else
+    grj.VelCoord_j = CellP[j].VelPred;
+#endif
+    VelPred_j = Vphys(VelPred_j, gr_j);
+    {double Wlorentz_j = lorentz_factor(gr_j->gamma, VelPred_j, grj.gr_limiter_j); grj.FourVelocity_j = Wlorentz_j*VelPred_j;} /* (the velocity is limited in place where required) */
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     Vec3<MyDouble> ParticleVel_j = CellP[j].ParticleVel; /* the mesh-generating point of j, as for i */
     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos, P[j].Pos, ParticleVel_j, -1);
+#ifdef GENERAL_RELATIVITY
+    ParticleVel_j = Vphys(ParticleVel_j, gr_j);
+#endif
 #endif
     kernel.dv = local.Vel - VelPred_j;
     kernel.rho_ij_inv = 2.0 / (local.Density + CellP[j].Density);
@@ -197,7 +216,24 @@ void hydro_accumulate_neighbor(
 
     /* relative velocity along separation vector + hubble correction */
     kernel.vdotr2 = dot(kernel.dp, kernel.dv);
+#ifdef GENERAL_RELATIVITY
+    { /* relativistic composition of the approach velocity */
+        double vstar_i = dot(kernel.dp, local.Vel)*rinv, vstar_j = dot(kernel.dp, VelPred_j)*rinv;
+        kernel.vdotr2 *= 1./(1. - vstar_i*vstar_j);
+    }
+#endif
     if(All.ComovingIntegrationOn) {kernel.vdotr2 += All.cf_hubble_a2 * r2;}
+#ifdef GENERAL_RELATIVITY
+    {
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
+        double fac_appvel = 6;
+#else
+        double fac_appvel = 2;
+#endif
+        kernel.vsig += fac_appvel * fac_mu * fabs(kernel.vdotr2) * rinv;
+        kernel.vsig /= (1. + 0.25*(kernel.sound_i + kernel.sound_j)*fabs(kernel.vdotr2)*rinv);
+    }
+#else
     if(kernel.vdotr2 < 0)
     {
 #if defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME)
@@ -206,6 +242,7 @@ void hydro_accumulate_neighbor(
         kernel.vsig -= fac_mu * kernel.vdotr2 * rinv;
 #endif
     }
+#endif
 
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     double KE = kernel.dv.norm_sq();
@@ -259,7 +296,11 @@ void hydro_accumulate_neighbor(
         particle_vel_j_for_core = ParticleVel_j;
 #endif
         hydro_core_meshless_compute_pair(local, j, P, CellP, VelPred_j, particle_vel_j_for_core,
-                                         BPred_j, PhiPred_j, kernel, rinv, r2, V_i, V_j,
+                                         BPred_j, PhiPred_j,
+#ifdef GENERAL_RELATIVITY
+                                         grj,
+#endif
+                                         kernel, rinv, r2, V_i, V_j,
                                          Particle_Size_i, Particle_Size_j, cnumcrit2,
                                          fac_magnetic_pressure, tensile_correction_factor,
                                          epsilon_entropic_eos_big, epsilon_entropic_eos_small,
@@ -406,6 +447,18 @@ void hydro_accumulate_neighbor(
 #endif
     out.Acc += Fluxes.v;
     out.DtInternalEnergy += Fluxes.p;
+#if defined(GENERAL_RELATIVITY) && !defined(FREEZE_HYDRO)
+    {
+        /* the volume variation from the Riemann problems: the drift predicts the density and kernel radius of GR cells with it, and the
+           kick/predict use it for the volume that multiplies the conserved variables (with an ideal gas the inversion depends only on S/D
+           and tau/D, so the volume leaves the kicked primitives unchanged) */
+        double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel + face_vel_i);
+#ifdef HYDRO_MESHLESS_FINITE_MASS
+        wt_face_sum = ((Riemann_out.P_M > 0) && !isnan(Riemann_out.P_M)) ? Face_Area_Norm * (-Riemann_out.S_M + face_vel_i) : 0; /* the face moves with the contact; none on a face without a valid solution */
+#endif
+        out.DtVolume += wt_face_sum;
+    }
+#endif
 #ifdef MAGNETIC
 #ifndef HYDRO_SPH
     out.Face_Area += Face_Area_Vec;

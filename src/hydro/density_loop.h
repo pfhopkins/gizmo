@@ -1178,6 +1178,10 @@ struct DensitySpec {
         const double h  = (double)i_active.h_search;
         const double h2 = h * h;
         if (r2 >= h2) return;
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+        {Vec3<double> pos_i = {(double)i_active.pos[0], (double)i_active.pos[1], (double)i_active.pos[2]};
+         if(gr_pair_crosses_excised_hole(pos_i, h, dp, (double)Pj.KernelRadius)) return;} /* a black hole lies between i and j */
+#endif
 
         /* Kernel evaluation (legacy line 200-204). */
         const double r = sqrt(r2);

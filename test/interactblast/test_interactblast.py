@@ -10,7 +10,9 @@ from scipy.interpolate import interp1d
 from matplotlib import pyplot as plt
 import h5py
 
-from gizmo.test import build_and_run_test, assert_final_time, get_final_snapshot
+from glob import glob
+from gizmo.test import (build_and_run_test, assert_final_time, get_final_snapshot, variant_output_dir, variant_suffix,
+                        gas_conservation_errors)
 
 
 # 2x1, not the node-scaled default. This is a 1D problem with 512 particles: on a 96-core node
@@ -18,13 +20,15 @@ from gizmo.test import build_and_run_test, assert_final_time, get_final_snapshot
 # than work and the neighbour search imports almost everything. Measured that way it manages
 # 10% of the run in 90 minutes -- ~15 hours total, and it skipped the full-suite sweep twice on
 # the 5400s cap. Wider parallelism buys nothing here: there is no work to divide.
+# Config.sh = meshless finite-mass (MFM); Config_mfv.sh = the same problem with meshless finite-volume (MFV)
+@pytest.mark.parametrize("config_file", ("Config.sh", "Config_mfv.sh"))
 @pytest.mark.parametrize("num_mpi_ranks", (2,))
 @pytest.mark.parametrize("num_omp_threads", (1,))
-def test_interactblast(num_mpi_ranks, num_omp_threads):
+def test_interactblast(num_mpi_ranks, num_omp_threads, config_file):
     test_name = "interactblast"
-    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, config_file=config_file)
 
-    final_snap = get_final_snapshot(test_name)
+    final_snap = get_final_snapshot(test_name, config_file=config_file)
     assert_final_time(final_snap, test_name)
 
     # Load simulation data
@@ -59,8 +63,19 @@ def test_interactblast(num_mpi_ranks, num_omp_threads):
         plt.xlabel("x")
         plt.ylabel(label)
         plt.legend()
-        plt.savefig(f"test/{test_name}/{label}.png")
+        plt.savefig(f"test/{test_name}/{label}{variant_suffix(config_file=config_file)}.png")
         plt.close()
 
     assert L1_rho < 0.1, f"Density L1 error {L1_rho:.4f} exceeds tolerance"
     assert L1_vel < 0.15, f"Velocity L1 error {L1_vel:.4f} exceeds tolerance"
+
+    # Energy conservation, first snapshot against last. The reflecting walls exert forces, so momentum is not
+    # conserved here. Energy changes only at time-integration accuracy (~1e-4 to 1e-3 for these strong shocks); a
+    # scheme that loses energy at its faces shows tens of percent on this problem.
+    first_snap = sorted(glob(f"{variant_output_dir(test_name, config_file=config_file)}/snapshot_*.hdf5"))[0]
+    err = gas_conservation_errors(first_snap, final_snap)
+    assert err["energy"] < 1e-2, f"Total energy changed by {err['energy']:.3e} (relative)"
+    # MFM masses are constant, so their sum is exact. Under MFV the snapshot masses are predicted between kicks
+    # (the conserved mass is not written out), so their sum is not checked.
+    if config_file == "Config.sh":
+        assert err["mass"] < 1e-12, f"Total mass changed by {err['mass']:.3e} (relative)"
