@@ -240,12 +240,12 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
          * already finest zone keeps its level-1 mass (the inner decline f0minfac*f0 is untouched); the plateau and the outer rise are lowered by
          * LEVEL^p, with p = 1.12 out to 0.5 pc and falling log-linearly to 0.55 at 40 pc, where the ICs are refined less than in proportion; the
          * IC masses fall linearly with radius below 1.9e-5 pc (the generic target is flat there), so the target is lowered by r/1.9e-5 and the
-         * absolute floor on the target mass is dropped to 1e-13; and the target mass is 1/2.4 of the generic one. Used with
-         * MERGE_SPLIT_HARDCODE_MIN_MASS=(0.25e3), MAX=(2.e3): evaluated on the radial mass histograms of the ICs this leaves < 0.02% of the
-         * gas outside the merge/split band at levels 1, 8 and 128. */
+         * absolute floor on the target mass is dropped to 1e-13; and the target mass is 1/3.0 of the generic one. With the
+         * normal merge/split band (MERGE_SPLIT_HARDCODE_MIN_MASS=(0.5e3), MAX=(2.e3)) the IC masses at each radius fill the whole band, so
+         * evaluated on 0.05-dex radial mass histograms of the ICs at levels 1..128 the gas outside the band is 0.0-1.7% above and 1.1-8.8% below. */
         f0 = DMIN(DMAX(1.,f0) / pow((double)(FIF_CAAR_RESOLUTION_LEVEL), 1.12 - 0.57 * DMIN(DMAX(log(r_pc / 0.5) / log(80.), 0.), 1.)), f0minfac*f0);
         f0 *= DMIN(1., r_pc / 1.9e-5);
-        mcrit_0 /= 2.4; m_ref_mJ /= 2.4;
+        mcrit_0 /= 3.0; m_ref_mJ /= 3.0;
         minimum_refinement_mass_in_solar = 1.e-13;
 #else
         f0 = DMIN(DMAX(1.,f0), f0minfac*f0);
