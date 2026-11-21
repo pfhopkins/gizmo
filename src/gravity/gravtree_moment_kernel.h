@@ -495,7 +495,8 @@ KOKKOS_INLINE_FUNCTION static void moment_accum_zero(const moment_node_ref<AccT>
      * that have since left the node and defeat the recomputation. */
     *r.bitflags = saved_bitflags & ((1u << BITFLAG_TOPLEVEL) |
                                      (1u << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT) |
-                                     (1u << BITFLAG_INTERNAL_TOPLEVEL));
+                                     (1u << BITFLAG_INTERNAL_TOPLEVEL) |
+                                     (1u << BITFLAG_SUBTREE_NOT_IMPORTED));   /* import state, set at install: a moment refresh keeps it */
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     *r.gasmass = (AccT) 0;
 #endif

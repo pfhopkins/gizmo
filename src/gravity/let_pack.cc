@@ -2029,25 +2029,15 @@ extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
         int last_child_wire_idx  = -1;
         int child = subtree_root;
 #ifndef SUBFIND
-        /* A multi-particle top leaf that no target in R's cover would open needs none of its children on R: ship the
-           top leaf itself, multipole-only and tagged truncated, as the whole subtree.  R's walk decides on its own copy
-           of the top leaf first and accepts it, exactly as it would with the children present.  If that copy has gone
-           stale enough to be opened, the walk meets this record instead of the children; opening the record too means
-           the import is short and is repaired, as at any other truncated node.  Safe for the gravity walks, which
-           either accept the multipole or repair; not done with SUBFIND, whose potential walk opens by its own test and
-           uses a truncated node as it finds it, so there every top leaf keeps its children. */
-        if((Nodes[topleaf_no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)) && !let_topleaf_essential(pk, topleaf_no))
-        {
-            const int w0 = count;
-            pack_recurse(pk, topleaf_no, sib_term, topleaf_no, out_buf, &count, out_capacity);
-            if(pk->pack_oom) goto pack_oom_bail;
-            if(count > w0)
-            {
-                first_child_wire_idx = last_child_wire_idx = w0;
-                (*out_buf)[w0].node.u.d.bitflags &= ~((1u << BITFLAG_TOPLEVEL) | (1u << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT));   /* a foreign copy, not part of R's top tree */
-            }
-            child = sib_term;   /* nothing else ships at this level */
-        }
+        /* A multi-particle top leaf that no target in R's cover would open needs none of its children on R, and R
+           already holds the top leaf itself, with this rank's moments, from the top-leaf moment exchange: ship nothing.
+           R's copy keeps its pseudo-particle as first child and is marked at install (BITFLAG_SUBTREE_NOT_IMPORTED), which every
+           gravity walk on R reads as a truncated aggregate (grav_classify_node): the copy is used where it stands, exactly as it would be with the children
+           present, and a walk that opens it -- the copy having gone stale since this build -- records the import as
+           short and is repaired, as at any other truncated node.  Not done with SUBFIND, whose potential walk opens by
+           its own test and uses a truncated node as it finds it, so there every top leaf keeps its children. */
+        if((Nodes[topleaf_no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)) && Nodes[topleaf_no].u.d.mass > 0
+           && !let_topleaf_essential(pk, topleaf_no)) {continue;}   /* a massless top leaf with particles still ships, so R's check at install sees it redirected, as before */
 #endif
         while(child != sib_term && child >= 0)
         {
@@ -3245,11 +3235,19 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
  *       (RT/CR/sink/etc. ride on real particles, of which there are none),
  *       so opening it contributes exactly nothing: rewrite nextnode := sibling
  *       (AoS + SoA) so the walk skips it instead of hitting the pseudo.
+ *   (3) not shipped because no target here would open it (not in SUBFIND
+ *       builds) -- still pointing into the pseudo range, a multi-particle
+ *       topleaf with consistent moments (mass > 0 AND N_part > 0).  Left on the
+ *       pseudo and marked BITFLAG_SUBTREE_NOT_IMPORTED: the gravity walks read
+ *       it as a truncated aggregate (grav_classify_node), and one that opens it records a repairable
+ *       import shortfall.  A subtree the walk needed and the owner failed to
+ *       ship is therefore caught there, by the repair and, if it persists,
+ *       the "still needed after the rebuild" stop.
  *
- * Anything else -- a topleaf still pointing into the pseudo range that is not
- * provably empty by BOTH measures -- is a LET correctness failure: the CPU
- * gravity export path has been retired, so the LET MUST supply every non-empty
- * foreign subtree.  Abort loudly with full context.
+ * Anything else -- a topleaf still pointing into the pseudo range that fits
+ * none of these (a single-particle topleaf, inconsistent moments, or any
+ * non-empty one in a SUBFIND build) -- is a LET correctness failure: the CPU
+ * gravity export path has been retired.  Abort loudly with full context.
  *
  * mass is the physics criterion; N_part is the structural-invariant guard --
  * a topleaf with N_part>0 must never be silently skipped even if its gravity
@@ -3279,6 +3277,13 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
                    t, DomainTask[t], no, All.TreeNodeIndexBase, All.TreeNodeIndexBase + MaxNodes);
             fflush(stdout); endrun(90000063); continue; /* soft bad-stop + skip this topleaf before the Nodes[no] deref; drains at gravtree:after_treebuild before the walk */
         }
+        /* The not-imported mark is this build's decision alone: cleared here on every foreign top leaf, set below only where
+         * the owner deliberately shipped nothing. */
+        if(Nodes[no].u.d.bitflags & (1u << BITFLAG_SUBTREE_NOT_IMPORTED))
+        {
+            Nodes[no].u.d.bitflags &= ~(1u << BITFLAG_SUBTREE_NOT_IMPORTED);
+            gpu_set_soa_bitflags(no, Nodes[no].u.d.bitflags);
+        }
         const long long nn = Nodes[no].u.d.nextnode;
         if(nn < pseudo_lo || nn >= pseudo_hi) continue;  /* already redirected */
 
@@ -3292,6 +3297,13 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
             gpu_set_soa_nextnode(no, Nodes[no].u.d.sibling);
             n_patched++;
         }
+#ifndef SUBFIND
+        else if(mass > 0.0 && npart > 0 && (Nodes[no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)))   /* case (3) */
+        {
+            Nodes[no].u.d.bitflags |= (1u << BITFLAG_SUBTREE_NOT_IMPORTED);
+            gpu_set_soa_bitflags(no, Nodes[no].u.d.bitflags);
+        }
+#endif
         else
         {
             printf("LET finalize FATAL: foreign topleaf t=%d owner_rank=%d node=%d still "

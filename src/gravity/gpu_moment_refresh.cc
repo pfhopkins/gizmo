@@ -737,10 +737,10 @@ static moment_node_accum<MyGravFloat> mr_child_accum_(const mr_scratch_t& scr, i
     return c;
 }
 
-/* Helper: zero per-node payload accumulators at slot k.  Bitflags
- * preserves the topology bits (TOPLEVEL/INTERNAL_TOPLEVEL/DEPENDS_
- * ON_LOCAL_ELEMENT) and clears the rest, matching the CPU saved_
- * bitflags mask in force_refresh_node_moments (forcetree.cc:3841). */
+/* Helper: zero per-node payload accumulators at slot k.  The shared
+ * moment_accum_zero (gravtree_moment_kernel.h) keeps the topology and
+ * import-state bits (TOPLEVEL / INTERNAL_TOPLEVEL / DEPENDS_ON_LOCAL_
+ * ELEMENT / SUBTREE_NOT_IMPORTED) and clears the rest. */
 KOKKOS_INLINE_FUNCTION
 static void mr_zero_payloads_(const mr_scratch_t& scr, int k, unsigned int saved_bitflags)
 {

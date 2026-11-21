@@ -2543,7 +2543,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                             fl_soft = (double) ForeignLeafSoft[fs];
                         }
                     }
-                    if(fl_tag != rec[irec].leaf_tag || grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode) != rec[irec].kind) {endrun(90001053);}
+                    if(fl_tag != rec[irec].leaf_tag || grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode, nop->u.d.bitflags) != rec[irec].kind) {endrun(90001053);}
                     mass = nop->u.d.mass;
 
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
@@ -2918,7 +2918,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
              * whether this node's children were shipped; both the single-particle branch just
              * below and the acceptance predicate further down consult this one answer, so no
              * path can follow nextnode on a node whose children the sender never sent. */
-            grav_node_kind_t node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+            grav_node_kind_t node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode, nop->u.d.bitflags);
             const int node_is_terminal = grav_node_is_terminal(node_kind);
             const int node_sibling = nop->u.d.sibling;
             for(int w = 0; w < mask_words; w++) {accept_mask[w] = 0; opened_mask[w] = 0;}
@@ -3313,7 +3313,7 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
                         int fs = no - (All.TreeNodeIndexBase + MaxNodes);
                         if(fs >= 0 && fs < AllocatedForeignNodes) {fl_tag = ForeignLeafTag[fs];}
                     }
-                    node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+                    node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode, nop->u.d.bitflags);
                 }
 
                 //if(nop->N_part <= 1) /* open cell */
@@ -3529,7 +3529,7 @@ int subfind_force_treeevaluate_potential(int target)
                     int fs = no - (All.TreeNodeIndexBase + MaxNodes);
                     if(fs >= 0 && fs < AllocatedForeignNodes) {fl_tag = ForeignLeafTag[fs];}
                 }
-                node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+                node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode, nop->u.d.bitflags);
             }
             if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
             {

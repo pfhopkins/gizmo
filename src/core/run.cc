@@ -160,6 +160,13 @@ void run(void)
 #endif
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+        /* The first step's single Barnes-Hut pass (accel.cc) leaves the relative criterion without a scale: OldAcc is
+           promoted from the latest walk only by a tree build, and the import is pruned against it.  So the next step
+           builds, whatever its active fraction (an all-active first step already asks for that build unless
+           TreeRebuild_ActiveFraction >= 1; under RANDOMIZE_GRAVTREE the request makes it a full decomposition). */
+        if(All.TypeOfOpeningCriterion == 1) {TreeReconstructFlag = 1;}
+#endif
     }
     else
     {

@@ -59,6 +59,9 @@ int gpu_set_soa_nextnode(int abs_idx, int new_nextnode);
  * with their AoS edits between full tree builds. */
 int gpu_set_soa_sibling(int abs_idx, int new_sibling);
 
+/* Bitflags twin of gpu_set_soa_nextnode: mirror one node's AoS bitflags word into its SoA slot. */
+int gpu_set_soa_bitflags(int abs_idx, unsigned int new_bitflags);
+
 /* Re-sum ancestor topnode moments directly in SoA after the
  * foreign pseudo data is in place (i.e. after gpu_scatter_pseudo_to_soa).
  * Recursive CPU walk of the topnode tree (all NTopnodes nodes; typically

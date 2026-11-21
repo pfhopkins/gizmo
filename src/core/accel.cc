@@ -53,7 +53,13 @@ void compute_grav_accelerations(void)
     /* For the first timestep, we redo it to allow usage of relative opening criterion for consistent accuracy.
        The estimator this seeds is refreshed only when the tree is built, and the import is pruned against it,
        so the repeat pass has to rebuild -- otherwise it walks the first pass's tree and seeds nothing. */
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+    /* Not under the hybrid criterion: it stays Barnes-Hut through the first step, so a repeat would recompute these same
+       forces.  The relative half starts at the next tree build, which promotes this pass's accelerations as its scale;
+       run() asks for that build once the first step is complete. */
+#else
     if(All.TypeOfOpeningCriterion == 1 && All.Ti_Current == 0) {TreeReconstructFlag = 1; gravity_tree();}
+#endif
   }
 
   PRINT_STATUS(" ..gravity force computation done");
