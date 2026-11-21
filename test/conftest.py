@@ -109,3 +109,34 @@ def pytest_configure(config):
     savefig._gizmo_format_patched = True
     matplotlib.figure.Figure.savefig = savefig  # covers both fig.savefig and plt.savefig (-> gcf().savefig)
     print(f"\n[gizmo-tests] figure output format: {_FIGURE_FORMAT} (.png targets retargeted)")
+
+
+# ---------------------------------------------------------------------------
+# Optional analysis modules (pyproject dependencies that a cluster python may lack): a test module that imports one at
+# top level is reported as skipped, naming the module, instead of a collection error.
+# ---------------------------------------------------------------------------
+import importlib.util
+import re
+
+_OPTIONAL_TEST_MODULES = ("meshoid", "seagen")
+
+
+class _MissingModuleTestFile(pytest.Module):
+    missing = ""
+
+    def collect(self):
+        pytest.skip(f"python module '{self.missing}' is not installed in this environment (pip install {self.missing})",
+                    allow_module_level=True)
+
+
+def pytest_pycollect_makemodule(module_path, parent):
+    try:
+        text = module_path.read_text(errors="ignore")
+    except OSError:
+        return None
+    for name in _OPTIONAL_TEST_MODULES:
+        if re.search(rf"^(from|import)\s+{name}\b", text, re.M) and importlib.util.find_spec(name) is None:
+            mod = _MissingModuleTestFile.from_parent(parent, path=module_path)
+            mod.missing = name
+            return mod
+    return None

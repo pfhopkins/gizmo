@@ -14,6 +14,8 @@ self-gravity for ~11 dynamical times.
 """
 
 import pytest
+
+pytest.importorskip("seagen", reason="generate_ics.py needs the python module seagen (pip install seagen)")
 import numpy as np
 import h5py
 import subprocess

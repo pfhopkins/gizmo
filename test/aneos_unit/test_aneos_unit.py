@@ -9,6 +9,7 @@ No GIZMO build or simulation is required — this tests the ANEOS module
 in isolation.
 """
 
+import os
 import subprocess
 import sys
 from os.path import isfile, dirname, abspath, join
@@ -20,12 +21,16 @@ def test_aneos_unit():
     exe = join(test_dir, "test_aneos_unit")
     aneos_cc = join(test_dir, "..", "..", "src", "eos", "aneos.cc")
 
-    # Compile
+    # Compile (allvars.h includes hdf5.h: its include directory from the environment the GIZMO Makefile uses)
+    hdf5_dirs = [os.path.join(os.environ[v], "include") for v in ("HDF5_HOME", "HDF5_ROOT") if os.environ.get(v)]
+    hdf5_dirs += [os.environ["TACC_HDF5_INC"]] if os.environ.get("TACC_HDF5_INC") else []
+    hdf5_include = [f"-I{d}" for d in hdf5_dirs if os.path.isdir(d)]
     result = subprocess.run(
         [
             "mpicxx", "-std=c++17", "-O2",
             "-DEOS_ANEOS", "-DGIZMO_config_H",
             "-I", join(test_dir, "..", ".."),
+            *hdf5_include,
             src, aneos_cc,
             "-o", exe, "-lm",
         ],
