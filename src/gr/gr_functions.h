@@ -196,14 +196,28 @@ KOKKOS_INLINE_FUNCTION double gr_sym4_contract(const struct gr_sym4 &A, const st
     return A.tt*B.tt + 2.*dot(A.ti, B.ti) + A.ij.double_contract(B.ij);
 }
 
+/* mass of the metric (G = c = 1), the length unit of its finite-difference derivatives: the hole mass (Kerr), the mass of the last row
+   (tabulated), 1 for Minkowski or a massless metric */
+KOKKOS_INLINE_FUNCTION double gr_metric_mass_scale(void)
+{
+#if (GR_METRIC==1)
+    double M = All.MetricParams[0];
+#elif (GR_METRIC<0)
+    double M = All.GR_MetricTable[2*All.GR_MetricTableN - 1];
+#else
+    double M = 1;
+#endif
+    return (M > 0) ? M : 1;
+}
+
 /* spatial derivatives of the 4-metric (dg[dir] = d g_{mu nu}/dx^dir), lapse and shift (dbeta[dir][j] = d beta^j/dx^dir) at pos,
-   by centred finite differences along the Cartesian directions */
+   by centred finite differences along the Cartesian directions, with the step GR_METRIC_DERIVATIVE_STEP times the mass of the metric */
 KOKKOS_INLINE_FUNCTION void compute_metric_jacobian(const Vec3<double> &pos, struct gr_sym4 dg[3], Vec3<double> &dalpha, Mat3<double> &dbeta)
 {
-    const double fac = 0.5/GR_EPS_TOLERANCE;
+    const double h = GR_METRIC_DERIVATIVE_STEP*gr_metric_mass_scale(), fac = 0.5/h;
     for(int dir = 0; dir < 3; dir++)
     {
-        Vec3<double> pH = pos, pL = pos; pH[dir] += GR_EPS_TOLERANCE; pL[dir] -= GR_EPS_TOLERANCE;
+        Vec3<double> pH = pos, pL = pos; pH[dir] += h; pL[dir] -= h;
         struct gr_sym4 gH, gL; struct gr_metric mH, mL;
         get_covariant_metric(pH, &gH); get_covariant_metric(pL, &gL);
         gr_metric_from_4metric(&gH, &mH); gr_metric_from_4metric(&gL, &mL);
