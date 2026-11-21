@@ -28,7 +28,6 @@
 /* kick/drift of the conserved variables: implicit solver tolerance and iteration cap (otherwise a predictor-corrector) */
 #define GR_IMPLICIT_TOLERANCE (1e-8)   /* convergence tolerance of the implicit iterations (drift position correction, source terms) */
 #define GR_IMPLICIT_MAX_NITER 100      /* their maximum number of iterations */
-#define GR_EPS_TOLERANCE (1e-8) /* finite-difference step (coordinate displacement) of the drift path rate */
 #define GR_METRIC_DERIVATIVE_STEP (1e-3) /* centred-difference step of the metric derivatives, in units of the mass of the metric (G = c = 1):
                                             rounding errors go as eps (r/M)^2 M/h and truncation errors as (h/L)^2 (L the local scale of the
                                             metric, >~ M), so 1e-3 M keeps the relative error below ~1e-6 out to 10^3 M (1e-5 at 10^4 M) */
