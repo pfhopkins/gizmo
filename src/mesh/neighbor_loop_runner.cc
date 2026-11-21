@@ -20,7 +20,6 @@
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
-#include "../system/timer.h"
 
 #include <mpi.h>
 #include <cstdarg>                                   /* va_list, vfprintf for nlr_warn_once_rank0 */
@@ -37,6 +36,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/lifecycle_counters.h"      /* g_global_drift_counter etc. for Mode B corridor */
 #include "../core/proto.h"
+#include "../system/timer.h"
 #include "../system/gpu_particles_arena.h"
 #include "../declarations/gpu_dispatch_templates.h"  /* gizmo_gpu_kernel_launch */
 
@@ -1681,10 +1681,7 @@ static void mode_b_remote_evaluate_into_buffer(
          * draining. */
         int ndone_flag = (cursor >= N) ? 1 : 0;
         {
-            {
-                GIZMO_TIMER_SCOPE("MPI_Allreduce");
             MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        }
         }
     } while(ndone < NTask);
 
@@ -3439,14 +3436,11 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
     NlrMode selected_mode = force_b ? NlrMode::B : NlrMode::A;
     long long global_num_active = -1;       /* -1 = not computed on this path */
     if(!force_a && !force_b) {
-        {
-            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         const int local_act = args.num_active;
         const long long local_act_64 = local_act;
         long long sum_act = 0; int max_act = 0;
         MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        }
         global_num_active = sum_act;
         selected_mode = nlr_select_mode<Spec>(sum_act, max_act);
         select_mode_b = (selected_mode == NlrMode::B);
@@ -6982,14 +6976,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     } else {
         /* Threshold dispatch: Allreduce sum + max of base args.num_active
          * (= union across subgroups). */
-        {
-            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         const int local_act = args.num_active;
         const long long local_act_64 = local_act;
         long long sum_act = 0; int max_act = 0;
         MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        }
         global_active_sum = sum_act;
         const NlrMode mode = nlr_select_mode<Spec>(sum_act, max_act);
         path = (mode == NlrMode::B) ? DispatchPath::ModeB_HostWalker : DispatchPath::ModeA_GPU_NGL;
@@ -7218,10 +7209,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
              * collectives below (a lone asserting rank would otherwise desync). */
             int global_partition_bad = local_partition_bad;
             if (NTask > 1) {
-                {
-                    GIZMO_TIMER_SCOPE("MPI_Allreduce");
                 MPI_Allreduce(&local_partition_bad, &global_partition_bad, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-            }
             }
             if (global_partition_bad) {
                 endrun(90001020);
@@ -7268,11 +7256,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             }
             int global_needs_rebuild = local_needs_rebuild;
             if (NTask > 1) {
-                {
-                    GIZMO_TIMER_SCOPE("MPI_Allreduce");
                 MPI_Allreduce(&local_needs_rebuild, &global_needs_rebuild, 1,
                               MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-            }
             }
             if (global_needs_rebuild) {
                 drv.rebuild_mode_a_arena_and_ctx_for_current_active_union();
@@ -7421,11 +7406,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                 }
             }
         }
-        }
 
         /* (c) Spec::after_iter_global — host-only, no-MPI (TRAP 7). */
         if constexpr (nlr_spec_has_after_iter_global_v<Spec>) {
-            GIZMO_TIMER_SCOPE("after_iter_global");
             Spec::after_iter_global(args, drv);
         }
 

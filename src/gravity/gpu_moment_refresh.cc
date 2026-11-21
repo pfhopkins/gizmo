@@ -1064,7 +1064,6 @@ extern "C" void gpu_moment_refresh_release(void)
 KOKKOS_INLINE_FUNCTION static void mr_writeback_node_(const struct gpu_gravity_tree_soa_t &soa, struct NODE *nodes,
                                                       struct extNODE *extnodes, int k)
 {
-    GIZMO_TIMER_FUNCTION();
     /* The host stamped every node current before this refresh (forcetree.cc, the reset
      * that mirrors the build's moment pass), and the kernel above just recomputed vmax.
      * The device walk widens a node's stored length from the time that length describes,
