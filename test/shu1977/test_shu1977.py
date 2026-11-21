@@ -47,7 +47,8 @@ def test_shu1977(num_mpi_ranks, num_omp_threads):
     # EOS_ENFORCE_ADIABAT given in different velocity units from the params file) still makes
     # exactly one sink, but accretes at that rate.
     with h5py.File(path.join(path.dirname(final_snap), "snapshot_000.hdf5"), "r") as F:
-        G = F["Header"].attrs["Gravitational_Constant_In_Code_Inits"]
+        hdr = F["Header"].attrs
+        G = hdr["Gravitational_Constant_In_Code_Units"] if "Gravitational_Constant_In_Code_Units" in hdr else hdr["Gravitational_Constant_In_Code_Inits"]   # older outputs carry the misspelt name
         x = F["PartType0/Coordinates"][:].astype(np.float64)
         m = F["PartType0/Masses"][:].astype(np.float64)
     r = np.linalg.norm(x - np.average(x, axis=0, weights=m), axis=1)
