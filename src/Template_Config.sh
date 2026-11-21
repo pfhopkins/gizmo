@@ -648,6 +648,7 @@
 #PARTICLE_EXCISION                 # enable dynamical excision (remove particles within some radius)
 #MERGE_SPLIT_HARDCODE_MAX_MASS=(1.0e-6)   # manually set maximum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
 #MERGE_SPLIT_HARDCODE_MIN_MASS=(1.0e-7)   # manually set minimum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
+#MERGE_SPLIT_RESOLUTION_MULTIPLIER=(8.0)   # with SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM: lower the target particle mass by this factor (a single number), so a run started from an IC that was resolved this many times more finely than the code's target starts with essentially no merges or splits. Applies in full outside MERGE_SPLIT_RESOLUTION_MULTIPLIER_OUTER_PC (default 6.0e-3 parsecs from the refinement centre), not at all inside MERGE_SPLIT_RESOLUTION_MULTIPLIER_INNER_PC (default 2.0e-3), ramping in between. Default (undefined) = 1
 #MHD_CONSERVE_B_ON_REFINEMENT      # redefine B after density step after a refinement/de-refinement operation so as to exactly conserve "B" between the steps, as compared to conserving the code "VB" between the steps [the default conserved integrated quantity]
 # --------------------
 # ----- Radiation-Hydrodynamics Special Options for Test Problems + Disabled or Other Special Features

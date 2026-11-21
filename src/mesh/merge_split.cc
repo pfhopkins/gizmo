@@ -159,6 +159,27 @@ int does_particle_need_to_be_split(int i)
 #endif
 }
 
+#ifdef MERGE_SPLIT_RESOLUTION_MULTIPLIER
+/*! Factor by which the target mass is lowered at distance r_pc (parsecs) from the nearest refinement centre, so that a run started from an IC
+ *  that was itself resolved MERGE_SPLIT_RESOLUTION_MULTIPLIER times more finely (every particle mass ~1/N) finds the particles already at the target.
+ *  Outside MERGE_SPLIT_RESOLUTION_MULTIPLIER_OUTER_PC the full multiplier applies; inside MERGE_SPLIT_RESOLUTION_MULTIPLIER_INNER_PC none does
+ *  (the innermost, already finest, zone is not resolved further); between them the exponent of the multiplier ramps linearly in log radius. */
+static double merge_split_resolution_multiplier_at_radius(double r_pc)
+{
+#ifndef MERGE_SPLIT_RESOLUTION_MULTIPLIER_INNER_PC
+#define MERGE_SPLIT_RESOLUTION_MULTIPLIER_INNER_PC (2.0e-3)
+#endif
+#ifndef MERGE_SPLIT_RESOLUTION_MULTIPLIER_OUTER_PC
+#define MERGE_SPLIT_RESOLUTION_MULTIPLIER_OUTER_PC (6.0e-3)
+#endif
+    const double n = MERGE_SPLIT_RESOLUTION_MULTIPLIER, r_in = MERGE_SPLIT_RESOLUTION_MULTIPLIER_INNER_PC, r_out = MERGE_SPLIT_RESOLUTION_MULTIPLIER_OUTER_PC;
+    if(!(n > 0.) || !(r_pc > 0.) || !isfinite(r_pc)) {return 1.;}
+    if(r_pc >= r_out) {return n;}
+    if(r_pc <= r_in) {return 1.;}
+    return pow(n, log(r_pc / r_in) / log(r_out / r_in));
+}
+#endif
+
 /*! A multiplicative factor that determines the target mass of a particle for the (de)refinement routines; split_key tells you if this is for a split (1) or merge (0) */
 double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
 {
@@ -250,6 +271,9 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
         ref_factor = DMAX(M_min_absolute / normal_median_mass, DMIN( M_target / normal_median_mass , 0.1/(normal_median_mass*UNIT_MASS_IN_SOLAR)));
 #else
         ref_factor = DMAX(M_min_absolute / normal_median_mass, DMIN( M_target / normal_median_mass , 1));
+#endif
+#ifdef MERGE_SPLIT_RESOLUTION_MULTIPLIER
+        ref_factor /= merge_split_resolution_multiplier_at_radius(r_pc);
 #endif
         return ref_factor;
     }
