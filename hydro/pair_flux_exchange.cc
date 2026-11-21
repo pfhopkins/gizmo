@@ -19,6 +19,38 @@ void test_kick_energy_split_add(int gas, double hydro, double floor_e, double to
 void test_impulse_energy_add(double de) {TestKickSplit[4] += de;}
 #endif
 
+#ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
+static double TestInjected[5] = {0}; /* mass, momentum, thermal + kinetic + magnetic energy added by the hook (physical) */
+/* test only: at the given step, inactive gas within 0.2 box of the centre gains half its mass at fixed velocity and u (as a
+   feedback deposit does), the additions are booked, and the cells are woken */
+void test_pairflux_add_mass_and_wake(void)
+{
+    if(All.NumCurrentTiStep != TEST_PAIRFLUX_ADD_MASS_AND_WAKE) {return;}
+    int n = 0; double a = All.cf_atime;
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type != 0 || P[i].Mass <= 0 || TimeBinActive[P[i].TimeBin]) {continue;}
+        Vec3<double> dx = P[i].Pos - Vec3<double>{0.5*All.BoxSize, 0.5*All.BoxSize, 0.5*All.BoxSize}; nearest_xyz(dx);
+        if(dx.norm() > 0.2 * All.BoxSize) {continue;}
+        double m = P[i].Mass, dM = 0.5 * m; Vec3<double> v = P[i].Vel / a;
+        double eb0 = 0;
+#ifdef MAGNETIC
+        eb0 = 0.5 * CellP[i].B.norm_sq() * (CellP[i].Density / m) / a;
+#endif
+        P[i].Mass += dM; CellP[i].Mass += dM;
+        double eb1 = 0;
+#ifdef MAGNETIC
+        eb1 = 0.5 * CellP[i].B.norm_sq() * (CellP[i].Density / P[i].Mass) / a;
+#endif
+        TestInjected[0] += dM; for(int k = 0; k < 3; k++) {TestInjected[1+k] += dM * v[k];}
+        TestInjected[4] += dM * (CellP[i].InternalEnergy + 0.5 * v.norm_sq()) + (eb1 - eb0);
+        P[i].wakeup = -1; NeedToWakeupParticles_local = 1; wakeup_list_note(i); n++;
+    }
+    long long nl = n, ng = 0; MPI_Allreduce(&nl, &ng, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0) {printf("TEST_PAIRFLUX_ADD_MASS_AND_WAKE: %lld inactive cells gained mass and were woken at step %lld\n", ng, (long long) All.NumCurrentTiStep);}
+}
+#endif
+
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
 
 struct pairflux_record
@@ -345,7 +377,7 @@ void print_gas_conserved_totals(void)
         add(6, 0.5 * CellP[i].B.norm_sq() * rho_over_m / a); add(8, CellP[i].B[0]); add(9, CellP[i].B[1]); add(10, CellP[i].B[2]);
 #endif
     }
-    double loc[33] = {0}, glob[33];
+    double loc[38] = {0}, glob[38];
     for(int k = 0; k < 12; k++) {loc[k] = s[k] + c[k];}
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
     loc[12] = (double) PairFluxNFloor; loc[13] = PairFluxEFloor; loc[14] = (double) PairFluxNStar; loc[15] = 0;
@@ -353,19 +385,22 @@ void print_gas_conserved_totals(void)
     loc[26] = PairFluxPeakMB; loc[27] = 0;
 #endif
     for(int k = 0; k < 5; k++) {loc[28+k] = TestKickSplit[k];}
+#ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
+    for(int k = 0; k < 5; k++) {loc[33+k] = TestInjected[k];}
+#endif
     MPI_Reduce(loc, glob, 26, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&loc[28], &glob[28], 5, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&loc[28], &glob[28], 10, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&loc[26], &glob[26], 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
     if(!fd)
     {
         char buf[1000]; snprintf(buf, sizeof(buf), "%s/conserved_totals.txt", All.OutputDir);
         fd = fopen(buf, "w");
-        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_to_star 0 [n,E floor: closing wake opening masschange kick] records_peak_MB_per_rank 0 [cumulative kick energy: gas hydro, gas other (gravity), gas floor, non-gas kinetic, pair-flux impulses] (gas, conserved variables, physical, after the sync's kicks)\n");
+        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_to_star 0 [n,E floor: closing wake opening masschange kick] records_peak_MB_per_rank 0 [cumulative kick energy: gas hydro, gas other (gravity), gas floor, non-gas kinetic, pair-flux impulses] [added by the test hook: M Px Py Pz E] (gas, conserved variables, physical, after the sync's kicks)\n");
     }
     fprintf(fd, "%lld %.17e", (long long) All.NumCurrentTiStep, All.Time);
     glob[27] = 0;
-    for(int k = 0; k < 33; k++) {fprintf(fd, " %.17e", glob[k]);}
+    for(int k = 0; k < 38; k++) {fprintf(fd, " %.17e", glob[k]);}
     fprintf(fd, "\n"); fflush(fd);
 }
 #endif

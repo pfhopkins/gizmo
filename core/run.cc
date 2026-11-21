@@ -771,6 +771,9 @@ void run(void)
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
         pairflux_after_closing_kick(); /* own coverage gap and receivers' closing-kick shares */
 #endif
+#ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
+        test_pairflux_add_mass_and_wake();
+#endif
         ESTEP_END(ESTEP_INT_KICK2);
 
 

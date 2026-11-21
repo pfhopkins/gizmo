@@ -1100,6 +1100,9 @@ void print_gas_conserved_totals(void);
 void test_kick_energy_split_add(int gas, double hydro, double floor_e, double total);
 void test_impulse_energy_add(double de);
 #endif
+#ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
+void test_pairflux_add_mass_and_wake(void);
+#endif
 void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
