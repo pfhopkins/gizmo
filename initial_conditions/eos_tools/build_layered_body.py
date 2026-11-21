@@ -290,6 +290,7 @@ def build_planet(zones, M_total, T_surface, P_surface, n_particles, out, kernel=
                                                    n_steps, adiabat_route, align_tol, max_align_passes, allow_unaligned)
     rho, h = estimate_sph_density(placed["coords"], placed["masses"], des_num_ngb=des_num_ngb, kernel=kernel)
     prof = calibrate_planet(placed, prof, zones, P_surface, rho, h, calibrate_masses=calibrate_masses)
+    prof["zone_composition_type"] = np.array([z.material.composition_type for z in zones])   # prof["zone_id"] k = the material of zones[k] (zones without a shell dropped)
     placed["kernel"], placed["des_num_ngb"] = kernel, des_num_ngb
     write_hdf5(out, placed, prof, box_size=box_size if box_size else 10.0 * prof["R"], id_offset=id_offset)
     return placed, prof
