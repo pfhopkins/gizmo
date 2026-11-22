@@ -29,10 +29,11 @@ struct KjMstarSide {           /* kept in ketju_system::internal_state */
 std::set<KjMstarSide *> &kj_live = *new std::set<KjMstarSide *>;   /* systems to destroy before Kokkos::finalize; never destroyed */
 bool kj_kokkos_owned = false;
 
-void kj_abort(const char *msg)
+/* an integration that cannot go on: report it and stop the run through endrun (error code, task and location in the log) */
+void kj_abort(const char *msg, int code)
 {
     fprintf(stderr, "KETJU MSTAR: %s\n", msg); fflush(stderr);
-    MPI_Abort(MPI_COMM_WORLD, 1);
+    endrun(code);
 }
 
 void kj_kokkos_finalize()
@@ -126,7 +127,7 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
     if(side->comm != MPI_COMM_NULL) {MPI_Comm_rank(side->comm, &rank); MPI_Comm_size(side->comm, &size);}
     const int n0 = R->num_particles, npn0 = R->num_pn_particles;
     if(rank == 0) {
-        if(R->options->mst_algorithm != KETJU_MST_PRIM) kj_abort("only mst_algorithm = KETJU_MST_PRIM is ported");
+        if(R->options->mst_algorithm != KETJU_MST_PRIM) kj_abort("only mst_algorithm = KETJU_MST_PRIM is ported", 7811);
         if(!side->sys) side->sys = new mstar::System(npn0, n0 - npn0); else side->sys->reset(npn0, n0 - npn0);
         mstar::System &S = *side->sys;
         S.constants.G = R->constants->G; S.constants.c = R->constants->c;
@@ -161,8 +162,8 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
         for(int i = 0; i < npn0; i++) for(int k = 0; k < 3; k++) S.spin[3*i+k] = ps->spin[i][k];
         if(R->collision_radius) S.collision_radius.assign(R->collision_radius, R->collision_radius + n0);
         bool ok = false;
-        try {ok = S.run(time_interval);} catch(const std::exception &e) {kj_abort(e.what());}
-        if(!ok) kj_abort("Exceeded options->max_step_count steps!");
+        try {ok = S.run(time_interval);} catch(const std::exception &e) {kj_abort(e.what(), 7812);}
+        if(!ok) kj_abort("Exceeded options->max_step_count steps!", 7812);
         /* state back; the tail slots of merged-away particles keep stale values as in the C library */
         const int n = S.num_particles, npn = S.num_pn_particles;
         R->num_particles = n; R->num_pn_particles = npn; ps->time = S.time;
