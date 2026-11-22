@@ -410,7 +410,7 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
                         double* RH2, double* Rdust, int nocalc, ChemCell& c)
 {
     const ChemTables& T = *c.tab;
-    const int ndust_iter = 20000;
+    const int ndust_iter = 100;   // Newton budget; then bisection (D-61)
     double isrf_heat = 0.0, dust_cool = 0.0, gas_dust = 0.0, dust_h2_heat = 0.0;
 
     if (c.dust_to_gas_ratio > 1e-8 && temp < 1e5) {
@@ -517,17 +517,42 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
             }
         }
         if (!converged) {
-            std::printf("Dust temp iteration failed! %g %g %g\n",
-                        c.tdust, tdust_new, c.tdust - tdust_new);
-            std::printf("Particle : %ld\n", c.id_current);
-            std::printf("density, temp, %g %g\n", yn, temp);
-            std::printf("%g %g %g %g\n", isrf_heat, dust_cool, gas_dust,
-                        dust_h2_heat);
-            std::printf("dust_to_gas_ratio = %g\n", c.dust_to_gas_ratio);
-            std::printf("RH2 = %g\nch7 = %g\n", *RH2, ch7);
-            // ABORT(10) in the Fortran.  The port keeps the failure LOUD but
-            // routes it through the driver's recoverable path (DEVIATIONS D-3).
-            c.dust_iter_failed = 1;
+            // Newton did not converge: bisection on the balance F(tdust) over [tmin, 1500 K] (F falls with tdust), D-61
+            auto balance = [&](double td) {
+                const double dc = 4.68e-31 * chem_fpowi(td, 6) * yn * c.dust_to_gas_ratio;
+#ifdef NO_GAS_DUST_HEAT
+                const double gd = 0.0;
+#else
+                const double gd = cl14 * (temp - td) * (yn * yn) * c.dust_to_gas_ratio;
+#endif
+                const double t2 = temp * 1e-2, td2 = td * 1e-2;
+                const double f_a = 1.0 / (1.0 + 1e4 * std::exp(-6e2 / td));
+                const double st = 1.0 / (1.0 + 0.4 * std::pow(t2 + td2, 0.5) + 0.2 * t2 + 0.08 * std::pow(t2, 2.0));
+                *Rdust = ch7 * f_a * st;
+                *RH2 = *Rdust * abHI * (yn * yn);
+#ifdef NO_DUST_H2_HEAT
+                const double hh = 0.0;
+#else
+                const double hh = (*Rdust == 0.0) ? 0.0 : (*RH2) * (1.0 - c.h2_form_ex - c.h2_form_kin) * 4.48 * CHEM_EV;
+#endif
+                chem_dust_iters++;
+                return isrf_heat - dc + gd + hh;
+            };
+            double lo = T.tmin, hi = 1.5e3;
+            double td;
+            if (balance(lo) <= 0.0)      td = lo;      // no balance above tmin
+            else if (balance(hi) >= 0.0) td = hi;      // balance above the sublimation cap
+            else {
+                for (int k = 0; k < 60 && (hi - lo) > 1e-6 * hi; k++) {
+                    const double mid = 0.5 * (lo + hi);
+                    if (balance(mid) > 0.0) lo = mid; else hi = mid;
+                }
+                td = 0.5 * (lo + hi);
+            }
+            (void)balance(td);                         // RH2, Rdust at the returned tdust
+            c.tdust = td;
+            chem_dust_bisections++;
+            c.dust_iter_failed = 1;                    // Newton did not converge (diagnostic)
         }
     } else {
         *RH2 = 0.0; *Rdust = 0.0;

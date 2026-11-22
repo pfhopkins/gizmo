@@ -822,8 +822,9 @@ c=======================================================================
       REAL CMB_temp, CMB_heat, CMB_heat_z0
       integer K, itemp, nocalc
 
-      integer ndust_iter
-      parameter (ndust_iter = 20000)
+      integer ndust_iter, KB
+      parameter (ndust_iter = 100)
+      REAL td_lo, td_hi, td_mid, F_lo, F_hi, F_mid
 
       if (dust_to_gas_ratio .gt. 1d-8 .and. temp .lt. 1d5) then
         if (temp .le. tmin) then
@@ -991,16 +992,37 @@ c NaN guard included.
           endif
         enddo
 c      
-        print*, "Dust temp iteration failed! ", tdust, tdust_new, 
-     $          tdust-tdust_new
-        print*, "Particle :", id_current
-        print*, "density, temp,", yn, temp
-        print*, isrf_heat, dust_cool, gas_dust, dust_h2_heat
-        print*, "dust_to_gas_ratio = ", dust_to_gas_ratio
-        print*, "h2_form_dust = ", h2_form_dust
-        print*, "RH2 = ", RH2
-        print*, "ch7 = ", ch7
-        ABORT(10)
+c
+c Newton did not converge: bisection on the balance F(tdust) over [tmin, 1500 K]
+c (F falls with tdust), D-61 (was ABORT(10))
+c
+        td_lo = tmin
+        td_hi = 1.5d3
+        call dust_balance(td_lo, F_lo, temp, yn, abHI, isrf_heat,
+     $                    cl14, ch7, Rdust, RH2)
+        call dust_balance(td_hi, F_hi, temp, yn, abHI, isrf_heat,
+     $                    cl14, ch7, Rdust, RH2)
+        if (F_lo .le. 0d0) then
+          tdust = td_lo
+        elseif (F_hi .ge. 0d0) then
+          tdust = td_hi
+        else
+          do KB = 1, 60
+            if (td_hi - td_lo .le. 1d-6 * td_hi) goto 102
+            td_mid = 0.5d0 * (td_lo + td_hi)
+            call dust_balance(td_mid, F_mid, temp, yn, abHI,
+     $                        isrf_heat, cl14, ch7, Rdust, RH2)
+            if (F_mid .gt. 0d0) then
+              td_lo = td_mid
+            else
+              td_hi = td_mid
+            endif
+          enddo
+ 102      continue
+          tdust = 0.5d0 * (td_lo + td_hi)
+        endif
+        call dust_balance(tdust, F_mid, temp, yn, abHI, isrf_heat,
+     $                    cl14, ch7, Rdust, RH2)
       else
         RH2   = 0d0
         Rdust = 0d0
@@ -1028,4 +1050,39 @@ c    \\\\\\\\\\        E N D   S U B R O U T I N E        //////////
 c    //////////        C A L C _ D U S T _ T E M P        \\\\\\\\\\
 c
 c=======================================================================
+c
+c Dust energy balance F(tdust) and the grain H2 formation rates at tdust (the
+c Newton terms of calc_dust_temp), for the bisection fallback (D-61)
+c
+      subroutine dust_balance(td, F, temp, yn, abHI, isrf_heat, cl14,
+     $                        ch7, Rdust, RH2)
+#ifdef SGCHEM
+      implicit NONE
+#include "cool.h"
+      REAL td, F, temp, yn, abHI, isrf_heat, cl14, ch7, Rdust, RH2
+      REAL dcool, gdust, t2, td2, f_a, stk, hheat
+      dcool = 4.68d-31 * td**6 * yn * dust_to_gas_ratio
+#ifdef NO_GAS_DUST_HEAT
+      gdust = 0d0
+#else
+      gdust = cl14 * (temp - td) * yn**2 * dust_to_gas_ratio
+#endif
+      t2  = temp * 1d-2
+      td2 = td * 1d-2
+      f_a = 1d0 / (1d0 + 1d4 * dexp(-6d2 / td))
+      stk = 1d0 / (1d0 + 0.4d0 * (t2 + td2)**0.5d0 +
+     $             0.2d0 * t2 + 0.08d0 * t2**2d0)
+      Rdust = ch7 * f_a * stk
+      RH2 = Rdust * abHI * yn**2
+#ifdef NO_DUST_H2_HEAT
+      hheat = 0d0
+#else
+      hheat = 0d0
+      if (Rdust .ne. 0d0) hheat = RH2 * (1d0 - h2_form_ex - h2_form_kin)
+     $                          * 4.48d0 * eV
+#endif
+      F = isrf_heat - dcool + gdust + hheat
+#endif /* SGCHEM */
+      return
+      end
 
