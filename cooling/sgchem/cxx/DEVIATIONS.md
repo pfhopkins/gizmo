@@ -857,10 +857,15 @@ Known cases (Uli's decision 2026-11-20), recorded in the test, bounded: hand-off
 each, from the stop time (waiver: <= 1 rejection, all H+); bypass T 4.99e5 K (T0 4.556e5 K), dt 7.7044e11 s: DVODE 1.1% off
 the converged T with D-60 in the Fortran RHS (0.098% with D-60 in C++ only), legacy-solver accuracy (waiver: <= 2%, NaN
 fails). rc, floor hits, D+ rejections and the C++ 1% bar stay hard; a waived call that comes out clean is reported.
-The r26 step count rises because the cloud's history changes, not the cost per call: the step histories agree to
-t ~ 0.0045, then star formation and the IMF draws differ (140 / 102 / 82 stars formed before / with D-60 and the stop
-time / D-60 alone) and with them the SNe (1 SN at t 0.0104; 2 SNe, the first at 0.0096; 2 SNe, the first at 0.0075),
-whose hot gas sets the timesteps.
+The r26 step count (5866 / 7590 / 12009 before / with D-60 and the stop time / D-60 alone) is not explained by
+feedback energy: the early "SN" rows (t 0.0096, 0.0075) are failed SNe (channel 5, E = M = 0) and the one energetic SN
+(1e51 erg, 18.676 Msun) is identical in all three runs at t 0.010406. The histories agree to t 0.003 and split by
+t 0.0045 (steps at t 0.0045 / 0.0075: 1762 / 3244, 1984 / 4331, 3464 / 8518, from cpu.txt), during star formation
+and photoionization: 145 / 121 / 86 stars (unique IDs in SFinfo.txt; the last at t 0.0092 / 0.0044 / 0.0042), 2 / 3 / 2
+ionizing stars, ionized cells at t 0.005-0.0055 1986 / 5159 / 5285 and at 0.007-0.0075 4228 / 9448 / 7391 (subgrid PI
+log). The lowest occupied timebins hold gas cells only; the lowest gas bin sits 0.5-1 (D-60 + stop time) and ~2
+(D-60 alone) bins lower than before during t 0.0035-0.0055, as the HII regions grow. Which cells and which limiter
+set the minimum step is not identified (no per-cell limiter output): open.
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 

@@ -23,6 +23,9 @@
 //            (recorded, not failed; bound <= 1, H+ only); hand-off nH 10, bypass T 4.99e5 K, dt 7.7044e11 s: DVODE is 1.1%
 //            off the converged T with D-60 in the Fortran RHS: legacy-solver accuracy, recorded, not failed up to 2% (NaN
 //            fails; C++ stays gated at 1%). A waived call that comes out clean prints "known case did not occur".
+//            "H+ only" counts the first species in excess of each rejected evaluation (validate_input returns there);
+//            the bound caps the number of rejected evaluations. In a TEST_PARENT_DRIVER build (bitwise comparison with
+//            the driver before D-59, no per-species counter) every rejection counts as H+.
 //   PHASE R  (TEST_SGCHEM_FORCED_SOLVER_FAILURE) failures forced per attempt (1 = substep budget of one,
 //            100 = every substep rejected), D-59:
 //            R1/R2  first attempt fails with code 1 / 100 on the logged cells: the retry rescues (rc 0, T within 1% of
@@ -355,7 +358,11 @@ static Res solve_cell(ChemCell& c, double dt, double yn, double e0, const double
     r.substeps = cxx_stat_substeps - s0; r.retries = cxx_stat_retries - r0; r.floors = cxx_stat_floor_hits - f0;
     r.excess = chem_excess_states - x0; r.fretries = cxx_stat_failure_retries - q0; r.tfinish = cxx_stat_tnochem_finishes - t0;
     r.crh = c.cr_ion_heat_int;
+#ifdef TEST_PARENT_DRIVER
+    r.exc_hp = r.excess; (void)h0;
+#else
     r.exc_hp = chem_excess_species[IHP] - h0;
+#endif
 #if CHEMISTRYNETWORK == 17
     r.dpfail = chem_clip_excess_fail[IDP] - d0;
 #else
@@ -699,9 +706,11 @@ int main(int argc, char** argv)
         }
         if (!Lm) { std::printf("PHASE R7c -- no logged cell retries from t > 0: FAIL\n"); nbadR++; Lm = &cells[0]; }
         force(1, 0);
+        chem_test_retry_start_tdust = -1.0;
         Res ref = run_cxx(*Lm, Lm->dt, Lm->yn, Lm->y[ITMP], Lm->y, nullptr);
         const double td_ref = chem_test_retry_start_tdust;
         chem_test_flag_rhs[2] = 1;
+        chem_test_retry_start_tdust = -1.0;
         Res c = run_cxx(*Lm, Lm->dt, Lm->yn, Lm->y[ITMP], Lm->y, nullptr);
         const double td_flag = chem_test_retry_start_tdust;
         chem_test_flag_rhs[2] = 0;
@@ -710,7 +719,7 @@ int main(int argc, char** argv)
         int same_state = (c.e == ref.e);
         for (int i = 0; i < TRAC_NUM; i++) same_state &= (c.y[i] == ref.y[i]);
         int ok = (ref.fretries == 1) && (ref.crh > 0.0) && std::isfinite(c.crh) && (ratio > 0.5) && (ratio < 1.5) && (c.rc == 0)
-              && same_state && (td_flag == td_ref) && (td_flag != 1e3);
+              && same_state && (c.fretries == 1) && (td_ref > 0.0) && (td_flag == td_ref) && (td_flag != 1e3);
         std::printf("PHASE R7c -- flagged evaluation at the failure point, CR heating 1e30, tdust moved to 1e3 (cell %ld): integral "
                     "%.6g vs unflagged %.6g (ratio %.4g), retry starts at tdust %.6g (unflagged %.6g), final state %s: %s\n", Lm->id,
                     c.crh, ref.crh, ratio, td_flag, td_ref, same_state ? "identical" : "DIFFERS", ok ? "PASS" : "FAIL");
@@ -772,7 +781,7 @@ int main(int argc, char** argv)
     }
     std::printf("  GATE H: %d of 60 calls fail\n", nbadH);
     const int ok = (nbadA == 0) && (nph1 == 0) && (nbadH == 0);
-    std::printf("  GATE rc = 0, no validate_input excess rejection (net 5: four known calls recorded), no CVODE floor hit, "
+    std::printf("  GATE rc = 0, no validate_input excess rejection (known calls recorded: net 5 four, net 17 four + one DVODE), no CVODE floor hit, "
                 "no D+ excess rejection, each backend's T within 1%% of the converged reference: %s\n", ok ? "PASS" : "FAIL");
 #endif
     if (g_csv) std::fclose(g_csv);
