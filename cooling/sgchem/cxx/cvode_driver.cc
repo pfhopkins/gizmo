@@ -700,8 +700,11 @@ attempt_start:
             if (chem_test_flag_rhs[0] == nsub_start || nsub_start <= chem_test_flag_rhs[4]) { rerr = 1; c.cr_ion_heat = 1e30; }   // test: flagged, stale CR heating
 #endif
             if (rerr) c.cr_ion_heat = crh_prev;          // flagged evaluation: no fresh CR heating
-            c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : c.cr_ion_heat) + c.cr_ion_heat) * crh_dt; // trapezoid over the accepted substep
-            crh_valid |= !rerr; crh_prev = c.cr_ion_heat; crh_dt = 0.0;
+            if (crh_valid || !rerr) {                   // no valid value yet and flagged: the interval stays pending
+                c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : c.cr_ion_heat) + c.cr_ion_heat) * crh_dt; // trapezoid over the accepted substep
+                crh_dt = 0.0;
+            }
+            crh_valid |= !rerr; crh_prev = c.cr_ion_heat;
             dt_est = 1e18;
             for (int j = 0; j < nspec; j++) {
                 if (used[j] && ydot[j] != 0.0 && safety[j] != 0.0 && y[j] > ctrl_floor[j]) {
@@ -783,7 +786,7 @@ attempt_start:
                 need_reinit = 1;                          // istate = 1
             } else {
                 t_start = t_start + dt;
-                crh_dt = dt;
+                crh_dt += dt;                             // pending interval (several substeps if evaluations were flagged)
                 new_step = 1;                             // istate stays 2:
                 // NB check_abundances clips modified OUR y (final answer /
                 // future y_old) but were NOT pushed into CVODE -- continuation
@@ -809,8 +812,11 @@ recover:
         c.tdust = tdust_acc;
         if (c.fatal_code) { retcode = c.fatal_code; goto out; }
         if (rerr) c.cr_ion_heat = crh_prev;
-        c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : c.cr_ion_heat) + c.cr_ion_heat) * crh_dt;
-        crh_valid |= !rerr; crh_prev = c.cr_ion_heat; crh_dt = 0.0;
+        if (crh_valid || !rerr) {
+            c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : c.cr_ion_heat) + c.cr_ion_heat) * crh_dt;
+            crh_dt = 0.0;
+        }
+        crh_valid |= !rerr; crh_prev = c.cr_ion_heat;
         long ns = 0;
         if (w && w->mem && CVodeGetNumSteps(w->mem, &ns) == CV_SUCCESS) cxx_stat_cvode_steps += ns;
         if (attempt == 0) {
