@@ -832,9 +832,9 @@ cell from it alone. Every non-zero return dumps the cell; the first CVODE floor 
 2.8 kB per event instead of the former 0.6 kB). Each rank prints its retried/TNOCHEM counts after the cooling step
 when they change (cooling.cc, no collective).
 CR ionisation heating of a flagged RHS evaluation: at a substep start, at the failure point and at the final
-evaluation the last unflagged value is held (before the first unflagged value of a call, the pending interval is
-booked as a rectangle with the next one); in the explicit subcycle a flagged evaluation applies nothing (ydot = 0)
-and books zero. Fortran DVODE path unchanged (aborts).
+evaluation the last unflagged value is held; before the first unflagged value of a call the pending interval is
+deferred (it accumulates over substeps) and booked as a rectangle with the next unflagged value (zero if the call
+never gets one); in the explicit subcycle a flagged evaluation applies nothing (ydot = 0) and books zero. Fortran DVODE path unchanged (aborts).
 Tests: golden/test_solver_failure.cc (nets 5 and 17) phase R, TEST_SGCHEM_FORCED_SOLVER_FAILURE: forced codes 1
 and 100 per attempt; retry rescue and its start state; TNOCHEM finish after heating across TNOCHEM in attempt 0
 and in the retry; abort at 100 K; dump-and-replay into a NaN-filled cell; flagged-RHS CR heating at all four
@@ -852,9 +852,15 @@ Test: golden/test_solver_failure.cc (no substep rejected for a D+ excess; each b
 Measured: C++ phase-H worst error 1.9% -> 1.5e-4. Cost, r26 cloud (net 17, 12 Myr, 8 tasks; runs repeat exactly): RHS
 evaluations 497.2e6 -> 543.0e6 (+9%), wall 401 -> 447 s (+11%), but the run takes 7590 instead of 5866 steps (different
 trajectory): per step -16% RHS evaluations, -13% wall. D-60 without the stop time: 695.3e6, 605 s, 12009 steps.
-Open (gate fails, bar unchanged): nH 10 hand-off, bypass T 4.11e5 / 4.38e5 K, dt 7.7e11 / 3e12 s: one recoverable C++ H+
-validate_input rejection each (comes with the stop time); bypass T 4.56e5 K, dt 7.7e11 s: DVODE 1.1% off the converged
-T (0.1% before D-60 in the Fortran RHS; 0.098% with D-60 in C++ only).
+Known cases (Uli's decision 2026-11-20), recorded in the test, bounded: hand-off cell 3018810, nH 10, bypass T 4.5e5 K
+(table T0 4.109e5 K) and 4.8e5 K (T0 4.383e5 K), dt 7.7044e11 and 3e12 s: one recoverable C++ H+ validate_input rejection
+each, from the stop time (waiver: <= 1 rejection, all H+); bypass T 4.99e5 K (T0 4.556e5 K), dt 7.7044e11 s: DVODE 1.1% off
+the converged T with D-60 in the Fortran RHS (0.098% with D-60 in C++ only), legacy-solver accuracy (waiver: <= 2%, NaN
+fails). rc, floor hits, D+ rejections and the C++ 1% bar stay hard; a waived call that comes out clean is reported.
+The r26 step count rises because the cloud's history changes, not the cost per call: the step histories agree to
+t ~ 0.0045, then star formation and the IMF draws differ (140 / 102 / 82 stars formed before / with D-60 and the stop
+time / D-60 alone) and with them the SNe (1 SN at t 0.0104; 2 SNe, the first at 0.0096; 2 SNe, the first at 0.0075),
+whose hot gas sets the timesteps.
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
