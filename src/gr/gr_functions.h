@@ -70,32 +70,9 @@ KOKKOS_INLINE_FUNCTION void gr_add_minkowski(struct gr_sym4 *g)
     g->tt -= 1; g->ij[0][0] += 1; g->ij[1][1] += 1; g->ij[2][2] += 1;
 }
 
-#if (GR_METRIC==1) && !defined(GR_METRIC_USE_KERR_SCHILD)
-/* Kerr in Boyer-Lindquist coordinates, Cartesian components (Liptai & Price 2019), at the displacement dp from the hole: singular on the axis
-   x = y = 0, where the 1/(x^2+y^2) terms cancel only analytically; for particle distributions that avoid the axis */
-KOKKOS_INLINE_FUNCTION void gr_kerr_boyer_lindquist_metric(const Vec3<double> &dp, struct gr_sym4 *g)
-{
-    double M = All.MetricParams[0], a = All.MetricParams[1]*M, a2 = a*a;
-    double x2 = dp[0]*dp[0], y2 = dp[1]*dp[1], z2 = dp[2]*dp[2], R2 = x2 + y2 + z2;
-    double r2 = (R2 - a2 + sqrt((R2-a2)*(R2-a2) + 4*a2*z2))/2.;
-    double sinth2 = 1. - z2/r2, rho2 = r2 + a2*z2/r2, delta = r2 - 2*M*sqrt(r2) + a2, Att = 2.0*M*sqrt(r2)/rho2, xy2 = x2 + y2;
-    g->tt = Att - 1.0;
-    double gtp = -Att*a*sinth2, gpp = (r2 + a2 + Att*a2*sinth2)*sinth2;
-    g->ti = Vec3<double>{-dp[1]/xy2*gtp, dp[0]/xy2*gtp, 0.};
-    double fac1 = r2/rho2/delta, fac2 = gpp/(xy2*xy2), fac3 = z2/rho2/(r2*sinth2), fac4 = (1 - z2*(r2+a2)/r2/rho2);
-    g->ij[0][0] = fac1*x2 + fac2*y2 + fac3*x2;
-    g->ij[1][1] = fac1*y2 + fac2*x2 + fac3*y2;
-    g->ij[2][2] = (1-fac4)*(a2+r2)/delta + rho2/(r2*sinth2)*fac4*fac4;
-    g->ij[0][1] = dp[0]*dp[1]*(fac1 - fac2 + fac3);
-    g->ij[0][2] = (a2+r2)*dp[0]*dp[2]/rho2/delta - dp[0]*dp[2]/(r2*sinth2)*fac4;
-    g->ij[1][2] = (a2+r2)*dp[1]*dp[2]/rho2/delta - dp[1]*dp[2]/(r2*sinth2)*fac4;
-}
-#endif
-
 /* deviation of the covariant 4-metric from Minkowski, h = g - eta, at pos (the source is at the box centre if the box is periodic), computed
    without forming eta + h: the finite differences of the metric derivatives difference h, so that they keep their relative accuracy where
-   h is small (far from the source) instead of losing it in the O(1) components of g. Boyer-Lindquist is the exception (its Cartesian
-   components are not written as eta + h, so h = g - eta) */
+   h is small (far from the source) instead of losing it in the O(1) components of g */
 KOKKOS_INLINE_FUNCTION void get_metric_deviation(const Vec3<double> &pos, struct gr_sym4 *h)
 {
     Vec3<double> dp = gr_hole_displacement(pos);
@@ -103,8 +80,21 @@ KOKKOS_INLINE_FUNCTION void get_metric_deviation(const Vec3<double> &pos, struct
     h->tt = 0; h->ti = Vec3<double>{0,0,0}; h->ij.set_isotropic(0.);
 #elif (GR_METRIC==1) /* Kerr: Boyer-Lindquist (GR_METRIC_USE_BOYER_LINDQUIST) or Kerr-Schild coordinates */
 #ifndef GR_METRIC_USE_KERR_SCHILD
-    gr_kerr_boyer_lindquist_metric(dp, h);
-    h->tt += 1; h->ij[0][0] -= 1; h->ij[1][1] -= 1; h->ij[2][2] -= 1;
+    /* Boyer-Lindquist, Cartesian components (x = sqrt(r^2+a^2) sin(theta) cos(phi), y = sqrt(r^2+a^2) sin(theta) sin(phi), z = r cos(theta)):
+       subtracting the flat metric in the same oblate spheroidal coordinates, the 1/(x^2+y^2) of d phi cancels the sin^2(theta) of g_t phi and
+       g_phi phi, (x^2+y^2) = (r^2+a^2) sin^2(theta), so h is regular on the rotation axis (singular only at the horizon and on the ring r = 0):
+       h_tt = 2Mr/rho^2, h_ti = -2Mar/(rho^2 (r^2+a^2)) w_i,
+       h_ij = 2Mr/(Delta (r^2+a^2) rho^2) v_i v_j + 2Mr a^2/(rho^2 (r^2+a^2)^2) w_i w_j,
+       with rho^2 = r^2 + a^2 z^2/r^2, Delta = r^2 - 2Mr + a^2, v = (r x, r y, (r^2+a^2) z/r) (rho^2/r times the gradient of r) and
+       w = (-y, x, 0) ((x^2+y^2) times the gradient of phi) */
+    double M = All.MetricParams[0], a = All.MetricParams[1]*M, a2 = a*a;
+    double z2 = dp[2]*dp[2], R2 = dp[0]*dp[0] + dp[1]*dp[1] + z2;
+    double r2 = (R2 - a2 + sqrt((R2-a2)*(R2-a2) + 4*a2*z2))/2., r = sqrt(r2);
+    double rho2 = r2 + a2*z2/r2, delta = r2 - 2*M*r + a2, ra2 = r2 + a2, Mr2 = 2*M*r;
+    Vec3<double> v = {r*dp[0], r*dp[1], ra2*dp[2]/r}, w = {-dp[1], dp[0], 0.};
+    h->tt = Mr2/rho2;
+    h->ti = (-Mr2*a/(rho2*ra2))*w;
+    h->ij = (Mr2/(delta*ra2*rho2))*outer_product(v) + (Mr2*a2/(rho2*ra2*ra2))*outer_product(w);
 #else /* h_{mu nu} = (2 M r^3/(r^4 + a^2 z^2)) l_mu l_nu */
     double M = All.MetricParams[0], a = All.MetricParams[1]*M, a2 = a*a;
     double x2 = dp[0]*dp[0], y2 = dp[1]*dp[1], z2 = dp[2]*dp[2], R2 = x2 + y2 + z2;
@@ -150,15 +140,11 @@ KOKKOS_INLINE_FUNCTION void get_metric_deviation(const Vec3<double> &pos, struct
 #endif
 }
 
-/* covariant 4-metric at pos, eta + h (get_metric_deviation; Boyer-Lindquist directly) */
+/* covariant 4-metric at pos, eta + h (get_metric_deviation) */
 KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct gr_sym4 *g)
 {
-#if (GR_METRIC==1) && !defined(GR_METRIC_USE_KERR_SCHILD)
-    gr_kerr_boyer_lindquist_metric(gr_hole_displacement(pos), g);
-#else
     get_metric_deviation(pos, g);
     gr_add_minkowski(g);
-#endif
 }
 
 #if (GR_METRIC>0)
