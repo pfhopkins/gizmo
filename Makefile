@@ -1082,26 +1082,42 @@ endif
 # Stella stellar + SGCHEM tables are an installed dependency, not built or fetched by make: install them once with
 # scripts/get_stella_tables.sh (or `make stella_tables`) and give their location by StellarTablesFile / SGCHEMTablesDir.
 
-# KETJU regularized integrator for BH and stellar dynamics
+# KETJU regularized integrator for BH and stellar dynamics.  MSTAR (ketju-integrator: the C++/Kokkos library, default; the C
+# library with KETJU_LEGACY_C_LIBRARY) and the ketju-integrator-c headers are a separate install found at KETJU_PATH, not part
+# of this repository and never fetched by make (https://github.com/pfhopkins/gizmo/issues/112).  Default: the install of
+# scripts/get_stella_deps.sh under $(STELLA_DEPS_PREFIX) (~/.stella-deps), keyed by the pins below and the Kokkos install;
+# set KETJU_PATH (environment, Makefile.systype block or make line) to use another.
 ifeq (KETJU_REGULARIZATION,$(findstring KETJU_REGULARIZATION,$(CONFIGVARS)))
-OBJS    += galaxy_sf/ketju_coupling.o galaxy_sf/stella_star_mergers.o
-# submodules missing or at a stale pin (old layout): git submodule update --init
-$(if $(wildcard ketju-integrator-c/include/ketju_integrator/ketju_integrator.h),,$(error KETJU: ketju-integrator-c not checked out; run git submodule update --init ketju-integrator-c))
-ifeq (KETJU_LEGACY_C_LIBRARY,$(findstring KETJU_LEGACY_C_LIBRARY,$(CONFIGVARS)))
-# legacy: the C MSTAR library (submodule ketju-integrator-c, fork branch ketju-c; reference for comparisons)
-KETJU_INCL = -Iketju-integrator-c/include
-KETJU_LIBS = -Lketju-integrator-c/lib -lketju-integrator -lstdc++
-KETJU_LIB_DEP = ketju-integrator-c/lib/libketju-integrator.a
-else
-# default: the C++/Kokkos MSTAR library mstar::mstar (submodule ketju-integrator, fork main); C structs from ketju-integrator-c; KOKKOS_ROOT = Kokkos (>= 4) install
+# pins: MSTAR (branch main) and the C library and headers (branch ketju-c)
+KETJU_REPO  = https://github.com/Ulli1991/ketju-integrator.git
+KETJU_REF   = 3274ee705a2b4fa6dc4a99501bbcc3f84da825a4
+KETJU_C_REF = e70b815a23ee03a666636d18c51e222cada3309a
 KOKKOS_ROOT ?= $(error KETJU_REGULARIZATION: set KOKKOS_ROOT to a Kokkos install, e.g. make KOKKOS_ROOT=<prefix>)
 KOKKOS_LIBS ?= -L$(KOKKOS_ROOT)/lib64 -L$(KOKKOS_ROOT)/lib -lkokkoscontainers -lkokkoscore -ldl -fopenmp
-OBJS    += galaxy_sf/ketju_mstar_kokkos.o
-$(if $(wildcard ketju-integrator/include/mstar/mstar.hpp),,$(error KETJU: ketju-integrator not checked out at the pinned commit; run git submodule update --init ketju-integrator))
-KETJU_INCL = -Iketju-integrator/include -Iketju-integrator-c/include
-KETJU_LIBS = ketju-integrator/build-kokkos/libmstar.a $(KOKKOS_LIBS) -lstdc++
-KETJU_LIB_DEP = ketju-integrator/build-kokkos/libmstar.a
+STELLA_DEPS_PREFIX ?= $(HOME)/.stella-deps
+ifeq ($(strip $(KETJU_PATH)),)
+KETJU_PATH := $(STELLA_DEPS_PREFIX)/ketju-$(shell echo $(KETJU_REF) | cut -c1-7)-$(shell echo $(KETJU_C_REF) | cut -c1-7)-kokkos-$(shell printf '%s' '$(KOKKOS_ROOT)' | cksum | cut -d' ' -f1)
 endif
+KETJU_OK = $(and $(wildcard $(KETJU_PATH)/include/mstar/mstar.hpp),$(wildcard $(KETJU_PATH)/include/ketju_integrator/ketju_integrator.h),$(wildcard $(KETJU_PATH)/lib/libmstar.a $(KETJU_PATH)/lib64/libmstar.a),$(wildcard $(KETJU_PATH)/lib/libketju-integrator.a $(KETJU_PATH)/lib64/libketju-integrator.a))
+OBJS    += galaxy_sf/ketju_coupling.o galaxy_sf/stella_star_mergers.o
+ifeq ($(MAKECMDGOALS),ketju-path)
+# the setup script asks make where KETJU goes and which compiler and Kokkos to build it with
+ketju-path:
+	@echo "KETJU_PATH='$(KETJU_PATH)'"; echo "KETJU_REPO='$(KETJU_REPO)'"; echo "KETJU_REF='$(KETJU_REF)'"; echo "KETJU_C_REF='$(KETJU_C_REF)'"
+	@echo "KETJU_KOKKOS='$(KOKKOS_ROOT)'"; echo "KETJU_CXX='$(firstword $(CXX))'"; echo "KETJU_OK='$(if $(KETJU_OK),1,0)'"
+else
+$(if $(KETJU_OK),,$(error KETJU: no install (include/mstar/mstar.hpp, include/ketju_integrator/ketju_integrator.h, lib/libmstar.a, lib/libketju-integrator.a) at KETJU_PATH=$(KETJU_PATH); run scripts/get_stella_deps.sh))
+endif
+KETJU_INCL = -I$(KETJU_PATH)/include
+ifeq (KETJU_LEGACY_C_LIBRARY,$(findstring KETJU_LEGACY_C_LIBRARY,$(CONFIGVARS)))
+# legacy: the C MSTAR library (reference for comparisons)
+KETJU_LIBS = -L$(KETJU_PATH)/lib -L$(KETJU_PATH)/lib64 -lketju-integrator -lstdc++
+else
+# default: the C++/Kokkos MSTAR library mstar::mstar; the C structs of ketju_integrator.h stay GIZMO's data model
+OBJS    += galaxy_sf/ketju_mstar_kokkos.o
+KETJU_LIBS = -L$(KETJU_PATH)/lib -L$(KETJU_PATH)/lib64 -lmstar $(KOKKOS_LIBS) -lstdc++
+endif
+KETJU_LIB_DEP =
 else
 KETJU_INCL =
 KETJU_LIBS =
@@ -1208,17 +1224,6 @@ $(CHEMCXX_OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 
 $(FOBJS): %.o: %.F
 	$(FC) $(FOPTIONS) -I. -Icooling/sgchem -c $< -o $@
-
-# KETJU_LEGACY_C_LIBRARY: the C integrator library (ketju-integrator-c/lib is not tracked), built and installed in place on first link
-ketju-integrator-c/lib/libketju-integrator.a:
-	cmake -S ketju-integrator-c -B ketju-integrator-c/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(CURDIR)/ketju-integrator-c
-	cmake --build ketju-integrator-c/build -j 8
-	cmake --install ketju-integrator-c/build
-
-# KETJU default: the mstar library only (its tests: test/ketju_unit)
-ketju-integrator/build-kokkos/libmstar.a:
-	cmake -S ketju-integrator -B ketju-integrator/build-kokkos -DCMAKE_CXX_COMPILER=$(firstword $(CXX)) -DCMAKE_BUILD_TYPE=Release -DMSTAR_TESTS=OFF -DKokkos_ROOT=$(KOKKOS_ROOT)
-	cmake --build ketju-integrator/build-kokkos --target mstar -j 8
 
 .PHONY: stella_tables
 stella_tables:

@@ -1,22 +1,23 @@
 # KETJU integrator unit tests
 
-Tests of GIZMO's two submodules of github.com/Ulli1991/ketju-integrator: `ketju-integrator/` (branch `main`, the
-C++/Kokkos MSTAR library) and `ketju-integrator-c/` (branch `ketju-c`, the C library; its header is also GIZMO's data
-model on the default path). Clone with `--recurse-submodules` or run `git submodule update --init --recursive`. No GIZMO
-build or simulation is involved.
+Tests of github.com/Ulli1991/ketju-integrator, which GIZMO uses as a separate install (scripts/get_stella_deps.sh), from two
+source checkouts given by environment variables: `KETJU_SOURCE_DIR` (branch `main` at the Makefile's `KETJU_REF`, the
+C++/Kokkos MSTAR library) and `KETJU_C_SOURCE_DIR` (branch `ketju-c` at `KETJU_C_REF`, the C library; its header is also
+GIZMO's data model on the default path; clone it with `--recurse-submodules` for the vendored googletest). Without them the
+tests are skipped. No GIZMO build or simulation is involved.
 
 ## Default: the C++/Kokkos library (GIZMO's default MSTAR)
 
-`test_ketju_kokkos_ctests` builds `ketju-integrator/` (Kokkos from `KOKKOS_ROOT` or the Makefile default; build directory
+`test_ketju_kokkos_ctests` builds `KETJU_SOURCE_DIR` (Kokkos from `KOKKOS_ROOT` or the Makefile default; build directory
 in a pytest temporary directory) and runs its 5 ctests: `mstar_unit_tests` (KETJU's unit tests and the GIZMO-addition
 and softening-kink cases below on `mstar::mstar`), `mstar_compare_c` (against stored C-library results: Kepler,
 Pythagorean, Plummer cores, PN binary and cusp, BH mergers, contact collisions, tide, softening), `mstar_extra_force`,
-`mstar_embedded_tide`, `mstar_driver`. See `ketju-integrator/README.md`.
+`mstar_embedded_tide`, `mstar_driver`. See `README.md` in `KETJU_SOURCE_DIR`.
 
 ## Legacy: the C library on MPI (`KETJU_LEGACY_C_LIBRARY`)
 
 `test_ketju_unit` runs only with `GIZMO_EXTRA_CONFIG_FLAGS=KETJU_LEGACY_C_LIBRARY`: the googletest suite of
-`ketju-integrator-c/`, each case on 1, 2 and 4 MPI tasks.
+`KETJU_C_SOURCE_DIR`, each case on 1, 2 and 4 MPI tasks.
 
 ## What is tested
 
@@ -56,7 +57,7 @@ their test fail.
     pytest test/ketju_unit/test_ketju_unit.py                                              # Kokkos ctests
     GIZMO_EXTRA_CONFIG_FLAGS=KETJU_LEGACY_C_LIBRARY pytest test/ketju_unit/test_ketju_unit.py  # + C googletests on MPI
 
-The legacy test copies `ketju-integrator-c/` to a pytest temporary directory (its CMake writes `bin/` and
+The legacy test copies `KETJU_C_SOURCE_DIR` to a pytest temporary directory (its CMake writes `bin/` and
 `lib/` into the source tree), builds with `-DUNIT_TESTS=ON -DBUILD_GMOCK=OFF` and the googletest
-submodule in `ketju-integrator-c/thirdparty/googletest/`, and runs with
+submodule in `thirdparty/googletest/` of that checkout, and runs with
 `mpiexec --oversubscribe`. Build ~1 min with 4 make jobs; the runs take seconds.

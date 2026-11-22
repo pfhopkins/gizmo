@@ -66,14 +66,12 @@ def test_stella_approach_timestep_opt_out():
 @pytest.mark.parametrize("merge", ["", "KETJU_MERGE_STARS\n", "KETJU_MERGE_BH\n"])
 def test_ketju_coupling_compiles_without_or_with_merge_flags(merge):
     """galaxy_sf/ketju_coupling.cc must compile with and without KETJU_MERGE_STARS / KETJU_MERGE_BH. Needs the KETJU headers:
-    set KETJU_INTEGRATOR_DIR to a ketju-integrator checkout (with include/mstar) and KOKKOS_ROOT."""
-    lib = os.environ.get("KETJU_INTEGRATOR_DIR")
+    set KETJU_PATH to a KETJU install (scripts/get_stella_deps.sh) and KOKKOS_ROOT."""
+    lib = os.environ.get("KETJU_PATH")
     if not lib or not os.path.isdir(os.path.join(lib, "include", "mstar")):
-        pytest.skip("KETJU_INTEGRATOR_DIR not set")
+        pytest.skip("KETJU_PATH not set")
     d = prepare("Config_stella_cloud.sh", "KETJU_REGULARIZATION\nADAPTIVE_GRAVSOFT_FORALL=1\n" + merge)
     try:
-        shutil.rmtree(os.path.join(d, "ketju-integrator"), ignore_errors=True)
-        os.symlink(lib, os.path.join(d, "ketju-integrator"))
         r = subprocess.run(["make", "GIZMO_config.h"], cwd=d, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr[-1500:]
         cmd = dry_compile(d, "galaxy_sf/ketju_coupling.cc").replace(" -c ", " -fsyntax-only ").split(" -o ")[0]
