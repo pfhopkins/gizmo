@@ -1143,6 +1143,10 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_TSTP:
         case IO_IMF:
         case IO_DIVB:
+#ifdef GENERAL_RELATIVITY
+        case IO_RHO0:
+        case IO_METRIC:
+#endif
         case IO_ABVC:
         case IO_COOLRATE:
         case IO_AMDC:

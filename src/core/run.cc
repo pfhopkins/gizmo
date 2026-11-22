@@ -231,7 +231,12 @@ void run(void)
 
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
+#if !(defined(GENERAL_RELATIVITY) && defined(GR_TEST_PARTICLE)) /* GR geodesic test particles: no hydro */
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+#endif
+#ifdef GENERAL_RELATIVITY
+        compute_initial_accelerations(); /* GR: seed HydroAccel/DtInternalEnergy from the initial fluxes (a first kick over a nominal step) */
+#endif
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
     }
@@ -612,9 +617,11 @@ void run(void)
 #endif
 
         LEDGER_STEP("pre_hydro_fb");
+#if !(defined(GENERAL_RELATIVITY) && defined(GR_TEST_PARTICLE)) /* GR geodesic test particles: no hydro */
         ESTEP_BEGIN(ESTEP_INT_HYDRO);
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
         ESTEP_END(ESTEP_INT_HYDRO);
+#endif
 #ifdef DM_HEATING
         apply_dm_heating();  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
         CPU_Step[CPU_COOLINGSFR] += measure_time();

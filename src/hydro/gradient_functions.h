@@ -50,7 +50,10 @@ struct Quantities_for_Gradients
 {
     MyDouble Density;
     MyDouble Pressure;
-    Vec3<MyDouble> Velocity;
+    Vec3<MyDouble> Velocity;        /*!< GR: the spatial four-velocity W*v (v = Eulerian velocity) */
+#ifdef GENERAL_RELATIVITY
+    MyDouble RestMassDensity;
+#endif
 #ifdef MAGNETIC
     Vec3<MyDouble> B;
 #ifdef DIVBCLEANING_DEDNER
@@ -111,7 +114,6 @@ struct GasGraddata_in_
 #ifdef MHD_CONSTRAINED_GRADIENT
     MyDouble ConditionNumber;
     SymmetricTensor2<MyDouble> NV_T;
-    MyFloat BGrad[3][3];
 #ifdef MHD_MODIFIED_GRADIENT
     MyFloat MG_cgcoeff;
     long long MG_piece_token;
@@ -220,10 +222,11 @@ double gradient_pair_weight(const struct kernel_GasGrad *kernel, int sph_gradien
 
 
 #if defined(MHD_CONSTRAINED_GRADIENT)
-/* Constrained-gradient per-component FaceDotB contribution: B_L/B_R state
+/* Constrained-gradient per-component FaceDotB contribution: j-side face state
  * reconstruction + slope limiting for component k, returning
- * Face_Area_Vec[k]*(GQuant.B[k]+Q_L). Extracted verbatim from the main pass
- * face loop; pass-neutral (grad_iter 0 and >0 call it identically). */
+ * Face_Area_Vec[k]*(GQuant.B[k]+Q_L). Pass-neutral (grad_iter 0 and >0 call it
+ * identically). Each cell evaluates only its own side of a face; j's term comes
+ * from j's own pass. */
 KOKKOS_INLINE_FUNCTION
 double constrained_facedotb_delta(int k, struct GasGraddata_in_ *local,
                                   struct gas_cell_data *CPj, struct particle_data *Pj,
@@ -232,15 +235,13 @@ double constrained_facedotb_delta(int k, struct GasGraddata_in_ *local,
     double Bjk = CPj->Bfield_component(k);
     NGB_SHEARBOX_BOUNDARY_BCORR_(local->Pos, Pj->Pos, Bjk, -1);
     double db_c = 0.5 * dot(CPj->Gradients.B[k], kernel->dp);
-    double db_cR = -0.5 * (local->BGrad[k][0]*kernel->dp[0] + local->BGrad[k][1]*kernel->dp[1] + local->BGrad[k][2]*kernel->dp[2]);
 
-    double Q_L, Q_R;
+    double Q_L;
     if(Bjk == local->GQuant.B[k])
     {
-        Q_L = Q_R = Bjk;
+        Q_L = Bjk;
     } else {
         Q_L = Bjk + db_c;
-        Q_R = local->GQuant.B[k] + db_cR;
         double Qmax, Qmin, Qmed = 0.5*(local->GQuant.B[k] + Bjk);
         if(local->GQuant.B[k] < Bjk) {Qmax=Bjk; Qmin=local->GQuant.B[k];} else {Qmax=local->GQuant.B[k]; Qmin=Bjk;}
         double fac = MHD_CONSTRAINED_GRADIENT_FAC_MINMAX * (Qmax-Qmin);
@@ -257,16 +258,11 @@ double constrained_facedotb_delta(int k, struct GasGraddata_in_ *local,
         {
             if(Q_L>Qmax_eff) Q_L=Qmax_eff;
             if(Q_L<Qmed_min) Q_L=Qmed_min;
-            if(Q_R<Qmin_eff) Q_R=Qmin_eff;
-            if(Q_R>Qmed_max) Q_R=Qmed_max;
         } else {
             if(Q_L<Qmin_eff) Q_L=Qmin_eff;
             if(Q_L>Qmed_max) Q_L=Qmed_max;
-            if(Q_R>Qmax_eff) Q_R=Qmax_eff;
-            if(Q_R<Qmed_min) Q_R=Qmed_min;
         }
     }
-    (void)Q_R;   /* legacy limiter cross-clamps Q_R but only Q_L feeds FaceDotB */
     return FA_k * (local->GQuant.B[k] + Q_L);
 }
 
@@ -322,6 +318,9 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 
 #if !defined(HYDRO_SPH) && !defined(KERNEL_CRK_FACES)
     if(r2 <= 0) return;
+#endif
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+    if(gr_pair_crosses_excised_hole(local->Pos, kernel->h_i, kernel->dp, h_j)) return; /* a black hole lies between i and j */
 #endif
 
     double h2_i = kernel->h_i * kernel->h_i;
@@ -437,11 +436,21 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 
     double d_rho = CellP[j].Density - local->GQuant.Density;
     MINMAX_CHECK(d_rho, out->Minima.Density, out->Maxima.Density);
+#ifdef GENERAL_RELATIVITY
+    double d_grrho = gr_get_primitive_density(CellP[j].Density, CellP[j].VelPred, &(CellP[j].gr), CellP[j].gr.limiter) - local->GQuant.RestMassDensity;
+    MINMAX_CHECK(d_grrho, out->Minima.RestMassDensity, out->Maxima.RestMassDensity);
+#endif
 
     double dp_pres = CellP[j].Pressure - local->GQuant.Pressure;
     MINMAX_CHECK(dp_pres, out->Minima.Pressure, out->Maxima.Pressure);
 
+#ifdef GENERAL_RELATIVITY
+    /* GR: differences of the spatial four-velocity W*v (v = Eulerian velocity) */
+    Vec3<MyDouble> dv = Vphys(CellP[j].VelPred, &(CellP[j].gr));
+    {double Wlorentz_j = lorentz_factor(CellP[j].gr.gamma, dv, CellP[j].gr.limiter); dv = Wlorentz_j*dv - local->GQuant.Velocity;}
+#else
     auto dv = CellP[j].VelPred - local->GQuant.Velocity;
+#endif
     NGB_SHEARBOX_BOUNDARY_VELCORR_(local->Pos, P[j].Pos, dv, -1);
     for(int k=0;k<3;k++) {
         MINMAX_CHECK(dv[k], out->Minima.Velocity[k], out->Maxima.Velocity[k]);
@@ -599,6 +608,9 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
         {
             double wk_xyz_i = -wk_for_grad * kernel->dp[k];
             out->Gradients[k].Density += wk_xyz_i * d_rho;
+#ifdef GENERAL_RELATIVITY
+            out->Gradients[k].RestMassDensity += wk_xyz_i * d_grrho;
+#endif
             out->Gradients[k].Pressure += wk_xyz_i * dp_pres;
             out->Gradients[k].Velocity += wk_xyz_i * dv;
 #ifdef SOLID_OWN_VELOCITY_GRADIENT
@@ -680,6 +692,9 @@ void gradient_accumulate_neighbor_iter(struct GasGraddata_in_ *local, struct Gas
 
 #if !defined(HYDRO_SPH) && !defined(KERNEL_CRK_FACES)
     if(r2 <= 0) return;
+#endif
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
+    if(gr_pair_crosses_excised_hole(local->Pos, kernel->h_i, kernel->dp, h_j)) return; /* a black hole lies between i and j */
 #endif
 
     double h2_i = kernel->h_i * kernel->h_i;

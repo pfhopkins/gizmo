@@ -307,6 +307,16 @@ struct GradientsSpec
         local.GQuant.Density  = kc[i].Density;
         local.GQuant.Pressure = kc[i].Pressure;
         local.GQuant.Velocity = kc[i].VelPred;
+#ifdef GENERAL_RELATIVITY
+        {
+            /* GR: the velocity gradients are those of the spatial four-velocity W*v (v = Eulerian velocity); the rest-mass density is reconstructed too */
+            const struct gr_metric *gri = &(kc[i].gr);
+            Vec3<double> vph = Vphys(kc[i].VelPred, gri);
+            double Wlorentz = lorentz_factor(gri->gamma, vph, gri->limiter);
+            local.GQuant.Velocity = Wlorentz*vph;
+            local.GQuant.RestMassDensity = active.enabled ? gr_get_primitive_density(kc[i].Density, kc[i].VelPred, gri, gri->limiter) : 0;
+        }
+#endif
 #ifdef MAGNETIC
         local.GQuant.B = active.enabled ? (kc[i].BPred * (kc[i].Density / kp[i].Mass)) : Vec3<double>{};
 #ifdef DIVBCLEANING_DEDNER
@@ -362,11 +372,6 @@ struct GradientsSpec
 #ifdef MHD_CONSTRAINED_GRADIENT
         local.ConditionNumber = kc[i].ConditionNumber;
         local.NV_T            = kc[i].NV_T;
-        for(int k = 0; k < 3; k++) {
-            for(int k2 = 0; k2 < 3; k2++) {
-                local.BGrad[k][k2] = kc[i].Gradients.B[k][k2];
-            }
-        }
 #ifdef MHD_MODIFIED_GRADIENT
         local.MG_cgcoeff = kc[i].MG_cgcoeff;
         local.MG_piece_token = kc[i].MG_piece_token;
@@ -460,6 +465,9 @@ struct GradientsSpec
             MERGE_ADD(Gradients[k].Density);
             MERGE_ADD(Gradients[k].Pressure);
             for(int j = 0; j < 3; j++) { MERGE_ADD(Gradients[k].Velocity[j]); }
+#ifdef GENERAL_RELATIVITY
+            MERGE_ADD(Gradients[k].RestMassDensity);
+#endif
 #ifdef MAGNETIC
             for(int j = 0; j < 3; j++) { MERGE_ADD(Gradients[k].B[j]); }
 #ifdef DIVBCLEANING_DEDNER
@@ -508,6 +516,9 @@ struct GradientsSpec
         MERGE_MAX(Maxima.Density);  MERGE_MIN(Minima.Density);
         MERGE_MAX(Maxima.Pressure); MERGE_MIN(Minima.Pressure);
         for(int j = 0; j < 3; j++) { MERGE_MAX(Maxima.Velocity[j]); MERGE_MIN(Minima.Velocity[j]); }
+#ifdef GENERAL_RELATIVITY
+        MERGE_MAX(Maxima.RestMassDensity); MERGE_MIN(Minima.RestMassDensity);
+#endif
 #ifdef MAGNETIC
         for(int j = 0; j < 3; j++) { MERGE_MAX(Maxima.B[j]); MERGE_MIN(Minima.B[j]); }
 #ifdef DIVBCLEANING_DEDNER

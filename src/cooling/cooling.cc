@@ -3012,6 +3012,9 @@ void gizmo_kokkos_finalize(void)
     hermite_ghost_table_release();
     let_foreign_leaf_id_release();
 #endif
+#ifdef KETJU_REGULARIZATION
+    kj_mstar_release_device_state();
+#endif
     Kokkos::finalize();
 }
 /* Best-effort drain of in-flight device work. Used by the reviewed hard-abort

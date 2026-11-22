@@ -305,6 +305,21 @@ double single_stars_collect_gas(long long tot_spawned)
     }
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(counters);
 
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+    /* donors cool down like the parent: no star until their density is recomputed, then none for the same fraction of
+       their own free-fall time (kept if already longer).  Every cell a star drew gas from, including the donors of a
+       failed draw whose gas went back (as on stella_dev, a06484e1f).  The records are kept on the donors' ranks, so
+       this is local. */
+    for(const SscGrantRecord& r : records) {
+        if(r.g <= 0) {continue;}
+        CellP[r.j].SingleStarSpawnBlock = 1;
+        if(All.SFCooldownFreeFallFraction > 0 && CellP[r.j].Density > 0) {
+            double t_cool = All.SFCooldownFreeFallFraction * sqrt(3. * M_PI / (32. * All.G * CellP[r.j].Density * All.cf_a3inv));
+            if(t_cool > CellP[r.j].SingleStarSFCooldown) {CellP[r.j].SingleStarSFCooldown = t_cool;}
+        }
+    }
+#endif
+
     /* the stars: collected mass, its momentum and metals; failed draws keep zero mass and are removed with the next
        rearrangement of the particle list */
     std::vector<double> rows; /* time ID child gen M_drawn M_collected R passes status split_grants remote_grants rho_parent */

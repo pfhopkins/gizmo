@@ -246,6 +246,22 @@ struct HydroForceSpec
         /* Dead-row gate (see HydroForceActiveData::enabled): also guards the
          * Mass/Density divisions below against a mid-corridor-killed cell. */
         active.enabled          = (kp[i].Mass > 0 && kc[i].Density > 0);
+#ifdef GENERAL_RELATIVITY
+        {
+            /* GR: Vel carries the Eulerian velocity v = (dx/dt + beta)/alpha, FourVelocity = W*v, VelCoord the coordinate velocity of the mesh-generating point */
+            const struct gr_metric *gri = &(kc[i].gr);
+            local.Vel = Vphys(kc[i].VelPred, gri);
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            local.ParticleVel = Vphys(kc[i].ParticleVel, gri);
+            local.VelCoord = kc[i].ParticleVel;
+#else
+            local.VelCoord = kc[i].VelPred;
+#endif
+            double Wlorentz = lorentz_factor(gri->gamma, local.Vel, gri->limiter); /* (limits Vel in place where required) */
+            local.FourVelocity = Wlorentz*local.Vel;
+            local.RestMassDensity = active.enabled ? gr_get_primitive_density(kc[i].Density, kc[i].VelPred, gri, gri->limiter) : 0;
+        }
+#endif
         local.Pressure          = kc[i].Pressure;
         local.ConditionNumber   = kc[i].ConditionNumber;
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -262,6 +278,9 @@ struct HydroForceSpec
         local.Gradients.Density   = kc[i].Gradients.Density;
         local.Gradients.Pressure  = kc[i].Gradients.Pressure;
         local.Gradients.Velocity  = kc[i].Gradients.Velocity;
+#ifdef GENERAL_RELATIVITY
+        local.Gradients.RestMassDensity = kc[i].Gradients.RestMassDensity;
+#endif
         local.NV_T                = kc[i].NV_T;
         local.TimeBin             = kp[i].TimeBin;
 #ifdef MAGNETIC
@@ -521,6 +540,9 @@ struct HydroForceSpec
 #endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         MERGE_MAX(MaxKineticEnergyNgb);
+#endif
+#ifdef GENERAL_RELATIVITY
+        MERGE_ADD(DtVolume);
 #endif
 #if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
         MERGE_MAX(ElasticImpedanceNeighbour);

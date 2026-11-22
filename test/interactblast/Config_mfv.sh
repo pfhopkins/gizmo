@@ -1,0 +1,10 @@
+# Config.sh with the meshless finite-volume (MFV) method instead of meshless finite-mass: keep the other lines in step
+HYDRO_MESHLESS_FINITE_VOLUME
+BOX_BND_PARTICLES
+BOX_SPATIAL_DIMENSION=1
+BOX_REFLECT_X
+SELFGRAVITY_OFF
+EOS_GAMMA=(1.4)
+INPUT_IN_DOUBLEPRECISION
+OUTPUT_IN_DOUBLEPRECISION
+DEVELOPER_MODE

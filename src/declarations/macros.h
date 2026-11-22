@@ -296,3 +296,7 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
 
 #define MACRO_NAME_CONCATENATE(A, B) MACRO_NAME_CONCATENATE_(A, B)
 #define MACRO_NAME_CONCATENATE_(A, B) A##B
+
+#if defined(GENERAL_RELATIVITY) && !defined(SLOPE_LIMITER_POSITIVITY_RANGE_FAC)
+#define SLOPE_LIMITER_POSITIVITY_RANGE_FAC (0.5)  /* GR: fraction of the maximum neighbour distance over which the positivity-preserving slope limiter acts (local_slopelimiter), as in Lupi (2023); Newtonian builds use the full distance */
+#endif

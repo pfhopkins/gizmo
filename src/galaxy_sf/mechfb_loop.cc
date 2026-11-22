@@ -100,6 +100,7 @@ void mechfb_populate_aux_initial(MechFBSpec::Aux& aux,
  * of truth, used only by the MechFBSpec runner-port.
  * ========================================================================== */
 
+#ifndef GALSF_FB_FIRE_STELLAREVOLUTION
 /* ejecta mass [code] this source returns this step, over every mode it is active in: the one pass of neighbour weights serves them all */
 static double mech_fb_ejecta_mass_this_step(int i) {
     double M_ej = 0;
@@ -117,6 +118,7 @@ static double mech_fb_ejecta_mass_this_step(int i) {
 #endif
     return M_ej;
 }
+#endif
 
 void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
     struct addFB_evaluate_data_in_ fb;

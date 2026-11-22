@@ -3,9 +3,9 @@
 # GIZMO) and of the ketju-integrator-c headers (include/ketju_integrator). Default: the install of
 # scripts/get_stella_deps.sh --ketju under $(STELLA_DEPS_PREFIX) (~/.stella-deps), keyed by the pins below and by the
 # Kokkos install; set it in your SYSTYPE block, the environment or on the make line to use another. Not part of this repository.
-# pins: MSTAR (branch kokkos) and the ketju-integrator-c headers (branch ketju-c)
+# pins: MSTAR (branch main) and the ketju-integrator-c headers (branch ketju-c)
 KETJU_REPO  = https://github.com/Ulli1991/ketju-integrator.git
-KETJU_REF   = 4b042547982b1aa4b05533eaa39ec121753b9240
+KETJU_REF   = 3274ee705a2b4fa6dc4a99501bbcc3f84da825a4
 KETJU_C_REF = e70b815a23ee03a666636d18c51e222cada3309a
 KETJU_KOKKOS = $(or $(strip $(KOKKOS_PATH)),$(patsubst -I%/include,%,$(firstword $(filter -I%,$(KOKKOS_CPPFLAGS)))))
 STELLA_DEPS_PREFIX ?= $(HOME)/.stella-deps

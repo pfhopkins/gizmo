@@ -583,6 +583,13 @@ void apply_excision(void)
             }
         }
     }
+#elif defined(GENERAL_RELATIVITY)
+    /* GR: remove the cells inside GR_EXCISION_RADIUS horizon radii of the black hole(s) (check_boundary, gr/gr_utils.cc) */
+    for (int i : ActiveParticleList)
+    {
+        if(P[i].Type != 0) {continue;}
+        check_boundary(i);
+    }
 #else
     double EXCISION_MASS = 0; // mass of the excised object. Used to move the excision boundary so as to capture bound objects. If zero the excision boundary will not move
     double EXCISION_INIT_RADIUS = 0; // initial excision radius

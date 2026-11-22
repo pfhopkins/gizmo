@@ -45,6 +45,7 @@
         + [Nuclear Reaction Networks](#config-fluids-nuclear)
         + [Magnetic Fields](#config-fluids-mhd)
         + [Two-Temperature Plasma (Independent Electron Temperature)](#config-fluids-twotemperature)
+        + [General-Relativistic Hydrodynamics](#config-fluids-gr)
         + [Conduction & Viscosity](#config-fluids-navierstokes)
         + [Passive Scalars, Metals, & Sub-Grid Turbulent Mixing](#config-fluids-metalsturb)
         + [Dust-Gas (Particulate) Mixtures](#config-fluids-dust)
@@ -154,6 +155,7 @@
     + [Continuum Vlasov (Collisionless Boltzmann) Tests](#tests-cbe)
     + [Magneto-Hydrodynamics Tests](#tests-mhd) (waves, shocktubes, field-loops, current sheets, Orszag-Tang vortex, rotors, MRI, jets, MHD-mixing/gravity)
         + [Non-Ideal MHD and Multi-Fluid Tests](#tests-mhd-nonideal)
+    + [General-Relativistic Hydrodynamics Tests](#tests-gr) (relativistic shock tube, TOV star, Michel accretion onto a black hole)
     + [Solid-Body, Elasto-Dynamics, and Equation-of-State Tests](#tests-elastic)
         + [Bouncing Rubber Cylinders](#tests-elastic-rubberrings), [Elastic Waves, Uniform Tension, Bending and Plastic Impact](#tests-elastic-dynamics), [Impact Cratering with Damage and Porosity](#tests-elastic-cratering), [Grain-to-Solid Promotion](#tests-elastic-grainpromotion)
         + [Self-Gravitating Planetary Bodies](#tests-elastic-planets), [Tabulated Equations of State](#tests-elastic-eos)
@@ -1189,6 +1191,55 @@ Note that these are not the only available equations-of-state in GIZMO, but just
 ```
 
 **TWO\_TEMPERATURE\_PLASMA**: Enables an independently-evolved electron temperature $T_{e}$ separate from the ion/gas temperature $T_{i}$, for problems where the electron-ion Coulomb equilibration timescale becomes comparable to or longer than other timescales of interest (e.g. shocks in dilute hot plasma, intracluster medium, supernova-remnant interiors, hot accretion flows). The primary state carried per cell is the specific electron internal energy per unit gas mass, $u_{e,{\rm cell}} = (3/2) n_{e} k_{\rm B} T_{e} / \rho$; the electron temperature $T_{e,{\rm cell}}$ is a derived cache. The *total* internal energy `InternalEnergy` remains the single conserved hydrodynamic variable -- the module only locally re-partitions it into electron and ion sub-energies (sub-energy mode), so the Riemann solver, snapshot consumers, and downstream couplings (including the Biermann battery in `MHD_BATTERY_MECHANISMS`, the gradient pass, and snapshot I/O) see the same total $u$ as in the single-temperature case. This is a bitfield: bit 0 (=1, required core) activates electron-ion Coulomb (Spitzer 1962) thermal equilibration with rate $\alpha_{ei} \propto n_{e} n_{i} \Lambda_{ei} / T_{e}^{3/2}$ and routes the radiative cooling and Compton-heating components of the cooling-function update to $T_{e}$ alone (rather than the total), so the cooling rate inside the rootfind is physically evaluated as a function of $T_{e}$ as it should be; bit 1 (=2) is reserved for electron-neutral elastic coupling, not yet implemented (enabling it will hard-fail at compile); bit 2 (=4) routes the Spitzer-Härm thermal conduction deposition (when `CONDUCTION` is active) into $u_{e}$ rather than $u_{\rm total}$, since electron heat conduction in a magnetized plasma is physically an electron-channel energy transport. By default, the fraction of hydro dissipation deposited into electrons at shocks is controlled by the runtime parameter `TwoTemp_ShockElectronFraction` (default $f_{e}=0$, the collisionless-shock limit following Vink+15, Ghavamian+13, where ions absorb all dissipation and electrons heat only via Coulomb equilibration; setting $f_{e}=1$ recovers strong-coupling single-fluid behavior). The initial $T_{e}/T_{i}$ ratio at startup is controlled by `TwoTemp_InitialTeOverTgas` (default 1.0 = LTE seed; set $\neq 1$ to initialize in a non-equilibrium state, e.g. for relaxation regression tests). Requires `COOLING`. Mutually exclusive in v1 with `CHIMES` (which evolves $T_{e}$ internally already), `EOS_HELMHOLTZ` (which owns $T$ directly via the tabulated EOS), and `COOLING_OPERATOR_SPLIT` (the current implementation uses the unsplit cooling rootfind path). Mach-dependent $f_{e}(\mathcal{M})$ (Ghavamian-style ramp) is deferred to a future refinement.
+
+
+<a name="config-fluids-gr"></a>
+### _General-Relativistic Hydrodynamics_
+
+```bash
+####################################################################################################
+# --------------------------------------- General relativity
+# ------------------------------- users of these routines should cite Lupi 2023, MNRAS, 519, 1115 (GR hydro)
+####################################################################################################
+#GENERAL_RELATIVITY=0           # turns on general relativistic hydrodynamics; 0=HLL solver/1=HLLC solver (Mignone & Bodo 2005)
+#GR_METRIC=1                    # metric: 0=Minkowski, 1=Kerr (default), <0=tabulated static spherically symmetric metric
+#GR_METRIC_USE_ISOTROPIC_RADIUS           # GR_METRIC<0: the table is indexed by the isotropic radius instead of the areal radius
+#GR_METRIC_USE_BOYER_LINDQUIST             # GR_METRIC=1: Boyer-Lindquist instead of Kerr-Schild coordinates (singular on the rotation axis)
+#GR_EXCISION_RADIUS=2.1         # cells inside this radius (in units of the horizon radius) are removed (default 2.1)
+#GR_TEST_PARTICLE               # the gas moves as collisionless test particles (tests of the source terms)
+#SLOPE_LIMITER_POSITIVITY_RANGE_FAC=0.5  # GR only: range of the positivity-preserving slope limiter, as a fraction of the maximum neighbour distance
+#GR_DRIFT_LEGACY                # GR: the drift of Lupi (2023) instead of the default energy-holding drift
+#GR_GAMMA_LIMITER_RADIUS=0      # GR (advanced): radius from the hole inside which the Lorentz factor is capped (default 0 = off)
+#GR_GAMMA_LIMITER=1000          # GR (advanced): the maximum Lorentz factor inside GR_GAMMA_LIMITER_RADIUS
+#OUTPUT_GR_METRIC               # GR: write the metric of every cell to the snapshots
+####################################################################################################
+```
+
+**GENERAL\_RELATIVITY**: Evolves the gas with general-relativistic hydrodynamics on a *prescribed*, static metric (Lupi 2023, MNRAS, 519, 1115, which users of this module should cite): the conserved rest-mass density, covariant momentum and energy (Valencia formulation) are integrated with the meshless finite-mass (MFM) or finite-volume (MFV) methods, with the metric source terms, and converted to primitive variables by a Newton-Raphson inversion (Noble et al. 2006). The metric is not evolved and the gas does not gravitate: `SELFGRAVITY_OFF` is set automatically. Set `=0` for the HLL Riemann solver or `=1` for HLLC (Mignone & Bodo 2005). HLLC is the more accurate in smooth flows (special relativity, accretion onto a Kerr hole), but with MFM it is not suited to strong shocks (in the relativistic blast wave it needs `MaxSizeTimestep` $\lesssim 10^{-5}$ and still gives a contact density spike about twice the exact value; MFV overshoots only mildly). HLL is the robust choice for MFM.
+
+Units are geometric, $G = c = 1$: the mass unit is `UnitMass_in_g` (divided by `HubbleParam` as usual), the velocity unit is $c$ and the length unit $G M_{u}/c^{2}$; `UnitLength_in_cm`, `UnitVelocity_in_cm_per_s` and `GravityConstantInternal` in the parameterfile are overridden (the code prints the units it uses). The gas is an ideal gas with the constant adiabatic index `EOS_GAMMA`. With GR the default `CourantFac` is 0.2 (also the maximum) and `ErrTolIntAccuracy` 0.01.
+
+Not supported with GR (the build stops): `MAGNETIC` (GR-MHD is not part of this version), the SPH solvers, and the general equations of state (`EOS_GENERAL`). Other physics modules (cooling, radiation, cosmic rays, star formation, sinks, ...) have not been tested with GR and are not supported. The 3+1 quantities and the velocities passed to such modules are not the Newtonian ones: for example `Gradients.Velocity` holds the gradient of the spatial four-velocity $W\,v$. Merging and splitting of cells works with GR. The merged state is remapped from the conserved variables at the merged position. Its entropy is held between those of the two parent cells, so the energy is not exactly conserved where that bound acts.
+
+**GR\_METRIC**: The metric. `0` = Minkowski (special relativity). `1` (default) = a Kerr black hole of mass `GR_Mass` and dimensionless spin `GR_Spin` (parameterfile, code units), with the spin along $z$. `<0` = a tabulated static, spherically symmetric metric, e.g. a TOV star, read from `GR_MetricTableFile` (parameterfile). The table starts with a header line `# N log` (N rows; `log` = 1 for logarithmic, 0 for linear spacing, informative only), followed by N rows `r M(r) -g_tt r_iso`: radius, enclosed gravitational mass, $-g_{tt}$, and the isotropic radius (read only with `GR_METRIC_USE_ISOTROPIC_RADIUS`; other tables may carry another quantity in that column). The radii must be finite, non-negative and strictly increasing, $M \geq 0$ and $-g_{tt} > 0$. For an areal radius every row with $r > 0$ must also have $2M < r$. The code checks every row at start-up and stops on the first invalid one. Beyond the last row the metric is the exterior Schwarzschild one with the last row's mass. The black hole (or star centre) sits at the origin, or at the centre of the box with `BOX_PERIODIC` (nearest periodic image).
+
+**GR\_METRIC\_USE\_ISOTROPIC\_RADIUS**: With `GR_METRIC<0`: the table is indexed by the isotropic radius (conformally flat spatial metric) instead of the areal radius.
+
+**GR\_METRIC\_USE\_BOYER\_LINDQUIST**: With `GR_METRIC=1`: use Boyer-Lindquist coordinates instead of the default Kerr-Schild coordinates, which are regular at the horizon and recommended. The Boyer-Lindquist metric is written in Cartesian components (Liptai & Price 2019) that are singular on the rotation axis ($x = y = 0$) and lose precision near it: use it only for particle distributions that avoid the axis.
+
+**GR\_EXCISION\_RADIUS**: With `GR_METRIC=1`: cells inside this radius, in units of the horizon radius $r_{H} = M\,(1 + \sqrt{1 - a^{2}})$, are removed (their mass set to zero), at start-up and whenever they are active. Two cells whose separation passes within the horizon (less a margin of the cells' size) do not interact. Default 2.1; the accretion tests of Lupi (2023) use 1.05.
+
+**GR\_TEST\_PARTICLE**: The gas moves as collisionless test particles along geodesics (no hydrodynamics); a test of the metric source terms. The working mass of every particle is set to 1, and particles inside coordinate radius 1.001 of the hole are removed.
+
+**SLOPE\_LIMITER\_POSITIVITY\_RANGE\_FAC**: GR builds only: the positivity-preserving slope limiter acts over this fraction of the maximum neighbour distance (default 0.5, as in Lupi 2023; Newtonian builds use the full distance).
+
+**GR\_DRIFT\_LEGACY**: The drift of Lupi (2023), which carries the conserved energy through the drift. By default the drift instead holds the conserved density, momentum and specific internal energy fixed while the metric changes along the path, and recomputes the Lorentz factor and energy at the new position. This gives second-order geodesics in Kerr-Schild coordinates.
+
+**GR\_GAMMA\_LIMITER\_RADIUS** and **GR\_GAMMA\_LIMITER**: Advanced. Inside `GR_GAMMA_LIMITER_RADIUS` of the hole (code length units; default 0 = off), the Lorentz factor of the gas is capped at `GR_GAMMA_LIMITER` (default 1000; it must be larger than 1), and faces whose reconstructed velocity reaches the cap fall back to first order. This is a protection against pathological reconstructed or numerical states near the hole, not a way to impose a lower Lorentz factor on a physically consistent flow. A cap below the flow's own Lorentz factor contradicts its conserved momentum, and the inversions fail.
+
+**OUTPUT\_GR\_METRIC**: Write the covariant 4-metric (10 components: tt, tx, ty, tz, xx, xy, xz, yy, yz, zz), the lapse and $\sqrt{\gamma}$ of every cell to the snapshots (`GRMetricTensor`, 12 values per cell). They follow from the positions, so they are off by default. Every GR snapshot also contains `RestMassDensity`, the rest-mass density $\rho_{0}$. With GR, `Density` is the conserved density $D = \sqrt{\gamma}\,\rho_{0} W$ (the mass per coordinate volume), `Velocities` the coordinate velocity $dx^{i}/dt$, and `InternalEnergy` the specific internal energy in the fluid frame.
+
+The module was validated on relativistic shock tubes (Martí & Müller), Michel (relativistic Bondi) accretion in Kerr-Schild coordinates, and a TOV star with a tabulated metric (Lupi 2023), with both MFM and MFV.
 
 
 <a name="config-fluids-navierstokes"></a>
@@ -5627,6 +5678,18 @@ These problems exercise the non-ideal terms (`MHD_NON_IDEAL`: Ohmic resistivity,
 **Biermann Battery Growth** (`test/biermann_growth`): A 2D periodic box with $\mathbf{B}=0$ and orthogonal sinusoidal gradients in density and temperature, from which the electron Biermann battery must generate a $B_{z}$ field. Uses `MAGNETIC`, `MHD_BATTERY_MECHANISMS=1`, `MHD_B_SET_IN_PARAMS`, `BOX_SPATIAL_DIMENSION=2`; the IC is generated locally by `make_biermann_growth_ics.py`. The test compares the field near the source maximum against the analytic rate $\mathrm{d}B_{z}/\mathrm{d}t = -(c\,k_{B}/e)\,a\,b\,T_{0}\,k^{2}$, requiring the correct sign and a magnitude within a factor of 5. It is a sign and order-of-magnitude check on the battery source term, not a precision convergence test.
 
 **Ion-Neutral Ambipolar Drag Relaxation** (`test/ionneutral_drag`): Two interleaved Type=0 fluids in a 1D periodic box — 32 ions tagged `FluidType=FLUID_ION` (with $v_x = +10^{-4}$ and a small $B_x$) interleaved with 32 neutrals tagged `FluidType=FLUID_DEFAULT` ($v=0$, $B=0$) — relax exponentially via the Draine ambipolar drag with $\mathrm{d}(\Delta v)/\mathrm{d}t = -\gamma_{\rm AD}(\rho_i+\rho_n)\,\Delta v$. Code units are chosen so $\gamma_{\rm AD,code}=1$ and $\rho_{\rm total}=1$, yielding analytic $t_{\rm damp}=1$ in code time. The pytest gate fits the measured decay rate to $\exp(-t)$ across 5 e-folds and asserts $\max|B_{\rm neutral}|<10^{-12}$ throughout (the cross-fluid MHD terms are skipped for neutrals, which therefore stay at $B=0$ under induction). The IC is generated locally by `make_ionneutral_drag_ics.py` (no website download). A recorded run measures a decay rate of 0.9997 against the analytic 1 over the full 5 e-folds. Uses `HYDRO_MULTIFLUID`, `HYDRO_MULTIFLUID_IONNEUTRAL`, `MAGNETIC`, `HYDRO_MESHLESS_FINITE_MASS`, `BOX_SPATIAL_DIMENSION=1`.
+
+
+<a name="tests-gr"></a>
+## General-Relativistic Hydrodynamics Tests
+
+These problems validate the general-relativistic hydrodynamics module (`GENERAL_RELATIVITY`, see [General-Relativistic Hydrodynamics](#config-fluids-gr); Lupi 2023, MNRAS, 519, 1115). Each runs with the HLL solver for both MFM and MFV and compares the final state with an exact or analytic solution.
+
+**Relativistic Shock Tube** (`test/grhd_shocktube`): Problem 1 of Martí & Müller: rest-mass density 10 | 1, pressure 40/3 | $10^{-6}$, gas at rest, adiabatic index 5/3, in special relativity (`GR_METRIC=0`, 1D periodic). A mildly relativistic shell ($v=0.714\,c$) forms behind the shock. The rest-mass density, pressure and velocity at $t=0.3$ are compared with the exact Riemann solution.
+
+**TOV Star** (`test/grhd_tov`): A polytropic neutron-star-like star (K = 1, $\Gamma=2$) in hydrostatic equilibrium in its own tabulated static metric (`GR_METRIC=-1`), run for about 7 dynamical times. The central density must stay within about 8% of the tabulated value, and the final density profile must match the TOV solution.
+
+**Michel Accretion** (`test/grhd_michel`): Steady relativistic Bondi (Michel) accretion onto a Schwarzschild black hole in Kerr-Schild coordinates (`GR_METRIC=1`, `GR_Spin` 0), with the cells inside 1.05 horizon radii excised. The test is a short run ($t=30\,GM/c^{3}$): it compares the density, radial velocity and internal energy with the Michel solution at $6<r<30\,GM/c^{2}$, where the flow has relaxed from the initial conditions. For the full comparison down to the horizon, as in Lupi (2023), run to $t=200$.
 
 
 <a name="tests-elastic"></a>
