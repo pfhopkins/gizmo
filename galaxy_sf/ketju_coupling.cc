@@ -2639,6 +2639,14 @@ void ketju_find_regions(void)
         MPI_Allgather(mine.data(), n_multi, MPI_INT, task_counts.data(), n_multi, MPI_INT, MPI_COMM_WORLD);
     }
 
+#ifdef KETJU_ONE_TASK_PER_REGION
+    /* the Kokkos MSTAR integrates on rank 0 of the compute group only: one task per region, its affected root, one round */
+    for(int k = 0; k < n_multi; k++) {
+        region_compute_info &ci = ActiveRegions[multi[k]].compute_info; ci.compute_sequence_position = 0;
+        for(int t = 0; t < NTask; t++) {if(task_counts[(size_t)t * n_multi + k] > 0) {ci.first_task_index = ci.final_task_index = t; break;}}
+    }
+    g_ketju_num_sequential_runs = (n_multi > 0) ? 1 : 0; (void)allocate_compute_tasks_for_regions; (void)update_region_costs; /* unused here */
+#else
     /* allocate compute tasks across regions based on cost estimates */
     allocate_compute_tasks_for_regions();
     /* A region given one compute task is integrated where its members live (its affected root, the lowest task holding
@@ -2648,6 +2656,7 @@ void ketju_find_regions(void)
         if(ci.first_task_index != ci.final_task_index) continue;
         for(int t = 0; t < NTask; t++) {if(task_counts[(size_t)t * n_multi + k] > 0) {ci.first_task_index = ci.final_task_index = t; break;}}
     }
+#endif
 
     /* second pass: set up integrators */
     clk.lap(CPU_KETJUFIND);
@@ -2732,6 +2741,9 @@ void ketju_run_integration(void)
     }
 
     int n_rounds = !any_multi ? 0 : (g_ketju_num_sequential_runs > 0 ? g_ketju_num_sequential_runs : 1);
+#ifdef KETJU_SCATTER_AFTER_ALL_REGIONS
+    std::vector<char> integrated(n_act, 0);
+#endif
     for(int seq = 0; seq < n_rounds; seq++) {
     for(size_t r = 0; r < ActiveRegions.size(); r++) {
         KetjuRegion &reg = ActiveRegions[r];
@@ -2764,14 +2776,25 @@ void ketju_run_integration(void)
         clk.lap(CPU_KETJUFIND);
         integrate_region(reg, dt_physical);
         clk.lap(CPU_KETJUMSTAR);
+#ifdef KETJU_SCATTER_AFTER_ALL_REGIONS
+        integrated[r] = 1; continue; /* written back below, in the same order */
+#endif
         scatter_results(reg);
         clk.lap(CPU_KETJUSCATTER);
     }
     } /* end for(seq) */
+#ifdef KETJU_SCATTER_AFTER_ALL_REGIONS
+    /* no rank waits in a write-back for a region integrated after its own: integration reads no particle data */
+    for(int seq = 0; seq < n_rounds; seq++)
+        for(size_t r = 0; r < ActiveRegions.size(); r++) if(integrated[r] && ActiveRegions[r].compute_info.compute_sequence_position == seq) scatter_results(ActiveRegions[r]);
+    clk.lap(CPU_KETJUSCATTER);
+#endif
 
     /* update cost estimates for next step's load balancing */
     clk.rest = CPU_KETJUFINISH;
+#ifndef KETJU_ONE_TASK_PER_REGION /* the costs only steer the task allocation */
     if(any_multi) update_region_costs(); /* no integrator anywhere: every cost is 0 and nothing is stored */
+#endif
 
     /* Cumulative MSTAR statistics, printed every 1024 steps and on the step that reaches the end of
      * the timeline: the per-region log is compiled out, so otherwise nothing shows how hard the
