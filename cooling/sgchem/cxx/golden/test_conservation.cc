@@ -556,8 +556,10 @@ static int phase_R(const ChemTables& TT, const char* tag)
 // deltas through a pipe.  Solver output of the child goes to /dev/null.
 // ===========================================================================
 struct FloorRec { int key; long n; double maxrel; long bin[4]; char var[16]; };
+extern thread_local long chem_dust_iters, chem_dust_bisections;
+static long g_last_dust_iters = 0, g_last_dust_bisect = 0;   // C++ dust solver work of the last forked call
 struct ChildResult {
-    int rc; double wsec, en; double y[TRAC_NUM];
+    int rc; double wsec, en, td; long dust_iters, dust_bisect; double y[TRAC_NUM];
     ClipStat clip; double h3p_max, h3p_rel_max; long h3p_cap, h3p_capped, rhs;
     int nfl; FloorRec fl[64];
 };
@@ -595,8 +597,10 @@ static int run_forked(int backend, double dt, double nH, double* en, double* y, 
         g_h3p_max = g_h3p_rel_max = 0.0; g_h3p_cap = g_h3p_capped = 0;
         ChildResult r = ChildResult();
         double w0 = wall();
+        const long di0 = chem_dust_iters, db0 = chem_dust_bisections;
         r.rc = backend ? run_cxx(dt, nH, en, y, td) : run_fortran(dt, nH, en, y, td);
-        r.wsec = wall() - w0; r.en = *en;
+        r.wsec = wall() - w0; r.en = *en; r.td = *td;
+        r.dust_iters = chem_dust_iters - di0; r.dust_bisect = chem_dust_bisections - db0;
         for (int i = 0; i < TRAC_NUM; i++) r.y[i] = y[i];
         r.clip = g_clip; r.h3p_max = g_h3p_max; r.h3p_rel_max = g_h3p_rel_max;
         r.h3p_cap = g_h3p_cap; r.h3p_capped = g_h3p_capped; r.rhs = g_rhs_calls;
@@ -632,7 +636,8 @@ static int run_forked(int backend, double dt, double nH, double* en, double* y, 
     if (timed_out) { *wsec = tmax; return -9; }
     if (got < sizeof(r)) { *wsec = wall() - w0; return -8; }     // child died
     merge_child(r);
-    *en = r.en; for (int i = 0; i < TRAC_NUM; i++) y[i] = r.y[i];
+    *en = r.en; *td = r.td; for (int i = 0; i < TRAC_NUM; i++) y[i] = r.y[i];
+    g_last_dust_iters = r.dust_iters; g_last_dust_bisect = r.dust_bisect;
     *wsec = r.wsec;
     return r.rc;
 }
@@ -959,6 +964,86 @@ static int phase_M(const ChemTables& TT)
     return ok;
 }
 
+// sgchem.cc final temperature (electrons = H+ only), used for the MinGasTemp rescale at fixed composition
+static double prod_temp(double nH, double en, const double* y)
+{
+    double ekn = en / (CHEM_KBOLTZ * (1.0 + CHEM_COMP.abhe - y[IH2] + y[IHP]) * nH), t, g;
+    cxx_lookup_temp_gamma(y[IH2], CHEM_COMP.abhe, ekn, &t, &g, *g_cx);
+    return t;
+}
+
+// PHASE F (STL-164): the dense shielded corner (nH 1e6, G0 0, Z 3) where the dust-temperature Newton stops converging
+// below ~4 K gas. Production-like sequences: start at the floor, MinGasTemp (10 / 5 K) applied after every solve as
+// sgchem.cc does, solves of 100 yr .. 10 Myr up to 10 Myr in total (CONS_F_MAXSOLVES, default 200), both backends.
+// Gate: every solve rc 0 (no failure, no timeout); C++ dust-solver iterations <= 1e6 per solve; final C++ T and x_H2
+// within 1% of DVODE per case; at the corner states a second dust solve from the returned dust T converges in Newton
+// (no bisection, dust_iter_failed stays 0) and moves it by < 1e-2.
+static int phase_F()
+{
+    const char* ms = std::getenv("CONS_F_MAXSOLVES");
+    const double cap = ms ? std::atof(ms) : 200.0;
+    std::printf("\nPHASE F -- dense shielded corner (nH 1e6, G0 0, Z 3): sequences with MinGasTemp applied after every solve, "
+                "both backends, <= %.0f solves per case\n", cap);
+    set_cell_commons(0.0, 3.0);
+    const double nH = 1e6;
+    int ok = 1;
+    for (double Tf : {10.0, 5.0}) for (double dt : {3.156e9, 3.156e10, 3.156e11, 3.156e12, 3.156e14}) for (int st = 0; st < NSTART; st++) {
+        double y0[TRAC_NUM], removed[NEL];
+        initial_state(st, y0); presolve(y0, removed);
+        const long nsteps = (long)std::min(cap, std::ceil(3.156e14 / dt));
+        double yb[2][TRAC_NUM], Tpre[2] = {0, 0}, wmax = 0.0;
+        int rcb[2] = {0, 0}; long nsol[2] = {0, 0}, maxit = 0, nbis = 0;
+        for (int b = 0; b < 2; b++) {
+            double y[TRAC_NUM]; for (int i = 0; i < TRAC_NUM; i++) y[i] = y0[i];
+            double en = energy_at(*g_cx, nH, Tf, y), td = 10.0;
+            for (long n = 0; n < nsteps; n++) {
+                double w = 0.0;
+                const int rc = run_forked(b, dt, nH, &en, y, &td, &w);
+                if (w > wmax) wmax = w;
+                if (rc) { rcb[b] = rc; break; }
+                if (b) { maxit = std::max(maxit, g_last_dust_iters); nbis += g_last_dust_bisect; }
+                const double Tp = prod_temp(nH, en, y);
+                Tpre[b] = Tp;
+                if (Tp < Tf && Tp > 0) en *= Tf / Tp;
+                nsol[b]++;
+            }
+            for (int i = 0; i < TRAC_NUM; i++) yb[b][i] = y[i];
+        }
+        const double relT = std::fabs(Tpre[1] - Tpre[0]) / Tpre[0];
+        const double h2 = std::max(yb[0][IH2], yb[1][IH2]);
+        const double relH2 = (h2 > 0.0) ? std::fabs(yb[1][IH2] - yb[0][IH2]) / h2 : 0.0;
+        const int bad = rcb[0] || rcb[1] || (maxit > 1000000) || !(relT <= 0.01) || !(relH2 <= 0.01);
+        ok &= !bad;
+        std::printf("  floor %4.0f K dt %9.3g start %d: solves f77 %ld rc %d, cxx %ld rc %d; T %.5g / %.5g K (rel %.1e), x_H2 rel %.1e; "
+                    "cxx dust iterations max %ld per solve, bisections %ld; slowest %.2f s%s\n",
+                    Tf, dt, st, nsol[0], rcb[0], nsol[1], rcb[1], Tpre[0], Tpre[1], relT, relH2, maxit, nbis, wmax, bad ? "  FAIL" : "");
+        std::fflush(stdout);
+    }
+    // the dust temperature returned at the corner states is the balance point
+    {
+        ChemCell c; chem_bind_cell(c, *g_cx, NET);
+        int nconv = 0, nst = 0;
+        for (double T : {3.0, 4.0, 5.0}) for (double aHI : {1e-3, 2e-2, 0.5}) {
+            double RH2 = 0.0, Rd = 0.0;
+            c.tdust = 3.8; c.dust_iter_failed = 0;
+            cxx_calc_dust_temp(nH, c.chi_isrf, T, aHI, &RH2, &Rd, 0, c);
+            const double td1 = c.tdust; const int failed1 = c.dust_iter_failed;
+            const long b1 = chem_dust_bisections;
+            c.dust_iter_failed = 0;
+            cxx_calc_dust_temp(nH, c.chi_isrf, T, aHI, &RH2, &Rd, 0, c);
+            const double td2 = c.tdust;
+            const int conv = (c.dust_iter_failed == 0) && (chem_dust_bisections == b1) && (std::fabs(td2 - td1) / td1 < 1e-2);
+            nst++; nconv += conv;
+            std::printf("  dust balance T %.1f K x_HI %.0e: first solve tdust %.6g (Newton %s), re-solve %.6g: %s\n", T, aHI, td1,
+                        failed1 ? "not converged" : "converged", td2, conv ? "converged" : "NOT CONVERGED");
+        }
+        ok &= (nconv == nst);
+    }
+    std::printf("  GATE F: every solve rc 0, cxx dust iterations <= 1e6 per solve, final T and x_H2 within 1%% of DVODE, "
+                "dust T converged at the corner states: %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     const char* csv = (argc > 1) ? argv[1] : "conservation.csv";
@@ -997,6 +1082,7 @@ int main(int argc, char** argv)
     if (want('O')) { std::printf("\nPHASE O -- one-zone trajectories to 300 Myr\n"); ok &= phase_O(); }
     if (want('I')) phase_I();
     if (want('M')) ok &= phase_M(Cx);
+    if (want('F')) ok &= phase_F();
     report_probes();
     std::printf("\n=== PARITY: %s ===\n", ok ? "ALL PASS" : "FAILURES PRESENT");
     chem_tables_free(Cx);

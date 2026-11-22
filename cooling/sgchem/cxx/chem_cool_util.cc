@@ -397,6 +397,9 @@ double cxx_compute_h2_heating_fraction(double T, double n, double xh2)
     return frac1 + dh2 * (frac2 - frac1);
 }
 
+// dust-temperature solver statistics of this thread (tests): Newton iterations, solves that needed bisection
+thread_local long chem_dust_iters = 0, chem_dust_bisections = 0;
+
 // ===========================================================================
 // calc_dust_temp (cool_util.F:802-1007)
 //
@@ -455,6 +458,7 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
         int converged = 0;
         for (int K = 1; K <= ndust_iter; K++) {
             c.tdust = tdust_new;
+            chem_dust_iters++;
 
             dust_cool = 4.68e-31 * chem_fpowi(c.tdust, 6) * yn;
             dust_cool *= c.dust_to_gas_ratio;
