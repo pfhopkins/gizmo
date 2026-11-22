@@ -28,11 +28,13 @@
 /* kick/drift of the conserved variables: implicit solver tolerance and iteration cap (otherwise a predictor-corrector) */
 #define GR_IMPLICIT_TOLERANCE (1e-8)   /* convergence tolerance of the implicit iterations (drift position correction, source terms) */
 #define GR_IMPLICIT_MAX_NITER 100      /* their maximum number of iterations */
-#define GR_METRIC_DERIVATIVE_STEP (1e-3) /* finite-difference step of the metric derivatives, in units of the mass of the metric (G = c = 1;
+#define GR_METRIC_DERIVATIVE_STEP (1e-4) /* finite-difference step of the metric derivatives, in units of the mass of the metric (G = c = 1;
                                             gr_metric_mass_scale). The differences of the deviation from Minkowski have rounding errors
                                             ~ eps (r/M) M/h and truncation errors ~ (h/L)^2 (L the local scale of the metric, >~ M): with
-                                            1e-3 M the relative error is <~ 4e-7 from the horizon to 10^6 M (Kerr-Schild, the tables;
-                                            Boyer-Lindquist differences the full metric: 2e-7 at 10^3 M, 4e-5 at 10^4 M) */
+                                            1e-4 M the relative error is <~ 1e-8 from the horizon to 10 M, 4e-8 at 10^4 M and 7e-7 at
+                                            10^5 M (Kerr-Schild, the tables).
+                                            Boyer-Lindquist, singular at the horizon (L ~ r - r_H), differences the full metric: 1e-6
+                                            at 1.05 r_H, <~ 2e-8 from 2 r_H to 100 M, 2e-6 at 10^3 M */
 
 #ifndef GR_GAMMA_LIMITER
 #define GR_GAMMA_LIMITER (1000)        /* maximum Lorentz factor enforced inside GR_GAMMA_LIMITER_RADIUS (Template_Config.sh) */
