@@ -31,15 +31,11 @@ struct SourceReachEntry {
     float reach[6];
 };
 
-/* One of this rank's top leaves, in both roles: as U (its cube at the build and the lists other ranks sent for it) and as
- * T (the lists it sent, and the distance from its cube to the nearest other rank's cube, as far as its members could
- * reach at the build). */
+/* One of this rank's top leaves, as a query's leaf U: its cube at the build and the lists other ranks sent for it. */
 struct OwnLeaf {
     int leaf;
     float half_len;
     long long recv_first, recv_end;
-    long long sent_first, sent_end;
-    double free_reach;
 };
 
 int g_valid = 0;
@@ -50,7 +46,7 @@ std::vector<float> g_widen_allowed, g_growth_allowed;   /* per top leaf: motion 
 std::vector<unsigned char> g_stale;                      /* per top leaf */
 std::vector<float> g_top_enclose;                        /* per top-level node: half side of a cube on its centre holding every leaf below at the build */
 std::vector<SourceReachEntry> g_recv;                   /* lists for this rank's leaves U, sorted by (U, T) */
-std::vector<SourceReachEntry> g_sent;                   /* lists this rank's leaves T sent, sorted by (T, U) */
+std::vector<float> g_covered;                            /* per particle slot: its radius at the build, rounded down; -1 = not a member then */
 std::vector<OwnLeaf> g_own;                              /* sorted by leaf */
 const ModeBTopleafMap *g_map = nullptr;
 integertime g_now_ti = -1;
@@ -114,16 +110,6 @@ void for_remote_leaves_near(const double c[3], const double hw[3], double R, F &
     }
 }
 
-/* Exact distance between two boxes (centres a, b; half widths ha, hb) under the box wrap. */
-inline double box_gap(const double a[3], const double ha[3], const double b[3], const double hb[3])
-{
-    double s[3];
-    gx_extended_wrapped_separation(b[0] - a[0], b[1] - a[1], b[2] - a[2], ha[0] + hb[0], &s[0], &s[1], &s[2]);
-    double d2 = 0;
-    for(int k = 0; k < 3; k++) {const double g = s[k] - ha[k] - hb[k]; if(g > 0) {d2 += g * g;}}
-    return sqrt(d2);
-}
-
 /* Build this rank's lists for its own leaves T.  Returns 0 on success; 1 if a member's reach cannot be bounded, a member is
  * not at the current time, or an allocation failed. */
 int build_own_lists(std::vector<std::vector<SourceReachEntry>> &per_thread)
@@ -156,6 +142,7 @@ int build_own_lists(std::vector<std::vector<SourceReachEntry>> &per_thread)
                 if(Father[p] >= 0 && P[p].Mass > 0) {
                     if(P[p].Ti_current != All.Ti_Current) {failed = 1;}
                     const double h = force_hmax_per_type_particle_radius(p);
+                    g_covered[p] = float_at_or_below(h);
                     const double g = grown_radius(h, growth);
                     if(!(g >= 0)) {failed = 1;}
                     const double test = g_scale_max * g + widen;
@@ -173,7 +160,6 @@ int build_own_lists(std::vector<std::vector<SourceReachEntry>> &per_thread)
         const int nm = (int) mreach.size();
         const double tc[3] = {(double) Nodes[t_node].center[0], (double) Nodes[t_node].center[1], (double) Nodes[t_node].center[2]};
         const double th = 0.5 * (double) Nodes[t_node].len, thw[3] = {th, th, th};
-        own.free_reach = t_reach_max;
         if(nm == 0) {continue;}
         /* member offsets from the leaf's centre, under the box wrap */
         std::vector<double> moff(3 * (size_t) nm);
@@ -184,9 +170,7 @@ int build_own_lists(std::vector<std::vector<SourceReachEntry>> &per_thread)
         }
         for_remote_leaves_near(tc, thw, t_reach_max, [&](int u, int u_node) {
             const double uc[3] = {(double) Nodes[u_node].center[0], (double) Nodes[u_node].center[1], (double) Nodes[u_node].center[2]};
-            const double uh = 0.5 * (double) Nodes[u_node].len, uhw[3] = {uh, uh, uh};
-            const double gap = box_gap(tc, thw, uc, uhw);
-            if(gap < own.free_reach) {own.free_reach = gap;}
+            const double uh = 0.5 * (double) Nodes[u_node].len;
             SourceReachEntry e;
             e.t_leaf = t; e.u_leaf = u;
             double lo[3] = {INFINITY, INFINITY, INFINITY}, hi[3] = {-INFINITY, -INFINITY, -INFINITY}, rr[6] = {-1, -1, -1, -1, -1, -1};
@@ -208,14 +192,13 @@ int build_own_lists(std::vector<std::vector<SourceReachEntry>> &per_thread)
 }
 
 inline bool by_u_then_t(const SourceReachEntry &a, const SourceReachEntry &b) {return a.u_leaf < b.u_leaf || (a.u_leaf == b.u_leaf && a.t_leaf < b.t_leaf);}
-inline bool by_t_then_u(const SourceReachEntry &a, const SourceReachEntry &b) {return a.t_leaf < b.t_leaf || (a.t_leaf == b.t_leaf && a.u_leaf < b.u_leaf);}
 
 void release_all(void)
 {
     g_valid = 0;
     std::vector<SourceReachEntry>().swap(g_recv);
-    std::vector<SourceReachEntry>().swap(g_sent);
     std::vector<OwnLeaf>().swap(g_own);
+    std::vector<float>().swap(g_covered);
 }
 
 } /* namespace */
@@ -244,6 +227,7 @@ void source_reach_map_build(int usable)
         g_widen_allowed.assign(NTopleaves, 0.0f);
         g_growth_allowed.assign(NTopleaves, 0.0f);
         g_stale.assign(NTopleaves, 0);
+        g_covered.assign(All.TreeParticleSlots > 0 ? All.TreeParticleSlots : 0, -1.0f);
         g_own.clear();
         for(int t = 0; t < NTopleaves; t++) {
             const int no = DomainNodeIndex[t];
@@ -253,7 +237,7 @@ void source_reach_map_build(int usable)
             g_growth_allowed[t] = float_at_or_below((double) Extnodes[no].divVmax * g_lifetime_drift);
             if(DomainTask[t] == ThisTask) {
                 OwnLeaf own; own.leaf = t; own.half_len = float_at_or_below(0.5 * (double) Nodes[no].len);
-                own.recv_first = own.recv_end = own.sent_first = own.sent_end = 0; own.free_reach = 0;
+                own.recv_first = own.recv_end = 0;
                 g_own.push_back(own);
             }
         }
@@ -277,12 +261,11 @@ void source_reach_map_build(int usable)
         if(build_own_lists(per_thread) != 0) {ok = 0;}
         size_t total = 0;
         for(auto &v : per_thread) {total += v.size();}
-        g_sent.clear(); g_sent.reserve(total);
-        for(auto &v : per_thread) {g_sent.insert(g_sent.end(), v.begin(), v.end()); std::vector<SourceReachEntry>().swap(v);}
-        std::sort(g_sent.begin(), g_sent.end(), by_t_then_u);
+        std::vector<SourceReachEntry> sent; sent.reserve(total);
+        for(auto &v : per_thread) {sent.insert(sent.end(), v.begin(), v.end()); std::vector<SourceReachEntry>().swap(v);}
         /* to each owner of a U, its entries, grouped by destination */
         std::vector<long long> per_dest(NTask, 0);
-        for(const auto &e : g_sent) {per_dest[DomainTask[e.u_leaf]]++;}
+        for(const auto &e : sent) {per_dest[DomainTask[e.u_leaf]]++;}
         long long off = 0;
         for(int r = 0; r < NTask; r++) {
             if(per_dest[r] * (long long) sizeof(SourceReachEntry) > (long long) INT_MAX || off * (long long) sizeof(SourceReachEntry) > (long long) INT_MAX) {ok = 0;}
@@ -290,10 +273,10 @@ void source_reach_map_build(int usable)
             send_offsets[r] = (int) (off * (long long) sizeof(SourceReachEntry));
             off += per_dest[r];
         }
-        outgoing.resize(g_sent.size());
+        outgoing.resize(sent.size());
         std::vector<long long> cursor(NTask, 0);
         for(int r = 1; r < NTask; r++) {cursor[r] = cursor[r - 1] + per_dest[r - 1];}
-        for(const auto &e : g_sent) {outgoing[cursor[DomainTask[e.u_leaf]]++] = e;}
+        for(const auto &e : sent) {outgoing[cursor[DomainTask[e.u_leaf]]++] = e;}
     } catch(const std::bad_alloc &) {ok = 0;}
 
     /* every rank agrees before any data moves: one rank that could not build its lists turns the map off everywhere */
@@ -314,16 +297,12 @@ void source_reach_map_build(int usable)
     std::vector<SourceReachEntry>().swap(outgoing);
     {
         std::sort(g_recv.begin(), g_recv.end(), by_u_then_t);
-        long long a = 0, b = 0;
+        long long a = 0;
         for(auto &own : g_own) {
             while(a < (long long) g_recv.size() && g_recv[a].u_leaf < own.leaf) {a++;}
             own.recv_first = a;
             while(a < (long long) g_recv.size() && g_recv[a].u_leaf == own.leaf) {a++;}
             own.recv_end = a;
-            while(b < (long long) g_sent.size() && g_sent[b].t_leaf < own.leaf) {b++;}
-            own.sent_first = b;
-            while(b < (long long) g_sent.size() && g_sent[b].t_leaf == own.leaf) {b++;}
-            own.sent_end = b;
         }
     }
     g_valid = 1;
@@ -383,9 +362,10 @@ int source_reach_map_verdict(int query_leaf, int leaf, int leaf_node, const doub
     return gx_extended_overlap_wrap_and_test(cc[0], cc[1], cc[2], hw[0], hw[1], hw[2], j_reach_scale * grown) ? 1 : 0;
 }
 
-void source_reach_map_mark_stale(int leaf)
+int source_reach_map_mark_stale(int leaf)
 {
-    if(leaf >= 0 && leaf < (int) g_stale.size()) {__atomic_store_n(&g_stale[leaf], (unsigned char) 1, __ATOMIC_RELAXED);}
+    if(leaf < 0 || leaf >= (int) g_stale.size()) {return 0;}
+    return (__atomic_exchange_n(&g_stale[leaf], (unsigned char) 1, __ATOMIC_RELAXED) == 0) ? 1 : 0;
 }
 
 int source_reach_map_is_stale(int leaf)
@@ -393,38 +373,26 @@ int source_reach_map_is_stale(int leaf)
     return (leaf >= 0 && leaf < (int) g_stale.size()) ? (int) __atomic_load_n(&g_stale[leaf], __ATOMIC_RELAXED) : 0;
 }
 
-int source_reach_map_note_member(int i, int leaf, double reach)
+int source_reach_map_member_covered(int i, double reach, double growth_rate)
 {
-    if(!g_valid || g_now_ti != All.Ti_Current || source_reach_map_is_stale(leaf)) {return 0;}
-    const int slot = own_slot(leaf);
-    if(slot < 0) {return 0;}
-    const OwnLeaf &own = g_own[slot];
-    const int t_node = DomainNodeIndex[leaf], type = (int) P[i].Type;
-    const double widen_now = TREE_NODE_WIDENING_DELTA(load_relaxed(&Extnodes[t_node].vmax), g_now_drift);
-    const double growth_now = load_relaxed(&Extnodes[t_node].divVmax) * g_now_drift;
-    /* from now to the end of the tree's lifetime the member may grow and move by at most what the build allowed for */
-    const double g = grown_radius(reach, (double) g_growth_allowed[leaf]);
-    int uncovered = !(g >= 0) || !(widen_now <= (double) g_widen_allowed[leaf]) || !(growth_now <= (double) g_growth_allowed[leaf]);
-    const double test = g_scale_max * g + (double) g_widen_allowed[leaf];
-    /* its sphere cannot reach any other rank's cube: nothing to cover */
-    if(!uncovered && test + widen_now < own.free_reach) {return 0;}
-    if(!uncovered) {
-        const double pos[3] = {(double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2]};
-        const double zero[3] = {0, 0, 0};
-        double off[3] = {pos[0] - (double) Nodes[t_node].center[0], pos[1] - (double) Nodes[t_node].center[1], pos[2] - (double) Nodes[t_node].center[2]};
-        NEAREST_XYZ(off[0], off[1], off[2], 1);
-        for_remote_leaves_near(pos, zero, test, [&](int u, int u_node) {
-            if(uncovered) {return;}
-            (void) u_node;
-            const SourceReachEntry *e = find_entry(g_sent, own.sent_first, own.sent_end, leaf, u, 0);
-            /* covered as if it had been listed: inside the listed box (widened by the motion so far), with a radius the
-               listed one, grown so far, still bounds */
-            if(!e || e->reach[type] < 0) {uncovered = 1; return;}
-            const double r_listed = grown_radius((double) e->reach[type], growth_now);
-            if(!(r_listed >= reach)) {uncovered = 1; return;}
-            for(int k = 0; k < 3; k++) {if(!(off[k] >= (double) e->lo[k] - widen_now && off[k] <= (double) e->hi[k] + widen_now)) {uncovered = 1; return;}}
-        });
-    }
-    if(!uncovered) {return 0;}
-    return (__atomic_exchange_n(&g_stale[leaf], (unsigned char) 1, __ATOMIC_RELAXED) == 0) ? 1 : 0;
+    if(!g_valid || g_now_ti != All.Ti_Current) {return 1;}   /* nothing will rely on the map before it is rebuilt */
+    if(i < 0 || i >= (int) g_covered.size()) {return 0;}
+    const double covered = (double) g_covered[i];
+    if(!(covered >= 0)) {return 0;}   /* not a member at the build */
+    if(reach <= covered) {return 1;}
+    /* Grown by drift alone it may reach covered grown at its own rate, which the leaf's divVmax bounds; the map already allows
+       for that, both where the member is listed and in the test that left it out. */
+    const double grown = grown_radius(covered, growth_rate * g_now_drift);
+    return (grown >= 0 && reach <= grown) ? 1 : 0;
+}
+
+void source_reach_map_swap_slots(int i, int j)
+{
+    if(i < 0 || j < 0 || i >= (int) g_covered.size() || j >= (int) g_covered.size()) {return;}
+    const float c = g_covered[i]; g_covered[i] = g_covered[j]; g_covered[j] = c;
+}
+
+void source_reach_map_clear_slot(int i)
+{
+    if(i >= 0 && i < (int) g_covered.size()) {g_covered[i] = -1.0f;}
 }

@@ -15,7 +15,8 @@
  * reach U's cube cannot pair with any query in U while those bounds hold; the others are inside the listed box, widened
  * by their motion since the build, with at most the listed reach, grown since the build.  Whenever a bound the
  * argument rests on is exceeded -- more motion or growth than the build allowed for, a larger reach scale than the build
- * used, a member whose radius changed other than by drift, or a member placed in the standing tree -- the node bound
+ * used, a member whose radius changed other than by drift (an O(1) test against its radius at the build), or a member
+ * placed in the standing tree -- the node bound
  * applies instead, so the map never routes fewer pairs than the node bound would.
  *
  * Built after the top-leaf moment exchange of every tree build and moment refresh (one Alltoall + Alltoallv, build
@@ -38,13 +39,16 @@ int  source_reach_map_query_leaf(const double pos[3]);
 int  source_reach_map_verdict(int query_leaf, int leaf, int leaf_node, const double pos[3], double h_q,
                               unsigned int type_mask, double j_reach_scale);
 
-/* Post-density update (force_update_hmax): member i of this rank's top leaf `leaf` now has reach `reach`.  If the map
- * no longer covers it, the leaf is marked stale and 1 is returned, so the caller ships the leaf to the other ranks.
- * Thread-safe. */
-int  source_reach_map_note_member(int i, int leaf, double reach);
-/* A leaf another rank marked stale, or one holding a particle placed in the standing tree: the node bound applies to
- * it until the next build. */
-void source_reach_map_mark_stale(int leaf);
+/* Post-density update (force_update_hmax): particle i now has reach `reach` and grows at `growth_rate` (0 if its radius does
+ * not drift with the divergence).  1 if the map still covers it -- its radius at the build, grown at that rate since, bounds
+ * the new one -- or nothing relies on the map; 0 if its leaf must be marked stale.  O(1), thread-safe. */
+int  source_reach_map_member_covered(int i, double reach, double growth_rate);
+/* The node bound applies to `leaf` until the next build (a member the map no longer covers, a particle placed in the
+ * standing tree, or another rank's flag).  Returns 1 if the leaf was not already stale.  Thread-safe. */
+int  source_reach_map_mark_stale(int leaf);
+/* A particle moved between slots of the standing tree (rearrange_particle_sequence through swap_treewalk_pointers), or left it. */
+void source_reach_map_swap_slots(int i, int j);
+void source_reach_map_clear_slot(int i);
 int  source_reach_map_is_stale(int leaf);
 
 #endif /* SOURCE_REACH_MAP_H */

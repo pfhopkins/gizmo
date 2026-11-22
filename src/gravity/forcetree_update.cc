@@ -889,10 +889,13 @@ void force_update_hmax(void)
 
             no = Nodes[no].u.d.father;
         }
-        /* The source-reach map re-tests the member with its new radius; a leaf it no longer covers is shipped like a band that grew. */
+        /* The source-reach map compares the new radius with the one it was built with (O(1)); a leaf whose member outgrew it is
+           shipped stale like a band that grew. */
+        if(!source_reach_map_member_covered(i, per_type_htmp, divv_eligible ? divVel : 0.0))
+        {
         int leaf_node = Father[i];
         while(leaf_node >= 0 && !(Nodes[leaf_node].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))) {leaf_node = Nodes[leaf_node].u.d.father;}
-        if(leaf_node >= 0 && source_reach_map_note_member(i, topleaf_map.topleaf_of(leaf_node, All.TreeNodeIndexBase), per_type_htmp))
+        if(leaf_node >= 0 && source_reach_map_mark_stale(topleaf_map.topleaf_of(leaf_node, All.TreeNodeIndexBase)))
         {
             #pragma omp critical(DomainListAppendHmax)
             {
@@ -902,6 +905,7 @@ void force_update_hmax(void)
                     DomainList[DomainNumChanged++] = leaf_node;
                 }
             }
+        }
         }
       }
   }
