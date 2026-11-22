@@ -34,11 +34,13 @@
 //            R6     the dumps of R3a/R3b/R4 rebuild a NaN-filled cell (chem_cell_parse) and replay it bit for bit
 //            R7     a flagged evaluation (CR heating set to 1e30) books no stale CR ionisation heating: at a substep
 //                   start (a), at the final evaluation (b), at the failure point before the retry (c, which also moves
-//                   tdust: the retry must start from the accepted dust temperature, final state bit for bit as unflagged),
-//                   in the TNOCHEM subcycle (d, nothing applied, nothing booked); the first substep-start evaluation (e,
-//                   the pending interval is booked as a rectangle with the next value) and the first two (f, deferred,
-//                   not dropped); (a)-(c) within 50% and (e)-(f) within 10% of the unflagged solve, (d) at most 1.5 x the
-//                   unflagged finish. R6 replays into a cell filled with 0xff and with 0x00.
+//                   tdust: the retry must start from the accepted dust temperature, the same as unflagged, and end in the
+//                   same state), in the TNOCHEM subcycle (d, nothing applied, nothing booked); the first substep-start
+//                   evaluation (e, the pending interval is booked as a rectangle with the next value) and the first two
+//                   (f, deferred, not dropped), both on a steady warm neutral cell (T 8000 K, nH 1, x_e 1e-2, dt 1e10 s:
+//                   constant CR heating, so the booking must match the unflagged integral within 2%); (a)-(c) within 50%
+//                   of the unflagged solve, (d) at most 1.5 x the unflagged finish. R6 replays into a cell filled with
+//                   0xff and with 0x00.
 //
 // Usage: test_solver_failure [csv]      (run where gizmo/cooling/sgchem holds the tables)
 
@@ -122,6 +124,7 @@ extern thread_local long cxx_stat_failure_retries, cxx_stat_tnochem_finishes;
 extern thread_local int chem_test_force_failure[2];
 extern thread_local double chem_test_retry_start_y[CHEM_NSPEC_MAX];
 extern thread_local double chem_test_retry_start_t;
+extern thread_local double chem_test_retry_start_tdust;
 extern thread_local std::string chem_test_last_dump;
 extern thread_local long chem_test_flag_rhs[5];
 #endif
@@ -661,24 +664,26 @@ int main(int argc, char** argv)
             nbadR += !ok;
         }
     }
-    // R7e/R7f: the first one / two substep-start evaluations flagged: rectangle with the next value, deferred not dropped
+    // R7e/R7f: the first one / two substep-start evaluations flagged, on a steady cell (constant CR heating)
     {
-        const LoggedCell* Lf = nullptr;
-        Res uf{}; long fewest = 1L << 40;
-        for (const LoggedCell& L : cells) {
-            Res u = run_cxx(L, L.dt, L.yn, L.y[ITMP], L.y, nullptr);
-            if (u.crh > 0.0 && u.substeps >= 1 && u.substeps < fewest) { fewest = u.substeps; Lf = &L; uf = u; }
-        }
+        double y[NSPEC] = {0};
+        y[IH2] = 1e-8; y[IHP] = 1e-2;
+#if CHEMISTRYNETWORK == 17
+        y[IDP] = 1e-2 * L0.abundD;
+#endif
+        const double yn = 1.0, dt = 1e10;
+        LoggedCell Lw = L0; Lw.tdust = 20.0;
+        y[ITMP] = energy_at(Cx, yn, 8000.0, y);
+        Res uf = run_cxx(Lw, dt, yn, y[ITMP], y, nullptr);
         for (int nflag = 1; nflag <= 2; nflag++) {
-            if (!Lf) { std::printf("PHASE R7%c -- no logged cell with CR heating: FAIL\n", nflag == 1 ? 'e' : 'f'); nbadR++; continue; }
             chem_test_flag_rhs[4] = nflag;
-            Res c = run_cxx(*Lf, Lf->dt, Lf->yn, Lf->y[ITMP], Lf->y, nullptr);
+            Res c = run_cxx(Lw, dt, yn, y[ITMP], y, nullptr);
             chem_test_flag_rhs[4] = 0;
             const double ratio = c.crh / uf.crh;
-            int ok = std::isfinite(c.crh) && (ratio > 0.9) && (ratio < 1.1) && (c.rc == 0);
-            std::printf("PHASE R7%c -- first %d substep-start evaluation(s) flagged (cell %ld, %ld substeps unflagged): integral %.6g "
-                        "vs unflagged %.6g (ratio %.4g): %s\n", nflag == 1 ? 'e' : 'f', nflag, Lf->id, uf.substeps, c.crh, uf.crh,
-                        ratio, ok ? "PASS" : "FAIL");
+            int ok = (uf.crh > 0.0) && std::isfinite(c.crh) && (ratio > 0.98) && (ratio < 1.02) && (c.rc == 0);
+            std::printf("PHASE R7%c -- first %d substep-start evaluation(s) flagged, steady cell (8000 K, nH 1, %ld substeps unflagged, "
+                        "%ld flagged): integral %.6g vs unflagged %.6g (ratio %.4g): %s\n", nflag == 1 ? 'e' : 'f', nflag, uf.substeps,
+                        c.substeps, c.crh, uf.crh, ratio, ok ? "PASS" : "FAIL");
             nbadR += !ok;
         }
     }
@@ -695,18 +700,20 @@ int main(int argc, char** argv)
         if (!Lm) { std::printf("PHASE R7c -- no logged cell retries from t > 0: FAIL\n"); nbadR++; Lm = &cells[0]; }
         force(1, 0);
         Res ref = run_cxx(*Lm, Lm->dt, Lm->yn, Lm->y[ITMP], Lm->y, nullptr);
+        const double td_ref = chem_test_retry_start_tdust;
         chem_test_flag_rhs[2] = 1;
         Res c = run_cxx(*Lm, Lm->dt, Lm->yn, Lm->y[ITMP], Lm->y, nullptr);
+        const double td_flag = chem_test_retry_start_tdust;
         chem_test_flag_rhs[2] = 0;
         force(0, 0);
         const double ratio = c.crh / ref.crh;
         int same_state = (c.e == ref.e);
         for (int i = 0; i < TRAC_NUM; i++) same_state &= (c.y[i] == ref.y[i]);
         int ok = (ref.fretries == 1) && (ref.crh > 0.0) && std::isfinite(c.crh) && (ratio > 0.5) && (ratio < 1.5) && (c.rc == 0)
-              && same_state;
-        std::printf("PHASE R7c -- flagged evaluation at the failure point, CR heating 1e30, tdust moved (cell %ld): integral %.6g vs "
-                    "unflagged %.6g (ratio %.4g), final state %s: %s\n", Lm->id, c.crh, ref.crh, ratio,
-                    same_state ? "identical" : "DIFFERS", ok ? "PASS" : "FAIL");
+              && same_state && (td_flag == td_ref) && (td_flag != 1e3);
+        std::printf("PHASE R7c -- flagged evaluation at the failure point, CR heating 1e30, tdust moved to 1e3 (cell %ld): integral "
+                    "%.6g vs unflagged %.6g (ratio %.4g), retry starts at tdust %.6g (unflagged %.6g), final state %s: %s\n", Lm->id,
+                    c.crh, ref.crh, ratio, td_flag, td_ref, same_state ? "identical" : "DIFFERS", ok ? "PASS" : "FAIL");
         nbadR += !ok;
     }
     // R7d: flagged first evaluation of the TNOCHEM subcycle after a failed retry (the R3a cell)

@@ -73,6 +73,7 @@ thread_local long chem_clip_excess_fail[CHEM_NSPEC_MAX];   // substeps check_abu
 thread_local int chem_test_force_failure[2] = {0, 0}; // per attempt: 1 = substep budget of one, 100 = every substep rejected
 thread_local double chem_test_retry_start_y[CHEM_NSPEC_MAX];   // state and time the retry started from
 thread_local double chem_test_retry_start_t = -1.0;
+thread_local double chem_test_retry_start_tdust = -1.0;          // dust temperature the retry started from
 thread_local std::string chem_test_last_dump;                   // last full cell dump
 thread_local long chem_test_flag_rhs[5] = {0, 0, 0, 0, 0};   // flag: substep-start evaluation number [0], final [1], at recover [2] (also
                                                               // moves tdust), first subcycle [3], the first [4] substep-start evaluations
@@ -646,7 +647,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
 
 attempt_start:
 #ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
-    if (attempt == 1) { for (int i = 0; i < nspec; i++) chem_test_retry_start_y[i] = y[i]; chem_test_retry_start_t = t_start; }
+    if (attempt == 1) { for (int i = 0; i < nspec; i++) chem_test_retry_start_y[i] = y[i]; chem_test_retry_start_t = t_start; chem_test_retry_start_tdust = c.tdust; }
 #endif
     // ---- TNOCHEM hot bypass (.F:200-260); the retry is always a CVODE retry (D-59) ----
     if (attempt == 0 && bypass_temp() > SGCHEM_TNOCHEM) {
