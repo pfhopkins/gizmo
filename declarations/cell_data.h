@@ -41,6 +41,10 @@ extern struct gas_cell_data
     
     Vec3<MyDouble> VelPred;         /*!< predicted gas cell velocity at the current time */
     Vec3<MyDouble> HydroAccel;      /*!< acceleration due to hydrodynamical force (for drifting) */
+#if defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC) && defined(MAGNETIC)
+    Vec3<MyDouble> TestPowellMomRate; /*!< test output: Powell momentum rate at the hydro pass */
+    MyDouble TestPowellEgyRate;       /*!< test output: Powell energy rate at the hydro pass */
+#endif
 #ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
     Vec3<MyDouble> HydroVelRef;     /*!< physical velocity the hydro pass used to turn the total-energy rate into du/dt */
 #endif

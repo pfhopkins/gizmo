@@ -791,6 +791,9 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #ifndef TEST_MHD_NO_POWELL_SOURCE_TERMS
                 CellP[i].HydroAccel -= CellP[i].divB * Bi;
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+                CellP[i].TestPowellMomRate = CellP[i].divB * Bi * (-1.); CellP[i].TestPowellEgyRate = -CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi); /* Powell work rates (test output) */
+#endif
                 CellP[i].DtInternalEnergy -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
                 CellP[i].DtE_MHDLedger[0] -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
@@ -799,6 +802,9 @@ void hydro_final_operations_and_cleanup(void)
             }
 
             double magnorm_closure = Get_DtB_FaceArea_Limiter(i, P, CellP);
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+            test_count_mhd_limiters(0, magnorm_closure != 1);
+#endif
 
 #if defined(DIVBCLEANING_DEDNER) && !defined(HYDRO_SPH)
             // ok now deal with the divB correction forces and damping fields //
@@ -821,6 +827,9 @@ void hydro_final_operations_and_cleanup(void)
             {
 
                 if(DtB_PhiCorr > tolerance_for_correction * DtB_UnCorr) {PhiCorr_Norm *= tolerance_for_correction * DtB_UnCorr / DtB_PhiCorr;}
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+                test_count_mhd_limiters(PhiCorr_Norm < 1, 0);
+#endif
                 CellP[i].DtB += PhiCorr_Norm * CellP[i].DtB_PhiCorr;
                 CellP[i].DtInternalEnergy += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, CellP[i].Bfield() * All.cf_a2inv);
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
@@ -1202,6 +1211,9 @@ void hydro_force_initial_operations_preloop(void)
 #ifdef MAGNETIC
             CellP[i].PairFluxSumB = {}; CellP[i].PairFluxSumBded = {}; CellP[i].PairFluxRecvB = {}; CellP[i].PairFluxRecvBded = {};
 #endif
+#endif
+#if defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC) && defined(MAGNETIC)
+            CellP[i].TestPowellMomRate = {}; CellP[i].TestPowellEgyRate = 0; /* set by the Powell terms, if on */
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};

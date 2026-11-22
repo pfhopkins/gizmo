@@ -318,6 +318,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             {Vec3<double> v_phys = P[i].Vel / All.cf_atime, a_h = CellP[i].HydroAccel; /* u takes the exact complement of the hydro velocity kick, applied before gravity */
              du_tot += dot(CellP[i].HydroVelRef - v_phys, a_h) * dt_hydrokick - 0.5 * a_h.norm_sq() * dt_hydrokick * dt_hydrokick;}
 #endif
+#if defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC) && defined(MAGNETIC)
+            test_powell_work_add(CellP[i].TestPowellMomRate * dt_hydrokick, CellP[i].TestPowellEgyRate * dt_hydrokick);
+#endif
 #ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
             tk_h = P[i].Mass * du_tot + 0.5 * P[i].Mass * ((tk_v0 + CellP[i].HydroAccel * dt_hydrokick).norm_sq() - tk_v0.norm_sq());
 #endif

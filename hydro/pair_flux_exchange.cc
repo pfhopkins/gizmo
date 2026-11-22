@@ -19,23 +19,48 @@ void test_kick_energy_split_add(int gas, double hydro, double floor_e, double to
 void test_impulse_energy_add(double de) {TestKickSplit[4] += de;}
 #endif
 
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+static double TestLimiter[2] = {0}, TestPowell[4] = {0}, TestDroppedBV[3] = {0}; /* Dedner correction renormalised / face-area closure != 1 (cell-steps); Powell momentum and energy work; B*V sent to a cell that became a star */
+void test_count_mhd_limiters(int phicorr_renormalised, int closure_not_one) {TestLimiter[0] += phicorr_renormalised; TestLimiter[1] += closure_not_one;}
+void test_powell_work_add(Vec3<double> dmom, double degy) {for(int k = 0; k < 3; k++) {TestPowell[k] += dmom[k];} TestPowell[3] += degy;}
+#endif
+
 #ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
-static double TestInjected[5] = {0}; /* mass, momentum, thermal + kinetic + magnetic energy added by the hook (physical) */
-/* test only: at the given step, inactive gas within 0.2 box of the centre gains half its mass at fixed velocity and u (as a
-   feedback deposit does), the additions are booked, and the cells are woken */
+#ifndef TEST_PAIRFLUX_HOOK_MODE
+#define TEST_PAIRFLUX_HOOK_MODE 1
+#endif
+static double TestInjected[8] = {0}; /* mass, momentum, thermal + kinetic + magnetic energy, B*V added by the hook (physical; B*V code) */
+/* test only, at the given step, after the closing kick, gas within 0.2 box of the centre:
+   mode 1: inactive cells gain half their mass at fixed velocity and u (a feedback deposit) and are woken;
+   mode 2: every cell keeps 0.4 of its mass (cells then merge into neighbours, which the merge wakes);
+   mode 3: every cell gets 2.5 times its mass (cells then split; the split wakes the daughters);
+   mode 4: every cell keeps 0.7 of its mass, B, BPred and DtB, as an IMF donor does; inactive ones are woken.
+   Additions (negative: removals) are booked so the test can subtract them. */
 void test_pairflux_add_mass_and_wake(void)
 {
     if(All.NumCurrentTiStep != TEST_PAIRFLUX_ADD_MASS_AND_WAKE) {return;}
-    int n = 0; double a = All.cf_atime;
+    const int mode = TEST_PAIRFLUX_HOOK_MODE; int n = 0; double a = All.cf_atime;
     for(int i = 0; i < NumPart; i++)
     {
-        if(P[i].Type != 0 || P[i].Mass <= 0 || TimeBinActive[P[i].TimeBin]) {continue;}
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        int active = TimeBinActive[P[i].TimeBin];
+        if(mode == 1 && active) {continue;}
         Vec3<double> dx = P[i].Pos - Vec3<double>{0.5*All.BoxSize, 0.5*All.BoxSize, 0.5*All.BoxSize}; nearest_xyz(dx);
         if(dx.norm() > 0.2 * All.BoxSize) {continue;}
-        double m = P[i].Mass, dM = 0.5 * m; Vec3<double> v = P[i].Vel / a;
+        double fac = (mode == 1) ? 1.5 : ((mode == 2) ? 0.4 : ((mode == 3) ? 2.5 : 0.7));
+        double m = P[i].Mass, dM = (fac - 1.) * m; Vec3<double> v = P[i].Vel / a;
         double eb0 = 0;
 #ifdef MAGNETIC
         eb0 = 0.5 * CellP[i].B.norm_sq() * (CellP[i].Density / m) / a;
+        Vec3<double> B0 = CellP[i].B;
+        if(mode == 4)
+        {
+            CellP[i].B *= fac; CellP[i].BPred *= fac; CellP[i].DtB *= fac;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            CellP[i].PairFluxBScale *= fac;
+#endif
+        }
+        for(int k = 0; k < 3; k++) {TestInjected[5+k] += CellP[i].B[k] - B0[k];}
 #endif
         P[i].Mass += dM; CellP[i].Mass += dM;
         double eb1 = 0;
@@ -44,10 +69,11 @@ void test_pairflux_add_mass_and_wake(void)
 #endif
         TestInjected[0] += dM; for(int k = 0; k < 3; k++) {TestInjected[1+k] += dM * v[k];}
         TestInjected[4] += dM * (CellP[i].InternalEnergy + 0.5 * v.norm_sq()) + (eb1 - eb0);
-        P[i].wakeup = -1; NeedToWakeupParticles_local = 1; wakeup_list_note(i); n++;
+        if((mode == 1 || mode == 4) && !active) {P[i].wakeup = -1; NeedToWakeupParticles_local = 1; wakeup_list_note(i);}
+        n++;
     }
     long long nl = n, ng = 0; MPI_Allreduce(&nl, &ng, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-    if(ThisTask == 0) {printf("TEST_PAIRFLUX_ADD_MASS_AND_WAKE: %lld inactive cells gained mass and were woken at step %lld\n", ng, (long long) All.NumCurrentTiStep);}
+    if(ThisTask == 0) {printf("TEST_PAIRFLUX_ADD_MASS_AND_WAKE: mode %d changed %lld cells at step %lld\n", mode, ng, (long long) All.NumCurrentTiStep);}
 }
 #endif
 
@@ -148,6 +174,9 @@ static void pairflux_apply_impulse(int i, Vec3<double> dmom, double dE, Vec3<dou
         double dKE = 0.5 * m * (vn.norm_sq() - v.norm_sq());
         P[i].Vel = vn * a; P[i].dp += dmom * a; force_raise_motion_bound(i);
         ESTEP_BOOK(EBK_SF_TH_LOCKED, -(dE - dKE)); PairFluxNStar++; /* a B*V share to it has no cell to go to (counted with n_to_star) */
+#if defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC) && defined(MAGNETIC)
+        for(int k = 0; k < 3; k++) {TestDroppedBV[k] += dB[k] / a;}
+#endif
 #ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
         test_impulse_energy_add(dKE);
 #endif
@@ -395,7 +424,7 @@ void print_gas_conserved_totals(void)
         add(6, 0.5 * CellP[i].B.norm_sq() * rho_over_m / a); add(8, CellP[i].B[0]); add(9, CellP[i].B[1]); add(10, CellP[i].B[2]);
 #endif
     }
-    double loc[38] = {0}, glob[38];
+    double loc[50] = {0}, glob[50];
     for(int k = 0; k < 12; k++) {loc[k] = s[k] + c[k];}
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
     loc[12] = (double) PairFluxNFloor; loc[13] = PairFluxEFloor; loc[14] = (double) PairFluxNStar; loc[15] = 0;
@@ -405,19 +434,21 @@ void print_gas_conserved_totals(void)
     for(int k = 0; k < 5; k++) {loc[28+k] = TestKickSplit[k];}
 #ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
     for(int k = 0; k < 5; k++) {loc[33+k] = TestInjected[k];}
+    for(int k = 0; k < 3; k++) {loc[38+k] = TestInjected[5+k];}
 #endif
+    loc[41] = TestLimiter[0]; loc[42] = TestLimiter[1]; for(int k = 0; k < 4; k++) {loc[43+k] = TestPowell[k];} for(int k = 0; k < 3; k++) {loc[47+k] = TestDroppedBV[k];}
     MPI_Reduce(loc, glob, 26, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&loc[27], &glob[27], 11, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&loc[27], &glob[27], 23, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&loc[26], &glob[26], 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
     if(!fd)
     {
         char buf[1000]; snprintf(buf, sizeof(buf), "%s/conserved_totals.txt", All.OutputDir);
         fd = fopen(buf, "w");
-        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_to_star 0 [n,E floor: closing wake opening masschange kick] records_peak_MB_per_rank records_spilled [cumulative kick energy: gas hydro, gas other (gravity), gas floor, non-gas kinetic, pair-flux impulses] [added by the test hook: M Px Py Pz E] (gas, conserved variables, physical, after the sync's kicks)\n");
+        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_to_star 0 [n,E floor: closing wake opening masschange kick] records_peak_MB_per_rank records_spilled [cumulative kick energy: gas hydro, gas other (gravity), gas floor, non-gas kinetic, pair-flux impulses] [added by the test hook: M Px Py Pz E] [hook B*V x y z] [Dedner correction renormalised, face-area closure != 1 (cell-steps)] [Powell work: momentum x y z, energy] [B*V to cells that became stars x y z] (gas, conserved variables, physical, after the sync's kicks)\n");
     }
     fprintf(fd, "%lld %.17e", (long long) All.NumCurrentTiStep, All.Time);
-    for(int k = 0; k < 38; k++) {fprintf(fd, " %.17e", glob[k]);}
+    for(int k = 0; k < 50; k++) {fprintf(fd, " %.17e", glob[k]);}
     fprintf(fd, "\n"); fflush(fd);
 }
 #endif

@@ -2086,6 +2086,9 @@
 #define HYDRO_PAIR_ONCE
 #endif
 /* every pair evaluated once from the smaller step; the other cell gets the opposite flux with the same time weights, active or not */
+#if defined(TEST_PAIRFLUX_ADD_MASS_AND_WAKE) && !defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC)
+#error "TEST_PAIRFLUX_ADD_MASS_AND_WAKE books its additions in the TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC output"
+#endif
 #if defined(HYDRO_EXACT_PAIR_FLUX_EXCHANGE) && defined(HYDRO_PAIR_ONCE_OFF)
 #error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE needs HYDRO_PAIR_ONCE: do not set HYDRO_PAIR_ONCE_OFF with it"
 #endif

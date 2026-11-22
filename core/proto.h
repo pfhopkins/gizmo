@@ -1099,6 +1099,8 @@ void pairflux_wake_kick_correction(int i, double dt_wake, int to_pred);
 void print_gas_conserved_totals(void);
 void test_kick_energy_split_add(int gas, double hydro, double floor_e, double total);
 void test_impulse_energy_add(double de);
+void test_count_mhd_limiters(int phicorr_renormalised, int closure_not_one);
+void test_powell_work_add(Vec3<double> dmom, double degy);
 #endif
 #ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
 void test_pairflux_add_mass_and_wake(void);
