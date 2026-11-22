@@ -217,6 +217,11 @@ void release_all(void)
     std::vector<SourceReachEntry>().swap(g_recv);
     std::vector<OwnLeaf>().swap(g_own);
     std::vector<float>().swap(g_covered);
+    std::vector<float>().swap(g_widen_allowed);
+    std::vector<float>().swap(g_growth_allowed);
+    std::vector<unsigned char>().swap(g_stale);
+    std::vector<float>().swap(g_top_enclose);
+    g_map = nullptr;
 }
 
 } /* namespace */
@@ -251,6 +256,7 @@ void source_reach_map_build(int usable)
 
     g_map = &mode_b_topleaf_map_current();
     g_build_ti = All.Ti_Current;
+    tree_lifetime_ensure();   /* collective, rank-uniform here: computed by the LET build, or now */
     g_lifetime_drift = tree_lifetime_drift();
     g_scale_max = gizmo_ghost_safety_factor() * gizmo_ghost_safety_factor();
     std::vector<int> send_counts(NTask, 0), recv_counts(NTask, 0), send_offsets(NTask, 0), recv_offsets(NTask, 0);

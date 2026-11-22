@@ -1,6 +1,6 @@
 #ifndef SOURCE_REACH_MAP_H
 #define SOURCE_REACH_MAP_H
-/* Source-reach map: exact routing of SYMMETRIC queries to remote top leaves.
+/* Source-reach map: exact routing of SYMMETRIC queries to remote top leaves, built only when it pays.
  *
  * A symmetric pair (q, j) is a neighbour pair when r < max(h_q, s*h_j), i.e. when r < h_q OR r < s*h_j.  The node bound
  * routes a query to a remote top leaf T when the query is within max(h_q, band_T) of T's box, band_T being the largest
@@ -19,19 +19,22 @@
  * placed in the standing tree -- the node bound
  * applies instead, so the map never routes fewer pairs than the node bound would.
  *
- * Built after the top-leaf moment exchange of every tree build and moment refresh (one Alltoall + Alltoallv, build
- * cadence only).  Each rank keeps the lists for its own leaves U and a copy of those it sent for its own leaves T.
- * Host only; read-only during the walks. */
+ * Measured-cost gate.  The map is built only when it is wanted.  Each symmetric corridor discovery measures its own
+ * imbalance (slowest minus fastest rank), summed over the current tree's life; the map turns on when that exceeds the
+ * map's measured build time (before its first build, the measured tree build time).  A mapped tree that did not save
+ * more than the map's build cost turns it off, and it is retried only above the imbalance that failed to pay.  While it
+ * is not wanted a tree build builds nothing and frees everything the map owns.  When wanted it is built after the
+ * top-leaf moment exchange of a tree build or moment refresh (one Alltoall + Alltoallv), or at the start of a symmetric
+ * discovery when no time has passed since the last tree build.  Every decision is rank-uniform and routing stays exact
+ * whatever the gate decides.  Each rank keeps the lists for its own leaves U.  Host only; read-only during the walks. */
 
 /* Collective.  After the top-leaf moment exchange of a tree build or a moment refresh; usable = 0 on a build that
  * covers only part of the particles (the map then stays off until the next full build). */
 void source_reach_map_build(int usable);
 /* At the start of a tree build: until rebuilt, symmetric exports use the node bound. */
 void source_reach_map_invalidate(void);
-/* Demand gate.  The map is built only once a symmetric corridor discovery has seen a flood (source_reach_map_request,
- * rank-uniform, sticky); until then source_reach_map_build only records the tree and returns.  After a request, the
- * map is built at the next tree build, or by source_reach_map_build_if_due at the start of a symmetric discovery when
- * no time has passed since the last tree build.  Both collective. */
+/* At the start of a symmetric discovery: build the map now if the gate wants it, it is not built, and no time has passed
+ * since the last tree build.  Collective; the condition is rank-uniform. */
 void source_reach_map_build_if_due(void);
 /* The gate's measurements ride the final receiver vote of a corridor discovery (MPI_MIN over SOURCE_REACH_GATE_NVOTE ints):
  * fill before it with this discovery's own time, apply after it.  Rank-uniform decisions. */

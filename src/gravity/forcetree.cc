@@ -18,7 +18,7 @@
 #include "let_data.h"   /* LET wire format + per-rank payload structs */
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
 #include "../mesh/nlr_radius_policy.h" /* SSOT helper for force_hmax_per_type_particle_radius */
-#include "../mesh/source_reach_map.h"  /* symmetric export routing, rebuilt with every tree */
+#include "../mesh/source_reach_map.h"  /* symmetric export routing, built when its measured-cost gate wants it */
 #include "../core/timestep_functions.h" /* Hermite source eligibility + prediction, inline (a cross-TU call here costs ~16% of the walk) */
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
@@ -411,10 +411,12 @@ static const double LET_FOREIGN_PAD_FRACTION = 0.5;
  * next rebuild, and its timestep, times LET_TREE_LIFETIME_PAD_FACTOR, is how long this tree is
  * expected to last.  Computed once per build, collectively, because the occupancies are global. */
 static integertime g_tree_lifetime_dti = 0;
+static int g_tree_lifetime_valid = 0;     /* computed for the current tree */
 static double g_tree_lifetime_drift = 0;   /* undilated drift factor over that horizon, from now */
 
 void tree_lifetime_compute(void)
 {
+    g_tree_lifetime_valid = 1;
     long long local_bin_count[TIMEBINS], global_bin_count[TIMEBINS];
     for(int bin = 0; bin < TIMEBINS; bin++) {local_bin_count[bin] = (long long) TimeBinCount[bin];}
     MPI_Allreduce(local_bin_count, global_bin_count, TIMEBINS, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -453,6 +455,7 @@ void tree_lifetime_compute(void)
     if(g_tree_lifetime_dti > 0) {g_tree_lifetime_drift = get_drift_factor_undilated(All.Ti_Current, All.Ti_Current + g_tree_lifetime_dti);}
 }
 
+void tree_lifetime_ensure(void) {if(!g_tree_lifetime_valid) {tree_lifetime_compute();}}
 integertime tree_lifetime_dti(void) {return g_tree_lifetime_dti;}
 double tree_lifetime_drift(void) {return g_tree_lifetime_drift;}
 
@@ -673,7 +676,10 @@ let_build_attempt:
      * gpu_moment_refresh above) and does not depend on foreign topleaves; so
      * the two MPI exchanges can overlap.  Latency drops from sum to max of
      * the two collectives' wall-times. */
-    tree_lifetime_compute();   /* one collective per build: the horizon the LET and the source-reach map plan for */
+    g_tree_lifetime_valid = 0;   /* a new tree: its horizon is computed by its first user (one collective) */
+#ifdef TREE_IMPORTS_FOREIGN_SUBTREES
+    tree_lifetime_compute();   /* the LET plans for it in every build; the source-reach map reuses it */
+#endif
     force_exchange_pseudodata_issue();
     /* LET exchange returns a typed status + (on overflow) the foreign-node capacity the
      * receiver needed. The pseudodata Iallgatherv posted just above must still be
