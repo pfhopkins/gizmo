@@ -52,6 +52,13 @@ const ModeBTopleafMap *g_map = nullptr;
 integertime g_now_ti = -1;
 double g_now_drift = 0.0;
 
+/* Room the lists leave for a member's radius to rise other than by drift (the density update sets a new one at the time of the
+ * build): a member is listed as if its radius were this factor larger, so a rise within it keeps the map valid.  Larger lists
+ * cost envelopes; a rise beyond it turns the member's leaf to the node bound until the next build.  The value is a measured
+ * performance choice, not a bound: on the fire and nuclear-zoom test problems all but ~1 in 50,000 post-density radii stay
+ * within 10% of their value at the build (most within 1%), and 1.25 bought fewer stale leaves at more envelopes. */
+const double SOURCE_REACH_RADIUS_MARGIN = 1.1;
+
 inline float float_at_or_above(double x) {float f = (float) x; return ((double) f >= x) ? f : nextafterf(f, INFINITY);}
 inline float float_at_or_below(double x) {float f = (float) x; return ((double) f <= x) ? f : nextafterf(f, -INFINITY);}
 /* A node bound another thread of the post-density update may be raising. */
@@ -141,7 +148,7 @@ int build_own_lists(std::vector<std::vector<SourceReachEntry>> &per_thread)
             if(p < tree_slots) {
                 if(Father[p] >= 0 && P[p].Mass > 0) {
                     if(P[p].Ti_current != All.Ti_Current) {failed = 1;}
-                    const double h = force_hmax_per_type_particle_radius(p);
+                    const double h = SOURCE_REACH_RADIUS_MARGIN * force_hmax_per_type_particle_radius(p);
                     g_covered[p] = float_at_or_below(h);
                     const double g = grown_radius(h, growth);
                     if(!(g >= 0)) {failed = 1;}
