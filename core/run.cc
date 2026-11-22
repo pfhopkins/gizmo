@@ -900,6 +900,7 @@ void run(void)
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
         EB_SYNC_REPORT();
+        MBARY_STEP("end_of_step"); /* every run writes the mass trace, also without SF/hydro/KETJU checkpoints */
 
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
