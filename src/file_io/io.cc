@@ -5980,7 +5980,7 @@ void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_f
         H5Awrite(hdf5_attribute, H5T_NATIVE_LLONG, &executable_size); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
     }
 
-    hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Gravitational_Constant_In_Code_Inits", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+    hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Gravitational_Constant_In_Code_Units", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &All.G); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
 
     hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Minimum_Mass_For_Cell_Merge", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
@@ -6078,10 +6078,6 @@ void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_f
     {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[1]={N_CR_PARTICLE_BINS}; H5Sset_extent_simple(hdf5_dataspace, 1, tmp_dim, NULL);
     hdf5_attribute = H5Acreate(handle, "CR_Bin_Med_Rigidity_GV", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.CR_global_rigidity_at_bin_center); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
-
-    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[1]={N_CR_PARTICLE_BINS}; H5Sset_extent_simple(hdf5_dataspace, 1, tmp_dim, NULL);
-    hdf5_attribute = H5Acreate(handle, "CR_Bin_Max_Rigidity_GV", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
-    H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.CR_global_max_rigidity_in_bin); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
 
     {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[1]={N_CR_PARTICLE_BINS}; H5Sset_extent_simple(hdf5_dataspace, 1, tmp_dim, NULL);
     hdf5_attribute = H5Acreate(handle, "CR_Bin_Max_Rigidity_GV", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
