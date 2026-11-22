@@ -41,7 +41,8 @@ def _totals(path):
     injb = a[:, 40:43] if w >= 43 else np.zeros((len(a), 3))
     return dict(M=a[:, 2] - inj[:, 0], P=a[:, 3:6] - inj[:, 1:4], E=a[:, 6] + a[:, 7] + a[:, 8] - inj[:, 4], BV=a[:, 10:13] - injb,
                 EB=a[:, 8], pscale=a[0, 9], nfloor=a[-1, 14], nstar=a[-1, 16], floor_paths=a[-1, 18:28], steps=a[:, 0], rows=len(a),
-                limiters=a[-1, 43:45] if w >= 45 else np.zeros(2), powell=a[-1, 45:49] if w >= 49 else np.zeros(4))
+                limiters=a[-1, 43:45] if w >= 45 else np.zeros(2), powell=a[-1, 45:49] if w >= 49 else np.zeros(4),
+                mem=(a[:, 28].max(), a[-1, 29], a[:, 52].max() if w >= 53 else 0.0))
 
 
 def _check(ref, t, energy=True, bv=False, momentum=True):
@@ -52,7 +53,7 @@ def _check(ref, t, energy=True, bv=False, momentum=True):
     dB = np.abs(t["BV"] - ref["BV"][0]).max() / bscale
     print(f"rows {t['rows']}  max|dM|/M {dM:.2e}  max|dP|/sum m|v| {dP:.2e}  max|dE|/E {dE:.2e}  max|dBV|/sum|BV| {dB:.2e}  "
           f"floor firings {int(t['nfloor'])} by path (closing, wake, opening, mass change, kick) {t['floor_paths'][0::2].astype(int).tolist()}  "
-          f"limiters (Dedner correction, closure) {t['limiters'].astype(int).tolist()}  Powell work (p, E) {t['powell'].tolist()}  shares to non-gas {int(t['nstar'])}")
+          f"limiters (Dedner correction, closure) {t['limiters'].astype(int).tolist()}  Powell work (p, E) {t['powell'].tolist()}  shares to non-gas {int(t['nstar'])}  records peak MB {t['mem'][0]:.3f} spills {int(t['mem'][1])} helpers peak MB {t['mem'][2]:.3f}")
     assert t["nstar"] == 0, "a share went to a particle that is no longer gas"
     assert dM <= TOL
     if momentum:

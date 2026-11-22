@@ -1242,7 +1242,18 @@ int merge_particles_ij(int i, int j)
     CellP[j].HydroVelRef = CellP[j].VelPred / All.cf_atime; /* the velocity the merged du/dt was formed with */
 #endif
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
-    CellP[j].PairFluxMassRef = mtot;
+    { /* merged sums are what the merged rates carry: each cell's sum at its m/m_ref (mom, energy) or B factor (B), merged m_ref = m_tot */
+        double fi = (CellP[i].PairFluxMassRef > 0) ? P[i].Mass / CellP[i].PairFluxMassRef : 1, fj = (CellP[j].PairFluxMassRef > 0) ? P[j].Mass / CellP[j].PairFluxMassRef : 1;
+        CellP[j].PairFluxSumMom = CellP[j].PairFluxSumMom * fj + CellP[i].PairFluxSumMom * fi; CellP[j].PairFluxSumEgy = CellP[j].PairFluxSumEgy * fj + CellP[i].PairFluxSumEgy * fi;
+        CellP[j].PairFluxRecvMom = CellP[j].PairFluxRecvMom * fj + CellP[i].PairFluxRecvMom * fi; CellP[j].PairFluxRecvEgy = CellP[j].PairFluxRecvEgy * fj + CellP[i].PairFluxRecvEgy * fi;
+#ifdef MAGNETIC
+        double bi = CellP[i].PairFluxBScale, bj = CellP[j].PairFluxBScale;
+        CellP[j].PairFluxSumB = CellP[j].PairFluxSumB * bj + CellP[i].PairFluxSumB * bi; CellP[j].PairFluxSumBded = CellP[j].PairFluxSumBded * bj + CellP[i].PairFluxSumBded * bi;
+        CellP[j].PairFluxRecvB = CellP[j].PairFluxRecvB * bj + CellP[i].PairFluxRecvB * bi; CellP[j].PairFluxRecvBded = CellP[j].PairFluxRecvBded * bj + CellP[i].PairFluxRecvBded * bi;
+        CellP[j].PairFluxBScale = 1;
+#endif
+    }
+    CellP[j].PairFluxMassRef = mtot; /* after the sums above, which read the old references */
 #endif
     // to be conservative adopt the maximum signal velocity and kernel length //
     CellP[j].MaxSignalVel = sqrt(CellP[j].MaxSignalVel*CellP[j].MaxSignalVel + CellP[i].MaxSignalVel*CellP[i].MaxSignalVel); /* need to be conservative */
@@ -1299,19 +1310,6 @@ int merge_particles_ij(int i, int j)
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving */
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
     for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] += CellP[i].Dyield_pending[k];} /* pending exchange adds */
-#endif
-#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
-    { /* merged sums are what the merged rates carry: each cell's sum at its m/m_ref (mom, energy) or B factor (B), merged m_ref = m_tot */
-        double fi = (CellP[i].PairFluxMassRef > 0) ? P[i].Mass / CellP[i].PairFluxMassRef : 1, fj = (CellP[j].PairFluxMassRef > 0) ? P[j].Mass / CellP[j].PairFluxMassRef : 1;
-        CellP[j].PairFluxSumMom = CellP[j].PairFluxSumMom * fj + CellP[i].PairFluxSumMom * fi; CellP[j].PairFluxSumEgy = CellP[j].PairFluxSumEgy * fj + CellP[i].PairFluxSumEgy * fi;
-        CellP[j].PairFluxRecvMom = CellP[j].PairFluxRecvMom * fj + CellP[i].PairFluxRecvMom * fi; CellP[j].PairFluxRecvEgy = CellP[j].PairFluxRecvEgy * fj + CellP[i].PairFluxRecvEgy * fi;
-#ifdef MAGNETIC
-        double bi = CellP[i].PairFluxBScale, bj = CellP[j].PairFluxBScale;
-        CellP[j].PairFluxSumB = CellP[j].PairFluxSumB * bj + CellP[i].PairFluxSumB * bi; CellP[j].PairFluxSumBded = CellP[j].PairFluxSumBded * bj + CellP[i].PairFluxSumBded * bi;
-        CellP[j].PairFluxRecvB = CellP[j].PairFluxRecvB * bj + CellP[i].PairFluxRecvB * bi; CellP[j].PairFluxRecvBded = CellP[j].PairFluxRecvBded * bj + CellP[i].PairFluxRecvBded * bi;
-        CellP[j].PairFluxBScale = 1;
-#endif
-    }
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     /* Force Σ Met[1..27] = 1 bit-exact via H from conservation. */

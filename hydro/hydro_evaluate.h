@@ -459,7 +459,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                     Vec3<double> pf_B = {}, pf_Bded = {};
 #if defined(MAGNETIC) && !defined(FREEZE_HYDRO)
 #ifdef DIVBCLEANING_DEDNER
-                    pf_Bded = Face_Area_Vec * Riemann_out.phi_normal_mean;
+                    pf_Bded = Face_Area_Vec * (Riemann_out.phi_normal_mean + Riemann_out.phi_normal_db); /* mean-phi and correction face terms: u gets B.dB back for both */
 #endif
                     pf_B = Fluxes.B + pf_Bded;
 #endif

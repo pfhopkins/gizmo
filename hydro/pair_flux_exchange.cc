@@ -3,6 +3,7 @@
 #include "../gravity/forcetree.h"
 #include "pair_flux_weights.h"
 #include <cstring>
+#include <algorithm>
 
 /* Exact pair-flux exchange across timebins (HYDRO_EXACT_PAIR_FLUX_EXCHANGE) and the per-sync conserved-totals
    diagnostic (TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC). Each pair is evaluated once, at every sync where either cell is
@@ -100,6 +101,25 @@ static int PairFluxClosingKickExpected = 0, PairFluxRearranged = 0, PairFluxTag 
 static long long PairFluxNFloor = 0, PairFluxNStar = 0; static double PairFluxEFloor = 0, PairFluxPeakMB = 0;
 static int PairFluxPath = 0; static long long PairFluxNFloorPath[5] = {0}; static double PairFluxEFloorPath[5] = {0}; /* closing, wake, opening, mass change, kick */
 static std::vector<pairflux_impulse> PairFluxSums;
+static void pf_reduce_sums(void);
+static double PairFluxHelperPeakMB = 0; /* largest size of the exchange helpers outside MaxMemSize (test output) */
+static void pf_note_helper(size_t bytes) {double mb = (double) bytes / (1024.*1024.); if(mb > PairFluxHelperPeakMB) {PairFluxHelperPeakMB = mb;}}
+/* sum the impulses per (mode, target) in a fixed order: conserved + predicted, conserved, predicted only; then by index */
+static void pf_reduce_sums(void)
+{
+    static const int rank_of_mode[3] = {1, 0, 2};
+    pf_note_helper(PairFluxSums.capacity() * sizeof(pairflux_impulse));
+    std::stable_sort(PairFluxSums.begin(), PairFluxSums.end(), [](const pairflux_impulse &x, const pairflux_impulse &y) {
+        return (rank_of_mode[x.mode] != rank_of_mode[y.mode]) ? (rank_of_mode[x.mode] < rank_of_mode[y.mode]) : (x.i < y.i);});
+    size_t w = 0;
+    for(size_t k = 0; k < PairFluxSums.size();)
+    {
+        pairflux_impulse s = PairFluxSums[k]; size_t m = k + 1;
+        while(m < PairFluxSums.size() && PairFluxSums[m].i == s.i && PairFluxSums[m].mode == s.mode) {s.mom += PairFluxSums[m].mom; s.egy += PairFluxSums[m].egy; s.B += PairFluxSums[m].B; s.Bded += PairFluxSums[m].Bded; m++;}
+        PairFluxSums[w++] = s; k = m;
+    }
+    PairFluxSums.resize(w);
+}
 
 void pairflux_note_kick_floor(double de) {PairFluxNFloorPath[4]++; PairFluxEFloorPath[4] += de;}
 void pairflux_note_rearrange(void) {PairFluxRearranged = 1;}
@@ -231,18 +251,12 @@ static void pf_add(int i, int mode, Vec3<double> mom, double egy, Vec3<double> B
 {
     if(i < 0 || i >= NumPart) {printf("HYDRO_EXACT_PAIR_FLUX_EXCHANGE: target %d outside [0,%d) on task %d\n", i, NumPart, ThisTask); endrun(97534);}
     pairflux_impulse t; t.i = i; t.mode = mode; t.mom = mom; t.egy = egy; t.B = B; t.Bded = Bded; PairFluxSums.push_back(t);
+    if(PairFluxSums.size() > (size_t)(2 * N_gas + 4096)) {pf_reduce_sums();} /* bounded by the number of targets, not of records */
 }
 static void pf_apply_all(void)
 {
-    static const int rank_of_mode[3] = {1, 0, 2}; /* conserved + predicted first, then conserved, then predicted only */
-    std::stable_sort(PairFluxSums.begin(), PairFluxSums.end(), [](const pairflux_impulse &x, const pairflux_impulse &y) {
-        return (rank_of_mode[x.mode] != rank_of_mode[y.mode]) ? (rank_of_mode[x.mode] < rank_of_mode[y.mode]) : (x.i < y.i);});
-    for(size_t k = 0; k < PairFluxSums.size();)
-    {
-        pairflux_impulse s = PairFluxSums[k]; size_t m = k + 1;
-        while(m < PairFluxSums.size() && PairFluxSums[m].i == s.i && PairFluxSums[m].mode == s.mode) {s.mom += PairFluxSums[m].mom; s.egy += PairFluxSums[m].egy; s.B += PairFluxSums[m].B; s.Bded += PairFluxSums[m].Bded; m++;}
-        pairflux_apply_impulse(s.i, s.mom, s.egy, s.B, s.Bded, s.mode); k = m;
-    }
+    pf_reduce_sums();
+    for(auto &s : PairFluxSums) {pairflux_apply_impulse(s.i, s.mom, s.egy, s.B, s.Bded, s.mode);}
     std::vector<pairflux_impulse>().swap(PairFluxSums); /* not held between syncs */
 }
 
@@ -280,10 +294,26 @@ static void pf_check_records(const char *where)
 }
 
 /* evaluator corrections: local ones summed now, remote ones sent to the evaluator's rank */
+static void pf_reduce_corr(std::vector<pairflux_corr> &v)
+{
+    std::stable_sort(v.begin(), v.end(), [](const pairflux_corr &x, const pairflux_corr &y) {return (x.idx != y.idx) ? (x.idx < y.idx) : (x.mode < y.mode);});
+    size_t w = 0;
+    for(size_t k = 0; k < v.size();)
+    {
+        pairflux_corr s = v[k]; size_t m = k + 1;
+        while(m < v.size() && v[m].idx == s.idx && v[m].mode == s.mode) {for(int d = 0; d < 3; d++) {s.mom[d] += v[m].mom[d]; s.B[d] += v[m].B[d]; s.Bded[d] += v[m].Bded[d];} s.egy += v[m].egy; m++;}
+        v[w++] = s; k = m;
+    }
+    v.resize(w);
+}
 static void pf_send_evaluator_corrections(std::vector<std::vector<pairflux_corr>> &out)
 {
+    size_t nb = 0; for(auto &v : out) {nb += v.capacity() * sizeof(pairflux_corr); pf_reduce_corr(v);}
+    pf_note_helper(nb);
     std::vector<pairflux_corr> in; std::vector<int> from;
     pf_sparse_exchange(out, in, from);
+    for(auto &v : out) {std::vector<pairflux_corr>().swap(v);}
+    pf_note_helper(in.capacity() * (sizeof(pairflux_corr) + sizeof(int)));
     std::vector<size_t> ord(in.size()); for(size_t k = 0; k < ord.size(); k++) {ord[k] = k;}
     std::stable_sort(ord.begin(), ord.end(), [&from](size_t x, size_t y) {return from[x] < from[y];}); /* arrival order must not change the sums */
     for(size_t k : ord)
@@ -332,7 +362,15 @@ void pairflux_after_opening_kick(void)
     /* the evaluators' new step ends and applied opening weights, from their ranks */
     std::vector<std::vector<pairflux_req>> rq(NTask); std::vector<long long> slot(PairFluxNRecords);
     pairflux_record *R = pf_records();
-    for(long long k = 0; k < PairFluxNRecords; k++) {slot[k] = (long long) rq[R[k].e_task].size(); pairflux_req q; q.idx = R[k].e_index; rq[R[k].e_task].push_back(q);}
+    for(long long k = 0; k < PairFluxNRecords; k++) {pairflux_req q; q.idx = R[k].e_index; rq[R[k].e_task].push_back(q);}
+    for(auto &v : rq) {std::sort(v.begin(), v.end(), [](const pairflux_req &x, const pairflux_req &y) {return x.idx < y.idx;});
+                     v.erase(std::unique(v.begin(), v.end(), [](const pairflux_req &x, const pairflux_req &y) {return x.idx == y.idx;}), v.end());} /* one request per distinct evaluator */
+    for(long long k = 0; k < PairFluxNRecords; k++)
+    {
+        auto &v = rq[R[k].e_task]; pairflux_req q; q.idx = R[k].e_index;
+        slot[k] = (long long)(std::lower_bound(v.begin(), v.end(), q, [](const pairflux_req &x, const pairflux_req &y) {return x.idx < y.idx;}) - v.begin());
+    }
+    pf_note_helper(PairFluxNRecords * sizeof(long long));
     std::vector<pairflux_req> qin; std::vector<int> qfrom; pf_sparse_exchange(rq, qin, qfrom);
     std::vector<std::vector<pairflux_rep>> rp(NTask);
     for(size_t k = 0; k < qin.size(); k++)
@@ -424,7 +462,7 @@ void print_gas_conserved_totals(void)
         add(6, 0.5 * CellP[i].B.norm_sq() * rho_over_m / a); add(8, CellP[i].B[0]); add(9, CellP[i].B[1]); add(10, CellP[i].B[2]);
 #endif
     }
-    double loc[50] = {0}, glob[50];
+    double loc[51] = {0}, glob[51];
     for(int k = 0; k < 12; k++) {loc[k] = s[k] + c[k];}
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
     loc[12] = (double) PairFluxNFloor; loc[13] = PairFluxEFloor; loc[14] = (double) PairFluxNStar; loc[15] = 0;
@@ -436,19 +474,23 @@ void print_gas_conserved_totals(void)
     for(int k = 0; k < 5; k++) {loc[33+k] = TestInjected[k];}
     for(int k = 0; k < 3; k++) {loc[38+k] = TestInjected[5+k];}
 #endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    loc[50] = PairFluxHelperPeakMB;
+#endif
     loc[41] = TestLimiter[0]; loc[42] = TestLimiter[1]; for(int k = 0; k < 4; k++) {loc[43+k] = TestPowell[k];} for(int k = 0; k < 3; k++) {loc[47+k] = TestDroppedBV[k];}
     MPI_Reduce(loc, glob, 26, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&loc[27], &glob[27], 23, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&loc[50], &glob[50], 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&loc[26], &glob[26], 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
     if(!fd)
     {
         char buf[1000]; snprintf(buf, sizeof(buf), "%s/conserved_totals.txt", All.OutputDir);
         fd = fopen(buf, "w");
-        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_to_star 0 [n,E floor: closing wake opening masschange kick] records_peak_MB_per_rank records_spilled [cumulative kick energy: gas hydro, gas other (gravity), gas floor, non-gas kinetic, pair-flux impulses] [added by the test hook: M Px Py Pz E] [hook B*V x y z] [Dedner correction renormalised, face-area closure != 1 (cell-steps)] [Powell work: momentum x y z, energy] [B*V to cells that became stars x y z] (gas, conserved variables, physical, after the sync's kicks)\n");
+        fprintf(fd, "# step time M Px Py Pz E_th E_kin E_B sum_m|v| BVx BVy BVz Ncells n_floor E_floor n_to_star 0 [n,E floor: closing wake opening masschange kick] records_peak_MB_per_rank records_spilled [cumulative kick energy: gas hydro, gas other (gravity), gas floor, non-gas kinetic, pair-flux impulses] [added by the test hook: M Px Py Pz E] [hook B*V x y z] [Dedner correction renormalised, face-area closure != 1 (cell-steps)] [Powell work: momentum x y z, energy] [B*V to cells that became stars x y z] exchange_helpers_peak_MB_per_rank (gas, conserved variables, physical, after the sync's kicks)\n");
     }
     fprintf(fd, "%lld %.17e", (long long) All.NumCurrentTiStep, All.Time);
-    for(int k = 0; k < 50; k++) {fprintf(fd, " %.17e", glob[k]);}
+    for(int k = 0; k < 51; k++) {fprintf(fd, " %.17e", glob[k]);}
     fprintf(fd, "\n"); fflush(fd);
 }
 #endif
