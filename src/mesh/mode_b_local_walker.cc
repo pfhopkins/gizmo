@@ -34,6 +34,7 @@
 #include "ghost_exchange_functions.h" /* gx_extended_overlap_wrap_and_test: canonical-wrap SSOT */
 #include "gpu_neighbor_list.h"    /* gizmo_mark_kernel_radius_dirty_indices */
 #include "mode_b_local_walker.h"
+#include "source_reach_map.h"       /* exact routing at remote top leaves for symmetric exports */
 
 /* Public helper: per-j symmetric radius under policy. Delegates to the SSOT
  * per-particle wrapper in nlr_radius_policy.h, which owns the
@@ -244,6 +245,7 @@ const ModeBTopleafMap &mode_b_topleaf_map_current(void)
         built_ntopleaves = NTopleaves;
         built_tree_base = All.TreeNodeIndexBase;
     }
+    source_reach_map_prepare();
     return map;
 }
 
@@ -283,6 +285,8 @@ static void mode_b_walk_impl(const double pos[3],
     const int oneway = (search_mode == MODE_B_SEARCH_ONEWAY);
     const integertime ti_now = All.Ti_Current;
     const struct DriftKickTableView drift_tables = drift_kick_table_view_host();
+    /* A symmetric export decision consults the source-reach map, keyed by the query's own top leaf. */
+    const int reach_map_leaf = (export_out && !oneway) ? source_reach_map_query_leaf(pos) : -1;
 
     int no = start_no;
 
@@ -346,7 +350,10 @@ static void mode_b_walk_impl(const double pos[3],
                 const int leaf = topleaf_map->topleaf_of(no, tree_base);
                 if(leaf >= 0) {
                     if(DomainTask[leaf] != ThisTask) {
-                        export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
+                        /* the node bound opened it; the source-reach map may show no member can pair with this query */
+                        if(oneway || source_reach_map_verdict(reach_map_leaf, leaf, no, pos, h_q, type_mask, j_reach_scale) != 0) {
+                            export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
+                        }
                         no = nop->u.d.sibling;
                         continue;
                     }
@@ -395,6 +402,7 @@ static void mode_b_walk_impl(const double pos[3],
                             const double node_h = mode_b_node_symmetric_radius(tl_node, type_mask, j_reach_scale);
                             const double R_exp_tl = (node_h > h_q) ? node_h : h_q;
                             do_export = sphere_aabb_overlap(pos, &Nodes[tl_node], R_exp_tl);
+                            if(do_export && source_reach_map_verdict(reach_map_leaf, leaf, tl_node, pos, h_q, type_mask, j_reach_scale) == 0) {do_export = 0;}
                         }
                     }
                     if(do_export) export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);

@@ -165,6 +165,12 @@ double force_hmax_per_type_particle_radius(int i);
  * key on BOTH plus All.Ti_Current; a mismatch means rebuild / fail-closed.  These
  * are NOT a substitute for the per-data epoch keys, only the tree-side half. */
 long   force_treebuild_generation(void);
+/* How long the tree being built is expected to stand (forcetree.cc): collective, once per build, before the LET and the
+ * source-reach map read it.  tree_lifetime_dti = that horizon in integer time; tree_lifetime_drift = the undilated drift
+ * factor over it from the build (0 = none). */
+void   tree_lifetime_compute(void);
+integertime tree_lifetime_dti(void);
+double tree_lifetime_drift(void);
 long   force_hmax_refresh_generation(void);
 void   force_bump_hmax_refresh_generation(void);   /* called by force_update_hmax (separate TU) */
 

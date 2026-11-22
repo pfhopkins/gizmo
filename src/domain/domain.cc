@@ -14,6 +14,7 @@
 #include "../core/wakeup_sidecar.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_range */
+#include "../mesh/source_reach_map.h"   /* off from here to the next tree build */
 
 
 /*! Announce that the local particle array was re-indexed: particles were
@@ -533,6 +534,7 @@ int domain_segments_per_rank_for_particles(long long total_particles, int *lower
 void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key, int allow_peano_order_cadence)
 {
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition")) {return;}
+    source_reach_map_invalidate();   /* the top-leaf layout is about to change */
     /* The kept neighbour indexes will not be read again before the layout changes, so
      * their memory is returned now, before this decomposition's own allocations and
      * the tree allocation at its end. */
@@ -841,6 +843,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_key)
 {
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition_light")) {return;}
+    source_reach_map_invalidate();   /* the top-leaf layout is about to change */
     gpu_step_sidx_invalidate_full();   /* as in domain_Decomposition: released before any allocation here */
     int i; size_t bytes; double t0, t1;
 
@@ -3659,6 +3662,30 @@ void domain_sumCost(void)
   myfree(local_domainCount);
   myfree(local_domainWorkGas);
   myfree(local_domainWork);
+}
+
+
+/*! The top leaf of the domain's top tree (TopNodes) holding Peano key `key`. */
+int domain_topleaf_of_key(peanokey key)
+{
+    int no = 0;
+    peanokey mask = ((peanokey)7) << (3 * (BITS_PER_DIMENSION - 1));
+    int shift = 3 * (BITS_PER_DIMENSION - 1);
+    while(TopNodes[no].Daughter >= 0)
+    {
+        no = TopNodes[no].Daughter + (int)((key & mask) >> shift);
+        mask >>= 3;
+        shift -= 3;
+    }
+    return TopNodes[no].Leaf;
+}
+
+/*! The top leaf whose key range holds position pos (a position outside the extent keys to a boundary leaf). */
+int domain_topleaf_of_position(const double pos[3])
+{
+    uint64_t c[3];
+    domain_key_integer_coordinates(pos[0], pos[1], pos[2], DomainCorner[0], DomainCorner[1], DomainCorner[2], DomainLen, BITS_PER_DIMENSION, c);
+    return domain_topleaf_of_key(peano_hilbert_key((peano1D) c[0], (peano1D) c[1], (peano1D) c[2], BITS_PER_DIMENSION));
 }
 
 

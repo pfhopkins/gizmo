@@ -377,19 +377,7 @@ int gx_send_set_emit(struct ghost_send_set *s, int peer, const int *slots, int n
 }
 
 /* ---- Utility: walk TopNodes to find which leaf a particle belongs to ---- */
-static inline int ghost_toptree_leaf(peanokey key)
-{
-    int no = 0;
-    peanokey mask = ((peanokey)7) << (3 * (BITS_PER_DIMENSION - 1));
-    int shift = 3 * (BITS_PER_DIMENSION - 1);
-    while(TopNodes[no].Daughter >= 0)
-    {
-        no = TopNodes[no].Daughter + (int)((key & mask) >> shift);
-        mask >>= 3;
-        shift -= 3;
-    }
-    return TopNodes[no].Leaf;
-}
+static inline int ghost_toptree_leaf(peanokey key) {return domain_topleaf_of_key(key);}
 
 
 /*!
