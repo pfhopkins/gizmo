@@ -41,8 +41,10 @@ void mbary_book_outflow(int i)
 #endif
 }
 
+static long long mbary_ncalls = 0; /* checkpoints so far, same on all tasks (each is collective) */
 void mbary_step_checkpoint(const char *tag)
 {
+    mbary_ncalls++;
     /* the scalar ledgers are summed in long double and reduced as MPI_LONG_DOUBLE: their terms (~1e-8 of metals after a big
      * SN) cancel to a much smaller total, which a double sum resolves only to the spacing of doubles near the terms */
     static long double last_M_tot = -1.0;
@@ -628,6 +630,7 @@ void run(void)
 
     while(1)			/* main timestep iteration loop */
     {
+        long long mbary_ncalls_step = mbary_ncalls;
 #ifdef OUTPUT_STAR_ENERGY_DIRECT_SUM
         incode_total_energy();	/* DIAGNOSTIC: KETJU-aware total energy, printed at the first full sync after each TimeBetSnapshot */
 #endif
@@ -900,7 +903,9 @@ void run(void)
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
         EB_SYNC_REPORT();
-        MBARY_STEP("end_of_step"); /* every run writes the mass trace, also without SF/hydro/KETJU checkpoints */
+#if defined(OUTPUT_ENERGY_STEP_TRACE) || defined(ENERGY_BUDGET_DIAGNOSTIC)
+        if(mbary_ncalls == mbary_ncalls_step) {MBARY_STEP("end_of_step");} /* mass trace for runs with no other checkpoint this step; no extra collective otherwise */
+#endif
 
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
