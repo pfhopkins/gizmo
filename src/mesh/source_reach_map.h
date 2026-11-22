@@ -28,6 +28,16 @@
 void source_reach_map_build(int usable);
 /* At the start of a tree build: until rebuilt, symmetric exports use the node bound. */
 void source_reach_map_invalidate(void);
+/* Demand gate.  The map is built only once a symmetric corridor discovery has seen a flood (source_reach_map_request,
+ * rank-uniform, sticky); until then source_reach_map_build only records the tree and returns.  After a request, the
+ * map is built at the next tree build, or by source_reach_map_build_if_due at the start of a symmetric discovery when
+ * no time has passed since the last tree build.  Both collective. */
+void source_reach_map_build_if_due(void);
+/* The gate's measurements ride the final receiver vote of a corridor discovery (MPI_MIN over SOURCE_REACH_GATE_NVOTE ints):
+ * fill before it with this discovery's own time, apply after it.  Rank-uniform decisions. */
+enum {SOURCE_REACH_GATE_NVOTE = 4};
+void source_reach_map_gate_fill(int *vote, double t_discovery);
+void source_reach_map_gate_apply(const int *vote_all, int symmetric);
 /* Bring the map to the current time; outside parallel regions, before a walk that uses it. */
 void source_reach_map_prepare(void);
 

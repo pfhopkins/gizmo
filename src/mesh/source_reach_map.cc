@@ -39,6 +39,17 @@ struct OwnLeaf {
 };
 
 int g_valid = 0;
+/* Demand gate.  Every decision is rank-uniform (taken from vote results); only the local timings differ per rank. */
+int g_wanted = 0;                 /* the map is to be built */
+integertime g_tree_ti = -1;       /* time of the last tree build or moment refresh; -1 once a due build was tried */
+int g_tree_usable = 0;            /* that build's usable flag */
+double g_t_tree0 = -1, g_t_lastbuild_end = -1;   /* local wall clock: start of the current tree build, end of the last map build call */
+double g_tb_local = 0, g_b_local = -1;           /* local: last tree build time; last map build time (-1: never built) */
+double g_E_tree = 0;              /* corridor imbalance (slowest - fastest rank) summed over the current tree so far */
+int g_map_this_tree = 0;          /* the current tree has a map */
+double g_E_off_last = 0;          /* that sum over the last tree, or tree part, without a map */
+double g_E_nogain = -1;           /* the unmapped imbalance at which the map last proved not worth its cost */
+double g_B_all = -1;              /* the map's build cost, slowest rank (-1: never built) */
 integertime g_build_ti = 0;
 double g_lifetime_drift = 0.0;    /* undilated drift factor over the tree's expected lifetime, from the build */
 double g_scale_max = 1.0;         /* the largest j-side reach scale the lists cover */
@@ -210,12 +221,26 @@ void release_all(void)
 
 } /* namespace */
 
-void source_reach_map_invalidate(void) {g_valid = 0;}
+void source_reach_map_invalidate(void) {g_valid = 0; g_t_tree0 = MPI_Wtime();}   /* a tree build starts here (or the tree is freed) */
+
 
 void source_reach_map_build(int usable)
 {
     g_valid = 0;
     g_now_ti = -1;
+    const double t_call = MPI_Wtime();
+    if(g_t_tree0 > g_t_lastbuild_end) {   /* a new tree (not a moment refresh): close the last tree's account */
+        g_tb_local = t_call - g_t_tree0;
+        if(g_map_this_tree) {
+            if(!(g_E_off_last - g_E_tree > g_B_all)) {   /* the map did not save more than it cost: drop it */
+                g_wanted = 0; g_E_nogain = g_E_off_last;
+                if(ThisTask == 0) {printf("source-reach map: off (saved %g s, cost %g s per tree)\n", g_E_off_last - g_E_tree, g_B_all); fflush(stdout);}
+            }
+        } else {g_E_off_last = g_E_tree;}
+        g_E_tree = 0; g_map_this_tree = 0;
+    }
+    g_tree_ti = All.Ti_Current; g_tree_usable = usable;
+    if(!g_wanted) {release_all(); g_t_lastbuild_end = MPI_Wtime(); return;}   /* nothing built (rank-uniform) */
     int ok = (usable && NTask > 1 && NTopleaves > 0 && All.TreeNodeIndexBase > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
 #if defined(BOX_SHEARING) && (BOX_SHEARING > 1)
     ok = 0;   /* the shear offset moves the radial wrap over the tree's lifetime, which no particle motion bound covers: node bound */
@@ -313,6 +338,41 @@ void source_reach_map_build(int usable)
         }
     }
     g_valid = 1;
+    g_map_this_tree = 1;
+    g_b_local = MPI_Wtime() - t_call;
+    g_t_lastbuild_end = MPI_Wtime();
+}
+
+void source_reach_map_build_if_due(void)
+{
+    if(!g_wanted || g_valid || g_tree_ti != All.Ti_Current) {return;}   /* rank-uniform */
+    g_E_off_last = g_E_tree; g_E_tree = 0;   /* the tree so far ran without a map */
+    source_reach_map_build(g_tree_usable);
+    g_tree_ti = -1;   /* tried once for this tree: a failed build is not repeated before the next one */
+}
+
+void source_reach_map_gate_fill(int *v, double t_discovery)
+{
+    const double ms = 1.0e3;
+    v[0] = -(int) (t_discovery * ms);                        /* -> slowest rank */
+    v[1] = (int) (t_discovery * ms);                         /* -> fastest rank */
+    v[2] = -(int) (g_tb_local * ms);                         /* -> slowest tree build */
+    v[3] = (g_b_local < 0) ? 1 : -(int) (g_b_local * ms);    /* -> slowest map build; 1 = never built */
+}
+
+void source_reach_map_gate_apply(const int *a, int symmetric)
+{
+    if(!symmetric) {return;}
+    const double tmax = -a[0] * 1.0e-3, tmin = a[1] * 1.0e-3, tb = -a[2] * 1.0e-3;
+    g_B_all = (a[3] > 0) ? -1.0 : -a[3] * 1.0e-3;
+    g_E_tree += DMAX(tmax - tmin, 0.0);
+    if(g_wanted || g_map_this_tree) {return;}
+    /* the map's measured cost per tree, or before it was ever built the tree build it is part of */
+    const double cost = (g_B_all >= 0) ? g_B_all : tb;
+    if(g_E_tree > cost && g_E_tree > g_E_nogain) {
+        g_wanted = 1;
+        if(ThisTask == 0) {printf("source-reach map: on (corridor imbalance %g s this tree > cost %g s)\n", g_E_tree, cost); fflush(stdout);}
+    }
 }
 
 void source_reach_map_prepare(void)
