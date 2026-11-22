@@ -15,12 +15,14 @@
 //            Every A/H result goes to the CSV (argument 1) at %.17g for a bitwise comparison.
 //            Known harmless case (Uli's decision 2026-11-19): net 5 keeps Arepo's EPS_MAX = 1e-4, so in gas at
 //            x_H+ ~ 0.9999+ CVODE's error-tolerated H+ overshoot can cross it; the recoverable validate_input rejections of
-//            these four net-5 calls are recorded, not failed: logged cells 6796375 and 1080890, hand-off (cell 1080890's
-//            inputs) nH 10, bypass T 4.99e5 K, dt 7.7044e11 and 3e12 s. rc, floor hits and the 1% T bar stay hard.
+//            these four net-5 calls are recorded, not failed: logged cells 6796375 (<= 1 rejection) and 1080890 (<= 2),
+//            hand-off (cell 1080890's inputs) nH 10, bypass T 4.99e5 K, dt 7.7044e11 and 3e12 s (<= 2 each); all of them H+.
+//            rc, floor hits and the 1% T bar stay hard.
 //            Known cases, net 17 (Uli's decision 2026-11-20): with the C++ stop time per substep (D-60) the hand-off
 //            calls nH 10, bypass T 4.5e5 and 4.8e5 K, dt 7.7044e11 and 3e12 s have one recoverable C++ H+ rejection each
-//            (recorded, not failed); hand-off nH 10, bypass T 4.99e5 K, dt 7.7044e11 s: DVODE is 1.1% off the converged
-//            T with D-60 in the Fortran RHS: legacy-solver accuracy, recorded, not failed (C++ stays gated at 1%).
+//            (recorded, not failed; bound <= 1, H+ only); hand-off nH 10, bypass T 4.99e5 K, dt 7.7044e11 s: DVODE is 1.1%
+//            off the converged T with D-60 in the Fortran RHS: legacy-solver accuracy, recorded, not failed up to 2% (NaN
+//            fails; C++ stays gated at 1%). A waived call that comes out clean prints "known case did not occur".
 //   PHASE R  (TEST_SGCHEM_FORCED_SOLVER_FAILURE) failures forced per attempt (1 = substep budget of one,
 //            100 = every substep rejected), D-59:
 //            R1/R2  first attempt fails with code 1 / 100 on the logged cells: the retry rescues (rc 0, T within 1% of
@@ -31,9 +33,12 @@
 //            R4/R5  retry fails in a 100 K cell (code 100 / 1): abort with that code
 //            R6     the dumps of R3a/R3b/R4 rebuild a NaN-filled cell (chem_cell_parse) and replay it bit for bit
 //            R7     a flagged evaluation (CR heating set to 1e30) books no stale CR ionisation heating: at a substep
-//                   start (a), at the final evaluation (b), at the failure point before the retry (c), in the TNOCHEM
-//                   subcycle (d, nothing applied, nothing booked); (a)-(c) within 50% of the unflagged solve,
-//                   (d) at most 1.5 x the unflagged finish
+//                   start (a), at the final evaluation (b), at the failure point before the retry (c, which also moves
+//                   tdust: the retry must start from the accepted dust temperature, final state bit for bit as unflagged),
+//                   in the TNOCHEM subcycle (d, nothing applied, nothing booked); the first substep-start evaluation (e,
+//                   the pending interval is booked as a rectangle with the next value) and the first two (f, deferred,
+//                   not dropped); (a)-(c) within 50% and (e)-(f) within 10% of the unflagged solve, (d) at most 1.5 x the
+//                   unflagged finish. R6 replays into a cell filled with 0xff and with 0x00.
 //
 // Usage: test_solver_failure [csv]      (run where gizmo/cooling/sgchem holds the tables)
 
@@ -103,8 +108,10 @@ extern thread_local long cxx_stat_substeps, cxx_stat_retries, cxx_stat_floor_hit
 extern thread_local long chem_excess_states;
 #ifdef TEST_PARENT_DRIVER
 static long chem_clip_excess_fail[CHEM_NSPEC_MAX];
+static long chem_excess_species[CHEM_NSPEC_MAX];
 #else
 extern thread_local long chem_clip_excess_fail[CHEM_NSPEC_MAX];
+extern thread_local long chem_excess_species[CHEM_NSPEC_MAX];
 #endif
 #ifdef TEST_PARENT_DRIVER   // bitwise comparison against the driver before D-59
 static long cxx_stat_failure_retries = 0, cxx_stat_tnochem_finishes = 0;
@@ -116,7 +123,7 @@ extern thread_local int chem_test_force_failure[2];
 extern thread_local double chem_test_retry_start_y[CHEM_NSPEC_MAX];
 extern thread_local double chem_test_retry_start_t;
 extern thread_local std::string chem_test_last_dump;
-extern thread_local long chem_test_flag_rhs[4];
+extern thread_local long chem_test_flag_rhs[5];
 #endif
 
 static const int NET = CHEMISTRYNETWORK;
@@ -284,7 +291,7 @@ static void hot_cie(double* y, double abundD)
 
 static ChemTables* g_cx = nullptr;
 
-struct Res { int rc; long substeps, retries, floors, excess, fretries, tfinish, dpfail; double e, T, crh; double y[NSPEC]; };
+struct Res { int rc; long substeps, retries, floors, excess, exc_hp, fretries, tfinish, dpfail; double e, T, crh; double y[NSPEC]; };
 
 #ifndef TEST_SGCHEM_FORCED_SOLVER_FAILURE
 static Res run_fortran(const LoggedCell& L, double dt, double yn, double e0, const double* y0)
@@ -309,7 +316,7 @@ static Res run_fortran(const LoggedCell& L, double dt, double yn, double e0, con
     if (setjmp(g_fatal_jmp) == 0) EVOLVE_ABUNDANCES(&dts, &dl, &yn, &dv, &e, y, &ce);
     else r.rc = g_fatal_code ? g_fatal_code : -1;
     g_fatal_armed = 0;
-    r.substeps = r.retries = r.floors = r.excess = r.fretries = r.tfinish = r.dpfail = -1; r.crh = 0.0;
+    r.substeps = r.retries = r.floors = r.excess = r.exc_hp = r.fretries = r.tfinish = r.dpfail = -1; r.crh = 0.0;
     r.e = e; for (int i = 0; i < NSPEC; i++) r.y[i] = y[i];
     r.y[ITMP] = e;
     r.T = temp_of(*g_cx, yn, e, y);
@@ -337,7 +344,7 @@ static Res solve_cell(ChemCell& c, double dt, double yn, double e0, const double
     Res r; double y[NSPEC]; for (int i = 0; i < NSPEC; i++) y[i] = y0[i];
     double e = e0;
     const long s0 = cxx_stat_substeps, r0 = cxx_stat_retries, f0 = cxx_stat_floor_hits;
-    const long x0 = chem_excess_states, q0 = cxx_stat_failure_retries, t0 = cxx_stat_tnochem_finishes;
+    const long x0 = chem_excess_states, q0 = cxx_stat_failure_retries, t0 = cxx_stat_tnochem_finishes, h0 = chem_excess_species[IHP];
 #if CHEMISTRYNETWORK == 17
     const long d0 = chem_clip_excess_fail[IDP];
 #endif
@@ -345,6 +352,7 @@ static Res solve_cell(ChemCell& c, double dt, double yn, double e0, const double
     r.substeps = cxx_stat_substeps - s0; r.retries = cxx_stat_retries - r0; r.floors = cxx_stat_floor_hits - f0;
     r.excess = chem_excess_states - x0; r.fretries = cxx_stat_failure_retries - q0; r.tfinish = cxx_stat_tnochem_finishes - t0;
     r.crh = c.cr_ion_heat_int;
+    r.exc_hp = chem_excess_species[IHP] - h0;
 #if CHEMISTRYNETWORK == 17
     r.dpfail = chem_clip_excess_fail[IDP] - d0;
 #else
@@ -402,22 +410,28 @@ static int check_pair(const char* tag, const LoggedCell& L, double dt, double yn
 #endif
     double relC = std::fabs(c.T - Tref) / Tref, relF = std::fabs(f.T - Tref) / Tref;
     // net 5 calls with known recoverable H+ rejections (Uli 2026-11-19, see the header)
-    int known = 0, known_dvode = 0;
+    long known = 0;          // waived recoverable H+ rejections allowed in this call (Uli 2026-11-19/20)
+    int known_dvode = 0;     // DVODE allowed up to 2% off the converged T in this call (Uli 2026-11-20)
     const int handoff10 = (std::strcmp(tag, "hand-off") == 0 && yn == 10.0 && (dt == 7.7044e11 || dt == 3e12));
     const double Tb = bypass_T(*g_cx, yn, e0, y0);
 #if CHEMISTRYNETWORK == 5
-    known = (std::strcmp(tag, "logged") == 0 && (L.id == 6796375 || L.id == 1080890))
-         || (handoff10 && L.id == 1080890 && std::fabs(Tb - 4.99e5) < 1.0);
+    if (std::strcmp(tag, "logged") == 0 && L.id == 6796375) known = 1;
+    if (std::strcmp(tag, "logged") == 0 && L.id == 1080890) known = 2;
+    if (handoff10 && L.id == 1080890 && std::fabs(Tb - 4.99e5) < 1.0) known = 2;
 #else
-    known = handoff10 && L.id == 3018810 && (std::fabs(Tb - 4.5e5) < 1.0 || std::fabs(Tb - 4.8e5) < 1.0);
+    if (handoff10 && L.id == 3018810 && (std::fabs(Tb - 4.5e5) < 1.0 || std::fabs(Tb - 4.8e5) < 1.0)) known = 1;
     known_dvode = handoff10 && L.id == 3018810 && dt == 7.7044e11 && std::fabs(Tb - 4.99e5) < 1.0;
 #endif
-    int bad = (c.rc != 0) || (f.rc != 0) || (c.excess != 0 && !known) || (c.floors != 0) || (c.dpfail != 0)
-           || !(relC <= 0.01) || (!(relF <= 0.01) && !known_dvode);
+    const int excess_ok = (c.excess == 0) || (c.excess <= known && c.exc_hp == c.excess);
+    const int dvode_ok = (relF <= 0.01) || (known_dvode && relF <= 0.02);
+    int bad = (c.rc != 0) || (f.rc != 0) || !excess_ok || (c.floors != 0) || (c.dpfail != 0)
+           || !(relC <= 0.01) || !dvode_ok;
     std::printf("  %-10s %8ld %10.4g %9.4g %9.4g | %4d %6ld %6ld %7ld %5ld %10.4g %8.1e | %4d %10.4g %8.1e | %10.4g%s\n",
                 tag, L.id, dt, yn, temp_of(*g_cx, yn, e0, y0), c.rc, c.substeps, c.retries, c.excess, c.floors, c.T, relC,
                 f.rc, f.T, relF, Tref, bad ? "  <-- FAIL" : (known && c.excess ? "  (known: recoverable H+ rejections)"
                                          : (known_dvode && relF > 0.01 ? "  (known: DVODE legacy accuracy)" : "")));
+    if ((known && c.excess == 0) || (known_dvode && relF <= 0.01)) std::printf("      known case did not occur\n");
+    if (c.excess && c.exc_hp != c.excess) std::printf("      %ld of %ld rejections are not H+\n", c.excess - c.exc_hp, c.excess);
     if (c.dpfail) std::printf("      %ld substeps rejected for a D+ excess\n", c.dpfail);
     if (bad)
         for (const Res* r : {&c, &f}) {
@@ -601,26 +615,28 @@ int main(int argc, char** argv)
     }
 
     // ---------------- R6: rebuild each dumped cell from its dump alone and replay it ----------------
-    for (size_t k = 0; k < dumps.size(); k++) {
+    for (size_t k = 0; k < 2 * dumps.size(); k++) {
+        const size_t kd = k % dumps.size();
+        const int fill = (k < dumps.size()) ? 0xff : 0x00;      // a missed field is NaN / -1, or 0: both must replay
         ChemCell c;
-        std::memset(static_cast<void*>(&c), 0xff, sizeof(c));   // every field the dump misses is NaN (or -1)
+        std::memset(static_cast<void*>(&c), fill, sizeof(c));
         ChemCellEntry e;
-        const int missing = chem_cell_parse(dumps[k].c_str(), c, e);
+        const int missing = chem_cell_parse(dumps[kd].c_str(), c, e);
         c.tab = &Cx;
         double y[NSPEC];
         for (int i = 0; i < NSPEC; i++) y[i] = e.y_entry[i];
-        force(dump_force[k].first, dump_force[k].second); chem_test_last_dump.clear();
+        force(dump_force[kd].first, dump_force[kd].second); chem_test_last_dump.clear();
         double en = y[ITMP];
         double yy[NSPEC]; for (int i = 0; i < NSPEC; i++) yy[i] = y[i];
         const int rc = cxx_evolve_abundances(e.time, c.dl, c.yn, c.divv, &en, yy, c);
         force(0, 0);
         // the dump's first line carries the per-thread running count; the cell state starts on the second line
         auto body = [](const std::string& d) { const size_t nl = d.find('\n'); return nl == std::string::npos ? d : d.substr(nl); };
-        int same = (rc == dump_rc[k]) && !dumps[k].empty() && (body(chem_test_last_dump) == body(dumps[k]));
-        if (rc == 0) { same &= (en == dump_e[k]); for (int i = 0; i < TRAC_NUM; i++) same &= (yy[i] == dump_y[k][i]); }
+        int same = (rc == dump_rc[kd]) && !dumps[kd].empty() && (body(chem_test_last_dump) == body(dumps[kd]));
+        if (rc == 0) { same &= (en == dump_e[kd]); for (int i = 0; i < TRAC_NUM; i++) same &= (yy[i] == dump_y[kd][i]); }
         int ok = (missing == 0) && same;
-        std::printf("PHASE R6 -- replay of dump %zu from the dump alone: %d fields missing, rc %d, dump and result %s: %s\n",
-                    k, missing, rc, same ? "identical" : "DIFFER", ok ? "PASS" : "FAIL");
+        std::printf("PHASE R6 -- replay of dump %zu (fill 0x%02x) from the dump alone: %d fields missing, rc %d, dump and result %s: %s\n",
+                    kd, fill, missing, rc, same ? "identical" : "DIFFER", ok ? "PASS" : "FAIL");
         nbadR += !ok;
     }
     // ---------------- R7: flagged evaluations book no stale CR heating ----------------
@@ -645,6 +661,27 @@ int main(int argc, char** argv)
             nbadR += !ok;
         }
     }
+    // R7e/R7f: the first one / two substep-start evaluations flagged: rectangle with the next value, deferred not dropped
+    {
+        const LoggedCell* Lf = nullptr;
+        Res uf{}; long fewest = 1L << 40;
+        for (const LoggedCell& L : cells) {
+            Res u = run_cxx(L, L.dt, L.yn, L.y[ITMP], L.y, nullptr);
+            if (u.crh > 0.0 && u.substeps >= 1 && u.substeps < fewest) { fewest = u.substeps; Lf = &L; uf = u; }
+        }
+        for (int nflag = 1; nflag <= 2; nflag++) {
+            if (!Lf) { std::printf("PHASE R7%c -- no logged cell with CR heating: FAIL\n", nflag == 1 ? 'e' : 'f'); nbadR++; continue; }
+            chem_test_flag_rhs[4] = nflag;
+            Res c = run_cxx(*Lf, Lf->dt, Lf->yn, Lf->y[ITMP], Lf->y, nullptr);
+            chem_test_flag_rhs[4] = 0;
+            const double ratio = c.crh / uf.crh;
+            int ok = std::isfinite(c.crh) && (ratio > 0.9) && (ratio < 1.1) && (c.rc == 0);
+            std::printf("PHASE R7%c -- first %d substep-start evaluation(s) flagged (cell %ld, %ld substeps unflagged): integral %.6g "
+                        "vs unflagged %.6g (ratio %.4g): %s\n", nflag == 1 ? 'e' : 'f', nflag, Lf->id, uf.substeps, c.crh, uf.crh,
+                        ratio, ok ? "PASS" : "FAIL");
+            nbadR += !ok;
+        }
+    }
     // R7c: flagged evaluation at the failure point with an accepted substep pending (retry starts at t > 0), then the retry
     {
         const LoggedCell* Lm = nullptr;
@@ -663,9 +700,13 @@ int main(int argc, char** argv)
         chem_test_flag_rhs[2] = 0;
         force(0, 0);
         const double ratio = c.crh / ref.crh;
-        int ok = (ref.fretries == 1) && (ref.crh > 0.0) && std::isfinite(c.crh) && (ratio > 0.5) && (ratio < 1.5) && (c.rc == 0);
-        std::printf("PHASE R7c -- flagged evaluation at the failure point, CR heating 1e30 (cell %ld): integral %.6g vs unflagged "
-                    "%.6g (ratio %.4g): %s\n", Lm->id, c.crh, ref.crh, ratio, ok ? "PASS" : "FAIL");
+        int same_state = (c.e == ref.e);
+        for (int i = 0; i < TRAC_NUM; i++) same_state &= (c.y[i] == ref.y[i]);
+        int ok = (ref.fretries == 1) && (ref.crh > 0.0) && std::isfinite(c.crh) && (ratio > 0.5) && (ratio < 1.5) && (c.rc == 0)
+              && same_state;
+        std::printf("PHASE R7c -- flagged evaluation at the failure point, CR heating 1e30, tdust moved (cell %ld): integral %.6g vs "
+                    "unflagged %.6g (ratio %.4g), final state %s: %s\n", Lm->id, c.crh, ref.crh, ratio,
+                    same_state ? "identical" : "DIFFERS", ok ? "PASS" : "FAIL");
         nbadR += !ok;
     }
     // R7d: flagged first evaluation of the TNOCHEM subcycle after a failed retry (the R3a cell)

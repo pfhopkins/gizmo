@@ -64,6 +64,7 @@ thread_local long cxx_stat_calls = 0, cxx_stat_substeps = 0, cxx_stat_retries = 
 thread_local long cxx_stat_rhs_evals = 0, cxx_stat_cvode_steps = 0;
 thread_local long chem_nan_states = 0;
 thread_local long chem_excess_states = 0;
+thread_local long chem_excess_species[CHEM_NSPEC_MAX];
 thread_local long cxx_stat_failure_retries = 0;    // solver failures (1, 100) retried with tighter tolerances (D-59)
 thread_local long cxx_stat_tnochem_finishes = 0;   // failed retries above TNOCHEM finished via the TNOCHEM path (D-59)
 thread_local long cxx_stat_floor_hits = 0;         // CVODE substeps rejected at the step-size floor
@@ -73,7 +74,8 @@ thread_local int chem_test_force_failure[2] = {0, 0}; // per attempt: 1 = subste
 thread_local double chem_test_retry_start_y[CHEM_NSPEC_MAX];   // state and time the retry started from
 thread_local double chem_test_retry_start_t = -1.0;
 thread_local std::string chem_test_last_dump;                   // last full cell dump
-thread_local long chem_test_flag_rhs[4] = {0, 0, 0, 0};   // flag: substep-start evaluation number [0], final [1], at recover [2], first subcycle [3]
+thread_local long chem_test_flag_rhs[5] = {0, 0, 0, 0, 0};   // flag: substep-start evaluation number [0], final [1], at recover [2] (also
+                                                              // moves tdust), first subcycle [3], the first [4] substep-start evaluations
 #endif
 
 // CVODE step floor: 10 x the double resolution of the time coordinate at the substep end. Below it
@@ -695,7 +697,7 @@ attempt_start:
             int rerr = rhs_dispatch(t_start, y, ydot, c);
             if (c.fatal_code) { retcode = c.fatal_code; goto out; }
 #ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
-            if (chem_test_flag_rhs[0] == nsub_start) { rerr = 1; c.cr_ion_heat = 1e30; }   // test: flagged, stale CR heating
+            if (chem_test_flag_rhs[0] == nsub_start || nsub_start <= chem_test_flag_rhs[4]) { rerr = 1; c.cr_ion_heat = 1e30; }   // test: flagged, stale CR heating
 #endif
             if (rerr) c.cr_ion_heat = crh_prev;          // flagged evaluation: no fresh CR heating
             c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : c.cr_ion_heat) + c.cr_ion_heat) * crh_dt; // trapezoid over the accepted substep
@@ -801,11 +803,11 @@ recover:
     {
         const double tdust_acc = c.tdust;                     // the evaluation must not move the accepted dust temperature
         int rerr = rhs_dispatch(t_start, y, ydot, c);         // CR heating at the accepted state closes the pending trapezoid
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+        if (chem_test_flag_rhs[2]) { rerr = 1; c.cr_ion_heat = 1e30; c.tdust = 1e3; }   // test: flagged, stale CR heating, moved tdust
+#endif
         c.tdust = tdust_acc;
         if (c.fatal_code) { retcode = c.fatal_code; goto out; }
-#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
-        if (chem_test_flag_rhs[2]) { rerr = 1; c.cr_ion_heat = 1e30; }   // test: flagged, stale CR heating
-#endif
         if (rerr) c.cr_ion_heat = crh_prev;
         c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : c.cr_ion_heat) + c.cr_ion_heat) * crh_dt;
         crh_valid |= !rerr; crh_prev = c.cr_ion_heat; crh_dt = 0.0;

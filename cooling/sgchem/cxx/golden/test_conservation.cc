@@ -894,7 +894,7 @@ static int phase_M(const ChemTables& TT)
     // Reference: golden/net<N>_onezone_converged_reference.txt, both backends at rtol 1e-8, written by this test built
     // with -DTEST_WRITE_CONVERGED_REFERENCE (build_conservation.sh REFERENCE=1, golden/make_converged_references.sh).
     // Required for nets 5 and 17; other networks without a reference keep the backend-vs-backend gate.
-    double Tref[3] = {0, 0, 0}, xref[3] = {0, 0, 0};
+    double Tref[3] = {0, 0, 0}, xref[3] = {0, 0, 0}, gref[3] = {0, 0, 0};
     int have_ref = 0;
 #ifdef TEST_WRITE_CONVERGED_REFERENCE
     FILE* refout = std::fopen(std::getenv("CONS_REF_OUT") ? std::getenv("CONS_REF_OUT") : "onezone_reference.txt", "w");
@@ -907,7 +907,7 @@ static int phase_M(const ChemTables& TT)
         double g, tc, tf, xc, xf;
         while (rf && std::fgets(line, sizeof(line), rf))
             if (line[0] != '#' && std::sscanf(line, "%lf %lf %lf %lf %lf", &g, &tc, &tf, &xc, &xf) == 5 && have_ref < 3) {
-                Tref[have_ref] = tc; xref[have_ref] = xc; have_ref++;
+                gref[have_ref] = g; Tref[have_ref] = tc; xref[have_ref] = xc; have_ref++;
             }
         if (rf) std::fclose(rf);
         have_ref = (have_ref == 3);
@@ -937,6 +937,10 @@ static int phase_M(const ChemTables& TT)
 #ifdef TEST_WRITE_CONVERGED_REFERENCE
         if (refout) std::fprintf(refout, "%.17g %.17g %.17g %.17g %.17g\n", G, TC, TF, yC[IHP], yF[IHP]);
 #endif
+        if (have_ref && gref[kG] != G) {   // the reference row must be the Gamma_HI being run
+            std::printf("  FAIL: reference row %d has Gamma_HI %g, run has %g\n", kG, gref[kG], G);
+            ok = 0;
+        }
         if (have_ref) {
             dT = std::max(std::fabs(TF - Tref[kG]), std::fabs(TC - Tref[kG])) / Tref[kG];
             dx = std::max(std::fabs(yF[IHP] - xref[kG]), std::fabs(yC[IHP] - xref[kG])) / xref[kG];
