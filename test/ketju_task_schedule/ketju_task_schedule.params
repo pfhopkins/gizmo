@@ -1,12 +1,7 @@
-% Plummer cluster of equal-mass circular binaries (Type 5 stars).
-% Units: pc - km/s - Msun, so G = 4.302e-3 in code units.
-% N=256 binaries, M_star=1 Msun, M_cluster=512 Msun, a_cluster=1 pc.
-% Half-mass crossing time t_cross ~ 3.24 code time units (~ 3.17 Myr).
-% TimeMax = 32.4 covers ~10 cluster crossings; binary period (1000 AU, 2 Msun)
-% is ~0.023 code units, so ~1400 binary orbits over the run.
-% TimeBetSnapshot = t_cross / 10 -> 100 snapshots over the test.
-% Plummer-equivalent softening = 6.43 AU = 3.117e-5 pc (= 18 AU / 2.8), so the
-% actual cubic-spline kernel radius is the desired 18 AU.
+% ketju_task_schedule: Plummer cluster of 64 equal-mass circular binaries (Type 5 stars, plummer_binaries setup).
+% Units: pc - km/s - Msun. M_star = 1 Msun, a_cluster = 1 pc, 1000 AU binaries, TimeMax = 0.648 (0.2 crossing times).
+% KetjuRegionRadius 0.1 pc merges neighbouring binaries into regions of 4+ members, and KetjuMinParticlesPerTask 2 lets
+% the cost allocator give such regions several compute tasks, so the multi-task paths of the coupling run on 8 ranks.
 %
 InitCondFile                       ketju_task_schedule_ics
 OutputDir                          output
@@ -54,14 +49,11 @@ CpuTimeBetRestartFile              30
 % With no gas in this test the default 5 pc search radius wastes huge amounts of
 % tree-walking; shrinking it to the softening scale eliminates that overhead.
 SinkMaxAccretionRadius             8.726e-5
-% KETJU regularized integrator params, read only when Config.sh has KETJU_REGULARIZATION (the ketju
-% variant also overrides TimeMax and TreeDomainUpdateFrequency, see the test). KetjuMinStarMass=0.5 makes
-% every 1-Msun star a chain center. KetjuRegionRadius=0.01 pc (~2060 AU) captures each 1000-AU binary's
-% partner; the merge radius (2*KetjuRegionRadius = 0.02 pc) is well below the ~0.15 pc inter-binary
-% spacing, so neighbouring binaries stay separate chains.
-KetjuRegionRadius                  0.01
+% KETJU: every 1-Msun star is a chain centre; centres within 2 x KetjuRegionRadius (0.2 pc) share a region.
 KetjuMinStarMass                   0.5
 KetjuMinBHMass                     0
 % Unsoftened chains (=0) blew up within 4 time units: transient close encounters between stars of
 % different binaries accelerated single stars to ~400 km/s. Keep =1, the host's star-star softening.
 KetjuUseStarStarSoftening          1
+KetjuRegionRadius                  0.1
+KetjuMinParticlesPerTask           2

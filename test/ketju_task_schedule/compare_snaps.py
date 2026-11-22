@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Compare two GIZMO snapshots dataset by dataset after sorting each particle type by (ID, child ID).
-Prints 'IDENTICAL' when every dataset is bitwise equal, else the max abs / rel difference per dataset.
-usage: compare_snaps.py A.hdf5 B.hdf5 [more pairs ...]"""
+"""Compare GIZMO snapshot pairs dataset by dataset after sorting each particle type by (ID, child ID).
+Prints IDENTICAL when every dataset and the header (Time, NumPart_Total) are bitwise equal, else the differences.
+usage: compare_snaps.py A1.hdf5 B1.hdf5 [A2.hdf5 B2.hdf5 ...]; exit status 0 only if every pair is identical."""
 import sys
+
 import h5py
 import numpy as np
 
@@ -17,19 +18,20 @@ def order(g):
 def compare(fa, fb):
     same = True
     with h5py.File(fa, "r") as A, h5py.File(fb, "r") as B:
-        ta, tb = A["Header"].attrs["Time"], B["Header"].attrs["Time"]
-        if ta != tb:
-            print(f"  Time differs {ta!r} {tb!r}"); same = False
-        for pt in sorted(k for k in A if k.startswith("PartType")):
-            if pt not in B:
-                print(f"  {pt} missing in B"); same = False; continue
+        for key in ("Time", "NumPart_Total"):
+            if not np.array_equal(A["Header"].attrs[key], B["Header"].attrs[key]):
+                print(f"  Header/{key}: {A['Header'].attrs[key]!r} vs {B['Header'].attrs[key]!r}"); same = False
+        types = sorted(k for k in set(A) | set(B) if k.startswith("PartType"))
+        for pt in types:
+            if pt not in A or pt not in B:
+                print(f"  {pt} only in {'A' if pt in A else 'B'}"); same = False; continue
             ga, gb = A[pt], B[pt]
             if ga["ParticleIDs"].shape != gb["ParticleIDs"].shape:
                 print(f"  {pt} count {ga['ParticleIDs'].shape} vs {gb['ParticleIDs'].shape}"); same = False; continue
             oa, ob = order(ga), order(gb)
-            for name in sorted(ga):
-                if name not in gb:
-                    continue
+            for name in sorted(set(ga) | set(gb)):
+                if name not in ga or name not in gb:
+                    print(f"  {pt}/{name} only in {'A' if name in ga else 'B'}"); same = False; continue
                 a, b = ga[name][:][oa], gb[name][:][ob]
                 if a.dtype.kind in "biu":
                     if not np.array_equal(a, b):

@@ -2640,6 +2640,9 @@ void ketju_find_regions(void)
     }
 
 #ifdef KETJU_ONE_TASK_PER_REGION
+#ifdef KETJU_LEGACY_C_LIBRARY
+#error "KETJU_ONE_TASK_PER_REGION: the legacy C library integrates in parallel over the compute group; the flag is for the Kokkos MSTAR"
+#endif
     /* the Kokkos MSTAR integrates on rank 0 of the compute group only: one task per region, its affected root, one round */
     for(int k = 0; k < n_multi; k++) {
         region_compute_info &ci = ActiveRegions[multi[k]].compute_info; ci.compute_sequence_position = 0;
