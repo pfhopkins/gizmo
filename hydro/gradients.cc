@@ -1539,7 +1539,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                 {
                     kernel.dwk_j = kernel.wk_j = 0;
                 }
-                double Particle_Size_j, Particle_Size_i;  Particle_Size_j=P[j].Get_Particle_Size(); Particle_Size_i=pow(local.Mass/local.GQuant.Density, 1./NUMDIMS);
+                double Particle_Size_j = pow(P[j].Mass / CellP[j].Density, 1./NUMDIMS), Particle_Size_i = pow(local.Mass/local.GQuant.Density, 1./NUMDIMS); /* same cell-volume definition on both sides */
 
 #if defined(MHD_CONSTRAINED_GRADIENT)
                 double V_j = P[j].Mass / CellP[j].Density, Face_Area_Norm, cnumcrit2 = ((double)CONDITION_NUMBER_DANGER)*((double)CONDITION_NUMBER_DANGER) - local.ConditionNumber*local.ConditionNumber; Vec3<double> Face_Area_Vec;
