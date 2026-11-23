@@ -1384,6 +1384,13 @@
 #endif
 #endif
 
+#if defined(EVALPOTENTIAL) && defined(PMGRID) && defined(BOX_PERIODIC) && !defined(PM_PLACEHIGHRESREGION) && !defined(DM_SCALARFIELD_SCREENING) && (defined(OUTPUT_ENERGY_STEP_TRACE) || defined(ENERGY_BUDGET_DIAGNOSTIC))
+#define PM_EXACT_SELF_POTENTIAL_DIAG /* energy diagnostics only: exact CIC mesh self-potential per particle (gravity/pm_periodic.cc); no effect on forces */
+#endif
+#if defined(EVALPOTENTIAL) && defined(PMGRID) && (defined(OUTPUT_ENERGY_STEP_TRACE) || defined(ENERGY_BUDGET_DIAGNOSTIC))
+#define TREE_SHORTRANGE_POT_FROM_FORCE_DIAG /* energy diagnostics only: tree pair potential inside the softening from the applied force (gravity/forcetree.cc); Potential and forces unchanged */
+#endif
+
 #ifdef COOL_MOLECFRAC_NONEQM
 #ifndef OUTPUT_MOLECULAR_FRACTION
 #define OUTPUT_MOLECULAR_FRACTION
@@ -1431,34 +1438,20 @@
 #endif
 #endif // BOX_SHEARING
 
-#ifdef GRAVITY_PERIODIC_XY_IMAGES /* self-gravity periodic in x/y by explicit image sums, open in z (e.g. tall boxes): no Ewald or PM */
-#if !defined(BOX_PERIODIC) || defined(BOX_OUTFLOW_X) || defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_REFLECT_Y)
-#error "GRAVITY_PERIODIC_XY_IMAGES requires BOX_PERIODIC with periodic x and y boundaries"
-#endif
-#if !defined(BOX_OUTFLOW_Z) && !defined(BOX_REFLECT_Z)
-#error "GRAVITY_PERIODIC_XY_IMAGES requires a non-periodic z boundary (BOX_OUTFLOW_Z or BOX_REFLECT_Z)"
-#endif
-#if defined(BOX_SHEARING) || defined(PMGRID) || defined(GRAVITY_SPHERICAL_SYMMETRY) || defined(SUBFIND)
-#error "GRAVITY_PERIODIC_XY_IMAGES is not compatible with BOX_SHEARING, PMGRID, GRAVITY_SPHERICAL_SYMMETRY or SUBFIND"
-#endif
-#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
-#error "TREE_RADIATION_WRAPS_WITHOUT_GRAVITY is redundant with GRAVITY_PERIODIC_XY_IMAGES: tree radiation and columns already use the x/y nearest image"
-#endif
-#ifndef GRAVITY_NOT_PERIODIC
-#define GRAVITY_NOT_PERIODIC /* switches off the cubic-periodic (Ewald) solver; the tree wraps x/y itself */
-#endif
-#endif
 
 
 
 #ifdef TALLBOX
-#error "TALLBOX was removed: use BOX_PERIODIC + BOX_OUTFLOW_Z (+ BOX_LONG_Z) with GRAVITY_PERIODIC_XY_IMAGES"
+#error "TALLBOX was removed: use BOX_PERIODIC + BOX_OUTFLOW_Z (+ BOX_LONG_Z) with GRAVITY_PERIODIC_XY"
 #endif
 
 #if defined(GRAVITY_ANALYTIC_STRATIFIED_DISK) && !defined(GRAVITY_ANALYTIC)
 #define GRAVITY_ANALYTIC
 #endif
 
+#if defined(SGCHEM_ELECTRONS_AND_HYDROGEN_FRACTION_FROM_NETWORK) && (!defined(SGCHEM) || CHEMISTRYNETWORK != 5)
+#error "SGCHEM_ELECTRONS_AND_HYDROGEN_FRACTION_FROM_NETWORK is complete for CHEMISTRYNETWORK 5 only"
+#endif
 #ifdef GRAVITY_PERIODIC_XY /* self-gravity (shear-)periodic in x/y, open in z, by a 2D Ewald correction on the tree */
 #if !defined(BOX_PERIODIC) || defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_X) || defined(BOX_REFLECT_Y) || defined(BOX_OUTFLOW_Y)
 #error "GRAVITY_PERIODIC_XY requires BOX_PERIODIC with periodic x and y boundaries"
@@ -1468,6 +1461,9 @@
 #endif
 #if defined(PMGRID) || defined(GRAVITY_NOT_PERIODIC) || defined(GRAVITY_SPHERICAL_SYMMETRY) || (defined(BOX_SHEARING) && (BOX_SHEARING < 3))
 #error "GRAVITY_PERIODIC_XY is incompatible with PMGRID, GRAVITY_NOT_PERIODIC, GRAVITY_SPHERICAL_SYMMETRY and 2D shearing sheets"
+#endif
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+#error "STARS_HERMITE_DIRECT_GRAVITY has no x/y Ewald correction (gravity/star_direct_gravity.cc): not combinable with GRAVITY_PERIODIC_XY"
 #endif
 #endif
 

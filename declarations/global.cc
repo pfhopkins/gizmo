@@ -47,6 +47,9 @@ void compute_global_quantities_of_system(void)
         sys.MassComp[P[i].Type] += P[i].Mass;
 #if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY)
         sys.EnergyPotComp[P[i].Type] += 0.5 * P[i].Mass * P[i].Potential / a1;
+#ifdef GALSF_RESOLVEDISM_TALLBOX
+        sys.EnergyPotComp[P[i].Type] += P[i].Mass * analytic_external_potential(i) / a1; /* external field: full weight, no pair double count */
+#endif
 #endif
         integertime dt_integerstep = P[i].integertime_step();
         dt_entr = dt_hydrokick = (All.Ti_Current - (P[i].Ti_begstep + dt_integerstep / 2)) * unit_integertime_in_physical(i);

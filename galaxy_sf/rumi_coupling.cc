@@ -42,7 +42,7 @@
 #ifdef STARS_INTEGRATED_BY_RUMI
 
 /* separations wrapped only when gravity itself is periodic (as forcetree.cc) */
-#if (defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)) || defined(GRAVITY_PERIODIC_XY_IMAGES)
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
 #define GRAVITY_NEAREST_XYZ(x,y,z,sign) NEAREST_XYZ(x,y,z,sign)
 #else
 #define GRAVITY_NEAREST_XYZ(x,y,z,sign)

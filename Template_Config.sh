@@ -149,7 +149,6 @@
 #SELFGRAVITY_OFF                # turn off self-gravity (compatible with GRAVITY_ANALYTIC)
 #GRAVITY_NOT_PERIODIC           # self-gravity is not periodic, even though the rest of the box is periodic
 #TREE_RADIATION_WRAPS_WITHOUT_GRAVITY # with GRAVITY_NOT_PERIODIC: gravity-tree radiation and columns (RT_USE_GRAVTREE, RT_USE_TREECOL_FOR_NH) still use the nearest periodic image (e.g. BOX_LONG_Z tall boxes)
-#GRAVITY_PERIODIC_XY_IMAGES     # self-gravity periodic in x/y by explicit image sums (parameter GravityPeriodicXYImages = N rings, (2N+1)^2-1 images), open in z; needs BOX_PERIODIC + BOX_OUTFLOW_Z or BOX_REFLECT_Z, allows BOX_LONG_Z tall boxes; tree radiation/columns use the x/y nearest image
 #GRAVITY_ANALYTIC_STRATIFIED_DISK # vertical stellar-disk + dark-matter gravity for a stratified local galactic patch (Kim & Ostriker 2017 form); params StratDisk_SigmaStar/ZStar/RhoDM/R0; mid-plane at the box center in z
 #GRAVITY_PERIODIC_XY            # self-gravity periodic in x/y (shear-periodic with BOX_SHEARING), open in z, via a 2D Ewald correction: for stratified boxes. needs BOX_PERIODIC + BOX_OUTFLOW_Z or BOX_REFLECT_Z; BOX_LONG_X/Y/Z allowed
 ## -----------------------------------------------------------------------------------------------------

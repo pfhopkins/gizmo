@@ -1115,11 +1115,6 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.BoxSize;
       id[nt++] = REAL;
 
-#ifdef GRAVITY_PERIODIC_XY_IMAGES
-      strcpy(tag[nt], "GravityPeriodicXYImages");
-      addr[nt] = &All.GravityPeriodicXYImages;
-      id[nt++] = INT;
-#endif
 
       strcpy(tag[nt], "MaxMemSize");
       strcpy(alternate_tag[nt], "Max_Memory_Per_MPI_Task_in_MB");
@@ -2661,6 +2656,10 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.KetjuTidalErrorBudget;
       id[nt++] = REAL;
 
+      strcpy(tag[nt], "KetjuExpandBinariesFactor");
+      addr[nt] = &All.KetjuExpandBinariesFactor;
+      id[nt++] = REAL;
+
       strcpy(tag[nt], "KetjuSmoothTide");
       addr[nt] = &All.KetjuSmoothTide;
       id[nt++] = INT;
@@ -3197,6 +3196,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("KetjuRegionMotionCapFactor",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s not set: defaulting to 1 (Mannerkoski+ 2023 caps)\n",tag[i]); continue;}
                 if(strcmp("KetjuTidalStepRes",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
                 if(strcmp("KetjuTidalErrorBudget",tag[i])==0) {*((double *)addr[i])=1e-5; printf("Tag %s not set: defaulting to 1e-5\n",tag[i]); continue;}
+                if(strcmp("KetjuExpandBinariesFactor",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
                 if(strcmp("KetjuSmoothTide",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
 #ifdef KETJU_TYPE4_STARS
                 if(strcmp("KetjuKeplerPairs",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s not set: defaulting to 1 (exact Kepler drift for isolated star pairs)\n",tag[i]); continue;}
@@ -3410,12 +3410,6 @@ void read_parameter_file(char *fname)
     {
         if(ThisTask==0) {printf("ErrTolIntAccuracy must be >0 and <0.05 to ensure stability \n"); endrun(1);}
     }
-#ifdef GRAVITY_PERIODIC_XY_IMAGES
-    if(All.GravityPeriodicXYImages < 0)
-    {
-        if(ThisTask==0) {printf("GravityPeriodicXYImages must be >=0 \n"); endrun(1);}
-    }
-#endif
     if((All.ErrTolTheta<=0.1)||(All.ErrTolTheta>=0.9))
     {
         if(ThisTask==0) {printf("ErrTolTheta must be >0.1 and <0.9 to ensure stability \n"); endrun(1);}
@@ -3517,6 +3511,9 @@ void read_parameter_file(char *fname)
         endrun(1);
     }
 #endif
+#endif
+#if defined(GHOSDT_G0_CR) && defined(SGCHEM)
+    if(All.ComovingIntegrationOn) {if(ThisTask == 0) {printf("GHOSDT_G0_CR with SGCHEM (Hu+21 field per box area) is for non-comoving boxes only\n");} endrun(8861);}
 #endif
 
 

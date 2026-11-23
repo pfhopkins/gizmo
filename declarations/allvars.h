@@ -137,8 +137,12 @@ extern short int special_boundary_condition_xyz_def_reflect[3];
 extern short int special_boundary_condition_xyz_def_outflow[3];
 #endif
 
-#ifdef GHOSDT_G0_CR /* GHOSDT (Hu+21): background ISRF scaled by FactorG0, floored at G0 = 0.324e-2 Habing */
-#define ISRF_BACKGROUND_STRENGTH (DMAX(All.FactorG0 * All.InterstellarRadiationFieldStrength, 0.324e-2/1.7))
+#define G0_FLOOR_Z0 0.324e-2 /* Habing: z = 0 UV background, floor of the G0_VARIABLE field */
+#define G0_FLOOR_BACKGROUND (G0_FLOOR_Z0) /* one fixed floor, not scaled by All.G0 (Uli 2026-11-19) */
+#ifdef GHOSDT_G0_CR /* GHOSDT; the SGCHEM field follows Hu+21 Sec. 2.2: u_UV = (Sigma_SFR/Sigma_SFR,0) u_UV,0, SFR over 30 Myr, floor G0_FLOOR_Z0 */
+#define HU21_SIGMA_SFR0 2.4e-3 /* Msun yr^-1 kpc^-2, solar neighbourhood (Fuchs+09) */
+#define HU21_U_UV0 8.94e-14    /* erg cm^-3, Draine field */
+#define ISRF_BACKGROUND_STRENGTH (DMAX(All.FactorG0 * All.InterstellarRadiationFieldStrength, G0_FLOOR_Z0/1.7))
 #else
 #define ISRF_BACKGROUND_STRENGTH (All.InterstellarRadiationFieldStrength)
 #endif
@@ -712,9 +716,6 @@ extern struct global_data_all_processes
   /* tree code opening criterion */
   double ErrTolTheta;		/*!< Barnes-Hut tree opening angle */
   double ErrTolForceAcc;	/*!< parameter for relative opening criterion in tree walk */
-#ifdef GRAVITY_PERIODIC_XY_IMAGES
-  int GravityPeriodicXYImages; /*!< image rings summed in x/y: (2N+1)^2-1 images per interaction */
-#endif
 
   /* adjusts accuracy of time-integration */
 #ifdef TIDAL_TIMESTEP_CRITERION
@@ -1347,6 +1348,9 @@ extern struct gravdata_in
 extern struct gravdata_out
 {
     Vec3<MyDouble> Acc;
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+    MyDouble TreePotForceCorr;
+#endif
 #ifdef RT_USE_TREECOL_FOR_NH
     MyDouble ColumnDensityBins[TREECOL_NSPECIES][RT_USE_TREECOL_FOR_NH];
 #endif

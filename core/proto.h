@@ -324,6 +324,25 @@ void calculate_power_spectra(int num, long long *ntot_type_all);
 
 
 int pmforce_is_particle_high_res(int type, Vec3<double>& Pos);
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+double pm_exact_self_potential(double mass, double dx, double dy, double dz);
+#endif
+#if defined(PMGRID)
+/* a particle's own long-range mesh potential in P.Potential (comoving, with G); energy reports remove it from 1/2 sum m Phi.
+   Periodic mesh with the energy diagnostics on: the exact CIC value; else -G m / (sqrt(pi) r_s), the continuum r -> 0 limit */
+static inline double pm_self_potential(int i)
+{
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+    return P[i].PM_SelfPotential; /* exact CIC mesh value at the last PM evaluation (pm_periodic.cc) */
+#else
+    double rs = All.Asmth[0];
+#ifdef PM_PLACEHIGHRESREGION
+    if(pmforce_is_particle_high_res(P[i].Type, P[i].Pos)) {rs = All.Asmth[1];}
+#endif
+    return -All.G * P[i].Mass / (sqrt(M_PI) * rs);
+#endif
+}
+#endif
 
 void compare_partitions(void);
 void assign_unique_ids(void);
@@ -402,6 +421,14 @@ double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double 
 double INLINE_FUNC Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double CR_gas_heating(int target, double n_elec, double nH0, double nHcgs, struct particle_data *pp, struct gas_cell_data *cell);
 double Get_CosmicRayIonizationRate_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
+#ifdef GHOSDT_G0_CR
+double ghosdt_hu21_sigma_sfr_ratio(void); /* Sigma_SFR / Sigma_SFR,0 (Hu+21) from FactorG0 and the x-y box area */
+#endif
+#ifdef GALSF_RESOLVEDISM_TALLBOX
+#define HU_TALLBOX_FIELD_DEFINED
+void hu_tallbox_field(double zc, double *az, double *tzz, double *phi);
+double analytic_external_potential(int i); /* Hu+21 tallbox potential of particle i, Phi(midplane) = 0 */
+#endif
 #ifdef COSMIC_RAY_FLUID
 void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double Get_CosmicRayGradientLength(int i, int k_CRegy, struct particle_data *pp, struct gas_cell_data *cell);
@@ -981,7 +1008,7 @@ enum {EBK_FB_WIND, EBK_FB_AGB, EBK_FB_SN, EBK_FB_IA, EBK_FB_FAILED, EBK_COOL_RAD
       EBK_SF_MAG_LOCKED, EBK_IMF_TH_LOCKED, EBK_IMF_MAG_LOCKED, EBK_IMF_KIN, EBK_MERGE_GRAVWORK,
       EBK_MERGE_HEAT_NOT_RETURNED, EBK_SN_CELL_TH, EBK_SN_CELL_MAG, EBK_MERGE_MAG_LOST, EBK_KICK_FLOOR, EBK_OUTFLOW, EBK_INFO_MHD_NUM, EBK_INFO_SN_RELKIN_HEAT,
       EBK_COOL_CR_LOSS, EBK_CR_CLIP, EBK_INFO_CR_SHOCK,
-      EBK_RT_EMIT, EBK_RT_ABS, EBK_RT_TOIR, EBK_COOL_RAD_EXCHANGE, EBK_N};
+      EBK_RT_EMIT, EBK_RT_ABS, EBK_RT_TOIR, EBK_COOL_RAD_EXCHANGE, EBK_KETJU_CHAIN_POT, EBK_KETJU_COLLISION, EBK_KETJU_EXPAND, EBK_N};
 #ifdef OUTPUT_ENERGY_STEP_TRACE
 extern double EstepBooked[EBK_N];
 void estep_begin(int stage);

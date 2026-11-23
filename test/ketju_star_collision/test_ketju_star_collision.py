@@ -111,3 +111,22 @@ def test_ketju_star_collision_snapshot_start(nranks):
     with h5py.File(f"{TEST_DIR}/output/ketju_output.hdf5", "r") as h:
         assert len(h["timesteps"]) > 0
     _check_merger_table(f"{TEST_DIR}/output/ketju_output.hdf5", _load(f"{TEST_DIR}/ketju_star_collision_ics.hdf5")[1])
+
+
+def test_ketju_star_collision_step_trace():
+    """Energy step trace through a KETJU collision (head-on case). KETJU conserves KE + the unsoftened pair potential of its
+    members (MSTAR), the trace measures KE + 1/2 sum m Phi with the tree's softened potential, so per region step the trace sees
+    dE_trace = dE_KETJU - d sum_pairs (Phi_unsoft - Phi_soft) and, at a merger, MSTAR's collision energy dE_coll. Both are booked as
+    integration terms (ketju_chain_pot, ketju_collision); the trace's fixed bars then hold (gizmo.conservation_trace: mass 1e-12,
+    integration residual 1e-2 of E_scale) and the collision booking is nonzero."""
+    subprocess.run([sys.executable, "make_ketju_star_collision_ics.py"], cwd=TEST_DIR, check=True)
+    clean_test_outputs(TEST_NAME)
+    build_and_run_test(TEST_NAME, 1, 1)
+    from gizmo.conservation_trace import keep_and_check_traces
+    sync = [l for l in open(f"{TEST_DIR}/output/energy_step_trace.txt") if l.startswith("SYNC")]
+    assert sync, "no SYNC line"
+    book = [float(t.split("=")[1]) for t in sync[-1].split() if t.startswith("b_ketju_collision=")]
+    print(f"booked KETJU collision energy {book}")
+    assert len(book) == 1 and book[0] < 0, "collision energy not booked in the step trace"
+    rep = keep_and_check_traces(os.path.join(TEST_DIR, "output"), os.path.join(TEST_DIR, "output"))
+    assert rep.ok, rep.summary()

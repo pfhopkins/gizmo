@@ -24,8 +24,6 @@ ComovingIntegrationOn           0                 % non-cosmological
 MaxSizeTimestep                 0.001           % ~1 Myr
 MinSizeTimestep                 0
 
-%---- Tall box (GRAVITY_PERIODIC_XY_IMAGES)
-GravityPeriodicXYImages         8               % x/y image rings, 288 images per interaction: sheet gravity within 3% of 2 pi G Sigma at z = H_g, slab stays bound
 
 %---- Tree & domain
 TreeDomainUpdateFrequency       0.05
@@ -100,8 +98,8 @@ BiniZ                           0
 ShieldingLength                 0.050             % 50 pc shielding length
 
 %---- SGCHEM (SGCHEM + CHEMISTRYNETWORK=5)
-G0                              1.7               % Habing FUV field at FactorG0 = 1 (GHOSDT scales it with the 30 Myr SFR, floor 0.324e-2)
-CosmicRayIonRate                3.0e-17           % CR ionization rate [s^-1] at FactorG0 = 1 (GHOSDT + CR_SCALE_WITH_G0 scale it with the 30 Myr SFR)
+G0                              1.7               % Habing; not used by the SGCHEM GHOSDT field (Hu+21: Sigma_SFR/2.4e-3 x 8.94e-14 erg/cm^3, floor G0 = 0.324e-2)
+CosmicRayIonRate                3.0e-17           % solar neighbourhood [s^-1]; GHOSDT: zeta = (G0 u_Hab/u_UV,0) x this, 5.7e-20 before the first star
 DGRnormalized                   1.0               % dust-to-metal efficiency (1.0 = MW); DGR scales with local Z per particle
 DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
 InitialMetallicity              1.0             % same as InitMetallicity

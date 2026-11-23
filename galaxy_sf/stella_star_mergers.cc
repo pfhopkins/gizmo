@@ -148,6 +148,10 @@ void star_mergers_apply(std::vector<star_merger_action> &actions, const char *ta
             continue;
         }
 #endif
+        if(P[s_idx].sampled && P[s_idx].MstarSampleIMF[0] <= 0) { /* compact remnant survivor stays a remnant: only mass (summed by the caller) and metals */
+            printf("%s STAR MERGER INTO REMNANT: ID %llu M=%g Msun\n", tag, (unsigned long long)P[s_idx].ID, P[s_idx].Mass * UNIT_MASS_IN_SOLAR);
+            continue;
+        }
         for(const std::vector<double> &b : a.victims) {
             if(b[n_met] > 0) P[s_idx].MstarSampleIMF[0] += b[n_met]; /* survivor carries the merged stellar mass; keeps its age */
 #if (N_STELLAR_MASS >= 5)

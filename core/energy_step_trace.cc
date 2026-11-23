@@ -41,16 +41,16 @@ static const char *estep_book_name[] = {"fb_wind", "fb_agb", "fb_sn", "fb_ia", "
     "sf_th_locked", "sf_mag_locked", "imf_th_locked", "imf_mag_locked", "imf_kin", "merge_gravwork",
     "merge_heat_not_returned", "sn_cell_th", "sn_cell_mag", "merge_mag_lost", "kick_floor", "outflow", "info_mhd_num", "info_sn_relkin_heat",
     "cool_cr_loss", "cr_clip", "info_cr_shock",
-    "rt_emit", "rt_abs", "rt_toir", "cool_rad_exchange"};
+    "rt_emit", "rt_abs", "rt_toir", "cool_rad_exchange", "ketju_chain_pot", "ketju_collision", "ketju_expand"};
 /* stage each booking belongs to; -1 = time integration (kicks/drift), -2 = information only (in no closure) */
 static const int estep_book_stage[] = {ESTEP_FB_WIND_AGB, ESTEP_FB_WIND_AGB, ESTEP_FB_SN_IA, ESTEP_FB_SN_IA, ESTEP_FB_SN_IA,
     ESTEP_COOLING, ESTEP_COOLING, ESTEP_COOLING, ESTEP_SF_SPAWN, ESTEP_SF_SPAWN, ESTEP_IMF_ACCRETE, ESTEP_IMF_ACCRETE,
     ESTEP_IMF_ACCRETE, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, -1, -1, -2, -2,
     ESTEP_COOLING, -1, -2,
-    -1, -1, -1, ESTEP_COOLING};
+    -1, -1, -1, ESTEP_COOLING, -1, -1, -1};
 /* magnetic bookings: kept out of the stage closure, since E_B = 1/2 |BV|^2 / V with V = m/rho moves whenever a tree walk
  * drifts a cell (predict.cc rescales Density); magnetic energy closes only at full syncs */
-static const int estep_book_is_mag[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static const int estep_book_is_mag[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 static_assert(sizeof(estep_stage_name) / sizeof(estep_stage_name[0]) == ESTEP_NSTAGE, "stage names");
 static_assert(sizeof(estep_stage_exact) / sizeof(estep_stage_exact[0]) == ESTEP_NSTAGE, "stage kinds");
@@ -105,6 +105,15 @@ static void estep_local_sums(double e[EC_N], double *pot)
         add(EC_KIN, 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv);
 #ifdef EVALPOTENTIAL
         if(pot) {add(EC_N, 0.5 * P[i].Mass * P[i].Potential);}
+#ifdef PMGRID
+        if(pot) {add(EC_N, -0.5 * P[i].Mass * pm_self_potential(i));} /* no self-energy */
+#endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+        if(pot) {add(EC_N, 0.5 * P[i].Mass * P[i].TreePotForceCorr);} /* tree pair potential consistent with the applied force */
+#endif
+#ifdef GALSF_RESOLVEDISM_TALLBOX
+        if(pot) {add(EC_N, P[i].Mass * analytic_external_potential(i));} /* external field: full weight */
+#endif
 #endif
         if(P[i].Type != 0) {continue;}
         add(EC_TH, P[i].Mass * CellP[i].InternalEnergy);
@@ -250,7 +259,7 @@ void energy_step_trace_report(void)
             fprintf(fd, "# Comoving: LI = int (2 E_kin + E_pot + sum 3(gamma-1) m u + E_mag + 3(gamma_CR-1) E_cr + E_rad) dln a (Layzer-Irvine), trapezoid over syncs; 0 if not comoving.\n");
             fprintf(fd, "# STAGE: exact stage whose window residual = dE(kin+th+cr+rad) - booked exceeds bar = %.1e x (E_abs + |booked|).\n", ESTEP_BAR_EXACT);
             fprintf(fd, "#        d_mag and b_*mag* are shown but not closed per stage: tree walks drift Density, and E_B = 1/2|BV|^2 m/rho moves with it.\n");
-            fprintf(fd, "# SYNC: full sync. int_res = (E_tot - E_tot0) + LI - sum(stage dE) - integration bookings (kick_floor, outflow, cr_clip, rt_emit, rt_abs, rt_toir).\n");
+            fprintf(fd, "# SYNC: full sync. int_res = (E_tot - E_tot0) + LI - sum(stage dE) - integration bookings (kick_floor, outflow, cr_clip, rt_emit, rt_abs, rt_toir, ketju_chain_pot, ketju_collision, ketju_expand).\n");
             fprintf(fd, "#       b_info_*: information only, in no closure (info_mhd_num = the kicks' CumulMHDNumEnergy, the hydro/MHD step's own energy change).\n");
             fprintf(fd, "#       tot_res = (E_tot - E_tot0) - all bookings - measured sources (fb_radp, rt_inject%s).\n",
 #ifdef SGCHEM
