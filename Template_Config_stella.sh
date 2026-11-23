@@ -174,5 +174,6 @@ OUTPUT_INDIVIDUAL_COOLRATES              % output per-process cooling rates
 ########## Test-only ##########
 #GALSF_RESOLVEDISM_ISOLATED_FB_TEST      % TEST-ONLY: isolated-star FB test hooks
 #TEST_DUMP_STATE_AROUND_WIND_DEPOSIT     % TEST-ONLY: append raw double state of all particles before/after each wind batch to output/wind_dep_dump.<task>.bin
+#TEST_PRINT_DIFFUSION_H_CLOSURE         % TEST-ONLY: per step, the H mass the diffusion unpack takes from the pair flux, the 0 floor and the 1 - Z - He closure (DIFFHSUM; DIFFHCELL for cells with Z > 0.5; DIFFHTOT: H ledger change of the unpack)
 #STELLA_SELFCHECK                        % TEST-ONLY: runtime invariant checks (harness)
 #TEST_GRAVITY_STATIC_PLUMMER             % TEST-ONLY: fixed Plummer potential at the origin (TEST_GRAVITY_STATIC_PLUMMER_MSUN=1000, _PC=0.5)

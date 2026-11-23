@@ -759,8 +759,29 @@ void turb_diff_metals_budget_log(void)
 }
 #endif
 
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+static double DiffH_dy, DiffH_floor, DiffH_clos, DiffH_sumdy; /* test: H mass from the pair flux, the 0 floor, the 1 - Z - He closure; sum of the Z, He, H fluxes */
+static void diffh_totals(double *t) /* test: gas H mass, pending H, active cells' Dyield H, gas Z mass, summed over all gas (long double) */
+{
+    long double a[4] = {0, 0, 0, 0};
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        a[0] += (long double)P[i].Mass * P[i].Metallicity[MET_OF(ELEM_H)]; a[3] += (long double)P[i].Mass * P[i].Metallicity[0];
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        a[1] += CellP[i].Dyield_pending[MET_OF(ELEM_H)];
+#endif
+    }
+    for(int i : ActiveParticleList) {if(P[i].Type == 0 && P[i].Mass > 0) {a[2] += CellP[i].Dyield[MET_OF(ELEM_H)];}}
+    double l[4] = {(double)a[0], (double)a[1], (double)a[2], (double)a[3]};
+    MPI_Allreduce(l, t, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+}
+static double DiffH_T0[4];
+#endif
 void hydro_final_operations_and_cleanup(void)
 {
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+    DiffH_dy = DiffH_floor = DiffH_clos = DiffH_sumdy = 0;
+    diffh_totals(DiffH_T0);
+#endif
     /* Diffusion unpack breakdown accumulators (line 867 clamp diagnostic). */
     double dMZ_pair_loc = 0;   /* Σ Dyield[0]: 0 if pair-flux solver conservative */
     double dMZ_clamp_loc = 0;  /* Σ M·(clamp_correction): non-zero iff DMAX(,0) fires on Met[0] */
@@ -976,6 +997,10 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION /* add the exchange received while inactive */
             for(int k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] += CellP[i].Dyield_pending[k]; CellP[i].Dyield_pending[k] = 0;}
 #endif
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+            double th_H0 = P[i].Metallicity[MET_OF(ELEM_H)], th_Z0 = P[i].Metallicity[0], th_He0 = P[i].Metallicity[MET_OF(ELEM_He)];
+            double th_dyH = CellP[i].Dyield[MET_OF(ELEM_H)], th_dyZ = CellP[i].Dyield[0], th_dyHe = CellP[i].Dyield[MET_OF(ELEM_He)];
+#endif
             {
                 double Z0_before = P[i].Metallicity[0], Dy0 = CellP[i].Dyield[0]; /* diff_unpack_breakdown: pair flux vs floor */
                 dMZ_pair_loc += Dy0;
@@ -990,7 +1015,28 @@ void hydro_final_operations_and_cleanup(void)
             {   /* sum Met[1..27] = 1: H = 1 - Z - Y */
                 double X_H_new = 1.0 - P[i].Metallicity[0] - P[i].Metallicity[MET_OF(ELEM_He)];
                 if(X_H_new < 0) X_H_new = 0;
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+                double th_Hf = P[i].Metallicity[MET_OF(ELEM_H)]; /* after the 0 floor */
+#endif
                 P[i].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+                {
+                    double m = P[i].Mass, fl = m * th_Hf - (m * th_H0 + th_dyH), cl = m * (P[i].Metallicity[MET_OF(ELEM_H)] - th_Hf);
+                    #pragma omp atomic
+                    DiffH_dy += th_dyH;
+                    #pragma omp atomic
+                    DiffH_floor += fl;
+                    #pragma omp atomic
+                    DiffH_clos += cl;
+                    #pragma omp atomic
+                    DiffH_sumdy += th_dyZ + th_dyHe + th_dyH;
+                    if(th_Z0 > 0.5 || P[i].Metallicity[0] > 0.5) {
+                        #pragma omp critical (diffh_print)
+                        printf("DIFFHCELL t=%.17e id=%llu m=%.17e Z0=%.17e He0=%.17e H0=%.17e dyZ=%.17e dyHe=%.17e dyH=%.17e floor=%.17e clos=%.17e\n",
+                               All.Time, (unsigned long long)P[i].ID, m, th_Z0, th_He0, th_H0, th_dyZ, th_dyHe, th_dyH, fl, cl);
+                    }
+                }
+#endif
             }
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange */
@@ -1163,6 +1209,17 @@ void hydro_final_operations_and_cleanup(void)
 
     /* Diff-unpack breakdown: pinpoint pair-flux vs clamp contribution to dM_Z. */
     diff_unpack_breakdown_log(dMZ_pair_loc, dMZ_clamp_loc);
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+    {
+        double loc[4] = {DiffH_dy, DiffH_floor, DiffH_clos, DiffH_sumdy}, tot[4];
+        MPI_Allreduce(loc, tot, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && (tot[1] != 0 || tot[2] != 0)) {printf("DIFFHSUM t=%.17e dyH=%.17e floor=%.17e clos=%.17e sumdy=%.17e\n", All.Time, tot[0], tot[1], tot[2], tot[3]); fflush(stdout);}
+        double T1[4]; diffh_totals(T1);
+        /* gas H + pending H + active Dyield H before vs gas H + pending H after (active Dyield applied): the H ledger change of the unpack */
+        if(ThisTask == 0) {printf("DIFFHTOT t=%.17e gasH0=%.17e pend0=%.17e dy0=%.17e gasH1=%.17e pend1=%.17e dLH=%.17e dgasH=%.17e dgasZ=%.17e\n", All.Time,
+                                  DiffH_T0[0], DiffH_T0[1], DiffH_T0[2], T1[0], T1[1], (T1[0] + T1[1]) - (DiffH_T0[0] + DiffH_T0[1] + DiffH_T0[2]), T1[0] - DiffH_T0[0], T1[3] - DiffH_T0[3]); fflush(stdout);}
+    }
+#endif
 
 #ifdef TURB_DRIVING
 #ifdef TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE // if this is enabled, we only update as frequently as the driving phases are recomputed, as set by TurbDrive_TimeBetweenTurbUpdates. To avoid large errors, must be set by-hand to be << lambda_min / V where V is the typical turbulent velocity and lambda_min is the smallest driven wavelength.
