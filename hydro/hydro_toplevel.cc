@@ -760,6 +760,7 @@ void turb_diff_metals_budget_log(void)
 #endif
 
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+static double DiffS_floor, DiffS_slot, DiffS_z0; static long DiffS_nfloor; /* test: |mass| any slot's floor adds, cells where it fires; worst per-cell |sum X(1..27) - 1| and |X0 - sum metals| after the unpack */
 static double DiffH_dy, DiffH_floor, DiffH_clos, DiffH_sumdy; /* test: H mass from the pair flux, the 0 floor, the 1 - Z - He closure; sum of the Z, He, H fluxes */
 static void diffh_totals(double *t) /* test: gas H mass, pending H, active cells' Dyield H, gas Z mass, summed over all gas (long double) */
 {
@@ -780,6 +781,7 @@ void hydro_final_operations_and_cleanup(void)
 {
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
     DiffH_dy = DiffH_floor = DiffH_clos = DiffH_sumdy = 0;
+    DiffS_floor = DiffS_slot = DiffS_z0 = 0; DiffS_nfloor = 0;
     diffh_totals(DiffH_T0);
 #endif
     /* Diffusion unpack breakdown accumulators (line 867 clamp diagnostic). */
@@ -1000,6 +1002,7 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
             double th_H0 = P[i].Metallicity[MET_OF(ELEM_H)], th_Z0 = P[i].Metallicity[0], th_He0 = P[i].Metallicity[MET_OF(ELEM_He)];
             double th_dyH = CellP[i].Dyield[MET_OF(ELEM_H)], th_dyZ = CellP[i].Dyield[0], th_dyHe = CellP[i].Dyield[MET_OF(ELEM_He)];
+            double th_pre[NUM_METAL_SPECIES]; for(int k = 0; k < NUM_METAL_SPECIES; k++) {th_pre[k] = P[i].Mass * P[i].Metallicity[k] + CellP[i].Dyield[k];}
 #endif
             {
                 double Z0_before = P[i].Metallicity[0], Dy0 = CellP[i].Dyield[0]; /* diff_unpack_breakdown: pair flux vs floor */
@@ -1011,6 +1014,14 @@ void hydro_final_operations_and_cleanup(void)
 #endif
                 dMZ_clamp_loc += P[i].Mass * (P[i].Metallicity[0] - Z0_before) - Dy0;
             }
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+            {double f_ = 0; for(int k = 0; k < NUM_METAL_SPECIES; k++) {f_ += fabs(P[i].Mass * P[i].Metallicity[k] - th_pre[k]);}
+             if(f_ > 0) {
+                 #pragma omp atomic
+                 DiffS_floor += f_;
+                 #pragma omp atomic
+                 DiffS_nfloor += 1;}}
+#endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
             {   /* sum Met[1..27] = 1: H = 1 - Z - Y */
                 double X_H_new = 1.0 - P[i].Metallicity[0] - P[i].Metallicity[MET_OF(ELEM_He)];
@@ -1030,6 +1041,10 @@ void hydro_final_operations_and_cleanup(void)
                     DiffH_clos += cl;
                     #pragma omp atomic
                     DiffH_sumdy += th_dyZ + th_dyHe + th_dyH;
+                    double s_ = 0, z_ = 0; for(int k = 1; k < NUM_METAL_SPECIES; k++) {s_ += P[i].Metallicity[k]; if(k >= 3) {z_ += P[i].Metallicity[k];}}
+                    s_ = fabs(s_ - 1); z_ = fabs(z_ - P[i].Metallicity[0]);
+                    #pragma omp critical (diffslot)
+                    {if(s_ > DiffS_slot) {DiffS_slot = s_;} if(z_ > DiffS_z0) {DiffS_z0 = z_;}}
                     if(th_Z0 > 0.5 || P[i].Metallicity[0] > 0.5) {
                         #pragma omp critical (diffh_print)
                         printf("DIFFHCELL t=%.17e id=%llu m=%.17e Z0=%.17e He0=%.17e H0=%.17e dyZ=%.17e dyHe=%.17e dyH=%.17e floor=%.17e clos=%.17e\n",
@@ -1215,6 +1230,9 @@ void hydro_final_operations_and_cleanup(void)
         MPI_Allreduce(loc, tot, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         if(ThisTask == 0 && (tot[1] != 0 || tot[2] != 0)) {printf("DIFFHSUM t=%.17e dyH=%.17e floor=%.17e clos=%.17e sumdy=%.17e\n", All.Time, tot[0], tot[1], tot[2], tot[3]); fflush(stdout);}
         double T1[4]; diffh_totals(T1);
+        {double ls[3] = {DiffS_floor, (double)DiffS_nfloor, 0}, gs[3], lm[2] = {DiffS_slot, DiffS_z0}, gm[2];
+         MPI_Allreduce(ls, gs, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); MPI_Allreduce(lm, gm, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+         if(ThisTask == 0) {printf("DIFFSLOT t=%.17e floor_abs=%.17e floor_cells=%.0f max_slot_sum_dev=%.17e max_z0_dev=%.17e\n", All.Time, gs[0], gs[1], gm[0], gm[1]); fflush(stdout);}}
         /* gas H + pending H + active Dyield H before vs gas H + pending H after (active Dyield applied): the H ledger change of the unpack */
         if(ThisTask == 0) {printf("DIFFHTOT t=%.17e gasH0=%.17e pend0=%.17e dy0=%.17e gasH1=%.17e pend1=%.17e dLH=%.17e dgasH=%.17e dgasZ=%.17e\n", All.Time,
                                   DiffH_T0[0], DiffH_T0[1], DiffH_T0[2], T1[0], T1[1], (T1[0] + T1[1]) - (DiffH_T0[0] + DiffH_T0[1] + DiffH_T0[2]), T1[0] - DiffH_T0[0], T1[3] - DiffH_T0[3]); fflush(stdout);}
