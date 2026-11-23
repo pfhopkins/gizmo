@@ -398,7 +398,7 @@ double cxx_compute_h2_heating_fraction(double T, double n, double xh2)
 }
 
 // dust-temperature solver statistics of this thread (tests): Newton iterations, solves that needed bisection
-thread_local long chem_dust_iters = 0, chem_dust_bisections = 0;
+thread_local long chem_dust_iters = 0, chem_dust_bisections = 0, chem_dust_bisect_evals = 0;
 
 // ===========================================================================
 // calc_dust_temp (cool_util.F:802-1007)
@@ -535,7 +535,7 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
 #else
                 const double hh = (*Rdust == 0.0) ? 0.0 : (*RH2) * (1.0 - c.h2_form_ex - c.h2_form_kin) * 4.48 * CHEM_EV;
 #endif
-                chem_dust_iters++;
+                chem_dust_iters++; chem_dust_bisect_evals++;
                 return isrf_heat - dc + gd + hh;
             };
             double lo = T.tmin, hi = 1.5e3;

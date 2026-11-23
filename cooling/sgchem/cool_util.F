@@ -822,6 +822,8 @@ c=======================================================================
       REAL CMB_temp, CMB_heat, CMB_heat_z0
       integer K, itemp, nocalc
 
+      integer*8 n_dust_newton, n_dust_bisect
+      common /dust_stat/ n_dust_newton, n_dust_bisect
       integer ndust_iter, KB
       parameter (ndust_iter = 100)
       REAL td_lo, td_hi, td_mid, F_lo, F_hi, F_mid
@@ -901,6 +903,7 @@ c
         tdust_new = tdust
         do K = 1, ndust_iter
           tdust = tdust_new
+          n_dust_newton = n_dust_newton + 1
 c
 c Cooling from dust (assuming optically thin emission) -- computed using same
 c opacities as for heating (i.e. OH94, MMP83). Accurate to within a factor two
@@ -996,6 +999,7 @@ c
 c Newton did not converge: bisection on the balance F(tdust) over [tmin, 1500 K]
 c (F falls with tdust), D-61 (was ABORT(10))
 c
+        n_dust_bisect = n_dust_bisect + 1
         td_lo = tmin
         td_hi = 1.5d3
         call dust_balance(td_lo, F_lo, temp, yn, abHI, isrf_heat,
