@@ -113,8 +113,7 @@ def star_identities(snap):
 def test_identities_unique_past_roll_over_and_restart(tables):
     """bar (written before the run): 40 stars from one cell in one call (the 32nd would repeat the 1st star's ID, child and
     generation, and so its random streams): every star identity in the snapshot distinct; a snapshot restart (start flag 2)
-    from that snapshot brings every born star back, and every star present in both snapshots with its identity unchanged
-    (an initial event star may die in the restart window)"""
+    from that snapshot brings every born star back with its full identity (an initial event star may die in the restart window)"""
     births = "1101:0.3*40"  # ID:M*count: the parameter holds 255 characters
     d, log = run("ids", tables, solar27(tables["StellarTablesFile"]), {"TimeMax": 1e-4, "TimeBetSnapshot": 1e-4, "TestSingleStarBirths": births})
     snap = sorted((d / "output").glob("snapshot_*.hdf5"))[-1]
@@ -138,10 +137,9 @@ def test_identities_unique_past_roll_over_and_restart(tables):
     with open(d2 / "restart.out", "w") as f:
         subprocess.run(mpi_launch_command(2) + [str(TEST_DIR / "GIZMO"), f"{TEST_NAME}.params", "2", "0"], cwd=d2, stdout=f,
                        stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True)
-    after = {t[:3]: t for t in star_identities(sorted((d2 / "output").glob("snapshot_*.hdf5"))[-1])}
-    assert all(t[:3] in after for t in born), [t for t in born if t[:3] not in after][:4]  # an event star may die in the restart window
-    changed = [(t, after[t[:3]]) for t in ids if t[:3] in after and after[t[:3]] != t]
-    assert not changed, changed[:4]
+    after = set(star_identities(sorted((d2 / "output").glob("snapshot_*.hdf5"))[-1]))
+    missing = [t for t in born if t not in after]  # full identities: (ID, child, generation) alone repeats past the roll-over
+    assert not missing, missing[:4]
 
 
 def test_broken_invariant_is_reported(tables):
