@@ -823,7 +823,10 @@ void force_update_hmax(void)
   }
   /* Phase 2: update hmax/divVmax/per-type bands with atomics (parallel). */
   const ModeBTopleafMap &topleaf_map = mode_b_topleaf_map_current();   /* also brings the source-reach map to now */
-#pragma omp parallel for schedule(dynamic)
+#ifdef _OPENMP
+  const int hmax_chunk = gizmo_omp_particle_chunk((long long) ActiveParticleList.size());
+#pragma omp parallel for schedule(dynamic, hmax_chunk)
+#endif
   for (int idx = 0; idx < (int)ActiveParticleList.size(); idx++)
   {
     int i = ActiveParticleList[idx];

@@ -60,7 +60,8 @@ void find_timesteps(void)
         double fastwavedecay = 0.0;
         double fac_magnetic_pressure = 1. / All.cf_atime;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) reduction(max:fastwavespeed,fastwavedecay)
+        const int wave_chunk = gizmo_omp_particle_chunk((long long) NumPart);
+#pragma omp parallel for schedule(dynamic, wave_chunk) reduction(max:fastwavespeed,fastwavedecay)
 #endif
         for(i=0;i<NumPart;i++)
         {
@@ -138,15 +139,50 @@ void find_timesteps(void)
         for(long k = 0; k < n_act; k++) {domain_record_step_work(act[k]);}
     }
 
-    /* Now assign new timesteps  */
-    for (int i : ActiveParticleList)
+#ifndef FORCE_EQUAL_TIMESTEPS
+    /* Each particle's desired step depends only on that particle, except for a sink in single-star timestepping, which can look
+       up the lowest occupied timebin as the loop below has left it so far. So when there are enough active particles, every
+       other step is computed first, on all threads, and those sinks are computed in order in the loop, exactly as before. */
+    const long n_steps = (long) ActiveParticleList.size();
+    const int steps_threaded = gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) n_steps);
+    std::vector<integertime> ti_desired;
+    std::vector<char> ti_desired_set;
+    if(steps_threaded)
     {
+        ti_desired.resize(n_steps); ti_desired_set.assign(n_steps, 0);
+        const int *act = ActiveParticleList.data();
+#ifdef _OPENMP
+        const int step_chunk = gizmo_omp_particle_chunk((long long) n_steps);
+#pragma omp parallel for schedule(dynamic, step_chunk)
+#endif
+        for(long k = 0; k < n_steps; k++)
+        {
+            const int i = act[k];
+#if defined(SINGLE_STAR_TIMESTEPPING)
+            if(P[i].Type == 5) {continue;}   /* reads the timebin counts as the in-order loop leaves them */
+#endif
+            double aphys_k;
+            const integertime t = get_timestep(i, &aphys_k, 0);
+            ti_desired[k] = (integertime)(((double)t) / timestep_dilation_factor(i, P)); /* get_timestep froze the factor for this particle */
+            ti_desired_set[k] = 1;
+        }
+    }
+#endif
+
+    /* Now assign new timesteps  */
+    for(long k_act = 0; k_act < (long) ActiveParticleList.size(); k_act++)
+    {
+        i = ActiveParticleList[k_act];
         if(!records_threaded) {domain_record_step_work(i);}   /* this step's work, before the timebin below changes */
 #ifdef FORCE_EQUAL_TIMESTEPS
         ti_step = ti_min_glob;  /* note that the dilation factor is already applied to ti_min_glob above - re-applying here would double-count it */
 #else
-        ti_step = get_timestep(i, &aphys, 0);
-        ti_step = (integertime)(((double)ti_step) / timestep_dilation_factor(i, P)); /* get_timestep above froze the factor for this particle */
+        if(steps_threaded && ti_desired_set[k_act]) {ti_step = ti_desired[k_act];}
+        else
+        {
+            ti_step = get_timestep(i, &aphys, 0);
+            ti_step = (integertime)(((double)ti_step) / timestep_dilation_factor(i, P)); /* get_timestep above froze the factor for this particle */
+        }
 #endif
         
 #if !defined(FORCE_EQUAL_TIMESTEPS) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)

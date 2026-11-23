@@ -556,12 +556,17 @@ void cooling_parent_routine(void)
      * above stages only where the device cannot read the particle storage in place:
      * there the compaction is what puts the elements somewhere the kernel can read. */
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
+    const int cool_chunk = gizmo_omp_particle_chunk((long long) N_active);
+#pragma omp parallel for schedule(dynamic, cool_chunk)
 #endif
     for(int j = 0; j < N_active; j++)
     {
         do_the_cooling_for_particle(cool_indices[j], P, CellP);
     }
+    /* each cell's equation of state and dust tail read and write only that cell, so this runs on all threads too */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, cool_chunk) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) N_active))
+#endif
     for(int j = 0; j < N_active; j++)
     {
         int i = cool_indices[j];
