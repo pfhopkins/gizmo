@@ -1348,7 +1348,7 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 static double do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int at_start, std::vector<double> *dv_out = NULL)
 {
     if(!reg.compute_tasks.is_member() || !reg.integrator) return 0;
-    double D_loc = 0;
+    double D_loc = 0, r_max = 0; /* largest member separation, physical */
 
     int n = reg.integrator->num_particles;
     struct ketju_system_physical_state *ps = reg.integrator->physical_state;
@@ -1386,6 +1386,7 @@ static double do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, in
             }
             double r = sqrt(r2);
             if(r == 0) continue;
+            if(r > r_max) {r_max = r;}
 
             { /* the tree's own pair kernel and separation (absolute comoving positions, as the tree differences them), with the
                  softening/zeta of the gravity call whose kick is cancelled */
@@ -1415,6 +1416,19 @@ static double do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, in
     /* collect results across compute tasks and apply */
     MPI_Allreduce(MPI_IN_PLACE, dv.data(), 3 * n, MPI_DOUBLE, MPI_SUM, reg.compute_tasks.comm);
     MPI_Allreduce(MPI_IN_PLACE, &D_loc, 1, MPI_DOUBLE, MPI_SUM, reg.compute_tasks.comm);
+#ifdef PMGRID
+    if(at_start) { /* members' mutual force must be tree-dominated: mesh share 1 - S(r) <= 1.1e-2 for r <= r_s/2 (stella_dev 7abc4b43f, e6789a55a) */
+        MPI_Allreduce(MPI_IN_PLACE, &r_max, 1, MPI_DOUBLE, MPI_MAX, reg.compute_tasks.comm);
+        double rs_phys = All.Asmth[0] * All.cf_atime;
+#ifdef PM_PLACEHIGHRESREGION
+        if(All.Asmth[1] > 0) {rs_phys = DMIN(rs_phys, All.Asmth[1] * All.cf_atime);}
+#endif
+        if(r_max > 0.5 * rs_phys) {
+            if(reg.compute_tasks.is_root()) {printf("KETJU: region members %g apart exceed half the PM split scale r_s = %g (physical code length)\n", r_max, rs_phys);}
+            endrun(8862);
+        }
+    }
+#endif
     if(dv_out) *dv_out = dv;
 
     for(int i = 0; i < n; i++) {
