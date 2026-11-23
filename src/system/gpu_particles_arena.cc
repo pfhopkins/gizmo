@@ -360,6 +360,21 @@ static int particle_storage_placement(size_t particle_arena_bytes)
 #endif
 }
 
+#if defined(KOKKOS_ENABLE_CUDA)
+/* cudaMemAdvise takes the target as a device ordinal (cudaCpuDeviceId for the host) up to CUDA 12 and as a cudaMemLocation from CUDA 13 on. */
+static cudaError_t cuda_memory_advise(void *p, size_t nbytes, cudaMemoryAdvise advice, int device)
+{
+#if CUDART_VERSION >= 13000
+    cudaMemLocation location;
+    location.type = (device == cudaCpuDeviceId) ? cudaMemLocationTypeHost : cudaMemLocationTypeDevice;
+    location.id = (device == cudaCpuDeviceId) ? 0 : device;
+    return cudaMemAdvise(p, nbytes, advice, location);
+#else
+    return cudaMemAdvise(p, nbytes, advice, device);
+#endif
+}
+#endif
+
 /*! Ask the driver for one placement on one managed buffer: a preferred location on one side and
  *  in-place access from the other, so whichever side is preferred, the other reaches the pages
  *  without moving them. The two requests are independent and either can be refused alone, so each
@@ -381,8 +396,8 @@ static int managed_memory_advise(void *p, size_t nbytes, int placement, const ch
     if(!std::is_same<GIZMO_KOKKOS_SHARED_SPACE, Kokkos::CudaUVMSpace>::value) {return -1;}
     int dev = 0;
     if(cudaGetDevice(&dev) != cudaSuccess) {return -1;}   /* nothing was asked of the driver */
-    cudaError_t rc_pref = cudaMemAdvise(p, nbytes, cudaMemAdviseSetPreferredLocation, on_device ? dev : cudaCpuDeviceId);
-    cudaError_t rc_acc  = cudaMemAdvise(p, nbytes, cudaMemAdviseSetAccessedBy, on_device ? cudaCpuDeviceId : dev);
+    cudaError_t rc_pref = cuda_memory_advise(p, nbytes, cudaMemAdviseSetPreferredLocation, on_device ? dev : cudaCpuDeviceId);
+    cudaError_t rc_acc  = cuda_memory_advise(p, nbytes, cudaMemAdviseSetAccessedBy, on_device ? cudaCpuDeviceId : dev);
     *pref_result = cudaGetErrorString(rc_pref); *access_result = cudaGetErrorString(rc_acc);
     return (rc_pref == cudaSuccess && rc_acc == cudaSuccess);
 #else

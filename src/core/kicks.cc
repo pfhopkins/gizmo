@@ -53,7 +53,12 @@ void do_first_halfstep_kick(void)
     {
         GIZMO_TIMER_SCOPE("kick_particles");
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    const int kick_chunk = gizmo_omp_particle_chunk((long long) NumPart);
+#else
+    const int kick_chunk = gizmo_omp_particle_chunk((long long) ActiveParticleList.size());
+#endif
+#pragma omp parallel for schedule(dynamic, kick_chunk) private(ti_step, tstart, tend)
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     /* as currently written with some revisions to MFV methods, should only update on active timesteps */
@@ -138,7 +143,12 @@ void do_second_halfstep_kick(void)
     {
         GIZMO_TIMER_SCOPE("kick_particles");
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    const int kick_chunk = gizmo_omp_particle_chunk((long long) NumPart);
+#else
+    const int kick_chunk = gizmo_omp_particle_chunk((long long) ActiveParticleList.size());
+#endif
+#pragma omp parallel for schedule(dynamic, kick_chunk) private(ti_step, tstart, tend)
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     for(i = 0; i < NumPart; i++)
@@ -202,7 +212,8 @@ void do_hermite_prediction(void)
     GIZMO_TIMER_FUNCTION();
     int i; integertime ti_step, tstart=0, tend=0;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
+    const int hermite_chunk = gizmo_omp_particle_chunk((long long) ActiveParticleList.size());
+#pragma omp parallel for schedule(dynamic, hermite_chunk) private(ti_step, tstart, tend)
 #endif
     for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) {
         int i = ActiveParticleList[_apl];
@@ -232,7 +243,8 @@ void do_hermite_correction(void) // corrector step
     int i; integertime ti_step, tstart=0, tend=0;
     int gas_corrected = 0; /* the corrector writes positions, which the kept gas neighbour index must see */
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend) reduction(+:gas_corrected)
+    const int hermite_chunk = gizmo_omp_particle_chunk((long long) ActiveParticleList.size());
+#pragma omp parallel for schedule(dynamic, hermite_chunk) private(ti_step, tstart, tend) reduction(+:gas_corrected)
 #endif
     for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) {
         int i = ActiveParticleList[_apl];
@@ -267,7 +279,8 @@ void apply_long_range_kick(integertime tstart, integertime tend)
     int i;
     double dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
+    const int pm_kick_chunk = gizmo_omp_particle_chunk((long long) NumPart);
+#pragma omp parallel for schedule(dynamic, pm_kick_chunk)
 #endif
     for(i = 0; i < NumPart; i++)
     {

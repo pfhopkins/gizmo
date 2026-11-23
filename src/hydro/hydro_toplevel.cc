@@ -135,7 +135,8 @@ void hydro_final_operations_and_cleanup(void)
 {
     GIZMO_TIMER_FUNCTION();
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
+    const int final_chunk = gizmo_omp_particle_chunk((long long) ActiveParticleList.size());
+#pragma omp parallel for schedule(dynamic, final_chunk)
 #endif
     for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++)
     { int i = ActiveParticleList[_apl]; int k = 0; /* k is declared here (not at function scope) so it is thread-private under OpenMP — a shared k would race between threads and corrupt CR bin index */
@@ -468,7 +469,8 @@ void hydro_force_initial_operations_preloop(void)
     /* need to zero out all numbers that can be set -EITHER- by an active particle in the domain, or by one of the neighbors we will get sent */
     int i;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) private(i)
+    const int preloop_chunk = gizmo_omp_particle_chunk((long long) ActiveParticleList.size());
+#pragma omp parallel for schedule(dynamic, preloop_chunk) private(i)
 #endif
     for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++)
     {   int i = ActiveParticleList[_apl]; int k = 0; /* thread-private k — same OMP race fix as hydro_final_operations_and_cleanup */
