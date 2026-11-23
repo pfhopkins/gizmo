@@ -133,7 +133,7 @@ struct MechFBLocalIn
     MyDouble yields[NUM_METAL_SPECIES];
 #endif
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
-    MyDouble IaConvertFrac; /* Type Ia: fraction of each kernel cell's gas that becomes Ia matter in place (0: not an Ia) */
+    MyDouble IaConvertMass; /* Type Ia: M_Ch - M_WD of receiver gas that becomes Ia matter in place, spread like the ejecta (0: not an Ia) */
 #endif
 };
 
@@ -506,6 +506,10 @@ static void mechanical_fb_pair_kernel(
     for(int k = 0; k < NUM_METAL_SPECIES; k++) Metallicity_j[k] = P[j].Metallicity[k];
     for(int k = 0; k < NUM_METAL_SPECIES; k++) Metallicity_j_0[k] = Metallicity_j[k];
 #endif
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+    double Z_ia_conv_pair[NUM_METAL_SPECIES]; for(int k = 0; k < NUM_METAL_SPECIES; k++) Z_ia_conv_pair[k] = 0; /* this pair's Ia conversion, per slot */
+    int ia_clamped = 0;
+#endif
 
     if(loop_iteration < 0) {  /* loop_iteration == -1 */
         double pnorm = 0, pvec[3] = {0}, vel_ba_2 = 0, cos_vel_ba_pcoupled = 0;
@@ -635,11 +639,13 @@ static void mechanical_fb_pair_kernel(
         if(loop_iteration >= 2) couple_anything_but_scalar_mass_and_metals = 0;
 #endif
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
-        if(local.IaConvertFrac > 0 && u < 1) { /* Type Ia: this cell's share of M_Ch - M_WD becomes Ia matter in place (no mass moves); the cells are those of the kernel gas sum */
-            double c_ia = (double)local.IaConvertFrac * Mass_j_0;
+        if(local.IaConvertMass > 0 && pnorm > 0) { /* Type Ia: this cell's share of M_Ch - M_WD, with the ejecta's weight, becomes Ia matter in place (no mass moves) */
+            double c_ia = pnorm * (double)local.IaConvertMass;
+            if(c_ia > Mass_j_0) {c_ia = Mass_j_0; ia_clamped = 1;} /* booked through Z_ia_conv, counted */
             for(int k = 0; k < NUM_METAL_SPECIES; k++) {
                 if(k >= k_age_begin && k < k_age_end) {continue;}
-                Metallicity_j[k] += c_ia * ((double)local.yields[k] - Metallicity_j_0[k]) / Mass_j;
+                double dmz = c_ia * ((double)local.yields[k] - Metallicity_j_0[k]);
+                Metallicity_j[k] += dmz / Mass_j; Z_ia_conv_pair[k] = dmz;
             }
         }
 #endif
@@ -732,6 +738,10 @@ static void mechanical_fb_pair_kernel(
     for(int k = 0; k < NUM_METAL_SPECIES; k++) {
         Kokkos::atomic_add(&gd->Z_injected[k], Mass_j * Metallicity_j[k] - Mass_j_0 * Metallicity_j_0[k]);
     }
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {if(Z_ia_conv_pair[k] != 0) {Kokkos::atomic_add(&gd->Z_ia_conv[k], Z_ia_conv_pair[k]);}}
+    if(ia_clamped) {Kokkos::atomic_add(&gd->N_ia_clamped, 1);}
+#endif
 #endif
     for(int k = 0; k < 3; k++) {
         Kokkos::atomic_add(&gd->p_injected[k], (Mass_j * Vel_j[k] - Mass_j_0 * Vel_j_0[k]) / scalars.common.cf_atime);

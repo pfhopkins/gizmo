@@ -49,6 +49,10 @@ struct MechFBGasDelta
 #ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
     int N_injected_sn; /* SN and Ia deposits (mode 0) among N_injected: they repeat the hydro pass */
 #endif
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+    double Z_ia_conv[NUM_METAL_SPECIES]; /* Type Ia conversion's change of the cell's metal mass per slot (also inside Z_injected) */
+    int N_ia_clamped; /* conversions clamped at the cell mass */
+#endif
 };
 
 

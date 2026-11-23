@@ -388,17 +388,46 @@ double single_star_ejecta_mass_this_step(int i)
 }
 
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
-/* Type Ia (stella_dev 579e0bf93): the event is the table's M_Ch of Ia matter, the white dwarf's M_WD plus M_Ch - M_WD of the gas in
-   the star's kernel (the weighting pass's kernel gas sum) turned into Ia composition in place; the fraction of each such cell */
-double single_star_ia_convert_fraction(int i, int fb_loop_iteration)
+/* Type Ia (stella_dev 579e0bf93, STL-180): the event is the table's M_Ch of Ia matter, the white dwarf's M_WD plus M_Ch - M_WD of
+   receiver gas turned into Ia composition in place, spread with the ejecta's own weights; returns M_Ch - M_WD [code mass] */
+double single_star_ia_convert_mass(int i, int fb_loop_iteration)
 {
     if(fb_loop_iteration != 0 || single_star_kind_this_step(i) != SSE_IA) {return 0;}
     struct single_star_event ev; single_star_event_of(i, SSE_IA, &ev);
     double M_ch = 0; for(int k = 0; k < STBL_NELEM; k++) {M_ch += stellar_type_ia_yield(k);}
     double dM = DMAX(M_ch - ev.Mej, 0) / UNIT_MASS_IN_SOLAR, M_kernel = P[i].Area_weighted_sum[AREA_WEIGHTED_SUM_KERNEL_GAS];
     if(dM <= 0 || M_kernel <= 0) {return 0;}
-    if(dM > M_kernel) {printf("SINGLE_STAR TYPE_IA: ID=%llu kernel gas %g Msun < companion share %g Msun: all of it converted\n", (unsigned long long)P[i].ID, M_kernel * UNIT_MASS_IN_SOLAR, dM * UNIT_MASS_IN_SOLAR);}
-    return DMIN(dM / M_kernel, 1.);
+    if(dM > M_kernel) {printf("SINGLE_STAR TYPE_IA: ID=%llu kernel gas %g Msun < companion share %g Msun: receivers clamp at their mass\n", (unsigned long long)P[i].ID, M_kernel * UNIT_MASS_IN_SOLAR, dM * UNIT_MASS_IN_SOLAR);}
+    return dM;
+}
+
+/* cumulative Ia conversion per metal slot (this rank): what the in-place conversion added minus removed, also inside the feedback
+   deposits; ledger row MZ_ia_conversion closes MZ_fb_to_gas = MZ_single_star_ejecta + MZ_ia_conversion */
+static long double SingleStarIaConv[NUM_METAL_SPECIES];
+static long long SingleStarIaConvClamped;
+void single_star_ia_conversion_book(const double *dmz, int n_clamped)
+{
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {SingleStarIaConv[k] += dmz[k];}
+    SingleStarIaConvClamped += n_clamped;
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    ledger_add(LEDGER_MZ_IA_CONVERSION, dmz[0]);
+#endif
+}
+/* at every snapshot, collective: rank 0 appends time, clamped receivers and the cumulative per-slot conversion [Msun] to
+   ia_conversion_slots.txt (counts since this start) */
+void single_star_ia_conversion_output(void)
+{
+    long double loc[NUM_METAL_SPECIES + 1], glob[NUM_METAL_SPECIES + 1];
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {loc[k] = SingleStarIaConv[k];}
+    loc[NUM_METAL_SPECIES] = (long double) SingleStarIaConvClamped;
+    MPI_Reduce(loc, glob, NUM_METAL_SPECIES + 1, MPI_LONG_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask != 0) {return;}
+    char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sia_conversion_slots.txt", All.OutputDir);
+    FILE *fd = fopen(buf, "a"); if(!fd) {return;}
+    if(ftell(fd) == 0) {fprintf(fd, "# time n_clamped_receivers then per metal slot the cumulative Ia conversion (added - removed) [Msun]\n");}
+    fprintf(fd, "%.17g %lld", All.Time, (long long) glob[NUM_METAL_SPECIES]);
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {fprintf(fd, " %.17Lg", glob[k] * (long double) UNIT_MASS_IN_SOLAR);}
+    fprintf(fd, "\n"); fclose(fd);
 }
 #endif
 

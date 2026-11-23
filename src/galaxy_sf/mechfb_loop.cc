@@ -183,7 +183,7 @@ void mech_fb_local_fill(int i, int loop_iteration, struct MechFBLocalIn *loc) {
     for (int k = 0; k < NUM_METAL_SPECIES; ++k) loc->yields[k] = fb.yields[k];
 #endif
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
-    loc->IaConvertFrac = (loop_iteration >= 0 && fb.Msne > 0 && P[i].StarIdx > 0) ? single_star_ia_convert_fraction(i, loop_iteration) : 0;
+    loc->IaConvertMass = (loop_iteration >= 0 && fb.Msne > 0 && P[i].StarIdx > 0) ? single_star_ia_convert_mass(i, loop_iteration) : 0;
 #endif
 }
 
@@ -545,6 +545,10 @@ static void mechfb_gas_delta_zero(struct MechFBGasDelta *d) {
     d->TE_injected = 0;
     for (int k = 0; k < 3; ++k) d->p_injected[k] = 0;
     for (int k = 0; k < NUM_METAL_SPECIES; ++k) d->Z_injected[k] = 0;
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+    for (int k = 0; k < NUM_METAL_SPECIES; ++k) d->Z_ia_conv[k] = 0;
+    d->N_ia_clamped = 0;
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     d->Mass_Where_Dust_Shocked = 0;
 #endif
@@ -573,6 +577,10 @@ static void mechfb_gas_delta_add(struct MechFBGasDelta *dst,
     dst->TE_injected += src->TE_injected;
     for (int k = 0; k < 3; ++k) dst->p_injected[k] += src->p_injected[k];
     for (int k = 0; k < NUM_METAL_SPECIES; ++k) dst->Z_injected[k] += src->Z_injected[k];
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+    for (int k = 0; k < NUM_METAL_SPECIES; ++k) dst->Z_ia_conv[k] += src->Z_ia_conv[k];
+    dst->N_ia_clamped += src->N_ia_clamped;
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     dst->Mass_Where_Dust_Shocked += src->Mass_Where_Dust_Shocked;
 #endif

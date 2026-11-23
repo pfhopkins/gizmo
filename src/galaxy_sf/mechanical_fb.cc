@@ -161,6 +161,9 @@ void verify_and_assign_local_mechfb_integrals(void)
             for(k=0;k<NUM_METAL_SPECIES;k++) {ledger_add_slot(LEDGER_SLOT_TO_GAS, k, LocalGasMechFBInfoTemp[j].Z_injected[k]);}
 #endif
 #endif
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+            single_star_ia_conversion_book(LocalGasMechFBInfoTemp[j].Z_ia_conv, LocalGasMechFBInfoTemp[j].N_ia_clamped);
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             m0=CellP[j].MassTrue; CellP[j].MassTrue += dm; /* update conserved mass */
 #endif

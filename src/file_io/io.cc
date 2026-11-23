@@ -111,6 +111,9 @@ void savepositions(int num)
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
     ledger_output(); /* the ledger's only reduction */
 #endif
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+    single_star_ia_conversion_output();
+#endif
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
     single_star_event_logs_write();
 #endif

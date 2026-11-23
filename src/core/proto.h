@@ -1190,7 +1190,9 @@ double single_star_max_timestep(int p);
 void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
 double single_star_ejecta_mass_this_step(int i);
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
-double single_star_ia_convert_fraction(int i, int fb_loop_iteration);
+double single_star_ia_convert_mass(int i, int fb_loop_iteration);
+void single_star_ia_conversion_book(const double *dmz, int n_clamped);
+void single_star_ia_conversion_output(void);
 #endif
 void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);
@@ -1455,10 +1457,15 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #else
 #define LEDGER_ROWS_FB(X)
 #endif
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+#define LEDGER_ROWS_IA_CONVERSION(X) X(LEDGER_MZ_IA_CONVERSION, "MZ_ia_conversion_Msun", UNIT_MASS_IN_SOLAR, 0)
+#else
+#define LEDGER_ROWS_IA_CONVERSION(X)
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
 #define LEDGER_ROWS_SINGLE_STARS(X) X(LEDGER_M_EJECTA, "M_single_star_ejecta_Msun", UNIT_MASS_IN_SOLAR, 0) \
     X(LEDGER_MZ_EJECTA, "MZ_single_star_ejecta_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_M_REMNANT_RESET, "M_remnant_reset_Msun", UNIT_MASS_IN_SOLAR, 0) \
-    X(LEDGER_MZ_STARS_LOST, "MZ_stars_lost_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_E_EJECTA, "E_single_star_ejecta_erg", UNIT_ENERGY_IN_CGS, 0)
+    X(LEDGER_MZ_STARS_LOST, "MZ_stars_lost_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_E_EJECTA, "E_single_star_ejecta_erg", UNIT_ENERGY_IN_CGS, 0) LEDGER_ROWS_IA_CONVERSION(X)
 #else
 #define LEDGER_ROWS_SINGLE_STARS(X)
 #endif
