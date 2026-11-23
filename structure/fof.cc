@@ -1353,6 +1353,10 @@ void fof_save_groups(int num)
       MPI_Barrier(MPI_COMM_WORLD);	/* wait inside the group */
     }
 
+#ifdef FOF_WRITE_KEYED_CATALOGUE
+  hbt_write_keyed_catalogue(num, Group, Ngroups, keyed_members.data(), (long)keyed_members.size()); /* collective: all tasks */
+#endif
+
   myfree(ID_list);
 
   t1 = my_second();
@@ -1482,9 +1486,6 @@ void fof_save_local_catalogue(int num)
   my_fwrite(&Send_offset[ThisTask], sizeof(int), 1, fd);	/* this is the number of IDs in previous files */
   my_fwrite(ids, sizeof(MyIDType), Nids, fd);
   fclose(fd);
-#ifdef FOF_WRITE_KEYED_CATALOGUE
-  hbt_write_keyed_catalogue(num, Group, Ngroups, keyed_members.data(), (long)keyed_members.size());
-#endif
 }
 
 

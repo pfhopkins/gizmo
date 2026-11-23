@@ -99,7 +99,7 @@ void hbt_write_keyed_catalogue(int num, group_properties *Grp, int ngroups, hbt_
         snprintf(fname, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/groups_%03d/fof_subhalo_tab_%03d.hdf5", All.OutputDir, num, num);
         file = H5Fcreate(fname, H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT);
         hid_t hd = H5Gcreate(file, "/Header", 0);
-        long long zero = 0, one = 1; double redshift = 1. / All.Time - 1.;
+        long long zero = 0, one = 1; double redshift = All.ComovingIntegrationOn ? 1. / All.Time - 1. : 0; /* as file_io/io.cc */
         hbt_h5_attr(hd, "Ngroups_ThisFile", H5T_NATIVE_LLONG, &ngtot); hbt_h5_attr(hd, "Ngroups_Total", H5T_NATIVE_LLONG, &ngtot);
         hbt_h5_attr(hd, "Nsubhalos_ThisFile", H5T_NATIVE_LLONG, &zero); hbt_h5_attr(hd, "Nsubhalos_Total", H5T_NATIVE_LLONG, &zero);
         hbt_h5_attr(hd, "Nids_ThisFile", H5T_NATIVE_LLONG, &nmtot); hbt_h5_attr(hd, "Nids_Total", H5T_NATIVE_LLONG, &nmtot);
@@ -134,6 +134,9 @@ void hbt_write_keyed_catalogue(int num, group_properties *Grp, int ngroups, hbt_
         std::vector<char> gid, gch;
         hbt_gather_bytes(id.data(), (long long)id.size() * 8, gid);
         hbt_gather_bytes(ch.data(), (long long)ch.size() * 8, gch);
+        int short_list = (ThisTask == 0) && (gid.size() < (size_t)(8 * tot[t]) || gch.size() < (size_t)(8 * tot[t]));
+        MPI_Bcast(&short_list, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        if(short_list) {if(ThisTask == 0) {printf("KEYED CATALOGUE: type %d has fewer member keys than its group lengths (%lld)\n", t, tot[t]);} endrun(1189);}
         if(ThisTask == 0 && tot[t] > 0)
         {
             snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "/IDs/PartType%d", t);
