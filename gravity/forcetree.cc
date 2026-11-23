@@ -2762,10 +2762,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     fac_pot *= shortrange_table_potential[tabindex];
 #endif
 #ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
-                    { /* plain-kernel pairs only: AGS zeta terms make the applied force differ */
+                    { /* plain-kernel pairs only (kernel at max(h, h_p)): adaptive-softening pairs get averaged kernels and zeta terms */
                         double h_g = DMAX(h, h_p); int ags_pair = 0;
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-                        ags_pair = (ptype_sec >= 0) && ((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) && ((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL));
+                        ags_pair = ((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) || ((ptype_sec >= 0) && ((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)));
 #elif defined(ADAPTIVE_GRAVSOFT_FORGAS)
                         ags_pair = (ptype == 0) && (ptype_sec == 0);
 #endif

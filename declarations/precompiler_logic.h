@@ -1387,7 +1387,7 @@
 #if defined(EVALPOTENTIAL) && defined(PMGRID) && defined(BOX_PERIODIC) && !defined(PM_PLACEHIGHRESREGION) && !defined(DM_SCALARFIELD_SCREENING) && (defined(OUTPUT_ENERGY_STEP_TRACE) || defined(ENERGY_BUDGET_DIAGNOSTIC))
 #define PM_EXACT_SELF_POTENTIAL_DIAG /* energy diagnostics only: exact CIC mesh self-potential per particle (gravity/pm_periodic.cc); no effect on forces */
 #endif
-#if defined(EVALPOTENTIAL) && defined(PMGRID) && !defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING) && (defined(OUTPUT_ENERGY_STEP_TRACE) || defined(ENERGY_BUDGET_DIAGNOSTIC))
+#if defined(EVALPOTENTIAL) && defined(PMGRID) && (defined(OUTPUT_ENERGY_STEP_TRACE) || defined(ENERGY_BUDGET_DIAGNOSTIC))
 #define TREE_SHORTRANGE_POT_FROM_FORCE_DIAG /* energy diagnostics only: tree pair potential inside the softening from the applied force (gravity/forcetree.cc); Potential and forces unchanged */
 #endif
 
