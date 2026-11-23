@@ -2995,7 +2995,13 @@ extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
             g_packet_shape.scratch_bytes = flat_team_scratch;
         }
         if(flat_team == 0) {
-        Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
+        /* Dynamic schedule, one target per iteration: per-target walk cost varies by orders of magnitude between dense and
+           sparse regions (more so for the targets left after the packet walk), so on the OpenMP backend a static split of
+           Peano-ordered targets leaves most threads waiting on the ones holding dense blocks. Chunk 1 also keeps every thread
+           busy at small num_active, and is what nvc++ builds get whatever chunk is set (Kokkos omits the chunk from the
+           pragma there). The CUDA and HIP backends ignore both the schedule and the chunk. */
+        Kokkos::RangePolicy<Kokkos::Schedule<Kokkos::Dynamic>> walk_policy(0, num_active, Kokkos::ChunkSize(1));
+        Kokkos::parallel_for("gravtree_walk_primary", walk_policy, KOKKOS_LAMBDA(int a) {
             if(only_failed && !d_failed[a]) {return;}
             int target = d_idx[a];
             Vec3<double> acc;
@@ -3457,7 +3463,8 @@ extern "C" int gpu_ewald_walk_primary(void)
     /* Import-completeness guard: reset the per-walk counter (see the primary walk). */
     g_inv_fterm_aggregate = 0; g_unship_aggregate = 0;
 
-    Kokkos::parallel_for("gpu_ewald_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
+    Kokkos::RangePolicy<Kokkos::Schedule<Kokkos::Dynamic>> ewald_policy(0, num_active, Kokkos::ChunkSize(1));   /* as the tree walk: uneven per-target cost */
+    Kokkos::parallel_for("gpu_ewald_walk_primary", ewald_policy, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
         Vec3<double> acc;
         int ok = gpu_ewald_walk_one(target, treeBase, treeParticleSlots_snap, maxNodes_snap, maxForeignNodes_sn,
