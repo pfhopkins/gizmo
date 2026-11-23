@@ -26,6 +26,10 @@
 
 #ifdef FOF
 #include "fof.h"
+#ifdef FOF_UNIQUE_KEY_CHECK
+#include <vector>
+#include "hbt/hbt_key_mpi.h"
+#endif
 #ifdef SUBFIND
 #include "subfind/subfind.h"
 #endif
@@ -53,6 +57,9 @@ static struct fofdata_out
   MyFloat Distance;
   MyIDType MinID;
   MyIDType MinIDTask;
+#ifdef FOF_SECONDARY_LINK_TARGET_TYPES
+  int Attach; /* nearest target is a primary-type particle */
+#endif
 }
  *FoFDataResult, *FoFDataOut;
 
@@ -84,6 +91,27 @@ static char *NonlocalFlag;
 static float *fof_nearest_distance;
 static float *fof_nearest_rkern;
 
+#ifdef FOF_SECONDARY_LINK_TARGET_TYPES
+#if ((FOF_SECONDARY_LINK_TARGET_TYPES) & (FOF_SECONDARY_LINK_TYPES))
+#error "FOF_SECONDARY_LINK_TARGET_TYPES must not contain a secondary link type (a secondary would find itself)"
+#endif
+#define FOF_NEAREST_SEARCH_TYPES (MyFOF_PRIMARY_LINK_TYPES | (FOF_SECONDARY_LINK_TARGET_TYPES))
+#else
+#define FOF_NEAREST_SEARCH_TYPES (MyFOF_PRIMARY_LINK_TYPES)
+#endif
+
+#ifdef FOF_UNIQUE_KEY_CHECK
+/* abort if the particle key (ID, child number) is not unique: catalogues and HBT tracking need it */
+static void fof_check_unique_particle_keys(void)
+{
+  std::vector<hbt_key_t> keys(NumPart > 0 ? NumPart : 1);
+  for(int i = 0; i < NumPart; i++) {keys[i] = hbt_key_make((uint64_t)P[i].ID, (uint64_t)P[i].ID_child_number);}
+  long long ndup = hbt_count_duplicate_keys(keys.data(), NumPart, MPI_COMM_WORLD);
+  if(ThisTask == 0) {printf("FOF: particle keys (ID, child number): %lld duplicates among %lld particles\n", ndup, (long long)All.TotNumPart);}
+  if(ndup != 0) {if(ThisTask == 0) {printf("FOF: particle keys are not unique (or the count overflowed: %lld)\n", ndup);} endrun(1186);}
+}
+#endif
+
 
 void fof_fof(int num)
 {
@@ -110,6 +138,10 @@ void fof_fof(int num)
   domain_Decomposition(1, 0, 0);
 
   force_treefree();
+
+#ifdef FOF_UNIQUE_KEY_CHECK
+  fof_check_unique_particle_keys();
+#endif
 
   for(i = 0, ndm = 0, mass = 0; i < NumPart; i++)
     if(((1 << P[i].Type) & (MyFOF_PRIMARY_LINK_TYPES)))
@@ -173,6 +205,15 @@ void fof_fof(int num)
   if(ThisTask == 0)
     printf("group finding took = %g sec\n", timediff(t0, t1));
 
+
+#ifdef FOF_SECONDARY_LINK_TARGET_TYPES
+  force_treefree(); /* rebuild with the secondary link targets, so the nearest search sees them */
+  for(i = 0, n = 0; i < NumPart; i++)
+    if(((1 << P[i].Type) & (FOF_NEAREST_SEARCH_TYPES)))
+      d[n++].index = i;
+  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
+  force_treebuild(n, d);
+#endif
 
   t0 = my_second();
 
@@ -1575,8 +1616,13 @@ void fof_find_nearest_dmparticle(void)
 	      if(FoFDataOut[j].Distance < fof_nearest_distance[place])
 		{
 		  fof_nearest_distance[place] = FoFDataOut[j].Distance;
+#ifdef FOF_SECONDARY_LINK_TARGET_TYPES
+		  if(FoFDataOut[j].Attach) {MinID[place] = FoFDataOut[j].MinID; MinIDTask[place] = FoFDataOut[j].MinIDTask;}
+		  else {MinID[place] = P[place].ID; MinIDTask[place] = ThisTask;}
+#else
 		  MinID[place] = FoFDataOut[j].MinID;
 		  MinIDTask[place] = FoFDataOut[j].MinIDTask;
+#endif
 		}
 	    }
 
@@ -1679,7 +1725,7 @@ int fof_find_nearest_dmparticle_evaluate(int target, int mode, int *nexport, int
     {
       while(startnode >= 0)
 	{
-        numngb_inbox = ngb_treefind_variable_targeted(pos, h, target, &startnode, mode, nexport, nsend_local, MyFOF_PRIMARY_LINK_TYPES); // MyFOF_PRIMARY_LINK_TYPES defines which types of particles we search for
+        numngb_inbox = ngb_treefind_variable_targeted(pos, h, target, &startnode, mode, nexport, nsend_local, FOF_NEAREST_SEARCH_TYPES); // primary types, plus FOF_SECONDARY_LINK_TARGET_TYPES if set
         if(numngb_inbox < 0) {return -2;}
 
 	  for(n = 0; n < numngb_inbox; n++)
@@ -1709,13 +1755,21 @@ int fof_find_nearest_dmparticle_evaluate(int target, int mode, int *nexport, int
     }
 
 
+#ifdef FOF_SECONDARY_LINK_TARGET_TYPES
+  int attach = (index >= 0) && ((1 << P[index].Type) & (MyFOF_PRIMARY_LINK_TYPES)); /* a non-primary nearest target leaves the secondary ungrouped */
+#endif
   if(mode == 0)
     {
       if(index >= 0)
 	{
 	  fof_nearest_distance[target] = sqrt(r2max);
+#ifdef FOF_SECONDARY_LINK_TARGET_TYPES
+	  if(attach) {MinID[target] = MinID[Head[index]]; MinIDTask[target] = MinIDTask[Head[index]];}
+	  else {MinID[target] = P[target].ID; MinIDTask[target] = ThisTask;}
+#else
 	  MinID[target] = MinID[Head[index]];
 	  MinIDTask[target] = MinIDTask[Head[index]];
+#endif
 	}
     }
   else
@@ -1725,6 +1779,9 @@ int fof_find_nearest_dmparticle_evaluate(int target, int mode, int *nexport, int
 	  FoFDataResult[target].Distance = sqrt(r2max);
 	  FoFDataResult[target].MinID = MinID[Head[index]];
 	  FoFDataResult[target].MinIDTask = MinIDTask[Head[index]];
+#ifdef FOF_SECONDARY_LINK_TARGET_TYPES
+	  FoFDataResult[target].Attach = attach;
+#endif
 	}
       else
 	FoFDataResult[target].Distance = 2.0e30;

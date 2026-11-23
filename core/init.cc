@@ -1068,6 +1068,19 @@ void init(void)
     All.Ti_Current = 0;
 
     if(RestartFlag != 3 && RestartFlag != 5) {setup_smoothinglengths();}
+#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
+    if(RestartFlag == 3) /* snapshots carry no non-gas kernel radius (uninitialised here) and density() stops on 0: seed it */
+    {
+        for(i = 0; i < NumPart; i++)
+        {
+            if(P[i].Type == 0) {continue;}
+            P[i].KernelRadius = All.ForceSoftening[P[i].Type];
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+            if(P[i].AGS_KernelRadius > 0) {P[i].KernelRadius = P[i].AGS_KernelRadius;}
+#endif
+        }
+    }
+#endif
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
     if(RestartFlag != 3 && RestartFlag != 5) {ags_setup_smoothinglengths();}
