@@ -160,7 +160,7 @@ double sgchem_cr_ion_rate(int i, double G0)
 #endif
     double zeta = All.SGChemCosmicRayIonRate;
 #if defined(CR_SCALE_WITH_G0) && defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
-    zeta = All.FactorG0 * zeta; /* unclamped */
+    zeta = DMAX(1e-21, All.FactorG0 * zeta); /* floor as the other paths (stella_dev d47840ddb): 0 before the first stars otherwise */
 #elif defined(CR_SCALE_WITH_G0)
     zeta = DMAX(1e-21, DMIN(2e-16, (G0 / 1.7) * zeta)); /* with the stars' field */
 #endif

@@ -1557,6 +1557,7 @@ double estep_cell_mag_energy(int i);
 void ledger_restart_io(void (*io)(void *, size_t, int), int modus);
 #ifdef OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS
 void ledger_step_checkpoint(const char *tag);
+long long ledger_step_ncalls(void);
 #define LEDGER_STEP(tag) ledger_step_checkpoint(tag)
 #if defined(METALS) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
 #define LEDGER_SLOTS /* element ledger: per metal slot, mass deposited into gas by feedback and taken from stars (mass_balance_elements.txt) */

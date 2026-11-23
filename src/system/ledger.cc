@@ -209,8 +209,11 @@ void ledger_restart_io(void (*io)(void *, size_t, int), int modus) /* modus 0 wr
    cancel to a much smaller total, which a double sum resolves only to the spacing of doubles near the terms). With LEDGER_SLOTS the
    same closure per metal slot, in the same reduction, to mass_balance_elements.txt (stella_dev 8227ec120, 9335b5ced). One
    MPI_Allreduce per call; code units. */
+static long long ledger_step_ncalls_all = 0; /* checkpoints so far, the same on all tasks (each is collective) */
+long long ledger_step_ncalls(void) {return ledger_step_ncalls_all;}
 void ledger_step_checkpoint(const char *tag)
 {
+    ledger_step_ncalls_all++;
     static long double last[3] = {-1., -1., -1.};
     static long long calls = 0;
     enum {N_SCALAR = 6}; /* M_gas, M_stars, MZ_gas, MZ_stars, net yield (cumulative rows of this rank), diffusion exchange in flight */

@@ -306,6 +306,9 @@ void run(void)
 
     while(1)			/* main timestep iteration loop */
     {
+#if defined(OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS) && (defined(OUTPUT_ENERGY_STEP_TRACE) || defined(ENERGY_BUDGET_DIAGNOSTIC))
+        {static long long n_prev = -1; if(n_prev >= 0 && ledger_step_ncalls() == n_prev) {LEDGER_STEP("end_of_step");} n_prev = ledger_step_ncalls();} /* mass trace for steps with no other checkpoint (pure gravity), stella_dev 43ef69a46/29ccc7c6a */
+#endif
 #if defined(KETJU_REGULARIZATION) && defined(OUTPUT_STAR_ENERGY_DIRECT_SUM)
         ketju_energy_diagnostic(); /* ETOT_INCODE: direct-sum star energy, printed at synchronised snapshot times */
 #endif
