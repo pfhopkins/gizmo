@@ -1,7 +1,7 @@
 # ketju_task_schedule
 
-KETJU scheduling flags against the unchanged code. A Plummer sphere of 64 equal-mass circular binaries (plummer_binaries
-setup: 1 Msun stars, 1000 AU binaries, Type 5) runs to t = 0.648 on 8 MPI ranks. KetjuRegionRadius = 0.1 pc merges
+KETJU scheduling flags against the unchanged code. A Plummer sphere of 256 equal-mass circular binaries (plummer_binaries
+setup: 1 Msun stars, 1000 AU binaries, Type 5) runs to t = 0.648 on 4 MPI ranks (8 ranks with 64 binaries stop in the domain decomposition: too few particles per rank). KetjuRegionRadius = 0.1 pc merges
 neighbouring binaries into regions of 4 and more members, and KetjuMinParticlesPerTask = 2 lets the cost allocator give
 such regions several compute tasks, so the multi-task paths (split negative half-kick, compute/affected forwards,
 kj_bcast_state) run. The test asserts from the KETJU_VERBOSE_INTEGRATION lines that at least one region got several tasks.

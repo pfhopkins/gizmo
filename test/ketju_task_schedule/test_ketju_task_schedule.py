@@ -1,6 +1,6 @@
-"""ketju_task_schedule: KETJU scheduling flags against the unchanged code on 8 MPI ranks, with multi-task compute groups.
+"""ketju_task_schedule: KETJU scheduling flags against the unchanged code on 4 MPI ranks, with multi-task compute groups.
 
-64 circular binaries in a Plummer sphere (plummer_binaries setup); KetjuRegionRadius 0.1 pc merges neighbouring binaries
+256 circular binaries in a Plummer sphere (plummer_binaries setup); KetjuRegionRadius 0.1 pc merges neighbouring binaries
 into regions of 4+ members and KetjuMinParticlesPerTask 2 gives them several compute tasks. See README.md.
   - control: the unchanged code twice, bitwise equal (else nothing below can be judged);
   - KETJU_SCATTER_AFTER_ALL_REGIONS: bitwise equal to the unchanged code;
@@ -26,8 +26,8 @@ from gizmo.units import G_CODE
 TEST_NAME = "ketju_task_schedule"
 TEST_DIR = f"test/{TEST_NAME}"
 IC_FILE = f"{TEST_DIR}/{TEST_NAME}_ics.hdf5"
-NUM_MPI_RANKS = 8
-N_BINARIES = 64
+NUM_MPI_RANKS = 4
+N_BINARIES = 256
 SCATTER = ("KETJU_SCATTER_AFTER_ALL_REGIONS",)
 ONE = ("KETJU_ONE_TASK_PER_REGION",)
 BOTH = SCATTER + ONE

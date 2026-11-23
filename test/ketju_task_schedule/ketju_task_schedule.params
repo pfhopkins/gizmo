@@ -1,7 +1,7 @@
-% ketju_task_schedule: Plummer cluster of 64 equal-mass circular binaries (Type 5 stars, plummer_binaries setup).
+% ketju_task_schedule: Plummer cluster of 256 equal-mass circular binaries (Type 5 stars, plummer_binaries setup).
 % Units: pc - km/s - Msun. M_star = 1 Msun, a_cluster = 1 pc, 1000 AU binaries, TimeMax = 0.648 (0.2 crossing times).
 % KetjuRegionRadius 0.1 pc merges neighbouring binaries into regions of 4+ members, and KetjuMinParticlesPerTask 2 lets
-% the cost allocator give such regions several compute tasks, so the multi-task paths of the coupling run on 8 ranks.
+% the cost allocator give such regions several compute tasks, so the multi-task paths of the coupling run on 4 ranks.
 %
 InitCondFile                       ketju_task_schedule_ics
 OutputDir                          output
