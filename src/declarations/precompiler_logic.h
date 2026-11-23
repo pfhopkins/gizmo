@@ -1917,7 +1917,10 @@
 #undef MHD_CONSTRAINED_GRADIENT_MIDPOINT
 #endif
 
-#if defined(TURB_DIFF_METALS) && defined(GALSF_SINGLE_STARS_FROM_IMF) /* defaults of the single-star model: Phil's metal exchange (each cell its own step's share); METALS_EXACT_PAIRWISE_EXCHANGE opt-in (Uli 2026-11-23) */
+#if defined(TURB_DIFF_METALS) && defined(GALSF_SINGLE_STARS_FROM_IMF) /* defaults of the single-star model */
+#if !defined(METALS_EXACT_PAIRWISE_EXCHANGE) && !defined(GALSF_ISMDUSTCHEM_MODEL) && !defined(TRANSPORT_SUBCYCLE)
+#define METALS_EXACT_PAIRWISE_EXCHANGE
+#endif
 #ifndef TURB_DIFF_METALS_MAX_DONOR_FRACTION_PER_PAIR
 #define TURB_DIFF_METALS_MAX_DONOR_FRACTION_PER_PAIR 0.01
 #endif
