@@ -101,6 +101,34 @@ def test_stromgren_sphere(built):
         assert abs(r[3] / rows[0, 3] - 1) < 2e-3  # static gas: the same cells at every solve, up to the slow rise of Q
 
 
+def empty_upper_half(f):
+    """remove the gas above the star (z > its z): the directions upward never spend their photons, so the sphere grows"""
+    import h5py
+    with h5py.File(f, "r+") as F:
+        z_star = F["PartType4/Coordinates"][0, 2]
+        keep = F["PartType0/Coordinates"][:, 2] < z_star
+        for k in list(F["PartType0"].keys()):
+            v = F[f"PartType0/{k}"][()][keep]
+            del F[f"PartType0/{k}"]
+            F[f"PartType0/{k}"] = v
+        n = F["Header"].attrs["NumPart_ThisFile"].copy(); n[0] = int(keep.sum())
+        F["Header"].attrs["NumPart_ThisFile"] = n; F["Header"].attrs["NumPart_Total"] = n
+        return F["Header"].attrs["BoxSize"]
+
+
+def test_search_radius_beyond_the_box(built):
+    """GKS-TI21: one source, gas only below it (upward directions open, so the sphere grows to the search radius limit). Bars
+    (written before the runs): with the limit below half the box (0.02 kpc), recombinations of the ionised cells / Q <= 1.02 at
+    every solve; with limits beyond the 45 pc periodic box (1 kpc, 50 kpc) the same ratio within 2 % of that run at every solve:
+    a limit beyond the box must not change which cells are ionised"""
+    rows = {r: log(run(f"half_{r}", built, overrides={"PhotoionMaxSearchRadius": r}, post_ic=empty_upper_half)[0]) for r in (0.02, 1.0, 50.0)}
+    ref = rows[0.02]
+    print({r: rows[r][:, 6].tolist() for r in rows})
+    assert np.all(ref[:, 6] <= 1.02), ref[:, 6]
+    for r in (1.0, 50.0):
+        assert rows[r].shape == ref.shape and np.all(np.abs(rows[r][:, 6] / ref[:, 6] - 1) <= 0.02), (r, rows[r][:, 6], ref[:, 6])
+
+
 def test_ranks_and_order(built):
     """the fronts do not depend on the rank count or the particle order (integer sums)"""
     ref = log(run("single_r1", built)[0])
