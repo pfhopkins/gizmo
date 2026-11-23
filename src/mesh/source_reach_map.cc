@@ -52,6 +52,8 @@ double g_E_off_last = 0;          /* that sum over the last tree, or tree part, 
 int g_n_off_last = 0;             /* its discoveries */
 double g_E_nogain = -1;           /* the unmapped imbalance at which the map last proved not worth its cost */
 double g_B_all = -1;              /* the map's build cost, slowest rank (-1: never built) */
+double g_e_fresh = -1;            /* corridor imbalance of the first discovery on the current map (-1: none yet) */
+double g_E_decay = 0;             /* imbalance above that, summed since: the map's decay, to set against a rebuild */
 integertime g_build_ti = 0;
 double g_lifetime_drift = 0.0;    /* undilated drift factor over the tree's expected lifetime, from the build */
 double g_scale_max = 1.0;         /* the largest j-side reach scale the lists cover */
@@ -372,6 +374,7 @@ void source_reach_map_build(int usable)
         }
     }
     g_valid = 1;
+    g_e_fresh = -1; g_E_decay = 0;
     const double t_build = MPI_Wtime() - t_call;
     g_b_local = g_map_this_tree ? g_b_local + t_build : t_build;   /* every map build of this tree (moment refreshes too) */
     g_map_this_tree = 1;
@@ -399,6 +402,19 @@ void source_reach_map_gate_apply(const long long *a, int symmetric)
     const double tmax = -a[0] * 1.0e-6, tmin = a[1] * 1.0e-6, tb = -a[2] * 1.0e-6;
     g_B_all = (a[3] > 0) ? -1.0 : -a[3] * 1.0e-6;
     g_E_tree += DMAX(tmax - tmin, 0.0); g_n_tree++;
+    if(g_map_this_tree && g_valid) {
+        /* a map decays on a long-lived tree (members past what it allowed for fall back to the node bound); once the imbalance it has
+           let back exceeds what a tree build and a map build cost, the tree is rebuilt, and the map with it (rank-uniform) */
+        const double e = DMAX(tmax - tmin, 0.0);
+        if(g_e_fresh < 0) {g_e_fresh = e;}
+        g_E_decay += DMAX(e - g_e_fresh, 0.0);
+        const double rebuild_cost = tb + DMAX(g_B_all, 0.0);
+        if(g_E_decay > rebuild_cost && !TreeReconstructFlag) {
+            TreeReconstructFlag = 1;
+            if(ThisTask == 0) {printf("source-reach map: tree rebuild requested (map decay %g s > tree + map build %g s)\n", g_E_decay, rebuild_cost); fflush(stdout);}
+            g_E_decay = 0;
+        }
+    }
     if(g_wanted || g_map_this_tree) {return;}
     /* the map's measured cost per tree, or before it was ever built the tree build it is part of */
     const double cost = (g_B_all >= 0) ? g_B_all : tb;
