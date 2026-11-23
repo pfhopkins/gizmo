@@ -48,13 +48,22 @@ int addFB_evaluate_active_check(int i, int fb_loop_iteration)
 void determine_where_SNe_occur(void)
 {
     if(All.Time<=0) return;
-    int i; double dt,star_age,npossible,nhosttotal,ntotal,ptotal,dtmean,rmean;
+    double npossible,nhosttotal,ntotal,ptotal,dtmean,rmean;
     npossible=nhosttotal=ntotal=ptotal=dtmean=rmean=0;
     double mpi_npossible,mpi_nhosttotal,mpi_ntotal,mpi_ptotal,mpi_dtmean,mpi_rmean;
     mpi_npossible=mpi_nhosttotal=mpi_ntotal=mpi_ptotal=mpi_dtmean=mpi_rmean=0;
-    // loop over particles //
-    for (int i : ActiveParticleList)
+    /* every particle's events depend only on that particle (its random numbers are keyed on the particle and the
+       timestep), so the loop runs on all threads when there are enough active particles; only the six log-file sums are shared */
+    const long n_act = (long) ActiveParticleList.size();
+    const int *act = ActiveParticleList.data();
+    const int threaded = gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) n_act);
+#ifdef _OPENMP
+    const int sn_chunk = gizmo_omp_particle_chunk((long long) n_act);
+#pragma omp parallel for schedule(dynamic, sn_chunk) if(threaded) reduction(+:npossible,nhosttotal,ntotal,ptotal,dtmean,rmean)
+#endif
+    for(long k = 0; k < n_act; k++)
     {
+        const int i = act[k]; double dt, star_age;
         P[i].SNe_ThisTimeStep=0;
 #ifdef GALSF_FB_MASS_RETURN_EVENTS
         P[i].MassReturn_ThisTimeStep=0;
@@ -97,7 +106,7 @@ void determine_where_SNe_occur(void)
 #endif
         if(P[i].SNe_ThisTimeStep>0) {ntotal+=P[i].SNe_ThisTimeStep; nhosttotal++;}
         dtmean += dt;
-    } // for (int i : ActiveParticleList) //
+    } // for each active particle //
 
     /* The six log-file diagnostics are independent sums to rank 0, so they ride
      * one six-element reduction rather than six single-value ones: same values,

@@ -572,7 +572,8 @@ void cooling_parent_routine(void)
     for(int j = 0; j < N_active; j++) {int i = cool_indices[j]; xref_P[j] = P[i]; xref_C[j] = CellP[i]; P[i] = xin_P[j]; CellP[i] = xin_C[j];}
 #endif
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic)
+    const int cool_chunk = gizmo_omp_particle_chunk((long long) N_active);
+#pragma omp parallel for schedule(dynamic, cool_chunk)
 #endif
     for(int j = 0; j < N_active; j++)
     {
@@ -592,6 +593,10 @@ void cooling_parent_routine(void)
             endrun(8859);}
         if(ThisTask == 0) {printf("COOLING_CROSSCHECK: %d cells on task 0, threaded pass equals the serial pass\n", N_active); fflush(stdout);}
     }
+#endif
+    /* each cell's equation of state and dust tail read and write only that cell, so this runs on all threads too */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, cool_chunk) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) N_active))
 #endif
     for(int j = 0; j < N_active; j++)
     {

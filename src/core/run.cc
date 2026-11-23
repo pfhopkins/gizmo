@@ -147,7 +147,11 @@ void gizmo_request_controlled_stop(int code, const char *reason,
     /* No MPI, no allocation, no Kokkos calls — safe inside per-particle
      * loops or device-dispatcher callers. First-set-wins; copy the diagnostic
      * into owned storage immediately (subsequent bad-state flow may clobber
-     * the caller's buffer or fail before global polling). */
+     * the caller's buffer or fail before global polling). Threaded particle loops can reach this, so the
+     * first-set-wins check and the copy are one critical section. */
+#ifdef _OPENMP
+#pragma omp critical(gizmo_controlled_stop_request)
+#endif
     if(ControlledStop_LocalCode == 0) {
         ControlledStop_LocalCode = code;
         snprintf(ControlledStop_LocalDiag, MAX_PATH_BUFFERSIZE_TOUSE,

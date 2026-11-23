@@ -1217,12 +1217,26 @@ static void gx_walk_export_discover(
      * race-safe.  The walk records what may be a neighbour once drifted; the shared accept
      * then drifts and accepts those candidates (threaded) and emits SERIALLY, peer by
      * peer in ascending order, which is the order the send set requires. */
+    /* cold-call probe: with no map yet and one buildable now, a walk that has run longer than the map would cost stops; the
+       discovery is then redone with the map (below), so nothing from the stopped walk is used */
+    const double probe_budget = (search_mode != NGB_SEARCH_ONEWAY) ? source_reach_map_cold_budget() : -1.0;
+#ifdef _OPENMP
+#define GX_PROBE_CLOCK() omp_get_wtime()   /* thread-safe: read in the threaded walk below */
+#else
+#define GX_PROBE_CLOCK() MPI_Wtime()
+#endif
+    const double probe_t0 = GX_PROBE_CLOCK();
+    int probe_stopped = 0;
     if(receiver_ok && !receiver_done_on_device) {
         std::vector<std::vector<int>> per_recv_cands((size_t)(tot_r > 0 ? tot_r : 0));
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 16)
 #endif
         for(long k = 0; k < tot_r; k++) {
+            if(probe_budget > 0) {
+                if(__atomic_load_n(&probe_stopped, __ATOMIC_RELAXED)) {continue;}
+                if((k & 63) == 0 && GX_PROBE_CLOCK() - probe_t0 > probe_budget) {__atomic_store_n(&probe_stopped, 1, __ATOMIC_RELAXED); continue;}
+            }
             const struct gx_export_envelope_t *e = &recv[k];
             std::vector<int> &cvk = per_recv_cands[k];
             cvk.clear();
@@ -1235,8 +1249,9 @@ static void gx_walk_export_discover(
          * of every row together, then accepts at current positions.  An envelope that
          * found nothing would add a row every pass of the accept reads and none emits from;
          * a rank can receive many times more envelopes than it has candidates for. */
+        if(probe_stopped) {receiver_ok = 0;}   /* abandoned below; the vote tells every rank to redo the discovery */
         std::vector<struct gx_candidate_row> rows;
-        try {
+        if(receiver_ok) try {
             for(int t = 0; t < NTask; t++) {
                 if(t == ThisTask) continue;
                 for(int r = 0; r < rc[t]; r++) {
@@ -1253,6 +1268,7 @@ static void gx_walk_export_discover(
                                        spec->radius_policy, spec->j_radius_scale, spec->safety_factor) != 0) {receiver_ok = 0;}
         }
     }
+#undef GX_PROBE_CLOCK
     free(recv); free(rc); free(rd);
     if(receiver_ok) {
         gx_send_set_finish_peer(send_set);
@@ -1275,11 +1291,19 @@ static void gx_walk_export_discover(
     /* the same vote carries the source-reach map gate's timings (its decision is taken from the result, on every rank) */
     long long gate_vote[1 + SOURCE_REACH_GATE_NVOTE], gate_all[1 + SOURCE_REACH_GATE_NVOTE];
     gate_vote[0] = (long long) receiver_ok;
-    source_reach_map_gate_fill(gate_vote + 1, MPI_Wtime() - gate_t0);
+    source_reach_map_gate_fill(gate_vote + 1, MPI_Wtime() - gate_t0, probe_stopped, (long long) n_local_queries);
     int receiver_ok_all = 0;
     MPI_Allreduce(gate_vote, gate_all, 1 + SOURCE_REACH_GATE_NVOTE, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
     receiver_ok_all = (int) gate_all[0];
     source_reach_map_gate_apply(gate_all + 1, search_mode != NGB_SEARCH_ONEWAY);
+    if(gate_all[1 + SOURCE_REACH_GATE_STOPPED] < 0) {
+        /* some rank stopped its cold walk: every rank drops its partial send set, the map is built now, and the discovery is
+           redone once (the probe is off on the retry: a map exists, or its build was tried for this tree) */
+        if(receiver_ok) {gx_send_set_abandon(send_set);}
+        source_reach_map_build_if_due();
+        gx_walk_export_discover(spec, local_queries, n_local_queries, num_pool, supply_mask, search_mode, send_set, res);
+        return;
+    }
     if(!receiver_ok_all) {
         if(receiver_ok) {gx_send_set_abandon(send_set);}
         if(res) res->status = GX_WALK_EXPORT_RECEIVER_FAIL;
