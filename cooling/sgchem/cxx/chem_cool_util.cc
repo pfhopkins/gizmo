@@ -511,7 +511,7 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
             if (tdust_new != tdust_new) tdust_new = T.tmin;
             if (tdust_new < T.tmin)     tdust_new = T.tmin;
             if (tdust_new > 1.5e3)      tdust_new = 1.5e3;
-            if (std::fabs((tdust_new - c.tdust) / c.tdust) < 1e-8) {   // same tight stop in both backends (D-61)
+            if (std::fabs((tdust_new - c.tdust) / c.tdust) < 1e-12) {   // same tight stop in both backends; RHS noise below Jacobian increments (D-61)
                 converged = 1;
                 break;
             }
@@ -543,7 +543,7 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
             if (balance(lo) <= 0.0)      td = lo;      // no balance above tmin
             else if (balance(hi) >= 0.0) td = hi;      // balance above the sublimation cap
             else {
-                for (int k = 0; k < 60 && (hi - lo) > 1e-8 * lo; k++) {
+                for (int k = 0; k < 60 && (hi - lo) > 1e-14 * lo; k++) {
                     const double mid = 0.5 * (lo + hi);
                     if (balance(mid) > 0.0) lo = mid; else hi = mid;
                 }
