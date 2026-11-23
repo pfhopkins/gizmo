@@ -404,6 +404,9 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
 
 // calc_dust_temp port (cool_util.F:802-1007).  Mutates c.tdust; outputs the H2
 // grain-formation rates.  nocalc=1 skips the Newton solve (RT_INFRARED path).
+void cxx_dust_newton_terms(double yn, double temp, double abHI, double isrf_heat, double cl14, double ch7, double tdust,
+                           const ChemCell& c, double* F_nr, double* dF_nr, double* Rdust, double* RH2,
+                           double* dust_cool, double* gas_dust, double* dust_h2_heat);
 void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
                         double* RH2, double* Rdust, int nocalc, ChemCell& c);
 

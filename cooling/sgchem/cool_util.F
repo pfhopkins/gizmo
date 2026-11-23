@@ -824,6 +824,7 @@ c=======================================================================
 
       integer*8 n_dust_newton, n_dust_bisect
       common /dust_stat/ n_dust_newton, n_dust_bisect
+c$omp threadprivate(/dust_stat/)
       integer ndust_iter, KB
       parameter (ndust_iter = 100)
       REAL td_lo, td_hi, td_mid, F_lo, F_hi, F_mid
@@ -904,70 +905,9 @@ c
         do K = 1, ndust_iter
           tdust = tdust_new
           n_dust_newton = n_dust_newton + 1
-c
-c Cooling from dust (assuming optically thin emission) -- computed using same
-c opacities as for heating (i.e. OH94, MMP83). Accurate to within a factor two
-c over the temperature range 5 < Td < 100 K (==> max 10% error in Td)
-c
-          dust_cool = 4.68d-31 * tdust**6 * yn
-          dust_cool = dust_cool * dust_to_gas_ratio
-c
-c Gas-grain energy transfer -- Hollenbach & McKee (1989)
-c
-#ifdef NO_GAS_DUST_HEAT
-          gas_dust  = 0d0
-#else
-          gas_dust  = cl14 * (temp - tdust) * yn**2
-          gas_dust = gas_dust * dust_to_gas_ratio
-#endif
-c
-c Heating from H2 formation on grain surface
-c
-          h2_form_dust = 1d0 - h2_form_ex - h2_form_kin
-c
-c H2 formation rate on dust -- we calculate this here, as this allows us to
-c vary tdust without needing to call cheminmo again
-c 
-          temp2  = temp * 1d-2
-          tdust2 = tdust * 1d-2
-          fa     = 1d0 / (1d0 + 1d4 * dexp(-6d2 / tdust))
-          stick  = 1d0 / (1d0 + 0.4d0 * (temp2 + tdust2)**0.5d0 +
-     $                    0.2d0 * temp2 + 0.08d0 * temp2**2d0)
-          dfa    = - fa * (1 - fa) * (6d2 / tdust**2)
-          dtrdust = ch7 * stick * (dfa - 2d-2 * stick * fa / 
-     $            dsqrt(tdust + temp))
-          Rdust  = ch7 * fa * stick
-          Rdust_rat = (dfa / fa - 2d-2 * stick / dsqrt(tdust + temp))
-          RH2 = Rdust * abHI * yn**2
-c
-#ifdef NO_DUST_H2_HEAT
-          dust_h2_heat = 0d0
-#else
-c          dust_h2_heat = (RH2 / dust_to_gas_ratio) * h2_form_dust 
-          dust_h2_heat = (RH2) * h2_form_dust 
-     $                 * 4.48d0 * eV
-#endif
-c
-          if (Rdust .eq. 0d0) then
-c This can happen if we've set deff = 0
-            F_nr = isrf_heat - dust_cool + gas_dust
-#ifdef NO_GAS_DUST_HEAT
-            dF_nr = -(6d0 * dust_cool / tdust)
-#else
-c slope of gas_dust includes dust_to_gas_ratio (STL-294)
-            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2
-     $            * dust_to_gas_ratio
-#endif
-          else
-            F_nr  = isrf_heat - dust_cool + gas_dust + dust_h2_heat
-#ifdef NO_GAS_DUST_HEAT
-            dF_nr = -(6d0 * dust_cool / tdust)
-     $            + dust_h2_heat * Rdust_rat
-#else
-            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2
-     $            * dust_to_gas_ratio + dust_h2_heat * Rdust_rat
-#endif
-          endif
+          call dust_newton_terms(temp, yn, abHI, isrf_heat, cl14, ch7,
+     $                           F_nr, dF_nr, Rdust, RH2, dust_cool,
+     $                           gas_dust, dust_h2_heat)
 #if 0
 c          if (temp .lt. 1.1d0) then
             print*, "Dust debug -- K, F_nr, dF_nr", K, F_nr, dF_nr
@@ -1088,6 +1028,87 @@ c
      $                          * 4.48d0 * eV
 #endif
       F = isrf_heat - dcool + gdust + hheat
+#endif /* SGCHEM */
+      return
+      end
+c
+c Dust energy balance F_nr(tdust) and its slope dF_nr at the common tdust, with the
+c grain H2 formation rates (Newton terms of calc_dust_temp)
+c
+      subroutine dust_newton_terms(temp, yn, abHI, isrf_heat, cl14, ch7,
+     $                             F_nr, dF_nr, Rdust, RH2, dust_cool,
+     $                             gas_dust, dust_h2_heat)
+#ifdef SGCHEM
+      implicit NONE
+#include "cool.h"
+      REAL temp, yn, abHI, isrf_heat, cl14, ch7, F_nr, dF_nr
+      REAL Rdust, RH2, dust_cool, gas_dust, dust_h2_heat
+      REAL h2_form_dust, temp2, tdust2, fa, stick, dfa, dtrdust
+      REAL Rdust_rat
+c
+c Cooling from dust (assuming optically thin emission) -- computed using same
+c opacities as for heating (i.e. OH94, MMP83). Accurate to within a factor two
+c over the temperature range 5 < Td < 100 K (==> max 10% error in Td)
+c
+          dust_cool = 4.68d-31 * tdust**6 * yn
+          dust_cool = dust_cool * dust_to_gas_ratio
+c
+c Gas-grain energy transfer -- Hollenbach & McKee (1989)
+c
+#ifdef NO_GAS_DUST_HEAT
+          gas_dust  = 0d0
+#else
+          gas_dust  = cl14 * (temp - tdust) * yn**2
+          gas_dust = gas_dust * dust_to_gas_ratio
+#endif
+c
+c Heating from H2 formation on grain surface
+c
+          h2_form_dust = 1d0 - h2_form_ex - h2_form_kin
+c
+c H2 formation rate on dust -- we calculate this here, as this allows us to
+c vary tdust without needing to call cheminmo again
+c 
+          temp2  = temp * 1d-2
+          tdust2 = tdust * 1d-2
+          fa     = 1d0 / (1d0 + 1d4 * dexp(-6d2 / tdust))
+          stick  = 1d0 / (1d0 + 0.4d0 * (temp2 + tdust2)**0.5d0 +
+     $                    0.2d0 * temp2 + 0.08d0 * temp2**2d0)
+          dfa    = - fa * (1 - fa) * (6d2 / tdust**2)
+          dtrdust = ch7 * stick * (dfa - 2d-2 * stick * fa / 
+     $            dsqrt(tdust + temp))
+          Rdust  = ch7 * fa * stick
+          Rdust_rat = (dfa / fa - 2d-2 * stick / dsqrt(tdust + temp))
+          RH2 = Rdust * abHI * yn**2
+c
+#ifdef NO_DUST_H2_HEAT
+          dust_h2_heat = 0d0
+#else
+c          dust_h2_heat = (RH2 / dust_to_gas_ratio) * h2_form_dust 
+          dust_h2_heat = (RH2) * h2_form_dust 
+     $                 * 4.48d0 * eV
+#endif
+c
+          if (Rdust .eq. 0d0) then
+c This can happen if we've set deff = 0
+            F_nr = isrf_heat - dust_cool + gas_dust
+#ifdef NO_GAS_DUST_HEAT
+            dF_nr = -(6d0 * dust_cool / tdust)
+#else
+c slope of gas_dust includes dust_to_gas_ratio (STL-294)
+            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2
+     $            * dust_to_gas_ratio
+#endif
+          else
+            F_nr  = isrf_heat - dust_cool + gas_dust + dust_h2_heat
+#ifdef NO_GAS_DUST_HEAT
+            dF_nr = -(6d0 * dust_cool / tdust)
+     $            + dust_h2_heat * Rdust_rat
+#else
+            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2
+     $            * dust_to_gas_ratio + dust_h2_heat * Rdust_rat
+#endif
+          endif
 #endif /* SGCHEM */
       return
       end

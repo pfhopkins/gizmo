@@ -400,6 +400,56 @@ double cxx_compute_h2_heating_fraction(double T, double n, double xh2)
 // dust-temperature solver statistics of this thread (tests): Newton iterations, solves that needed bisection
 thread_local long chem_dust_iters = 0, chem_dust_bisections = 0, chem_dust_bisect_evals = 0;
 
+// dust energy balance F(tdust), its slope dF/dtdust, and the grain H2 formation rates at tdust (Newton terms of calc_dust_temp)
+void cxx_dust_newton_terms(double yn, double temp, double abHI, double isrf_heat, double cl14, double ch7, double tdust,
+                           const ChemCell& c, double* F_nr, double* dF_nr, double* Rdust, double* RH2,
+                           double* dust_cool, double* gas_dust, double* dust_h2_heat)
+{
+    double temp2, tdust2, fa, stick;
+    (*dust_cool) = 4.68e-31 * chem_fpowi(tdust, 6) * yn;
+    (*dust_cool) *= c.dust_to_gas_ratio;
+#ifdef NO_GAS_DUST_HEAT
+    (*gas_dust) = 0.0;
+#else
+    (*gas_dust) = cl14 * (temp - tdust) * (yn * yn);
+    (*gas_dust) *= c.dust_to_gas_ratio;
+#endif
+    double h2_form_dust = 1.0 - c.h2_form_ex - c.h2_form_kin;
+
+    temp2  = temp * 1e-2;
+    tdust2 = tdust * 1e-2;
+    fa     = 1.0 / (1.0 + 1e4 * std::exp(-6e2 / tdust));
+    stick  = 1.0 / (1.0 + 0.4 * std::pow(temp2 + tdust2, 0.5)
+                        + 0.2 * temp2 + 0.08 * std::pow(temp2, 2.0));
+    double dfa = -fa * (1 - fa) * (6e2 / (tdust * tdust));
+    *Rdust = ch7 * fa * stick;
+    double Rdust_rat = (dfa / fa
+                      - 2e-2 * stick / std::sqrt(tdust + temp));
+    *RH2 = *Rdust * abHI * (yn * yn);
+
+#ifdef NO_DUST_H2_HEAT
+    (*dust_h2_heat) = 0.0;
+#else
+    (*dust_h2_heat) = (*RH2) * h2_form_dust * 4.48 * CHEM_EV;
+#endif
+    if (*Rdust == 0.0) {          // can happen if deff = 0
+        (*F_nr) = isrf_heat - (*dust_cool) + (*gas_dust);
+#ifdef NO_GAS_DUST_HEAT
+        (*dF_nr) = -(6.0 * (*dust_cool) / tdust);
+#else
+        (*dF_nr) = -(6.0 * (*dust_cool) / tdust) - cl14 * (yn * yn) * c.dust_to_gas_ratio;   // slope of gas_dust (STL-294)
+#endif
+    } else {
+        (*F_nr) = isrf_heat - (*dust_cool) + (*gas_dust) + (*dust_h2_heat);
+#ifdef NO_GAS_DUST_HEAT
+        (*dF_nr) = -(6.0 * (*dust_cool) / tdust) + (*dust_h2_heat) * Rdust_rat;
+#else
+        (*dF_nr) = -(6.0 * (*dust_cool) / tdust) - cl14 * (yn * yn) * c.dust_to_gas_ratio
+              + (*dust_h2_heat) * Rdust_rat;
+#endif
+    }
+}
+
 // ===========================================================================
 // calc_dust_temp (cool_util.F:802-1007)
 //
@@ -460,49 +510,9 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
             c.tdust = tdust_new;
             chem_dust_iters++;
 
-            dust_cool = 4.68e-31 * chem_fpowi(c.tdust, 6) * yn;
-            dust_cool *= c.dust_to_gas_ratio;
-#ifdef NO_GAS_DUST_HEAT
-            gas_dust = 0.0;
-#else
-            gas_dust = cl14 * (temp - c.tdust) * (yn * yn);
-            gas_dust *= c.dust_to_gas_ratio;
-#endif
-            double h2_form_dust = 1.0 - c.h2_form_ex - c.h2_form_kin;
-
-            temp2  = temp * 1e-2;
-            tdust2 = c.tdust * 1e-2;
-            fa     = 1.0 / (1.0 + 1e4 * std::exp(-6e2 / c.tdust));
-            stick  = 1.0 / (1.0 + 0.4 * std::pow(temp2 + tdust2, 0.5)
-                                + 0.2 * temp2 + 0.08 * std::pow(temp2, 2.0));
-            double dfa = -fa * (1 - fa) * (6e2 / (c.tdust * c.tdust));
-            *Rdust = ch7 * fa * stick;
-            double Rdust_rat = (dfa / fa
-                              - 2e-2 * stick / std::sqrt(c.tdust + temp));
-            *RH2 = *Rdust * abHI * (yn * yn);
-
-#ifdef NO_DUST_H2_HEAT
-            dust_h2_heat = 0.0;
-#else
-            dust_h2_heat = (*RH2) * h2_form_dust * 4.48 * CHEM_EV;
-#endif
             double F_nr, dF_nr;
-            if (*Rdust == 0.0) {          // can happen if deff = 0
-                F_nr = isrf_heat - dust_cool + gas_dust;
-#ifdef NO_GAS_DUST_HEAT
-                dF_nr = -(6.0 * dust_cool / c.tdust);
-#else
-                dF_nr = -(6.0 * dust_cool / c.tdust) - cl14 * (yn * yn) * c.dust_to_gas_ratio;   // slope of gas_dust (STL-294)
-#endif
-            } else {
-                F_nr = isrf_heat - dust_cool + gas_dust + dust_h2_heat;
-#ifdef NO_GAS_DUST_HEAT
-                dF_nr = -(6.0 * dust_cool / c.tdust) + dust_h2_heat * Rdust_rat;
-#else
-                dF_nr = -(6.0 * dust_cool / c.tdust) - cl14 * (yn * yn) * c.dust_to_gas_ratio
-                      + dust_h2_heat * Rdust_rat;
-#endif
-            }
+            cxx_dust_newton_terms(yn, temp, abHI, isrf_heat, cl14, ch7, c.tdust, c, &F_nr, &dF_nr, Rdust, RH2,
+                                  &dust_cool, &gas_dust, &dust_h2_heat);
 
             tdust_new = c.tdust - F_nr / dF_nr;
             // Bounded Newton iterate (2026-07-02 fix): grains sublimate above
