@@ -177,6 +177,9 @@ struct GasGraddata_out
     Quantities_for_Gradients_T<MyCommFloat> Gradients[3];
     Quantities_for_Gradients_T<MyCommFloat> Maxima;
     Quantities_for_Gradients_T<MyCommFloat> Minima;
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    int TD_NumPairs; /* pairs of this cell visited (the hydro pass replays the same pairs) */
+#endif
     MyFloat MaxDistance;
 #ifdef TURB_DIFF_DYNAMIC
     Vec3<MyDouble> Velocity_hat;
@@ -364,6 +367,14 @@ static inline void out2particle_GasGrad(struct GasGraddata_out *out, int i, int 
     {
         int j,k;
         MAX_ADD(GasGradDataPasser[i].MaxDistance,out->MaxDistance,mode);
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+        if(out->TD_NumPairs > 0) { /* added, never assigned: neighbours' counts may already be in */
+            #pragma omp atomic
+            CellP[i].TD_NumPairs += out->TD_NumPairs;
+            #pragma omp atomic write
+            CellP[i].TD_Touched = 1;
+        }
+#endif
 #ifdef TURB_DIFF_DYNAMIC
         for (j = 0; j < 3; j++) {
             MAX_ADD(GasGradDataPasser[i].Maxima.Velocity_bar[j], out->Maxima.Velocity_bar[j], mode);
@@ -1515,6 +1526,15 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                 } /* closes gradient_iteration == 0 */
 #endif
                 if((r2 >= h2_i) && (r2 >= h_j * h_j)) continue;
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+                if(gradient_iteration == 0) { /* both cells of the pair: an upper bound on the exchange evaluations touching each */
+                    out.TD_NumPairs += 1;
+                    #pragma omp atomic
+                    CellP[j].TD_NumPairs += 1;
+                    #pragma omp atomic write
+                    CellP[j].TD_Touched = 1;
+                }
+#endif
 
                 kernel.r = sqrt(r2);
                 if(kernel.r < kernel.h_i)

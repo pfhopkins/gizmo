@@ -231,6 +231,9 @@ struct INPUT_STRUCT_NAME
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     MyFloat Metallicity[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
 #endif
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    int TD_NumPairs;
+#endif
     
 #ifdef CHIMES_TURB_DIFF_IONS
     MyDouble ChimesNIons[CHIMES_TOTSIZE];
@@ -352,6 +355,9 @@ struct OUTPUT_STRUCT_NAME
 
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     MyFloat Dyield[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
+#endif
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(TEST_PRINT_DIFFUSION_H_CLOSURE)
+    int TD_NumEvals;
 #endif
 
 #ifdef CHIMES_TURB_DIFF_IONS
@@ -519,6 +525,9 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     for(k=0;k<NUM_METAL_SPECIES;k++) {in->Metallicity[k] = P[i].Metallicity[k];}
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    in->TD_NumPairs = CellP[i].TD_NumPairs;
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0);}
 #endif
@@ -667,7 +676,23 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     if(CellP[i].MaxKineticEnergyNgb < out->MaxKineticEnergyNgb) {CellP[i].MaxKineticEnergyNgb = out->MaxKineticEnergyNgb;}
 #endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    { /* neighbours' j-side writes reach the same field concurrently */
+        int any_ = 0;
+        for(k=0;k<TD_NUM_EXCHANGED;k++) {if(out->Dyield[k] != 0) {any_ = 1;
+            #pragma omp atomic
+            CellP[i].Dyield[k] += out->Dyield[k];}}
+        if(any_) {
+            #pragma omp atomic write
+            CellP[i].TD_Touched = 1;}
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+        #pragma omp atomic
+        CellP[i].TD_NumEvals += out->TD_NumEvals;
+#endif
+    }
+#else
     for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] += out->Dyield[k];}
+#endif
 #endif
 
 #ifdef CHIMES_TURB_DIFF_IONS
@@ -741,6 +766,59 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     hydro routines, AFTER the neighbors have all been checked and summed */
 /* --------------------------------------------------------------------------------- */
 /* --------------------------------------------------------------------------------- */
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+long TD_FloorCellsStep = 0; /* cells where the last apply had to floor a slot at zero (0 by the pair bound) */
+/* every gas cell touched in this hydro pass, active or not, applies its pair exchange and clears it, so nothing stays pending (STL-277) */
+static void td_apply_and_clear(void)
+{
+    long nfloor = 0, nover = 0; double floor_mass = 0, slot_dev = 0, z0_dev = 0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(+:nfloor,nover,floor_mass) reduction(max:slot_dev,z0_dev)
+#endif
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type != 0 || !CellP[i].TD_Touched) {continue;}
+        if(P[i].Mass > 0)
+        {
+            int fired = 0;
+            for(int k = 0; k < TD_NUM_EXCHANGED; k++)
+            {
+                if(CellP[i].Dyield[k] == 0) {continue;}
+                double x;
+#if defined(GALSF_RESOLVEDISM_DUST)
+                if(k >= NUM_METAL_SPECIES) {x = CellP[i].Dust[k-NUM_METAL_SPECIES] + CellP[i].Dyield[k] / P[i].Mass;} else
+#endif
+                {x = P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass;}
+                if(x < 0) {fired = 1; floor_mass -= x * P[i].Mass; x = 0;} /* never by the pair bound; counted */
+#if defined(GALSF_RESOLVEDISM_DUST)
+                if(k >= NUM_METAL_SPECIES) {CellP[i].Dust[k-NUM_METAL_SPECIES] = x;} else
+#endif
+                {P[i].Metallicity[k] = x;}
+            }
+            nfloor += fired;
+#if defined(TEST_PRINT_DIFFUSION_H_CLOSURE) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+            {double s_ = 0, z_ = 0; for(int k = 1; k < NUM_METAL_SPECIES; k++) {s_ += P[i].Metallicity[k]; if(k >= 3) {z_ += P[i].Metallicity[k];}}
+             slot_dev = DMAX(slot_dev, fabs(s_ - 1)); z0_dev = DMAX(z0_dev, fabs(z_ - P[i].Metallicity[0]));}
+#endif
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+            if(CellP[i].TD_NumEvals > CellP[i].TD_NumPairs) {nover++;}
+#endif
+        }
+        for(int k = 0; k < NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION; k++) {CellP[i].Dyield[k] = 0;}
+        CellP[i].TD_NumPairs = 0; CellP[i].TD_Touched = 0;
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+        CellP[i].TD_NumEvals = 0;
+#endif
+    }
+    long nl = nfloor, ng = 0; MPI_Allreduce(&nl, &ng, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD); TD_FloorCellsStep = ng;
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+    {double ls[3] = {floor_mass, (double)nfloor, (double)nover}, gs[3], lm[2] = {slot_dev, z0_dev}, gm[2];
+     MPI_Allreduce(ls, gs, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); MPI_Allreduce(lm, gm, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+     if(ThisTask == 0) {printf("DIFFSLOT t=%.17e floor_abs=%.17e floor_cells=%.0f max_slot_sum_dev=%.17e max_z0_dev=%.17e pairs_over_count=%.0f\n",
+                               All.Time, gs[0], gs[1], gm[0], gm[1], gs[2]); fflush(stdout);}}
+#endif
+}
+#endif
 #if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
 /*! global metal budget after each hydro step: sum of M*Z, and diffusive exchange still pending (0 without TURB_DIFF_METALS_EXACT_CONSERVATION) */
 void turb_diff_metals_budget_log(void)
@@ -755,7 +833,11 @@ void turb_diff_metals_budget_log(void)
 #endif
     }
     MPI_Allreduce(loc, tot, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    if(ThisTask==0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e floor_cells= %ld\n", All.Time, tot[0], tot[1], TD_FloorCellsStep);}
+#else
     if(ThisTask==0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e\n", All.Time, tot[0], tot[1]);}
+#endif
 }
 #endif
 
@@ -995,7 +1077,7 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 
 
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)) /* update the metal masses from exchange */
+#if (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE) /* update the metal masses from exchange (the pairwise exchange is applied for every cell after this loop) */
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION /* add the exchange received while inactive */
             for(int k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] += CellP[i].Dyield_pending[k]; CellP[i].Dyield_pending[k] = 0;}
 #endif
@@ -1099,7 +1181,7 @@ void hydro_final_operations_and_cleanup(void)
                 }
             }
 #endif
-#if defined(GALSF_RESOLVEDISM_DUST)
+#if defined(GALSF_RESOLVEDISM_DUST) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE)
             /* dust unpack, floor at 0 (Dyield already holds the pending exchange) */
             for(int k=0;k<NUM_RESOLVEDISM_DUST;k++) {CellP[i].Dust[k] = DMAX(CellP[i].Dust[k] + CellP[i].Dyield[k_offset+k] / P[i].Mass, 0.0);}
             k_offset += NUM_RESOLVEDISM_DUST;
@@ -1223,9 +1305,12 @@ void hydro_final_operations_and_cleanup(void)
         } // closes P[i].Type==0 check and so closes loop over particles i
     } // for (loop over active particles) //
 
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    td_apply_and_clear();
+#endif
     /* Diff-unpack breakdown: pinpoint pair-flux vs clamp contribution to dM_Z. */
     diff_unpack_breakdown_log(dMZ_pair_loc, dMZ_clamp_loc);
-#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+#if defined(TEST_PRINT_DIFFUSION_H_CLOSURE) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE)
     {
         double loc[4] = {DiffH_dy, DiffH_floor, DiffH_clos, DiffH_sumdy}, tot[4];
         MPI_Allreduce(loc, tot, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);

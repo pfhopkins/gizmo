@@ -213,6 +213,15 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
   changes in the converted part. At 0.1 Msun cells the kernel holds a few Msun, so up to ~25 % of the kernel gas becomes
   Ia matter. The rate normalisation is unchanged, so Ia iron per formed mass is rate x table yield. In the Stella x FIRE-3
   coupled mode the conversion acts on every FIRE slot, tracer slots included: the converted gas keeps no tracer.
+- **Metal diffusion.** Stella builds book every pair's turbulent metal exchange to both cells (METALS_EXACT_PAIRWISE_EXCHANGE,
+  replacing the forced TURB_DIFF_METALS_EXACT_CONSERVATION, which stays opt-in): with an inactive neighbour the active cell owns the
+  pair, with both active the shorter step owns it (equal steps half each, or the single evaluation of HYDRO_PAIR_ONCE), and the owner
+  computes it over its own step with the existing flux and limiters. At the end of every hydro pass every touched cell, active or not,
+  applies its exchange and clears it, so nothing stays pending. Each pair's 27 element-slot amounts are closed (residual shared in
+  proportion to |amount|, slot 0 = sum of metals) and then scaled by one factor so that no cell gives more than its holding / N per
+  evaluation, N counted in the gradient pass: a slot can never go below zero. Metal and element masses are exact with individual
+  timesteps. The 1 % per-pair cap is gone. MFM only (#error with MFV, SPH, GALSF_ISMDUSTCHEM_MODEL, TRANSPORT_SUBCYCLE); the SGChem
+  tracer slots are not diffused (as before: they were never applied). Restart layout changes (two ints per cell).
 - **Mass trace.** mass_balance_steps.txt counts mass leaving through an outflow boundary in M_bary (also in non-Stella
   builds), and mass_balance_elements.txt closes every element; MbaryOutflow is not restarted (the trace re-baselines after a
   restart).
