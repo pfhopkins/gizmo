@@ -557,6 +557,7 @@ static int phase_R(const ChemTables& TT, const char* tag)
 // ===========================================================================
 struct FloorRec { int key; long n; double maxrel; long bin[4]; char var[16]; };
 extern thread_local long chem_dust_iters, chem_dust_bisections;
+extern "C" void calc_dust_temp_(double* yn, double* chi_isrf, double* temp, double* abHI, double* RH2, double* Rdust, int* nocalc);
 static long g_last_dust_iters = 0, g_last_dust_bisect = 0;   // C++ dust solver work of the last forked call
 struct ChildResult {
     int rc; double wsec, en, td; long dust_iters, dust_bisect; double y[TRAC_NUM];
@@ -1038,9 +1039,30 @@ static int phase_F()
                         failed1 ? "not converged" : "converged", td2, conv ? "converged" : "NOT CONVERGED");
         }
         ok &= (nconv == nst);
+        // same root in both backends from different starts: C++ and Fortran, tdust 3.8 K and 30 K, spread <= 1e-6
+        int nsame = 0; double worst = 0.0;
+        for (double T : {3.0, 4.0, 5.0, 10.0, 30.0}) for (double aHI : {1e-3, 2e-2, 0.5}) {
+            double v[4]; int k = 0;
+            for (double t0 : {3.8, 30.0}) {
+                double RH2 = 0.0, Rd = 0.0;
+                c.tdust = t0; cxx_calc_dust_temp(nH, c.chi_isrf, T, aHI, &RH2, &Rd, 0, c); v[k++] = c.tdust;
+                double yn = nH, chi = c.chi_isrf, tg = T, ah = aHI; int nc = 0;
+                COOLRC.tdust = t0; calc_dust_temp_(&yn, &chi, &tg, &ah, &RH2, &Rd, &nc); v[k++] = COOLRC.tdust;
+            }
+            const double lo = std::min(std::min(v[0], v[1]), std::min(v[2], v[3]));
+            const double hi = std::max(std::max(v[0], v[1]), std::max(v[2], v[3]));
+            const double sp = (hi - lo) / lo;
+            worst = std::max(worst, sp); nsame += (sp <= 1e-6);
+            if (!(sp <= 1e-6))
+                std::printf("  dust root T %.1f K x_HI %.0e: cxx %.10g / %.10g, f77 %.10g / %.10g (start 3.8 / 30 K), spread %.1e  FAIL\n",
+                            T, aHI, v[0], v[2], v[1], v[3], sp);
+        }
+        std::printf("  dust root: %d of 15 states give the same tdust in both backends from both starts (<= 1e-6), worst spread %.1e\n",
+                    nsame, worst);
+        ok &= (nsame == 15);
     }
     std::printf("  GATE F: every solve rc 0, cxx dust iterations <= 1e6 per solve, final T and x_H2 within 1%% of DVODE, "
-                "dust T converged at the corner states: %s\n", ok ? "PASS" : "FAIL");
+                "dust T converged at the corner states, same dust root in both backends: %s\n", ok ? "PASS" : "FAIL");
     return ok;
 }
 
