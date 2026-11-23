@@ -2317,6 +2317,13 @@ static const int g_grav_coop_n_rows = (int) (sizeof(g_grav_coop_rows) / sizeof(g
  * packet row cannot be launched, and the replay for a packet that gives up. */
 static int gpu_grav_dense_walks_flat(int n_cand)
 {
+#ifdef GPU_SPEEDUP_GRAV_DENSE_FLAT
+    /* The crossover above, measured on MI250X, does not hold on every device: on MI300A, with one or two
+     * ranks per GPU, the single-target walk was already 37 % faster than the packets on calls of about
+     * 1e5 targets a rank, while the packets still won at 1e4.  This sets the crossover directly, in
+     * targets per rank, independent of the lane count. */
+    return n_cand >= GPU_SPEEDUP_GRAV_DENSE_FLAT;
+#endif
     return device_packet_lanes_saturated(n_cand, 2, gizmo_gpu_lane_count());
 }
 
