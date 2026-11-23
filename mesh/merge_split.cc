@@ -1215,7 +1215,7 @@ int merge_particles_ij(int i, int j)
     de_ij -= dm_ij * CellP[j].InternalEnergyPred;
     CellP[j].HydroAccel = (dp_ij - CellP[j].VelPred * (dm_ij / All.cf_atime)) * (1.0 / mtot);
     de_ij -= mtot * dot(CellP[j].VelPred, CellP[j].HydroAccel) / All.cf_atime + 0.5 * dm_ij * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
-    CellP[j].DtInternalEnergy = de_ij;
+    CellP[j].DtInternalEnergy = de_ij / mtot; /* de_ij is the merged cell's total energy rate: the kick wants the rate per unit mass, as HydroAccel above */
     // to be conservative adopt the maximum signal velocity and kernel length //
     CellP[j].MaxSignalVel = sqrt(CellP[j].MaxSignalVel*CellP[j].MaxSignalVel + CellP[i].MaxSignalVel*CellP[i].MaxSignalVel); /* need to be conservative */
     P[j].KernelRadius = pow(pow(P[j].KernelRadius,NUMDIMS)+pow(P[i].KernelRadius,NUMDIMS),1.0/NUMDIMS); /* sum the volume of the two particles */
