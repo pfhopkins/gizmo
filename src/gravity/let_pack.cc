@@ -42,6 +42,7 @@
 #include <float.h>
 #include <limits.h>
 #include <vector>
+#include <algorithm>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -222,6 +223,218 @@ static struct LETOrphanRecord *let_my_orphan_for_topleaf(int t)
 /* ----------------------------------------------------------------------
  * Step 1: per-rank-payload computation
  * ---------------------------------------------------------------------- */
+
+/* Codes let_target_classify returns for a particle that is not a target in a top-leaf. */
+enum {LET_TARGET_NONE = -1, LET_TARGET_UNBUCKETABLE = -2};
+
+/* One local particle as a target of the receiver cover: the top-leaf whose box contains it (owned or not), or
+ * LET_TARGET_NONE when it is no target of this tree, or LET_TARGET_UNBUCKETABLE when its Father chain reaches no
+ * top-leaf.  For a top-leaf, *oa, *soft and *disp are its opening scalars. */
+static inline int let_target_classify(int i, const int *tl_lookup, double *oa, double *soft, double *disp)
+{
+    if(P[i].Mass <= 0) {return LET_TARGET_NONE;}
+    const int t = P[i].Type;
+    if(t < 0 || t > 5) {return LET_TARGET_NONE;}
+
+    /* Particles this tree does not contain carry Father[i] == -1: the finalize pass initialises
+     * every particle slot to -1 and writes only the ones that ended up in the tree. They are not
+     * targets of this tree's walk, so they take no part in the receiver cover -- including them
+     * would over-import on their behalf. Trees built over a particle subset (the halo finder's
+     * group and candidate trees) are what produces them; a full tree holds every local particle,
+     * so nothing is skipped there. */
+    if(Father[i] < 0) {return LET_TARGET_NONE;}
+
+    /* Map particle -> the topleaf whose box contains it, via the Father chain. Top-tree leaves do
+     * not nest, so the chain passes through EXACTLY ONE topleaf (the containing one) before climbing
+     * internal top-tree nodes to the root -- the first topleaf reached IS that topleaf. */
+    int tl = -1, no = Father[i], guard = 0;
+    while(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes && guard++ < 1024)
+    {
+        int cand = tl_lookup[no - All.TreeNodeIndexBase];
+        if(cand >= 0) { tl = cand; break; }
+        no = Nodes[no].u.d.father;
+    }
+    /* No topleaf on the Father chain at all -> genuine tree-topology corruption (NOT mere drift): the target has no
+     * geometry in ANY cover; the caller counts it for the collective controlled stop in let_run_exchange. */
+    if(tl < 0) {return LET_TARGET_UNBUCKETABLE;}
+
+    *oa = (double) P[i].OldAcc;
+    *soft = (double) ForceSoftening_KernelRadius(i);
+    /* How far this target may move, per axis, before the tree is expected to be rebuilt: the walk evaluates it
+       where it is then, not where it is now.  The same bound and the same horizon the pack uses to widen its own
+       nodes (TREE_NODE_WIDENING_DELTA widens a node's full width, so one side moves by half of it). */
+    double d = 0.5 * TREE_NODE_WIDENING_DELTA(particle_motion_speed_bound(i, P, CellP), tree_lifetime_drift());
+    /* A motion bound that is not a number bounds nothing: take it as unbounded, so the cover holds this target
+       anywhere rather than nowhere (a NaN would compare false against every maximum and leave its box unwidened). */
+    if(!isfinite(d)) {d = DBL_MAX;}
+    *disp = d;
+    return tl;
+}
+
+/* A cluster cover leaf with no members yet, and one member folded into it: tight member bbox, conservative
+ * member-max scalars (max soft-by-type, min soft, min OldAcc including zero, max displacement, OR has_sink).
+ * Every field is a minimum, maximum or OR, so the result does not depend on the order members arrive in. */
+static inline void let_cluster_init(struct LETCoverLeaf *c)
+{
+    for(int d = 0; d < 3; d++) { c->bmin[d] = DBL_MAX; c->bmax[d] = -DBL_MAX; }
+    c->s.min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) c->s.max_soft_by_type[k] = 0.0;
+    c->s.min_soft = DBL_MAX; c->s.max_displacement = 0.0; c->s.has_sink = 0; c->s.populated = 1;
+}
+static inline void let_cluster_add(struct LETCoverLeaf *c, const double pos[3], double soft, double oldacc, double disp, int type)
+{
+    for(int d = 0; d < 3; d++) { if(pos[d] < c->bmin[d]) c->bmin[d] = pos[d]; if(pos[d] > c->bmax[d]) c->bmax[d] = pos[d]; }
+    if(type >= 0 && type < 6 && soft > c->s.max_soft_by_type[type]) c->s.max_soft_by_type[type] = soft;
+    if(oldacc < c->s.min_OldAcc) c->s.min_OldAcc = oldacc;
+    if(soft < c->s.min_soft) c->s.min_soft = soft;
+    if(disp > c->s.max_displacement) c->s.max_displacement = disp;
+    if(type == 5) c->s.has_sink = 1;
+}
+static inline void let_cluster_close(struct LETCoverLeaf *c)
+{
+    if(c->s.min_OldAcc == DBL_MAX) c->s.min_OldAcc = 0.0;   /* conservative-zero (maximally-open relaccel) */
+    if(c->s.min_soft   == DBL_MAX) c->s.min_soft   = 0.0;
+}
+
+#ifdef GPU_SPEEDUP_LET_PAYLOAD_THREADED
+/* The receiver cover of the local targets, built on all host threads: the same clusters, in the same order and
+ * with the same values, as collecting every target as a member and sorting the members by (top-leaf, softening
+ * octave, displacement octave).  Targets are classified in parallel, bucketed by top-leaf with a counting sort,
+ * and each top-leaf's few members are ordered by octave pair on their own; every cluster field is a minimum,
+ * maximum or OR, so how members are grouped onto threads changes nothing.  Also forms the whole-rank scalars,
+ * the unbucketable count and the drift-orphan records, the latter in particle order as the serial loop makes them.
+ * Scratch: 36 bytes and one int per local particle plus one int per top-leaf and thread, grow-only, for the run. */
+static int    *g_lp_tl = NULL, *g_lp_oct = NULL, *g_lp_doct = NULL, *g_lp_order = NULL;
+static double *g_lp_val = NULL;   /* oa, soft, disp per particle */
+static int     g_lp_cap = 0;
+static std::vector<int> g_lp_count, g_lp_ncl;
+
+static void let_payload_targets_threaded(struct LETPerRankPayload *out, const int *tl_lookup)
+{
+    const int n = NumPart, ntl = NTopleaves;
+    if(n > g_lp_cap)
+    {
+        free(g_lp_tl); free(g_lp_oct); free(g_lp_doct); free(g_lp_order); free(g_lp_val);
+        g_lp_tl = (int *) malloc((size_t) n * sizeof(int));  g_lp_oct = (int *) malloc((size_t) n * sizeof(int));
+        g_lp_doct = (int *) malloc((size_t) n * sizeof(int)); g_lp_order = (int *) malloc((size_t) n * sizeof(int));
+        g_lp_val = (double *) malloc((size_t) n * 3 * sizeof(double));
+        if(!g_lp_tl || !g_lp_oct || !g_lp_doct || !g_lp_order || !g_lp_val)
+            {printf("let_compute_local_payload: no memory for the threaded cover scratch (%d particles, rank=%d). Stopping.\n", n, ThisTask); fflush(stdout); endrun(90000093);}
+        g_lp_cap = n;
+    }
+    const int threaded = gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, n);
+    const int nth = threaded ? omp_get_max_threads() : 1;
+
+    /* 1. classify every local particle; whole-rank scalars and the unbucketable count by reduction */
+    double min_oa = DBL_MAX, min_soft = DBL_MAX, max_soft_t[6] = {0, 0, 0, 0, 0, 0};
+    int has_sink = 0, first_unbucketable = INT_MAX;
+    long long n_unbucketable = 0;
+#pragma omp parallel for schedule(static) if(threaded) reduction(min: min_oa, min_soft, first_unbucketable) reduction(max: max_soft_t[:6], has_sink) reduction(+: n_unbucketable)
+    for(int i = 0; i < n; i++)
+    {
+        double oa = 0, soft = 0, disp = 0;
+        const int tl = let_target_classify(i, tl_lookup, &oa, &soft, &disp);
+        g_lp_tl[i] = tl;
+        if(tl == LET_TARGET_UNBUCKETABLE) {n_unbucketable++; if(i < first_unbucketable) first_unbucketable = i; continue;}
+        if(tl < 0) continue;
+        g_lp_val[3 * i] = oa; g_lp_val[3 * i + 1] = soft; g_lp_val[3 * i + 2] = disp;
+        g_lp_oct[i] = let_octave(soft); g_lp_doct[i] = let_octave(disp);
+        const int t = P[i].Type;
+        if(oa < min_oa) min_oa = oa;
+        if(soft > max_soft_t[t]) max_soft_t[t] = soft;
+        if(soft < min_soft) min_soft = soft;
+        if(t == 5) has_sink = 1;
+    }
+    out->min_OldAcc = min_oa; out->min_soft = min_soft; out->has_sink = has_sink;
+    for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = max_soft_t[t];
+    g_let_unbucketable = n_unbucketable;
+    g_let_unbucketable_first_id = n_unbucketable ? (long long) P[first_unbucketable].ID : -1;
+
+    /* 2. drift-orphans (targets in a top-leaf another rank owns): rare, merged in particle order */
+    for(int i = 0; i < n; i++)
+    {
+        const int tl = g_lp_tl[i];
+        if(tl >= 0 && DomainTask[tl] != ThisTask)
+            let_orphan_merge(let_my_orphan_for_topleaf(tl), g_lp_val[3 * i], g_lp_val[3 * i + 1], g_lp_val[3 * i + 2], P[i].Type);
+    }
+
+    /* 3. owned targets bucketed by top-leaf: per-thread counts over static slices, then a stable scatter over the
+     *    same slices (one parallel region, so both loops see the same team and the same slicing) */
+    std::vector<int> tl_start((size_t) ntl + 1, 0);
+    int team = 1;
+#pragma omp parallel num_threads(nth) if(threaded)
+    {
+        const int th = omp_get_thread_num();
+#pragma omp single
+        {
+            team = omp_get_num_threads();
+            g_lp_count.assign((size_t) team * (ntl + 1), 0);
+        }
+        int *cnt = &g_lp_count[(size_t) th * (ntl + 1)];
+#pragma omp for schedule(static)
+        for(int i = 0; i < n; i++) {const int tl = g_lp_tl[i]; if(tl >= 0 && DomainTask[tl] == ThisTask) cnt[tl]++;}
+#pragma omp single
+        {
+            long long run = 0;
+            for(int tl = 0; tl < ntl; tl++)
+            {
+                tl_start[tl] = (int) run;
+                for(int t2 = 0; t2 < team; t2++) {int *c = &g_lp_count[(size_t) t2 * (ntl + 1) + tl]; const int k = *c; *c = (int) run; run += k;}
+            }
+            tl_start[ntl] = (int) run;
+        }
+#pragma omp for schedule(static)
+        for(int i = 0; i < n; i++) {const int tl = g_lp_tl[i]; if(tl >= 0 && DomainTask[tl] == ThisTask) g_lp_order[cnt[tl]++] = i;}
+    }
+
+    /* 4. within each top-leaf, members ordered by (softening octave, displacement octave); one cluster per run */
+    g_lp_ncl.assign((size_t) ntl + 1, 0);
+#pragma omp parallel for schedule(dynamic, 16) if(threaded)
+    for(int tl = 0; tl < ntl; tl++)
+    {
+        int *b = g_lp_order + tl_start[tl], *e = g_lp_order + tl_start[tl + 1];
+        if(b == e) continue;
+        std::sort(b, e, [](int x, int y) {
+            if(g_lp_oct[x] != g_lp_oct[y]) return g_lp_oct[x] < g_lp_oct[y];
+            if(g_lp_doct[x] != g_lp_doct[y]) return g_lp_doct[x] < g_lp_doct[y];
+            return x < y;});
+        int runs = 1;
+        for(int *q = b + 1; q < e; q++) if(g_lp_oct[*q] != g_lp_oct[q[-1]] || g_lp_doct[*q] != g_lp_doct[q[-1]]) runs++;
+        g_lp_ncl[tl] = runs;
+    }
+    long long ncl_total = 0;
+    for(int tl = 0; tl < ntl; tl++) {const int c = g_lp_ncl[tl]; g_lp_ncl[tl] = (int) ncl_total; ncl_total += c;}
+    if(ncl_total > g_my_clusters_cap)
+    {
+        struct LETCoverLeaf *nb = (struct LETCoverLeaf *) realloc(g_my_clusters, (size_t) ncl_total * sizeof(struct LETCoverLeaf));
+        if(!nb) { printf("let_cluster_push: realloc failed (n=%lld, rank=%d). Stopping.\n", ncl_total, ThisTask); fflush(stdout); endrun(90000100); }
+        g_my_clusters = nb; g_my_clusters_cap = (int) ncl_total;
+    }
+#pragma omp parallel for schedule(dynamic, 16) if(threaded)
+    for(int tl = 0; tl < ntl; tl++)
+    {
+        const int *b = g_lp_order + tl_start[tl], *e = g_lp_order + tl_start[tl + 1];
+        int k = g_lp_ncl[tl];
+        for(const int *p = b; p < e; )
+        {
+            const int *q = p;
+            struct LETCoverLeaf c;
+            let_cluster_init(&c);
+            while(q < e && g_lp_oct[*q] == g_lp_oct[*p] && g_lp_doct[*q] == g_lp_doct[*p])
+            {
+                const int i = *q;
+                const double pos[3] = {(double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2]};
+                let_cluster_add(&c, pos, g_lp_val[3 * i + 1], g_lp_val[3 * i], g_lp_val[3 * i + 2], P[i].Type);
+                q++;
+            }
+            let_cluster_close(&c);
+            g_my_clusters[k++] = c;
+            p = q;
+        }
+    }
+    g_my_clusters_n = (int) ncl_total;
+}
+#endif
+
 extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
 {
     /* bbox: union of OUR topleaf bboxes (each topleaf's [center-len/2, center+len/2]).
@@ -285,49 +498,21 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
     g_my_orphans_n = 0;   /* drift-orphan records rebuilt each payload compute */
     g_cl_members_n = 0;   /* cluster members re-collected each payload compute */
 
+#ifdef GPU_SPEEDUP_LET_PAYLOAD_THREADED
+    let_payload_targets_threaded(out, tl_lookup);
+#else
     for(int i = 0; i < NumPart; i++)
     {
-        if(P[i].Mass <= 0) continue;
-        int t = P[i].Type;
-        if(t < 0 || t > 5) continue;
-
-        /* Particles this tree does not contain carry Father[i] == -1: the finalize pass initialises
-         * every particle slot to -1 and writes only the ones that ended up in the tree. They are not
-         * targets of this tree's walk, so they take no part in the receiver cover -- including them
-         * would over-import on their behalf. Trees built over a particle subset (the halo finder's
-         * group and candidate trees) are what produces them; a full tree holds every local particle,
-         * so nothing is skipped there. */
-        if(Father[i] < 0) continue;
-
-        /* Map particle -> the topleaf whose box contains it, via the Father chain. Top-tree leaves do
-         * not nest, so the chain passes through EXACTLY ONE topleaf (the containing one) before climbing
-         * internal top-tree nodes to the root -- the first topleaf reached IS that topleaf. */
-        int tl = -1, no = Father[i], guard = 0;
-        while(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes && guard++ < 1024)
+        double oa = 0, soft = 0, disp = 0;
+        const int tl = let_target_classify(i, tl_lookup, &oa, &soft, &disp);
+        if(tl == LET_TARGET_NONE) continue;
+        if(tl == LET_TARGET_UNBUCKETABLE)
         {
-            int cand = tl_lookup[no - All.TreeNodeIndexBase];
-            if(cand >= 0) { tl = cand; break; }
-            no = Nodes[no].u.d.father;
-        }
-        if(tl < 0)
-        {
-            /* No topleaf on the Father chain at all -> genuine tree-topology corruption (NOT mere
-             * drift): the target has no geometry in ANY cover. Count for the collective controlled
-             * stop in let_run_exchange. NEVER a silent fold-into-every-leaf downgrade. */
             if(g_let_unbucketable == 0) g_let_unbucketable_first_id = (long long) P[i].ID;
             g_let_unbucketable++;
             continue;
         }
-
-        double oa = (double) P[i].OldAcc;
-        double soft = (double) ForceSoftening_KernelRadius(i);
-        /* How far this target may move, per axis, before the tree is expected to be rebuilt: the walk evaluates it
-           where it is then, not where it is now.  The same bound and the same horizon the pack uses to widen its own
-           nodes (TREE_NODE_WIDENING_DELTA widens a node's full width, so one side moves by half of it). */
-        double disp = 0.5 * TREE_NODE_WIDENING_DELTA(particle_motion_speed_bound(i, P, CellP), tree_lifetime_drift());
-        /* A motion bound that is not a number bounds nothing: take it as unbounded, so the cover holds this target
-           anywhere rather than nowhere (a NaN would compare false against every maximum and leave its box unwidened). */
-        if(!isfinite(disp)) {disp = DBL_MAX;}
+        const int t = P[i].Type;
 
         if(DomainTask[tl] != ThisTask)
         {
@@ -351,6 +536,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
         if(soft < out->min_soft) out->min_soft = soft;
         if(t == 5) out->has_sink = 1;
     }
+#endif
     myfree(tl_lookup);
 
     /* Resolve orphan-record sentinels to conservative bounds (same convention as the owned slice
@@ -375,6 +561,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
      * scalars (max soft-by-type, min soft, min OldAcc including zero, max displacement, OR has_sink). An empty owned topleaf collected no
      * members, so it yields no cluster (the old populated=0 exclusion, now structural). This is the SSOT for
      * the receiver cover -- exchanged to every sender below; the whole-rank payload scalars are wire-compat only. */
+#ifndef GPU_SPEEDUP_LET_PAYLOAD_THREADED
     g_my_clusters_n = 0;
     if(g_cl_members_n > 0)
     {
@@ -386,25 +573,18 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
             while(q < g_cl_members_n && g_cl_members[q].tl == g_cl_members[p].tl &&
                   g_cl_members[q].octave == g_cl_members[p].octave && g_cl_members[q].disp_octave == g_cl_members[p].disp_octave) q++;
             struct LETCoverLeaf c;
-            for(int d = 0; d < 3; d++) { c.bmin[d] = DBL_MAX; c.bmax[d] = -DBL_MAX; }
-            c.s.min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) c.s.max_soft_by_type[k] = 0.0;
-            c.s.min_soft = DBL_MAX; c.s.max_displacement = 0.0; c.s.has_sink = 0; c.s.populated = 1;
+            let_cluster_init(&c);
             for(int r = p; r < q; r++)
             {
                 struct LETClusterMember *m = &g_cl_members[r];
-                for(int d = 0; d < 3; d++) { if(m->pos[d] < c.bmin[d]) c.bmin[d] = m->pos[d]; if(m->pos[d] > c.bmax[d]) c.bmax[d] = m->pos[d]; }
-                if(m->type >= 0 && m->type < 6 && m->soft > c.s.max_soft_by_type[m->type]) c.s.max_soft_by_type[m->type] = m->soft;
-                if(m->oldacc < c.s.min_OldAcc) c.s.min_OldAcc = m->oldacc;
-                if(m->soft < c.s.min_soft) c.s.min_soft = m->soft;
-                if(m->disp > c.s.max_displacement) c.s.max_displacement = m->disp;
-                if(m->type == 5) c.s.has_sink = 1;
+                let_cluster_add(&c, m->pos, m->soft, m->oldacc, m->disp, m->type);
             }
-            if(c.s.min_OldAcc == DBL_MAX) c.s.min_OldAcc = 0.0;   /* conservative-zero (maximally-open relaccel) */
-            if(c.s.min_soft   == DBL_MAX) c.s.min_soft   = 0.0;
+            let_cluster_close(&c);
             let_cluster_push(&c);
             p = q;
         }
     }
+#endif
     out->n_clusters = g_my_clusters_n;
     /* The relative-criterion activation is not shipped: the cell predicate recomputes it sender-side
      * from All.ErrTolTheta + the first-step test (both global, identical on every rank). */
