@@ -51,7 +51,7 @@ void read_ic(char *fname)
     long i; int num_files, rest_files, ngroups, gr, filenr, primaryTask, lastTask, groupTaskIterator;
     double u_init, molecular_weight; char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
 
 #ifdef CBE_INTEGRATOR
     /* Reset per-type VlasovMoments-loaded flags before any HDF5 open.
@@ -406,7 +406,7 @@ void read_ic(char *fname)
     gizmo_exit_bad_stop_if_requested("read_ic:done");   /* final all-rank drain (replaces the closing barrier) */
     if(ThisTask == 0) {printf("Reading done. Total number of particles :  %d%09d\n\n", (int) (All.TotNumPart / 1000000000), (int) (All.TotNumPart % 1000000000)); fflush(stdout);}
 
-    CPU_Step[CPU_SNAPSHOT] += measure_time();
+    cpu_charge(CPU_SNAPSHOT, measure_time());
 }
 
 

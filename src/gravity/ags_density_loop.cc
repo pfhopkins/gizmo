@@ -284,7 +284,7 @@ void AgsDensitySpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
 
 void ags_density(void)
 {
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
     double t00_truestart = my_second(); double child0_span = CPU_ChildCharged;
 
     /* Canonical host All accessor — stylistic intent-tag for host-snapshot
@@ -351,7 +351,7 @@ void ags_density(void)
          * (runner asserts num_subgroups >= 1 at entry). */
         myfree(AGS_Prev);
         double t1 = my_second(); cpu_chain_sync(t1);
-        CPU_Step[CPU_AGSDENSMISC] += cpu_minus_children(timediff(t00_truestart, t1), child0_span);
+        cpu_charge(CPU_AGSDENSMISC, cpu_minus_children(timediff(t00_truestart, t1), child0_span));
         return;
     }
 
@@ -391,7 +391,7 @@ void ags_density(void)
     const double t_runner_start = my_second(); const double child0_runner = CPU_ChildCharged;
     run_neighbor_loop_iterative<AgsDensitySpec>(args);
     const double t_runner = cpu_minus_children(timediff(t_runner_start, my_second()), child0_runner);
-    CPU_Step[CPU_AGSDENSCOMPUTE] += t_runner;
+    cpu_charge(CPU_AGSDENSCOMPUTE, t_runner);
 
     /* Post-runner cleanup. */
     if(NTask > 1) ghost_exchange_cleanup();
@@ -435,7 +435,7 @@ void ags_density(void)
     double t1 = my_second(); cpu_chain_sync(t1);
     double timeall = cpu_minus_children(timediff(t00_truestart, t1), child0_span);
     /* The caller's own share: the whole call less the runner span charged above. */
-    CPU_Step[CPU_AGSDENSMISC] += timeall - t_runner;
+    cpu_charge(CPU_AGSDENSMISC, timeall - t_runner);
 }
 
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */

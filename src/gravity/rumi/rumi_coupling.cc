@@ -135,7 +135,7 @@ template <class V> void get(const std::vector<char> &b, size_t &o, V &v) {std::m
 template <class V> void get_vec(const std::vector<char> &b, size_t &o, std::vector<V> &v) {long long n; get(b, o, n); v.resize(n); if(n) {std::memcpy(v.data(), b.data() + o, n * sizeof(V));} o += n * sizeof(V);}
 
 /* RUMI++'s share of the CPU accounting: what ran before is charged as before, this function's time to CPU_RUMI */
-struct RumiClock {RumiClock() {CPU_Step[CPU_MISC] += measure_time();} ~RumiClock() {CPU_Step[CPU_RUMI] += measure_time();}};
+struct RumiClock {RumiClock() {cpu_charge(CPU_MISC, measure_time());} ~RumiClock() {cpu_charge(CPU_RUMI, measure_time());}};
 
 } // namespace
 

@@ -70,7 +70,7 @@ void thermal_fb_calc(void)
     if (!nlr_build_active_list(ThermalFBSpec::is_active,
                                 &active_list, &num_active,
                                 "thermalfb_active_list")) {
-        CPU_Step[CPU_SNIIHEATING] += measure_time();
+        cpu_charge(CPU_SNIIHEATING, measure_time());
         return;
     }
 
@@ -123,7 +123,7 @@ void thermal_fb_calc(void)
     myfree(host_locals);
     nlr_free_active_list(active_list);
 
-    CPU_Step[CPU_SNIIHEATING] += measure_time();
+    cpu_charge(CPU_SNIIHEATING, measure_time());
 }
 
 

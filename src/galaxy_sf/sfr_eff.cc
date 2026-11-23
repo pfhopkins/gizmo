@@ -987,7 +987,7 @@ void star_formation_parent_routine(void)
             fflush(FdSfr); // can flush it, because only occuring on domain-level steps anyways
         } // thistask==0
     }
-    CPU_Step[CPU_COOLINGSFR] += measure_time();
+    cpu_charge(CPU_COOLINGSFR, measure_time());
 } /* end of main sfr_cooling routine */
 
 

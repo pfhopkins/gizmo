@@ -770,7 +770,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
  *       IMPORT-ONLY (no drift): post-density move_particles at All.Ti_Current
  *       breaks downstream hydro's drift contract (SP4 abort
  *       'no prediction into past allowed').
- *   (8) Timing: CPU_Step[CPU_MISC] += measure_time() at entry; PRINT_STATUS
+ *   (8) Timing: cpu_charge(CPU_MISC, measure_time()) at entry; PRINT_STATUS
  *       at end mirroring legacy line 800-802.
  * ==================================================================== */
 void density(void)
@@ -778,7 +778,7 @@ void density(void)
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();
     if (host_all->TotN_gas <= 0) return;
 
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
     const double t00_truestart = my_second();
 
     /* (1) Ghost lifecycle: caller does NOT call gizmo_hydro_density_prep_ghosts

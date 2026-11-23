@@ -655,6 +655,7 @@
 #OUTPUT_MASS_BALANCE_BREAKDOWN # with the checkpoints: more of them (feedback, gas collection, diffusion apply, merge/split), mass per element and slot-sum range on stdout (MCBAL lines), diff_unpack_breakdown.txt per hydro step; reductions at every checkpoint, diagnostic only
 #OUTPUT_ENERGY_STEP_TRACE      # with OUTPUT_MASS_METAL_ENERGY_LEDGER: per-stage energy closure (energy twin of mass_balance_steps.txt) -> energy_step_trace.txt: rank-local stage brackets, bookings where energy is added or removed (feedback ejecta energy at the star, cooling solve, PI raise, floors, CR losses, kick floor), one MPI_Reduce every N steps (=N, default 1) and at full syncs; E_pot at full syncs (implies EVALPOTENTIAL); checked by gizmo.conservation_trace
 #OUTPUT_ADDITIONAL_RUNINFO      # enables extended simulation output data (can slow down machines significantly in massively-parallel runs)
+#OUTPUT_TIMING_BREAKDOWN        # cpu.txt rows also give, per bucket, the device kernel time of the kernels launched in it, host time waiting on the device (fences, copies), host time in OpenMP parallel regions, single-thread host time, kernel launches and fences; plus a per-step line. Measured without adding any synchronization (device events, Kokkos Tools and OpenMP tools callbacks)
 #OUTPUT_IN_DOUBLEPRECISION      # snapshot files will be written in double precision
 #INPUT_IN_DOUBLEPRECISION       # input files assumed to be in double precision (otherwise float is assumed)
 #INPUT_POSITIONS_IN_DOUBLE      # as above, but specific to the ICs file

@@ -3052,6 +3052,10 @@ int gx_mode_d_staging_acquire(void)
         gx_mode_d_eval_instance = new Kokkos::DefaultExecutionSpace();
 #endif
     } catch(...) {delete gx_mode_d_copy_instance; gx_mode_d_copy_instance = NULL; gx_mode_d_eval_instance = NULL;}
+    if(gx_mode_d_copy_instance && gx_mode_d_eval_instance) {
+        timing_breakdown_register_instance(*gx_mode_d_copy_instance);
+        timing_breakdown_register_instance(*gx_mode_d_eval_instance);
+    }
     int events_made = 0;
     if(gx_mode_d_copy_instance && gx_mode_d_eval_instance) {
         for(; events_made < MODE_D_EVAL_EVENTS; events_made++) {if(gx_mode_d_eval_events[events_made].create() != 0) {break;}}

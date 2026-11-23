@@ -1246,6 +1246,9 @@ OBJS    += eos/aneos.o
 INCL    += eos/aneos.h
 endif
 
+# cpu.txt timing breakdown (OUTPUT_TIMING_BREAKDOWN): Kokkos Tools callbacks and device events; empty without the flag
+GPU_OBJS += system/timing_breakdown.o
+
 # nuclear reaction network — nuclear.o is GPU-compiled; physics functions are header-only
 # (nuclear_physics_functions.h, included by nuclear.cc) so no separate physics .o is needed.
 ifeq (NUCLEAR_NETWORK,$(findstring NUCLEAR_NETWORK,$(CONFIGVARS)))
@@ -1472,6 +1475,8 @@ galaxy_sf/radfb_rp_loop.o: galaxy_sf/radfb_rp_loop.cc $(INCL) $(CONFIG) compile_
 system/gpu_particles_arena.o: system/gpu_particles_arena.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 system/kokkos_mem_telemetry.o: system/kokkos_mem_telemetry.cc $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+system/timing_breakdown.o: system/timing_breakdown.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 gravity/gpu_gravity_tree.o: gravity/gpu_gravity_tree.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@

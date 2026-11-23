@@ -767,7 +767,7 @@ void add_turb_accel()
  * several threads with the same result once there are enough of them. */
 static void turb_driving_energy_half_kick(int second_half)
 {
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
     const int n_act = (int) ActiveParticleList.size();
     const int *act = ActiveParticleList.data();
 #ifdef _OPENMP
@@ -788,7 +788,7 @@ static void turb_driving_energy_half_kick(int second_half)
             CellP[i].EgyDrive += ekin1 - ekin0;
         }
     }
-    CPU_Step[CPU_DRIFT] += measure_time();
+    cpu_charge(CPU_DRIFT, measure_time());
 }
 void do_turb_driving_step_first_half(void) {turb_driving_energy_half_kick(0);}
 void do_turb_driving_step_second_half(void) {turb_driving_energy_half_kick(1);}

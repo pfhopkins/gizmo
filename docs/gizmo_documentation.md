@@ -2752,6 +2752,7 @@ These flags govern snapshot outputs (what is saved and how it is saved).
 # --------------------------------------- Input/Output options
 ####################################################################################################
 #OUTPUT_ADDITIONAL_RUNINFO      # enables extended simulation output data (can slow down machines significantly in massively-parallel runs)
+#OUTPUT_TIMING_BREAKDOWN        # cpu.txt rows also give, per bucket, the device kernel time of the kernels launched in it, host time waiting on the device (fences, copies), host time in OpenMP parallel regions, single-thread host time, kernel launches and fences; plus a per-step line. Measured without adding any synchronization (device events, Kokkos Tools and OpenMP tools callbacks)
 #OUTPUT_IN_DOUBLEPRECISION      # snapshot files will be written in double precision
 #INPUT_IN_DOUBLEPRECISION       # input files assumed to be in double precision (otherwise float is assumed)
 #INPUT_POSITIONS_IN_DOUBLE      # as above, but specific to the ICs file
@@ -2795,6 +2796,8 @@ These flags govern snapshot outputs (what is saved and how it is saved).
 **IO\_DISABLE\_HDF5**: If this is set, the code will be compiled without support for input and output in the HDF5 format. You need to have the HDF5 libraries and headers installed on your computer for the code to compile otherwise (which you should do). The HDF5 format format is normally format "3" in the parameterfile. Without it, the code will resort to the un-formatted fortran binary as the only option (format "1"), which is not recommended.
 
 **OUTPUT\_ADDITIONAL\_RUNINFO**: This enables various outputs that are disabled by default. This includes outputs like 'cpu.txt' every timestep instead of only on the super-steps, far more output in the stdout outputs, checking for 'stop' files for checkpointing every timestep, outputing the extended `sink_details.txt` files, etc. On machines with slow I/O, this can be a major slow-down and bottleneck for the code. On machines with fast I/O, this is much less of an issue. It depends strongly on the run. But most of the extra output is only needed for de-bugging.
+
+**OUTPUT\_TIMING\_BREAKDOWN**: Splits the wall time of every row of `cpu.txt` into what it was spent on: the device (GPU) run time of the kernels launched in it, host time spent waiting on the device, host time in OpenMP parallel regions, and the rest (single-thread host work), with the number of kernel launches and fences. See [cpu.txt](#logs-cpu). It adds no synchronization; on a GPU run of a molecular cloud (two pairs of runs with and without it, swapping the devices) the difference in wall time was within the run-to-run noise of about one percent. Combine it with `OUTPUT_ADDITIONAL_RUNINFO` to get the block every step.
 
 **OUTPUT\_IN\_DOUBLEPRECISION**: Snapshots written in double-precision (single is default, even though the code uses double; this is purely to save on storage).
 
@@ -5011,6 +5014,22 @@ Various optional physics modules will add their own blocks to the table here, so
 **localwindkik**: FIRE local radiation pressure calculation (`GALSF_FB_FIRE_RT_LOCALRP`).
 
 **rt\_nonfluxops**: Collects radiation-hydrodynamics operations (with `RADTRANSFER` active) not included already in the hydrodynamics solvers total above (those contain the cell-cell fluxes) and basic drift/kick operations (also already included above).
+
+**Where the time goes (`OUTPUT_TIMING_BREAKDOWN`)**: with this flag each row gets six more columns, and each block a line for the step itself (mean per MPI task). An excerpt (a molecular cloud with self-gravity, MHD, chemistry and stellar feedback, two tasks sharing one AMD MI300A):
+
+    this step, mean per task: wall 0.314 s, gpu_kern 0.229 s, gpu_wait 0.230 s, host_omp 0.019 s, launches 41, fences 107
+                        wall          gpu_kern  gpu_wait  host_omp host_1thr   launches    fences   (since this run started)
+    total             510.19  100.0%    258.65    261.55     97.58    151.06      51660    141818
+    tree+gravity      238.53   46.8%    175.87    178.47     24.88     35.17      10232     35547
+       treebuild       44.42    8.7%      5.40      8.03     17.89     18.50       9273     31886
+       treewalk       182.95   35.9%    170.47    170.44      6.99      5.52        959      3660
+    pair kernel        50.81   10.0%     50.74     50.77      0.00      0.04       1952      1953
+    domain             30.10    5.9%      0.16      0.00      0.41     29.69        187      1318
+    cooling+chem       59.55   11.7%      0.00      0.00     54.70      4.85          0         0
+
+Here the tree walk and the neighbor-pair kernels keep the device busy while the host waits for them, the cooling and chemistry run in threaded host loops, and the domain decomposition is single-thread host work.
+
+The columns are: `gpu_kern`, the run time on the device of the kernels launched in that row (measured with timing events placed around each kernel in its device queue, read once they are complete, so a kernel's time can appear one step after its launch); `gpu_wait`, host time spent waiting for the device in fences and device copies (the host time of a copy counts even when the copy only queues the transfer); `host_omp`, host time inside OpenMP parallel regions (all threads working, including the wait at the region's closing barrier); `host_1thr`, the rest of the row's wall time, i.e. host work on a single thread (including MPI); `launches` and `fences`, the numbers of device kernel launches and fences. Device time runs alongside host time, so `gpu_kern` is not part of the wall-time sum: a row with `gpu_kern` close to its wall time keeps the device busy, while a row with large `host_1thr` and small `gpu_kern` is limited by the host. The new columns are means over tasks and are counted from the start of the current run (they are not in the restart files). Events are attributed to the row whose timer covers the moment they happen (the launch of a kernel, the start of a wait), the same rule by which the wall time of a sub-row is taken out of its parent row. Kernels are seen through Kokkos' profiling hooks and OpenMP regions through the OpenMP tools interface (OMPT); if the OpenMP runtime has no OMPT (e.g. GCC's), only the regions of Kokkos' OpenMP back end are counted in `host_omp`. No synchronization is added. If a Kokkos tool library loaded through Kokkos' own options makes Kokkos fence around every kernel, the code warns, since those fences change the timings.
 
 
 <a name="logs-energy"></a>
