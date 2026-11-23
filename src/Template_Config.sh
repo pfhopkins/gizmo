@@ -141,7 +141,7 @@
 # -------------------------------------- Smagorinsky Turbulent Eddy Diffusion Model
 # --------------------------------------- Users of these modules should cite Hopkins et al. 2017 (arXiv:1702.06148) and Colbrook et al. (arXiv:1610.06590)
 #TURB_DIFF_METALS               # turbulent diffusion of metals (passive scalars); requires METALS
-#METALS_EXACT_PAIRWISE_EXCHANGE # metal mass conserved to round-off with individual timesteps: the shorter step owns each pair (diffusion, MFV metal flux) and writes both cells; not with GALSF_ISMDUSTCHEM_MODEL or TRANSPORT_SUBCYCLE
+#METALS_EXACT_PAIRWISE_EXCHANGE # opt-in (default: Phil's exchange, each cell its own step's share): metal mass conserved to round-off with individual timesteps: the shorter step owns each pair (diffusion, MFV metal flux) and writes both cells; not with GALSF_ISMDUSTCHEM_MODEL or TRANSPORT_SUBCYCLE
 #TURB_DIFF_ENERGY               # turbulent diffusion of internal energy (conduction with effective turbulent coefficients)
 #TURB_DIFF_VELOCITY             # turbulent diffusion of momentum (viscosity with effective turbulent coefficients)
 #TURB_DIFF_DYNAMIC              # replace Smagorinsky-style eddy diffusion with the 'dynamic localized Smagorinsky' model from Rennehan et al. (arXiv:1807.11509 and 2104.07673): cite those papers for all methods. more accurate but more complex and expensive.
