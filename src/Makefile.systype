@@ -23,3 +23,5 @@ SYSTYPE="MacBookCellar_Kokkos"
 #SYSTYPE="Orion_Kokkos"   # MPCDF Orion, CPU nodes via the Kokkos OpenMP backend
 #SYSTYPE="Lonestar6"      # TACC, A100 via the Kokkos CUDA backend (Kokkos built per user: see Makefile)
 #SYSTYPE="Lonestar6_CPU"  # TACC, same source dispatched to the Kokkos OpenMP backend
+#SYSTYPE="Horizon_GPU"     # TACC Horizon GB nodes, GB200 via the Kokkos CUDA backend (Kokkos built per user: see Makefile)
+#SYSTYPE="Horizon_CPU"     # TACC Horizon, same source dispatched to the Kokkos OpenMP backend

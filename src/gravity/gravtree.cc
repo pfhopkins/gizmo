@@ -573,14 +573,14 @@ gravity_walk_attempt:
             if(ThisTask == 0)
             {
                 if(repairing) {
-                    printf("The gravity walk needed to descend %lld imported node(s) that arrived without children, on "
+                    printf("The gravity walk needed to descend %lld node(s) whose children were not imported, on "
                            "%lld of %d ranks. The import is pruned when the tree is built, against where the particles "
                            "were then, and they have since moved far enough that the walk resolves structure it no "
                            "longer carries.%s%s Rebuilding the tree and redoing this evaluation against it. Frequent "
                            "repairs mean the tree is being reused too long -- lower TreeRebuild_ActiveFraction.\n",
                            total[0], total[1], NTask, example[0] ? " First case: " : "", example);
                 } else if(all_unrepairable) {
-                    printf("The gravity walk needed to descend %lld imported node(s) that arrived without children, "
+                    printf("The gravity walk needed to descend %lld node(s) whose children were not imported, "
                            "on %lld of %d ranks, and %lld of them are subtrees the sending rank never owned: every "
                            "child was a pseudo-particle or another rank's foreign node, so no rank could have "
                            "shipped them whole.%s%s Rebuilding reproduces that exactly. "
@@ -588,8 +588,8 @@ gravity_walk_attempt:
                            "the one-shot import does not express. Stopping.\n",
                            total[0], total[1], NTask, total[2], example[0] ? " First case: " : "", example);
                 } else {
-                    printf("The gravity walk still needed to descend %lld imported node(s) that arrived without "
-                           "children, on %lld of %d ranks, after the tree and its import were rebuilt against the "
+                    printf("The gravity walk still needed to descend %lld node(s) whose children were not "
+                           "imported, on %lld of %d ranks, after the tree and its import were rebuilt against the "
                            "current particle positions.%s%s That is not the tree falling behind the particles, so "
                            "rebuilding again would not fix it -- the receiver cover, the wire format or the import "
                            "install is not shipping what this walk opens. Stopping.\n",
