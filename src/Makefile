@@ -1083,6 +1083,7 @@ SYSTEM_OBJS =   system/system.o \
 GRAVITY_OBJS  = gravity/forcetree.o \
                 gravity/forcetree_update.o \
                 gravity/gravtree.o \
+                gravity/ewald_xy.o \
 				gravity/cosmology.o \
 				gravity/pm_periodic.o \
                 gravity/pm_nonperiodic.o \

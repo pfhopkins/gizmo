@@ -739,6 +739,53 @@ grav_pair_xy_images(const grav_pair_tgt_t &tgt, const grav_pair_src_t &src, grav
 }
 #endif /* GRAVITY_PERIODIC_XY_IMAGES */
 
+#ifdef GRAVITY_PERIODIC_XY
+/* x/y Ewald correction (unit mass, G = 1) for nearest-image separation dr = source - target: out[0..2] acceleration, out[3] potential,
+ * of all further x/y images. Trilinear in the table (gravity/ewald_xy.cc); beyond its height the uniform sheet minus the point mass. */
+KOKKOS_INLINE_FUNCTION void ewald_xy_corr(const double dr[3], double out[4])
+{
+    const double az = fabs(dr[2]);
+    if(az >= All.EwaldXY_zmax)
+    {
+        const double A = All.EwaldXY_Lx * All.EwaldXY_Ly, r2 = dr[0]*dr[0] + dr[1]*dr[1] + dr[2]*dr[2], r = sqrt(r2), r3 = r2 * r;
+        for(int d = 0; d < 3; d++) {out[d] = -dr[d] / r3;}
+        out[2] += (dr[2] > 0 ? 1.0 : -1.0) * 2.0 * M_PI / A;
+        out[3] = 2.0 * M_PI / A * az + 1.0 / r;
+        return;
+    }
+    const double sx = (dr[0] < 0) ? -1. : 1.; /* C(-dx,-dy,dz) = (-C_x, -C_y, C_z, pot) */
+    double u = sx * dr[0] / All.EwaldXY_dx, v = (sx * dr[1] + 0.5 * All.EwaldXY_Ly) / All.EwaldXY_dy, w = az / All.EwaldXY_dz;
+    int i = (int)u, j = (int)v, k = (int)w;
+    i = (i >= EWXY_NXH) ? EWXY_NXH - 1 : i;
+    j = (j < 0) ? 0 : ((j >= EWXY_NXY) ? EWXY_NXY - 1 : j);
+    k = (k >= All.EwaldXY_nz) ? All.EwaldXY_nz - 1 : k;
+    u -= i; v -= j; w -= k;
+    u = fmin(fmax(u, 0.), 1.); v = fmin(fmax(v, 0.), 1.);
+    const double fu[2] = {1 - u, u}, fv[2] = {1 - v, v}, fw[2] = {1 - w, w};
+    const float *tab = All.EwaldXY_Table; const int nz1 = All.EwaldXY_nz + 1;
+    for(int d = 0; d < 4; d++) {out[d] = 0;}
+    for(int a = 0; a < 2; a++) for(int b = 0; b < 2; b++) for(int c = 0; c < 2; c++)
+    {
+        const double f = fu[a] * fv[b] * fw[c];
+        const float *e = tab + 4 * ((size_t)((i + a) * (EWXY_NXY + 1) + (j + b)) * nz1 + (k + c));
+        for(int d = 0; d < 4; d++) {out[d] += f * e[d];}
+    }
+    out[0] *= sx; out[1] *= sx;
+    if(dr[2] < 0) {out[2] = -out[2];} /* z-component odd in dz, the rest even */
+}
+
+KOKKOS_INLINE_FUNCTION void
+grav_pair_xy_ewald(const grav_pair_tgt_t &tgt, const grav_pair_src_t &src, grav_pair_core_acc_t &core, grav_pair_optional_acc_t &optional)
+{
+    (void) tgt; (void) optional;
+    const double dr[3] = {src.dr[0], src.dr[1], src.dr[2]}; double out[4]; ewald_xy_corr(dr, out);
+    core.acc[0] += src.mass * out[0]; core.acc[1] += src.mass * out[1]; core.acc[2] += src.mass * out[2];
+#ifdef EVALPOTENTIAL
+    core.pot += src.mass * out[3];
+#endif
+}
+#endif /* GRAVITY_PERIODIC_XY */
+
 /* What the walker's payload blocks consume after the evaluation: the separation and the
  * acceleration prefactor as accumulated (PM-truncated when the source was in range of the
  * short-range table, raw otherwise -- the column-integral payloads have no PM completion). */
@@ -796,6 +843,9 @@ grav_pair_evaluate_core(const grav_pair_tgt_t &tgt, grav_pair_src_t &src, grav_p
         core.acc += fac_accel * src.dr;
 #ifdef GRAVITY_PERIODIC_XY_IMAGES
         grav_pair_xy_images(tgt, src, core, optional);
+#endif
+#ifdef GRAVITY_PERIODIC_XY
+        grav_pair_xy_ewald(tgt, src, core, optional);
 #endif
 #ifdef SINK_DYNFRICTION_FROMTREE
         grav_sink_dynfriction_accumulate(src.dr, src.dv, fac_accel, src.mass, tgt.sink_mass, src.m_j_eff_for_df, tgt.ptype, core.acc);

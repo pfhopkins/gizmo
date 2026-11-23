@@ -18,7 +18,7 @@
 
 /* Gravity wraps separations when the box and gravity are periodic, or when gravity is periodic in x/y by image sums
  * (GRAVITY_PERIODIC_XY_IMAGES: the box macros then wrap x and y only). */
-#if (defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)) || defined(GRAVITY_PERIODIC_XY_IMAGES)
+#if (defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)) || defined(GRAVITY_PERIODIC_XY_IMAGES) || defined(GRAVITY_PERIODIC_XY)
 #define GRAVITY_BOX_WRAPS
 #endif
 

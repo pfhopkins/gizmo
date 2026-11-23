@@ -318,6 +318,9 @@ void gravity_tree(void)
 
     /* set new softening lengths */
     if(All.ComovingIntegrationOn) {set_softenings();}
+#ifdef GRAVITY_PERIODIC_XY
+    ewald_xy_update(); /* collective, first call only: the x/y Ewald table */
+#endif
 
     /* Refresh the per-particle ForceSoftening cache for active particles.
      * Single source of truth shared by CPU walk, GPU walk, and tree-build
@@ -779,6 +782,9 @@ gravity_walk_attempt:
 #endif
 
 #ifdef EVALPOTENTIAL
+#ifdef GRAVITY_PERIODIC_XY
+        P[i].Potential += P[i].Mass * All.EwaldXY_SelfPot; /* the particle's own x/y images */
+#endif
         P[i].Potential *= All.G;
 #ifdef BOX_PERIODIC
         if(All.ComovingIntegrationOn) {P[i].Potential -= All.G * 2.8372975 * pow(P[i].Mass, 2.0 / 3) * pow(All.OmegaMatter * 3 * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits / (8 * M_PI * All.G), 1.0 / 3);} else {if(All.OmegaLambda>0) {P[i].Potential -= 0.5*All.OmegaLambda*All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits * (P[i].Pos.norm_sq());}}

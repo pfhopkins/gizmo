@@ -2026,6 +2026,29 @@
 #endif
 #endif
 
+/* GRAVITY_PERIODIC_XY: self-gravity periodic in x and y by a 2D Ewald correction table (gravity/ewald_xy.cc), open in z (tall boxes):
+ * the exact sheet field at any height. No 3D Ewald and no PM; the tree wraps x and y only, as with GRAVITY_PERIODIC_XY_IMAGES. */
+#ifdef GRAVITY_PERIODIC_XY
+#if defined(GRAVITY_PERIODIC_XY_IMAGES)
+#error "GRAVITY_PERIODIC_XY (Ewald) and GRAVITY_PERIODIC_XY_IMAGES (image sums) are alternatives"
+#endif
+#if !defined(BOX_PERIODIC) || defined(BOX_OUTFLOW_X) || defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_REFLECT_Y)
+#error "GRAVITY_PERIODIC_XY requires BOX_PERIODIC with periodic x and y boundaries"
+#endif
+#if !defined(BOX_OUTFLOW_Z) && !defined(BOX_REFLECT_Z)
+#error "GRAVITY_PERIODIC_XY requires a non-periodic z boundary (BOX_OUTFLOW_Z or BOX_REFLECT_Z)"
+#endif
+#if defined(BOX_SHEARING) || defined(PMGRID) || defined(GRAVITY_SPHERICAL_SYMMETRY) || defined(SINGLE_STAR_DIRECT_GRAVITY)
+#error "GRAVITY_PERIODIC_XY is not compatible with BOX_SHEARING, PMGRID, GRAVITY_SPHERICAL_SYMMETRY or SINGLE_STAR_DIRECT_GRAVITY"
+#endif
+#ifndef GRAVITY_NOT_PERIODIC
+#define GRAVITY_NOT_PERIODIC
+#endif
+#define EWXY_NXY 48        /* table cells across each of L_x, L_y */
+#define EWXY_NXH (EWXY_NXY / 2)
+#define EWXY_ZMAX_IN_L 2.0 /* table height in units of max(L_x, L_y) */
+#endif
+
 /* GRAVITY_PERIODIC_XY_IMAGES: self-gravity periodic in x and y by explicit image sums, open in z (tall boxes). No Ewald and no PM, so
  * the cubic-box solvers are switched off; the tree wraps separations in x and y only (z is non-periodic) and adds the images itself. */
 #ifdef GRAVITY_PERIODIC_XY_IMAGES

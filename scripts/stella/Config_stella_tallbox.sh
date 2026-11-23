@@ -1,4 +1,4 @@
-# Stella tall box: no band fluxes, radiation pressure at the star; needs the tall-box port (GRAVITY_PERIODIC_XY_IMAGES)
+# Stella tall box: no band fluxes, radiation pressure at the star; x/y-periodic gravity by 2D Ewald (GRAVITY_PERIODIC_XY) plus the Hu+21 potential
 HYDRO_MESHLESS_FINITE_MASS
 MAGNETIC
 MHD_B_SET_IN_PARAMS
@@ -16,7 +16,7 @@ OUTPUT_MASS_METAL_ENERGY_LEDGER
 BOX_PERIODIC
 BOX_LONG_Z=20
 BOX_OUTFLOW_Z
-GRAVITY_PERIODIC_XY_IMAGES
+GRAVITY_PERIODIC_XY                 # 2D Ewald x/y-periodic gravity (exact sheet field; stella_dev 799e10f39)
 GRAVITY_ANALYTIC_TALLBOX_HU21       # Hu+21 stellar disk + vertical NFW at R0 (stella_dev GALSF_RESOLVEDISM_TALLBOX)
 COOLING
 COOLING_OPERATOR_SPLIT

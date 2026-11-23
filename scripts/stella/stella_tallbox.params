@@ -9,7 +9,7 @@ TimeMax 0.5
 ComovingIntegrationOn 0
 MaxSizeTimestep 0.001
 MinSizeTimestep 0
-GravityPeriodicXYImages 8
+%GravityPeriodicXYImages 8      % only with GRAVITY_PERIODIC_XY_IMAGES; the tall box uses the 2D Ewald (GRAVITY_PERIODIC_XY)
 TreeDomainUpdateFrequency 0.05
 PartAllocFactor 5.0
 UnitLength_in_cm 3.085678e21
