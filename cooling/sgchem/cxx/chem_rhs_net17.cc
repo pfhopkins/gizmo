@@ -310,7 +310,9 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     }
 
     // --- protons (.F:717-744) ---
-    ydot[ihp] = (ch11 * abe   * abHI
+    // over-filled H (1 - 2 H2 - H+ - HD < 0): collisional, CR and photo ionization of that HI fraction stay restoring (D-30, D-58)
+    const double abHI_ion = (abHI_ph < 0.0) ? abHI_ph : abHI;
+    ydot[ihp] = (ch11 * abe   * abHI_ion
               + ch144 * abHI  * abHI
               + ch158 * abheI * abHI
               + T.cst[0] * abh2p * abHI
@@ -327,8 +329,8 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
               + h2p_cdh * abh2p * abM
               +  ch9  * abhep * abh2) * yn
               +  ph5  * abh2p
-              +  cr1  * abHI
-              +  ph38 * ((abHI_ph < 0.0) ? abHI_ph : abHI);
+              +  cr1  * abHI_ion
+              +  ph38 * abHI_ion;
     if (c.no_dchem == 0 && c.abundD > 0.0) {
         ydot[ihp] += (ch99  * abdp * abHI
                    -  ch98  * abhp * abDI
@@ -397,16 +399,18 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     if (c.abundD == 0.0 || c.no_dchem == 1) {
         ydot[idp] = 0.0;
     } else {
-        ydot[idp] = (ch98  * abhp  * abDI
+        // over-filled D (D+ + HD > abundD): ionization of that DI fraction stays restoring (D-60)
+        const double abDI_ion = std::min(abDI, c.abundD - abdp - abhd);
+        ydot[idp] = (ch98  * abhp  * abDI_ion
                   -  ch99  * abdp  * abHI
                   -  ch100 * abdp  * abh2
                   +  ch101 * abhd  * abhp
                   -  ch13  * abdp  * abe
-                  +  ch11  * abDI  * abe
-                  +  ch32  * abhep * abDI
+                  +  ch11  * abDI_ion  * abe
+                  +  ch32  * abhep * abDI_ion
                   -  ch33  * abheI * abdp) * yn
-                  +  cr1a  * abDI
-                  +  ph38  * abDI;
+                  +  cr1a  * abDI_ion
+                  +  ph38  * abDI_ion;
     }
 
     // --- HD (.F:848-860) ---

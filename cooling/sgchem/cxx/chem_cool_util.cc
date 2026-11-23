@@ -397,6 +397,59 @@ double cxx_compute_h2_heating_fraction(double T, double n, double xh2)
     return frac1 + dh2 * (frac2 - frac1);
 }
 
+// dust-temperature solver statistics of this thread (tests): Newton iterations, solves that needed bisection
+thread_local long chem_dust_iters = 0, chem_dust_bisections = 0, chem_dust_bisect_evals = 0;
+
+// dust energy balance F(tdust), its slope dF/dtdust, and the grain H2 formation rates at tdust (Newton terms of calc_dust_temp)
+void cxx_dust_newton_terms(double yn, double temp, double abHI, double isrf_heat, double cl14, double ch7, double tdust,
+                           const ChemCell& c, double* F_nr, double* dF_nr, double* Rdust, double* RH2,
+                           double* dust_cool, double* gas_dust, double* dust_h2_heat)
+{
+    double temp2, tdust2, fa, stick;
+    (*dust_cool) = 4.68e-31 * chem_fpowi(tdust, 6) * yn;
+    (*dust_cool) *= c.dust_to_gas_ratio;
+#ifdef NO_GAS_DUST_HEAT
+    (*gas_dust) = 0.0;
+#else
+    (*gas_dust) = cl14 * (temp - tdust) * (yn * yn);
+    (*gas_dust) *= c.dust_to_gas_ratio;
+#endif
+    double h2_form_dust = 1.0 - c.h2_form_ex - c.h2_form_kin;
+
+    temp2  = temp * 1e-2;
+    tdust2 = tdust * 1e-2;
+    fa     = 1.0 / (1.0 + 1e4 * std::exp(-6e2 / tdust));
+    stick  = 1.0 / (1.0 + 0.4 * std::pow(temp2 + tdust2, 0.5)
+                        + 0.2 * temp2 + 0.08 * std::pow(temp2, 2.0));
+    double dfa = -fa * (1 - fa) * (6e2 / (tdust * tdust));
+    *Rdust = ch7 * fa * stick;
+    double Rdust_rat = (dfa / fa
+                      - 2e-2 * stick / std::sqrt(tdust + temp));
+    *RH2 = *Rdust * abHI * (yn * yn);
+
+#ifdef NO_DUST_H2_HEAT
+    (*dust_h2_heat) = 0.0;
+#else
+    (*dust_h2_heat) = (*RH2) * h2_form_dust * 4.48 * CHEM_EV;
+#endif
+    if (*Rdust == 0.0) {          // can happen if deff = 0
+        (*F_nr) = isrf_heat - (*dust_cool) + (*gas_dust);
+#ifdef NO_GAS_DUST_HEAT
+        (*dF_nr) = -(6.0 * (*dust_cool) / tdust);
+#else
+        (*dF_nr) = -(6.0 * (*dust_cool) / tdust) - cl14 * (yn * yn) * c.dust_to_gas_ratio;   // slope of gas_dust (STL-294)
+#endif
+    } else {
+        (*F_nr) = isrf_heat - (*dust_cool) + (*gas_dust) + (*dust_h2_heat);
+#ifdef NO_GAS_DUST_HEAT
+        (*dF_nr) = -(6.0 * (*dust_cool) / tdust) + (*dust_h2_heat) * Rdust_rat;
+#else
+        (*dF_nr) = -(6.0 * (*dust_cool) / tdust) - cl14 * (yn * yn) * c.dust_to_gas_ratio
+              + (*dust_h2_heat) * Rdust_rat;
+#endif
+    }
+}
+
 // ===========================================================================
 // calc_dust_temp (cool_util.F:802-1007)
 //
@@ -407,7 +460,7 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
                         double* RH2, double* Rdust, int nocalc, ChemCell& c)
 {
     const ChemTables& T = *c.tab;
-    const int ndust_iter = 20000;
+    const int ndust_iter = 100;   // Newton budget; then bisection (D-61)
     double isrf_heat = 0.0, dust_cool = 0.0, gas_dust = 0.0, dust_h2_heat = 0.0;
 
     if (c.dust_to_gas_ratio > 1e-8 && temp < 1e5) {
@@ -455,50 +508,11 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
         int converged = 0;
         for (int K = 1; K <= ndust_iter; K++) {
             c.tdust = tdust_new;
+            chem_dust_iters++;
 
-            dust_cool = 4.68e-31 * chem_fpowi(c.tdust, 6) * yn;
-            dust_cool *= c.dust_to_gas_ratio;
-#ifdef NO_GAS_DUST_HEAT
-            gas_dust = 0.0;
-#else
-            gas_dust = cl14 * (temp - c.tdust) * (yn * yn);
-            gas_dust *= c.dust_to_gas_ratio;
-#endif
-            double h2_form_dust = 1.0 - c.h2_form_ex - c.h2_form_kin;
-
-            temp2  = temp * 1e-2;
-            tdust2 = c.tdust * 1e-2;
-            fa     = 1.0 / (1.0 + 1e4 * std::exp(-6e2 / c.tdust));
-            stick  = 1.0 / (1.0 + 0.4 * std::pow(temp2 + tdust2, 0.5)
-                                + 0.2 * temp2 + 0.08 * std::pow(temp2, 2.0));
-            double dfa = -fa * (1 - fa) * (6e2 / (c.tdust * c.tdust));
-            *Rdust = ch7 * fa * stick;
-            double Rdust_rat = (dfa / fa
-                              - 2e-2 * stick / std::sqrt(c.tdust + temp));
-            *RH2 = *Rdust * abHI * (yn * yn);
-
-#ifdef NO_DUST_H2_HEAT
-            dust_h2_heat = 0.0;
-#else
-            dust_h2_heat = (*RH2) * h2_form_dust * 4.48 * CHEM_EV;
-#endif
             double F_nr, dF_nr;
-            if (*Rdust == 0.0) {          // can happen if deff = 0
-                F_nr = isrf_heat - dust_cool + gas_dust;
-#ifdef NO_GAS_DUST_HEAT
-                dF_nr = -(6.0 * dust_cool / c.tdust);
-#else
-                dF_nr = -(6.0 * dust_cool / c.tdust) - cl14 * (yn * yn);
-#endif
-            } else {
-                F_nr = isrf_heat - dust_cool + gas_dust + dust_h2_heat;
-#ifdef NO_GAS_DUST_HEAT
-                dF_nr = -(6.0 * dust_cool / c.tdust) + dust_h2_heat * Rdust_rat;
-#else
-                dF_nr = -(6.0 * dust_cool / c.tdust) - cl14 * (yn * yn)
-                      + dust_h2_heat * Rdust_rat;
-#endif
-            }
+            cxx_dust_newton_terms(yn, temp, abHI, isrf_heat, cl14, ch7, c.tdust, c, &F_nr, &dF_nr, Rdust, RH2,
+                                  &dust_cool, &gas_dust, &dust_h2_heat);
 
             tdust_new = c.tdust - F_nr / dF_nr;
             // Bounded Newton iterate (2026-07-02 fix): grains sublimate above
@@ -507,23 +521,48 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
             if (tdust_new != tdust_new) tdust_new = T.tmin;
             if (tdust_new < T.tmin)     tdust_new = T.tmin;
             if (tdust_new > 1.5e3)      tdust_new = 1.5e3;
-            if (std::fabs((tdust_new - c.tdust) / c.tdust) < 1e-2) {
+            if (std::fabs((tdust_new - c.tdust) / c.tdust) < 1e-12) {   // same tight stop in both backends; RHS noise below Jacobian increments (D-61)
                 converged = 1;
                 break;
             }
         }
         if (!converged) {
-            std::printf("Dust temp iteration failed! %g %g %g\n",
-                        c.tdust, tdust_new, c.tdust - tdust_new);
-            std::printf("Particle : %ld\n", c.id_current);
-            std::printf("density, temp, %g %g\n", yn, temp);
-            std::printf("%g %g %g %g\n", isrf_heat, dust_cool, gas_dust,
-                        dust_h2_heat);
-            std::printf("dust_to_gas_ratio = %g\n", c.dust_to_gas_ratio);
-            std::printf("RH2 = %g\nch7 = %g\n", *RH2, ch7);
-            // ABORT(10) in the Fortran.  The port keeps the failure LOUD but
-            // routes it through the driver's recoverable path (DEVIATIONS D-3).
-            c.dust_iter_failed = 1;
+            // Newton did not converge: bisection on the balance F(tdust) over [tmin, 1500 K] (F falls with tdust), D-61
+            auto balance = [&](double td) {
+                const double dc = 4.68e-31 * chem_fpowi(td, 6) * yn * c.dust_to_gas_ratio;
+#ifdef NO_GAS_DUST_HEAT
+                const double gd = 0.0;
+#else
+                const double gd = cl14 * (temp - td) * (yn * yn) * c.dust_to_gas_ratio;
+#endif
+                const double t2 = temp * 1e-2, td2 = td * 1e-2;
+                const double f_a = 1.0 / (1.0 + 1e4 * std::exp(-6e2 / td));
+                const double st = 1.0 / (1.0 + 0.4 * std::pow(t2 + td2, 0.5) + 0.2 * t2 + 0.08 * std::pow(t2, 2.0));
+                *Rdust = ch7 * f_a * st;
+                *RH2 = *Rdust * abHI * (yn * yn);
+#ifdef NO_DUST_H2_HEAT
+                const double hh = 0.0;
+#else
+                const double hh = (*Rdust == 0.0) ? 0.0 : (*RH2) * (1.0 - c.h2_form_ex - c.h2_form_kin) * 4.48 * CHEM_EV;
+#endif
+                chem_dust_iters++; chem_dust_bisect_evals++;
+                return isrf_heat - dc + gd + hh;
+            };
+            double lo = T.tmin, hi = 1.5e3;
+            double td;
+            if (balance(lo) <= 0.0)      td = lo;      // no balance above tmin
+            else if (balance(hi) >= 0.0) td = hi;      // balance above the sublimation cap
+            else {
+                for (int k = 0; k < 60 && (hi - lo) > 1e-14 * lo; k++) {
+                    const double mid = 0.5 * (lo + hi);
+                    if (balance(mid) > 0.0) lo = mid; else hi = mid;
+                }
+                td = 0.5 * (lo + hi);
+            }
+            (void)balance(td);                         // RH2, Rdust at the returned tdust
+            c.tdust = td;
+            chem_dust_bisections++;
+            c.dust_iter_failed = 1;                    // Newton did not converge (diagnostic)
         }
     } else {
         *RH2 = 0.0; *Rdust = 0.0;

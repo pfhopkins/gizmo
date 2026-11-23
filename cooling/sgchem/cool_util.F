@@ -822,8 +822,12 @@ c=======================================================================
       REAL CMB_temp, CMB_heat, CMB_heat_z0
       integer K, itemp, nocalc
 
-      integer ndust_iter
-      parameter (ndust_iter = 20000)
+      integer*8 n_dust_newton, n_dust_bisect
+      common /dust_stat/ n_dust_newton, n_dust_bisect
+c$omp threadprivate(/dust_stat/)
+      integer ndust_iter, KB
+      parameter (ndust_iter = 100)
+      REAL td_lo, td_hi, td_mid, F_lo, F_hi, F_mid
 
       if (dust_to_gas_ratio .gt. 1d-8 .and. temp .lt. 1d5) then
         if (temp .le. tmin) then
@@ -900,6 +904,147 @@ c
         tdust_new = tdust
         do K = 1, ndust_iter
           tdust = tdust_new
+          n_dust_newton = n_dust_newton + 1
+          call dust_newton_terms(temp, yn, abHI, isrf_heat, cl14, ch7,
+     $                           F_nr, dF_nr, Rdust, RH2, dust_cool,
+     $                           gas_dust, dust_h2_heat)
+#if 0
+c          if (temp .lt. 1.1d0) then
+            print*, "Dust debug -- K, F_nr, dF_nr", K, F_nr, dF_nr
+            print*, "Dust debug -- isrf_heat", isrf_heat
+            print*, "Dust debug -- dust_cool", dust_cool
+            print*, "Dust debug -- gas_dust", gas_dust
+            print*, "Dust debug -- dust_h2_heat", dust_h2_heat
+            print*, "Dust debug -- temp, tdust, yn, abhI", temp, 
+     $              tdust, yn, abHI
+            print*, "Dust debug -- ch7, cl14, Rdust", ch7, cl14, Rdust
+c          endif
+#endif
+
+          tdust_new = tdust - F_nr / dF_nr
+c
+c Bound the Newton iterate to a physical dust-temperature range [tmin, ~1500 K].
+c Grains sublimate above ~1500 K, so a higher tdust is unphysical; without this
+c cap the solver (dust_cool ~ tdust^6, gas-grain heating from hot gas) can run
+c away to tdust >> 1e4 K, which massively overstiffens the chemistry network
+c (the net-17 DVODE "nstep exceeded" wedge showed tdust ~ 1e8 K at temp ~ 1e5 K).
+c NaN guard included.
+          if (tdust_new .ne. tdust_new) tdust_new = tmin
+          if (tdust_new .lt. tmin)   tdust_new = tmin
+          if (tdust_new .gt. 1.5d3)  tdust_new = 1.5d3
+          if (abs((tdust_new - tdust)/tdust) .lt. 1d-12) then
+            goto 101
+          endif
+        enddo
+c      
+c
+c Newton did not converge: bisection on the balance F(tdust) over [tmin, 1500 K]
+c (F falls with tdust), D-61 (was ABORT(10))
+c
+        n_dust_bisect = n_dust_bisect + 1
+        td_lo = tmin
+        td_hi = 1.5d3
+        call dust_balance(td_lo, F_lo, temp, yn, abHI, isrf_heat,
+     $                    cl14, ch7, Rdust, RH2)
+        call dust_balance(td_hi, F_hi, temp, yn, abHI, isrf_heat,
+     $                    cl14, ch7, Rdust, RH2)
+        if (F_lo .le. 0d0) then
+          tdust = td_lo
+        elseif (F_hi .ge. 0d0) then
+          tdust = td_hi
+        else
+          do KB = 1, 60
+            if (td_hi - td_lo .le. 1d-14 * td_lo) goto 102
+            td_mid = 0.5d0 * (td_lo + td_hi)
+            call dust_balance(td_mid, F_mid, temp, yn, abHI,
+     $                        isrf_heat, cl14, ch7, Rdust, RH2)
+            if (F_mid .gt. 0d0) then
+              td_lo = td_mid
+            else
+              td_hi = td_mid
+            endif
+          enddo
+ 102      continue
+          tdust = 0.5d0 * (td_lo + td_hi)
+        endif
+        call dust_balance(tdust, F_mid, temp, yn, abHI, isrf_heat,
+     $                    cl14, ch7, Rdust, RH2)
+      else
+        RH2   = 0d0
+        Rdust = 0d0
+c Hot/dust-free branch (temp >= 1e5 K or DGR ~ 0): dust rates are off, but do NOT
+c set tdust = temp — grains never reach the gas temperature (they sublimate at
+c ~1.5e3 K), and the unbounded value (up to ~1e8 K in SN bubbles) leaked into
+c DustTemp / diagnostics / dust_evolve inputs. Cap at the sublimation bound,
+c consistent with the Newton-branch clamp above. (2026-07-03)
+        tdust = min(temp, 1.5d3)
+      endif
+c
+ 101  continue
+c
+      if (tdust .eq. 0d0) then
+        print*, "Zero dust temp!"
+        print*, isrf_heat, dust_cool, gas_dust, dust_h2_heat
+      endif
+
+#endif /* SGCHEM */
+      return
+      end
+c=======================================================================
+c
+c    \\\\\\\\\\        E N D   S U B R O U T I N E        //////////
+c    //////////        C A L C _ D U S T _ T E M P        \\\\\\\\\\
+c
+c=======================================================================
+c
+c Dust energy balance F(tdust) and the grain H2 formation rates at tdust (the
+c Newton terms of calc_dust_temp), for the bisection fallback (D-61)
+c
+      subroutine dust_balance(td, F, temp, yn, abHI, isrf_heat, cl14,
+     $                        ch7, Rdust, RH2)
+#ifdef SGCHEM
+      implicit NONE
+#include "cool.h"
+      REAL td, F, temp, yn, abHI, isrf_heat, cl14, ch7, Rdust, RH2
+      REAL dcool, gdust, t2, td2, f_a, stk, hheat
+      dcool = 4.68d-31 * td**6 * yn * dust_to_gas_ratio
+#ifdef NO_GAS_DUST_HEAT
+      gdust = 0d0
+#else
+      gdust = cl14 * (temp - td) * yn**2 * dust_to_gas_ratio
+#endif
+      t2  = temp * 1d-2
+      td2 = td * 1d-2
+      f_a = 1d0 / (1d0 + 1d4 * dexp(-6d2 / td))
+      stk = 1d0 / (1d0 + 0.4d0 * (t2 + td2)**0.5d0 +
+     $             0.2d0 * t2 + 0.08d0 * t2**2d0)
+      Rdust = ch7 * f_a * stk
+      RH2 = Rdust * abHI * yn**2
+#ifdef NO_DUST_H2_HEAT
+      hheat = 0d0
+#else
+      hheat = 0d0
+      if (Rdust .ne. 0d0) hheat = RH2 * (1d0 - h2_form_ex - h2_form_kin)
+     $                          * 4.48d0 * eV
+#endif
+      F = isrf_heat - dcool + gdust + hheat
+#endif /* SGCHEM */
+      return
+      end
+c
+c Dust energy balance F_nr(tdust) and its slope dF_nr at the common tdust, with the
+c grain H2 formation rates (Newton terms of calc_dust_temp)
+c
+      subroutine dust_newton_terms(temp, yn, abHI, isrf_heat, cl14, ch7,
+     $                             F_nr, dF_nr, Rdust, RH2, dust_cool,
+     $                             gas_dust, dust_h2_heat)
+#ifdef SGCHEM
+      implicit NONE
+#include "cool.h"
+      REAL temp, yn, abHI, isrf_heat, cl14, ch7, F_nr, dF_nr
+      REAL Rdust, RH2, dust_cool, gas_dust, dust_h2_heat
+      REAL h2_form_dust, temp2, tdust2, fa, stick, dfa, dtrdust
+      REAL Rdust_rat
 c
 c Cooling from dust (assuming optically thin emission) -- computed using same
 c opacities as for heating (i.e. OH94, MMP83). Accurate to within a factor two
@@ -950,7 +1095,9 @@ c This can happen if we've set deff = 0
 #ifdef NO_GAS_DUST_HEAT
             dF_nr = -(6d0 * dust_cool / tdust)
 #else
-            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2 
+c slope of gas_dust includes dust_to_gas_ratio (STL-294)
+            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2
+     $            * dust_to_gas_ratio
 #endif
           else
             F_nr  = isrf_heat - dust_cool + gas_dust + dust_h2_heat
@@ -958,74 +1105,11 @@ c This can happen if we've set deff = 0
             dF_nr = -(6d0 * dust_cool / tdust)
      $            + dust_h2_heat * Rdust_rat
 #else
-            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2 
-     $            + dust_h2_heat * Rdust_rat
+            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2
+     $            * dust_to_gas_ratio + dust_h2_heat * Rdust_rat
 #endif
           endif
-#if 0
-c          if (temp .lt. 1.1d0) then
-            print*, "Dust debug -- K, F_nr, dF_nr", K, F_nr, dF_nr
-            print*, "Dust debug -- isrf_heat", isrf_heat
-            print*, "Dust debug -- dust_cool", dust_cool
-            print*, "Dust debug -- gas_dust", gas_dust
-            print*, "Dust debug -- dust_h2_heat", dust_h2_heat
-            print*, "Dust debug -- temp, tdust, yn, abhI", temp, 
-     $              tdust, yn, abHI
-            print*, "Dust debug -- ch7, cl14, Rdust", ch7, cl14, Rdust
-c          endif
-#endif
-
-          tdust_new = tdust - F_nr / dF_nr
-c
-c Bound the Newton iterate to a physical dust-temperature range [tmin, ~1500 K].
-c Grains sublimate above ~1500 K, so a higher tdust is unphysical; without this
-c cap the solver (dust_cool ~ tdust^6, gas-grain heating from hot gas) can run
-c away to tdust >> 1e4 K, which massively overstiffens the chemistry network
-c (the net-17 DVODE "nstep exceeded" wedge showed tdust ~ 1e8 K at temp ~ 1e5 K).
-c NaN guard included.
-          if (tdust_new .ne. tdust_new) tdust_new = tmin
-          if (tdust_new .lt. tmin)   tdust_new = tmin
-          if (tdust_new .gt. 1.5d3)  tdust_new = 1.5d3
-          if (abs((tdust_new - tdust)/tdust) .lt. 1d-2) then
-            goto 101
-          endif
-        enddo
-c      
-        print*, "Dust temp iteration failed! ", tdust, tdust_new, 
-     $          tdust-tdust_new
-        print*, "Particle :", id_current
-        print*, "density, temp,", yn, temp
-        print*, isrf_heat, dust_cool, gas_dust, dust_h2_heat
-        print*, "dust_to_gas_ratio = ", dust_to_gas_ratio
-        print*, "h2_form_dust = ", h2_form_dust
-        print*, "RH2 = ", RH2
-        print*, "ch7 = ", ch7
-        ABORT(10)
-      else
-        RH2   = 0d0
-        Rdust = 0d0
-c Hot/dust-free branch (temp >= 1e5 K or DGR ~ 0): dust rates are off, but do NOT
-c set tdust = temp — grains never reach the gas temperature (they sublimate at
-c ~1.5e3 K), and the unbounded value (up to ~1e8 K in SN bubbles) leaked into
-c DustTemp / diagnostics / dust_evolve inputs. Cap at the sublimation bound,
-c consistent with the Newton-branch clamp above. (2026-07-03)
-        tdust = min(temp, 1.5d3)
-      endif
-c
- 101  continue
-c
-      if (tdust .eq. 0d0) then
-        print*, "Zero dust temp!"
-        print*, isrf_heat, dust_cool, gas_dust, dust_h2_heat
-      endif
-
 #endif /* SGCHEM */
       return
       end
-c=======================================================================
-c
-c    \\\\\\\\\\        E N D   S U B R O U T I N E        //////////
-c    //////////        C A L C _ D U S T _ T E M P        \\\\\\\\\\
-c
-c=======================================================================
 

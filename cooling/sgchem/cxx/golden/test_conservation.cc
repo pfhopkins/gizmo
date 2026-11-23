@@ -556,8 +556,15 @@ static int phase_R(const ChemTables& TT, const char* tag)
 // deltas through a pipe.  Solver output of the child goes to /dev/null.
 // ===========================================================================
 struct FloorRec { int key; long n; double maxrel; long bin[4]; char var[16]; };
+extern thread_local long chem_dust_iters, chem_dust_bisections, chem_dust_bisect_evals;
+extern "C" CHEM_TLS struct { long long newton, bisect; } dust_stat_;   // cool_util.F counters (threadprivate)
+extern "C" void dust_newton_terms_(double* temp, double* yn, double* abHI, double* isrf_heat, double* cl14, double* ch7,
+                                   double* F, double* dF, double* Rdust, double* RH2, double* dc, double* gd, double* hh);
+static long g_last_fbis = 0;   // Fortran dust bisections of the last forked call
+extern "C" void calc_dust_temp_(double* yn, double* chi_isrf, double* temp, double* abHI, double* RH2, double* Rdust, int* nocalc);
+static long g_last_dust_iters = 0, g_last_dust_bisect = 0;   // C++ dust solver work of the last forked call
 struct ChildResult {
-    int rc; double wsec, en; double y[TRAC_NUM];
+    int rc; double wsec, en, td; long dust_iters, dust_bisect, fbis; double y[TRAC_NUM];
     ClipStat clip; double h3p_max, h3p_rel_max; long h3p_cap, h3p_capped, rhs;
     int nfl; FloorRec fl[64];
 };
@@ -595,8 +602,10 @@ static int run_forked(int backend, double dt, double nH, double* en, double* y, 
         g_h3p_max = g_h3p_rel_max = 0.0; g_h3p_cap = g_h3p_capped = 0;
         ChildResult r = ChildResult();
         double w0 = wall();
+        const long di0 = chem_dust_iters, db0 = chem_dust_bisections; const long long fb0 = dust_stat_.bisect;
         r.rc = backend ? run_cxx(dt, nH, en, y, td) : run_fortran(dt, nH, en, y, td);
-        r.wsec = wall() - w0; r.en = *en;
+        r.wsec = wall() - w0; r.en = *en; r.td = *td;
+        r.dust_iters = chem_dust_iters - di0; r.dust_bisect = chem_dust_bisections - db0; r.fbis = (long)(dust_stat_.bisect - fb0);
         for (int i = 0; i < TRAC_NUM; i++) r.y[i] = y[i];
         r.clip = g_clip; r.h3p_max = g_h3p_max; r.h3p_rel_max = g_h3p_rel_max;
         r.h3p_cap = g_h3p_cap; r.h3p_capped = g_h3p_capped; r.rhs = g_rhs_calls;
@@ -632,7 +641,8 @@ static int run_forked(int backend, double dt, double nH, double* en, double* y, 
     if (timed_out) { *wsec = tmax; return -9; }
     if (got < sizeof(r)) { *wsec = wall() - w0; return -8; }     // child died
     merge_child(r);
-    *en = r.en; for (int i = 0; i < TRAC_NUM; i++) y[i] = r.y[i];
+    *en = r.en; *td = r.td; for (int i = 0; i < TRAC_NUM; i++) y[i] = r.y[i];
+    g_last_dust_iters = r.dust_iters; g_last_dust_bisect = r.dust_bisect; g_last_fbis = r.fbis;
     *wsec = r.wsec;
     return r.rc;
 }
@@ -890,7 +900,36 @@ static int phase_M(const ChemTables& TT)
     }
     { int pass = rfl.npass == rfl.n; ok &= pass; std::printf("  flag (0/1)   %5ld/%-5ld %s\n", rfl.npass, rfl.n, pass ? "PASS" : "FAIL"); }
     // one-zone: the B2 cell 3782 solve (n 4.4, 1.65e5 K, x_H+ 0.9999951, dt 1.017e11 s) at three Gamma_HI
-    std::printf("  one-zone (n=4.4, T0=1.65e5 K, dt=1.017e11 s), Fortran DVODE vs C++ CVODE, gate final T and x_H+ within 1%%:\n");
+    // Uli 2026-11-19: each backend against the converged solution with the 1% bar; production rtol unchanged.
+    // Reference: golden/net<N>_onezone_converged_reference.txt, both backends at rtol 1e-8, written by this test built
+    // with -DTEST_WRITE_CONVERGED_REFERENCE (build_conservation.sh REFERENCE=1, golden/make_converged_references.sh).
+    // Required for nets 5 and 17; other networks without a reference keep the backend-vs-backend gate.
+    double Tref[3] = {0, 0, 0}, xref[3] = {0, 0, 0}, gref[3] = {0, 0, 0};
+    int have_ref = 0;
+#ifdef TEST_WRITE_CONVERGED_REFERENCE
+    FILE* refout = std::fopen(std::getenv("CONS_REF_OUT") ? std::getenv("CONS_REF_OUT") : "onezone_reference.txt", "w");
+#else
+    {
+        char rp[256];
+        std::snprintf(rp, sizeof(rp), "gizmo/cooling/sgchem/cxx/golden/net%d_onezone_converged_reference.txt", NET);
+        FILE* rf = std::fopen(rp, "r");
+        char line[512];
+        double g, tc, tf, xc, xf;
+        while (rf && std::fgets(line, sizeof(line), rf))
+            if (line[0] != '#' && std::sscanf(line, "%lf %lf %lf %lf %lf", &g, &tc, &tf, &xc, &xf) == 5 && have_ref < 3) {
+                gref[have_ref] = g; Tref[have_ref] = tc; xref[have_ref] = xc; have_ref++;
+            }
+        if (rf) std::fclose(rf);
+        have_ref = (have_ref == 3);
+        if (!have_ref && (NET == 5 || NET == 17)) {
+            std::printf("  FAIL: no converged one-zone reference %s\n", rp);
+            ok = 0;
+        }
+    }
+#endif
+    std::printf("  one-zone (n=4.4, T0=1.65e5 K, dt=1.017e11 s), gate final T and x_H+ within 1%% of %s:\n",
+                have_ref ? "the converged rtol-1e-8 solution, each backend" : "Fortran DVODE (C++ CVODE)");
+    int kG = 0;
     for (double G : Gs) {
         COOLRC.rt_phot_HI = G; COOLRC.rt_heat_HI = G * eps_ion;
         double y0[NSPEC]; initial_state(2, y0); y0[IH2] = 0.0; y0[IHP] = 0.9999951259;
@@ -904,12 +943,200 @@ static int phase_M(const ChemTables& TT)
         int rcC = run_cxx(dt, yn, &eC, yC, &tdC);
         long nrhs = cxx_stat_rhs_evals - n0;
         double TF = temp_of(*g_cx, yn, eF, yF), TC = temp_of(*g_cx, yn, eC, yC);
-        double dT = std::fabs(TF - TC) / TF, dx = std::fabs(yF[IHP] - yC[IHP]) / yF[IHP];
+        double dT, dx;
+#ifdef TEST_WRITE_CONVERGED_REFERENCE
+        if (refout) std::fprintf(refout, "%.17g %.17g %.17g %.17g %.17g\n", G, TC, TF, yC[IHP], yF[IHP]);
+#endif
+        if (have_ref && gref[kG] != G) {   // the reference row must be the Gamma_HI being run
+            std::printf("  FAIL: reference row %d has Gamma_HI %g, run has %g\n", kG, gref[kG], G);
+            ok = 0;
+        }
+        if (have_ref) {
+            dT = std::max(std::fabs(TF - Tref[kG]), std::fabs(TC - Tref[kG])) / Tref[kG];
+            dx = std::max(std::fabs(yF[IHP] - xref[kG]), std::fabs(yC[IHP] - xref[kG])) / xref[kG];
+        } else {
+            dT = std::fabs(TF - TC) / TF; dx = std::fabs(yF[IHP] - yC[IHP]) / yF[IHP];
+        }
         int pass = !rcF && !rcC && std::isfinite(TC) && dT < 1e-2 && dx < 1e-2; ok &= pass;
-        std::printf("  Gamma_HI=%.0e  rc f77/cxx %d/%d  T %.6e / %.6e (rel %.2e)  x_H+ %.9f / %.9f  C++ RHS evals %ld  %s\n",
-                    G, rcF, rcC, TF, TC, dT, yF[IHP], yC[IHP], nrhs, pass ? "PASS" : "FAIL");
+        std::printf("  Gamma_HI=%.0e  rc f77/cxx %d/%d  T %.6e / %.6e (ref %.6e, worst rel %.2e)  x_H+ %.9f / %.9f  C++ RHS evals %ld  %s\n",
+                    G, rcF, rcC, TF, TC, have_ref ? Tref[kG] : TF, dT, yF[IHP], yC[IHP], nrhs, pass ? "PASS" : "FAIL");
+        kG++;
     }
+#ifdef TEST_WRITE_CONVERGED_REFERENCE
+    if (refout) std::fclose(refout);
+#endif
     COOLRC.rt_phot_HI = COOLRC.rt_heat_HI = 0.0;
+    return ok;
+}
+
+// sgchem.cc final temperature (electrons = H+ only), used for the MinGasTemp rescale at fixed composition
+static double prod_temp(double nH, double en, const double* y)
+{
+    double ekn = en / (CHEM_KBOLTZ * (1.0 + CHEM_COMP.abhe - y[IH2] + y[IHP]) * nH), t, g;
+    cxx_lookup_temp_gamma(y[IH2], CHEM_COMP.abhe, ekn, &t, &g, *g_cx);
+    return t;
+}
+
+// PHASE F (STL-164, STL-294): dust temperature. (1) Production-like sequences in the dense shielded corner (nH 1e6,
+// G0 0, Z 3), where gas falls below ~4 K inside one solve: start at the floor, MinGasTemp (10 / 5 K) applied after every
+// solve as sgchem.cc does, solves of 100 yr .. 10 Myr up to 10 Myr in total (CONS_F_MAXSOLVES, default 200), both
+// backends. Gate: every solve rc 0, no dust bisection in either backend, C++ dust iterations <= 3e4 per solve (3x the
+// measured maximum), final C++ T and x_H2 within 1% of DVODE. (2) Same dust root in both backends from two starts
+// (<= 1e-6). (3) Newton over Z 0.1-3, nH 1e4-1e6, T 5 K-1e4 K, G0 0 / 1.7 / 100: no bisection, backends within 1e-9,
+// cold start <= 30 and warm start <= 20 iterations (Uli 2026-11-23). (4) Newton slope of each backend against a central difference of its own
+// balance, relative <= 1e-6, at 0.5x, 1x and 2x the root over the grid of (3).
+static int phase_F()
+{
+    const char* ms = std::getenv("CONS_F_MAXSOLVES");
+    const double cap = ms ? std::atof(ms) : 200.0;
+    std::printf("\nPHASE F -- dense shielded corner (nH 1e6, G0 0, Z 3): sequences with MinGasTemp applied after every solve, "
+                "both backends, <= %.0f solves per case\n", cap);
+    set_cell_commons(0.0, 3.0);
+    const double nH = 1e6;
+    int ok = 1;
+    for (double Tf : {10.0, 5.0}) for (double dt : {3.156e9, 3.156e10, 3.156e11, 3.156e12, 3.156e14}) for (int st = 0; st < NSTART; st++) {
+        double y0[TRAC_NUM], removed[NEL];
+        initial_state(st, y0); presolve(y0, removed);
+        const long nsteps = (long)std::min(cap, std::ceil(3.156e14 / dt));
+        double yb[2][TRAC_NUM], Tpre[2] = {0, 0}, wmax = 0.0;
+        int rcb[2] = {0, 0}; long nsol[2] = {0, 0}, maxit = 0, nbis = 0, nbisf = 0;
+        for (int b = 0; b < 2; b++) {
+            double y[TRAC_NUM]; for (int i = 0; i < TRAC_NUM; i++) y[i] = y0[i];
+            double en = energy_at(*g_cx, nH, Tf, y), td = 10.0;
+            for (long n = 0; n < nsteps; n++) {
+                double w = 0.0;
+                const int rc = run_forked(b, dt, nH, &en, y, &td, &w);
+                if (w > wmax) wmax = w;
+                if (rc) { rcb[b] = rc; break; }
+                if (b) { maxit = std::max(maxit, g_last_dust_iters); nbis += g_last_dust_bisect; } else nbisf += g_last_fbis;
+                const double Tp = prod_temp(nH, en, y);
+                Tpre[b] = Tp;
+                if (Tp < Tf && Tp > 0) en *= Tf / Tp;
+                nsol[b]++;
+            }
+            for (int i = 0; i < TRAC_NUM; i++) yb[b][i] = y[i];
+        }
+        const double relT = std::fabs(Tpre[1] - Tpre[0]) / Tpre[0];
+        const double h2 = std::max(yb[0][IH2], yb[1][IH2]);
+        const double relH2 = (h2 > 0.0) ? std::fabs(yb[1][IH2] - yb[0][IH2]) / h2 : 0.0;
+        const int bad = rcb[0] || rcb[1] || (maxit > 30000) || nbis || nbisf || !(relT <= 0.01) || !(relH2 <= 0.01);
+        ok &= !bad;
+        std::printf("  floor %4.0f K dt %9.3g start %d: solves f77 %ld rc %d, cxx %ld rc %d; T %.5g / %.5g K (rel %.1e), x_H2 rel %.1e; "
+                    "cxx dust iterations max %ld per solve, bisections cxx %ld / f77 %ld; slowest %.2f s%s\n",
+                    Tf, dt, st, nsol[0], rcb[0], nsol[1], rcb[1], Tpre[0], Tpre[1], relT, relH2, maxit, nbis, nbisf, wmax, bad ? "  FAIL" : "");
+        std::fflush(stdout);
+    }
+    {
+        ChemCell c; chem_bind_cell(c, *g_cx, NET);
+        // same root in both backends from different starts: C++ and Fortran, tdust 3.8 K and 30 K, spread <= 1e-6
+        int nsame = 0; double worst = 0.0;
+        for (double T : {3.0, 4.0, 5.0, 10.0, 30.0}) for (double aHI : {1e-3, 2e-2, 0.5}) {
+            double v[4]; int k = 0;
+            for (double t0 : {3.8, 30.0}) {
+                double RH2 = 0.0, Rd = 0.0;
+                c.tdust = t0; cxx_calc_dust_temp(nH, c.chi_isrf, T, aHI, &RH2, &Rd, 0, c); v[k++] = c.tdust;
+                double yn = nH, chi = c.chi_isrf, tg = T, ah = aHI; int nc = 0;
+                COOLRC.tdust = t0; calc_dust_temp_(&yn, &chi, &tg, &ah, &RH2, &Rd, &nc); v[k++] = COOLRC.tdust;
+            }
+            const double lo = std::min(std::min(v[0], v[1]), std::min(v[2], v[3]));
+            const double hi = std::max(std::max(v[0], v[1]), std::max(v[2], v[3]));
+            const double sp = (hi - lo) / lo;
+            worst = std::max(worst, sp); nsame += (sp <= 1e-6);
+            if (!(sp <= 1e-6))
+                std::printf("  dust root T %.1f K x_HI %.0e: cxx %.10g / %.10g, f77 %.10g / %.10g (start 3.8 / 30 K), spread %.1e  FAIL\n",
+                            T, aHI, v[0], v[2], v[1], v[3], sp);
+        }
+        std::printf("  dust root: %d of 15 states give the same tdust in both backends from both starts (<= 1e-6), worst spread %.1e\n",
+                    nsame, worst);
+        ok &= (nsame == 15);
+    }
+    // STL-294: the dust Newton converges over Z 0.1-3, nH 1e4-1e6, T 5 K-1e4 K, G0 0 / 1.7 / 100 in both backends: no
+    // bisection, C++ and Fortran roots within 1e-9; iteration bars (Uli 2026-11-23): cold start (min(T_gas, 100 K) or
+    // 10 K) <= 30, warm start (previous root, gas 1 % warmer, as in production) <= 20
+    {
+        int ncall = 0, nbad = 0; long mxc = 0, mxf = 0, nbc = 0, nbf = 0, mxev = 0, mxw = 0;
+        int nfd = 0, nfdbad = 0; double fdw[2] = {0.0, 0.0};
+        for (double G0 : {0.0, 1.7, 100.0}) for (double Z : {0.1, 0.3, 1.0, 3.0}) {
+            set_cell_commons(G0, Z);
+            ChemCell c; chem_bind_cell(c, *g_cx, NET);
+            c.chi_isrf = 1.0;
+            for (double n : {1e4, 1e5, 1e6}) for (double T : {5.0, 10.0, 20.0, 50.0, 100.0, 1e3, 1e4}) for (double aHI : {1e-3, 0.5}) for (int s0 = 0; s0 < 2; s0++) {
+                const double t0 = s0 ? 10.0 : std::min(T, 100.0);
+                double RH2 = 0.0, Rd = 0.0;
+                const long i0 = chem_dust_iters, e0 = chem_dust_bisect_evals, b0 = chem_dust_bisections;
+                c.tdust = t0; cxx_calc_dust_temp(n, c.chi_isrf, T, aHI, &RH2, &Rd, 0, c);
+                const long ev = chem_dust_bisect_evals - e0, nc_ = (chem_dust_iters - i0) - ev, bc = chem_dust_bisections - b0;
+                const double tdc = c.tdust;
+                double yn = n, chi = c.chi_isrf, tg = T, ah = aHI; int nc = 0;
+                const long long fn0 = dust_stat_.newton, fb0 = dust_stat_.bisect;
+                COOLRC.tdust = t0; calc_dust_temp_(&yn, &chi, &tg, &ah, &RH2, &Rd, &nc);
+                const long nf = (long)(dust_stat_.newton - fn0), bf = (long)(dust_stat_.bisect - fb0);
+                const double rel = std::fabs(COOLRC.tdust - tdc) / tdc;
+                const double tdf = COOLRC.tdust;
+                // warm start: each backend from its own root, gas 1 % warmer
+                const long wi0 = chem_dust_iters, we0 = chem_dust_bisect_evals, wb0 = chem_dust_bisections;
+                c.tdust = tdc; cxx_calc_dust_temp(n, c.chi_isrf, 1.01 * T, aHI, &RH2, &Rd, 0, c);
+                const long wev = chem_dust_bisect_evals - we0, wnc = (chem_dust_iters - wi0) - wev, wbc = chem_dust_bisections - wb0;
+                const double wtdc = c.tdust;
+                double tgw = 1.01 * T;
+                const long long wfn0 = dust_stat_.newton, wfb0 = dust_stat_.bisect;
+                COOLRC.tdust = tdf; calc_dust_temp_(&yn, &chi, &tgw, &ah, &RH2, &Rd, &nc);
+                const long wnf = (long)(dust_stat_.newton - wfn0), wbf = (long)(dust_stat_.bisect - wfb0);
+                const double wrel = std::fabs(COOLRC.tdust - wtdc) / wtdc;
+                const int bad = bc || bf || wbc || wbf || nc_ > 30 || nf > 30 || wnc > 20 || wnf > 20 || !(rel <= 1e-9) || !(wrel <= 1e-9);
+                ncall++; nbad += bad; mxc = std::max(mxc, nc_); mxf = std::max(mxf, nf); nbc += bc + wbc; nbf += bf + wbf;
+                mxev = std::max(mxev, std::max(ev, wev)); mxw = std::max(mxw, std::max(wnc, wnf));
+                if (bad && nbad <= 40)
+                    std::printf("  dust Newton G0 %.1f Z %.1f nH %.0e T %.0f K x_HI %.0e start %.0f K: cold cxx %ld / f77 %ld Newton, warm cxx %ld / f77 %ld, "
+                                "bisection entries cxx %ld / f77 %ld, tdust %.10g / %.10g  FAIL\n", G0, Z, n, T, aHI, t0, nc_, nf, wnc, wnf, bc + wbc, bf + wbf, tdc, tdf);
+                if (s0) continue;
+                // slope of each backend against a central difference of its own balance (inputs as calc_dust_temp builds them)
+                const ChemTables& TT = *c.tab;
+                int itemp; double dtemp;
+                if (T <= TT.tmin)      { itemp = 1;        dtemp = 0.0; }
+                else if (T >= TT.tmax) { itemp = CHEM_NMD; dtemp = 0.0; }
+                else { itemp = (int)(std::log10(T) / TT.dtlog) + 1; dtemp = T - TT.temptab[itemp - 1]; }
+                double ch7  = (TT.chtab[itemp - 1][6] + dtemp * TT.dtchtab[itemp - 1][6]) * c.dust_to_gas_ratio;
+                double cl14 = TT.cltab[itemp - 1][13] + dtemp * TT.dtcltab[itemp - 1][13];
+                const double CMB_heat_z0 = 4.68e-31 * std::pow(2.726, 6.0);
+                double isrf = std::max(0.0, ((c.isrf_option == 1) ? 5.8e-24 : 5.73e-24) * c.chi_isrf - CMB_heat_z0) * n * (c.G0_dust / (double)1.7f);
+                isrf = (isrf + 4.68e-31 * chem_fpowi(2.726 * (1.0 + c.redshift), 6) * n) * c.dust_to_gas_ratio;
+                for (double fac : {0.5, 1.0, 2.0}) {
+                    const double td = std::min(1400.0, std::max(1.5, fac * tdc)), h = 1e-6 * td;
+                    for (int be = 0; be < 2; be++) {
+                        double F[3], dF = 0.0, Rd2, RH, dc, gd, hh;
+                        const double tds[3] = {td, td + h, td - h};
+                        for (int q = 0; q < 3; q++) {
+                            double dFq;
+                            if (be == 0) cxx_dust_newton_terms(n, T, aHI, isrf, cl14, ch7, tds[q], c, &F[q], &dFq, &Rd2, &RH, &dc, &gd, &hh);
+                            else { double tg = T, yn2 = n, ah2 = aHI; COOLRC.tdust = tds[q];
+                                   dust_newton_terms_(&tg, &yn2, &ah2, &isrf, &cl14, &ch7, &F[q], &dFq, &Rd2, &RH, &dc, &gd, &hh); }
+                            if (q == 0) dF = dFq;
+                        }
+                        const double fd = (F[1] - F[2]) / (2.0 * h);
+                        const double rel = std::fabs(dF - fd) / std::max(std::fabs(dF), 1e-300);
+                        nfd++; fdw[be] = std::max(fdw[be], rel);
+                        if (!(rel <= 1e-6)) {
+                            nfdbad++;
+                            if (nfdbad <= 20)
+                                std::printf("  dust slope %s G0 %.1f Z %.1f nH %.0e T %.0f K x_HI %.0e tdust %.6g: Newton %.10e, central difference %.10e, rel %.1e  FAIL\n",
+                                            be ? "f77" : "cxx", G0, Z, n, T, aHI, td, dF, fd, rel);
+                        }
+                    }
+                }
+            }
+        }
+        set_cell_commons(0.0, 3.0);
+        std::printf("  dust slope (STL-294): %d of %d checks within 1e-6 of the central difference; worst cxx %.1e / f77 %.1e\n",
+                    nfd - nfdbad, nfd, fdw[0], fdw[1]);
+        ok &= (nfdbad == 0);
+        std::printf("  dust Newton (STL-294): %d of %d states pass (no bisection, cold start <= 30 / warm start <= 20 Newton iterations, "
+                    "roots within 1e-9); max cold iterations cxx %ld / f77 %ld, max warm %ld, bisection entries cxx %ld / f77 %ld, max bisection evals per call %ld\n",
+                    ncall - nbad, ncall, mxc, mxf, mxw, nbc, nbf, mxev);
+        ok &= (nbad == 0);
+    }
+    std::printf("  GATE F: every solve rc 0 without dust bisection, cxx dust iterations <= 3e4 per solve, final T and x_H2 within 1%% of DVODE, "
+                "same dust root in both backends, dust Newton converges, slope matches: %s\n", ok ? "PASS" : "FAIL");
     return ok;
 }
 
@@ -951,6 +1178,7 @@ int main(int argc, char** argv)
     if (want('O')) { std::printf("\nPHASE O -- one-zone trajectories to 300 Myr\n"); ok &= phase_O(); }
     if (want('I')) phase_I();
     if (want('M')) ok &= phase_M(Cx);
+    if (want('F')) ok &= phase_F();
     report_probes();
     std::printf("\n=== PARITY: %s ===\n", ok ? "ALL PASS" : "FAILURES PRESENT");
     chem_tables_free(Cx);

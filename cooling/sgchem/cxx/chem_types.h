@@ -381,6 +381,14 @@ struct ChemCell {
     const ChemTables* tab;
 };
 
+// call of a dumped cell (cvode_driver.cc chem_dump_cell / chem_cell_parse)
+struct ChemCellEntry {
+    double time, t_start, t_end, tdust_entry, tdust_now, n20_xe_entry;
+    int attempt, code;
+    double y_entry[CHEM_NSPEC_MAX], y_now[CHEM_NSPEC_MAX];
+};
+int chem_cell_parse(const char* text, ChemCell& c, ChemCellEntry& e);
+
 // ---------------------------------------------------------------------------
 // Kernel interfaces
 // ---------------------------------------------------------------------------
@@ -394,6 +402,10 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
                   const double abundances[16], double* ylam, double rates[CHEM_NRATES],
                   int iflag_cmb, ChemCell& c);
 
+// dust energy balance and its Newton slope at tdust (shared by the solve and the test)
+void cxx_dust_newton_terms(double yn, double temp, double abHI, double isrf_heat, double cl14, double ch7, double tdust,
+                           const ChemCell& c, double* F_nr, double* dF_nr, double* Rdust, double* RH2,
+                           double* dust_cool, double* gas_dust, double* dust_h2_heat);
 // calc_dust_temp port (cool_util.F:802-1007).  Mutates c.tdust; outputs the H2
 // grain-formation rates.  nocalc=1 skips the Newton solve (RT_INFRARED path).
 void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,

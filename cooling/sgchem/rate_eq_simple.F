@@ -325,10 +325,11 @@ c HI:
 c
 c Protons
 c 
-      ydot(ihp) = (ch11 * abe   * abHI          ! Collisional ion: H  + e-
+c over-filled H: collisional, CR and photo ionization stay restoring (D-30, D-58)
+      ydot(ihp) = (ch11 * abe   * abHI_ph       ! Collisional ion: H  + e-
      $          -  ch13 * abhp  * abe           ! Gas-phase H recomb.(case B)
      $          -  h_gr * abhp  * 1d0) * yn     ! Grain H recomb.
-     $          +  cr1  * abHI                  ! Cosmic ray ion.:  H + CR
+     $          +  cr1  * abHI_ph               ! Cosmic ray ion.:  H + CR
      $          + cr10  * abh2
      $          + ph38  * abHI_ph               ! M1 RT photoionization: H + gamma(>13.6eV)
 c

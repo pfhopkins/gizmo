@@ -631,7 +631,11 @@
 /* Used for rate_eq */ 
 #define  NRPAR 7
 #define  NIPAR 2
+#ifdef SGCHEM_FORTRAN_RTOL   /* gfortran -DSGCHEM_FORTRAN_RTOL=1d-8 for the converged references (RTOL is a DVODE argument name) */
+#define  RTOL      SGCHEM_FORTRAN_RTOL
+#else
 #define  RTOL      1d-4
+#endif
 #define  ATOL_H2   1d-7
 #define  ATOL_HP   1d-12
 #define  ATOL_C    1d-16

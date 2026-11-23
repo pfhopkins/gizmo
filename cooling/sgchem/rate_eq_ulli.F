@@ -45,7 +45,7 @@ c
 c
 c D+/HD abundances
 c
-      REAL abdp, abhd, abDI
+      REAL abdp, abhd, abDI, abDI_ion
 c
       REAL num, denom
       REAL comp_equilib
@@ -718,7 +718,9 @@ c
 c
 c Protons
 c
-      ydot(ihp) = (ch11 * abe   * abHI          ! Collisional ion: H  + e-
+c over-filled H: collisional, CR and photo ionization stay restoring (D-30, D-58)
+      ydot(ihp) = (ch11 * abe                   ! Collisional ion: H  + e-
+     $                * merge(abHI_ph, abHI, abHI_ph .lt. 0d0)
      $          + ch144 * abHI  * abHI          ! Collisional ion: H + H
      $          + ch158 * abheI * abHI          ! Collisional ion: H + He
      $         + cst(1) * abh2p * abHI          ! Charge transfer: H  + H2+
@@ -735,7 +737,7 @@ c
      $          + h2p_cdh * abh2p * abM         ! Collisional dissoc. of H2+
      $          + ch9 * abhep * abh2) * yn      ! DiCT: He+ + H2
      $          +  ph5  * abh2p                 ! Photodissoc:    H2+ + PH
-     $          +  cr1  * abHI                  ! Cosmic ray ion.:  H + CR
+     $          +  cr1  * merge(abHI_ph, abHI, abHI_ph .lt. 0d0)
      $          + ph38  * merge(abHI_ph, abHI, abHI_ph .lt. 0d0)
 c
 c D coupling to H+
@@ -832,16 +834,18 @@ c
       if (abundD .eq. 0d0 .or. no_dchem .eq. 1) then
         ydot(idp) = 0d0
       else
-        ydot(idp) = (ch98   * abhp  * abDI          ! Charge transfer: D + H+
+c over-filled D: ionization of that DI fraction stays restoring (D-60)
+        abDI_ion = min(abDI, abundD - abdp - abhd)
+        ydot(idp) = (ch98   * abhp  * abDI_ion      ! Charge transfer: D + H+
      $             - ch99   * abdp  * abHI          ! Charge transfer: H + D+
      $             - ch100  * abdp  * abh2          ! HD form: D+ + H2
      $             + ch101  * abhd  * abhp          ! HD dest: HD + H+
      $             - ch13   * abdp  * abe           ! Case B recomb.
-     $             + ch11   * abDI  * abe           ! Collisional ionization
-     $             + ch32   * abhep * abDI          ! Charge transfer: He+ + D
+     $             + ch11   * abDI_ion  * abe       ! Collisional ionization
+     $             + ch32   * abhep * abDI_ion      ! Charge transfer: He+ + D
      $             - ch33   * abheI * abdp) * yn    ! Charge transfer: He  + D+
-     $             + cr1a   * abDI                  ! Cosmic ray ion: D + CR
-     $             + ph38   * abDI                  ! Photoionization
+     $             + cr1a   * abDI_ion              ! Cosmic ray ion: D + CR
+     $             + ph38   * abDI_ion              ! Photoionization
       endif
 c
 c Hydrogen deuteride (HD)

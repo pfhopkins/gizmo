@@ -797,6 +797,108 @@ where O + H2 -> OH + H (barrier ~3150 K) is dead. The O+ ion chain gives +0.15 d
 N ~ 1e21 cm^-2, more only at N ~ 1e22. Her large effect needs warm (~1000 K) gas in chemical equilibrium (>~ 100 Myr).
 If needed later (solar Z, MW-like CR): add the ion chain as four algebraic species (reaction list in the report).
 
+## D-58. (2026-11-18) nets 5, 17: H+ collisional and CR ionization stay restoring above x_H+ = 1, both backends
+D-30 for collisionally ionized gas. Above x_H+ = 1 validate_input clips H+ to 1 and abHI is floored at 0, so with
+ph38 = 0 the H+ RHS is flat above 1 and steeply restoring below (ch11 n_e ~ 2e-9 s^-1 at 4.5e5 K). The TNOCHEM
+hand-off writes x_H+ = 1 exactly; the one-sided difference-quotient Jacobian misses the stiffness, Newton
+overshoots past 1 + EPS_MAX, CVODE cuts h to the floor (flag -10) and the driver halves the substep. In the WLM
+net 17 run (2026-11-17) this hit 66 cells and one exhausted the 9e6 substep budget (ID 4819441, abort 78101);
+the net 5 twin hit the floor in 7 hot ionized cells. ch11 n_e abHI and cr1 abHI now use the unclipped HI fraction
+1 - 2 x_H2 - x_H+ - x_HD when it is negative, as ph38 does: unchanged whenever that fraction is >= 0 (over-filled
+H budgets, e.g. x_H+ > 1, now lose H+). As in D-30 the ionization cooling (rc[7] / rates_chem[4]) and CR heating
+keep the floored HI fraction: no energy term for the H+ removed, bounded by the over-fill (<= EPS_MAX). At rtol
+1e-8 the old and new RHS give the same hand-off trajectories. C++ chem_rhs_net5/17, Fortran rate_eq_simple/ulli.
+Test: golden/test_solver_failure.cc, nets 5 and 17 (the 66 + 7 logged cells replayed, hand-off grid), each backend
+against the committed converged reference (Uli 2026-11-19). Not changed: net 3, He (He++ at abhe).
+Net 5 logged cells 6796375, 1080890 and hand-off nH 10, Tb 4.99e5 K, dt 7.7e11 / 3e12 s: T within 0.13%, 1-2
+recoverable validate_input H+ rejections per solve (EPS_MAX = 1e-4 = rtol; kept as Arepo, Uli 2026-11-19; recorded in
+the test as a known harmless case). Net 17 hand-off rows: see D-60.
+
+## D-59. (2026-11-19) C++ solver failures: one retry, TNOCHEM finish in hot gas, else abort (Uli 2026-11-18)
+Nets 3, 5, 15, 16, 17 and 20 (the shared driver; net 18 has its own); tested for nets 5 and 17.
+A dt collapse (100) or a spent substep budget (1) no longer aborts at once:
+(1) Retry from the last accepted state with CVODE, rtol/atol and the substep safety factors x0.1, budget
+    CHEM_NSTEP_RETRY = 1e6 substeps (a code-1 cell can otherwise cost a second 9e6 budget). The retry is always
+    a CVODE retry, also when attempt 0 heated the cell above TNOCHEM. Logged; counted (cxx_stat_failure_retries).
+    The accepted dust temperature is kept across the evaluation at the failure point.
+(2) If the retry fails and the state's bypass temperature is above TNOCHEM: finish the step through the TNOCHEM
+    path (hot-CIE ions, explicit energy-only subcycle), full cell dump, counted (cxx_stat_tnochem_finishes). The
+    energy change is booked by the cooling ledger like any chemistry step.
+(3) Otherwise return the code (the caller aborts, as Arepo) after the full cell dump.
+The dump (chem_dump_cell, one write per cell so threads do not interleave) holds the call-entry state (incl. tdust
+and the net-20 x_e start value), t_start, t_end, the current state and every ChemCell input at %.17g (all
+photorates, all pixel columns, CR energy density, ...; the particle ID as an integer); chem_cell_parse rebuilds the
+cell from it alone. Every non-zero return dumps the cell; the first CVODE floor hit of a call also dumps it (about
+2.8 kB per event instead of the former 0.6 kB). Each rank prints its retried/TNOCHEM counts after the cooling step
+when they change (cooling.cc, no collective).
+CR ionisation heating of a flagged RHS evaluation: at a substep start, at the failure point and at the final
+evaluation the last unflagged value is held; before the first unflagged value of a call the pending interval is
+deferred (it accumulates over substeps) and booked as a rectangle with the next unflagged value (zero if the call
+never gets one); in the explicit subcycle a flagged evaluation applies nothing (ydot = 0) and books zero. Fortran DVODE path unchanged (aborts).
+Tests: golden/test_solver_failure.cc (nets 5 and 17) phase R, TEST_SGCHEM_FORCED_SOLVER_FAILURE: forced codes 1
+and 100 per attempt; retry rescue and its start state; TNOCHEM finish after heating across TNOCHEM in attempt 0
+and in the retry; abort at 100 K; dump-and-replay into a NaN-filled cell; flagged-RHS CR heating at all four
+booking sites.
+
+## D-60. (2026-11-19) net 17: D+ ionization stays restoring above D+ = abundD, both backends; C++ stop time per substep
+D-58 for deuterium (Uli 2026-11-19, option D). The TNOCHEM hand-off writes D+ = abundD exactly; with the neutral D
+fraction floored at 0 the D+ RHS is flat above it, CVODE overshoots and check_abundances rejects the substep for a D+
+excess (554 of 568 substep rejections in the 126 A/H test calls). ch98 x_H+ x_D, ch11 n_e x_D, ch32 x_He+ x_D, cr1a x_D
+and ph38 x_D in the D+ equation use the unclipped D fraction abundD - x_D+ - x_HD when it is negative; unchanged
+otherwise (the H+/He+ charge-exchange partners keep the floored value: imbalance bounded by the over-fill,
+<= rtol x abundD). C++ chem_rhs_net17, Fortran rate_eq_ulli. The C++ driver also stops CVODE at each net-17 substep end
+(CVodeSetStopTime) instead of stepping past it and interpolating back. Converged references change by <= 5e-7.
+Test: golden/test_solver_failure.cc (no substep rejected for a D+ excess; each backend within 1% of the converged T).
+Measured: C++ phase-H worst error 1.9% -> 1.5e-4. Cost, r26 cloud (net 17, 12 Myr, 8 tasks; runs repeat exactly): RHS
+evaluations 497.2e6 -> 543.0e6 (+9%), wall 401 -> 447 s (+11%), but the run takes 7590 instead of 5866 steps (different
+trajectory): per step -16% RHS evaluations, -13% wall. D-60 without the stop time: 695.3e6, 605 s, 12009 steps.
+Known cases (Uli's decision 2026-11-20), recorded in the test, bounded: hand-off cell 3018810, nH 10, bypass T 4.5e5 K
+(table T0 4.109e5 K) and 4.8e5 K (T0 4.383e5 K), dt 7.7044e11 and 3e12 s: one recoverable C++ H+ validate_input rejection
+each, from the stop time (waiver: <= 1 rejection, all H+); bypass T 4.99e5 K (T0 4.556e5 K), dt 7.7044e11 s: DVODE 1.1% off
+the converged T with D-60 in the Fortran RHS (0.098% with D-60 in C++ only), legacy-solver accuracy (waiver: <= 2%, NaN
+fails). rc, floor hits, D+ rejections and the C++ 1% bar stay hard; a waived call that comes out clean is reported.
+The r26 step count (5866 / 7590 / 12009 before / with D-60 and the stop time / D-60 alone) is not explained by
+feedback energy: the early "SN" rows (t 0.0096, 0.0075) are failed SNe (channel 5, E = M = 0) and the one energetic SN
+(1e51 erg, 18.676 Msun) is identical in all three runs at t 0.010406. The histories agree to t 0.003 and split by
+t 0.0045 (steps at t 0.0045 / 0.0075: 1762 / 3244, 1984 / 4331, 3464 / 8518, from cpu.txt), during star formation
+and photoionization: 145 / 121 / 86 stars (unique IDs in SFinfo.txt; the last at t 0.0092 / 0.0044 / 0.0042), 2 / 3 / 2
+ionizing stars, ionized cells at t 0.005-0.0055 1986 / 5159 / 5285 and at 0.007-0.0075 4228 / 9448 / 7391 (subgrid PI
+log). The lowest occupied timebins hold gas cells only; the lowest gas bin sits 0.5-1 (D-60 + stop time) and ~2
+(D-60 alone) bins lower than before during t 0.0035-0.0055, as the HII regions grow. Which cells and which limiter
+set the minimum step is not identified (no per-cell limiter output): open.
+
+
+## D-61. (2026-11-22/23) dust temperature: Newton slope, tight stop, bisection backstop, both backends (STL-164, STL-294)
+
+calc_dust_temp (cool_util.F) / cxx_calc_dust_temp, three changes:
+1. Slope (STL-294): the gas-grain term of the balance is cl14 (T - Td) yn^2 dust_to_gas_ratio, its Newton slope
+   lacked dust_to_gas_ratio (exact only at ratio 1; ratio in solar units, capped 10). Newton converged linearly at
+   rate ~1 - ratio and oscillated above ratio 2. Now -cl14 yn^2 dust_to_gas_ratio, both branches, both backends.
+2. Stop: a Newton iterate is accepted at a relative step < 1e-12 (was 1e-2). This is a physics change in dense cold
+   dusty gas, where the gas temperature follows tdust: the 1 % step left tdust up to 0.6 % off the root depending on
+   the start, and C++/DVODE gas T 1.0-1.8 % apart. A 1e-8 stop (bisection noise at the Jacobian increments,
+   inferred) left both solvers up to 70 % / 11 % off their rtol-1e-8 result on net 17.
+3. Budget and backstop: Newton budget 20000 -> 100, then bisection of the balance (monotone falling) on
+   [tmin, 1500 K] to a bracket of 1e-14 relative (<= 60 halvings); F(tmin) <= 0 returns tmin, F(1500) >= 0 returns
+   1500. Fortran no longer ABORT(10)s; C++ counts bisections per rank (SGCHEM cooling-step line).
+Scope and cost: every dust-solving cell changes (dust_to_gas_ratio > 1e-8, T < 1e5), not only dense cold gas. C++
+tdust vs the original Newton (1 % stop, slope without the ratio), diffuse / warm / low-Z / dense gas, G0 1.7 and
+100: median 2.5e-3, max 1.0e-2 (169 of 192 states > 1e-3); vs 3d20f2201 (tight stop, old slope) <= 1.3e-12. Newton
+iterations per call: from the previous tdust with gas 1 % warmer (production steady state) mean 1.0 -> 2.6, max
+1 -> 4; from a cold 10 K start mean 16.3 -> 19.5, max 25 -> 28 (no bisection in any state). Below the root the
+first Newton step overshoots to the 1500 K clamp (concave balance, tdust^6 cooling) and then descends linearly.
+Accepted by Uli 2026-11-23 (no step limit); phase F bars: cold start (10 K or min(T_gas, 100 K)) <= 30, warm start
+(previous root, as in production) <= 20 Newton iterations.
+On a Newton failure the C++ port used to continue from the last iterate (dust_iter_failed set, never read) and
+Fortran aborted; both now bisect. The Newton terms are one helper per backend (cxx_dust_newton_terms,
+dust_newton_terms; same arithmetic, phase C bitwise), checked against a central difference in phase F.
+Why: at nH 1e6, G0 0, Z 3 gas falls below ~4 K inside one solve (MinGasTemp acts only after it); the oscillating
+Newton aborted in Fortran and stalled C++ (20000 iterations per RHS call). Decided by Uli 2026-11-23 (option B,
+the tight stop, the slope fix). Measured at 362712ba9 (dust64.233287): Newton converges in <= 18 iterations at
+Z 0.1-3, nH 1e4-1e6, cold gas, from tdust = T_gas and 10 K, no bisection in either backend; phase F C++/DVODE T
+<= 2.9e-5 (net 5) / 9.7e-4 (net 17), <= 9768 dust iterations per solve; every former golden phase C failure runs;
+C++/DVODE agreement over phase C unchanged; r26 cloud nets 5 / 17: 0 bisections.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1
