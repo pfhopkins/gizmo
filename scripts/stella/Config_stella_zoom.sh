@@ -19,7 +19,6 @@ GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
 GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
 GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
 CR_SCALE_WITH_G0                    # zoom: SGChem cosmic-ray rate clamp(G0/1.7 x SGChemCosmicRayIonRate, 1e-21, 2e-16), as stella_dev
-RESOLVED_ISM_FB_AFTER_CLOSING_KICK  # zoom: feedback after the closing kick, hydro pass redone after SN/Ia deposits (gizmo2017 order)
 ADAPTIVE_GRAVSOFT_FORALL=1
 EVALPOTENTIAL
 BOX_PERIODIC
