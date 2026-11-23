@@ -987,7 +987,7 @@ c NaN guard included.
           if (tdust_new .ne. tdust_new) tdust_new = tmin
           if (tdust_new .lt. tmin)   tdust_new = tmin
           if (tdust_new .gt. 1.5d3)  tdust_new = 1.5d3
-          if (abs((tdust_new - tdust)/tdust) .lt. 1d-2) then
+          if (abs((tdust_new - tdust)/tdust) .lt. 1d-8) then
             goto 101
           endif
         enddo
@@ -1008,7 +1008,7 @@ c
           tdust = td_hi
         else
           do KB = 1, 60
-            if (td_hi - td_lo .le. 1d-6 * td_hi) goto 102
+            if (td_hi - td_lo .le. 1d-8 * td_lo) goto 102
             td_mid = 0.5d0 * (td_lo + td_hi)
             call dust_balance(td_mid, F_mid, temp, yn, abHI,
      $                        isrf_heat, cl14, ch7, Rdust, RH2)
