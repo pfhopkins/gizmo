@@ -3,8 +3,9 @@ changes) and the mass step trace (OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS) close in
 
 Problem: Stella cloud production flags (SGChem net 5, MHD, photoionisation, radiation pressure, turbulent metal diffusion); one 10 Msun
 star dying 1 kyr in and one 60 Msun star of 0.1 Myr blowing its wind every step, gas of n_H = 10 at 100 K, 8^3 cells of 0.68 Msun in a 10 pc periodic box, 10 kyr, 2 ranks.
-The column x, y >= 7.5 pc holds a 3x finer lattice of the same cells (n_H = 270): the 60 Msun star photoionises the rest of the box,
-so without it no cell ran the chemistry and the cooling identity had no evaluation to check (GKS-TI17, Uli 2026-11-23).
+The column x, y >= 7.5 pc holds a 4x finer lattice of the same cells (n_H = 640, ~2e50 recombinations/s vs Q = 4.9e49/s; with 27 n_H the
+whole box was still ionised, the fronts reach it through the periodic images): without a neutral part no cell runs the chemistry and
+the cooling identity has no evaluation to check (GKS-TI17, Uli 2026-11-23).
 
 Bars (the checker's, fixed in gizmo.conservation_trace; not set per test):
 - mass and metal ledger: |delta| / value <= 1e-12 at every checkpoint;
@@ -35,7 +36,7 @@ from make_treecol_pixels_ics import make_treecol_pixels_ics, lattice  # noqa: E4
 from stella_table_bands import Tables  # noqa: E402
 
 L, NG, M_STAR, Z, N_H, T_DEATH = 10.0, 8, 10.0, 0.0142, 10.0, 1000.0
-DENSE_LO, DENSE_FINE = 0.75 * L, 3  # column x, y in [0.75 L, L): lattice 3x finer, equal cell mass, so 27 n_H: its inside stays neutral
+DENSE_LO, DENSE_FINE = 0.75 * L, 4  # column x, y in [0.75 L, L): lattice 4x finer, equal cell mass, 64 n_H: its recombinations ~4x the stars' photons
 
 
 def gas_positions():
