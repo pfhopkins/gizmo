@@ -231,6 +231,9 @@ void run(void)
 
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        pairflux_reset_rearranged(); /* the start-up rearranges precede the first records */
+#endif
 #if !(defined(GENERAL_RELATIVITY) && defined(GR_TEST_PARTICLE)) /* GR geodesic test particles: no hydro */
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
 #endif
@@ -400,6 +403,12 @@ void run(void)
 #endif
         ESTEP_BEGIN(ESTEP_INT_KICK1);
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        pairflux_after_opening_kick(); /* the pair weights' opening shares; the records go */
+#endif
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+        print_gas_conserved_totals();
+#endif
         ESTEP_END(ESTEP_INT_KICK1);
         ESTEP_BEGIN(ESTEP_INT_NBODY);
 #ifdef STARS_INTEGRATED_BY_RUMI
@@ -627,6 +636,9 @@ void run(void)
 #endif
 
         LEDGER_STEP("pre_hydro_fb");
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        pairflux_mark_closing_kick_expected(); /* this pass's records carry closing-kick shares */
+#endif
 #if !(defined(GENERAL_RELATIVITY) && defined(GR_TEST_PARTICLE)) /* GR geodesic test particles: no hydro */
         ESTEP_BEGIN(ESTEP_INT_HYDRO);
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
@@ -639,6 +651,12 @@ void run(void)
 
         ESTEP_BEGIN(ESTEP_INT_KICK2);
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        pairflux_after_closing_kick(); /* the pair weights' closing shares */
+#endif
+#ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
+        test_pairflux_add_mass_and_wake();
+#endif
         ESTEP_END(ESTEP_INT_KICK2);
         cpu_charge(CPU_KICKS, measure_time());
 

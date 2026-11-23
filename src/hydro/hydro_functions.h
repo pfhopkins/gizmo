@@ -561,7 +561,14 @@ void hydro_accumulate_neighbor(
        flag it for wakeup. Uses Kokkos atomics for thread safety. */
     if(TimeBinActive_arr && !(TimeBinActive_arr[P[j].TimeBin]))
     {
-        if(vsig_timestep > WAKEUP * CellP[j].MaxSignalVel) {
+        int pf_wake = 0;
+#ifdef HYDRO_TIMESTEP_FROM_PAIR_FORCE
+        { /* this pair's push over half of j's step would change j's kinetic energy by more than a fraction of its u */
+            double a_pf = Fluxes.v.norm() / P[j].Mass, dt_half = 0.5 * dt_hydrostep_j;
+            if(0.5 * a_pf*a_pf * dt_half*dt_half > HYDRO_PAIR_FORCE_DT_ETA * CellP[j].InternalEnergyPred) {pf_wake = 1;}
+        }
+#endif
+        if(vsig_timestep > WAKEUP * CellP[j].MaxSignalVel || pf_wake) {
             int wakeup_val = wakeup_flag_from_timebin(local.TimeBin);
             HYDRO_ATOMIC_MAX(&P[j].wakeup, wakeup_val);
             if(NeedToWakeup_flag) HYDRO_ATOMIC_STORE(NeedToWakeup_flag, 1);

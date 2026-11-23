@@ -115,6 +115,15 @@ void HydroForceSpec::populate_device_context(const neighbor_loop_args& args,
     }
     for(int k = 0; k < TIMEBINS; k++) { ctx.TimeBinActive_uvm[k] = TimeBinActive[k]; }
     *ctx.need_wakeup_uvm = 0;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    ctx.pf_rec = NULL; ctx.pf_count = NULL; ctx.pf_cap = 0;
+    if(!args.external_csr) {printf("HYDRO_EXACT_PAIR_FLUX_EXCHANGE: hydro forces without the corridor neighbour list (Mode A) on task %d; the records need it\n", ThisTask); endrun(97540);}
+    ctx.pf_cap = (long long) args.external_csr->total_pairs; /* at most one record per listed pair */
+    ctx.pf_count = (long long *) gizmo_gpu_alloc_shared(sizeof(long long), NULL);
+    ctx.pf_rec = (struct pairflux_device_record *) gizmo_gpu_alloc_shared((size_t) DMAX(ctx.pf_cap, 1) * sizeof(struct pairflux_device_record), NULL);
+    if(!ctx.pf_count || !ctx.pf_rec) {printf("HYDRO_EXACT_PAIR_FLUX_EXCHANGE: could not allocate %lld pair records on task %d\n", ctx.pf_cap, ThisTask); endrun(97541);}
+    *ctx.pf_count = 0;
+#endif
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
     /* Host-precompute per-active ISMDustChem passive-scalar diffusion values.
@@ -170,6 +179,16 @@ void HydroForceSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ctx.TimeBinActive_uvm);
         ctx.TimeBinActive_uvm = nullptr;
     }
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    if(ctx.pf_count) { /* the ghost pool is still in place: resolve each neighbour to its home rank and index */
+        Kokkos::fence();
+        long long n = *ctx.pf_count;
+        if(n > ctx.pf_cap) {printf("HYDRO_EXACT_PAIR_FLUX_EXCHANGE: %lld pair records for %lld listed pairs on task %d\n", n, ctx.pf_cap, ThisTask); endrun(97542);}
+        pairflux_take_hydro_records(ctx.pf_rec, n);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ctx.pf_count); ctx.pf_count = nullptr;
+    }
+    if(ctx.pf_rec) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ctx.pf_rec); ctx.pf_rec = nullptr;}
+#endif
 }
 
 /* ============================================================================

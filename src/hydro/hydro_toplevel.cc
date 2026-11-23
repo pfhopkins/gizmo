@@ -239,6 +239,12 @@ void hydro_final_operations_and_cleanup(void)
              intermediate drift operations, we need the primive variables, so reduce to those here
              (remembering that v_phys = v_code/All.cf_atime, for the sake of doing the unit conversions to physical) */
             {Vec3<double> vel_phys = CellP[i].VelPred / All.cf_atime;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            CellP[i].PairFluxSumMom = CellP[i].HydroAccel; CellP[i].PairFluxSumEgy = CellP[i].DtInternalEnergy; CellP[i].PairFluxMassRef = P[i].Mass; /* the pair fluxes in the rates; the rates are per unit of this mass */
+#endif
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+            CellP[i].HydroVelRef = vel_phys;
+#endif
             CellP[i].DtInternalEnergy -= dot(vel_phys, CellP[i].HydroAccel);
             /* we solved for total energy flux (and remember, HydroAccel is still momentum -- keep units straight here!) */
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -275,7 +281,9 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 
             /* zero out hydrodynamic PdV work terms if the particle is at the maximum smoothing, these will be incorrect */
+#ifndef HYDRO_EXACT_PAIR_FLUX_EXCHANGE /* the pair records assume the kick applies the energy rate */
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}
+#endif
 #if defined(MAGNETIC) && defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
             { /* ledger: d(E_th+E_kin+E_B)/dt of this step (Powell/Dedner terms, the -B^2/2 dV/dt the u-equation omits); booked in the kick */
                 Vec3<double> Bp = CellP[i].Bfield() * All.cf_a2inv; double V_phys = P[i].Mass / (CellP[i].Density * All.cf_a3inv);

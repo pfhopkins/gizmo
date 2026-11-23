@@ -89,7 +89,14 @@ struct HydroForceActiveData
 #ifdef HYDRO_MULTIFLUID
     unsigned char FluidType;  /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
 #endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    int pf_index;   /* local index of the active cell: the evaluator of its pair-flux records */
+#endif
 };
+
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+#include "pair_flux_exchange.h"
+#endif
 
 /* NeighborData carries the integer j plus the j-owning rank's pointers /
  * gates. hydro_accumulate_neighbor indexes P[j] / CellP[j] for ~30 fields
@@ -105,6 +112,11 @@ struct HydroForceNeighborData
     int                  *TimeBinActive_ptr;    /* evaluating ctx UVM */
     int                  *need_wakeup_ptr;      /* evaluating ctx UVM */
     unsigned char        *wakeup_dirty_ptr;     /* WakeupDirty sidecar base */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    struct pairflux_device_record *pf_rec;      /* record buffer (UVM) */
+    long long            *pf_count;             /* records written (UVM; may exceed pf_cap: counted, refused after the loop) */
+    long long             pf_cap;
+#endif
 };
 
 /* DeviceContext extension. UVM pointers backing the per-call scratch the
@@ -116,6 +128,9 @@ struct HydroForceDeviceContext : NeighborLoopDeviceContextBase
     int  *TimeBinActive_uvm;   /* UVM int[TIMEBINS]; populate copies from host */
     int  *need_wakeup_uvm;     /* UVM int[1]; populate inits to 0 */
     unsigned char *wakeup_dirty_base;  /* WakeupDirty sidecar base (global UVM); populate sets from WakeupDirty */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    struct pairflux_device_record *pf_rec; long long *pf_count; long long pf_cap; /* pair records of this call (UVM) */
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && (defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)))
     /* UVM double[num_active * NUM_ISMDUSTCHEM_PASSIVE_SCALARS]; host-precomputed
      * per-active passive scalars (legacy density_gpu.cc:169-188). nullptr when
@@ -439,6 +454,9 @@ struct HydroForceSpec
 #ifdef HYDRO_MULTIFLUID
         active.FluidType = ctx.P[i].FluidType;
 #endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        active.pf_index = i;
+#endif
         return active;
     }
 
@@ -461,6 +479,9 @@ struct HydroForceSpec
         nb.TimeBinActive_ptr  = ctx.TimeBinActive_uvm;
         nb.need_wakeup_ptr    = ctx.need_wakeup_uvm;
         nb.wakeup_dirty_ptr   = ctx.wakeup_dirty_base;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        nb.pf_rec = ctx.pf_rec; nb.pf_count = ctx.pf_count; nb.pf_cap = ctx.pf_cap;
+#endif
         return nb;
     }
 
@@ -508,6 +529,15 @@ struct HydroForceSpec
             neighbor.TimeBinActive_ptr,
             neighbor.need_wakeup_ptr,
             neighbor.wakeup_dirty_ptr);
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        if(neighbor.pf_rec && (Fluxes.v[0] != 0 || Fluxes.v[1] != 0 || Fluxes.v[2] != 0 || Fluxes.p != 0)) { /* exactly what this pair added to the active cell's rates */
+            long long k = Kokkos::atomic_fetch_add(neighbor.pf_count, 1LL);
+            if(k < neighbor.pf_cap) {
+                struct pairflux_device_record *r = neighbor.pf_rec + k;
+                r->e = active.pf_index; r->j = neighbor.j; r->mom[0] = Fluxes.v[0]; r->mom[1] = Fluxes.v[1]; r->mom[2] = Fluxes.v[2]; r->egy = Fluxes.p;
+            }
+        }
+#endif
     }
 
     /* Host writebacks (post-dispatch). Body in hydro_force_loop.cc.
