@@ -26,7 +26,7 @@ GALSF_RESOLVEDISM_INSTANT_SN             % SNe before TimeInstantSN (param) expl
 # SN energies (resolvedism_sn_energy.h): 1e51 erg for CCSN, ECSN, PPISN and PISN (flat by design); 0 for failed SNe and direct BHs
 #GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE % opt-in: PISN [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to 64-133 Msun (Heger & Woosley 2002, Wise+12a); default flat 1e51 [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 GALSF_RESOLVEDISM_TYPE_IA                % Type Ia SNe from WD DTD (W7 yields)
-#FB_G17_BOUNDARY_INJECTION               % feedback deposited after the closing kick, then the hydro pass is redone on feedback steps (gizmo2017 order); on in Config_stella_zoom.sh  [excl MFV]
+#FB_G17_BOUNDARY_INJECTION               % feedback deposited after the closing kick, then the hydro pass is redone on SN/Ia steps (gizmo2017 order; wind heating does not trigger the redo, STL-296); opt-in  [excl MFV]
 #GALSF_RESOLVEDISM_SN_SPAWN              % spawn ejecta cells when the FB kernel holds too little gas (prototype)
 #RESOLVEDISM_HOTSYNC_CLAMP               % clamp timebins in hot regions (validated with SN_SPAWN)
 #GALSF_RESOLVEDISM_FB_HEALPIX            % HEALPix FB weighting (weights are mass-blind)
