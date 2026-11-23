@@ -1273,12 +1273,12 @@ static void gx_walk_export_discover(
      * now.  Agree it here, where every rank arrives whichever backend it used, before
      * the count and payload exchanges that follow. */
     /* the same vote carries the source-reach map gate's timings (its decision is taken from the result, on every rank) */
-    int gate_vote[1 + SOURCE_REACH_GATE_NVOTE], gate_all[1 + SOURCE_REACH_GATE_NVOTE];
-    gate_vote[0] = receiver_ok;
+    long long gate_vote[1 + SOURCE_REACH_GATE_NVOTE], gate_all[1 + SOURCE_REACH_GATE_NVOTE];
+    gate_vote[0] = (long long) receiver_ok;
     source_reach_map_gate_fill(gate_vote + 1, MPI_Wtime() - gate_t0);
     int receiver_ok_all = 0;
-    MPI_Allreduce(gate_vote, gate_all, 1 + SOURCE_REACH_GATE_NVOTE, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-    receiver_ok_all = gate_all[0];
+    MPI_Allreduce(gate_vote, gate_all, 1 + SOURCE_REACH_GATE_NVOTE, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+    receiver_ok_all = (int) gate_all[0];
     source_reach_map_gate_apply(gate_all + 1, search_mode != NGB_SEARCH_ONEWAY);
     if(!receiver_ok_all) {
         if(receiver_ok) {gx_send_set_abandon(send_set);}

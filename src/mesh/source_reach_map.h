@@ -36,11 +36,11 @@ void source_reach_map_invalidate(void);
 /* At the start of a symmetric discovery: build the map now if the gate wants it, it is not built, and no time has passed
  * since the last tree build.  Collective; the condition is rank-uniform. */
 void source_reach_map_build_if_due(void);
-/* The gate's measurements ride the final receiver vote of a corridor discovery (MPI_MIN over SOURCE_REACH_GATE_NVOTE ints):
+/* The gate's measurements ride the final receiver vote of a corridor discovery (MPI_MIN over SOURCE_REACH_GATE_NVOTE long longs, times in microseconds):
  * fill before it with this discovery's own time, apply after it.  Rank-uniform decisions. */
 enum {SOURCE_REACH_GATE_NVOTE = 4};
-void source_reach_map_gate_fill(int *vote, double t_discovery);
-void source_reach_map_gate_apply(const int *vote_all, int symmetric);
+void source_reach_map_gate_fill(long long *vote, double t_discovery);
+void source_reach_map_gate_apply(const long long *vote_all, int symmetric);
 /* Bring the map to the current time; outside parallel regions, before a walk that uses it. */
 void source_reach_map_prepare(void);
 

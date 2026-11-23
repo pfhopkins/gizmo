@@ -409,7 +409,8 @@ static const double LET_FOREIGN_PAD_FRACTION = 0.5;
  * The rebuild cadence supplies it: walking the timebins from the smallest up, the first whose
  * cumulative occupancy crosses the update-frequency threshold is the bin that will trigger the
  * next rebuild, and its timestep, times LET_TREE_LIFETIME_PAD_FACTOR, is how long this tree is
- * expected to last.  Computed once per build, collectively, because the occupancies are global. */
+ * expected to last.  Collective, because the occupancies are global: computed in every build that builds a LET; without
+ * one, at most once per tree, when the source-reach map first needs it (its drift factor then counts from that time). */
 static integertime g_tree_lifetime_dti = 0;
 static int g_tree_lifetime_valid = 0;     /* computed for the current tree */
 static double g_tree_lifetime_drift = 0;   /* undilated drift factor over that horizon, from now */
