@@ -53,6 +53,9 @@ int g_n_off_last = 0;             /* its discoveries */
 double g_E_nogain = -1;           /* the unmapped imbalance at which the map last proved not worth its cost */
 double g_B_all = -1;              /* the map's build cost, slowest rank (-1: never built) */
 double g_e_fresh = -1;            /* corridor imbalance of the first discovery on the current map (-1: none yet) */
+double g_q_fresh = 0;             /* that discovery's largest per-rank query count */
+int g_cur_censored = 0;           /* the current tree's no-map imbalance includes a stopped cold call (a lower bound) */
+int g_off_censored = 0;           /* the no-map baseline in g_E_off_last is such a lower bound */
 double g_E_decay = 0;             /* imbalance above that, summed since: the map's decay, to set against a rebuild */
 integertime g_build_ti = 0;
 double g_lifetime_drift = 0.0;    /* undilated drift factor over the tree's expected lifetime, from the build */
@@ -167,7 +170,6 @@ int build_own_lists(std::vector<std::vector<SourceReachEntry>> &per_thread)
                     const double h = SOURCE_REACH_RADIUS_MARGIN * force_hmax_per_type_particle_radius(p);
                     g_covered[p] = float_at_or_below(h);
                     const double g = grown_radius(h, growth);
-                    if(!(g >= 0)) {failed = 1;}
                     const double test = g_scale_max * g + widen;
                     if(!(g >= 0) || !std::isfinite(test)) {failed = 1; nonfinite = 1;}
                     for(int k = 0; k < 3; k++) {mpos.push_back((double) P[p].Pos[k]);}
@@ -283,11 +285,14 @@ void source_reach_map_build(int usable)
         if(g_map_this_tree) {
             /* saved = the imbalance the same discoveries had without the map, at the unmapped rate, minus what they had with it */
             const double saved = ((g_n_off_last > 0) ? g_E_off_last / g_n_off_last : 0.0) * g_n_tree - g_E_tree;
-            if(!(saved > g_B_all)) {   /* the map did not save more than it cost: drop it */
+            /* the map did not save more than it cost: drop it -- unless the no-map rate is only a lower bound (a stopped cold
+               call), which cannot show that the map does not pay */
+            if(!(saved > g_B_all) && !g_off_censored) {
                 g_wanted = 0; g_E_nogain = g_E_off_last;
                 if(ThisTask == 0) {printf("source-reach map: off (saved %g s, cost %g s per tree)\n", saved, g_B_all); fflush(stdout);}
             }
-        } else {g_E_off_last = g_E_tree; g_n_off_last = g_n_tree;}
+        } else {g_E_off_last = g_E_tree; g_n_off_last = g_n_tree; g_off_censored = g_cur_censored;}
+        g_cur_censored = 0;
         g_E_tree = 0; g_n_tree = 0; g_map_this_tree = 0;
     }
     g_t_lastbuild_end = t_call;   /* this tree's account is open: a later call before the next tree build is a moment refresh */
@@ -404,6 +409,7 @@ void source_reach_map_build_if_due(void)
 {
     if(!g_wanted || g_valid || g_tree_ti != All.Ti_Current) {return;}   /* rank-uniform */
     g_E_off_last = g_E_tree; g_n_off_last = g_n_tree; g_E_tree = 0; g_n_tree = 0;   /* the tree so far ran without a map */
+    g_off_censored = g_cur_censored; g_cur_censored = 0;
     source_reach_map_build(g_tree_usable);
     g_tree_ti = -1;   /* tried once for this tree: a failed build is not repeated before the next one */
 }
@@ -414,13 +420,14 @@ double source_reach_map_cold_budget(void)
     return (g_b_local >= 0) ? g_b_local : g_tb_local;   /* what the map would cost: its last build, or the tree build it is part of */
 }
 
-void source_reach_map_gate_fill(long long *v, double t_discovery, int stopped)
+void source_reach_map_gate_fill(long long *v, double t_discovery, int stopped, long long n_queries)
 {
     v[0] = -vote_us(t_discovery);                            /* -> slowest rank */
     v[1] = vote_us(t_discovery);                             /* -> fastest rank */
     v[2] = -vote_us(g_tb_local);                             /* -> slowest tree build */
     v[3] = (g_b_local < 0) ? 1 : -vote_us(g_b_local);        /* -> slowest map build; 1 = never built */
     v[4] = stopped ? -1 : 0;                                 /* -> some rank stopped its cold receiver walk */
+    v[5] = -(n_queries > 0 ? n_queries : 0);                 /* -> the largest per-rank query count */
 }
 
 void source_reach_map_gate_apply(const long long *a, int symmetric)
@@ -433,8 +440,11 @@ void source_reach_map_gate_apply(const long long *a, int symmetric)
         /* a map decays on a long-lived tree (members past what it allowed for fall back to the node bound); once the imbalance it has
            let back exceeds what a tree build and a map build cost, the tree is rebuilt, and the map with it (rank-uniform) */
         const double e = DMAX(tmax - tmin, 0.0);
-        if(g_e_fresh < 0) {g_e_fresh = e;}
-        g_E_decay += DMAX(e - g_e_fresh, 0.0);
+        const double q = (double) (-a[5]);
+        if(g_e_fresh < 0) {g_e_fresh = e; g_q_fresh = q;}
+        /* what a fresh map lets through at this call's size: the first call's imbalance, scaled up with the query count */
+        const double allowed = g_e_fresh * DMAX(1.0, q / DMAX(1.0, g_q_fresh));
+        g_E_decay += DMAX(e - allowed, 0.0);
         const double rebuild_cost = tb + DMAX(g_B_all, 0.0);
         if(g_E_decay > rebuild_cost && !TreeReconstructFlag) {
             TreeReconstructFlag = 1;
@@ -442,6 +452,7 @@ void source_reach_map_gate_apply(const long long *a, int symmetric)
             g_E_decay = 0;
         }
     }
+    if(a[SOURCE_REACH_GATE_STOPPED] < 0) {g_cur_censored = 1;}
     if(a[SOURCE_REACH_GATE_STOPPED] < 0 && !g_wanted && !g_map_this_tree) {
         g_wanted = 1;
         if(ThisTask == 0) {printf("source-reach map: on (cold receiver walk stopped after the map's cost)\n"); fflush(stdout);}
