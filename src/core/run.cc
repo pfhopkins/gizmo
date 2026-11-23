@@ -1624,6 +1624,9 @@ void write_cpu_log(void)
 #endif
           {"drift/splitmg", {CPU_DRIFT, -1}},
           {"kicks",         {CPU_KICKS, -1}},
+#ifdef STARS_INTEGRATED_BY_RUMI
+          {"rumi",          {CPU_RUMI, -1}},
+#endif
           {"log/stats",     {CPU_LOGMSG, -1}},
           {"find_timestep", {CPU_FIND_TIMESTEPS, -1}},
           {"io/snapshots",  {CPU_SNAPSHOT, -1}},
