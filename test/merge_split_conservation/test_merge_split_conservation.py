@@ -1,7 +1,8 @@
 """Merge/split conservation and memory safety (mesh/merge_split.cc).
 
 Links merge_split_driver.cc against the build and runs split_particle_i, merge_particles_ij and the SN ejecta spawn on
-hand-built cells: every extensive quantity conserved to 1e-13, no CellP write past MaxPartGas.
+hand-built cells: every extensive quantity conserved to 1e-13, no CellP write past MaxPartGas; a merged cell keeps both
+parents' total momentum and energy rates, per unit mass.
 merge_split_conservation_starforge runs the same checks under STARFORGE with SINK_THERMALFEEDBACK.
 """
 

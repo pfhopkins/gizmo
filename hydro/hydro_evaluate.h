@@ -197,7 +197,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
                 kernel.dv = local.Vel - VelPred_j;
                 kernel.rho_ij_inv = 2.0 / (local.Density + CellP[j].Density);
-                double Particle_Size_j; Particle_Size_j = P[j].Get_Particle_Size() * All.cf_atime; /* physical units */
+                double Particle_Size_j = pow(P[j].Mass / CellP[j].Density, 1.0/NUMDIMS) * All.cf_atime; /* physical; from the cell volume, as Particle_Size_i, so pair quantities are the same from either cell */
 
                 /* --------------------------------------------------------------------------------- */
                 /* sound speed, relative velocity, and signal velocity computation */
