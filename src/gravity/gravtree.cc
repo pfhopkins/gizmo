@@ -923,6 +923,9 @@ gravity_walk_attempt:
 #endif
 
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
+#ifdef KETJU_REGULARIZATION
+    for(int i : ActiveParticleList) {if(P[i].Type == 4 || P[i].Type == 5) {P[i].KetjuTreeMass = P[i].Mass;}} /* mass a later start subtraction cancels */
+#endif
 
 
     /* Now the force computation is finished: gather timing and diagnostic information */
