@@ -1298,7 +1298,8 @@ void fof_save_groups(int num)
 	    ID_list[Nids].GrNr = FOF_GList[i].GrNr;
 	    ID_list[Nids].ID = P[FOF_PList[start + lenloc].Pindex].ID;
 #ifdef FOF_WRITE_KEYED_CATALOGUE
-	    {int p = FOF_PList[start + lenloc].Pindex; keyed_members.push_back({(int)FOF_GList[i].GrNr, (int)P[p].Type, P[p].ID, P[p].ID_child_number});}
+	    {int p = FOF_PList[start + lenloc].Pindex; hbt_member_t m; m.GrNr = (int)FOF_GList[i].GrNr; m.Type = (int)P[p].Type; m.ID = P[p].ID; m.Child = P[p].ID_child_number; m.Mass = P[p].Mass;
+	     for(int k = 0; k < 3; k++) {m.Pos[k] = P[p].Pos[k]; m.Vel[k] = P[p].Vel[k];} keyed_members.push_back(m);}
 #endif
 #ifdef SUBFIND
 	    P[FOF_PList[start + lenloc].Pindex].GrNr = FOF_GList[i].GrNr;

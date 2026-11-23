@@ -5,7 +5,7 @@
 #if defined(FOF) && defined(FOF_WRITE_KEYED_CATALOGUE)
 #include "../fof.h"
 
-struct hbt_member_t {int GrNr; int Type; MyIDType ID; MyIDType Child;};
+struct hbt_member_t {int GrNr; int Type; MyIDType ID; MyIDType Child; double Mass, Pos[3], Vel[3];};
 
 /* Grp: this task's groups, sorted by GrNr and contiguous in GrNr across tasks; mem: this task's group members */
 void hbt_write_keyed_catalogue(int num, group_properties *Grp, int ngroups, hbt_member_t *mem, long nmem);

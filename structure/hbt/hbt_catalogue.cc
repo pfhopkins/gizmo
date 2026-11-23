@@ -57,7 +57,8 @@ static void hbt_h5_attr(hid_t loc, const char *name, hid_t type, const void *v)
     H5Awrite(at, type, v); H5Aclose(at); H5Sclose(space);
 }
 
-struct hbt_group_row {long long OffsetType[HBT_NTYPES]; int Len, LenType[HBT_NTYPES]; float Mass, MassType[HBT_NTYPES], CM[3], Vel[3], Sfr;};
+struct hbt_group_row {long long OffsetType[HBT_NTYPES]; int GrNr, Len, LenType[HBT_NTYPES]; float Mass, MassType[HBT_NTYPES], CM[3], Vel[3], Sfr;};
+struct hbt_group_sum {double MassType[HBT_NTYPES], MX[3], MV[3]; int GrNr;};
 
 void hbt_write_keyed_catalogue(int num, group_properties *Grp, int ngroups, hbt_member_t *mem, long nmem)
 {
@@ -75,7 +76,7 @@ void hbt_write_keyed_catalogue(int num, group_properties *Grp, int ngroups, hbt_
     for(int g = 0; g < ngroups; g++)
     {
         hbt_group_row &r = rows[g];
-        r.Len = Grp[g].Len; r.Mass = (float)Grp[g].Mass;
+        r.GrNr = Grp[g].GrNr; r.Len = Grp[g].Len; r.Mass = (float)Grp[g].Mass;
 #ifdef GALSF
         r.Sfr = (float)Grp[g].Sfr;
 #else
@@ -91,6 +92,52 @@ void hbt_write_keyed_catalogue(int num, group_properties *Grp, int ngroups, hbt_
     MPI_Allreduce(&nloc, &ngtot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&nmloc, &nmtot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
     if(nmtot != tot[0] + tot[1] + tot[2] + tot[3] + tot[4] + tot[5]) {if(ThisTask == 0) {printf("KEYED CATALOGUE: %lld members but group lengths sum to %lld\n", nmtot, tot[0] + tot[1] + tot[2] + tot[3] + tot[4] + tot[5]);} endrun(1188);}
+
+    /* Mass, MassType, CM and Vel in double from the members (GIZMO's FOF sums them in float, SFD-28); CM offsets from the float CM */
+    if(3 * ngtot > INT_MAX) {if(ThisTask == 0) {printf("KEYED CATALOGUE: too many groups for one broadcast\n");} endrun(1190);}
+    std::vector<float> cmref(3 * (size_t)ngtot + 3);
+    if(ThisTask == 0)
+    {
+        hbt_group_row *R = (hbt_group_row *)grows.data(); int bad = 0;
+        for(long long g = 0; g < ngtot; g++) {if(R[g].GrNr != g + 1) {bad = 1;} for(int k = 0; k < 3; k++) {cmref[3 * g + k] = R[g].CM[k];}}
+        if(bad) {printf("KEYED CATALOGUE: group rows are not in group-number order\n"); endrun(1191);}
+    }
+    MPI_Bcast(cmref.data(), (int)(3 * ngtot), MPI_FLOAT, 0, MPI_COMM_WORLD);
+    std::vector<hbt_group_sum> part;
+    for(long i = 0; i < nmem; i++)
+    {
+        if(part.empty() || part.back().GrNr != mem[i].GrNr) {hbt_group_sum s; memset(&s, 0, sizeof(s)); s.GrNr = mem[i].GrNr; part.push_back(s);}
+        hbt_group_sum &s = part.back(); const double m = mem[i].Mass; const size_t g = (size_t)(mem[i].GrNr - 1);
+        double xyz[3]; for(int k = 0; k < 3; k++) {xyz[k] = mem[i].Pos[k] - cmref[3 * g + k];}
+        NEAREST_XYZ(xyz[0], xyz[1], xyz[2], -1);
+        s.MassType[mem[i].Type] += m;
+        for(int k = 0; k < 3; k++) {s.MX[k] += m * xyz[k]; s.MV[k] += m * mem[i].Vel[k];}
+    }
+    std::vector<char> gpart;
+    hbt_gather_bytes(part.data(), (long long)part.size() * (long long)sizeof(hbt_group_sum), gpart);
+    if(ThisTask == 0)
+    {
+        hbt_group_row *R = (hbt_group_row *)grows.data(); hbt_group_sum *S = (hbt_group_sum *)gpart.data();
+        const size_t np = gpart.size() / sizeof(hbt_group_sum);
+        std::vector<double> mt(HBT_NTYPES * (size_t)ngtot + 1, 0.), mx(3 * (size_t)ngtot + 1, 0.), mv(3 * (size_t)ngtot + 1, 0.);
+        for(size_t j = 0; j < np; j++)
+        {
+            const size_t g = (size_t)(S[j].GrNr - 1);
+            for(int t = 0; t < HBT_NTYPES; t++) {mt[HBT_NTYPES * g + t] += S[j].MassType[t];}
+            for(int k = 0; k < 3; k++) {mx[3 * g + k] += S[j].MX[k]; mv[3 * g + k] += S[j].MV[k];}
+        }
+        for(long long g = 0; g < ngtot; g++)
+        {
+            double mtot = 0; for(int t = 0; t < HBT_NTYPES; t++) {mtot += mt[HBT_NTYPES * g + t]; R[g].MassType[t] = (float)mt[HBT_NTYPES * g + t];}
+            R[g].Mass = (float)mtot;
+            for(int k = 0; k < 3; k++)
+            {
+                double c = cmref[3 * g + k] + mx[3 * g + k] / mtot;
+                R[g].CM[k] = (float)WRAP_POSITION_UNIFORM_BOX(c);
+                R[g].Vel[k] = (float)(mv[3 * g + k] / mtot * vfac);
+            }
+        }
+    }
 
     hid_t file = 0, gids = 0;
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], fname[DEFAULT_PATH_BUFFERSIZE_TOUSE];
