@@ -92,6 +92,24 @@ void find_timesteps(void)
 #if defined(FORCE_EQUAL_TIMESTEPS) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     ti_max = 0;
     ti_min = TIMEBASE;
+#if defined(FORCE_EQUAL_TIMESTEPS) && defined(GPU_SPEEDUP_HOST_THREADED_EQUAL_TIMESTEPS)
+    if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) ActiveParticleList.size()))
+    {   /* each particle's step depends only on its own state, so the min and max over the active set are a threaded reduction */
+        const long n_act = (long) ActiveParticleList.size(); const int *act = ActiveParticleList.data();
+        integertime tmin = TIMEBASE, tmax = 0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(min:tmin) reduction(max:tmax)
+#endif
+        for(long k = 0; k < n_act; k++)
+        {
+            double aphys_k; integertime t_undilated = get_timestep(act[k], &aphys_k, 0);
+            integertime t = (integertime)(((double)t_undilated) / timestep_dilation_factor(act[k], P));
+            if(t < tmin) {tmin = t;}
+            if(t > tmax) {tmax = t;}
+        }
+        ti_min = tmin; ti_max = tmax;
+    } else
+#endif
     for (int i : ActiveParticleList)
     {
 #if defined(FORCE_EQUAL_TIMESTEPS)
