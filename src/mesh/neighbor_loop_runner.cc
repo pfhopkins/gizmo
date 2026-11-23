@@ -7400,7 +7400,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         for (int sg = 0; sg < args.num_subgroups; sg++) {
             int n_compacted   = drv.active_set_size[sg];
             int write_idx     = 0;
-            for (int k = 0; k < n_compacted; k++) {
+            auto after_iter_of = [&](int k) {
                 int  slot = drv.active_set_uvm[sg][k];
                 int  i    = args.subgroups[sg].active_indices[slot];
                 AfterIterContext<Spec> ctx{
@@ -7410,7 +7410,30 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                     /* scratch (mutable ref) */          drv.scratch_uvm[sg][slot],
                     /* device context (driver-owned) */  drv.ctx
                 };
-                IterResult r = Spec::after_iter(ctx, drv.accum_uvm[sg][slot]);
+                return Spec::after_iter(ctx, drv.accum_uvm[sg][slot]);
+            };
+#ifdef GPU_SPEEDUP_HOST_THREADED_AFTER_ITER
+            /* A Spec whose after_iter also runs on the device (after_iter_device) decides each slot from that
+             * slot's own state alone, so the slots are decided on all threads first; the list is then compacted
+             * in order, as below.  The same results in the same order. */
+            std::vector<IterResult> decided;
+            constexpr bool decide_threaded = nlr_spec_has_after_iter_device<Spec>::value;
+            if constexpr (decide_threaded) {
+                decided.resize((size_t)n_compacted);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 64) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n_compacted))
+#endif
+                for (int k = 0; k < n_compacted; k++) {decided[(size_t)k] = after_iter_of(k);}
+            }
+#endif
+            for (int k = 0; k < n_compacted; k++) {
+                int  slot = drv.active_set_uvm[sg][k];
+                int  i    = args.subgroups[sg].active_indices[slot];
+#ifdef GPU_SPEEDUP_HOST_THREADED_AFTER_ITER
+                IterResult r = decide_threaded ? decided[(size_t)k] : after_iter_of(k);
+#else
+                IterResult r = after_iter_of(k);
+#endif
                 switch (r.status) {
                     case IterStatus::Converged:
                         /* Drop slot from compacted active_set; its accum_uvm
