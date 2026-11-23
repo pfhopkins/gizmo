@@ -756,6 +756,7 @@ void star_formation_parent_routine(void)
                                 double y = single_star_random_number(i, STOCH_IMF_RNG_SALT, (uint64_t)All.Ti_Current, 1), xmin = All.MinMassIMF, xmax = All.MaxMassIMF;
                                 struct single_star_record r; memset(&r, 0, sizeof(r));
                                 r.M_drawn = pow(pow(xmin, -1.3) + (pow(xmax, -1.3) - pow(xmin, -1.3)) * y, -1. / 1.3);
+                                r.Z_birth = P[i_star].Metallicity[0]; /* the tables' metallicity */
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
                                 r.rho_birth = (float)(CellP[i].Density * All.cf_a3inv);
 #endif
