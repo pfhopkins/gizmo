@@ -18,3 +18,5 @@ The zoom needs the SGChem UV background (comoving floor): SGChem stops on `Comov
   default, galaxy and tall box set `GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS` themselves and push the gas; the zoom build defines
   no radiation-pressure macro (zoom reference, Uli 2026-11-18). `test_stella_defaults_without_radiation_pressure`:
   `STELLA_DEFAULTS` alone sets none.
+
+`test_zoom_cr_rate_scales_with_g0`: the zoom build defines CR_SCALE_WITH_G0, as stella_dev's zoom configuration (GKS-26).

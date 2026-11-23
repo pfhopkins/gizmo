@@ -137,6 +137,13 @@ def test_stella_defaults_without_radiation_pressure(tmp_path):
     assert "GALSF_SINGLE_STARS_FROM_IMF" in m and not [k for k in RADP if k in m], [k for k in RADP if k in m]
 
 
+def test_zoom_cr_rate_scales_with_g0(tmp_path):
+    """the zoom build scales the SGChem cosmic-ray rate with the stars' field, as stella_dev's Config_stella_zoom.sh
+    (CR_SCALE_WITH_G0; GKS-26, Uli 2026-11-23: gku defaults as stella_dev's)"""
+    m = macros(tmp_path, (CFG / "Config_stella_zoom.sh").read_text().splitlines())
+    assert "CR_SCALE_WITH_G0" in m
+
+
 @pytest.mark.parametrize("c", ["defaults_only", "cloud", "default", "galaxy", "tallbox", "zoom"])
 def test_no_sn_broadcast_by_default(tmp_path, c):
     """SNE_BROADCAST_TIMESTEP is an opt-in option: neither STELLA_DEFAULTS nor a production config switches it on"""
