@@ -1,5 +1,5 @@
 """8 clumps of 4^3 gas cells (1 Msun, spacing 0.3 pc) on a 2x2x2 grid of centres in a 5.28 pc periodic box (pc, Msun, km/s), so FOF
-(linking length 0.55 x the mean spacing 0.66) finds 8 groups of 64, none collective on 4 ranks (limit 0.6 N/ntask = 86), and SUBFIND moves
+(LINKLENGTH 0.0026 gives a linking length of 0.40 pc here: the DM density is tiny without cosmology) finds 8 groups of 64, none collective on 4 ranks (limit 0.6 N/ntask = 86), and SUBFIND moves
 the particles of groups 5-8 between ranks; plus 64 single stars at random positions moving at 20-60 km/s with a drawn mass and a birth metallicity."""
 import numpy as np
 import h5py
