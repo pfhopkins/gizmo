@@ -758,6 +758,9 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 /* --------------------------------------------------------------------------------- */
 /* need to link to the file "hydro_evaluate" which actually contains the computation part of the loop! */
 /* --------------------------------------------------------------------------------- */
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
+static long TD_EvalsStep = 0, TD_ScaledStep = 0; /* pair evaluations and pairs scaled by the debit bound since the last budget line */
+#endif
 #include "hydro_evaluate.h"
 
 /* --------------------------------------------------------------------------------- */
@@ -771,11 +774,11 @@ long TD_FloorCellsStep = 0; /* cells where the last apply had to floor a slot at
 /* every gas cell touched in this hydro pass, active or not, applies its pair exchange and clears it, so nothing stays pending (STL-277) */
 static void td_apply_and_clear(void)
 {
-    long nfloor = 0, nover = 0; double floor_mass = 0, slot_dev = 0, z0_dev = 0;
+    long nfloor = 0, nover = 0, nevals = 0; double floor_mass = 0, slot_dev = 0, z0_dev = 0;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) reduction(+:nfloor,nover,floor_mass) reduction(max:slot_dev,z0_dev)
+#pragma omp parallel for schedule(static) reduction(+:nfloor,nover,nevals,floor_mass) reduction(max:slot_dev,z0_dev)
 #endif
-    for(int i = 0; i < NumPart; i++)
+    for(int i = 0; i < N_gas; i++) /* gas cells come first in P */
     {
         if(P[i].Type != 0 || !CellP[i].TD_Touched) {continue;}
         if(P[i].Mass > 0)
@@ -802,6 +805,7 @@ static void td_apply_and_clear(void)
 #endif
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
             if(CellP[i].TD_NumEvals > CellP[i].TD_NumPairs) {nover++;}
+            nevals += CellP[i].TD_NumEvals;
 #endif
         }
         for(int k = 0; k < NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION; k++) {CellP[i].Dyield[k] = 0;}
@@ -812,10 +816,10 @@ static void td_apply_and_clear(void)
     }
     long nl = nfloor, ng = 0; MPI_Allreduce(&nl, &ng, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD); TD_FloorCellsStep = ng;
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
-    {double ls[3] = {floor_mass, (double)nfloor, (double)nover}, gs[3], lm[2] = {slot_dev, z0_dev}, gm[2];
-     MPI_Allreduce(ls, gs, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); MPI_Allreduce(lm, gm, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-     if(ThisTask == 0) {printf("DIFFSLOT t=%.17e floor_abs=%.17e floor_cells=%.0f max_slot_sum_dev=%.17e max_z0_dev=%.17e pairs_over_count=%.0f\n",
-                               All.Time, gs[0], gs[1], gm[0], gm[1], gs[2]); fflush(stdout);}}
+    {double ls[4] = {floor_mass, (double)nfloor, (double)nover, (double)nevals}, gs[4], lm[2] = {slot_dev, z0_dev}, gm[2];
+     MPI_Allreduce(ls, gs, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); MPI_Allreduce(lm, gm, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+     if(ThisTask == 0) {printf("DIFFSLOT t=%.17e floor_abs=%.17e floor_cells=%.0f max_slot_sum_dev=%.17e max_z0_dev=%.17e pairs_over_count=%.0f evals=%.0f\n",
+                               All.Time, gs[0], gs[1], gm[0], gm[1], gs[2], gs[3]); fflush(stdout);}}
 #endif
 }
 #endif
@@ -834,7 +838,8 @@ void turb_diff_metals_budget_log(void)
     }
     MPI_Allreduce(loc, tot, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
-    if(ThisTask==0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e floor_cells= %ld\n", All.Time, tot[0], tot[1], TD_FloorCellsStep);}
+    long ce[2] = {TD_EvalsStep, TD_ScaledStep}, cg[2]; MPI_Allreduce(ce, cg, 2, MPI_LONG, MPI_SUM, MPI_COMM_WORLD); TD_EvalsStep = TD_ScaledStep = 0;
+    if(ThisTask==0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e floor_cells= %ld evals= %ld scaled= %ld\n", All.Time, tot[0], tot[1], TD_FloorCellsStep, cg[0], cg[1]);}
 #else
     if(ThisTask==0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e\n", All.Time, tot[0], tot[1]);}
 #endif
@@ -864,7 +869,9 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
     DiffH_dy = DiffH_floor = DiffH_clos = DiffH_sumdy = 0;
     DiffS_floor = DiffS_slot = DiffS_z0 = 0; DiffS_nfloor = 0;
+#ifndef METALS_EXACT_PAIRWISE_EXCHANGE
     diffh_totals(DiffH_T0);
+#endif
 #endif
     /* Diffusion unpack breakdown accumulators (line 867 clamp diagnostic). */
     double dMZ_pair_loc = 0;   /* Σ Dyield[0]: 0 if pair-flux solver conservative */
@@ -1306,10 +1313,11 @@ void hydro_final_operations_and_cleanup(void)
     } // for (loop over active particles) //
 
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
-    td_apply_and_clear();
-#endif
+    td_apply_and_clear(); /* its floor count replaces the active-cell breakdown below */
+#else
     /* Diff-unpack breakdown: pinpoint pair-flux vs clamp contribution to dM_Z. */
     diff_unpack_breakdown_log(dMZ_pair_loc, dMZ_clamp_loc);
+#endif
 #if defined(TEST_PRINT_DIFFUSION_H_CLOSURE) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE)
     {
         double loc[4] = {DiffH_dy, DiffH_floor, DiffH_clos, DiffH_sumdy}, tot[4];

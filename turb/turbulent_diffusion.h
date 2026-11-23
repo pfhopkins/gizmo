@@ -22,7 +22,8 @@
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
     /* pair owner (STL-277): with j inactive i owns the pair; both active: the single HYDRO_PAIR_ONCE evaluation owns it, otherwise
        the shorter step, equal steps half each. The owner computes the exchange over its own step and books it to both cells. */
-    if(TimeBinActive[P[j].TimeBin]) {
+    if(P[j].KernelRadius <= 0) {td_share = 0;} /* the gradient pass does not count such a cell */
+    else if(TimeBinActive[P[j].TimeBin]) {
 #ifndef HYDRO_PAIR_ONCE
         if(dt_hydrostep_i > dt_hydrostep_j) {td_share = 0;} else if(dt_hydrostep_i == dt_hydrostep_j) {td_share = 0.5;}
 #endif
@@ -139,16 +140,16 @@
                this pass (counted in the gradient pass), so no slot of any cell is overdrawn when the pass is applied */
             double td_s = 1;
             for(kk = 0; kk < TD_NUM_EXCHANGED; kk++) {
-                double a = td_share * td_amt[kk], hold, n;
+                double a = td_share * td_amt[kk], hold, nd;
                 if(a == 0) {continue;}
                 if(a > 0) { /* j gives */
 #if defined(GALSF_RESOLVEDISM_DUST)
                     if(kk >= NUM_METAL_SPECIES) {hold = P[j].Mass * CellP[j].Dust[kk-NUM_METAL_SPECIES];} else
 #endif
                     {hold = P[j].Mass * P[j].Metallicity[kk];}
-                    n = CellP[j].TD_NumPairs;
-                } else {hold = local.Mass * local.Metallicity[kk]; n = local.TD_NumPairs;} /* i gives */
-                double lim = (1 - 1e-12) * DMAX(hold, 0) / DMAX(n, 1); /* margin for the sum's round-off */
+                    nd = CellP[j].TD_NumPairs;
+                } else {hold = local.Mass * local.Metallicity[kk]; nd = local.TD_NumPairs;} /* i gives */
+                double lim = (1 - 1e-12) * DMAX(hold, 0) / DMAX(nd, 1); /* margin for the sum's round-off */
                 if(fabs(a) * td_s > lim) {td_s = lim / fabs(a);}
             }
             for(kk = 0; kk < TD_NUM_EXCHANGED; kk++) {
@@ -160,6 +161,13 @@
             }
             #pragma omp atomic write
             CellP[j].TD_Touched = 1;
+#ifdef OUTPUT_TURB_DIFF_METALS_BUDGET
+            #pragma omp atomic
+            TD_EvalsStep += 1;
+            if(td_s < 1) {
+                #pragma omp atomic
+                TD_ScaledStep += 1;}
+#endif
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
             out.TD_NumEvals += 1;
             #pragma omp atomic

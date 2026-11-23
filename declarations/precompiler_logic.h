@@ -2068,8 +2068,12 @@
 #define KETJU_SINKS /* Type-5 sinks (STARFORGE stars or BHs) carry KETJU spin and PN class */
 #endif
 
-#if defined(TURB_DIFF_METALS) && (defined(GALSF_RESOLVEDISM) || defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)) && !defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE_OFF)
+#if defined(TURB_DIFF_METALS) && (defined(GALSF_RESOLVEDISM) || defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)) && !defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE)
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE_OFF
+#define TURB_DIFF_METALS_EXACT_CONSERVATION /* Stella opt-out: the pending-buffer booking, whose slot closure the element slots need */
+#else
 #define METALS_EXACT_PAIRWISE_EXCHANGE /* Stella: every pair's metal exchange booked to both cells, exact with individual timesteps (STL-277) */
+#endif
 #endif
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
