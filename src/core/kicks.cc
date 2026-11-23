@@ -270,11 +270,8 @@ void apply_long_range_kick(integertime tstart, integertime tend)
 #endif
     for(i = 0; i < NumPart; i++)
     {
-#ifdef KETJU_REGULARIZATION
-        if(P[i].KetjuIntegrated) {continue;} /* MSTAR integrates it */
-#endif
         if(P[i].Mass > 0)
-        {
+        { /* KETJU members too: the negative half-kicks remove the full chain-self F_N, tree (S F_N) plus mesh ((1-S) F_N) restore it */
             Vec3<double> dvel = P[i].GravPM * dt_gravkick; /* do the kick, only collisionless particles */
             P[i].Vel += dvel;
             P[i].dp += dvel * P[i].Mass;
