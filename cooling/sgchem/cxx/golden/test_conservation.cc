@@ -982,8 +982,8 @@ static double prod_temp(double nH, double en, const double* y)
 // solve as sgchem.cc does, solves of 100 yr .. 10 Myr up to 10 Myr in total (CONS_F_MAXSOLVES, default 200), both
 // backends. Gate: every solve rc 0, no dust bisection in either backend, C++ dust iterations <= 3e4 per solve (3x the
 // measured maximum), final C++ T and x_H2 within 1% of DVODE. (2) Same dust root in both backends from two starts
-// (<= 1e-6). (3) Newton from realistic starts over Z 0.1-3, nH 1e4-1e6, T 5 K-1e4 K, G0 0 / 1.7 / 100: no bisection,
-// <= 20 iterations, backends within 1e-9. (4) Newton slope of each backend against a central difference of its own
+// (<= 1e-6). (3) Newton over Z 0.1-3, nH 1e4-1e6, T 5 K-1e4 K, G0 0 / 1.7 / 100: no bisection, backends within 1e-9,
+// cold start <= 30 and warm start <= 20 iterations (Uli 2026-11-23). (4) Newton slope of each backend against a central difference of its own
 // balance, relative <= 1e-6, at 0.5x, 1x and 2x the root over the grid of (3).
 static int phase_F()
 {
@@ -1050,10 +1050,11 @@ static int phase_F()
                     nsame, worst);
         ok &= (nsame == 15);
     }
-    // STL-294: from realistic starts (tdust = T_gas, 10 K) the dust Newton converges in cold dense dusty gas at every
-    // metallicity: no bisection, <= 20 Newton iterations per call in both backends, C++ and Fortran roots within 1e-9
+    // STL-294: the dust Newton converges over Z 0.1-3, nH 1e4-1e6, T 5 K-1e4 K, G0 0 / 1.7 / 100 in both backends: no
+    // bisection, C++ and Fortran roots within 1e-9; iteration bars (Uli 2026-11-23): cold start (min(T_gas, 100 K) or
+    // 10 K) <= 30, warm start (previous root, gas 1 % warmer, as in production) <= 20
     {
-        int ncall = 0, nbad = 0; long mxc = 0, mxf = 0, nbc = 0, nbf = 0, mxev = 0;
+        int ncall = 0, nbad = 0; long mxc = 0, mxf = 0, nbc = 0, nbf = 0, mxev = 0, mxw = 0;
         int nfd = 0, nfdbad = 0; double fdw[2] = {0.0, 0.0};
         for (double G0 : {0.0, 1.7, 100.0}) for (double Z : {0.1, 0.3, 1.0, 3.0}) {
             set_cell_commons(G0, Z);
@@ -1071,11 +1072,23 @@ static int phase_F()
                 COOLRC.tdust = t0; calc_dust_temp_(&yn, &chi, &tg, &ah, &RH2, &Rd, &nc);
                 const long nf = (long)(dust_stat_.newton - fn0), bf = (long)(dust_stat_.bisect - fb0);
                 const double rel = std::fabs(COOLRC.tdust - tdc) / tdc;
-                const int bad = bc || bf || nc_ > 20 || nf > 20 || !(rel <= 1e-9);
-                ncall++; nbad += bad; mxc = std::max(mxc, nc_); mxf = std::max(mxf, nf); nbc += bc; nbf += bf; mxev = std::max(mxev, ev);
+                const double tdf = COOLRC.tdust;
+                // warm start: each backend from its own root, gas 1 % warmer
+                const long wi0 = chem_dust_iters, we0 = chem_dust_bisect_evals, wb0 = chem_dust_bisections;
+                c.tdust = tdc; cxx_calc_dust_temp(n, c.chi_isrf, 1.01 * T, aHI, &RH2, &Rd, 0, c);
+                const long wev = chem_dust_bisect_evals - we0, wnc = (chem_dust_iters - wi0) - wev, wbc = chem_dust_bisections - wb0;
+                const double wtdc = c.tdust;
+                double tgw = 1.01 * T;
+                const long long wfn0 = dust_stat_.newton, wfb0 = dust_stat_.bisect;
+                COOLRC.tdust = tdf; calc_dust_temp_(&yn, &chi, &tgw, &ah, &RH2, &Rd, &nc);
+                const long wnf = (long)(dust_stat_.newton - wfn0), wbf = (long)(dust_stat_.bisect - wfb0);
+                const double wrel = std::fabs(COOLRC.tdust - wtdc) / wtdc;
+                const int bad = bc || bf || wbc || wbf || nc_ > 30 || nf > 30 || wnc > 20 || wnf > 20 || !(rel <= 1e-9) || !(wrel <= 1e-9);
+                ncall++; nbad += bad; mxc = std::max(mxc, nc_); mxf = std::max(mxf, nf); nbc += bc + wbc; nbf += bf + wbf;
+                mxev = std::max(mxev, std::max(ev, wev)); mxw = std::max(mxw, std::max(wnc, wnf));
                 if (bad && nbad <= 40)
-                    std::printf("  dust Newton G0 %.1f Z %.1f nH %.0e T %.0f K x_HI %.0e start %.0f K: cxx %ld Newton + %ld bisection evals (%ld entries), "
-                                "f77 %ld Newton (%ld bisection entries), tdust %.10g / %.10g  FAIL\n", G0, Z, n, T, aHI, t0, nc_, ev, bc, nf, bf, tdc, COOLRC.tdust);
+                    std::printf("  dust Newton G0 %.1f Z %.1f nH %.0e T %.0f K x_HI %.0e start %.0f K: cold cxx %ld / f77 %ld Newton, warm cxx %ld / f77 %ld, "
+                                "bisection entries cxx %ld / f77 %ld, tdust %.10g / %.10g  FAIL\n", G0, Z, n, T, aHI, t0, nc_, nf, wnc, wnf, bc + wbc, bf + wbf, tdc, tdf);
                 if (s0) continue;
                 // slope of each backend against a central difference of its own balance (inputs as calc_dust_temp builds them)
                 const ChemTables& TT = *c.tab;
@@ -1117,9 +1130,9 @@ static int phase_F()
         std::printf("  dust slope (STL-294): %d of %d checks within 1e-6 of the central difference; worst cxx %.1e / f77 %.1e\n",
                     nfd - nfdbad, nfd, fdw[0], fdw[1]);
         ok &= (nfdbad == 0);
-        std::printf("  dust Newton (STL-294): %d of %d calls pass (no bisection, <= 20 Newton iterations, roots within 1e-9); "
-                    "max Newton iterations cxx %ld / f77 %ld, bisection entries cxx %ld / f77 %ld, max bisection evals per call %ld\n",
-                    ncall - nbad, ncall, mxc, mxf, nbc, nbf, mxev);
+        std::printf("  dust Newton (STL-294): %d of %d states pass (no bisection, cold start <= 30 / warm start <= 20 Newton iterations, "
+                    "roots within 1e-9); max cold iterations cxx %ld / f77 %ld, max warm %ld, bisection entries cxx %ld / f77 %ld, max bisection evals per call %ld\n",
+                    ncall - nbad, ncall, mxc, mxf, mxw, nbc, nbf, mxev);
         ok &= (nbad == 0);
     }
     std::printf("  GATE F: every solve rc 0 without dust bisection, cxx dust iterations <= 3e4 per solve, final T and x_H2 within 1%% of DVODE, "

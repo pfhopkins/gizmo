@@ -887,6 +887,8 @@ tdust vs the original Newton (1 % stop, slope without the ratio), diffuse / warm
 iterations per call: from the previous tdust with gas 1 % warmer (production steady state) mean 1.0 -> 2.6, max
 1 -> 4; from a cold 10 K start mean 16.3 -> 19.5, max 25 -> 28 (no bisection in any state). Below the root the
 first Newton step overshoots to the 1500 K clamp (concave balance, tdust^6 cooling) and then descends linearly.
+Accepted by Uli 2026-11-23 (no step limit); phase F bars: cold start (10 K or min(T_gas, 100 K)) <= 30, warm start
+(previous root, as in production) <= 20 Newton iterations.
 On a Newton failure the C++ port used to continue from the last iterate (dust_iter_failed set, never read) and
 Fortran aborted; both now bisect. The Newton terms are one helper per backend (cxx_dust_newton_terms,
 dust_newton_terms; same arithmetic, phase C bitwise), checked against a central difference in phase F.
