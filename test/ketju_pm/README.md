@@ -9,8 +9,9 @@ Comoving variant (a = 0.5, 2 ranks, 2 regions): two binaries and their mirror si
 traces close.
 
 Energy: the step trace's own bars (mass 1e-12, exact stages, integration residual 1e-2 of E_scale). The trace's E_pot leaves out
-the particles' own mesh self-potential, now the exact CIC value (test/pm_self_potential). 2026-11-20: worst residual 2.0e-2 of
-E_scale at one sync (pair at pericentre), others <= 6.1e-3: FAILS the 1e-2 bar (continuum self term: 4.9e-2 at 39 syncs).
+the particles' own mesh self-potential (exact CIC value, test/pm_self_potential), and inside the softening it uses the tree pair
+potential consistent with the applied force (kernel_force x S; the stored kernel_pot x erfc is not its potential). Worst residual
+8.1e-4 of E_scale (2.006e-2 without the force-consistent term, 4.9e-2 with the continuum self term).
 
 History: PMGRID = 64 with R_out = 5000 AU passed the orbit bars but left a 2.6e-2 integration residual from the coarse mesh (also with
 KETJU off); PMGRID = 256 there put r_s (244 AU) at the pair separation (|da/a| 2.4e-2). Redesigned 2026-11-19 (Uli).

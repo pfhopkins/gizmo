@@ -15,8 +15,9 @@ Bars, set before running: the pair CoM relative to the 20 Msun star within 0.05 
 (periodic images change the field by (R_out/L)^3 = 1e-3), the pair's semi-major axis within 1e-2 of the reference, the mass trace and
 the energy step trace closes with its own bars (integration residual 1e-2 of E_scale), as set before the first run.
 The trace's E_pot leaves out each particle's own mesh self-potential, the exact CIC value (PM_EXACT_SELF_POTENTIAL_DIAG; the
-continuum -G m/(sqrt(pi) r_s) differs from it by up to ~20% with sub-cell position). 2026-11-20: residual 2.0e-2 of E_scale at one
-sync (pair at pericentre, step 9), all others <= 6.1e-3; with the continuum self term 4.9e-2 at 39 syncs. Still fails the 1e-2 bar."""
+continuum -G m/(sqrt(pi) r_s) differs from it by up to ~20% with sub-cell position). Inside the star softening (h = 577 AU > the
+pair) the tree applies kernel_force x S but stores kernel_pot x erfc, not that force's potential; with the energy diagnostics the trace
+uses the force-consistent tree pair potential (TREE_SHORTRANGE_POT_FROM_FORCE_DIAG). Residual 2.006e-2 without it, 8.1e-4 with it."""
 
 import glob
 import os
