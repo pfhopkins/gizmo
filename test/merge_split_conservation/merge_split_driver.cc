@@ -265,6 +265,26 @@ static void test_merge_energy()
 #endif
 }
 
+static void test_merge_rates()
+{
+    /* the merged cell's rates are per unit mass and carry both parents' total momentum and energy rates (MFM: no DtMass) */
+    setup(64, 64);
+    make_gas(0, 0.5, 0.5, 0.5, 0.4, 0.72, 0.27, 0.01, 0.);
+    make_gas(1, 0.55, 0.5, 0.5, 1.0, 0.72, 0.27, 0.01, 0.3);
+    CellP[0].HydroAccel = Vec3<double>{2., -1., 0.5}; CellP[1].HydroAccel = Vec3<double>{-0.7, 0.4, 1.1};
+    CellP[0].DtInternalEnergy = 30.; CellP[1].DtInternalEnergy = -12.;
+    NumPart = N_gas = 2;
+    double a = All.cf_atime, m0 = P[0].Mass, m1 = P[1].Mass, mtot = m0 + m1;
+    Vec3<double> p_rate = CellP[0].HydroAccel * m0 + CellP[1].HydroAccel * m1;
+    double e_rate = m0 * (CellP[0].DtInternalEnergy + dot(CellP[0].VelPred, CellP[0].HydroAccel) / a) + m1 * (CellP[1].DtInternalEnergy + dot(CellP[1].VelPred, CellP[1].HydroAccel) / a);
+    int ok = merge_particles_ij(0, 1);
+    check("merge_rates:succeeded", ok == 1, ok, 1);
+    Vec3<double> p_rate1 = CellP[1].HydroAccel * mtot;
+    double e_rate1 = mtot * (CellP[1].DtInternalEnergy + dot(CellP[1].VelPred, CellP[1].HydroAccel) / a);
+    for(int k = 0; k < 3; k++) {check_rel("merge_rates:momentum_rate_conserved", p_rate1[k], p_rate[k], p_rate.norm());}
+    check_rel("merge_rates:energy_rate_conserved_per_unit_mass", e_rate1, e_rate, fabs(e_rate));
+}
+
 static void test_hydrogen_massfrac()
 {
 #ifdef HAVE_PARTICLE_HYDROGEN_MASSFRAC
@@ -425,6 +445,7 @@ int main(int argc, char **argv)
     test_split();
     test_merge();
     test_merge_energy();
+    test_merge_rates();
     test_hydrogen_massfrac();
     test_nongas_never_touches_CellP();
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
