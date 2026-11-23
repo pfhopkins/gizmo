@@ -124,6 +124,9 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
         {
             double dM_conv = DMAX(stellar_type_ia_yield_total() - MIa_solar, 0) / UNIT_MASS_IN_SOLAR;
             if(dM_conv > 0 && P[i].FB_KernelMass > 0) {in->IaConvertFrac = DMIN(dM_conv / P[i].FB_KernelMass, 1.0);}
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+            if(loop_iteration >= 0) {printf("IACONVSRC id=%llu dM_conv=%.17e Mej=%.17e Mch=%.17e\n", (unsigned long long)P[i].ID, dM_conv, in->Mej, stellar_type_ia_yield_total() / UNIT_MASS_IN_SOLAR); fflush(stdout);}
+#endif
         }
 #ifdef STELLA_FIRE_YIELD_SLOTS
         in->MetalMass = stella_pack_fire_yields(y_fire, in->FireYields, P[i].ID); /* Z deposit = sum of the packed table metals */
@@ -460,6 +463,9 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     double dMZ_net = 0; /* metal mass the cell gains (net of the converted gas's own metals) */
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
                     c_ia = local.IaConvertFrac * Mass_j;
+#endif
+#if defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST) && defined(GALSF_RESOLVEDISM_TYPE_IA)
+                    if(local.fb_channel == 3) {printf("IACONVCELL id=%llu u=%.17e m=%.17e c=%.17e\n", (unsigned long long)P[j].ID, u, Mass_j, c_ia);}
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
                     /* SINGLE SOURCE OF TRUTH for total-Z: the summed METAL part of the

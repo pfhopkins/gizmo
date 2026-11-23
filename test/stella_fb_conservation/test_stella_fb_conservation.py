@@ -297,6 +297,67 @@ def test_ia_iron(late_run):
     traces_ok(out)
 
 
+def cubic_spline_w(u):
+    """GIZMO's default kernel (KERNEL_FUNCTION 3) without its normalisation."""
+    return np.where(u < 0.5, 1 + 6 * (u - 1) * u * u, 2 * (1 - u) ** 3)
+
+
+def ia_conversion_check(text):
+    """The gas turned into Ia composition is c_j = w_j dM_conv, with the ejecta's weight w_j = m_j W(u_j) / sum m W recomputed
+    here from each receiver's printed u and m (not taken from the code), and c_j = m_j where w_j dM_conv > m_j (the clamp). The
+    clamp's shortfall is booked (RESOLVEDISM TYPE_IA CLAMP line) and sum c_j + shortfall = dM_conv. Ia iron delivered =
+    Fe_table (M_WD + sum c_j) / M_Ch. All bars BAR = 1e-12 of dM_conv or of the quantity."""
+    src = kv_lines(text, "IACONVSRC")
+    assert src and len({r["id"] for r in src}) == 1, f"expected one Ia, got {src}"
+    s = src[0]; dM = s["dM_conv"]
+    cells = kv_lines(text, "IACONVCELL")
+    assert cells, "no Ia receiver printed"
+    u, m, c = (np.array([r[k] for r in cells]) for k in ("u", "m", "c"))
+    w = m * cubic_spline_w(u); w = w / w.sum()
+    want = w * dM
+    clamped = want > m
+    dev = np.abs(np.where(clamped, c - m, c - want)).max() / dM
+    short = (want - m)[clamped].sum()
+    tot = abs((c.sum() + short) / dM - 1)
+    book = re.findall(r"RESOLVEDISM TYPE_IA CLAMP: t=\S+ cells=(\d+) short=(\S+)\[code\]", text)
+    n_book = sum(int(a) for a, _ in book); s_book = sum(float(b) for _, b in book)
+    fe = kv_lines(text, "IAFE")
+    assert len(fe) == 1, f"expected one IAFE line, got {len(fe)}"
+    fe_err = abs(fe[0]["Fe"] / fe[0]["Fe_table"] - (s["Mej"] + c.sum()) / s["Mch"])
+    print(f"Ia conversion: {len(cells)} receivers, dM_conv {dM:.6e}, max |c_j - expected| / dM_conv {dev:.3e}, "
+          f"|sum c_j + shortfall - dM_conv| / dM_conv {tot:.3e}, clamped {clamped.sum()} (booked {n_book}), shortfall / dM_conv "
+          f"{short / dM:.3e} (booked {s_book / dM:.3e}), Fe err {fe_err:.3e}")
+    assert dev < BAR
+    assert tot < BAR
+    assert n_book == clamped.sum()
+    assert abs(s_book - short) < BAR * dM
+    assert fe_err < BAR
+    return clamped.sum()
+
+
+def test_ia_conversion_follows_ejecta_weights(late_run):
+    """STL-180: the converted gas is spread with the ejecta's kernel weight (cubic spline, no HEALPix in this build), so a receiver
+    at the kernel edge gets none of it (Enzyme audit check C8c: jump of 0.147 of sum |d(m X)| for the old top-hat)."""
+    text, out = late_run
+    cfg = open(join(TEST_DIR, "Config.sh")).read()
+    assert not re.search(r"^\s*(KERNEL_FUNCTION|GALSF_RESOLVEDISM_FB_HEALPIX)\b", cfg, re.M), "the check assumes the cubic spline weight"
+    ia_conversion_check(text)
+    traces_ok(out)
+
+
+def test_ia_conversion_clamp(build):
+    """STL-180 clamp: a lone 3 Msun star (AGB death, then a forced Ia) in a 4 pc box of 0.02 Msun cells, where w_j dM_conv
+    exceeds the inner cells' mass. The clamp must fire (else this run does not test it), every clamped cell is converted whole,
+    the shortfall is booked, and the traces close."""
+    d = join(TEST_DIR, "run_ia_clamp"); os.makedirs(d, exist_ok=True)
+    make_box(join(d, "box_ics.hdf5"), ZSUN, n_H=10.0, box_pc=4.0, m_cell=0.02)
+    text, out = run_case("ia_clamp", build, {"InitCondFile": "box_ics", "TestNumStars": 1, "TestStarMass": 3.0, "TestStarMass2": 0,
+                                             "TestStarMass3": 0, "TestSNTime0": 1.0e-6, "TestIaTime": 3.5e-6, "TimeMax": 5.0e-6,
+                                             **zpar(np.log10(ZSUN))})
+    assert ia_conversion_check(text) > 0, "the clamp did not fire"
+    traces_ok(out)
+
+
 def test_ecsn_energy(late_run):
     text, out = late_run
     e = [float(x) for x in re.findall(r"RESOLVEDISM SN: .* rem_type=1 E=([0-9.e+]+)\[erg\]", text)]
