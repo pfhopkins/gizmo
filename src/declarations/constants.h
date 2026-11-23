@@ -15,6 +15,9 @@
 #define WAKEUP   2.1            /* allows only 1-separated timestep bins within kernel */
 #endif
 #endif
+#if defined(HYDRO_EXACT_PAIR_FLUX_EXCHANGE) && !defined(WAKEUP)
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE needs WAKEUP: its wake correction runs after the wake kicks" /* here, not in precompiler_logic.h: WAKEUP gets its default above */
+#endif
 
 #ifndef ARENA_SHARE_OF_TASK_MEMORY
 #define ARENA_SHARE_OF_TASK_MEMORY          0.90 /* most of a task's memory share the working pool may take when the code has to bring its own size down to fit the machine; the rest is for the particle arrays and the tree, which are not allocated from the pool */
