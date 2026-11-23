@@ -60,8 +60,9 @@ def test_setups():
     assert z["ComovingIntegrationOn"] == "1" and float(z["TimeBetSnapshot"]) > 1.0 and float(z["OmegaBaryon"]) > 0
     for p in ("stella_cloud.params", "stella_galaxy.params", "stella_tallbox.params"):
         assert par(p)["ComovingIntegrationOn"] == "0", p
-    zf = active_flags(CFG / "Config_stella_zoom.sh")  # as stella_dev's zoom: feedback after the closing kick, SN/Ia redo the hydro pass
-    assert "RESOLVED_ISM_FB_AFTER_CLOSING_KICK" in zf and "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB" not in zf
+    for c in ("default", "galaxy", "tallbox", "zoom"):  # feedback after the closing kick is opt-in, in no Stella config (stella_dev 1694d0c79)
+        cf = active_flags(CFG / f"Config_stella_{c}.sh")
+        assert "RESOLVED_ISM_FB_AFTER_CLOSING_KICK" not in cf and "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB" not in cf, c
 
 
 KERNEL_FAC = 2.8  # MinKernelRadius = MinGasKernelRadiusFractional x ForceSoftening[0], ForceSoftening = 2.8 x SofteningGas (cubic spline)
