@@ -660,6 +660,9 @@ void init(void)
 
 
 
+#if defined(SINK_APPROACH_TIME_TRACKED) && !defined(SINK_PARTICLES) /* stars' approach-time step without sinks: no walk has filled it yet (none at all with SELFGRAVITY_OFF) */
+        P[i].Min_Sink_Approach_Time = P[i].Min_Sink_Freefall_time = MAX_REAL_NUMBER;
+#endif
 #ifdef SINK_PARTICLES
 #if (SINGLE_STAR_SINK_FORMATION & 8)
         P[i].Sink_Ngb_Flag = 0;
@@ -766,7 +769,7 @@ void init(void)
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
         CellP[i].SFCooldown = 0; /* not in snapshots: snapshot restarts start with no cooldown */
 #endif
-#ifdef FB_G17_BOUNDARY_INJECTION
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
         CellP[i].FBinjFlag = 0; /* gizmo2017-mimicry FB-receiver flag starts clear */
 #endif
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME

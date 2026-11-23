@@ -790,8 +790,7 @@ void star_formation_parent_routine(void)
                             P[ns].StarModel = STAR_MODEL_STELLA;
                             P[ns].StellaFBEvent_ThisTimeStep = 0;
 #endif
-                            P[ns].Mass = 1e-10 / UNIT_MASS_IN_SOLAR; /* tiny placeholder — filled by accretion walk */
-                            ESTEP_BOOK(EBK_SF_PLACEHOLDER_KIN, 0.5 * P[ns].Mass * P[ns].Vel.norm_sq() * All.cf_a2inv); /* placeholder mass is not taken from the parent */
+                            P[ns].Mass = 0; /* all its mass comes from the donors in the accretion walk */
                             P[ns].StellarAge = All.Time;
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                         /* TestStarInitAgeYr>0 (B10 AGB test, 2026-07-28): back-date the birth

@@ -60,14 +60,16 @@ Not with TREE_RAY or RADTRANSFER. No parameters.
 On in: Config_stella_zoom.sh (with RT_NUV and RT_OPTICAL_NIR). Tests: test/unit/test_hminus_bands.cc (blackbody field
 against the spectral integral, upstream bin edges), test/unit/test_band_flags_without_radpressure.cc.
 
-## GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE: PISN energy (opt-in)
+## RESOLVED_ISM_VARIABLE_SN_ENERGY: explosion energies by type (off by default)
 
-By default every exploding death (CCSN, ECSN, PPISN, PISN) injects a flat 1e51 erg, by design. Failed SNe and direct
-black holes inject nothing. With this switch a PISN instead injects [5.0 + 1.304 (M_He - 64)] 1e51 erg. Here
-M_He = (13/24)(M - 20), held to 64-133 Msun (Heger & Woosley 2002, as fitted by Wise+12a). The same energy goes to an
-ejecta cell (see the ejecta-cell rule below). No parameters.
+By default every exploding death (CCSN, ECSN, PPISN, PISN) injects 1e51 erg (Uli 2026-11-19); failed SNe and direct
+collapse inject nothing. With this switch (Uli's choice 2026-11-19) a PISN injects 1e52 erg and an ECSN 5e50 erg; CCSNe and
+PPISNe stay at 1e51. For reference: the He-core fit of Heger & Woosley 2002 (via Wise+12a) gives 4.87e52 erg for a 200 Msun
+PISN, and Kitaura, Janka & Hillebrandt 2006 ~1e50 erg for an ECSN; the fit is no longer in the code. Deposit, FeedbackBudget, the energy trace, SNinfo and the ejecta-cell payload use the same energy. It
+replaces the former GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE.
 
-On in: no shipped config. Tests: test/unit/test_pisn_energy.cc (default flat 1e51), test/unit/test_pisn_energy_helium_core.cc.
+Tests: test/unit/test_pisn_energy.cc and test_sn_energy_variable.cc; test/stella_fb_conservation (a PISN, an ECSN and a
+CCSN with and without the switch, booked = deposited).
 
 ## SGCHEM_UVB_TREECOL_SHIELDING: self-shielding of the UV background
 
@@ -132,12 +134,21 @@ Checks (reports/sn_boundary_and_approach_dt.md): 1 + 10 Msun flyby, eps = b = 0.
 50 kyr step cap the deflection is 0.31 deg off and dE/E = -4e-3; with no cap 63 deg off. With the switch, 0.002 deg and
 |dE/E| <= 5e-5 at any cap. Cost in the 1e4 Msun cloud: 9% more steps, 19% more time per step.
 
-## FB_G17_BOUNDARY_INJECTION: feedback at the step boundary
+## RESOLVED_ISM_FB_AFTER_CLOSING_KICK: feedback at the step boundary
 
 Feedback is deposited after the closing kick, and the hydro pass is redone on feedback steps (gizmo2017 order). The redone
 pass no longer repeats the turbulent metal exchange, which is applied in the pass itself rather than by the kicks. Not
 combinable with MFV. On in Config_stella_zoom.sh. Adiabatic SN at 1 Msun: energy excess +0.96% (max) with mid-step
 deposit, +0.40% at the boundary.
+
+## RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB: hydro recompute after every boundary deposit
+
+With RESOLVED_ISM_FB_AFTER_CLOSING_KICK alone, the hydro pass is redone after SN and Ia deposits only. With this switch, wind, AGB and
+radiation-pressure deposits (star-side walk and the per-cell tree term) also flag their receivers, so the next opening kick
+uses forces from the post-deposit state there too. Requires RESOLVED_ISM_FB_AFTER_CLOSING_KICK. Off by default and set in no
+production config, the zoom included (Uli 2026-11-19); with continuous winds
+the recompute then runs on almost every step. Cost on the zoom smoke test (L10 zoom, 17.7M particles, restart from snapshot 17, 8 ranks, 23 steps): 245 s without, 282 s with the flag (+15 %, a recompute on 23 of 23 steps). Adiabatic 60 Msun wind + AGB box (test/stella_fb_boundary_wind): energy excess +0.0017/+0.0020 % with, +0.0028/+0.0031 % without (100 K / 1e4 K), so no measurable energy gain there.
+Test: test/stella_fb_boundary_wind (flag on and off).
 
 ## TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS (test only)
 
@@ -166,7 +177,6 @@ Tests: test/merge_split_conservation_stella_default (with the Stella default con
 | SGCHEM_DGR_REMY_RUYER14 | SGCHEM_DGR_REMY_RUYER14 |
 | SGCHEM_PRIMORDIAL_HELIUM | SGCHEM_PRIMORDIAL_HELIUM |
 | SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS | SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS |
-| GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE | GALSF_SINGLE_STARS_PISN_ENERGY_FROM_HELIUM_CORE |
 | SGCHEM_UVB_TREECOL_SHIELDING | SGCHEM_UVB_TREECOL_SHIELDING |
 | GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF (nHcutoffSF) | GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY (nHcutoffSF) |
 | GALSF_RESOLVEDISM_SN_SPAWN | GALSF_SINGLE_STARS_SN_EJECTA_CELL |
@@ -176,3 +186,40 @@ Tests: test/merge_split_conservation_stella_default (with the Stella default con
 ### Star softening rule (in development)
 Stars use a fixed gravitational softening (adaptive softening for gas only), set per run from the gas mass resolution:
 eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = the hard star-formation threshold (1e6 cm^-3), i.e. eps_star = 0.1 pc x (m_gas/Msun)^(1/3) (0.1 pc at 1 Msun, 0.047 pc at 0.1 Msun). This is 3x the Hopkins et al. (2018) / RIGEL scaling: it keeps stars clearly above the smallest gas cells, so birth clusters do not shrink below the softening and set the global timestep. Comoving runs set it as a physical cap (SofteningStarsMaxPhys) with a comoving value large enough that the cap binds before the first stars form. The gas smoothing length is not capped (tiny gas softening floor).
+
+## Feedback audit 2026-11-17: changes that affect runs
+
+- **Feedback tests.** test/stella_fb_conservation, stella_fb_wakeup and stella_fb_boundary_wind build with
+  HYDRO_EXACT_PAIR_FLUX_EXCHANGE and HYDRO_TIMESTEP_FROM_PAIR_FORCE (Uli 2026-11-21), so their energy traces test the feedback,
+  not the cross-timebin integration error; the default build's 1-3 % residual after hot deposits is a recorded strict expected
+  failure (test_default_build_integration_residual; STL-55, STL-127).
+
+- **Restart files.** The restart layout changed: the element ledger (CumulElemToGas, CumulElemFromStars) is written after
+  the metal ledger, the metal-ledger accumulators are long double, and every particle carries FB_DepositedP and
+  FB_DepositedZ. Restart files
+  written before this change cannot be read by this code and vice versa (no size check guards it). Resume running
+  productions from a snapshot (RestartFlag 2). Reading ElementAbundance now sets H = 1 - Z - Y, so single-precision
+  snapshots and ICs start with a closed composition (an IC with an all-zero ElementAbundance becomes pure H; fresh starts
+  still take the composition from InitMetallicity).
+- **Explosion energies.** Default: every SN 1e51 erg, as before the audit. With RESOLVED_ISM_VARIABLE_SN_ENERGY: PISN 1e52 erg,
+  ECSN 5e50 erg.
+- **Death ejecta.** Remnant and ejecta are fractions of the star's mass at death. Failed SNe and direct collapse eject
+  nothing (all table ejecta are 0). Remnants between grid points differ from the earlier absolute table values.
+- **Type Ia.** Each Ia delivers the table's 1.378 Msun of Ia matter (0.744 Msun Fe): the white dwarf particle plus
+  1.378 - M_WD of the receivers' gas turned into Ia composition in place, shared with the ejecta's kernel weight (or the
+  HEALPix weight), so it vanishes at the kernel edge (cell mass, momentum and specific internal energy unchanged; its dust
+  removed). A cell whose share exceeds its mass is converted whole; the rest is not converted and is reported per step
+  (RESOLVEDISM TYPE_IA CLAMP, with running totals). The mean molecular weight, and so T at fixed u,
+  changes in the converted part. At 0.1 Msun cells the kernel holds a few Msun, so up to ~25 % of the kernel gas becomes
+  Ia matter. The rate normalisation is unchanged, so Ia iron per formed mass is rate x table yield. In the Stella x FIRE-3
+  coupled mode the conversion acts on every FIRE slot, tracer slots included: the converted gas keeps no tracer.
+- **Metal diffusion.** Stella builds use the default TURB_DIFF_METALS exchange (each cell applies its own step's share,
+  as upstream); TURB_DIFF_METALS_EXACT_CONSERVATION is no longer switched on for Stella and stays opt-in. With individual
+  timesteps the element and metal ledgers therefore close only to the integration order of the exchange (exact at equal
+  timesteps). Each pair's 27 element-slot fluxes are closed before they are applied: their residual is shared in proportion
+  to each slot's flux (a slot a cell does not hold takes none) and slot 0 is the sum of the metal slots, so every cell keeps
+  sum X = 1 and Z = sum of its metals. Restart files from builds with the forced flag carry an extra per-cell buffer and
+  cannot be read.
+- **Mass trace.** mass_balance_steps.txt counts mass leaving through an outflow boundary in M_bary (also in non-Stella
+  builds), and mass_balance_elements.txt closes every element; MbaryOutflow is not restarted (the trace re-baselines after a
+  restart).

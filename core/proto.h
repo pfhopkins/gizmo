@@ -954,7 +954,10 @@ extern double CumulSFEnergyRemoved;  /* gas thermal+kinetic energy removed by st
 extern double CumulFeedbackMass;     /* cumulative mass returned to gas [Msun] */
 extern double CumulStarMassFormed;   /* cumulative stellar mass formed [Msun] */
 extern double CumulFeedbackMetals;   /* cumulative metals returned to gas [Msun] */
-extern double CumulMetalYieldToGas, CumulMetalEjectedFromStars; /* metal ledger on this rank [code mass] */
+extern long double CumulMetalYieldToGas, CumulMetalEjectedFromStars; /* metal ledger on this rank [code mass]; long double: ~1e-8 terms cancel to a much smaller total */
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+extern double CumulElemToGas[NUM_METAL_SPECIES], CumulElemFromStars[NUM_METAL_SPECIES]; /* element ledger on this rank, per Metallicity slot: deposited, removed from stars [code mass] */
+#endif
 extern int CumulSNe, CumulAGB, CumulIa; /* cumulative event counts */
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)
@@ -967,6 +970,7 @@ int get_index(double search);
 /* Always-on mass-balance leak locator: log per-checkpoint M_bary + M_Z delta
  * to mass_balance_steps.txt; bracket suspect operations with MBARY_STEP("tag"). */
 void mbary_step_checkpoint(const char *tag);
+void mbary_book_outflow(int i); /* mass and composition of particle i leaving through an outflow boundary */
 #define MBARY_STEP(tag) mbary_step_checkpoint(tag)
 
 /* Energy step trace (core/energy_step_trace.cc): rank-local stage brackets, booked sources/sinks, one reduce per window */
@@ -974,7 +978,7 @@ enum {ESTEP_MERGE_SPLIT, ESTEP_FB_WIND_AGB, ESTEP_FB_SN_IA, ESTEP_FB_POST, ESTEP
       ESTEP_DUST, ESTEP_SF_SPAWN, ESTEP_IMF_ACCRETE, ESTEP_RT_INJECT,
       ESTEP_INT_GRAV, ESTEP_INT_HYDRO, ESTEP_INT_KICK1, ESTEP_INT_KICK2, ESTEP_INT_DRIFT, ESTEP_NSTAGE};
 enum {EBK_FB_WIND, EBK_FB_AGB, EBK_FB_SN, EBK_FB_IA, EBK_FB_FAILED, EBK_COOL_RAD, EBK_COOL_PI, EBK_COOL_FLOOR, EBK_SF_TH_LOCKED,
-      EBK_SF_MAG_LOCKED, EBK_SF_PLACEHOLDER_KIN, EBK_IMF_TH_LOCKED, EBK_IMF_MAG_LOCKED, EBK_IMF_KIN, EBK_MERGE_GRAVWORK,
+      EBK_SF_MAG_LOCKED, EBK_IMF_TH_LOCKED, EBK_IMF_MAG_LOCKED, EBK_IMF_KIN, EBK_MERGE_GRAVWORK,
       EBK_MERGE_HEAT_NOT_RETURNED, EBK_SN_CELL_TH, EBK_SN_CELL_MAG, EBK_MERGE_MAG_LOST, EBK_KICK_FLOOR, EBK_OUTFLOW, EBK_INFO_MHD_NUM, EBK_INFO_SN_RELKIN_HEAT,
       EBK_COOL_CR_LOSS, EBK_CR_CLIP, EBK_INFO_CR_SHOCK,
       EBK_RT_EMIT, EBK_RT_ABS, EBK_RT_TOIR, EBK_COOL_RAD_EXCHANGE, EBK_N};
@@ -1005,6 +1009,7 @@ void resolvedism_inject_fb_energy(void);
 void resolvedism_fb_thermal_calc(int loop_iteration);
 void resolvedism_fb_momentum_calc(int fb_loop_iteration);
 extern MyIDType FB_SerialEventID; /* per-event FB serialization token (resolvedism_fb.cc); 0 = unrestricted */
+extern MyIDType FB_SerialEventChild; extern long long FB_SerialEventGen; /* with the ID: siblings share the parent cell's ID */
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
 void resolvedism_radpressure_treerad(void); /* LEBRON-style per-cell direct radp from tree per-pixel fluxes (Uli 2026-07-08) */
 #endif
@@ -1081,6 +1086,30 @@ double get_particle_feedback_timestep_in_physical(int i, struct particle_data *p
 void determine_PMinterior(void);
 void gravity_tree(void);
 void hydro_force(void);
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+void pairflux_begin_hydro_pass(void);
+void pairflux_end_hydro_pass(void);
+long long pairflux_restart_count(void);
+void *pairflux_restart_buffer(long long n_read);
+size_t pairflux_record_size(void);
+void pairflux_note_rearrange(void);
+void pairflux_note_kick_floor(double de);
+void pairflux_mark_closing_kick_expected(void);
+void pairflux_record_add(int r, int r_active, int crossbin, int e_task, int e_index, long long S_e, long long ti_e, Vec3<double> mom, double egy, Vec3<double> B, Vec3<double> Bded);
+void pairflux_after_closing_kick(void);
+void pairflux_after_opening_kick(void);
+void pairflux_wake_kick_correction(int i, double dt_wake, int to_pred);
+#endif
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+void print_gas_conserved_totals(void);
+void test_kick_energy_split_add(int gas, double hydro, double floor_e, double total);
+void test_impulse_energy_add(double de);
+void test_count_mhd_limiters(int phicorr_renormalised, int closure_not_one);
+void test_powell_work_add(Vec3<double> dmom, double degy);
+#endif
+#ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
+void test_pairflux_add_mass_and_wake(void);
+#endif
 void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);

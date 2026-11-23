@@ -162,7 +162,7 @@ int Flag_FullStep;		/*!< Flag used to signal that the current step involves all 
 
 int TreeReconstructFlag;
 int TreeMomentsStaleFlag;
-#ifdef FB_G17_BOUNDARY_INJECTION
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
 int HydroPassRepeatsStep; /*!< 1 during the feedback hydro recompute: exchanges applied directly in the hydro pass are skipped */
 #endif
 #ifdef TREE_REFRESH_INCREMENTAL

@@ -26,7 +26,8 @@
 #ifdef GALSF_RESOLVEDISM_FB
 
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
-double FB_TestWindPabs = 0, FB_TestWindPvec[3] = {0, 0, 0}, FB_TestWindMcoupled = 0; /* test: wind momentum/mass delivered by the walk (code units) */
+double FB_TestWindPabs = 0, FB_TestWindPvec[3] = {0, 0, 0}, FB_TestWindMcoupled = 0, FB_TestWindZcoupled = 0; /* test: wind momentum/mass delivered by the walk (code units) */
+double FB_TestRadpPabs = 0, FB_TestRadpPvec[3] = {0, 0, 0}; /* test: star-side radp momentum delivered by the walk (code units) */
 #endif
 
 #define FB_QNORM_MIN 1.0e-6 /* Σ|q| below this: neighbours collinear, no isotropic split exists */
@@ -210,7 +211,7 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     in->WindCREnergy = 0;
 #endif
     /* Load measured AWS from prior weighting pass (or 0 if this IS the weighting pass). */
-    int load_ = (loop_iteration >= 0 || loop_iteration <= -3); /* -3/-4: wind/AGB normalisation passes */
+    int load_ = (loop_iteration >= 0 || loop_iteration <= -3); /* -3/-4: wind/AGB normalisation passes, -5: radp */
     in->FB_Area_weighted_sum_in = load_ ? (MyDouble)P[i].FB_Area_weighted_sum : 0;
     for(k=0;k<3;k++) {in->FB_VecSum_in[k] = load_ ? P[i].FB_VecSum[k] : 0;}
     in->FB_QnormSum_in = load_ ? P[i].FB_QnormSum : 0;
@@ -239,8 +240,8 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     if(!get_star_info(i, &Mstar, &logM, &logZ)) return;
 
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
-    /* ---- Radiation pressure (loop_iteration == 1; -2 is its weighting pre-pass and needs the budget too) ---- */
-    if(loop_iteration == 1 || loop_iteration == -2) {
+    /* ---- Radiation pressure (loop_iteration == 1; -2 and -5 are its weighting and Σ|q| passes and need the budget too) ---- */
+    if(loop_iteration == 1 || loop_iteration == -2 || loop_iteration == -5) {
         in->WindMomentum = resolvedism_radp_starside_dp_code(i);
         return;
     }
@@ -369,13 +370,13 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     /* ---- AGB death (STELLA_FB_EVENT == 2) ---- */
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
     int rem_type = stellar_remnant_type(logM, logZ);
-    double rem_mass = stellar_remnant_mass(logM, logZ);
 
     /* same export-repack freeze as the SN thermal path (2026-07-05) */
     double M_particle_solar = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger
                                                          : P[i].Mass * UNIT_MASS_IN_SOLAR;
-    double Mej_solar = M_particle_solar - rem_mass;
-    if(Mej_solar < 0) Mej_solar = 0;
+    double m_k_ej[STBL_NELEM]; /* AGB element ejecta of this star (stellar_death_ejecta) */
+    double rem_mass = stellar_death_ejecta(logM, logZ, M_particle_solar, m_k_ej);
+    double Mej_solar = 0; for(k = 0; k < STBL_NELEM; k++) {Mej_solar += m_k_ej[k];} /* = M_particle - rem */
     in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;
 
     /* AGB momentum: planetary nebula ejection at 30 km/s */
@@ -383,36 +384,21 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
         in->WindMomentum = Mej_solar * 30.0 * SOLAR_MASS_CGS * 1.0e5 / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
     }
 
-    /* AGB yields: the table gives the ejecta COMPOSITION; rescale it to the physical
-     * ejecta mass Mej_solar = M_particle - rem_mass so we never remove more than the
-     * star currently has. BUGFIX 2026-07-02: previously in->Mej was overwritten with the
-     * ZAMS-envelope table sum Mej_table_solar, which for a wind-stripped star exceeds the
-     * current mass -> out2particle clip -> mass non-conservation (the test_FULL leak).
-     * Mirror the SN thermal path: current-mass Mej, table composition. */
     double metal_mass_solar = 0;
-    double Mej_table_solar = 0;
 #ifdef STELLA_FIRE_YIELD_SLOTS
     double y_fire[STBL_NELEM];
 #endif
     for(k = 0; k < STBL_NELEM; k++) {
-        double m_k = stellar_elem_ej_AGB(logM, logZ, k);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-        in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR; /* table-absolute; rescaled below */
+        in->ElemYields[k] = m_k_ej[k] / UNIT_MASS_IN_SOLAR;
 #endif
 #ifdef STELLA_FIRE_YIELD_SLOTS
-        y_fire[k] = m_k / UNIT_MASS_IN_SOLAR;
+        y_fire[k] = m_k_ej[k] / UNIT_MASS_IN_SOLAR;
 #endif
-        Mej_table_solar += m_k;
-        if(k >= ELEM_C) metal_mass_solar += m_k;
+        if(k >= ELEM_C) metal_mass_solar += m_k_ej[k];
     }
-    double zscale = (Mej_table_solar > 0) ? (Mej_solar / Mej_table_solar) : 0.0;
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-    for(k = 0; k < STBL_NELEM; k++) in->ElemYields[k] *= zscale;
-#endif
-    in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;                     /* current-mass ejecta (not table sum) */
-    in->MetalMass = metal_mass_solar * zscale / UNIT_MASS_IN_SOLAR;
+    in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
 #ifdef STELLA_FIRE_YIELD_SLOTS
-    for(k = 0; k < STBL_NELEM; k++) {y_fire[k] *= zscale;}
     in->MetalMass = stella_pack_fire_yields(y_fire, in->FireYields, P[i].ID); /* Z deposit = sum of the packed table metals */
 #ifdef STELLA_SELFCHECK
     if(loop_iteration == 0) {stella_fire_yields_log("AGB", P[i].ID, y_fire, in->FireYields);}
@@ -423,9 +409,9 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     {
         double sum_y_code = 0;
         for(int kk = 0; kk < NUM_RESOLVEDISM_ELEMENTS; kk++) sum_y_code += in->ElemYields[kk];
-        printf("FBDBG_AGB_DONOR star=%llu(%.1fMsun) rem_type=%d M_pre=%.6e rem=%.6e Mej_solar(unused)=%.6e Mej_tab=%.6e in.Mej=%.6e Msun SumY=%.6e Msun Y[H]=%.6e Y[He]=%.6e Y[C]=%.6e Y[O]=%.6e Y[Fe]=%.6e\n",
+        printf("FBDBG_AGB_DONOR star=%llu(%.1fMsun) rem_type=%d M_pre=%.6e rem=%.6e Mej_solar=%.6e in.Mej=%.6e Msun SumY=%.6e Msun Y[H]=%.6e Y[He]=%.6e Y[C]=%.6e Y[O]=%.6e Y[Fe]=%.6e\n",
             (unsigned long long)P[i].ID, P[i].MstarSampleIMF[0],
-            rem_type, M_particle_solar, rem_mass, Mej_solar, Mej_table_solar,
+            rem_type, M_particle_solar, rem_mass, Mej_solar,
             in->Mej*UNIT_MASS_IN_SOLAR, sum_y_code*UNIT_MASS_IN_SOLAR,
             in->ElemYields[0]*UNIT_MASS_IN_SOLAR, in->ElemYields[1]*UNIT_MASS_IN_SOLAR,
             in->ElemYields[2]*UNIT_MASS_IN_SOLAR, in->ElemYields[4]*UNIT_MASS_IN_SOLAR,
@@ -451,6 +437,7 @@ struct OUTPUT_STRUCT_NAME
      * and total mass deposited (for star mass reduction). */
     MyFloat MomentumInjected[3];
     MyFloat M_coupled;
+    MyDouble P_dep, Z_dep; /* delivered sum |dp_j| and metal mass */
     /* Weighting-pass accumulator: Σ_j (Mass_j × kernel.wk) over neighbors walked. */
     MyDouble FB_Area_weighted_sum_accum;
     MyDouble FB_VecSum_accum[3];
@@ -464,7 +451,7 @@ struct OUTPUT_STRUCT_NAME
 void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
 {
     if(loop_iteration == -3) {int k_; for(k_=0;k_<3;k_++) {ASSIGN_ADD(P[i].FB_VecSum[k_], out->FB_VecSum_accum[k_], mode);} return;}
-    if(loop_iteration == -4) {ASSIGN_ADD(P[i].FB_QnormSum, out->FB_Qnorm_accum, mode); return;}
+    if(loop_iteration == -4 || loop_iteration == -5) {ASSIGN_ADD(P[i].FB_QnormSum, out->FB_Qnorm_accum, mode); return;}
     if(loop_iteration < 0) {
         /* Weighting pass: accumulate measured kernel sum onto the star. */
         P[i].FB_Area_weighted_sum += out->FB_Area_weighted_sum_accum;
@@ -484,11 +471,19 @@ void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, 
 #ifdef METALS
         double m_before = P[i].Mass;
 #endif
+        P[i].FB_DepositedP += out->P_dep;
+        P[i].FB_DepositedZ += out->Z_dep;
         P[i].Mass -= out->M_coupled;
         if((P[i].Mass < 0) || (isnan(P[i].Mass))) P[i].Mass = 0;
 #ifdef METALS
-        #pragma omp atomic
-        CumulMetalEjectedFromStars += (m_before - P[i].Mass) * P[i].Metallicity[0]; /* metal ledger: star metal mass removed */
+        #pragma omp critical (metal_ledger_sum)
+        CumulMetalEjectedFromStars += (long double)(m_before - P[i].Mass) * P[i].Metallicity[0]; /* metal ledger: star metal mass removed */
+#endif
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+        for(int m_ = 0; m_ < NUM_METAL_SPECIES; m_++) { /* element ledger: removed at the star's own composition */
+            #pragma omp atomic
+            CumulElemFromStars[m_] += (m_before - P[i].Mass) * P[i].Metallicity[m_];
+        }
 #endif
     }
 }
@@ -506,19 +501,19 @@ int resolvedismFB_momentum_active_check(int i, int loop_iteration)
     if(P[i].KernelRadius <= 0) return 0;
     if(P[i].NumNgb <= 0) return 0;
 
-    /* Pair (-1, 0) for wind/AGB; pair (-2, 1) for radpressure.  STARFORGE pattern:
+    /* Pair (-1, 0) for wind/AGB; pair (-2, 1) for radpressure (-5 its Σ|q| pass).  STARFORGE pattern:
      * the weighting pre-pass uses the same active_check criterion as its injection. */
     if(loop_iteration == 0 || loop_iteration == -1 || loop_iteration == -3 || loop_iteration == -4) {
         /* per-event serialization (see resolvedism_fb_serialized_pass in resolvedism_fb.cc):
          * when the token is set, only that single event is active. Radpressure pair
          * (-2,1) below is deliberately NOT gated — it stays batched (momentum-only,
          * many low-rate sources; runs with the token released). */
-        if(FB_SerialEventID != 0 && P[i].ID != FB_SerialEventID) return 0;
+        if(!resolvedism_fb_token_admits(i)) return 0;
         /* AGB (2) and wind (3) */
         if(STELLA_FB_EVENT(P[i]) == 2 || STELLA_FB_EVENT(P[i]) == 3) return 1;
     }
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
-    if(loop_iteration == 1 || loop_iteration == -2) {
+    if(loop_iteration == 1 || loop_iteration == -2 || loop_iteration == -5) {
         if(P[i].Mass <= 0) return 0;
         double Mstar = 0;
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
@@ -580,7 +575,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                 if((kernel.wk <= 0)||(isnan(kernel.wk))) {continue;}
 
                 /* wind/AGB passes weight with the cell mass frozen at the weighting pass (batch-consistent) */
-                double Mass_w = (loop_iteration == 0 || loop_iteration == -1 || loop_iteration <= -3) ? (double)CellP[j].FB_WeightMass : Mass_j;
+                double Mass_w = (loop_iteration == 0 || loop_iteration == -1 || loop_iteration == -3 || loop_iteration == -4) ? (double)CellP[j].FB_WeightMass : Mass_j;
                 double rhat[3]; for(k=0;k<3;k++) {rhat[k] = -kernel.dp[k] / kernel.r;}
 
                 /* STARFORGE two-pass pattern: weighting pre-pass (loop_iteration -1/-2) just
@@ -611,14 +606,14 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                 /* kick direction: r̂_j minus the weighted mean direction m, so Σ_j wk_j dir_j = 0 */
                 double mdir[3], dir_[3];
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
-                for(k=0;k<3;k++) {mdir[k] = (loop_iteration == 1) ? 0 : local.FB_VecSum_in[k];}
+                for(k=0;k<3;k++) {mdir[k] = (loop_iteration == 1 || loop_iteration == -5) ? 0 : local.FB_VecSum_in[k];}
 #else
                 for(k=0;k<3;k++) {mdir[k] = local.FB_VecSum_in[k] / (MIN_REAL_NUMBER + fabs(local.FB_Area_weighted_sum_in));}
 #endif
                 for(k=0;k<3;k++) {dir_[k] = rhat[k] - mdir[k];}
                 double qn = wk * sqrt(dir_[0]*dir_[0] + dir_[1]*dir_[1] + dir_[2]*dir_[2]);
-                if(loop_iteration == -4) {out.FB_Qnorm_accum += qn; continue;}
-                if(loop_iteration == 0) {
+                if(loop_iteration == -4 || loop_iteration == -5) {out.FB_Qnorm_accum += qn; continue;}
+                if(loop_iteration == 0 || loop_iteration == 1) {
                     /* vector weights q_j = wk_j (r̂_j - m), normalised by Σ|q|: share |q_j|/Σ|q| along q̂_j,
                      * so Σ dp = 0, Σ|dp| = p_ej and Σ ½ dM v_w² = ½ M_ej v_w² exactly */
                     if(local.FB_QnormSum_in > FB_QNORM_MIN) {
@@ -658,8 +653,12 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         double dZ = (dMZ - Z_old * dM) / (M_old + dM);
                         #pragma omp atomic
                         P[j].Metallicity[0] += dZ;
-                        #pragma omp atomic
+                        #pragma omp critical (metal_ledger_sum)
                         CumulMetalYieldToGas += dMZ; /* metal ledger: yield metals into gas */
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                        #pragma omp atomic
+                        CumulElemToGas[0] += dMZ;
+#endif
                     }
                     {
                         int ch = local.fb_channel;
@@ -676,9 +675,9 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     }
 #endif
 #ifdef STELLA_FIRE_YIELD_SLOTS
-                    stella_blend_fire_slots(j, Mass_j, dM, wk, local.FireYields); /* FIRE layout: no H slot, no closure */
+                    stella_blend_fire_slots(j, Mass_j, dM, wk, local.FireYields, 0, local.Mej); /* FIRE layout: no H slot, no closure */
 #ifdef STELLA_SELFCHECK
-                    stella_fire_receiver_check(j, Mass_j, dM, wk, local.FireYields, X_fire_old, local.StarID);
+                    stella_fire_receiver_check(j, Mass_j, dM, wk, local.FireYields, X_fire_old, local.StarID, 0, local.Mej);
 #endif
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
@@ -701,6 +700,8 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         double dX = (dMX - X_old * dM) / (Mass_j + dM);
                         #pragma omp atomic
                         P[j].Metallicity[m] += dX;
+                        #pragma omp atomic
+                        CumulElemToGas[m] += dMX; /* element ledger: what the deposit books */
                     }
                     /* Force ΣMet = 1 by construction (see fb_thermal for rationale). */
                     {
@@ -776,7 +777,17 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     /* Accumulate actual deposition for measured-coupling reduction
                      * on the dying star (FIRE pattern); see out2particle. */
                     out.M_coupled += dM;
+#ifdef METALS
+                    out.Z_dep += wk * yield_metals;
+#endif
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
+                    CellP[j].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    if(loop_iteration == 0 && local.fb_channel == 2) {
+                        #pragma omp atomic
+                        FB_TestWindZcoupled += wk * yield_metals;
+                    }
                     if(loop_iteration == 0 && local.fb_channel == 2) {
                         #pragma omp atomic
                         FB_TestWindMcoupled += dM;
@@ -820,6 +831,10 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     CellP[j].InternalEnergy += du_full;
                     #pragma omp atomic
                     CellP[j].InternalEnergyPred += du_full;
+                    out.P_dep += wk * local.WindMomentum; /* momentum equivalent of the heat */
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
+                    CellP[j].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
+#endif
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                     wakeup_list_note(j);
@@ -845,7 +860,11 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         out.MomentumInjected[k] += dp_k;
                         dv_mag2 += dv_k * dv_k;
                     }
+                    out.P_dep += dp_share * sqrt(dir_[0]*dir_[0] + dir_[1]*dir_[1] + dir_[2]*dir_[2]);
                     force_note_motion_change(j);
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
+                    CellP[j].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     if(loop_iteration == 0 && local.fb_channel == 2) {
                         double dpa = 0; for(k = 0; k < 3; k++) {dpa += (dp_share * dir_[k]) * (dp_share * dir_[k]);}
@@ -854,6 +873,15 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         for(k = 0; k < 3; k++) {
                             #pragma omp atomic
                             FB_TestWindPvec[k] += dp_share * dir_[k];
+                        }
+                    }
+                    if(loop_iteration == 1) {
+                        double dpa = 0; for(k = 0; k < 3; k++) {dpa += (dp_share * dir_[k]) * (dp_share * dir_[k]);}
+                        #pragma omp atomic
+                        FB_TestRadpPabs += sqrt(dpa);
+                        for(k = 0; k < 3; k++) {
+                            #pragma omp atomic
+                            FB_TestRadpPvec[k] += dp_share * dir_[k];
                         }
                     }
 #endif
@@ -950,11 +978,16 @@ static void resolvedism_fb_momentum_walk(int fb_loop_iteration)
     #include "../system/code_block_xchange_perform_ops_demalloc.h"
 }
 
-/* -1 (wind/AGB weighting) also runs the normalisation passes: -3 HEALPIX mean direction, -4 Σ|q| */
+/* -1 (wind/AGB weighting) also runs the normalisation passes: -3 HEALPIX mean direction, -4 Σ|q|; -2 (radp weighting) runs -5 Σ|q| */
 void resolvedism_fb_momentum_calc(int fb_loop_iteration)
 {
     if(fb_loop_iteration == -1) {for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0) {CellP[i].FB_WeightMass = P[i].Mass;}}}
     resolvedism_fb_momentum_walk(fb_loop_iteration);
+    if(fb_loop_iteration == -2) {
+        for(int i : ActiveParticleList) {if(P[i].Type == 4) {P[i].FB_QnormSum = 0;}}
+        resolvedism_fb_momentum_walk(-5);
+        return;
+    }
     if(fb_loop_iteration != -1) return;
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
     for(int i : ActiveParticleList) {if(P[i].Type == 4) {P[i].FB_VecSum[0] = P[i].FB_VecSum[1] = P[i].FB_VecSum[2] = 0;}}
@@ -1133,6 +1166,9 @@ void resolvedism_radpressure_treerad(void)
             CellP[i].VelPred[k] += dv;
         }
         force_raise_motion_bound(i);
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
+        CellP[i].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
+#endif
         RadPressure_dp_thisStep += dpmag_cgs; /* channel-3 ledger (FeedbackBudget) */
     }
 }

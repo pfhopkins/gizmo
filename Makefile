@@ -837,6 +837,7 @@ GRAVITY_OBJS  = gravity/forcetree.o \
                 gravity/star_direct_gravity.o
 
 HYDRO_OBJS = 	hydro/hydro_toplevel.o \
+				hydro/pair_flux_exchange.o \
 				hydro/density.o \
 				hydro/gradients.o \
 				hydro/mg_gradient_correction.o \

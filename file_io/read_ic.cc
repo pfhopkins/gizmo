@@ -706,6 +706,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
                     if(k >= ELEM_C) Z_sum += val;
                 }
                 P[offset + n].Metallicity[0] = Z_sum;
+                P[offset + n].Metallicity[MET_OF(ELEM_H)] = 1.0 - Z_sum - P[offset + n].Metallicity[MET_OF(ELEM_He)]; /* close sum = 1: single-precision snapshots leave ~1e-8 */
             }
 #endif
             break;

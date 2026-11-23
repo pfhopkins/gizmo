@@ -35,6 +35,7 @@ enum StellarElement {
  *   ...
  *   MET_OF(ELEM_Zn) = 27 */
 #define MET_OF(k) ((k) + 1)
+#endif
 /* Asplund+09 photospheric mass fractions in StellarElement order (stella-tables X_init); metals sum to 0.014 */
 static const double resolvedism_solar_massfrac[STBL_NELEM] = {
     7.3750000000e-01, /*  0: H  */    2.4850000000e-01, /*  1: He */
@@ -52,7 +53,6 @@ static const double resolvedism_solar_massfrac[STBL_NELEM] = {
     7.4619379442e-05, /* 24: Ni */    7.5396909229e-07, /* 25: Cu */
     1.8184871682e-06, /* 26: Zn */
 };
-#endif
 
 /* Isotope index mapping (matches HDF5 'isotopes' dataset order) */
 enum StellarIsotope {
@@ -166,6 +166,7 @@ double stellar_lifetime(double logM, double logZ);
 double stellar_remnant_mass(double logM, double logZ);
 int    stellar_remnant_type(double logM, double logZ);
 double stellar_M_preSN(double logM, double logZ);
+double stellar_death_ejecta(double logM, double logZ, double M_death, double *m_k); /* element ejecta m_k[STBL_NELEM] of a star of mass M_death [Msun] at death; returns the remnant mass [Msun] */
 
 /* ---- PMS duration / feedback delay (2D bilinear: logM, logZ) ---- */
 double stellar_t_PMS(double logM, double logZ);

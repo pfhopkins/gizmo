@@ -454,6 +454,36 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
 #endif // magnetic //
 
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+                { /* the pair's exchanged fluxes: summed into both cells' rates as before, and recorded for j's exact share */
+                    Vec3<double> pf_B = {}, pf_Bded = {};
+#if defined(MAGNETIC) && !defined(FREEZE_HYDRO)
+#ifdef DIVBCLEANING_DEDNER
+                    pf_Bded = Face_Area_Vec * (Riemann_out.phi_normal_mean + Riemann_out.phi_normal_db); /* mean-phi and correction face terms: u gets B.dB back for both */
+#endif
+                    pf_B = Fluxes.B + pf_Bded;
+#endif
+                    out.PairFluxSumMom += Fluxes.v; out.PairFluxSumEgy += Fluxes.p;
+#ifdef MAGNETIC
+                    out.PairFluxSumB += pf_B; out.PairFluxSumBded += pf_Bded;
+#endif
+                    if(j_is_active_for_fluxes)
+                    {
+                        CellP[j].PairFluxSumMom -= Fluxes.v; CellP[j].PairFluxSumEgy -= Fluxes.p;
+#ifdef MAGNETIC
+                        CellP[j].PairFluxSumB -= pf_B; CellP[j].PairFluxSumBded -= pf_Bded;
+#endif
+                        if(dt_hydrostep_i < dt_hydrostep_j) /* cross-bin: i delivers this flux to j as impulses until j's next step */
+                        {
+                            CellP[j].PairFluxRecvMom -= Fluxes.v; CellP[j].PairFluxRecvEgy -= Fluxes.p;
+#ifdef MAGNETIC
+                            CellP[j].PairFluxRecvB -= pf_B; CellP[j].PairFluxRecvBded -= pf_Bded;
+#endif
+                        }
+                    }
+                    pairflux_record_add(j, j_is_active_for_fluxes, (dt_hydrostep_i < dt_hydrostep_j), local.PairFluxTask, local.PairFluxIndex, local.PairFluxS, local.PairFluxTi, -1.*Fluxes.v, -Fluxes.p, -1.*pf_B, -1.*pf_Bded);
+                }
+#endif
                 /* if this is particle j's active timestep, you should sent them the time-derivative information as well, for their subsequent drift operations */
                 if(j_is_active_for_fluxes)
                 {
@@ -524,7 +554,16 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifdef WAKEUP
                 if(!(TimeBinActive[P[j].TimeBin]))
                 {
+#ifdef HYDRO_TIMESTEP_FROM_PAIR_FORCE
+                    int pf_wake = 0;
+                    { /* this pair's push over half of j's step would change j's kinetic energy by more than a fraction of its u */
+                        double a_pf = Fluxes.v.norm() / P[j].Mass, dt_half = 0.5 * dt_hydrostep_j;
+                        if(0.5 * a_pf*a_pf * dt_half*dt_half > HYDRO_PAIR_FORCE_DT_ETA * CellP[j].InternalEnergyPred) {pf_wake = 1;}
+                    }
+                    if(kernel.vsig > WAKEUP*CellP[j].MaxSignalVel || pf_wake) {
+#else
                     if(kernel.vsig > WAKEUP*CellP[j].MaxSignalVel) {
+#endif
                         #pragma omp atomic write
                         P[j].wakeup = (short int)(local.TimeBin + 1);
                         #pragma omp atomic write

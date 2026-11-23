@@ -2068,9 +2068,6 @@
 #define KETJU_SINKS /* Type-5 sinks (STARFORGE stars or BHs) carry KETJU spin and PN class */
 #endif
 
-#if defined(TURB_DIFF_METALS) && (defined(GALSF_RESOLVEDISM) || defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)) && !defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
-#define TURB_DIFF_METALS_EXACT_CONSERVATION /* Stella: element-slot closure and dust diffusion use the pending exchange */
-#endif
 /* gradient and hydro loops reuse the first gradient pass's local pair searches (mesh/ngb.cc); identical results, memory ~ 4 B per
    neighbour of every active cell. Off where something between those loops could change a search: NGB_PAIR_CACHE_OFF opts out */
 #if !defined(NGB_PAIR_CACHE_OFF) && !defined(TURB_DIFF_DYNAMIC) && !defined(MHD_MODIFIED_GRADIENT) && !(defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES) && (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4))
@@ -2085,6 +2082,30 @@
 #if defined(STARFORGE_OPTIMIZATIONS) && !defined(HYDRO_PAIR_ONCE) && !defined(HYDRO_PAIR_ONCE_OFF) && defined(HYDRO_MESHLESS_FINITE_MASS) && !(defined(_OPENMP) || defined(OPENMP) || defined(BOX_SHEARING) || defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
 #define HYDRO_PAIR_ONCE
 #endif
+/* every pair evaluated once from the smaller step; the other cell gets the opposite flux with the same time weights, active or not */
+#if defined(TEST_PAIRFLUX_ADD_MASS_AND_WAKE) && !defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC)
+#error "TEST_PAIRFLUX_ADD_MASS_AND_WAKE books its additions in the TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC output"
+#endif
+#if defined(HYDRO_EXACT_PAIR_FLUX_EXCHANGE) && defined(HYDRO_PAIR_ONCE_OFF)
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE needs HYDRO_PAIR_ONCE: do not set HYDRO_PAIR_ONCE_OFF with it"
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+#ifndef HYDRO_PAIR_ONCE
+#define HYDRO_PAIR_ONCE
+#endif
+#ifndef HYDRO_KICK_TOTAL_ENERGY_EXACT
+#define HYDRO_KICK_TOTAL_ENERGY_EXACT /* u takes the exact kinetic-energy complement of the hydro kick */
+#endif
+#if !defined(HYDRO_MESHLESS_FINITE_MASS) || defined(CONDUCTION) || defined(VISCOSITY) || defined(COSMIC_RAY_FLUID) || defined(RT_SOLVER_EXPLICIT) || defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(EOS_ELASTIC) || defined(MHD_NON_IDEAL) || defined(GALSF_SUBGRID_WINDS) || defined(PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP) || defined(ENERGY_ENTROPY_SWITCH_IS_ACTIVE) || defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) || (defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)) || defined(SINK_PARTICLES) || defined(BOX_BND_PARTICLES) || (defined(COMPUTE_POTENTIAL_ENERGY) && !defined(EVALPOTENTIAL))
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE: MFM only; sinks, boundary particles and a potential pass that rearranges particles between the kicks hold stale record indices; conduction, viscosity, CR fluid, explicit RT, turbulent energy/velocity diffusion, elastic EOS, non-ideal MHD, subgrid winds, per-step merge/split, the entropy switch, conservative psi cleaning and non-split cooling are not exchanged"
+#endif
+#endif
+#if defined(HYDRO_TIMESTEP_FROM_PAIR_FORCE) && !defined(HYDRO_PAIR_FORCE_DT_ETA)
+#define HYDRO_PAIR_FORCE_DT_ETA 0.1 /* allowed kinetic-energy change of one half-kick, in units of u */
+#endif
+#if defined(HYDRO_KICK_TOTAL_ENERGY_EXACT) && (!defined(HYDRO_MESHLESS_FINITE_MASS) || (defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)) || defined(ENERGY_ENTROPY_SWITCH_IS_ACTIVE))
+#error "HYDRO_KICK_TOTAL_ENERGY_EXACT: MFM kick only; not with the entropy switch or non-split cooling"
+#endif
 #if defined(HYDRO_PAIR_ONCE) && (defined(_OPENMP) || defined(OPENMP) || defined(BOX_SHEARING) || defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
 #error "HYDRO_PAIR_ONCE: pure-MPI MFM only (j-side writes are not thread-safe; shearing, dilation, SPH and MFV fluxes are not handled)"
 #endif
@@ -2092,8 +2113,17 @@
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
 #error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
 #endif
-#if defined(FB_G17_BOUNDARY_INJECTION) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
-#error "FB_G17_BOUNDARY_INJECTION repeats the hydro pass on feedback steps: MFV mass fluxes are applied in that pass and would be applied twice"
+#ifdef FB_G17_BOUNDARY_INJECTION
+#error "FB_G17_BOUNDARY_INJECTION was renamed RESOLVED_ISM_FB_AFTER_CLOSING_KICK"
+#endif
+#ifdef GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE
+#error "GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE was removed: use RESOLVED_ISM_VARIABLE_SN_ENERGY (PISN 1e52 erg, not the He-core fit)"
+#endif
+#if defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB) && !defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK)
+#error "RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB extends the hydro recompute of RESOLVED_ISM_FB_AFTER_CLOSING_KICK: set both"
+#endif
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
+#error "RESOLVED_ISM_FB_AFTER_CLOSING_KICK repeats the hydro pass on feedback steps: MFV mass fluxes are applied in that pass and would be applied twice"
 #endif
 
 /* coupled mode: upstream RT bins next to FIRE-3 break FIRE's all-bins consumers (docs/stella_hybrid/P4_DESIGN.md) until P4 masks them */

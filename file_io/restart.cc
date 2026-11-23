@@ -298,6 +298,12 @@ void restart(int modus)
 		}
 	      /* fluid-cell data  */
 	      byten(&CellP[0], N_gas * sizeof(struct gas_cell_data), modus);
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+	      { /* pair-flux records waiting for the opening kick */
+		  long long npf = pairflux_restart_count(); byten(&npf, sizeof(npf), modus);
+		  void *pf = pairflux_restart_buffer(modus ? npf : -1); if(npf > 0) {byten(pf, npf * pairflux_record_size(), modus);}
+	      }
+#endif
 
 #ifdef CHIMES 
 	      gasAbundancesBuf = (ChimesFloat *) malloc(N_gas * ChimesGlobalVars.totalNumberOfSpecies * sizeof(ChimesFloat));
@@ -367,8 +373,12 @@ void restart(int modus)
 	  byten(&CumulSFEnergyRemoved, sizeof(double), modus);
 	  byten(&CumulFeedbackMass, sizeof(double), modus);
 	  byten(&CumulFeedbackMetals, sizeof(double), modus);
-	  byten(&CumulMetalYieldToGas, sizeof(double), modus);
-	  byten(&CumulMetalEjectedFromStars, sizeof(double), modus);
+	  byten(&CumulMetalYieldToGas, sizeof(CumulMetalYieldToGas), modus);
+	  byten(&CumulMetalEjectedFromStars, sizeof(CumulMetalEjectedFromStars), modus);
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+	  byten(CumulElemToGas, sizeof(CumulElemToGas), modus);
+	  byten(CumulElemFromStars, sizeof(CumulElemFromStars), modus);
+#endif
 	  byten(&CumulStarMassFormed, sizeof(double), modus);
 	  in(&CumulSNe, modus);
 	  in(&CumulAGB, modus);

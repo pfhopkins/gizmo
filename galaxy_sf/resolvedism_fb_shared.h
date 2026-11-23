@@ -35,6 +35,9 @@ extern double RadPressure_dp_thisStep;
 /*  Shared helper functions                                                    */
 /* =========================================================================== */
 
+/* per-event serialization token: one star, keyed by its unique (ID, child number, generation) */
+static inline int resolvedism_fb_token_admits(int i) {return FB_SerialEventID == 0 || (P[i].ID == FB_SerialEventID && P[i].ID_child_number == FB_SerialEventChild && (long long)P[i].ID_generation == FB_SerialEventGen);}
+
 /* Get stellar mass and metallicity for the single star in particle i */
 static inline int get_star_info(int i, double *Mstar_out, double *logM_out, double *logZ_out)
 {
@@ -102,15 +105,17 @@ static inline double stella_pack_fire_yields(const double *y, MyDouble *fy, MyID
     return z;
 }
 
-/* mass-fraction blend of slots 1..NUM_METAL_SPECIES-1 for ejecta dM; tracer slots get no yield, only dilution */
-static inline void stella_blend_fire_slots(int j, double M_old, double dM, double wk, const MyDouble *fy)
+/* mass-fraction blend of slots 1..NUM_METAL_SPECIES-1 for ejecta dM; tracer slots get no yield, only dilution.
+ * c: mass of the cell's own gas turned into ejecta composition in place (Ia companion share), of total ejecta Mej;
+ * the converted gas keeps no tracer either (age or other tracer slots lose c X_old) */
+static inline void stella_blend_fire_slots(int j, double M_old, double dM, double wk, const MyDouble *fy, double c, double Mej)
 {
     int s;
     for(s = 1; s < NUM_METAL_SPECIES; s++) {
         double X_old;
         #pragma omp atomic read
         X_old = P[j].Metallicity[s];
-        double dMX = (s < STELLA_FIRE_YIELD_SLOTS) ? wk * fy[s] : 0;
+        double dMX = ((s < STELLA_FIRE_YIELD_SLOTS) ? (wk + ((c > 0) ? c / Mej : 0)) * fy[s] : 0) - c * X_old;
         double dX = (dMX - X_old * dM) / (M_old + dM);
         #pragma omp atomic
         P[j].Metallicity[s] += dX;
@@ -125,13 +130,14 @@ static inline void stella_fire_yields_log(const char *ch, MyIDType id, const dou
     printf(" slots"); for(k = 0; k < STELLA_FIRE_YIELD_SLOTS; k++) {printf(" %.17g", fy[k]);}
     printf("\n"); fflush(stdout);
 }
-/* receiver check: slot s gains exactly wk*fy[s] in mass; Z - sum(C..Fe) >= 0 is preserved */
-static inline void stella_fire_receiver_check(int j, double M_old, double dM, double wk, const MyDouble *fy, const double *X_old, MyIDType donor)
+/* receiver check: slot s gains exactly (wk + c/Mej) fy[s] - c X_old[s] in mass; Z - sum(C..Fe) >= 0 is preserved */
+static inline void stella_fire_receiver_check(int j, double M_old, double dM, double wk, const MyDouble *fy, const double *X_old, MyIDType donor, double c, double Mej)
 {
     int s; double M_new = M_old + dM, sub_old = 0, sub_new = 0;
     for(s = 0; s < STELLA_FIRE_YIELD_SLOTS; s++) {
-        double X_new = P[j].Metallicity[s], dm_s = M_new * X_new - M_old * X_old[s], want = wk * fy[s];
-        double tol = 8 * DBL_EPSILON * (M_old * X_old[s] + want + M_new * X_new); /* bound of the 4-flop blend + this difference */
+        double add = (wk + ((c > 0) ? c / Mej : 0)) * fy[s];
+        double X_new = P[j].Metallicity[s], dm_s = M_new * X_new - M_old * X_old[s], want = add - c * X_old[s];
+        double tol = 8 * DBL_EPSILON * (M_old * X_old[s] + add + c * X_old[s] + M_new * X_new); /* bound of the blend + this difference */
         STELLA_CHECK("fire_slot_deposit", fabs(dm_s - want) <= tol, "donor=%llu cell=%llu slot=%d dm=%.17g want=%.17g tol=%.3g", (unsigned long long)donor, (unsigned long long)P[j].ID, s, dm_s, want, tol);
         if(s >= 2) {sub_old += X_old[s]; sub_new += X_new;}
     }

@@ -1,11 +1,13 @@
 """Mass- and energy-trace closure checks for Stella/GIZMO runs.
 
-Reads <output>/mass_balance_steps.txt (always written) and <output>/energy_step_trace.txt
-(OUTPUT_ENERGY_STEP_TRACE) and turns every violation into a finding (kind, stage, count, magnitude).
+Reads <output>/mass_balance_steps.txt (always written), <output>/mass_balance_elements.txt (per-element ledger,
+GALSF_RESOLVEDISM_METALS_INDIVIDUAL) and <output>/energy_step_trace.txt (OUTPUT_ENERGY_STEP_TRACE) and turns every
+violation into a finding (kind, stage, count, magnitude).
 
 Bars (fixed, see reports/energy_step_trace.md; do not loosen per test):
   mass, metal ledger : |delta| / value <= 1e-12 at every checkpoint (round-off; nothing in a step may
                        create or destroy baryons or metals)
+  element ledger     : the same bar per element (H, He, C..Zn), relative to that element's mass in the box
   exact energy stages: the code writes a STAGE line only when |dE - booked| > 1e-12 (E_abs + |booked|),
                        so every STAGE line is a finding
   time integration   : |int_res| / E_scale <= 1e-2 at every full sync (kick-drift-kick + tree gravity
@@ -71,6 +73,14 @@ def _check_mass(path, groups, rep, bar):
     rep.notes.append(f"mass trace: {len(rows)} checkpoint rows")
 
 
+def _check_elements(path, groups, rep, bar):
+    rows = [l.split() for l in open(path) if l.strip() and not l.startswith("#")]
+    for r in rows[1:]:  # first row is the baseline
+        tag, t, slot, rel = r[1], float(r[2]), r[3], float(r[4])
+        if abs(rel) > bar:
+            _add(groups, "element_ledger", f"{tag}:{slot}", rel, rel, t)
+
+
 def _check_energy(path, groups, rep, bar):
     pot_valid = True
     n_sync = 0
@@ -114,6 +124,8 @@ def check_conservation_traces(output_dir, require_energy=True, mass_bar=MASS_BAR
         _check_mass(mpath, groups, rep, mass_bar)
     else:
         groups[("missing", "mass")] = {"kind": "missing", "stage": "mass_trace", "count": 1, "max_rel": float("inf"), "sum_res": 0.0, "first_t": 0.0}
+    if os.path.exists(os.path.join(output_dir, "mass_balance_elements.txt")):
+        _check_elements(os.path.join(output_dir, "mass_balance_elements.txt"), groups, rep, mass_bar)
     if os.path.exists(epath):
         _check_energy(epath, groups, rep, integration_bar)
     elif require_energy:
@@ -122,7 +134,7 @@ def check_conservation_traces(output_dir, require_energy=True, mass_bar=MASS_BAR
     return rep
 
 
-TRACE_FILES = ("mass_balance_steps.txt", "energy_step_trace.txt")
+TRACE_FILES = ("mass_balance_steps.txt", "mass_balance_elements.txt", "energy_step_trace.txt")
 
 
 def keep_and_check_traces(run_output_dir, dest_dir, **kw):

@@ -38,19 +38,19 @@ static const int estep_stage_exact[] = {1, 1, 1, 1, 0, 1, 1,
     1, 1, 1, 0, 2, 2, 2, 2, 2};
 
 static const char *estep_book_name[] = {"fb_wind", "fb_agb", "fb_sn", "fb_ia", "fb_failed", "cool_rad", "cool_pi", "cool_floor",
-    "sf_th_locked", "sf_mag_locked", "sf_placeholder_kin", "imf_th_locked", "imf_mag_locked", "imf_kin", "merge_gravwork",
+    "sf_th_locked", "sf_mag_locked", "imf_th_locked", "imf_mag_locked", "imf_kin", "merge_gravwork",
     "merge_heat_not_returned", "sn_cell_th", "sn_cell_mag", "merge_mag_lost", "kick_floor", "outflow", "info_mhd_num", "info_sn_relkin_heat",
     "cool_cr_loss", "cr_clip", "info_cr_shock",
     "rt_emit", "rt_abs", "rt_toir", "cool_rad_exchange"};
 /* stage each booking belongs to; -1 = time integration (kicks/drift), -2 = information only (in no closure) */
 static const int estep_book_stage[] = {ESTEP_FB_WIND_AGB, ESTEP_FB_WIND_AGB, ESTEP_FB_SN_IA, ESTEP_FB_SN_IA, ESTEP_FB_SN_IA,
-    ESTEP_COOLING, ESTEP_COOLING, ESTEP_COOLING, ESTEP_SF_SPAWN, ESTEP_SF_SPAWN, ESTEP_SF_SPAWN, ESTEP_IMF_ACCRETE, ESTEP_IMF_ACCRETE,
+    ESTEP_COOLING, ESTEP_COOLING, ESTEP_COOLING, ESTEP_SF_SPAWN, ESTEP_SF_SPAWN, ESTEP_IMF_ACCRETE, ESTEP_IMF_ACCRETE,
     ESTEP_IMF_ACCRETE, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, -1, -1, -2, -2,
     ESTEP_COOLING, -1, -2,
     -1, -1, -1, ESTEP_COOLING};
 /* magnetic bookings: kept out of the stage closure, since E_B = 1/2 |BV|^2 / V with V = m/rho moves whenever a tree walk
  * drifts a cell (predict.cc rescales Density); magnetic energy closes only at full syncs */
-static const int estep_book_is_mag[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+static const int estep_book_is_mag[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
 
 static_assert(sizeof(estep_stage_name) / sizeof(estep_stage_name[0]) == ESTEP_NSTAGE, "stage names");
 static_assert(sizeof(estep_stage_exact) / sizeof(estep_stage_exact[0]) == ESTEP_NSTAGE, "stage kinds");

@@ -103,7 +103,10 @@ double CumulCRInjectedErg = 0;   /* CR energy measured at the feedback deposit [
 double CumulSFEnergyRemoved = 0; /* gas thermal+kinetic energy removed by star formation [erg] */
 double CumulFeedbackMass = 0;    /* cumulative mass returned to gas by feedback [Msun] */
 double CumulFeedbackMetals = 0;  /* cumulative metals returned to gas by feedback [Msun] */
-double CumulMetalYieldToGas = 0, CumulMetalEjectedFromStars = 0; /* metal ledger on this rank: yield metals deposited, star metal mass removed [code mass] */
+long double CumulMetalYieldToGas = 0, CumulMetalEjectedFromStars = 0; /* metal ledger on this rank: yield metals deposited, star metal mass removed [code mass] */
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+double CumulElemToGas[NUM_METAL_SPECIES], CumulElemFromStars[NUM_METAL_SPECIES]; /* element ledger on this rank, per Metallicity slot [code mass] */
+#endif
 int CumulSNe = 0, CumulAGB = 0, CumulIa = 0; /* cumulative event counts */
 double CumulStarMassFormed = 0;  /* cumulative stellar mass formed [Msun] — set in IMF sampling */
 double RadPressure_dp_thisStep = 0; /* total radpressure momentum this step [g*cm/s] */
@@ -371,36 +374,12 @@ void resolvedism_determine_SNe(void)
             double mej_log = 0;
             double zej_log = 0, yC_log = 0, yO_log = 0, ySi_log = 0, yFe_log = 0;
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
-#ifndef GALSF_RESOLVEDISM_WINDS
-            double t_end_yr_log = stellar_lifetime(logM, logZ);
-            double log_age_end_log = log10(DMAX(t_end_yr_log, 100.0));
-#endif
-            for(int kk = 0; kk < STBL_NELEM; kk++) {
-                double me = stellar_elem_ej_SN(logM, logZ, kk);
-#ifndef GALSF_RESOLVEDISM_WINDS
-                me += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end_log, kk);
-#endif
-                mej_log += me;
-                if(kk >= ELEM_C) zej_log += me;
-                if(kk == ELEM_C)  yC_log  = me;
-                if(kk == ELEM_O)  yO_log  = me;
-                if(kk == ELEM_Si) ySi_log = me;
-                if(kk == ELEM_Fe) yFe_log = me;
-            }
-            /* LEDGER FIX (2026-07-03): log what fb_thermal ACTUALLY injects, not the raw
-             * table values. The injector rescales all yields by
-             *   scale = (M_pre - rem_mass) / Mej_table
-             * (heavy-fallback remnants at low Z swallow most of the nominal ejecta:
-             * rem ~ M_star for 25-60 Msun at Z~1e-3 -> scale ~ 0 for FSN). Logging the
-             * unscaled table values made the metal ledger over-count by ~20% vs the
-             * double-precision M_Z tracker. Mirror fb_thermal.cc exactly. */
-            {
-                double M_pre_log = P[i].M_at_SN_trigger; /* Msun, pre-walk */
-                double rem_log = rem_mass;
-                double Mej_actual_log = DMAX(M_pre_log - rem_log, 0);
-                double scale_log = (mej_log > 0) ? Mej_actual_log / mej_log : 0;
-                mej_log *= scale_log; zej_log *= scale_log;
-                yC_log *= scale_log; yO_log *= scale_log; ySi_log *= scale_log; yFe_log *= scale_log;
+            { /* what fb_thermal injects (stellar_death_ejecta of the pre-walk mass) */
+                double m_log[STBL_NELEM];
+                double rem_log = stellar_death_ejecta(logM, logZ, P[i].M_at_SN_trigger, m_log);
+                for(int kk = 0; kk < STBL_NELEM; kk++) {mej_log += m_log[kk];} /* = M - rem_log */
+                for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {zej_log += m_log[kk];}
+                yC_log = m_log[ELEM_C]; yO_log = m_log[ELEM_O]; ySi_log = m_log[ELEM_Si]; yFe_log = m_log[ELEM_Fe];
             }
 #endif
             sn_mej[n_logged] = mej_log;
@@ -543,6 +522,12 @@ void resolvedism_determine_SNe(void)
                 STELLA_FB_EVENT(P[i]) = 4; n_ia_local++;
                 continue;
             }
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+            if(All.TestIaTime > 0 && All.Time >= All.TestIaTime && P[i].ID >= 1 && P[i].ID <= (MyIDType)((All.TestNumStars > 0) ? All.TestNumStars : 1) && P[i].ID_generation == 0) {
+                STELLA_FB_EVENT(P[i]) = 4; P[i].M_at_SN_trigger = (MyFloat)(P[i].Mass * UNIT_MASS_IN_SOLAR); n_ia_local++; /* test: forced Ia of a site WD */
+                continue;
+            }
+#endif
 
             double star_age_Gyr = resolvedism_star_age_yr(i) * 1.0e-9;
             if(star_age_Gyr < IA_T_MIN_GYR) continue; /* below minimum delay time */
@@ -659,11 +644,40 @@ void resolvedism_determine_SNe(void)
  * weighting pre-pass against the CURRENT neighbor masses immediately before its own
  * injection. 0 = no restriction (radpressure and any legacy batched passes). */
 MyIDType FB_SerialEventID = 0;
+MyIDType FB_SerialEventChild = 0; long long FB_SerialEventGen = 0;
+
+/* lexicographic minimum of (ID, child number, generation) keys, the unique particle identity */
+static void fb_event_key_min(void *in, void *inout, int *len, MPI_Datatype *dt)
+{
+    unsigned long long *a = (unsigned long long *)in, *b = (unsigned long long *)inout;
+    for(int n = 0; n < *len; n++, a += 3, b += 3) {
+        if(a[0] < b[0] || (a[0] == b[0] && (a[1] < b[1] || (a[1] == b[1] && a[2] < b[2])))) {b[0] = a[0]; b[1] = a[1]; b[2] = a[2];}
+    }
+}
+
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+/* a dying star's SN deposit carries mass or energy (failed SNe and direct collapse without ejecta carry neither) */
+static int resolvedism_death_has_payload(int i)
+{
+    double Ms, lM, lZ, m[STBL_NELEM], s = 0;
+    if(!get_star_info(i, &Ms, &lM, &lZ)) {return 1;}
+    int rt = stellar_remnant_type(lM, lZ);
+    if(rt != REM_FSN && rt != REM_DBH) {return 1;}
+    stellar_death_ejecta(lM, lZ, (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger : P[i].Mass * UNIT_MASS_IN_SOLAR, m);
+    for(int k = 0; k < STBL_NELEM; k++) {s += m[k];}
+    return s > 0;
+}
+#endif
 #ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
 int FB_WindBatchOnly = 0;   /* 1 = momentum walk admits ONLY flag-3 (wind) stars, batch mode */
 #endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
-extern double FB_TestWindPabs, FB_TestWindPvec[3], FB_TestWindMcoupled;
+extern double FB_TestWindPabs, FB_TestWindPvec[3], FB_TestWindMcoupled, FB_TestWindZcoupled;
+extern double FB_TestRadpPabs, FB_TestRadpPvec[3];
+extern double FB_TestIaFe;
+#endif
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+extern long FB_IaClampCells; extern double FB_IaClampShort;
 #endif
 #ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
 /* test: raw double state of all local particles (ID,type,m,v,u) appended to <OutputDir>/wind_dep_dump.<task>.bin */
@@ -751,6 +765,9 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
         if(!STELLA_OWNS_STAR(P[ii])) continue;
         if(STELLA_FB_EVENT(P[ii]) != flagA && STELLA_FB_EVENT(P[ii]) != flagB) continue;
         if(P[ii].KernelRadius <= 0 || P[ii].NumNgb <= 0) continue;
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+        if(STELLA_FB_EVENT(P[ii]) == 1 && !resolvedism_death_has_payload(ii)) continue; /* nothing to deposit: no weighting walks, no kernel growth */
+#endif
         if(ncand >= ccap) {ccap *= 2; cand = (int *)myrealloc_movable(cand, ccap * sizeof(int));}
         cand[ncand++] = ii;
     }
@@ -769,16 +786,21 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
 
     while(1)
     {
-        /* pick globally-smallest unprocessed event ID (sentinel = max) */
-        unsigned long long my_min = ~0ULL, glob_min = ~0ULL; int my_idx = -1;
+        /* pick the globally smallest unprocessed event key (ID, child number, generation); sentinel = max */
+        static MPI_Datatype key_type = MPI_DATATYPE_NULL; static MPI_Op key_min_op = MPI_OP_NULL;
+        if(key_type == MPI_DATATYPE_NULL) {MPI_Type_contiguous(3, MPI_UNSIGNED_LONG_LONG, &key_type); MPI_Type_commit(&key_type); MPI_Op_create(fb_event_key_min, 1, &key_min_op);}
+        unsigned long long my_key[3] = {~0ULL, ~0ULL, ~0ULL}, glob_key[3]; int my_idx = -1;
         for(ii = 0; ii < ncand; ii++) {
             if(done[ii]) continue;
-            if((unsigned long long)P[cand[ii]].ID < my_min) {my_min = (unsigned long long)P[cand[ii]].ID; my_idx = ii;}
+            unsigned long long k_[3] = {(unsigned long long)P[cand[ii]].ID, (unsigned long long)P[cand[ii]].ID_child_number, (unsigned long long)P[cand[ii]].ID_generation};
+            int s_ = 1; fb_event_key_min(k_, my_key, &s_, &key_type);
+            if(my_key[0] == k_[0] && my_key[1] == k_[1] && my_key[2] == k_[2]) {my_idx = ii;}
         }
-        MPI_Allreduce(&my_min, &glob_min, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
-        if(glob_min == ~0ULL) break; /* no events left anywhere */
-        FB_SerialEventID = (MyIDType)glob_min;
-        int i_owner = (my_idx >= 0 && (unsigned long long)P[cand[my_idx]].ID == glob_min) ? cand[my_idx] : -1;
+        MPI_Allreduce(my_key, glob_key, 1, key_type, key_min_op, MPI_COMM_WORLD);
+        if(glob_key[0] == ~0ULL && glob_key[1] == ~0ULL && glob_key[2] == ~0ULL) break; /* no events left anywhere */
+        unsigned long long glob_min = glob_key[0];
+        FB_SerialEventID = (MyIDType)glob_key[0]; FB_SerialEventChild = (MyIDType)glob_key[1]; FB_SerialEventGen = (long long)glob_key[2];
+        int i_owner = (my_idx >= 0 && my_key[0] == glob_key[0] && my_key[1] == glob_key[1] && my_key[2] == glob_key[2]) ? cand[my_idx] : -1;
 
         /* fresh weighting for THIS event against current neighbor masses,
          * with bubble retry (kernel growth) if no gas weight was found */
@@ -816,26 +838,18 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
                 double Zbirth_sp = (P[i_owner].BirthMetallicity > 0) ? P[i_owner].BirthMetallicity : All.InitMetallicityinSolar*All.SolarAbundances[0];
                 double logM_sp = log10(DMAX(Mstar_sp, 0.1)), logZ_sp = log10(DMAX(Zbirth_sp, 1e-8));
                 int rt_sp = stellar_remnant_type(logM_sp, logZ_sp);
-                double rem_sp = stellar_remnant_mass(logM_sp, logZ_sp);
+                double Mpre_sp = (P[i_owner].M_at_SN_trigger > 0) ? (double)P[i_owner].M_at_SN_trigger : P[i_owner].Mass*UNIT_MASS_IN_SOLAR;
+                double m_k_sp[STBL_NELEM];
+                double rem_sp = stellar_death_ejecta(logM_sp, logZ_sp, Mpre_sp, m_k_sp);
                 if(rt_sp != REM_FSN && rt_sp != REM_DBH) {   /* explosive only (Esne>0) */
-                    double Mpre_sp = (P[i_owner].M_at_SN_trigger > 0) ? (double)P[i_owner].M_at_SN_trigger : P[i_owner].Mass*UNIT_MASS_IN_SOLAR;
-                    double Mej_sp = DMAX(Mpre_sp - rem_sp, 0.0);
+                    double Mej_sp = 0; for(int ksp = 0; ksp < STBL_NELEM; ksp++) {Mej_sp += m_k_sp[ksp];}
                     double f_thresh = (double)(GALSF_RESOLVEDISM_SN_SPAWN);
                     if(P[i_owner].FB_KernelGasMass*UNIT_MASS_IN_SOLAR < f_thresh*Mej_sp && Mej_sp > 0) {
-                        /* payload: yields scaled to Mej (same single-source logic as fb_thermal) */
-                        int ksp; double m_k_sp[STBL_NELEM], Mej_tab_sp = 0;
-                        for(ksp = 0; ksp < STBL_NELEM; ksp++) {
-                            m_k_sp[ksp] = stellar_elem_ej_SN(logM_sp, logZ_sp, ksp);
-#ifndef GALSF_RESOLVEDISM_WINDS
-                            {double t_end_sp = stellar_lifetime(logM_sp, logZ_sp);
-                             m_k_sp[ksp] += stellar_elem_ej_wind_cumulative(logM_sp, logZ_sp, log10(DMAX(t_end_sp,100.)), ksp);}
-#endif
-                            if(m_k_sp[ksp] < 0) m_k_sp[ksp] = 0; Mej_tab_sp += m_k_sp[ksp];
-                        }
-                        double scl_sp = (Mej_tab_sp > 0) ? Mej_sp/Mej_tab_sp : 0;
-                        for(ksp = 0; ksp < STBL_NELEM; ksp++) P[i_owner].SpawnEjZ[ksp] = (MyFloat)(m_k_sp[ksp]*scl_sp/UNIT_MASS_IN_SOLAR);
+                        /* payload: the same death ejecta as fb_thermal */
+                        int ksp;
+                        for(ksp = 0; ksp < STBL_NELEM; ksp++) P[i_owner].SpawnEjZ[ksp] = (MyFloat)(m_k_sp[ksp]/UNIT_MASS_IN_SOLAR);
                         P[i_owner].SpawnEjMass = (MyFloat)(Mej_sp/UNIT_MASS_IN_SOLAR);
-                        P[i_owner].SpawnEjEnergy = (MyFloat)(resolvedism_sn_energy_erg(rt_sp == REM_PISN, 1, Mstar_sp)/UNIT_ENERGY_IN_CGS);
+                        P[i_owner].SpawnEjEnergy = (MyFloat)(resolvedism_sn_energy_erg(rt_sp == REM_PISN, rt_sp == REM_ECSN, 1)/UNIT_ENERGY_IN_CGS);
                         ESTEP_BOOK(EBK_FB_SN, -P[i_owner].SpawnEjEnergy); /* booked in this step's E_injected, delivered by the ejecta cell at the next merge/split */
                         P[i_owner].SN_SpawnPending = 1;
                         /* keep STELLA_FB_EVENT==1 and M_at_SN_trigger: the post-walk
@@ -883,7 +897,7 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
 #endif
         if(i_owner >= 0) {done[my_idx] = 1;} /* owner retires the event */
     }
-    FB_SerialEventID = 0; /* release: subsequent passes see all particles */
+    FB_SerialEventID = 0; FB_SerialEventChild = 0; FB_SerialEventGen = 0; /* release: subsequent passes see all particles */
     myfree(done);
     myfree(cand);
 }
@@ -912,7 +926,7 @@ void resolvedism_inject_fb_energy(void)
     #define FB_ZERO_AWS() do { for(int ii : ActiveParticleList) { if(STELLA_OWNS_STAR(P[ii])) P[ii].FB_Area_weighted_sum = 0; } } while(0)
 #endif
 
-    for(int ii : ActiveParticleList) {if(STELLA_OWNS_STAR(P[ii])) {P[ii].FB_Deposited = 0;}}
+    for(int ii : ActiveParticleList) {if(STELLA_OWNS_STAR(P[ii])) {P[ii].FB_Deposited = 0; P[ii].FB_DepositedP = P[ii].FB_DepositedZ = 0;}}
     double E_mech0 = resolvedism_mech_energy_local(), E_mech1 = E_mech0, E_mech2, E_mech3;
 #ifdef COSMIC_RAY_FLUID
     double E_cr0 = resolvedism_cr_energy_local(), E_cr3 = E_cr0; /* CR injection by winds and SNe */
@@ -920,6 +934,15 @@ void resolvedism_inject_fb_energy(void)
 
     /* ---- Pass 0: wind + AGB (momentum + mass + metals).  Fires first so final
      *      winds happen before the star explodes as SN. Serialized per event. ---- */
+#if defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST) && defined(METALS)
+    { /* test: one unbooked metal change, which the mass trace must catch */
+        static int kicked = 0;
+        if(!kicked && All.TestMetalKickTime > 0 && All.Time >= All.TestMetalKickTime) {
+            kicked = 1;
+            for(int q = 0; q < NumPart; q++) {if(P[q].Type == 0 && P[q].ID == 10 && P[q].Mass > 0) {P[q].Metallicity[0] += All.TestMetalKickMass / P[q].Mass; printf("TESTMETALKICK t=%.10e dMZ=%.17e\n", All.Time, All.TestMetalKickMass);}}
+        }
+    }
+#endif
     MBARY_STEP("pre_fb_mom_p0");
     ESTEP_BEGIN(ESTEP_FB_WIND_AGB);
 #ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
@@ -990,6 +1013,27 @@ void resolvedism_inject_fb_energy(void)
     resolvedism_fb_serialized_pass(resolvedism_fb_thermal_calc, 1, 4);
     ESTEP_END(ESTEP_FB_SN_IA);
     MBARY_STEP("post_fb_thermal");
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+    { /* Ia conversion clamp: cells whose share of M_Ch - M_WD exceeded their mass were converted whole; the rest is not converted */
+        static long n_tot = 0; static double s_tot = 0;
+        double loc[2] = {(double)FB_IaClampCells, FB_IaClampShort}, glob[2];
+        MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(glob[0] > 0) {
+            n_tot += (long)glob[0]; s_tot += glob[1];
+            if(ThisTask == 0) {printf("RESOLVEDISM TYPE_IA CLAMP: t=%.17e cells=%ld short=%.17e[code] short_Msun=%.6e cells_total=%ld short_total_Msun=%.6e\n",
+                                      All.Time, (long)glob[0], glob[1], glob[1] * UNIT_MASS_IN_SOLAR, n_tot, s_tot * UNIT_MASS_IN_SOLAR); fflush(stdout);}
+        }
+        FB_IaClampCells = 0; FB_IaClampShort = 0;
+    }
+#endif
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    { /* test: iron of Ia composition delivered this step [Msun] */
+        double fe_loc = FB_TestIaFe * UNIT_MASS_IN_SOLAR, fe_glob = 0;
+        MPI_Allreduce(&fe_loc, &fe_glob, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && fe_glob > 0) {printf("IAFE t=%.17e Fe=%.17e Fe_table=%.17e\n", All.Time, fe_glob, stellar_type_ia_yield(ELEM_Fe)); fflush(stdout);}
+        FB_TestIaFe = 0;
+    }
+#endif
     ESTEP_BEGIN(ESTEP_FB_POST);
 #if defined(STELLA_FIRE_YIELD_SLOTS) && defined(STELLA_SELFCHECK)
     { /* every step: each gas cell keeps sum(C..Fe) <= Z and non-negative FIRE slots */
@@ -1040,15 +1084,7 @@ void resolvedism_inject_fb_energy(void)
         if(STELLA_OWNS_STAR(P[i]) && STELLA_FB_EVENT(P[i]) >= 1 && STELLA_FB_EVENT(P[i]) <= 4) {
             int has_payload = 1; /* silent collapse with no ejecta has nothing to deposit */
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
-            if(STELLA_FB_EVENT(P[i]) == 1) {
-                double Ms_, lM_, lZ_;
-                if(get_star_info(i, &Ms_, &lM_, &lZ_)) {
-                    int rt_ = stellar_remnant_type(lM_, lZ_);
-                    double rm_ = (rt_ == REM_PISN) ? 0 : stellar_remnant_mass(lM_, lZ_);
-                    double Mpre_ = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger : P[i].Mass * UNIT_MASS_IN_SOLAR;
-                    if((rt_ == REM_FSN || rt_ == REM_DBH) && Mpre_ - rm_ <= 0) has_payload = 0;
-                }
-            }
+            if(STELLA_FB_EVENT(P[i]) == 1) {has_payload = resolvedism_death_has_payload(i);}
 #endif
             if(has_payload && !P[i].FB_Deposited) {
                 /* no gas reached: book nothing, keep the star's mass, retry next step */
@@ -1075,11 +1111,11 @@ void resolvedism_inject_fb_energy(void)
                 n_selfcheck_book++;
             }
             if(STELLA_FB_EVENT(P[i]) != 3 && P[i].M_at_SN_trigger > 0) { /* a booked event with ejecta must have left the star */
-                double Ms_, lM_, lZ_, rm_ = 0;
+                double Ms_, lM_, lZ_, ej_ = P[i].M_at_SN_trigger, m_[STBL_NELEM];
                 if(STELLA_FB_EVENT(P[i]) != 4 && get_star_info(i, &Ms_, &lM_, &lZ_)) {
-                    rm_ = (stellar_remnant_type(lM_, lZ_) == REM_PISN) ? 0 : stellar_remnant_mass(lM_, lZ_);}
+                    ej_ = P[i].M_at_SN_trigger - stellar_death_ejecta(lM_, lZ_, P[i].M_at_SN_trigger, m_);}
                 double Mtrig_ = P[i].M_at_SN_trigger, Mnow_ = P[i].Mass * UNIT_MASS_IN_SOLAR;
-                if(Mtrig_ - rm_ > 1.0e-6) {
+                if(ej_ > 1.0e-6) {
                     STELLA_CHECK("fb_booked_deposited", Mnow_ < Mtrig_ * (1 - 1.0e-6), "flag=%d ID=%llu M_trigger=%g M_now=%g",
                                  (int)STELLA_FB_EVENT(P[i]), (unsigned long long)P[i].ID, Mtrig_, Mnow_);
                     n_selfcheck_book++;
@@ -1109,30 +1145,11 @@ void resolvedism_inject_fb_energy(void)
 #ifdef COSMIC_RAY_FLUID
             if(dM_wind > 0 && P[i].WindMomentumAccum > 1000. * dM_wind) {dp_injected[2] -= dp_wind * (1. - sqrt(1. - All.CosmicRay_SNeFraction));} /* fast wind: f_CR of the KE went to CRs */
 #endif
-            /* Wind metals: estimate from surface abundances */
-            double Mstar_w, logM_w, logZ_w;
-            if(get_star_info(i, &Mstar_w, &logM_w, &logZ_w)) {
-                double star_age_yr = resolvedism_star_age_yr(i);
-                double table_age_w = get_star_table_age(star_age_yr, logM_w, logZ_w);
-                double log_age_w = log10(DMAX(table_age_w, 100.0));
-                double Z_wind = 0;
-                for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {
-                    Z_wind += stellar_surface_abundance(logM_w, logZ_w, log_age_w, kk) * dM_wind;
-                }
-                Z_injected[2] += Z_wind;
-            }
+            Z_injected[2] += P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR; /* wind metals the walk delivered */
 
             /* Log wind event */
             if(n_wind_logged < n_wind_alloc) {
-                double Z_w_log = 0;
-                double Mstar_wl, logM_wl, logZ_wl;
-                if(get_star_info(i, &Mstar_wl, &logM_wl, &logZ_wl)) {
-                    double age_wl = resolvedism_star_age_yr(i);
-                    double table_age_wl = get_star_table_age(age_wl, logM_wl, logZ_wl);
-                    double lage_wl = log10(DMAX(table_age_wl, 100.0));
-                    for(int kk = ELEM_C; kk < STBL_NELEM; kk++)
-                        Z_w_log += stellar_surface_abundance(logM_wl, logZ_wl, lage_wl, kk) * dM_wind;
-                }
+                double Z_w_log = P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR;
                 wind_log_x[n_wind_logged] = P[i].Pos[0];
                 wind_log_y[n_wind_logged] = P[i].Pos[1];
                 wind_log_z[n_wind_logged] = P[i].Pos[2];
@@ -1173,16 +1190,15 @@ void resolvedism_inject_fb_energy(void)
             /* Use pre-walk snapshot — P[i].Mass has already been drained by thermal walk */
             double M_WD = (P[i].M_at_SN_trigger > 0) ? (double)P[i].M_at_SN_trigger
                                                      : P[i].Mass * UNIT_MASS_IN_SOLAR;
-            double yield_rescale = M_WD / stellar_type_ia_yield_total();
             n_events[4] += 1;
             M_injected[4] += M_WD;     /* actual injected mass (= WD mass) */
             M_removed[4] += M_WD;      /* particle mass removed */
             E_injected[4] += IA_ENERGY_ERG;
-            double Z_ia = 0;
-            for(int kk = ELEM_C; kk < STBL_NELEM; kk++) Z_ia += stellar_type_ia_yield(kk) * yield_rescale;
-            Z_injected[4] += Z_ia;
-            {double yia[6] = {M_WD, Z_ia, stellar_type_ia_yield(ELEM_C) * yield_rescale, stellar_type_ia_yield(ELEM_O) * yield_rescale,
-                              stellar_type_ia_yield(ELEM_Si) * yield_rescale, stellar_type_ia_yield(ELEM_Fe) * yield_rescale};
+            double Z_ia = 0; /* the table's Ia metals: the deposit delivers the full M_Ch of Ia matter */
+            for(int kk = ELEM_C; kk < STBL_NELEM; kk++) Z_ia += stellar_type_ia_yield(kk);
+            Z_injected[4] += P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR; /* metals the walk delivered */
+            {double yia[6] = {M_WD, Z_ia, stellar_type_ia_yield(ELEM_C), stellar_type_ia_yield(ELEM_O),
+                              stellar_type_ia_yield(ELEM_Si), stellar_type_ia_yield(ELEM_Fe)};
              fb_death_row_push(i, 0, 7, FB_LOG_EXPLODED, IA_ENERGY_ERG, yia, resolvedism_star_age_yr(i), 0.0);}
             printf("RESOLVEDISM TYPE_IA: Task=%d ID=%llu M_WD=%.3f E=%.2e[erg]\n",
                 ThisTask, (unsigned long long)P[i].ID, M_WD, IA_ENERGY_ERG);
@@ -1217,45 +1233,16 @@ void resolvedism_inject_fb_energy(void)
             double logM = log10(Mstar);
             double logZ = log10(DMAX(P[i].BirthMetallicity, 1e-10));
             int rem_type = stellar_remnant_type(logM, logZ);
-            double rem_mass = stellar_remnant_mass(logM, logZ);
-            if(rem_type == REM_PISN) rem_mass = 0; /* complete disruption */
-
-            /* Mej_actual = (current particle mass) - rem_mass. Matches the injection and ensures
-             * exact mass conservation. Z_ej is table-shape rescaled so total = Mej_actual. */
-#ifndef GALSF_RESOLVEDISM_WINDS
-            double t_end_yr_acc = stellar_lifetime(logM, logZ);
-            double log_age_end_acc = log10(DMAX(t_end_yr_acc, 100.0));
-#endif
-            double Mej_table = 0, Z_ej_table = 0;
-            for(int kk = 0; kk < STBL_NELEM; kk++) {
-                double m_k;
-                if(channel == 0) {
-                    m_k = stellar_elem_ej_SN(logM, logZ, kk);
-#ifndef GALSF_RESOLVEDISM_WINDS
-                    m_k += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end_acc, kk);
-#endif
-                } else {
-                    m_k = stellar_elem_ej_AGB(logM, logZ, kk);
-                }
-                Mej_table += m_k;
-                if(kk >= ELEM_C) Z_ej_table += m_k;
-            }
-            double Mej_actual = M_star_old - rem_mass;
-            if(Mej_actual < 0) Mej_actual = 0;
-            double scale_diag = (Mej_table > 0) ? Mej_actual / Mej_table : 0;
-            double Mej_solar = Mej_actual;
-            double Z_ej = Z_ej_table * scale_diag;
+            double m_led[STBL_NELEM]; /* the deposit's element ejecta (stellar_death_ejecta of the pre-walk mass) */
+            double rem_mass = stellar_death_ejecta(logM, logZ, M_star_old, m_led);
+            double Mej_solar = 0, Z_ej = 0;
+            for(int kk = 0; kk < STBL_NELEM; kk++) {Mej_solar += m_led[kk];}
+            for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {Z_ej += m_led[kk];}
             if(channel == 0 && (rem_type == REM_FSN || rem_type == REM_DBH)) {channel = 5;} /* failed SN: recorded, zero energy */
-            double Esne_erg = resolvedism_sn_energy_erg(rem_type == REM_PISN, rem_type != REM_FSN && rem_type != REM_DBH, Mstar);
+            double Esne_erg = resolvedism_sn_energy_erg(rem_type == REM_PISN, rem_type == REM_ECSN, rem_type != REM_FSN && rem_type != REM_DBH);
             {
                 double yl[6] = {Mej_solar, Z_ej, 0, 0, 0, 0}; const int ke[4] = {ELEM_C, ELEM_O, ELEM_Si, ELEM_Fe};
-                for(int q = 0; q < 4; q++) {
-                    double m_q = (channel == 1) ? stellar_elem_ej_AGB(logM, logZ, ke[q]) : stellar_elem_ej_SN(logM, logZ, ke[q]);
-#ifndef GALSF_RESOLVEDISM_WINDS
-                    if(channel != 1) m_q += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end_acc, ke[q]);
-#endif
-                    yl[2 + q] = m_q * scale_diag;
-                }
+                for(int q = 0; q < 4; q++) {yl[2 + q] = m_led[ke[q]];}
                 double age_l = resolvedism_star_age_yr(i);
                 fb_death_row_push(i, channel == 1, (channel == 1) ? REM_WD : rem_type, (channel == 5) ? FB_LOG_FAILED : FB_LOG_EXPLODED,
                                   (channel == 0) ? Esne_erg : 0.0, yl, age_l, get_star_lifetime(Mstar, logM, logZ));
@@ -1264,9 +1251,14 @@ void resolvedism_inject_fb_energy(void)
             n_events[channel] += 1;
             M_injected[channel] += Mej_solar;
             M_removed[channel] += Mej_solar;
-            Z_injected[channel] += Z_ej;
-            if(channel == 0) { /* SN: 1e51 for explosive remnants, the He-core energy for PISN, 0 for FSN/DBH */
+            Z_injected[channel] += P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR; /* metals the walk delivered */
+            if(channel == 0) { /* SN: resolvedism_sn_energy_erg (1e51; PISN 1e52 and ECSN 5e50 with RESOLVED_ISM_VARIABLE_SN_ENERGY), 0 for FSN/DBH */
                 E_injected[channel] += Esne_erg;
+            }
+            if(channel == 1 && Mej_solar > 0) { /* AGB: delivered momentum and its kinetic energy 1/2 p^2 / M_ej (kick + inelastic heat), as winds */
+                double p_agb = P[i].FB_DepositedP * UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s; /* g cm/s */
+                dp_injected[1] += p_agb;
+                E_injected[1] += 0.5 * p_agb * p_agb / (Mej_solar * SOLAR_MASS_CGS);
             }
 
             /* P[i].Mass has already been reduced by the measured-coupling pattern in
@@ -1277,11 +1269,11 @@ void resolvedism_inject_fb_energy(void)
              * trading exact-remnant-mass for exact-budget-closure on the injection. */
             if(channel != 1) {
                 printf("RESOLVEDISM SN: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f rem_type=%d E=%.2e[erg]\n",
-                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass, rem_type,
+                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, P[i].Mass * UNIT_MASS_IN_SOLAR, rem_type,
                     Esne_erg);
             } else {
                 printf("RESOLVEDISM AGB: Task=%d ID=%llu M_init=%.2f M_ej=%.2f M_rem=%.2f\n",
-                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, rem_mass);
+                    ThisTask, (unsigned long long)P[i].ID, Mstar, Mej_solar, P[i].Mass * UNIT_MASS_IN_SOLAR);
             }
             if(rem_type == REM_PISN) {resolvedism_zero_disrupted_star(i, M_star_old, "PISN");}
 
@@ -1418,6 +1410,14 @@ void resolvedism_inject_fb_energy(void)
     myfree(wind_log_mstar); myfree(wind_log_z); myfree(wind_log_y); myfree(wind_log_x);
 
     ESTEP_END(ESTEP_FB_POST);
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    { /* test: wind metals booked (FeedbackBudget) vs delivered by the walk this step [Msun] */
+        double loc[2] = {Z_injected[2], FB_TestWindZcoupled * UNIT_MASS_IN_SOLAR}, glob[2];
+        MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && (glob[0] > 0 || glob[1] > 0)) {printf("WINDZLEDGER t=%.17e Z_book=%.17e Z_dep=%.17e\n", All.Time, glob[0], glob[1]); fflush(stdout);}
+        FB_TestWindZcoupled = 0;
+    }
+#endif
     /* energy step trace: what each pass books it deposits (E_injected is erg, on the star's rank) */
     ESTEP_BOOK(EBK_FB_WIND, E_injected[2] / UNIT_ENERGY_IN_CGS); ESTEP_BOOK(EBK_FB_AGB, E_injected[1] / UNIT_ENERGY_IN_CGS);
     ESTEP_BOOK(EBK_FB_SN, E_injected[0] / UNIT_ENERGY_IN_CGS); ESTEP_BOOK(EBK_FB_IA, E_injected[4] / UNIT_ENERGY_IN_CGS);
@@ -1436,17 +1436,42 @@ void resolvedism_inject_fb_energy(void)
     /* Radpressure is mass-neutral, but follow same two-pass pattern for the kernel-weighted
      * momentum kicks → Σ wk = 1 exactly → Σ Δp_j = p_radpressure exactly. */
     FB_ZERO_AWS();
+    for(int ii : ActiveParticleList) {if(STELLA_OWNS_STAR(P[ii])) {P[ii].FB_DepositedP = 0;}}
     resolvedism_fb_momentum_calc(-2);   /* weighting pre-pass for radpressure */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    for(int ii : ActiveParticleList) {if(STELLA_OWNS_STAR(P[ii]) && All.Time < All.TestFBNoGasUntilTime) {P[ii].FB_Area_weighted_sum = 0;}} /* test: no gas in reach */
+#endif
     resolvedism_fb_momentum_calc(1);    /* radpressure injection (IR-trapping boost; DIRECT term
                                          * offloaded to the per-cell tree-flux pass below) */
     resolvedism_fb_apply_recoil();
-    /* channel-3 ledger, ONCE per local star (LEDGER FIX 2026-07-28: the old
-     * accumulation inside particle2in counted once per export entry too). */
+    /* channel-3 ledger: the momentum each star's walk delivered (sum |dp_j|, all returns) */
     for(int i : ActiveParticleList) {
-        if(!STELLA_OWNS_STAR(P[i]) || P[i].Mass <= 0) continue;
-        double dp_code_led = resolvedism_radp_starside_dp_code(i);
-        if(dp_code_led > 0) {RadPressure_dp_thisStep += dp_code_led * (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);}
+        if(!STELLA_OWNS_STAR(P[i]) || P[i].FB_DepositedP <= 0) continue;
+        RadPressure_dp_thisStep += P[i].FB_DepositedP * (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
+        n_events[3] += 1;
     }
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    { /* test: star-side radp booked (channel 3, every star) vs delivered this step, full precision (code units) */
+        double loc[7] = {0}, glob[7];
+        loc[0] = RadPressure_dp_thisStep / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
+        for(int i : ActiveParticleList) {
+            if(!STELLA_OWNS_STAR(P[i]) || P[i].Mass <= 0) continue;
+            if(P[i].FB_DepositedP > 0) {loc[6] += resolvedism_radp_starside_dp_code(i);} /* the budget of each star that deposited */
+            double aws = P[i].FB_Area_weighted_sum, m2 = 0;
+            if(aws <= 0) continue;
+            for(int k_ = 0; k_ < 3; k_++) {m2 += (P[i].FB_VecSum[k_] / aws) * (P[i].FB_VecSum[k_] / aws);}
+            loc[5] += m2;
+        }
+        loc[1] = FB_TestRadpPabs; for(int k_ = 0; k_ < 3; k_++) {loc[2 + k_] = FB_TestRadpPvec[k_];}
+        MPI_Allreduce(loc, glob, 7, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && (glob[0] > 0 || glob[1] > 0)) {
+            double pv = sqrt(glob[2]*glob[2] + glob[3]*glob[3] + glob[4]*glob[4]);
+            printf("RADPLEDGER t=%.17e p_book=%.17e p_abs=%.17e p_vec=%.17e m2=%.17e p_budget=%.17e\n", All.Time, glob[0], glob[1], pv, glob[5], glob[6]);
+            fflush(stdout);
+        }
+        FB_TestRadpPabs = 0; FB_TestRadpPvec[0] = FB_TestRadpPvec[1] = FB_TestRadpPvec[2] = 0;
+    }
+#endif
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
     /* LEBRON-style DIRECT radp: per gas cell, from the tree attenuated per-pixel
      * fluxes finalized in the gravity walk (deposited locally in the absorbing cell,
@@ -1455,19 +1480,7 @@ void resolvedism_inject_fb_energy(void)
     resolvedism_radpressure_treerad();
 #endif
 
-    /* Count radiation pressure events */
-    for(int i : ActiveParticleList) {
-        if(!STELLA_OWNS_STAR(P[i]) || P[i].Mass <= 0) continue;
-        double Mstar_rp = 0;
-#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-        if(P[i].sampled) Mstar_rp = P[i].MstarSampleIMF[0];
-#endif
-#ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
-        Mstar_rp = P[i].Mstar;
-#endif
-        if(Mstar_rp >= 2.0) n_events[3] += 1;
-    }
-    dp_injected[3] = RadPressure_dp_thisStep; /* exact dp from particle2in */
+    dp_injected[3] = RadPressure_dp_thisStep; /* delivered: star-side walk plus the per-cell term */
     E_coupled[3] = resolvedism_mech_energy_local() - E_mech3;
 #else
     E_mech3 = resolvedism_mech_energy_local();

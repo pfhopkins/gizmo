@@ -178,6 +178,10 @@ struct INPUT_STRUCT_NAME
     MyFloat SoundSpeed;
     MyFloat dt_hydrostep_i;
     MyCommFloat DrkernNgbFactor;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    long long PairFluxS, PairFluxTi; /* start and length of the step that ends now (integer time) */
+    int PairFluxTask, PairFluxIndex; /* home rank and index: corrections and the opening weight go there */
+#endif
 #ifdef EOS_ANEOS
     MyFloat Temperature; /* orders the two sides of a face in the MFM entropic energy switch */
 #endif
@@ -327,6 +331,13 @@ struct OUTPUT_STRUCT_NAME
     MyDouble DtInternalEnergy;
     //MyDouble dInternalEnergy; //manifest-indiv-timestep-debug//
     MyScratchFloat MaxSignalVel;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    Vec3<MyDouble> PairFluxSumMom;
+    MyDouble PairFluxSumEgy;
+#ifdef MAGNETIC
+    Vec3<MyDouble> PairFluxSumB, PairFluxSumBded;
+#endif
+#endif
 #ifdef OUTPUT_SHOCK_MACH_NUMBER
     MyFloat MaxShockMachNumber;
 #endif
@@ -423,6 +434,9 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     in->InternalEnergyPred = CellP[i].InternalEnergyPred;
     in->SoundSpeed = CellP[i].effective_soundspeed();
     in->dt_hydrostep_i = get_particle_timestep_in_physical(i);
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    in->PairFluxS = (long long) P[i].Ti_begstep; in->PairFluxTi = (long long) P[i].integertime_step(); in->PairFluxTask = ThisTask; in->PairFluxIndex = i;
+#endif
     in->ConditionNumber = CellP[i].ConditionNumber;
     in->FaceClosureError = CellP[i].FaceClosureError;
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -632,6 +646,12 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     CellP[i].HydroAccel += out->Acc;
     CellP[i].DtInternalEnergy += out->DtInternalEnergy;
     //CellP[i].dInternalEnergy += out->dInternalEnergy; //manifest-indiv-timestep-debug//
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    CellP[i].PairFluxSumMom += out->PairFluxSumMom; CellP[i].PairFluxSumEgy += out->PairFluxSumEgy;
+#ifdef MAGNETIC
+    CellP[i].PairFluxSumB += out->PairFluxSumB; CellP[i].PairFluxSumBded += out->PairFluxSumBded;
+#endif
+#endif
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[i].DtMass += out->DtMass;
@@ -739,8 +759,31 @@ void turb_diff_metals_budget_log(void)
 }
 #endif
 
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+static double DiffS_floor, DiffS_slot, DiffS_z0; static long DiffS_nfloor; /* test: cells where a floor fires (some slot off m X + Dyield by > 1e-12 m) and the |mass| it adds there; worst per-cell |sum X(1..27) - 1| and |X0 - sum metals| after the unpack */
+static double DiffH_dy, DiffH_floor, DiffH_clos, DiffH_sumdy; /* test: H mass from the pair flux, the 0 floor, the 1 - Z - He closure; sum of the Z, He, H fluxes */
+static void diffh_totals(double *t) /* test: gas H mass, pending H, active cells' Dyield H, gas Z mass, summed over all gas (long double) */
+{
+    long double a[4] = {0, 0, 0, 0};
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        a[0] += (long double)P[i].Mass * P[i].Metallicity[MET_OF(ELEM_H)]; a[3] += (long double)P[i].Mass * P[i].Metallicity[0];
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        a[1] += CellP[i].Dyield_pending[MET_OF(ELEM_H)];
+#endif
+    }
+    for(int i : ActiveParticleList) {if(P[i].Type == 0 && P[i].Mass > 0) {a[2] += CellP[i].Dyield[MET_OF(ELEM_H)];}}
+    double l[4] = {(double)a[0], (double)a[1], (double)a[2], (double)a[3]};
+    MPI_Allreduce(l, t, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+}
+static double DiffH_T0[4];
+#endif
 void hydro_final_operations_and_cleanup(void)
 {
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+    DiffH_dy = DiffH_floor = DiffH_clos = DiffH_sumdy = 0;
+    DiffS_floor = DiffS_slot = DiffS_z0 = 0; DiffS_nfloor = 0;
+    diffh_totals(DiffH_T0);
+#endif
     /* Diffusion unpack breakdown accumulators (line 867 clamp diagnostic). */
     double dMZ_pair_loc = 0;   /* Σ Dyield[0]: 0 if pair-flux solver conservative */
     double dMZ_clamp_loc = 0;  /* Σ M·(clamp_correction): non-zero iff DMAX(,0) fires on Met[0] */
@@ -771,6 +814,9 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #ifndef TEST_MHD_NO_POWELL_SOURCE_TERMS
                 CellP[i].HydroAccel -= CellP[i].divB * Bi;
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+                CellP[i].TestPowellMomRate = CellP[i].divB * Bi * (-1.); CellP[i].TestPowellEgyRate = -CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi); /* Powell work rates (test output) */
+#endif
                 CellP[i].DtInternalEnergy -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
                 CellP[i].DtE_MHDLedger[0] -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
@@ -779,6 +825,9 @@ void hydro_final_operations_and_cleanup(void)
             }
 
             double magnorm_closure = Get_DtB_FaceArea_Limiter(i, P, CellP);
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+            test_count_mhd_limiters(0, magnorm_closure != 1);
+#endif
 
 #if defined(DIVBCLEANING_DEDNER) && !defined(HYDRO_SPH)
             // ok now deal with the divB correction forces and damping fields //
@@ -801,6 +850,9 @@ void hydro_final_operations_and_cleanup(void)
             {
 
                 if(DtB_PhiCorr > tolerance_for_correction * DtB_UnCorr) {PhiCorr_Norm *= tolerance_for_correction * DtB_UnCorr / DtB_PhiCorr;}
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+                test_count_mhd_limiters(PhiCorr_Norm < 1, 0);
+#endif
                 CellP[i].DtB += PhiCorr_Norm * CellP[i].DtB_PhiCorr;
                 CellP[i].DtInternalEnergy += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, CellP[i].Bfield() * All.cf_a2inv);
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
@@ -836,6 +888,9 @@ void hydro_final_operations_and_cleanup(void)
              intermediate drift operations, we need the primive variables, so reduce to those here
              (remembering that v_phys = v_code/All.cf_atime, for the sake of doing the unit conversions to physical) */
             {Vec3<double> vel_phys = CellP[i].VelPred / All.cf_atime;
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+            CellP[i].HydroVelRef = vel_phys;
+#endif
             CellP[i].DtInternalEnergy -= dot(vel_phys, CellP[i].HydroAccel);
             /* we solved for total energy flux (and remember, HydroAccel is still momentum -- keep units straight here!) */
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -871,7 +926,12 @@ void hydro_final_operations_and_cleanup(void)
             /* ok, now: HydroAccel = dv/dt, DtInternalEnergy = du/dt (energy per unit mass), GravWorkTerm.g = du/dt from mass moved through the potential */
 
             /* zero out hydrodynamic PdV work terms if the particle is at the maximum smoothing, these will be incorrect */
+#ifndef HYDRO_EXACT_PAIR_FLUX_EXCHANGE /* the pair records assume the kick applies the energy rate */
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            CellP[i].PairFluxMassRef = P[i].Mass; CellP[i].PairFluxBScale = 1; /* mass the rates are per unit of; DtB unscaled */
+#endif
 #if defined(MAGNETIC) && defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
             { /* ledger: d(E_th+E_kin+E_B)/dt of this step (Powell/Dedner terms, the -B^2/2 dV/dt the u-equation omits); booked in do_the_kick */
                 Vec3<double> Bp = CellP[i].Bfield() * All.cf_a2inv; double V_phys = P[i].Mass / (CellP[i].Density * All.cf_a3inv);
@@ -939,6 +999,11 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION /* add the exchange received while inactive */
             for(int k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] += CellP[i].Dyield_pending[k]; CellP[i].Dyield_pending[k] = 0;}
 #endif
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+            double th_H0 = P[i].Metallicity[MET_OF(ELEM_H)], th_Z0 = P[i].Metallicity[0], th_He0 = P[i].Metallicity[MET_OF(ELEM_He)];
+            double th_dyH = CellP[i].Dyield[MET_OF(ELEM_H)], th_dyZ = CellP[i].Dyield[0], th_dyHe = CellP[i].Dyield[MET_OF(ELEM_He)];
+            double th_pre[NUM_METAL_SPECIES]; for(int k = 0; k < NUM_METAL_SPECIES; k++) {th_pre[k] = P[i].Mass * P[i].Metallicity[k] + CellP[i].Dyield[k];}
+#endif
             {
                 double Z0_before = P[i].Metallicity[0], Dy0 = CellP[i].Dyield[0]; /* diff_unpack_breakdown: pair flux vs floor */
                 dMZ_pair_loc += Dy0;
@@ -949,11 +1014,45 @@ void hydro_final_operations_and_cleanup(void)
 #endif
                 dMZ_clamp_loc += P[i].Mass * (P[i].Metallicity[0] - Z0_before) - Dy0;
             }
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+            {double f_ = 0; int fired_ = 0; /* a floor fired: some slot's mass differs from m X + Dyield by more than 1e-12 m */
+             for(int k = 0; k < NUM_METAL_SPECIES; k++) {double e_ = fabs(P[i].Mass * P[i].Metallicity[k] - th_pre[k]); f_ += e_; if(e_ > 1e-12 * P[i].Mass) {fired_ = 1;}}
+             if(fired_) {
+                 #pragma omp atomic
+                 DiffS_floor += f_;
+                 #pragma omp atomic
+                 DiffS_nfloor += 1;}}
+#endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
             {   /* sum Met[1..27] = 1: H = 1 - Z - Y */
                 double X_H_new = 1.0 - P[i].Metallicity[0] - P[i].Metallicity[MET_OF(ELEM_He)];
                 if(X_H_new < 0) X_H_new = 0;
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+                double th_Hf = P[i].Metallicity[MET_OF(ELEM_H)]; /* after the 0 floor */
+#endif
                 P[i].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+                {
+                    double m = P[i].Mass, fl = m * th_Hf - (m * th_H0 + th_dyH), cl = m * (P[i].Metallicity[MET_OF(ELEM_H)] - th_Hf);
+                    #pragma omp atomic
+                    DiffH_dy += th_dyH;
+                    #pragma omp atomic
+                    DiffH_floor += fl;
+                    #pragma omp atomic
+                    DiffH_clos += cl;
+                    #pragma omp atomic
+                    DiffH_sumdy += th_dyZ + th_dyHe + th_dyH;
+                    double s_ = 0, z_ = 0; for(int k = 1; k < NUM_METAL_SPECIES; k++) {s_ += P[i].Metallicity[k]; if(k >= 3) {z_ += P[i].Metallicity[k];}}
+                    s_ = fabs(s_ - 1); z_ = fabs(z_ - P[i].Metallicity[0]);
+                    #pragma omp critical (diffslot)
+                    {if(s_ > DiffS_slot) {DiffS_slot = s_;} if(z_ > DiffS_z0) {DiffS_z0 = z_;}}
+                    if(th_Z0 > 0.5 || P[i].Metallicity[0] > 0.5) {
+                        #pragma omp critical (diffh_print)
+                        printf("DIFFHCELL t=%.17e id=%llu m=%.17e Z0=%.17e He0=%.17e H0=%.17e dyZ=%.17e dyHe=%.17e dyH=%.17e floor=%.17e clos=%.17e\n",
+                               All.Time, (unsigned long long)P[i].ID, m, th_Z0, th_He0, th_H0, th_dyZ, th_dyHe, th_dyH, fl, cl);
+                    }
+                }
+#endif
             }
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange */
@@ -1126,6 +1225,20 @@ void hydro_final_operations_and_cleanup(void)
 
     /* Diff-unpack breakdown: pinpoint pair-flux vs clamp contribution to dM_Z. */
     diff_unpack_breakdown_log(dMZ_pair_loc, dMZ_clamp_loc);
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+    {
+        double loc[4] = {DiffH_dy, DiffH_floor, DiffH_clos, DiffH_sumdy}, tot[4];
+        MPI_Allreduce(loc, tot, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && (tot[1] != 0 || tot[2] != 0)) {printf("DIFFHSUM t=%.17e dyH=%.17e floor=%.17e clos=%.17e sumdy=%.17e\n", All.Time, tot[0], tot[1], tot[2], tot[3]); fflush(stdout);}
+        double T1[4]; diffh_totals(T1);
+        {double ls[3] = {DiffS_floor, (double)DiffS_nfloor, 0}, gs[3], lm[2] = {DiffS_slot, DiffS_z0}, gm[2];
+         MPI_Allreduce(ls, gs, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); MPI_Allreduce(lm, gm, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+         if(ThisTask == 0) {printf("DIFFSLOT t=%.17e floor_abs=%.17e floor_cells=%.0f max_slot_sum_dev=%.17e max_z0_dev=%.17e\n", All.Time, gs[0], gs[1], gm[0], gm[1]); fflush(stdout);}}
+        /* gas H + pending H + active Dyield H before vs gas H + pending H after (active Dyield applied): the H ledger change of the unpack */
+        if(ThisTask == 0) {printf("DIFFHTOT t=%.17e gasH0=%.17e pend0=%.17e dy0=%.17e gasH1=%.17e pend1=%.17e dLH=%.17e dgasH=%.17e dgasZ=%.17e\n", All.Time,
+                                  DiffH_T0[0], DiffH_T0[1], DiffH_T0[2], T1[0], T1[1], (T1[0] + T1[1]) - (DiffH_T0[0] + DiffH_T0[1] + DiffH_T0[2]), T1[0] - DiffH_T0[0], T1[3] - DiffH_T0[3]); fflush(stdout);}
+    }
+#endif
 
 #ifdef TURB_DRIVING
 #ifdef TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE // if this is enabled, we only update as frequently as the driving phases are recomputed, as set by TurbDrive_TimeBetweenTurbUpdates. To avoid large errors, must be set by-hand to be << lambda_min / V where V is the typical turbulent velocity and lambda_min is the smallest driven wavelength.
@@ -1169,6 +1282,15 @@ void hydro_force_initial_operations_preloop(void)
 #endif
             CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
             CellP[i].HydroAccel = {};
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            CellP[i].PairFluxSumMom = {}; CellP[i].PairFluxSumEgy = 0; CellP[i].PairFluxRecvMom = {}; CellP[i].PairFluxRecvEgy = 0;
+#ifdef MAGNETIC
+            CellP[i].PairFluxSumB = {}; CellP[i].PairFluxSumBded = {}; CellP[i].PairFluxRecvB = {}; CellP[i].PairFluxRecvBded = {};
+#endif
+#endif
+#if defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC) && defined(MAGNETIC)
+            CellP[i].TestPowellMomRate = {}; CellP[i].TestPowellEgyRate = 0; /* set by the Powell terms, if on */
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};
 #endif
@@ -1256,6 +1378,9 @@ void hydro_force(void)
 #endif
     double t_preloop_start = my_second();
     hydro_force_initial_operations_preloop(); /* do initial pre-processing operations as needed before main hydro force loop */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    pairflux_begin_hydro_pass(); /* this pass's records replace the previous pass's */
+#endif
     double t_preloop = timediff(t_preloop_start, my_second());
     double t_malloc_start = my_second();
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
@@ -1270,6 +1395,9 @@ void hydro_force(void)
     double t_demalloc = timediff(t_demalloc_start, my_second());
     double t_postloop_start = my_second();
     hydro_final_operations_and_cleanup(); /* do final operations on results */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    pairflux_end_hydro_pass(); /* records into the memory budget until the opening kick */
+#endif
 #ifdef NGB_PAIR_CACHE
     ngb_pair_cache_free();
 #endif

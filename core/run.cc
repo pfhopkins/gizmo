@@ -5,6 +5,8 @@
 #include <math.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <vector>
+#include <float.h>
 
 #include "../declarations/allvars.h"
 #include "../mesh/kernel.h"   /* kernel_gravity: softened-potential metric in incode_total_energy */
@@ -16,28 +18,52 @@
  * the previous call by more than 1e-14 fractional.  M_Z change between
  * pre/post_diff_unpack catches metal-diffusion leaks; M_bary change at any
  * tag catches mass leaks.  Use it to bracket suspect operations.
- * M_Z_ledger = gas + star/remnant + in-flight diffusion metals - net yields; constant to roundoff. */
+ * M_Z_ledger = gas + star/remnant + in-flight diffusion metals - net yields; constant to roundoff.
+ * Element ledger (mass_balance_elements.txt): the same closure for every Metallicity slot, in the same reduce. */
+static double MbaryOutflow = 0; /* gas + star mass that left through an outflow boundary on this rank [code mass] */
+#ifdef METALS
+static double MbaryElemOutflow[NUM_METAL_SPECIES]; /* per-slot mass that left through an outflow boundary [code mass] */
+#endif
+void mbary_book_outflow(int i)
+{
+    if(P[i].Mass <= 0) {return;}
+    if(P[i].Type == 0 || P[i].Type == 4) {
+        #pragma omp atomic
+        MbaryOutflow += P[i].Mass;
+    }
+#ifdef METALS
+    if(P[i].Type == 0 || P[i].Type == 4 || P[i].Type == 5) {
+        for(int m = 0; m < NUM_METAL_SPECIES; m++) {
+            #pragma omp atomic
+            MbaryElemOutflow[m] += P[i].Mass * P[i].Metallicity[m];
+        }
+    }
+#endif
+}
+
 void mbary_step_checkpoint(const char *tag)
 {
-    static double last_M_tot = -1.0;
-    static double last_M_Z   = -1.0;
+    /* the scalar ledgers are summed in long double and reduced as MPI_LONG_DOUBLE: their terms (~1e-8 of metals after a big
+     * SN) cancel to a much smaller total, which a double sum resolves only to the spacing of doubles near the terms */
+    static long double last_M_tot = -1.0;
+    static long double last_M_Z   = -1.0;
 #ifdef GALSF_RESOLVEDISM_DUST
-    static double last_M_dust = -1.0;
+    static long double last_M_dust = -1.0;
 #endif
-    static double last_M_L = -1.0;
+    static long double last_M_L = -1.0;
     static long long call_count = 0;
     int i;
-    double M_gas_loc = 0, M_star_loc = 0, M_Z_loc = 0;
-    double ml_loc[3] = {0, 0, 0}; /* metal ledger: star+remnant metals, in-flight diffusion metals, net yields */
+    long double M_gas_loc = 0, M_star_loc = 0, M_Z_loc = 0;
+    long double ml_loc[3] = {0, 0, 0}; /* metal ledger: star+remnant metals, in-flight diffusion metals, net yields */
 #ifdef GALSF_RESOLVEDISM_DUST
-    double M_dust_loc = 0;
+    long double M_dust_loc = 0;
 #endif
     for(i = 0; i < NumPart; i++) {
         if(P[i].Mass <= 0) continue;
         if(P[i].Type == 0) {
             M_gas_loc += P[i].Mass;
 #if defined(METALS)
-            M_Z_loc += P[i].Mass * P[i].Metallicity[0];  /* gas metal mass = Σ M·Met[0] */
+            M_Z_loc += (long double)P[i].Mass * P[i].Metallicity[0];  /* gas metal mass = Σ M·Met[0] */
 #endif
 #ifdef GALSF_RESOLVEDISM_DUST
             /* Dust is a PARTITION of the metals (Met[k] includes dust-locked atoms),
@@ -46,14 +72,14 @@ void mbary_step_checkpoint(const char *tag)
              * must be constant across post_diff_unpack; changes legitimately at
              * FB (yields/shock destruction) and sputtering checkpoints. */
             {int kd; double dsum = 0; for(kd = 0; kd < NUM_RESOLVEDISM_DUST; kd++) {dsum += CellP[i].Dust[kd];}
-             M_dust_loc += P[i].Mass * dsum;}
+             M_dust_loc += (long double)P[i].Mass * dsum;}
 #endif
         }
         else if(P[i].Type == 4) {
             M_star_loc += P[i].Mass;
         }
 #if defined(METALS)
-        if(P[i].Type == 4 || P[i].Type == 5) {ml_loc[0] += P[i].Mass * P[i].Metallicity[0];}
+        if(P[i].Type == 4 || P[i].Type == 5) {ml_loc[0] += (long double)P[i].Mass * P[i].Metallicity[0];}
 #endif
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
         if(P[i].Type == 0) {ml_loc[1] += CellP[i].Dyield_pending[0];}
@@ -65,36 +91,123 @@ void mbary_step_checkpoint(const char *tag)
 #if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
     ml_loc[2] = CumulMetalYieldToGas - CumulMetalEjectedFromStars;
 #endif
-    double red_loc[7] = {ml_loc[0], ml_loc[1], ml_loc[2], M_gas_loc, M_star_loc, M_Z_loc, 0}, red[7] = {0}; /* one reduction per checkpoint */
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+    enum {EL_GAS, EL_STAR, EL_FLIGHT, EL_OUT, EL_NET, EL_N}; /* per slot: gas, stars + remnants, in-flight diffusion, outflow, booked net yield */
+    const int NRED = 9 + EL_N * NUM_METAL_SPECIES;
+#else
+    const int NRED = 9;
+#endif
+    static int ld_checked = 0;
+    if(!ld_checked) {
+        ld_checked = 1; int sz = 0; MPI_Type_size(MPI_LONG_DOUBLE, &sz);
+        if(sz != (int)sizeof(long double)) {if(ThisTask == 0) {printf("mass trace: MPI_LONG_DOUBLE has %d bytes, long double %d\n", sz, (int)sizeof(long double));} endrun(8731);}
+        if(LDBL_MANT_DIG <= DBL_MANT_DIG && ThisTask == 0) {printf("WARNING: long double is not wider than double here: the mass-trace ledgers round at double precision\n");}
+    }
+    std::vector<long double> red_loc(NRED, 0.0L), red(NRED, 0.0L); /* one reduction per checkpoint */
+    red_loc[0] = ml_loc[0]; red_loc[1] = ml_loc[1]; red_loc[2] = ml_loc[2]; red_loc[3] = M_gas_loc; red_loc[4] = M_star_loc; red_loc[5] = M_Z_loc;
 #ifdef GALSF_RESOLVEDISM_DUST
     red_loc[6] = M_dust_loc;
 #endif
-    MPI_Reduce(red_loc, red, 7, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); /* only rank 0 reads the sums */
-    double ml[3] = {red[0], red[1], red[2]};
-    double M_gas = red[3], M_star = red[4], M_Z = red[5];
-#ifdef GALSF_RESOLVEDISM_DUST
-    double M_dust = red[6];
+    red_loc[7] = MbaryOutflow;
+#ifdef METALS
+    red_loc[8] = MbaryElemOutflow[0]; /* metals gone through an outflow boundary */
 #endif
-    double M_tot = M_gas + M_star;
-    double M_L = M_Z + ml[0] + ml[1] - ml[2];
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+    {
+        std::vector<double> el_d(EL_N * NUM_METAL_SPECIES, 0.0); /* the element ledger sums in double, as before */
+        double *el = el_d.data();
+        for(i = 0; i < NumPart; i++) {
+            if(P[i].Mass <= 0) {continue;}
+            int c = (P[i].Type == 0) ? EL_GAS : ((P[i].Type == 4 || P[i].Type == 5) ? EL_STAR : -1);
+            if(c < 0) {continue;}
+            for(int m = 0; m < NUM_METAL_SPECIES; m++) {el[c * NUM_METAL_SPECIES + m] += P[i].Mass * P[i].Metallicity[m];}
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+            if(P[i].Type == 0) {for(int m = 0; m < NUM_METAL_SPECIES; m++) {el[EL_FLIGHT * NUM_METAL_SPECIES + m] += CellP[i].Dyield_pending[m];}}
+#endif
+        }
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        if(strcmp(tag, "pre_diff_unpack") == 0) {for(int j : ActiveParticleList) {if(P[j].Type == 0 && P[j].Mass > 0) {for(int m = 0; m < NUM_METAL_SPECIES; m++) {el[EL_FLIGHT * NUM_METAL_SPECIES + m] += CellP[j].Dyield[m];}}}}
+#endif
+        for(int m = 0; m < NUM_METAL_SPECIES; m++) {
+            el[EL_OUT * NUM_METAL_SPECIES + m] = MbaryElemOutflow[m];
+#ifdef GALSF_RESOLVEDISM_FB
+            el[EL_NET * NUM_METAL_SPECIES + m] = CumulElemToGas[m] - CumulElemFromStars[m];
+#endif
+        }
+        for(int q = 0; q < EL_N * NUM_METAL_SPECIES; q++) {red_loc[9 + q] = el_d[q];}
+    }
+#endif
+    MPI_Reduce(red_loc.data(), red.data(), NRED, MPI_LONG_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); /* only rank 0 reads the sums */
+    long double ml[3] = {red[0], red[1], red[2]};
+    long double M_gas = red[3], M_star = red[4], M_Z = red[5];
+#ifdef GALSF_RESOLVEDISM_DUST
+    long double M_dust = red[6];
+#endif
+    long double M_tot = M_gas + M_star + red[7]; /* baryons in the box plus those gone through an outflow boundary */
+    long double M_L = M_Z + ml[0] + ml[1] + red[8] - ml[2];
+#if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+    if(ThisTask == 0) {
+        static std::vector<double> last_EL;
+        static const char *slot_name[] = {"Z", "H", "He", "C", "N", "O", "F", "Ne", "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca",
+                                          "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn"};
+        std::vector<double> el_r(EL_N * NUM_METAL_SPECIES);
+        for(int q = 0; q < EL_N * NUM_METAL_SPECIES; q++) {el_r[q] = (double)red[9 + q];}
+        const double *el = el_r.data();
+        std::vector<double> EL(NUM_METAL_SPECIES), S(NUM_METAL_SPECIES);
+        for(int m = 0; m < NUM_METAL_SPECIES; m++) { /* L = gas + stars + in flight + gone - net yields: constant to round-off */
+            double g = el[EL_GAS * NUM_METAL_SPECIES + m], s = el[EL_STAR * NUM_METAL_SPECIES + m], fl = el[EL_FLIGHT * NUM_METAL_SPECIES + m], o = el[EL_OUT * NUM_METAL_SPECIES + m];
+            EL[m] = g + s + fl + o - el[EL_NET * NUM_METAL_SPECIES + m];
+            S[m] = fabs(g) + fabs(s) + fabs(fl) + fabs(o);
+        }
+        int worst = -1; double worst_rel = 0;
+        std::vector<double> rel(NUM_METAL_SPECIES, 0.0);
+        if(!last_EL.empty()) {
+            for(int m = 0; m < NUM_METAL_SPECIES; m++) {
+                double d = EL[m] - last_EL[m];
+                rel[m] = (S[m] > 0) ? d / S[m] : ((d != 0) ? HUGE_VAL : 0);
+                if(fabs(rel[m]) > fabs(worst_rel) || worst < 0) {worst_rel = rel[m]; worst = m;}
+            }
+        }
+        if(last_EL.empty() || fabs(worst_rel) > 1.0e-14) {
+            char path[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+            snprintf(path, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/mass_balance_elements.txt", All.OutputDir);
+            FILE *f = fopen(path, "a");
+            if(f) {
+                if(ftell(f) == 0) {
+                    fprintf(f, "### Per-slot element ledger L = gas + stars/remnants + in flight + outflow - booked net yields, constant to round-off.\n");
+                    fprintf(f, "### Logs the first call and every checkpoint where some |dL|/S > 1e-14, S = gas + stars + |in flight| + outflow of that slot.\n");
+                    fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) worst slot  (5) its dL/S  (6..) dL/S per slot:");
+                    for(int m = 0; m < NUM_METAL_SPECIES; m++) {fprintf(f, " %s", (m < (int)(sizeof(slot_name) / sizeof(slot_name[0]))) ? slot_name[m] : "x");}
+                    fprintf(f, "\n");
+                }
+                const char *wn = (worst >= 0 && worst < (int)(sizeof(slot_name) / sizeof(slot_name[0]))) ? slot_name[worst] : "none";
+                fprintf(f, "%8lld  %-22s  %.10e  %-3s  %+.6e", call_count, tag, All.Time, wn, worst_rel);
+                for(int m = 0; m < NUM_METAL_SPECIES; m++) {fprintf(f, "  %+.3e", rel[m]);}
+                fprintf(f, "\n");
+                fclose(f);
+            }
+        }
+        last_EL = EL;
+    }
+#endif
     if(ThisTask == 0) {
         int should_log = 0;
-        double dM = 0.0, dZ = 0.0, dL = 0.0;
+        long double dM = 0.0, dZ = 0.0, dL = 0.0;
 #ifdef GALSF_RESOLVEDISM_DUST
-        double dDust = 0.0;
+        long double dDust = 0.0;
 #endif
         if(last_M_tot < 0) { should_log = 1; }
         else {
             dM = M_tot - last_M_tot;
             dZ = M_Z   - last_M_Z;
-            double frac_M = (last_M_tot > 0) ? fabs(dM) / last_M_tot : 0.0;
-            double frac_Z = (last_M_Z   > 0) ? fabs(dZ) / last_M_Z   : 0.0;
+            double frac_M = (last_M_tot > 0) ? (double)(fabsl(dM) / last_M_tot) : 0.0;
+            double frac_Z = (last_M_Z   > 0) ? (double)(fabsl(dZ) / last_M_Z) : 0.0;
             if(frac_M > 1.0e-14 || frac_Z > 1.0e-14) should_log = 1;
             dL = M_L - last_M_L;
-            if(last_M_L > 0 && fabs(dL) / last_M_L > 1.0e-14) should_log = 1;
+            if(last_M_L > 0 && fabsl(dL) / last_M_L > 1.0e-14) should_log = 1;
 #ifdef GALSF_RESOLVEDISM_DUST
             dDust = M_dust - last_M_dust;
-            double frac_D = (last_M_dust > 0) ? fabs(dDust) / last_M_dust : 0.0;
+            double frac_D = (last_M_dust > 0) ? (double)(fabsl(dDust) / last_M_dust) : 0.0;
             if(frac_D > 1.0e-14) should_log = 1;
 #endif
         }
@@ -105,7 +218,7 @@ void mbary_step_checkpoint(const char *tag)
             if(f) {
                 if(ftell(f) == 0) {
                     fprintf(f, "### Per-checkpoint M_bary + M_Z delta trace for leak localization.\n");
-                    fprintf(f, "###  Logs only when |delta|/value > 1e-14 for M_bary, M_Z, M_dust or M_Z_ledger (or first call).\n");
+                    fprintf(f, "###  Logs only when |delta|/value > 1e-14 for M_bary, M_Z, M_dust or M_Z_ledger (or first call). M_bary and M_Z_ledger include what left through an outflow boundary.\n");
                     fprintf(f, "###  M_Z = gas only.  M_Z_ledger = M_Z + M_Z_star + M_Z_inflight - M_Z_netyield: total metals, conserved to roundoff.\n");
 #ifdef GALSF_RESOLVEDISM_DUST
                     fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) M_bary[code]  (5) deltaM_bary[code]  (6) M_Z[code]  (7) deltaM_Z[code]  (8) M_dust[code]  (9) deltaM_dust[code]");
@@ -117,12 +230,12 @@ void mbary_step_checkpoint(const char *tag)
                 }
 #ifdef GALSF_RESOLVEDISM_DUST
                 fprintf(f, "%8lld  %-22s  %.10e  %.16e  %+.16e  %.16e  %+.16e  %.16e  %+.16e",
-                    call_count, tag, All.Time, M_tot, dM, M_Z, dZ, M_dust, dDust);
+                    call_count, tag, All.Time, (double)M_tot, (double)dM, (double)M_Z, (double)dZ, (double)M_dust, (double)dDust);
 #else
                 fprintf(f, "%8lld  %-22s  %.10e  %.16e  %+.16e  %.16e  %+.16e",
-                    call_count, tag, All.Time, M_tot, dM, M_Z, dZ);
+                    call_count, tag, All.Time, (double)M_tot, (double)dM, (double)M_Z, (double)dZ);
 #endif
-                fprintf(f, "  %.16e  %+.16e  %+.16e  %.16e  %+.16e\n", ml[0], ml[1], ml[2], M_L, dL);
+                fprintf(f, "  %.16e  %+.16e  %+.16e  %.16e  %+.16e\n", (double)ml[0], (double)ml[1], (double)ml[2], (double)M_L, (double)dL);
                 fclose(f);
             }
         }
@@ -554,7 +667,13 @@ void run(void)
 #endif
         ESTEP_BEGIN(ESTEP_INT_KICK1);
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        pairflux_after_opening_kick(); /* receivers' opening-kick shares; coverage advanced */
+#endif
         ESTEP_END(ESTEP_INT_KICK1);
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+        print_gas_conserved_totals();
+#endif
 #ifdef STARS_INTEGRATED_BY_RUMI
         rumi_integrate();           /* stars' mutual gravity over their step by RUMI++, chord velocities for the drift */
 #endif
@@ -738,6 +857,9 @@ void run(void)
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
 #endif
 
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        pairflux_mark_closing_kick_expected(); /* this pass's records carry closing-kick shares */
+#endif
         ESTEP_BEGIN(ESTEP_INT_HYDRO);
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
         ESTEP_END(ESTEP_INT_HYDRO);
@@ -759,6 +881,12 @@ void run(void)
         
         ESTEP_BEGIN(ESTEP_INT_KICK2);
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        pairflux_after_closing_kick(); /* own coverage gap and receivers' closing-kick shares */
+#endif
+#ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
+        test_pairflux_add_mass_and_wake();
+#endif
         ESTEP_END(ESTEP_INT_KICK2);
 
 
@@ -888,7 +1016,7 @@ void set_non_standard_physics_for_current_time(void)
 
 void calculate_non_standard_physics(void)
 {
-#if defined(GALSF) && defined(FB_G17_BOUNDARY_INJECTION)
+#if defined(GALSF) && defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK)
     /* ---- gizmo2017-mimicry boundary injection (2026-07-10) ----
      * Restores the upstream ordering (gizmo2017 run.c:114-118 + 220): the FB walk AND
      * deposit run here, AFTER do_second_halfstep_kick() and BEFORE cooling, so no
@@ -909,7 +1037,7 @@ void calculate_non_standard_physics(void)
         MPI_Allreduce(&count_fb, &tot_count_fb, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         if(tot_count_fb > 0)
         {
-            if(ThisTask == 0) {printf("G17RECOMPUTE: %d feedback-affected cells -> re-running compute_hydro_densities_and_forces\n", tot_count_fb); fflush(stdout);}
+            if(ThisTask == 0) {printf("HYDRO_RECOMPUTE_POST_FB: %d feedback-affected cells -> re-running compute_hydro_densities_and_forces\n", tot_count_fb); fflush(stdout);}
             HydroPassRepeatsStep = 1; /* the metal exchange is applied in the hydro pass itself, not by the kicks: once per step */
             compute_hydro_densities_and_forces();
             HydroPassRepeatsStep = 0;

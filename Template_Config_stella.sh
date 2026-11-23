@@ -24,9 +24,10 @@ GALSF_RESOLVEDISM_INSTANT_SN             % SNe before TimeInstantSN (param) expl
 
 ########## Supernovae / Type Ia / mass return ##########
 # SN energies (resolvedism_sn_energy.h): 1e51 erg for CCSN, ECSN, PPISN and PISN (flat by design); 0 for failed SNe and direct BHs
-#GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE % opt-in: PISN [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20) held to 64-133 Msun (Heger & Woosley 2002, Wise+12a); default flat 1e51 [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 GALSF_RESOLVEDISM_TYPE_IA                % Type Ia SNe from WD DTD (W7 yields)
-#FB_G17_BOUNDARY_INJECTION               % feedback deposited after the closing kick, then the hydro pass is redone on SN/Ia steps (gizmo2017 order; wind heating does not trigger the redo, STL-296); opt-in  [excl MFV]
+#RESOLVED_ISM_VARIABLE_SN_ENERGY        % Stella SN energies by type: PISN 1e52 erg, ECSN 5e50 erg; default: every SN 1e51 erg
+#RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB    % with RESOLVED_ISM_FB_AFTER_CLOSING_KICK: wind, AGB and radiation-pressure deposits also redo the hydro pass (not only SN/Ia); off by default and in no production config: +15 % per step on the L10 zoom, energy gain not measurable (docs/stella_options.md)
+#RESOLVED_ISM_FB_AFTER_CLOSING_KICK               % feedback deposited after the closing kick, then the hydro pass is redone on SN/Ia steps (gizmo2017 order; wind heating does not trigger the redo, STL-296); opt-in, in no default config  [excl MFV]
 #GALSF_RESOLVEDISM_SN_SPAWN              % spawn ejecta cells when the FB kernel holds too little gas (prototype)
 #RESOLVEDISM_HOTSYNC_CLAMP               % clamp timebins in hot regions (validated with SN_SPAWN)
 #GALSF_RESOLVEDISM_FB_HEALPIX            % HEALPix FB weighting (weights are mass-blind)
@@ -173,5 +174,6 @@ OUTPUT_INDIVIDUAL_COOLRATES              % output per-process cooling rates
 ########## Test-only ##########
 #GALSF_RESOLVEDISM_ISOLATED_FB_TEST      % TEST-ONLY: isolated-star FB test hooks
 #TEST_DUMP_STATE_AROUND_WIND_DEPOSIT     % TEST-ONLY: append raw double state of all particles before/after each wind batch to output/wind_dep_dump.<task>.bin
+#TEST_PRINT_DIFFUSION_H_CLOSURE         % TEST-ONLY: per step, the H mass the diffusion unpack takes from the pair flux, the 0 floor and the 1 - Z - He closure (DIFFHSUM; DIFFHCELL for cells with Z > 0.5; DIFFHTOT: H ledger change of the unpack; DIFFSLOT: every slot's floor, worst per-cell slot sum and Z0 deviation)
 #STELLA_SELFCHECK                        % TEST-ONLY: runtime invariant checks (harness)
 #TEST_GRAVITY_STATIC_PLUMMER             % TEST-ONLY: fixed Plummer potential at the origin (TEST_GRAVITY_STATIC_PLUMMER_MSUN=1000, _PC=0.5)

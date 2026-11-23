@@ -42,3 +42,5 @@ OUTPUT_TEMPERATURE
 STOP_WHEN_BELOW_MINTIMESTEP
 WAKEUP_GATE_AUDIT
 OUTPUT_ENERGY_STEP_TRACE                 % energy step trace (gizmo.conservation_trace)
+HYDRO_EXACT_PAIR_FLUX_EXCHANGE      % cross-timebin pair fluxes exchanged exactly (Uli 2026-11-21: the feedback tests run with it)
+HYDRO_TIMESTEP_FROM_PAIR_FORCE

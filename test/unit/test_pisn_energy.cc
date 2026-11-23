@@ -1,28 +1,20 @@
-// Unit test: supernova explosion energies (galaxy_sf/resolvedism_sn_energy.h).
-// PISN: Heger & Woosley 2002 via the Wise+12a fit, E = [5.0 + 1.304 (M_He - 64)] 1e51 erg, M_He = (13/24)(M - 20),
-// He core held to HW02's PISN range 64-133 Msun (opt-in GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE; default PISN 1e51);
-// other explosive deaths 1e51 erg; failed SNe and direct BHs 0.
+// Unit test: supernova explosion energies by death type (galaxy_sf/resolvedism_sn_energy.h).
+// Default: every explosive death (CCSN, ECSN, PPISN, PISN) 1e51 erg; failed SNe and direct collapse 0.
+// With RESOLVED_ISM_VARIABLE_SN_ENERGY (test_sn_energy_variable.cc), Uli's choice 2026-11-19: PISN 1e52 erg, ECSN 5e50 erg,
+// CCSN and PPISN 1e51 erg. For reference: the He-core fit of Heger & Woosley 2002 via Wise+12a gives 4.87e52 erg at 200 Msun,
+// Kitaura, Janka & Hillebrandt 2006 (A&A 450, 345) ~1e50 erg for the 8.8 Msun O-Ne-Mg core.
 #include "test_harness.h"
 #include "galaxy_sf/resolvedism_sn_energy.h"
 
-TEST_CASE("PISN energy from the helium core") {
-    CHECK_CLOSE(resolvedism_pisn_energy_erg(200.) / 1e51, 5.0 + 1.304 * (97.5 - 64.), 1e-9); // design report: 4.9e52
-    CHECK_CLOSE(resolvedism_pisn_energy_erg(140.) / 1e51, 5.0 + 1.304 * (65. - 64.), 1e-9);
-    CHECK_CLOSE(resolvedism_pisn_energy_erg(20. + 64. * 24. / 13.) / 1e51, 5.0, 1e-9);     // lower edge of the HW02 range
-    CHECK_CLOSE(resolvedism_pisn_energy_erg(130.) / 1e51, 5.0, 1e-9);                      // table PISN below the range: held at M_He = 64
-    CHECK_CLOSE(resolvedism_pisn_energy_erg(20. + 133. * 24. / 13.) / 9.35e52, 1.0, 0.02); // HW02 maximum, 9.35e52 for the 133 Msun core
-    CHECK_CLOSE(resolvedism_pisn_energy_erg(400.), resolvedism_pisn_energy_erg(20. + 133. * 24. / 13.), 1e-9 * 1e52);
-    double prev = 0;
-    for(double M = 100; M <= 500; M += 0.5) {double E = resolvedism_pisn_energy_erg(M); CHECK(E >= prev && E >= 5e51 && E <= 9.5e52); prev = E;}
-}
-
 TEST_CASE("energy by death type") {
-    CHECK(resolvedism_sn_energy_erg(0, 1, 15.) == 1e51);  // CCSN, ECSN, PPISN
-    CHECK(resolvedism_sn_energy_erg(0, 0, 40.) == 0);     // failed SN, direct BH
-#ifdef GALSF_RESOLVEDISM_PISN_ENERGY_FROM_HELIUM_CORE
-    CHECK(resolvedism_sn_energy_erg(1, 1, 200.) == resolvedism_pisn_energy_erg(200.));
+    CHECK(resolvedism_sn_energy_erg(0, 0, 1) == 1e51);  // CCSN, PPISN
+    CHECK(resolvedism_sn_energy_erg(0, 0, 0) == 0);     // failed SN, direct collapse
+#ifdef RESOLVED_ISM_VARIABLE_SN_ENERGY
+    CHECK(resolvedism_sn_energy_erg(0, 1, 1) == 5e50);  // ECSN
+    CHECK(resolvedism_sn_energy_erg(1, 0, 1) == 1e52);  // PISN
 #else
-    CHECK(resolvedism_sn_energy_erg(1, 1, 200.) == 1e51); // default: flat 1e51 for PISN
+    CHECK(resolvedism_sn_energy_erg(0, 1, 1) == 1e51);  // ECSN: fixed
+    CHECK(resolvedism_sn_energy_erg(1, 0, 1) == 1e51);  // PISN: fixed
 #endif
 }
 

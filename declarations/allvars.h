@@ -246,7 +246,7 @@ extern int TreeReconstructFlag; /*!< the standing tree is CONDEMNED: its storage
     DomainReconstructFlag (ownership/balance decomposition owed -- strictly more expensive) and from
     TreeMomentsStaleFlag below (moments re-derivation on intact topology -- strictly cheaper).
     Serialized in restartfiles. */
-#ifdef FB_G17_BOUNDARY_INJECTION
+#ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
 extern int HydroPassRepeatsStep; /*!< 1 during the feedback hydro recompute (run.cc): the metal exchange was already applied this step */
 #endif
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
@@ -555,6 +555,9 @@ extern struct global_data_all_processes
   double TestFixedQion;         /*!< >0: PIN the ionizing photon rate Q [phot/s] to this constant (no aging drift) + zero non-ionizing bands — clean StarBench PI ionization-front test (constant source vs Spitzer/HI); 0 = off (variable table Q) */
   double TestStarBenchIso;      /*!< >0: StarBench BENCHMARK-MODE thermodynamics (2026-07-31): neutral gas held isothermal at this T [K], ionized gas pinned at T_II, NO radiative losses in between — the thermal conditions the StarBench codes and Smith+21/Hu+17 tests actually assume. Full thermochemistry radiates the D-type driving work away at the ionized/neutral interface at high n (measured: ALL methods -50%% at n=100 with chemistry on), which the analytic references exclude by construction. 0 = off (full chemistry) */
   double TestFBNoGasUntilTime;  /*!< >0: FB weighting walks find no gas until this code time (no-gas event test) */
+  double TestIaTime;            /*!< >0: site WD remnants (IDs 1..TestNumStars) explode as Type Ia at this code time (Ia yield test) */
+  double TestMetalKickTime;     /*!< >0: once at this code time, gas cell ID 10 gains TestMetalKickMass of metals, unbooked (trace test) */
+  double TestMetalKickMass;     /*!< code mass of that unbooked metal change */
   double TestStarInitAgeYr;     /*!< >0: back-date test-star birth time by this many years (B10 AGB test: star starts IN its late phase; evolution proceeds naturally); 0 = off */
   double TestFixedLbol;         /*!< >0: PIN bolometric luminosity [erg/s] constant, split UV/NUV/OPT, zero ionizing — clean radiation-pressure test (constant source vs momentum-driven shell); 0 = off */
   double TestFixedWindMdot;     /*!< >0: PIN the stellar wind mass-loss rate [Msun/yr] constant (bypasses tables+PMS delay) — clean Weaver-bubble test; 0 = off (table wind) */
