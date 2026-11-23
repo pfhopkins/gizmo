@@ -64,6 +64,8 @@ int gpu_set_soa_sibling(int abs_idx, int new_sibling);
  * after the single-star light exchange changed them between builds.  Returns 0 on success or when there is no mirror. */
 int gpu_mirror_put_node_light(int no);
 #endif
+/* Bitflags twin of gpu_set_soa_nextnode: mirror one node's AoS bitflags word into its SoA slot. */
+int gpu_set_soa_bitflags(int abs_idx, unsigned int new_bitflags);
 
 /* Re-sum ancestor topnode moments directly in SoA after the
  * foreign pseudo data is in place (i.e. after gpu_scatter_pseudo_to_soa).

@@ -770,3 +770,15 @@ extern "C" int gpu_mirror_put_node_light(int no)
     return 0;
 }
 #endif
+
+/* Bitflags twin of gpu_set_soa_nextnode: the gravity walks classify a node from its SoA bitflags, so a host-side change to a
+ * node's flags after the mirror was filled must reach both. */
+extern "C" int gpu_set_soa_bitflags(int abs_idx, unsigned int new_bitflags)
+{
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->bitflags) {return 1;}
+    const int k = gpu_gravity_tree_mirror_slot(abs_idx);
+    if(k < 0) {return 1;}
+    soa->bitflags[k] = new_bitflags;
+    return 0;
+}

@@ -64,15 +64,17 @@
 
 
 /* older spellings of renamed Config.sh flags that setups still use (or that are easy to type): accepted as aliases */
-#if defined(MERGESPLIT_HARDCODE_MAX_MASS) && defined(MERGE_SPLIT_HARDCODE_MAX_MASS)
+#if defined(MERGESPLIT_HARDCODE_MAX_MASS) && defined(MERGE_SPLIT_HARDCODE_MAX_MASS) && !defined(MERGE_SPLIT_HARDCODE_MAX_MASS_FROM_OLDER_SPELLING)
 #error "Set only MERGE_SPLIT_HARDCODE_MAX_MASS (MERGESPLIT_HARDCODE_MAX_MASS is its older spelling)"
-#elif defined(MERGESPLIT_HARDCODE_MAX_MASS)
+#elif defined(MERGESPLIT_HARDCODE_MAX_MASS) && !defined(MERGE_SPLIT_HARDCODE_MAX_MASS)
 #define MERGE_SPLIT_HARDCODE_MAX_MASS MERGESPLIT_HARDCODE_MAX_MASS
+#define MERGE_SPLIT_HARDCODE_MAX_MASS_FROM_OLDER_SPELLING /* this file is included more than once per file: the alias above is ours, not a second user setting */
 #endif
-#if defined(MERGESPLIT_HARDCODE_MIN_MASS) && defined(MERGE_SPLIT_HARDCODE_MIN_MASS)
+#if defined(MERGESPLIT_HARDCODE_MIN_MASS) && defined(MERGE_SPLIT_HARDCODE_MIN_MASS) && !defined(MERGE_SPLIT_HARDCODE_MIN_MASS_FROM_OLDER_SPELLING)
 #error "Set only MERGE_SPLIT_HARDCODE_MIN_MASS (MERGESPLIT_HARDCODE_MIN_MASS is its older spelling)"
-#elif defined(MERGESPLIT_HARDCODE_MIN_MASS)
+#elif defined(MERGESPLIT_HARDCODE_MIN_MASS) && !defined(MERGE_SPLIT_HARDCODE_MIN_MASS)
 #define MERGE_SPLIT_HARDCODE_MIN_MASS MERGESPLIT_HARDCODE_MIN_MASS
+#define MERGE_SPLIT_HARDCODE_MIN_MASS_FROM_OLDER_SPELLING /* this file is included more than once per file: the alias above is ours, not a second user setting */
 #endif
 
 /* set default slope limiters */
