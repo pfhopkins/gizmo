@@ -20,7 +20,7 @@ import h5py
 import numpy as np
 import pytest
 
-from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.test import build_gizmo_for_test, mpi_launch_command, forced_sn_check
 from gizmo.conservation_trace import keep_and_check_traces, assert_conservation_traces
 
 TEST_NAME = "stella_sn_ejecta_cell_first"
@@ -117,6 +117,8 @@ def run_variant(flags, tag):
     m1 = masses(snaps[-1])
     sninfo = np.loadtxt(join(run, "output", "SNinfo.txt"), ndmin=2) if os.path.exists(join(run, "output", "SNinfo.txt")) else np.zeros((0, 20))
     keep_and_check_traces(join(run, "output"), out)
+    forced = forced_sn_check(join(run, "output", "SNinfo.txt"), join(TEST_DIR, f"{TEST_NAME}.params"))
+    assert forced is None, forced
     shutil.rmtree(run, ignore_errors=True)
     return text, m0, m1, sninfo, out
 

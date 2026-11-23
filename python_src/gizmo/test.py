@@ -743,3 +743,26 @@ def plot_1D_snapshot_comparison(
         plt.xlabel("x")
         plt.savefig(path.join(output_dir, f"{f}.png"))
         plt.close()
+
+
+def forced_sn_check(sninfo: str, paramsfile: str, star_id: int = 1):
+    """Stella ISOLATED_FB_TEST: did star star_id die by the forced SN time (TestSNTime0 + (id-1) TestSNSpacing)?
+    A forced death has age below the table lifetime (SNinfo columns 15, 16; no-gas retry rows print 0) and time >= the forced time (column 0,
+    printed with 6 decimals). Prints the event and returns None, or a failure message."""
+    par = {}
+    for line in open(paramsfile):
+        w = line.split("%")[0].split()
+        if len(w) >= 2:
+            par[w[0]] = w[1]
+    t_forced = float(par.get("TestSNTime0", 0)) + (star_id - 1) * float(par.get("TestSNSpacing", 0))
+    if not path.exists(sninfo):
+        return f"no {sninfo}"
+    rows = np.loadtxt(sninfo, ndmin=2)
+    rows = rows[rows[:, 6] == star_id] if len(rows) else rows
+    if len(rows) == 0:
+        return f"no SN row of star {star_id}"
+    r = rows[0]
+    print(f"FORCED_SN star={star_id} t={r[0]:.6f} age={r[15]:.6e} life={r[16]:.6e} t_forced={t_forced:.6e} rows={len(rows)}")
+    if not ((r[16] <= 0 or r[15] < r[16]) and r[0] >= round(t_forced, 6) - 5e-7):   # lifetime 0: no-gas retry row
+        return f"star {star_id} SN at t={r[0]} age={r[15]:.4e} life={r[16]:.4e}: not the forced SN at {t_forced}"
+    return None
