@@ -492,14 +492,14 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
 #ifdef NO_GAS_DUST_HEAT
                 dF_nr = -(6.0 * dust_cool / c.tdust);
 #else
-                dF_nr = -(6.0 * dust_cool / c.tdust) - cl14 * (yn * yn);
+                dF_nr = -(6.0 * dust_cool / c.tdust) - cl14 * (yn * yn) * c.dust_to_gas_ratio;   // slope of gas_dust (STL-294)
 #endif
             } else {
                 F_nr = isrf_heat - dust_cool + gas_dust + dust_h2_heat;
 #ifdef NO_GAS_DUST_HEAT
                 dF_nr = -(6.0 * dust_cool / c.tdust) + dust_h2_heat * Rdust_rat;
 #else
-                dF_nr = -(6.0 * dust_cool / c.tdust) - cl14 * (yn * yn)
+                dF_nr = -(6.0 * dust_cool / c.tdust) - cl14 * (yn * yn) * c.dust_to_gas_ratio
                       + dust_h2_heat * Rdust_rat;
 #endif
             }

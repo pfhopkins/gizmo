@@ -954,7 +954,9 @@ c This can happen if we've set deff = 0
 #ifdef NO_GAS_DUST_HEAT
             dF_nr = -(6d0 * dust_cool / tdust)
 #else
-            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2 
+c slope of gas_dust includes dust_to_gas_ratio (STL-294)
+            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2
+     $            * dust_to_gas_ratio
 #endif
           else
             F_nr  = isrf_heat - dust_cool + gas_dust + dust_h2_heat
@@ -962,8 +964,8 @@ c This can happen if we've set deff = 0
             dF_nr = -(6d0 * dust_cool / tdust)
      $            + dust_h2_heat * Rdust_rat
 #else
-            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2 
-     $            + dust_h2_heat * Rdust_rat
+            dF_nr = -(6d0 * dust_cool / tdust) - cl14 * yn**2
+     $            * dust_to_gas_ratio + dust_h2_heat * Rdust_rat
 #endif
           endif
 #if 0
