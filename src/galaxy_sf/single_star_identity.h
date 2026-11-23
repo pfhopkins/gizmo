@@ -53,7 +53,7 @@ template <class Particle> SINGLE_STAR_IDENTITY_INLINE void single_star_identity_
         if constexpr(single_star_has_identity_wraps<Particle>::value) {p.ID_wraps++;}
     }
     c.ID_generation = p.ID_generation;
-    if constexpr(single_star_has_identity_wraps<Particle>::value) {c.ID_wraps = p.ID_wraps;}
+    if constexpr(single_star_has_identity_wraps<Particle>::value) {c.ID_wraps = p.ID_wraps - ((p.ID_generation == 0) ? 1 : 0);} /* the count before this creation: the child made at the roll-over keeps its stream */
 }
 
 /* merge of i into j: j takes i's identity (with its lineage key) when swap_ids; the roll-over count never drops below either's */

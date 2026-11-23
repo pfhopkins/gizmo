@@ -14,8 +14,8 @@
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 #include "single_star_imf.h"
 #include "single_star_sf_event.h"
-#include "single_star_identity.h"
 #endif
+#include "single_star_identity.h"
 #if defined(GALSF_SINGLE_STARS_SF_CRITERION) && defined(GALSF_SFR_CRITERION)
 #error "GALSF_SINGLE_STARS_SF_CRITERION replaces GALSF_SFR_CRITERION"
 #endif
