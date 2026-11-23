@@ -384,17 +384,13 @@ void cooling_parent_routine(void)
     int N_active = (int) cool_indices.size();
     if(N_active == 0) {return;}
 
-    /* Steps 2-4: Gather / Dispatch / Scatter in batches.
-     *
-     * Why batching:  CUDA allocates stack_size × N_launched_threads bytes of HBM3 at
-     * kernel launch.  stack_size is set to 4096 at init (sufficient for the cooling
-     * chain).  Without batching a large N_active (e.g. entire startup timestep) can
-     * launch millions of threads, exhausting device memory with stack alone.  Batching
-     * to GPU_COOL_BATCH_SIZE caps peak stack at 4096 × GPU_COOL_BATCH_SIZE bytes per
-     * launch.  At 32768 that is 128 MB — safe even when many MPI ranks share a GPU.
-     *
-     * The compact arrays are also kept small (GPU_COOL_BATCH_SIZE × struct_size) rather
-     * than N_active × struct_size, further reducing UVM pressure.
+    /* Steps 2-4: gather / dispatch / scatter, in batches of GPU_COOL_BATCH_SIZE cells.
+     * Staged (the device cannot read the particle storage in place): each batch is copied whole into host and device
+     * buffers, so the batch bounds that memory.
+     * In place: nothing is copied; the batch bounds only the length of one launch and the per-slot timestep array (8 bytes
+     * a cell).
+     * Neither bound controls the device stack reservation, which follows the per-thread limit set at start-up (on GB200,
+     * measured: reserved once per context when the limit is set, before any launch, whatever the launch size).
      */
 #if !defined(COOLING_SOLVE_IN_HOST_LIBRARY)
   if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
@@ -402,11 +398,19 @@ void cooling_parent_routine(void)
     static const int GPU_COOL_BATCH_SIZE = 32768;
 
     int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
-    /* Whole-struct staging is shared with the other batched device loops: plain host
-       buffers filled in parallel, one explicit copy each way, and device memory the
-       kernel actually reads. */
+    /* Where the device reads the particle storage in place (coherent host-device memory, or storage placed on the device),
+       the kernels work on P and CellP directly through the list of active cells: no gather, no copies, no scatter -- the
+       whole structs (3080 bytes a cell) never move, only what the cooling solve touches is read. Otherwise whole-struct
+       staging, shared with the other batched device loops: plain host buffers filled in parallel, one explicit copy each
+       way, and device memory the kernel actually reads. */
+    const int in_place = gizmo_particle_storage_device_reads_in_place();
     struct ParticleStagingBatch batch = {};
-    int staged = particle_staging_acquire(&batch, batch_cap);
+    int staged = in_place ? 1 : particle_staging_acquire(&batch, batch_cap);
+    int *cool_map = NULL;   /* in place: the active cells, readable by the device */
+    if(in_place) {
+        cool_map = (int *) gizmo_gpu_alloc_shared((size_t) N_active * sizeof(int), NULL);
+        if(cool_map) {memcpy(cool_map, cool_indices.data(), (size_t) N_active * sizeof(int));} else {staged = 0;}
+    }
     /* dtime is captured on the host at gather time because
        get_particle_timestep_in_physical is host-only. It is the one deliberate
        exception to staging through host-then-device memory: at 8 bytes an element
@@ -418,13 +422,12 @@ void cooling_parent_routine(void)
          * zeroed rather than returning, so the loop below runs zero batches and
          * any collective past it is still reached by every rank. */
         char msg[256];
+        const size_t wanted = in_place ? ((size_t) N_active * sizeof(int) + (size_t) batch_cap * sizeof(double))
+                                       : ((size_t) batch_cap * (2 * (sizeof(struct particle_data) + sizeof(struct gas_cell_data)) + sizeof(int) + sizeof(double)));   /* host + device copies, index, timestep */
         snprintf(msg, sizeof(msg),
-                 "cooling: could not stage a batch of %d cells (%.1f MB); "
+                 "cooling: could not allocate the buffers for a batch of %d cells (%.1f MB); "
                  "no cooling is applied on this rank",
-                 batch_cap,
-                 (double)((size_t) batch_cap * (sizeof(struct particle_data)
-                                                + sizeof(struct gas_cell_data)
-                                                + sizeof(double))) / (1024.0 * 1024.0));
+                 batch_cap, (double) wanted / (1024.0 * 1024.0));
         gizmo_request_controlled_stop(7717, msg, __FILE__, __LINE__, __FUNCTION__);
         N_active = 0;
     }
@@ -434,16 +437,23 @@ void cooling_parent_routine(void)
         int batch_n = N_active - batch_start;
         if(batch_n > GPU_COOL_BATCH_SIZE) {batch_n = GPU_COOL_BATCH_SIZE;}
 
-        /* Gather batch */
-        if(!particle_staging_gather(&batch, cool_indices.data() + batch_start, batch_n, P, CellP)) {break;}
-        /* Every index here is gas by construction (the eligibility loop above skips
-           Type != 0), so the staging leaves the order alone and every slot has a cell. */
+        /* Gather batch (staged), or point the kernels at the storage itself (in place) */
+        int count = batch_n;
+        struct particle_data *kp = P;
+        struct gas_cell_data *kc = CellP;
+        const int *kmap = in_place ? cool_map + batch_start : NULL;   /* kernel slot j -> cell kmap[j]; staged: slot j is cell j */
+        if(!in_place) {
+            if(!particle_staging_gather(&batch, cool_indices.data() + batch_start, batch_n, P, CellP)) {break;}
+            /* Every index here is gas by construction (the eligibility loop above skips
+               Type != 0), so the staging leaves the order alone and every slot has a cell. */
+            count = batch.count; kp = batch.dev_P; kc = batch.dev_Cell;
+        }
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif
-        for(int j = 0; j < batch.count; j++)
+        for(int j = 0; j < count; j++)
         {
-            double dt = get_particle_timestep_in_physical(batch.index[j], P);
+            double dt = get_particle_timestep_in_physical(cool_indices[batch_start + j], P);
 #ifdef TRANSPORT_SUBCYCLE_COOLING
             dt *= All.Transport_Subcycle_dt_fraction; /* cooling fires N times in the subcycle loop, each with dt/N */
 #endif
@@ -451,13 +461,9 @@ void cooling_parent_routine(void)
         }
 
         /* Dispatch batch to GPU */
-        {
-            struct particle_data *kp = batch.dev_P;
-            struct gas_cell_data *kc = batch.dev_Cell;
-            gizmo_gpu_kernel_launch("cooling_loop", batch.count, KOKKOS_LAMBDA(int j) {
-                do_the_cooling_for_particle(j, kp, kc);
-            }, batch_start);
-        }
+        gizmo_gpu_kernel_launch("cooling_loop", count, KOKKOS_LAMBDA(int j) {
+            do_the_cooling_for_particle(kmap ? kmap[j] : j, kp, kc);
+        }, batch_start);
 
 
         /* Post-cooling tail device kernel. Three blocks, each independently
@@ -486,27 +492,26 @@ void cooling_parent_routine(void)
          * loop already exercises; nesting would double the stack at the
          * H200 OOM limit. */
         {
-            struct particle_data *kp = batch.dev_P;
-            struct gas_cell_data *kc = batch.dev_Cell;
             double               *kdt = compact_dtime;
             /* Host-built, captured by value -- see eos_tables_view. */
             struct EosTableView eos_tables = eos_tables_view();
-            gizmo_gpu_kernel_launch("post_cooling_tail", batch.count, KOKKOS_LAMBDA(int j) {
+            gizmo_gpu_kernel_launch("post_cooling_tail", count, KOKKOS_LAMBDA(int jslot) {
+                const int j = kmap ? kmap[jslot] : jslot;   /* the cell; kdt is per slot */
                 set_eos_pressure_impl(j, kp, kc, &eos_tables);
 #ifdef ELASTIC_STATE_DEPENDENT_STRENGTH
                 elastic_project_after_eos_P(j, kc, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED); /* the accepted state: as refresh_eos_and_project on the host */
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-                if((kdt[j] > 0) && (kc[j].Mass > 0) && (kp[j].Type == 0)) {
-                    update_dust_processes(j, kdt[j] * UNIT_TIME_IN_MYR * 0.001, kp, kc);
+                if((kdt[jslot] > 0) && (kc[j].Mass > 0) && (kp[j].Type == 0)) {
+                    update_dust_processes(j, kdt[jslot] * UNIT_TIME_IN_MYR * 0.001, kp, kc);
 #ifdef COOL_MOLECFRAC_NONEQM
-                    update_explicit_molecular_fraction(j, 0.5 * kdt[j] * UNIT_TIME_IN_CGS, kp, kc);
+                    update_explicit_molecular_fraction(j, 0.5 * kdt[jslot] * UNIT_TIME_IN_CGS, kp, kc);
 #endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
                     if(kc[j].DelayTimeHII > 0) {
-                        kc[j].DelayTimeHII -= kdt[j];
+                        kc[j].DelayTimeHII -= kdt[jslot];
                     #if ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION))
-                        if(kc[j].DelayTimeHII <= 0) {kc[j].DelayTimeHII = -DMAX(fabs(kc[j].DelayTimeHII), fabs(kdt[j]));}
+                        if(kc[j].DelayTimeHII <= 0) {kc[j].DelayTimeHII = -DMAX(fabs(kc[j].DelayTimeHII), fabs(kdt[jslot]));}
                     #endif
                     }
                   #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
@@ -524,11 +529,12 @@ void cooling_parent_routine(void)
          * dust, molecular-fraction and DelayTimeHII updates that the cooling
          * solve hands to that tail run there too. The CPU OMP fallback further
          * below still does its own dust tail host-side. */
-        particle_staging_scatter(&batch, P, CellP);
+        if(!in_place) {particle_staging_scatter(&batch, P, CellP);}
     }
-    gpu_particles_arena_invalidate(); /* host P/CellP scattered; arena stale */
+    gpu_particles_arena_invalidate(); /* host P/CellP scattered or written in place; arena stale */
 
-    particle_staging_release(&batch);
+    if(!in_place) {particle_staging_release(&batch);}
+    if(cool_map) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(cool_map);}
     if(compact_dtime) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_dtime);}
 
   } else
