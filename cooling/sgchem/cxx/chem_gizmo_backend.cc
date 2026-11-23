@@ -36,6 +36,8 @@ static_assert(NPIX <= CHEM_NPIX, "ChemCell pixel arrays are sized for RT_USE_TRE
 static ChemCell g_tmpl;                                   // init-time constants of every cell
 extern thread_local long cxx_stat_failure_retries, cxx_stat_tnochem_finishes;
 static std::atomic<long> g_failure_retries(0), g_tnochem_finishes(0);   // all threads of this rank (D-59)
+extern thread_local long chem_dust_bisections;
+static std::atomic<long> g_dust_bisections(0);   // dust-temperature solves that needed the bisection (D-61)
 static thread_local ChemCell tl_cell;                     // the cell being solved on this thread
 static thread_local double tl_lambda[28], tl_lambda_chem[NRATES_CHEM];  // last solved cell (Fortran COMMON semantics)
 
@@ -169,20 +171,22 @@ void chem_cxx_begin_cell(const struct ChemInputs* in, double temp, double abh2, 
 void chem_cxx_evolve_cell(double timestep, double dl, double yn, double divv, double* energy, double* abundances)
 {
     ChemCell& c = tl_cell;
-    const long r0 = cxx_stat_failure_retries, f0 = cxx_stat_tnochem_finishes;
+    const long r0 = cxx_stat_failure_retries, f0 = cxx_stat_tnochem_finishes, d0 = chem_dust_bisections;
     int rc = cxx_evolve_abundances(timestep, dl, yn, divv, energy, abundances, c);
     if (cxx_stat_failure_retries != r0) g_failure_retries += cxx_stat_failure_retries - r0;
     if (cxx_stat_tnochem_finishes != f0) g_tnochem_finishes += cxx_stat_tnochem_finishes - f0;
+    if (chem_dust_bisections != d0) g_dust_bisections += chem_dust_bisections - d0;
     std::memcpy(tl_lambda, c.lambda, sizeof(tl_lambda));
     std::memcpy(tl_lambda_chem, c.lambda_chem, sizeof(tl_lambda_chem));
     if (rc != 0) sgchem_fatal_(&rc);  // same funnel as the Fortran driver
 }
 
-// cumulative D-59 counts on this rank: solver failures retried, failed retries finished via TNOCHEM
-void chem_cxx_failure_counts(long* retried, long* tnochem_finished)
+// cumulative counts on this rank: solver failures retried, failed retries finished via TNOCHEM (D-59), dust bisections (D-61)
+void chem_cxx_failure_counts(long* retried, long* tnochem_finished, long* dust_bisections)
 {
     *retried = g_failure_retries.load();
     *tnochem_finished = g_tnochem_finishes.load();
+    *dust_bisections = g_dust_bisections.load();
 }
 
 // unsolved (PHOTOION-ionized) cells keep the last solved cell's rates, as the Fortran path does

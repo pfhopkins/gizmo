@@ -296,7 +296,7 @@ double chem_cxx_calc_temp(double abh2, double abhe, double ekn);
 void chem_cxx_begin_cell(const struct ChemInputs *in, double temp, double abh2, double abhd, double abco);
 void chem_cxx_evolve_cell(double timestep, double dl, double yn, double divv, double *energy, double *abundances);
 void chem_cxx_read_outputs(struct ChemOutputs *out);
-void chem_cxx_failure_counts(long *retried, long *tnochem_finished);
+void chem_cxx_failure_counts(long *retried, long *tnochem_finished, long *dust_bisections);
 #if CHEMISTRYNETWORK == 18
 double chem_cxx_net18_temp(const double *abundances, double energy, double yn, double abhe);
 void chem_cxx_net18_finish(const double *abundances, double energy, double *temp);
