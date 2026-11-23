@@ -755,6 +755,9 @@ void drift_particle(int i, integertime time1);
    entries leftward and preserves their order. */
 int drift_particles_batch(const int *idx, int n_idx, integertime time1,
                           int *out_drifted = NULL, int *out_n_drifted = NULL);
+/* Drift the distinct particles idx[0..n_idx) to time1 with drift_particle, on the host, threaded above a
+   handful (the host route of drift_particles_batch; the same bits as drift_particle called one by one). */
+void drift_particles_host(const int *idx, int n_idx, integertime time1);
 void put_symbol(double t0, double t1, char c);
 void write_cpu_log(void);
 int get_timestep_bin(integertime ti_step);

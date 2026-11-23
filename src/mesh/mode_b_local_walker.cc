@@ -504,6 +504,19 @@ void mode_b_drift_and_filter_candidates(const double pos[3],
     /* drift_particle moves the KernelRadius of the particles it advanced, so the spatial index
      * must refresh those rows; a particle already current kept its own. */
     gizmo_mark_kernel_radius_dirty_indices(drifted.data(), (int)drifted.size());
+    mode_b_filter_candidates(pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale, cands);
+}
+
+/* Keep, in place and in walk order, exactly the candidates that satisfy the query at their current position and
+ * radius.  Every candidate must already be current.  Reads only, so queries may be filtered concurrently. */
+void mode_b_filter_candidates(const double pos[3],
+                              double h_q,
+                              unsigned int type_mask,
+                              int search_mode,
+                              mode_b_radius_policy_t radius_policy,
+                              double j_reach_scale,
+                              std::vector<int>& cands)
+{
     size_t n_kept = 0;
     for(size_t k = 0; k < cands.size(); k++) {
         const int j = cands[k];

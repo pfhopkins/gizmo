@@ -770,6 +770,41 @@ static void drift_and_filter_candidates(std::vector<std::vector<int>>& per_activ
         if(per_active_cands[aa].empty()) continue;
         query_at((int)aa, &queries[4 * aa], queries[4 * aa + 3]);
     }
+#ifdef GPU_SPEEDUP_HOST_THREADED_NGB_DRIFT_FILTER
+    /* The same drift and the same lists, in three passes: the distinct local candidates behind the current
+     * time, in the order the queries first reach them; their drift, threaded (drift_particles_host -- each
+     * particle on its own, as when drifted one by one); then every query's filter, threaded, since a filter
+     * only reads.  Every candidate is current before any query is filtered, as it was for each query's own
+     * candidates before. */
+    {
+        const integertime time1 = All.Ti_Current;
+        const int num_local = ghost_get_num_local();
+        static std::vector<unsigned int> seen;   /* generation stamps, so no pass over all particles clears them */
+        static unsigned int seen_gen = 0;
+        if((int)seen.size() < num_local) {seen.resize((size_t)num_local, 0u);}
+        if(++seen_gen == 0u) {std::fill(seen.begin(), seen.end(), 0u); seen_gen = 1u;}
+        std::vector<int> behind;
+        for(size_t aa = 0; aa < n_queries; aa++) {
+            for(const int j : per_active_cands[aa]) {
+                if(j < 0 || j >= num_local || seen[(size_t)j] == seen_gen) {continue;}
+                seen[(size_t)j] = seen_gen;
+                if(P[j].Ti_current != time1) {behind.push_back(j);}
+            }
+        }
+        drift_particles_host(behind.data(), (int)behind.size(), time1);
+        gizmo_mark_kernel_radius_dirty_indices(behind.data(), (int)behind.size());
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 64) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (int)n_queries))
+#endif
+        for(size_t aa = 0; aa < n_queries; aa++) {
+            std::vector<int>& v = per_active_cands[aa];
+            if(v.empty()) continue;
+            mode_b_filter_candidates(&queries[4 * aa], queries[4 * aa + 3], neighbor_type_mask,
+                                     Spec::search_mode, Spec::radius_policy, jscale, v);
+        }
+        return;
+    }
+#endif
     for(size_t aa = 0; aa < n_queries; aa++) {
         std::vector<int>& v = per_active_cands[aa];
         if(v.empty()) continue;

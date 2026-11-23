@@ -66,7 +66,7 @@ static const int GPU_DRIFT_BATCH_SIZE = 32768;
    and routing through here must not quietly serialise them; the body acts on one
    particle with no pair coupling and no random draws, so the indices being distinct
    is the whole of the argument. */
-static void drift_particles_host_(const int *idx, int n_idx, integertime time1)
+void drift_particles_host(const int *idx, int n_idx, integertime time1)
 {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 256) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n_idx))
@@ -142,7 +142,7 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
 
     /* Tiny-N and everything below the offload threshold stays exactly as it was. */
     if(!gizmo_gpu_offload_takes(GPU_OFFLOAD_DRIFT, n_need)) {
-        drift_particles_host_(needs_drift.data(), n_need, time1);
+        drift_particles_host(needs_drift.data(), n_need, time1);
         return drift_batch_status_();
     }
 
@@ -154,7 +154,7 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
 
     struct DriftKickTableView tables;
     if(drift_kick_table_mirror_refresh(&drift_kick_table_dev_, &tables) != 0) {
-        drift_particles_host_(needs_drift.data(), n_need, time1);
+        drift_particles_host(needs_drift.data(), n_need, time1);
         return drift_batch_status_();
     }
 
@@ -178,7 +178,7 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
         int *idx_dev = (int *) gizmo_gpu_alloc_shared((size_t)n_need * sizeof(int), "drift_inplace_idx");
         if(!idx_dev) {   /* no shared memory for the index list: the particles still
                             have to be drifted, so the host loop takes them. */
-            drift_particles_host_(needs_drift.data(), n_need, time1);
+            drift_particles_host(needs_drift.data(), n_need, time1);
             return drift_batch_status_();
         }
         memcpy(idx_dev, needs_drift.data(), (size_t)n_need * sizeof(int));
@@ -204,7 +204,7 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
     const int batch_cap = (n_need < GPU_DRIFT_BATCH_SIZE) ? n_need : GPU_DRIFT_BATCH_SIZE;
     struct ParticleStagingBatch batch = {};
     if(!particle_staging_acquire(&batch, batch_cap)) {
-        drift_particles_host_(needs_drift.data(), n_need, time1);
+        drift_particles_host(needs_drift.data(), n_need, time1);
         return drift_batch_status_();
     }
 
@@ -217,7 +217,7 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
             /* The gather staged nothing. These particles still have to be drifted:
                leaving them behind is a wrong position, and the sites that early-return
                on Ti_current would then never revisit them. */
-            drift_particles_host_(needs_drift.data() + batch_start, n_need - batch_start, time1);
+            drift_particles_host(needs_drift.data() + batch_start, n_need - batch_start, time1);
             break;
         }
 
@@ -257,7 +257,7 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
             for(int j = 0; j < batch.count; j++) {
                 if(P[batch.index[j]].Ti_current != time1) {undrifted.push_back(batch.index[j]);}
             }
-            drift_particles_host_(undrifted.data(), (int) undrifted.size(), time1);
+            drift_particles_host(undrifted.data(), (int) undrifted.size(), time1);
         }
     }
 
