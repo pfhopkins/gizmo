@@ -13,8 +13,9 @@
    gku evaluates every pair from each active side, each cell adding its own flux F to its rates. A pair is evaluated at every
    sync where either cell is active; each evaluation's flux gets the pair weights (pair_flux_exchange.h): the evaluator's own
    kicks are corrected to them, and an inactive partner receives -F with the same weights as conserved impulses, after the
-   closing and after the opening kick. When both cells are active each corrects its own side, so the pair conserves to the
-   antisymmetry of the two evaluations. Corrections for a partner on another rank are sent there. */
+   closing and after the opening kick. When both cells are active each evaluation is shared half and half (1/2 F_own W kept,
+   -1/2 F_own W to the partner), so the pair is antisymmetric even where the two evaluations differ (a Riemann branch flipping
+   between the sides). Corrections for a partner on another rank are sent there. */
 
 #ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
 static double TestKickSplit[5] = {0}; /* reserved columns (stella_dev kick energy split); not filled on gku */
@@ -26,10 +27,9 @@ static double TestKickSplit[5] = {0}; /* reserved columns (stella_dev kick energ
 #endif
 static double TestInjected[8] = {0}; /* mass, momentum, thermal + kinetic energy added by the hook (physical) */
 /* test only, at the given step, after the closing kick, gas within 0.2 box of the centre:
-   mode 1: inactive cells gain half their mass at fixed velocity and u (a feedback deposit) and are woken;
-   mode 2: every cell keeps 0.4 of its mass (cells then merge into neighbours, which the merge wakes);
-   mode 3: every cell gets 2.5 times its mass (cells then split; the split wakes the daughters).
-   Additions (negative: removals) are booked so the test can subtract them. */
+   mode 1: inactive cells gain half their mass at fixed velocity and u (a feedback deposit) and are woken
+   (merges and splits are driven by the test's ICs, stella_dev 2d3174035/2a0da74a7; stella_dev's mode 4 needs MHD).
+   Additions are booked so the test can subtract them. */
 void test_pairflux_add_mass_and_wake(void)
 {
     if(All.NumCurrentTiStep != TEST_PAIRFLUX_ADD_MASS_AND_WAKE) {return;}
@@ -42,7 +42,8 @@ void test_pairflux_add_mass_and_wake(void)
         Vec3<double> dx = P[i].Pos - Vec3<double>{0.5*All.BoxSize, 0.5*All.BoxSize, 0.5*All.BoxSize};
         for(int k = 0; k < 3; k++) {if(dx[k] > 0.5*All.BoxSize) {dx[k] -= All.BoxSize;} if(dx[k] < -0.5*All.BoxSize) {dx[k] += All.BoxSize;}}
         if(dx.norm() > 0.2 * All.BoxSize) {continue;}
-        double fac = (mode == 1) ? 1.5 : ((mode == 2) ? 0.4 : 2.5);
+        if(mode != 1) {printf("TEST_PAIRFLUX_HOOK_MODE %d is not available on gku (1 only)\n", mode); endrun(97544);}
+        double fac = 1.5;
         double m = P[i].Mass, dM = (fac - 1.) * m; Vec3<double> v = P[i].Vel / a;
         P[i].Mass += dM; CellP[i].Mass += dM;
         TestInjected[0] += dM; for(int k = 0; k < 3; k++) {TestInjected[1+k] += dM * v[k];}
@@ -122,6 +123,8 @@ void pairflux_take_hydro_records(const struct pairflux_device_record *rec, long 
             r.c2_r = W2p;
         }
     }
+    std::sort(PairFluxRecords.begin(), PairFluxRecords.end(), [](const pairflux_record &x, const pairflux_record &y) { /* the kernel appends in thread order: fix the summation order */
+        return (x.e != y.e) ? (x.e < y.e) : ((x.r_task != y.r_task) ? (x.r_task < y.r_task) : (x.r_index < y.r_index));});
     double mb = (double)(PairFluxRecords.capacity() * sizeof(pairflux_record)) / (1024.*1024.); if(mb > PairFluxPeakMB) {PairFluxPeakMB = mb;}
 }
 
@@ -253,8 +256,11 @@ void pairflux_after_closing_kick(void)
     std::vector<std::vector<pairflux_corr>> out(NTask);
     for(auto &rec : PairFluxRecords)
     {
-        if(rec.c2_e != 0) {pf_add(rec.e, 1, rec.mom * rec.c2_e, rec.egy * rec.c2_e);}
-        if(!(rec.flags & 1) && rec.c2_r != 0) {out[rec.r_task].push_back(pf_corr(rec.r_index, 1, rec.mom * (-rec.c2_r), rec.egy * (-rec.c2_r)));}
+        /* inactive partner: the evaluator keeps F W, the partner gets -F W. Active partner (it evaluates the pair too): each side keeps
+           1/2 F_own W and sends -1/2 F_own W, so the pair is antisymmetric whatever the two evaluations give */
+        double ws = (rec.flags & 1) ? 0.5 : 1.0, ce = rec.c2_e - (1. - ws) * rec.c2_r, cr = ws * rec.c2_r;
+        if(ce != 0) {pf_add(rec.e, 1, rec.mom * ce, rec.egy * ce);}
+        if(cr != 0) {out[rec.r_task].push_back(pf_corr(rec.r_index, 1, rec.mom * (-cr), rec.egy * (-cr)));}
     }
     pf_send_partner_corrections(out);
     pf_apply_all();
@@ -295,9 +301,10 @@ void pairflux_after_opening_kick(void)
         if(off[rec.r_task] < 0) {printf("HYDRO_EXACT_PAIR_FLUX_EXCHANGE: no reply from task %d\n", rec.r_task); endrun(97536);}
         long long N_r = rin[off[rec.r_task] + slot[k]].N, N_e = pf_next_eval(rec.e);
         double w1p = (double) pairflux_pair_opening_ti(t, N_e, N_r) * U;
-        double c1_e = w1p - pf_opening_applied(rec.e);
+        int r_active = rec.flags & 1; double ws = r_active ? 0.5 : 1.0; /* as at the closing kick */
+        double c1_e = ws * w1p - pf_opening_applied(rec.e), c1_r = ws * w1p;
         if(c1_e != 0) {pf_add(rec.e, 0, rec.mom * c1_e, rec.egy * c1_e);}
-        if(!(rec.flags & 1) && w1p != 0) {out[rec.r_task].push_back(pf_corr(rec.r_index, 1, rec.mom * (-w1p), rec.egy * (-w1p)));}
+        if(c1_r != 0) {out[rec.r_task].push_back(pf_corr(rec.r_index, r_active ? 0 : 1, rec.mom * (-c1_r), rec.egy * (-c1_r)));}
     }
     pf_send_partner_corrections(out);
     pf_apply_all();

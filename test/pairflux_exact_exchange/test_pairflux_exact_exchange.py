@@ -6,7 +6,9 @@ variables after every sync (conserved_totals.txt). Bars (stella_dev's, fixed bef
 - stop part-way and restart (the restart files hold the records waiting for the opening kick): the same bars over both runs;
   the stopping run ends at the stop step (or the one before) and the restart continues with the next step.
 - hook arms (test hook TEST_PAIRFLUX_ADD_MASS_AND_WAKE, changes booked and subtracted), the same bars:
-  mass (inactive cells gain mass, then woken), merge (cells shrink and merge into neighbours), split (cells grow and split).
+  mass (inactive cells gain mass, then woken), merge (no hook: a shell of light cells far from the blast is below the IC-header
+  merge threshold and merges into heavier neighbours at domain steps), split (no hook: a shell of heavy cells far from the blast is
+  above the IC-header split threshold); as stella_dev 2d3174035, 2a0da74a7.
 The MHD arms of stella_dev are not here: the B*V and Dedner records are not ported to gku (the flag is a build error with MAGNETIC)."""
 
 import filecmp
@@ -25,7 +27,9 @@ TEST_DIR = f"test/{TEST_NAME}"
 TOL = 1e-12
 STOP_STEP = 60
 NRANKS = 4
-M0 = 1.0 / 16**3  # IC cell mass
+MERGESPLIT = "TreeDomainUpdateFrequency 0\n"  # merge/split run at domain steps: at every sync, not only full ones (thresholds 0.49/2.01 x cell mass)
+MERGE = MERGESPLIT + "InitCondFile pairflux_exact_exchange_merge_ics\n"  # a light shell far from the blast, below the IC-header merge threshold
+SPLIT = MERGESPLIT + "InitCondFile pairflux_exact_exchange_split_ics\n"  # a heavy shell far from the blast, above the IC-header split threshold
 
 
 def _totals(path):
@@ -60,9 +64,15 @@ def _build(flags, name):
     shutil.move(f"{TEST_DIR}/GIZMO", f"{TEST_DIR}/GIZMO_{name}")
 
 
-def _arm(name):
-    shutil.copy(f"GIZMO_{name}", "GIZMO"); shutil.rmtree("output", ignore_errors=True)
-    res = _run(["0"], f"{name}.out"); assert res.returncode == 0, open(f"{name}.out").read()[-400:]
+def _arm(name, extra_params="", binary=None):
+    shutil.copy(f"GIZMO_{binary or name}", "GIZMO"); shutil.rmtree("output", ignore_errors=True)
+    params = f"{name}.params"; lines = open(f"{TEST_NAME}.params").read().splitlines()
+    for e in extra_params.splitlines():  # a key already in the params is replaced, others appended
+        k = e.split()[0]; hit = [n for n, l in enumerate(lines) if l.split()[:1] == [k]]
+        if hit: lines[hit[0]] = e
+        else: lines.append(e)
+    open(params, "w").write("\n".join(lines) + "\n")
+    res = _run(["0"], f"{name}.out", params=params); assert res.returncode == 0, open(f"{name}.out").read()[-400:]
     return _totals("output/conserved_totals.txt"), open(f"{name}.out").read()
 
 
@@ -71,8 +81,6 @@ def test_pairflux_exact_exchange():
     hook = lambda mode: ("TEST_PAIRFLUX_ADD_MASS_AND_WAKE=40", f"TEST_PAIRFLUX_HOOK_MODE={mode}")
     _build((), "hydro")
     _build(hook(1), "mass")
-    _build(hook(2), "merge")
-    _build(hook(3) + (f"MERGE_SPLIT_HARDCODE_MAX_MASS={2.01*M0:.6e}",), "split")
     build_gizmo_for_test(TEST_NAME, config_file="Config_noexchange.sh")
     shutil.move(f"{TEST_DIR}/GIZMO", f"{TEST_DIR}/GIZMO_control")
     cwd = os.getcwd(); os.chdir(TEST_DIR)
@@ -111,15 +119,16 @@ def test_pairflux_exact_exchange():
         arm("restart", restart_arm)
 
         def mass_arm():
-            t, log = _arm("mass"); assert "mode 1 changed" in log; _check(t, t)
+            t, log = _arm("mass"); m_ = re.search(r"mode 1 changed (\d+) cells", log)
+            assert m_ and int(m_.group(1)) > 0, "the hook changed no cell"; _check(t, t)
         arm("mass", mass_arm)
 
         def merge_arm():
-            t, log = _arm("merge"); assert re.search(r"[1-9][0-9]* particles merged", log), "no merge happened"; _check(t, t)
+            t, log = _arm("merge", MERGE, "hydro"); assert re.search(r"[1-9][0-9]* particles merged", log), "no merge happened"; _check(t, t)
         arm("merge", merge_arm)
 
         def split_arm():
-            t, log = _arm("split"); assert re.search(r"[1-9][0-9]* particles split", log), "no split happened"; _check(t, t)
+            t, log = _arm("split", SPLIT, "hydro"); assert re.search(r"[1-9][0-9]* particles split", log), "no split happened"; _check(t, t)
         arm("split", split_arm)
 
         def control_arm():  # the same run without the exchange must miss the bar, or the test shows nothing
