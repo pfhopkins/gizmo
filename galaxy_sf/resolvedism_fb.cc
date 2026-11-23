@@ -670,6 +670,9 @@ extern double FB_TestWindPabs, FB_TestWindPvec[3], FB_TestWindMcoupled, FB_TestW
 extern double FB_TestRadpPabs, FB_TestRadpPvec[3];
 extern double FB_TestIaFe;
 #endif
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+extern long FB_IaClampCells; extern double FB_IaClampShort;
+#endif
 #ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
 /* test: raw double state of all local particles (ID,type,m,v,u) appended to <OutputDir>/wind_dep_dump.<task>.bin */
 static void fb_test_state_dump(int phase)
@@ -802,9 +805,6 @@ static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int 
         for(try_num = 0; try_num < 4; try_num++) {
             for(int ii : ActiveParticleList) {
                 if(STELLA_OWNS_STAR(P[ii])) {P[ii].FB_Area_weighted_sum = 0;
-#ifdef GALSF_RESOLVEDISM_TYPE_IA
-                    P[ii].FB_KernelMass = 0;
-#endif
 #ifdef GALSF_RESOLVEDISM_SN_SPAWN
                     P[ii].FB_KernelGasMass = 0;
 #endif
@@ -1007,6 +1007,19 @@ void resolvedism_inject_fb_energy(void)
     resolvedism_fb_serialized_pass(resolvedism_fb_thermal_calc, 1, 4);
     ESTEP_END(ESTEP_FB_SN_IA);
     MBARY_STEP("post_fb_thermal");
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+    { /* Ia conversion clamp: cells whose share of M_Ch - M_WD exceeded their mass were converted whole; the rest is not converted */
+        static long n_tot = 0; static double s_tot = 0;
+        double loc[2] = {(double)FB_IaClampCells, FB_IaClampShort}, glob[2];
+        MPI_Allreduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(glob[0] > 0) {
+            n_tot += (long)glob[0]; s_tot += glob[1];
+            if(ThisTask == 0) {printf("RESOLVEDISM TYPE_IA CLAMP: t=%.17e cells=%ld short=%.17e[code] short_Msun=%.6e cells_total=%ld short_total_Msun=%.6e\n",
+                                      All.Time, (long)glob[0], glob[1], glob[1] * UNIT_MASS_IN_SOLAR, n_tot, s_tot * UNIT_MASS_IN_SOLAR); fflush(stdout);}
+        }
+        FB_IaClampCells = 0; FB_IaClampShort = 0;
+    }
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     { /* test: iron of Ia composition delivered this step [Msun] */
         double fe_loc = FB_TestIaFe * UNIT_MASS_IN_SOLAR, fe_glob = 0;
@@ -1183,8 +1196,6 @@ void resolvedism_inject_fb_energy(void)
              fb_death_row_push(i, 0, 7, FB_LOG_EXPLODED, IA_ENERGY_ERG, yia, resolvedism_star_age_yr(i), 0.0);}
             printf("RESOLVEDISM TYPE_IA: Task=%d ID=%llu M_WD=%.3f E=%.2e[erg]\n",
                 ThisTask, (unsigned long long)P[i].ID, M_WD, IA_ENERGY_ERG);
-            if(P[i].FB_KernelMass * UNIT_MASS_IN_SOLAR < stellar_type_ia_yield_total() - M_WD) {
-                printf("RESOLVEDISM TYPE_IA: ID=%llu kernel gas %g Msun < companion share %g Msun: all of it converted\n", (unsigned long long)P[i].ID, P[i].FB_KernelMass * UNIT_MASS_IN_SOLAR, stellar_type_ia_yield_total() - M_WD);}
             resolvedism_zero_disrupted_star(i, M_WD, "Ia");
             P[i].M_drawn_Ia = 0; /* no longer eligible */
             P[i].M_at_SN_trigger = -1; /* reset bookkeeping snapshot */

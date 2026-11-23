@@ -43,7 +43,7 @@ struct INPUT_STRUCT_NAME
     MyDouble MetalMass;
     int fb_channel; /* 0=SN, 3=Ia */
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
-    MyDouble IaConvertFrac; /* Ia: fraction of each receiver's gas that becomes Ia ejecta (the companion's share of M_Ch) */
+    MyDouble IaConvertMass; /* Ia: gas mass turned into Ia composition in place (M_Ch - M_WD), spread with the ejecta weight */
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     MyDouble ElemYields[NUM_RESOLVEDISM_ELEMENTS];
@@ -64,6 +64,9 @@ struct INPUT_STRUCT_NAME
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
 double FB_TestIaFe = 0; /* test: Ia-composition iron delivered (code mass) */
 #endif
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+long FB_IaClampCells = 0; double FB_IaClampShort = 0; /* Ia conversion share above the cell mass: cells, mass not converted */
+#endif
 
 void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int loop_iteration)
 {
@@ -71,7 +74,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     in->KernelRadius = P[i].KernelRadius;
     in->Esne = 0; in->Mej = 0; in->MetalMass = 0;
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
-    in->IaConvertFrac = 0;
+    in->IaConvertMass = 0;
 #endif
     /* Load measured AWS from prior weighting pass (or 0 if this is the weighting pass). */
     in->FB_Area_weighted_sum_in = (loop_iteration >= 0) ? (MyDouble)P[i].FB_Area_weighted_sum : 0;
@@ -123,7 +126,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
         in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
         {
             double dM_conv = DMAX(stellar_type_ia_yield_total() - MIa_solar, 0) / UNIT_MASS_IN_SOLAR;
-            if(dM_conv > 0 && P[i].FB_KernelMass > 0) {in->IaConvertFrac = DMIN(dM_conv / P[i].FB_KernelMass, 1.0);}
+            in->IaConvertMass = dM_conv;
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
             if(loop_iteration >= 0) {printf("IACONVSRC id=%llu dM_conv=%.17e Mej=%.17e Mch=%.17e\n", (unsigned long long)P[i].ID, dM_conv, in->Mej, stellar_type_ia_yield_total() / UNIT_MASS_IN_SOLAR); fflush(stdout);}
 #endif
@@ -231,9 +234,6 @@ struct OUTPUT_STRUCT_NAME
      * out2particle subtracts this from the star → bit-exact mass conservation. */
     MyFloat M_coupled;
     MyDouble Z_dep; /* delivered metal mass */
-#ifdef GALSF_RESOLVEDISM_TYPE_IA
-    MyDouble KernelMass; /* weighting pass: gas mass in the kernel */
-#endif
     /* Weighting-pass accumulator: out.FB_Area_weighted_sum_accum = Σ_j (Mass_j × kernel.wk)
      * over neighbors walked on this rank/iteration.  Out2particle sums these across all
      * mode=0/mode=1 calls into P[i].FB_Area_weighted_sum for the next (injection) pass. */
@@ -257,9 +257,6 @@ void out2particle_resolvedismFB_thermal(struct OUTPUT_STRUCT_NAME *out, int i, i
          * mode=0 (local walk) AND mode=1 (per-remote-rank import return) — both
          * contributions sum into P[i].FB_Area_weighted_sum for the upcoming injection. */
         P[i].FB_Area_weighted_sum += out->FB_Area_weighted_sum_accum;
-#ifdef GALSF_RESOLVEDISM_TYPE_IA
-        P[i].FB_KernelMass += out->KernelMass;
-#endif
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
         {int hp_; for(hp_=0;hp_<12;hp_++) {P[i].FB_HpxCount[hp_] += out->HpxCount[hp_];}}
 #endif
@@ -362,9 +359,6 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                  * uses that measured sum as denominator → Σ wk_j = 1 by construction. */
                 if(loop_iteration < 0) {
                     out.FB_Area_weighted_sum_accum += Mass_j * kernel.wk;
-#ifdef GALSF_RESOLVEDISM_TYPE_IA
-                    out.KernelMass += Mass_j;
-#endif
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
                 {double v_hp[3]; long ip_hp; v_hp[0]=-kernel.dp[0]; v_hp[1]=-kernel.dp[1]; v_hp[2]=-kernel.dp[2];
                  vec2pix_ring(1, v_hp, &ip_hp); out.HpxCount[(int)ip_hp] += 1;}
@@ -384,6 +378,20 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                  for(hp_=0;hp_<12;hp_++) {if(local.HpxCount[hp_] > 0) {nocc_++;}}
                  if(nocc_ > 0 && local.HpxCount[(int)ip_hp] > 0) {wk = 1.0/((double)nocc_ * (double)local.HpxCount[(int)ip_hp]);}
                  else {wk = 0;}}
+#endif
+                double c_ia = 0; /* Ia: this cell's gas turned into Ia composition (no mass moves), the ejecta's weight */
+#ifdef GALSF_RESOLVEDISM_TYPE_IA
+                c_ia = wk * local.IaConvertMass;
+                if(c_ia > Mass_j) { /* share above the cell mass: the whole cell is converted, the rest is booked as not converted */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    printf("IACLAMP id=%llu want=%.17e m=%.17e\n", (unsigned long long)P[j].ID, c_ia, Mass_j);
+#endif
+                    #pragma omp atomic
+                    FB_IaClampCells += 1;
+                    #pragma omp atomic
+                    FB_IaClampShort += c_ia - Mass_j;
+                    c_ia = Mass_j;
+                }
 #endif
 
                 /* ---- Thermal energy injection ---- */
@@ -459,11 +467,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                 /* ---- Mass + metals injection ---- */
                 if(local.Mej > 0) {
                     double dM = wk * local.Mej;
-                    double c_ia = 0; /* Ia: this cell's gas turned into Ia composition (no mass moves) */
                     double dMZ_net = 0; /* metal mass the cell gains (net of the converted gas's own metals) */
-#ifdef GALSF_RESOLVEDISM_TYPE_IA
-                    c_ia = local.IaConvertFrac * Mass_j;
-#endif
 #if defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST) && defined(GALSF_RESOLVEDISM_TYPE_IA)
                     if(local.fb_channel == 3) {printf("IACONVCELL id=%llu u=%.17e m=%.17e c=%.17e\n", (unsigned long long)P[j].ID, u, Mass_j, c_ia);}
 #endif
@@ -690,7 +694,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         double dMD = wk * local.DustYields[k];
                         double dD = (dMD - D_old * dM) / Mnew_j;
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
-                        dD -= D_old * local.IaConvertFrac * Mass_j / Mnew_j; /* converted gas keeps no dust */
+                        dD -= D_old * c_ia / Mnew_j; /* converted gas keeps no dust */
 #endif
                         #pragma omp atomic
                         CellP[j].Dust[k] += dD;

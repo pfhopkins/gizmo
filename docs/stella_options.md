@@ -195,8 +195,8 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
   failure (test_default_build_integration_residual; STL-55, STL-127).
 
 - **Restart files.** The restart layout changed: the element ledger (CumulElemToGas, CumulElemFromStars) is written after
-  the metal ledger, the metal-ledger accumulators are long double, and every particle carries FB_DepositedP, FB_DepositedZ and,
-  with Type Ia, FB_KernelMass. Restart files
+  the metal ledger, the metal-ledger accumulators are long double, and every particle carries FB_DepositedP and
+  FB_DepositedZ. Restart files
   written before this change cannot be read by this code and vice versa (no size check guards it). Resume running
   productions from a snapshot (RestartFlag 2). Reading ElementAbundance now sets H = 1 - Z - Y, so single-precision
   snapshots and ICs start with a closed composition (an IC with an all-zero ElementAbundance becomes pure H; fresh starts
@@ -206,8 +206,10 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
 - **Death ejecta.** Remnant and ejecta are fractions of the star's mass at death. Failed SNe and direct collapse eject
   nothing (all table ejecta are 0). Remnants between grid points differ from the earlier absolute table values.
 - **Type Ia.** Each Ia delivers the table's 1.378 Msun of Ia matter (0.744 Msun Fe): the white dwarf particle plus
-  1.378 - M_WD of the receivers' gas turned into Ia composition in place, shared in proportion to cell mass (cell mass,
-  momentum and specific internal energy unchanged; its dust removed). The mean molecular weight, and so T at fixed u,
+  1.378 - M_WD of the receivers' gas turned into Ia composition in place, shared with the ejecta's kernel weight (or the
+  HEALPix weight), so it vanishes at the kernel edge (cell mass, momentum and specific internal energy unchanged; its dust
+  removed). A cell whose share exceeds its mass is converted whole; the rest is not converted and is reported per step
+  (RESOLVEDISM TYPE_IA CLAMP, with running totals). The mean molecular weight, and so T at fixed u,
   changes in the converted part. At 0.1 Msun cells the kernel holds a few Msun, so up to ~25 % of the kernel gas becomes
   Ia matter. The rate normalisation is unchanged, so Ia iron per formed mass is rate x table yield. In the Stella x FIRE-3
   coupled mode the conversion acts on every FIRE slot, tracer slots included: the converted gas keeps no tracer.
