@@ -44,6 +44,7 @@
 #include "ghost_writeback.h"     /* ghost_get_num_local (bounded fine-tree walk) */
 #include "ghost_exchange_spec.h"
 #include "mode_b_local_walker.h"
+#include "source_reach_map.h"   /* demand gate: a flood seen here requests the map */
 #ifdef _OPENMP
 #include <omp.h>                 /* threaded sender export + receiver walk below */
 #endif
@@ -378,19 +379,7 @@ int gx_send_set_emit(struct ghost_send_set *s, int peer, const int *slots, int n
 }
 
 /* ---- Utility: walk TopNodes to find which leaf a particle belongs to ---- */
-static inline int ghost_toptree_leaf(peanokey key)
-{
-    int no = 0;
-    peanokey mask = ((peanokey)7) << (3 * (BITS_PER_DIMENSION - 1));
-    int shift = 3 * (BITS_PER_DIMENSION - 1);
-    while(TopNodes[no].Daughter >= 0)
-    {
-        no = TopNodes[no].Daughter + (int)((key & mask) >> shift);
-        mask >>= 3;
-        shift -= 3;
-    }
-    return TopNodes[no].Leaf;
-}
+static inline int ghost_toptree_leaf(peanokey key) {return domain_topleaf_of_key(key);}
 
 
 /*!
@@ -1079,6 +1068,8 @@ static void gx_walk_export_discover(
     MPI_Allreduce(&ok_local, &ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     }
     if(!ok_all) { if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE; return; }
+    if(search_mode != NGB_SEARCH_ONEWAY) {source_reach_map_build_if_due();}   /* collective; rank-uniform condition */
+    const double gate_t0 = MPI_Wtime();   /* this discovery's own time, from the common start the vote above gives */
 
     /* (b) SENDER: build per-peer envelope lists (export is a byproduct of the walk).
      * THREADED, following the same shape the runner uses: the topleaf map is built once
@@ -1309,11 +1300,17 @@ static void gx_walk_export_discover(
     /* The send set grows as it is filled, so whether it could be built is known only
      * now.  Agree it here, where every rank arrives whichever backend it used, before
      * the count and payload exchanges that follow. */
+    /* the same vote carries the source-reach map gate's timings (its decision is taken from the result, on every rank) */
+    long long gate_vote[1 + SOURCE_REACH_GATE_NVOTE], gate_all[1 + SOURCE_REACH_GATE_NVOTE];
+    gate_vote[0] = (long long) receiver_ok;
+    source_reach_map_gate_fill(gate_vote + 1, MPI_Wtime() - gate_t0);
     int receiver_ok_all = 0;
     {
         GIZMO_TIMER_SCOPE("MPI_Allreduce");
-    MPI_Allreduce(&receiver_ok, &receiver_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(gate_vote, gate_all, 1 + SOURCE_REACH_GATE_NVOTE, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
     }
+    receiver_ok_all = (int) gate_all[0];
+    source_reach_map_gate_apply(gate_all + 1, search_mode != NGB_SEARCH_ONEWAY);
     if(!receiver_ok_all) {
         if(receiver_ok) {gx_send_set_abandon(send_set);}
         if(res) res->status = GX_WALK_EXPORT_RECEIVER_FAIL;

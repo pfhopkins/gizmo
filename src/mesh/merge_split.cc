@@ -37,6 +37,7 @@ static Vec3<double> merged_position(int i, int j);
 #include "../mesh/ghost_writeback.h"
 #include "../gravity/gpu_pseudo_update.h" /* gpu_set_soa_nextnode / gpu_set_soa_sibling: keep SoA node thread coherent with the rearrange pointer fixups */
 #include "../gravity/forcetree.h"         /* force_tree_swap_attachment_slots: the standing tree's attachment record */
+#include "../mesh/source_reach_map.h"     /* its per-slot record follows the particles */
 #ifdef GENERAL_RELATIVITY
 #include "../gr/gr_kick_functions.h" /* gr_primitives_of_cell (the GR merge works on the conserved variables) */
 #endif
@@ -1609,6 +1610,7 @@ static inline void rearrange_set_node_nextnode(int no, int v){ Nodes[no].u.d.nex
 static inline void rearrange_set_node_sibling (int no, int v){ Nodes[no].u.d.sibling  = v; gpu_set_soa_sibling (no, v); }
 
 void swap_treewalk_pointers(int i, int j){
+    source_reach_map_swap_slots(i, j);
     // walk the tree and any time we see a nextnode or sibling set to i, swap it to j and vice versa
     int no, next, pre_sibling_i=-1, pre_sibling_j=-1, previous_node_i, previous_node_j;
     no = All.TreeNodeIndexBase;
@@ -1661,6 +1663,7 @@ void swap_treewalk_pointers(int i, int j){
   This routine deletes a particle from the linked list for the treewalk, preserving the lists's integrity. This must be run if you are deleting particles but don't want to do a while treebuild after. - MYG
 */
 void remove_particle_from_treewalk(int i){
+    source_reach_map_clear_slot(i);
     int no, next;
     long iter = 0, iter_max = (long)All.TreeParticleSlots + MaxNodes + MaxForeignNodes + 1; // defensive bound: a valid chain visits each slot at most once
     no = All.TreeNodeIndexBase;

@@ -15,6 +15,8 @@
 #include "gpu_gravity_tree.h"        /* SoA mirror: vmax coherence for widen-on-open */
 #include "gravtree_moment_kernel.h"   /* the shared node-motion arithmetic */
 #include "gravity_box_distance.h"     /* gravity's periodicity, for the box a relocated particle needs */
+#include "../mesh/mode_b_local_walker.h" /* top-leaf map */
+#include "../mesh/source_reach_map.h"   /* its members re-tested where the bands are raised */
 
 /* GPU replacement for force_update_tree. */
 extern "C" void gpu_force_update_tree(void);
@@ -297,6 +299,7 @@ inline int marked_top_level_slot(const int *node_slot, int no)
 static int  *g_pending_topnode_list  = NULL;   /* [NTopnodes] */
 static int  *g_pending_topnode_stamp = NULL;   /* [NTopnodes]: == g_pending_stamp when listed */
 static MyFloat *g_pending_topnode_cover = NULL; /* [NTopnodes]: side length a listed node must reach to hold a placed particle, 0 if none */
+static unsigned char *g_pending_topnode_placed = NULL; /* [NTopnodes]: 1 if a particle was placed in this top leaf (source-reach map) */
 static int   g_pending_topnode_n     = 0;
 static int   g_pending_topnode_cap   = 0;
 static int   g_pending_stamp         = 1;
@@ -304,11 +307,12 @@ static int   g_pending_stamp         = 1;
 static void pending_topnodes_ensure(void)
 {
     if(g_pending_topnode_cap == NTopnodes && g_pending_topnode_list) {return;}
-    free(g_pending_topnode_list); free(g_pending_topnode_stamp); free(g_pending_topnode_cover);
+    free(g_pending_topnode_list); free(g_pending_topnode_stamp); free(g_pending_topnode_cover); free(g_pending_topnode_placed);
     g_pending_topnode_cap   = NTopnodes;
     g_pending_topnode_list  = (int *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(int));
     g_pending_topnode_stamp = (int *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(int));
     g_pending_topnode_cover = (MyFloat *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(MyFloat));
+    g_pending_topnode_placed = (unsigned char *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(unsigned char));
     g_pending_topnode_n = 0;
     g_pending_stamp = 1;
 }
@@ -339,6 +343,7 @@ static inline void list_pending_topnode(int no)
     {
         g_pending_topnode_stamp[t] = g_pending_stamp;
         g_pending_topnode_cover[t] = 0;
+        g_pending_topnode_placed[t] = 0;
         g_pending_topnode_list[g_pending_topnode_n++] = no;
     }
 }
@@ -414,8 +419,20 @@ void gravity_note_set_positions(const int *idx, int n)
     {
         const int i = idx[k];
         if(i < 0 || i >= All.TreeParticleSlots) {continue;}
+        int top_leaf_listed = 0;
         for(int no = Father[i]; no >= 0; no = Nodes[no].u.d.father)
         {
+            /* Its top leaf is listed even if its box already holds it: the source-reach map's box of the leaf's members
+               may not, so every rank's copy of that leaf takes the node bound from the flush to the next build.  Particles are
+               placed only at the end of a step (sink_final_operations, the wind spawn), and no symmetric export runs between
+               there and the flush at the next step's kick. */
+            if(!top_leaf_listed && (Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)))
+            {
+                top_leaf_listed = 1;
+                pending_topnodes_ensure(); list_pending_topnode(no);
+                const int t = no - All.TreeNodeIndexBase;
+                if(t >= 0 && t < g_pending_topnode_cap) {g_pending_topnode_placed[t] = 1;}
+            }
             const double need = node_length_to_hold(no, i);
             if(Nodes[no].len >= need) {continue;}
             Nodes[no].len = (MyFloat) (need * (1. + 1.e-6)); /* slack for roundoff */
@@ -474,7 +491,7 @@ void gravity_flush_pending_motion_bounds(void)
     for(int ta = 0; ta < NTask; ta++) {total += counts[ta];}
     if(total > 0)
     {
-        struct NodeBound {int node; MyFloat vmax; MyFloat cover; /* gravity_note_set_positions */
+        struct NodeBound {int node; int placed; MyFloat vmax; MyFloat cover; /* gravity_note_set_positions */
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
             MyFloat divVmax;   /* gravity_note_radius_growth_rates */
 #endif
@@ -485,7 +502,7 @@ void gravity_flush_pending_motion_bounds(void)
         struct NodeBound *all = (struct NodeBound *) mymalloc("mb_all", (size_t)total * sizeof(struct NodeBound));
         for(int k = 0; k < n_local; k++)
         {
-            loc[k].node = g_pending_topnode_list[k]; loc[k].vmax = Extnodes[g_pending_topnode_list[k]].vmax;
+            loc[k].node = g_pending_topnode_list[k]; loc[k].placed = (int) g_pending_topnode_placed[g_pending_topnode_list[k] - All.TreeNodeIndexBase]; loc[k].vmax = Extnodes[g_pending_topnode_list[k]].vmax;
             loc[k].cover = g_pending_topnode_cover[g_pending_topnode_list[k] - All.TreeNodeIndexBase];
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
             loc[k].divVmax = Extnodes[g_pending_topnode_list[k]].divVmax;
@@ -500,12 +517,15 @@ void gravity_flush_pending_motion_bounds(void)
             GIZMO_TIMER_SCOPE("MPI_Allgatherv");
         MPI_Allgatherv(loc, n_local * (int) sizeof(struct NodeBound), MPI_BYTE, all, counts_b, offset_b, MPI_BYTE, MPI_COMM_WORLD);
         }
+        const ModeBTopleafMap &topleaf_map = mode_b_topleaf_map_current();
         for(int r = 0; r < total; r++)
         {
             int no = all[r].node;
             /* The record names a top-level node, which every rank holds at the
              * same index; validated rather than trusted, as the kick exchange does. */
             if(!(no >= All.TreeNodeIndexBase && no - All.TreeNodeIndexBase < NTopnodes)) {continue;}
+            /* a particle was placed in this top leaf (gravity_note_set_positions) */
+            if(all[r].placed) {source_reach_map_mark_stale(topleaf_map.topleaf_of(no, All.TreeNodeIndexBase));}
             /* the same centre on every rank, so the length that holds the placed particle holds it in this copy too */
             if(Nodes[no].len < all[r].cover) {Nodes[no].len = all[r].cover; force_soa_raise_len(no, Nodes[no].len);}
             const MyFloat vmax = all[r].vmax;
@@ -790,7 +810,7 @@ void force_update_hmax(void)
    * were locally grown above but, without this, were only cross-rank-fresh at the
    * last full tree build/refresh).  Required for the Mode-B SYMMETRIC targeted
    * export band, which prunes remote topleaves by these per-type bands. */
-  enum { HMAX_EXCH_HMAX = 0, HMAX_EXCH_DIVVMAX = 1, HMAX_EXCH_PTYPE0 = 2, HMAX_EXCH_SIZE = 8 };
+  enum { HMAX_EXCH_HMAX = 0, HMAX_EXCH_DIVVMAX = 1, HMAX_EXCH_PTYPE0 = 2, HMAX_EXCH_REACH_MAP_STALE = 8, HMAX_EXCH_SIZE = 9 };
   int OffsetSIZE = HMAX_EXCH_SIZE;
   double divVel;
 
@@ -819,6 +839,7 @@ void force_update_hmax(void)
       }
   }
   /* Phase 2: update hmax/divVmax/per-type bands with atomics (parallel). */
+  const ModeBTopleafMap &topleaf_map = mode_b_topleaf_map_current();   /* also brings the source-reach map to now */
 #pragma omp parallel for schedule(dynamic)
   for (int idx = 0; idx < (int)ActiveParticleList.size(); idx++)
   {
@@ -885,6 +906,24 @@ void force_update_hmax(void)
 
             no = Nodes[no].u.d.father;
         }
+        /* The source-reach map compares the new radius with the one it was built with (O(1)); a leaf whose member outgrew it is
+           shipped stale like a band that grew. */
+        if(!source_reach_map_member_covered(i, per_type_htmp, divv_eligible ? divVel : 0.0))
+        {
+        int leaf_node = Father[i];
+        while(leaf_node >= 0 && !(Nodes[leaf_node].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))) {leaf_node = Nodes[leaf_node].u.d.father;}
+        if(leaf_node >= 0 && source_reach_map_mark_stale(topleaf_map.topleaf_of(leaf_node, All.TreeNodeIndexBase)))
+        {
+            #pragma omp critical(DomainListAppendHmax)
+            {
+                if(Extnodes[leaf_node].Flag != GlobFlag)
+                {
+                    Extnodes[leaf_node].Flag = GlobFlag;
+                    DomainList[DomainNumChanged++] = leaf_node;
+                }
+            }
+        }
+        }
       }
   }
 
@@ -902,6 +941,7 @@ void force_update_hmax(void)
       domainHmax_loc[OffsetSIZE * i + HMAX_EXCH_DIVVMAX] = Extnodes[DomainList[i]].divVmax;
       for(int t = 0; t < 6; t++)
           domainHmax_loc[OffsetSIZE * i + HMAX_EXCH_PTYPE0 + t] = Extnodes[DomainList[i]].hmax_per_type[t];
+      domainHmax_loc[OffsetSIZE * i + HMAX_EXCH_REACH_MAP_STALE] = (MyFloat) source_reach_map_is_stale(topleaf_map.topleaf_of(DomainList[i], All.TreeNodeIndexBase));
     }
 
 
@@ -943,6 +983,7 @@ void force_update_hmax(void)
   for(i = 0; i < totDomainNumChanged; i++)
     {
         no = domainList_all[i];
+        if(domainHmax_all[OffsetSIZE * i + HMAX_EXCH_REACH_MAP_STALE] > 0) {source_reach_map_mark_stale(topleaf_map.topleaf_of(no, All.TreeNodeIndexBase));}
         if(Nodes[no].u.d.bitflags & (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT))    {no = Nodes[no].u.d.father;} /* to avoid that the hmax is updated twice */
         
         while(no >= 0)

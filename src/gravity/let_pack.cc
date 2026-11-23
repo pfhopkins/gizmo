@@ -64,63 +64,6 @@
 #include "gpu_gravity_tree.h"            /* suns_backup: the tree's own direct-child slots; the node mirror's foreign capacity */
 
 
-/* How long the tree being built here is expected to stand, as an INTEGER time interval.
- *
- * The gravity walk widens a reused node as it drifts it (force_drift_node, and its device twin),
- * and every opening rule grows monotonically with node size.  So a sender that prunes the import
- * against the node's size AT BUILD TIME is answering a different question from the one the walk
- * will ask later, and it prunes nodes the walk goes on to open -- an import the walk cannot
- * resolve.  The pack therefore tests against the size the node may REACH, which needs a horizon.
- *
- * The rebuild cadence supplies it: walking the timebins from the smallest up, the first whose
- * cumulative occupancy crosses the update-frequency threshold is the bin that will trigger the
- * next rebuild, and its timestep is how long this tree is expected to last.  Computed once per
- * build, collectively, because the occupancies are global. */
-static integertime g_let_tree_lifetime_dti = 0;
-static double g_let_tree_lifetime_drift = 0;   /* undilated drift factor over that horizon, from now */
-
-static void let_compute_tree_lifetime(void)
-{
-    long long local_bin_count[TIMEBINS], global_bin_count[TIMEBINS];
-    for(int bin = 0; bin < TIMEBINS; bin++) {local_bin_count[bin] = (long long) TimeBinCount[bin];}
-    {
-        GIZMO_TIMER_SCOPE("MPI_Allreduce");
-    MPI_Allreduce(local_bin_count, global_bin_count, TIMEBINS, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-    }
-
-    double rebuild_threshold = All.TreeRebuild_ActiveFraction * (double) All.TotNumPart;
-    long long cumulative = 0, occupied_total = 0;
-    int trigger_bin = -1, highest_occupied = -1;
-    for(int bin = 0; bin < TIMEBINS; bin++)
-    {
-        occupied_total += global_bin_count[bin];
-        if(global_bin_count[bin] > 0) {highest_occupied = bin;}
-        cumulative += global_bin_count[bin];
-        if(trigger_bin < 0 && (double) cumulative > rebuild_threshold) {trigger_bin = bin;}
-    }
-    /* The builds that run before any timestep has been assigned see empty bins.  Nothing has been
-     * drifted at that point and the tree is fresh, so the honest horizon is zero -- and reaching for
-     * All.HighestOccupiedTimeBin here would read a value this run has not written yet (on a restart,
-     * the PREVIOUS run's, which pads maximally for no reason). */
-    g_let_tree_lifetime_drift = 0;
-    if(occupied_total <= 0) {g_let_tree_lifetime_dti = 0; return;}
-    /* Nothing crosses the threshold: the system steps as a whole, so the coarsest occupied bin is
-     * the interval that matters.  Taken from the counts just reduced, not from global state. */
-    if(trigger_bin < 0) {trigger_bin = highest_occupied;}
-
-    /* The horizon is only ever used as an offset from the current time, so it must not run off the
-     * end of the integer timeline: get_drift_factor maps time1 into the drift table and clamps the
-     * index only after forming it.  The clamp is tested before the multiplication so that a large
-     * pad factor cannot overflow the integer time; the product is formed unsigned and only once it
-     * is known not to exceed the remaining interval. */
-    integertime remaining = TIMEBASE - All.Ti_Current;
-    if(remaining < 0) {remaining = 0;}
-    const unsigned long long pad_factor = (LET_TREE_LIFETIME_PAD_FACTOR);
-    const unsigned long long trigger_interval = (unsigned long long) GET_INTEGERTIME_FROM_TIMEBIN(trigger_bin);
-    if(pad_factor > 0 && trigger_interval > (unsigned long long) remaining / pad_factor) {g_let_tree_lifetime_dti = remaining;}
-    else {g_let_tree_lifetime_dti = (integertime) (pad_factor * trigger_interval);}
-    if(g_let_tree_lifetime_dti > 0) {g_let_tree_lifetime_drift = get_drift_factor_undilated(All.Ti_Current, All.Ti_Current + g_let_tree_lifetime_dti);}
-}
 
 /* The node size the walk may reach before this tree is rebuilt.  The growth rule is the walk's own
  * (TREE_NODE_WIDENING_DELTA over the undilated drift factor), evaluated over the tree's expected
@@ -128,8 +71,8 @@ static void let_compute_tree_lifetime(void)
  * node itself ships at its true build-time size, and the receiver widens it the ordinary way. */
 static double let_node_len_over_tree_lifetime(int no, double len)
 {
-    if(g_let_tree_lifetime_dti <= 0) {return len;}
-    return len + TREE_NODE_WIDENING_DELTA((double) Extnodes[no].vmax, g_let_tree_lifetime_drift);
+    if(tree_lifetime_dti() <= 0) {return len;}
+    return len + TREE_NODE_WIDENING_DELTA((double) Extnodes[no].vmax, tree_lifetime_drift());
 }
 
 
@@ -383,7 +326,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
         /* How far this target may move, per axis, before the tree is expected to be rebuilt: the walk evaluates it
            where it is then, not where it is now.  The same bound and the same horizon the pack uses to widen its own
            nodes (TREE_NODE_WIDENING_DELTA widens a node's full width, so one side moves by half of it). */
-        double disp = 0.5 * TREE_NODE_WIDENING_DELTA(particle_motion_speed_bound(i, P, CellP), g_let_tree_lifetime_drift);
+        double disp = 0.5 * TREE_NODE_WIDENING_DELTA(particle_motion_speed_bound(i, P, CellP), tree_lifetime_drift());
         /* A motion bound that is not a number bounds nothing: take it as unbounded, so the cover holds this target
            anywhere rather than nowhere (a NaN would compare false against every maximum and leave its box unwidened). */
         if(!isfinite(disp)) {disp = DBL_MAX;}
@@ -1190,8 +1133,8 @@ static void let_bucket_cube(int no, int slot, const int *members, int n,
  * carries each member's dilation, and the interval is the undilated one, as for a real node. */
 static double let_aggregate_len_over_tree_lifetime(const struct LETNodeWire *w, double len)
 {
-    if(g_let_tree_lifetime_dti <= 0) {return len;}
-    return len + TREE_NODE_WIDENING_DELTA((double) w->extnode.vmax, g_let_tree_lifetime_drift);
+    if(tree_lifetime_dti() <= 0) {return len;}
+    return len + TREE_NODE_WIDENING_DELTA((double) w->extnode.vmax, tree_lifetime_drift());
 }
 
 /* Build the leaf's aggregate wire from the members already gathered in the worker's scratch.
@@ -2927,8 +2870,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     g_let_kicked_records = 0;      g_let_kicked_records_first = -1;
     g_let_leaves_compact = 0;      g_let_leaves_full = 0;
 
-    /* One collective, once per build: the horizon the import is pruned against. */
-    let_compute_tree_lifetime();
+    /* The horizon the import is pruned against: tree_lifetime_compute, once per build in force_treebuild. */
 
     /* The foreign-leaf identity sidecar needs no reset here: it is zeroed when it is allocated
      * (with the tree, or by force_tree_grow_foreign_storage below for a larger import), the install
