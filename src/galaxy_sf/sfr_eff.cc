@@ -609,12 +609,8 @@ void star_formation_parent_routine(void)
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
                 if(All.Ti_Current < CellP[i].PhotoionizedUntil) {instant_sf = false;}
 #endif
-                if(instant_sf) {M_drawn = single_star_imf_draw_numberweighted(All.IMFSampleMinMass, gizmo_rng_combine(single_star_draw_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);}
 #endif
-                prob = (P[i].Mass / (M_drawn / UNIT_MASS_IN_SOLAR)) * pfac;
-#ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY
-                if(instant_sf) {prob = 2.;}
-#endif
+                prob = (P[i].Mass / (M_drawn / UNIT_MASS_IN_SOLAR)) * pfac; /* above nHcutoffSF this X/M0 picks the path (stella_dev resolvedism_sf_chain) */
 #endif
                 
 #if defined(METALS) && defined(GALSF_EFFECTIVE_EQS) // does instantaneous enrichment //
@@ -638,12 +634,15 @@ void star_formation_parent_routine(void)
 #endif
                         return single_star_imf_draw_massweighted(All.IMFSampleMinMass, key_k, (uint64_t)All.Ti_Current);};
                     auto accept_k = [&](long k) {return single_star_random_number(i, STAR_FORMATION_RNG_SALT, (uint64_t)All.Ti_Current, (uint64_t)k);};
-                    bool one_star = false;
+                    bool one_star = false; double M_first = M_drawn;
 #ifdef GALSF_SINGLE_STARS_SF_INSTANT_ABOVE_DENSITY
-                    one_star = instant_sf; /* one star, number-weighted draw */
+                    if(instant_sf) { /* X/M0 < 2: one star now, drawn by number; else the sub-event split, from a fresh draw (M0 only picks the path) */
+                        if(prob < 2.) {one_star = true; M_first = single_star_imf_draw_numberweighted(All.IMFSampleMinMass, gizmo_rng_combine(imf_key, (uint64_t)1 << 62), (uint64_t)All.Ti_Current);}
+                        else {M_first = draw_k(0);}
+                    }
 #endif
-                    if(one_star) {sf_event_mass.assign(1, M_drawn);}
-                    else {single_star_sf_event(P[i].Mass * pfac * UNIT_MASS_IN_SOLAR, M_lo, M_drawn, draw_k, accept_k, sf_event_mass);}
+                    if(one_star) {sf_event_mass.assign(1, M_first);}
+                    else {single_star_sf_event(P[i].Mass * pfac * UNIT_MASS_IN_SOLAR, M_lo, M_first, draw_k, accept_k, sf_event_mass);}
                     for(double M_star : sf_event_mass) /* zero-mass single stars that collect their drawn mass after this loop; their mass enters the SF statistics there */
                     {
                         int i_star = spawn_star_from_gas(i, 0, stars_spawned);
