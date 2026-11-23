@@ -19,6 +19,7 @@
 
 #include "../fof.h"
 #include "subfind.h"
+#include "../../galaxy_sf/single_star_record.h"
 
 
 void subfind_distribute_groups(void)
@@ -142,6 +143,9 @@ void subfind_distribute_particles(int mode)
   gizmo_exit_bad_stop_if_requested("subfind_distribute_particles:maxpart_preflight");
 
   partBuf = (struct particle_data *) mymalloc("partBuf", nexport * sizeof(struct particle_data));
+#ifdef SINGLE_STAR_RECORDS
+  struct single_star_xfer ssx; single_star_xfer_init(ssx, NTask); /* star records follow their particles */
+#endif
 
   for(i = 0; i < NTask; i++)
     Send_count[i] = 0;
@@ -164,6 +168,9 @@ void subfind_distribute_particles(int mode)
 
       if(target != ThisTask)
 	{
+#ifdef SINGLE_STAR_RECORDS
+	  single_star_xfer_detach(ssx, P[n], target);
+#endif
 	  partBuf[Send_offset[target] + Send_count[target]] = P[n];
 	  Send_count[target]++;
 
@@ -182,8 +189,14 @@ void subfind_distribute_particles(int mode)
 		       MPI_BYTE, target, TAG_PDATA,
 		       P + NumPart + Recv_offset[target], Recv_count[target] * sizeof(struct particle_data),
 		       MPI_BYTE, target, TAG_PDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE, 0);
+#ifdef SINGLE_STAR_RECORDS
+	  single_star_xfer_swap(ssx, target, P + NumPart + Recv_offset[target], Recv_count[target]);
+#endif
 	}
     }
+#ifdef SINGLE_STAR_RECORDS
+  for(target = 0; target < NTask; target++) {single_star_xfer_attach(ssx, target, P + NumPart + Recv_offset[target], Recv_count[target]);}
+#endif
   NumPart += nimport;
   wakeup_sidecar_invalidate();   /* particles redistributed → rebuild WakeupDirty from P[] next scan */
 
@@ -289,6 +302,9 @@ void subfind_exchange(void)
 
   partBuf = (struct particle_data *) mymalloc("partBuf", count_togo * sizeof(struct particle_data));
   gasBuf = (struct gas_cell_data *) mymalloc("gasBuf", count_togo_gas * sizeof(struct gas_cell_data));
+#ifdef SINGLE_STAR_RECORDS
+  struct single_star_xfer ssx; single_star_xfer_init(ssx, NTask); /* star records follow their particles (stars are never gas) */
+#endif
 
   for(i = 0; i < NTask; i++)
     count[i] = count_gas[i] = 0;
@@ -308,6 +324,9 @@ void subfind_exchange(void)
 	    }
 	  else
 	    {
+#ifdef SINGLE_STAR_RECORDS
+	      single_star_xfer_detach(ssx, P[n], target);
+#endif
 	      partBuf[offset[target] + count[target]] = P[n];
 	      count[target]++;
 	    }
@@ -384,9 +403,15 @@ void subfind_exchange(void)
 			   P + offset_recv[target], count_recv[target] * sizeof(struct particle_data),
 			   MPI_BYTE, target, TAG_PDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE, 0);
 	    }
+#ifdef SINGLE_STAR_RECORDS
+	  single_star_xfer_swap(ssx, target, P + offset_recv[target], count_recv[target]);
+#endif
 	}
     }
 
+#ifdef SINGLE_STAR_RECORDS
+  for(target = 0; target < NTask; target++) {single_star_xfer_attach(ssx, target, P + offset_recv[target], count_recv[target]);}
+#endif
   NumPart += count_get;
   wakeup_sidecar_invalidate();   /* particles redistributed → rebuild WakeupDirty from P[] next scan */
   if(NumPart > All.MaxPart)

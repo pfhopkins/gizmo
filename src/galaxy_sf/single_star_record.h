@@ -6,6 +6,7 @@
 #ifndef SINGLE_STAR_RECORD_H
 #define SINGLE_STAR_RECORD_H
 #include <stdint.h>
+#include <vector>
 #ifdef SINGLE_STAR_RECORDS
 #ifdef KETJU_REGULARIZATION
 #include "../gravity/ketju/ketju_member_state.h"
@@ -100,6 +101,14 @@ void single_star_record_resize(int capacity);
 void single_star_record_reset(int capacity);   /* restart read: empty arrays of this capacity, then read them */
 void single_star_record_rebuild_free_list(void); /* restart read: after the arrays are read */
 static inline int single_star_slot(int star_idx) {return star_idx - 1;}
+
+/* records travelling with their stars through a raw particle exchange (SUBFIND redistribution; domain_exchange has its own copy of this):
+   detach each outgoing star's record in send order, swap them with the same partner as the particles, attach to the received stars in order */
+struct single_star_xfer {std::vector<std::vector<struct single_star_record> > send, recv;};
+void single_star_xfer_init(struct single_star_xfer &x, int ntask);
+void single_star_xfer_detach(struct single_star_xfer &x, const struct particle_data &p, int target); /* frees the local slot; p keeps StarIdx > 0 as the marker */
+void single_star_xfer_swap(struct single_star_xfer &x, int target, const struct particle_data *recv_first, int count_recv); /* after the particles arrived */
+void single_star_xfer_attach(struct single_star_xfer &x, int target, struct particle_data *recv_first, int count_recv);
 
 #endif
 #endif
