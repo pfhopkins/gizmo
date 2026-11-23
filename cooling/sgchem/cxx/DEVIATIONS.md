@@ -881,6 +881,15 @@ calc_dust_temp (cool_util.F) / cxx_calc_dust_temp, three changes:
 3. Budget and backstop: Newton budget 20000 -> 100, then bisection of the balance (monotone falling) on
    [tmin, 1500 K] to a bracket of 1e-14 relative (<= 60 halvings); F(tmin) <= 0 returns tmin, F(1500) >= 0 returns
    1500. Fortran no longer ABORT(10)s; C++ counts bisections per rank (SGCHEM cooling-step line).
+Scope and cost: every dust-solving cell changes (dust_to_gas_ratio > 1e-8, T < 1e5), not only dense cold gas. C++
+tdust vs the original Newton (1 % stop, slope without the ratio), diffuse / warm / low-Z / dense gas, G0 1.7 and
+100: median 2.5e-3, max 1.0e-2 (169 of 192 states > 1e-3); vs 3d20f2201 (tight stop, old slope) <= 1.3e-12. Newton
+iterations per call: from the previous tdust with gas 1 % warmer (production steady state) mean 1.0 -> 2.6, max
+1 -> 4; from a cold 10 K start mean 16.3 -> 19.5, max 25 -> 28 (no bisection in any state). Below the root the
+first Newton step overshoots to the 1500 K clamp (concave balance, tdust^6 cooling) and then descends linearly.
+On a Newton failure the C++ port used to continue from the last iterate (dust_iter_failed set, never read) and
+Fortran aborted; both now bisect. The Newton terms are one helper per backend (cxx_dust_newton_terms,
+dust_newton_terms; same arithmetic, phase C bitwise), checked against a central difference in phase F.
 Why: at nH 1e6, G0 0, Z 3 gas falls below ~4 K inside one solve (MinGasTemp acts only after it); the oscillating
 Newton aborted in Fortran and stalled C++ (20000 iterations per RHS call). Decided by Uli 2026-11-23 (option B,
 the tight stop, the slope fix). Measured at 362712ba9 (dust64.233287): Newton converges in <= 18 iterations at
