@@ -3013,6 +3013,9 @@ void gizmo_kokkos_finalize(void)
     /* Persistent device-side state is handed back before Kokkos is torn down;
        finalizing with allocations still tracked is what this ordering avoids.
        This is the single chokepoint every shutdown path already routes through. */
+#ifdef OUTPUT_TIMING_BREAKDOWN
+    timing_breakdown_release();   /* its callbacks off and its timing events destroyed first */
+#endif
     gx_touched_set_release();
     gx_mode_d_staging_release();
     nlr_mode_d_packet_workspace_release();

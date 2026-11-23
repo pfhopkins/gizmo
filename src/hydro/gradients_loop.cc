@@ -457,7 +457,7 @@ void GradientsIterSpec::apply_active_writeback(const neighbor_loop_args& args,
  * ========================================================================== */
 void hydro_gradient_calc(void)
 {
-    CPU_Step[CPU_DENSMISC] += measure_time();
+    cpu_charge(CPU_DENSMISC, measure_time());
     double t0 = my_second();
     /* The per-active host loops below each write only their own particle, so they thread over the
      * active list on any step with enough actives to pay for it. */

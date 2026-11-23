@@ -32,7 +32,7 @@
 
 void compute_grav_accelerations(void)
 {
-  CPU_Step[CPU_MISC] += measure_time();
+  cpu_charge(CPU_MISC, measure_time());
   PRINT_STATUS("Start gravity force computation...");
 
 #ifdef PMGRID
@@ -40,7 +40,7 @@ void compute_grav_accelerations(void)
     if(All.PM_Ti_endstep == All.Ti_Current)
       {
         long_range_force();
-        CPU_Step[CPU_MESH] += measure_time();
+        cpu_charge(CPU_MESH, measure_time());
       }
   }
 #endif
@@ -91,7 +91,7 @@ void compute_hydro_densities_and_forces(void)
            via the ghost_symlist_lifecycle helpers. Same for gradients and hydro_force. */
         double t_bench_density_start = my_second(); double child0_density = CPU_ChildCharged;
         density();		/* computes density, and pressure */
-        double t_bench_density_only = cpu_minus_children(timediff(t_bench_density_start, my_second()), child0_density);
+        cpu_charge(CPU_DENSCOMPUTE, cpu_minus_children(timediff(t_bench_density_start, my_second()), child0_density));
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
         ags_density();
 #endif
@@ -105,7 +105,7 @@ void compute_hydro_densities_and_forces(void)
 #endif
 #if defined(RT_OPACITY_FROM_EXPLICIT_GRAINS)
         interpolate_fluxes_opacities_gasgrains(); /* this must be called here for the computation of opacities and radiative quantity gradients below to be correct */
-        CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
+        cpu_charge(CPU_RTNONFLUXOPS, measure_time());
 #endif
 #ifdef GALSF /* PFH set of feedback routines (thermal, photo-ionization, radiation pressure), coupled discretely just -before- the hydro force is computed; mechanical feedback is coupled after the closing kick (run.cc) */
 #ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
@@ -138,7 +138,7 @@ void compute_hydro_densities_and_forces(void)
          * step. Consuming this CSR, the way cellcorrections and gradients do,
          * is what removes such a tear. */
         gizmo_hydro_corridor_begin();
-        CPU_Step[CPU_DENSMISC] += measure_time();
+        cpu_charge(CPU_DENSMISC, measure_time());
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
         /* Running below feedback is NOT neutral for this routine, by intent.
@@ -175,7 +175,7 @@ void compute_hydro_densities_and_forces(void)
 #if defined(COOLING) && defined(GALSF_FB_FIRE_RT_LONGRANGE)
         selfshield_local_incident_uv_flux(); /* needs to be called after gravity tree (where raw flux is calculated) and the local gradient calculation (GradRho) to properly self-shield the particles that had this calculated */
 #endif
-        double t_bench_grad = cpu_minus_children(timediff(t_bench_grad_start, my_second()), child0_grad);
+        cpu_charge(CPU_DENSWAIT, cpu_minus_children(timediff(t_bench_grad_start, my_second()), child0_grad));
         PRINT_STATUS(" ..gradient computation done.");
 
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4)
@@ -187,18 +187,12 @@ void compute_hydro_densities_and_forces(void)
 #endif
         double t_bench_hydro_start = my_second(); double child0_hydro = CPU_ChildCharged;
         hydro_force();		/* adds hydrodynamical accelerations and computes du/dt  */
-        double t_bench_hydro = cpu_minus_children(timediff(t_bench_hydro_start, my_second()), child0_hydro);
+        cpu_charge(CPU_HYDCOMPUTE, cpu_minus_children(timediff(t_bench_hydro_start, my_second()), child0_hydro));
         /* Hydro corridor exit: reset mode to UNSET. Any unexpected
          * gizmo_hydro_corridor_get_mode() outside the corridor span will
          * read UNSET and is therefore detectable. */
         gizmo_hydro_corridor_end();
         compute_additional_forces_for_all_particles(); /* other accelerations that need to be computed are done here */
-        /* Feed GPU-path kernel timings into CPU_Step accumulators for cpu.txt output.
-           drift+ghost+redo feeds are done inside density()/gradients()/hydro_force() via
-           the ghost_symlist_lifecycle helpers. */
-        CPU_Step[CPU_DENSCOMPUTE] += t_bench_density_only;
-        CPU_Step[CPU_DENSWAIT] += t_bench_grad;
-        CPU_Step[CPU_HYDCOMPUTE] += t_bench_hydro;
         PRINT_STATUS(" ..hydro force computation done.");
 
     } else {
@@ -294,7 +288,7 @@ void compute_additional_forces_for_all_particles(void)
 #ifdef GALSF
 void compute_stellar_feedback(void)
 {
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
 #ifdef GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW
     if(All.Dt_Since_LastFBCalc_Gyr > All.Dt_Min_Between_FBCalc_Gyr) {All.Dt_Since_LastFBCalc_Gyr = 0;}
     All.Dt_Since_LastFBCalc_Gyr += All.TimeStep / All.cf_hubble_a * UNIT_TIME_IN_GYR; // augment by timestep
@@ -305,7 +299,7 @@ void compute_stellar_feedback(void)
 
 #ifdef GALSF_FB_THERMAL
     thermal_fb_calc(); /* thermal feedback */
-    gizmo_exit_bad_stop_if_requested("accel:after_thermal_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
+    gizmo_exit_bad_stop_if_requested("accel:after_thermal_fb"); cpu_charge(CPU_SNIIHEATING, measure_time()); /* collect timings and reset clock for next timing */
 #endif
 
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
@@ -314,14 +308,14 @@ void compute_stellar_feedback(void)
 #endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
     HII_heating_singledomain(); /* local photo-ionization heating */
-    gizmo_exit_bad_stop_if_requested("accel:after_hii_heating"); CPU_Step[CPU_HIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
+    gizmo_exit_bad_stop_if_requested("accel:after_hii_heating"); cpu_charge(CPU_HIIHEATING, measure_time()); /* collect timings and reset clock for next timing */
 #endif
 
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
     radiation_pressure_winds_consolidated(); /* local radiation pressure */
-    gizmo_exit_bad_stop_if_requested("accel:after_local_rp"); CPU_Step[CPU_LOCALWIND] += measure_time(); /* collect timings and reset clock for next timing */
+    gizmo_exit_bad_stop_if_requested("accel:after_local_rp"); cpu_charge(CPU_LOCALWIND, measure_time()); /* collect timings and reset clock for next timing */
 #endif
     
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
 }
 #endif // GALSF //

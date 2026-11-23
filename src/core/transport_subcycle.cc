@@ -181,7 +181,7 @@ void transport_flux_initial_operations(void)
 /* ===== PUBLIC ENTRY POINT ===== */
 void transport_subcycle_exchange_fluxes(int transport_sub)
 {
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
     /* The previous sub-step's kick moved the owners' transported fields; the
        topology is unchanged (nothing drifts inside the loop), so bring the ghost
        copies current in place. If the pool cannot be refreshed, rebuild it and
@@ -254,7 +254,7 @@ void transport_subcycle_exchange_fluxes(int transport_sub)
     }
 #endif
 
-    CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
+    cpu_charge(CPU_RTNONFLUXOPS, measure_time());
 }
 
 

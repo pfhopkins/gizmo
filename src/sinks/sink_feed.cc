@@ -145,7 +145,7 @@ static void sink_feed_scatter_to_temp_info(const int *active_list,
 
 void sink_feed_loop(void)
 {
-    CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
+    cpu_charge(CPU_SINK_FEEDSWK, measure_time());
 
     /* ---------- engine: build active list ---------- */
     int *active_list = nullptr;
@@ -153,7 +153,7 @@ void sink_feed_loop(void)
     if(!nlr_build_active_list(SinkFeedSpec::is_active,
                                &active_list, &num_active,
                                "sinkfeed_active_list")) {
-        CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
+        cpu_charge(CPU_SINK_FEEDSWK, measure_time());
         return;
     }
 
@@ -197,7 +197,7 @@ void sink_feed_loop(void)
     myfree(per_active_accum);
     nlr_free_active_list(active_list);
 
-    CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
+    cpu_charge(CPU_SINK_FEEDSWK, measure_time());
 }
 
 

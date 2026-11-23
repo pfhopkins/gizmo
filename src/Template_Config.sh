@@ -636,6 +636,7 @@
 #OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS # with the ledger: mass_balance_steps.txt, baryon mass and gas/star/ledger-corrected metal mass at checkpoints inside the step (around the hydro and feedback solve, around star formation), a line where one changes by more than 1e-14, to find the operation that leaks. One MPI_Allreduce per checkpoint; nothing when off
 #OUTPUT_MASS_BALANCE_BREAKDOWN # with the checkpoints: more of them (feedback, gas collection, diffusion apply, merge/split), mass per element and slot-sum range on stdout (MCBAL lines), diff_unpack_breakdown.txt per hydro step; reductions at every checkpoint, diagnostic only
 #OUTPUT_ADDITIONAL_RUNINFO      # enables extended simulation output data (can slow down machines significantly in massively-parallel runs)
+#OUTPUT_TIMING_BREAKDOWN        # cpu.txt rows also give, per bucket, the device kernel time of the kernels launched in it, host time waiting on the device (fences, copies), host time in OpenMP parallel regions, single-thread host time, kernel launches and fences; plus a per-step line. Measured without adding any synchronization (device events, Kokkos Tools and OpenMP tools callbacks)
 #OUTPUT_IN_DOUBLEPRECISION      # snapshot files will be written in double precision
 #INPUT_IN_DOUBLEPRECISION       # input files assumed to be in double precision (otherwise float is assumed)
 #INPUT_POSITIONS_IN_DOUBLE      # as above, but specific to the ICs file

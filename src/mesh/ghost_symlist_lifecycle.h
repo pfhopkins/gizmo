@@ -56,10 +56,10 @@ static inline void gizmo_density_prep_ghosts(double safety)
     double t0 = my_second();
     move_particles(gizmo_host_ti_current());
     double t_drift = timediff(t0, my_second());
+    cpu_charge_child(CPU_DENSMISC, t_drift);   /* charged when its span ends (see cpu_charge) */
     double t1 = my_second();
     ghost_exchange(safety);
     double t_ghost = timediff(t1, my_second());
-    cpu_charge_child(CPU_DENSMISC, t_drift);
     cpu_charge_child(CPU_GHOSTIMPORT, t_ghost);
 }
 
@@ -111,6 +111,7 @@ static inline void gizmo_request_filtered_ghost_import(const char *caller_name,
     double t0 = my_second();
     move_particles(gizmo_host_ti_current());
     double t_drift = timediff(t0, my_second());
+    cpu_charge_child(CPU_DENSMISC, t_drift);   /* charged when its span ends (see cpu_charge) */
 
     int alloc_n = (num_active > 0 ? num_active : 1);
     double (*qpos)[3] = (double (*)[3]) malloc((size_t)alloc_n * sizeof(double[3]));
@@ -141,7 +142,6 @@ static inline void gizmo_request_filtered_ghost_import(const char *caller_name,
     double t_ghost = timediff(t1, my_second());
     free(qh);
     free(qpos);
-    cpu_charge_child(CPU_DENSMISC, t_drift);
     cpu_charge_child(CPU_GHOSTIMPORT, t_ghost);
 }
 
@@ -186,10 +186,10 @@ static inline void gizmo_hydro_density_prep_ghosts(double safety)
     double t0 = my_second();
     move_particles(gizmo_host_ti_current());
     double t_drift = timediff(t0, my_second());
+    cpu_charge_child(CPU_DENSMISC, t_drift);   /* charged when its span ends (see cpu_charge) */
     double t1 = my_second();
     ghost_exchange_hydro_oneway(safety);
     double t_ghost = timediff(t1, my_second());
-    cpu_charge_child(CPU_DENSMISC, t_drift);
     cpu_charge_child(CPU_GHOSTIMPORT, t_ghost);
 }
 

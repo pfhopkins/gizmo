@@ -50,7 +50,7 @@ void CellcorrectionsSpec::apply_active_writeback(const neighbor_loop_args& /*arg
  * the final closure (Density / Pressure) call. */
 void cellcorrections_calc(void)
 {
-    CPU_Step[CPU_DENSMISC] += measure_time();
+    cpu_charge(CPU_DENSMISC, measure_time());
     double t00 = my_second();  const double child0_span = CPU_ChildCharged;
     PRINT_STATUS(" ..calculating first-order corrections to cell sizes/faces");
 
@@ -84,7 +84,7 @@ void cellcorrections_calc(void)
                                    &active_list_local, &num_active,
                                    "cellcorrections_active")) {
             /* No active gas anywhere globally — nothing to do. */
-            CPU_Step[CPU_DENSMISC] += measure_time();
+            cpu_charge(CPU_DENSMISC, measure_time());
             return;
         }
         /* Mode A always publishes a corridor view when there is active gas;
@@ -112,7 +112,7 @@ void cellcorrections_calc(void)
     cellcorrections_final_operations_and_cleanup();
 
     double t1 = my_second(); cpu_chain_sync(t1);
-    CPU_Step[CPU_DENSMISC] += cpu_minus_children(timediff(t00, t1), child0_span);
+    cpu_charge(CPU_DENSMISC, cpu_minus_children(timediff(t00, t1), child0_span));
 }
 
 #endif /* HYDRO_VOLUME_CORRECTIONS */
