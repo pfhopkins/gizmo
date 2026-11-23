@@ -1268,6 +1268,7 @@ static void gx_walk_export_discover(
                                        spec->radius_policy, spec->j_radius_scale, spec->safety_factor) != 0) {receiver_ok = 0;}
         }
     }
+#undef GX_PROBE_CLOCK
     free(recv); free(rc); free(rd);
     if(receiver_ok) {
         gx_send_set_finish_peer(send_set);

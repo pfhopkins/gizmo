@@ -285,9 +285,11 @@ void source_reach_map_build(int usable)
         if(g_map_this_tree) {
             /* saved = the imbalance the same discoveries had without the map, at the unmapped rate, minus what they had with it */
             const double saved = ((g_n_off_last > 0) ? g_E_off_last / g_n_off_last : 0.0) * g_n_tree - g_E_tree;
-            /* the map did not save more than it cost: drop it -- unless the no-map rate is only a lower bound (a stopped cold
-               call), which cannot show that the map does not pay */
-            if(!(saved > g_B_all) && !g_off_censored) {
+            /* the map did not save more than it cost: drop it.  A no-map rate that is only a lower bound (a stopped cold call)
+               skips this decision once -- the first mapped tree, which carries the build at the first timestep assignment -- and
+               is then used as it stands; a wrong drop is corrected by the next unmapped tree, which measures the true rate */
+            const int skip_once = g_off_censored; g_off_censored = 0;
+            if(!(saved > g_B_all) && !skip_once) {
                 g_wanted = 0; g_E_nogain = g_E_off_last;
                 if(ThisTask == 0) {printf("source-reach map: off (saved %g s, cost %g s per tree)\n", saved, g_B_all); fflush(stdout);}
             }
