@@ -3,9 +3,9 @@ changes) and the mass step trace (OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS) close in
 
 Problem: Stella cloud production flags (SGChem net 5, MHD, photoionisation, radiation pressure, turbulent metal diffusion); one 10 Msun
 star dying 1 kyr in and one 60 Msun star of 0.1 Myr blowing its wind every step, gas of n_H = 10 at 100 K, 8^3 cells of 0.68 Msun in a 10 pc periodic box, 10 kyr, 2 ranks.
-The column x, y >= 7.5 pc holds a 4x finer lattice of the same cells (n_H = 640, ~2e50 recombinations/s vs Q = 4.9e49/s; with 27 n_H the
-whole box was still ionised, the fronts reach it through the periodic images): without a neutral part no cell runs the chemistry and
-the cooling identity has no evaluation to check (GKS-TI17, Uli 2026-11-23).
+PhotoionMaxSearchRadius 0.003 (3 pc, physical kpc): the 60 Msun star photoionised the whole box with the earlier 50 (50 kpc in a 10 pc
+periodic box), so no cell ran the chemistry and the cooling identity had no evaluation to check; gas beyond 3 pc of both stars stays
+neutral (GKS-TI17, Uli 2026-11-23; a dense column of 27 or 64 n_H was ionised as well, GKS-TI21).
 
 Bars (the checker's, fixed in gizmo.conservation_trace; not set per test):
 - mass and metal ledger: |delta| / value <= 1e-12 at every checkpoint;
@@ -36,15 +36,6 @@ from make_treecol_pixels_ics import make_treecol_pixels_ics, lattice  # noqa: E4
 from stella_table_bands import Tables  # noqa: E402
 
 L, NG, M_STAR, Z, N_H, T_DEATH = 10.0, 8, 10.0, 0.0142, 10.0, 1000.0
-DENSE_LO, DENSE_FINE = 0.75 * L, 4  # column x, y in [0.75 L, L): lattice 4x finer, equal cell mass, 64 n_H: its recombinations ~4x the stars' photons
-
-
-def gas_positions():
-    """the 8^3 lattice with the column x, y >= DENSE_LO replaced by a lattice DENSE_FINE times finer (same cell mass)"""
-    g = lattice(NG, L)
-    keep = ~((g[:, 0] >= DENSE_LO) & (g[:, 1] >= DENSE_LO))
-    f = lattice(NG * DENSE_FINE, L)
-    return np.concatenate([g[keep], f[(f[:, 0] >= DENSE_LO) & (f[:, 1] >= DENSE_LO)]])
 M_WIND, AGE_WIND = 60.0, 1.0e5
 RUN_TIMEOUT = 3600  # s
 UNIT_E = 1.989e33 * 1e10  # erg per code energy (Msun, km/s)
@@ -69,9 +60,9 @@ def build_and_run(tag, flags=()):
     lM, lZ = np.log10(M_STAR), np.log10(Z)
     age = tab._i2(tab.t_pms, lM, lZ) + tab._i2(tab.life, lM, lZ) - T_DEATH
     m_gas = N_H * 1.6726e-24 / 0.7065 * (3.085678e18 ** 3) / 1.989e33 * L ** 3 / NG ** 3
-    make_treecol_pixels_ics(str(d / "output" / "snapshot_000.hdf5"), L, gas_positions(), [(M_STAR, age, (0.5 * L + 0.11, 0.5 * L + 0.07, 0.5 * L)),
+    make_treecol_pixels_ics(str(d / "output" / "snapshot_000.hdf5"), L, lattice(NG, L), [(M_STAR, age, (0.5 * L + 0.11, 0.5 * L + 0.07, 0.5 * L)),
                                                                             (M_WIND, AGE_WIND, (0.25 * L + 0.11, 0.25 * L + 0.07, 0.5 * L))],
-                            gas_mass=m_gas, z=Z, T=100.0, hsml=2 * L / NG, tracabund=np.tile([0.0, 1.0e-4, 0.0], (len(gas_positions()), 1)))
+                            gas_mass=m_gas, z=Z, T=100.0, hsml=2 * L / NG, tracabund=np.tile([0.0, 1.0e-4, 0.0], (NG ** 3, 1)))
     for f in ("TREECOOL", "spcool_tables"):
         if (HERE / f).exists():
             os.symlink(HERE / f, d / f)

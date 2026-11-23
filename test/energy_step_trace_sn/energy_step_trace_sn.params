@@ -38,6 +38,6 @@ SofteningBulge              0.01
 SofteningStars              0.01
 SofteningBndry              0.01
 TreeColShieldingLength      50
-PhotoionMaxSearchRadius     50
+PhotoionMaxSearchRadius     0.003
 FacSfThreshMJ               1.0
 SFCooldownFreeFallFraction  0.1
