@@ -19,7 +19,7 @@ import h5py
 import numpy as np
 import pytest
 
-from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.test import build_gizmo_for_test, mpi_launch_command, forced_sn_check
 from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "stella_hotsync_periodic"
@@ -86,9 +86,11 @@ def test_hot_sync_sphere_uses_nearest_image():
             rows.append(res)
             print(res)
     trace = keep_and_check_traces(join(run, "output"), out)
+    forced = forced_sn_check(join(run, "output", "SNinfo.txt"), join(TEST_DIR, f"{TEST_NAME}.params"))
     shutil.rmtree(run, ignore_errors=True)
 
     assert r.returncode == 0, f"GIZMO exited {r.returncode}, see {out}/run.log"
+    assert forced is None, forced
     assert f"Final time={TIME_MAX:g} reached" in text, f"run stopped before TimeMax ({out}/run.log)"
     rows = [x for x in rows if x["n_far"] > 0]
     assert rows, "no snapshot with hot gas and gas outside the clamp sphere"

@@ -15,6 +15,14 @@
 #include "resolvedism_rng.h"
 #include <vector>
 
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+/* forced-SN test star k: key (k, 1) from the site hook (sfr_eff.cc forms only from a generation-0 site, child 2^0) or (k, 0) in the ICs */
+static inline int resolvedism_is_forced_sn_test_star(int i)
+{
+    return P[i].ID >= 1 && P[i].ID <= (MyIDType)((All.TestNumStars > 0) ? All.TestNumStars : 1) && P[i].ID_child_number <= 1;
+}
+#endif
+
 /* Death-event log rows (SNinfo/AGBinfo), written when the outcome is known (booking), so failed
  * and no-gas events appear once each with their real (possibly zero) energy and mass return. */
 struct fb_death_row {double t, x, y, z, u, rho, mstar, mej, zej, yC, yO, ySi, yFe, age, life, E, nH, T, h_pc, nngb, nH_birth, nH_stale; long long id; int remtype, tb, status, agb;};
@@ -230,8 +238,7 @@ void resolvedism_determine_SNe(void)
         if(All.Time < All.TimeInstantSN && Mstar >= 8.0) {lifetime_yr = 0;}
 #endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
-        if(All.TestSNTime0 > 0 && P[i].ID >= 1 && P[i].ID <= (MyIDType)((All.TestNumStars>0)?All.TestNumStars:1)
-           && P[i].ID_generation == 0) { /* forced-SN sites: count exactly as the flagging pass decides */
+        if(All.TestSNTime0 > 0 && resolvedism_is_forced_sn_test_star(i)) { /* forced-SN sites: count exactly as the flagging pass decides */
             if(All.Time >= All.TestSNTime0 + ((double)P[i].ID - 1.0) * All.TestSNSpacing) {n_death_count++;}
             continue;
         }
@@ -274,9 +281,8 @@ void resolvedism_determine_SNe(void)
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
         /* Clustered-SN test (2026-07-05): force star ID=k to explode at
          * TestSNTime0+(k-1)*TestSNSpacing, bypassing table lifetimes. Only the
-         * designated test sites (ID<=TestNumStars, first generation) are affected. */
-        if(All.TestSNTime0 > 0 && P[i].ID >= 1 && P[i].ID <= (MyIDType)((All.TestNumStars>0)?All.TestNumStars:1)
-           && P[i].ID_generation == 0) {
+         * designated test stars (resolvedism_is_forced_sn_test_star) are affected. */
+        if(All.TestSNTime0 > 0 && resolvedism_is_forced_sn_test_star(i)) {
             double t_forced = All.TestSNTime0 + ((double)P[i].ID - 1.0) * All.TestSNSpacing;
             if(All.Time < t_forced) continue;   /* not yet */
             /* fall through: dies now */

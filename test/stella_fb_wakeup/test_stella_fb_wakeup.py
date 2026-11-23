@@ -19,7 +19,7 @@ from os.path import abspath, dirname, join
 import numpy as np
 import pytest
 
-from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.test import build_gizmo_for_test, mpi_launch_command, forced_sn_check
 from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "stella_fb_wakeup"
@@ -57,9 +57,11 @@ def test_feedback_wakeups_reach_the_pending_list():
     text = open(join(run, "run.log")).read()
     sninfo = np.loadtxt(join(run, "output", "SNinfo.txt"), ndmin=2) if os.path.exists(join(run, "output", "SNinfo.txt")) else np.zeros((0, 20))
     trace = keep_and_check_traces(join(run, "output"), out)
+    forced = forced_sn_check(join(run, "output", "SNinfo.txt"), join(TEST_DIR, f"{TEST_NAME}.params"))
     shutil.rmtree(run, ignore_errors=True)
 
     assert r.returncode == 0, f"GIZMO exited {r.returncode}, see {out}/run.log"
+    assert forced is None, forced
     assert f"Final time={TIME_MAX:g} reached" in text, f"run stopped before TimeMax ({out}/run.log)"
     assert np.any((sninfo[:, 6] == 1) & (sninfo[:, 19] == 0)), "the forced SN of star 1 was not delivered"
     missed = [int(n) for n in re.findall(r"WAKEUP-LIST-AUDIT step=\d+ task=\d+: (\d+) pending requests missing", text)]

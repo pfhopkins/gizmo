@@ -15,12 +15,13 @@ struct sim_particle {hbt_key_t key; int gen; long parent; int is_star;};
 static uint64_t rng_state = 12345;
 static uint64_t rng_next() {rng_state ^= rng_state << 13; rng_state ^= rng_state >> 7; rng_state ^= rng_state << 17; return rng_state;}
 
-/* GIZMO's rules; returns the newborn's index */
-static long spawn(std::vector<sim_particle> &p, long i, int as_star)
+/* GIZMO's rules (a star takes the parent's incremented generation, sfr_eff.cc Stella and non-Stella paths);
+   star_gen_zero emulates the pre-STL-148 Stella rule (star born with generation 0); returns the newborn's index */
+static long spawn(std::vector<sim_particle> &p, long i, int as_star, int star_gen_zero = 0)
 {
     sim_particle c; c.key = hbt_key_make(p[i].key.id, p[i].key.child + (((uint64_t)1) << p[i].gen));
     p[i].gen++; if(p[i].gen > 30) {p[i].gen = 0;}
-    c.gen = as_star ? 0 : p[i].gen; c.parent = i; c.is_star = as_star;
+    c.gen = (as_star && star_gen_zero) ? 0 : p[i].gen; c.parent = i; c.is_star = as_star;
     p.push_back(c); return (long)p.size() - 1;
 }
 
@@ -104,9 +105,20 @@ int main(int argc, char **argv)
     }
     {
         std::vector<sim_particle> r; sim_particle s; s.key = hbt_key_make(9, 0); s.gen = 0; s.parent = -1; s.is_star = 0; r.push_back(s);
-        long a = spawn(r, 0, 0); long st = spawn(r, 0, 1); spawn(r, a, 0); spawn(r, st, 0);   /* a generation-0 star that spawned */
+        long a = spawn(r, 0, 0); long st = spawn(r, 0, 1, 1); spawn(r, a, 0); spawn(r, st, 0);   /* old rule: a generation-0 star that spawned */
         std::vector<hbt_key_t> k(r.size()); for(size_t i = 0; i < r.size(); i++) {k[i] = r[i].key;} sort_keys(k);
-        check(hbt_count_adjacent_duplicates(k.data(), (long)k.size()) > 0, "(c) a spawn from a generation-0 star collides and is detected", hbt_count_adjacent_duplicates(k.data(), (long)k.size()), 1);
+        check(hbt_count_adjacent_duplicates(k.data(), (long)k.size()) > 0, "(c) old rule: a spawn from a generation-0 star collides and is detected", hbt_count_adjacent_duplicates(k.data(), (long)k.size()), 1);
+    }
+    {
+        /* STL-148 rule: stars spawn and their children spawn again, many times; keys stay unique and parents are recovered */
+        std::vector<sim_particle> r; sim_particle s; s.key = hbt_key_make(9, 0); s.gen = 0; s.parent = -1; s.is_star = 0; r.push_back(s);
+        long a = spawn(r, 0, 0); long st = spawn(r, 0, 1); spawn(r, a, 0); spawn(r, st, 0);
+        for(int e = 0; e < 20000; e++) {long i = (long)(rng_next() % r.size()); if(r[i].gen < 30) {spawn(r, i, (rng_next() % 2) == 0);}}
+        std::vector<hbt_key_t> k(r.size()); long npar = 0, nch = 0;
+        for(size_t i = 0; i < r.size(); i++) {k[i] = r[i].key; hbt_key_t q; if(r[i].parent >= 0) {nch++; if(hbt_key_parent(r[i].key, &q) && hbt_key_equal(q, r[r[i].parent].key)) {npar++;}}}
+        sort_keys(k);
+        check(hbt_count_adjacent_duplicates(k.data(), (long)k.size()) == 0, "(c) STL-148 rule: spawns from stars keep keys unique", hbt_count_adjacent_duplicates(k.data(), (long)k.size()), 0);
+        check(npar == nch, "(c) STL-148 rule: parent recovered for every spawn from a star", npar, nch);
     }
 
     /* (d) distributed count: keys of (a) split round-robin over ranks, then injected duplicates on other ranks */

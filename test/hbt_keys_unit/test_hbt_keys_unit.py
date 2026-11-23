@@ -10,6 +10,18 @@ from os.path import abspath, dirname, join
 import pytest
 
 
+def test_star_spawn_generation_rule():
+    """The C++ test emulates sfr_eff.cc: every star spawn must give the star the parent's incremented generation (STL-148)."""
+    repo = abspath(join(dirname(abspath(__file__)), "..", ".."))
+    lines = open(join(repo, "galaxy_sf", "sfr_eff.cc")).read().splitlines()
+    spawn_child = [n for n, s in enumerate(lines) if "ID_child_number = P[i].ID_child_number + (MyIDType)(1 << ((int)P[i].ID_generation))" in s]
+    assert len(spawn_child) == 2, "expected the Stella and the non-Stella star spawn in sfr_eff.cc, found %d" % len(spawn_child)
+    for n in spawn_child:
+        star = lines[n].split(".ID_child_number")[0].strip()          # P[ns] or P[i_star]
+        window = " ".join(lines[n:n + 5])
+        assert ("%s.ID_generation = P[i].ID_generation;" % star) in window, "sfr_eff.cc:%d: star generation not taken from the parent:\n%s" % (n + 1, "\n".join(lines[n:n + 5]))
+
+
 @pytest.mark.parametrize("nranks", [1, 4])
 def test_hbt_keys_unit(nranks):
     test_dir = dirname(abspath(__file__))

@@ -22,7 +22,7 @@ import h5py
 import numpy as np
 import pytest
 
-from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.test import build_gizmo_for_test, mpi_launch_command, forced_sn_check
 from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "stella_sn_merge_energy"
@@ -105,8 +105,10 @@ def test_adiabatic_sn_energy_with_merge_split():
             shutil.copy(join(run, f), out)
     text = open(join(run, "run.log")).read()
     trace = keep_and_check_traces(join(run, "output"), out)
+    forced = forced_sn_check(join(run, "output", "SNinfo.txt"), join(TEST_DIR, f"{TEST_NAME}.params"))
     shutil.rmtree(run, ignore_errors=True)
     assert r.returncode == 0, f"GIZMO exited {r.returncode}, see {out}/run.log"
+    assert forced is None, forced
 
     sync = np.array([[float(a), float(b)] for a, b in SYNC.findall(text)])
     assert len(sync) > 2 and abs(sync[-1, 0] / 4.0e-5 - 1) < 1e-6, "no synchronised energy line at TimeMax"

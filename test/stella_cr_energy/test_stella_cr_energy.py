@@ -18,7 +18,7 @@ from os.path import abspath, dirname, join
 
 import pytest
 
-from gizmo.test import build_gizmo_for_test, mpi_launch_command
+from gizmo.test import build_gizmo_for_test, mpi_launch_command, forced_sn_check
 from gizmo.conservation_trace import keep_and_check_traces
 
 TEST_NAME = "stella_cr_energy"
@@ -55,8 +55,10 @@ def run():
     shutil.copy(join(rundir, "run.log"), out)
     rep = keep_and_check_traces(join(rundir, "output"), out)
     text = open(join(out, "run.log")).read()
+    forced = forced_sn_check(join(rundir, "output", "SNinfo.txt"), join(TEST_DIR, f"{TEST_NAME}.params"))
     shutil.rmtree(rundir, ignore_errors=True)
     assert r.returncode == 0, f"GIZMO exited {r.returncode}, see {out}/run.log"
+    assert forced is None, forced
     assert f"Final time={TIME_MAX:g} reached" in text, f"run stopped before TimeMax ({out}/run.log)"
     return rep, out
 
