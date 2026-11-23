@@ -879,6 +879,8 @@ RHD_OBJS =  radiation/rt_utilities.o \
 
 FOF_OBJS =	structure/fof.o \
 			structure/hbt/hbt_key_mpi.o \
+			structure/hbt/hbt_catalogue.o \
+			structure/hbt/hbt_catalogue_mpi.o \
 			structure/subfind/subfind.o \
 			structure/subfind/subfind_vars.o \
 			structure/subfind/subfind_collective.o \
@@ -960,6 +962,9 @@ INCL    += 	declarations/allvars.h \
 			structure/fof.h \
 			structure/hbt/hbt_key.h \
 			structure/hbt/hbt_key_mpi.h \
+			structure/hbt/hbt_catalogue.h \
+			structure/hbt/hbt_catalogue_core.h \
+			structure/hbt/hbt_catalogue_mpi.h \
 			structure/subfind/subfind.h \
 			cooling/cooling.h \
 			Makefile

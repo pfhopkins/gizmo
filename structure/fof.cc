@@ -30,6 +30,10 @@
 #include <vector>
 #include "hbt/hbt_key_mpi.h"
 #endif
+#ifdef FOF_WRITE_KEYED_CATALOGUE
+#include <vector>
+#include "hbt/hbt_catalogue.h"
+#endif
 #ifdef SUBFIND
 #include "subfind/subfind.h"
 #endif
@@ -1267,6 +1271,9 @@ void fof_save_groups(int num)
   /* prepare list of ids with assigned group numbers */
 
   ID_list = (fof_id_list *)mymalloc("ID_list", sizeof(fof_id_list) * NumPart);
+#ifdef FOF_WRITE_KEYED_CATALOGUE
+  std::vector<hbt_member_t> keyed_members;
+#endif
 
 #ifdef SUBFIND
   for(i = 0; i < NumPart; i++)
@@ -1290,6 +1297,9 @@ void fof_save_groups(int num)
 	  {
 	    ID_list[Nids].GrNr = FOF_GList[i].GrNr;
 	    ID_list[Nids].ID = P[FOF_PList[start + lenloc].Pindex].ID;
+#ifdef FOF_WRITE_KEYED_CATALOGUE
+	    {int p = FOF_PList[start + lenloc].Pindex; keyed_members.push_back({(int)FOF_GList[i].GrNr, (int)P[p].Type, P[p].ID, P[p].ID_child_number});}
+#endif
 #ifdef SUBFIND
 	    P[FOF_PList[start + lenloc].Pindex].GrNr = FOF_GList[i].GrNr;
 #endif
@@ -1472,6 +1482,9 @@ void fof_save_local_catalogue(int num)
   my_fwrite(&Send_offset[ThisTask], sizeof(int), 1, fd);	/* this is the number of IDs in previous files */
   my_fwrite(ids, sizeof(MyIDType), Nids, fd);
   fclose(fd);
+#ifdef FOF_WRITE_KEYED_CATALOGUE
+  hbt_write_keyed_catalogue(num, Group, Ngroups, keyed_members.data(), (long)keyed_members.size());
+#endif
 }
 
 
