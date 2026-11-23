@@ -183,21 +183,39 @@ int build_own_lists(std::vector<std::vector<SourceReachEntry>> &per_thread)
         const double tc[3] = {(double) Nodes[t_node].center[0], (double) Nodes[t_node].center[1], (double) Nodes[t_node].center[2]};
         const double th = 0.5 * (double) Nodes[t_node].len, thw[3] = {th, th, th};
         if(nm == 0) {continue;}
-        /* member offsets from the leaf's centre, under the box wrap */
+        /* member offsets from the leaf's centre, under the box wrap, and their box */
         std::vector<double> moff(3 * (size_t) nm);
+        double blo[3] = {INFINITY, INFINITY, INFINITY}, bhi[3] = {-INFINITY, -INFINITY, -INFINITY};
         for(int m = 0; m < nm; m++) {
             double d[3] = {mpos[3 * m] - tc[0], mpos[3 * m + 1] - tc[1], mpos[3 * m + 2] - tc[2]};
             NEAREST_XYZ(d[0], d[1], d[2], 1);
-            for(int k = 0; k < 3; k++) {moff[3 * m + k] = d[k];}
+            for(int k = 0; k < 3; k++) {moff[3 * m + k] = d[k]; blo[k] = DMIN(blo[k], d[k]); bhi[k] = DMAX(bhi[k], d[k]);}
         }
+        /* members by test radius, largest first: against a candidate leaf the scan stops at the first that cannot reach it */
+        std::vector<int> mord(nm);
+        for(int m = 0; m < nm; m++) {mord[m] = m;}
+        std::sort(mord.begin(), mord.end(), [&](int a, int b) {return mtest[a] > mtest[b];});
+        const double bc[3] = {tc[0] + 0.5 * (blo[0] + bhi[0]), tc[1] + 0.5 * (blo[1] + bhi[1]), tc[2] + 0.5 * (blo[2] + bhi[2])};
+        const double bhw[3] = {0.5 * (bhi[0] - blo[0]), 0.5 * (bhi[1] - blo[1]), 0.5 * (bhi[2] - blo[2])};
         for_remote_leaves_near(tc, thw, t_reach_max, [&](int u, int u_node) {
             const double uc[3] = {(double) Nodes[u_node].center[0], (double) Nodes[u_node].center[1], (double) Nodes[u_node].center[2]};
             const double uh = 0.5 * (double) Nodes[u_node].len;
             SourceReachEntry e;
             e.t_leaf = t; e.u_leaf = u;
             double lo[3] = {INFINITY, INFINITY, INFINITY}, hi[3] = {-INFINITY, -INFINITY, -INFINITY}, rr[6] = {-1, -1, -1, -1, -1, -1};
+            /* the overlap test rejects a member on any axis where its wrapped separation from the candidate's centre exceeds its
+               radius plus the candidate's half side; every member lies in the members' box, so that separation is at least the
+               axis gap from the box, and a member whose radius plus half side is below the largest gap is rejected (the margin
+               only sends near-ties to the test itself) */
+            double gs[3];
+            gx_extended_wrapped_separation(uc[0] - bc[0], uc[1] - bc[1], uc[2] - bc[2], bhw[0], &gs[0], &gs[1], &gs[2]);
+            double gmax = 0;
+            for(int k = 0; k < 3; k++) {gmax = DMAX(gmax, gs[k] - bhw[k]);}
+            const double glim = gmax * (1.0 - 1.0e-9) - uh;
             int any = 0;
-            for(int m = 0; m < nm; m++) {
+            for(int ii = 0; ii < nm; ii++) {
+                const int m = mord[ii];
+                if(mtest[m] < glim) {break;}
                 if(!gx_extended_overlap_wrap_and_test(uc[0] - mpos[3 * m], uc[1] - mpos[3 * m + 1], uc[2] - mpos[3 * m + 2], uh, uh, uh, mtest[m])) {continue;}
                 any = 1;
                 for(int k = 0; k < 3; k++) {lo[k] = DMIN(lo[k], moff[3 * m + k]); hi[k] = DMAX(hi[k], moff[3 * m + k]);}
