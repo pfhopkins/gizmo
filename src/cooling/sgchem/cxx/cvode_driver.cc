@@ -40,6 +40,26 @@
 #include <cstring>
 #include <cstdlib>
 
+// reported net cooling of the last RHS evaluation [erg cm^-3 s^-1]: what sgchem_cell.cc sums, less the heating it does not report
+static inline double cxx_reported_net_cool(const ChemCell& c)
+{
+    double s = -c.heat_unreported;
+    for (int k = 0; k < CHEM_NRATES; k++) s += c.lambda[k];
+    for (int k = 0; k < CHEM_NRATES_CHEM_MAX; k++) s += c.lambda_chem[k];
+    return s;
+}
+
+// energy RHS vs reported net cooling at one RHS evaluation: |difference| and the gross rates (equal when every term is reported)
+static inline void cxx_identity_account(ChemCell& c, double ydot_e)
+{
+    double gross = std::fabs(c.heat_unreported);
+    for (int k = 0; k < CHEM_NRATES; k++) gross += std::fabs(c.lambda[k]);
+    for (int k = 0; k < CHEM_NRATES_CHEM_MAX; k++) gross += std::fabs(c.lambda_chem[k]);
+    c.id_diff += std::fabs(ydot_e + cxx_reported_net_cool(c));
+    c.id_gross += gross;
+    c.id_n++;
+}
+
 #define DTCOOL_SCALE_FACTOR 0.3
 #define CHEM_RTOL 1e-4
 #define CHEM_NSTEP 9000000
@@ -363,7 +383,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
     cxx_stat_calls++;
     c.yn = yn; c.dl = dl; c.divv = divv;
     c.fatal_code = 0;
-    c.cr_ion_heat_int = 0.0;
+    c.cr_ion_heat_int = 0.0; c.id_diff = 0.0; c.id_gross = 0.0; c.id_n = 0;
 
     double y[CHEM_NSPEC_MAX], y_old[CHEM_NSPEC_MAX], ydot[CHEM_NSPEC_MAX];
     for (int i = 0; i < c.trac_num; i++) y[i] = non_eq_abundances[i];
@@ -500,7 +520,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                 // ipar-clear semantics: RHS retval ignored; a flagged eval
                 // left ydot all-zero, exactly like the Fortran zero-ydot path
                 // (net 15 builds the full ydot, as rate_eq_nl99 does).
-                rhs_dispatch(t_start, y, ydot, c);
+                if (rhs_dispatch(t_start, y, ydot, c) == CHEM_RHS_OK) cxx_identity_account(c, ydot[itmp]);
                 if (c.fatal_code) return c.fatal_code;      // Fortran ABORT inside rate_eq
                 double dt_byp;
                 if (std::fabs(ydot[itmp]) > 0.0)
@@ -543,6 +563,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
             tdust_old = c.tdust;
 
             int rerr = rhs_dispatch(t_start, y, ydot, c);
+            if (rerr == CHEM_RHS_OK) cxx_identity_account(c, ydot[itmp]);
             if (c.fatal_code) { retcode = c.fatal_code; goto out; }
             c.cr_ion_heat_int += 0.5 * (crh_prev + c.cr_ion_heat) * crh_dt; crh_prev = c.cr_ion_heat; crh_dt = 0.0; // trapezoid over the accepted substep
             dt_est = 1e18;
@@ -651,7 +672,7 @@ out:
         // Fortran semantics.
         if (!chem_legacy_lambda()) {
             double ydot_final[CHEM_NSPEC_MAX];
-            (void)rhs_dispatch(t_start, y, ydot_final, c);
+            if (rhs_dispatch(t_start, y, ydot_final, c) == CHEM_RHS_OK) cxx_identity_account(c, ydot_final[itmp]);
         }
         c.cr_ion_heat_int += 0.5 * (crh_prev + (chem_legacy_lambda() ? crh_prev : c.cr_ion_heat)) * crh_dt; // last accepted substep
     }

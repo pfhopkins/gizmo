@@ -20,7 +20,11 @@ extern ALIGN(32) struct particle_data
 #ifdef SINGLE_STAR_RECORDS
     int StarIdx;                    /*!< single-star record slot + 1, 0 = none (galaxy_sf/single_star_record.h); in the padding after ID_generation */
 #endif
-    
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    int ID_wraps;                   /*!< roll-overs of this particle's generation counter: part of its identity (and random streams) once > 0 */
+    MyIDType ID_lineage;            /*!< hash of the parent's identity state at creation once the lineage has rolled over (0 before); galaxy_sf/single_star_identity.h */
+#endif
+
     integertime Ti_begstep;         /*!< marks start of current timestep of particle on integer timeline */
     integertime Ti_current;         /*!< current time of the particle */
 #ifdef SNE_BROADCAST_TIMESTEP

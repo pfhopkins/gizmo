@@ -14,6 +14,7 @@ print; the run goes on. All of them run on the host (no check inside a device ke
 | `fb_booked_deposited` | end of a single-star event (`single_star_feedback.cc`) | the star lost the ejecta it booked (1e-6); after a death it is below its trigger mass |
 | `lifetime_consistent` | band luminosities (`single_star_luminosity.cc`) | a star that radiates has not died |
 | `donor_mass_floor` | gas collection (`sfr_collect_gas.cc`) | every donor keeps 0.01 `MinMassForParticleMerger` |
+| `donor_cooldown` | gas collection (`sfr_collect_gas.cc`) | every cell that gave mass is blocked until its density is recomputed and cools down for `SFCooldownFreeFallFraction` of its free-fall time, as the parent |
 | `tree_insert` | new single star (`single_star_attach_to_new_star`, `sfr_collect_gas.cc`) | the new star sits at its parent's position, in its parent's tree node |
 | `dgr_consistent` | SGChem cell step (`sgchem_cell.cc`) | hot gas (above 1e5 K in the chemistry and stored): no dust in the chemistry nor in the TreeCol columns |
 
@@ -34,6 +35,10 @@ Checks (bars written before the first run):
 2. `test_broken_invariant_is_reported`: the same run with total Z set to half the sum of the 25 metals in every cell, 2.5e-4
    time units: `fire_slot_invariant` prints FAIL at the first feedback step (for example "2047 of 2048 cells"),
    `fire_slot_invariant_cell` stays silent (it tests only cells that held the invariant before), and the run reaches its end.
+3. `test_identities_unique_past_roll_over_and_restart`: 40 stars from one cell in one call (the parent's generation counter
+   rolls over after 31): every star's (ID, child, generation, `ParticleIDWraps`, `ParticleIDLineage`) in the snapshot is
+   distinct; a snapshot restart from it (straight from the snapshot: stars born together are placed apart at birth) brings every born star back with its full
+   identity.
 
 Reference implementation: stella_dev `STELLA_SELFCHECK` (`galaxy_sf/resolvedism_selfcheck.h`); the same tags, log prefix
 `STELLA_SELFCHECK`.

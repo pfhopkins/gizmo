@@ -31,7 +31,7 @@ def built():
     return True
 
 
-def run(tag, stars, ranks=2, threads=1, n_side=None, shuffle=False, exe="GIZMO"):
+def run(tag, stars, ranks=2, threads=1, n_side=None, shuffle=False, exe="GIZMO", births=None):
     """one run in its own directory, started from the lattice written as snapshot 0 (start flag 2, which reads the
     metallicity); returns (initial snapshot, final snapshot, birth log rows)"""
     import sys
@@ -45,7 +45,7 @@ def run(tag, stars, ranks=2, threads=1, n_side=None, shuffle=False, exe="GIZMO")
     ic = d / "output" / "snapshot_000.hdf5"
     if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         L = make_single_stars_collect_gas_ics(str(ic), n=n, shuffle=shuffle)
-        births = ",".join(f"{cell_id(*c, n=n)}:{m}" for c, m in stars)
+        births = births or ",".join(f"{cell_id(*c, n=n)}:{m}" for c, m in stars)  # TestSingleStarBirths holds 255 characters
         params = Path(TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SET_BY_TEST", births)
         params = params.replace("BoxSize                            15.84", f"BoxSize                            {L}")
         (d / f"{TEST_NAME}.params").write_text(params)
@@ -147,6 +147,22 @@ def test_unreachable_and_reachable(built):
     Z0 = exact_dot(p0["PartType0"]["Masses"], p0["PartType0"]["Metallicity"][:, 0])
     Z1 = exact_dot(p1["PartType0"]["Masses"], p1["PartType0"]["Metallicity"][:, 0]) + exact_dot(p1["PartType4"]["Masses"], p1["PartType4"]["Metallicity"][:, 0])
     assert abs(float(Z1 - Z0)) <= float(p1["PartType4"]["Masses"][0]) * np.spacing(float(p1["PartType4"]["Metallicity"][0, 0]))
+
+
+def test_failed_draw_past_31_spawns_of_one_cell(built):
+    """32 stars from one cell in one call: the 32nd has the 1st star's (ID, child, generation), since the parent's generation
+    counter rolls over after 31 spawns. Only the 32nd is unreachable; undoing it must return its own grants only, so the
+    total mass is exact (bar written before the run: 32 births, 31 kept, gas + stars == initial gas exactly)"""
+    import sys
+    sys.path.insert(0, str(TEST_DIR))
+    from make_single_stars_collect_gas_ics import cell_id
+    c = cell_id(12, 12, 12)
+    ic, snap, rows = run("key_wrap", None, births=f"{c}:2.0,{c}:0.5*30,{c}:30000")  # ID:M*count, the parameter holds 255 characters
+    assert rows.shape[0] == 32, rows.shape  # every spawn placed in this call
+    assert sorted(rows[:, 8].tolist()) == [0.0] + [1.0] * 31 and rows[rows[:, 8] == 0, 4][0] == 3.0e4
+    p0, p1 = particles(ic), particles(snap)
+    assert len(p1["PartType4"]["Masses"]) == 31
+    assert exact_sum(p1["PartType0"]["Masses"]) + exact_sum(p1["PartType4"]["Masses"]) == exact_sum(p0["PartType0"]["Masses"])
 
 
 def final_state(snap):

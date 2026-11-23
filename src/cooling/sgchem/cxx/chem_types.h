@@ -300,6 +300,9 @@ struct ChemCell {
     double cr_energy_density;
     double cr_ion_heat;       // CR ionisation heating of the last RHS evaluation [erg cm^-3 s^-1]
     double cr_ion_heat_int;   // CR ionisation heating integrated over the accepted solve [erg cm^-3]
+    double heat_unreported;   // heating in the energy equation but in neither lambda nor lambda_chem, last RHS evaluation [erg cm^-3 s^-1]
+    double id_diff, id_gross; // sum over this solve's RHS evaluations of |energy RHS + reported net cooling| and of the gross rates [erg cm^-3 s^-1]
+    long id_n;                // RHS evaluations counted
     double redshift;
     double AV_ext;
 

@@ -1003,6 +1003,7 @@ int chem_rhs_net3(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
         if (e2) return CHEM_RHS_RECOVERABLE;
     }
 
+    c.heat_unreported = ylam_cmb; // the T_CMB term enters as heating and is in no reported rate
     ydot[itmp] = -(ylam - ylam_cmb + ylam_chem);
 
     for (int i = 0; i < nspec; i++) {

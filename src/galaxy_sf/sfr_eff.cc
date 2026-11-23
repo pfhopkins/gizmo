@@ -15,6 +15,7 @@
 #include "single_star_imf.h"
 #include "single_star_sf_event.h"
 #endif
+#include "single_star_identity.h"
 #ifdef GALSF_SINGLE_STARS_STOCHASTIC_IMF
 #include "single_star_record.h"
 #endif
@@ -479,10 +480,7 @@ int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned)
     if(NextInTimeBin[i] >= 0) {PrevInTimeBin[NextInTimeBin[i]] = i_star;}
     NextInTimeBin[i] = i_star;
     if(LastInTimeBin[P[i].TimeBin] == i) {LastInTimeBin[P[i].TimeBin] = i_star;}
-    P[i_star].ID_child_number = P[i].ID_child_number + (MyIDType)(1 << ((int)P[i].ID_generation)); // particle 'i' retains its child number; this ensures uniqueness
-    P[i].ID_generation = P[i].ID_generation + 1;
-    if(P[i].ID_generation > 30) {P[i].ID_generation=0;} // roll over at 32 generations (unlikely to ever reach this)
-    P[i_star].ID_generation = P[i].ID_generation; // ok, all set!
+    single_star_identity_from_parent(P[i], P[i_star]); // particle 'i' retains its child number; the star's is unique (single_star_identity.h)
     P[i_star].Mass = mass_of_star; /* i_star = NumPart+stars_spawned (>= MaxPartGas); no CellP[i_star] write — CellP[] is sized All.MaxPartGas */
     P[i].Mass -= P[i_star].Mass; CellP[i].Mass = P[i].Mass; /* i is still gas here */
     if(P[i].Mass<0) {P[i].Mass=0;} CellP[i].Mass = P[i].Mass;

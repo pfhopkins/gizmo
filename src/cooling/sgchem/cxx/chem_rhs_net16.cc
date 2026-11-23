@@ -398,6 +398,7 @@ int chem_rhs_net16(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
                       &ylam_floor, rates_floor, 1, c))
         return CHEM_RHS_RECOVERABLE;
 
+    c.heat_unreported = ylam_floor; // the T_CMB floor enters as heating and is in no reported rate
     ydot[itmp] = -(ylam + ylam_chem - ylam_floor);
 
     for (int i = 0; i < nspec; i++) {

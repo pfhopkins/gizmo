@@ -3,6 +3,9 @@ changes) and the mass step trace (OUTPUT_MASS_BALANCE_STEP_CHECKPOINTS) close in
 
 Problem: Stella cloud production flags (SGChem net 5, MHD, photoionisation, radiation pressure, turbulent metal diffusion); one 10 Msun
 star dying 1 kyr in and one 60 Msun star of 0.1 Myr blowing its wind every step, gas of n_H = 10 at 100 K, 8^3 cells of 0.68 Msun in a 10 pc periodic box, 10 kyr, 2 ranks.
+PhotoionMaxSearchRadius 0.003 (3 pc, physical kpc): the 60 Msun star photoionised the whole box with the earlier 50 (50 kpc in a 10 pc
+periodic box), so no cell ran the chemistry and the cooling identity had no evaluation to check; gas beyond 3 pc of both stars stays
+neutral (GKS-TI17, Uli 2026-11-23; a dense column of 27 or 64 n_H was ionised as well, GKS-TI21).
 
 Bars (the checker's, fixed in gizmo.conservation_trace; not set per test):
 - mass and metal ledger: |delta| / value <= 1e-12 at every checkpoint;
@@ -40,12 +43,17 @@ UNIT_E = 1.989e33 * 1e10  # erg per code energy (Msun, km/s)
 
 @pytest.fixture(scope="module")
 def out():
+    return build_and_run("run")
+
+
+def build_and_run(tag, flags=()):
+    """build (with extra Config flags) and run the problem in HERE/<tag>; returns its output directory"""
     if not os.environ.get("SUNDIALS_DIR"):
         pytest.skip("set SUNDIALS_DIR (SGCHEM builds against SUNDIALS 6.x or 7.x)")
     tables = get_stellar_evolution_tables()
     get_cooling_tables(str(HERE))
-    build_gizmo_for_test(NAME)
-    d = HERE / "run"
+    build_gizmo_for_test(NAME, extra_config_flags=flags)
+    d = HERE / tag
     shutil.rmtree(d, ignore_errors=True)
     (d / "output").mkdir(parents=True)
     tab = Tables(tables["StellarTablesFile"])
@@ -83,9 +91,25 @@ def test_traces_close(out):
     assert rep.ok, rep.summary()
 
 
+def test_chemistry_covered(out):
+    """bar: the cooling identity checked RHS evaluations (> 0) and the chemistry solve changed energy (the dense column ran it)"""
+    s = sync_lines(out)[-1]
+    print(f"cooling identity: {s.get('b_info_cool_id_evals', 0):.0f} evaluations; solve {s.get('b_cool_solve', 0):+.4e}")
+    assert s.get("b_info_cool_id_evals", 0) > 0 and s.get("b_cool_solve", 0) != 0
+
+
 def test_sn_and_winds_booked(out):
     s = sync_lines(out)
     assert len(s) >= 2
     e_sn = s[-1]["b_fb_sn"] * UNIT_E
     print(f"{len(s)} syncs; booked SN {e_sn:.6e} erg, winds {s[-1]['b_fb_wind'] * UNIT_E:.3e} erg; last int_res {s[-1]['int_res'] * UNIT_E:+.3e} erg")
     assert abs(e_sn / 1e51 - 1) < 1e-6 and s[-1]["b_fb_wind"] > 0
+
+
+def test_heat_after_chemistry_is_reported():
+    """bar (written before the run): heat added after the chemistry (TEST_COOLING_ADDS_1PCT_HEAT_AFTER_CHEMISTRY, u x 1.01 of every
+    cooled cell) is unbooked, so the exact cooling stage reports it: at least one cooling STAGE finding (the default run has none,
+    test_traces_close). Runs last: its build replaces the default binary (stella_dev 2758c8713)"""
+    rep = check_conservation_traces(str(build_and_run("run_heat_after_chemistry", ("TEST_COOLING_ADDS_1PCT_HEAT_AFTER_CHEMISTRY",))))
+    print(rep.summary())
+    assert any(f["kind"] == "energy_stage" and f["stage"] == "cooling" for f in rep.findings), rep.summary()

@@ -6,7 +6,9 @@
  * the parent cell's kernel radius, widened so it holds twice the mass still missing at the formation density; each
  * later pass widens the last radius by 1.5. A star is done when it holds its drawn mass to within 1%. A star still
  * short after 10 passes is a failed draw: everything granted to it goes back to its donors (exact integer quanta) and
- * the star is removed. No mass is created. The drawn mass is kept in the star record (single_star_record.h). */
+ * the star is removed. No mass is created. The drawn mass is kept in the star record (single_star_record.h). Every cell that gives
+ * mass gets the parent's spawn block and SF cool-down (GALSF_SINGLE_STARS_SF_CRITERION). Stars a parent formed together are set
+ * apart by 0.01 of its kernel radius, keeping their centre of mass and momentum (single_star_birth_offsets.h). */
 #include <mpi.h>
 #include <cstdio>
 #include <cstdlib>
@@ -32,6 +34,8 @@
 #include "single_star_record.h"
 #include "sfr_collect_gas_loop.h"
 #include "single_star_checks.h"
+#include "single_star_birth_offsets.h"
+#include "../declarations/gpu_rng.h"
 
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 
@@ -187,7 +191,7 @@ double single_stars_collect_gas(long long tot_spawned)
             t.passes = pass + 1;
             SscStarIn x; std::memset(&x, 0, sizeof(x));
             for(int k = 0; k < 3; k++) {x.Pos[k] = P[t.i].Pos[k];}
-            x.R = t.R; x.id = P[t.i].ID; x.child = P[t.i].ID_child_number; x.gen = P[t.i].ID_generation; x.task = ThisTask;
+            x.R = t.R; x.id = P[t.i].ID; x.task = ThisTask; x.index = t.i;
             x.q_Z = ssc_pow2_at_least(t.N_drawn * mu) * ldexp(1.0, -100);   /* metal mass <= drawn mass */
             x.q_p = ssc_pow2_at_least(t.N_drawn * mu) * ldexp(1.0, -60);    /* momentum: |v| up to ~2^66 code units */
             list.push_back(t.i); in.push_back(x); which.push_back((int)s);
@@ -229,9 +233,9 @@ double single_stars_collect_gas(long long tot_spawned)
     }
 
     /* failed draws: hand their grants back, exactly, on the donors' ranks */
-    struct ssc_key {MyIDType id, child; int gen;};
+    struct ssc_key {int task, index;}; /* (ID, child, generation) repeats after 31 spawns of one cell; (rank, index) does not */
     std::vector<ssc_key> failed_mine, failed_all;
-    for(ssc_star& t : S) {if(t.active) {failed_mine.push_back({P[t.i].ID, P[t.i].ID_child_number, (int)P[t.i].ID_generation});}}
+    for(ssc_star& t : S) {if(t.active) {failed_mine.push_back({ThisTask, t.i});}}
     int n_failed_mine = (int) failed_mine.size();
     if(any_active) { /* some star is still short after the last pass, on some rank: return the failed grants */
         int nb = n_failed_mine * (int) sizeof(ssc_key); std::vector<int> counts(NTask), displs(NTask); int tot = 0;
@@ -241,7 +245,7 @@ double single_stars_collect_gas(long long tot_spawned)
         MPI_Allgatherv(failed_mine.data(), nb, MPI_BYTE, failed_all.data(), counts.data(), displs.data(), MPI_BYTE, MPI_COMM_WORLD);
         for(const SscGrantRecord& r : records) {
             for(const ssc_key& f : failed_all) {
-                if(r.id == f.id && r.child == f.child && r.gen == f.gen) {ssc_donor[r.j].grant -= r.g; break;}
+                if(r.task == f.task && r.index == f.index) {ssc_donor[r.j].grant -= r.g; break;}
             }
         }
         gpu_particles_arena_invalidate();
@@ -249,11 +253,11 @@ double single_stars_collect_gas(long long tot_spawned)
 
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
     { /* IMFinfo.txt: one row per (star, donor cell) with the mass taken over all passes (failed draws left out), written by rank 0 sorted by star and donor */
-        std::map<std::tuple<unsigned long long, unsigned long long, int, unsigned long long>, long long> taken;
+        std::map<std::tuple<unsigned long long, int, int, unsigned long long>, long long> taken;
         for(const SscGrantRecord& r : records) {
             bool failed = false;
-            for(const ssc_key& f : failed_all) {if(r.id == f.id && r.child == f.child && r.gen == f.gen) {failed = true; break;}}
-            if(!failed) {taken[std::make_tuple((unsigned long long)r.id, (unsigned long long)r.child, r.gen, (unsigned long long)P[r.j].ID)] += r.g;}
+            for(const ssc_key& f : failed_all) {if(r.task == f.task && r.index == f.index) {failed = true; break;}}
+            if(!failed) {taken[std::make_tuple((unsigned long long)r.id, r.task, r.index, (unsigned long long)P[r.j].ID)] += r.g;}
         }
         std::vector<double> mine; for(const auto& kv : taken) {mine.push_back((double)std::get<0>(kv.first)); mine.push_back((double)std::get<3>(kv.first)); mine.push_back((double)kv.second * mu * UNIT_MASS_IN_SOLAR);}
         int nm = (int) mine.size(), nall = 0; std::vector<int> cnt(NTask), dsp(NTask);
@@ -276,6 +280,20 @@ double single_stars_collect_gas(long long tot_spawned)
     }
 #endif
 
+#if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(GALSF_SINGLE_STARS_SF_CRITERION)
+    std::vector<int> net_donors; /* donors that lose mass in this collection */
+    for(int j = 0; j < DMIN(N_gas, ssc_donor_cap); j++) {if(ssc_donor[j].grant > 0 && P[j].Type == 0) {net_donors.push_back(j);}}
+#endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION /* donors cool down like the parent: blocked until the density is recomputed, then a fraction of their own free-fall time */
+    for(int j = 0; j < DMIN(N_gas, ssc_donor_cap); j++) {
+        if(ssc_donor[j].grant <= 0 || P[j].Type != 0) {continue;}
+        CellP[j].SingleStarSpawnBlock = 1;
+        if(All.SFCooldownFreeFallFraction > 0 && CellP[j].Density > 0) {
+            double t_cool = All.SFCooldownFreeFallFraction * sqrt(3. * M_PI / (32. * All.G * CellP[j].Density * All.cf_a3inv));
+            if(t_cool > CellP[j].SingleStarSFCooldown) {CellP[j].SingleStarSFCooldown = t_cool;}
+        }
+    }
+#endif
     /* apply: each donor loses its granted quanta once */
     {
         std::vector<int> list; std::vector<SscStarIn> in;
@@ -357,6 +375,31 @@ double single_stars_collect_gas(long long tot_spawned)
                          t.M_drawn, (double)t.N_got * mu * UNIT_MASS_IN_SOLAR, t.R, (double)t.passes, (double)ok, (double)t.n_split, (double)t.n_remote, t.rho_form};
         rows.insert(rows.end(), row, row + SSC_LOG_COLS);
     }
+#if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(GALSF_SINGLE_STARS_SF_CRITERION)
+    for(int j : net_donors) { /* every donor is blocked and cools down as the parent does */
+        double t_cool = (CellP[j].Density > 0) ? All.SFCooldownFreeFallFraction * sqrt(3. * M_PI / (32. * All.G * CellP[j].Density * All.cf_a3inv)) : 0;
+        SINGLE_STAR_CHECK("donor_cooldown", CellP[j].SingleStarSpawnBlock == 1 && CellP[j].SingleStarSFCooldown >= (1 - 1.0e-12) * t_cool,
+                          "donor ID=%llu block=%d cooldown=%.6e expected=%.6e", (unsigned long long)P[j].ID, (int)CellP[j].SingleStarSpawnBlock, (double)CellP[j].SingleStarSFCooldown, t_cool);
+    }
+    SINGLE_STAR_CHECK_RAN("donor_cooldown", (long)net_donors.size());
+#endif
+    { /* stars a parent formed together: set apart around it, the group's centre of mass and momentum kept (single_star_birth_offsets.h) */
+        static constexpr uint64_t BIRTH_OFFSET_RNG_SALT = gizmo_loop_rng_salt("single_star_birth_offset");
+        std::map<int, std::vector<int>> group; /* parent -> its kept stars */
+        for(const ssc_star& t : S) {if(!t.active) {group[t.parent].push_back(t.i);}}
+        for(const auto& kv : group) {
+            const std::vector<int>& g = kv.second; const int n = (int) g.size();
+            if(n < 2) {continue;}
+            const double h = (P[kv.first].KernelRadius > 0) ? P[kv.first].KernelRadius : All.ForceSoftening[0];
+            std::vector<double> m(n), u(2 * n), d(3 * n);
+            for(int k = 0; k < n; k++) {
+                m[k] = P[g[k]].Mass;
+                for(int c = 0; c < 2; c++) {u[2*k+c] = single_star_random_number(g[k], BIRTH_OFFSET_RNG_SALT, (uint64_t)All.Ti_Current, (uint64_t)c);}
+            }
+            single_star_birth_offsets(n, m.data(), u.data(), h, d.data());
+            for(int k = 0; k < n; k++) {for(int c = 0; c < 3; c++) {P[g[k]].Pos[c] += d[3*k+c];}}
+        }
+    }
     TreeMomentsStaleFlag = 1;
     if(!moved.empty()) {gizmo_motion_bound_raise(moved.data(), (int) moved.size());}
     gpu_particles_arena_invalidate();
@@ -419,7 +462,7 @@ void single_star_attach_to_new_star(int i_star, int i, double M_drawn)
 
 #ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
 /* test only: at the first star-formation step, a star of the given drawn mass at each listed gas cell
-   (parameter TestSingleStarBirths = "ID:M_drawn[Msun],ID:M_drawn,..."); stars_spawned = spawns so far this step;
+   (parameter TestSingleStarBirths = "ID:M_drawn[Msun],ID:M_drawn*count,...", at most 255 characters); stars_spawned = spawns so far this step;
    returns the number spawned here */
 int single_star_test_births(int stars_spawned)
 {
@@ -428,16 +471,22 @@ int single_star_test_births(int stars_spawned)
     done = 1;
     int n = 0;
     const char *s = All.TestSingleStarBirths;
+    if(strlen(s) >= sizeof(All.TestSingleStarBirths) - 1) {endrun(7814);} /* the list filled the parameter: probably cut; use ID:M*count */
     while(*s) {
         unsigned long long id; double m; int used = 0;
         if(sscanf(s, "%llu:%lf%n", &id, &m, &used) != 2) {break;}
-        for(int i = 0; i < N_gas; i++) {
-            if(P[i].Type == 0 && P[i].ID == (MyIDType)id && P[i].ID_child_number == 0) {
-                int i_star = spawn_star_from_gas(i, 0, stars_spawned + n);
-                if(i_star >= 0) {single_star_attach_to_new_star(i_star, i, m); n++;}
+        s += used;
+        int count = 1, used_c = 0; /* "ID:M*count": count stars of drawn mass M at that cell (the parameter holds 255 characters) */
+        if(*s == '*' && sscanf(s + 1, "%d%n", &count, &used_c) == 1) {s += 1 + used_c;}
+        for(int c = 0; c < count; c++) {
+            for(int i = 0; i < N_gas; i++) {
+                if(P[i].Type == 0 && P[i].ID == (MyIDType)id && P[i].ID_child_number == 0) {
+                    int i_star = spawn_star_from_gas(i, 0, stars_spawned + n);
+                    if(i_star >= 0) {single_star_attach_to_new_star(i_star, i, m); n++;}
+                }
             }
         }
-        s += used; if(*s == ',') {s++;}
+        if(*s == ',') {s++;}
     }
     return n;
 }

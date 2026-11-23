@@ -14,6 +14,7 @@
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
 #include "../galaxy_sf/single_star_record.h"
+#include "../galaxy_sf/single_star_identity.h"
 #include "../declarations/gpu_rng.h"
 #include "ghost_writeback.h"   /* ghost_get_num_local/num_ghosts */
 #include "../core/wakeup_sidecar.h"
@@ -800,10 +801,7 @@ static int make_sn_ejecta_cell(int i, int n_particles_split)
     long j = NumPart + n_particles_split;
     double m_ratio = in.Msne / P[tmpl].Mass;
     P[j] = P[tmpl]; CellP[j] = CellP[tmpl];
-    P[j].ID_child_number = P[tmpl].ID_child_number + (MyIDType)(1 << ((int)P[tmpl].ID_generation)); /* as a split */
-    P[tmpl].ID_generation = P[tmpl].ID_generation + 1;
-    if(P[tmpl].ID_generation > 30) {P[tmpl].ID_generation = 0;}
-    P[j].ID_generation = P[tmpl].ID_generation;
+    single_star_identity_from_parent(P[tmpl], P[j]); /* as a split */
     static constexpr uint64_t EJECTA_CELL_DIRECTION_RNG_SALT = gizmo_loop_rng_salt("ejecta_cell_direction");
     double phi = 2.0*M_PI*single_star_random_number(i, EJECTA_CELL_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 0), cth = 2.0*(single_star_random_number(i, EJECTA_CELL_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 1)-0.5), sth = sqrt(1.-cth*cth), dr = 0.05 * P[tmpl].KernelRadius;
     Vec3<double> n_dir; n_dir[0] = sth*cos(phi); n_dir[1] = sth*sin(phi); n_dir[2] = cth;
@@ -929,10 +927,7 @@ int split_particle_i(int i, int n_particles_split, double r_near)
 
     // need to assign new particle a unique ID:
     // new method: preserve the original "ID" field, but assign a unique -child- ID: this is unique up to ~32 *GENERATIONS* of repeated splitting!
-    P[j].ID_child_number = P[i].ID_child_number + (MyIDType)(1 << ((int)P[i].ID_generation)); // particle 'i' retains its child number; this ensures uniqueness
-    P[i].ID_generation = P[i].ID_generation + 1;
-    if(P[i].ID_generation > 30) {P[i].ID_generation=0;} // roll over at 32 generations (unlikely to ever reach this)
-    P[j].ID_generation = P[i].ID_generation; // ok, all set!
+    single_star_identity_from_parent(P[i], P[j]); // particle 'i' retains its child number; this ensures uniqueness (galaxy_sf/single_star_identity.h)
 
     /* assign masses to both particles (so they sum correctly), but first record some numbers in case we need them below */
     double mass_before_split = 0, density_before_split = 0, volume_before_split = 0; mass_before_split = P[i].Mass; // save for use below
@@ -1213,7 +1208,7 @@ int merge_particles_ij(int i, int j, double target_share)
     if(P[i].ID == All.SpawnedWindCellID) {swap_ids = 0;} /* don't copy an agn wind id */
     if(P[j].ID == All.SpawnedWindCellID) {P[j].ID = All.SpawnedWindCellID + 1;} /* offset this to avoid checks through code */
 #endif
-    if(swap_ids) {P[j].ID=P[i].ID; P[j].ID_child_number=P[i].ID_child_number; P[j].ID_generation=P[i].ID_generation;} /* swap the ids so save the desired set */
+    single_star_identity_merge(P[i], P[j], swap_ids); /* swap the ids so save the desired set */
     domain_merge_work_history(i, j);
     
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES

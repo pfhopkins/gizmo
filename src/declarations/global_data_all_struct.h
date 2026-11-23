@@ -886,7 +886,7 @@ struct global_data_all_processes
   double Sink_jet_precess_period;
 #endif
 #ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
-    char TestSingleStarBirths[256]; /*!< test only: "ID:M_drawn,..." single stars formed at these gas cells at the first star-formation step */
+    char TestSingleStarBirths[256]; /*!< test only: "ID:M_drawn[*count],..." (at most 255 characters) single stars formed at these gas cells at the first star-formation step */
 #endif
 #ifdef TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE
     double TestStarInitAgeYr; /*!< test only: a single star is born with this age [yr] */

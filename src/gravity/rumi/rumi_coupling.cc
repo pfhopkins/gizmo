@@ -22,6 +22,7 @@
 #include "../../galaxy_sf/stellar_evolution_tables.h" /* star radii */
 #endif
 #include "rumi_lib.h"
+#include "../../galaxy_sf/single_star_identity.h" /* star identity beyond (ID, child, generation) */
 
 /*! \file rumi_coupling.cc
  *  \brief Type-4 stars integrated by the collisional N-body library RUMI++ (STARS_INTEGRATED_BY_RUMI), as a BRIDGE:
@@ -48,14 +49,16 @@ static_assert(RUMI_LIB_API_VERSION == RUMI_COUPLING_API_VERSION, "rumi_lib.h is 
 
 namespace {
 
-/* a star's identity: stars spawned from one gas cell share ID and differ in child number / generation */
+/* a star's identity: stars spawned from one gas cell share ID and differ in child number / generation, and past a roll-over of
+   the generation counter in the roll-over count and lineage key (galaxy_sf/single_star_identity.h; 0 without a roll-over) */
 struct StarKey {
-    unsigned long long id, child, gen;
-    bool operator<(const StarKey &o) const {return id != o.id ? id < o.id : (child != o.child ? child < o.child : gen < o.gen);}
-    bool operator==(const StarKey &o) const {return id == o.id && child == o.child && gen == o.gen;}
+    unsigned long long id, child, gen, extra;
+    bool operator<(const StarKey &o) const {return id != o.id ? id < o.id : (child != o.child ? child < o.child : (gen != o.gen ? gen < o.gen : extra < o.extra));}
+    bool operator==(const StarKey &o) const {return id == o.id && child == o.child && gen == o.gen && extra == o.extra;}
 };
-struct StarKeyHash {size_t operator()(const StarKey &k) const {return std::hash<unsigned long long>()(k.id * 0x9E3779B97F4A7C15ULL ^ (k.child << 20) ^ k.gen);}};
-inline StarKey star_key(int i) {return StarKey{(unsigned long long)P[i].ID, (unsigned long long)P[i].ID_child_number, (unsigned long long)P[i].ID_generation};}
+struct StarKeyHash {size_t operator()(const StarKey &k) const {return std::hash<unsigned long long>()(k.id * 0x9E3779B97F4A7C15ULL ^ (k.child << 20) ^ k.gen ^ k.extra);}};
+#define RUMI_STATE_LAYOUT_TAG (0x52554D49534B0000ULL + (uint64_t)sizeof(StarKey)) /* restart state: magic plus the star-key size */
+inline StarKey star_key(int i) {return StarKey{(unsigned long long)P[i].ID, (unsigned long long)P[i].ID_child_number, (unsigned long long)P[i].ID_generation, (unsigned long long)single_star_identity_extra(P[i])};}
 struct RumiStar { StarKey ID; int task, index, kw; integertime ti_step; double m, pos[3], vel[3], r_rsun; };
 struct RumiBack { StarKey ID; int index, has_mid; double m, pos[3], vel[3], mpos[3], mvel[3]; };
 struct Plan { int rebuild, n_new, do_mass, split, nsl; double dt, G, dt1; };   /* task 0 -> RUMI++ ranks, per step */
@@ -496,7 +499,8 @@ void rumi_save_state(void)
 {
     if(!rumi_rank) return;
     std::vector<char> b;
-    if(ThisTask == 0) {put_vec(b, slot_id); put_vec(b, last_m); put_vec(b, last_x); put_vec(b, last_v); put_vec(b, slot_m_r); put(b, n_steps); put(b, n_merge); put(b, n_split); put(b, E0_led); put(b, have_E0);}
+    const uint64_t layout = RUMI_STATE_LAYOUT_TAG; /* refuse state written with another star-key layout */
+    if(ThisTask == 0) {put(b, layout); put_vec(b, slot_id); put_vec(b, last_m); put_vec(b, last_x); put_vec(b, last_v); put_vec(b, slot_m_r); put(b, n_steps); put(b, n_merge); put(b, n_split); put(b, E0_led); put(b, have_E0);}
     char dir[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(dir, sizeof(dir), "%s/restartfiles/rumi", All.OutputDir);
     if(rumi_lib::save_state(dir, b) != 0) {printf("RUMI++: save_state failed\n"); endrun(9308);}
 }
@@ -508,7 +512,9 @@ void rumi_load_state(void)
     char dir[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(dir, sizeof(dir), "%s/restartfiles/rumi", All.OutputDir);
     if(rumi_lib::load_state(dir, b) != 0) {printf("RUMI++: load_state failed (%s)\n", dir); endrun(9309);}
     if(ThisTask == 0 && !b.empty()) {
-        size_t o = 0;
+        size_t o = 0; uint64_t layout = 0;
+        if(b.size() >= sizeof(layout)) {get(b, o, layout);}
+        if(layout != RUMI_STATE_LAYOUT_TAG) {printf("RUMI++: restart state in %s has another layout (star key of %d bytes expected); restart from a snapshot\n", dir, (int)sizeof(StarKey)); endrun(9310);}
         get_vec(b, o, slot_id); get_vec(b, o, last_m); get_vec(b, o, last_x); get_vec(b, o, last_v); get_vec(b, o, slot_m_r); get(b, o, n_steps); get(b, o, n_merge); get(b, o, n_split); get(b, o, E0_led); get(b, o, have_E0);
         slot_of.clear(); for(size_t k = 0; k < slot_id.size(); k++) {slot_of[slot_id[k]] = (int)k;}
         printf("RUMI++: restarted from %s, %zu slots, step %lld\n", dir, slot_id.size(), n_steps);
