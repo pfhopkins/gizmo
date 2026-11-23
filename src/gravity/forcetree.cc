@@ -21,6 +21,7 @@
 #include "let_data.h"   /* LET wire format + per-rank payload structs */
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
 #include "../mesh/nlr_radius_policy.h" /* SSOT helper for force_hmax_per_type_particle_radius */
+#include "../mesh/source_reach_map.h"  /* symmetric export routing, built when its measured-cost gate wants it */
 #include "../core/timestep_functions.h" /* Hermite source eligibility + prediction, inline (a cross-TU call here costs ~16% of the walk) */
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
@@ -400,9 +401,74 @@ static const double LET_FOREIGN_PAD_FRACTION = 0.5;
 #define FORCE_TREEBUILD_HARD_FAILURE  (-3)
 
 
+/* How long the tree being built is expected to stand, as an INTEGER time interval.
+ *
+ * A reused tree's nodes widen as they drift, so anything decided against a node at build time and
+ * relied on later needs to know how far the node may move and grow before the next rebuild.  Two
+ * readers plan to this horizon: the LET pack (let_pack.cc), which prunes the exported import
+ * against the size a node may reach, and the source-reach map (mesh/source_reach_map.cc), which
+ * lists which other ranks' leaves a leaf's members may reach.  Neither relies on it being right:
+ * the LET's incomplete-import repair and the map's own validity test cover a tree that outlives it.
+ *
+ * The rebuild cadence supplies it: walking the timebins from the smallest up, the first whose
+ * cumulative occupancy crosses the update-frequency threshold is the bin that will trigger the
+ * next rebuild, and its timestep, times LET_TREE_LIFETIME_PAD_FACTOR, is how long this tree is
+ * expected to last.  Collective, because the occupancies are global: computed in every build that builds a LET; without
+ * one, at most once per tree, when the source-reach map first needs it (its drift factor then counts from that time). */
+static integertime g_tree_lifetime_dti = 0;
+static int g_tree_lifetime_valid = 0;     /* computed for the current tree */
+static double g_tree_lifetime_drift = 0;   /* undilated drift factor over that horizon, from now */
+
+void tree_lifetime_compute(void)
+{
+    g_tree_lifetime_valid = 1;
+    long long local_bin_count[TIMEBINS], global_bin_count[TIMEBINS];
+    for(int bin = 0; bin < TIMEBINS; bin++) {local_bin_count[bin] = (long long) TimeBinCount[bin];}
+    MPI_Allreduce(local_bin_count, global_bin_count, TIMEBINS, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+
+    double rebuild_threshold = All.TreeRebuild_ActiveFraction * (double) All.TotNumPart;
+    long long cumulative = 0, occupied_total = 0;
+    int trigger_bin = -1, highest_occupied = -1;
+    for(int bin = 0; bin < TIMEBINS; bin++)
+    {
+        occupied_total += global_bin_count[bin];
+        if(global_bin_count[bin] > 0) {highest_occupied = bin;}
+        cumulative += global_bin_count[bin];
+        if(trigger_bin < 0 && (double) cumulative > rebuild_threshold) {trigger_bin = bin;}
+    }
+    /* The builds that run before any timestep has been assigned see empty bins.  Nothing has been
+     * drifted at that point and the tree is fresh, so the honest horizon is zero -- and reaching for
+     * All.HighestOccupiedTimeBin here would read a value this run has not written yet (on a restart,
+     * the PREVIOUS run's, which pads maximally for no reason). */
+    g_tree_lifetime_drift = 0;
+    if(occupied_total <= 0) {g_tree_lifetime_dti = 0; return;}
+    /* Nothing crosses the threshold: the system steps as a whole, so the coarsest occupied bin is
+     * the interval that matters.  Taken from the counts just reduced, not from global state. */
+    if(trigger_bin < 0) {trigger_bin = highest_occupied;}
+
+    /* The horizon is only ever used as an offset from the current time, so it must not run off the
+     * end of the integer timeline: get_drift_factor maps time1 into the drift table and clamps the
+     * index only after forming it.  The clamp is tested before the multiplication so that a large
+     * pad factor cannot overflow the integer time; the product is formed unsigned and only once it
+     * is known not to exceed the remaining interval. */
+    integertime remaining = TIMEBASE - All.Ti_Current;
+    if(remaining < 0) {remaining = 0;}
+    const unsigned long long pad_factor = (LET_TREE_LIFETIME_PAD_FACTOR);
+    const unsigned long long trigger_interval = (unsigned long long) GET_INTEGERTIME_FROM_TIMEBIN(trigger_bin);
+    if(pad_factor > 0 && trigger_interval > (unsigned long long) remaining / pad_factor) {g_tree_lifetime_dti = remaining;}
+    else {g_tree_lifetime_dti = (integertime) (pad_factor * trigger_interval);}
+    if(g_tree_lifetime_dti > 0) {g_tree_lifetime_drift = get_drift_factor_undilated(All.Ti_Current, All.Ti_Current + g_tree_lifetime_dti);}
+}
+
+void tree_lifetime_ensure(void) {if(!g_tree_lifetime_valid) {tree_lifetime_compute();}}
+integertime tree_lifetime_dti(void) {return g_tree_lifetime_dti;}
+double tree_lifetime_drift(void) {return g_tree_lifetime_drift;}
+
+
 int force_treebuild(int npart, struct unbind_data *mp)
 {
     int flag;
+    source_reach_map_invalidate();   /* until rebuilt below, symmetric exports use the node bound */
     /* Adaptive LET foreign-arena retry: force_treebuild owns the rebuild loop (same
      * idiom as the TreeAllocFactor-overflow retry below). On a retryable LET overflow
      * we grow the adaptive floor and rebuild the whole tree from scratch -- the foreign
@@ -616,6 +682,10 @@ let_build_attempt:
      * gpu_moment_refresh above) and does not depend on foreign topleaves; so
      * the two MPI exchanges can overlap.  Latency drops from sum to max of
      * the two collectives' wall-times. */
+    g_tree_lifetime_valid = 0;   /* a new tree: its horizon is computed by its first user (one collective) */
+#ifdef TREE_IMPORTS_FOREIGN_SUBTREES
+    tree_lifetime_compute();   /* the LET plans for it in every build; the source-reach map reuses it */
+#endif
     force_exchange_pseudodata_issue();
     /* LET exchange returns a typed status + (on overflow) the foreign-node capacity the
      * receiver needed. The pseudodata Iallgatherv posted just above must still be
@@ -717,6 +787,7 @@ let_build_attempt:
         let_finalize_unredirected_foreign_topleaves();
 #endif
         if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
+        source_reach_map_build(!not_whole_tree_any);   /* needs every rank's top-leaf bounds, just exchanged */
         if(building_gravity_tree && !not_whole_tree_any && foreign_needed > remembered_foreign_slots)
         {
             /* An import that outgrew the reservation raises it by a quarter at least, so a demand creeping upward is grown
@@ -2563,7 +2634,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                             fl_soft = (double) ForeignLeafSoft[fs];
                         }
                     }
-                    if(fl_tag != rec[irec].leaf_tag || grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode) != rec[irec].kind) {endrun(90001053);}
+                    if(fl_tag != rec[irec].leaf_tag || grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode, nop->u.d.bitflags) != rec[irec].kind) {endrun(90001053);}
                     mass = nop->u.d.mass;
 
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
@@ -2951,7 +3022,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
              * whether this node's children were shipped; both the single-particle branch just
              * below and the acceptance predicate further down consult this one answer, so no
              * path can follow nextnode on a node whose children the sender never sent. */
-            grav_node_kind_t node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+            grav_node_kind_t node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode, nop->u.d.bitflags);
             const int node_is_terminal = grav_node_is_terminal(node_kind);
             const int node_sibling = nop->u.d.sibling;
             for(int w = 0; w < mask_words; w++) {accept_mask[w] = 0; opened_mask[w] = 0;}
@@ -3356,7 +3427,7 @@ int force_treeevaluate_ewald_correction(int target, int *exportflag, int *export
                         int fs = no - (All.TreeNodeIndexBase + MaxNodes);
                         if(fs >= 0 && fs < AllocatedForeignNodes) {fl_tag = ForeignLeafTag[fs];}
                     }
-                    node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+                    node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode, nop->u.d.bitflags);
                 }
 
                 //if(nop->N_part <= 1) /* open cell */
@@ -3572,7 +3643,7 @@ int subfind_force_treeevaluate_potential(int target)
                     int fs = no - (All.TreeNodeIndexBase + MaxNodes);
                     if(fs >= 0 && fs < AllocatedForeignNodes) {fl_tag = ForeignLeafTag[fs];}
                 }
-                node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+                node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode, nop->u.d.bitflags);
             }
             if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
             {
@@ -4158,6 +4229,7 @@ void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *
  */
 void force_treefree(void)
 {
+    source_reach_map_invalidate();   /* the map describes the tree being freed */
     if(tree_allocated_flag)
     {
         /* SharedSpace (UVM) frees for GPU-addressable tree
@@ -4503,6 +4575,8 @@ void force_refresh_node_moments(void)
             if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(90000088);}
             if(gpu_topnode_moment_resum() != 0)      {endrun(90000089);}
         }
+        source_reach_map_build(!pseudo_status);   /* collective: members' radii and types may have changed (the lifetime margin
+                                                     is the last build's, counted from now: its validity test keeps it exact) */
         PRINT_STATUS(" ..tree node moments refreshed (GPU).");
         return;
     }

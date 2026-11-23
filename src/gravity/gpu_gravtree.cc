@@ -628,11 +628,7 @@ gpu_grav_open_inputs_init(const gpu_grav_walk_ctx_t &ctx, int target,
     open.alive = 1;
     const int ptype = open.ptype;
 
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
     double soft = gpu_force_softening_kernel_radius(P_dev, target);
-#else
-    double soft = All.ForceSoftening[ptype];
-#endif
     /* zeta is set unconditionally (matches CPU walk); passed to the shared pair kernel,
      * consumed there only under #if AGS */
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
@@ -922,7 +918,7 @@ gpu_grav_node_prelude(const gpu_grav_walk_ctx_t &ctx, int no, gpu_grav_node_prel
 
     /* Classify BEFORE anything that could descend, so the wire tag is the one authority on
      * whether this node's children were shipped (mirrors forcetree.cc). */
-    nd.node_kind = grav_classify_node(nd.in_foreign_n, nd.fl_tag, nd.nextnode);
+    nd.node_kind = grav_classify_node(nd.in_foreign_n, nd.fl_tag, nd.nextnode, tree_soa->bitflags[idx]);
 
     /* single-particle node -> open to its leaf for an exact force.  Only a local node, or a
      * foreign node shipped WITH its children, has anything below it: a foreign node reaching
@@ -3352,7 +3348,7 @@ gpu_ewald_walk_one(int target,
                     int fs = idx - maxNodes;
                     if(fs >= 0 && fs < tree_soa->foreign_leaf_cap) {fl_tag = tree_soa->foreign_leaf_tag[fs];}
                 }
-                node_kind = grav_classify_node(in_foreign_n, fl_tag, tree_soa->nextnode[idx]);
+                node_kind = grav_classify_node(in_foreign_n, fl_tag, tree_soa->nextnode[idx], tree_soa->bitflags[idx]);
             }
             /* skip single-particle node (open it to its daughter chain).  A terminal foreign node
              * holds one particle whose multipole is that particle exactly, and its nextnode is the

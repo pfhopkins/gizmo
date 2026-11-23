@@ -1322,8 +1322,27 @@ int pmforce_nonperiodic(int grnr)
 }
 
 
+/* The unit a transpose trades in: one row of GRID/2 values.  Counting rows rather than bytes keeps every count far inside MPI's int
+   even where the byte count would not be (e.g. PMGRID 1024 on two ranks).  Made once per transpose and reused for every peer. */
+static MPI_Datatype pm_nonperiodic_transpose_row_type(void)
+{
+  MPI_Datatype row;
+  MPI_Type_contiguous((int) ((GRID / 2) * sizeof(fftw_real)), MPI_BYTE, &row);
+  MPI_Type_commit(&row);
+  return row;
+}
+
+/* One transpose trade with task: nslab_x x slabs_per_task[task] rows each way, from and to the block that starts at task's first slab. */
+static void pm_nonperiodic_transpose_trade(fftw_real *send, fftw_real *recv, int task, MPI_Datatype row)
+{
+  const ptrdiff_t offset = (ptrdiff_t) (GRID / 2) * first_slab_of_task[task] * nslab_x;
+  const int rows = (int) (nslab_x * slabs_per_task[task]);
+  MPI_Sendrecv(send + offset, rows, row, task, TAG_KEY, recv + offset, rows, row, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+}
+
 void pm_nonperiodic_transposeA(fftw_real * field, fftw_real * scratch)
 {
+  if(nslab_x == 0) {return;}   /* no slab here: every partner skips this rank too, and there is nothing to pack or unpack */
   int x, y, z, task;
 
   for(task = 0; task < NTask; task++)
@@ -1336,12 +1355,13 @@ void pm_nonperiodic_transposeA(fftw_real * field, fftw_real * scratch)
 	      field[GRID2 * (GRID * x + y) + z];
 	  }
 
+  MPI_Datatype row = pm_nonperiodic_transpose_row_type();
   int ngrp;
   for(ngrp = 0; ngrp < (1 << PTask); ngrp++)
     {
       task = ThisTask ^ ngrp;
 
-      if(task < NTask)
+      if(task < NTask && (task == ThisTask || slabs_per_task[task] > 0))   /* a pair trades (slabs here) x (slabs there) rows each way, so nothing with a rank holding no slab; that rank skips the trade too */
 	{
 	  /* Self-send via MPI_Sendrecv would overflow int count for PMGRID >= 512
 	   * single-rank (GRID/2 * nslab_x * slabs_per_task * sizeof(fftw_real) >= 2^31).
@@ -1351,28 +1371,26 @@ void pm_nonperiodic_transposeA(fftw_real * field, fftw_real * scratch)
 		   scratch + (size_t)(GRID / 2) * first_slab_of_task[task] * nslab_x,
 		   (size_t)(GRID / 2) * nslab_x * slabs_per_task[task] * sizeof(fftw_real));
 	  } else {
-	    MPI_Sendrecv(scratch + GRID / 2 * first_slab_of_task[task] * nslab_x,
-		         GRID / 2 * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		         MPI_BYTE, task, TAG_KEY,
-		         field + GRID / 2 * first_slab_of_task[task] * nslab_x,
-		         GRID / 2 * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		         MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	    pm_nonperiodic_transpose_trade(scratch, field, task, row);
 	  }
 	}
     }
+  MPI_Type_free(&row);
 }
 
 
 
 void pm_nonperiodic_transposeB(fftw_real * field, fftw_real * scratch)
 {
+  if(nslab_x == 0) {return;}   /* no slab here: every partner skips this rank too, and there is nothing to pack or unpack */
   int x, y, z, task;
+  MPI_Datatype row = pm_nonperiodic_transpose_row_type();
   int ngrp;
   for(ngrp = 0; ngrp < (1 << PTask); ngrp++)
     {
       task = ThisTask ^ ngrp;
 
-      if(task < NTask)
+      if(task < NTask && (task == ThisTask || slabs_per_task[task] > 0))   /* a pair trades (slabs here) x (slabs there) rows each way, so nothing with a rank holding no slab; that rank skips the trade too */
 	{
 	  /* Self-send: memcpy avoids int-count overflow for PMGRID >= 512 single-rank. */
 	  if(task == ThisTask) {
@@ -1380,15 +1398,11 @@ void pm_nonperiodic_transposeB(fftw_real * field, fftw_real * scratch)
 		   field   + (size_t)(GRID / 2) * first_slab_of_task[task] * nslab_x,
 		   (size_t)(GRID / 2) * nslab_x * slabs_per_task[task] * sizeof(fftw_real));
 	  } else {
-	    MPI_Sendrecv(field + GRID / 2 * first_slab_of_task[task] * nslab_x,
-		         GRID / 2 * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		         MPI_BYTE, task, TAG_KEY,
-		         scratch + GRID / 2 * first_slab_of_task[task] * nslab_x,
-		         GRID / 2 * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		         MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	    pm_nonperiodic_transpose_trade(field, scratch, task, row);
 	  }
 	}
     }
+  MPI_Type_free(&row);
 
   for(task = 0; task < NTask; task++)
     for(x = 0; x < nslab_x; x++)
@@ -1404,6 +1418,7 @@ void pm_nonperiodic_transposeB(fftw_real * field, fftw_real * scratch)
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
 void pm_nonperiodic_transposeAz(fftw_real * field, fftw_real * scratch)
 {
+  if(nslab_x == 0) {return;}   /* no slab here: every partner skips this rank too, and there is nothing to pack or unpack */
   int x, y, z, task;
 
   for(task = 0; task < NTask; task++)
@@ -1417,12 +1432,13 @@ void pm_nonperiodic_transposeAz(fftw_real * field, fftw_real * scratch)
 	      field[GRID2 * (GRID * x + y) + z];
 	  }
 
+  MPI_Datatype row = pm_nonperiodic_transpose_row_type();
   int ngrp;
   for(ngrp = 0; ngrp < (1 << PTask); ngrp++)
     {
       task = ThisTask ^ ngrp;
 
-      if(task < NTask)
+      if(task < NTask && (task == ThisTask || slabs_per_task[task] > 0))   /* a pair trades (slabs here) x (slabs there) rows each way, so nothing with a rank holding no slab; that rank skips the trade too */
 	{
 	  /* Self-send via MPI_Sendrecv would overflow int count for PMGRID >= 512
 	   * single-rank (GRID/2 * nslab_x * slabs_per_task * sizeof(fftw_real) >= 2^31).
@@ -1432,28 +1448,26 @@ void pm_nonperiodic_transposeAz(fftw_real * field, fftw_real * scratch)
 		   scratch + (size_t)(GRID / 2) * first_slab_of_task[task] * nslab_x,
 		   (size_t)(GRID / 2) * nslab_x * slabs_per_task[task] * sizeof(fftw_real));
 	  } else {
-	    MPI_Sendrecv(scratch + GRID / 2 * first_slab_of_task[task] * nslab_x,
-		         GRID / 2 * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		         MPI_BYTE, task, TAG_KEY,
-		         field + GRID / 2 * first_slab_of_task[task] * nslab_x,
-		         GRID / 2 * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		         MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	    pm_nonperiodic_transpose_trade(scratch, field, task, row);
 	  }
 	}
     }
+  MPI_Type_free(&row);
 }
 
 
 
 void pm_nonperiodic_transposeBz(fftw_real * field, fftw_real * scratch)
 {
+  if(nslab_x == 0) {return;}   /* no slab here: every partner skips this rank too, and there is nothing to pack or unpack */
   int x, y, z, task;
+  MPI_Datatype row = pm_nonperiodic_transpose_row_type();
   int ngrp;
   for(ngrp = 0; ngrp < (1 << PTask); ngrp++)
     {
       task = ThisTask ^ ngrp;
 
-      if(task < NTask)
+      if(task < NTask && (task == ThisTask || slabs_per_task[task] > 0))   /* a pair trades (slabs here) x (slabs there) rows each way, so nothing with a rank holding no slab; that rank skips the trade too */
 	{
 	  /* Self-send: memcpy avoids int-count overflow for PMGRID >= 512 single-rank. */
 	  if(task == ThisTask) {
@@ -1461,15 +1475,11 @@ void pm_nonperiodic_transposeBz(fftw_real * field, fftw_real * scratch)
 		   field   + (size_t)(GRID / 2) * first_slab_of_task[task] * nslab_x,
 		   (size_t)(GRID / 2) * nslab_x * slabs_per_task[task] * sizeof(fftw_real));
 	  } else {
-	    MPI_Sendrecv(field + GRID / 2 * first_slab_of_task[task] * nslab_x,
-		         GRID / 2 * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		         MPI_BYTE, task, TAG_KEY,
-		         scratch + GRID / 2 * first_slab_of_task[task] * nslab_x,
-		         GRID / 2 * nslab_x * slabs_per_task[task] * sizeof(fftw_real),
-		         MPI_BYTE, task, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	    pm_nonperiodic_transpose_trade(field, scratch, task, row);
 	  }
 	}
     }
+  MPI_Type_free(&row);
 
   for(task = 0; task < NTask; task++)
     for(x = 0; x < nslab_x; x++)
