@@ -13,10 +13,10 @@
 #endif
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 #include "single_star_imf.h"
+#include "single_star_sf_event.h"
+#endif
 #ifdef GALSF_SINGLE_STARS_STOCHASTIC_IMF
 #include "single_star_record.h"
-#endif
-#include "single_star_sf_event.h"
 #endif
 #if defined(GALSF_SINGLE_STARS_SF_CRITERION) && defined(GALSF_SFR_CRITERION)
 #error "GALSF_SINGLE_STARS_SF_CRITERION replaces GALSF_SFR_CRITERION"
