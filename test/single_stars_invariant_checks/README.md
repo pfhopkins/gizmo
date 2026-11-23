@@ -37,7 +37,8 @@ Checks (bars written before the first run):
    `fire_slot_invariant_cell` stays silent (it tests only cells that held the invariant before), and the run reaches its end.
 3. `test_identities_unique_past_roll_over_and_restart`: 40 stars from one cell in one call (the parent's generation counter
    rolls over after 31): every star's (ID, child, generation, `ParticleIDWraps`, `ParticleIDLineage`) in the snapshot is
-   distinct; a snapshot restart from it carries every star's identity unchanged.
+   distinct; a snapshot restart from it (stars set apart by small offsets, GKS-TI18) brings every born star back, and every
+   star present in both snapshots keeps its identity.
 
 Reference implementation: stella_dev `STELLA_SELFCHECK` (`galaxy_sf/resolvedism_selfcheck.h`); the same tags, log prefix
 `STELLA_SELFCHECK`.
