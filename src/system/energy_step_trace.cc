@@ -16,6 +16,9 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
+#include "../gravity/pm_highres_region.h"
+#endif
 
 #ifdef OUTPUT_ENERGY_STEP_TRACE
 
@@ -106,6 +109,19 @@ void estep_ledger_hook(int row, double x)
 }
 #endif
 
+#ifdef PMGRID
+/* a particle's own long-range mesh potential in P.Potential (with G): -G m / (sqrt(pi) r_s), the r -> 0 limit of the Gaussian split's
+   -G m erf(r / 2 r_s) / r; energy sums remove it from 1/2 sum m Phi (stella_dev 5e3384335) */
+static double estep_pm_self_potential(int i)
+{
+    double rs = All.Asmth[0];
+#ifdef PM_PLACEHIGHRESREGION
+    Vec3<double> pos = P[i].Pos; if(pmforce_is_particle_high_res(P[i].Type, pos)) {rs = All.Asmth[1];}
+#endif
+    return -All.G * P[i].Mass / (sqrt(M_PI) * rs);
+}
+#endif
+
 /* Neumaier-compensated local sums of the components (and of 1/2 m Phi when pot != NULL) */
 static void estep_local_sums(double e[EC_N], double *pot)
 {
@@ -117,6 +133,9 @@ static void estep_local_sums(double e[EC_N], double *pot)
         add(EC_KIN, 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv);
 #ifdef EVALPOTENTIAL
         if(pot) {add(EC_N, 0.5 * P[i].Mass * P[i].Potential);}
+#ifdef PMGRID
+        if(pot) {add(EC_N, -0.5 * P[i].Mass * estep_pm_self_potential(i));} /* no self-energy */
+#endif
 #endif
 #ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
         if(pot) {add(EC_N, P[i].Mass * analytic_external_potential(i));} /* external field: full weight */
