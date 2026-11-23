@@ -388,12 +388,19 @@ void source_reach_map_build_if_due(void)
     g_tree_ti = -1;   /* tried once for this tree: a failed build is not repeated before the next one */
 }
 
-void source_reach_map_gate_fill(long long *v, double t_discovery)
+double source_reach_map_cold_budget(void)
+{
+    if(g_valid || g_tree_ti != All.Ti_Current || g_E_nogain >= 0) {return -1.0;}
+    return (g_b_local >= 0) ? g_b_local : g_tb_local;   /* what the map would cost: its last build, or the tree build it is part of */
+}
+
+void source_reach_map_gate_fill(long long *v, double t_discovery, int stopped)
 {
     v[0] = -vote_us(t_discovery);                            /* -> slowest rank */
     v[1] = vote_us(t_discovery);                             /* -> fastest rank */
     v[2] = -vote_us(g_tb_local);                             /* -> slowest tree build */
     v[3] = (g_b_local < 0) ? 1 : -vote_us(g_b_local);        /* -> slowest map build; 1 = never built */
+    v[4] = stopped ? -1 : 0;                                 /* -> some rank stopped its cold receiver walk */
 }
 
 void source_reach_map_gate_apply(const long long *a, int symmetric)
@@ -414,6 +421,10 @@ void source_reach_map_gate_apply(const long long *a, int symmetric)
             if(ThisTask == 0) {printf("source-reach map: tree rebuild requested (map decay %g s > tree + map build %g s)\n", g_E_decay, rebuild_cost); fflush(stdout);}
             g_E_decay = 0;
         }
+    }
+    if(a[SOURCE_REACH_GATE_STOPPED] < 0 && !g_wanted && !g_map_this_tree) {
+        g_wanted = 1;
+        if(ThisTask == 0) {printf("source-reach map: on (cold receiver walk stopped after the map's cost)\n"); fflush(stdout);}
     }
     if(g_wanted || g_map_this_tree) {return;}
     /* the map's measured cost per tree, or before it was ever built the tree build it is part of */
