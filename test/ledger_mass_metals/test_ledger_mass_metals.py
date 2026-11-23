@@ -86,7 +86,7 @@ def test_ledger_mass_metals(ledger):
     resZ = {
         "stars": b["MZ_stars_Msun"] - m0["stars"][1] - (b["MZ_stars_formed_Msun"] - b["MZ_stars_lost_Msun"]),
         "gas": b["MZ_gas_Msun"] - m0["gas"][1] - (b["MZ_fb_to_gas_Msun"] - b["MZ_stars_formed_Msun"]),
-        "ejecta": b["MZ_fb_to_gas_Msun"] - b["MZ_single_star_ejecta_Msun"],
+        "ejecta": b["MZ_fb_to_gas_Msun"] - b["MZ_single_star_ejecta_Msun"] - b.get("MZ_ia_conversion_Msun", 0),  # Type Ia M_Ch matter: in-place conversion
     }
     print("formed", b["M_stars_formed_Msun"][-1], "ejecta", b["M_single_star_ejecta_Msun"][-1], "remnant reset",
           b["M_remnant_reset_Msun"][-1], "MZ ejecta", b["MZ_single_star_ejecta_Msun"][-1])
