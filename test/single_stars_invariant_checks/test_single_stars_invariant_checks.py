@@ -127,6 +127,9 @@ def test_identities_unique_past_roll_over_and_restart(tables):
         shutil.rmtree(d2)
     shutil.copytree(d, d2, symlinks=True, ignore=shutil.ignore_patterns("snapshot_*.hdf5", "*.out", "*.txt"))
     shutil.copy(snap, d2 / "output" / "snapshot_000.hdf5")
+    with h5py.File(d2 / "output" / "snapshot_000.hdf5", "r+") as F:  # stars born together still share their position (GKS-TI18): set them
+        x = F["PartType4"]["Coordinates"]                             # apart by distinct small offsets; identities are what is checked
+        x[...] = x[()] + 1.0e-3 * np.arange(len(x))[:, None] * np.array([1.0, 0.7, 0.3])
     new = {"TimeMax": 1.1e-4, "TestSingleStarBirths": "none"}  # a little further, no births
     p = (d2 / f"{TEST_NAME}.params").read_text()
     p = "\n".join([l for l in p.splitlines() if l.split()[:1] not in ([k] for k in new)] + [f"{k:27s} {v}" for k, v in new.items()]) + "\n"
