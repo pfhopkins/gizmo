@@ -868,20 +868,25 @@ log). The lowest occupied timebins hold gas cells only; the lowest gas bin sits 
 set the minimum step is not identified (no per-cell limiter output): open.
 
 
-## D-61. (2026-11-22/23) dust temperature: bounded solve with the same tight stop, both backends (STL-164)
+## D-61. (2026-11-22/23) dust temperature: Newton slope, tight stop, bisection backstop, both backends (STL-164, STL-294)
 
-calc_dust_temp (cool_util.F) / cxx_calc_dust_temp: Newton budget 20000 -> 100; a Newton iterate is accepted when
-its relative step is < 1e-12 (was 1e-2); otherwise bisection of the balance F(tdust) = isrf - dust_cool + gas_dust
-+ H2 heat (monotone falling) on [tmin, 1500 K] to a bracket of 1e-14 relative (<= 60 halvings); F(tmin) <= 0
-returns tmin, F(1500) >= 0 returns 1500. Fortran no longer ABORT(10)s; C++ still sets dust_iter_failed (never read).
-Why: at nH 1e6, G0 0, Z 3 gas falls below ~4 K inside one solve (MinGasTemp acts only after it) and the Newton
-oscillates: Fortran aborted, C++ spent 20000 iterations per RHS call (stall). The 1 % step test left tdust up to
-0.6 % off the root depending on the start, and C++/DVODE gas T 1.0-1.8 % apart. A 1e-8 stop shared the root but
-at production rtol left both solvers up to 70 % / 11 % off their rtol-1e-8 result on net 17 (RHS noise at the
-Jacobian increments, inferred); 1e-12 / 1e-14 keeps every traced solve within 0.5 %. Decided by Uli 2026-11-23
-(option B: corner rows may change). Measured at 3d20f2201 (dust63.233263): phase F C++/DVODE T <= 9.4e-4, root
-spread 1.1e-12, <= 4.8e5 dust iterations per solve; golden phase C: every former failure runs, most rows change
-slightly (every Newton result is refined), C++/DVODE agreement unchanged.
+calc_dust_temp (cool_util.F) / cxx_calc_dust_temp, three changes:
+1. Slope (STL-294): the gas-grain term of the balance is cl14 (T - Td) yn^2 dust_to_gas_ratio, its Newton slope
+   lacked dust_to_gas_ratio (exact only at ratio 1; ratio in solar units, capped 10). Newton converged linearly at
+   rate ~1 - ratio and oscillated above ratio 2. Now -cl14 yn^2 dust_to_gas_ratio, both branches, both backends.
+2. Stop: a Newton iterate is accepted at a relative step < 1e-12 (was 1e-2). This is a physics change in dense cold
+   dusty gas, where the gas temperature follows tdust: the 1 % step left tdust up to 0.6 % off the root depending on
+   the start, and C++/DVODE gas T 1.0-1.8 % apart. A 1e-8 stop (bisection noise at the Jacobian increments,
+   inferred) left both solvers up to 70 % / 11 % off their rtol-1e-8 result on net 17.
+3. Budget and backstop: Newton budget 20000 -> 100, then bisection of the balance (monotone falling) on
+   [tmin, 1500 K] to a bracket of 1e-14 relative (<= 60 halvings); F(tmin) <= 0 returns tmin, F(1500) >= 0 returns
+   1500. Fortran no longer ABORT(10)s; C++ counts bisections per rank (SGCHEM cooling-step line).
+Why: at nH 1e6, G0 0, Z 3 gas falls below ~4 K inside one solve (MinGasTemp acts only after it); the oscillating
+Newton aborted in Fortran and stalled C++ (20000 iterations per RHS call). Decided by Uli 2026-11-23 (option B,
+the tight stop, the slope fix). Measured at 362712ba9 (dust64.233287): Newton converges in <= 18 iterations at
+Z 0.1-3, nH 1e4-1e6, cold gas, from tdust = T_gas and 10 K, no bisection in either backend; phase F C++/DVODE T
+<= 2.9e-5 (net 5) / 9.7e-4 (net 17), <= 9768 dust iterations per solve; every former golden phase C failure runs;
+C++/DVODE agreement over phase C unchanged; r26 cloud nets 5 / 17: 0 bisections.
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
