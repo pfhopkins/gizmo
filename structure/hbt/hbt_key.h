@@ -4,8 +4,8 @@
    counter and is not part of it). A split or spawn gives the newborn child = c + 2^g, where c < 2^g is the parent's
    child number and g its generation before the increment (mesh/merge_split.cc, galaxy_sf/sfr_eff.cc), so clearing
    the newborn's highest child bit gives the parent's key. Not covered: SINK_WIND_SPAWN cells (sinks/sink_swallow_and_kick.cc
-   gives them a shared ID and child = c + generation), generation rollover after 31 splits, spawns from a star (born with
-   generation 0); FOF_UNIQUE_KEY_CHECK detects the resulting duplicates.
+   gives them a shared ID and child = c + generation), generation rollover after 31 splits;
+   FOF_UNIQUE_KEY_CHECK detects the resulting duplicates.
    Device-safe: plain functions over flat arrays, no STL, no recursion, no MPI; loops have independent iterations
    (Kokkos::parallel_for / parallel_reduce). */
 #include <stdint.h>

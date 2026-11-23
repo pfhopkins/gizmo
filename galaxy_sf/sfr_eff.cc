@@ -784,7 +784,7 @@ void star_formation_parent_routine(void)
                             P[ns].ID_child_number = P[i].ID_child_number + (MyIDType)(1 << ((int)P[i].ID_generation));
                             P[i].ID_generation = P[i].ID_generation + 1;
                             if(P[i].ID_generation > 30) {P[i].ID_generation = 0;}
-                            P[ns].ID_generation = 0;
+                            P[ns].ID_generation = P[i].ID_generation; /* parent's incremented generation, keeps keys unique (STL-148) */
                             P[ns].Type = 4;
 #ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
                             P[ns].StarModel = STAR_MODEL_STELLA;
