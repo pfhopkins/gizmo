@@ -1905,6 +1905,40 @@ static void *nlr_shared_alloc_bytes(size_t bytes, const char *label)
     return gizmo_gpu_alloc_shared(bytes, label);
 }
 
+/* Per-call staging buffers the device writes first.  A fresh managed (SharedSpace) allocation costs its first device
+ * touch -- page faults under XNACK, measured ~1.2 ms per MB on MI300A, while a second touch runs at device-memory speed -- so the
+ * largest per-call buffers can instead be kept across calls in fixed slots: a slot grows to the largest size asked of
+ * it and is released when the run ends (nlr_staging_release, from gizmo_kokkos_finalize).  Memory: the peak size of
+ * each slot, which every call reaches anyway, kept for the run.  A slot serves one buffer of one call at a time; the
+ * runner's loops do not nest. */
+enum NlrStagingSlot {NLR_STAGE_MODED_IDX = 0, NLR_STAGE_MODED_SLOT, NLR_STAGE_MODED_RADII, NLR_STAGE_MODED_ACCUM,
+                     NLR_STAGE_MODEA_ACCUM, NLR_STAGE_SLOTS};
+#ifdef GPU_SPEEDUP_PERSISTENT_STAGING
+static void  *g_nlr_stage_ptr[NLR_STAGE_SLOTS];
+static size_t g_nlr_stage_bytes[NLR_STAGE_SLOTS];
+static void *nlr_stage_alloc(int slot, size_t bytes, const char *label)
+{
+    if(bytes == 0) {return NULL;}
+    if(g_nlr_stage_ptr[slot] && g_nlr_stage_bytes[slot] >= bytes) {return g_nlr_stage_ptr[slot];}
+    if(g_nlr_stage_ptr[slot]) {Kokkos::fence(); Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_nlr_stage_ptr[slot]);}
+    g_nlr_stage_ptr[slot] = gizmo_gpu_alloc_shared(bytes, label);
+    g_nlr_stage_bytes[slot] = g_nlr_stage_ptr[slot] ? bytes : 0;
+    return g_nlr_stage_ptr[slot];
+}
+static void nlr_stage_free(int /*slot*/, void * /*p*/) {}   /* kept for the next call */
+void nlr_staging_release(void)
+{
+    for(int s = 0; s < NLR_STAGE_SLOTS; s++) {
+        if(g_nlr_stage_ptr[s]) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_nlr_stage_ptr[s]);}
+        g_nlr_stage_ptr[s] = NULL; g_nlr_stage_bytes[s] = 0;
+    }
+}
+#else
+static void *nlr_stage_alloc(int /*slot*/, size_t bytes, const char *label) {return nlr_shared_alloc_bytes(bytes, label);}
+static void nlr_stage_free(int /*slot*/, void *p) {if(p) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}}
+void nlr_staging_release(void) {}
+#endif
+
 /* One wording for every runner staging buffer that could not be had. The stop is
  * drained at the next phase boundary; until then the loop simply leaves its actives
  * untouched. Nothing here returns early past a collective — the ghost-writeback
@@ -2420,9 +2454,9 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
      * request drains collectively at the caller's next phase poll (same as the
      * external-CSR contract-violation path above). */
     ActiveData *d_actives = (ActiveData *) nlr_active_stage_alloc_bytes((size_t)K * sizeof(ActiveData), "modea_active_data");
-    AccumData  *d_accums  = (AccumData  *) nlr_shared_alloc_bytes((size_t)K * sizeof(AccumData),  "modea_accum_data");
+    AccumData  *d_accums  = (AccumData  *) nlr_stage_alloc(NLR_STAGE_MODEA_ACCUM, (size_t)K * sizeof(AccumData),  "modea_accum_data");
     if(d_actives == NULL || d_accums == NULL) {
-        if(d_accums)  { Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums); }
+        nlr_stage_free(NLR_STAGE_MODEA_ACCUM, d_accums);
         nlr_active_stage_free(d_actives);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
         if(!gnl_borrowed) {gpu_ngb_list_free(&gnl);}
@@ -2455,7 +2489,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
      * obtained and return — this function issues no MPI, so the request drains
      * at the caller's next phase poll. The guard releases the hook's buffers. */
     if(ctx.populate_failed) {
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums);
+        nlr_stage_free(NLR_STAGE_MODEA_ACCUM, d_accums);
         nlr_active_stage_free(d_actives);   /* device space, not shared -- see nlr_active_stage_alloc_bytes */
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
         if(!gnl_borrowed) {gpu_ngb_list_free(&gnl);}
@@ -2552,7 +2586,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
      * the next loop; on the external-CSR path the free releases only what we
      * staged (gnl offsets/neighbors/d_active), the caller owning its host CSR
      * and any device list it lent. */
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_accums);
+    nlr_stage_free(NLR_STAGE_MODEA_ACCUM, d_accums);
     nlr_active_stage_free(d_actives);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
     if(!gnl_borrowed) {gpu_ngb_list_free(&gnl);}
@@ -6608,17 +6642,17 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
     using AccumData = typename Spec::AccumData;
     if(n <= 0) {return true;}
 
-    int       *idx_d     = (int *)    nlr_shared_alloc_bytes((size_t)n * sizeof(int),    "moded_idx");
-    int       *slot_d    = (int *)    nlr_shared_alloc_bytes((size_t)n * sizeof(int),    "moded_slot");
-    double    *rad_d     = (double *) nlr_shared_alloc_bytes((size_t)n * sizeof(double), "moded_radii");
-    AccumData *acc_d     = (AccumData *) nlr_shared_alloc_bytes((size_t)n * sizeof(AccumData), "moded_accum");
+    int       *idx_d     = (int *)    nlr_stage_alloc(NLR_STAGE_MODED_IDX, (size_t)n * sizeof(int),    "moded_idx");
+    int       *slot_d    = (int *)    nlr_stage_alloc(NLR_STAGE_MODED_SLOT, (size_t)n * sizeof(int),    "moded_slot");
+    double    *rad_d     = (double *) nlr_stage_alloc(NLR_STAGE_MODED_RADII, (size_t)n * sizeof(double), "moded_radii");
+    AccumData *acc_d     = (AccumData *) nlr_stage_alloc(NLR_STAGE_MODED_ACCUM, (size_t)n * sizeof(AccumData), "moded_accum");
     int       *anomaly_d = (int *)    nlr_shared_alloc_bytes(sizeof(int), "moded_anomaly");
 
     if(!idx_d || !slot_d || !rad_d || !acc_d || !anomaly_d) {
-        if(idx_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);}
-        if(slot_d)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(slot_d);}
-        if(rad_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);}
-        if(acc_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);}
+        nlr_stage_free(NLR_STAGE_MODED_IDX, idx_d);
+        nlr_stage_free(NLR_STAGE_MODED_SLOT, slot_d);
+        nlr_stage_free(NLR_STAGE_MODED_RADII, rad_d);
+        nlr_stage_free(NLR_STAGE_MODED_ACCUM, acc_d);
         if(anomaly_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);}
         return false;
     }
@@ -6635,10 +6669,10 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
     const int anomaly_seen = *anomaly_d;
     for(int k = 0; k < n; k++) {accums_out[k] = acc_d[k];}
 
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(slot_d);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);
+    nlr_stage_free(NLR_STAGE_MODED_IDX, idx_d);
+    nlr_stage_free(NLR_STAGE_MODED_SLOT, slot_d);
+    nlr_stage_free(NLR_STAGE_MODED_RADII, rad_d);
+    nlr_stage_free(NLR_STAGE_MODED_ACCUM, acc_d);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);
 
     /* The traversal reports the one state the host walk treats as fatal: an
