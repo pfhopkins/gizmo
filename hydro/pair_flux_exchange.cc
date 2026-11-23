@@ -33,7 +33,8 @@ void test_powell_work_add(Vec3<double> dmom, double degy) {for(int k = 0; k < 3;
 static double TestInjected[8] = {0}; /* mass, momentum, thermal + kinetic + magnetic energy, B*V added by the hook (physical; B*V code) */
 /* test only, at the given step, after the closing kick, gas within 0.2 box of the centre:
    mode 1: inactive cells gain half their mass at fixed velocity and u (a feedback deposit) and are woken;
-   mode 3: every cell gets 2.5 times its mass and is cleared for splitting (cells then split; the split wakes the daughters);
+   mode 3: every cell gets 3.5 times its mass, above the default split threshold 3.01 (2.01 with GALSF) x the largest IC mass
+           (cells then split; the split wakes the daughters);
    mode 4: every cell keeps 0.7 of its mass, B, BPred and DtB, as an IMF donor does; inactive ones are woken.
    Additions (negative: removals) are booked so the test can subtract them. */
 void test_pairflux_add_mass_and_wake(void)
@@ -47,7 +48,7 @@ void test_pairflux_add_mass_and_wake(void)
         if(mode == 1 && active) {continue;}
         Vec3<double> dx = P[i].Pos - Vec3<double>{0.5*All.BoxSize, 0.5*All.BoxSize, 0.5*All.BoxSize}; nearest_xyz(dx);
         if(dx.norm() > 0.2 * All.BoxSize) {continue;}
-        double fac = (mode == 1) ? 1.5 : ((mode == 3) ? 2.5 : 0.7);
+        double fac = (mode == 1) ? 1.5 : ((mode == 3) ? 3.5 : 0.7);
         double m = P[i].Mass, dM = (fac - 1.) * m; Vec3<double> v = P[i].Vel / a;
         double eb0 = 0;
 #ifdef MAGNETIC
@@ -63,7 +64,6 @@ void test_pairflux_add_mass_and_wake(void)
         for(int k = 0; k < 3; k++) {TestInjected[5+k] += CellP[i].B[k] - B0[k];}
 #endif
         P[i].Mass += dM; CellP[i].Mass += dM;
-        if(mode == 3) {P[i].Time_Of_Last_MergeSplit = -1.e30;} /* past GIZMO's split timing gate */
         double eb1 = 0;
 #ifdef MAGNETIC
         eb1 = 0.5 * CellP[i].B.norm_sq() * (CellP[i].Density / P[i].Mass) / a;
