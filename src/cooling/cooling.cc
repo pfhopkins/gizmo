@@ -357,6 +357,12 @@ static inline void finish_cooling_host_deferred_dust_updates(int i, double dtime
 /* this is the 'parent' loop to do the cell cooling+chemistry. this is now openmp-parallelized, since the semi-implicit iteration can be a non-negligible cost.
    Uses a gather-dispatch-scatter pattern with compact arrays so that the cooling chain operates on contiguous memory
    indexed 0..N_active-1, enabling future GPU offloading. */
+#ifndef GPU_COOLING_IN_PLACE_BATCH_CELLS
+#define GPU_COOLING_IN_PLACE_BATCH_CELLS 32768   /* cells per device cooling launch when the device reads the particle storage in place; a machine block of the Makefile may raise it */
+#endif
+#if GPU_COOLING_IN_PLACE_BATCH_CELLS <= 0
+#error "GPU_COOLING_IN_PLACE_BATCH_CELLS must be a positive number of cells"
+#endif
 void cooling_parent_routine(void)
 {
     PRINT_STATUS("Cooling and Chemistry update");
@@ -384,11 +390,13 @@ void cooling_parent_routine(void)
     int N_active = (int) cool_indices.size();
     if(N_active == 0) {return;}
 
-    /* Steps 2-4: gather / dispatch / scatter, in batches of GPU_COOL_BATCH_SIZE cells.
+    /* Steps 2-4: gather / dispatch / scatter, in batches.
      * Staged (the device cannot read the particle storage in place): each batch is copied whole into host and device
-     * buffers, so the batch bounds that memory.
+     * buffers, so the batch bounds that memory -- GPU_COOL_BATCH_SIZE cells, on every machine.
      * In place: nothing is copied; the batch bounds only the length of one launch and the per-slot timestep array (8 bytes
-     * a cell).
+     * a cell). A launch lasts as long as its slowest cell (cells take different numbers of solver iterations), so a large
+     * device runs few long launches faster than many short ones: GPU_COOLING_IN_PLACE_BATCH_CELLS, 32768 unless the
+     * machine's Makefile block raises it.
      * Neither bound controls the device stack reservation, which follows the per-thread limit set at start-up (on GB200,
      * measured: reserved once per context when the limit is set, before any launch, whatever the launch size).
      */
@@ -396,14 +404,14 @@ void cooling_parent_routine(void)
   if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
     GIZMO_GPU_ENSURE_ALL_FRESH(); /* device cooling reads All mirrors; tiny-N CPU path reads host All directly */
     static const int GPU_COOL_BATCH_SIZE = 32768;
-
-    int batch_cap = (N_active < GPU_COOL_BATCH_SIZE) ? N_active : GPU_COOL_BATCH_SIZE;
+    const int in_place = gizmo_particle_storage_device_reads_in_place();
+    const int cool_batch = in_place ? GPU_COOLING_IN_PLACE_BATCH_CELLS : GPU_COOL_BATCH_SIZE;
+    int batch_cap = (N_active < cool_batch) ? N_active : cool_batch;
     /* Where the device reads the particle storage in place (coherent host-device memory, or storage placed on the device),
        the kernels work on P and CellP directly through the list of active cells: no gather, no copies, no scatter -- the
        whole structs (3080 bytes a cell) never move, only what the cooling solve touches is read. Otherwise whole-struct
        staging, shared with the other batched device loops: plain host buffers filled in parallel, one explicit copy each
        way, and device memory the kernel actually reads. */
-    const int in_place = gizmo_particle_storage_device_reads_in_place();
     struct ParticleStagingBatch batch = {};
     int staged = in_place ? 1 : particle_staging_acquire(&batch, batch_cap);
     int *cool_map = NULL;   /* in place: the active cells, readable by the device */
@@ -432,10 +440,10 @@ void cooling_parent_routine(void)
         N_active = 0;
     }
 
-    for(int batch_start = 0; batch_start < N_active; batch_start += GPU_COOL_BATCH_SIZE)
+    for(int batch_start = 0; batch_start < N_active; batch_start += cool_batch)
     {
         int batch_n = N_active - batch_start;
-        if(batch_n > GPU_COOL_BATCH_SIZE) {batch_n = GPU_COOL_BATCH_SIZE;}
+        if(batch_n > cool_batch) {batch_n = cool_batch;}
 
         /* Gather batch (staged), or point the kernels at the storage itself (in place) */
         int count = batch_n;

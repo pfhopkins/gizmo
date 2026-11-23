@@ -716,6 +716,11 @@ HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
 HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
 MPICHLIB = #
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
+## device cooling reads the particle storage in place here (coherent memory): 1048576 cells per launch instead of the generic
+## 32768 cuts cooling by ~37% on a 36M-cell zoom with one or two ranks per GPU (measured); a Config that sets it keeps its own value
+ifeq (,$(findstring GPU_COOLING_IN_PLACE_BATCH_CELLS,$(CONFIGVARS)))
+OPT     += -DGPU_COOLING_IN_PLACE_BATCH_CELLS=1048576
+endif
 endif
 
 
