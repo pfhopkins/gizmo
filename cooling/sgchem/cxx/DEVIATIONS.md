@@ -867,6 +867,17 @@ log). The lowest occupied timebins hold gas cells only; the lowest gas bin sits 
 (D-60 alone) bins lower than before during t 0.0035-0.0055, as the HII regions grow. Which cells and which limiter
 set the minimum step is not identified (no per-cell limiter output): open.
 
+
+## D-61. (2026-11-22) dust temperature: bounded solve, both backends (STL-164; status: bars not all met)
+
+calc_dust_temp (cool_util.F) / cxx_calc_dust_temp: Newton budget 20000 -> 100, then bisection of the
+balance F(tdust) = isrf - dust_cool + gas_dust + H2 heat (monotone falling) on [tmin, 1500 K], <= 60 halvings
+to 1e-6 relative; F(tmin) <= 0 returns tmin, F(1500) >= 0 returns 1500. Fortran no longer ABORT(10)s; C++ still
+sets dust_iter_failed (never read). Reason: at nH 1e6, G0 0, Z 3 the gas falls below ~4 K inside one solve
+(MinGasTemp is applied only after the solve); Newton then oscillates: Fortran aborted, C++ spent 20000
+iterations per RHS call (stall). Measured (dust61.232693.out): no abort or stall, all 60 golden phase C
+failures run; the 1 % C++/DVODE T bar is missed in 3/8 of 50 phase F cases (nets 5/17, 1.0-1.8 %), and
+Newton calls that converged after 101-10833 iterations (all in this corner) now take the bisection result.
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1
