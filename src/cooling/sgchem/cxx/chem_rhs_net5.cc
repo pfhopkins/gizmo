@@ -134,10 +134,10 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double cr11 = T.crtab[10] * c.cosmic_ray_ion_rate;
 
     // --- protons (.F:276-281) ---
-    ydot[ihp] = (ch11 * abe  * abHI
+    ydot[ihp] = (ch11 * abe  * abHI_ph_rate     // over-filled H stays restoring (D-30, D-58)
               -  ch13 * abhp * abe
               -  h_gr * abhp * 1.0) * yn
-              +  cr1  * abHI
+              +  cr1  * abHI_ph_rate
               +  cr10 * abh2
               +  ph38 * abHI_ph_rate;
 

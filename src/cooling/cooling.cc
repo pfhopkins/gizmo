@@ -606,6 +606,18 @@ void cooling_parent_routine(void)
 #endif
     }
   } /* end CPU/GPU path selection */
+#ifdef SGCHEM
+    { /* on this rank (no collective): D-59 solver failures retried / finished via TNOCHEM, D-61 dust-temperature bisections */
+        void chem_cxx_failure_counts(long *retried, long *tnochem_finished, long *dust_bisections);
+        static long last_r = 0, last_f = 0, last_d = 0; long r = 0, f = 0, d = 0;
+        chem_cxx_failure_counts(&r, &f, &d);
+        if(r != last_r || f != last_f || d != last_d) {
+            printf("SGCHEM: task %d: %ld solver failures retried, %ld finished via TNOCHEM, %ld dust temperatures by bisection this step (cumulative %ld, %ld, %ld)\n",
+                ThisTask, r - last_r, f - last_f, d - last_d, r, f, d);
+            last_r = r; last_f = f; last_d = d;
+        }
+    }
+#endif
 #ifdef SGCHEM_PRINT_STEP_COOLING_DIAGNOSTICS
     { /* this rank's cells only, no communication: energy the update removed, running sum, temperature and density ranges */
         static double dE_cum = 0;
