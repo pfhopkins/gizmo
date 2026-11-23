@@ -103,6 +103,9 @@
                 #pragma omp atomic
                 CellP[j].Dyield_pending[k_species] -= cmag;
 #else
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                if(k_species < NUM_METAL_SPECIES) {cmag_slotbuf[k_species] = cmag; continue;} /* closed and applied after the loop */
+#endif
                 /* the limiters above bound the exchange over the pair step dt_hydrostep: each side applies the share for its own step */
                 out.Dyield[k_species] += FluxCorrectionFactor_to_i * cmag * (dt_hydrostep_i / dt_hydrostep);
                 if(j_is_active_for_fluxes) {CellP[j].Dyield[k_species] -= FluxCorrectionFactor_to_j * cmag * (dt_hydrostep_j / dt_hydrostep);}
@@ -113,12 +116,14 @@
         /* ---- Closure corrections (2026-07-04), RESOLVEDISM 28-slot layout only
          * ([0]=Ztot, [1]=H, [2]=He, [3..27]=metals; ΣMet[1..27]=1 convention):
          *   (I2) slot0 flux := Σ metal-slot fluxes  → Z0 ≡ Σmetals preserved
-         *   (I1) residual of element-slot fluxes absorbed into H (the ~0.7
-         *        reservoir; residual is O(1e-6) of the fluxes) → Σ fluxes = 0
+         *   (I1) residual of element-slot fluxes absorbed into H with
+         *        TURB_DIFF_METALS_EXACT_CONSERVATION (opt-in); otherwise shared over the
+         *        slots in proportion to |flux| (STL-277) → Σ fluxes = 0
          *        → per-cell ΣX = 1 preserved through the unpack.
          * Both ride the same antisymmetric (half-exchange) scatter, so pairwise and
          * global per-element conservation remain bit-exact. */
         {
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
             int kk; double sum_metal = 0, resid = 0;
             for(kk = 3; kk < NUM_METAL_SPECIES; kk++) {sum_metal += cmag_slotbuf[kk];}
             cmag_slotbuf[0] = sum_metal;
@@ -131,6 +136,22 @@
                     CellP[j].Dyield_pending[kk] -= cmag_slotbuf[kk];
                 }
             }
+#else
+            /* slots 1..27 sum to 0: the residual is shared in proportion to each slot's |flux| (a slot without flux, e.g. H of an
+             * H-free cell, takes none, so no slot gives more than its limiters allow); slot 0 = sum of the metal slots. Each side
+             * applies the share for its own step, as for the other species. */
+            int kk; double resid = 0, sabs = 0, sum_metal = 0;
+            for(kk = 1; kk < NUM_METAL_SPECIES; kk++) {resid += cmag_slotbuf[kk]; sabs += fabs(cmag_slotbuf[kk]);}
+            if(sabs > 0) {for(kk = 1; kk < NUM_METAL_SPECIES; kk++) {cmag_slotbuf[kk] -= resid * fabs(cmag_slotbuf[kk]) / sabs;}}
+            for(kk = 3; kk < NUM_METAL_SPECIES; kk++) {sum_metal += cmag_slotbuf[kk];}
+            cmag_slotbuf[0] = sum_metal;
+            for(kk = 0; kk < NUM_METAL_SPECIES; kk++) {
+                if(cmag_slotbuf[kk] != 0) {
+                    out.Dyield[kk] += FluxCorrectionFactor_to_i * cmag_slotbuf[kk] * (dt_hydrostep_i / dt_hydrostep);
+                    if(j_is_active_for_fluxes) {CellP[j].Dyield[kk] -= FluxCorrectionFactor_to_j * cmag_slotbuf[kk] * (dt_hydrostep_j / dt_hydrostep);}
+                }
+            }
+#endif
         }
 #endif
     }
