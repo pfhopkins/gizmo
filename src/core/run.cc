@@ -661,13 +661,6 @@ void run(void)
             ESTEP_END(ESTEP_FB_MECH);
             LEDGER_STEP_BREAKDOWN("post_feedback");
             gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); cpu_charge(CPU_SNIIHEATING, measure_time());
-#ifdef GALSF_FB_HYDRO_RECOMPUTE_AFTER_FEEDBACK
-            if(MechFBAnyCellReceived) { /* refresh densities, gradients and forces against the state after the deposit */
-                MechFBAnyCellReceived = 0;
-                if(ThisTask == 0) {printf("HYDRO_RECOMPUTE_AFTER_FEEDBACK: repeating the hydro pass after a deposit\n");}
-                HydroRecomputeAfterFeedback = 1; compute_hydro_densities_and_forces(); HydroRecomputeAfterFeedback = 0;
-            }
-#endif
         }
 #ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
         if(All.TotN_gas > 0) {resolved_ism_fb_after_closing_kick();} /* the rest of the feedback, then the hydro pass again if a deposit asks */
