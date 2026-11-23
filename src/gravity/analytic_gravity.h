@@ -33,6 +33,9 @@ void GravAccel_Harmonic1D(void);
 #ifdef TEST_GRAVITY_STATIC_PLUMMER
 void GravAccel_TestStaticPlummer(void);
 #endif
+#ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
+void GravAccel_HuTallbox(void);
+#endif
 
 /* The analytic terms go onto an acceleration this gravity call has just rebuilt. One it kept (a walk skipped under
    ADAPTIVE_TREEFORCE_UPDATE, or a non-Hermite element in the Hermite re-evaluation) still carries them from its last
@@ -93,6 +96,9 @@ void add_analytic_gravitational_forces()
 #endif
 #ifdef GRAVITY_ANALYTIC_HARMONIC
     GravAccel_Harmonic1D();               // 1D harmonic-oscillator confining potential (analytic CBE hot-equilibrium test)
+#endif
+#ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
+    GravAccel_HuTallbox();                // Hu+21 stellar disk + vertical NFW at R0 for the stratified-ISM tall box
 #endif
 }
 
@@ -277,6 +283,44 @@ void GravAccel_TestStaticPlummer()
         P[i].GravAccel += dp * (-All.G * M / f);
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
         for(int k=0;k<3;k++) {P[i].tidal_tensorps[k][k] -= All.G * M / f; for(int j=k;j<3;j++) {P[i].tidal_tensorps[k][j] += 3 * All.G * M * dp[k]*dp[j] / f2;}}
+#endif
+    }
+}
+#endif
+
+#ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
+/* Hu, Sternberg & van Dishoeck 2021 (arXiv:2103.03889) fixed vertical potential at R0, added to self-gravity; z from the box midplane, non-comoving.
+ *   disk: Phi = 2 pi G Sigma_* H_* ln cosh(z/H_*),  a_z = -2 pi G Sigma_* tanh(z/H_*),  T_zz = -2 pi G Sigma_* / (H_* cosh^2(z/H_*))
+ *   NFW:  Phi = -4 pi G rho_s r_s^3 [ln(1+x)/r - ln(1+R0/r_s)/R0], r = sqrt(z^2+R0^2), x = r/r_s, a_z = -G M(<r) z/r^3 */
+void hu_tallbox_field(double zc, double *az, double *tzz, double *phi)
+{
+    const double pc = 1. / UNIT_LENGTH_IN_PC, msun = 1. / UNIT_MASS_IN_SOLAR;
+    const double Sigma_star = 40. * msun / (pc * pc), z_star = 250. * pc; /* 40 Msun/pc^2, H_* = 250 pc */
+    const double rho_s = 9.5e-3 * msun / (pc * pc * pc), r_s = 17.e3 * pc, R0 = 8.e3 * pc; /* NFW rho_s, r_s; solar radius */
+    const double two_piG_Sig = 2. * M_PI * All.G * Sigma_star, fourpiG_rhos_rs3 = 4. * M_PI * All.G * rho_s * r_s * r_s * r_s;
+    double ch = cosh(zc / z_star);
+    double a_disk = -two_piG_Sig * tanh(zc / z_star), t_disk = -two_piG_Sig / (z_star * ch * ch), p_disk = two_piG_Sig * z_star * log(ch);
+    double r = sqrt(zc*zc + R0*R0), x = r / r_s, r3 = r*r*r;
+    double GM = fourpiG_rhos_rs3 * (log(1. + x) - x / (1. + x)), dGM = fourpiG_rhos_rs3 * x / ((1. + x) * (1. + x) * r_s);
+    double a_dm = -GM * zc / r3, t_dm = -(dGM * zc * zc / (r*r3) + GM / r3 - 3. * GM * zc * zc / (r3*r*r));
+    double p_dm = -fourpiG_rhos_rs3 * (log(1. + x) / r - log(1. + R0 / r_s) / R0);
+    *az = a_disk + a_dm; *tzz = t_disk + t_dm; *phi = p_disk + p_dm;
+}
+/* external potential of particle i (Phi(midplane) = 0), for E_pot at full weight */
+double analytic_external_potential(int i)
+{
+    double az, tzz, phi; hu_tallbox_field(P[i].Pos[2] - boxHalf_Z, &az, &tzz, &phi);
+    return phi;
+}
+void GravAccel_HuTallbox()
+{
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++)
+    {
+        int i = ActiveParticleList[ii]; if(!analytic_gravity_adds_to(i, ii)) {continue;}
+        double az, tzz, phi; hu_tallbox_field(P[i].Pos[2] - boxHalf_Z, &az, &tzz, &phi);
+        P[i].GravAccel[2] += az;
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+        P[i].tidal_tensorps[2][2] += tzz;
 #endif
     }
 }

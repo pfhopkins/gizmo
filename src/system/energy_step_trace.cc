@@ -118,6 +118,9 @@ static void estep_local_sums(double e[EC_N], double *pot)
 #ifdef EVALPOTENTIAL
         if(pot) {add(EC_N, 0.5 * P[i].Mass * P[i].Potential);}
 #endif
+#ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
+        if(pot) {add(EC_N, P[i].Mass * analytic_external_potential(i));} /* external field: full weight */
+#endif
         if(P[i].Type != 0) {continue;}
         add(EC_TH, P[i].Mass * CellP[i].InternalEnergy);
         add(EC_MAG, estep_cell_mag_energy(i));

@@ -2017,6 +2017,15 @@
 #endif
 #endif // BOX_SHEARING
 
+#ifdef GALSF_RESOLVEDISM_TALLBOX
+#error "GALSF_RESOLVEDISM_TALLBOX (stella_dev) is GRAVITY_ANALYTIC_TALLBOX_HU21 here"
+#endif
+#ifdef GRAVITY_ANALYTIC_TALLBOX_HU21 /* Hu+21 vertical potential: physical-coordinate patch, z from the box midplane */
+#if !defined(BOX_PERIODIC) || (!defined(BOX_OUTFLOW_Z) && !defined(BOX_REFLECT_Z))
+#error "GRAVITY_ANALYTIC_TALLBOX_HU21 needs a tall box: BOX_PERIODIC with BOX_OUTFLOW_Z or BOX_REFLECT_Z"
+#endif
+#endif
+
 /* GRAVITY_PERIODIC_XY_IMAGES: self-gravity periodic in x and y by explicit image sums, open in z (tall boxes). No Ewald and no PM, so
  * the cubic-box solvers are switched off; the tree wraps separations in x and y only (z is non-periodic) and adds the images itself. */
 #ifdef GRAVITY_PERIODIC_XY_IMAGES
