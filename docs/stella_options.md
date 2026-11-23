@@ -213,13 +213,6 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
   changes in the converted part. At 0.1 Msun cells the kernel holds a few Msun, so up to ~25 % of the kernel gas becomes
   Ia matter. The rate normalisation is unchanged, so Ia iron per formed mass is rate x table yield. In the Stella x FIRE-3
   coupled mode the conversion acts on every FIRE slot, tracer slots included: the converted gas keeps no tracer.
-- **Metal diffusion.** Stella builds use the default TURB_DIFF_METALS exchange (each cell applies its own step's share,
-  as upstream); TURB_DIFF_METALS_EXACT_CONSERVATION is no longer switched on for Stella and stays opt-in. With individual
-  timesteps the element and metal ledgers therefore close only to the integration order of the exchange (exact at equal
-  timesteps). Each pair's 27 element-slot fluxes are closed before they are applied: their residual is shared in proportion
-  to each slot's flux (a slot a cell does not hold takes none) and slot 0 is the sum of the metal slots, so every cell keeps
-  sum X = 1 and Z = sum of its metals. Restart files from builds with the forced flag carry an extra per-cell buffer and
-  cannot be read.
 - **Mass trace.** mass_balance_steps.txt counts mass leaving through an outflow boundary in M_bary (also in non-Stella
   builds), and mass_balance_elements.txt closes every element; MbaryOutflow is not restarted (the trace re-baselines after a
   restart).

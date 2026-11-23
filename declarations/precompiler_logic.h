@@ -2068,6 +2068,9 @@
 #define KETJU_SINKS /* Type-5 sinks (STARFORGE stars or BHs) carry KETJU spin and PN class */
 #endif
 
+#if defined(TURB_DIFF_METALS) && (defined(GALSF_RESOLVEDISM) || defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)) && !defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
+#define TURB_DIFF_METALS_EXACT_CONSERVATION /* Stella: element-slot closure and dust diffusion use the pending exchange */
+#endif
 /* gradient and hydro loops reuse the first gradient pass's local pair searches (mesh/ngb.cc); identical results, memory ~ 4 B per
    neighbour of every active cell. Off where something between those loops could change a search: NGB_PAIR_CACHE_OFF opts out */
 #if !defined(NGB_PAIR_CACHE_OFF) && !defined(TURB_DIFF_DYNAMIC) && !defined(MHD_MODIFIED_GRADIENT) && !(defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES) && (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4))
