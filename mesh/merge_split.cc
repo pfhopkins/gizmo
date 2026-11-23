@@ -1135,6 +1135,16 @@ int merge_particles_ij(int i, int j)
         P[j].wakeup = -1; NeedToWakeupParticles_local = 1; wakeup_list_note(j);
 #endif
     }
+#ifdef TEST_PAIRFLUX_MERGE_DUMP
+    const double tmd_a = All.cf_atime; const int tmd_bi = P[i].TimeBin, tmd_bj = P[j].TimeBin, tmd_ai = TimeBinActive[P[i].TimeBin], tmd_aj = TimeBinActive[P[j].TimeBin];
+    const double tmd_mi = P[i].Mass, tmd_mj = P[j].Mass, tmd_dui = CellP[i].DtInternalEnergy, tmd_duj = CellP[j].DtInternalEnergy;
+    double tmd_ri = 0, tmd_rj = 0, tmd_Si = 0, tmd_Sj = 0;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    tmd_ri = CellP[i].PairFluxMassRef; tmd_rj = CellP[j].PairFluxMassRef; tmd_Si = CellP[i].PairFluxSumEgy; tmd_Sj = CellP[j].PairFluxSumEgy;
+#endif
+    const double tmd_Eb = P[i].Mass * (CellP[i].InternalEnergy + 0.5 * (P[i].Vel / tmd_a).norm_sq()) + P[j].Mass * (CellP[j].InternalEnergy + 0.5 * (P[j].Vel / tmd_a).norm_sq());
+    const double tmd_ui = CellP[i].InternalEnergy, tmd_uj = CellP[j].InternalEnergy;
+#endif
     double dm_i=0,dm_j=0,de_i=0,de_j=0,dm_ij,de_ij;
     Vec3<double> dp_i{}, dp_j{}, dp_ij{};
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -1145,8 +1155,13 @@ int merge_particles_ij(int i, int j)
     de_j = P[j].Mass * CellP[j].DtInternalEnergy + dm_j*CellP[j].InternalEnergyPred;
     dp_i = CellP[i].HydroAccel * P[i].Mass + CellP[i].VelPred * (dm_i / All.cf_atime);
     dp_j = CellP[j].HydroAccel * P[j].Mass + CellP[j].VelPred * (dm_j / All.cf_atime);
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+    de_i += dot(dp_i, CellP[i].HydroVelRef) - 0.5 * dm_i * CellP[i].VelPred.norm_sq() * All.cf_a2inv; /* the kick's energy rate is m (du/dt + v_ref.a) */
+    de_j += dot(dp_j, CellP[j].HydroVelRef) - 0.5 * dm_j * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+#else
     de_i += dot(dp_i, CellP[i].VelPred) / All.cf_atime - 0.5 * dm_i * CellP[i].VelPred.norm_sq() * All.cf_a2inv;
     de_j += dot(dp_j, CellP[j].VelPred) / All.cf_atime - 0.5 * dm_j * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+#endif
     dp_ij = dp_i + dp_j;
     dm_ij = dm_i+dm_j;
     de_ij = de_i+de_j;
@@ -1287,6 +1302,18 @@ int merge_particles_ij(int i, int j)
 #endif
     }
     CellP[j].PairFluxMassRef = mtot; /* after the sums above, which read the old references */
+#endif
+#ifdef TEST_PAIRFLUX_MERGE_DUMP
+    {
+        double Ea = mtot * (CellP[j].InternalEnergy + 0.5 * (P[j].Vel / tmd_a).norm_sq()), Sm = 0; /* P[j].Mass is set to mtot later */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        Sm = CellP[j].PairFluxSumEgy;
+#endif
+        printf("TEST_PAIRFLUX_MERGE_DUMP step %lld task %d IDi %llu IDj %llu bin %d %d active %d %d wake_j %d m %.17g %.17g mref %.17g %.17g u %.17g %.17g SumEgy %.17g %.17g merged %.17g DtU %.17g %.17g mergedDtU %.17g dtstep %.6g %.6g E_before %.17g E_after %.17g dE %.3e\n",
+               (long long) All.NumCurrentTiStep, ThisTask, (unsigned long long) P[i].ID, (unsigned long long) P[j].ID, tmd_bi, tmd_bj, tmd_ai, tmd_aj, (int) P[j].wakeup,
+               tmd_mi, tmd_mj, tmd_ri, tmd_rj, tmd_ui, tmd_uj, tmd_Si, tmd_Sj, Sm, tmd_dui, tmd_duj, CellP[j].DtInternalEnergy,
+               (double) P[i].integertime_step() * All.Timebase_interval, (double) P[j].integertime_step() * All.Timebase_interval, tmd_Eb, Ea, Ea - tmd_Eb);
+    }
 #endif
     // to be conservative adopt the maximum signal velocity and kernel length //
     CellP[j].MaxSignalVel = sqrt(CellP[j].MaxSignalVel*CellP[j].MaxSignalVel + CellP[i].MaxSignalVel*CellP[i].MaxSignalVel); /* need to be conservative */

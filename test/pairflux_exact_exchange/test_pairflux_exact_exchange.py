@@ -6,7 +6,8 @@ Gas mass, momentum, thermal + kinetic (+ magnetic) energy and sum B*V from the c
 - stop part-way and restart (the restart files hold the records waiting for the opening kick): the same bars over both runs;
   the stopping run returns 0 at the stop step (its last row is that step or the one before) and the restart continues with the next step.
 - hook arms (test hook TEST_PAIRFLUX_ADD_MASS_AND_WAKE, changes booked and subtracted), the same bars:
-  mass (inactive cells gain mass, then woken), merge (cells shrink and merge into neighbours, which are woken),
+  mass (inactive cells gain mass, then woken), merge (no hook: a shell of light cells far from the blast is below the IC-header merge threshold and merges into
+  heavier neighbours at domain steps; a neighbour in a larger bin is woken),
   split (cells grow and split; the daughters are woken).
 - MHD (Dedner cleaning; Powell terms off to isolate the exchange): mass, momentum and sum B*V, with the Dedner correction
   limiter and the face-area closure never firing; energy is reported (the kick's magnetic part is second order).
@@ -29,8 +30,8 @@ TEST_DIR = f"test/{TEST_NAME}"
 TOL = 1e-12
 STOP_STEP = 60
 NRANKS = 4
-M0 = 1.0 / 16**3  # IC cell mass
-MERGESPLIT = f"MinMassForParticleMerger {0.49*M0:.6e}\nMaxMassForParticleSplit {2.01*M0:.6e}\n"
+MERGESPLIT = "TreeDomainUpdateFrequency 0\n"  # merge/split run at domain steps: at every sync, not only full ones (thresholds 0.49/2.01 x cell mass)
+MERGE = MERGESPLIT + "InitCondFile pairflux_exact_exchange_merge_ics\n"  # a light shell far from the blast, below the IC-header merge threshold
 MHD = "BiniX 3e-7\nBiniY 1e-7\nBiniZ 0\nDivBcleaningParabolicSigma 0.2\nDivBcleaningHyperbolicSigma 1.0\n"
 
 
@@ -77,7 +78,12 @@ def _build(flags, name):
 
 def _arm(name, extra_params=""):
     shutil.copy(f"GIZMO_{name}", "GIZMO"); shutil.rmtree("output", ignore_errors=True)
-    params = f"{name}.params"; open(params, "w").write(open(f"{TEST_NAME}.params").read() + extra_params)
+    params = f"{name}.params"; lines = open(f"{TEST_NAME}.params").read().splitlines()
+    for e in extra_params.splitlines():  # a key already in the params is replaced, others appended
+        k = e.split()[0]; hit = [n for n, l in enumerate(lines) if l.split()[:1] == [k]]
+        if hit: lines[hit[0]] = e
+        else: lines.append(e)
+    open(params, "w").write("\n".join(lines) + "\n")
     res = _run(["0"], f"{name}.out", params=params); assert res.returncode == 0, open(f"{name}.out").read()[-400:]
     return _totals("output/conserved_totals.txt"), open(f"{name}.out").read()
 
@@ -88,7 +94,7 @@ def test_pairflux_exact_exchange():
     mhd = ("MAGNETIC", "MHD_B_SET_IN_PARAMS")
     _build((), "hydro")
     _build(hook(1), "mass")
-    _build(hook(2) + ("MERGE_SPLIT_CONSERVE_ENERGY",), "merge")
+    _build(("MERGE_SPLIT_CONSERVE_ENERGY",), "merge")
     _build(hook(3) + ("MERGE_SPLIT_CONSERVE_ENERGY",), "split")
     _build(mhd + ("TEST_MHD_NO_POWELL_SOURCE_TERMS",), "mhd")
     _build(mhd + ("TEST_MHD_NO_POWELL_SOURCE_TERMS",) + hook(4), "mhd_imf")
@@ -113,7 +119,7 @@ def test_pairflux_exact_exchange():
         assert int(second["steps"][0]) == int(first["steps"][-1]) + 1, f"the restart began at step {second['steps'][0]}, the stop was at {first['steps'][-1]}"
         _check(first, second)
         t, log = _arm("mass"); assert "mode 1 changed" in log; _check(t, t)
-        t, log = _arm("merge", MERGESPLIT); assert re.search(r"[1-9][0-9]* particles merged", log), "no merge happened"; _check(t, t)
+        t, log = _arm("merge", MERGE); assert re.search(r"[1-9][0-9]* particles merged", log), "no merge happened"; _check(t, t)
         t, log = _arm("split", MERGESPLIT); assert re.search(r"[1-9][0-9]* particles split", log), "no split happened"; _check(t, t)
         t, _ = _arm("mhd", MHD); _check(t, t, energy=False, bv=True)
         t, log = _arm("mhd_imf", MHD); assert "mode 4 changed" in log; _check(t, t, energy=False, bv=True)

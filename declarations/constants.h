@@ -9,6 +9,9 @@
 #define WAKEUP   2.1            /* allows only 1-separated timestep bins within kernel */
 #endif
 #endif
+#if defined(HYDRO_EXACT_PAIR_FLUX_EXCHANGE) && !defined(WAKEUP)
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE needs WAKEUP: its wake correction runs after the wake kicks" /* here, not in precompiler_logic.h: WAKEUP gets its default above */
+#endif
 
 #define REDUC_FAC_FOR_MEMORY_IN_DOMAIN      0.98 /* used to pad memory in domain decomposition structures, should be slightly less than unity */
 
