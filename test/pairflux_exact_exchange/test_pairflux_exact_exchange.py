@@ -81,6 +81,7 @@ def test_pairflux_exact_exchange():
     hook = lambda mode: ("TEST_PAIRFLUX_ADD_MASS_AND_WAKE=40", f"TEST_PAIRFLUX_HOOK_MODE={mode}")
     _build((), "hydro")
     _build(hook(1), "mass")
+    _build(("HYDRO_TIMESTEP_FROM_PAIR_FORCE",), "pfdt")
     build_gizmo_for_test(TEST_NAME, config_file="Config_noexchange.sh")
     shutil.move(f"{TEST_DIR}/GIZMO", f"{TEST_DIR}/GIZMO_control")
     cwd = os.getcwd(); os.chdir(TEST_DIR)
@@ -130,6 +131,10 @@ def test_pairflux_exact_exchange():
         def split_arm():
             t, log = _arm("split", SPLIT, "hydro"); assert re.search(r"[1-9][0-9]* particles split", log), "no split happened"; _check(t, t)
         arm("split", split_arm)
+
+        def pfdt_arm():  # the same blast with the pair-force step and wake-up (HYDRO_TIMESTEP_FROM_PAIR_FORCE), same bars
+            t, _ = _arm("pfdt"); _check(t, t)
+        arm("pair-force step", pfdt_arm)
 
         def control_arm():  # the same run without the exchange must miss the bar, or the test shows nothing
             t, _ = _arm("control")
