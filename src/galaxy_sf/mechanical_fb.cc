@@ -177,7 +177,16 @@ void verify_and_assign_local_mechfb_integrals(void)
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
-            if(LocalGasMechFBInfoTemp[j].M_ia_conv > 0) {ISMDustChem_remove_converted_gas_dust(j, DMIN(LocalGasMechFBInfoTemp[j].M_ia_conv / m0, 1.));} /* converted gas keeps no dust */
+            if(LocalGasMechFBInfoTemp[j].M_ia_conv > 0) { /* converted gas keeps no dust */
+#ifdef TEST_SINGLE_STARS_PRINT_IA_DUST_REMOVAL
+                double d_before = CellP[j].ISMDustChem_Dust_Metal[0], s_before = 0; for(int q = 0; q < NUM_ISMDUSTCHEM_SPECIES; q++) {s_before += CellP[j].ISMDustChem_Dust_Species[q];}
+#endif
+                ISMDustChem_remove_converted_gas_dust(j, DMIN(LocalGasMechFBInfoTemp[j].M_ia_conv / m0, 1.));
+#ifdef TEST_SINGLE_STARS_PRINT_IA_DUST_REMOVAL
+                double s_after = 0; for(int q = 0; q < NUM_ISMDUSTCHEM_SPECIES; q++) {s_after += CellP[j].ISMDustChem_Dust_Species[q];}
+                printf("IA_DUST_REMOVAL ID=%llu f=%.17g dust_metal %.17g -> %.17g species %.17g -> %.17g\n", (unsigned long long)P[j].ID, DMIN(LocalGasMechFBInfoTemp[j].M_ia_conv / m0, 1.), d_before, CellP[j].ISMDustChem_Dust_Metal[0], s_before, s_after);
+#endif
+            }
 #endif
             update_ISMDustChem_after_mechanical_injection(j, LocalGasMechFBInfoTemp[j].Mass_Where_Dust_Shocked, m0, mf, LocalGasMechFBInfoTemp[j].Z_injected); /* update dust chemistry quantities */
 #endif
