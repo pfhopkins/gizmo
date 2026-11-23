@@ -760,7 +760,7 @@ void turb_diff_metals_budget_log(void)
 #endif
 
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
-static double DiffS_floor, DiffS_slot, DiffS_z0; static long DiffS_nfloor; /* test: |mass| any slot's floor adds, cells where it fires; worst per-cell |sum X(1..27) - 1| and |X0 - sum metals| after the unpack */
+static double DiffS_floor, DiffS_slot, DiffS_z0; static long DiffS_nfloor; /* test: cells where a floor fires (some slot off m X + Dyield by > 1e-12 m) and the |mass| it adds there; worst per-cell |sum X(1..27) - 1| and |X0 - sum metals| after the unpack */
 static double DiffH_dy, DiffH_floor, DiffH_clos, DiffH_sumdy; /* test: H mass from the pair flux, the 0 floor, the 1 - Z - He closure; sum of the Z, He, H fluxes */
 static void diffh_totals(double *t) /* test: gas H mass, pending H, active cells' Dyield H, gas Z mass, summed over all gas (long double) */
 {
@@ -1015,8 +1015,9 @@ void hydro_final_operations_and_cleanup(void)
                 dMZ_clamp_loc += P[i].Mass * (P[i].Metallicity[0] - Z0_before) - Dy0;
             }
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
-            {double f_ = 0; for(int k = 0; k < NUM_METAL_SPECIES; k++) {f_ += fabs(P[i].Mass * P[i].Metallicity[k] - th_pre[k]);}
-             if(f_ > 0) {
+            {double f_ = 0; int fired_ = 0; /* a floor fired: some slot's mass differs from m X + Dyield by more than 1e-12 m */
+             for(int k = 0; k < NUM_METAL_SPECIES; k++) {double e_ = fabs(P[i].Mass * P[i].Metallicity[k] - th_pre[k]); f_ += e_; if(e_ > 1e-12 * P[i].Mass) {fired_ = 1;}}
+             if(fired_) {
                  #pragma omp atomic
                  DiffS_floor += f_;
                  #pragma omp atomic

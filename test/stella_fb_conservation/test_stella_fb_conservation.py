@@ -51,7 +51,8 @@ from gizmo.conservation_trace import keep_and_check_traces
 TEST_NAME = "stella_fb_conservation"
 TEST_DIR = dirname(abspath(__file__))
 REPO = abspath(join(TEST_DIR, "..", ".."))
-EXTRA_FLAGS = ("BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "GALSF_RESOLVEDISM_ISOLATED_FB_TEST", "OUTPUT_ENERGY_STEP_TRACE")
+EXTRA_FLAGS = ("BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "GALSF_RESOLVEDISM_ISOLATED_FB_TEST", "OUTPUT_ENERGY_STEP_TRACE",
+               "TEST_PRINT_DIFFUSION_H_CLOSURE")
 # cross-timebin pair fluxes exchanged exactly, so the traces test the feedback itself (Uli 2026-11-21, B1 option a)
 PAIR_FLUX_FLAGS = ("HYDRO_EXACT_PAIR_FLUX_EXCHANGE", "HYDRO_TIMESTEP_FROM_PAIR_FORCE")
 BAR = 1e-12
@@ -345,16 +346,68 @@ def test_ia_conversion_follows_ejecta_weights(late_run):
     traces_ok(out)
 
 
-def test_ia_conversion_clamp(build):
-    """STL-180 clamp: a lone 3 Msun star (AGB death, then a forced Ia) in a 4 pc box of 0.02 Msun cells, where w_j dM_conv
-    exceeds the inner cells' mass. The clamp must fire (else this run does not test it), every clamped cell is converted whole,
-    the shortfall is booked, and the traces close."""
-    d = join(TEST_DIR, "run_ia_clamp"); os.makedirs(d, exist_ok=True)
+def clamp_box_run(binary, name):
+    """A lone 3 Msun star (AGB death, then a forced Ia) in a 4 pc box of 0.02 Msun cells, where w_j dM_conv exceeds the inner
+    cells' mass, so the Ia clamp converts some cells whole."""
+    d = join(TEST_DIR, "run_" + name); os.makedirs(d, exist_ok=True)
     make_box(join(d, "box_ics.hdf5"), ZSUN, n_H=10.0, box_pc=4.0, m_cell=0.02)
-    text, out = run_case("ia_clamp", build, {"InitCondFile": "box_ics", "TestNumStars": 1, "TestStarMass": 3.0, "TestStarMass2": 0,
-                                             "TestStarMass3": 0, "TestSNTime0": 1.0e-6, "TestIaTime": 3.5e-6, "TimeMax": 5.0e-6,
-                                             **zpar(np.log10(ZSUN))})
+    return run_case(name, binary, {"InitCondFile": "box_ics", "TestNumStars": 1, "TestStarMass": 3.0, "TestStarMass2": 0,
+                                   "TestStarMass3": 0, "TestSNTime0": 1.0e-6, "TestIaTime": 3.5e-6, "TimeMax": 5.0e-6,
+                                   **zpar(np.log10(ZSUN))})
+
+
+@pytest.fixture(scope="module")
+def clamp_run(build):
+    return clamp_box_run(build, "ia_clamp")
+
+
+def diffusion_check(text):
+    """STL-277: after every diffusion unpack (TEST_PRINT_DIFFUSION_H_CLOSURE), no slot floor fired in any cell (each slot's mass
+    = m X + exchange to 1e-12 m), and every cell keeps sum X(1..27) = 1 and X0 = sum of its metal slots to BAR."""
+    rows = kv_lines(text, "DIFFSLOT")
+    assert rows, "no DIFFSLOT rows: build without TEST_PRINT_DIFFUSION_H_CLOSURE?"
+    nf = sum(r["floor_cells"] for r in rows); fm = sum(r["floor_abs"] for r in rows)
+    sd = max(r["max_slot_sum_dev"] for r in rows); zd = max(r["max_z0_dev"] for r in rows)
+    print(f"diffusion: {len(rows)} unpacks, floor fired in {nf:.0f} cell-steps (|mass| {fm:.3e} code), worst per-cell |sum X - 1| {sd:.3e}, "
+          f"|X0 - sum metals| {zd:.3e}")
+    assert nf == 0, "a slot floor fired in the diffusion unpack"
+    assert sd <= BAR and zd <= BAR
+
+
+def test_ia_conversion_clamp(clamp_run):
+    """STL-180 clamp: the clamp must fire (else this run does not test it), every clamped cell is converted whole, the shortfall
+    is booked, and the traces close."""
+    text, out = clamp_run
     assert ia_conversion_check(text) > 0, "the clamp did not fire"
+    traces_ok(out)
+
+
+def test_diffusion_slots_clamp_box(clamp_run):
+    """STL-277: cells converted whole to Ia composition (H ~ 0) next to H-rich gas: no floor fires and every cell's slots close."""
+    diffusion_check(clamp_run[0])
+
+
+@pytest.fixture(scope="module")
+def build_equal_timesteps():
+    """The production build with FORCE_EQUAL_TIMESTEPS: every pair exchanges on both sides at once."""
+    if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        pytest.skip("builds GIZMO")
+    _write_config()
+    cwd = os.getcwd(); os.chdir(REPO)
+    try:
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=PAIR_FLUX_FLAGS + ("FORCE_EQUAL_TIMESTEPS",))
+        shutil.move(join(TEST_DIR, "GIZMO"), join(TEST_DIR, "GIZMO_equal_timesteps"))
+    finally:
+        os.chdir(cwd)
+    return join(TEST_DIR, "GIZMO_equal_timesteps")
+
+
+def test_clamp_box_equal_timesteps(build_equal_timesteps):
+    """STL-277 at equal timesteps: the clamp box with every exchange applied to both cells of a pair at once. Every element and
+    the metal ledger close at the trace bars (unchanged), no floor fires, every cell's slots close."""
+    text, out = clamp_box_run(build_equal_timesteps, "ia_clamp_equal_dt")
+    assert ia_conversion_check(text) > 0, "the clamp did not fire"
+    diffusion_check(text)
     traces_ok(out)
 
 
