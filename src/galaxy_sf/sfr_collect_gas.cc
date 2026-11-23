@@ -7,7 +7,8 @@
  * later pass widens the last radius by 1.5. A star is done when it holds its drawn mass to within 1%. A star still
  * short after 10 passes is a failed draw: everything granted to it goes back to its donors (exact integer quanta) and
  * the star is removed. No mass is created. The drawn mass is kept in the star record (single_star_record.h). Every cell that gives
- * mass gets the parent's spawn block and SF cool-down (GALSF_SINGLE_STARS_SF_CRITERION). */
+ * mass gets the parent's spawn block and SF cool-down (GALSF_SINGLE_STARS_SF_CRITERION). Stars a parent formed together are set
+ * apart by 0.01 of its kernel radius, keeping their centre of mass and momentum (single_star_birth_offsets.h). */
 #include <mpi.h>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +34,8 @@
 #include "single_star_record.h"
 #include "sfr_collect_gas_loop.h"
 #include "single_star_checks.h"
+#include "single_star_birth_offsets.h"
+#include "../declarations/gpu_rng.h"
 
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 
@@ -365,6 +368,23 @@ double single_stars_collect_gas(long long tot_spawned)
     }
     SINGLE_STAR_CHECK_RAN("donor_cooldown", (long)net_donors.size());
 #endif
+    { /* stars a parent formed together: set apart around it, the group's centre of mass and momentum kept (single_star_birth_offsets.h) */
+        static constexpr uint64_t BIRTH_OFFSET_RNG_SALT = gizmo_loop_rng_salt("single_star_birth_offset");
+        std::map<int, std::vector<int>> group; /* parent -> its kept stars */
+        for(const ssc_star& t : S) {if(!t.active) {group[t.parent].push_back(t.i);}}
+        for(const auto& kv : group) {
+            const std::vector<int>& g = kv.second; const int n = (int) g.size();
+            if(n < 2) {continue;}
+            const double h = (P[kv.first].KernelRadius > 0) ? P[kv.first].KernelRadius : All.ForceSoftening[0];
+            std::vector<double> m(n), u(2 * n), d(3 * n);
+            for(int k = 0; k < n; k++) {
+                m[k] = P[g[k]].Mass;
+                for(int c = 0; c < 2; c++) {u[2*k+c] = single_star_random_number(g[k], BIRTH_OFFSET_RNG_SALT, (uint64_t)All.Ti_Current, (uint64_t)c);}
+            }
+            single_star_birth_offsets(n, m.data(), u.data(), h, d.data());
+            for(int k = 0; k < n; k++) {for(int c = 0; c < 3; c++) {P[g[k]].Pos[c] += d[3*k+c];}}
+        }
+    }
     TreeMomentsStaleFlag = 1;
     if(!moved.empty()) {gizmo_motion_bound_raise(moved.data(), (int) moved.size());}
     gpu_particles_arena_invalidate();
