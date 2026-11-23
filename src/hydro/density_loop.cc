@@ -306,10 +306,10 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
 {
     const int N = (int)active_list_concat.size();
 
-    /* Parallel-for: legacy uses #pragma omp parallel for schedule(dynamic)
-     * around density.cc:629-795. Preserved here. */
+    /* Per-active-particle finalize, on all threads (dynamic schedule; chunk from gizmo_omp_particle_chunk). */
 #ifdef _OPENMP
-    #pragma omp parallel for schedule(dynamic)
+    const int finalize_chunk = gizmo_omp_particle_chunk((long long) N);
+    #pragma omp parallel for schedule(dynamic, finalize_chunk)
 #endif
     for (int slot = 0; slot < N; ++slot) {
         const int i = active_list_concat[slot];
