@@ -227,10 +227,17 @@ ifeq ($(SYSTYPE),"Frontier")
 ## * Legacy: module load amd/6.4.2 rocm/6.4.2 cray-mpich/9.0.1 craype-accel-amd-gfx90a kokkos/4.6.02-gpu
 ##           cray-hdf5 cray-fftw gsl hypre/3.0.0-mpi       (kokkos/4.6.02-gpu is the module built with rocm-6.4.2)
 ##   The default GTL library (/opt/cray/pe/lib64/libmpi_gtl_hsa.so.0) now belongs to cray-mpich 9.1.0 and needs
-##   ROCm 7's libamdhip64.so.7, so a legacy binary fails at load unless the job script sets
+##   ROCm 7's libamdhip64.so.7. A legacy binary linked with the run path below finds the 9.0.1 GTL by itself; one
+##   linked before it fails at load unless the job script sets
 ##     export LD_LIBRARY_PATH=/opt/cray/pe/mpich/9.0.1/gtl/lib:$LD_LIBRARY_PATH
 ##   Never set that line for a ROCm 7 binary: it would pull ROCm 6 libraries into the run.
 ## Before submitting either: `ldd ./GIZMO | grep 'not found'` must print nothing in the job's environment.
+## Run path: the Cray modules publish their library directories in CRAY_LD_LIBRARY_PATH, not LD_LIBRARY_PATH, so a
+## binary without a run path loads whatever /opt/cray/pe/lib64 holds at run time (the PE defaults: cray-mpich 9.1.0
+## and hdf5 1.14.3.9 for amd 7.0 since 2026-11), not the versions it was built against. A legacy-set binary on the
+## 9.1.0 libraries corrupts the heap at start-up ("double free or corruption" on a few ranks). GPU_LDFLAGS below
+## records the build's CRAY_LD_LIBRARY_PATH as the run path (DT_RPATH, which LD_LIBRARY_PATH does not override), so
+## the binary loads the libraries it was built with in any job environment; check with `ldd ./GIZMO | grep libmpi`.
 CC       =  cc
 CXX      =  CC -std=c++17
 FC       =  ftn
@@ -250,7 +257,7 @@ KOKKOS_LDFLAGS  = -L$(OLCF_KOKKOS_ROOT)/lib64 -Wl,-rpath,$(OLCF_KOKKOS_ROOT)/lib
 KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
 GPU_CXX     = hipcc --std=c++17
 GPU_CFLAGS  = $(KOKKOS_CPPFLAGS) $(KOKKOS_CXXFLAGS)
-GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
+GPU_LDFLAGS = $(KOKKOS_LDFLAGS) -Wl,-rpath,$(CRAY_LD_LIBRARY_PATH)   # run path: see the note above
 MKL_INCL =
 MKL_LIBS =
 ## cray-hdf5 include set explicitly so hipcc finds <hdf5.h> (allvars.h includes it
@@ -329,6 +336,8 @@ ifeq ($(SYSTYPE),"Frontier_CPU")
 ## for MHD_MODIFIED_GRADIENT; no gsl module -- nothing here consumes GSL_INCL/GSL_LIBS.)
 ## Do NOT export HSA_XNACK=1 for this build; it has no device allocations.
 ## To compare against the "Frontier" GPU build, run at the same rank and thread counts.
+## The link records the build's CRAY_LD_LIBRARY_PATH as the run path, as in the "Frontier" block (see its note): without it
+## this build (cray-mpich 9.0.1) loads the default cray-mpich 9.1.0 at run time and corrupts the heap at start-up.
 CC       =  cc
 CXX      =  CC -std=c++17
 FC       =  ftn
@@ -343,7 +352,7 @@ KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
 ## GPU-ported TUs: the host compiler, plus the Kokkos includes. No offload arch.
 GPU_CXX     = CC -std=c++17
 GPU_CFLAGS  = $(KOKKOS_CPPFLAGS)
-GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
+GPU_LDFLAGS = $(KOKKOS_LDFLAGS) -Wl,-rpath,$(CRAY_LD_LIBRARY_PATH)   # run path: see the note above
 MKL_INCL =
 MKL_LIBS =
 HDF5INCL = -I$(HDF5_ROOT)/include -DH5_USE_16_API
