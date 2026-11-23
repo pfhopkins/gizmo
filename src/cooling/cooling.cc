@@ -354,15 +354,17 @@ static inline void finish_cooling_host_deferred_dust_updates(int i, double dtime
 }
 #endif
 
-/* this is the 'parent' loop to do the cell cooling+chemistry. this is now openmp-parallelized, since the semi-implicit iteration can be a non-negligible cost.
-   Uses a gather-dispatch-scatter pattern with compact arrays so that the cooling chain operates on contiguous memory
-   indexed 0..N_active-1, enabling future GPU offloading. */
 #ifndef GPU_COOLING_IN_PLACE_BATCH_CELLS
 #define GPU_COOLING_IN_PLACE_BATCH_CELLS 32768   /* cells per device cooling launch when the device reads the particle storage in place; a machine block of the Makefile may raise it */
 #endif
 #if GPU_COOLING_IN_PLACE_BATCH_CELLS <= 0
 #error "GPU_COOLING_IN_PLACE_BATCH_CELLS must be a positive number of cells"
 #endif
+/* this is the 'parent' loop to do the cell cooling+chemistry. this is now openmp-parallelized, since the semi-implicit iteration can be a non-negligible cost.
+   From the device-offload count up, the active cells go to the device in batches: where the device reads the particle storage in
+   place, the kernels work on P and CellP directly through a list of the active cells (kernel slot -> cell; the per-slot timestep
+   array is indexed by slot); otherwise each batch is gathered into compact copies indexed 0..batch-1 and scattered back. Below that
+   count the host cools the cells in place. */
 void cooling_parent_routine(void)
 {
     PRINT_STATUS("Cooling and Chemistry update");
@@ -413,11 +415,11 @@ void cooling_parent_routine(void)
        staging, shared with the other batched device loops: plain host buffers filled in parallel, one explicit copy each
        way, and device memory the kernel actually reads. */
     struct ParticleStagingBatch batch = {};
-    int staged = in_place ? 1 : particle_staging_acquire(&batch, batch_cap);
+    int buffers_ready = in_place ? 1 : particle_staging_acquire(&batch, batch_cap);
     int *cool_map = NULL;   /* in place: the active cells, readable by the device */
     if(in_place) {
         cool_map = (int *) gizmo_gpu_alloc_shared((size_t) N_active * sizeof(int), NULL);
-        if(cool_map) {memcpy(cool_map, cool_indices.data(), (size_t) N_active * sizeof(int));} else {staged = 0;}
+        if(cool_map) {memcpy(cool_map, cool_indices.data(), (size_t) N_active * sizeof(int));} else {buffers_ready = 0;}
     }
     /* dtime is captured on the host at gather time because
        get_particle_timestep_in_physical is host-only. It is the one deliberate
@@ -425,7 +427,7 @@ void cooling_parent_routine(void)
        against 3080 for the structs, a third buffer plus a third copy would cost more
        than the shared-memory read it saves. */
     double *compact_dtime = (double *) gizmo_gpu_alloc_shared((size_t) batch_cap * sizeof(double), NULL);
-    if(!staged || !compact_dtime) {
+    if(!buffers_ready || !compact_dtime) {
         /* No batch buffers means this rank cools nothing this step. The count is
          * zeroed rather than returning, so the loop below runs zero batches and
          * any collective past it is still reached by every rank. */
@@ -551,8 +553,8 @@ void cooling_parent_routine(void)
     /* Cooled in place. do_the_cooling_for_particle reads and writes only element i
      * of the arrays it is handed, so the host has nothing to gain from compacting
      * first: the copy in and the copy back are pure overhead here. The device path
-     * above still stages, because there the compaction is what puts the elements
-     * somewhere the kernel can read. */
+     * above stages only where the device cannot read the particle storage in place:
+     * there the compaction is what puts the elements somewhere the kernel can read. */
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
