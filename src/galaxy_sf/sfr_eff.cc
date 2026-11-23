@@ -13,6 +13,9 @@
 #endif
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 #include "single_star_imf.h"
+#ifdef GALSF_SINGLE_STARS_STOCHASTIC_IMF
+#include "single_star_record.h"
+#endif
 #include "single_star_sf_event.h"
 #endif
 #if defined(GALSF_SINGLE_STARS_SF_CRITERION) && defined(GALSF_SFR_CRITERION)
@@ -744,6 +747,22 @@ void star_formation_parent_routine(void)
                         ledger_add(LEDGER_M_STARS_FORMED, P[i_star].Mass); ledger_add(LEDGER_MZ_STARS_FORMED, P[i_star].Mass * P[i_star].Metallicity[0]);
 #endif
                         P[i_star].StellarAge = All.Time;
+#ifdef GALSF_SINGLE_STARS_STOCHASTIC_IMF
+                        { /* stochastic IMF (stella_dev GALSF_RESOLVEDISM_STOCHASTIC_IMF): the particle carries one massive star with probability
+                             m / MassPerStarIMF, drawn from dN/dM ~ M^-2.3 in [MinMassIMF, MaxMassIMF]; else no star of its own (no feedback) */
+                            P[i_star].StarIdx = 0;
+                            static constexpr uint64_t STOCH_IMF_RNG_SALT = gizmo_loop_rng_salt("single_star_stochastic_imf");
+                            if(single_star_random_number(i, STOCH_IMF_RNG_SALT, (uint64_t)All.Ti_Current, 0) < P[i_star].Mass * UNIT_MASS_IN_SOLAR / All.MassPerStarIMF) {
+                                double y = single_star_random_number(i, STOCH_IMF_RNG_SALT, (uint64_t)All.Ti_Current, 1), xmin = All.MinMassIMF, xmax = All.MaxMassIMF;
+                                struct single_star_record r; memset(&r, 0, sizeof(r));
+                                r.M_drawn = pow(pow(xmin, -1.3) + (pow(xmax, -1.3) - pow(xmin, -1.3)) * y, -1. / 1.3);
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+                                r.rho_birth = (float)(CellP[i].Density * All.cf_a3inv);
+#endif
+                                P[i_star].StarIdx = single_star_record_new(&r);
+                            }
+                        }
+#endif
 #if defined(GALSF_SFR_IMF_VARIATION) || defined(GALSF_SFR_IMF_SAMPLING)
                         /* if we're allowing for a variable IMF, this is where we will calculate the IMF properties produced from the gas forming stars */
                         assign_imf_properties_from_starforming_gas(i, i_star);

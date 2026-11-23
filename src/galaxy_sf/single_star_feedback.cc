@@ -247,6 +247,27 @@ double single_star_max_timestep(int p) {(void) p; return All.MaxStellarTimestep 
 
 /* single-star branch of mechanical_fb_calculate_eventrates: sets SNe_ThisTimeStep (supernova, Type Ia) or
    MassReturn_ThisTimeStep (wind, AGB death; the fraction of the star's mass) */
+#ifdef GALSF_SINGLE_STARS_STOCHASTIC_IMF
+/* stochastic IMF: the particle carries one drawn star; that star's own mass now [code]: the drawn mass less the winds it returned,
+   a white dwarf the table remnant. The events scale to it, not to the particle's mass. */
+static double single_star_stochastic_mass_now(int s, double logM, double logZ, int wd)
+{
+    if(wd) {return DMAX(stellar_remnant_mass(logM, logZ), 0) / UNIT_MASS_IN_SOLAR;}
+    double la = SingleStars.last_wind_log_age[s], w = 0;
+    if(la > 0) {for(int k = 0; k < STBL_NELEM; k++) {w += DMAX(stellar_elem_ej_wind_cumulative(logM, logZ, la, k), 0);}}
+    return DMAX(SingleStars.M_drawn[s] - w, 0) / UNIT_MASS_IN_SOLAR;
+}
+#define SINGLE_STAR_TRIGGER_MASS(i, s, logM, logZ, wd) single_star_stochastic_mass_now(s, logM, logZ, wd)
+#else
+#define SINGLE_STAR_TRIGGER_MASS(i, s, logM, logZ, wd) (P[i].Mass)
+#endif
+static long long SingleStarStochasticClamps = 0;
+#ifdef GALSF_SINGLE_STARS_STOCHASTIC_IMF
+#define SINGLE_STAR_MASS_AFTER_DEATH(i, ev) (P[i].Mass) /* the carrier keeps what the ejecta left: no remnant reset */
+#else
+#define SINGLE_STAR_MASS_AFTER_DEATH(i, ev) ((ev).M_rem / UNIT_MASS_IN_SOLAR)
+#endif /* stochastic IMF: events whose ejecta exceeded the carrier particle's mass */
+
 double single_star_eventrates(int i, double dt)
 {
     int s = single_star_slot(P[i].StarIdx);
@@ -264,7 +285,7 @@ double single_star_eventrates(int i, double dt)
         p *= (TEST_SINGLE_STARS_TYPE_IA_RATE_MULTIPLIER); /* test only */
 #endif
         if(single_star_random_number(i, SINGLE_STAR_IA_RNG_SALT, (uint64_t)All.Ti_Current, 0) < p) {
-            SingleStars.M_at_SN_trigger[s] = P[i].Mass; P[i].SNe_ThisTimeStep = 1; return 1;
+            SingleStars.M_at_SN_trigger[s] = SINGLE_STAR_TRIGGER_MASS(i, s, logM, logZ, 1); P[i].SNe_ThisTimeStep = 1; return 1;
         }
 #endif
         return 0;
@@ -295,7 +316,7 @@ double single_star_eventrates(int i, double dt)
         }
         return 0;
     }
-    SingleStars.M_at_SN_trigger[s] = P[i].Mass; /* death: store the mass for every pack of the event */
+    SingleStars.M_at_SN_trigger[s] = SINGLE_STAR_TRIGGER_MASS(i, s, logM, logZ, 0); /* death: store the mass for every pack of the event (the particle's, or with the stochastic IMF the drawn star's) */
     SingleStars.no_deposit_count[s] = 0;
     if(is_wd) {P[i].MassReturn_ThisTimeStep = 1;} else {P[i].SNe_ThisTimeStep = 1;}
     return 1;
@@ -358,6 +379,13 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
     if(single_star_sn_needs_ejecta_cell(i, &ev)) {return;}
 #endif
     in->Msne = ev.Mej / UNIT_MASS_IN_SOLAR;
+#ifdef GALSF_SINGLE_STARS_STOCHASTIC_IMF
+    if(in->Msne > P[i].Mass) { /* the carrier gives at most what it has: counted, the ledger books what left it */
+        SingleStarStochasticClamps++;
+        printf("SINGLE_STAR STOCHASTIC_IMF CLAMP: ID=%llu ejecta %g Msun > carrier %g Msun (rank clamps %lld)\n", (unsigned long long)P[i].ID, ev.Mej, P[i].Mass * UNIT_MASS_IN_SOLAR, SingleStarStochasticClamps);
+        in->Msne = P[i].Mass;
+    }
+#endif
     in->SNe_v_ejecta = (ev.E > 0) ? sqrt(2. * (ev.E / UNIT_ENERGY_IN_CGS) / in->Msne) : ev.v_kms / UNIT_VEL_IN_KMS;
 #ifdef METALS
     double z = 0; for(int k = ELEM_C; k < STBL_NELEM; k++) {z += ev.y[k];}
@@ -606,7 +634,7 @@ void single_star_feedback_finalize(const int *list, int n)
           if(ev.E > 0 || ev.v_kms > 1000.) {ledger_add(LEDGER_E_CR_OFFERED, All.CosmicRay_SNeFraction * e);}}
 #endif
          ESTEP_BOOK((ev.E > 0) ? EBK_FB_SN : EBK_FB_WIND, (ev.E > 0) ? dm * (ev.E / UNIT_ENERGY_IN_CGS) / (ev.Mej / UNIT_MASS_IN_SOLAR) : 0.5 * dm * pow(ev.v_kms / UNIT_VEL_IN_KMS, 2)); /* energy trace: what the event gives, at the star */
-         if(kind != SSE_WIND) {double dr = P[i].Mass - ev.M_rem / UNIT_MASS_IN_SOLAR; ledger_add(LEDGER_M_REMNANT_RESET, dr); ledger_add(LEDGER_MZ_STARS_LOST, dr * P[i].Metallicity[0]);
+         if(kind != SSE_WIND) {double dr = P[i].Mass - SINGLE_STAR_MASS_AFTER_DEATH(i, ev); ledger_add(LEDGER_M_REMNANT_RESET, dr); ledger_add(LEDGER_MZ_STARS_LOST, dr * P[i].Metallicity[0]);
 #ifdef LEDGER_SLOTS
              for(int k = 0; k < NUM_METAL_SPECIES; k++) {ledger_add_slot(LEDGER_SLOT_FROM_STARS, k, dr * P[i].Metallicity[k]);}
 #endif
@@ -625,8 +653,8 @@ void single_star_feedback_finalize(const int *list, int n)
             continue; /* winds are frequent: not logged per step */
         }
         ssfb_rows.insert(ssfb_rows.end(), row, row + SSFB_LOG_COLS);
-        ESTEP_BOOK(EBK_FB_REMNANT_KIN, 0.5 * (ev.M_rem / UNIT_MASS_IN_SOLAR - P[i].Mass) * P[i].Vel.norm_sq() * All.cf_a2inv); /* kinetic energy of the mass the remnant reset removes */
-        P[i].Mass = ev.M_rem / UNIT_MASS_IN_SOLAR; /* exactly the table remnant; 0 (PISN, Type Ia) removes the particle */
+        ESTEP_BOOK(EBK_FB_REMNANT_KIN, 0.5 * (SINGLE_STAR_MASS_AFTER_DEATH(i, ev) - P[i].Mass) * P[i].Vel.norm_sq() * All.cf_a2inv); /* kinetic energy of the mass the remnant reset removes */
+        P[i].Mass = SINGLE_STAR_MASS_AFTER_DEATH(i, ev); /* exactly the table remnant (0: PISN, Type Ia removes the particle); stochastic IMF: the carrier's rest */
 #ifdef TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS
         if(ev.M_trigger - ev.M_rem > 1.0e-6) {SINGLE_STAR_CHECK("fb_booked_deposited", P[i].Mass * UNIT_MASS_IN_SOLAR < ev.M_trigger * (1 - 1.0e-6), "kind=%d ID=%llu M_trigger=%g M_now=%g", kind, (unsigned long long)P[i].ID, ev.M_trigger, P[i].Mass * UNIT_MASS_IN_SOLAR);}
 #endif

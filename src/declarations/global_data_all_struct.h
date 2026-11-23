@@ -270,6 +270,10 @@ struct global_data_all_processes
   double TimeLimitCPU;
   double CPU_Sum[CPU_PARTS];    /*!< sums wallclock time/CPU consumption in whole run */
 
+#ifdef GALSF_SINGLE_STARS_STOCHASTIC_IMF
+  double MinMassIMF, MaxMassIMF; /*!< stochastic IMF: mass range of the drawn massive star [Msun] */
+  double MassPerStarIMF;         /*!< stochastic IMF: stellar mass per drawn massive star [Msun] */
+#endif
 #ifdef GRAVITY_PERIODIC_XY
   float *EwaldXY_Table;  /*!< x/y Ewald correction table in Kokkos shared memory, 4 floats per node (acc_x, acc_y, acc_z, pot); gravity/ewald_xy.cc */
   double EwaldXY_Lx, EwaldXY_Ly, EwaldXY_zmax, EwaldXY_dx, EwaldXY_dy, EwaldXY_dz; /*!< box and table spacing of the x/y Ewald table */

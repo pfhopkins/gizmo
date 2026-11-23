@@ -2634,6 +2634,11 @@ void read_parameter_file(char *fname)
             density given above. use the dimensionless SfEffPerFreeFall
             to calculate this */
 #endif
+#ifdef GALSF_SINGLE_STARS_STOCHASTIC_IMF
+      strcpy(tag[nt], "MinMassIMF"); addr[nt] = &All.MinMassIMF; id[nt++] = REAL;
+      strcpy(tag[nt], "MaxMassIMF"); addr[nt] = &All.MaxMassIMF; id[nt++] = REAL;
+      strcpy(tag[nt], "MassPerStarIMF"); addr[nt] = &All.MassPerStarIMF; id[nt++] = REAL;
+#endif
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
       strcpy(tag[nt], "IMFSampleMinMass");
       addr[nt] = &All.IMFSampleMinMass;
