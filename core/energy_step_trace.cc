@@ -108,6 +108,9 @@ static void estep_local_sums(double e[EC_N], double *pot)
 #ifdef PMGRID
         if(pot) {add(EC_N, -0.5 * P[i].Mass * pm_self_potential(i));} /* no self-energy */
 #endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+        if(pot) {add(EC_N, 0.5 * P[i].Mass * P[i].TreePotForceCorr);} /* tree pair potential consistent with the applied force */
+#endif
 #ifdef GALSF_RESOLVEDISM_TALLBOX
         if(pot) {add(EC_N, P[i].Mass * analytic_external_potential(i));} /* external field: full weight */
 #endif

@@ -137,6 +137,23 @@ static int last;
 #define NTAB 1000
 /*! variables for short-range lookup table */
 static float shortrange_table[NTAB], shortrange_table_potential[NTAB];
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+/* STELLA DIAGNOSTIC ADDITION (energy step trace / BUDGET only): inside the softening the walk applies kernel_force(r,h) x S_i but
+   stores kernel_pot(r,h) x erfc_i, which is not its potential. U(r) = U(h) - m sum_i S_i [kpot(b_i+1) - kpot(b_i)] over the
+   tabindex bins between r and h (S constant per bin, d kpot/dr = kernel_force), with U(h) = -m erfc(h)/h the stored value at h. */
+static double tree_shortrange_pot_from_force(double r, double mass, double h, double asmthfac)
+{
+    double hinv = 1. / h, U = 0, hi = h; int ih = (int) (asmthfac * h), ir = (int) (asmthfac * r);
+    if(ih < NTAB) {U = -mass * shortrange_table_potential[ih] * hinv;}
+    for(int i = ih; i >= ir; i--)
+    {
+        double lo = (i == ir) ? r : i / asmthfac;
+        if(i < NTAB) {U -= mass * shortrange_table[i] * (kernel_gravity(hi * hinv, hinv, 1, -1) - kernel_gravity(lo * hinv, hinv, 1, -1));}
+        hi = lo;
+    }
+    return U;
+}
+#endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
 static float shortrange_table_tidal[NTAB];
 #endif
@@ -2000,6 +2017,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef EVALPOTENTIAL
     double fac_pot; MyDouble pot; pot = 0;
 #endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+    MyDouble pot_fc_corr = 0;
+#endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
     tidal_tensorps = {};
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
@@ -2741,6 +2761,17 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef PMGRID
                     fac_pot *= shortrange_table_potential[tabindex];
 #endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+                    { /* plain-kernel pairs only: AGS zeta terms make the applied force differ */
+                        double h_g = DMAX(h, h_p); int ags_pair = 0;
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+                        ags_pair = (ptype_sec >= 0) && ((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) && ((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL));
+#elif defined(ADAPTIVE_GRAVSOFT_FORGAS)
+                        ags_pair = (ptype == 0) && (ptype_sec == 0);
+#endif
+                        if(r < h_g && !ags_pair) {pot_fc_corr += tree_shortrange_pot_from_force(r, mass, h_g, asmthfac) - fac_pot;}
+                    }
+#endif
                     pot += (fac_pot);
 #if defined(GRAVITY_PERIODIC_XY)
                     {double drc[3] = {dr[0], dr[1], dr[2]}, ac[3], pc; ewald_xy_corr(drc, ac, &pc); pot += mass * pc;}
@@ -3234,6 +3265,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef EVALPOTENTIAL
         P[target].Potential = pot;
 #endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+        P[target].TreePotForceCorr = pot_fc_corr;
+#endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
         P[target].tidal_tensorps = tidal_tensorps;
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
@@ -3336,6 +3370,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef EVALPOTENTIAL
         GravDataResult[target].Potential = pot;
+#endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+        GravDataResult[target].TreePotForceCorr = pot_fc_corr;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
         GravDataResult[target].tidal_tensorps = tidal_tensorps;

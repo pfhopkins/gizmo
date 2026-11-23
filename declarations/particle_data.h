@@ -63,6 +63,9 @@ extern ALIGN(32) struct particle_data
 #ifdef PM_EXACT_SELF_POTENTIAL_DIAG
     MyFloat PM_SelfPotential; /*!< particle's own share of PM_Potential (energy diagnostics only) */
 #endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+    MyFloat TreePotForceCorr; /*!< force-consistent minus stored tree pair potential inside the softening (energy diagnostics only) */
+#endif
 #endif
 #if defined(GALSF_SFR_TIDAL_HILL_CRITERION) || defined(TIDAL_TIMESTEP_CRITERION) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(OUTPUT_TIDAL_TENSOR) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
 #define COMPUTE_TIDAL_TENSOR_IN_GRAVTREE

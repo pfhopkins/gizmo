@@ -512,6 +512,9 @@ void gravity_tree(void)
 #ifdef EVALPOTENTIAL
                 P[place].Potential += GravDataOut[j].Potential;
 #endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+                P[place].TreePotForceCorr += GravDataOut[j].TreePotForceCorr;
+#endif
 #ifdef COUNT_MASS_IN_GRAVTREE
                 P[place].TreeMass += GravDataOut[j].TreeMass;
 #endif
@@ -851,6 +854,9 @@ void gravity_tree(void)
         {double dr0[3] = {0, 0, 0}, ac[3], pc; ewald_xy_corr(dr0, ac, &pc); P[i].Potential += P[i].Mass * pc;} /* the particle's own x/y images */
 #endif
         P[i].Potential *= All.G;
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+        P[i].TreePotForceCorr *= All.G;
+#endif
 #ifdef BOX_PERIODIC
         if(All.ComovingIntegrationOn) {P[i].Potential -= All.G * 2.8372975 * pow(P[i].Mass, 2.0 / 3) * pow(All.OmegaMatter * 3 * All.Hubble_H0_CodeUnits * All.Hubble_H0_CodeUnits / (8 * M_PI * All.G), 1.0 / 3);} else {if(All.OmegaLambda>0) {P[i].Potential -= 0.5*All.OmegaLambda*All.Hubble_H0_CodeUnits*All.Hubble_H0_CodeUnits * (P[i].Pos.norm_sq());}}
 #endif
@@ -980,6 +986,9 @@ void gravity_tree(void)
 #endif
 #ifdef EVALPOTENTIAL
         P[i].Potential = 0;
+#endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+        P[i].TreePotForceCorr = 0;
 #endif
     }
 #endif /* end tree walk (guarded by SELFGRAVITY_OFF unless non-gravity tree features are active) */

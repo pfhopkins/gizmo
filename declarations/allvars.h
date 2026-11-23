@@ -1348,6 +1348,9 @@ extern struct gravdata_in
 extern struct gravdata_out
 {
     Vec3<MyDouble> Acc;
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+    MyDouble TreePotForceCorr;
+#endif
 #ifdef RT_USE_TREECOL_FOR_NH
     MyDouble ColumnDensityBins[TREECOL_NSPECIES][RT_USE_TREECOL_FOR_NH];
 #endif
