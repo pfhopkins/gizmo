@@ -157,7 +157,7 @@ KOKKOS_INLINE_FUNCTION int treecol_shell_of(double r2)
 #endif
 
 /* one accepted source (leaf or node) for a gas target: column in the pixel of its mass centre dr, inside
-   TreeColShieldingLength (0 = no limit), unsoftened; band fluxes L/r_L^2 in the pixel of the light
+   TreeColShieldingLength (0 = no limit), 1/r^2 gravity-softened; band fluxes L/r_L^2 in the pixel of the light
    centroid d_lum (a second lookup only for luminous nodes, whose light and mass centres differ), r_L floored at r_floor
    (the target's Plummer-equivalent softening) */
 KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, const Vec3<double> &dr, double r, double fac_accel,
@@ -167,7 +167,7 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, 
     const int ip = treecol_hpx_pixel(dr);
     if(All.TreeColShieldingLength <= 0 || r < All.TreeColShieldingLength / All.cf_atime)
     {
-        const double w = 1.0 / ((4.0 * M_PI / TREECOL_PIXELS_N) * r * r); /* unsoftened */
+        const double w = (fac_accel * r / mass) / (4.0 * M_PI / TREECOL_PIXELS_N); /* gravity-softened 1/r^2, as upstream's tree column: bounded for close neighbours */
         for(int s = 0; s < TREECOL_PIXELS_NCOLUMNS; s++) {a.col[s][ip] += w * species[s];}
 #ifdef CR_BACKGROUND_IONRATE_ATTENUATED
         a.gas[ip] += w * gasmass;
