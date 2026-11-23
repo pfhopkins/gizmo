@@ -3,7 +3,6 @@
 #include <stdlib.h>
 #include <math.h>
 #include <vector>
-#include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
@@ -97,9 +96,9 @@ void ewald_xy_update(void)
     }
     std::vector<float> all(4 * npts);
     MPI_Allgatherv(mine.data(), cnt[ThisTask], MPI_FLOAT, all.data(), cnt.data(), off.data(), MPI_FLOAT, MPI_COMM_WORLD);
-    float *tab = (float *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ewald_xy_table", 4 * npts * sizeof(float));
+    float *tab = (float *) gizmo_gpu_alloc_shared(4 * npts * sizeof(float), "ewald_xy_table");
     for(size_t n = 0; n < 4 * npts; n++) {tab[n] = all[n];}
-    Kokkos::fence();
+    gizmo_kokkos_fence();
     {double c0[4]; ewald_xy_exact(0, 0, 0, All.EwaldXY_Lx, All.EwaldXY_Ly, c0); All.EwaldXY_SelfPot = c0[3];}
     All.EwaldXY_Table = tab; filled = 1;
     if(ThisTask == 0) {printf("GRAVITY_PERIODIC_XY: Ewald table %d x %d x %d over |dz| <= %g\n", EWXY_NXH + 1, EWXY_NXY + 1, All.EwaldXY_nz + 1, All.EwaldXY_zmax);}
