@@ -31,7 +31,7 @@ def _clean_outputs(test_dir):
 
 def _run_fof_subfind(test_dir, num_mpi_ranks, num_omp_threads):
     make_fof_subfind_ics(test_dir)
-    build_gizmo_for_test(TEST_NAME, num_omp_threads)
+    build_gizmo_for_test(TEST_NAME, num_omp_threads, extra_config_flags=tuple(os.environ.get("GIZMO_TEST_EXTRA_FLAGS", "").split()))  # e.g. "FOF_UNIQUE_KEY_CHECK FOF_SECONDARY_LINK_TARGET_TYPES=4"
 
     cmd = mpi_launch_command(num_mpi_ranks, num_omp_threads) + ["./GIZMO", "fof_subfind.params", "3", "0"]
     env = os.environ.copy()
