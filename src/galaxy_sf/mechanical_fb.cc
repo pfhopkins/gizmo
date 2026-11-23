@@ -176,6 +176,9 @@ void verify_and_assign_local_mechfb_integrals(void)
             single_star_check_receiver(j, m0, mf, Z_before, LocalGasMechFBInfoTemp[j].Z_injected);
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
+#ifdef SINGLE_STARS_IA_COMPANION_SHARE
+            if(LocalGasMechFBInfoTemp[j].M_ia_conv > 0) {ISMDustChem_remove_converted_gas_dust(j, DMIN(LocalGasMechFBInfoTemp[j].M_ia_conv / m0, 1.));} /* converted gas keeps no dust */
+#endif
             update_ISMDustChem_after_mechanical_injection(j, LocalGasMechFBInfoTemp[j].Mass_Where_Dust_Shocked, m0, mf, LocalGasMechFBInfoTemp[j].Z_injected); /* update dust chemistry quantities */
 #endif
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER

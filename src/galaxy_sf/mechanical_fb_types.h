@@ -52,6 +52,7 @@ struct MechFBGasDelta
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
     double Z_ia_conv[NUM_METAL_SPECIES]; /* Type Ia conversion's change of the cell's metal mass per slot (also inside Z_injected) */
     int N_ia_clamped; /* conversions clamped at the cell mass */
+    double M_ia_conv; /* gas mass converted to Ia matter in place (its dust goes) */
 #endif
 };
 

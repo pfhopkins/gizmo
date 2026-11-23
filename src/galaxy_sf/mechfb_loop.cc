@@ -548,6 +548,7 @@ static void mechfb_gas_delta_zero(struct MechFBGasDelta *d) {
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
     for (int k = 0; k < NUM_METAL_SPECIES; ++k) d->Z_ia_conv[k] = 0;
     d->N_ia_clamped = 0;
+    d->M_ia_conv = 0;
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     d->Mass_Where_Dust_Shocked = 0;
@@ -580,6 +581,7 @@ static void mechfb_gas_delta_add(struct MechFBGasDelta *dst,
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
     for (int k = 0; k < NUM_METAL_SPECIES; ++k) dst->Z_ia_conv[k] += src->Z_ia_conv[k];
     dst->N_ia_clamped += src->N_ia_clamped;
+    dst->M_ia_conv += src->M_ia_conv;
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     dst->Mass_Where_Dust_Shocked += src->Mass_Where_Dust_Shocked;

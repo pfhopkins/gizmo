@@ -690,6 +690,21 @@ double return_ismdustchem_species_of_interest_for_diffusion_and_yields(int i, in
 
 
 /* Subroutine to update the dust abundances after enrichment in the mechanical feedback subroutine and destroy dust from SNe shocks */
+/* the fraction f of cell j's gas turned into Type Ia matter in place keeps no dust (stella_dev resolvedism_fb_thermal.cc:687): every per-gas-mass
+   dust quantity scaled by 1 - f, before the deposit's dilution m0 -> mf; drift velocities unchanged */
+void ISMDustChem_remove_converted_gas_dust(int j, double f)
+{
+    const double keep = 1. - DMIN(DMAX(f, 0.), 1.);
+    int k, l;
+    for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[j].ISMDustChem_Dust_Source[k] *= keep;}
+    for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k] *= keep;}
+    for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[j].ISMDustChem_Dust_Species[k] *= keep;}
+#ifdef GALSF_ISMDUSTCHEM_GRAINSIZEEVO
+    for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {CellP[j].ISMDustChem_Dust_NumberInBin[k][l] *= keep; CellP[j].ISMDustChem_Dust_SlopeInBin[k][l] *= keep;}}
+#endif
+    (void) l;
+}
+
 void update_ISMDustChem_after_mechanical_injection(int j, double mass_shocked, double m0, double mf, double *Z_injected)
 {
     // If SNe events happened need to first destroy the appropriate amount of dust if there is any dust

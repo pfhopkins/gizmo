@@ -508,7 +508,7 @@ static void mechanical_fb_pair_kernel(
 #endif
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
     double Z_ia_conv_pair[NUM_METAL_SPECIES]; for(int k = 0; k < NUM_METAL_SPECIES; k++) Z_ia_conv_pair[k] = 0; /* this pair's Ia conversion, per slot */
-    int ia_clamped = 0;
+    int ia_clamped = 0; double M_ia_conv_pair = 0;
 #endif
 
     if(loop_iteration < 0) {  /* loop_iteration == -1 */
@@ -642,6 +642,7 @@ static void mechanical_fb_pair_kernel(
         if(local.IaConvertMass > 0 && pnorm > 0) { /* Type Ia: this cell's share of M_Ch - M_WD, with the ejecta's weight, becomes Ia matter in place (no mass moves) */
             double c_ia = pnorm * (double)local.IaConvertMass;
             if(c_ia > Mass_j_0) {c_ia = Mass_j_0; ia_clamped = 1;} /* booked through Z_ia_conv, counted */
+            M_ia_conv_pair = c_ia;
             for(int k = 0; k < NUM_METAL_SPECIES; k++) {
                 if(k >= k_age_begin && k < k_age_end) {continue;}
                 double dmz = c_ia * ((double)local.yields[k] - Metallicity_j_0[k]);
@@ -741,6 +742,7 @@ static void mechanical_fb_pair_kernel(
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
     for(int k = 0; k < NUM_METAL_SPECIES; k++) {if(Z_ia_conv_pair[k] != 0) {Kokkos::atomic_add(&gd->Z_ia_conv[k], Z_ia_conv_pair[k]);}}
     if(ia_clamped) {Kokkos::atomic_add(&gd->N_ia_clamped, 1);}
+    if(M_ia_conv_pair > 0) {Kokkos::atomic_add(&gd->M_ia_conv, M_ia_conv_pair);}
 #endif
 #endif
     for(int k = 0; k < 3; k++) {
