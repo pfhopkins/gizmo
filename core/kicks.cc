@@ -293,6 +293,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
     {
         /* get the timestep (physical units for dt_entr and dt_hydrokick) */
         dt_entr = dt_hydrokick = (tend - tstart) * unit_integertime_in_physical(i);
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+        double tk_u0 = (P[i].Type == 0) ? CellP[i].InternalEnergy : 0, tk_h = 0, tk_floor = 0; Vec3<double> tk_v0 = P[i].Vel / All.cf_atime; /* kick energy split (test output) */
+#endif
         dt_gravkick = get_gravkick_factor(tstart, tend, i, 0);
         
         if(P[i].Type==0)
@@ -311,6 +314,16 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             dEnt_Gravity += dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+            {Vec3<double> v_phys = P[i].Vel / All.cf_atime, a_h = CellP[i].HydroAccel; /* u takes the exact complement of the hydro velocity kick, applied before gravity */
+             du_tot += dot(CellP[i].HydroVelRef - v_phys, a_h) * dt_hydrokick - 0.5 * a_h.norm_sq() * dt_hydrokick * dt_hydrokick;}
+#endif
+#if defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC) && defined(MAGNETIC)
+            test_powell_work_add(CellP[i].TestPowellMomRate * dt_hydrokick, CellP[i].TestPowellEgyRate * dt_hydrokick);
+#endif
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+            tk_h = P[i].Mass * du_tot + 0.5 * P[i].Mass * ((tk_v0 + CellP[i].HydroAccel * dt_hydrokick).norm_sq() - tk_v0.norm_sq());
+#endif
 #if defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY) && defined(MAGNETIC) && !defined(HYDRO_SPH) && !defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME)
             { /* rescale |VB| so the cell E_B after this kick equals the E_B the u equation booked (kernel-volume changes then move no energy) */
                 double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0; /* physical E_B = |VB_code|^2 (rho/m)_code / (2a) */
@@ -433,6 +446,12 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             CellP[i].InternalEnergy = internal_energy_positivity_catch(CellP[i].InternalEnergy, dEnt, u_floor);
 #endif
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            if(CellP[i].InternalEnergy != dEnt) {pairflux_note_kick_floor((CellP[i].InternalEnergy - dEnt) * P[i].Mass);} /* diagnostic */
+#endif
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+            tk_floor = (CellP[i].InternalEnergy - dEnt) * P[i].Mass;
+#endif
 #if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
             {double de_floor = (CellP[i].InternalEnergy - dEnt) * P[i].Mass; if(de_floor != 0) { /* ledger: energy the 0.5u limiter and the floor add */
                 #pragma omp atomic
@@ -488,6 +507,10 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
         }
 #endif
         P[i].Vel += dp * (1.0 / mass_new); /* correctly accounts for mass change if its allowed */
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+        {double tk_tot = 0.5 * P[i].Mass * ((P[i].Vel / All.cf_atime).norm_sq() - tk_v0.norm_sq()) + ((P[i].Type == 0) ? P[i].Mass * (CellP[i].InternalEnergy - tk_u0) : 0);
+         test_kick_energy_split_add(P[i].Type == 0, tk_h, tk_floor, tk_tot);}
+#endif
 
 #ifdef DILATION_FOR_STELLAR_KINEMATICS_ONLY
         double a_fac = return_timestep_dilation_factor(i,0);
@@ -752,6 +775,9 @@ void apply_special_boundary_conditions(int i, double mass_for_dp, int mode, inte
                 if(P[i].Type==0)
                 {
                     CellP[i].VelPred[j]=P[i].Vel[j]; CellP[i].HydroAccel[j]=0;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+                    CellP[i].PairFluxSumMom[j] = 0; /* the boundary replaces this momentum component */
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
                     CellP[i].ParticleVel[j] = -CellP[i].ParticleVel[j];
 #endif

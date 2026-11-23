@@ -178,6 +178,10 @@ struct INPUT_STRUCT_NAME
     MyFloat SoundSpeed;
     MyFloat dt_hydrostep_i;
     MyCommFloat DrkernNgbFactor;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    long long PairFluxS, PairFluxTi; /* start and length of the step that ends now (integer time) */
+    int PairFluxTask, PairFluxIndex; /* home rank and index: corrections and the opening weight go there */
+#endif
 #ifdef EOS_ANEOS
     MyFloat Temperature; /* orders the two sides of a face in the MFM entropic energy switch */
 #endif
@@ -327,6 +331,13 @@ struct OUTPUT_STRUCT_NAME
     MyDouble DtInternalEnergy;
     //MyDouble dInternalEnergy; //manifest-indiv-timestep-debug//
     MyScratchFloat MaxSignalVel;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    Vec3<MyDouble> PairFluxSumMom;
+    MyDouble PairFluxSumEgy;
+#ifdef MAGNETIC
+    Vec3<MyDouble> PairFluxSumB, PairFluxSumBded;
+#endif
+#endif
 #ifdef OUTPUT_SHOCK_MACH_NUMBER
     MyFloat MaxShockMachNumber;
 #endif
@@ -423,6 +434,9 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     in->InternalEnergyPred = CellP[i].InternalEnergyPred;
     in->SoundSpeed = CellP[i].effective_soundspeed();
     in->dt_hydrostep_i = get_particle_timestep_in_physical(i);
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    in->PairFluxS = (long long) P[i].Ti_begstep; in->PairFluxTi = (long long) P[i].integertime_step(); in->PairFluxTask = ThisTask; in->PairFluxIndex = i;
+#endif
     in->ConditionNumber = CellP[i].ConditionNumber;
     in->FaceClosureError = CellP[i].FaceClosureError;
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -632,6 +646,12 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     CellP[i].HydroAccel += out->Acc;
     CellP[i].DtInternalEnergy += out->DtInternalEnergy;
     //CellP[i].dInternalEnergy += out->dInternalEnergy; //manifest-indiv-timestep-debug//
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    CellP[i].PairFluxSumMom += out->PairFluxSumMom; CellP[i].PairFluxSumEgy += out->PairFluxSumEgy;
+#ifdef MAGNETIC
+    CellP[i].PairFluxSumB += out->PairFluxSumB; CellP[i].PairFluxSumBded += out->PairFluxSumBded;
+#endif
+#endif
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[i].DtMass += out->DtMass;
@@ -771,6 +791,9 @@ void hydro_final_operations_and_cleanup(void)
 #endif
 #ifndef TEST_MHD_NO_POWELL_SOURCE_TERMS
                 CellP[i].HydroAccel -= CellP[i].divB * Bi;
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+                CellP[i].TestPowellMomRate = CellP[i].divB * Bi * (-1.); CellP[i].TestPowellEgyRate = -CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi); /* Powell work rates (test output) */
+#endif
                 CellP[i].DtInternalEnergy -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
                 CellP[i].DtE_MHDLedger[0] -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
@@ -779,6 +802,9 @@ void hydro_final_operations_and_cleanup(void)
             }
 
             double magnorm_closure = Get_DtB_FaceArea_Limiter(i, P, CellP);
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+            test_count_mhd_limiters(0, magnorm_closure != 1);
+#endif
 
 #if defined(DIVBCLEANING_DEDNER) && !defined(HYDRO_SPH)
             // ok now deal with the divB correction forces and damping fields //
@@ -801,6 +827,9 @@ void hydro_final_operations_and_cleanup(void)
             {
 
                 if(DtB_PhiCorr > tolerance_for_correction * DtB_UnCorr) {PhiCorr_Norm *= tolerance_for_correction * DtB_UnCorr / DtB_PhiCorr;}
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+                test_count_mhd_limiters(PhiCorr_Norm < 1, 0);
+#endif
                 CellP[i].DtB += PhiCorr_Norm * CellP[i].DtB_PhiCorr;
                 CellP[i].DtInternalEnergy += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, CellP[i].Bfield() * All.cf_a2inv);
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
@@ -836,6 +865,9 @@ void hydro_final_operations_and_cleanup(void)
              intermediate drift operations, we need the primive variables, so reduce to those here
              (remembering that v_phys = v_code/All.cf_atime, for the sake of doing the unit conversions to physical) */
             {Vec3<double> vel_phys = CellP[i].VelPred / All.cf_atime;
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+            CellP[i].HydroVelRef = vel_phys;
+#endif
             CellP[i].DtInternalEnergy -= dot(vel_phys, CellP[i].HydroAccel);
             /* we solved for total energy flux (and remember, HydroAccel is still momentum -- keep units straight here!) */
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -871,7 +903,12 @@ void hydro_final_operations_and_cleanup(void)
             /* ok, now: HydroAccel = dv/dt, DtInternalEnergy = du/dt (energy per unit mass), GravWorkTerm.g = du/dt from mass moved through the potential */
 
             /* zero out hydrodynamic PdV work terms if the particle is at the maximum smoothing, these will be incorrect */
+#ifndef HYDRO_EXACT_PAIR_FLUX_EXCHANGE /* the pair records assume the kick applies the energy rate */
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            CellP[i].PairFluxMassRef = P[i].Mass; CellP[i].PairFluxBScale = 1; /* mass the rates are per unit of; DtB unscaled */
+#endif
 #if defined(MAGNETIC) && defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
             { /* ledger: d(E_th+E_kin+E_B)/dt of this step (Powell/Dedner terms, the -B^2/2 dV/dt the u-equation omits); booked in do_the_kick */
                 Vec3<double> Bp = CellP[i].Bfield() * All.cf_a2inv; double V_phys = P[i].Mass / (CellP[i].Density * All.cf_a3inv);
@@ -1169,6 +1206,15 @@ void hydro_force_initial_operations_preloop(void)
 #endif
             CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
             CellP[i].HydroAccel = {};
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            CellP[i].PairFluxSumMom = {}; CellP[i].PairFluxSumEgy = 0; CellP[i].PairFluxRecvMom = {}; CellP[i].PairFluxRecvEgy = 0;
+#ifdef MAGNETIC
+            CellP[i].PairFluxSumB = {}; CellP[i].PairFluxSumBded = {}; CellP[i].PairFluxRecvB = {}; CellP[i].PairFluxRecvBded = {};
+#endif
+#endif
+#if defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC) && defined(MAGNETIC)
+            CellP[i].TestPowellMomRate = {}; CellP[i].TestPowellEgyRate = 0; /* set by the Powell terms, if on */
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};
 #endif
@@ -1256,6 +1302,9 @@ void hydro_force(void)
 #endif
     double t_preloop_start = my_second();
     hydro_force_initial_operations_preloop(); /* do initial pre-processing operations as needed before main hydro force loop */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    pairflux_begin_hydro_pass(); /* this pass's records replace the previous pass's */
+#endif
     double t_preloop = timediff(t_preloop_start, my_second());
     double t_malloc_start = my_second();
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
@@ -1270,6 +1319,9 @@ void hydro_force(void)
     double t_demalloc = timediff(t_demalloc_start, my_second());
     double t_postloop_start = my_second();
     hydro_final_operations_and_cleanup(); /* do final operations on results */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    pairflux_end_hydro_pass(); /* records into the memory budget until the opening kick */
+#endif
 #ifdef NGB_PAIR_CACHE
     ngb_pair_cache_free();
 #endif

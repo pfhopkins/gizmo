@@ -432,3 +432,35 @@ def test_shu_jets_merging_energetics():
             "destroying the outflow rather than retiring cells that have joined the ambient "
             f"medium (the two runs ended with {a['N_gas']:.0f} and {b['N_gas']:.0f} cells)."
         )
+
+
+# Feedback without jets. Winds (or SNe) with protostellar evolution still compile in the spawning
+# machinery (SINK_WIND_SPAWN), which used to divert (1 - Sink_accreted_fraction) of every accretion
+# into isotropic spawned cells at Sink_outflow_velocity. Only jets tie an outflow to accretion, so
+# here nothing may be spawned before the star reaches the main sequence (it does not by TimeMax).
+NOJETS_WINDS = ("SINGLE_STAR_FB_WINDS=2",) + COOLING
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_shu_no_jets_no_accretion_outflow(num_mpi_ranks, num_omp_threads):
+    generate_ics()
+    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags=NOJETS_WINDS)
+
+    final_snap = get_final_snapshot(TEST_NAME, NOJETS_WINDS)
+    assert_final_time(final_snap, TEST_NAME)
+    with h5py.File(final_snap, "r") as f:
+        assert f["Header"].attrs["NumPart_ThisFile"][5] == 1, "expected exactly one sink"
+        n_spawned = int(get_jet_cells(f, ambient_cell_mass()).sum())
+        stage = f["PartType5/ProtoStellarStage"][:] if "ProtoStellarStage" in f["PartType5"] else None
+    assert stage is None or stage.max() < 5, f"star reached stage {stage.max()}; winds may legitimately spawn"
+    assert n_spawned == 0, (
+        f"{n_spawned} cells were spawned around a pre-main-sequence star without jets: accretion is "
+        "being re-ejected as an outflow that no feedback channel asked for"
+    )
+
+    snaps = sorted(glob(f"{variant_output_dir(TEST_NAME, NOJETS_WINDS)}/snapshot_*.hdf5"))
+    with h5py.File(snaps[0], "r") as f0, h5py.File(snaps[-1], "r") as f1:
+        m0 = f0["PartType0/Masses"][:].sum() + (f0["PartType5/Masses"][:].sum() if "PartType5" in f0 else 0.0)
+        m1 = f1["PartType0/Masses"][:].sum() + f1["PartType5/Masses"][:].sum()
+    assert abs(m1 - m0) / m0 < 1e-6, f"gas + sink mass not conserved: {m0:.8f} -> {m1:.8f}"

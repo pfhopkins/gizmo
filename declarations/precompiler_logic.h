@@ -782,6 +782,9 @@
 #ifndef HERMITE_CORRECTOR_ITERATIONS
 #define HERMITE_CORRECTOR_ITERATIONS 1 /* P(EC)^n: n>1 re-evaluates gravity at the corrected state and re-applies the corrector (Kokubo, Yoshinaga & Makino 1998) */
 #endif
+#if (HERMITE_CORRECTOR_ITERATIONS) < 1
+#error "HERMITE_CORRECTOR_ITERATIONS counts corrector passes and must be at least 1"
+#endif
 #ifndef TIDAL_TIMESTEP_CRITERION
 #define TIDAL_TIMESTEP_CRITERION // use tidal tensor timestep criterion -- otherwise won't effectively leverage the Hermite integrator timesteps
 #endif
@@ -1468,6 +1471,11 @@
 #endif
 #endif
 
+/* SNe injected one at a time below the scale of their ejecta need the timestep broadcast; single-star setups resolve the ejecta instead.
+   Not the one-loop coupling: its injection has no post-injection signal-speed update or instant heating, and it is unmeasured there */
+#if defined(GALSF_FB_MECHANICAL) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && !defined(GALSF_USE_SNE_ONELOOP_SCHEME) && !defined(SINGLE_STAR_SINK_DYNAMICS) && !defined(SNE_BROADCAST_TIMESTEP) && !defined(SNE_BROADCAST_TIMESTEP_DISABLE)
+#define SNE_BROADCAST_TIMESTEP
+#endif
 #ifdef SNE_BROADCAST_TIMESTEP
 #if !defined(GALSF_FB_MECHANICAL) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
 #error "SNE_BROADCAST_TIMESTEP requires GALSF_FB_MECHANICAL with GALSF_FB_FIRE_STELLAREVOLUTION"
@@ -2076,6 +2084,30 @@
    fb_norad 0.96-0.97x; Bate neutral. */
 #if defined(STARFORGE_OPTIMIZATIONS) && !defined(HYDRO_PAIR_ONCE) && !defined(HYDRO_PAIR_ONCE_OFF) && defined(HYDRO_MESHLESS_FINITE_MASS) && !(defined(_OPENMP) || defined(OPENMP) || defined(BOX_SHEARING) || defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
 #define HYDRO_PAIR_ONCE
+#endif
+/* every pair evaluated once from the smaller step; the other cell gets the opposite flux with the same time weights, active or not */
+#if defined(TEST_PAIRFLUX_ADD_MASS_AND_WAKE) && !defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC)
+#error "TEST_PAIRFLUX_ADD_MASS_AND_WAKE books its additions in the TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC output"
+#endif
+#if defined(HYDRO_EXACT_PAIR_FLUX_EXCHANGE) && defined(HYDRO_PAIR_ONCE_OFF)
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE needs HYDRO_PAIR_ONCE: do not set HYDRO_PAIR_ONCE_OFF with it"
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+#ifndef HYDRO_PAIR_ONCE
+#define HYDRO_PAIR_ONCE
+#endif
+#ifndef HYDRO_KICK_TOTAL_ENERGY_EXACT
+#define HYDRO_KICK_TOTAL_ENERGY_EXACT /* u takes the exact kinetic-energy complement of the hydro kick */
+#endif
+#if !defined(HYDRO_MESHLESS_FINITE_MASS) || defined(CONDUCTION) || defined(VISCOSITY) || defined(COSMIC_RAY_FLUID) || defined(RT_SOLVER_EXPLICIT) || defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(EOS_ELASTIC) || defined(MHD_NON_IDEAL) || defined(GALSF_SUBGRID_WINDS) || defined(PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP) || defined(ENERGY_ENTROPY_SWITCH_IS_ACTIVE) || defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) || (defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)) || defined(SINK_PARTICLES) || defined(BOX_BND_PARTICLES) || (defined(COMPUTE_POTENTIAL_ENERGY) && !defined(EVALPOTENTIAL))
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE: MFM only; sinks, boundary particles and a potential pass that rearranges particles between the kicks hold stale record indices; conduction, viscosity, CR fluid, explicit RT, turbulent energy/velocity diffusion, elastic EOS, non-ideal MHD, subgrid winds, per-step merge/split, the entropy switch, conservative psi cleaning and non-split cooling are not exchanged"
+#endif
+#endif
+#if defined(HYDRO_TIMESTEP_FROM_PAIR_FORCE) && !defined(HYDRO_PAIR_FORCE_DT_ETA)
+#define HYDRO_PAIR_FORCE_DT_ETA 0.1 /* allowed kinetic-energy change of one half-kick, in units of u */
+#endif
+#if defined(HYDRO_KICK_TOTAL_ENERGY_EXACT) && (!defined(HYDRO_MESHLESS_FINITE_MASS) || (defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)) || defined(ENERGY_ENTROPY_SWITCH_IS_ACTIVE))
+#error "HYDRO_KICK_TOTAL_ENERGY_EXACT: MFM kick only; not with the entropy switch or non-split cooling"
 #endif
 #if defined(HYDRO_PAIR_ONCE) && (defined(_OPENMP) || defined(OPENMP) || defined(BOX_SHEARING) || defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(HYDRO_SPH) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
 #error "HYDRO_PAIR_ONCE: pure-MPI MFM only (j-side writes are not thread-safe; shearing, dilation, SPH and MFV fluxes are not handled)"

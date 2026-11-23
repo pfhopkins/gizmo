@@ -93,13 +93,7 @@ void apply_grain_dragforce(void)
                     tstop_Coulomb_inv *= (Z_grain/tau_draine_sutin) * (Z_grain/tau_draine_sutin) / 17.; // coulomb attraction terms, assuming ions have charge ~1, and Coulomb logarithm is 17
                     // don't need super-accuration gas ionization states, just need approximate estimate, which we can make based on temperature //
                     double T_Kelvin = (2.3*PROTONMASS_CGS) * (cs_cgs*cs_cgs) / (1.3807e-16 * gamma_eff), f_ion_to_use = 0; // temperature in K
-                    if(T_Kelvin > 1000.) {f_ion_to_use = exp(-15000./T_Kelvin);} /* default to a simple approximate guess for ionization, without cooling active */
-#ifdef COOLING  // in this case, have the ability to calculate more accurate ionization fraction
-                    double u_tmp, ne_tmp = 1, nh0_tmp = 0, mu_tmp = 1, temp_tmp, nHeII_tmp, nhp_tmp, nHe0_tmp, nHepp_tmp;
-                    u_tmp = T_Kelvin / (2.3 * U_TO_TEMP_UNITS); // needs to be in code units; 2.3 for mean molecular weight factor and gamma_eos factor //
-                    temp_tmp = ThermalProperties(u_tmp, rho_gas, -1, &mu_tmp, &ne_tmp, &nh0_tmp, &nhp_tmp, &nHe0_tmp, &nHeII_tmp, &nHepp_tmp, P, CellP);
-                    f_ion_to_use = DMIN(ne_tmp , 1.);
-#endif
+                    if(T_Kelvin > 1000.) {f_ion_to_use = exp(-15000./T_Kelvin);} /* simple approximate guess for ionization; a grain has no gas cell to run the cooling solver on */
                     tstop_Coulomb_inv *= f_ion_to_use; // correct for ionization fraction
                     tstop_inv += tstop_Coulomb_inv; // add both forces
                 }

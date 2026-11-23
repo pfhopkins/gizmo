@@ -208,16 +208,19 @@ void find_timesteps(void)
            reversible, and an eccentric orbit drifts in energy although each Hermite step is
            time-symmetric. Instead take the largest h' in {2h, h, h/2, ...} with
            h' <= (f_start + f_end)/2, f_end extrapolated linearly from f at the start of the step
-           just completed. f depends on positions and |velocities| only, so it is even under time
-           reversal. Without a criterion history the default rule applies. */
+           just completed. f is the gravitational criterion only; it depends on positions and
+           |velocities|, so it is even under time reversal. When a hard limit (sink, neighbour,
+           Courant, ...) binds below f, the step obeys it at the start, as the default rule does.
+           Without a criterion history the default rule applies. */
         if(P[i].dt_crit_last > 0 && P[i].dt_crit_prev > 0 && All.Ti_Current > P[i].Ti_begstep && P[i].TimeBin > 1)
         {
             double ticks_per_unit = 1. / (All.Timebase_interval * timestep_dilation_factor(i,0));
             double f1 = P[i].dt_crit_last * ticks_per_unit, f0 = P[i].dt_crit_prev * ticks_per_unit; /* in ticks */
             double dfdh = (f1 - f0) / (double)(All.Ti_Current - P[i].Ti_begstep);
             double hmax = DMIN(All.MaxSizeTimestep, dt_displacement) * ticks_per_unit;
+            if((double) ti_step + 2. < (1. - 1.e-9) * f1) {hmax = DMIN(hmax, (double) ti_step);} /* a hard limit binds (margin: tick truncation) */
             int b;
-            for(b = P[i].TimeBin + 1; b > 1; b--)
+            for(b = (P[i].TimeBin + 1 < TIMEBINS - 1) ? P[i].TimeBin + 1 : TIMEBINS - 1; b > 1; b--)
             {
                 double h_try = (double) GET_INTEGERTIME_FROM_TIMEBIN(b);
                 if(h_try > hmax) {continue;}
@@ -633,6 +636,9 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
 #endif    
 #endif // SINGLE_STAR_TIMESTEPPING
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+    const double dt_smooth = dt; /* the gravitational criteria; the limits applied below are hard caps, not extrapolated */
+#endif
 #ifdef STARS_APPROACH_TIMESTEP
     if(P[p].Type == 4) /* the Type-5 dt_2body above for stars; walk times are comoving (r, Vel = a^2 dx/dt): to physical */
     {
@@ -676,7 +682,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef GRAIN_FLUID
     if((1 << P[p].Type) & (GRAIN_PTYPES))
     {
-        csnd = CellP[p].soundspeed2_from_u(P[p].Gas_InternalEnergy);
+        csnd = GAMMA_DEFAULT*(GAMMA_DEFAULT-1.)*P[p].Gas_InternalEnergy; /* p is a grain, not a gas cell */
         csnd += (P[p].Gas_Velocity - P[p].Vel).norm_sq();
 #if defined(GRAIN_LORENTZFORCE)
         csnd += P[p].Gas_B.norm_sq() / (2.0 * P[p].Gas_Density);
@@ -722,6 +728,12 @@ integertime get_timestep(int p,		/*!< particle index */
             if(P[p].ID == All.SpawnedWindCellID) {dt_courant *= 0.5;} // be more careful if this is a spawned-in gas cell
 #endif
             if(dt_courant < dt) dt = dt_courant;
+#ifdef HYDRO_TIMESTEP_FROM_PAIR_FORCE
+            { /* one half-kick of the hydro force changes the kinetic energy by at most a fraction of u: (a dt/2)^2/2 <= eta u */
+                double a2 = CellP[p].HydroAccel.norm_sq();
+                if(a2 > 0 && CellP[p].InternalEnergy > All.MinEgySpec) {double dt_pf = 2. * sqrt(2. * HYDRO_PAIR_FORCE_DT_ETA * CellP[p].InternalEnergy / a2); if(dt_pf < dt) {dt = dt_pf;}}
+            }
+#endif
 
             double dt_prefac_diffusion;
             dt_prefac_diffusion = 0.5;
@@ -1280,7 +1292,7 @@ integertime get_timestep(int p,		/*!< particle index */
     }
 
 #ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
-    P[p].dt_crit_last = eligible_for_hermite(p) ? dt : 0; /* every factor and cap applied, not yet quantised */
+    P[p].dt_crit_last = eligible_for_hermite(p) ? DMIN(dt_smooth * All.cf_hubble_a, 0.5 * TIMEBASE * All.Timebase_interval) : 0; /* not quantised */
 #endif
     ti_step = (integertime) (dt / All.Timebase_interval);
 #ifndef STOP_WHEN_BELOW_MINTIMESTEP
@@ -1659,6 +1671,9 @@ void process_wake_ups(void)
 #ifndef HYDRO_MESHLESS_FINITE_VOLUME
 		    /* the old step kicked this cell only to its midpoint and kick 1 (ActiveParticleList) skips it: complete the old step to now here, first half-kick of the new one below */
 		    if(new_step_starts_now) {do_the_kick(i, old_midpoint, All.Ti_Current, P[i].Ti_current, 1);} /* otherwise no kick: the step is truncated below */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+		    if(new_step_starts_now) {pairflux_wake_kick_correction(i, (double)(All.Ti_Current - old_midpoint) * unit_integertime_in_physical(i), 1);}
+#endif
 #else
 		    {
 #ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
@@ -1696,6 +1711,9 @@ void process_wake_ups(void)
 		if(P[i].Ti_current < All.Ti_Current) {P[i].Ti_current=All.Ti_Current;}
 #ifndef HYDRO_MESHLESS_FINITE_VOLUME
 		if(new_step_starts_now) {do_the_kick(i, P[i].Ti_begstep, P[i].Ti_begstep + P[i].integertime_step() / 2, P[i].Ti_current, 0);} /* the first half-kick of the new step, as do_first_halfstep_kick gives an active particle */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+		if(new_step_starts_now) {pairflux_wake_kick_correction(i, (double)(P[i].integertime_step() / 2) * unit_integertime_in_physical(i), 0);}
+#endif
 #endif
 		force_raise_motion_bound(i); /* the wake-up kicks above changed this particle's velocity outside the sync-point kick */
 	    }

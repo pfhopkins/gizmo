@@ -411,6 +411,9 @@ void begrun(void)
         All.Sink_Rad_MomentumFactor = all.Sink_Rad_MomentumFactor;
 #endif
 #endif // sinks
+#if defined(SINGLE_STAR_SINK_DYNAMICS) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+        All.StellarLuminosityFactor = all.StellarLuminosityFactor;
+#endif
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
         All.RP_Local_Momentum_Renormalization = all.RP_Local_Momentum_Renormalization;
 #endif
@@ -2157,6 +2160,12 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.RadiationBackgroundRedshift;
         id[nt++] = REAL;
 #endif
+
+#if defined(SINGLE_STAR_SINK_DYNAMICS) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+        strcpy(tag[nt], "StellarLuminosityFactor");
+        addr[nt] = &All.StellarLuminosityFactor;
+        id[nt++] = REAL;
+#endif
 #ifdef RT_INFRARED
     strcpy(tag[nt], "InitRadiationTemp");
 	strcpy(alternate_tag[nt], "InitRadTemp");
@@ -3064,6 +3073,9 @@ void read_parameter_file(char *fname)
 
                 if(strcmp("Redshift_RT_Background",tag[i])==0) {*((double *)addr[i])=0.0; printf("Tag %s (%s) not set in parameter file: defaulting to assuming z=0 background radiation field \n",tag[i],alternate_tag[i]); continue;}
 #endif
+#if defined(SINGLE_STAR_SINK_DYNAMICS) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+                if(strcmp("StellarLuminosityFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s (%s) not set in parameter file: defaulting to unscaled stellar luminosity (=%g) \n",tag[i],alternate_tag[i],All.StellarLuminosityFactor); continue;}
+#endif
 #if defined(RT_INFRARED)
                 if(strcmp("InitRadiationTemp",tag[i])==0) {*((double *)addr[i])=20.; printf("Tag %s (%s) not set in parameter file: defaulting to assuming 20K radiation temperature \n",tag[i],alternate_tag[i]); continue;}
 #endif
@@ -3514,6 +3526,16 @@ void read_parameter_file(char *fname)
 #endif
 #endif
 
+#if defined(SINK_WIND_SPAWN) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && !defined(SINGLE_STAR_FB_JETS)
+    /* single stars tie an outflow to accretion only through jets. Winds or SNe still compile in SINK_WIND_SPAWN, under which
+       a fraction f < 1 would re-eject (1-f) of every accretion as isotropic spawned cells at Sink_outflow_velocity, and cap
+       the reservoir drain at f. Without jets all accreted mass stays in the star. Set here, so restarts get it too. */
+    if(All.Sink_accreted_fraction != 1) {
+        if(ThisTask == 0) {printf("Sink_accreted_fraction = %g ignored: without SINGLE_STAR_FB_JETS all accreted mass stays in the star (using 1)\n", All.Sink_accreted_fraction);}
+        All.Sink_accreted_fraction = 1;
+    }
+#endif
+
 
 
 
@@ -3630,6 +3652,12 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
       All.Timebase_interval *= 2.0;
       ti_end /= 2;
       All.Ti_Current /= 2;
+      All.Previous_Ti_Current /= 2;
+      All.Ti_lastoutput /= 2;
+#ifdef RADTRANSFER
+      All.Radiation_Ti_begstep /= 2;
+      All.Radiation_Ti_endstep /= 2;
+#endif
 #ifdef PMGRID
       All.PM_Ti_begstep /= 2;
       All.PM_Ti_endstep /= 2;
@@ -3638,13 +3666,22 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
       StTPrev /= 2;
 #endif
 
-    All.Previous_Ti_Current /= 2;
-    if(Nodes_base && Extnodes_base) {for(i = 0; i < Numnodestree; i++) {Nodes_base[i].Ti_current /= 2; Extnodes_base[i].Ti_lastkicked /= 2;}} /* the tree of the restart files */
     for(i = 0; i < NumPart; i++)
 	{
+#ifdef WAKEUP
+        if((P[i].Ti_begstep | P[i].Ti_current | P[i].dt_step) & 1) /* a step truncated at an odd tick cannot be halved exactly */
+#else
+        if((P[i].Ti_begstep | P[i].Ti_current) & 1)
+#endif
+            {printf("readjust_timebase(): particle %d has a step boundary on an odd tick of the integer timeline, which cannot be coarsened. Restart from a snapshot instead. Exiting.\n", i); endrun(8766);}
         P[i].Ti_begstep /= 2;
         P[i].Ti_current /= 2;
-        P[i].dt_step /= 2;
+#ifdef WAKEUP
+        P[i].dt_step /= 2; /* the particle's own step, which integertime_step() returns */
+#endif
+#ifdef SINK_PARTICLES
+        if(P[i].Sink_TimeBinGasNeighbor > 0 && P[i].Sink_TimeBinGasNeighbor < TIMEBINS) {P[i].Sink_TimeBinGasNeighbor--;} /* a timebin too; TIMEBINS marks no gas neighbour */
+#endif
         if(P[i].TimeBin > 0)
 	    {
 	      P[i].TimeBin--;
@@ -3652,6 +3689,8 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
 	    }
 	}
     All.Ti_nextlineofsight /= 2;
+    /* the tree restored from the restart files carries node times on the old timeline */
+    if(Nodes_base && Extnodes_base) {for(i = 0; i < Numnodestree; i++) {Nodes_base[i].Ti_current /= 2; Extnodes_base[i].Ti_lastkicked /= 2;}}
   }
   All.TimeMax = TimeMax_new;
 }

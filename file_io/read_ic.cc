@@ -121,6 +121,10 @@ void read_ic(char *fname)
         for(i = 0; i < NumPart; i++) {if(All.MassTable[P[i].Type] != 0) {P[i].Mass = All.MassTable[P[i].Type];}}
     }
 
+#ifdef METALS
+    {int cols[6]; MPI_Allreduce(IC_Metallicity_Columns, cols, 6, MPI_INT, MPI_MAX, MPI_COMM_WORLD); for(i=0;i<6;i++) {IC_Metallicity_Columns[i]=cols[i];}} /* set on the reading tasks only */
+#endif
+
     /* zero this out, since various operations in the code will want to change particle
      masses and keeping MassTable fixed won't allow that to happen */
     for(i=0;i<6;i++) All.MassTable[i]=0;
@@ -291,7 +295,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #ifdef METALS
             for(n = 0; n < pc; n++) {
                 int nmax=NUM_METAL_SPECIES;
-                if(RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {nmax=header.flag_metals;} // special clause to catch cases where read-in snapshot did not use all the metals fields we want to read now
+                if((RestartFlag==2 || RestartFlag==0) && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {nmax=header.flag_metals;} // special clause to catch cases where read-in snapshot did not use all the metals fields we want to read now
                 for(k=0;k<nmax;k++) {P[offset + n].Metallicity[k] = *fp++;} // normal read-in
                 if(nmax<NUM_METAL_SPECIES) {for(k=nmax;k<NUM_METAL_SPECIES;k++) {P[offset + n].Metallicity[k]=0;}} // any extra fields zero'd
             }
@@ -1161,6 +1165,9 @@ void read_file(char *fname, int readTask, int lastTask)
                 /* blocks only for restartflag == 0 */
                 if(RestartFlag == 0 && blocknr > IO_U
                    && blocknr != IO_BFLD
+#ifdef METALS
+                   && !(blocknr == IO_Z && All.ICFormat == 3) /* optional in HDF5 ICs: where present it replaces InitMetallicity */
+#endif
 #ifdef INPUT_READ_KERNELRADIUS
                    && blocknr != IO_KERNELRADIUS
 #endif
@@ -1330,7 +1337,7 @@ void read_file(char *fname, int readTask, int lastTask)
             if(RestartFlag == 2 && blocknr == IO_COSMICRAY_ENERGY) {bytes_per_blockelement = (1) * sizeof(MyInputFloat);}
 #endif
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
-            if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {bytes_per_blockelement = (header.flag_metals) * sizeof(MyInputFloat);}
+            if(blocknr==IO_Z && (RestartFlag==2 || RestartFlag==0) && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {bytes_per_blockelement = (header.flag_metals) * sizeof(MyInputFloat);}
 #endif
             blockmaxlen = comm_buffer_bytes() / bytes_per_blockelement;
             npart = get_particles_in_block(blocknr, &typelist[0], npart_in_file);
@@ -1436,6 +1443,23 @@ void read_file(char *fname, int readTask, int lastTask)
                                         H5Eset_auto(NULL, NULL);
                                         hdf5_dataset = open_dataset_or_legacy(hdf5_grp[type], buf);
                                         H5Eset_auto(old_func, old_client_data);
+#ifdef METALS
+                                        if(hdf5_dataset >= 0 && blocknr == IO_Z && RestartFlag == 0)
+                                        {
+                                            hsize_t filedims[2] = {0, 1}; hid_t filespace = H5Dget_space(hdf5_dataset);
+                                            int filerank = H5Sget_simple_extent_ndims(filespace), cols_expected = (int) (bytes_per_blockelement / sizeof(MyInputFloat));
+                                            if(filerank <= 2) {H5Sget_simple_extent_dims(filespace, filedims, NULL);} else {filedims[1] = 0;}
+                                            H5Sclose(filespace);
+                                            /* a single column is read as a 1-D dataset, so an (N,1) one does not qualify */
+                                            if(filedims[1] != (hsize_t) cols_expected || filerank != (cols_expected == 1 ? 1 : 2))
+                                            {
+                                                static int warned[6]; /* this runs once per communication chunk */
+                                                if(!warned[type]) {printf("IC Metallicity of type %d has shape (N%s%d) where %d column(s) are expected (Header Flag_Metals = %d; a single column must be 1-D): ignoring it\n", type, (filerank == 2 ? "," : "; rank "), (filerank == 2 ? (int) filedims[1] : filerank), cols_expected, header.flag_metals); warned[type] = 1;}
+                                                H5Dclose(hdf5_dataset); hdf5_dataset = -1;
+                                            }
+                                            else {IC_Metallicity_Columns[type] = (int) filedims[1];}
+                                        }
+#endif
 
                                       if(hdf5_dataset >= 0)
                                       {
@@ -1445,7 +1469,7 @@ void read_file(char *fname, int readTask, int lastTask)
                                         if(RestartFlag == 2 && blocknr == IO_COSMICRAY_ENERGY) {dims[1] = 1;}
 #endif
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
-                                        if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {dims[1] = header.flag_metals;}
+                                        if(blocknr==IO_Z && (RestartFlag==2 || RestartFlag==0) && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {dims[1] = header.flag_metals;}
 #endif
                                         if(dims[1] == 1) {rank = 1;} else {rank = 2;}
                                         hdf5_dataspace_in_file = H5Screate_simple(rank, dims, NULL);
@@ -1462,7 +1486,7 @@ void read_file(char *fname, int readTask, int lastTask)
                                         if(RestartFlag == 2 && blocknr == IO_COSMICRAY_ENERGY) {count[1] = 1;}
 #endif
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
-                                        if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {count[1] = header.flag_metals;}
+                                        if(blocknr==IO_Z && (RestartFlag==2 || RestartFlag==0) && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {count[1] = header.flag_metals;}
 #endif
                                         pcsum += pc;
 
@@ -1765,7 +1789,8 @@ void read_header_attributes_in_hdf5(char *fname)
     H5Aclose(hdf5_attribute);
 
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
-    if(RestartFlag==2)
+    header.flag_metals = 0;
+    if(RestartFlag==2 || (RestartFlag==0 && H5Aexists(hdf5_headergrp, "Flag_Metals") > 0)) /* ICs: number of Metallicity columns, 1 = total only */
     {
         hdf5_attribute = H5Aopen_name(hdf5_headergrp, "Flag_Metals");
         H5Aread(hdf5_attribute, H5T_NATIVE_INT, &header.flag_metals);

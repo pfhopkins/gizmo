@@ -41,6 +41,27 @@ extern struct gas_cell_data
     
     Vec3<MyDouble> VelPred;         /*!< predicted gas cell velocity at the current time */
     Vec3<MyDouble> HydroAccel;      /*!< acceleration due to hydrodynamical force (for drifting) */
+#if defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC) && defined(MAGNETIC)
+    Vec3<MyDouble> TestPowellMomRate; /*!< test output: Powell momentum rate at the hydro pass */
+    MyDouble TestPowellEgyRate;       /*!< test output: Powell energy rate at the hydro pass */
+#endif
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+    Vec3<MyDouble> HydroVelRef;     /*!< physical velocity the hydro pass used to turn the total-energy rate into du/dt */
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    Vec3<MyDouble> PairFluxSumMom;  /*!< sum of the pair momentum fluxes in this cell's rates (physical) */
+    MyDouble PairFluxSumEgy;        /*!< sum of the pair total-energy fluxes in this cell's rates (physical) */
+#ifdef MAGNETIC
+    Vec3<MyDouble> PairFluxSumB;    /*!< sum of the pair B*V fluxes in this cell's rates (physical) */
+    Vec3<MyDouble> PairFluxSumBded; /*!< part of PairFluxSumB from the Dedner mean-phi face term */
+    Vec3<MyDouble> PairFluxRecvBded; /*!< part of PairFluxRecvB from the Dedner mean-phi face term */
+    Vec3<MyDouble> PairFluxRecvB;   /*!< part of PairFluxSumB received from smaller-step cells */
+#endif
+    Vec3<MyDouble> PairFluxRecvMom; /*!< part of PairFluxSumMom received from smaller-step cells (they deliver it as impulses; not predicted) */
+    MyDouble PairFluxRecvEgy;       /*!< part of PairFluxSumEgy received from smaller-step cells */
+    MyDouble PairFluxMassRef;       /*!< cell mass at the hydro pass (rates are per unit of it) */
+    MyDouble PairFluxBScale;        /*!< factor DtB was scaled by since the hydro pass (IMF donors) */
+#endif
     
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
     MyDouble Density_ExplicitInt;   /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */

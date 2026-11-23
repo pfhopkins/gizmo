@@ -1086,6 +1086,30 @@ double get_particle_feedback_timestep_in_physical(int i, struct particle_data *p
 void determine_PMinterior(void);
 void gravity_tree(void);
 void hydro_force(void);
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+void pairflux_begin_hydro_pass(void);
+void pairflux_end_hydro_pass(void);
+long long pairflux_restart_count(void);
+void *pairflux_restart_buffer(long long n_read);
+size_t pairflux_record_size(void);
+void pairflux_note_rearrange(void);
+void pairflux_note_kick_floor(double de);
+void pairflux_mark_closing_kick_expected(void);
+void pairflux_record_add(int r, int r_active, int crossbin, int e_task, int e_index, long long S_e, long long ti_e, Vec3<double> mom, double egy, Vec3<double> B, Vec3<double> Bded);
+void pairflux_after_closing_kick(void);
+void pairflux_after_opening_kick(void);
+void pairflux_wake_kick_correction(int i, double dt_wake, int to_pred);
+#endif
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+void print_gas_conserved_totals(void);
+void test_kick_energy_split_add(int gas, double hydro, double floor_e, double total);
+void test_impulse_energy_add(double de);
+void test_count_mhd_limiters(int phicorr_renormalised, int closure_not_one);
+void test_powell_work_add(Vec3<double> dmom, double degy);
+#endif
+#ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
+void test_pairflux_add_mass_and_wake(void);
+#endif
 void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
