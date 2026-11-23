@@ -868,16 +868,21 @@ log). The lowest occupied timebins hold gas cells only; the lowest gas bin sits 
 set the minimum step is not identified (no per-cell limiter output): open.
 
 
-## D-61. (2026-11-22) dust temperature: bounded solve, both backends (STL-164; status: bars not all met)
+## D-61. (2026-11-22/23) dust temperature: bounded solve with the same tight stop, both backends (STL-164)
 
-calc_dust_temp (cool_util.F) / cxx_calc_dust_temp: Newton budget 20000 -> 100, then bisection of the
-balance F(tdust) = isrf - dust_cool + gas_dust + H2 heat (monotone falling) on [tmin, 1500 K], <= 60 halvings
-to 1e-6 relative; F(tmin) <= 0 returns tmin, F(1500) >= 0 returns 1500. Fortran no longer ABORT(10)s; C++ still
-sets dust_iter_failed (never read). Reason: at nH 1e6, G0 0, Z 3 the gas falls below ~4 K inside one solve
-(MinGasTemp is applied only after the solve); Newton then oscillates: Fortran aborted, C++ spent 20000
-iterations per RHS call (stall). Measured (dust61.232693.out): no abort or stall, all 60 golden phase C
-failures run; the 1 % C++/DVODE T bar is missed in 3/8 of 50 phase F cases (nets 5/17, 1.0-1.8 %), and
-Newton calls that converged after 101-10833 iterations (all in this corner) now take the bisection result.
+calc_dust_temp (cool_util.F) / cxx_calc_dust_temp: Newton budget 20000 -> 100; a Newton iterate is accepted when
+its relative step is < 1e-12 (was 1e-2); otherwise bisection of the balance F(tdust) = isrf - dust_cool + gas_dust
++ H2 heat (monotone falling) on [tmin, 1500 K] to a bracket of 1e-14 relative (<= 60 halvings); F(tmin) <= 0
+returns tmin, F(1500) >= 0 returns 1500. Fortran no longer ABORT(10)s; C++ still sets dust_iter_failed (never read).
+Why: at nH 1e6, G0 0, Z 3 gas falls below ~4 K inside one solve (MinGasTemp acts only after it) and the Newton
+oscillates: Fortran aborted, C++ spent 20000 iterations per RHS call (stall). The 1 % step test left tdust up to
+0.6 % off the root depending on the start, and C++/DVODE gas T 1.0-1.8 % apart. A 1e-8 stop shared the root but
+at production rtol left both solvers up to 70 % / 11 % off their rtol-1e-8 result on net 17 (RHS noise at the
+Jacobian increments, inferred); 1e-12 / 1e-14 keeps every traced solve within 0.5 %. Decided by Uli 2026-11-23
+(option B: corner rows may change). Measured at 3d20f2201 (dust63.233263): phase F C++/DVODE T <= 9.4e-4, root
+spread 1.1e-12, <= 4.8e5 dust iterations per solve; golden phase C: every former failure runs, most rows change
+slightly (every Newton result is refined), C++/DVODE agreement unchanged.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1
