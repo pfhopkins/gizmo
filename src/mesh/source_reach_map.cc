@@ -157,6 +157,7 @@ int build_own_lists(std::vector<std::vector<SourceReachEntry>> &per_thread)
         std::vector<double> mpos, mreach, mtest;
         std::vector<int> mtype;
         double t_reach_max = 0;
+        int nonfinite = 0;   /* a member whose radius cannot be bounded: the build fails, and the leaf is not scanned */
         const int stop = Nodes[t_node].u.d.sibling;
         int p = Nodes[t_node].u.d.nextnode;
         while(p >= 0 && p != stop) {
@@ -168,6 +169,7 @@ int build_own_lists(std::vector<std::vector<SourceReachEntry>> &per_thread)
                     const double g = grown_radius(h, growth);
                     if(!(g >= 0)) {failed = 1;}
                     const double test = g_scale_max * g + widen;
+                    if(!(g >= 0) || !std::isfinite(test)) {failed = 1; nonfinite = 1;}
                     for(int k = 0; k < 3; k++) {mpos.push_back((double) P[p].Pos[k]);}
                     mreach.push_back(h); mtest.push_back(test); mtype.push_back((int) P[p].Type);
                     if(test > t_reach_max) {t_reach_max = test;}
@@ -182,7 +184,7 @@ int build_own_lists(std::vector<std::vector<SourceReachEntry>> &per_thread)
         const int nm = (int) mreach.size();
         const double tc[3] = {(double) Nodes[t_node].center[0], (double) Nodes[t_node].center[1], (double) Nodes[t_node].center[2]};
         const double th = 0.5 * (double) Nodes[t_node].len, thw[3] = {th, th, th};
-        if(nm == 0) {continue;}
+        if(nm == 0 || nonfinite) {continue;}
         /* member offsets from the leaf's centre, under the box wrap, and their box */
         std::vector<double> moff(3 * (size_t) nm);
         double blo[3] = {INFINITY, INFINITY, INFINITY}, bhi[3] = {-INFINITY, -INFINITY, -INFINITY};
