@@ -495,7 +495,8 @@ int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned)
 
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
 /* young-star mass by birth time, rank-local and not tied to particles: births and mass changes of young stars add to
-   it, entries leave at 30 Myr; only its total over ranks matters, so particles may move between ranks */
+   it, entries leave at 30 Myr; only its total over ranks matters, so particles may move between ranks. Steps on which
+   every particle is active recount it, so stars that left otherwise (open boundaries, mergers) are dropped then */
 static std::map<double, double> recent_sfr_young_mass;
 static int recent_sfr_changed = 1, recent_sfr_built = 0;
 
@@ -505,9 +506,16 @@ void recent_sfr_young_mass_add(double t_birth, double dm)
     recent_sfr_young_mass[t_birth] += dm; recent_sfr_changed = 1;
 }
 
-static void recent_sfr_expire(void) /* the oldest entries first; a scan of all particles once at start-up */
+static void recent_sfr_expire(void) /* the oldest entries first; a scan of all particles at start-up and on all-active steps */
 {
-    if(!recent_sfr_built) {recent_sfr_built = 1; for(int i = 0; i < NumPart; i++) {if(P[i].Type == 4) {recent_sfr_young_mass_add(P[i].StellarAge, P[i].Mass);}}}
+    if(!recent_sfr_built || All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+    {
+        double m_old = 0, m_new = 0; for(auto &e : recent_sfr_young_mass) {m_old += e.second;}
+        recent_sfr_young_mass.clear(); recent_sfr_built = 1; const int changed = recent_sfr_changed;
+        for(int i = 0; i < NumPart; i++) {if(P[i].Type == 4 && P[i].StellarAge < (MyFloat) All.Time) {recent_sfr_young_mass_add(P[i].StellarAge, P[i].Mass);}} /* this call's births come after */
+        for(auto &e : recent_sfr_young_mass) {m_new += e.second;}
+        recent_sfr_changed = changed || (fabs(m_new - m_old) > 1.e-12 * DMAX(m_new, m_old));
+    }
     while(!recent_sfr_young_mass.empty() && evaluate_time_since_t_initial_in_Gyr(recent_sfr_young_mass.begin()->first) >= 0.03)
         {recent_sfr_young_mass.erase(recent_sfr_young_mass.begin()); recent_sfr_changed = 1;}
 }

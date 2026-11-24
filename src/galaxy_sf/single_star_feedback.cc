@@ -683,7 +683,7 @@ void single_star_feedback_finalize(const int *list, int n)
         P[i].SNe_ThisTimeStep = 0; P[i].MassReturn_ThisTimeStep = 0;
     }
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
-    for(int a = 0; a < n; a++) {recent_sfr_young_mass_add(P[list[a]].StellarAge, P[list[a]].Mass - ssfb_mass_before[a]);} /* winds and deaths */
+    for(int a = 0; a < n; a++) {recent_sfr_young_mass_add(P[list[a]].StellarAge, ((P[list[a]].Type == 4) ? (double) P[list[a]].Mass : 0) - ssfb_mass_before[a]);} /* winds and deaths; a star turned sink leaves */
 #endif
 #ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
     if(ssfb_making_ejecta_cell) {return;} /* one rank alone: the row goes out with single_star_ejecta_cells_flush */
