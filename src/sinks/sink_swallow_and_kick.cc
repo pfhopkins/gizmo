@@ -419,7 +419,11 @@ double get_spawned_cell_launch_speed(int i, struct particle_data *pp)
 #ifdef METALS
         double yields[NUM_METAL_SPECIES]={0}; get_SNe_yields(yields,i,t_gyr,SNeIaFlag,&Msne); // same ejecta mass per event as for the directly-coupled ejecta
 #endif
-        return sqrt(2.0*SNe_energy_per_event(i,SNeIaFlag)/(Msne/UNIT_MASS_IN_SOLAR)); // v_ej in code units
+        double v_ej = sqrt(2.0*SNe_energy_per_event(i,SNeIaFlag)/(Msne/UNIT_MASS_IN_SOLAR)); // v_ej in code units
+#if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
+        if(v_ej > 1000./UNIT_VEL_IN_KMS) {v_ej *= sqrt(1. - All.CosmicRay_SNeFraction);} // energy going into CRs, as for the directly-coupled ejecta
+#endif
+        return v_ej;
     }
 #endif
 
@@ -978,12 +982,18 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #if defined(SINK_RIAF_SUBEDDINGTON_MODEL) || defined(SINK_TEST_WIND_MIXED_FASTSLOW)
         if(mode != 1) {dEcr=0;} else if(P[i].Type==5) {dEcr *= mass_of_new_particle_default / (fraction_to_spawn_in_jet * P[j].Mass);} /* only the jet cells carry CR energy: weight by their mass and number fraction so the total over the outflow is preserved */
 #endif
-        if(P[i].Type==4) {dEcr=0;} /* stellar ejecta are not powered by accretion */
+        if(P[i].Type==4) {dEcr=0;} /* stellar ejecta are not powered by accretion: their CRs are injected below */
 #if defined(SINK_CR_INJECTION_AT_TERMINATION)
         CellP[j].Sink_CR_Energy_Available_For_Injection = dEcr;     /* store energy for later injection */
 #else
         inject_cosmic_rays(dEcr, v_magnitude_physical, 5, j, veldir.data, P, CellP, -1); /* inject directly */
 #endif
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(CR_DYNAMICAL_INJECTION_IN_SNE) && defined(GALSF_FB_MECHANICAL_SNE_SPAWN) /* CRs from SNe carried by the spawned ejecta: same fraction of the initial ejecta energy as for the directly-coupled ejecta */
+        if(P[i].Type==4) {
+            double v_ej_initial = v_magnitude_physical / sqrt(1. - All.CosmicRay_SNeFraction); // the launch speed already accounts for the energy going into CRs
+            if(v_ej_initial > 1000./UNIT_VEL_IN_KMS) {inject_cosmic_rays(All.CosmicRay_SNeFraction * 0.5*v_ej_initial*v_ej_initial * P[j].Mass, v_ej_initial, 0, j, veldir.data, P, CellP, -1);}
+        }
 #endif
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
         force_add_element_to_tree(i0, j);// (buggy) /* we solve this by only calling the merge/split algorithm when we're doing the new domain decomposition */
