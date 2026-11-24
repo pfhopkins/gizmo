@@ -467,6 +467,19 @@ extern "C" void *gpu_tree_alloc_bytes(size_t bytes, const char *label)
     return ptr;
 }
 
+/* The tree arrays built and installed mostly on the host (Nodes, Extnodes and the imported-leaf sidecars; device drift and moment
+   kernels also update them):
+   with GPU_TREE_HOST_ARRAYS_HOST_PREFERRED their pages prefer host memory, the device mapped in, so the host's writes stop pulling
+   pages back from the GPU. The arrays the device walk reads (Nextnode and the tree's device mirror) are allocated elsewhere. */
+extern "C" void *gpu_tree_alloc_host_built_bytes(size_t bytes, const char *label)
+{
+    void *ptr = gpu_tree_alloc_bytes(bytes, label);
+#if defined(GPU_TREE_HOST_ARRAYS_HOST_PREFERRED) && GPU_TREE_HOST_ARRAYS_HOST_PREFERRED
+    if(ptr) {gizmo_gpu_place_shared(ptr, bytes, 1, label ? label : "tree arrays the host builds");}
+#endif
+    return ptr;
+}
+
 extern "C" void gpu_tree_free_bytes(void *p)
 {
     if(p) {gizmo_gpu_prepare_shared_for_free(p); Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}

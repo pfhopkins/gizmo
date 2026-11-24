@@ -1219,7 +1219,7 @@ static int let_foreign_leaf_id_reserve(int n)
 {
     if(n > ForeignLeafIDCap)
     {
-        MyIDType *p = (MyIDType *) gpu_tree_alloc_bytes((size_t) n * sizeof(MyIDType), "tree_foreign_id");
+        MyIDType *p = (MyIDType *) gpu_tree_alloc_host_built_bytes((size_t) n * sizeof(MyIDType), "tree_foreign_id");
         if(!p) {return 1;}
         if(ForeignLeafID) {gpu_tree_free_bytes(ForeignLeafID);}
         ForeignLeafID = p; ForeignLeafIDCap = n;
