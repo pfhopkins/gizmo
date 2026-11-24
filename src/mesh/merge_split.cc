@@ -1680,10 +1680,16 @@ int merge_particles_ij(int i, int j, double target_share)
     for (k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {ChimesGasVars[j].abundances[k] = (ChimesFloat) (((ChimesGasVars[j].abundances[k] * wt_j * wt_h_j) + (ChimesGasVars[i].abundances[k] * wt_i * wt_h_i)) / ((wt_j * wt_h_j) + (wt_i * wt_h_i)));}
 #endif // CHIMES
 #ifdef METALS
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+    MyFloat metal_origin_j[4]; for(k=0;k<4;k++) {metal_origin_j[k] = P[j].Metallicity[SINGLE_STAR_METAL_ORIGIN_OFFSET+k];} /* the surviving cell keeps its own origin labels */
+#endif
 #if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = (mass_true_j*P[j].Metallicity[k] + mass_true_i*P[i].Metallicity[k]) / (mass_true_i + mass_true_j);}
 #else
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving (includes nuclear species) */
+#endif
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+    for(k=0;k<4;k++) {P[j].Metallicity[SINGLE_STAR_METAL_ORIGIN_OFFSET+k] = metal_origin_j[k];}
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 #ifdef GALSF_ISMDUSTCHEM_HU_MODEL

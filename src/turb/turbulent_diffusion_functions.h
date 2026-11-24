@@ -66,6 +66,9 @@ void turb_diff_metals_compute_pair(
 #endif
     for(int k_species=0; k_species<NUM_METAL_SPECIES; k_species++)
     {
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+        if(k_species >= SINGLE_STAR_METAL_ORIGIN_OFFSET && k_species < SINGLE_STAR_METAL_ORIGIN_OFFSET + 4) {continue;} /* the origin labels stay with their cell */
+#endif
         double cmag = 0.0, grad_dot_x_ij = 0.0;
         double Z_j = Pj.Metallicity[k_species];
         double d_scalar = local.Metallicity[k_species] - Z_j;

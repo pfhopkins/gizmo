@@ -302,6 +302,9 @@ void ledger_step_checkpoint(const char *tag)
         int worst = -1;
         for(int k = 0; k < NUM_METAL_SPECIES; k++) {
             long double g = el[EL_GAS * NUM_METAL_SPECIES + k], st = el[EL_STARS * NUM_METAL_SPECIES + k], out = el[EL_OUT * NUM_METAL_SPECIES + k], S = fabsl(g) + fabsl(st) + fabsl(out);
+#ifdef GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
+            if(k >= SINGLE_STAR_METAL_ORIGIN_OFFSET && k < SINGLE_STAR_METAL_ORIGIN_OFFSET + 4) {continue;} /* labels, not conserved on merges */
+#endif
             L[k] = g + st + out - el[EL_NET * NUM_METAL_SPECIES + k];
             if(!last_L.empty()) {
                 long double dL = L[k] - last_L[k];
