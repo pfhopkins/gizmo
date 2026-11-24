@@ -343,10 +343,7 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 #if defined(EXTERNAL_CHEMISTRY_REPORTS_SPECIES)
   return (double) cell[i].HII;
 #elif defined(SGCHEM)
-    double x_ion = cell[i].Ne; /* ions per H nucleus: the chemistry's electrons */
-#if CHEMISTRYNETWORK == 5
-    x_ion -= cell[i].TracAbund[2]; /* net 5 counts all gas-phase C as C+; carbon in CO (slot 2) is neutral */
-#endif
+    double x_ion = cell[i].Ne; /* ions per H nucleus: the chemistry's electrons, in which carbon in CO is neutral */
     if(!isfinite(x_ion)) {x_ion = 0;}
     return DMIN(DMAX(x_ion, 1.e-12), 1.);
 #else
