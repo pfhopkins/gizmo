@@ -109,14 +109,14 @@ static void sgchem_uvb_treecol_shielding(int i, double f_gamma[3], double f_heat
 
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
 /* the unattenuated stellar field of cell i from the gravity walk: each 6-13.6 eV pixel floored at
-   0.324e-2 SGChemBackgroundG0 / NPIX Habing, the pixel weights fac_uv, G0 / G0_LW / band-resolved G0_dust */
+   SGCHEM_G0_FLOOR_HABING / NPIX, the pixel weights fac_uv, G0 / G0_LW / band-resolved G0_dust */
 struct ChemFUVField sgchem_treecol_field(int i, double *fac_uv)
 {
-    double floor_pix = 0.324e-2 * All.SGChemBackgroundG0 / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS, u_uv = 0, u_pix[NPIX];
+    double floor_pix = SGCHEM_G0_FLOOR_HABING / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS, u_uv = 0, u_pix[NPIX];
     for(int k = 0; k < NPIX; k++) {u_pix[k] = DMAX(TREECOL_PIXELS_EGY_UV(CellP[i], k), floor_pix); u_uv += u_pix[k];}
     for(int k = 0; k < NPIX; k++) {fac_uv[k] = (u_uv > 0) ? u_pix[k] / u_uv : 1.0 / NPIX;}
     return chem_fuv_field_from_band_energy(u_uv, HABING_EGY_DENSITY_6_13P6EV_CGS, CellP[i].TreeColEgyLW, CellP[i].TreeColEgyNUV,
-                                           CellP[i].TreeColEgyOPT, 1, 1, 0.324e-2 * All.SGChemBackgroundG0);
+                                           CellP[i].TreeColEgyOPT, 1, 1, SGCHEM_G0_FLOOR_HABING);
 }
 #endif
 
@@ -241,14 +241,14 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     struct ChemFUVField fuv = sgchem_treecol_field(i, in.fac_uv); /* the stars' field from the gravity walk */
 #ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
-    for(int k = 0; k < NPIX; k++) {in.pix_att[k] = (TREECOL_PIXELS_EGY_UV(CellP[i], k) < 0.324e-2 * All.SGChemBackgroundG0 / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS) ? 1. : 0.;}
+    for(int k = 0; k < NPIX; k++) {in.pix_att[k] = (TREECOL_PIXELS_EGY_UV(CellP[i], k) < SGCHEM_G0_FLOOR_HABING / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS) ? 1. : 0.;}
 #endif
 #elif defined(RADTRANSFER)
     struct ChemFUVField fuv = sgchem_rt_field(i, in.fac_uv, in.pix_att); /* the stars' field from the moment bins */
 #elif defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
     struct ChemFUVField fuv; fuv.G0 = fuv.G0_LW = fuv.G0_dust = sgchem_recent_sfr_g0(); /* uniform, scaled with the recent SFR */
 #else
-    struct ChemFUVField fuv = sgchem_uniform_field(All.SGChemG0, All.SGChemG0_LW, All.SGChemBackgroundG0); /* uniform, unattenuated */
+    struct ChemFUVField fuv = sgchem_uniform_field(All.SGChemG0, All.SGChemG0_LW); /* uniform, unattenuated */
 #endif
     double uvb[6] = {0, 0, 0, 0, 0, 0}; /* UV background (gJH0, gJHe0, gJHep, epsH0, epsHe0, epsHep), comoving runs only */
     if(All.ComovingIntegrationOn) {
@@ -262,7 +262,7 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     in.G0 = fuv.G0; in.G0_LW = fuv.G0_LW; in.G0_dust = fuv.G0_dust;
 #ifdef SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS
     { /* stellar 6-13.6 eV = pixel energy above the floor; NUV (3.444-6 eV) and optical (0.4133-3.444 eV) are stellar only */
-        double floor_pix = 0.324e-2 * All.SGChemBackgroundG0 / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS, u_fuv_star = 0;
+        double floor_pix = SGCHEM_G0_FLOOR_HABING / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS, u_fuv_star = 0;
         for(int k = 0; k < NPIX; k++) {u_fuv_star += DMAX(TREECOL_PIXELS_EGY_UV(CellP[i], k) - floor_pix, 0.);}
         in.hm_detach_stellar = sgchem_hminus_rate_from_bands(CellP[i].TreeColEgyOPT, CellP[i].TreeColEgyNUV, u_fuv_star);
         in.G0_hm_isrf = DMAX(in.G0 - u_fuv_star / HABING_EGY_DENSITY_6_13P6EV_CGS, 0.);

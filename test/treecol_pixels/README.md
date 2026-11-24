@@ -9,7 +9,7 @@ computation: `TEST_DUMP_TREECOL_PIXELS_AND_EXIT` (test only) writes the tree rad
 |---|---|
 | `test_pixel_columns_and_fluxes` | every cell's 12 pixel columns (dust-weighted, H2, CO; within `TreeColShieldingLength`) and stellar band energy densities against direct sums over all particles: columns median <= 1e-2, p99 <= 5e-2 (tree error); fluxes median <= 2e-3, p99 <= 3e-2; 1 and 2 ranks |
 | `test_columns_unsoftened` | softening of 1 pc on a 1.7 pc lattice: the columns follow the unsoftened direct sum |
-| `test_chemistry_inputs` | SGChem field per cell from the tree energy densities (6-13.6 eV pixels floored at 0.324e-2 SGChemBackgroundG0/12): G0, G0_LW, band-resolved G0_dust (1e-6) |
+| `test_chemistry_inputs` | SGChem field per cell from the tree energy densities (6-13.6 eV pixels floored at 0.324e-2/12): G0, G0_LW, band-resolved G0_dust (1e-6) |
 | `test_radial_shells_attenuate_bands` | `GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS`: stored stellar bands attenuated by dust per (pixel, shell) in the walk, against a direct sweep over all particles (tree-error bars; 1, 2 ranks) |
 | `test_radial_shells_without_dust` | without dust the sweep returns the unattenuated pixels (3e-6, float storage) |
 | `test_ionising_sources_and_absorbers` | ionising energy and photon rate as the tables in two tree source bins (1e-10), root sums, H-ionising absorber masses per cell and in the root (1e-12) |

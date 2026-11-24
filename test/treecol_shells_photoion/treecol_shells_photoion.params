@@ -65,7 +65,6 @@ SGChemDustToGasRatio               1.0
 SGChemDeuteriumAbundance           2.6e-5
 SGChemG0                           0
 SGChemG0_LW                        0
-SGChemBackgroundG0                 1.7
 TreeColShieldingLength             0.100
 TestTreeRayFixedRate               1.0e49
 TestTreeRayNeutralTemp             1000.0

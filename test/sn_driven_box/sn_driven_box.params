@@ -37,7 +37,6 @@ SGChemDustToGasRatio               1.0
 SGChemDeuteriumAbundance           2.6e-5
 SGChemG0                           1.7
 SGChemG0_LW                        0
-SGChemBackgroundG0                 1.7
 TreeColShieldingLength             0.050
 PhotoionMaxSearchRadius            0.05
 InitMetallicity                    1.0

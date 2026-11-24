@@ -33,4 +33,3 @@ SGChemDustToGasRatio        0.0         % no depletion: C and Si per H follow th
 SGChemDeuteriumAbundance    2.6e-5      % D/H
 SGChemG0                    0           % no radiation field (test_sgchem_habing_field sets one)
 SGChemG0_LW                 0
-SGChemBackgroundG0          0

@@ -19,7 +19,7 @@ stops) and checks them against exact values.
   test_host_equals_device: the device walk (team-scratch sums, fixed fold order) gives the same cell outputs as the
     host walk, and repeats bitwise (2 ranks x 2 threads; 1 rank x 4 threads, where every target takes the device walk).
   test_chemistry_inputs: the SGChem field of every cell from the tree energy densities (pixels floored at
-    0.324e-2 SGChemBackgroundG0 / 12 Habing): G0, G0_LW and the band-resolved grain-heating G0_dust (1e-6).
+    0.324e-2 / 12 Habing): G0, G0_LW and the band-resolved grain-heating G0_dust (1e-6).
   test_radial_shells_attenuate_bands: with GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS the stored stellar bands are
     dust-attenuated per (pixel, shell) in the walk: 6-13.6, 11.2-13.6, 3.444-6 and 0.4133-3.444 eV against a direct
     sweep over all particles (tree-error bars, 1 and 2 ranks).
@@ -367,7 +367,7 @@ def test_slab_shielding(tables):
     star = (40.0, tab._i2(tab.t_pms, lM, lZ) + 0.3 * tab._i2(tab.life, lM, lZ), np.array([4.0, 4.0, 1.5]))
     exe = build("pix12_step20", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "TEST_DUMP_TREECOL_PIXELS_AT_STEP=20"))
     out = run(exe, "slab", tables, L, pos, [star], gas_mass=1.0, hsml=0.6,
-              overrides={"TimeMax": 1.0, "MaxSizeTimestep": 0.01, "SGChemBackgroundG0": 1.7, "SGChemCosmicRayIonRate": 3.0e-17})
+              overrides={"TimeMax": 1.0, "MaxSizeTimestep": 0.01, "SGChemCosmicRayIonRate": 3.0e-17})
     cells = load(out, "cells"); z = cells[:, -1]
     axis = (np.abs(cells[:, -3] - 4.0) < 1.2) & (np.abs(cells[:, -2] - 4.0) < 1.2)
     x_h2 = cells[:, 2] * 1.4 / (2.0 * 1.0)  # H2 mass of a 1 Msun cell, per H nucleus
@@ -386,7 +386,7 @@ def test_slab_shielding_finer_pixels(tables, npix):
     pos = slab_ics(L, z0)
     lM, lZ = np.log10(40.0), np.log10(0.0142)
     star = (40.0, tab._i2(tab.t_pms, lM, lZ) + 0.3 * tab._i2(tab.life, lM, lZ), np.array([4.0, 4.0, 1.5]))
-    over = {"TimeMax": 1.0, "MaxSizeTimestep": 0.01, "SGChemBackgroundG0": 1.7, "SGChemCosmicRayIonRate": 3.0e-17}
+    over = {"TimeMax": 1.0, "MaxSizeTimestep": 0.01, "SGChemCosmicRayIonRate": 3.0e-17}
     res = {}
     for n in (12, npix):
         exe = build(f"pix{n}_step20", (f"GALSF_RESOLVEDISM_TREECOL_PIXELS={n}", "TEST_DUMP_TREECOL_PIXELS_AT_STEP=20"))
@@ -437,8 +437,8 @@ def test_host_equals_device(tables, ranks, threads):
 
 
 def test_chemistry_inputs(tables):
-    cells = pixel_run(tables, 1, tag="_chem", overrides={"SGChemBackgroundG0": 1.7})[0]
-    g0bg = 0.324e-2 * 1.7
+    cells = pixel_run(tables, 1, tag="_chem")[0]
+    g0bg = 0.324e-2
     uv = np.maximum(cells[:, 40:52], g0bg / 12 * 5.257e-14).sum(1)
     G0 = uv / 5.257e-14
     G0_LW = cells[:, 52] / 7.799e-15
@@ -636,7 +636,7 @@ def cr_attenuation(sigma):
 def test_cosmic_ray_rate(tables, mode):
     rate, m_gas = (1.0e-18 if mode == "CR_SCALE_WITH_G0" else 3.0e-17), 30.0  # G0 ~ 70-2e4 here
     cells = pixel_run(tables, 1, tag=f"_{mode}", flags=(mode,), gas_mass=m_gas,
-                      overrides={"SGChemBackgroundG0": 1.7, "SGChemCosmicRayIonRate": rate})[0]
+                      overrides={"SGChemCosmicRayIonRate": rate})[0]
     zeta = cells[:, 59]
     if mode == "CR_SCALE_WITH_G0":
         assert cells.shape[1] == 63, "dump: ID, species, columns, energy densities, G0 G0_LW G0_dust zeta, position"

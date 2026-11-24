@@ -48,7 +48,6 @@ BiniX 1.0e-8
 BiniY 0
 BiniZ 0
 TreeColShieldingLength 0.050
-SGChemBackgroundG0 1.7
 SGChemCosmicRayIonRate 3.0e-17
 SGChemDustToGasRatio 1.0
 SGChemDeuteriumAbundance 2.6e-5

@@ -51,6 +51,7 @@
 #error "EXPERIMENTAL_HABING_1968_BAND_ENERGY_DENSITIES was retired: all bands use the Draine (1978) shape / 1.7 unit of the SGChem photorates"
 #endif
 #define HABING_EGY_DENSITY_6_8EV_CGS       (1.877e-14)
+#define SGCHEM_G0_FLOOR_HABING             (0.324e-2) /* fixed floor of the cell field from the stars (z = 0 UV background, 6-13.6 eV, Habing units); not a parameter */
 /* grain heating: ISRF (MMP83) absorbed-power shares per band, and band energy density per unit dust G0 = u_ISRF x 5.257e-14/u_ISRF(6-13.6) */
 #define DUST_ISRF_SHARE_6_13P6EV           (0.2362)
 #define DUST_ISRF_SHARE_3P4_6EV            (0.1496)

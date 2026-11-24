@@ -58,18 +58,17 @@ static inline double sgchem_electrons(const double *ab, const struct ChemInputs 
 }
 
 /* uniform ISRF-shaped (Draine 1978) field of strength G0 (6-13.6 eV) and G0_LW (11.2-13.6 eV), Habing units: band energies
-   through the shared chem_fuv_field_from_band_energy, floors 0.324e-2 G0_bg (LW: a tenth in 6-13.6 eV energy) */
+   through the shared chem_fuv_field_from_band_energy; no floor, the parameters are the field */
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
 struct ChemFUVField sgchem_treecol_field(int i, double *fac_uv); /* sgchem_cell.cc */
 double sgchem_cr_ion_rate(int i, double G0); /* sgchem_cell.cc */
 #endif
-static inline struct ChemFUVField sgchem_uniform_field(double G0, double G0_LW, double G0_bg)
+static inline struct ChemFUVField sgchem_uniform_field(double G0, double G0_LW)
 {
-    double g0_floor = 0.324e-2 * G0_bg;
-    double u_uv = DMAX(G0, g0_floor) * HABING_EGY_DENSITY_6_13P6EV_CGS;
-    double u_lw = DMAX(G0_LW * HABING_EGY_DENSITY_11P2_13P6EV_CGS, 0.1 * g0_floor * HABING_EGY_DENSITY_6_13P6EV_CGS);
+    double u_uv = G0 * HABING_EGY_DENSITY_6_13P6EV_CGS;
+    double u_lw = G0_LW * HABING_EGY_DENSITY_11P2_13P6EV_CGS;
     return chem_fuv_field_from_band_energy(u_uv, HABING_EGY_DENSITY_6_13P6EV_CGS, u_lw, G0 * DUST_EGY_DENSITY_3P4_6EV_CGS,
-                                           G0 * DUST_EGY_DENSITY_0P4_3P4EV_CGS, 1, 1, g0_floor);
+                                           G0 * DUST_EGY_DENSITY_0P4_3P4EV_CGS, 1, 1, 0);
 }
 
 /* photoionized cell: molecules destroyed, H, D, He and the low-IP metals singly ionized */

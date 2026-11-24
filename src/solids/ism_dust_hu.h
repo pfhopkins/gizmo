@@ -26,7 +26,7 @@ KOKKOS_INLINE_FUNCTION void ism_dust_hu_env(int i, const struct particle_data *p
     e->x_e = DMAX(cell[i].TracAbund[IHP], 0) + ISM_DUST_HU_XE_METALS * Z_rel;
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     double u_uv = 0; for(int k = 0; k < NPIX; k++) {u_uv += cell[i].TreeColEgyUV[k];}
-    e->G0 = DMAX(u_uv / HABING_EGY_DENSITY_6_13P6EV_CGS, 0.324e-2 * All.SGChemBackgroundG0);
+    e->G0 = DMAX(u_uv / HABING_EGY_DENSITY_6_13P6EV_CGS, SGCHEM_G0_FLOOR_HABING);
 #else
     e->G0 = All.SGChemG0;
 #endif

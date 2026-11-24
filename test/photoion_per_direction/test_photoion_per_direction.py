@@ -161,7 +161,7 @@ def built_sgchem(built):
         os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_sgchem")
         build_gizmo_for_test(TEST_NAME)
     return built, "".join(f"{k:34s} {v}\n" for k, v in [("SGChemTablesPath", chemistry_tables_dir()), ("SGChemCosmicRayIonRate", 2.0e-16),
-            ("SGChemDustToGasRatio", 1.0), ("SGChemDeuteriumAbundance", 2.6e-5), ("SGChemG0", 0), ("SGChemG0_LW", 0), ("SGChemBackgroundG0", 0)])
+            ("SGChemDustToGasRatio", 1.0), ("SGChemDeuteriumAbundance", 2.6e-5), ("SGChemG0", 0), ("SGChemG0_LW", 0)])
 
 
 def gas(snap):

@@ -112,7 +112,7 @@ def test_h2_transition_matches_treecol(result):
     star = (40.0, tab._i2(tab.t_pms, lM, lZ) + 0.3 * tab._i2(tab.life, lM, lZ), np.array([4.0, 4.0, ZSTAR]))
     exe = tc.build("pix12_step75", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "TEST_DUMP_TREECOL_PIXELS_AT_STEP=75"))
     out = tc.run(exe, "slab_m1_twin", tables, L, slab_ics(L, Z0), [star], gas_mass=1.0, hsml=0.6,
-                 overrides={"TimeMax": 1.0, "MaxSizeTimestep": 0.002, "SGChemBackgroundG0": 1.7, "SGChemCosmicRayIonRate": 3.0e-17})
+                 overrides={"TimeMax": 1.0, "MaxSizeTimestep": 0.002, "SGChemCosmicRayIonRate": 3.0e-17})
     cells = tc.load(out, "cells"); zc = cells[:, -1]
     a_tc = (np.abs(cells[:, -3] - 4.0) < 1.2) & (np.abs(cells[:, -2] - 4.0) < 1.2) & (zc > Z0)
     x_tc = cells[:, 2] * 1.4 / 2.0  # H2 mass of a 1 Msun cell, per H nucleus

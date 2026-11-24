@@ -16,7 +16,7 @@
 static inline double sgchem_rt_band_u_cgs(int i, int k) {return CellP[i].Rad_E_gamma[k] * (CellP[i].Density * All.cf_a3inv / P[i].Mass) * UNIT_PRESSURE_IN_CGS;}
 
 /* the stellar field of cell i, as sgchem_treecol_field with the bins in place of the pixels: the part along the M1 flux goes
-   to the pixel facing the source, the rest is isotropic; pixels are floored at 0.324e-2 SGChemBackgroundG0 / NPIX Habing,
+   to the pixel facing the source, the rest is isotropic; pixels are floored at SGCHEM_G0_FLOOR_HABING / NPIX,
    only floor pixels take the dust column (pix_att) */
 struct ChemFUVField sgchem_rt_field(int i, double *fac_uv, double *pix_att)
 {
@@ -29,7 +29,7 @@ struct ChemFUVField sgchem_rt_field(int i, double *fac_uv, double *pix_att)
         pix_src = treecol_hpx_pixel(F * (-1.)); /* radiation flows away from its source */
     }
     double g0 = u_uv / HABING_EGY_DENSITY_6_13P6EV_CGS, g0_lw = sgchem_rt_band_u_cgs(i, RT_FREQ_BIN_LYMAN_WERNER) / HABING_EGY_DENSITY_11P2_13P6EV_CGS;
-    double bg = 0.324e-2 * All.SGChemBackgroundG0, floor_pix = bg / NPIX, floor_lw = 0.1 * floor_pix * HABING_EGY_DENSITY_6_13P6EV_CGS / HABING_EGY_DENSITY_11P2_13P6EV_CGS;
+    double bg = SGCHEM_G0_FLOOR_HABING, floor_pix = bg / NPIX, floor_lw = 0.1 * floor_pix * HABING_EGY_DENSITY_6_13P6EV_CGS / HABING_EGY_DENSITY_11P2_13P6EV_CGS;
     double g0_tot = 0, g0_lw_tot = 0, g_pix[NPIX];
     for(int k = 0; k < NPIX; k++) {
         double w = (1. - f_beam) / NPIX + ((k == pix_src) ? f_beam : 0.), s = g0 * w;

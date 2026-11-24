@@ -27,7 +27,6 @@ SGChemDustToGasRatio        1.0
 SGChemDeuteriumAbundance    2.6e-5
 SGChemG0                    1.7
 SGChemG0_LW                 0
-SGChemBackgroundG0          1.7
 MaxStellarTimestep          10000.0
 IMFSampleStellarMassCut     0.5
 SofteningGas                0.0001

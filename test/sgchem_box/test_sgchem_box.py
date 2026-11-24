@@ -84,7 +84,7 @@ def test_sgchem_cell_state(box):
     assert grow == 8 * (3 + 2), f"gas cell grows by {grow} B with SGCHEM network 5"
 
 
-def standalone(tables, snap0, times, start=None, field=(0.0, 0.0, 0.0), production_inputs=False, over={}):
+def standalone(tables, snap0, times, start=None, field=(0.0, 0.0), production_inputs=False, over={}):
     """cell_standalone.cc built in the box build's src/ (same config), fed the cells' density and energy and the run's timesteps."""
     src = path.join(ROOT, "src")
     cc = subprocess.run("make -n -W cooling/sgchem/sgchem_cell.cc cooling/sgchem/sgchem_cell.o", shell=True, cwd=src,
@@ -247,13 +247,13 @@ def test_sgchem_restart(tables, box):
 def test_sgchem_habing_field(tables, box, g0):
     """uniform Habing-shaped field: inputs as the production path (12 pixels, floors, NUV/optical grain heating),
     and the box cells equal the standalone run on those inputs"""
-    field = (1.7, g0, g0)  # SGChemBackgroundG0, SGChemG0, SGChemG0_LW
+    field = (g0, g0)  # SGChemG0, SGChemG0_LW
     out = path.join(HERE, f"output_g0_{g0:g}")
     shutil.rmtree(out, ignore_errors=True)
     chdir(HERE)
     try:
         run_test(NAME, 2, default_omp_threads(), param_overrides={"SGChemTablesPath": tables, "OutputDir": path.basename(out),
-                 "SGChemBackgroundG0": field[0], "SGChemG0": field[1], "SGChemG0_LW": field[2]})
+                 "SGChemG0": field[0], "SGChemG0_LW": field[1]})
     finally:
         chdir(ROOT)
     with h5py.File(path.join(out, "snapshot_000.hdf5")) as s0, h5py.File(path.join(out, "snapshot_002.hdf5")) as s2:
@@ -285,8 +285,7 @@ def test_sgchem_ledger(tables, box):
         shutil.rmtree(path.join(HERE, d), ignore_errors=True)
         chdir(HERE)
         try:
-            run_test(NAME, 2, nt, param_overrides={"SGChemTablesPath": tables, "OutputDir": d, "SGChemG0": 10.0, "SGChemG0_LW": 10.0,
-                                                   "SGChemBackgroundG0": 1.7})
+            run_test(NAME, 2, nt, param_overrides={"SGChemTablesPath": tables, "OutputDir": d, "SGChemG0": 10.0, "SGChemG0_LW": 10.0})
         finally:
             chdir(ROOT)
         led[nt] = open(path.join(HERE, d, "ledger.txt")).read()

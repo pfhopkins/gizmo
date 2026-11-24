@@ -26,7 +26,6 @@ SGChemDustToGasRatio               1.0
 SGChemDeuteriumAbundance           2.6e-5
 SGChemG0                           1.7
 SGChemG0_LW                        1.7
-SGChemBackgroundG0                 1.7
 CosmicRayDiffusionCoeff            690.0
 SofteningGas                       0.01
 SofteningHalo                      0.01

@@ -4,7 +4,7 @@ the band energies of a Draine field of G0 Habing (8-13.6, 11.2-13.6, 6-8, 0.4133
 same box without radiation transport, with the same G0 through SGChemG0. Dust-free, so the half-cell dust column and the
 absorption leave the field as seeded. H2 fraction and temperature agree within 1 %.
   test_habing_gate: G0 = 10.
-  test_floor: empty bins and SGChemBackgroundG0 = 2 equal the uniform path at G0 = 0 with the same floor.
+  test_floor: empty bins give the fixed floor, the uniform path at G0 = 0.324e-2 with a tenth of that energy in the Lyman-Werner band.
 """
 import os
 import shutil
@@ -87,14 +87,13 @@ def compare(a, b, x0):
 
 
 def test_habing_gate(tables):
-    over = {"SGChemG0": 10, "SGChemG0_LW": 10, "SGChemBackgroundG0": 0}
+    over = {"SGChemG0": 10, "SGChemG0_LW": 10}
     ref = run(build("uniform"), "uniform", tables, None, over)
-    m1 = run(build("m1", RT), "m1", tables, 10.0, {"SGChemG0": 0, "SGChemG0_LW": 0, "SGChemBackgroundG0": 0})
+    m1 = run(build("m1", RT), "m1", tables, 10.0, {"SGChemG0": 0, "SGChemG0_LW": 0})
     compare(m1, ref, 0.25)
 
 
 def test_floor(tables):
-    over = {"SGChemG0": 0, "SGChemG0_LW": 0, "SGChemBackgroundG0": 2000}
-    ref = run(build("uniform"), "uniform_floor", tables, None, over)
-    m1 = run(build("m1", RT), "m1_floor", tables, 0.0, over)
+    ref = run(build("uniform"), "uniform_floor", tables, None, {"SGChemG0": 0.324e-2, "SGChemG0_LW": 0.1 * 0.324e-2 * 5.257e-14 / 7.799e-15})
+    m1 = run(build("m1", RT), "m1_floor", tables, 0.0, {"SGChemG0": 0, "SGChemG0_LW": 0})
     compare(m1, ref, None)

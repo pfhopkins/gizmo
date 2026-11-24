@@ -3159,10 +3159,6 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "SGChemG0_LW");
       addr[nt] = &All.SGChemG0_LW;
       id[nt++] = REAL;
-
-      strcpy(tag[nt], "SGChemBackgroundG0");
-      addr[nt] = &All.SGChemBackgroundG0;
-      id[nt++] = REAL;
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
       strcpy(tag[nt], "TreeColShieldingLength");
       addr[nt] = &All.TreeColShieldingLength;

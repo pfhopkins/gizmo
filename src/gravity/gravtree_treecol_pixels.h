@@ -335,13 +335,13 @@ KOKKOS_INLINE_FUNCTION void treecol_shells_ion_sweep(const treecol_pixels_sums_t
 #endif
 
 /* walk end: write a gas cell's columns and band energy densities [erg/cm^3]; Lyman-Werner floored per pixel at
-   0.1 x the 6-13.6 eV background floor 0.324e-2 SGChemBackgroundG0 / N, then summed */
+   0.1 x the 6-13.6 eV floor SGCHEM_G0_FLOOR_HABING / N, then summed */
 KOKKOS_INLINE_FUNCTION void treecol_pixels_write_cell(struct gas_cell_data &c, const treecol_pixels_sums_t &a)
 {
     for(int s = 0; s < TREECOL_PIXELS_NCOLUMNS; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {c.TreeColColumn[s][k] = treecol_pixel_store(a.col[s][k], UNIT_SURFDEN_IN_CGS, TREECOL_PIXELS_LOG16_MIN_COLUMN);}}
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     const double u = All.cf_a2inv / (4.0 * M_PI * C_LIGHT_CGS * UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS); /* flux [erg/s / code length^2] to energy density */
-    const double lw_floor = 0.1 * 0.324e-2 * All.SGChemBackgroundG0 / TREECOL_PIXELS_N * HABING_EGY_DENSITY_6_13P6EV_CGS;
+    const double lw_floor = 0.1 * SGCHEM_G0_FLOOR_HABING / TREECOL_PIXELS_N * HABING_EGY_DENSITY_6_13P6EV_CGS;
 #ifdef TREECOL_SHELLS_N
     double a_uv[TREECOL_PIXELS_N], a_lw[TREECOL_PIXELS_N], a_nuv, a_opt;
     treecol_shells_sweep(a, a_uv, a_lw, a_nuv, a_opt);

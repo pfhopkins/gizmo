@@ -45,7 +45,6 @@ SFCooldownFreeFallFraction  0.1
 MaxStellarTimestep          10.0
 SGChemG0                    1.7
 SGChemG0_LW                 0
-SGChemBackgroundG0          1.7
 TreeColShieldingLength      50
 PhotoionMaxSearchRadius     50
 TestSNTime0                 1e-3
