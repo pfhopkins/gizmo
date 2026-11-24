@@ -22,7 +22,7 @@
 #include "../mesh/ghost_symlist_lifecycle.h" /* gizmo_ghost_safety_factor + hydro_density_redo (post-finalize downstream refresh) */
 #include "../system/gpu_particles_arena.h"   /* gpu_particles_arena_invalidate — pre-runner prepass mirrors legacy density.cc:183 */
 #include "density_loop.h"
-#ifdef GALSF_SINGLE_STARS_EVENT_LOGS
+#if defined(GALSF_SINGLE_STARS_EVENT_LOGS) || defined(SINGLE_STAR_RADPRESSURE_LIVE_DUST)
 #include "../galaxy_sf/single_star_record.h"
 #endif
 #include "../mesh/gpu_neighbor_list.h"      /* gizmo_mark_kernel_radius_dirty_indices */
@@ -426,6 +426,9 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
         P[i].DensityAroundParticle = (MyFloat)accum.Rho;
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
         if(P[i].StarIdx > 0 && accum.Rho > 0) {SingleStars.u_ambient[single_star_slot(P[i].StarIdx)] = accum.UAround / accum.Rho;}
+#endif
+#ifdef SINGLE_STAR_RADPRESSURE_LIVE_DUST
+        if(P[i].StarIdx > 0 && accum.Rho > 0) {SingleStars.dust_ambient[single_star_slot(P[i].StarIdx)] = accum.DustAround / accum.Rho;}
 #endif
         P[i].GradRho[0] = (MyFloat)accum.GradRho[0];
         P[i].GradRho[1] = (MyFloat)accum.GradRho[1];

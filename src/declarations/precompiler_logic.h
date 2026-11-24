@@ -1478,6 +1478,11 @@
 #endif
 #endif
 
+/* the star-side radiation pressure of single stars absorbs on the live dust around the star */
+#if defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS) && (defined(GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL) || defined(GALSF_ISMDUSTCHEM_HU_MODEL))
+#define SINGLE_STAR_RADPRESSURE_LIVE_DUST
+#endif
+
 #ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS /* single stars source the moment solver's bins from the tables (disjoint bins, radiation-pressure and band energy counted once) */
 #if !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
 #error "GALSF_SINGLE_STARS_RT_TABLE_BANDS needs GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"

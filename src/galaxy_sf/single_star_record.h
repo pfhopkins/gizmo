@@ -57,9 +57,15 @@ struct single_star_tree_lum {float L[N_RT_FREQ_BINS];};
 #else
 #define SINGLE_STAR_RECORD_ION_FIELDS(X)
 #endif
+#ifdef SINGLE_STAR_RADPRESSURE_LIVE_DUST
+#define SINGLE_STAR_RECORD_DUST_FIELDS(X) X(double, dust_ambient, "mass-weighted dust mass fraction of the gas around the star")
+#else
+#define SINGLE_STAR_RECORD_DUST_FIELDS(X)
+#endif
 #define SINGLE_STAR_RECORD_TABLE_FIELDS(X) \
     X(float, rho_birth, "physical gas density of the parent cell at birth [code]; 0 = unknown") \
     SINGLE_STAR_RECORD_ION_FIELDS(X) \
+    SINGLE_STAR_RECORD_DUST_FIELDS(X) \
     SINGLE_STAR_RECORD_TREE_FIELDS(X)
 #else
 #define SINGLE_STAR_RECORD_TABLE_FIELDS(X)

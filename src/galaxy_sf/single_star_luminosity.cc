@@ -209,7 +209,12 @@ double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR
     *tau_IR = 0;
     if(P[i].StarIdx <= 0 || SingleStars.M_drawn[single_star_slot(P[i].StarIdx)] < SINGLE_STAR_RADPRESSURE_MIN_MASS) {return 0;}
     if(!single_star_band_luminosities_cgs(i, L, &L_bol)) {return 0;}
-#ifdef SGCHEM
+#ifdef SINGLE_STAR_RADPRESSURE_LIVE_DUST
+#ifndef SGCHEM_LIVE_DUST_MILKY_WAY
+#define SGCHEM_LIVE_DUST_MILKY_WAY 0.01 /* Milky Way dust mass fraction, without SGCHEM (sgchem_dust_to_gas.h) */
+#endif
+    double dgr = DMAX(DMIN(SingleStars.dust_ambient[single_star_slot(P[i].StarIdx)] / SGCHEM_LIVE_DUST_MILKY_WAY, 10.), 0.); /* kernel mean of the dust around the star */
+#elif defined(SGCHEM)
     double dgr = DMAX(sgchem_dust_to_gas_ratio(P[i].Metallicity[0]), 0.);
 #else
     double dgr = DMAX(DMIN(P[i].Metallicity[0] / All.SolarAbundances[0], 10.), 0.);
@@ -239,7 +244,7 @@ double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR
 static std::vector<double> radp_lum_abs; /* per active cell, absorbed_local to per_cell */
 static double radp_cell_dgr(int i) /* the cell's dust-to-gas ratio for the direct term; hot gas none */
 {
-#ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL
+#ifdef SINGLE_STAR_RADPRESSURE_LIVE_DUST
     return (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_cell_dust_to_gas_ratio(P, CellP, i), 0.); /* the cell's live dust */
 #else
     return (CellP[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_dust_to_gas_ratio(P[i].Metallicity[0]), 0.);
