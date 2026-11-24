@@ -18,9 +18,9 @@
    removed from the source applied in the kick. Only where the drift re-inverts the moved cells (GR_DRIFT_PATH_SOURCE): elsewhere the kick
    applies the whole source. dg are the metric derivatives at the cell (gr_source_term).
    At fixed (D, S_j, u), tau = D [h W - (Gamma-1) u/W - 1] depends on the position only through gamma^ij, in W^2 = 1 + gamma^ij s_i s_j/h^2
-   (s = S/D, h = 1 + Gamma u), so (d tau/d x^k) w^k = -D (h + (Gamma-1) u/W^2)/(2 h^2 W) w^k (d_k gamma_ab) s^a s^b with s^a = gamma^ab s_b;
-   zero where the Lorentz factor is held at the limiter */
-KOKKOS_INLINE_FUNCTION double gr_drift_tau_path_rate(int i, const struct gr_conservatives *cons, const struct gr_primitives *prims, const struct gr_sym4 dg[3], struct particle_data *pp, struct gas_cell_data *cell)
+   (s = S/D, h = 1 + Gamma u), so (d tau/d x^k) w^k = -D (h + (Gamma-1) u/W^2)/(2 h^2 W) w^k (d_k gamma_ab) s^a s^b with s^a = gamma^ab s_b.
+   A cell at the limiter stays at it, with constant tau, where the motion would raise W, and leaves it at this rate where the motion lowers W */
+KOKKOS_INLINE_FUNCTION double gr_drift_tau_path_rate(int i, const struct gr_conservatives *cons, const struct gr_primitives *prims, const struct gr_sym4 dg[3], struct gas_cell_data *cell)
 {
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     const Vec3<double> vc = cell[i].ParticleVel; /* MFV: the cell is a mesh point, displaced with its own velocity */
@@ -32,11 +32,13 @@ KOKKOS_INLINE_FUNCTION double gr_drift_tau_path_rate(int i, const struct gr_cons
     const double gamma_eos = GAMMA_DEFAULT, u = prims->u, h = 1. + gamma_eos*u; /* GR: ideal gas with a constant adiabatic index */
     const Vec3<double> s = cons->S/cons->D, s_up = gr->ugamma.matvec(s);
     const double W2 = 1. + dot(s_up, s)/(h*h);
-    if(gr->limiter && (W2 >= (double)GR_GAMMA_LIMITER*(double)GR_GAMMA_LIMITER)) {return 0;}
     double dgamma_ss = 0; /* w^k (d_k gamma_ab) s^a s^b */
     for(int k = 0; k < 3; k++) {dgamma_ss += vc[k]*dg[k].ij.quad(s_up);}
-    const double W = sqrt(W2);
-    return -cons->D*(h + (gamma_eos - 1.)*u/W2)/(2.*h*h*W)*dgamma_ss;
+    const double W = sqrt(W2), rate = -cons->D*(h + (gamma_eos - 1.)*u/W2)/(2.*h*h*W)*dgamma_ss;
+    /* (the margin: W2 of a limited state is the cap W_cap^2 only to rounding errors, which 1 - 1/W_cap^2 amplifies by W_cap^2) */
+    const double W2_cap = (double)GR_GAMMA_LIMITER*(double)GR_GAMMA_LIMITER;
+    if(gr->limiter && (rate > 0) && (W2*(1. + 1e-14*W2_cap) >= W2_cap)) {return 0;}
+    return rate;
 }
 #endif
 
@@ -79,7 +81,7 @@ KOKKOS_INLINE_FUNCTION int gr_add_source_term(int i, struct gr_primitives *prims
     struct gr_conservatives Src; struct gr_sym4 dg[3];
     gr_source_term(i, prims, &Src, dg, pp, cell);
 #ifdef GR_DRIFT_PATH_SOURCE
-    Src.tau -= gr_drift_tau_path_rate(i, cons, prims, dg, pp, cell); /* the part of the energy source the drift accounts for */
+    Src.tau -= gr_drift_tau_path_rate(i, cons, prims, dg, cell); /* the part of the energy source the drift accounts for */
 #endif
     /* predictor */
     cons->S += dtime*Src.S;
@@ -102,7 +104,7 @@ KOKKOS_INLINE_FUNCTION int gr_add_source_term(int i, struct gr_primitives *prims
             Src = Src_corr;
             gr_source_term(i, prims, &Src_corr, dg, pp, cell);
 #ifdef GR_DRIFT_PATH_SOURCE
-            Src_corr.tau -= gr_drift_tau_path_rate(i, cons, prims, dg, pp, cell);
+            Src_corr.tau -= gr_drift_tau_path_rate(i, cons, prims, dg, cell);
 #endif
             cons->S += dtime*(Src_corr.S - Src.S);
             cons->tau += dtime*(Src_corr.tau - Src.tau);

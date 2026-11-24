@@ -67,14 +67,14 @@ void compute_initial_accelerations(void)
 
 #ifdef PARTICLE_EXCISION
 
-/* sets the mass to 0 inside GR_EXCISION_RADIUS horizon radii of the black hole (gr_hole_displacement for the Kerr metric) */
+/* sets the mass to 0 inside GR_EXCISION_RADIUS horizon radii of the black hole: the radius is the Kerr r (gr_kerr_radius_sq), so that the
+   excised surface encloses the horizon whatever the spin (at the equator the horizon is at sqrt(r_H^2 + a^2) from the hole) */
 void check_boundary(int target)
 {
 #if (GR_METRIC==1)
-    double r_min = gr_hole_displacement(P[target].Pos).norm();
-    double a[3] = {0, 0, All.MetricParams[1]};
-    double horizon = GR_HORIZON_RADIUS(All.MetricParams[0], a);
-    if(r_min < GR_EXCISION_RADIUS*horizon) {P[target].Mass = 0;}
+    double a[3] = {0, 0, All.MetricParams[1]}, M = All.MetricParams[0];
+    double r_kerr = sqrt(gr_kerr_radius_sq(gr_hole_displacement(P[target].Pos), a[2]*a[2]*M*M));
+    if(r_kerr < GR_EXCISION_RADIUS*GR_HORIZON_RADIUS(M, a)) {P[target].Mass = 0;}
 #endif
 }
 

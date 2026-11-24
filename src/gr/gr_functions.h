@@ -45,7 +45,7 @@ KOKKOS_INLINE_FUNCTION Vec3<double> Vcoord(const Vec3<double> &vphys, const stru
 
 /* ------------------------------------------------------------------ metric */
 /* displacement of pos from the black hole of the single-hole metrics: the hole sits at the origin, or at the box centre if the box is
-   periodic (nearest image). Every distance from the hole (metric, excision, Lorentz-factor limiter, test-particle cut) uses it */
+   periodic (nearest image). Every distance from the hole (metric, excision, Lorentz-factor limiter) uses it */
 KOKKOS_INLINE_FUNCTION Vec3<double> gr_hole_displacement(const Vec3<double> &pos)
 {
     Vec3<double> dp = pos;
@@ -55,6 +55,16 @@ KOKKOS_INLINE_FUNCTION Vec3<double> gr_hole_displacement(const Vec3<double> &pos
 #endif
     return dp;
 }
+
+#if (GR_METRIC==1)
+/* square of the radial coordinate r of the Kerr metric (the same in Kerr-Schild and Boyer-Lindquist coordinates) at the displacement dp from
+   the hole, with a2 = (spin*M)^2: (x^2+y^2)/(r^2+a^2) + z^2/r^2 = 1. The horizon is r = r_H; r = |dp| only without spin */
+KOKKOS_INLINE_FUNCTION double gr_kerr_radius_sq(const Vec3<double> &dp, double a2)
+{
+    double z2 = dp[2]*dp[2], R2 = dp[0]*dp[0] + dp[1]*dp[1] + z2;
+    return (R2 - a2 + sqrt((R2-a2)*(R2-a2) + 4*a2*z2))/2.;
+}
+#endif
 
 /* 1 inside GR_GAMMA_LIMITER_RADIUS of the hole (where the Lorentz factor is limited); never when the radius is not positive (off) */
 KOKKOS_INLINE_FUNCTION int gr_limiter_flag(const Vec3<double> &pos)
@@ -70,12 +80,11 @@ KOKKOS_INLINE_FUNCTION void gr_add_minkowski(struct gr_sym4 *g)
     g->tt -= 1; g->ij[0][0] += 1; g->ij[1][1] += 1; g->ij[2][2] += 1;
 }
 
-/* deviation of the covariant 4-metric from Minkowski, h = g - eta, at pos (the source is at the box centre if the box is periodic), computed
+/* deviation of the covariant 4-metric from Minkowski, h = g - eta, at the displacement dp from the source (gr_hole_displacement), computed
    without forming eta + h: the finite differences of the metric derivatives difference h, so that they keep their relative accuracy where
    h is small (far from the source) instead of losing it in the O(1) components of g */
-KOKKOS_INLINE_FUNCTION void get_metric_deviation(const Vec3<double> &pos, struct gr_sym4 *h)
+KOKKOS_INLINE_FUNCTION void get_metric_deviation(const Vec3<double> &dp, struct gr_sym4 *h)
 {
-    Vec3<double> dp = gr_hole_displacement(pos);
 #if (GR_METRIC==0) /* Minkowski */
     h->tt = 0; h->ti = Vec3<double>{0,0,0}; h->ij.set_isotropic(0.);
 #elif (GR_METRIC==1) /* Kerr: Boyer-Lindquist (GR_METRIC_USE_BOYER_LINDQUIST) or Kerr-Schild coordinates */
@@ -85,11 +94,10 @@ KOKKOS_INLINE_FUNCTION void get_metric_deviation(const Vec3<double> &pos, struct
        g_phi phi, (x^2+y^2) = (r^2+a^2) sin^2(theta), so h is regular on the rotation axis (singular only at the horizon and on the ring r = 0):
        h_tt = 2Mr/rho^2, h_ti = -2Mar/(rho^2 (r^2+a^2)) w_i,
        h_ij = 2Mr/(Delta (r^2+a^2) rho^2) v_i v_j + 2Mr a^2/(rho^2 (r^2+a^2)^2) w_i w_j,
-       with rho^2 = r^2 + a^2 z^2/r^2, Delta = r^2 - 2Mr + a^2, v = (r x, r y, (r^2+a^2) z/r) (rho^2/r times the gradient of r) and
+       with rho^2 = r^2 + a^2 z^2/r^2, Delta = r^2 - 2Mr + a^2, v = (r x, r y, (r^2+a^2) z/r) (rho^2 times the gradient of r) and
        w = (-y, x, 0) ((x^2+y^2) times the gradient of phi) */
     double M = All.MetricParams[0], a = All.MetricParams[1]*M, a2 = a*a;
-    double z2 = dp[2]*dp[2], R2 = dp[0]*dp[0] + dp[1]*dp[1] + z2;
-    double r2 = (R2 - a2 + sqrt((R2-a2)*(R2-a2) + 4*a2*z2))/2., r = sqrt(r2);
+    double z2 = dp[2]*dp[2], r2 = gr_kerr_radius_sq(dp, a2), r = sqrt(r2);
     double rho2 = r2 + a2*z2/r2, delta = r2 - 2*M*r + a2, ra2 = r2 + a2, Mr2 = 2*M*r;
     Vec3<double> v = {r*dp[0], r*dp[1], ra2*dp[2]/r}, w = {-dp[1], dp[0], 0.};
     h->tt = Mr2/rho2;
@@ -97,8 +105,7 @@ KOKKOS_INLINE_FUNCTION void get_metric_deviation(const Vec3<double> &pos, struct
     h->ij = (Mr2/(delta*ra2*rho2))*outer_product(v) + (Mr2*a2/(rho2*ra2*ra2))*outer_product(w);
 #else /* h_{mu nu} = (2 M r^3/(r^4 + a^2 z^2)) l_mu l_nu */
     double M = All.MetricParams[0], a = All.MetricParams[1]*M, a2 = a*a;
-    double x2 = dp[0]*dp[0], y2 = dp[1]*dp[1], z2 = dp[2]*dp[2], R2 = x2 + y2 + z2;
-    double r2 = (R2 - a2 + sqrt((R2-a2)*(R2-a2) + 4*a2*z2))/2.;
+    double z2 = dp[2]*dp[2], r2 = gr_kerr_radius_sq(dp, a2);
     double rho2 = r2*r2 + a2*z2, r = sqrt(r2), Mfac = 2*M*r*r*r/rho2, denom = r2 + a2;
     Vec3<double> l = {(r*dp[0] + a*dp[1])/denom, (r*dp[1] - a*dp[0])/denom, dp[2]/r}; /* spatial part of the null vector l_mu = (1, l_i) */
     h->tt = Mfac;
@@ -143,7 +150,7 @@ KOKKOS_INLINE_FUNCTION void get_metric_deviation(const Vec3<double> &pos, struct
 /* covariant 4-metric at pos, eta + h (get_metric_deviation) */
 KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct gr_sym4 *g)
 {
-    get_metric_deviation(pos, g);
+    get_metric_deviation(gr_hole_displacement(pos), g);
     gr_add_minkowski(g);
 }
 
@@ -222,17 +229,19 @@ KOKKOS_INLINE_FUNCTION double gr_metric_mass_scale(void)
 }
 
 /* spatial derivatives of the 4-metric (dg[dir] = d g_{mu nu}/dx^dir), lapse and shift (dbeta[dir][j] = d beta^j/dx^dir) at pos, given the
-   metric gr there. dg: centred finite differences of the deviation from Minkowski (get_metric_deviation) along the Cartesian directions,
+   metric gr there. dg: centred finite differences of the deviation from Minkowski (get_metric_deviation) along the Cartesian directions
+   (the step is taken in the displacement from the hole, after the periodic wrap: the two points never fall on opposite images),
    with the step GR_METRIC_DERIVATIVE_STEP times the mass of the metric; differencing h = g - eta instead of g, the rounding error goes as
    eps (r/M) M/h instead of eps (r/M)^2 M/h. Lapse and shift by the chain rule (differences of alpha ~ 1 would lose the accuracy again):
    d beta^i = gamma^ij (d g_tj - d gamma_jk beta^k), 2 alpha d alpha = d beta^i g_ti + beta^i d g_ti - d g_tt */
 KOKKOS_INLINE_FUNCTION void compute_metric_jacobian(const Vec3<double> &pos, const struct gr_metric *gr, struct gr_sym4 dg[3], Vec3<double> &dalpha, Mat3<double> &dbeta)
 {
     const double h = GR_METRIC_DERIVATIVE_STEP*gr_metric_mass_scale();
+    const Vec3<double> dp = gr_hole_displacement(pos);
     const Vec3<double> g_t = gr->gamma.matvec(gr->beta); /* g_ti = beta_i */
     for(int dir = 0; dir < 3; dir++)
     {
-        Vec3<double> pH = pos, pL = pos; pH[dir] += h; pL[dir] -= h;
+        Vec3<double> pH = dp, pL = dp; pH[dir] += h; pL[dir] -= h;
         const double fac = 1./(pH[dir] - pL[dir]); /* the step actually represented */
         struct gr_sym4 hH, hL;
         get_metric_deviation(pH, &hH); get_metric_deviation(pL, &hL);
