@@ -71,7 +71,7 @@ static double tb_step[CPU_PARTS][TIMING_BREAKDOWN_FIELDS];
 static double tb_span_start = -1;           /* start of the span the next charge closes; <0: not given */
 static long long tb_untimed = 0, tb_tool_fences = 0;
 static int tb_active = 0, tb_ompt_active = 0;
-static thread_local int tb_is_main = 0, tb_omp_depth = 0, tb_wait_depth = 0;
+static thread_local int tb_is_main = 0, tb_omp_depth = 0, tb_wait_depth = 0, tb_host_copy_depth = 0;
 static thread_local double tb_wait_t0 = 0, tb_omp_t0 = 0;
 
 static bool tb_type_is_host(KT::DeviceType type)
@@ -184,13 +184,22 @@ static void tb_end_fence(const uint64_t handle)
     tb_append(my_second() - (dur > 0 ? dur : 0), (dur > 0 ? dur : 0), TB_KIND_FENCE, -1);
 }
 
-static void tb_begin_copy(Kokkos::Tools::SpaceHandle, const char *, const void *, Kokkos::Tools::SpaceHandle, const char *, const void *, uint64_t)
+/* A memory space on the host side of the device: host memory and the device runtimes' page-locked host memory. */
+static int tb_space_is_host(const Kokkos::Tools::SpaceHandle &h)
 {
-    if(tb_active) {tb_wait_begin();}
+    return strcmp(h.name, Kokkos::HostSpace::name()) == 0 || strstr(h.name, "HostPinned") != NULL;
+}
+/* A copy with both ends on the host is host work, not a wait on the device: it stays in the row's host time. */
+static void tb_begin_copy(Kokkos::Tools::SpaceHandle dst, const char *, const void *, Kokkos::Tools::SpaceHandle src, const char *, const void *, uint64_t)
+{
+    if(!tb_active) {return;}
+    if(tb_space_is_host(dst) && tb_space_is_host(src)) {tb_host_copy_depth++; return;}
+    tb_wait_begin();
 }
 static void tb_end_copy(void)
 {
     if(!tb_active) {return;}
+    if(tb_host_copy_depth > 0) {tb_host_copy_depth--; return;}
     const double dur = tb_wait_end();
     if(dur >= 0) {tb_append(my_second() - dur, dur, TB_KIND_COPY, -1);}
 }
