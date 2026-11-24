@@ -649,7 +649,7 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
 
                                     if(split_two_bin==0 && All.CR_species_ID_in_bin[j]==1 && k==0 && (All.CR_species_ID_in_bin[j_s]<0 || All.CR_species_ID_in_bin[j_s]==7)) { /* now code extending the CR spectrum of secondary production to energies higher than our max limit, assuming continued power-law extrapolation of the CR spectrum */
                                         double Rx0=All.CR_global_rigidity_at_bin_center[j_s], U00=U_donor, xm_0=All.CR_global_min_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s], xp_0=All.CR_global_max_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s];
-                                        int spec_0=All.CR_species_ID_in_bin[j_s], slope_0=2.+slope_inj; slope_0=DMAX(-4.,DMIN(slope_0,0.)); if(spec_0==7) {slope_0=DMIN(slope_0,-0.7);}
+                                        int spec_0=All.CR_species_ID_in_bin[j_s]; double slope_0=2.+slope_inj; slope_0=DMAX(-4.,DMIN(slope_0,0.)); if(spec_0==7) {slope_0=DMIN(slope_0,-0.7);}
                                         j_s++;
                                         while(j_s<N_CR_PARTICLE_BINS && All.CR_species_ID_in_bin[j_s]==spec_0) {
                                             double Rx1=All.CR_global_rigidity_at_bin_center[j_s];
