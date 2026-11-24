@@ -780,6 +780,7 @@ let_build_attempt:
         let_finalize_unredirected_foreign_topleaves();
 #endif
         if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
+        g_force_treebuild_generation++;   /* topology + Father[] + node structure changed: before the map build, which reads the top-leaf map cached per generation */
         source_reach_map_build(!not_whole_tree_any);   /* needs every rank's top-leaf bounds, just exchanged */
         if(building_gravity_tree && !not_whole_tree_any && foreign_needed > remembered_foreign_slots)
         {
@@ -817,7 +818,6 @@ let_build_attempt:
     }
 
     TimeOfLastTreeConstruction = All.Time;
-    g_force_treebuild_generation++;   /* topology + Father[] + node structure changed */
     /* Only a whole-tree build leaves Father[] describing every local particle; a subset build writes
        links for its own members and leaves the rest at -1, which is no use as an attachment record.
        A whole-tree build whose retained stage was vetoed because some other rank was building a subset

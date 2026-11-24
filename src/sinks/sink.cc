@@ -349,7 +349,7 @@ void set_sink_mdot(int i, int n, double dt)
             double mdot_ROI_alt = psi_magdisk * P[n].Sink_Mass_Reservoir * omega_enc;
             if(mdot_ROI_alt > mdot_ROI) {mdot_ROI = mdot_ROI_alt;}
         }
-        double mdot_Edd = m_sink / (5.e7 / UNIT_TIME_IN_YR);
+        double mdot_Edd = sink_eddington_mdot(m_sink);
         double mdot_crit_ROI = (2.*psi_magdisk) * mdot_Edd;
         mdot = 0;
         if(mdot_ROI > mdot_crit_ROI)

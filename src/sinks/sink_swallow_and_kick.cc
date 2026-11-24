@@ -275,6 +275,9 @@ void spawn_sink_wind_feedback(void)
         {
             int sink_eligible_to_spawn = 0; // flag to check eligibility for spawning
             if(*active_unspawned_mass_ptr(i) >= (SINK_WIND_SPAWN)*target_mass_for_wind_spawning(i)) {sink_eligible_to_spawn=1;} // have 'enough' mass to spawn, in whichever reservoir currently holds the discrete-spawn channel
+#if defined(SINK_RIAF_SUBEDDINGTON_MODEL) && !defined(SINGLE_STAR_SINK_DYNAMICS)
+            if(P[i].Type==5) {if(P[i].Sink_Mdot_ROI <= P[i].Sink_Mdot) {sink_eligible_to_spawn=0;}} // no outflow now to define the launch speed, so the mass banked for spawning waits until there is
+#endif
 #if defined(SINGLE_STAR_SINK_DYNAMICS)
             if(P[i].Type==5) {if((P[i].Mass <= 3.5*P[i].Sink_Formation_Mass) || (P[i].Sink_Mass*UNIT_MASS_IN_SOLAR < 0.01)) {sink_eligible_to_spawn=0;}}  // spawning causes problems in these modules for low-mass sinks, so arbitrarily restrict to this, since it's roughly a criterion on the minimum particle mass. and for <0.01 Msun, in pre-collapse phase, no jets
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
@@ -409,38 +412,29 @@ double get_spawned_cell_launch_speed(int i, struct particle_data *pp)
     if(is_particle_a_special_zoom_target(i)) {return 3.e4/UNIT_VEL_IN_KMS;} // need an initial velocity for launch here //
 #endif
     
-#ifdef GALSF_FB_MECHANICAL_SNE_SPAWN
+#if defined(GALSF_FB_MECHANICAL_SNE_SPAWN) && defined(GALSF_FB_FIRE_STELLAREVOLUTION)
     if(pp[i].Type == 4) {
-        double t_gyr = evaluate_stellar_age_Gyr(i); int SNeIaFlag=0; if(t_gyr > 0.03753) {SNeIaFlag=1;}; /* assume SNe before critical time are core-collapse, later are Ia */
-        double Msne=10.5/UNIT_MASS_IN_SOLAR; if(SNeIaFlag) {Msne=1.4/UNIT_MASS_IN_SOLAR;} // average ejecta mass for single event (normalized to give total mass loss correctly)
-        double SNeEgy = (1.0e51/UNIT_ENERGY_IN_CGS);
-#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
-        if(SNeIaFlag==0) {double z_eff = pp[i].Metallicity[10]/All.SolarAbundances[10]; if(z_eff < 1) {SNeEgy *= pow(z_eff + 1.e-5 , -0.12);}} // updated to use same metallicity used for stellar evolution, rather than total metallicity, if this derives from pre-explosion winds, etc, for consistency
-#if (FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT > 1)
-        if(i>0) {double z0 = pp[i].Metallicity[0]/All.SolarAbundances[0];
-#if (FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT > 2)
-            SNeEgy *= pow(z0/0.1 + 1.e-3 , -0.2);
-#else
-            SNeEgy *= pow(z0/0.1 + 1.e-3 , -0.1);
+        double t_gyr = evaluate_stellar_age_Gyr(i); int SNeIaFlag = SNe_are_type_Ia(t_gyr);
+        double Msne=10.5; if(SNeIaFlag) {Msne=1.4;} // average ejecta mass for single event in solar, where not set by the yields below
+#ifdef METALS
+        double yields[NUM_METAL_SPECIES]={0}; get_SNe_yields(yields,i,t_gyr,SNeIaFlag,&Msne); // same ejecta mass per event as for the directly-coupled ejecta
 #endif
-        }
-#endif
-#endif
-        return sqrt(2.0*SNeEgy/Msne); // v_ej in code units: assume all SNe = 1e51 erg //
+        return sqrt(2.0*SNe_energy_per_event(i,SNeIaFlag)/(Msne/UNIT_MASS_IN_SOLAR)); // v_ej in code units
     }
 #endif
 
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL
     double Mdot_wind = pp[i].Sink_Mdot_ROI - pp[i].Sink_Mdot;
-    if(Mdot_wind < 0) {return MIN_REAL_NUMBER;} // should be invalid
-    double mdot = pp[i].Sink_Mdot / (pp[i].Sink_Mass / (4.e7 / UNIT_TIME_IN_YR));
+    if(Mdot_wind <= 0) {v_magnitude = MIN_REAL_NUMBER;} else { // no wind here to launch, unless one of the single-star modes below sets its own velocity
+    double mdot = pp[i].Sink_Mdot / sink_eddington_mdot(pp[i].Sink_Mass);
     double L_over_c = evaluate_sink_radiative_efficiency(pp[i].Sink_Mdot,pp[i].Sink_Mass,i) * pp[i].Sink_Mdot * C_LIGHT_CODE;
     double Pdot_rad = 0.;
-    if(mdot > 0.01) {Pdot_rad = L_over_c * DMIN(DMAX(mdot,1.),10.);}
+    if(mdot > (SINK_RIAF_SUBEDDINGTON_MODEL)) {Pdot_rad = L_over_c * DMIN(DMAX(mdot,1.),10.);}
     double sigma_ROI = sqrt(All.G * pp[i].Sink_Mass / pp[i].Sink_ROI);
     double Pdot_turb = 3. * Mdot_wind * sigma_ROI;
     double Pdot_wind = Pdot_rad + Pdot_turb;
-    v_magnitude = Pdot_wind / Mdot_wind; 
+    v_magnitude = Pdot_wind / Mdot_wind;
+    }
     /* // (older deprecated model here)
     double MSINK_4 = pp[i].Sink_Mass * UNIT_MASS_IN_SOLAR / 1.e4; // sink mass in 1e4 Msun to scale
     double lambda_edd_eff = DMAX( pp[i].Sink_Mdot / sink_eddington_mdot(pp[i].Sink_Mass) , 1.e-10 ); // eddington ratio, with floor just to prevent unphysical behaviors
@@ -657,7 +651,11 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
                                   known axis. Real jets follow the disk/spin axis, so this is not
                                   physical for production. */
 #ifdef SINK_FOLLOW_ACCRETED_ANGMOM  /* use local angular momentum to estimate preferred directions/coordinates for spawning */
-    if(mode==1){ // set up so that the z axis is the angular momentum vector
+    int set_axis_from_angmom = (mode==1);
+#if defined(SINK_RIAF_SUBEDDINGTON_MODEL) || defined(SINK_TEST_WIND_MIXED_FASTSLOW)
+    if(P[i].Type==5) {set_axis_from_angmom = 1;} // the mode set above can be isotropic here, but the jet pairs chosen below are collimated and need the axis
+#endif
+    if(set_axis_from_angmom){ // set up so that the z axis is the angular momentum vector
 #ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK // Jgas stores total angmom in COM frame of sink-gas system; use this for direction
         double Jtot=P[i].Jgas_in_Kernel.norm_sq();
         if(Jtot>0) {Jtot=1/sqrt(Jtot); jz = P[i].Jgas_in_Kernel * Jtot;}
@@ -704,9 +702,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
 
 #if defined(SINK_TEST_WIND_MIXED_FASTSLOW) || defined(SINK_RIAF_SUBEDDINGTON_MODEL)
+        double fraction_to_spawn_in_jet = 0.1; /* fraction of spawned cells by number in jet */
         if(P[i].Type==5) {
-            double masscorrfac_fast = 100.; /* ratio of spawned jet cell mass to non-jet cell mass */
-            double fraction_to_spawn_in_jet = 0.1; /* fraction of spawned cells by number in jet */
+            double masscorrfac_fast = 100.; /* ratio of spawned non-jet cell mass to jet cell mass */
             double frac_clight_jet = 0.1; /* default fraction of C for jet speed */
 #ifdef SINK_TEST_WIND_MIXED_FASTSLOW
             frac_clight_jet = (SINK_TEST_WIND_MIXED_FASTSLOW/UNIT_VEL_IN_KMS) / C_LIGHT_CODE;
@@ -715,25 +713,18 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
             double frac_clight_jet_max = 0.10; //1.0; // don't let the jet be too fast, for physical (superluminal) or numerical (timestep) reasons
             double frac_clight_jet_min = 0.03; //0.1; // don't let the jet be too slow, or it won't behave like a jet; lower jet mass to compensate
             double Mdot_wind = P[i].Sink_Mdot_ROI - P[i].Sink_Mdot;
-            if(Mdot_wind > 0)
+            if(Mdot_wind > 0 && P[i].Sink_Mdot > 0)
             {
-                double a_spin = 0.33;
-                double HR = 0.33;
-                double mdot = P[i].Sink_Mdot / (P[i].Sink_Mass / (5.e7/UNIT_TIME_IN_YR));
-                if(mdot < 0.01) {HR = 1;}
-                double eff_jet = 0.1 * pow(a_spin*HR,2);
-                double Mdot_jet = (fraction_to_spawn_in_jet/masscorrfac_fast) * Mdot_wind;
+                double eff_jet = evaluate_sink_jet_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass);
+                double Mdot_jet = Mdot_wind * fraction_to_spawn_in_jet / (masscorrfac_fast*(1.-fraction_to_spawn_in_jet) + fraction_to_spawn_in_jet);
                 double eta_jet = Mdot_jet / P[i].Sink_Mdot;
                 frac_clight_jet = sqrt(2.*eff_jet/eta_jet); /* scaling so that KE of jet = desired */
-                if(frac_clight_jet > frac_clight_jet_max) { /* superluminal - need more mass in jet to make this make sense */
-                    frac_clight_jet = frac_clight_jet_max; // cap this at luminal
-                    masscorrfac_fast = frac_clight_jet*frac_clight_jet * (fraction_to_spawn_in_jet/(2.*eff_jet)) * (Mdot_wind / P[i].Sink_Mdot); // boost this term to make up the difference
+                if(frac_clight_jet > frac_clight_jet_max || frac_clight_jet < frac_clight_jet_min) { /* outside the allowed speeds: set to the limit, and change the mass in the jet to make up the difference */
+                    frac_clight_jet = DMAX(frac_clight_jet_min , DMIN(frac_clight_jet_max , frac_clight_jet));
+                    masscorrfac_fast = fraction_to_spawn_in_jet/(1.-fraction_to_spawn_in_jet) * (frac_clight_jet*frac_clight_jet/(2.*eff_jet) * (Mdot_wind / P[i].Sink_Mdot) - 1.);
+                    masscorrfac_fast = DMAX(masscorrfac_fast , 0.01); /* if even all of the outflow mass at this speed cannot carry the desired power, this is the most it can do */
                 }
-                if(frac_clight_jet < frac_clight_jet_min) {
-                    frac_clight_jet = frac_clight_jet_min; // cap this at minimum
-                    masscorrfac_fast = frac_clight_jet*frac_clight_jet * (fraction_to_spawn_in_jet/(2.*eff_jet)) * (Mdot_wind / P[i].Sink_Mdot); // boost this term to make up the difference
-                }
-            }
+            } else {fraction_to_spawn_in_jet = 0;} // no accretion, no jet
 #endif
             double m0_newparticlemass_for_target_spawnedmass = mass_of_new_particle_default / (1. - fraction_to_spawn_in_jet * (1.-1./masscorrfac_fast));
             mode = mode_default; mass_of_new_particle=m0_newparticlemass_for_target_spawnedmass; v_magnitude_physical=v_magnitude_physical_default;
@@ -973,15 +964,15 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS) /* inject cosmic rays alongside wind injection */
         double eps_cr = evaluate_sink_cosmicray_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass,i);
-        double fac_wind_corr = All.Sink_accreted_fraction / (1.-All.Sink_accreted_fraction);
-        double dEcr = eps_cr * P[j].Mass * fac_wind_corr * C_LIGHT_CODE*C_LIGHT_CODE;
+        double fac_wind_corr = All.Sink_accreted_fraction / (1.-All.Sink_accreted_fraction); /* ratio of accretion to outflow rate */
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL
-        dEcr = eps_cr * 0.5 * v_magnitude_physical*v_magnitude_physical * P[j].Mass; /* in this case, eps_cr refers to fraction relative to KE going into jet spawns */
-        if(mass_of_new_particle > 2.*mass_of_new_particle_default/masscorrfac_fast) {dEcr=0;} /* only the jet cells carry CR energy */
+        if(P[i].Type==5) {double Mdot_wind = P[i].Sink_Mdot_ROI - P[i].Sink_Mdot; if(Mdot_wind > 0) {fac_wind_corr = P[i].Sink_Mdot / Mdot_wind;} else {fac_wind_corr = 0;}} /* here this ratio is not constant */
 #endif
-#if defined(SINK_TEST_WIND_MIXED_FASTSLOW)
-        if(mass_of_new_particle < 2.*mass_of_new_particle_default/masscorrfac_fast) {dEcr*=masscorrfac_fast;} else {dEcr=0;}
+        double dEcr = eps_cr * P[j].Mass * fac_wind_corr * C_LIGHT_CODE*C_LIGHT_CODE; /* eps_cr is a fraction of mdot*c^2: not limited by the kinetic energy of the spawned cells, since it can represent e.g. jet energy converted to CRs on un-resolved scales */
+#if defined(SINK_RIAF_SUBEDDINGTON_MODEL) || defined(SINK_TEST_WIND_MIXED_FASTSLOW)
+        if(mode != 1) {dEcr=0;} else if(P[i].Type==5) {dEcr *= mass_of_new_particle_default / (fraction_to_spawn_in_jet * P[j].Mass);} /* only the jet cells carry CR energy: weight by their mass and number fraction so the total is still eps_cr*Mdot*c^2 */
 #endif
+        if(P[i].Type==4) {dEcr=0;} /* stellar ejecta are not powered by accretion */
 #if defined(SINK_CR_INJECTION_AT_TERMINATION)
         CellP[j].Sink_CR_Energy_Available_For_Injection = dEcr;     /* store energy for later injection */
 #else

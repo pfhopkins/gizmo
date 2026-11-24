@@ -1096,7 +1096,14 @@ KOKKOS_INLINE_FUNCTION
 void apply_special_boundary_conditions_P(int i, double mass_for_dp, int mode, integertime ti_target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     particle_motion_in_arrays a = {pp, cell, i};
+#if defined(GENERAL_RELATIVITY) && BOX_DEFINED_SPECIAL_XYZ_BOUNDARY_CONDITIONS_ARE_ACTIVE
+    const Vec3<double> pos_before = pp[i].Pos;
+#endif
     apply_special_boundary_conditions_body(a, mass_for_dp, mode, ti_target);
+#if defined(GENERAL_RELATIVITY) && BOX_DEFINED_SPECIAL_XYZ_BOUNDARY_CONDITIONS_ARE_ACTIVE
+    if((pp[i].Type == 0) && (pp[i].Mass > 0) && (pp[i].Pos[0] != pos_before[0] || pp[i].Pos[1] != pos_before[1] || pp[i].Pos[2] != pos_before[2]))
+        {set_metric_coefficients(pp[i].Pos, &(cell[i].gr));} /* a reflection moved the cell: the metric at its new position */
+#endif
 }
 
 /* The position a drift of dt_drift gives a particle: its binary's motion for a super-timestepped

@@ -367,6 +367,9 @@ void init(void)
              P[i].StellarAge = -2.0 * All.InitStellarAgeinGyr / (UNIT_TIME_IN_GYR) * particle_random_number(i, INITIAL_STELLAR_AGE_RNG_SALT, 0, 0);}
         }
 #endif
+#ifdef GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF
+        P[i].IMF_WeightedMeanStellarFormationTime = P[i].StellarAge; /* not kept in snapshots, but sets the age used for all stellar feedback: start from the formation time of the particle */
+#endif
         
 #ifdef GRAIN_FLUID
         if((RestartFlag == 0) && ((1 << P[i].Type) & (GRAIN_PTYPES)))
@@ -525,14 +528,13 @@ void init(void)
         if(P[i].Type == 5)
         {
             count_holes++;
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+            P[i].Sink_Mdot_ROI = P[i].Sink_ROI = 0; /* not kept in snapshots: set by the first sink calculation */
+#endif
             if(RestartFlag == 0)
             {
                 P[i].Sink_Mass = All.SeedSinkMass;
                 P[i].Sink_Formation_Mass = P[i].Mass;
-#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
-                P[i].Sink_Mdot_ROI = 0;
-                P[i].Sink_ROI = 0;
-#endif
 #ifdef SINGLE_STAR_SINK_DYNAMICS
                 P[i].Sink_Mass = P[i].Mass;
 #endif
@@ -959,10 +961,6 @@ void init(void)
     }
 #endif
 
-#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
-    for(i = 0; i < N_gas; i++) {if(P[i].Type == 0) {check_boundary(i);}} /* excise the cells inside the horizon (apply_excision does it every step) */
-#endif
-
 #ifdef TEST_FOR_IDUNIQUENESS
     test_id_uniqueness();
 #endif
@@ -984,6 +982,17 @@ void init(void)
             if(j==2) {boxtmp = boxSize_Z;}
             P[i].Pos[j] += 0.5 * boxtmp;
         }
+#endif
+
+#ifdef GENERAL_RELATIVITY
+    for(i = 0; i < N_gas; i++)
+    {
+        if(P[i].Type != 0) {continue;}
+        set_metric_coefficients(P[i].Pos, &(CellP[i].gr)); /* at the final initial positions (the unused dimensions and the half-box shift above) */
+#if (GR_METRIC>0)
+        check_boundary(i); /* excise the cells inside the horizon (apply_excision does it every step) */
+#endif
+    }
 #endif
 
 

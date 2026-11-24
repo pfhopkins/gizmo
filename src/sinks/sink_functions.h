@@ -194,21 +194,27 @@ KOKKOS_INLINE_FUNCTION double sink_eddington_mdot_core(double sink_mass)
 KOKKOS_INLINE_FUNCTION double evaluate_sink_radiative_efficiency_core(double mdot, double mass, long pindex)
 {
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL /* simple classic model where radiative efficiency declines linearly below critical eddington ratio of order 1% eddington, and super-Eddington accretion is also radiatively inefficient  */
-    double lambda_0 = 0.01, lambda_1 = 2., lambda_eff = mdot/sink_eddington_mdot_core(mass), qfac = lambda_eff/lambda_0, qfac_he = lambda_eff/lambda_1;
+    double lambda_0 = (SINK_RIAF_SUBEDDINGTON_MODEL), lambda_1 = 2., lambda_eff = mdot/sink_eddington_mdot_core(mass), qfac = lambda_eff/lambda_0, qfac_he = lambda_eff/lambda_1;
     return All.SinkRadiativeEfficiency * (qfac/(1.+qfac)) * (1./(1.+qfac_he));
 #endif
     return All.SinkRadiativeEfficiency; // default to constant
 }
 
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+/* return the jet kinetic power relative to mdot*c^2: scales as (spin*H/R)^2 with a thicker disk near the horizon in the radiatively-inefficient state */
+KOKKOS_INLINE_FUNCTION double evaluate_sink_jet_efficiency_core(double mdot, double mass)
+{
+    double a_spin = 0.33, HR = 0.33;
+    if(mdot/sink_eddington_mdot_core(mass) < (SINK_RIAF_SUBEDDINGTON_MODEL)) {HR = 1;}
+    return 0.1 * (a_spin*HR)*(a_spin*HR);
+}
+#endif
+
 /* return the bh cosmic ray acceleration efficiency - allows for models with dynamical or accretion-dependent cosmic ray efficiencies */
 KOKKOS_INLINE_FUNCTION double evaluate_sink_cosmicray_efficiency_core(double mdot, double mass, long pindex)
 {
 #ifdef SINK_COSMIC_RAYS
-#ifdef SINK_RIAF_SUBEDDINGTON_MODEL /* experiment with functions here to explore more/less efficient CR injection at lower/higher eddington ratios, reflecting hard/soft-type transition */
-    /* current version with this flag scales this relative to the jet kinetic power */
-    if(mdot/sink_eddington_mdot_core(mass) < 0.01) {return 0.5;} else {return 0.1;} /* high-Mdot uses standard SNe kinetic power, otherwise give unity power here */
-#endif
-    return All.Sink_CosmicRay_Injection_Efficiency; // default to constant
+    return All.Sink_CosmicRay_Injection_Efficiency; // default to constant, as a fraction of mdot*c^2
 #endif
     return 0;
 }

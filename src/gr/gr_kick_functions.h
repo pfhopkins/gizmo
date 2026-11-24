@@ -96,7 +96,6 @@ KOKKOS_INLINE_FUNCTION void gr_drift_impl(int i, double dt_drift, struct particl
     Vec3<double> v_old = pp[i].Vel, v_new;
 #ifdef GR_TEST_PARTICLE
     pp[i].Mass = Vi = 1;
-    if(gr_hole_displacement(pp[i].Pos).norm() <= 1.001) {pp[i].Mass = 0;}
 #endif
     /* conserved variables of the predicted and of the kicked state, with the metric of the old position */
     Wlorentz = gr_primitives_of_cell(i, cell[i].VelPred, pp[i].Mass, Vi, cell[i].InternalEnergyPred, &Prims, pp, cell);
@@ -113,7 +112,7 @@ KOKKOS_INLINE_FUNCTION void gr_drift_impl(int i, double dt_drift, struct particl
 #else
         res_con2prim = gr_get_primitive_variables(&Cons, &Prims, &(cell[i].gr), cell[i].gr.limiter);
 #endif
-        if(res_con2prim < 0)
+        if(res_con2prim < -1) /* (legacy drift: code -1, rho0 <= 0 or u <= 0, is accepted at an intermediate position, which needs only the velocity; the final inversion below is strict) */
         {
             printf("GR: failed inversion (code %g) in the drift: ID %llu at %g %g %g\n", res_con2prim, (unsigned long long) pp[i].ID, pp[i].Pos[0], pp[i].Pos[1], pp[i].Pos[2]);
             endrun(9992406); return;
@@ -167,12 +166,11 @@ KOKKOS_INLINE_FUNCTION void gr_predict_impl(int i, double dt_hydrokick, struct p
     struct gr_primitives Prims;
     struct gr_conservatives ConsPred;
     double Vi = pp[i].Mass/cell[i].Density, mass_new = pp[i].Mass, res_con2prim;
-#ifdef GR_TEST_PARTICLE
-    if(pp[i].Mass > 0) {pp[i].Mass = 1.0;} /* (an excised test particle keeps its zero mass) */
-    mass_new = pp[i].Mass; Vi = 1.0;
-#endif
 #ifdef PARTICLE_EXCISION
     if(pp[i].Mass == 0) {return;}
+#endif
+#ifdef GR_TEST_PARTICLE
+    pp[i].Mass = mass_new = Vi = 1.0;
 #endif
     double Wlorentz = gr_primitives_of_cell(i, cell[i].VelPred, pp[i].Mass, Vi, cell[i].InternalEnergyPred, &Prims, pp, cell);
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
