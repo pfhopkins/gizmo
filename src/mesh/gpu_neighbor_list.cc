@@ -1867,6 +1867,117 @@ int sidx_search_segments(const struct SidxSegmentView &own, const struct SidxSeg
     return n_own + n_ghost;
 }
 
+/* The same search with several lanes per query.  Each query is one row of a team (a team holds several queries, so
+ * a block stays full whatever the lanes per query); the row's lanes all walk the tile index the same way (the walk is
+ * deterministic, so they visit the same tiles in the same order), divide each tile's members, and a prefix sum over
+ * the row places the accepted ones at the positions the one-lane walk would give them, so the list is identical, order
+ * included.  This is the second level of parallelism for a call with fewer queries than lanes: one lane per query
+ * leaves most of the device idle on mid-size steps.
+ *
+ * A tile is taken a chunk of members at a time, one member per lane: each lane tests its member once and leaves the
+ * answer in the row's scratch (accepted, 2 x lanes ints, chunks alternating halves), and the prefix sum reads the
+ * answers back -- the vector prefix sum calls its body more than once per member, and the pair test is not cheap
+ * enough to repeat.  ngl_row_lanes_sync after the writes lets the sum see them all; alternating halves keeps a chunk's
+ * writes off answers the previous chunk's sum may still be reading. */
+/* Make a row's scratch writes visible to the row's other lanes.  On CUDA the vector loop already ends with the row's
+ * lanes synchronized (a warp sync over the row's mask, which orders memory); HIP's vector loop ends with no barrier, so the
+ * wavefront is fenced and synchronized here; host backends run a row's lanes one after another. */
+KOKKOS_INLINE_FUNCTION
+void ngl_row_lanes_sync()
+{
+#if defined(KOKKOS_ENABLE_HIP)
+    KOKKOS_IF_ON_DEVICE((__builtin_amdgcn_fence(__ATOMIC_RELEASE, "wavefront"); __builtin_amdgcn_wave_barrier();
+                         __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "wavefront");))
+#endif
+}
+
+template <class Member>
+struct TileCandidateStoreTeam {
+    const Member &team;
+    const double *rows;
+    const double *pos_i;
+    double h_i, h2_i, j_radius_scale;
+    const sfc_tile_t *tiles;
+    const int *pool;
+    int search_mode;
+    struct sfc_walk_frame frame;
+    int *store_neighbors;
+    int max_store;
+    int count;
+    int lanes;        /* the row's vector length */
+    int *accepted;    /* the row's scratch, 2 * lanes ints */
+    int chunk;        /* chunks taken so far (selects the half of accepted) */
+
+    KOKKOS_INLINE_FUNCTION
+    void operator()(int tile_idx)
+    {
+        const sfc_tile_t *tile = &tiles[tile_idx];
+        for(int s0 = 0; s0 < tile->count; s0 += lanes, chunk++)
+        {
+            const int n = (tile->count - s0 < lanes) ? tile->count - s0 : lanes;
+            int *acc = accepted + (chunk & 1) * lanes;
+            Kokkos::parallel_for(Kokkos::ThreadVectorRange(team, n), [&](const int k) {
+                acc[k] = tile_member_accepted(rows, pos_i, h_i, h2_i, j_radius_scale, tile, pool, s0 + k, search_mode, frame,
+                                              nullptr, (1u << 6) - 1u);
+            });
+            ngl_row_lanes_sync();
+            const int base = count;
+            int added = 0;
+            Kokkos::parallel_scan(Kokkos::ThreadVectorRange(team, n), [&](const int k, int &before, const bool final) {
+                const int j = acc[k];
+                if(j >= 0)
+                {
+                    if(final && store_neighbors && base + before < max_store) {store_neighbors[base + before] = j;}
+                    before++;
+                }
+            }, added);
+            count = base + added;
+        }
+    }
+};
+
+template <class Member>
+KOKKOS_INLINE_FUNCTION
+int sidx_search_segment_team(const Member &team, const struct SidxSegmentView &seg, const double pos[3], double h,
+                             double j_radius_scale, int search_mode, int *store, int capacity, int lanes, int *accepted,
+                             int &chunk)
+{
+    if(seg.root < 0) return 0;
+    TileCandidateStoreTeam<Member> visit{team, seg.rows, pos, h, h * h, j_radius_scale, seg.tiles, seg.pool, search_mode,
+                                         seg.frame, store, capacity, 0, lanes, accepted, chunk};
+    bvh_walk_tiles(pos, h, j_radius_scale, search_mode, seg.bvh, seg.root, nullptr, (1u << 6) - 1u, nullptr, nullptr,
+                   visit, seg.frame);
+    chunk = visit.chunk;
+    return visit.count;
+}
+
+/* sidx_search_segments with a row of lanes per query: the owned segment, then the ghost segment, as the one-lane form. */
+template <class Member>
+KOKKOS_INLINE_FUNCTION
+int sidx_search_segments_team(const Member &team, const struct SidxSegmentView &own, const struct SidxSegmentView &ghost,
+                              const double pos[3], double h, double j_radius_scale, int search_mode, int *store, int capacity,
+                              int lanes, int *accepted)
+{
+    int chunk = 0;   /* carried from one segment to the next, so the halves of the scratch keep alternating */
+    const int n_own = sidx_search_segment_team(team, own, pos, h, j_radius_scale, search_mode, store, capacity, lanes, accepted, chunk);
+    const int stored = (n_own < capacity) ? n_own : capacity;
+    const int n_ghost = sidx_search_segment_team(team, ghost, pos, h, j_radius_scale, search_mode, store + stored, capacity - stored,
+                                                 lanes, accepted, chunk);
+    return n_own + n_ghost;
+}
+
+/* Lanes per query for the fused neighbour-list walk: as many as the device has lanes to spare for this many
+ * queries (a power of two), at most 32 (a vector width every GPU backend supports); 1 -- the one-lane walk -- on a
+ * host backend or when the queries alone fill the device. */
+static int ngl_walk_lanes_per_query(int num_active)
+{
+    if(gizmo_gpu_default_space_is_host() || num_active <= 0) {return 1;}
+    const long long spare = (long long) gizmo_gpu_lane_count() / (long long) num_active;
+    int w = 1;
+    while(2 * w <= 32 && 2 * w <= spare) {w *= 2;}
+    return w;
+}
+
 void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
                         int search_mode, int type_bitmask,
@@ -2235,6 +2346,39 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         const double *radii = d_radii;
         const double *src_pos = d_source_pos;
         const struct SidxSegmentView own_walk = own_view, ghost_walk = ghost_view;
+        /* Lanes per query, and queries per team so that a team (one block) holds about 128 lanes. */
+        const int lanes_per_query = ngl_walk_lanes_per_query(num_active);
+        const int queries_per_team = (lanes_per_query > 1) ? ((128 / lanes_per_query > 1) ? 128 / lanes_per_query : 1) : 1;
+        const int n_active_q = num_active;
+        const size_t row_scratch_bytes = (size_t) 2 * lanes_per_query * sizeof(int);
+        const int row_lanes = lanes_per_query;   /* the vector length the rows are launched with */
+        const auto fused_rows = KOKKOS_LAMBDA(const Kokkos::TeamPolicy<>::member_type &team) {
+            const int aa = team.league_rank() * team.team_size() + team.team_rank();
+            if(aa >= n_active_q) {return;}   /* the last team's spare rows (every lane of a row leaves together) */
+            double h_i = radii[aa] * sr_fac;
+            double pos_i[3] = {src_pos[aa*3+0], src_pos[aa*3+1], src_pos[aa*3+2]};
+            int *accepted = (int *) team.thread_scratch(0).get_shmem(row_scratch_bytes);
+            int cnt = sidx_search_segments_team(team, own_walk, ghost_walk, pos_i, h_i, j_rad_scale, smode,
+                                                &scratch[(size_t)aa * NGL_SCRATCH_STRIDE], NGL_SCRATCH_STRIDE,
+                                                row_lanes, accepted);
+            Kokkos::single(Kokkos::PerThread(team), [&]() {counts[aa] = cnt;});
+        };
+        int rows = queries_per_team;
+        if(lanes_per_query > 1)
+        {
+            const int rows_max = gizmo_gpu_team_size_max_rows(fused_rows, lanes_per_query, row_scratch_bytes);
+            if(rows > rows_max) {rows = rows_max;}
+        }
+        if(lanes_per_query > 1 && rows >= 1)
+        {
+            const int league = (num_active + rows - 1) / rows;
+            Kokkos::parallel_for("ngb_fused_rows", Kokkos::TeamPolicy<>(league, rows, lanes_per_query)
+                                                       .set_scratch_size(0, Kokkos::PerThread(row_scratch_bytes)), fused_rows);
+            Kokkos::fence();
+            gizmo_gpu_check_last_error("ngb_fused_rows", num_active);
+        }
+        else
+        {
         Kokkos::parallel_for("ngb_fused", num_active, KOKKOS_LAMBDA(int aa) {
             double h_i = radii[aa] * sr_fac;
             double pos_i[3] = {src_pos[aa*3+0], src_pos[aa*3+1], src_pos[aa*3+2]};
@@ -2244,6 +2388,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         });
         Kokkos::fence();
         gizmo_gpu_check_last_error("ngb_fused", num_active);
+        }
 
     }
 
