@@ -1143,6 +1143,9 @@ void init(void)
         int k __attribute__((unused)) = 0;
         CellP[i].InternalEnergyPred = CellP[i].InternalEnergy;
         CellP[i].recent_refinement_flag = 0; // always initialize to zero, no recent refinements
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+        CellP[i].SingleStarSFCooldown = 0; CellP[i].SingleStarSpawnBlock = 0; /* not in snapshots: a start from one has no cooldown */
+#endif
 
         // re-match the predicted and initial velocities and B-field values, just to be sure //
         CellP[i].VelPred = P[i].Vel;
