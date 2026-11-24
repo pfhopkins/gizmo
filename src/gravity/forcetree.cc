@@ -1581,7 +1581,7 @@ void force_treeupdate_pseudos(int no)
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-            double l_tot=0; for(k=0;k<N_RT_FREQ_BINS;k++) {l_tot += (Nodes[p].stellar_lum[k]);}
+            double l_tot = moment_light_centre_weight(&Nodes[p].stellar_lum[0]);
             rt_source_lum_s += l_tot * Nodes[p].rt_source_lum_s;
             rt_source_lum_vs += l_tot * Extnodes[p].rt_source_lum_vs;
 #endif
@@ -1651,7 +1651,7 @@ void force_treeupdate_pseudos(int no)
     }
     
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-    double l_tot=0; int kfreq; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {l_tot += stellar_lum[kfreq];}
+    double l_tot = moment_light_centre_weight(&stellar_lum[0]);
     if(l_tot)
     {
         rt_source_lum_s /= l_tot;

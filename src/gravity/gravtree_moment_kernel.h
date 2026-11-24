@@ -256,15 +256,33 @@ KOKKOS_INLINE_FUNCTION static Vec3<AccT> moment_weighted_vec3(double w, double x
 }
 
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
+/* Weight of a source or node in the luminosity-weighted centre, from its band luminosities: their sum; with the single-star
+ * band fluxes 6-13.6 eV plus Lyman-Werner, and the ionising energy where the walk carries it. Every place that weights or
+ * normalizes the centre uses this, so weights and denominators agree. */
+template <class LumT>
+KOKKOS_INLINE_FUNCTION static double moment_light_centre_weight(const LumT *lum)
+{
+    double l = 0;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+    l = (double) lum[RT_FREQ_BIN_GENERIC_USER_FREQ] + (double) lum[RT_FREQ_BIN_PHOTOELECTRIC] + (double) lum[RT_FREQ_BIN_LYMAN_WERNER];
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
+    l += (double) lum[RT_FREQ_BIN_ION_ENERGY];
+#ifdef TREECOL_SHELLS_ION_HELIUM
+    l += (double) lum[RT_FREQ_BIN_ION_HE_ENERGY];
+#endif
+#endif
+#else
+    for(int b = 0; b < N_RT_FREQ_BINS; b++) { l += (double) lum[b]; }
+#endif
+    return l;
+}
 /* Total stellar luminosity of a node (the RT lum-position normalization weight). The SAME running
  * sum a venue keeps for its rt_s/rt_vs divide MUST use this, so the per-child weight and the
  * normalize denominator stay bit-consistent within the venue. */
 template <class AccT>
 KOKKOS_INLINE_FUNCTION static double moment_child_total_luminosity(const moment_node_accum<AccT>& c)
 {
-    double l = 0;
-    for(int b = 0; b < N_RT_FREQ_BINS; b++) { l += (double) c.stellar_lum[b]; }
-    return l;
+    return moment_light_centre_weight(&c.stellar_lum[0]);
 }
 #endif
 
@@ -354,11 +372,7 @@ KOKKOS_INLINE_FUNCTION static moment_node_accum<AccT> moment_source_from_particl
 #endif
 #ifdef RT_USE_GRAVTREE
     {
-        double l_sum = 0;
-        for(int b = 0; b < N_RT_FREQ_BINS; b++) {
-            a.stellar_lum[b] = (AccT) p.src_lum[b];
-            l_sum += p.src_lum[b];
-        }
+        for(int b = 0; b < N_RT_FREQ_BINS; b++) {a.stellar_lum[b] = (AccT) p.src_lum[b];}
 #ifdef CHIMES_STELLAR_FLUXES
         for(int b = 0; b < CHIMES_LOCAL_UV_NBINS; b++) {
             a.chimes_G0 [b] = p.src_lum_G0 [b];
@@ -366,6 +380,7 @@ KOKKOS_INLINE_FUNCTION static moment_node_accum<AccT> moment_source_from_particl
         }
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
+        const double l_sum = moment_light_centre_weight(&p.src_lum[0]);
         if(l_sum > 0) {
             a.rt_s  = moment_weighted_vec3<AccT>(l_sum, p.pos[0], p.pos[1], p.pos[2]);
             a.rt_vs = moment_weighted_vec3<AccT>(l_sum, p.vel[0], p.vel[1], p.vel[2]);
@@ -679,8 +694,7 @@ KOKKOS_INLINE_FUNCTION static void moment_finalize(const moment_node_ref<AccT>& 
     }
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     {
-        double l_tot = 0;
-        for(int b = 0; b < N_RT_FREQ_BINS; b++) { l_tot += (double) r.stellar_lum[b]; }
+        const double l_tot = moment_light_centre_weight(r.stellar_lum);
         if(l_tot > 0) {
             *r.rt_s  = *r.rt_s  / ((AccT) l_tot);
             *r.rt_vs = *r.rt_vs / ((AccT) l_tot);
@@ -753,7 +767,7 @@ struct node_motion_in_arrays {
     KOKKOS_INLINE_FUNCTION MyFloat  &rt_s(int j)  const {return nodes[no].rt_source_lum_s[j];}
     KOKKOS_INLINE_FUNCTION MyFloat  &rt_vs(int j) const {return ext[no].rt_source_lum_vs[j];}
     KOKKOS_INLINE_FUNCTION MyDouble &rt_dp(int j) const {return ext[no].rt_source_lum_dp[j];}
-    KOKKOS_INLINE_FUNCTION double    lum_tot()    const {double l = 0; for(int b = 0; b < N_RT_FREQ_BINS; b++) {l += (double) nodes[no].stellar_lum[b];} return l;}
+    KOKKOS_INLINE_FUNCTION double    lum_tot()    const {return moment_light_centre_weight(&nodes[no].stellar_lum[0]);}
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
     KOKKOS_INLINE_FUNCTION MyFloat  &s_dm(int j)  const {return nodes[no].s_dm[j];}

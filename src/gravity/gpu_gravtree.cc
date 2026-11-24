@@ -841,7 +841,7 @@ gpu_grav_node_motion_at(const struct gpu_gravity_tree_soa_t &soa, const struct e
         for(int j = 0; j < 3; j++) {m.dp_[j] = ext[no].dp[j];}
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
         for(int j = 0; j < 3; j++) {m.rt_dp_[j] = ext[no].rt_source_lum_dp[j];}
-        {double l = 0; for(int b = 0; b < N_RT_FREQ_BINS; b++) {l += (double) soa.stellar_lum[(long) idx * N_RT_FREQ_BINS + b];} m.lum_tot_ = l;}
+        m.lum_tot_ = moment_light_centre_weight(&soa.stellar_lum[(long) idx * N_RT_FREQ_BINS]);
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
         for(int j = 0; j < 3; j++) {m.dp_dm_[j] = ext[no].dp_dm[j];}

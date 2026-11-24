@@ -247,6 +247,7 @@ void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code)
 #ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES /* opt-in (Uli 2026-11-19, GKS-95 option c); default: bounded staleness */
 #include "../gravity/forcetree.h"
 #include "../gravity/gpu_pseudo_update.h"
+#include "../gravity/gravtree_moment_kernel.h"   /* moment_light_centre_weight */
 int let_light_wire_of(int R, int key);
 int let_light_foreign_node(int sender, int wire);
 
@@ -293,13 +294,12 @@ int single_star_light_exchange_scan(double tol)
 static void single_star_light_apply(int no, const struct single_star_light_change *c)
 {
     if(Nodes[no].Ti_current != All.Ti_Current) {force_drift_node(no, All.Ti_Current);}
-    double L0 = 0, L1 = 0;
+    const double L0 = moment_light_centre_weight(&Nodes[no].stellar_lum[0]);
     for(int b = 0; b < N_RT_FREQ_BINS; b++) {
-        L0 += (double) Nodes[no].stellar_lum[b];
         double l = (double) Nodes[no].stellar_lum[b] + c->dl[b];
         Nodes[no].stellar_lum[b] = (MyFloat) ((l > 0) ? l : 0);
-        L1 += (double) Nodes[no].stellar_lum[b];
     }
+    const double L1 = moment_light_centre_weight(&Nodes[no].stellar_lum[0]);
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     if(L1 > 0) {
         const double h = Nodes[no].len; /* guard against cancellation when the dominant source goes dark: stay near the node */
