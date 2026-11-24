@@ -57,9 +57,6 @@
 #ifndef TIDAL_TIMESTEP_CRITERION
 #define TIDAL_TIMESTEP_CRITERION
 #endif
-#if !defined(STARS_APPROACH_TIMESTEP) && !defined(STARS_APPROACH_TIMESTEP_OFF) && !defined(SINK_CALC_DISTANCES) && !defined(SINGLE_STAR_TIMESTEPPING) && !defined(SINGLE_STAR_DIRECT_GRAVITY) && !defined(SINK_PARTICLES) && !defined(STARS_HERMITE_DIRECT_GRAVITY) && !defined(STARS_INTEGRATED_BY_RUMI) && !defined(SPECIAL_POINT_MOTION) && !defined(GRAVITY_ANALYTIC)
-#define STARS_APPROACH_TIMESTEP /* star encounters resolved in clusters; skipped where the sink node moments are taken, opt out with STARS_APPROACH_TIMESTEP_OFF */
-#endif
 #ifndef DO_DENSITY_AROUND_NONGAS_PARTICLES
 #define DO_DENSITY_AROUND_NONGAS_PARTICLES
 #endif
@@ -914,6 +911,9 @@
 #define SINGLE_STAR_DIRECT_GRAVITY /* the exact star-star sum (stars not yet integrated by RUMI++) */
 #define STAR_DIRECT_GRAVITY_TYPE 4
 #define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#endif
+#if (defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS)) && !defined(GALSF_SINGLE_STARS_STOCHASTIC_IMF) && !defined(SELFGRAVITY_OFF) && !defined(STARS_APPROACH_TIMESTEP) && !defined(STARS_APPROACH_TIMESTEP_OFF) && !defined(SINK_CALC_DISTANCES) && !defined(SINGLE_STAR_TIMESTEPPING) && !defined(SINGLE_STAR_DIRECT_GRAVITY) && !defined(SINK_PARTICLES) && !defined(STARS_HERMITE_DIRECT_GRAVITY) && !defined(STARS_INTEGRATED_BY_RUMI) && !defined(SPECIAL_POINT_MOTION) && !defined(GRAVITY_ANALYTIC)
+#define STARS_APPROACH_TIMESTEP /* default for single stars: star encounters resolved in clusters; skipped without the gravity walk and where the sink node moments are taken, opt out with STARS_APPROACH_TIMESTEP_OFF */
 #endif
 #ifdef STARS_APPROACH_TIMESTEP /* Type-4 stars: STARFORGE's two-body step (approach and free-fall time to the nearest star, from the gravity walk) */
 #ifndef STARS_APPROACH_TIMESTEP_CHECKED /* first pass only: this file is read twice */

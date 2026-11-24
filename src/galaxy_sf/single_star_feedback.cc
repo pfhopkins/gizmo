@@ -245,8 +245,8 @@ static inline int single_star_kind_this_step(int i)
     return SSE_NONE;
 }
 
-/* largest timestep of a single star [code]: the death needs no step of its own */
-double single_star_max_timestep(int p) {(void) p; return All.MaxStellarTimestep / UNIT_TIME_IN_YR;}
+/* largest timestep of a living single star [code], 0 (none) for a remnant: the death needs no step of its own */
+double single_star_max_timestep(int p) {return SingleStars.event_bits[single_star_slot(P[p].StarIdx)] ? 0 : All.MaxStellarTimestep / UNIT_TIME_IN_YR;}
 
 /* single-star branch of mechanical_fb_calculate_eventrates: sets SNe_ThisTimeStep (supernova, Type Ia) or
    MassReturn_ThisTimeStep (wind, AGB death; the fraction of the star's mass) */

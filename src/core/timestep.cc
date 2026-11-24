@@ -611,7 +611,7 @@ integertime get_timestep(int p,		/*!< particle index */
     if(h_for_accel_dt <= 0) {h_for_accel_dt = P[p].Get_Particle_Size() * All.cf_atime;} /* a particle without a force softening (e.g. grains without gravity, or an element whose type changed this step before its softening was refreshed) uses the inter-particle spacing as the characteristic length scale */
     dt = sqrt(2 * All.ErrTolIntAccuracy * All.cf_atime * h_for_accel_dt / ac);}
 
-#if (defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)) && defined(GALSF) && defined(GALSF_FB_MECHANICAL)
+#if (defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)) && defined(GALSF) && defined(GALSF_FB_MECHANICAL) && !defined(GALSF_SINGLE_STARS_FROM_IMF) /* single stars keep the step of their own softening */
     if(is_galsf_stellar_candidate_type(P[p].Type, All.ComovingIntegrationOn) && (P[p].Mass>0))
     {
         if((All.ComovingIntegrationOn)) // sort of a hack here, but acceptable in applications
