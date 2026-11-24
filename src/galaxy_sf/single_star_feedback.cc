@@ -27,8 +27,8 @@
  *     first, as a wind delivery, and the death follows on the next step; the star's mass at the death trigger is stored in
  *     the record (M_at_SN_trigger), and every pack of the event recomputes ejecta, energy and yields from it;
  *   - supernova classes (table remnant type): CCSN, ECSN, PPISN and PISN 1e51 erg; failed SN and direct BH no energy;
- *     ejecta = stored mass - table remnant, composition from the table's SN element ejecta scaled to that mass;
- *   - white-dwarf remnants (AGB death): ejecta = stored mass - table remnant at 30 km/s, AGB element ejecta scaled;
+ *     ejecta and remnant are the table's fractions of the stored mass (stellar_death_ejecta);
+ *   - white-dwarf remnants (AGB death): the same at 30 km/s, with the AGB element ejecta;
  *   - with GALSF_SINGLE_STARS_TYPE_IA a white dwarf explodes with the per-step hazard
  *     (t^-1 delay-time distribution normalised to the dead-progenitor fraction, keyed random number): the whole mass at
  *     1e51 erg with the table's Type Ia yields, no remnant;
@@ -208,19 +208,6 @@ static void single_star_deliver_wind(int i, int s, double logM, double logZ, dou
     P[i].MassReturn_ThisTimeStep = SingleStars.wind_mass[s] / UNIT_MASS_IN_SOLAR / P[i].Mass;
 }
 
-/* death ejecta as fractions of the star's mass at death: element k leaves as e_k / (rem + sum e) of the mass at death, e the table's
-   death ejecta in y[], rem the table remnant (PISN: 0). Remnant + ejecta = the mass at death at any (M, Z); a collapse without table
-   ejecta ejects nothing. Sets y[], Mej and M_rem. */
-static void single_star_death_ejecta(double logM, double logZ, struct single_star_event *ev)
-{
-    double sum = 0, rem = (ev->remnant_type == REM_PISN) ? 0 : DMAX(stellar_remnant_mass(logM, logZ), 0);
-    for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = DMAX(ev->y[k], 0); sum += ev->y[k];}
-    const double f = (sum + rem > 0) ? ev->M_trigger / (sum + rem) : 0;
-    ev->Mej = 0;
-    for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] *= f; ev->Mej += ev->y[k];}
-    ev->M_rem = ev->M_trigger - ev->Mej;
-}
-
 /* the event of star i this step (the kind set by single_star_eventrates), all from the record and the tables */
 static void single_star_event_of(int i, int kind, struct single_star_event *ev)
 {
@@ -238,7 +225,6 @@ static void single_star_event_of(int i, int kind, struct single_star_event *ev)
     }
     if(kind == SSE_AGB) {
         ev->v_kms = SINGLE_STAR_AGB_SPEED_KMS;
-        for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_elem_ej_AGB(logM, logZ, k);}
     } else {
         ev->E = 1.e51;
 #ifdef RESOLVED_ISM_VARIABLE_SN_ENERGY /* Uli 2026-11-19: by default every explosion 1e51 erg */
@@ -246,9 +232,9 @@ static void single_star_event_of(int i, int kind, struct single_star_event *ev)
         if(ev->remnant_type == REM_ECSN) {ev->E = 5.e50;}
 #endif
         if(ev->remnant_type == REM_FSN || ev->remnant_type == REM_DBH) {ev->E = 0;}
-        for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_elem_ej_SN(logM, logZ, k);}
     }
-    single_star_death_ejecta(logM, logZ, ev);
+    ev->M_rem = stellar_death_ejecta(logM, logZ, ev->M_trigger, ev->y);
+    for(int k = 0; k < STBL_NELEM; k++) {ev->Mej += ev->y[k];}
 }
 
 static inline int single_star_kind_this_step(int i)

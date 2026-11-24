@@ -98,6 +98,7 @@ double stellar_surface_abundance(double logM, double logZ, double log_age, int e
 double stellar_elem_ej_wind_cumulative(double logM, double logZ, double log_age, int elem); /* [Msun] from birth */
 double stellar_elem_ej_SN(double logM, double logZ, int elem);   /* [Msun], table birth composition */
 double stellar_elem_ej_AGB(double logM, double logZ, int elem);  /* [Msun], table birth composition */
+double stellar_death_ejecta(double logM, double logZ, double M_death, double *m_k); /* [Msun]: element ejecta of a death, returns the remnant mass */
 double stellar_type_ia_yield(int elem);                          /* [Msun] per Ia */
 #ifdef GALSF_SINGLE_STARS_TYPE_IA
 void   stellar_ia_fdead_init(void);

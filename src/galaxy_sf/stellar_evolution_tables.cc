@@ -464,6 +464,39 @@ double stellar_elem_ej_AGB(double logM, double logZ, int elem)
     return interp2d_elem_rt_aware(StellarTbl.elem_ej_AGB_mass, logM, logZ, elem);
 }
 
+/* Death ejecta of element k at one grid star as a fraction of its mass at death: ej_k / (rem + sum ej), from the AGB table for white
+ * dwarfs and the SN table for the rest; complete disruption (PISN) has rem = 0 */
+static void stbl_death_fractions(int inode, double *e)
+{
+    const int rt = StellarTbl.remnant_type[inode];
+    const double *ej = ((rt == REM_WD) ? StellarTbl.elem_ej_AGB_mass : StellarTbl.elem_ej_SN_mass) + (size_t)inode * STBL_NELEM;
+    double sum = 0;
+    for(int k = 0; k < STBL_NELEM; k++) {e[k] = DMAX(ej[k], 0); sum += e[k];}
+    const double D = sum + ((rt == REM_PISN) ? 0 : DMAX(StellarTbl.remnant_mass[inode], 0));
+    for(int k = 0; k < STBL_NELEM; k++) {e[k] = (D > 0) ? e[k] / D : 0;}
+}
+
+/* Element ejecta m_k [Msun] of a star holding M_death [Msun] at death; returns the remnant mass, M_death - sum m_k. The fractions of
+ * the four corners are interpolated, not the ejecta and the remnant mass one by one, so that ejecta and remnant add up to the
+ * star's mass at any (M, Z) and remnant types are not mixed (the nearest corner where the types differ, as interp2d_rt_aware). */
+double stellar_death_ejecta(double logM, double logZ, double M_death, double *m_k)
+{
+    int iz, im; double fz, fm, sum = 0, Mej = 0;
+    stbl_idx_Z(logZ, &iz, &fz);
+    stbl_idx_M(logM, &im, &fm);
+    const int c[4] = {IDX2(iz, im), IDX2(iz, im+1), IDX2(iz+1, im), IDX2(iz+1, im+1)}, *rtc = StellarTbl.remnant_type;
+    if(rtc[c[0]] == rtc[c[1]] && rtc[c[0]] == rtc[c[2]] && rtc[c[0]] == rtc[c[3]]) {
+        double e[4][STBL_NELEM];
+        for(int n = 0; n < 4; n++) {stbl_death_fractions(c[n], e[n]);}
+        for(int k = 0; k < STBL_NELEM; k++) {m_k[k] = (1-fz)*(1-fm)*e[0][k] + (1-fz)*fm*e[1][k] + fz*(1-fm)*e[2][k] + fz*fm*e[3][k];}
+    } else {stbl_death_fractions(c[2 * (fz > 0.5) + (fm > 0.5)], m_k);}
+    for(int k = 0; k < STBL_NELEM; k++) {m_k[k] = DMAX(m_k[k], 0); sum += m_k[k];}
+    const int rt = stellar_remnant_type(logM, logZ);
+    const double norm = (rt == REM_PISN || sum > 1) ? ((sum > 0) ? 1 / sum : 0) : 1; /* PISN: complete disruption */
+    for(int k = 0; k < STBL_NELEM; k++) {m_k[k] *= norm * DMAX(M_death, 0); Mej += m_k[k];}
+    return (rt == REM_PISN) ? 0 : DMAX(M_death, 0) - Mej;
+}
+
 /* Cumulative wind ejecta of element `elem` [Msun] from birth up to log_age.
  * Per-corner age clamp at lifetime: cum stays at end-of-life value past death. */
 double stellar_elem_ej_wind_cumulative(double logM, double logZ, double log_age, int elem)
