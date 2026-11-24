@@ -52,8 +52,14 @@ struct single_star_tree_lum {float L[N_RT_FREQ_BINS];};
 #else
 #define SINGLE_STAR_RECORD_TREE_FIELDS(X)
 #endif
+#ifdef SINGLE_STAR_ION_PHOTON_ENERGY_FROM_TABLES
+#define SINGLE_STAR_RECORD_ION_FIELDS(X) X(double, L_ion_counted, "ionising light [erg/s] in the rank sum of the mean photon energy") X(double, Q_ion_counted, "ionising photons [1/s], likewise")
+#else
+#define SINGLE_STAR_RECORD_ION_FIELDS(X)
+#endif
 #define SINGLE_STAR_RECORD_TABLE_FIELDS(X) \
     X(float, rho_birth, "physical gas density of the parent cell at birth [code]; 0 = unknown") \
+    SINGLE_STAR_RECORD_ION_FIELDS(X) \
     SINGLE_STAR_RECORD_TREE_FIELDS(X)
 #else
 #define SINGLE_STAR_RECORD_TABLE_FIELDS(X)

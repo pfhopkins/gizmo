@@ -166,10 +166,12 @@ void rt_source_injection(void)
     std::vector<RtSrcLocalIn> host_locals;
     for (int i : ActiveParticleList) {
         if (!rt_sourceinjection_active_check(i)) continue;
+        active_src.push_back(i);
+#ifndef SINGLE_STAR_ION_PHOTON_ENERGY_FROM_TABLES
         RtSrcLocalIn loc;
         rt_source_injection_fill_local(i, P, CellP, &loc);
-        active_src.push_back(i);
         host_locals.push_back(loc);
+#endif
     }
     const int num_active = (int)active_src.size();
 
@@ -177,7 +179,14 @@ void rt_source_injection(void)
      * inside (ghost_exchange, Allreduce, ghost_writeback Alltoallv) stay in
      * lockstep on multi-rank runs. Short-circuit only when globally zero. */
     int any_local = (num_active > 0) ? 1 : 0, any_active = 0;
+#ifdef SINGLE_STAR_ION_PHOTON_ENERGY_FROM_TABLES
+    if(single_star_ion_light_count_active()) {any_local = 1;} /* the bin's photon energy is set before the sources are, on calls with a source anywhere */
+#endif
     MPI_Allreduce(&any_local, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+#ifdef SINGLE_STAR_ION_PHOTON_ENERGY_FROM_TABLES
+    if(any_active) {single_star_ion_photon_energy_update();}
+    for(int i : active_src) {RtSrcLocalIn loc; rt_source_injection_fill_local(i, P, CellP, &loc); host_locals.push_back(loc);}
+#endif
     if (any_active) {
         rt_source_injection_run_loop(active_src.data(), host_locals.data(), num_active);
     }

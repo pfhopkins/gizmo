@@ -141,6 +141,61 @@ int single_star_rt_band_luminosities(int i, int mode, double *lum, struct partic
 }
 #endif
 
+#ifdef SINGLE_STAR_ION_PHOTON_ENERGY_FROM_TABLES
+/* mean photon energy of the one ionising bin = sum L_ion / sum Q over the living stars above 8 Msun, from the tables at
+   their current ages: the stars' hardness instead of a fixed blackbody's. Emission and the cells' rates and heating read
+   the same number, so the photon count is kept. Each star's share is renewed on its own active steps and kept in its
+   record; the rank sums are not tied to the particles, so stars may move between ranks, and a step on which every
+   particle is active counts anew (stars that merged or left are dropped then) */
+static double ion_light_sum[2];
+static int ion_light_sum_built = 0;
+
+static void single_star_ion_light(int i, double *L, double *Q)
+{
+    double b[SINGLE_STAR_NBANDS], L_bol; *L = *Q = 0;
+    int s = single_star_slot(P[i].StarIdx);
+    if(SingleStars.M_drawn[s] <= 8. || !single_star_band_luminosities_cgs(i, b, &L_bol)) {return;}
+    double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
+    double l = single_star_band_lum_cgs(stellar_log_L_ion_tot(logM, logZ, log10(DMAX(evaluate_stellar_age_Gyr(i) * 1.e9 - stellar_t_PMS(logM, logZ), 100.))));
+    if(l > 0 && b[SINGLE_STAR_BAND_Q] > 0) {*L = l; *Q = b[SINGLE_STAR_BAND_Q];}
+}
+
+/* the active stars' shares into the rank sums; 1 on the first call of a run: the bin's energy is not set yet */
+int single_star_ion_light_count_active(void)
+{
+    int first = !ion_light_sum_built;
+    if(first)
+    {
+        ion_light_sum[0] = ion_light_sum[1] = 0; ion_light_sum_built = 1; /* restart files carry the shares, other starts have all particles active */
+        for(int s = 0; s < SingleStars.capacity; s++) {if(SingleStars.used[s]) {ion_light_sum[0] += SingleStars.L_ion_counted[s]; ion_light_sum[1] += SingleStars.Q_ion_counted[s];}}
+    }
+    if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
+    {
+        ion_light_sum[0] = ion_light_sum[1] = 0;
+        for(int s = 0; s < SingleStars.capacity; s++) {if(SingleStars.used[s]) {SingleStars.L_ion_counted[s] = SingleStars.Q_ion_counted[s] = 0;}}
+    }
+    for(int i : ActiveParticleList)
+    {
+        if(P[i].Type != 4 || P[i].StarIdx <= 0) {continue;}
+        int s = single_star_slot(P[i].StarIdx); double L, Q;
+        single_star_ion_light(i, &L, &Q);
+        ion_light_sum[0] += L - SingleStars.L_ion_counted[s]; ion_light_sum[1] += Q - SingleStars.Q_ion_counted[s];
+        SingleStars.L_ion_counted[s] = L; SingleStars.Q_ion_counted[s] = Q;
+    }
+    return first;
+}
+
+/* collective: one reduction; without living ionising stars the energy stays */
+void single_star_ion_photon_energy_update(void)
+{
+    double sum[2]; MPI_Allreduce(ion_light_sum, sum, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(!(sum[0] > 0 && sum[1] > 0)) {return;}
+    double e = DMIN(DMAX(sum[0] / sum[1] / ELECTRONVOLT_IN_ERGS, 13.6), 100.);
+    All.rt_nu_eff_eV[RT_FREQ_BIN_H0] = e;
+    All.rt_ion_G_HI[RT_FREQ_BIN_H0] = (e - 13.6) * ELECTRONVOLT_IN_ERGS / UNIT_ENERGY_IN_CGS;
+}
+#endif
+
 #ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
 /* photon momentum a single star hands to the gas this step [g cm/s]: band luminosities absorbed
    over the kernel column at the star, f_b = 1 - exp(-sigma_b DGR N_H) with sigma = 2.0 (PE + 6-8), 1.3 (NUV), 0.5 (OPT)

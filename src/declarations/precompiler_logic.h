@@ -1646,6 +1646,11 @@
 #endif
 #endif
 
+/* one ionising bin sourced by single stars: its photon energy follows the living stars' tables (the bin's photons per unit energy must be the stars') */
+#if defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) && defined(RT_CHEM_PHOTOION) && !defined(RT_PHOTOION_MULTIFREQUENCY) && !defined(RT_STARBENCH_TEST)
+#define SINGLE_STAR_ION_PHOTON_ENERGY_FROM_TABLES
+#endif
+
 /* enable appropriate flags for X-ray sub-modules */
 #if defined(RT_XRAY)
 #if (RT_XRAY == 1)

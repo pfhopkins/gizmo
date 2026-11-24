@@ -4,7 +4,7 @@ corners of a periodic box of very thin gas (2 ranks, so each rank holds a star),
 every photon stays in the bins.
   test_band_energy: energy per bin over the box = sum over stars of L_table(band) x t x c_red / c (2 %). Bins PE 8-13.6,
     LW 11.2-13.6 (inside PE), 6-8, H0, He0, He1, He2.
-  test_single_ionising_bin: one ionising bin holds the table's photon rate at the bin's mean photon energy (2 %).
+  test_single_ionising_bin: one ionising bin holds the table's photon rate at the stars' mean photon energy L_ion/Q (2 %).
   test_excluded_channels: the star-side radiation pressure and photoionisation channels do not build with the moment forces.
 The rates are taken between two snapshots: the first injection arrives two steps after t = 0.
 """
@@ -111,8 +111,10 @@ def test_band_energy(tables):
 def test_single_ionising_bin(tables):
     E, t, age, tab = run(build("single", ("RT_CHEM_PHOTOION=1", "RT_DISABLE_RAD_PRESSURE")), "single", tables)
     assert len(E) == 4
-    Q = expected(tab, age, ("log_Q_ion",))["log_Q_ion"]
-    assert abs(E[0] / Q / EV / nu_eff(13.6, 500.0) - 1) < 2e-2, E[0] / Q / EV
+    xp = expected(tab, age, ("log_Q_ion", "log_L_ion_tot"))
+    e_mean = xp["log_L_ion_tot"] / xp["log_Q_ion"] / EV  # the living stars' mean photon energy; the dead star does not count
+    assert abs(E[0] / xp["log_Q_ion"] / EV / e_mean - 1) < 2e-2, (E[0] / xp["log_Q_ion"] / EV, e_mean)
+    assert abs(e_mean / nu_eff(13.6, 500.0) - 1) > 4e-2  # the fixed blackbody's energy would fail
 
 
 @pytest.mark.parametrize("flag", ["GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS", "GALSF_FB_FIRE_RT_HIIHEATING", "GALSF_FB_PHOTOIONIZATION_PER_DIRECTION"])

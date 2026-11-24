@@ -1237,6 +1237,10 @@ int single_star_band_luminosities_cgs(int i, double *L, double *L_bol); /* host 
 #if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
 int single_star_rt_band_luminosities(int i, int mode, double *lum, struct particle_data *pp); /* host only */
 #endif
+#ifdef SINGLE_STAR_ION_PHOTON_ENERGY_FROM_TABLES
+int single_star_ion_light_count_active(void);
+void single_star_ion_photon_energy_update(void);
+#endif
 #ifdef OUTPUT_SGCHEM_RADIATION_FIELDS
 double sgchem_radiation_field_for_snapshot(int i, int blocknr);
 #endif
