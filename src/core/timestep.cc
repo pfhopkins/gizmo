@@ -37,18 +37,26 @@ int HotGasSyncArmed = 1; /* set by feedback events and new ejecta cells; off aga
 static integertime hot_gas_sync_step(Vec3<double> *centre, double *R2)
 {
     const double u_hot = (1.0e6 * BOLTZMANN_CGS) / ((2./3.) * 0.6 * PROTONMASS_CGS) / UNIT_SPECEGY_IN_CGS;
+    struct {double u; int task;} umax_loc = {-1, ThisTask}, umax; int i_ref = -1;
+    for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0 && P[i].Mass > 0 && CellP[i].InternalEnergyPred > u_hot && CellP[i].InternalEnergyPred > umax_loc.u) {umax_loc.u = CellP[i].InternalEnergyPred; i_ref = i;}}
+    MPI_Allreduce(&umax_loc, &umax, 1, MPI_DOUBLE_INT, MPI_MAXLOC, MPI_COMM_WORLD);
+    if(umax.u < 0) {HotGasSyncArmed = 0; return TIMEBASE;}
+    double ref[3] = {0,0,0}; /* the hottest cell: the mean is taken over nearest-image offsets from it, so a blast across a periodic face has its centre in the blast */
+    if(ThisTask == umax.task) {for(int k = 0; k < 3; k++) {ref[k] = P[i_ref].Pos[k];}}
+    MPI_Bcast(ref, 3, MPI_DOUBLE, umax.task, MPI_COMM_WORLD);
     integertime ti_loc = TIMEBASE, ti_glob = TIMEBASE; double aphys, sum_loc[4] = {0,0,0,0}, sum_glob[4];
     for(int i = 0; i < N_gas; i++) {
         if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].InternalEnergyPred <= u_hot) {continue;}
         integertime t = get_timestep(i, &aphys, 0);
         if(t > 0 && t < ti_loc) {ti_loc = t;}
-        for(int k = 0; k < 3; k++) {sum_loc[k] += P[i].Pos[k];}
+        Vec3<double> d; for(int k = 0; k < 3; k++) {d[k] = P[i].Pos[k] - ref[k];}
+        nearest_xyz(d);
+        for(int k = 0; k < 3; k++) {sum_loc[k] += d[k];}
         sum_loc[3] += 1;
     }
     MPI_Allreduce(&ti_loc, &ti_glob, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
     MPI_Allreduce(sum_loc, sum_glob, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    if(sum_glob[3] <= 0) {HotGasSyncArmed = 0; return TIMEBASE;}
-    for(int k = 0; k < 3; k++) {(*centre)[k] = sum_glob[k] / sum_glob[3];}
+    for(int k = 0; k < 3; k++) {(*centre)[k] = ref[k] + sum_glob[k] / sum_glob[3];}
     double rh_loc[2] = {0,0}, rh_glob[2];
     for(int i = 0; i < N_gas; i++) {
         if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].InternalEnergyPred <= u_hot) {continue;}
