@@ -27,6 +27,9 @@
 #define BITFLAG_MULTIPLEPARTICLES          7
 #define BITFLAG_NODEHASBEENKICKED          8
 #define BITFLAG_INSIDE_LINKINGLENGTH       9
+#define BITFLAG_SUBTREE_NOT_IMPORTED       10  /* another rank's top leaf whose owner shipped nothing because no target here would open it:
+                                                  the replicated copy is used as a truncated aggregate (grav_classify_node).  Set or cleared
+                                                  for every foreign top leaf at each build by let_finalize_unredirected_foreign_topleaves. */
 
 /* Which particle TYPES are present below a node, one bit per type, packed into the spare high
  * bits of the same bitflags word the topology flags use.  Stored shifted so it cannot collide
@@ -162,6 +165,14 @@ double force_hmax_per_type_particle_radius(int i);
  * key on BOTH plus All.Ti_Current; a mismatch means rebuild / fail-closed.  These
  * are NOT a substitute for the per-data epoch keys, only the tree-side half. */
 long   force_treebuild_generation(void);
+/* How long the tree being built is expected to stand (forcetree.cc): collective.  Computed in every build that builds a LET,
+ * otherwise by tree_lifetime_ensure when the source-reach map is about to build (once per tree, rank-uniform callers).
+ * tree_lifetime_dti = that horizon in integer time; tree_lifetime_drift = the undilated drift factor over it from the
+ * time it was computed (0 = none). */
+void   tree_lifetime_compute(void);
+void   tree_lifetime_ensure(void);
+integertime tree_lifetime_dti(void);
+double tree_lifetime_drift(void);
 long   force_hmax_refresh_generation(void);
 void   force_bump_hmax_refresh_generation(void);   /* called by force_update_hmax (separate TU) */
 

@@ -42,6 +42,7 @@
 #include <float.h>
 #include <limits.h>
 #include <vector>
+#include <algorithm>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -63,60 +64,6 @@
 #include "gpu_gravity_tree.h"            /* suns_backup: the tree's own direct-child slots; the node mirror's foreign capacity */
 
 
-/* How long the tree being built here is expected to stand, as an INTEGER time interval.
- *
- * The gravity walk widens a reused node as it drifts it (force_drift_node, and its device twin),
- * and every opening rule grows monotonically with node size.  So a sender that prunes the import
- * against the node's size AT BUILD TIME is answering a different question from the one the walk
- * will ask later, and it prunes nodes the walk goes on to open -- an import the walk cannot
- * resolve.  The pack therefore tests against the size the node may REACH, which needs a horizon.
- *
- * The rebuild cadence supplies it: walking the timebins from the smallest up, the first whose
- * cumulative occupancy crosses the update-frequency threshold is the bin that will trigger the
- * next rebuild, and its timestep is how long this tree is expected to last.  Computed once per
- * build, collectively, because the occupancies are global. */
-static integertime g_let_tree_lifetime_dti = 0;
-static double g_let_tree_lifetime_drift = 0;   /* undilated drift factor over that horizon, from now */
-
-static void let_compute_tree_lifetime(void)
-{
-    long long local_bin_count[TIMEBINS], global_bin_count[TIMEBINS];
-    for(int bin = 0; bin < TIMEBINS; bin++) {local_bin_count[bin] = (long long) TimeBinCount[bin];}
-    MPI_Allreduce(local_bin_count, global_bin_count, TIMEBINS, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-
-    double rebuild_threshold = All.TreeRebuild_ActiveFraction * (double) All.TotNumPart;
-    long long cumulative = 0, occupied_total = 0;
-    int trigger_bin = -1, highest_occupied = -1;
-    for(int bin = 0; bin < TIMEBINS; bin++)
-    {
-        occupied_total += global_bin_count[bin];
-        if(global_bin_count[bin] > 0) {highest_occupied = bin;}
-        cumulative += global_bin_count[bin];
-        if(trigger_bin < 0 && (double) cumulative > rebuild_threshold) {trigger_bin = bin;}
-    }
-    /* The builds that run before any timestep has been assigned see empty bins.  Nothing has been
-     * drifted at that point and the tree is fresh, so the honest horizon is zero -- and reaching for
-     * All.HighestOccupiedTimeBin here would read a value this run has not written yet (on a restart,
-     * the PREVIOUS run's, which pads maximally for no reason). */
-    g_let_tree_lifetime_drift = 0;
-    if(occupied_total <= 0) {g_let_tree_lifetime_dti = 0; return;}
-    /* Nothing crosses the threshold: the system steps as a whole, so the coarsest occupied bin is
-     * the interval that matters.  Taken from the counts just reduced, not from global state. */
-    if(trigger_bin < 0) {trigger_bin = highest_occupied;}
-
-    /* The horizon is only ever used as an offset from the current time, so it must not run off the
-     * end of the integer timeline: get_drift_factor maps time1 into the drift table and clamps the
-     * index only after forming it.  The clamp is tested before the multiplication so that a large
-     * pad factor cannot overflow the integer time; the product is formed unsigned and only once it
-     * is known not to exceed the remaining interval. */
-    integertime remaining = TIMEBASE - All.Ti_Current;
-    if(remaining < 0) {remaining = 0;}
-    const unsigned long long pad_factor = (LET_TREE_LIFETIME_PAD_FACTOR);
-    const unsigned long long trigger_interval = (unsigned long long) GET_INTEGERTIME_FROM_TIMEBIN(trigger_bin);
-    if(pad_factor > 0 && trigger_interval > (unsigned long long) remaining / pad_factor) {g_let_tree_lifetime_dti = remaining;}
-    else {g_let_tree_lifetime_dti = (integertime) (pad_factor * trigger_interval);}
-    if(g_let_tree_lifetime_dti > 0) {g_let_tree_lifetime_drift = get_drift_factor_undilated(All.Ti_Current, All.Ti_Current + g_let_tree_lifetime_dti);}
-}
 
 /* The node size the walk may reach before this tree is rebuilt.  The growth rule is the walk's own
  * (TREE_NODE_WIDENING_DELTA over the undilated drift factor), evaluated over the tree's expected
@@ -124,8 +71,8 @@ static void let_compute_tree_lifetime(void)
  * node itself ships at its true build-time size, and the receiver widens it the ordinary way. */
 static double let_node_len_over_tree_lifetime(int no, double len)
 {
-    if(g_let_tree_lifetime_dti <= 0) {return len;}
-    return len + TREE_NODE_WIDENING_DELTA((double) Extnodes[no].vmax, g_let_tree_lifetime_drift);
+    if(tree_lifetime_dti() <= 0) {return len;}
+    return len + TREE_NODE_WIDENING_DELTA((double) Extnodes[no].vmax, tree_lifetime_drift());
 }
 
 
@@ -160,8 +107,7 @@ static double let_node_len_over_tree_lifetime(int no, double len)
  *   g_my_clusters   -- THIS rank's cluster leaves for the current build (producer side).
  *   g_cluster_all   -- every rank's cluster leaves, concatenated by rank (post-Allgatherv).
  *   g_cluster_off   -- prefix-sum offsets: rank R's clusters = g_cluster_all[off[R], off[R+1]).
- * g_cl_members is the transient per-build member scratch (target pos/soft/OldAcc/displacement/type + its
- * topleaf, softening-octave and displacement-octave key) that the sort-and-reduce below turns into clusters.  All grow-only, process-lifetime.
+ * The per-particle scratch the clusters are formed from is described at let_payload_targets.  All grow-only, process-lifetime.
  * UNBUCKETABLE guard: a local particle whose Father chain never reaches an owned topleaf loses its coverage
  * (a real under-import hazard) -> LOUD count + collective controlled stop in let_run_exchange.
  * ---------------------------------------------------------------------- */
@@ -184,45 +130,9 @@ static int g_cluster_off_cap = 0;
 static long long g_let_unbucketable = 0;          /* local count this build */
 static long long g_let_unbucketable_first_id = -1;/* first offending P[i].ID (diagnostic) */
 
-/* Transient per-build member scratch: one entry per owned-topleaf target, keyed by (topleaf, softening octave,
- * displacement octave).  Sorted by that key then reduced into clusters (one per contiguous equal-key run) at the
- * end of the payload. */
-struct LETClusterMember { int tl; int octave; int disp_octave; double pos[3]; double soft; double oldacc; double disp; int type; };
-static struct LETClusterMember *g_cl_members = NULL;
-static int g_cl_members_n = 0, g_cl_members_cap = 0;
-static int let_cluster_member_cmp(const void *a, const void *b)
-{
-    const struct LETClusterMember *x = (const struct LETClusterMember *) a, *y = (const struct LETClusterMember *) b;
-    if(x->tl != y->tl) return (x->tl > y->tl) - (x->tl < y->tl);
-    if(x->octave != y->octave) return (x->octave > y->octave) - (x->octave < y->octave);
-    return (x->disp_octave > y->disp_octave) - (x->disp_octave < y->disp_octave);
-}
 /* The octave a softening or a displacement falls in: a value that is not finite (NaN or infinite) the highest,
  * everything else at or below zero the lowest. */
 static inline int let_octave(double x) {return !isfinite(x) ? 2000000000 : ((x > 1e-300) ? (int) floor(log2(x)) : -2000000000);}
-static inline void let_cl_member_push(int tl, double px, double py, double pz, double soft, double oldacc, double disp, int type)
-{
-    if(g_cl_members_n >= g_cl_members_cap) {
-        int nc = g_cl_members_cap ? 2 * g_cl_members_cap : 8192;
-        struct LETClusterMember *nb = (struct LETClusterMember *) realloc(g_cl_members, (size_t) nc * sizeof(struct LETClusterMember));
-        if(!nb) { printf("let_cl_member_push: realloc failed (n=%d, rank=%d). Stopping.\n", nc, ThisTask); fflush(stdout); endrun(90000093); }
-        g_cl_members = nb; g_cl_members_cap = nc;
-    }
-    struct LETClusterMember *m = &g_cl_members[g_cl_members_n++];
-    m->tl = tl; m->octave = let_octave(soft); m->disp_octave = let_octave(disp);
-    m->pos[0] = px; m->pos[1] = py; m->pos[2] = pz;
-    m->soft = soft; m->oldacc = oldacc; m->disp = disp; m->type = type;
-}
-static inline void let_cluster_push(const struct LETCoverLeaf *c)
-{
-    if(g_my_clusters_n >= g_my_clusters_cap) {
-        int nc = g_my_clusters_cap ? 2 * g_my_clusters_cap : 4096;
-        struct LETCoverLeaf *nb = (struct LETCoverLeaf *) realloc(g_my_clusters, (size_t) nc * sizeof(struct LETCoverLeaf));
-        if(!nb) { printf("let_cluster_push: realloc failed (n=%d, rank=%d). Stopping.\n", nc, ThisTask); fflush(stdout); endrun(90000100); }
-        g_my_clusters = nb; g_my_clusters_cap = nc;
-    }
-    g_my_clusters[g_my_clusters_n++] = *c;
-}
 
 /* ----------------------------------------------------------------------
  * Drift-orphan receiver-cover records (see struct LETOrphanRecord).
@@ -276,6 +186,234 @@ static struct LETOrphanRecord *let_my_orphan_for_topleaf(int t)
 /* ----------------------------------------------------------------------
  * Step 1: per-rank-payload computation
  * ---------------------------------------------------------------------- */
+
+/* Codes let_target_classify returns for a particle that is not a target in a top-leaf. */
+enum {LET_TARGET_NONE = -1, LET_TARGET_UNBUCKETABLE = -2};
+
+/* One local particle as a target of the receiver cover: the top-leaf whose box contains it (owned or not), or
+ * LET_TARGET_NONE when it is no target of this tree, or LET_TARGET_UNBUCKETABLE when its Father chain reaches no
+ * top-leaf.  For a top-leaf, *oa, *soft and *disp are its opening scalars. */
+static inline int let_target_classify(int i, const int *tl_lookup, double *oa, double *soft, double *disp)
+{
+    if(P[i].Mass <= 0) {return LET_TARGET_NONE;}
+    const int t = P[i].Type;
+    if(t < 0 || t > 5) {return LET_TARGET_NONE;}
+
+    /* Particles this tree does not contain carry Father[i] == -1: the finalize pass initialises
+     * every particle slot to -1 and writes only the ones that ended up in the tree. They are not
+     * targets of this tree's walk, so they take no part in the receiver cover -- including them
+     * would over-import on their behalf. Trees built over a particle subset (the halo finder's
+     * group and candidate trees) are what produces them; a full tree holds every local particle,
+     * so nothing is skipped there. */
+    if(Father[i] < 0) {return LET_TARGET_NONE;}
+
+    /* Map particle -> the topleaf whose box contains it, via the Father chain. Top-tree leaves do
+     * not nest, so the chain passes through EXACTLY ONE topleaf (the containing one) before climbing
+     * internal top-tree nodes to the root -- the first topleaf reached IS that topleaf. */
+    int tl = -1, no = Father[i], guard = 0;
+    while(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes && guard++ < 1024)
+    {
+        int cand = tl_lookup[no - All.TreeNodeIndexBase];
+        if(cand >= 0) { tl = cand; break; }
+        no = Nodes[no].u.d.father;
+    }
+    /* No topleaf on the Father chain at all -> genuine tree-topology corruption (NOT mere drift): the target has no
+     * geometry in ANY cover; the caller counts it for the collective controlled stop in let_run_exchange. */
+    if(tl < 0) {return LET_TARGET_UNBUCKETABLE;}
+
+    *oa = (double) P[i].OldAcc;
+    *soft = (double) ForceSoftening_KernelRadius(i);
+    /* How far this target may move, per axis, before the tree is expected to be rebuilt: the walk evaluates it
+       where it is then, not where it is now.  The same bound and the same horizon the pack uses to widen its own
+       nodes (TREE_NODE_WIDENING_DELTA widens a node's full width, so one side moves by half of it). */
+    double d = 0.5 * TREE_NODE_WIDENING_DELTA(particle_motion_speed_bound(i, P, CellP), tree_lifetime_drift());
+    /* A motion bound that is not a number bounds nothing: take it as unbounded, so the cover holds this target
+       anywhere rather than nowhere (a NaN would compare false against every maximum and leave its box unwidened). */
+    if(!isfinite(d)) {d = DBL_MAX;}
+    *disp = d;
+    return tl;
+}
+
+/* A cluster cover leaf with no members yet, and one member folded into it: tight member bbox, conservative
+ * member-max scalars (max soft-by-type, min soft, min OldAcc including zero, max displacement, OR has_sink).
+ * Every field is a minimum, maximum or OR, so the result does not depend on the order members arrive in. */
+static inline void let_cluster_init(struct LETCoverLeaf *c)
+{
+    for(int d = 0; d < 3; d++) { c->bmin[d] = DBL_MAX; c->bmax[d] = -DBL_MAX; }
+    c->s.min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) c->s.max_soft_by_type[k] = 0.0;
+    c->s.min_soft = DBL_MAX; c->s.max_displacement = 0.0; c->s.has_sink = 0; c->s.populated = 1;
+}
+static inline void let_cluster_add(struct LETCoverLeaf *c, const double pos[3], double soft, double oldacc, double disp, int type)
+{
+    for(int d = 0; d < 3; d++) { if(pos[d] < c->bmin[d]) c->bmin[d] = pos[d]; if(pos[d] > c->bmax[d]) c->bmax[d] = pos[d]; }
+    if(type >= 0 && type < 6 && soft > c->s.max_soft_by_type[type]) c->s.max_soft_by_type[type] = soft;
+    if(oldacc < c->s.min_OldAcc) c->s.min_OldAcc = oldacc;
+    if(soft < c->s.min_soft) c->s.min_soft = soft;
+    if(disp > c->s.max_displacement) c->s.max_displacement = disp;
+    if(type == 5) c->s.has_sink = 1;
+}
+static inline void let_cluster_close(struct LETCoverLeaf *c)
+{
+    if(c->s.min_OldAcc == DBL_MAX) c->s.min_OldAcc = 0.0;   /* conservative-zero (maximally-open relaccel) */
+    if(c->s.min_soft   == DBL_MAX) c->s.min_soft   = 0.0;
+}
+
+/* The receiver cover of the local targets, built on all host threads: the same clusters, in the same order and
+ * with the same values, as collecting every target as a member and sorting the members by (top-leaf, softening
+ * octave, displacement octave).  Targets are classified in parallel, bucketed by top-leaf with a counting sort,
+ * and each top-leaf's few members are ordered by octave pair on their own; every cluster field is a minimum,
+ * maximum or OR, so how members are grouped onto threads changes nothing.  Also forms the whole-rank scalars,
+ * the unbucketable count and the drift-orphan records, the latter in particle order as the serial loop makes them.
+ * Scratch: 36 bytes and one int per local particle, grow-only and kept for the run, plus per build one int per top-leaf
+ * and one per owned top-leaf and thread. */
+static int    *g_lp_tl = NULL, *g_lp_oct = NULL, *g_lp_doct = NULL, *g_lp_order = NULL;
+static double *g_lp_val = NULL;   /* oa, soft, disp per particle */
+static int     g_lp_cap = 0;
+
+static void let_payload_targets(struct LETPerRankPayload *out, const int *tl_lookup)
+{
+    const int n = NumPart, ntl = NTopleaves;
+    if(n > g_lp_cap || !g_lp_tl)   /* at least one slot, so a rank with no particles still holds valid arrays */
+    {
+        const size_t cap = (n > 0) ? (size_t) n : 1;
+        free(g_lp_tl); free(g_lp_oct); free(g_lp_doct); free(g_lp_order); free(g_lp_val);
+        g_lp_tl = (int *) malloc(cap * sizeof(int));  g_lp_oct = (int *) malloc(cap * sizeof(int));
+        g_lp_doct = (int *) malloc(cap * sizeof(int)); g_lp_order = (int *) malloc(cap * sizeof(int));
+        g_lp_val = (double *) malloc(cap * 3 * sizeof(double));
+        if(!g_lp_tl || !g_lp_oct || !g_lp_doct || !g_lp_order || !g_lp_val)
+            {printf("let_compute_local_payload: no memory for the threaded cover scratch (%d particles, rank=%d). Stopping.\n", n, ThisTask); fflush(stdout); endrun(90000093);}
+        g_lp_cap = (int) cap;
+    }
+    const int threaded = gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, n);
+#ifdef _OPENMP
+    const int nth = threaded ? omp_get_max_threads() : 1;
+#else
+    const int nth = 1;
+    (void) threaded;
+#endif
+
+    /* 1. classify every local particle; whole-rank scalars and the unbucketable count by reduction */
+    double min_oa = DBL_MAX, min_soft = DBL_MAX, max_soft_t[6] = {0, 0, 0, 0, 0, 0};
+    int has_sink = 0, first_unbucketable = INT_MAX;
+    long long n_unbucketable = 0;
+#pragma omp parallel for schedule(static) if(threaded) reduction(min: min_oa, min_soft, first_unbucketable) reduction(max: max_soft_t[:6], has_sink) reduction(+: n_unbucketable)
+    for(int i = 0; i < n; i++)
+    {
+        double oa = 0, soft = 0, disp = 0;
+        const int tl = let_target_classify(i, tl_lookup, &oa, &soft, &disp);
+        g_lp_tl[i] = tl;
+        if(tl == LET_TARGET_UNBUCKETABLE) {n_unbucketable++; if(i < first_unbucketable) first_unbucketable = i; continue;}
+        if(tl < 0) continue;
+        double *v = &g_lp_val[3 * (size_t) i]; v[0] = oa; v[1] = soft; v[2] = disp;
+        g_lp_oct[i] = let_octave(soft); g_lp_doct[i] = let_octave(disp);
+        const int t = P[i].Type;
+        if(oa < min_oa) min_oa = oa;
+        if(soft > max_soft_t[t]) max_soft_t[t] = soft;
+        if(soft < min_soft) min_soft = soft;
+        if(t == 5) has_sink = 1;
+    }
+    out->min_OldAcc = min_oa; out->min_soft = min_soft; out->has_sink = has_sink;
+    for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = max_soft_t[t];
+    g_let_unbucketable = n_unbucketable;
+    g_let_unbucketable_first_id = n_unbucketable ? (long long) P[first_unbucketable].ID : -1;
+
+    /* 2. drift-orphans (targets in a top-leaf another rank owns): rare, merged in particle order */
+    for(int i = 0; i < n; i++)
+    {
+        const int tl = g_lp_tl[i];
+        if(tl >= 0 && DomainTask[tl] != ThisTask)
+            {const double *v = &g_lp_val[3 * (size_t) i]; let_orphan_merge(let_my_orphan_for_topleaf(tl), v[0], v[1], v[2], P[i].Type);}
+    }
+
+    /* 3. owned targets bucketed by owned top-leaf (in ascending top-leaf order, the order the clusters are listed in):
+     *    per-thread counts over static slices, then a stable scatter over the same slices (one parallel region, so both
+     *    loops see the same team and the same slicing).  Sized by this rank's top-leaves, not every rank's. */
+    std::vector<int> own_of_tl, own_tl, own_start, own_ncl, own_count;
+    try {
+        own_of_tl.assign((size_t) ntl, -1);
+        for(int tl = 0; tl < ntl; tl++) {if(DomainTask[tl] == ThisTask) {own_of_tl[tl] = (int) own_tl.size(); own_tl.push_back(tl);}}
+        const size_t nown = own_tl.size();
+        own_start.assign(nown + 1, 0); own_ncl.assign(nown + 1, 0); own_count.assign((size_t) nth * (nown + 1), 0);
+    } catch(const std::bad_alloc &) {
+        printf("let_compute_local_payload: no memory for the cover's top-leaf counts (%d top-leaves, %d threads, rank=%d). Stopping.\n", ntl, nth, ThisTask);
+        fflush(stdout); endrun(90000093);
+    }
+    const int nown = (int) own_tl.size();
+    int team = 1;
+#pragma omp parallel num_threads(nth) if(threaded)
+    {
+#ifdef _OPENMP
+        const int th = omp_get_thread_num();
+#pragma omp single
+        team = omp_get_num_threads();
+#else
+        const int th = 0;
+#endif
+        int *cnt = &own_count[(size_t) th * (nown + 1)];
+#pragma omp for schedule(static)
+        for(int i = 0; i < n; i++) {const int tl = g_lp_tl[i]; if(tl >= 0 && own_of_tl[tl] >= 0) cnt[own_of_tl[tl]]++;}
+#pragma omp single
+        {
+            long long run = 0;
+            for(int o = 0; o < nown; o++)
+            {
+                own_start[o] = (int) run;
+                for(int t2 = 0; t2 < team; t2++) {int *c = &own_count[(size_t) t2 * (nown + 1) + o]; const int k = *c; *c = (int) run; run += k;}
+            }
+            own_start[nown] = (int) run;
+        }
+#pragma omp for schedule(static)
+        for(int i = 0; i < n; i++) {const int tl = g_lp_tl[i]; if(tl >= 0 && own_of_tl[tl] >= 0) g_lp_order[cnt[own_of_tl[tl]]++] = i;}
+    }
+
+    /* 4. within each owned top-leaf, members ordered by (softening octave, displacement octave); one cluster per run */
+#pragma omp parallel for schedule(dynamic, 16) if(threaded)
+    for(int o = 0; o < nown; o++)
+    {
+        int *b = g_lp_order + own_start[o], *e = g_lp_order + own_start[o + 1];
+        if(b == e) continue;
+        std::sort(b, e, [](int x, int y) {
+            if(g_lp_oct[x] != g_lp_oct[y]) return g_lp_oct[x] < g_lp_oct[y];
+            if(g_lp_doct[x] != g_lp_doct[y]) return g_lp_doct[x] < g_lp_doct[y];
+            return x < y;});
+        int runs = 1;
+        for(int *q = b + 1; q < e; q++) if(g_lp_oct[*q] != g_lp_oct[q[-1]] || g_lp_doct[*q] != g_lp_doct[q[-1]]) runs++;
+        own_ncl[o] = runs;
+    }
+    long long ncl_total = 0;
+    for(int o = 0; o < nown; o++) {const int c = own_ncl[o]; own_ncl[o] = (int) ncl_total; ncl_total += c;}
+    if(ncl_total > g_my_clusters_cap)
+    {
+        struct LETCoverLeaf *nb = (struct LETCoverLeaf *) realloc(g_my_clusters, (size_t) ncl_total * sizeof(struct LETCoverLeaf));
+        if(!nb) { printf("let_payload_targets: cluster cover realloc failed (n=%lld, rank=%d). Stopping.\n", ncl_total, ThisTask); fflush(stdout); endrun(90000100); }
+        g_my_clusters = nb; g_my_clusters_cap = (int) ncl_total;
+    }
+#pragma omp parallel for schedule(dynamic, 16) if(threaded)
+    for(int o = 0; o < nown; o++)
+    {
+        const int *b = g_lp_order + own_start[o], *e = g_lp_order + own_start[o + 1];
+        int k = own_ncl[o];
+        for(const int *p = b; p < e; )
+        {
+            const int *q = p;
+            struct LETCoverLeaf c;
+            let_cluster_init(&c);
+            while(q < e && g_lp_oct[*q] == g_lp_oct[*p] && g_lp_doct[*q] == g_lp_doct[*p])
+            {
+                const int i = *q;
+                const double pos[3] = {(double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2]};
+                const double *v = &g_lp_val[3 * (size_t) i];
+                let_cluster_add(&c, pos, v[1], v[0], v[2], P[i].Type);
+                q++;
+            }
+            let_cluster_close(&c);
+            g_my_clusters[k++] = c;
+            p = q;
+        }
+    }
+    g_my_clusters_n = (int) ncl_total;
+}
+
 extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
 {
     /* bbox: union of OUR topleaf bboxes (each topleaf's [center-len/2, center+len/2]).
@@ -316,10 +454,10 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
     }
     out->has_cover = found_any;   /* >=1 owned topleaf -> a real cover exists */
 
-    /* Per-particle bounds -> CLUSTER MEMBERS (grouped later by topleaf, softening octave and displacement octave) + WHOLE-RANK
-     * reduce. Each local target is bucketed to its owning topleaf via the Father chain; owned targets are
-     * stashed as cluster members, drifted ones ride an orphan record. The whole-rank payload scalars below are
-     * the reduce over all local targets -- a conservative wire-compat fallback (has_cover + empty-rank guard). */
+    /* Per-particle bounds -> CLUSTERS + WHOLE-RANK reduce (let_payload_targets). Each local target is bucketed to its
+     * topleaf via the Father chain; owned targets form clusters by (topleaf, softening octave, displacement octave),
+     * drifted ones ride an orphan record. The whole-rank payload scalars below are the reduce over all local targets --
+     * a conservative wire-compat fallback (has_cover + empty-rank guard). */
     out->min_OldAcc = DBL_MAX;
     for(int t = 0; t < 6; t++) out->max_soft_by_type[t] = 0.0;
     out->min_soft = DBL_MAX;
@@ -337,74 +475,8 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
         if(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes) tl_lookup[no - All.TreeNodeIndexBase] = t;
     }
     g_my_orphans_n = 0;   /* drift-orphan records rebuilt each payload compute */
-    g_cl_members_n = 0;   /* cluster members re-collected each payload compute */
 
-    for(int i = 0; i < NumPart; i++)
-    {
-        if(P[i].Mass <= 0) continue;
-        int t = P[i].Type;
-        if(t < 0 || t > 5) continue;
-
-        /* Particles this tree does not contain carry Father[i] == -1: the finalize pass initialises
-         * every particle slot to -1 and writes only the ones that ended up in the tree. They are not
-         * targets of this tree's walk, so they take no part in the receiver cover -- including them
-         * would over-import on their behalf. Trees built over a particle subset (the halo finder's
-         * group and candidate trees) are what produces them; a full tree holds every local particle,
-         * so nothing is skipped there. */
-        if(Father[i] < 0) continue;
-
-        /* Map particle -> the topleaf whose box contains it, via the Father chain. Top-tree leaves do
-         * not nest, so the chain passes through EXACTLY ONE topleaf (the containing one) before climbing
-         * internal top-tree nodes to the root -- the first topleaf reached IS that topleaf. */
-        int tl = -1, no = Father[i], guard = 0;
-        while(no >= All.TreeNodeIndexBase && no < All.TreeNodeIndexBase + MaxNodes && guard++ < 1024)
-        {
-            int cand = tl_lookup[no - All.TreeNodeIndexBase];
-            if(cand >= 0) { tl = cand; break; }
-            no = Nodes[no].u.d.father;
-        }
-        if(tl < 0)
-        {
-            /* No topleaf on the Father chain at all -> genuine tree-topology corruption (NOT mere
-             * drift): the target has no geometry in ANY cover. Count for the collective controlled
-             * stop in let_run_exchange. NEVER a silent fold-into-every-leaf downgrade. */
-            if(g_let_unbucketable == 0) g_let_unbucketable_first_id = (long long) P[i].ID;
-            g_let_unbucketable++;
-            continue;
-        }
-
-        double oa = (double) P[i].OldAcc;
-        double soft = (double) ForceSoftening_KernelRadius(i);
-        /* How far this target may move, per axis, before the tree is expected to be rebuilt: the walk evaluates it
-           where it is then, not where it is now.  The same bound and the same horizon the pack uses to widen its own
-           nodes (TREE_NODE_WIDENING_DELTA widens a node's full width, so one side moves by half of it). */
-        double disp = 0.5 * TREE_NODE_WIDENING_DELTA(particle_motion_speed_bound(i, P, CellP), g_let_tree_lifetime_drift);
-        /* A motion bound that is not a number bounds nothing: take it as unbounded, so the cover holds this target
-           anywhere rather than nowhere (a NaN would compare false against every maximum and leave its box unwidened). */
-        if(!isfinite(disp)) {disp = DBL_MAX;}
-
-        if(DomainTask[tl] != ThisTask)
-        {
-            /* DRIFT-ORPHAN: this LOCAL/resident target drifted into a topleaf owned by another rank
-             * (current tree geometry only -- NOT a change of which rank owns the target). Its scalars
-             * ride an orphan record so senders open nodes essential to it against topleaf tl's box;
-             * otherwise it is dropped from this rank's owned-topleaf cover (the pre-fix under-import
-             * hazard, exposed under ADAPTIVE_TREEFORCE_UPDATE tree reuse). */
-            let_orphan_merge(let_my_orphan_for_topleaf(tl), oa, soft, disp, t);
-        }
-        else
-        {
-            /* Owned target: stash as a cluster member keyed by (topleaf, softening octave, displacement octave) -- one
-             * cluster per distinct pair in a topleaf, applied by the sort-and-reduce after the loop. */
-            let_cl_member_push(tl, (double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2], soft, oa, disp, t);
-        }
-        /* whole-rank reduce (derived fallback) -- over ALL local targets incl. orphans, so the
-         * empty-owned-topleaf fallback baked in below stays a true worst case. */
-        if(oa < out->min_OldAcc) out->min_OldAcc = oa;
-        if(soft > out->max_soft_by_type[t]) out->max_soft_by_type[t] = soft;
-        if(soft < out->min_soft) out->min_soft = soft;
-        if(t == 5) out->has_sink = 1;
-    }
+    let_payload_targets(out, tl_lookup);
     myfree(tl_lookup);
 
     /* Resolve orphan-record sentinels to conservative bounds (same convention as the owned slice
@@ -424,41 +496,10 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
     if(out->min_OldAcc == DBL_MAX) out->min_OldAcc = 0.0;  /* no positive OldAcc; conservative-zero (maximally open) */
     if(out->min_soft   == DBL_MAX) out->min_soft   = 0.0;  /* empty cover; conservative (opens softening) */
 
-    /* Build MY rule-1 cluster cover leaves: sort the collected members by (topleaf, softening octave, displacement
-     * octave), then each contiguous equal-key RUN is one cluster = tight member bbox + conservative member-max
-     * scalars (max soft-by-type, min soft, min OldAcc including zero, max displacement, OR has_sink). An empty owned topleaf collected no
-     * members, so it yields no cluster (the old populated=0 exclusion, now structural). This is the SSOT for
-     * the receiver cover -- exchanged to every sender below; the whole-rank payload scalars are wire-compat only. */
-    g_my_clusters_n = 0;
-    if(g_cl_members_n > 0)
-    {
-        qsort(g_cl_members, (size_t) g_cl_members_n, sizeof(struct LETClusterMember), let_cluster_member_cmp);
-        int p = 0;
-        while(p < g_cl_members_n)
-        {
-            int q = p;
-            while(q < g_cl_members_n && g_cl_members[q].tl == g_cl_members[p].tl &&
-                  g_cl_members[q].octave == g_cl_members[p].octave && g_cl_members[q].disp_octave == g_cl_members[p].disp_octave) q++;
-            struct LETCoverLeaf c;
-            for(int d = 0; d < 3; d++) { c.bmin[d] = DBL_MAX; c.bmax[d] = -DBL_MAX; }
-            c.s.min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) c.s.max_soft_by_type[k] = 0.0;
-            c.s.min_soft = DBL_MAX; c.s.max_displacement = 0.0; c.s.has_sink = 0; c.s.populated = 1;
-            for(int r = p; r < q; r++)
-            {
-                struct LETClusterMember *m = &g_cl_members[r];
-                for(int d = 0; d < 3; d++) { if(m->pos[d] < c.bmin[d]) c.bmin[d] = m->pos[d]; if(m->pos[d] > c.bmax[d]) c.bmax[d] = m->pos[d]; }
-                if(m->type >= 0 && m->type < 6 && m->soft > c.s.max_soft_by_type[m->type]) c.s.max_soft_by_type[m->type] = m->soft;
-                if(m->oldacc < c.s.min_OldAcc) c.s.min_OldAcc = m->oldacc;
-                if(m->soft < c.s.min_soft) c.s.min_soft = m->soft;
-                if(m->disp > c.s.max_displacement) c.s.max_displacement = m->disp;
-                if(m->type == 5) c.s.has_sink = 1;
-            }
-            if(c.s.min_OldAcc == DBL_MAX) c.s.min_OldAcc = 0.0;   /* conservative-zero (maximally-open relaccel) */
-            if(c.s.min_soft   == DBL_MAX) c.s.min_soft   = 0.0;
-            let_cluster_push(&c);
-            p = q;
-        }
-    }
+    /* MY rule-1 cluster cover leaves, formed by let_payload_targets: one per distinct (topleaf, softening octave,
+     * displacement octave) among the owned targets = tight member bbox + conservative member-max scalars. An empty owned
+     * topleaf has no members, so it yields no cluster. This is the SSOT for the receiver cover -- exchanged to every
+     * sender below; the whole-rank payload scalars are wire-compat only. */
     out->n_clusters = g_my_clusters_n;
     /* The relative-criterion activation is not shipped: the cell predicate recomputes it sender-side
      * from All.ErrTolTheta + the first-step test (both global, identical on every rank). */
@@ -1183,8 +1224,8 @@ static void let_bucket_cube(int no, int slot, const int *members, int n,
  * carries each member's dilation, and the interval is the undilated one, as for a real node. */
 static double let_aggregate_len_over_tree_lifetime(const struct LETNodeWire *w, double len)
 {
-    if(g_let_tree_lifetime_dti <= 0) {return len;}
-    return len + TREE_NODE_WIDENING_DELTA((double) w->extnode.vmax, g_let_tree_lifetime_drift);
+    if(tree_lifetime_dti() <= 0) {return len;}
+    return len + TREE_NODE_WIDENING_DELTA((double) w->extnode.vmax, tree_lifetime_drift());
 }
 
 /* Build the leaf's aggregate wire from the members already gathered in the worker's scratch.
@@ -2020,25 +2061,15 @@ extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
         int last_child_wire_idx  = -1;
         int child = subtree_root;
 #ifndef SUBFIND
-        /* A multi-particle top leaf that no target in R's cover would open needs none of its children on R: ship the
-           top leaf itself, multipole-only and tagged truncated, as the whole subtree.  R's walk decides on its own copy
-           of the top leaf first and accepts it, exactly as it would with the children present.  If that copy has gone
-           stale enough to be opened, the walk meets this record instead of the children; opening the record too means
-           the import is short and is repaired, as at any other truncated node.  Safe for the gravity walks, which
-           either accept the multipole or repair; not done with SUBFIND, whose potential walk opens by its own test and
-           uses a truncated node as it finds it, so there every top leaf keeps its children. */
-        if((Nodes[topleaf_no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)) && !let_topleaf_essential(pk, topleaf_no))
-        {
-            const int w0 = count;
-            pack_recurse(pk, topleaf_no, sib_term, topleaf_no, out_buf, &count, out_capacity);
-            if(pk->pack_oom) goto pack_oom_bail;
-            if(count > w0)
-            {
-                first_child_wire_idx = last_child_wire_idx = w0;
-                (*out_buf)[w0].node.u.d.bitflags &= ~((1u << BITFLAG_TOPLEVEL) | (1u << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT));   /* a foreign copy, not part of R's top tree */
-            }
-            child = sib_term;   /* nothing else ships at this level */
-        }
+        /* A multi-particle top leaf that no target in R's cover would open needs none of its children on R, and R
+           already holds the top leaf itself, with this rank's moments, from the top-leaf moment exchange: ship nothing.
+           R's copy keeps its pseudo-particle as first child and is marked at install (BITFLAG_SUBTREE_NOT_IMPORTED), which every
+           gravity walk on R reads as a truncated aggregate (grav_classify_node): the copy is used where it stands, exactly as it would be with the children
+           present, and a walk that opens it -- the copy having gone stale since this build -- records the import as
+           short and is repaired, as at any other truncated node.  Not done with SUBFIND, whose potential walk opens by
+           its own test and uses a truncated node as it finds it, so there every top leaf keeps its children. */
+        if((Nodes[topleaf_no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)) && Nodes[topleaf_no].u.d.mass > 0
+           && !let_topleaf_essential(pk, topleaf_no)) {continue;}   /* a massless top leaf with particles still ships, so R's check at install sees it redirected, as before */
 #endif
         while(child != sib_term && child >= 0)
         {
@@ -2901,8 +2932,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     g_let_kicked_records = 0;      g_let_kicked_records_first = -1;
     g_let_leaves_compact = 0;      g_let_leaves_full = 0;
 
-    /* One collective, once per build: the horizon the import is pruned against. */
-    let_compute_tree_lifetime();
+    /* The horizon the import is pruned against: tree_lifetime_compute, once per build in force_treebuild. */
 
     /* The foreign-leaf identity sidecar needs no reset here: it is zeroed when it is allocated
      * (with the tree, or by force_tree_grow_foreign_storage below for a larger import), the install
@@ -3196,11 +3226,19 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
  *       (RT/CR/sink/etc. ride on real particles, of which there are none),
  *       so opening it contributes exactly nothing: rewrite nextnode := sibling
  *       (AoS + SoA) so the walk skips it instead of hitting the pseudo.
+ *   (3) not shipped because no target here would open it (not in SUBFIND
+ *       builds) -- still pointing into the pseudo range, a multi-particle
+ *       topleaf with consistent moments (mass > 0 AND N_part > 0).  Left on the
+ *       pseudo and marked BITFLAG_SUBTREE_NOT_IMPORTED: the gravity walks read
+ *       it as a truncated aggregate (grav_classify_node), and one that opens it records a repairable
+ *       import shortfall.  A subtree the walk needed and the owner failed to
+ *       ship is therefore caught there, by the repair and, if it persists,
+ *       the "still needed after the rebuild" stop.
  *
- * Anything else -- a topleaf still pointing into the pseudo range that is not
- * provably empty by BOTH measures -- is a LET correctness failure: the CPU
- * gravity export path has been retired, so the LET MUST supply every non-empty
- * foreign subtree.  Abort loudly with full context.
+ * Anything else -- a topleaf still pointing into the pseudo range that fits
+ * none of these (a single-particle topleaf, inconsistent moments, or any
+ * non-empty one in a SUBFIND build) -- is a LET correctness failure: the CPU
+ * gravity export path has been retired.  Abort loudly with full context.
  *
  * mass is the physics criterion; N_part is the structural-invariant guard --
  * a topleaf with N_part>0 must never be silently skipped even if its gravity
@@ -3230,6 +3268,13 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
                    t, DomainTask[t], no, All.TreeNodeIndexBase, All.TreeNodeIndexBase + MaxNodes);
             fflush(stdout); endrun(90000063); continue; /* soft bad-stop + skip this topleaf before the Nodes[no] deref; drains at gravtree:after_treebuild before the walk */
         }
+        /* The not-imported mark is this build's decision alone: cleared here on every foreign top leaf, set below only where
+         * the owner deliberately shipped nothing. */
+        if(Nodes[no].u.d.bitflags & (1u << BITFLAG_SUBTREE_NOT_IMPORTED))
+        {
+            Nodes[no].u.d.bitflags &= ~(1u << BITFLAG_SUBTREE_NOT_IMPORTED);
+            gpu_set_soa_bitflags(no, Nodes[no].u.d.bitflags);
+        }
         const long long nn = Nodes[no].u.d.nextnode;
         if(nn < pseudo_lo || nn >= pseudo_hi) continue;  /* already redirected */
 
@@ -3243,6 +3288,13 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
             gpu_set_soa_nextnode(no, Nodes[no].u.d.sibling);
             n_patched++;
         }
+#ifndef SUBFIND
+        else if(mass > 0.0 && npart > 0 && (Nodes[no].u.d.bitflags & (1u << BITFLAG_MULTIPLEPARTICLES)))   /* case (3) */
+        {
+            Nodes[no].u.d.bitflags |= (1u << BITFLAG_SUBTREE_NOT_IMPORTED);
+            gpu_set_soa_bitflags(no, Nodes[no].u.d.bitflags);
+        }
+#endif
         else
         {
             printf("LET finalize FATAL: foreign topleaf t=%d owner_rank=%d node=%d still "

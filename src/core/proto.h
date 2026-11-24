@@ -539,6 +539,17 @@ enum GizmoHostThreadSite
 };
 int gizmo_host_threads_take(enum GizmoHostThreadSite site, long long count);   /* 1 if a loop over `count` items should run on all OpenMP threads */
 int gizmo_host_thread_count(void);   /* the OpenMP threads a host loop would run on (1 without OpenMP) */
+/* Chunk for schedule(dynamic, ...) in a host loop over n particles: about four chunks per thread, so a small or mid-size loop of
+ * costly bodies still spreads over every thread; at most 256, because each chunk is a trip through the OpenMP runtime's shared work
+ * counter (~20 ns, measured on Grace at 7-36 threads), which with chunks of 1 would cap a large loop of cheap bodies at ~50M
+ * iterations per second per MPI task whatever the thread count. Computed once before the loop. */
+static inline int gizmo_omp_particle_chunk(long long n)
+{
+    const long long threads = (long long) gizmo_host_thread_count();
+    if(n <= 0 || threads <= 1) {return 1;}
+    const long long chunk = n / (4 * threads);
+    return (int) (chunk < 1 ? 1 : (chunk > 256 ? 256 : chunk));
+}
 /* Atomic max of a double shared by host threads: an atomic load and compare-and-swap on its bits (clang has no __atomic on floating
  * types).  Returns 1 if this call raised the value.  While threads share the address, every access to it goes through here: a plain
  * read beside these atomic writes is a data race.  A maximum does not depend on the order its terms arrive in, so any number of
@@ -944,6 +955,8 @@ void hermite_local_sources_rebuild(void);
 void hermite_ghost_table_release(void);
 void let_foreign_leaf_id_release(void);
 #endif
+int domain_topleaf_of_key(peanokey key);                /* top leaf of TopNodes holding key */
+int domain_topleaf_of_position(const double pos[3]);   /* top leaf whose key range holds pos */
 peanokey domain_peano_key(int i);                     /* Peano key of particle i: the ONLY host route from a position to a key */
 peanokey peano_hilbert_key(peano1D x, peano1D y, peano1D z, int bits);
 peanokey peano_and_morton_key(peano1D x, peano1D y, peano1D z, int bits, peanokey *morton);

@@ -14,6 +14,7 @@
 #include "../core/wakeup_sidecar.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_range */
+#include "../mesh/source_reach_map.h"   /* off from here to the next tree build */
 
 
 /*! Announce that the local particle array was re-indexed: particles were
@@ -533,6 +534,7 @@ int domain_segments_per_rank_for_particles(long long total_particles, int *lower
 void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key, int allow_peano_order_cadence)
 {
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition")) {return;}
+    source_reach_map_invalidate();   /* the top-leaf layout is about to change */
     /* The kept neighbour indexes will not be read again before the layout changes, so
      * their memory is returned now, before this decomposition's own allocations and
      * the tree allocation at its end. */
@@ -841,6 +843,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_key)
 {
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition_light")) {return;}
+    source_reach_map_invalidate();   /* the top-leaf layout is about to change */
     gpu_step_sidx_invalidate_full();   /* as in domain_Decomposition: released before any allocation here */
     int i; size_t bytes; double t0, t1;
 
@@ -2327,14 +2330,25 @@ static struct domain_segments_data
  *domainAssign;
 
 
-struct queue_data
+/* One balance queue: the tasks that can still take a segment, ordered by their current total of one balanced quantity, lowest
+   first; among equal totals the task that reached its total earliest comes first (stamp = order of insertion).  A sorted set
+   rather than a list re-sorted by walking it: assigning a segment re-files one task in O(log NTask), where the walk passed every
+   task already loaded -- quadratic in the rank count over a decomposition. */
+struct balance_queue_entry
 {
-  int first, last;
-  int *next;
-  int *previous;
-  double *value;
-}
-queues[N_DOMAINDECOMP_QUEUES];
+  double value;
+  long long stamp;
+  int task;
+};
+struct balance_queue_order
+{
+  bool operator()(const balance_queue_entry &a, const balance_queue_entry &b) const
+  {
+    if(a.value != b.value) {return a.value < b.value;}
+    return a.stamp < b.stamp;
+  }
+};
+typedef std::set<balance_queue_entry, balance_queue_order> balance_queue;
 
 struct tasklist_data
 {
@@ -2373,7 +2387,7 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
   double tot_work, tot_load, tot_loadactivegas, tot_loadgas;
 
 
-  int best_queue, target, next, prev;
+  int best_queue, target;
   int i, n, q, ta;
 
   /* memory limits: reject assignments that would push a rank above this fraction of max capacity */
@@ -2459,53 +2473,43 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
 
   qsort(domainAssign, multipledomains * NTask, sizeof(struct domain_segments_data), domain_sort_load);
 
-  /* initialize queues (4 queues: work, load, active gas, gas memory) */
-  for(q = 0; q < N_DOMAINDECOMP_QUEUES; q++)
+  /* initialize queues (4 queues: work, load, active gas, gas memory), every task at zero in task order */
+  std::vector<balance_queue> queues(N_DOMAINDECOMP_QUEUES);
+  std::vector<std::vector<balance_queue_entry>> queue_entry(N_DOMAINDECOMP_QUEUES, std::vector<balance_queue_entry>(NTask));
+  long long queue_stamp = 0;
+  for(ta = 0; ta < NTask; ta++)
     {
-      queues[q].next = (int *) mymalloc("queues[q].next", NTask * sizeof(int));
-      queues[q].previous = (int *) mymalloc("queues[q].previous", NTask * sizeof(int));
-      queues[q].value = (double *) mymalloc("queues[q].value", NTask * sizeof(double));
-
-      for(ta = 0; ta < NTask; ta++)
-	{
-	  queues[q].next[ta] = ta + 1;
-	  queues[q].previous[ta] = ta - 1;
-	  queues[q].value[ta] = 0;
-	}
-      queues[q].previous[0] = -1;
-      queues[q].next[NTask - 1] = -1;
-      queues[q].first = 0;
-      queues[q].last = NTask - 1;
+      for(q = 0; q < N_DOMAINDECOMP_QUEUES; q++)
+        {
+          queue_entry[q][ta].value = 0; queue_entry[q][ta].stamp = queue_stamp; queue_entry[q][ta].task = ta;
+          queues[q].insert(queues[q].end(), queue_entry[q][ta]);
+        }
+      queue_stamp++;
     }
+
+  /* The task a segment goes to from one queue: its least-loaded task, or under the memory cap the first one in queue order the
+     segment fits on (the least-loaded one when none fits, accepting the overload rather than stopping).  A queue holds only
+     tasks with room for another segment.  Only that memory-cap search walks the queue; the ordinary pick is its first entry. */
+  auto queue_target = [&](int qq, int seg) -> int {
+      balance_queue::const_iterator it = queues[qq].begin();
+      int chosen = it->task;
+      if(mode == 1 && (tasklist[chosen].load + domainAssign[seg].load > max_load_per_task || tasklist[chosen].load_gas + domainAssign[seg].load_gas > max_gasload_per_task))
+        {
+          for(++it; it != queues[qq].end(); ++it)
+            {
+              const int t = it->task;
+              if(tasklist[t].load + domainAssign[seg].load <= max_load_per_task && tasklist[t].load_gas + domainAssign[seg].load_gas <= max_gasload_per_task) {return t;}
+            }
+        }
+      return chosen;
+  };
 
   for(n = 0; n < multipledomains * NTask; n++)
     {
       /* need to decide, which of the tasks that has the lowest load in one of the queues is best */
       for(q = 0, best_balance = 1.0e30, best_queue = 0; q < N_DOMAINDECOMP_QUEUES; q++)
 	{
-	  target = queues[q].first;
-
-	  while(tasklist[target].count == multipledomains) {target = queues[q].next[target];}
-
-	  /* check memory hard constraint: skip targets that would exceed memory limits */
-	  if(mode == 1) {
-	      double candidate_load = tasklist[target].load + domainAssign[n].load;
-	      double candidate_gasload = tasklist[target].load_gas + domainAssign[n].load_gas;
-	      if(candidate_load > max_load_per_task || candidate_gasload > max_gasload_per_task) {
-	          /* try next targets in this queue until we find one that fits */
-	          int orig_target = target;
-	          target = queues[q].next[target];
-	          while(target >= 0) {
-	              if(tasklist[target].count < multipledomains) {
-	                  candidate_load = tasklist[target].load + domainAssign[n].load;
-	                  candidate_gasload = tasklist[target].load_gas + domainAssign[n].load_gas;
-	                  if(candidate_load <= max_load_per_task && candidate_gasload <= max_gasload_per_task) break;
-	              }
-	              target = queues[q].next[target];
-	          }
-	          if(target < 0) target = orig_target; /* fallback: accept overload rather than crash */
-	      }
-	  }
+	  target = queue_target(q, n);
 
 	  target_work_balance = (domainAssign[n].work + tasklist[target].work) / (tot_work + 1.0e-30);
 	  target_load_balance = (domainAssign[n].load + tasklist[target].load) / (tot_load + 1.0e-30);
@@ -2539,26 +2543,7 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
 	}
 
       /* Now we know the best queue, and hence the best target task. Assign this piece to this task */
-      target = queues[best_queue].first;
-
-      while(tasklist[target].count == multipledomains) {target = queues[best_queue].next[target];}
-
-      /* re-check memory constraint for the selected target */
-      if(mode == 1) {
-          double candidate_load = tasklist[target].load + domainAssign[n].load;
-          double candidate_gasload = tasklist[target].load_gas + domainAssign[n].load_gas;
-          if(candidate_load > max_load_per_task || candidate_gasload > max_gasload_per_task) {
-              int next_t = queues[best_queue].next[target];
-              while(next_t >= 0) {
-                  if(tasklist[next_t].count < multipledomains &&
-                     tasklist[next_t].load + domainAssign[n].load <= max_load_per_task &&
-                     tasklist[next_t].load_gas + domainAssign[n].load_gas <= max_gasload_per_task) {
-                      target = next_t; break;
-                  }
-                  next_t = queues[best_queue].next[next_t];
-              }
-          }
-      }
+      target = queue_target(best_queue, n);
 
       domainAssign[n].task = target;
       tasklist[target].work += domainAssign[n].work;
@@ -2573,9 +2558,10 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
 #endif
       tasklist[target].count++;
 
-      /* now we need to remove the element 'target' from the queues and reinsert it */
-    for(q = 0; q < N_DOMAINDECOMP_QUEUES; q++)
-    {
+      /* re-file 'target' in every queue at its new totals, behind any task already at the same total; a task with no room left
+         for another segment leaves the queues */
+      for(q = 0; q < N_DOMAINDECOMP_QUEUES; q++)
+	{
 	  switch (q)
 	    {
 	    case 0:
@@ -2594,60 +2580,11 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
 	      value = 0;
 	      break;
 	    }
-
-	  /* now remove the element target */
-	  prev = queues[q].previous[target];
-	  next = queues[q].next[target];
-
-	  if(prev >= 0)		/* previous exists */
-	    {queues[q].next[prev] = next;}
-	  else
-	    {queues[q].first = next;}	/* we remove the head of the queue */
-
-
-	  if(next >= 0)		/* next exists */
-	    {queues[q].previous[next] = prev;}
-	  else
-	    {queues[q].last = prev;}	/* we remove the end of the queue */
-
-	  /* now we insert the element again, in an ordered fashion, starting from the end of the queue */
-	  if(queues[q].last >= 0)
-	    {
-	      ta = queues[q].last;
-
-	      while(value < queues[q].value[ta])
-		{
-		  ta = queues[q].previous[ta];
-		  if(ta < 0) {break;}
-		}
-
-	      if(ta < 0)	/* we insert the element as the first element */
-		{
-		  queues[q].next[target] = queues[q].first;
-		  queues[q].previous[queues[q].first] = target;
-		  queues[q].first = target;
-		}
-	      else
-		{
-		  /* insert behind ta */
-		  queues[q].next[target] = queues[q].next[ta];
-		  if(queues[q].next[ta] >= 0)
-		    {queues[q].previous[queues[q].next[ta]] = target;}
-		  else
-		    {queues[q].last = target;}	/* we insert a new last element */
-		  queues[q].previous[target] = ta;
-		  queues[q].next[ta] = target;
-		}
-	    }
-	  else
-	    {
-	      /* queue was empty */
-	      queues[q].previous[target] = queues[q].next[target] = -1;
-	      queues[q].first = queues[q].last = target;
-	    }
-
-	  queues[q].value[target] = value;
+	  queues[q].erase(queue_entry[q][target]);
+	  queue_entry[q][target].value = value; queue_entry[q][target].stamp = queue_stamp;
+	  if(tasklist[target].count < multipledomains) {queues[q].insert(queue_entry[q][target]);}
 	}
+      queue_stamp++;
     }
 
   /* Iterative refinement (Gadget-4 approach): try random swaps of two segments between tasks, and keep a swap when it
@@ -2714,15 +2651,15 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       };
       std::vector<double> task_share(NTask);
       for(int t = 0; t < NTask; t++) {task_share[t] = share_after(t, -1, -1);}
+      /* every task's score, largest first, ties to the lower task number; a swap re-files its two tasks rather than re-ranking all */
+      struct score_order {bool operator()(const std::pair<double,int> &a, const std::pair<double,int> &b) const {return (a.first != b.first) ? (a.first > b.first) : (a.second < b.second);}};
+      std::set<std::pair<double,int>, score_order> score_rank;
+      for(int t = 0; t < NTask; t++) {score_rank.insert(std::make_pair(task_share[t], t));}
       int top[3] = {-1, -1, -1};   /* the three tasks holding the largest scores, largest first */
       auto rank_top = [&]() {
           top[0] = top[1] = top[2] = -1;
-          for(int t = 0; t < NTask; t++)
-          {
-              if(top[0] < 0 || task_share[t] > task_share[top[0]]) {top[2] = top[1]; top[1] = top[0]; top[0] = t;}
-              else if(top[1] < 0 || task_share[t] > task_share[top[1]]) {top[2] = top[1]; top[1] = t;}
-              else if(top[2] < 0 || task_share[t] > task_share[top[2]]) {top[2] = t;}
-          }
+          int m = 0;
+          for(auto it = score_rank.begin(); it != score_rank.end() && m < 3; ++it, ++m) {top[m] = it->second;}
       };
       rank_top();
       double current_imbalance = task_share[top[0]];
@@ -2768,8 +2705,10 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
 #endif
               domainAssign[s1].task = t2;
               domainAssign[s2].task = t1;
+              score_rank.erase(std::make_pair(task_share[t1], t1)); score_rank.erase(std::make_pair(task_share[t2], t2));
               task_share[t1] = share_after(t1, -1, -1);
               task_share[t2] = share_after(t2, -1, -1);
+              score_rank.insert(std::make_pair(task_share[t1], t1)); score_rank.insert(std::make_pair(task_share[t2], t2));
               rank_top();
               current_imbalance = task_share[top[0]];
               nswaps_accepted++;
@@ -2792,14 +2731,6 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       DomainEndList[n] = domainAssign[n].end;
 
       for(i = DomainStartList[n]; i <= DomainEndList[n]; i++) {DomainTask[i] = domainAssign[n].task;}
-    }
-
-  /* free the queues */
-  for(q = N_DOMAINDECOMP_QUEUES-1; q >= 0; q--)
-    {
-      myfree(queues[q].value);
-      myfree(queues[q].previous);
-      myfree(queues[q].next);
     }
 
   myfree(tasklist);
@@ -3731,6 +3662,30 @@ void domain_sumCost(void)
   myfree(local_domainCount);
   myfree(local_domainWorkGas);
   myfree(local_domainWork);
+}
+
+
+/*! The top leaf of the domain's top tree (TopNodes) holding Peano key `key`. */
+int domain_topleaf_of_key(peanokey key)
+{
+    int no = 0;
+    peanokey mask = ((peanokey)7) << (3 * (BITS_PER_DIMENSION - 1));
+    int shift = 3 * (BITS_PER_DIMENSION - 1);
+    while(TopNodes[no].Daughter >= 0)
+    {
+        no = TopNodes[no].Daughter + (int)((key & mask) >> shift);
+        mask >>= 3;
+        shift -= 3;
+    }
+    return TopNodes[no].Leaf;
+}
+
+/*! The top leaf whose key range holds position pos (a position outside the extent keys to a boundary leaf). */
+int domain_topleaf_of_position(const double pos[3])
+{
+    uint64_t c[3];
+    domain_key_integer_coordinates(pos[0], pos[1], pos[2], DomainCorner[0], DomainCorner[1], DomainCorner[2], DomainLen, BITS_PER_DIMENSION, c);
+    return domain_topleaf_of_key(peano_hilbert_key((peano1D) c[0], (peano1D) c[1], (peano1D) c[2], BITS_PER_DIMENSION));
 }
 
 

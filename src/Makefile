@@ -227,10 +227,17 @@ ifeq ($(SYSTYPE),"Frontier")
 ## * Legacy: module load amd/6.4.2 rocm/6.4.2 cray-mpich/9.0.1 craype-accel-amd-gfx90a kokkos/4.6.02-gpu
 ##           cray-hdf5 cray-fftw gsl hypre/3.0.0-mpi       (kokkos/4.6.02-gpu is the module built with rocm-6.4.2)
 ##   The default GTL library (/opt/cray/pe/lib64/libmpi_gtl_hsa.so.0) now belongs to cray-mpich 9.1.0 and needs
-##   ROCm 7's libamdhip64.so.7, so a legacy binary fails at load unless the job script sets
+##   ROCm 7's libamdhip64.so.7. A legacy binary linked with the run path below finds the 9.0.1 GTL by itself; one
+##   linked before it fails at load unless the job script sets
 ##     export LD_LIBRARY_PATH=/opt/cray/pe/mpich/9.0.1/gtl/lib:$LD_LIBRARY_PATH
 ##   Never set that line for a ROCm 7 binary: it would pull ROCm 6 libraries into the run.
 ## Before submitting either: `ldd ./GIZMO | grep 'not found'` must print nothing in the job's environment.
+## Run path: the Cray modules publish their library directories in CRAY_LD_LIBRARY_PATH, not LD_LIBRARY_PATH, so a
+## binary without a run path loads whatever /opt/cray/pe/lib64 holds at run time (the PE defaults: cray-mpich 9.1.0
+## and hdf5 1.14.3.9 for amd 7.0 since 2026-11), not the versions it was built against. A legacy-set binary on the
+## 9.1.0 libraries corrupts the heap at start-up ("double free or corruption" on a few ranks). GPU_LDFLAGS below
+## records the build's CRAY_LD_LIBRARY_PATH as the run path (DT_RPATH, which LD_LIBRARY_PATH does not override), so
+## the binary loads the libraries it was built with in any job environment; check with `ldd ./GIZMO | grep libmpi`.
 CC       =  cc
 CXX      =  CC -std=c++17
 FC       =  ftn
@@ -250,7 +257,7 @@ KOKKOS_LDFLAGS  = -L$(OLCF_KOKKOS_ROOT)/lib64 -Wl,-rpath,$(OLCF_KOKKOS_ROOT)/lib
 KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
 GPU_CXX     = hipcc --std=c++17
 GPU_CFLAGS  = $(KOKKOS_CPPFLAGS) $(KOKKOS_CXXFLAGS)
-GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
+GPU_LDFLAGS = $(KOKKOS_LDFLAGS) -Wl,-rpath,$(CRAY_LD_LIBRARY_PATH)   # run path: see the note above
 MKL_INCL =
 MKL_LIBS =
 ## cray-hdf5 include set explicitly so hipcc finds <hdf5.h> (allvars.h includes it
@@ -329,6 +336,8 @@ ifeq ($(SYSTYPE),"Frontier_CPU")
 ## for MHD_MODIFIED_GRADIENT; no gsl module -- nothing here consumes GSL_INCL/GSL_LIBS.)
 ## Do NOT export HSA_XNACK=1 for this build; it has no device allocations.
 ## To compare against the "Frontier" GPU build, run at the same rank and thread counts.
+## The link records the build's CRAY_LD_LIBRARY_PATH as the run path, as in the "Frontier" block (see its note): without it
+## this build (cray-mpich 9.0.1) loads the default cray-mpich 9.1.0 at run time and corrupts the heap at start-up.
 CC       =  cc
 CXX      =  CC -std=c++17
 FC       =  ftn
@@ -343,7 +352,7 @@ KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
 ## GPU-ported TUs: the host compiler, plus the Kokkos includes. No offload arch.
 GPU_CXX     = CC -std=c++17
 GPU_CFLAGS  = $(KOKKOS_CPPFLAGS)
-GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
+GPU_LDFLAGS = $(KOKKOS_LDFLAGS) -Wl,-rpath,$(CRAY_LD_LIBRARY_PATH)   # run path: see the note above
 MKL_INCL =
 MKL_LIBS =
 HDF5INCL = -I$(HDF5_ROOT)/include -DH5_USE_16_API
@@ -649,6 +658,133 @@ endif
 
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Horizon_GPU")
+## Horizon (TACC), "GB" nodes: 2 Grace CPUs (144 Arm Neoverse-V2 cores, aarch64) + 4 GB200 GPUs (Blackwell, sm_100,
+## NVLink-coherent with the CPU memory), Kokkos CUDA backend. Device TUs (GPU_OBJS) are compiled by nvcc_wrapper with
+## nvc++ (the NVIDIA HPC compiler that mpicxx wraps) as host compiler; host TUs and the link use mpicxx.
+## Load modules, ONE AT A TIME in this order (a single multi-module "module load" silently loads nothing):
+##   nvidia/26.9 cuda/13.3 openmpi/5.0.11 ucc hdf5/1.14.6     (+ cmake to build Kokkos)
+## gcc is not usable as the host compiler here: nvcc 13.x rejects gcc 16, and hdf5/fftw3 are not offered for gcc 15.
+## There is no CUDA Kokkos module, and Kokkos 4.6 does not compile against CUDA 13, so each user builds Kokkos 4.7.01
+## once, into $HOME (login node, a few minutes; HORIZON_KOKKOS_CUDA_DIR below is its install prefix), with the modules above:
+##   KV=4.7.01; mkdir -p $HOME/apps/src && cd $HOME/apps/src
+##   git clone --branch $KV --depth 1 https://github.com/kokkos/kokkos.git kokkos-$KV
+##   export NVCC_WRAPPER_DEFAULT_COMPILER=nvc++
+##   cmake -S kokkos-$KV -B kokkos-$KV/build-cuda-omp -DCMAKE_BUILD_TYPE=Release \
+##     -DCMAKE_INSTALL_PREFIX=$HOME/apps/kokkos/$KV-cuda-omp-gb200 \
+##     -DCMAKE_CXX_COMPILER=$HOME/apps/src/kokkos-$KV/bin/nvcc_wrapper -DCMAKE_CXX_STANDARD=17 \
+##     -DCMAKE_CXX_FLAGS=-arch=sm_100 -DKokkos_ENABLE_SERIAL=ON -DKokkos_ENABLE_OPENMP=ON -DKokkos_ENABLE_CUDA=ON \
+##     -DKokkos_ARCH_BLACKWELL100=ON
+##   cmake --build kokkos-$KV/build-cuda-omp -j 8 && cmake --install kokkos-$KV/build-cuda-omp
+## (OpenMP must be the host backend: with Serial alone every Kokkos host-space loop -- tree-build initialisation, the host
+## route of the spatial index, ... -- runs on one core per rank.)
+## (-DCMAKE_CXX_FLAGS=-arch=sm_100 is needed because nvcc_wrapper's default sm_70 is rejected by CUDA 13.)
+## Login nodes have no GPU driver, so libcuda is linked from the toolkit's stub directory, which is deliberately not
+## on the run-time path: the compute nodes supply the real driver.
+## The TACC fftw3 module has no MPI interface or single-precision library, which PMGRID needs, so FFTW 3.3.10 is built once
+## into $HOME (login node, a few minutes; nvc cannot compile its planner.c, so gcc compiles it and mpicc supplies the MPI headers):
+##   curl -O https://www.fftw.org/fftw-3.3.10.tar.gz && tar xzf fftw-3.3.10.tar.gz && cd fftw-3.3.10
+##   for prec in "" "--enable-float"; do mkdir -p build$prec && (cd build$prec && OMPI_CC=gcc CC=gcc MPICC=mpicc ../configure \
+##     --prefix=$HOME/apps/fftw3/3.3.10 --enable-shared --enable-mpi --enable-openmp --enable-threads $prec && make -j8 && make install); done
+## submit with idev/sbatch to the GPU queues (gpu-dev, gpu, ...; "debug" while the early-user system is being set up) and launch
+## with ibrun. Set UCX_TLS=^xpmem in the job environment: with UCX's xpmem transport, MPI messages between ranks on the same node
+## arrived with wrong contents beyond their first ~16 KiB (measured with these modules; the sender's buffer was verified intact).
+## One rank per GPU: KOKKOS_MAP_DEVICE_ID_BY=mpi_rank. Two per GPU: unset it and give each rank
+## CUDA_VISIBLE_DEVICES=$((OMPI_COMM_WORLD_LOCAL_RANK / 2)), so a rank uses the GPU on its own socket (cores 0-71 hold GPUs 0-1).
+CC       =  mpicc
+CXX      =  mpicxx -std=c++17
+FC       =  mpif90
+OPTIMIZE = -O2 -tp neoverse-v2 -Wall   # no -g: with it nvc++ takes ~455 s instead of ~86 s on gpu_neighbor_list.cc alone (measured)
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
+HORIZON_KOKKOS_CUDA_DIR ?= $(HOME)/apps/kokkos/4.7.01-cuda-omp-gb200
+KOKKOS_PATH     = $(HORIZON_KOKKOS_CUDA_DIR)
+KOKKOS_CPPFLAGS = -I$(HORIZON_KOKKOS_CUDA_DIR)/include
+KOKKOS_CXXFLAGS = --expt-relaxed-constexpr --expt-extended-lambda -arch=sm_100
+KOKKOS_LDFLAGS  = -L$(HORIZON_KOKKOS_CUDA_DIR)/lib64 -Wl,-rpath,$(HORIZON_KOKKOS_CUDA_DIR)/lib64 -L$(TACC_CUDA_LIB) -Wl,-rpath,$(TACC_CUDA_LIB) -L$(TACC_CUDA_LIB)/stubs
+KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers -lcudart -lcuda
+export NVCC_WRAPPER_DEFAULT_COMPILER = mpicxx
+GPU_CXX     = $(HORIZON_KOKKOS_CUDA_DIR)/bin/nvcc_wrapper --std=c++17
+GPU_CFLAGS  = $(KOKKOS_CPPFLAGS) $(KOKKOS_CXXFLAGS)
+GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
+ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
+CHIMESINCL = -I$(TACC_SUNDIALS_INC)
+CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial -lsundials_core
+endif
+ifeq (yes,$(MG_USES_HYPRE))
+HYPRE_INCL = -I$(TACC_HYPRE_INC)
+HYPRE_LIBS = -L$(TACC_HYPRE_LIB) -lHYPRE
+endif
+MKL_INCL =
+MKL_LIBS =
+HORIZON_FFTW_DIR ?= $(HOME)/apps/fftw3/3.3.10
+FFTW_INCL= -I$(HORIZON_FFTW_DIR)/include
+FFTW_LIBS= -L$(HORIZON_FFTW_DIR)/lib -Wl,-rpath,$(HORIZON_FFTW_DIR)/lib
+HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
+HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
+MPICHLIB = #
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
+## device cooling reads the particle storage in place here (coherent memory): 1048576 cells per launch instead of the generic
+## 32768 cuts cooling by ~37% on a 36M-cell zoom with one or two ranks per GPU (measured); a Config that sets it keeps its own value
+ifeq (,$(findstring GPU_COOLING_IN_PLACE_BATCH_CELLS,$(CONFIGVARS)))
+OPT     += -DGPU_COOLING_IN_PLACE_BATCH_CELLS=1048576
+endif
+endif
+
+
+#----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Horizon_CPU")
+## Horizon with the Kokkos OpenMP backend: the same Kokkos source path as "Horizon_GPU", dispatched to CPU threads.
+## Host compiler, MPI, libraries and Kokkos version are identical to "Horizon_GPU", so the pair differs only in the Kokkos
+## backend (as Frontier and Frontier_CPU do). Runs on the CPU nodes ("VV", Vera) or on the GB nodes' Grace cores as a
+## CPU control. No nvcc, so GIZMO_GPU_COMPILER is undefined and the per-TU AllDeviceMirror blocks are skipped.
+## Load modules, ONE AT A TIME, the same set as "Horizon_GPU": nvidia/26.9 cuda/13.3 openmpi/5.0.11 ucc hdf5/1.14.6
+## (this openmpi, ucc and hdf5 are only offered inside the nvidia + cuda chain; nothing here compiles with nvcc)
+## Kokkos is built once into $HOME (login node, a few minutes; HORIZON_KOKKOS_OMP_DIR below is its install prefix):
+##   KV=4.7.01; mkdir -p $HOME/apps/src && cd $HOME/apps/src      (kokkos-$KV cloned as for "Horizon_GPU")
+##   cmake -S kokkos-$KV -B kokkos-$KV/build-omp -DCMAKE_BUILD_TYPE=Release \
+##     -DCMAKE_INSTALL_PREFIX=$HOME/apps/kokkos/$KV-omp -DCMAKE_CXX_COMPILER=nvc++ -DCMAKE_CXX_STANDARD=17 \
+##     -DKokkos_ENABLE_SERIAL=ON -DKokkos_ENABLE_OPENMP=ON
+##   cmake --build kokkos-$KV/build-omp -j 8 && cmake --install kokkos-$KV/build-omp
+## FFTW: as for "Horizon_GPU" (same install, HORIZON_FFTW_DIR).
+## -tp neoverse-v2 is the Grace core; the Vera cores (Armv9.2) run it unchanged, and a Vera-specific flag is not yet measured.
+## Launch with ibrun and UCX_TLS=^xpmem, as for "Horizon_GPU" (the same-node message corruption is in MPI, not the GPU).
+CC       =  mpicc
+CXX      =  mpicxx -std=c++17
+FC       =  mpif90
+OPTIMIZE = -O2 -tp neoverse-v2 -Wall   # no -g: with it nvc++ takes ~455 s instead of ~86 s on gpu_neighbor_list.cc alone (measured)
+## the Kokkos OpenMP backend needs OpenMP whatever the Config says
+OPTIMIZE += -fopenmp
+HORIZON_KOKKOS_OMP_DIR ?= $(HOME)/apps/kokkos/4.7.01-omp
+KOKKOS_PATH     = $(HORIZON_KOKKOS_OMP_DIR)
+KOKKOS_CPPFLAGS = -I$(HORIZON_KOKKOS_OMP_DIR)/include
+KOKKOS_LDFLAGS  = -L$(HORIZON_KOKKOS_OMP_DIR)/lib64 -Wl,-rpath,$(HORIZON_KOKKOS_OMP_DIR)/lib64
+KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
+GPU_CXX     = mpicxx -std=c++17
+GPU_CFLAGS  = $(KOKKOS_CPPFLAGS)
+GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
+ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))
+CHIMESINCL = -I$(TACC_SUNDIALS_INC)
+CHIMESLIBS = -L$(TACC_SUNDIALS_LIB) -lsundials_cvode -lsundials_nvecserial -lsundials_core
+endif
+ifeq (yes,$(MG_USES_HYPRE))
+HYPRE_INCL = -I$(TACC_HYPRE_INC)
+HYPRE_LIBS = -L$(TACC_HYPRE_LIB) -lHYPRE
+endif
+MKL_INCL =
+MKL_LIBS =
+HORIZON_FFTW_DIR ?= $(HOME)/apps/fftw3/3.3.10
+FFTW_INCL= -I$(HORIZON_FFTW_DIR)/include
+FFTW_LIBS= -L$(HORIZON_FFTW_DIR)/lib -Wl,-rpath,$(HORIZON_FFTW_DIR)/lib
+HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API
+HDF5LIB  = -L$(TACC_HDF5_LIB) -lhdf5 -lz
+MPICHLIB = #
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
+endif
+
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Frontera_Kokkos")
 ## Frontera (CPU-only, Cascade Lake) with Kokkos OpenMP backend.
 ## Same Kokkos source path as Vista_CPU (CPU dispatch), Intel compiler + TACC libs.
@@ -936,7 +1072,7 @@ CORE_OBJS =	core/main.o core/accel.o core/timestep.o core/init.o file_io/restart
 			core/predict.o declarations/global.o core/begrun.o core/run.o core/gizmo_fatal.o declarations/allvars.o \
 			declarations/lifecycle_counters.o \
 			file_io/read_ic.o file_io/hdf5_deflate_filter.o domain/domain.o core/driftfac.o core/kicks.o \
-			mesh/ghost_exchange.o mesh/ghost_writeback.o mesh/neighbor_list.o mesh/sfc_tiles.o mesh/gpu_dirty_tracker.o mesh/mode_b_local_walker.o mesh/mode_b_p2p_transport.o compile_time_info.o mesh/merge_split.o \
+			mesh/ghost_exchange.o mesh/ghost_writeback.o mesh/neighbor_list.o mesh/sfc_tiles.o mesh/gpu_dirty_tracker.o mesh/mode_b_local_walker.o mesh/source_reach_map.o mesh/mode_b_p2p_transport.o compile_time_info.o mesh/merge_split.o \
 			core/transport_subcycle.o
 
 SYSTEM_OBJS =   system/system.o \

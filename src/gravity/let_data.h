@@ -64,7 +64,8 @@ typedef enum {
     GRAV_NODE_LOCAL = 0,        /* not imported: ordinary local tree node */
     GRAV_NODE_FOREIGN_OPENABLE, /* imported with its children -> may be descended */
     GRAV_NODE_FOREIGN_LEAF,     /* imported single-particle leaf: terminal, leaf semantics */
-    GRAV_NODE_FOREIGN_TRUNCATED,/* imported multipole-only: terminal, and opening it means the import is short */
+    GRAV_NODE_FOREIGN_TRUNCATED,/* multipole-only (imported so, or another rank's top leaf whose subtree was not shipped):
+                                 * terminal, and opening it means the import is short */
     GRAV_NODE_FOREIGN_UNSHIPPABLE /* terminal, and opening it means the import is short in a way no
                                    * rebuild can fix -- the sender never owned the children */
 } grav_node_kind_t;
@@ -75,9 +76,13 @@ typedef enum {
  * The nextnode<0 sentinel is kept as a backstop: a node the packer failed to tag is still treated
  * as terminal rather than followed. */
 KOKKOS_INLINE_FUNCTION
-grav_node_kind_t grav_classify_node(int in_foreign, int leaf_tag, int nextnode)
+grav_node_kind_t grav_classify_node(int in_foreign, int leaf_tag, int nextnode, unsigned int bitflags)
 {
-    if(!in_foreign) {return GRAV_NODE_LOCAL;}
+    /* Another rank's top leaf that no target here would open, so its owner shipped nothing for it (marked at install, and only
+     * there): the replicated copy already carries the owner's moments.  It is used where it stands, exactly like a truncated
+     * imported aggregate, and opening it means the import is short.  Any other node of this rank's own tree is local, so a
+     * pointer into the pseudo-particles from an unmarked node still reaches the walks' pseudo-particle stop. */
+    if(!in_foreign) {return (bitflags & (1u << BITFLAG_SUBTREE_NOT_IMPORTED)) ? GRAV_NODE_FOREIGN_TRUNCATED : GRAV_NODE_LOCAL;}
     if(leaf_tag == LET_LEAF_TAG_REAL_LEAF) {return GRAV_NODE_FOREIGN_LEAF;}
     if(leaf_tag == LET_LEAF_TAG_UNSHIPPABLE_SUBTREE) {return GRAV_NODE_FOREIGN_UNSHIPPABLE;}
     if(leaf_tag == LET_LEAF_TAG_TRUNCATED_AGGREGATE || nextnode < 0) {return GRAV_NODE_FOREIGN_TRUNCATED;}

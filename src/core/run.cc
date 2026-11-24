@@ -56,7 +56,11 @@ void gizmo_request_controlled_stop(int code, const char *reason,
     /* No MPI, no allocation, no Kokkos calls — safe inside per-particle
      * loops or device-dispatcher callers. First-set-wins; copy the diagnostic
      * into owned storage immediately (subsequent bad-state flow may clobber
-     * the caller's buffer or fail before global polling). */
+     * the caller's buffer or fail before global polling). Threaded particle loops can reach this, so the
+     * first-set-wins check and the copy are one critical section. */
+#ifdef _OPENMP
+#pragma omp critical(gizmo_controlled_stop_request)
+#endif
     if(ControlledStop_LocalCode == 0) {
         ControlledStop_LocalCode = code;
         snprintf(ControlledStop_LocalDiag, MAX_PATH_BUFFERSIZE_TOUSE,
@@ -148,6 +152,13 @@ void run(void)
 #endif
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+        /* The first step's single Barnes-Hut pass (accel.cc) leaves the relative criterion without a scale: OldAcc is
+           promoted from the latest walk only by a tree build, and the import is pruned against it.  So the next step
+           builds, whatever its active fraction (an all-active first step already asks for that build unless
+           TreeRebuild_ActiveFraction >= 1; under RANDOMIZE_GRAVTREE the request makes it a full decomposition). */
+        if(All.TypeOfOpeningCriterion == 1) {TreeReconstructFlag = 1;}
+#endif
     }
     else
     {
