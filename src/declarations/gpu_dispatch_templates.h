@@ -150,8 +150,8 @@ inline constexpr bool gizmo_gpu_default_space_is_host()
  * a failure.  Created once and kept; destroyed before Kokkos is finalized.
  * An event made with create_timed() also carries a timestamp, for the optional cpu.txt timing breakdown only:
  * elapsed_seconds(start, stop) is the device time between two such events once both are complete (negative if the
- * runtime refused).  error_pending() says whether the runtime holds an error it has not yet reported; clear_error()
- * drops one -- callers clear only an error their own call raised, never one a launch check is still to see.
+ * runtime refused).  error_pending() says whether the runtime holds an error it has not yet reported, without clearing it:
+ * the timing code never clears an error, it stops the run on any failure of its own calls.
  *
  * This is the one place GIZMO calls the CUDA / HIP runtime directly: Kokkos has no portable query of whether an
  * instance's work has finished, only a blocking fence.  It covers completion and that optional timing --
@@ -187,7 +187,6 @@ struct GizmoGpuEvent {
     }
     void destroy() {if(event) {cudaEventDestroy(event); event = nullptr;}}
     int create_timed() {return (cudaEventCreate(&event) == cudaSuccess) ? 0 : 1;}
-    static void clear_error() {(void) cudaGetLastError();}
     static int error_pending() {return cudaPeekAtLastError() != cudaSuccess;}
     static double elapsed_seconds(const GizmoGpuEvent &start, const GizmoGpuEvent &stop) {
         float ms = 0; return (cudaEventElapsedTime(&ms, start.event, stop.event) == cudaSuccess) ? 1.0e-3 * ms : -1.0;
@@ -205,7 +204,6 @@ struct GizmoGpuEvent {
     }
     void destroy() {if(event) {(void) hipEventDestroy(event); event = nullptr;}}
     int create_timed() {return (hipEventCreate(&event) == hipSuccess) ? 0 : 1;}
-    static void clear_error() {(void) hipGetLastError();}
     static int error_pending() {return hipPeekAtLastError() != hipSuccess;}
     static double elapsed_seconds(const GizmoGpuEvent &start, const GizmoGpuEvent &stop) {
         float ms = 0; return (hipEventElapsedTime(&ms, start.event, stop.event) == hipSuccess) ? 1.0e-3 * ms : -1.0;
@@ -216,7 +214,6 @@ struct GizmoGpuEvent {
     int query() const {return GIZMO_GPU_EVENT_COMPLETE;}
     void destroy() {}
     int create_timed() {return 0;}
-    static void clear_error() {}
     static int error_pending() {return 0;}
     static double elapsed_seconds(const GizmoGpuEvent &, const GizmoGpuEvent &) {return 0.0;}
 #endif
