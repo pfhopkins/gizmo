@@ -128,7 +128,7 @@ void DMGradSpec::apply_active_writeback(const neighbor_loop_args& args,
  * ========================================================================== */
 void DMGrad_gradient_calc(void)
 {
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
     const double t00 = my_second();  const double child0_span = CPU_ChildCharged;
     PRINT_STATUS(" ..calculating higher-order gradients for DM density field\n");
 
@@ -160,7 +160,7 @@ void DMGrad_gradient_calc(void)
     }
     if (global_bm_presence == 0) {
         { const double t_end = my_second();
-          CPU_Step[CPU_AGSDENSMISC] += cpu_minus_children(timediff(t00, t_end), child0_span);
+          cpu_charge(CPU_AGSDENSMISC, cpu_minus_children(timediff(t00, t_end), child0_span));
           cpu_chain_sync(t_end); }
         return;   /* no DMGrad-active particles anywhere — collective short-circuit */
     }
@@ -261,7 +261,7 @@ void DMGrad_gradient_calc(void)
     } /* end of pass loop */
 
     { const double t_end = my_second();
-          CPU_Step[CPU_AGSDENSMISC] += cpu_minus_children(timediff(t00, t_end), child0_span);
+          cpu_charge(CPU_AGSDENSMISC, cpu_minus_children(timediff(t00, t_end), child0_span));
           cpu_chain_sync(t_end); }
 }
 

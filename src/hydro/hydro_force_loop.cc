@@ -422,7 +422,7 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 
 void hydro_force(void)
 {
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
     double t00_truestart = my_second();
     double t_preloop_start = my_second();
     hydro_force_initial_operations_preloop();

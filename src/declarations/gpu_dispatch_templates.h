@@ -148,7 +148,9 @@ inline constexpr bool gizmo_gpu_default_space_is_host()
  * which is how a fault in the device work behind it surfaces (it never turns into an endless wait).  A
  * not-ready answer is cleared from the runtime's last-error state, so later launch checks do not read it as
  * a failure.  An event is recorded again only after its previous completion was seen.  Created once and
- * kept; destroyed before Kokkos is finalized.
+ * kept; destroyed before Kokkos is finalized.  An event made with create_timed() also carries a timestamp: elapsed_seconds(start, stop) is the
+ * device time between two such events once both are complete (negative if the runtime refused).  clear_error() drops a
+ * refused call's error from the runtime's last-error state, for callers that carry on without that event.
  *
  * This is the one place GIZMO calls the CUDA / HIP runtime for stream completion: Kokkos has no portable
  * query of whether an instance's work has finished, only a blocking fence.  It covers completion only --
@@ -183,6 +185,11 @@ struct GizmoGpuEvent {
         return (last == cudaSuccess || last == cudaErrorNotReady) ? GIZMO_GPU_EVENT_NOT_READY : GIZMO_GPU_EVENT_ERROR;
     }
     void destroy() {if(event) {cudaEventDestroy(event); event = nullptr;}}
+    int create_timed() {return (cudaEventCreate(&event) == cudaSuccess) ? 0 : 1;}
+    static void clear_error() {(void) cudaGetLastError();}
+    static double elapsed_seconds(const GizmoGpuEvent &start, const GizmoGpuEvent &stop) {
+        float ms = 0; return (cudaEventElapsedTime(&ms, start.event, stop.event) == cudaSuccess) ? 1.0e-3 * ms : -1.0;
+    }
 #elif defined(KOKKOS_ENABLE_HIP)
     hipEvent_t event = nullptr;
     int create() {return (hipEventCreateWithFlags(&event, hipEventDisableTiming) == hipSuccess) ? 0 : 1;}
@@ -195,13 +202,26 @@ struct GizmoGpuEvent {
         return (last == hipSuccess || last == hipErrorNotReady) ? GIZMO_GPU_EVENT_NOT_READY : GIZMO_GPU_EVENT_ERROR;
     }
     void destroy() {if(event) {(void) hipEventDestroy(event); event = nullptr;}}
+    int create_timed() {return (hipEventCreate(&event) == hipSuccess) ? 0 : 1;}
+    static void clear_error() {(void) hipGetLastError();}
+    static double elapsed_seconds(const GizmoGpuEvent &start, const GizmoGpuEvent &stop) {
+        float ms = 0; return (hipEventElapsedTime(&ms, start.event, stop.event) == hipSuccess) ? 1.0e-3 * ms : -1.0;
+    }
 #else
     int create() {return 0;}
     int record(const Kokkos::DefaultExecutionSpace &) {return 0;}
     int query() const {return GIZMO_GPU_EVENT_COMPLETE;}
     void destroy() {}
+    int create_timed() {return 0;}
+    static void clear_error() {}
+    static double elapsed_seconds(const GizmoGpuEvent &, const GizmoGpuEvent &) {return 0.0;}
 #endif
 };
+
+/* OUTPUT_TIMING_BREAKDOWN (system/timing_breakdown.cc) times each device kernel with a pair of timed events in the
+ * queue of the instance that ran it.  The default instance is known to it; any other instance a module creates is
+ * registered here when it is made, or its kernels are counted but not timed. */
+void timing_breakdown_register_instance(const Kokkos::DefaultExecutionSpace &space);   /* a no-op without the flag */
 
 
 #endif /* GIZMO_GPU_DISPATCH_TEMPLATES_H */

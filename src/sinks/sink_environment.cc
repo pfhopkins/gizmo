@@ -118,7 +118,7 @@ static void sink_env1_scatter_to_temp_info(const int *active_list,
 
 void sink_environment_loop(void)
 {
-    CPU_Step[CPU_SINK_ENV] += measure_time();
+    cpu_charge(CPU_SINK_ENV, measure_time());
 
     /* ---------- engine: build active list (count + Allreduce + skip-if-empty + fill) ---------- */
     int *active_list = nullptr;
@@ -126,7 +126,7 @@ void sink_environment_loop(void)
     if(!nlr_build_active_list(SinkEnv1Spec::is_active,
                                &active_list, &num_active,
                                "sinkenv_active_list")) {
-        CPU_Step[CPU_SINK_ENV] += measure_time();
+        cpu_charge(CPU_SINK_ENV, measure_time());
         return;
     }
 
@@ -156,7 +156,7 @@ void sink_environment_loop(void)
         sink_normalize_temp_info_struct_after_environment_loop(i);
     }
 
-    CPU_Step[CPU_SINK_ENV] += measure_time();
+    cpu_charge(CPU_SINK_ENV, measure_time());
 }
 
 
@@ -200,7 +200,7 @@ void sink_environment_second_loop(void)
     /* Stage E2: pure aggregator (Bulge-Disk kinematic decomposition),
      * runner-driven via SinkEnv2Spec. Same active set + radii +
      * j_type_bitmask as Stage E1 (sink_environment_loop). */
-    CPU_Step[CPU_SINK_ENV] += measure_time();
+    cpu_charge(CPU_SINK_ENV, measure_time());
 
     /* ---------- engine: build active list ---------- */
     int *active_list = nullptr;
@@ -208,7 +208,7 @@ void sink_environment_second_loop(void)
     if(!nlr_build_active_list(SinkEnv2Spec::is_active,
                                &active_list, &num_active,
                                "sinkenv2_active_list")) {
-        CPU_Step[CPU_SINK_ENV] += measure_time();
+        cpu_charge(CPU_SINK_ENV, measure_time());
         return;
     }
 
@@ -250,7 +250,7 @@ void sink_environment_second_loop(void)
     myfree(per_active_accum);
     nlr_free_active_list(active_list);
 
-    CPU_Step[CPU_SINK_ENV] += measure_time();
+    cpu_charge(CPU_SINK_ENV, measure_time());
 }
 
 #endif   //SINK_GRAVACCRETION == 0

@@ -100,7 +100,7 @@ void savepositions(int num)
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], outputdir[DEFAULT_PATH_BUFFERSIZE_TOUSE];
     int n, filenr, gr, ngroups, primaryTask, lastTask;
 
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
 
 #ifdef CHIMES_REDUCED_OUTPUT
     if (num % N_chimes_full_output_freq == 0) {Chimes_incl_full_output = 1;} else {Chimes_incl_full_output = 0;}
@@ -220,7 +220,7 @@ void savepositions(int num)
 
         All.Ti_lastoutput = All.Ti_Current;
 
-        CPU_Step[CPU_SNAPSHOT] += measure_time();
+        cpu_charge(CPU_SNAPSHOT, measure_time());
 }
 
 #ifdef FOF
@@ -234,7 +234,7 @@ void savepositions(int num)
         if(ThisTask == 0)
             printf("done with group catalogue.\n");
 
-        CPU_Step[CPU_FOF] += measure_time();
+        cpu_charge(CPU_FOF, measure_time());
     }
 #endif
 
@@ -249,7 +249,7 @@ void savepositions(int num)
         if(ThisTask == 0)
             printf("done with power spectra.\n");
 
-        CPU_Step[CPU_MISC] += measure_time();
+        cpu_charge(CPU_MISC, measure_time());
     }
 #endif
 

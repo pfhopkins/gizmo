@@ -179,7 +179,7 @@ static void sink_swk_scatter(const int *active_list, int num_active,
 
 void sink_swallow_and_kick_loop(void)
 {
-    CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
+    cpu_charge(CPU_SINK_FEEDSWK, measure_time());
     (void)N_gas_swallowed; (void)N_star_swallowed; (void)N_dm_swallowed; (void)N_sink_swallowed;
     /* D1 GPU path — atomic j-writes + ghost writeback; per-source output scatter
      * and MPI_Reduce of swallow counters handled inside the launcher. */
@@ -189,7 +189,7 @@ void sink_swallow_and_kick_loop(void)
     if(!nlr_build_active_list(SinkSwkSpec::is_active,
                                &active_list, &num_active,
                                "sinkswk_active_list")) {
-        CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
+        cpu_charge(CPU_SINK_FEEDSWK, measure_time());
         return;
     }
 
@@ -242,7 +242,7 @@ void sink_swallow_and_kick_loop(void)
     myfree(per_active_accum);
     nlr_free_active_list(active_list);
 
-    CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
+    cpu_charge(CPU_SINK_FEEDSWK, measure_time());
 }
 
 
