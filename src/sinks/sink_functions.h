@@ -201,12 +201,13 @@ KOKKOS_INLINE_FUNCTION double evaluate_sink_radiative_efficiency_core(double mdo
 }
 
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL
-/* return the jet kinetic power relative to mdot*c^2: scales as (spin*H/R)^2 with a thicker disk near the horizon in the radiatively-inefficient state */
+/* return the raw jet power relative to mdot*c^2 from the physical model: scales as (spin*H/R)^2 with a thicker disk near the horizon in the radiatively-inefficient state. this sets the CR power; the kinetic power
+    given to the spawned jet cells can be set lower where they are launched (see f_jet_kinetic in sink_spawn_particle_wind_shell), without changing this */
 KOKKOS_INLINE_FUNCTION double evaluate_sink_jet_efficiency_core(double mdot, double mass)
 {
     double a_spin = 0.33, HR = 0.33;
     if(mdot/sink_eddington_mdot_core(mass) < (SINK_RIAF_SUBEDDINGTON_MODEL)) {HR = 1;}
-    return 0.1 * (a_spin*HR)*(a_spin*HR);
+    return (a_spin*HR)*(a_spin*HR);
 }
 #endif
 
@@ -214,6 +215,13 @@ KOKKOS_INLINE_FUNCTION double evaluate_sink_jet_efficiency_core(double mdot, dou
 KOKKOS_INLINE_FUNCTION double evaluate_sink_cosmicray_efficiency_core(double mdot, double mass, long pindex)
 {
 #ifdef SINK_COSMIC_RAYS
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL /* experiment with functions here to explore more/less efficient CR injection at lower/higher eddington ratios, reflecting hard/soft-type transition */
+    /* with this model this is the CR power relative to the raw jet power [evaluate_sink_jet_efficiency_core * mdot*c^2], set here and not by the parameterfile */
+    double f_cr = 0.1; /* high-Mdot: similar to the standard fraction for SNe shocks */
+    if(mdot/sink_eddington_mdot_core(mass) < (SINK_RIAF_SUBEDDINGTON_MODEL)) {f_cr = 0.5;} /* low-Mdot: CR-dominated jet */
+    //f_cr *= 0.1; // uncomment for CR power relative to the (default) reduced kinetic power given to the jet cells, instead of the raw jet power
+    return f_cr;
+#endif
     return All.Sink_CosmicRay_Injection_Efficiency; // default to constant, as a fraction of mdot*c^2
 #endif
     return 0;

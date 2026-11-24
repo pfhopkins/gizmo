@@ -712,10 +712,12 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL
             double frac_clight_jet_max = 0.10; //1.0; // don't let the jet be too fast, for physical (superluminal) or numerical (timestep) reasons
             double frac_clight_jet_min = 0.03; //0.1; // don't let the jet be too slow, or it won't behave like a jet; lower jet mass to compensate
+            double f_jet_kinetic = 0.1; // kinetic power given to the jet cells relative to the raw jet power: reduced since very fast jets are difficult to follow, and can lose kinetic energy on un-resolved scales. does not change the CR power
+            //f_jet_kinetic = 1.; // uncomment to couple the full raw jet power as kinetic energy
             double Mdot_wind = P[i].Sink_Mdot_ROI - P[i].Sink_Mdot;
             if(Mdot_wind > 0 && P[i].Sink_Mdot > 0)
             {
-                double eff_jet = evaluate_sink_jet_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass);
+                double eff_jet = f_jet_kinetic * evaluate_sink_jet_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass);
                 double Mdot_jet = Mdot_wind * fraction_to_spawn_in_jet / (masscorrfac_fast*(1.-fraction_to_spawn_in_jet) + fraction_to_spawn_in_jet);
                 double eta_jet = Mdot_jet / P[i].Sink_Mdot;
                 frac_clight_jet = sqrt(2.*eff_jet/eta_jet); /* scaling so that KE of jet = desired */
@@ -966,11 +968,15 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         double eps_cr = evaluate_sink_cosmicray_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass,i);
         double fac_wind_corr = All.Sink_accreted_fraction / (1.-All.Sink_accreted_fraction); /* ratio of accretion to outflow rate */
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL
-        if(P[i].Type==5) {double Mdot_wind = P[i].Sink_Mdot_ROI - P[i].Sink_Mdot; if(Mdot_wind > 0) {fac_wind_corr = P[i].Sink_Mdot / Mdot_wind;} else {fac_wind_corr = 0;}} /* here this ratio is not constant */
+        /* here eps_cr is relative to the raw jet power set by the physical model. this is not the kinetic energy of the spawned cells, which can be launched slower and does not limit it */
+        if(P[i].Type==5) {
+            double Mdot_wind = P[i].Sink_Mdot_ROI - P[i].Sink_Mdot; fac_wind_corr = 0;
+            if(Mdot_wind > 0) {fac_wind_corr = evaluate_sink_jet_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass) * P[i].Sink_Mdot / Mdot_wind;}
+        } else {fac_wind_corr = 0.5 * v_magnitude_physical*v_magnitude_physical / (C_LIGHT_CODE*C_LIGHT_CODE);} /* no accretion model for other sources: relative to the kinetic energy */
 #endif
-        double dEcr = eps_cr * P[j].Mass * fac_wind_corr * C_LIGHT_CODE*C_LIGHT_CODE; /* eps_cr is a fraction of mdot*c^2: not limited by the kinetic energy of the spawned cells, since it can represent e.g. jet energy converted to CRs on un-resolved scales */
+        double dEcr = eps_cr * P[j].Mass * fac_wind_corr * C_LIGHT_CODE*C_LIGHT_CODE;
 #if defined(SINK_RIAF_SUBEDDINGTON_MODEL) || defined(SINK_TEST_WIND_MIXED_FASTSLOW)
-        if(mode != 1) {dEcr=0;} else if(P[i].Type==5) {dEcr *= mass_of_new_particle_default / (fraction_to_spawn_in_jet * P[j].Mass);} /* only the jet cells carry CR energy: weight by their mass and number fraction so the total is still eps_cr*Mdot*c^2 */
+        if(mode != 1) {dEcr=0;} else if(P[i].Type==5) {dEcr *= mass_of_new_particle_default / (fraction_to_spawn_in_jet * P[j].Mass);} /* only the jet cells carry CR energy: weight by their mass and number fraction so the total over the outflow is preserved */
 #endif
         if(P[i].Type==4) {dEcr=0;} /* stellar ejecta are not powered by accretion */
 #if defined(SINK_CR_INJECTION_AT_TERMINATION)
