@@ -3,8 +3,12 @@ single stars at rest-frame speed 10 km/s, each alone in its region and older tha
 the first step: a core-collapse SN (20 Msun), a failed SN (40 Msun), a pulsational pair-instability SN (150 Msun) and a
 pair-instability SN (320 Msun). Units pc, Msun, km/s. Written as a snapshot (the run starts from it with start flag 2,
 which reads the stellar ages, metallicities and star records)."""
+import os
+import sys
 import numpy as np
 import h5py
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "treecol_pixels"))
+from stella_table_bands import Tables  # noqa: E402
 
 PC_KMS_IN_YR = 3.085678e13 / 3.155e7  # time unit [yr], with the code's year (constants.h)
 SOLAR = np.array([0.0142, 0.2703, 2.53e-3, 7.41e-4, 6.13e-3, 1.34e-3, 7.57e-4, 7.12e-4, 3.31e-4, 6.87e-5, 1.38e-3])
@@ -49,5 +53,8 @@ def make_single_stars_supernovae_ics(fname, tables_file, n=32, n_H=10.0, T=100.0
         Zs = np.tile(SOLAR * z / SOLAR[0], (ns, 1)); Zs[:, 1] = SOLAR[1]
         s["Metallicity"] = Zs[:, :n_metals]; s["SingleStarDrawnMass"] = np.array([m for m, _ in stars]); s["SingleStarBirthMetallicity"] = np.full(ns, z)
         # winds counted as returned up to the end of life (these stars have no history): the deaths come at once
-        s["SingleStarLastWindLogAge"] = np.array([np.log10(np.interp(np.log10(m), np.log10(Mt), ms_life)) - winds_owed_dex for m, _ in stars])
+        last = np.array([np.log10(np.interp(np.log10(m), np.log10(Mt), ms_life)) - winds_owed_dex for m, _ in stars])
+        s["SingleStarLastWindLogAge"] = last
+        T = Tables(tables_file)
+        s["SingleStarBirthMass"] = np.array([star_mass_factor * m + T.wind_cumulative(m, z, la if winds_owed_dex > 0 else 9.9) for (m, _), la in zip(stars, last)])
     return L, dx

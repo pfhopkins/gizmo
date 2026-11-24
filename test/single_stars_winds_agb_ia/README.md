@@ -3,9 +3,11 @@
 Stellar winds, AGB deaths and Type Ia supernovae of IMF-sampled single stars, from the stellar-evolution tables, through
 the mass-return mode (winds, AGB deaths: momentum-conserving) and the supernova mode (Type Ia: pure thermal) of the shared
 mechanical feedback loop.
-- Winds (drawn mass >= 8 Msun, after the pre-main sequence): every star step returns the table's cumulative wind ejecta
-  between the last delivery and now, at the table wind speed; the delivery age advances only when the mass coupled.
-- AGB death (white-dwarf remnant): ejecta = mass - table remnant at 30 km/s, AGB element ejecta.
+- Winds (drawn mass >= 8 Msun, after the pre-main sequence): every star step returns the table's cumulative wind mass less
+  what the star has returned (its birth mass less its mass), at the table wind speed, with the composition of the table since
+  the last delivery.
+- AGB death (white-dwarf remnant): the winds of the star's whole life leave first as one wind delivery; on the next step ejecta =
+  the table's fraction of the mass left, at 30 km/s, AGB element ejecta.
 - Type Ia (`GALSF_SINGLE_STARS_TYPE_IA`): per-step hazard of a white dwarf (t^-1 delay-time distribution normalised to the
   dead-progenitor fraction, keyed random number); the whole mass at 1e51 erg with the table Type Ia composition. With the
   opt-in `GALSF_SINGLE_STARS_TYPE_IA_CHANDRASEKHAR_MATTER` the table's M_Ch of Ia matter per event: M_Ch - M_WD of the gas in
@@ -18,7 +20,7 @@ Problem: a 24^3 lattice of 1 Msun cells at n_H = 10 cm^-3, 100 K, Z = 0.014, no 
 Checks:
 1. the 35 Msun star has returned exactly the table's cumulative wind mass up to its last delivery age (1e-9), and that
    age is its current age to one step;
-2. one AGB death of the 3 Msun star, white-dwarf remnant of the table, ejecta = 3 Msun - remnant;
+2. one AGB death of the 3 Msun star, at 3 Msun less the table's whole wind (1e-9), ejecta = mass at death - remnant;
 3. Type Ia of both white dwarfs (the initial one at the first step, the new one after its AGB death): the whole mass at
    1e51 erg, no remnant, ejecta almost all metals;
 4. total mass (gas + stars) conserved to 1e-12, metal mass rises at least by the event metals; momentum change below 5%

@@ -114,6 +114,7 @@ def hot_wind(tag, tables, last_wind_log_age):
                             tracabund=np.tile([0.0, 1.0, 0.0], (n ** 3, 1)))
     with h5py.File(ic, "a") as f:
         f["PartType4/SingleStarLastWindLogAge"] = np.array([last_wind_log_age])
+        f["PartType4/SingleStarBirthMass"] = np.array([20.0 + Tables(tables).wind_cumulative(20.0, 0.0142, last_wind_log_age)])
     params = (TEST_DIR / f"{TEST_NAME}.params").read_text()
     for k, v in (("StellarTablesFile", tables), ("TestSingleStarBirths", "1:0.5"), ("SGChemTablesPath", os.environ.get("SGCHEM_TABLES_DIR", os.path.dirname(tables)))):
         params = params.replace(f"{k:35s}SET_BY_TEST", f"{k:35s}{v}")

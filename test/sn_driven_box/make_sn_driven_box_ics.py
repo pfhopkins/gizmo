@@ -1,8 +1,11 @@
 """ICs of the sn_driven_box test: make_box writes the gas box of the driving stage; add_stars puts pre-placed stars, with
 table masses that explode and ages that make them die across a window, into a snapshot of the driven box."""
+import sys
 from pathlib import Path
 import h5py
 import numpy as np
+sys.path.insert(0, str(Path(__file__).parent.parent / "treecol_pixels"))
+from stella_table_bands import Tables  # noqa: E402
 
 MSUN, PC, MP, XH = 1.989e33, 3.085678e18, 1.6726e-24, 0.75
 LENGTH, MASS = 1e-3, 1e-10  # kpc per pc, 1e10 Msun per Msun
@@ -72,7 +75,7 @@ def death_age(tables_file, M, z=0.014):
         return float((T["lifetime_yr"][()] + T["t_PMS"][()]).reshape(len(Zt), len(Mt))[iz, im])
 
 
-def add_stars(fname, masses, ages_yr, pos_box):
+def add_stars(fname, masses, ages_yr, pos_box, tables_file):
     with h5py.File(fname, "r+") as F:
         h = F["Header"]
         t, n = float(h.attrs["Time"]), len(masses)
@@ -95,3 +98,5 @@ def add_stars(fname, masses, ages_yr, pos_box):
         s["SingleStarBirthDensity"] = np.full(n, 10.0)
         s["SingleStarEventBits"] = np.zeros(n)
         s["SingleStarLastWindLogAge"] = np.log10(ages_yr)
+        T = Tables(tables_file)
+        s["SingleStarBirthMass"] = np.array([m + T.wind_cumulative(m, 0.014, np.log10(a)) for m, a in zip(masses, ages_yr)])

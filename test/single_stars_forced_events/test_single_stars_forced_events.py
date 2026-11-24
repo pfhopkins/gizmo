@@ -70,7 +70,7 @@ def test_forced_times(built):
     sn = sn_rows(rows)
     assert sorted(sn) == [1, 2] and len([r for r in rows if int(r[2]) == 1]) == 2, rows
     for k, t_forced in ((1, 0.002), (2, 0.005)):
-        assert t_forced <= sn[k][0] < t_forced + 1.5e-4, (k, sn[k][0])
+        assert t_forced <= sn[k][0] < t_forced + 2.5e-4, (k, sn[k][0])  # its owed winds first, the supernova on the next step
     assert abs(total_mass(snap) / total_mass(ic) - 1) < 1e-12
 
 
@@ -80,6 +80,6 @@ def test_no_gas_retry(built):
     assert sorted(sn) == [1, 2], rows
     assert 0.004 <= sn[1][0] < 0.004 + 1.5e-4, sn[1][0]
     assert sn[1][11] >= 10, sn[1]  # steps without deposit before the event coupled
-    assert 0.005 <= sn[2][0] < 0.005 + 1.5e-4 and sn[2][11] == 0, sn[2]
+    assert 0.005 <= sn[2][0] < 0.005 + 2.5e-4 and sn[2][11] == 0, sn[2]
     assert abs(sn[1][10]) < 1e-9 and abs(sn[2][10]) < 1e-9, (sn[1][10], sn[2][10])  # mass residual [Msun]
     assert abs(total_mass(snap) / total_mass(ic) - 1) < 1e-12

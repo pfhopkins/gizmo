@@ -10,7 +10,7 @@ Problem: a 32^3 lattice of 1 Msun cells at n_H = 10 cm^-3 and 100 K, no gravity,
 budgets do not depend on a cooling module), with four stars moving at 12 km/s, each alone in its region and just past its
 table lifetime at Z = 0.014: a core-collapse SN (20 Msun), a failed SN (40 Msun, no energy, no ejecta: its table ejecta are 0), a
 pulsational pair-instability SN (150 Msun) and a pair-instability SN (320 Msun, no remnant). A few steps. The initial
-conditions count each star's winds as returned up to the end of its life (`SingleStarLastWindLogAge`), so the deaths
+conditions count each star's winds as returned up to the end of its life (`SingleStarBirthMass` = its mass plus the table's wind), so the deaths
 come at once.
 
 Checks:
@@ -25,7 +25,7 @@ Checks:
 7. FIRE metal layout (a second build with `COOLING` and `COOL_METAL_LINES_BY_SPECIES`): every metal slot of the gas gains
    exactly the table SN element ejecta scaled to the ejecta mass (1e-9); slot 0 all table metals C..Zn.
 8. the death step (`test_death_step_first_step_past_lifetime`), caps 10 and 50 kyr: stars 37 kyr from death, a long largest step. A single star's step is `MaxStellarTimestep` (default 50 kyr; 1e4 yr in the production params) and no less: every step before the first death stays in that bin, and each star dies at its first step past its table death time, at most one cap late. With the former rule of 1/50 of the time to death: 377 steps before the first death, down to 0.47 kyr.
-   A death with winds owed (`test_death_with_winds_owed`, the last 5 % of life not returned): one event in the first step, the owed winds in its ejecta as a wind delivery would return them and the table ejecta scaled to the rest, whole mass and metals in the gas; no wind delivery before it. The failed SN (no table ejecta) gives exactly the table wind metals owed (1e-4).
+   A death with winds owed (`test_death_with_winds_owed`, the last 5 % of life not returned): the owed winds leave in the first step as one wind delivery (mass against the table to 1e-9), the deaths fire on the next step with the table's fractions of the mass left; whole mass in the gas (1e-12). The failed SN gives nothing but its winds.
 9. stars started below their table remnant mass: no star grows at death and the total mass is conserved (1e-12).
 10. in 1e7 K gas the total energy still rises by the explosion energies to 1e-3: the ejecta carry no ambient `u`. Before the death ejecta became fractions (item 11) the failed SN gave mass with no energy, which checked that the dilution of `u` is applied at once (measured then 1 - 1.3e-8 after the deposit, 1 + 3.9e-5 at the end of the run); it now ejects nothing.
 

@@ -76,6 +76,9 @@ struct single_star_tree_lum {float L[N_RT_FREQ_BINS];};
     X(double, M_at_SN_trigger, "particle mass when its supernova was triggered [code]; 0 = none pending") \
     X(uint16_t, no_deposit_count, "steps a triggered event found no neighbour weight") \
     X(double, last_wind_log_age, "table age (log10 yr) up to which winds have been returned; 0 = none yet") \
+    X(double, M_birth, "mass the star was born with, after gas collection [Msun]: the winds returned so far are M_birth less its mass; 0 = M_drawn") \
+    X(double, wind_mass, "wind mass of this step's delivery [Msun], held while the delivery couples") \
+    X(double, wind_speed, "wind speed of this step's delivery [km/s]") \
     X(uint8_t, event_bits, "single_star_event_bits") \
     SINGLE_STAR_RECORD_LOG_FIELDS(X)
 enum single_star_event_bits {SINGLE_STAR_EVENT_SN_DONE = 1, SINGLE_STAR_EVENT_AGB_DONE = 2};
@@ -113,6 +116,10 @@ void single_star_record_resize(int capacity);
 void single_star_record_reset(int capacity);   /* restart read: empty arrays of this capacity, then read them */
 void single_star_record_rebuild_free_list(void); /* restart read: after the arrays are read */
 static inline int single_star_slot(int star_idx) {return star_idx - 1;}
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+static inline double single_star_birth_mass(int s) {return (SingleStars.M_birth[s] > 0) ? SingleStars.M_birth[s] : SingleStars.M_drawn[s];} /* [Msun] */
+double single_star_wind_cumulative(double logM, double logZ, double log_age); /* [Msun], single_star_feedback.cc */
+#endif
 
 /* records travelling with their stars through a raw particle exchange (SUBFIND redistribution; domain_exchange has its own copy of this):
    detach each outgoing star's record in send order, swap them with the same partner as the particles, attach to the received stars in order */

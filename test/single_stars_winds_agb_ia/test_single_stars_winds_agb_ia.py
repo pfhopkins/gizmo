@@ -4,6 +4,7 @@ feedback loop. See README.md."""
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 import numpy as np
 import h5py
@@ -12,6 +13,8 @@ from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, get_c
 
 TEST_NAME = "single_stars_winds_agb_ia"
 TEST_DIR = Path(__file__).parent
+sys.path.insert(0, str(TEST_DIR.parent / "treecol_pixels"))
+from stella_table_bands import Tables  # noqa: E402
 PC_KMS_IN_YR = 3.085678e13 / 3.155e7
 FIRE_ELEMENTS = [1, 2, 3, 4, 6, 8, 10, 12, 16, 22]  # table element of metal slots 1..10 (slot 0: all metals C..Zn)
 
@@ -142,10 +145,12 @@ def test_winds_agb_ia(built):
         Zt, Mt = F["Z"][()], F["M_init"][()]
         tpms = F["t_PMS"][()].reshape(len(Zt), len(Mt))[int(np.argmin(np.abs(Zt - 0.014))), int(np.argmin(np.abs(Mt - 35.0)))]
     assert abs(10 ** w["wa"] - (age_yr - tpms)) <= 3e-4 * PC_KMS_IN_YR
-    # the AGB death: one event, white-dwarf remnant of the table mass, ejecta = mass - remnant
+    # the AGB death: one event, after the winds of its whole life left as one delivery; ejecta = mass at death - remnant
     r_agb = rows[rows[:, 2] == 2]
     assert len(r_agb) == 1 and int(r_agb[0, 1]) == agb and int(r_agb[0, 3]) == 0
-    assert abs(r_agb[0, 6] - (3.0 - r_agb[0, 7])) < 1e-12
+    owed = Tables(built["StellarTablesFile"]).wind_cumulative(3.0, 0.014, 11.0)
+    assert owed > 0.1 and abs(r_agb[0, 5] - (3.0 - owed)) < 1e-9, (r_agb[0, 5], owed)
+    assert abs(r_agb[0, 6] - (r_agb[0, 5] - r_agb[0, 7])) < 1e-12
     # Type Ia (hazard multiplied so that every eligible white dwarf explodes at once): the white dwarf of the initial
     # conditions at the first step, the new one from the AGB death at a later step; the whole mass at 1e51 erg, no remnant
     r_ia = rows[rows[:, 2] == 4]

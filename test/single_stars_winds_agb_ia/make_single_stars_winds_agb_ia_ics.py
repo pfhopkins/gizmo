@@ -2,14 +2,19 @@
 stars, each alone in its region (units pc, Msun, km/s): a 35 Msun star 1 Myr old (main-sequence winds), a 3 Msun star
 just past its table lifetime (AGB death, white-dwarf remnant), and a white dwarf of drawn mass 3 Msun, 1 Gyr old, whose
 AGB death is already done (event bit 2), which explodes as a Type Ia SN (`which` picks a subset). Written as a snapshot (start flag 2)."""
+import os
+import sys
 import numpy as np
 import h5py
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "treecol_pixels"))
+from stella_table_bands import Tables  # noqa: E402
 
 PC_KMS_IN_YR = 3.085678e13 / 3.155e7  # time unit [yr], with the code's year (constants.h)
 
 
-def make_single_stars_winds_agb_ia_ics(fname, tables_file, n=24, n_H=10.0, T=100.0, z=0.014, M=35.0, v_radial=0.0, last_wind_log_age=None, which=("wind", "agb", "wd"), n_metals=1, wind_age_yr=1.0e6, gas_metals=True):
-    """v_radial [km/s]: gas moves radially out of the star, Gaussian of 3 cells; last_wind_log_age: winds returned up to this table age;
+def make_single_stars_winds_agb_ia_ics(fname, tables_file, n=24, n_H=10.0, T=100.0, z=0.014, M=35.0, v_radial=0.0, last_wind_log_age=None, which=("wind", "agb", "wd"), n_metals=1, wind_age_yr=1.0e6, gas_metals=True, wind_returned=None):
+    """v_radial [km/s]: gas moves radially out of the star, Gaussian of 3 cells; last_wind_log_age: winds returned up to this table age (the birth mass is the
+    mass plus that table wind, or plus wind_returned [Msun]);
     n_metals 11: the FIRE layout (total, He, C, N, O, Ne, Mg, Si, S, Ca, Fe), solar scaled to z; wind_age_yr: age of the wind star;
     gas_metals False: metal-free gas"""
     solar = np.array([0.0142, 0.2703, 2.53e-3, 7.41e-4, 6.13e-3, 1.34e-3, 7.57e-4, 7.12e-4, 3.31e-4, 6.87e-5, 1.38e-3])
@@ -59,4 +64,6 @@ def make_single_stars_winds_agb_ia_ics(fname, tables_file, n=24, n_H=10.0, T=100
         s["SingleStarBirthMetallicity"] = np.full(ns, z); s["SingleStarEventBits"] = np.array([b for _, _, _, _, b in stars], dtype=float)
         if last_wind_log_age is not None:
             s["SingleStarLastWindLogAge"] = np.full(ns, last_wind_log_age)
+            T = Tables(tables_file)
+            s["SingleStarBirthMass"] = np.array([m + (T.wind_cumulative(md, z, last_wind_log_age) if wind_returned is None else wind_returned) for md, m, *_ in stars])
     return L

@@ -59,7 +59,7 @@ def run(tag, tables, metals, over):
     if d.exists():
         shutil.rmtree(d)
     (d / "output").mkdir(parents=True)
-    L = make_single_stars_metals_ics(str(d / "output" / "snapshot_000.hdf5"), metals, event_stars(tables["StellarTablesFile"]))
+    L = make_single_stars_metals_ics(str(d / "output" / "snapshot_000.hdf5"), metals, event_stars(tables["StellarTablesFile"]), tables_file=tables["StellarTablesFile"])
     for f in ("TREECOOL", "spcool_tables"):
         if (TEST_DIR / f).exists():
             os.symlink(TEST_DIR / f, d / f)

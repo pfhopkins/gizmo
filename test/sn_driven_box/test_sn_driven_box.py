@@ -65,7 +65,7 @@ def sn_stage(driven, tag, env=None):
     (d / "output").mkdir(parents=True)
     shutil.copy(snap, d / "output" / "snapshot_000.hdf5")
     M, age, pos = events(tables, SUITE["n_sn"], SUITE["window_yr"])
-    add_stars(d / "output" / "snapshot_000.hdf5", M, age, pos)
+    add_stars(d / "output" / "snapshot_000.hdf5", M, age, pos, tables)
     t_end = SUITE["t_drive"] + SUITE["window_yr"] / 9.78e8 + SUITE["t_after"]
     params(d, tables, cooling, SUITE["L_pc"], t_end, t_end)
     run(d, env)
@@ -142,7 +142,7 @@ def test_single_sn_energy(built, m_cell):
     ic = d / "output" / "snapshot_000.hdf5"
     make_box(ic, LADDER[m_cell], 100.0, cell_msun=m_cell)
     t_sn = 1e-4 - 0.2 * 5e-5  # code time
-    add_stars(ic, np.array([20.0]), np.array([death_age(tables, 20.0) - t_sn * YR_PER_CODE_TIME]), np.array([[0.5, 0.5, 0.5]]))
+    add_stars(ic, np.array([20.0]), np.array([death_age(tables, 20.0) - t_sn * YR_PER_CODE_TIME]), np.array([[0.5, 0.5, 0.5]]), tables)
     params(d, tables, cooling, LADDER[m_cell], 2e-4, 2e-4, driving=0.0)
     run(d)
     c, _, e = read(d / "output")
@@ -161,7 +161,7 @@ def test_no_wake_collective_without_supernova(built):
     (d / "output").mkdir(parents=True)
     ic = d / "output" / "snapshot_000.hdf5"
     make_box(ic, LADDER[10.0], 100.0, cell_msun=10.0)
-    add_stars(ic, np.array([20.0]), np.array([death_age(tables, 20.0) - 1.0e6]), np.array([[0.5, 0.5, 0.5]]))
+    add_stars(ic, np.array([20.0]), np.array([death_age(tables, 20.0) - 1.0e6]), np.array([[0.5, 0.5, 0.5]]), tables)
     params(d, tables, cooling, LADDER[10.0], 5e-5, 5e-5, driving=0.0)
     so = d / "mpi_collective_callers.so"
     subprocess.run(["mpicc", "-shared", "-fPIC", "-O1", str(TEST_DIR.parent / "hot_gas_timebin_clamp" / "mpi_collective_callers.c"), "-o", str(so)], check=True)

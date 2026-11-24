@@ -1,6 +1,7 @@
-"""Band luminosities of a single star from the stella-tables file, interpolated as GIZMO does
+"""Band luminosities and cumulative wind mass of a single star from the stella-tables files, interpolated as GIZMO does
 (galaxy_sf/stellar_evolution_tables.cc: bilinear t_PMS and lifetime, trilinear float32 log-luminosity tables
 with dead (-99) corners left out)."""
+import os
 import numpy as np
 import h5py
 
@@ -40,6 +41,19 @@ class Tables:
                     if v > -90.0:
                         vs += wz * wm * wa * v; ws += wz * wm * wa
         return vs / ws if ws > 0 else -99.0
+
+    def wind_cumulative(self, M, Z, log_age):
+        """cumulative wind mass [Msun] from birth to table age log_age (each corner held at its lifetime)"""
+        iz, fz = self._idx(self.lZ, np.log10(max(Z, 1e-10))); im, fm = self._idx(self.lM, np.log10(M))
+        c = 0.0
+        with h5py.File(os.path.join(os.path.dirname(self.fname), "stellar_wind_cumulative.hdf5"), "r") as W:
+            for dz, wz in ((0, 1 - fz), (1, fz)):
+                for dm, wm in ((0, 1 - fm), (1, fm)):
+                    life = self.life.reshape(len(self.lZ), len(self.lM))[iz + dz, im + dm]
+                    ia, fa = self._idx(self.la, min(log_age, np.log10(life)) if life > 0 else log_age)
+                    v = W["elem_ej_wind_cumulative"][iz + dz, im + dm, ia:ia + 2, :].astype(np.float64).sum(1)
+                    c += wz * wm * (v[0] * (1 - fa) + v[1] * fa)
+        return c
 
     def bands(self, M, Z, age_yr):
         """(PE 8-13.6, LW 11.2-13.6, 6-8, NUV 3.444-6, OPT) [erg/s]; zeros before the main sequence and after death"""

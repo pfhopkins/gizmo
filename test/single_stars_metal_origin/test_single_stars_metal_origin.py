@@ -63,7 +63,7 @@ def run(tag, tables, over, ic=None):
     if d.exists():
         shutil.rmtree(d)
     (d / "output").mkdir(parents=True)
-    L = make_single_stars_metals_ics(str(d / "output" / "snapshot_000.hdf5"), solar27(tables["StellarTablesFile"]), event_stars(tables["StellarTablesFile"]))
+    L = make_single_stars_metals_ics(str(d / "output" / "snapshot_000.hdf5"), solar27(tables["StellarTablesFile"]), event_stars(tables["StellarTablesFile"]), tables_file=tables["StellarTablesFile"])
     if ic is not None:
         shutil.copy(ic, d / "output" / "snapshot_000.hdf5")
     for f in ("TREECOOL", "spcool_tables"):

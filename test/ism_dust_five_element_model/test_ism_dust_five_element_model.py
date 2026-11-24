@@ -181,7 +181,7 @@ def star_run(tag, flags, tmax=5e-5, every=None):
     stars = event_stars(T)[:2]
     stars[1] = stars[1] + (np.log10(event_life(T, 3.0)),)
     dust, species = seed(SOLAR, 0.5, 0.5)
-    L = make_single_stars_metals_ics(str(d / "output" / "snapshot_000.hdf5"), SOLAR, stars, gas_fields={"DustMetallicity": dust, "DustSpeciesAbundance": species})
+    L = make_single_stars_metals_ics(str(d / "output" / "snapshot_000.hdf5"), SOLAR, stars, tables_file=T, gas_fields={"DustMetallicity": dust, "DustSpeciesAbundance": species})
     launch(d, exe, {"BoxSize": L, "TimeMax": tmax, "TimeBetSnapshot": every or tmax, "StellarTablesFile": T}, "2")
     rows = np.loadtxt(d / "output" / "single_star_events.txt", ndmin=2)
     assert sorted(rows[:, 2].astype(int).tolist()) == [1, 2]
@@ -247,7 +247,7 @@ def test_dust_budget_through_feedback_merge_and_split():
     star = event_stars(T)[1] + (np.log10(event_life(T, 3.0)),)
     dust, species = seed(SOLAR, 0.5, 0.5)
     ic = d / "output" / "snapshot_000.hdf5"
-    L = make_single_stars_metals_ics(str(ic), SOLAR, [star], gas_fields={"DustMetallicity": dust, "DustSpeciesAbundance": species})
+    L = make_single_stars_metals_ics(str(ic), SOLAR, [star], tables_file=T, gas_fields={"DustMetallicity": dust, "DustSpeciesAbundance": species})
     with h5py.File(ic, "r+") as F:
         g, x_s = F["PartType0"], F["PartType4/Coordinates"][0]
         m, x = g["Masses"][()], g["Coordinates"][()]

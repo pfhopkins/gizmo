@@ -44,7 +44,7 @@ void star_mergers_apply(std::vector<star_merger_action> &actions, const char *ta
 #else
     const int n_met = 0;
 #endif
-    const int buf_size = n_met + 3; /* [metals][drawn mass][birth Z][age yr] */
+    const int buf_size = n_met + 4; /* [metals][drawn mass][birth Z][age yr][birth mass] */
     struct survivor_acc {double M_old; std::vector<double> buf_sum; std::vector<std::vector<double>> victims; std::vector<double> victim_mass;};
     std::unordered_map<int, survivor_acc> acc; /* by local survivor index */
 
@@ -58,6 +58,9 @@ void star_mergers_apply(std::vector<star_merger_action> &actions, const char *ta
 #endif
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
             if(P[v].StarIdx > 0) {buf[n_met] = SingleStars.M_drawn[single_star_slot(P[v].StarIdx)]; buf[n_met + 1] = SingleStars.Z_birth[single_star_slot(P[v].StarIdx)];}
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+            if(P[v].StarIdx > 0) {buf[n_met + 3] = single_star_birth_mass(single_star_slot(P[v].StarIdx));}
+#endif
 #ifdef SINGLE_STAR_MERGER_PRODUCT
             if(P[v].StarIdx > 0) {buf[n_met + 2] = evaluate_stellar_age_Gyr(v) * 1.e9;}
 #endif
@@ -106,6 +109,7 @@ void star_mergers_apply(std::vector<star_merger_action> &actions, const char *ta
             P[s_idx].StellarAge = star_formation_time_for_age(stellar_t_PMS(logM, logZ) + tab);
 #ifdef GALSF_FB_MECHANICAL
             SingleStars.last_wind_log_age[s] = log10(DMAX(tab, 100.0)); /* the wind table restarts at the product's age */
+            SingleStars.M_birth[s] = Mnew + single_star_wind_cumulative(logM, logZ, SingleStars.last_wind_log_age[s]); /* no wind owed now */
 #endif
             printf("%s STAR MERGER PRODUCT: ID %llu M=%g Msun Zb=%g MS fraction %g -> age %g yr\n", tag, (unsigned long long)P[s_idx].ID, Mnew, Zb, 0.1 * fsum / Mtot, stellar_t_PMS(logM, logZ) + tab);
             continue;
@@ -115,6 +119,13 @@ void star_mergers_apply(std::vector<star_merger_action> &actions, const char *ta
             printf("%s STAR MERGER INTO REMNANT: ID %llu M=%g Msun\n", tag, (unsigned long long)P[s_idx].ID, P[s_idx].Mass * UNIT_MASS_IN_SOLAR);
             continue;
         }
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        if(P[s_idx].StarIdx > 0) { /* the birth mass too: the winds returned so far are reckoned from it */
+            int s = single_star_slot(P[s_idx].StarIdx); double Mb = single_star_birth_mass(s);
+            for(const std::vector<double> &b : a.victims) {Mb += b[n_met + 3];}
+            SingleStars.M_birth[s] = Mb;
+        }
+#endif
         if(P[s_idx].StarIdx > 0) {for(const std::vector<double> &b : a.victims) {SingleStars.M_drawn[single_star_slot(P[s_idx].StarIdx)] += b[n_met];}} /* the survivor keeps its age */
 #endif
     }

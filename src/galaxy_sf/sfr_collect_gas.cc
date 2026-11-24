@@ -349,6 +349,9 @@ double single_stars_collect_gas(long long tot_spawned)
             double M = (double)t.N_got * mu;
             ESTEP_BOOK(EBK_SF_STAR_KIN, -0.5 * P[t.i].Mass * P[t.i].Vel.norm_sq() * All.cf_a2inv);
             P[t.i].Mass = M;
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+            SingleStars.M_birth[single_star_slot(P[t.i].StarIdx)] = M * UNIT_MASS_IN_SOLAR;
+#endif
             for(int k = 0; k < 3; k++) {P[t.i].Vel[k] = (double)t.p[k] * ssc_pow2_at_least(t.N_drawn * mu) * ldexp(1.0, -60) / M;}
             ESTEP_BOOK(EBK_SF_STAR_KIN, 0.5 * M * P[t.i].Vel.norm_sq() * All.cf_a2inv); /* the donors' momentum: their kinetic energy less this is the inelastic loss */
 #ifdef METALS

@@ -42,7 +42,7 @@ def run(tables):
     (d / "output").mkdir(parents=True, exist_ok=True)
     ic = d / "output" / "snapshot_000.hdf5"
     if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
-        L = make_single_stars_winds_agb_ia_ics(str(ic), tables["StellarTablesFile"], which=("wind",), last_wind_log_age=np.log10(AGE0))
+        L = make_single_stars_winds_agb_ia_ics(str(ic), tables["StellarTablesFile"], which=("wind",), last_wind_log_age=np.log10(AGE0), wind_returned=MDOT * AGE0)
         p = (TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SET_BY_TEST", tables["StellarTablesFile"])
         p = p.replace("BoxSize                            45.0", f"BoxSize                            {L}")
         (d / f"{TEST_NAME}.params").write_text(p)

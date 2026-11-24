@@ -7,7 +7,7 @@ event without neighbour weight, `no_deposit_count`).
 
 Problem: 24^3 lattice of 1 Msun cells, n_H = 10, 100 K, two 20 Msun stars 1 Myr old (table death ~10 Myr), IDs 1 and 2; 8 kyr, 2 ranks.
 
-Checks: each star one supernova row, at its forced time to within one step (1.5e-4); with no gas until 0.004 the first star (forced 0.002)
+Checks: each star one supernova row, at its forced time to within two steps (2.5e-4: the winds it owes leave on the step before); with no gas until 0.004 the first star (forced 0.002)
 fires at 0.004, after at least 10 steps without deposit, the second is not delayed; mass conserved (1e-12), mass residual 0.
 
 Reference: the definitions of the parameters.

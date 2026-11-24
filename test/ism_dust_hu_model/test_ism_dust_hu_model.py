@@ -198,7 +198,7 @@ def star_run(tag, dust, tmax=5e-4):
     (d / "output").mkdir(parents=True)
     stars = event_stars(T)[:2]
     stars[1] = stars[1] + (np.log10(event_life(T, 3.0)),)
-    L = make_single_stars_metals_ics(str(d / "output" / "snapshot_000.hdf5"), SOLAR, stars, gas_fields={"DustMetallicity": dust[0], "DustSpeciesAbundance": dust[1]})
+    L = make_single_stars_metals_ics(str(d / "output" / "snapshot_000.hdf5"), SOLAR, stars, tables_file=T, gas_fields={"DustMetallicity": dust[0], "DustSpeciesAbundance": dust[1]})
     for f in ("TREECOOL", "spcool_tables"):
         if (TEST_DIR / f).exists():
             os.symlink(TEST_DIR / f, d / f)

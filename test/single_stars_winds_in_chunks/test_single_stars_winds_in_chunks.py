@@ -61,6 +61,7 @@ def run(tag, tables, age, last_age):
     make_treecol_pixels_ics(str(ic), L, lattice(N_SIDE, L), [(M, age, np.full(3, 0.5 * L + 0.17))], z=Z, hsml=2.0)
     with h5py.File(ic, "a") as f:
         f["PartType4/SingleStarLastWindLogAge"] = np.array([last_age])
+        f["PartType4/SingleStarBirthMass"] = np.array([M + Tables(tables["StellarTablesFile"]).wind_cumulative(M, Z, last_age)])
     params = (TEST_DIR / f"{TEST_NAME}.params").read_text()
     for k, v in (("StellarTablesFile", tables["StellarTablesFile"]), ("SGChemTablesPath", os.environ.get("SGCHEM_TABLES_DIR", os.path.dirname(tables["StellarTablesFile"])))):
         params = params.replace(f"{k:35s}SET_BY_TEST", f"{k:35s}{v}")

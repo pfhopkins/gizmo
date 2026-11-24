@@ -136,23 +136,23 @@ def test_death_step_first_step_past_lifetime(built, cap_kyr):
 
 
 def test_death_with_winds_owed(built):
-    """stars past death with the winds of the last 5 % of their life not returned: the death fires in the first step, as one
-    event of the whole star, and the owed winds leave with its ejecta"""
+    """stars past death with the winds of the last 5 % of their life not returned: the owed winds leave in the first step as a wind
+    delivery, at the table wind speed, and the death fires on the next step, with the table's fraction of the mass left"""
     ic, snap, rows = run("winds_owed", built, ic_args={"winds_owed_dex": np.log10(1 / 0.95)})
     a, b = totals(ic), totals(snap)
     assert len(rows) == 4 and np.all(rows[:, 2] == 1)
-    assert np.ptp(rows[:, 0]) == 0 and rows[0, 0] <= 1e-5  # the first step
-    assert np.all(rows[:, 5] == rows[:, 4])  # nothing left the star before the death
-    assert abs(b["M"] - a["M"] - rows[:, 6].sum()) <= 1e-12 * b["M"]
-    assert abs(b["MZ"][0] - a["MZ"][0] - rows[:, 9].sum()) <= 1e-10 * rows[:, 9].sum()
-    # the owed winds keep their mass and composition: the failed SN has no table yields, so its metals are theirs alone
-    with h5py.File(built["StellarTablesFile"], "r") as T, h5py.File(Path(built["StellarTablesFile"]).parent / "stellar_wind_cumulative.hdf5", "r") as W:
-        Zt, Mt, la = T["Z"][()], T["M_init"][()], T["log_age_yr"][()]
-        iz, im = int(np.argmin(np.abs(Zt - 0.014))), int(np.argmin(np.abs(Mt - 40.0)))
-        cum = W["elem_ej_wind_cumulative"][()].reshape(len(Zt), len(Mt), len(la), -1)[iz, im, :, 2:].sum(1)
-        life = T["lifetime_yr"][()].reshape(len(Zt), len(Mt))[iz, im]
-    owed = np.interp(np.log10(life), la, cum) - np.interp(np.log10(0.95 * life), la, cum)
-    assert owed > 0 and abs(rows[rows[:, 4] == 40.0, 9][0] / owed - 1) < 1e-4, (rows[rows[:, 4] == 40.0, 9], owed)
+    assert np.ptp(rows[:, 0]) == 0 and rows[0, 0] > 0
+    import sys
+    sys.path.insert(0, str(TEST_DIR.parent / "treecol_pixels"))
+    from stella_table_bands import Tables
+    T = Tables(built["StellarTablesFile"])
+    for r in rows:
+        life = np.interp(np.log10(r[4]), T.lM, T.life.reshape(len(T.lZ), len(T.lM))[int(np.argmin(np.abs(T.lZ - np.log10(0.014))))])
+        owed = T.wind_cumulative(r[4], 0.014, 11.0) - T.wind_cumulative(r[4], 0.014, np.log10(0.95 * life))
+        assert owed > 0 and abs((r[4] - r[5]) / owed - 1) < 1e-9, (r[4], r[5], owed)  # what left before the death
+    assert abs(b["M"] - a["M"] - (rows[:, 6].sum() + (rows[:, 4] - rows[:, 5]).sum())) <= 1e-12 * b["M"]
+    failed = rows[rows[:, 4] == 40.0][0]
+    assert failed[6] == 0 and failed[9] == 0  # no table ejecta: its winds were all it gave
 
 
 def test_element_yields(built):

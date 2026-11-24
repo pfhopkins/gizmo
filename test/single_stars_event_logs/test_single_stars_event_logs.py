@@ -117,6 +117,8 @@ def test_agb_type_ia_wind_rows(built):
         s = F["PartType4"]
         m = dict(zip(s["ParticleIDs"][()].tolist(), s["Masses"][()].tolist()))
         t_snap = float(F["Header"].attrs["Time"])
+    agb_wind, wind = wind[wind[:, 5] != 35.0], wind[wind[:, 5] == 35.0]
+    assert len(agb_wind) == 1 and agb_wind[0, 4] == agb[0, ID]  # the winds of the AGB star's whole life, before its death
     w_id = wind[0, 4]
     assert np.all(wind[:, 4] == w_id) and np.all(wind[:, 5] == 35.0) and np.all(np.diff(wind[:, 0]) > 0)
     before = wind[:, 0] < t_snap * (1 - 1e-12)  # the snapshot is written before that step's feedback
