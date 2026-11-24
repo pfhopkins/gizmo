@@ -964,12 +964,12 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS) /* inject cosmic rays alongside wind injection */
         double eps_cr = evaluate_sink_cosmicray_efficiency(P[i].Sink_Mdot,P[i].Sink_Mass,i);
-        double fac_wind_corr = All.Sink_accreted_fraction / (1.-All.Sink_accreted_fraction);
-        double dEcr = eps_cr * P[j].Mass * fac_wind_corr * C_LIGHT_CODE*C_LIGHT_CODE;
+        double fac_wind_corr = All.Sink_accreted_fraction / (1.-All.Sink_accreted_fraction); /* ratio of accretion to outflow rate */
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL
-        dEcr = eps_cr * 0.5 * v_magnitude_physical*v_magnitude_physical * P[j].Mass; /* in this case, eps_cr refers to fraction relative to KE going into jet spawns */
-        if(mode != 1) {dEcr=0;} /* only the jet cells carry CR energy */
-#elif defined(SINK_TEST_WIND_MIXED_FASTSLOW)
+        if(P[i].Type==5) {double Mdot_wind = P[i].Sink_Mdot_ROI - P[i].Sink_Mdot; if(Mdot_wind > 0) {fac_wind_corr = P[i].Sink_Mdot / Mdot_wind;} else {fac_wind_corr = 0;}} /* here this ratio is not constant */
+#endif
+        double dEcr = eps_cr * P[j].Mass * fac_wind_corr * C_LIGHT_CODE*C_LIGHT_CODE; /* eps_cr is a fraction of mdot*c^2: not limited by the kinetic energy of the spawned cells, since it can represent e.g. jet energy converted to CRs on un-resolved scales */
+#if defined(SINK_RIAF_SUBEDDINGTON_MODEL) || defined(SINK_TEST_WIND_MIXED_FASTSLOW)
         if(mode != 1) {dEcr=0;} else if(P[i].Type==5) {dEcr *= mass_of_new_particle_default / (fraction_to_spawn_in_jet * P[j].Mass);} /* only the jet cells carry CR energy: weight by their mass and number fraction so the total is still eps_cr*Mdot*c^2 */
 #endif
         if(P[i].Type==4) {dEcr=0;} /* stellar ejecta are not powered by accretion */

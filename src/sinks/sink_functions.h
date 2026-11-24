@@ -214,11 +214,7 @@ KOKKOS_INLINE_FUNCTION double evaluate_sink_jet_efficiency_core(double mdot, dou
 KOKKOS_INLINE_FUNCTION double evaluate_sink_cosmicray_efficiency_core(double mdot, double mass, long pindex)
 {
 #ifdef SINK_COSMIC_RAYS
-#ifdef SINK_RIAF_SUBEDDINGTON_MODEL /* experiment with functions here to explore more/less efficient CR injection at lower/higher eddington ratios, reflecting hard/soft-type transition */
-    /* current version with this flag scales this relative to the jet kinetic power */
-    if(mdot/sink_eddington_mdot_core(mass) < (SINK_RIAF_SUBEDDINGTON_MODEL)) {return 0.5;} else {return 0.1;} /* high-Mdot uses standard SNe kinetic power, otherwise give unity power here */
-#endif
-    return All.Sink_CosmicRay_Injection_Efficiency; // default to constant
+    return All.Sink_CosmicRay_Injection_Efficiency; // default to constant, as a fraction of mdot*c^2
 #endif
     return 0;
 }

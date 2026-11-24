@@ -1573,9 +1573,6 @@ KOKKOS_INLINE_FUNCTION double cr_get_source_injection_rate(int i, struct particl
         double mdot_eff = pp[i].Sink_Mdot; // code units
         mdot_eff = DMIN( mdot_eff , pp[i].Sink_Mass / (100./UNIT_TIME_IN_MYR) ); // if time-averaging over ~Gyr, can't have time-averaged injection rate above Mbh/<t> more or less (modulo order-one corrections for all this)
         Edot = evaluate_sink_cosmicray_efficiency_core(pp[i].Sink_Mdot,pp[i].Sink_Mass,i) * mdot_eff * C_LIGHT_CODE*C_LIGHT_CODE; // injection in code units
-#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
-        Edot *= evaluate_sink_jet_efficiency_core(pp[i].Sink_Mdot,pp[i].Sink_Mass); // with this model the CR efficiency is defined relative to the jet kinetic power
-#endif
     }
 #endif
 #endif
