@@ -349,6 +349,10 @@ double single_stars_collect_gas(long long tot_spawned)
     std::vector<int> moved;
     for(ssc_star& t : S) {
         int ok = !t.active;
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION /* the parent forms no star until its density is recomputed, then for a fraction of its free-fall time, whether or not the draw got its gas */
+        CellP[t.parent].SingleStarSpawnBlock = 1;
+        if(All.SFCooldownFreeFallFraction > 0) {CellP[t.parent].SingleStarSFCooldown = All.SFCooldownFreeFallFraction * sqrt(3. * M_PI / (32. * All.G * t.rho_form * All.cf_a3inv));}
+#endif
         if(ok) {
             double M = (double)t.N_got * mu;
             ESTEP_BOOK(EBK_SF_STAR_KIN, -0.5 * P[t.i].Mass * P[t.i].Vel.norm_sq() * All.cf_a2inv);
@@ -368,10 +372,6 @@ double single_stars_collect_gas(long long tot_spawned)
             moved.push_back(t.i); M_collected_here += M;
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
             ledger_add(LEDGER_M_STARS_FORMED, M); ledger_add(LEDGER_MZ_STARS_FORMED, M * P[t.i].Metallicity[0]);
-#endif
-#ifdef GALSF_SINGLE_STARS_SF_CRITERION /* the parent forms no star until its density is recomputed, then for a fraction of its free-fall time */
-            CellP[t.parent].SingleStarSpawnBlock = 1;
-            if(All.SFCooldownFreeFallFraction > 0) {CellP[t.parent].SingleStarSFCooldown = All.SFCooldownFreeFallFraction * sqrt(3. * M_PI / (32. * All.G * t.rho_form * All.cf_a3inv));}
 #endif
         } else {
             ESTEP_BOOK(EBK_SF_STAR_KIN, -0.5 * P[t.i].Mass * P[t.i].Vel.norm_sq() * All.cf_a2inv);
