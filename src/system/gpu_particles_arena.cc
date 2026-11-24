@@ -470,21 +470,29 @@ static void particle_storage_apply_placement(void *p, size_t nbytes, size_t part
 
 #if defined(GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY) && GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY && defined(KOKKOS_ENABLE_CUDA)
 /*! The bulk particle records (P, CellP) in ordinary page-aligned system memory with a host preferred-location hint, instead of
- *  CUDA managed memory. On a GPU that can access pageable memory (cudaDevAttrPageableMemoryAccess) the device reads and writes the
- *  records in place, while host loops find them in their own memory. On Grace-Blackwell that access is the hardware path, over the
- *  coherent link through the host page tables (cudaDevAttrPageableMemoryAccessUsesHostPageTables), which is what the measured gain
- *  rests on; the first attribute alone would also admit a software-managed path. Every other shared-space buffer is unchanged.
- *  Asked for on a GPU without that access, the storage is refused by name rather than served from managed memory. */
+ *  CUDA managed memory. On a GPU that reaches pageable memory through the host page tables (cudaDevAttrPageableMemoryAccess and
+ *  cudaDevAttrPageableMemoryAccessUsesHostPageTables both 1: the hardware path over a coherent link, as on Grace-Blackwell) the
+ *  device reads and writes the records in place, while host loops find them in their own memory; the first attribute alone would
+ *  also admit a software-managed path, which this storage is not meant for. Every other shared-space buffer is unchanged. Asked for
+ *  on a GPU without both, the storage is refused by name rather than served from managed memory. */
 static void *system_particle_buffers[4] = {};
+
+/* The two device attributes the storage needs: access to pageable memory at all, and access through the host page tables (the
+   hardware path over the coherent link, not a software-managed one); each is 1 or 0, -1 when it could not be read. */
+static int pageable_access = -1, pageable_access_host_page_tables = -1;
 
 static int node_reaches_pageable_memory(void)
 {
     static int ok = -1;
     if(ok < 0)
     {
-        int attr = 0, dev = 0;
-        ok = (cudaGetDevice(&dev) == cudaSuccess &&
-              cudaDeviceGetAttribute(&attr, cudaDevAttrPageableMemoryAccess, dev) == cudaSuccess && attr) ? 1 : 0;
+        int dev = 0, a = 0, b = 0;
+        if(cudaGetDevice(&dev) == cudaSuccess)
+        {
+            if(cudaDeviceGetAttribute(&a, cudaDevAttrPageableMemoryAccess, dev) == cudaSuccess) {pageable_access = a ? 1 : 0;}
+            if(cudaDeviceGetAttribute(&b, cudaDevAttrPageableMemoryAccessUsesHostPageTables, dev) == cudaSuccess) {pageable_access_host_page_tables = b ? 1 : 0;}
+        }
+        ok = (pageable_access == 1 && pageable_access_host_page_tables == 1) ? 1 : 0;
     }
     return ok;
 }
@@ -497,8 +505,9 @@ static void *system_particle_alloc(size_t nbytes)
         if(!reported && ThisTask == 0)
         {
             reported = 1;
-            printf("GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY is set, but this GPU cannot reach pageable system memory "
-                   "(cudaDevAttrPageableMemoryAccess = 0): the particle storage is not allocated.\n");
+            printf("GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY is set, but this GPU does not reach pageable system memory through the host "
+                   "page tables (cudaDevAttrPageableMemoryAccess = %d, cudaDevAttrPageableMemoryAccessUsesHostPageTables = %d; -1 = could "
+                   "not be read; both must be 1): the particle storage is not allocated.\n", pageable_access, pageable_access_host_page_tables);
             fflush(stdout);
         }
         return NULL;
