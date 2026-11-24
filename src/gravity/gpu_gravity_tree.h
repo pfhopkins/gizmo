@@ -305,7 +305,9 @@ int  gpu_device_node_list_publish(const int *list, int n, int base, int cap);
  * gpu_force_update_hmax_release); when reach_records is non-NULL, copy one record per active element into it (in
  * ActiveParticleList order) for the host's source-reach-map test.  It takes two fresh GlobFlag values, the second the
  * stamp of the changed-node list, so a caller adding to the list afterwards dedupes against GlobFlag as it stands.
- * 0 = done; 1 = not taken (no node has changed; the caller runs the host form). */
+ * 0 = taken (done, or stopped through endrun with nothing to send: the caller still joins the exchange); 1 = not taken
+ * (no node has changed; the caller runs the host form).  The release, after the exchange, publishes the drifted nodes'
+ * mirrors and frees the list. */
 struct gpu_hmax_reach_record {
     double reach;      /* the element's per-type band radius (force_hmax_per_type_radius) */
     double growth;     /* its radius growth rate if its radius drifts with the divergence, else 0 */

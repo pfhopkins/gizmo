@@ -464,20 +464,31 @@ finish_mpi:
  *      lane is that lane's from there up) -- the set the host's serial drift visits;
  *   2. the listed nodes brought current by the device drift (gpu_device_node_list_bring_current), the same
  *      per-node arithmetic as the host's force_drift_node;
- *   3. the band raise with atomics, the changed top-level nodes listed once (an atomic stamp), and the listed
- *      nodes' mirrors published again, so they carry the raised bands as the host route's later publication would.
+ *   3. the band raise with atomics, and the changed top-level nodes listed once (an atomic stamp).
+ * After the exchange, gpu_force_update_hmax_release publishes the claimed nodes' mirrors again, so they carry the
+ * raised bands (local and remote) as the host route's later publication of the nodes it drifted would.
  * The bands are maxima, so the result does not depend on the order the lanes run in; the changed-node list is a
  * set, and every reader of it (the pack, the exchange, the apply) is order-independent.
  * ========================================================================= */
 static char *g_hmax_update_scratch = NULL;
+static int *g_hmax_claim_list = NULL;   /* in the scratch: the claimed (drifted) nodes, published at release */
+static int g_hmax_claim_n = 0;
 
 extern "C" int gpu_force_update_hmax_available(void)
 {
     return gizmo_gpu_default_space_is_host() ? 0 : 1;
 }
 
+/* After the exchange: publish the claimed nodes' mirrors from their canonical state, which now holds the local raise and
+   the other ranks' changes -- what the host route's later publication of the nodes it drifted gives -- then free. */
 extern "C" void gpu_force_update_hmax_release(void)
 {
+    if(g_hmax_claim_n > 0 && gpu_device_node_list_publish(g_hmax_claim_list, g_hmax_claim_n, All.TreeNodeIndexBase, gpu_gravity_tree_capacity()) != 0)
+    {
+        printf("Task=%d force_update_hmax (device): the updated nodes' mirrors could not be published\n", ThisTask); fflush(stdout);
+        endrun(929712);
+    }
+    g_hmax_claim_list = NULL; g_hmax_claim_n = 0;
     DomainList = NULL;
     if(g_hmax_update_scratch) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_hmax_update_scratch); g_hmax_update_scratch = NULL;}
 }
@@ -488,7 +499,7 @@ extern "C" int gpu_force_update_hmax_local(struct gpu_hmax_reach_record *reach_r
 
     /* the device drift and the mirror it publishes need the walk's mirror of the tree */
     const struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
-    if(!soa || !soa->len) {return 1;}
+    if(!soa || !soa->len || !soa->node_ti || !soa->s || !soa->node_vs || !soa->bitflags || !soa->hmax || !soa->vmax) {return 1;}
     const int n_active = (int) ActiveParticleList.size();
     const int ntop = (NTopleaves > 0) ? NTopleaves : 1;
     const int n_alloc = (n_active > 0) ? n_active : 1;
@@ -548,12 +559,15 @@ extern "C" int gpu_force_update_hmax_local(struct gpu_hmax_reach_record *reach_r
     }
     if(flags_dev[1]) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch); return 1;}   /* nothing has changed yet */
     g_hmax_update_scratch = scratch;
+    g_hmax_claim_list = claim_list_dev;
+    g_hmax_claim_n = flags_dev[0];
     DomainList = domain_list_dev;
     DomainNumChanged = 0;
     const int n_claimed = flags_dev[0];
 
-    /* 2. bring the claimed nodes current.  A failure past this point has changed nodes, so it is not answered by the
-          host form: it stops the run, and this rank still joins the exchange with nothing to send. */
+    /* 2. bring the claimed nodes current.  A failure here (a drift-table or dilation refusal, an index outside the mirror)
+          may have changed nodes, so it is not answered by the host form: it stops the run, and this rank still joins the
+          exchange with nothing to send. */
     if(gpu_device_node_list_bring_current(claim_list_dev, n_claimed, All.TreeNodeIndexBase, gpu_gravity_tree_capacity(), ti_now) != 0)
     {
         printf("Task=%d force_update_hmax (device): the active chains could not be brought current\n", ThisTask); fflush(stdout);
@@ -577,14 +591,14 @@ extern "C" int gpu_force_update_hmax_local(struct gpu_hmax_reach_record *reach_r
             const int per_type_band = (int) Pp[i].Type;
             const double per_type_htmp = force_hmax_per_type_radius(Pp[i], max_kernel_radius);
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-            const int scalar_eligible = 1;
+            volatile int scalar_eligible = 1;
             const double kernrad_temp = (Pp[i].Type == 0) ? (double) Pp[i].KernelRadius : (double) Pp[i].AGS_KernelRadius;
             const double htmp = DMIN(kernrad_temp, max_kernel_radius);
 #else
-            const int scalar_eligible = (Pp[i].Type == 0);
+            volatile int scalar_eligible = (Pp[i].Type == 0);
             const double htmp = (Pp[i].Type == 0) ? DMIN((double) Pp[i].KernelRadius, max_kernel_radius) : 0.0;
 #endif
-            const int divv_eligible = particle_radius_drifts_with_divergence_P(i, Pp);
+            volatile int divv_eligible = particle_radius_drifts_with_divergence_P(i, Pp);
             int no = Fa[i];
             while(no >= 0) {
                 /* as the host form: climb only while something grows */
@@ -613,12 +627,6 @@ extern "C" int gpu_force_update_hmax_local(struct gpu_hmax_reach_record *reach_r
         Kokkos::fence();
         gizmo_gpu_check_last_error("gpu_hmax_raise_bands", n_active);
     }
-    if(gpu_device_node_list_publish(claim_list_dev, n_claimed, All.TreeNodeIndexBase, gpu_gravity_tree_capacity()) != 0)
-    {
-        printf("Task=%d force_update_hmax (device): the raised nodes' mirrors could not be published\n", ThisTask); fflush(stdout);
-        endrun(929712);
-    }
-
     DomainNumChanged = domain_count_dev[0];
     if(DomainNumChanged > ntop)
     {

@@ -916,7 +916,7 @@ static int force_update_hmax_local_device(const ModeBTopleafMap **topleaf_map_ou
     if(!r.valid || source_reach_map_member_covered(ActiveParticleList[idx], r.reach, r.growth)) {continue;}
     if(r.leaf_node >= 0 && source_reach_map_mark_stale(topleaf_map.topleaf_of(r.leaf_node, All.TreeNodeIndexBase)))
     {
-      if(Extnodes[r.leaf_node].Flag != GlobFlag)
+      if(Extnodes[r.leaf_node].Flag != GlobFlag && DomainNumChanged < NTopleaves)
       {
         Extnodes[r.leaf_node].Flag = GlobFlag;
         DomainList[DomainNumChanged++] = r.leaf_node;

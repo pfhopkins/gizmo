@@ -352,8 +352,8 @@ extern "C" int gpu_force_drift_nodes_ex(integertime time1, int refresh_mirrors_a
  * rewritten.  `base` and `cap` describe the mirror the indices address.  Returns 0 when every
  * listed node stands at `time1` with its mirror published, 1 when nothing may be relied on (an
  * index outside the mirror, a missing mirror or table) and the caller must sweep instead.
- * Its one caller is the device tree update, which brings current exactly the nodes its kick is about
- * to touch: `list` must be the claim list that update wrote on the device, in its own scratch block.
+ * Its callers are the device tree update and the device kernel-length update, each bringing current exactly the
+ * nodes it is about to change: `list` must be the claim list the caller wrote on the device, in its own scratch block.
  * It must never be handed the host's node dirty set, which is answered on the host
  * (gpu_node_dirty_bring_gravity_current) so that no kernel ever touches it.  It publishes no
  * whole-tree certificate: what it brings current is the listed set. */
@@ -428,9 +428,9 @@ extern "C" int gpu_device_node_list_bring_current(const int *list, int n, int ba
 }
 
 /* Publish the mirror of every listed node again, from its canonical state as it stands now (no drift).  For a caller that
- * brought a list current with gpu_device_node_list_bring_current and then changed those nodes' canonical fields on the device
- * (the kernel-length update raises their bands): the mirror then holds what the host route's later publication of the same
- * nodes would.  `list` is the caller's device-written list, as for gpu_device_node_list_bring_current.  0 = done, 1 = no
+ * brought a list current with gpu_device_node_list_bring_current and then changed those nodes' canonical fields (the
+ * kernel-length update raises their bands, locally and from the other ranks): published after the last change, the mirror
+ * holds what the host route's later publication of the nodes it drifted would.  `list` is the caller's device-written list, as for gpu_device_node_list_bring_current.  0 = done, 1 = no
  * mirror or an index outside it. */
 extern "C" int gpu_device_node_list_publish(const int *list, int n, int base, int cap)
 {
