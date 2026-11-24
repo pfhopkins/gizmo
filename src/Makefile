@@ -730,6 +730,12 @@ OPT     += -DHDF5_DISABLE_VERSION_CHECK
 ifeq (,$(findstring GPU_COOLING_IN_PLACE_BATCH_CELLS,$(CONFIGVARS)))
 OPT     += -DGPU_COOLING_IN_PLACE_BATCH_CELLS=1048576
 endif
+## the GPU reads pageable memory in place here (address translation services over the coherent link): the particle records in Grace memory with a host preferred-location hint run a
+## 36M-cell zoom 9-13% faster per step than CUDA managed storage (measured, repeated); a Config that sets the token keeps its own value.
+## TEMPORARY host placement: goes when the host loops reading the particle records run on the device (priced together with device storage)
+ifeq (,$(findstring GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY,$(CONFIGVARS)))
+OPT     += -DGPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY=1
+endif
 endif
 
 
