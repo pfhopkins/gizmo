@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <algorithm>
+#include <array>
 #include <functional>
 #include <queue>
 #include <vector>
@@ -1598,6 +1599,10 @@ static double domain_a_priori_cost_multiplier(int i)
 #endif
 }
 
+#ifdef GPU_SPEEDUP_HOST_THREADED_DOMAIN_COSTS
+static const int DOMAIN_COST_BLOCK = 4096;
+#endif
+
 static void domain_compute_particle_costs(void)
 {
     /* global sums: [0] sum(w * GravWork) over stars, [1] sum(ExtraWorkEstimate), [2] sum(0.1 + GravWork), [3] sum(hydro),
@@ -1605,7 +1610,20 @@ static void domain_compute_particle_costs(void)
     double sums[5] = {0, 0, 0, 0, 0};
     domain_no_work_recorded = 0;
     const int prepay = domain_prepay_armed && !UseAllParticles;   /* step-loop decompositions only */
+#ifdef GPU_SPEEDUP_HOST_THREADED_DOMAIN_COSTS
+    /* fixed blocks, partial sums added in block order: the result does not depend on the number of threads (it differs from the plain loop at round-off) */
+    const int cost_blocks = (NumPart + DOMAIN_COST_BLOCK - 1) / DOMAIN_COST_BLOCK;
+    std::vector<std::array<double, 5>> block_sums(cost_blocks, std::array<double, 5>{0, 0, 0, 0, 0});
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, NumPart))
+#endif
+    for(int bl = 0; bl < cost_blocks; bl++)
+    {
+    double *sums = block_sums[bl].data();   /* shadows the totals inside the loop */
+    for(int i = bl * DOMAIN_COST_BLOCK; i < DMIN(NumPart, (bl + 1) * DOMAIN_COST_BLOCK); i++)
+#else
     for(int i = 0; i < NumPart; i++)
+#endif
     {
 #ifdef SUBFIND
         if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
@@ -1622,6 +1640,10 @@ static void domain_compute_particle_costs(void)
         if(P[i].ExtraWorkEstimate > 0) {sums[0] += domain_star_age_work_weight(i) * (double) P[i].GravWork; sums[1] += (double) P[i].ExtraWorkEstimate;}
 #endif
     }
+#ifdef GPU_SPEEDUP_HOST_THREADED_DOMAIN_COSTS
+    }
+    for(int bl = 0; bl < cost_blocks; bl++) {for(int k = 0; k < 5; k++) {sums[k] += block_sums[bl][k];}}
+#endif
     MPI_Allreduce(MPI_IN_PLACE, sums, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(sums[4] <= 0)
     {
@@ -1650,7 +1672,20 @@ static void domain_compute_particle_costs(void)
     const double grav_total = sums[2] + domain_stellar_prior_scale * sums[1];
     const double inv_grav_total = (grav_total > 0) ? 1.0 / grav_total : 0, inv_hydro_total = (sums[3] > 0) ? 1.0 / sums[3] : 0;
     gravcost = gascost = 0;
+#ifdef GPU_SPEEDUP_HOST_THREADED_DOMAIN_COSTS
+    std::vector<std::array<double, 2>> block_cost(cost_blocks, std::array<double, 2>{0, 0});
+    std::vector<std::array<int, 6>> block_type(cost_blocks, std::array<int, 6>{0, 0, 0, 0, 0, 0});
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, NumPart))
+#endif
+    for(int bl = 0; bl < cost_blocks; bl++)
+    {
+    double gravcost = 0, gascost = 0;   /* this block's share */
+    int *NtypeLocal = block_type[bl].data();
+    for(int i = bl * DOMAIN_COST_BLOCK; i < DMIN(NumPart, (bl + 1) * DOMAIN_COST_BLOCK); i++)
+#else
     for(int i = 0; i < NumPart; i++)
+#endif
     {
 #ifdef SUBFIND
         if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
@@ -1665,6 +1700,11 @@ static void domain_compute_particle_costs(void)
         gravcost += total;
         gascost += hydro;
     }
+#ifdef GPU_SPEEDUP_HOST_THREADED_DOMAIN_COSTS
+    block_cost[bl] = {gravcost, gascost};
+    }
+    for(int bl = 0; bl < cost_blocks; bl++) {gravcost += block_cost[bl][0]; gascost += block_cost[bl][1]; for(int k = 0; k < 6; k++) {NtypeLocal[k] += block_type[bl][k];}}
+#endif
 }
 
 
