@@ -266,7 +266,7 @@ KOKKOS_INLINE_FUNCTION
 void update_dust_processes(int i, double dtime_gyr, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef GALSF_ISMDUSTCHEM_HU_MODEL
-    update_dust_processes_hu(i, dtime_gyr, pp, cell);
+    update_dust_processes_hu(i, dtime_gyr, pp, cell, NULL);
     return;
 #endif
 #ifdef GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL

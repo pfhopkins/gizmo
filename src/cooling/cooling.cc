@@ -335,7 +335,13 @@ double chimes_convert_u_to_temp(double u, double rho, int target, struct particl
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 static inline void finish_cooling_host_deferred_dust_updates(int i, double dtime, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#if defined(GALSF_ISMDUSTCHEM_HU_MODEL) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+    double dust_booked[ISM_DUST_HU_NBOOK];
+    update_dust_processes_hu(i, dtime*UNIT_TIME_IN_MYR*0.001, pp, cell, dust_booked);
+    for(int k = 0; k < ISM_DUST_HU_NBOOK; k++) {ledger_add(LEDGER_DUST_SPUT_TH_C + k, pp[i].Mass * dust_booked[k]);}
+#else
     update_dust_processes(i, dtime*UNIT_TIME_IN_MYR*0.001, pp, cell);
+#endif
 #ifdef COOL_MOLECFRAC_NONEQM
     update_explicit_molecular_fraction(i, 0.5*dtime*UNIT_TIME_IN_CGS, pp, cell); // if we're doing the H2 explicitly with this particular model, we update it in two half-steps before and after the main cooling step
 #endif

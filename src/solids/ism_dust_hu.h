@@ -39,8 +39,11 @@ KOKKOS_INLINE_FUNCTION void ism_dust_hu_env(int i, const struct particle_data *p
 #endif
 }
 
-KOKKOS_INLINE_FUNCTION void update_dust_processes_hu(int i, double dtime_gyr, struct particle_data *pp, struct gas_cell_data *cell)
+/* booked, if given: the mass fractions of the cell's gas destroyed (thermal sputtering of carbon and silicate, nonthermal of both), grown (both) and cut by the clamp */
+enum {ISM_DUST_HU_BOOK_SPUT_TH_C, ISM_DUST_HU_BOOK_SPUT_TH_SIL, ISM_DUST_HU_BOOK_SPUT_NTH_C, ISM_DUST_HU_BOOK_SPUT_NTH_SIL, ISM_DUST_HU_BOOK_GROW_C, ISM_DUST_HU_BOOK_GROW_SIL, ISM_DUST_HU_BOOK_CLAMP, ISM_DUST_HU_NBOOK};
+KOKKOS_INLINE_FUNCTION void update_dust_processes_hu(int i, double dtime_gyr, struct particle_data *pp, struct gas_cell_data *cell, double *booked)
 {
+    if(booked) {for(int k = 0; k < ISM_DUST_HU_NBOOK; k++) {booked[k] = 0;}}
     MyDouble *D = cell[i].ISMDustChem_Dust_Metal; /* slots 2 C, 4 O, 6 Mg, 7 Si, 10 Fe */
     const MyFloat *Z = pp[i].Metallicity;
     double dC = D[2], dS[4] = {D[4], D[6], D[7], D[10]}, total0 = dC + dS[0] + dS[1] + dS[2] + dS[3], dt_yr = dtime_gyr * 1.e9;
@@ -56,8 +59,13 @@ KOKKOS_INLINE_FUNCTION void update_dust_processes_hu(int i, double dtime_gyr, st
         double v[3] = {cell[i].ISMDustChem_Hu_Vrel[b][0], cell[i].ISMDustChem_Hu_Vrel[b][1], cell[i].ISMDustChem_Hu_Vrel[b][2]}, InC, InS;
         dustk_step_vrel(&env, a_b, dt_yr, v, &InC, &InS, ISM_DUST_HU_FSUB, ISM_DUST_HU_NSUB_MAX);
         for(int k = 0; k < 3; k++) {cell[i].ISMDustChem_Hu_Vrel[b][k] = v[k];}
-        fC += w_b * exp(-(dt_yr * 3.0 * env.nH * YthC / a_b + InC));
-        fS += w_b * exp(-(dt_yr * 3.0 * env.nH * YthS / a_b + InS));
+        double IthC = dt_yr * 3.0 * env.nH * YthC / a_b, IthS = dt_yr * 3.0 * env.nH * YthS / a_b, gC = exp(-(IthC + InC)), gS = exp(-(IthS + InS));
+        fC += w_b * gC; fS += w_b * gS;
+        if(booked) { /* what the bin lost, by the share of the two exponents */
+            double lostC = dC * w_b * (1.0 - gC), lostS = (dS[0] + dS[1] + dS[2] + dS[3]) * w_b * (1.0 - gS);
+            if(IthC + InC > 0) {booked[ISM_DUST_HU_BOOK_SPUT_TH_C] += lostC * IthC / (IthC + InC); booked[ISM_DUST_HU_BOOK_SPUT_NTH_C] += lostC * InC / (IthC + InC);}
+            if(IthS + InS > 0) {booked[ISM_DUST_HU_BOOK_SPUT_TH_SIL] += lostS * IthS / (IthS + InS); booked[ISM_DUST_HU_BOOK_SPUT_NTH_SIL] += lostS * InS / (IthS + InS);}
+        }
     }
     dC *= fC; for(int k = 0; k < 4; k++) {dS[k] *= fS;}
     double total1 = dC + dS[0] + dS[1] + dS[2] + dS[3], growth = 0;
@@ -73,10 +81,12 @@ KOKKOS_INLINE_FUNCTION void update_dust_processes_hu(int i, double dtime_gyr, st
         double pool[4] = {DMAX(Z[4] - O_CO, 0), DMAX(Z[6], 0), DMAX(Z[7], 0), DMAX(Z[10] - Fe_free, 0)};
         double dSil = dustk_grow_silicate(S0, pool, frac, Zp, r0, dt_yr) - S0;
         growth = C1 - dC; dC = C1;
+        if(booked) {booked[ISM_DUST_HU_BOOK_GROW_C] = growth; booked[ISM_DUST_HU_BOOK_GROW_SIL] = DMAX(dSil, 0);}
         if(dSil > 0) {for(int k = 0; k < 4; k++) {dS[k] += dSil * frac[k];} growth += dSil;}
     }
 
     /* dust stays inside its element pool; silicate scales as a whole */
+    double unclamped = dC + dS[0] + dS[1] + dS[2] + dS[3];
     dC = DMIN(dC, DMAX(Z[2], 0));
     {double pool[4] = {DMAX(Z[4], 0), DMAX(Z[6], 0), DMAX(Z[7], 0), DMAX(Z[10], 0)}, f = 1;
      for(int k = 0; k < 4; k++) {if(dS[k] > 0) {f = DMIN(f, pool[k] / dS[k]);}}
@@ -85,6 +95,7 @@ KOKKOS_INLINE_FUNCTION void update_dust_processes_hu(int i, double dtime_gyr, st
     D[2] = dC; D[4] = dS[0]; D[6] = dS[1]; D[7] = dS[2]; D[10] = dS[3];
     double total2 = dC + dS[0] + dS[1] + dS[2] + dS[3];
     D[0] = total2;
+    if(booked) {booked[ISM_DUST_HU_BOOK_CLAMP] = unclamped - total2;}
     double Fe_free = DMAX(dS[3] - dS[2] / frac[2] * frac[3], 0), keep = total1 / total0, trim = (total1 + growth > 0) ? total2 / (total1 + growth) : 0;
     for(int k = 0; k < NUM_ISMDUSTCHEM_SOURCES; k++) {cell[i].ISMDustChem_Dust_Source[k] *= keep;}
     cell[i].ISMDustChem_Dust_Source[0] += growth; /* 0 = gas-dust accretion */

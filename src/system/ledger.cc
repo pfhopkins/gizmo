@@ -166,6 +166,13 @@ static void ledger_state_rows(void) /* the state rows: sums over this rank's par
 #endif
     }
 #endif
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL /* carbonaceous dust: element 2; silicate: all other dust (O, Mg, Si, Fe) */
+    for(int i = 0; i < N_gas; i++) {
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        ledger_add_exact(&ledger_total[LEDGER_M_DUST_C], P[i].Mass * CellP[i].ISMDustChem_Dust_Metal[2]);
+        ledger_add_exact(&ledger_total[LEDGER_M_DUST_SIL], P[i].Mass * (CellP[i].ISMDustChem_Dust_Metal[0] - CellP[i].ISMDustChem_Dust_Metal[2]));
+    }
+#endif
 #ifdef GALSF
     for(int i = 0; i < NumPart; i++) {
         if(P[i].Type == 0) {ledger_add_exact(&ledger_total[LEDGER_M_GAS], P[i].Mass); ledger_add_exact(&ledger_total[LEDGER_MZ_GAS], P[i].Mass * P[i].Metallicity[0]);}
