@@ -1,4 +1,5 @@
 #include <mpi.h>
+#include <vector>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -86,6 +87,77 @@ static struct part_slab_data
 } *part;
 
 static int *part_sortindex;
+
+/*! The unique mesh cells of the sorted cell list. part_sortindex orders the num_on_grid entries by cell; a new field point
+ *  starts at every entry whose cell differs from the previous one. */
+static inline int pm_nonperiodic_new_cell(int i)
+{
+  return (i == 0) || (part[part_sortindex[i]].globalindex != part[part_sortindex[i - 1]].globalindex);
+}
+/*! How many field points (unique cells) the sorted cell list holds. */
+static long pm_nonperiodic_count_field_points(long num_on_grid)
+{
+  const int threaded = gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) num_on_grid / 8);
+  long long n = 0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(+:n) if(threaded)
+#endif
+  for(long i = 0; i < num_on_grid; i++) {n += pm_nonperiodic_new_cell((int) i);}
+  return (long) n;
+}
+/*! Link every cell-list entry to its field point (part[].localindex = the field point's index in cell order), record each
+ *  field point's cell, and count the field points on each rank's slabs (localfield_count) with each rank's first one
+ *  (localfield_first, set only where the count is nonzero). Returns the number of field points. The same result as one
+ *  serial scan: the index of entry i is the number of new cells in (0, i], a prefix sum over contiguous thread blocks;
+ *  field points are in cell order and slabs belong to ranks in order, so each rank's field points are one run. */
+static long pm_nonperiodic_link_field_points(long num_on_grid, large_array_offset *localfield_globalindex,
+                                         int *localfield_first, int *localfield_count)
+{
+  for(int t = 0; t < NTask; t++) {localfield_first[t] = 0; localfield_count[t] = 0;}
+  if(num_on_grid <= 0) {return 0;}
+  const int threaded = gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) num_on_grid / 8);
+  int nthreads = 1;
+#ifdef _OPENMP
+  if(threaded) {nthreads = omp_get_max_threads();}
+#endif
+  std::vector<long long> block_new(nthreads + 1, 0);
+  int nthreads_used = 1;
+#ifdef _OPENMP
+#pragma omp parallel num_threads(nthreads) if(threaded)
+#endif
+  {
+    int tid = 0, nt = 1;
+#ifdef _OPENMP
+    tid = omp_get_thread_num(); nt = omp_get_num_threads();
+#endif
+    const long long lo = (long long) num_on_grid * tid / nt, hi = (long long) num_on_grid * (tid + 1) / nt;
+    long long c = 0;
+    for(long long i = lo; i < hi; i++) {if(i > 0 && pm_nonperiodic_new_cell((int) i)) {c++;}}
+    block_new[tid + 1] = c;
+#ifdef _OPENMP
+#pragma omp barrier
+#pragma omp single
+#endif
+    {for(int b = 1; b <= nt; b++) {block_new[b] += block_new[b - 1];} nthreads_used = nt;}
+    long long k = block_new[tid];   /* new cells in (0, lo) */
+    for(long long i = lo; i < hi; i++)
+      {
+        const int is_new = pm_nonperiodic_new_cell((int) i);
+        if(i > 0 && is_new) {k++;}
+        part[part_sortindex[i]].localindex = (int) k;
+        if(is_new) {localfield_globalindex[k] = part[part_sortindex[i]].globalindex;}
+      }
+  }
+  const long num_field_points = (long) block_new[nthreads_used] + 1;
+  for(long f = 0; f < num_field_points; f++)
+    {
+      const int task = slab_to_task[localfield_globalindex[f] / (GRID * GRID2)];
+      if(localfield_count[task] == 0) {localfield_first[task] = f;}
+      localfield_count[task]++;
+    }
+  return num_field_points;
+}
+
 
 
 /*! Memory this module will want from the arena, worked out before the arena exists so that it can
@@ -739,9 +811,9 @@ int pmforce_nonperiodic(int grnr)
   double dx, dy, dz;
   double fac, to_slab_fac;
   double re, im, acc_dim;
-  long i, j, slab, level, sendTask, recvTask, flag, flagsum;
+  long i, j, level, sendTask, recvTask, flag, flagsum;
   long x, y, z, yl, zl, yr, zr, yll, zll, yrr, zrr, ip, dim;
-  long xx, yy, zz, task, pindex;
+  long xx, yy, zz, pindex;
   long slab_x, slab_y, slab_z;
   long slab_xx, slab_yy, slab_zz;
   long num_on_grid, num_field_points;
@@ -851,14 +923,7 @@ int pmforce_nonperiodic(int grnr)
       mysort_pmnonperiodic(part_sortindex, num_on_grid, sizeof(int), pm_nonperiodic_compare_sortindex);
 
       /* determine the number of unique field points */
-      for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-	{
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	      continue;
-
-	  num_field_points++;
-	}
+      num_field_points = pm_nonperiodic_count_field_points(num_on_grid);
 
       /* allocate the local field */
       localfield_globalindex =
@@ -872,35 +937,11 @@ int pmforce_nonperiodic(int grnr)
       localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
       localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
-      for(i = 0; i < NTask; i++)
-	{
-	  localfield_first[i] = 0;
-	  localfield_count[i] = 0;
-	}
+
 
       /* establish the cross link between the part[] array and the local list of 
          mesh points. Also, count on which CPU how many of the needed field points are stored */
-      for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-	{
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex != part[part_sortindex[i - 1]].globalindex)
-	      num_field_points++;
-
-	  part[part_sortindex[i]].localindex = num_field_points;
-
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	      continue;
-
-	  localfield_globalindex[num_field_points] = part[part_sortindex[i]].globalindex;
-
-	  slab = part[part_sortindex[i]].globalindex / (GRID * GRID2);
-	  task = slab_to_task[slab];
-	  if(localfield_count[task] == 0)
-	    localfield_first[task] = num_field_points;
-	  localfield_count[task]++;
-	}
-      num_field_points++;
+      num_field_points = pm_nonperiodic_link_field_points(num_on_grid, localfield_globalindex, localfield_first, localfield_count);
 
 
       for(i = 1, localfield_offset[0] = 0; i < NTask; i++)
@@ -1560,8 +1601,8 @@ int pmpotential_nonperiodic(int grnr)
   double dx, dy, dz;
   double fac, to_slab_fac;
   double re, im, pot;
-  long i, j, slab, level, sendTask, recvTask, flag, flagsum;
-  long x, y, z, ip, xx, yy, zz, task, pindex;
+  long i, j, level, sendTask, recvTask, flag, flagsum;
+  long x, y, z, ip, xx, yy, zz, pindex;
   long slab_x, slab_y, slab_z, slab_xx, slab_yy, slab_zz;
   long num_on_grid, num_field_points;
   int *localfield_count, *localfield_first, *localfield_offset, *localfield_recv;
@@ -1656,14 +1697,7 @@ int pmpotential_nonperiodic(int grnr)
   mysort_pmnonperiodic(part_sortindex, num_on_grid, sizeof(int), pm_nonperiodic_compare_sortindex);
 
   /* determine the number of unique field points */
-  for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-    {
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	  continue;
-
-      num_field_points++;
-    }
+  num_field_points = pm_nonperiodic_count_field_points(num_on_grid);
 
   /* allocate the local field */
   localfield_globalindex =
@@ -1675,35 +1709,11 @@ int pmpotential_nonperiodic(int grnr)
   localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
   localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
-  for(i = 0; i < NTask; i++)
-    {
-      localfield_first[i] = 0;
-      localfield_count[i] = 0;
-    }
+
 
   /* establish the cross link between the part[] array and the local list of 
      mesh points. Also, count on which CPU how many of the needed field points are stored */
-  for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-    {
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex != part[part_sortindex[i - 1]].globalindex)
-	  num_field_points++;
-
-      part[part_sortindex[i]].localindex = num_field_points;
-
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	  continue;
-
-      localfield_globalindex[num_field_points] = part[part_sortindex[i]].globalindex;
-
-      slab = part[part_sortindex[i]].globalindex / (GRID * GRID2);
-      task = slab_to_task[slab];
-      if(localfield_count[task] == 0)
-	localfield_first[task] = num_field_points;
-      localfield_count[task]++;
-    }
-  num_field_points++;
+  num_field_points = pm_nonperiodic_link_field_points(num_on_grid, localfield_globalindex, localfield_first, localfield_count);
 
 
   for(i = 1, localfield_offset[0] = 0; i < NTask; i++)
@@ -1950,7 +1960,9 @@ int pm_nonperiodic_compare_sortindex(const void *a, const void *b)
   return 0;
 }
 
-static void msort_pmnonperiodic_with_tmp(int *b, size_t n, int *t)
+/* Stable merge sort of the cell-list index by mesh offset. `depth` > 0 sorts the two halves as concurrent OpenMP tasks, each
+ * with its own half of the scratch array; the merges are the same, so the order is identical to the serial sort. */
+static void msort_pmnonperiodic_with_tmp(int *b, size_t n, int *t, int depth)
 {
   int *tmp;
   int *b1, *b2;
@@ -1964,8 +1976,22 @@ static void msort_pmnonperiodic_with_tmp(int *b, size_t n, int *t)
   b1 = b;
   b2 = b + n1;
 
-  msort_pmnonperiodic_with_tmp(b1, n1, t);
-  msort_pmnonperiodic_with_tmp(b2, n2, t);
+  if(depth > 0 && n > 65536)
+    {
+#ifdef _OPENMP
+#pragma omp task
+#endif
+      msort_pmnonperiodic_with_tmp(b1, n1, t, depth - 1);
+      msort_pmnonperiodic_with_tmp(b2, n2, t + n1, depth - 1);
+#ifdef _OPENMP
+#pragma omp taskwait
+#endif
+    }
+  else
+    {
+      msort_pmnonperiodic_with_tmp(b1, n1, t, 0);
+      msort_pmnonperiodic_with_tmp(b2, n2, t, 0);
+    }
 
   tmp = t;
 
@@ -1995,7 +2021,20 @@ void mysort_pmnonperiodic(void *b, size_t n, size_t s, int (*cmp) (const void *,
 
   int *tmp = (int *) mymalloc("int *tmp", size);
 
-  msort_pmnonperiodic_with_tmp((int *) b, n, tmp);
+  int depth = 0;
+#ifdef _OPENMP
+  if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) n))
+    {for(int nt = omp_get_max_threads(); nt > 1; nt >>= 1) {depth++;} depth += 2;}   /* a few more tasks than threads, for balance */
+#endif
+  if(depth > 0)
+    {
+#ifdef _OPENMP
+#pragma omp parallel
+#pragma omp single
+#endif
+      msort_pmnonperiodic_with_tmp((int *) b, n, tmp, depth);
+    }
+  else {msort_pmnonperiodic_with_tmp((int *) b, n, tmp, 0);}
 
   myfree(tmp);
 }
@@ -2015,10 +2054,10 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
   double dx, dy, dz;
   double fac, to_slab_fac;
   double re, im, acc_dim;
-  int i, j, slab, level, sendTask, recvTask;
+  int i, j, level, sendTask, recvTask;
   long flag, flagsum;
   int x, y, z, yl, zl, yr, zr, yll, zll, yrr, zrr, ip, dim;
-  int xx, yy, zz, task, pindex;
+  int xx, yy, zz, pindex;
   int slab_x, slab_y, slab_z;
   int slab_xx, slab_yy, slab_zz;
   int num_on_grid, num_field_points;
@@ -2135,14 +2174,7 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
       mysort_pmnonperiodic(part_sortindex, num_on_grid, sizeof(int), pm_nonperiodic_compare_sortindex);
 
       /* determine the number of unique field points */
-      for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-	{
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	      continue;
-
-	  num_field_points++;
-	}
+      num_field_points = pm_nonperiodic_count_field_points(num_on_grid);
 
       /* allocate the local field */
       localfield_globalindex =
@@ -2156,35 +2188,11 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
       localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
       localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
-      for(i = 0; i < NTask; i++)
-	{
-	  localfield_first[i] = 0;
-	  localfield_count[i] = 0;
-	}
+
 
       /* establish the cross link between the part[] array and the local list of 
          mesh points. Also, count on which CPU how many of the needed field points are stored */
-      for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-	{
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex != part[part_sortindex[i - 1]].globalindex)
-	      num_field_points++;
-
-	  part[part_sortindex[i]].localindex = num_field_points;
-
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	      continue;
-
-	  localfield_globalindex[num_field_points] = part[part_sortindex[i]].globalindex;
-
-	  slab = part[part_sortindex[i]].globalindex / (GRID * GRID2);
-	  task = slab_to_task[slab];
-	  if(localfield_count[task] == 0)
-	    localfield_first[task] = num_field_points;
-	  localfield_count[task]++;
-	}
-      num_field_points++;
+      num_field_points = pm_nonperiodic_link_field_points(num_on_grid, localfield_globalindex, localfield_first, localfield_count);
 
 
       for(i = 1, localfield_offset[0] = 0; i < NTask; i++)
@@ -2623,10 +2631,10 @@ int pmtidaltensor_nonperiodic_fourier(int grnr, int component)
   double kx, ky, kz;
   double fac, to_slab_fac;
   double re, im, tidal;
-  int i, j, slab, level, sendTask, recvTask;
+  int i, j, level, sendTask, recvTask;
   long flag, flagsum;
   int x, y, z, ip;
-  int xx, yy, zz, task, pindex;
+  int xx, yy, zz, pindex;
   int slab_x, slab_y, slab_z;
   int slab_xx, slab_yy, slab_zz;
   int num_on_grid, num_field_points;
@@ -2718,14 +2726,7 @@ int pmtidaltensor_nonperiodic_fourier(int grnr, int component)
   mysort_pmnonperiodic(part_sortindex, num_on_grid, sizeof(int), pm_nonperiodic_compare_sortindex);
 
   /* determine the number of unique field points */
-  for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-    {
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	  continue;
-
-      num_field_points++;
-    }
+  num_field_points = pm_nonperiodic_count_field_points(num_on_grid);
 
   /* allocate the local field */
   localfield_globalindex =
@@ -2737,35 +2738,11 @@ int pmtidaltensor_nonperiodic_fourier(int grnr, int component)
   localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
   localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
-  for(i = 0; i < NTask; i++)
-    {
-      localfield_first[i] = 0;
-      localfield_count[i] = 0;
-    }
+
 
   /* establish the cross link between the part[] array and the local list of 
      mesh points. Also, count on which CPU how many of the needed field points are stored */
-  for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-    {
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex != part[part_sortindex[i - 1]].globalindex)
-	  num_field_points++;
-
-      part[part_sortindex[i]].localindex = num_field_points;
-
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	  continue;
-
-      localfield_globalindex[num_field_points] = part[part_sortindex[i]].globalindex;
-
-      slab = part[part_sortindex[i]].globalindex / (GRID * GRID2);
-      task = slab_to_task[slab];
-      if(localfield_count[task] == 0)
-	localfield_first[task] = num_field_points;
-      localfield_count[task]++;
-    }
-  num_field_points++;
+  num_field_points = pm_nonperiodic_link_field_points(num_on_grid, localfield_globalindex, localfield_first, localfield_count);
 
 
   for(i = 1, localfield_offset[0] = 0; i < NTask; i++)

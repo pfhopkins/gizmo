@@ -1,4 +1,5 @@
 #include <mpi.h>
+#include <vector>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -66,6 +67,194 @@ static struct part_slab_data
 } *part;
 
 static int *part_sortindex;
+
+/*! The cell list when every local particle is on the grid: entries 8i..8i+7 are particle i's eight CIC cells, in the order
+ *  (xx,yy,zz) the per-particle loops have always used, so the list is identical to the serial build. Each particle writes only
+ *  its own eight entries, so the build runs on all threads when there are enough particles. Returns the list length. */
+static int pm_periodic_build_cell_list_all(void)
+{
+  const int threaded = gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) NumPart);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+  for(int i = 0; i < NumPart; i++)
+    {
+      MyDouble pp[3];
+      for(int k = 0; k < 3; k++) {pp[k] = P[i].Pos[k]; pp[k] = WRAP_POSITION_UNIFORM_BOX(pp[k]);}   /* box-wrapped, as in the loops */
+      int slab_x = (int) (to_slab_fac * pp[0]), slab_y = (int) (to_slab_fac * pp[1]), slab_z = (int) (to_slab_fac * pp[2]);
+      if(slab_x >= PMGRID) slab_x -= PMGRID;
+      if(slab_y >= PMGRID) slab_y -= PMGRID;
+      if(slab_z >= PMGRID) slab_z -= PMGRID;
+      for(int xx = 0; xx < 2; xx++)
+        for(int yy = 0; yy < 2; yy++)
+          for(int zz = 0; zz < 2; zz++)
+            {
+              int slab_xx = slab_x + xx, slab_yy = slab_y + yy, slab_zz = slab_z + zz;
+              if(slab_xx >= PMGRID) slab_xx -= PMGRID;
+              if(slab_yy >= PMGRID) slab_yy -= PMGRID;
+              if(slab_zz >= PMGRID) slab_zz -= PMGRID;
+              const int n = 8 * i + (xx << 2) + (yy << 1) + zz;
+              part[n].partindex = (i << 3) + (xx << 2) + (yy << 1) + zz;
+              part[n].globalindex = ((large_array_offset) PMGRID2) * (PMGRID * slab_xx + slab_yy) + slab_zz;
+              part_sortindex[n] = n;
+            }
+    }
+  return 8 * NumPart;
+}
+
+/*! The unique mesh cells of the sorted cell list. part_sortindex orders the num_on_grid entries by cell; a new field point
+ *  starts at every entry whose cell differs from the previous one. */
+static inline int pm_periodic_new_cell(int i)
+{
+  return (i == 0) || (part[part_sortindex[i]].globalindex != part[part_sortindex[i - 1]].globalindex);
+}
+/*! How many field points (unique cells) the sorted cell list holds. */
+static int pm_periodic_count_field_points(int num_on_grid)
+{
+  const int threaded = gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) num_on_grid / 8);
+  long long n = 0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(+:n) if(threaded)
+#endif
+  for(int i = 0; i < num_on_grid; i++) {n += pm_periodic_new_cell(i);}
+  return (int) n;
+}
+/*! Link every cell-list entry to its field point (part[].localindex = the field point's index in cell order), record each
+ *  field point's cell, and count the field points on each rank's slabs (localfield_count) with each rank's first one
+ *  (localfield_first, set only where the count is nonzero). Returns the number of field points. The same result as one
+ *  serial scan: the index of entry i is the number of new cells in (0, i], a prefix sum over contiguous thread blocks;
+ *  field points are in cell order and slabs belong to ranks in order, so each rank's field points are one run. */
+static int pm_periodic_link_field_points(int num_on_grid, large_array_offset *localfield_globalindex,
+                                         int *localfield_first, int *localfield_count)
+{
+  for(int t = 0; t < NTask; t++) {localfield_first[t] = 0; localfield_count[t] = 0;}
+  if(num_on_grid <= 0) {return 0;}
+  const int threaded = gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) num_on_grid / 8);
+  int nthreads = 1;
+#ifdef _OPENMP
+  if(threaded) {nthreads = omp_get_max_threads();}
+#endif
+  std::vector<long long> block_new(nthreads + 1, 0);
+  int nthreads_used = 1;
+#ifdef _OPENMP
+#pragma omp parallel num_threads(nthreads) if(threaded)
+#endif
+  {
+    int tid = 0, nt = 1;
+#ifdef _OPENMP
+    tid = omp_get_thread_num(); nt = omp_get_num_threads();
+#endif
+    const long long lo = (long long) num_on_grid * tid / nt, hi = (long long) num_on_grid * (tid + 1) / nt;
+    long long c = 0;
+    for(long long i = lo; i < hi; i++) {if(i > 0 && pm_periodic_new_cell((int) i)) {c++;}}
+    block_new[tid + 1] = c;
+#ifdef _OPENMP
+#pragma omp barrier
+#pragma omp single
+#endif
+    {for(int b = 1; b <= nt; b++) {block_new[b] += block_new[b - 1];} nthreads_used = nt;}
+    long long k = block_new[tid];   /* new cells in (0, lo) */
+    for(long long i = lo; i < hi; i++)
+      {
+        const int is_new = pm_periodic_new_cell((int) i);
+        if(i > 0 && is_new) {k++;}
+        part[part_sortindex[i]].localindex = (int) k;
+        if(is_new) {localfield_globalindex[k] = part[part_sortindex[i]].globalindex;}
+      }
+  }
+  const int num_field_points = (int) block_new[nthreads_used] + 1;
+  for(int f = 0; f < num_field_points; f++)
+    {
+      const int task = slab_to_task[localfield_globalindex[f] / (PMGRID * PMGRID2)];
+      if(localfield_count[task] == 0) {localfield_first[task] = f;}
+      localfield_count[task]++;
+    }
+  return num_field_points;
+}
+
+/*! CIC mass assignment of every local particle onto its cell-list cells (every particle on the grid: entries 8i..8i+7), into
+ *  `field`, which is zeroed first. Each term is the serial code's expression, in the same particle order on one thread. On all
+ *  threads the per-cell sums are atomic adds, so a cell shared by several particles sums its terms in the order the threads reach
+ *  it: the same terms, rounded in a different order. */
+static void pm_periodic_cic_bin_all(d_fftw_real *field, int num_field_points)
+{
+  const int threaded = gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) NumPart);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+  for(int k = 0; k < num_field_points; k++) {field[k] = 0;}
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+  for(int i = 0; i < NumPart; i++)
+    {
+      if(P[i].Mass <= 0) {continue;}
+      MyDouble pp[3];
+      for(int k = 0; k < 3; k++) {pp[k] = P[i].Pos[k]; pp[k] = WRAP_POSITION_UNIFORM_BOX(pp[k]);}
+      int slab_x = (int) (to_slab_fac * pp[0]), slab_y = (int) (to_slab_fac * pp[1]), slab_z = (int) (to_slab_fac * pp[2]);
+      if(slab_x >= PMGRID) slab_x -= PMGRID;   /* as the serial assignment: a wrapped position that rounds onto the far edge */
+      if(slab_y >= PMGRID) slab_y -= PMGRID;
+      if(slab_z >= PMGRID) slab_z -= PMGRID;
+      const double dx = to_slab_fac * pp[0] - slab_x, dy = to_slab_fac * pp[1] - slab_y, dz = to_slab_fac * pp[2] - slab_z;
+      const double term[8] = {P[i].Mass * (1.0 - dx) * (1.0 - dy) * (1.0 - dz), P[i].Mass * (1.0 - dx) * (1.0 - dy) * dz,
+                              P[i].Mass * (1.0 - dx) * dy * (1.0 - dz),         P[i].Mass * (1.0 - dx) * dy * dz,
+                              P[i].Mass * (dx) * (1.0 - dy) * (1.0 - dz),       P[i].Mass * (dx) * (1.0 - dy) * dz,
+                              P[i].Mass * (dx) * dy * (1.0 - dz),               P[i].Mass * (dx) * dy * dz};
+      const int j = 8 * i;
+      if(threaded)
+        {
+          for(int c = 0; c < 8; c++)
+            {
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+              field[part[j + c].localindex] += term[c];
+            }
+        }
+      else {for(int c = 0; c < 8; c++) {field[part[j + c].localindex] += term[c];}}
+    }
+}
+
+/*! Zero n elements of a mesh array, on all threads when it is large. */
+static void pm_periodic_zero(d_fftw_real *a, ptrdiff_t n)
+{
+  const int threaded = gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, (long long) n);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+  for(ptrdiff_t k = 0; k < n; k++) {a[k] = 0;}
+}
+
+/*! Add one received list of field values into the local slab grid. The entries of one list are distinct mesh cells, so
+ *  the adds are independent and the result is exactly the serial one, on any number of threads. */
+static void pm_periodic_scatter_into_slab(d_fftw_real *grid, const d_fftw_real *data, const large_array_offset *globalindex, int n)
+{
+  const large_array_offset base = first_slab_of_task[ThisTask] * PMGRID * ((large_array_offset) PMGRID2);
+  const int threaded = gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, (long long) n);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+  for(int k = 0; k < n; k++) {grid[globalindex[k] - base] += data[k];}
+}
+
+/*! CIC interpolation of a mesh field (assembled per cell-list entry in `field`) back to particle i, whose eight cells are
+ *  cell-list entries 8i..8i+7 (every particle on the grid); the same sum, in the same order, as the per-particle readout loops. */
+static double pm_periodic_cic_readout(int i, const fftw_real *field)
+{
+  MyDouble pp[3];
+  for(int k = 0; k < 3; k++) {pp[k] = P[i].Pos[k]; pp[k] = WRAP_POSITION_UNIFORM_BOX(pp[k]);}
+  const int slab_x = (int) (to_slab_fac * pp[0]), slab_y = (int) (to_slab_fac * pp[1]), slab_z = (int) (to_slab_fac * pp[2]);
+  const double dx = to_slab_fac * pp[0] - slab_x, dy = to_slab_fac * pp[1] - slab_y, dz = to_slab_fac * pp[2] - slab_z;
+  const int j = 8 * i;
+  return +field[part[j + 0].localindex] * (1.0 - dx) * (1.0 - dy) * (1.0 - dz)
+         + field[part[j + 1].localindex] * (1.0 - dx) * (1.0 - dy) * dz
+         + field[part[j + 2].localindex] * (1.0 - dx) * dy * (1.0 - dz)
+         + field[part[j + 3].localindex] * (1.0 - dx) * dy * dz
+         + field[part[j + 4].localindex] * (dx) * (1.0 - dy) * (1.0 - dz)
+         + field[part[j + 5].localindex] * (dx) * (1.0 - dy) * dz
+         + field[part[j + 6].localindex] * (dx) * dy * (1.0 - dz)
+         + field[part[j + 7].localindex] * (dx) * dy * dz;
+}
 
 
 /*! Memory this module will want from the arena, worked out before the arena exists so that it can
@@ -307,7 +496,7 @@ void pmforce_periodic(int mode, int *typelist)
   double dx, dy, dz;
   double fx, fy, fz, ff;
   double asmth2, fac, acc_dim;
-  int i, j, slab, level, sendTask, recvTask, task;
+  int i, j, level, sendTask, recvTask;
   int x, y, z, yl, zl, yr, zr, yll, zll, yrr, zrr, ip, dim;
   int slab_x, slab_y, slab_z;
   int slab_xx, slab_yy, slab_zz;
@@ -341,6 +530,11 @@ void pmforce_periodic(int mode, int *typelist)
 #endif
 
       /* determine the cells each particles accesses */
+      /* the force pass puts every particle on the grid, so its cell list builds on all threads (identical list) */
+#ifndef DM_SCALARFIELD_SCREENING
+      if(mode == 0) {num_on_grid = pm_periodic_build_cell_list_all();} else
+#endif
+      {
       for(i = 0, num_on_grid = 0; i < NumPart; i++)
 	{
 	  if(mode)
@@ -401,6 +595,7 @@ void pmforce_periodic(int mode, int *typelist)
 		  num_on_grid++;
 		}
 	}
+      } /* serial cell list */
       /* note: num_on_grid will be  8 times larger than the particle number,
          but num_field_points will generally be much smaller */
 
@@ -408,14 +603,7 @@ void pmforce_periodic(int mode, int *typelist)
       mysort_pmperiodic(part_sortindex, num_on_grid, sizeof(int), pm_periodic_compare_sortindex);
 
       /* determine the number of unique field points */
-      for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-	{
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	      continue;
-
-	  num_field_points++;
-	}
+      num_field_points = pm_periodic_count_field_points(num_on_grid);
 
       /* allocate the local field */
       localfield_globalindex =
@@ -429,35 +617,11 @@ void pmforce_periodic(int mode, int *typelist)
       localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
       localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
-      for(i = 0; i < NTask; i++)
-	{
-	  localfield_first[i] = 0;
-	  localfield_count[i] = 0;
-	}
+
 
       /* establish the cross link between the part[] array and the local list of
          mesh points. Also, count on which CPU how many of the needed field points are stored */
-      for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-	{
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex != part[part_sortindex[i - 1]].globalindex)
-	      num_field_points++;
-
-	  part[part_sortindex[i]].localindex = num_field_points;
-
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	      continue;
-
-	  localfield_globalindex[num_field_points] = part[part_sortindex[i]].globalindex;
-
-	  slab = part[part_sortindex[i]].globalindex / (PMGRID * PMGRID2);
-	  task = slab_to_task[slab];
-	  if(localfield_count[task] == 0)
-	    localfield_first[task] = num_field_points;
-	  localfield_count[task]++;
-	}
-      num_field_points++;
+      num_field_points = pm_periodic_link_field_points(num_on_grid, localfield_globalindex, localfield_first, localfield_count);
 
       for(i = 1, localfield_offset[0] = 0; i < NTask; i++)
 	localfield_offset[i] = localfield_offset[i - 1] + localfield_count[i - 1];
@@ -470,6 +634,11 @@ void pmforce_periodic(int mode, int *typelist)
 
       /* now bin the local particle data onto the mesh list */
 
+      /* every particle is on the grid: bin all of them on all threads (atomic per-cell sums) */
+#ifndef DM_SCALARFIELD_SCREENING
+      if(mode == 0) {pm_periodic_cic_bin_all(localfield_d_data, num_field_points);} else
+#endif
+      {
       for(i = 0; i < num_field_points; i++)
 	localfield_d_data[i] = 0;
 
@@ -513,10 +682,10 @@ void pmforce_periodic(int mode, int *typelist)
 	  localfield_d_data[part[i + 6].localindex] += P[pindex].Mass * (dx) * dy * (1.0 - dz);
 	  localfield_d_data[part[i + 7].localindex] += P[pindex].Mass * (dx) * dy * dz;
 	}
+      } /* serial binning */
 
       /* clear local FFT-mesh density field */
-      for(i = 0; i < fftsize; i++)
-	d_rhogrid[i] = 0;
+      pm_periodic_zero(d_rhogrid, fftsize);
 
       /* exchange data and add contributions to the local mesh-path */
 
@@ -560,15 +729,7 @@ void pmforce_periodic(int mode, int *typelist)
 		  import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
 		}
 
-	      for(i = 0; i < localfield_recv[recvTask]; i++)
-		{
-		  /* determine offset in local FFT slab */
-		  offset =
-		    import_globalindex[i] -
-		    first_slab_of_task[ThisTask] * PMGRID * ((large_array_offset) PMGRID2);
-
-		  d_rhogrid[offset] += import_d_data[i];
-		}
+	      pm_periodic_scatter_into_slab(d_rhogrid, import_d_data, import_globalindex, localfield_recv[recvTask]);
 
 	      if(level > 0)
 		{
@@ -896,6 +1057,17 @@ void pmforce_periodic(int mode, int *typelist)
 
 	      /* read out the forces, which all have been assembled in localfield_data */
 
+	      /* every particle is on the grid in the force pass, so each reads out its own eight cells, on all threads */
+#ifndef DM_SCALARFIELD_SCREENING
+	      if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) NumPart))
+	        {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+	          for(int ip = 0; ip < NumPart; ip++) {P[ip].GravPM[dim] += pm_periodic_cic_readout(ip, localfield_data);}
+	        } else
+#endif
+	      {
 	      for(i = 0, j = 0; i < NumPart; i++)
 		{
 #ifdef DM_SCALARFIELD_SCREENING
@@ -932,6 +1104,7 @@ void pmforce_periodic(int mode, int *typelist)
             
 		  P[i].GravPM[dim] += acc_dim;
 		}
+	      } /* serial force readout */
 
 	    }			/* end of if(mode==0) block */
 
@@ -963,7 +1136,7 @@ void pmpotential_periodic(void)
   double dx, dy, dz;
   double fx, fy, fz, ff;
   double asmth2, fac, pot;
-  int i, j, slab, level, sendTask, recvTask, task;
+  int i, j, level, sendTask, recvTask;
   int x, y, z, ip;
   int slab_x, slab_y, slab_z;
   int slab_xx, slab_yy, slab_zz;
@@ -1032,14 +1205,7 @@ void pmpotential_periodic(void)
   mysort_pmperiodic(part_sortindex, num_on_grid, sizeof(int), pm_periodic_compare_sortindex);
 
   /* determine the number of unique field points */
-  for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-    {
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	  continue;
-
-      num_field_points++;
-    }
+  num_field_points = pm_periodic_count_field_points(num_on_grid);
 
   /* allocate the local field */
   localfield_globalindex =
@@ -1051,35 +1217,11 @@ void pmpotential_periodic(void)
   localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
   localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
-  for(i = 0; i < NTask; i++)
-    {
-      localfield_first[i] = 0;
-      localfield_count[i] = 0;
-    }
+
 
   /* establish the cross link between the part[] array and the local list of
      mesh points. Also, count on which CPU how many of the needed field points are stored */
-  for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-    {
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex != part[part_sortindex[i - 1]].globalindex)
-	  num_field_points++;
-
-      part[part_sortindex[i]].localindex = num_field_points;
-
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	  continue;
-
-      localfield_globalindex[num_field_points] = part[part_sortindex[i]].globalindex;
-
-      slab = part[part_sortindex[i]].globalindex / (PMGRID * PMGRID2);
-      task = slab_to_task[slab];
-      if(localfield_count[task] == 0)
-	localfield_first[task] = num_field_points;
-      localfield_count[task]++;
-    }
-  num_field_points++;
+  num_field_points = pm_periodic_link_field_points(num_on_grid, localfield_globalindex, localfield_first, localfield_count);
 
   for(i = 1, localfield_offset[0] = 0; i < NTask; i++)
     localfield_offset[i] = localfield_offset[i - 1] + localfield_count[i - 1];
@@ -1365,7 +1507,9 @@ int pm_periodic_compare_sortindex(const void *a, const void *b)
   return 0;
 }
 
-static void msort_pmperiodic_with_tmp(int *b, size_t n, int *t)
+/* Stable merge sort of the cell-list index by mesh offset. `depth` > 0 sorts the two halves as concurrent OpenMP tasks, each
+ * with its own half of the scratch array; the merges are the same, so the order is identical to the serial sort. */
+static void msort_pmperiodic_with_tmp(int *b, size_t n, int *t, int depth)
 {
   int *tmp;
   int *b1, *b2;
@@ -1379,8 +1523,22 @@ static void msort_pmperiodic_with_tmp(int *b, size_t n, int *t)
   b1 = b;
   b2 = b + n1;
 
-  msort_pmperiodic_with_tmp(b1, n1, t);
-  msort_pmperiodic_with_tmp(b2, n2, t);
+  if(depth > 0 && n > 65536)
+    {
+#ifdef _OPENMP
+#pragma omp task
+#endif
+      msort_pmperiodic_with_tmp(b1, n1, t, depth - 1);
+      msort_pmperiodic_with_tmp(b2, n2, t + n1, depth - 1);
+#ifdef _OPENMP
+#pragma omp taskwait
+#endif
+    }
+  else
+    {
+      msort_pmperiodic_with_tmp(b1, n1, t, 0);
+      msort_pmperiodic_with_tmp(b2, n2, t, 0);
+    }
 
   tmp = t;
 
@@ -1410,7 +1568,20 @@ void mysort_pmperiodic(void *b, size_t n, size_t s, int (*cmp) (const void *, co
 
   int *tmp = (int *) mymalloc("int *tmp", size);
 
-  msort_pmperiodic_with_tmp((int *) b, n, tmp);
+  int depth = 0;
+#ifdef _OPENMP
+  if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) n))
+    {for(int nt = omp_get_max_threads(); nt > 1; nt >>= 1) {depth++;} depth += 2;}   /* a few more tasks than threads, for balance */
+#endif
+  if(depth > 0)
+    {
+#ifdef _OPENMP
+#pragma omp parallel
+#pragma omp single
+#endif
+      msort_pmperiodic_with_tmp((int *) b, n, tmp, depth);
+    }
+  else {msort_pmperiodic_with_tmp((int *) b, n, tmp, 0);}
 
   myfree(tmp);
 }
@@ -1603,7 +1774,7 @@ void pmtidaltensor_periodic_diff(void)
   double fx, fy, fz, ff;
   double asmth2, fac, tidal_dim;
   MyDouble pp[3];
-  int i, j, slab, level, sendTask, recvTask, task;
+  int i, j, level, sendTask, recvTask;
   int x, y, z, yl, zl, yr, zr, yll, zll, yrr, zrr, ip, dim;
   int slab_x, slab_y, slab_z;
   int slab_xx, slab_yy, slab_zz;
@@ -1689,14 +1860,7 @@ void pmtidaltensor_periodic_diff(void)
       mysort_pmperiodic(part_sortindex, num_on_grid, sizeof(int), pm_periodic_compare_sortindex);
 
       /* determine the number of unique field points */
-      for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-	{
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	      continue;
-
-	  num_field_points++;
-	}
+      num_field_points = pm_periodic_count_field_points(num_on_grid);
 
       /* allocate the local field */
       localfield_globalindex =
@@ -1710,35 +1874,11 @@ void pmtidaltensor_periodic_diff(void)
       localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
       localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
-      for(i = 0; i < NTask; i++)
-	{
-	  localfield_first[i] = 0;
-	  localfield_count[i] = 0;
-	}
+
 
       /* establish the cross link between the part[] array and the local list of
          mesh points. Also, count on which CPU how many of the needed field points are stored */
-      for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-	{
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex != part[part_sortindex[i - 1]].globalindex)
-	      num_field_points++;
-
-	  part[part_sortindex[i]].localindex = num_field_points;
-
-	  if(i > 0)
-	    if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	      continue;
-
-	  localfield_globalindex[num_field_points] = part[part_sortindex[i]].globalindex;
-
-	  slab = part[part_sortindex[i]].globalindex / (PMGRID * PMGRID2);
-	  task = slab_to_task[slab];
-	  if(localfield_count[task] == 0)
-	    localfield_first[task] = num_field_points;
-	  localfield_count[task]++;
-	}
-      num_field_points++;
+      num_field_points = pm_periodic_link_field_points(num_on_grid, localfield_globalindex, localfield_first, localfield_count);
 
       for(i = 1, localfield_offset[0] = 0; i < NTask; i++)
 	localfield_offset[i] = localfield_offset[i - 1] + localfield_count[i - 1];
@@ -2220,15 +2360,11 @@ void pmtidaltensor_periodic_diff(void)
 void pmtidaltensor_periodic_fourier(int component)
 {
   double k2, kx, ky, kz, smth;
-  double dx, dy, dz;
   double fx, fy, fz, ff;
-  double asmth2, fac, tidal;
-  MyDouble pp[3];
-  int i, j, slab, level, sendTask, recvTask, task;
+  double asmth2, fac;
+  int i, level, sendTask, recvTask;
   int x, y, z, ip;
-  int slab_x, slab_y, slab_z;
-  int slab_xx, slab_yy, slab_zz;
-  int num_on_grid, num_field_points, pindex, xx, yy, zz;
+  int num_on_grid, num_field_points;
   MPI_Status status;
   int *localfield_count, *localfield_first, *localfield_offset, *localfield_recv;
   large_array_offset offset, *localfield_globalindex, *import_globalindex;
@@ -2245,43 +2381,8 @@ void pmtidaltensor_periodic_fourier(int component)
 
 
   /* determine the cells each particles accesses */
-  for(i = 0, num_on_grid = 0; i < NumPart; i++)
-    {
-        /* possible bugfix: Y.Feng:  (otherwise just pp[xx]=Pos[xx]) */
-        /* make sure that particles are properly box-wrapped */
-        for(xx = 0; xx < 3; xx++)
-        {
-            pp[xx] = P[i].Pos[xx];
-            pp[xx] = WRAP_POSITION_UNIFORM_BOX(pp[xx]);
-        }
-        slab_x = (int) (to_slab_fac * pp[0]);
-        slab_y = (int) (to_slab_fac * pp[1]);
-        slab_z = (int) (to_slab_fac * pp[2]);
-        if(slab_x >= PMGRID) slab_x -= PMGRID;
-        if(slab_y >= PMGRID) slab_y -= PMGRID;
-        if(slab_z >= PMGRID) slab_z -= PMGRID; 
-	
-	for(xx = 0; xx < 2; xx++) 
-	    for(yy = 0; yy < 2; yy++) 
-		for(zz = 0; zz < 2; zz++) { 
-		    slab_xx = slab_x + xx; 
-		    slab_yy = slab_y + yy; 
-		    slab_zz = slab_z + zz; 
-		    
-		    if(slab_xx >= PMGRID) 
-			slab_xx -= PMGRID; 
-		    if(slab_yy >= PMGRID) 
-			slab_yy -= PMGRID; 
-		    if(slab_zz >= PMGRID) 
-			slab_zz -= PMGRID; 
-		    
-		    offset = ((large_array_offset) PMGRID2) * (PMGRID * slab_xx + slab_yy) + slab_zz; 
-		    part[num_on_grid].partindex = (i << 3) + (xx << 2) + (yy << 1) + zz; 
-		    part[num_on_grid].globalindex = offset; 
-		    part_sortindex[num_on_grid] = num_on_grid; 
-		    num_on_grid++; 
-		} 
-    } 
+  /* every particle is on the grid here, so particle i's eight cells are entries 8i..8i+7 and the list builds on all threads */
+  num_on_grid = pm_periodic_build_cell_list_all();
   
   /* note: num_on_grid will be  8 times larger than the particle number, 
      but num_field_points will generally be much smaller */
@@ -2290,14 +2391,7 @@ void pmtidaltensor_periodic_fourier(int component)
   mysort_pmperiodic(part_sortindex, num_on_grid, sizeof(int), pm_periodic_compare_sortindex);
 
   /* determine the number of unique field points */
-  for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-    {
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	  continue;
-
-      num_field_points++;
-    }
+  num_field_points = pm_periodic_count_field_points(num_on_grid);
 
   /* allocate the local field */
   localfield_globalindex =
@@ -2309,76 +2403,22 @@ void pmtidaltensor_periodic_fourier(int component)
   localfield_offset = (int *) mymalloc("localfield_offset", NTask * sizeof(int));
   localfield_recv = (int *) mymalloc("localfield_recv", NTask * sizeof(int));   /* what each rank sends this one */
 
-  for(i = 0; i < NTask; i++)
-    {
-      localfield_first[i] = 0;
-      localfield_count[i] = 0;
-    }
+
 
   /* establish the cross link between the part[] array and the local list of
      mesh points. Also, count on which CPU how many of the needed field points are stored */
-  for(i = 0, num_field_points = 0; i < num_on_grid; i++)
-    {
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex != part[part_sortindex[i - 1]].globalindex)
-	  num_field_points++;
-
-      part[part_sortindex[i]].localindex = num_field_points;
-
-      if(i > 0)
-	if(part[part_sortindex[i]].globalindex == part[part_sortindex[i - 1]].globalindex)
-	  continue;
-
-      localfield_globalindex[num_field_points] = part[part_sortindex[i]].globalindex;
-
-      slab = part[part_sortindex[i]].globalindex / (PMGRID * PMGRID2);
-      task = slab_to_task[slab];
-      if(localfield_count[task] == 0)
-	localfield_first[task] = num_field_points;
-      localfield_count[task]++;
-    } 
-  num_field_points++;
+  num_field_points = pm_periodic_link_field_points(num_on_grid, localfield_globalindex, localfield_first, localfield_count);
 
   for(i = 1, localfield_offset[0] = 0; i < NTask; i++)
     localfield_offset[i] = localfield_offset[i - 1] + localfield_count[i - 1];
 
   /* now bin the local particle data onto the mesh list */
 
-  for(i = 0; i < num_field_points; i++)
-    localfield_d_data[i] = 0;
-
-  for(i = 0; i < num_on_grid; i += 8)
-    { 
-	pindex = (part[i].partindex >> 3);
-        if(P[pindex].Mass<=0) continue;
-
-        /* possible bugfix: Y.Feng:  (otherwise just pp[xx]=Pos[xx]) */
-        /* make sure that particles are properly box-wrapped */
-        for(xx = 0; xx < 3; xx++)
-        {
-            pp[xx] = P[pindex].Pos[xx];
-            pp[xx] = WRAP_POSITION_UNIFORM_BOX(pp[xx]);
-        }
-        slab_x = (int) (to_slab_fac * pp[0]);
-        slab_y = (int) (to_slab_fac * pp[1]);
-        slab_z = (int) (to_slab_fac * pp[2]);
-        dx = to_slab_fac * pp[0] - slab_x;
-        dy = to_slab_fac * pp[1] - slab_y;
-        dz = to_slab_fac * pp[2] - slab_z;
-
-	localfield_d_data[part[i + 0].localindex] += P[pindex].Mass * (1.0 - dx) * (1.0 - dy) * (1.0 - dz);
-	localfield_d_data[part[i + 1].localindex] += P[pindex].Mass * (1.0 - dx) * (1.0 - dy) * dz;
-	localfield_d_data[part[i + 2].localindex] += P[pindex].Mass * (1.0 - dx) * dy * (1.0 - dz);
-	localfield_d_data[part[i + 3].localindex] += P[pindex].Mass * (1.0 - dx) * dy * dz;
-	localfield_d_data[part[i + 4].localindex] += P[pindex].Mass * (dx) * (1.0 - dy) * (1.0 - dz);
-	localfield_d_data[part[i + 5].localindex] += P[pindex].Mass * (dx) * (1.0 - dy) * dz;
-	localfield_d_data[part[i + 6].localindex] += P[pindex].Mass * (dx) * dy * (1.0 - dz);
-	localfield_d_data[part[i + 7].localindex] += P[pindex].Mass * (dx) * dy * dz;
-    }
+  /* every particle is on the grid: bin all of them on all threads (atomic per-cell sums) */
+  pm_periodic_cic_bin_all(localfield_d_data, num_field_points);
 
   /* clear local FFT-mesh density field */
-  for(i = 0; i < fftsize; i++)
-    d_rhogrid[i] = 0;
+  pm_periodic_zero(d_rhogrid, fftsize);
 
   /* exchange data and add contributions to the local mesh-path */
 
@@ -2423,15 +2463,7 @@ void pmtidaltensor_periodic_fourier(int component)
 	      import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
 	    }
 
-	  for(i = 0; i < localfield_recv[recvTask]; i++)
-	    {
-	      /* determine offset in local FFT slab */
-	      offset =
-		import_globalindex[i] -
-		first_slab_of_task[ThisTask] * PMGRID * ((large_array_offset) PMGRID2);
-
-	      d_rhogrid[offset] += import_d_data[i];
-	    }
+	  pm_periodic_scatter_into_slab(d_rhogrid, import_d_data, import_globalindex, localfield_recv[recvTask]);
 
 	  if(level > 0)
 	    {
@@ -2603,36 +2635,14 @@ void pmtidaltensor_periodic_fourier(int component)
 
   /* read out the tidal field values, which all have been assembled in localfield_data */
 
-  for(i = 0, j = 0; i < NumPart; i++)
+  /* particle i's eight cells are entries 8i..8i+7 (cell list above), so every particle reads out independently */
+  const int tidal_threaded = gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, (long long) NumPart);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(tidal_threaded)
+#endif
+  for(int i = 0; i < NumPart; i++)
     {
-      while(j < num_on_grid && (part[j].partindex >> 3) != i)
-	j++;
-
-        /* possible bugfix: Y.Feng:  (otherwise just pp[xx]=Pos[xx]) */
-        /* make sure that particles are properly box-wrapped */
-        for(xx = 0; xx < 3; xx++)
-        {
-            pp[xx] = P[i].Pos[xx];
-            pp[xx] = WRAP_POSITION_UNIFORM_BOX(pp[xx]);
-        }
-        slab_x = (int) (to_slab_fac * pp[0]);
-        slab_y = (int) (to_slab_fac * pp[1]);
-        slab_z = (int) (to_slab_fac * pp[2]);
-        dx = to_slab_fac * pp[0] - slab_x;
-        dy = to_slab_fac * pp[1] - slab_y;
-        dz = to_slab_fac * pp[2] - slab_z; 
-	
-	tidal = 
-	    +localfield_data[part[j + 0].localindex] * (1.0 - dx) * (1.0 - dy) * (1.0 - dz)
-	    + localfield_data[part[j + 1].localindex] * (1.0 - dx) * (1.0 - dy) * dz
-	    + localfield_data[part[j + 2].localindex] * (1.0 - dx) * dy * (1.0 - dz)
-	    + localfield_data[part[j + 3].localindex] * (1.0 - dx) * dy * dz
-	    + localfield_data[part[j + 4].localindex] * (dx) * (1.0 - dy) * (1.0 - dz)
-	    + localfield_data[part[j + 5].localindex] * (dx) * (1.0 - dy) * dz
-	    + localfield_data[part[j + 6].localindex] * (dx) * dy * (1.0 - dz)
-	    + localfield_data[part[j + 7].localindex] * (dx) * dy * dz;
-
-	tidal *= fac;
+	const double tidal = fac * pm_periodic_cic_readout(i, localfield_data);
 
 	if(component == 0) 
 	{ 
