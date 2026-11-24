@@ -84,6 +84,17 @@ static SscDonorSums *ssc_donor_sums(int n_gas)
     return ssc_donor;
 }
 
+#if defined(OUTPUT_ENERGY_STEP_TRACE) || (defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(GALSF_SINGLE_STARS_SF_CRITERION))
+/* this rank's cells that granted mass, each once */
+static std::vector<int> ssc_record_donors(const std::vector<SscGrantRecord> &records)
+{
+    std::vector<int> d;
+    for(const SscGrantRecord& r : records) {d.push_back(r.j);}
+    std::sort(d.begin(), d.end()); d.erase(std::unique(d.begin(), d.end()), d.end());
+    return d;
+}
+#endif
+
 /* ---- Spec hooks ---- */
 
 static int ssc_is_pending_star(int i) {return (P[i].Type == 4 && P[i].Mass == 0);}
@@ -285,17 +296,7 @@ double single_stars_collect_gas(long long tot_spawned)
 
 #if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(GALSF_SINGLE_STARS_SF_CRITERION)
     std::vector<int> net_donors; /* donors that lose mass in this collection */
-    for(int j = 0; j < DMIN(N_gas, ssc_donor_cap); j++) {if(ssc_donor[j].grant > 0 && P[j].Type == 0) {net_donors.push_back(j);}}
-#endif
-#ifdef GALSF_SINGLE_STARS_SF_CRITERION /* donors cool down like the parent: blocked until the density is recomputed, then a fraction of their own free-fall time */
-    for(int j = 0; j < DMIN(N_gas, ssc_donor_cap); j++) {
-        if(ssc_donor[j].grant <= 0 || P[j].Type != 0) {continue;}
-        CellP[j].SingleStarSpawnBlock = 1;
-        if(All.SFCooldownFreeFallFraction > 0 && CellP[j].Density > 0) {
-            double t_cool = All.SFCooldownFreeFallFraction * sqrt(3. * M_PI / (32. * All.G * CellP[j].Density * All.cf_a3inv));
-            if(t_cool > CellP[j].SingleStarSFCooldown) {CellP[j].SingleStarSFCooldown = t_cool;}
-        }
-    }
+    for(int j : ssc_record_donors(records)) {if(ssc_donor[j].grant > 0 && P[j].Type == 0) {net_donors.push_back(j);}}
 #endif
     /* apply: each donor loses its granted quanta once */
     {
@@ -310,7 +311,7 @@ double single_stars_collect_gas(long long tot_spawned)
         double e_cr_0 = ssc_local_cr_energy();
 #endif
 #ifdef OUTPUT_ENERGY_STEP_TRACE
-        for(int j = 0; j < DMIN(N_gas, ssc_donor_cap); j++) { /* each donor loses grant x mu with its own u and v (the apply below keeps them) */
+        for(int j : ssc_record_donors(records)) { /* each donor loses grant x mu with its own u and v (the apply below keeps them) */
             if(ssc_donor[j].grant > 0 && P[j].Type == 0) {double dm = (double)ssc_donor[j].grant * mu; ESTEP_BOOK(EBK_SF_DONOR, -dm * (CellP[j].InternalEnergy + 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv));}
         }
 #endif
