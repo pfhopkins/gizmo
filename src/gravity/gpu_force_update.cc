@@ -46,7 +46,10 @@
 #include "gpu_gravity_tree.h"
 #include "../mesh/ghost_writeback.h"   /* ghost_get_num_local: the rank's own element count */
 #include "forcetree.h"
-#include "../core/timestep_functions.h"   /* dilation, for the motion bound */
+#include "../core/timestep_functions.h"   /* dilation, for the motion bound; particle_radius_growth_rate */
+#include "ags_functions.h"                /* particle_radius_drifts_with_divergence_P */
+#include "../mesh/nlr_radius_policy.h"    /* force_hmax_per_type_radius */
+#include "../declarations/gpu_dispatch_templates.h"   /* gizmo_gpu_default_space_is_host */
 
 
 /* Atomic max for MyFloat via 64-bit CAS (MyFloat = double in GIZMO typedefs). */
@@ -88,6 +91,22 @@ gpu_atomic_max_myfloat(MyFloat* addr, MyFloat val)
         if(prev == old_bits) break;
         memcpy(&old, &prev, sizeof(MyFloat));
     }
+}
+
+/* Raise *addr to val if val is larger; 1 if it did.  The host's atomic_max_double, on the device. */
+KOKKOS_INLINE_FUNCTION static int
+gpu_atomic_raise_myfloat(MyFloat* addr, MyFloat val)
+{
+    uint64_t val_bits, old_bits;
+    memcpy(&val_bits, &val, sizeof(MyFloat));
+    MyFloat old = *addr;
+    while(val > old) {
+        memcpy(&old_bits, &old, sizeof(MyFloat));
+        const uint64_t prev = Kokkos::atomic_compare_exchange(reinterpret_cast<uint64_t*>(addr), old_bits, val_bits);
+        if(prev == old_bits) {return 1;}
+        memcpy(&old, &prev, sizeof(MyFloat));
+    }
+    return 0;
 }
 
 /* =========================================================================
@@ -432,3 +451,188 @@ finish_mpi:
 }
 
 
+
+
+/* =========================================================================
+ * gpu_force_update_hmax_local -- the local part of force_update_hmax on the device.
+ *
+ * The host form drifts each active element's chain of parent nodes up to the first node already current, then
+ * raises the chain's kernel-length bands (scalar hmax, divVmax, the six per-type bands) while they grow, listing
+ * each top-level node reached.  Here the same three steps run on the device, so the host writes none of those
+ * node pages between device updates:
+ *   1. claim: each chain, up to its first node current at this time, is listed once (a node stamped by another
+ *      lane is that lane's from there up) -- the set the host's serial drift visits;
+ *   2. the listed nodes brought current by the device drift (gpu_device_node_list_bring_current), the same
+ *      per-node arithmetic as the host's force_drift_node;
+ *   3. the band raise with atomics, the changed top-level nodes listed once (an atomic stamp), and the listed
+ *      nodes' mirrors published again, so they carry the raised bands as the host route's later publication would.
+ * The bands are maxima, so the result does not depend on the order the lanes run in; the changed-node list is a
+ * set, and every reader of it (the pack, the exchange, the apply) is order-independent.
+ * ========================================================================= */
+static char *g_hmax_update_scratch = NULL;
+
+extern "C" int gpu_force_update_hmax_available(void)
+{
+    return gizmo_gpu_default_space_is_host() ? 0 : 1;
+}
+
+extern "C" void gpu_force_update_hmax_release(void)
+{
+    DomainList = NULL;
+    if(g_hmax_update_scratch) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_hmax_update_scratch); g_hmax_update_scratch = NULL;}
+}
+
+extern "C" int gpu_force_update_hmax_local(struct gpu_hmax_reach_record *reach_records)
+{
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
+    /* the device drift and the mirror it publishes need the walk's mirror of the tree */
+    const struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->len) {return 1;}
+    const int n_active = (int) ActiveParticleList.size();
+    const int ntop = (NTopleaves > 0) ? NTopleaves : 1;
+    const int n_alloc = (n_active > 0) ? n_active : 1;
+    const integertime ti_now = gizmo_host_ti_current();
+    /* The claim list never needs more than the local node count; below it, the active count times a depth ordinary
+       trees stay under.  A longer chain overflows it, and the update then takes the host form, before any node has
+       changed. */
+    const size_t claim_depth = 48;
+    size_t claim_cap = (size_t) n_alloc * claim_depth;
+    if(claim_cap > (size_t) Numnodestree) {claim_cap = (size_t) Numnodestree;}
+    if(claim_cap < 1) {claim_cap = 1;}
+    const size_t rec_bytes = reach_records ? (size_t) n_alloc * sizeof(struct gpu_hmax_reach_record) : 0;
+    /* changed-node list, its count, the active list, claim cursor + overflow flag, the claim list */
+    const size_t int_bytes = ((size_t) ntop + 1 + (size_t) n_alloc + 2 + claim_cap) * sizeof(int);
+    char *scratch = (char *) gizmo_gpu_alloc_shared(rec_bytes + int_bytes, "hmax_update_scratch");
+    if(!scratch) {return 1;}
+    struct gpu_hmax_reach_record *records_dev = (struct gpu_hmax_reach_record *) scratch;
+    int *domain_list_dev  = (int *) (scratch + rec_bytes);
+    int *domain_count_dev = domain_list_dev + ntop;
+    int *active_dev       = domain_count_dev + 1;
+    int *flags_dev        = active_dev + n_alloc;
+    int *claim_list_dev   = flags_dev + 2;
+    domain_count_dev[0] = 0;
+    flags_dev[0] = flags_dev[1] = 0;
+    if(n_active > 0) {memcpy(active_dev, ActiveParticleList.data(), (size_t) n_active * sizeof(int));}
+
+    gpu_particles_arena_set_site("gpu_force_update_hmax");
+    gpu_particles_arena_acquire(NumPart, P, CellP);
+    struct particle_data *Pp = gpu_particles_arena_P();
+    int            *Fa = Father;
+    struct NODE    *No = Nodes;
+    struct extNODE *Ex = Extnodes;
+
+    /* 1. claim the chains */
+    GlobFlag++;
+    const int gclaim = GlobFlag;
+    const int claim_cap_i = (int) claim_cap;
+    {
+        int *claim_cursor = flags_dev, *claim_overflow = flags_dev + 1, *claim_list = claim_list_dev;
+        const int *act = active_dev;
+        const integertime ti = ti_now;
+        Kokkos::parallel_for("gpu_hmax_claim_chains", n_active, KOKKOS_LAMBDA(const int idx) {
+            const int i = act[idx];
+            if(!(Pp[i].Mass > 0)) {return;}
+            int no = Fa[i];
+            while(no >= 0) {
+                if(No[no].Ti_current == ti) {break;}
+                if(Kokkos::atomic_exchange(&Ex[no].Flag, gclaim) == gclaim) {break;}
+                const int slot = Kokkos::atomic_fetch_add(claim_cursor, 1);
+                if(slot < claim_cap_i) {claim_list[slot] = no;}
+                else {Kokkos::atomic_store(claim_overflow, 1);}
+                no = No[no].u.d.father;
+            }
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("gpu_hmax_claim_chains", n_active);
+    }
+    if(flags_dev[1]) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch); return 1;}   /* nothing has changed yet */
+    g_hmax_update_scratch = scratch;
+    DomainList = domain_list_dev;
+    DomainNumChanged = 0;
+    const int n_claimed = flags_dev[0];
+
+    /* 2. bring the claimed nodes current.  A failure past this point has changed nodes, so it is not answered by the
+          host form: it stops the run, and this rank still joins the exchange with nothing to send. */
+    if(gpu_device_node_list_bring_current(claim_list_dev, n_claimed, All.TreeNodeIndexBase, gpu_gravity_tree_capacity(), ti_now) != 0)
+    {
+        printf("Task=%d force_update_hmax (device): the active chains could not be brought current\n", ThisTask); fflush(stdout);
+        endrun(929711);
+        return 0;
+    }
+
+    /* 3. raise the bands */
+    GlobFlag++;
+    const int gband = GlobFlag;
+    {
+        const int *act = active_dev;
+        int *dlist = domain_list_dev, *dcount = domain_count_dev;
+        struct gpu_hmax_reach_record *rec = reach_records ? records_dev : NULL;
+        const double max_kernel_radius = (double) All.MaxKernelRadius;
+        Kokkos::parallel_for("gpu_hmax_raise_bands", Kokkos::RangePolicy<Kokkos::Schedule<Kokkos::Dynamic>>(0, n_active, Kokkos::ChunkSize(1)),
+                             KOKKOS_LAMBDA(const int idx) {
+            const int i = act[idx];
+            if(!(Pp[i].Mass > 0)) {if(rec) {rec[idx].valid = 0;} return;}
+            const double divVel = particle_radius_growth_rate(i, Pp);
+            const int per_type_band = (int) Pp[i].Type;
+            const double per_type_htmp = force_hmax_per_type_radius(Pp[i], max_kernel_radius);
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+            const int scalar_eligible = 1;
+            const double kernrad_temp = (Pp[i].Type == 0) ? (double) Pp[i].KernelRadius : (double) Pp[i].AGS_KernelRadius;
+            const double htmp = DMIN(kernrad_temp, max_kernel_radius);
+#else
+            const int scalar_eligible = (Pp[i].Type == 0);
+            const double htmp = (Pp[i].Type == 0) ? DMIN((double) Pp[i].KernelRadius, max_kernel_radius) : 0.0;
+#endif
+            const int divv_eligible = particle_radius_drifts_with_divergence_P(i, Pp);
+            int no = Fa[i];
+            while(no >= 0) {
+                /* as the host form: climb only while something grows */
+                const int per_type_grew = gpu_atomic_raise_myfloat(&Ex[no].hmax_per_type[per_type_band], (MyFloat) per_type_htmp);
+                int scalar_grew = scalar_eligible ? gpu_atomic_raise_myfloat(&Ex[no].hmax, (MyFloat) htmp) : 0;
+                if(divv_eligible && gpu_atomic_raise_myfloat(&Ex[no].divVmax, (MyFloat) divVel)) {scalar_grew = 1;}
+                if(!(scalar_grew || per_type_grew)) {break;}
+                if(No[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) {
+                    if(Kokkos::atomic_exchange(&Ex[no].Flag, gband) != gband) {
+                        const int slot = Kokkos::atomic_fetch_add(dcount, 1);
+                        if(slot < ntop) {dlist[slot] = no;}
+                    }
+                    break;
+                }
+                no = No[no].u.d.father;
+            }
+            if(rec) {
+                int leaf = Fa[i];
+                while(leaf >= 0 && !(No[leaf].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))) {leaf = No[leaf].u.d.father;}
+                rec[idx].reach = per_type_htmp;
+                rec[idx].growth = divv_eligible ? divVel : 0.0;
+                rec[idx].leaf_node = leaf;
+                rec[idx].valid = 1;
+            }
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("gpu_hmax_raise_bands", n_active);
+    }
+    if(gpu_device_node_list_publish(claim_list_dev, n_claimed, All.TreeNodeIndexBase, gpu_gravity_tree_capacity()) != 0)
+    {
+        printf("Task=%d force_update_hmax (device): the raised nodes' mirrors could not be published\n", ThisTask); fflush(stdout);
+        endrun(929712);
+    }
+
+    DomainNumChanged = domain_count_dev[0];
+    if(DomainNumChanged > ntop)
+    {
+        printf("Task=%d force_update_hmax (device): %d changed top-level nodes exceeds the %d-entry list\n", ThisTask, DomainNumChanged, ntop);
+        fflush(stdout);
+        DomainNumChanged = ntop;
+        endrun(929713);
+    }
+    /* the records, one contiguous copy to the host */
+    if(reach_records && n_active > 0)
+    {
+        Kokkos::View<struct gpu_hmax_reach_record *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> to(reach_records, (size_t) n_active);
+        Kokkos::View<const struct gpu_hmax_reach_record *, GIZMO_KOKKOS_SHARED_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> from(records_dev, (size_t) n_active);
+        Kokkos::deep_copy(to, from);
+    }
+    return 0;
+}

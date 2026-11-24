@@ -59,6 +59,9 @@ int  source_reach_map_verdict(int query_leaf, int leaf, int leaf_node, const dou
  * not drift with the divergence).  1 if the map still covers it -- its radius at the build, grown at that rate since, bounds
  * the new one -- or nothing relies on the map; 0 if its leaf must be marked stale.  O(1), thread-safe. */
 int  source_reach_map_member_covered(int i, double reach, double growth_rate);
+/* Whether source_reach_map_member_covered tests anything now (a valid map brought to this time); when 0 it answers 1 for
+ * every member, so a caller may skip gathering the members' radii. */
+int  source_reach_map_tests_members(void);
 /* The node bound applies to `leaf` until the next build (a member the map no longer covers, a particle placed in the
  * standing tree, or another rank's flag).  Returns 1 if the leaf was not already stale.  Thread-safe. */
 int  source_reach_map_mark_stale(int leaf);

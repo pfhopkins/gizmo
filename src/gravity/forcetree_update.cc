@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cstdint>
 #include <algorithm>
+#include <vector>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../core/timestep_functions.h"   /* dilation, for the motion bound */
@@ -778,28 +779,11 @@ void force_drift_node(int no, integertime time1)
 
 
 
-/*! This function updates the hmax-values in tree nodes that hold gas cells. These values are needed to find all neighbors in the
- *  hydro-force computation.  Since the KernelRadius-values are potentially changed in the fluid-density computation, force_update_hmax() should be carried
- *  out just before the hydrodynamical forces are computed, i.e. after density(). */
-void force_update_hmax(void)
+/* The local part of force_update_hmax on the host: drift the active chains, raise their bands, and list in DomainList the
+ * changed top-level nodes and the top leaves of members the source-reach map no longer covers. */
+static void force_update_hmax_local_host(const ModeBTopleafMap **topleaf_map_out)
 {
-  int i, no, ta, totDomainNumChanged;
-  int *domainList_all;
-  int *counts, *offset_list, *offset_hmax;
-  MyFloat *domainHmax_loc, *domainHmax_all;
-  /* Per-changed-topleaf exchange record: scalar hmax + divVmax + the 6 Mode-B
-   * per-type bands.  The per-type slots ride this SAME post-density exchange so
-   * remote topleaf/ancestor per-type bands are as fresh as the scalar hmax (they
-   * were locally grown above but, without this, were only cross-rank-fresh at the
-   * last full tree build/refresh).  Required for the Mode-B SYMMETRIC targeted
-   * export band, which prunes remote topleaves by these per-type bands. */
-  enum { HMAX_EXCH_HMAX = 0, HMAX_EXCH_DIVVMAX = 1, HMAX_EXCH_PTYPE0 = 2, HMAX_EXCH_REACH_MAP_STALE = 8, HMAX_EXCH_SIZE = 9 };
-  int OffsetSIZE = HMAX_EXCH_SIZE;
-  double divVel;
-
-  GlobFlag++;
-
-  DomainNumChanged = 0;
+  int no;
   DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
 
   /* Phase 1: drift all ancestor nodes (serial — force_drift_node is not thread-safe).
@@ -823,6 +807,7 @@ void force_update_hmax(void)
   }
   /* Phase 2: update hmax/divVmax/per-type bands with atomics (parallel). */
   const ModeBTopleafMap &topleaf_map = mode_b_topleaf_map_current();   /* also brings the source-reach map to now */
+  *topleaf_map_out = &topleaf_map;
 #ifdef _OPENMP
   const int hmax_chunk = gizmo_omp_particle_chunk((long long) ActiveParticleList.size());
 #pragma omp parallel for schedule(dynamic, hmax_chunk)
@@ -912,6 +897,76 @@ void force_update_hmax(void)
         }
       }
   }
+}
+
+/* The local part of force_update_hmax on the device (gpu_force_update_hmax_local), with the source-reach-map test on
+ * the host over the records the device wrote: the test reads only the map and the record (never P[] or a node), and it
+ * runs for every member, since a member can outgrow the map's radius for it without raising any node's band (another
+ * member already holds a larger one).  0 = done; 1 = not taken, nothing changed. */
+static int force_update_hmax_local_device(const ModeBTopleafMap **topleaf_map_out)
+{
+  const ModeBTopleafMap &topleaf_map = mode_b_topleaf_map_current();   /* also brings the source-reach map to now */
+  *topleaf_map_out = &topleaf_map;
+  const int test_members = source_reach_map_tests_members();
+  std::vector<struct gpu_hmax_reach_record> records(test_members ? ActiveParticleList.size() : 0);
+  if(gpu_force_update_hmax_local(test_members ? records.data() : NULL) != 0) {return 1;}
+  for(size_t idx = 0; idx < records.size(); idx++)
+  {
+    const struct gpu_hmax_reach_record &r = records[idx];
+    if(!r.valid || source_reach_map_member_covered(ActiveParticleList[idx], r.reach, r.growth)) {continue;}
+    if(r.leaf_node >= 0 && source_reach_map_mark_stale(topleaf_map.topleaf_of(r.leaf_node, All.TreeNodeIndexBase)))
+    {
+      if(Extnodes[r.leaf_node].Flag != GlobFlag)
+      {
+        Extnodes[r.leaf_node].Flag = GlobFlag;
+        DomainList[DomainNumChanged++] = r.leaf_node;
+      }
+    }
+  }
+  return 0;
+}
+
+/* Where the local part runs: on the device unless the build has none or the coming step is below the size the device
+ * update is worth (TreeUpdateHostBelowActive, as for the tree update). */
+static int force_update_hmax_on_device(void)
+{
+  if(!gpu_force_update_hmax_available()) {return 0;}
+  return !(All.TreeUpdateHostBelowActive > 0 && (long long) ActiveParticleList.size() < All.TreeUpdateHostBelowActive);
+}
+
+/*! This function updates the hmax-values in tree nodes that hold gas cells. These values are needed to find all neighbors in the
+ *  hydro-force computation.  Since the KernelRadius-values are potentially changed in the fluid-density computation, force_update_hmax() should be carried
+ *  out just before the hydrodynamical forces are computed, i.e. after density(). */
+void force_update_hmax(void)
+{
+  int i, no, ta, totDomainNumChanged;
+  int *domainList_all;
+  int *counts, *offset_list, *offset_hmax;
+  MyFloat *domainHmax_loc, *domainHmax_all;
+  /* Per-changed-topleaf exchange record: scalar hmax + divVmax + the 6 Mode-B
+   * per-type bands.  The per-type slots ride this SAME post-density exchange so
+   * remote topleaf/ancestor per-type bands are as fresh as the scalar hmax (they
+   * were locally grown above but, without this, were only cross-rank-fresh at the
+   * last full tree build/refresh).  Required for the Mode-B SYMMETRIC targeted
+   * export band, which prunes remote topleaves by these per-type bands. */
+  enum { HMAX_EXCH_HMAX = 0, HMAX_EXCH_DIVVMAX = 1, HMAX_EXCH_PTYPE0 = 2, HMAX_EXCH_REACH_MAP_STALE = 8, HMAX_EXCH_SIZE = 9 };
+  int OffsetSIZE = HMAX_EXCH_SIZE;
+  double divVel;
+
+  GlobFlag++;
+
+  DomainNumChanged = 0;
+
+  const ModeBTopleafMap *topleaf_map_p = NULL;
+  const int try_device = force_update_hmax_on_device();
+  const int on_device = try_device && (force_update_hmax_local_device(&topleaf_map_p) == 0);
+  if(!on_device)
+  {
+    if(try_device) {GlobFlag++;}   /* the device attempt that was not taken may have stamped nodes with the value in force */
+    DomainNumChanged = 0;
+    force_update_hmax_local_host(&topleaf_map_p);
+  }
+  const ModeBTopleafMap &topleaf_map = *topleaf_map_p;
 
   /* share the hmax-data of the pseudo-particles accross CPUs */
 
@@ -993,7 +1048,7 @@ void force_update_hmax(void)
   myfree(offset_hmax);
   myfree(offset_list);
   myfree(counts);
-  myfree(DomainList);
+  if(on_device) {gpu_force_update_hmax_release();} else {myfree(DomainList);}
 
   force_bump_hmax_refresh_generation();   /* ancestor boxes re-drifted + per-type bands re-seeded */
   cpu_charge(CPU_TREEHMAXUPDATE, measure_time());

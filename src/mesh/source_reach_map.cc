@@ -533,9 +533,14 @@ int source_reach_map_is_stale(int leaf)
     return (leaf >= 0 && leaf < (int) g_stale.size()) ? (int) __atomic_load_n(&g_stale[leaf], __ATOMIC_RELAXED) : 0;
 }
 
+int source_reach_map_tests_members(void)
+{
+    return (g_valid && g_now_ti == All.Ti_Current) ? 1 : 0;
+}
+
 int source_reach_map_member_covered(int i, double reach, double growth_rate)
 {
-    if(!g_valid || g_now_ti != All.Ti_Current) {return 1;}   /* nothing will rely on the map before it is rebuilt */
+    if(!source_reach_map_tests_members()) {return 1;}   /* nothing will rely on the map before it is rebuilt */
     if(i < 0 || i >= (int) g_covered.size()) {return 0;}
     const double covered = (double) g_covered[i];
     if(!(covered >= 0)) {return 0;}   /* not a member at the build */

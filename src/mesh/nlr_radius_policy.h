@@ -193,6 +193,14 @@ double nlr_particle_symmetric_radius_capped(const struct particle_data &p,
                                             policy);
 }
 
+/* The radius a particle contributes to its nodes' per-type bands (Extnodes hmax_per_type): every leaf-policy source,
+ * kernel radii capped at max_kernel_radius.  One form for the host update and the device update. */
+KOKKOS_INLINE_FUNCTION
+double force_hmax_per_type_radius(const struct particle_data &p, double max_kernel_radius)
+{
+    return nlr_particle_symmetric_radius_capped(p, MODE_B_RADIUS_ALL_SOURCES, max_kernel_radius);
+}
+
 /* The largest symmetric radius a particle can have under this policy once drifted to the current time,
  * however far behind it is.  A drift (drift_particle_impl) rescales KernelRadius and AGS_KernelRadius by
  * at most `growth` (kernel_radius_drift_max_growth_factor) and then raises them to their floors --

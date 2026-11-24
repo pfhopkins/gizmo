@@ -280,9 +280,7 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
  * even when FS > All.MaxKernelRadius. */
 double force_hmax_per_type_particle_radius(int i)
 {
-    return nlr_particle_symmetric_radius_capped(P[i],
-                                                MODE_B_RADIUS_ALL_SOURCES,
-                                                (double)All.MaxKernelRadius);
+    return force_hmax_per_type_radius(P[i], (double)All.MaxKernelRadius);
 }
 
 static void force_refresh_hmax_per_type_host(int Numnodestree)

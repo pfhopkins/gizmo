@@ -427,6 +427,40 @@ extern "C" int gpu_device_node_list_bring_current(const int *list, int n, int ba
     return (*index_outside) ? 1 : 0;   /* an index outside the mirror: nothing listed may be relied on */
 }
 
+/* Publish the mirror of every listed node again, from its canonical state as it stands now (no drift).  For a caller that
+ * brought a list current with gpu_device_node_list_bring_current and then changed those nodes' canonical fields on the device
+ * (the kernel-length update raises their bands): the mirror then holds what the host route's later publication of the same
+ * nodes would.  `list` is the caller's device-written list, as for gpu_device_node_list_bring_current.  0 = done, 1 = no
+ * mirror or an index outside it. */
+extern "C" int gpu_device_node_list_publish(const int *list, int n, int base, int cap)
+{
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->len || !soa->node_ti || !soa->s || !soa->node_vs
+            || !soa->bitflags || !soa->hmax || !soa->vmax) {return 1;}
+    if(n < 0 || (n > 0 && !list)) {return 1;}
+    if(n == 0) {return 0;}
+    if(!list_index_outside_mirror_dev_) {
+        list_index_outside_mirror_dev_ = (int *) gizmo_gpu_alloc_shared(sizeof(int), "node_list_index_flag");
+        if(!list_index_outside_mirror_dev_) {return 1;}
+    }
+    int *index_outside = list_index_outside_mirror_dev_;
+    *index_outside = 0;
+    struct NODE    *Nodes_uvm    = Nodes;
+    struct extNODE *Extnodes_uvm = Extnodes;
+    const struct gpu_node_mirror_ptrs_t mirror = gpu_node_mirror_ptrs(soa);
+    Kokkos::parallel_for("gpu_node_subset_publish", n, KOKKOS_LAMBDA(int i) {
+        const int no = list[i];
+        const int k  = no - base;
+        if(k < 0 || k >= cap) {Kokkos::atomic_store(index_outside, 1); return;}
+        gpu_node_mirror_publish(mirror, k, no, Nodes_uvm, Extnodes_uvm);
+    });
+    Kokkos::fence();
+    gizmo_gpu_check_last_error("gpu_node_subset_publish", n);
+    return (*index_outside) ? 1 : 0;
+}
+
 /* Bring just the nodes a recorder listed current at `ti`, instead of sweeping every node.
  *
  * The claimer is the host lazy drift, which advances a node's canonical state and leaves its

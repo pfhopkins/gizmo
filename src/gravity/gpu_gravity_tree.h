@@ -297,6 +297,24 @@ int  gpu_node_dirty_bring_gravity_current(integertime time1);
  * caller must sweep instead.  Called only by the device tree update, with the claim list it wrote on the
  * device in its own scratch block -- never with the host's node dirty set, which the host answers above. */
 int  gpu_device_node_list_bring_current(const int *list, int n, int base, int cap, integertime time1);
+/* Publish the listed nodes' mirrors again from their canonical state, without drifting: for a caller that changed the
+ * canonical fields of a list it brought current above.  0 = done, 1 = no mirror or an index outside it. */
+int  gpu_device_node_list_publish(const int *list, int n, int base, int cap);
+/* The kernel-length update (force_update_hmax) on the device, local part: bring the active chains current, raise their
+ * bands, and list the changed top-level nodes in DomainList / DomainNumChanged (a device-written buffer, released by
+ * gpu_force_update_hmax_release); when reach_records is non-NULL, copy one record per active element into it (in
+ * ActiveParticleList order) for the host's source-reach-map test.  It takes two fresh GlobFlag values, the second the
+ * stamp of the changed-node list, so a caller adding to the list afterwards dedupes against GlobFlag as it stands.
+ * 0 = done; 1 = not taken (no node has changed; the caller runs the host form). */
+struct gpu_hmax_reach_record {
+    double reach;      /* the element's per-type band radius (force_hmax_per_type_radius) */
+    double growth;     /* its radius growth rate if its radius drifts with the divergence, else 0 */
+    int    leaf_node;  /* the top-level node above it, -1 if none */
+    int    valid;      /* 1 for an element the update covers (Mass > 0); the others carry nothing */
+};
+int  gpu_force_update_hmax_local(struct gpu_hmax_reach_record *reach_records);
+int  gpu_force_update_hmax_available(void);   /* 1 when the build has a device to run it on (not a host backend) */
+void gpu_force_update_hmax_release(void);
 void gpu_node_dirty_grow_to(int cap);   /* keep the set as large as the mirror when foreign storage grows */
 void gpu_node_dirty_release(void);
 long long gpu_node_dirty_unsafe_events(void);   /* fail-safe firings, run-total; a silent
