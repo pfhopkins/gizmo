@@ -72,9 +72,9 @@ static PiFrontRecord *pi_tab = nullptr;
 static int pi_tab_n = 0, pi_tab_cap = 0;
 static int *pi_flist = nullptr; /* the partners of each source of a solve */
 static int pi_flist_cap = 0;
-static int pi_tab_row(MyIDType id)
+static int pi_tab_row(uint64_t id)
 {
-    PiFrontRecord *e = std::lower_bound(pi_tab, pi_tab + pi_tab_n, id, [](const PiFrontRecord& a, MyIDType b) {return a.id < b;});
+    PiFrontRecord *e = std::lower_bound(pi_tab, pi_tab + pi_tab_n, id, [](const PiFrontRecord& a, uint64_t b) {return a.id < b;});
     return (e < pi_tab + pi_tab_n && e->id == id) ? (int)(e - pi_tab) : -1;
 }
 int photoion_front_table_size(void) {return pi_tab_n;}
@@ -350,7 +350,7 @@ static void pi_claim_all(std::vector<pi_src>& S)
 /* a table row counts until the first multiple of the cap step after its solve (where the source solves again, or is gone) */
 static integertime pi_row_end(const PiFrontRecord& e, integertime dti) {return (e.ti / dti + 1) * dti;}
 
-struct pi_sphere {MyIDType id; Vec3<double> Pos; double R;};
+struct pi_sphere {uint64_t id; Vec3<double> Pos; double R;};
 static void pi_counts_in_bytes(const std::vector<long long>& cnt, const std::vector<long long>& off, size_t rec, std::vector<int>& n, std::vector<int>& d)
 {
     n.resize(NTask); d.resize(NTask);
@@ -364,7 +364,7 @@ static int pi_find_partners(std::vector<pi_src>& S, const std::vector<long long>
     const int n_tot = (int) off[NTask];
     std::vector<pi_sphere> mine(S.size()), all(n_tot);
     for(size_t a = 0; a < S.size(); a++) {
-        pi_sphere& m = mine[a]; m.id = P[S[a].i].ID; m.R = 2.0 * S[a].R; /* rounds can grow a sphere */
+        pi_sphere& m = mine[a]; m.id = single_star_draw_rng_key(S[a].i); m.R = 2.0 * S[a].R; /* rounds can grow a sphere */
         for(int k = 0; k < 3; k++) {m.Pos[k] = P[S[a].i].Pos[k];}
         if(S[a].prev >= 0) {Vec3<double> d; for(int k = 0; k < 3; k++) {d[k] = m.Pos[k] - pi_tab[S[a].prev].Pos[k];} m.R = DMAX(m.R, sqrt(d.norm_sq()) + pi_tab[S[a].prev].R);} /* and the cells it may release */
     }
@@ -396,7 +396,7 @@ static void pi_table_update(const std::vector<pi_src>& S, const std::vector<PiLe
     std::vector<PiFrontRecord> mine(S.size()), all(off[NTask]);
     for(size_t a = 0; a < S.size(); a++) {
         PiFrontRecord& e = mine[a]; const pi_src& s = S[a];
-        e.id = P[s.i].ID; e.ti = All.Ti_Current; e.R = 0; e.S_pix = s.Q / PI_NPIX; e.ledger = L[a].bill / s.Q;
+        e.id = single_star_draw_rng_key(s.i); e.ti = All.Ti_Current; e.R = 0; e.S_pix = s.Q / PI_NPIX; e.ledger = L[a].bill / s.Q;
         for(int k = 0; k < 3; k++) {e.Pos[k] = P[s.i].Pos[k];}
         for(int k = 0; k < PI_NPIX; k++) {e.mark[k] = s.mark[k]; e.R = DMAX(e.R, 1.0001 * s.mark[k]);} /* the reach of its fronts */
     }
@@ -432,7 +432,7 @@ void photoionization_per_direction(void)
         double Q = photoion_source_rate(i);
         if(Q <= 0) {continue;}
         pi_src s; std::memset(&s, 0, sizeof(s)); s.i = i; s.Q = Q; s.open = 1;
-        s.prev = pi_tab_row(P[i].ID);
+        s.prev = pi_tab_row(single_star_draw_rng_key(i));
         if(s.prev >= 0 && pi_row_end(pi_tab[s.prev], dti) < All.Ti_Current) {s.prev = -1;} /* its cells expired */
         for(int k = 0; k < PI_NPIX; k++) {s.held[k] = -1;}
         double nH = (P[i].DensityAroundParticle > 0) ? HYDROGEN_MASSFRAC * P[i].DensityAroundParticle * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS : 1.0;

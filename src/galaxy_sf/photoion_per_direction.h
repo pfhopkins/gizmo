@@ -35,7 +35,7 @@ struct PiSourceIn {
     int f0, nf;                   /* its partners: flist[f0 .. f0 + nf) */
 };
 struct PiFrontRecord {            /* a source's last solve, the same on every rank; sorted by id */
-    MyIDType id;
+    uint64_t id;                  /* the star's identity key: stars born from one cell share P.ID */
     integertime ti;               /* when */
     Vec3<double> Pos;
     double R, S_pix;
