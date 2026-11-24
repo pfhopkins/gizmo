@@ -2,8 +2,9 @@
 
 SGChem background field and cosmic-ray rate scaled with the recent star formation rate
 (`ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR` with `CR_SCALE_WITH_G0`, Hu+21):
-F = [M(stars younger than 30 Myr) / 30 Myr] / [M_gas,0 / 4 Gyr]; G0 = G0_LW = G0_dust = max(F SGChemG0, 0.324e-2);
-zeta = F SGChemCosmicRayIonRate. The young-star mass is a running sum kept per rank by birth time (births, wind and
+F = [M(stars younger than 30 Myr) / 30 Myr] / [M_gas,0 / 4 Gyr]; with Sigma_SFR = F M_gas,0 / 4 Gyr over the x-y box area,
+G0 = G0_LW = G0_dust = max(Sigma_SFR / 2.4e-3 Msun yr^-1 kpc^-2 x 8.94e-14 / 5.257e-14, 0.324e-2) (Hu+21 Sec. 2.2);
+zeta = G0 x 5.257e-14 / 8.94e-14 x SGChemCosmicRayIonRate. The young-star mass is a running sum kept per rank by birth time (births, wind and
 death mass changes of young stars, removal at 30 Myr), reduced over ranks only on calls where it changed.
 
 An 8^3 box of 1 Msun cells, SGChem, single stars from the tables, two births at the first step, 2 ranks.

@@ -157,7 +157,7 @@ struct global_data_all_processes
 #endif // CHIMES
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
   double Mgas0;                 /*!< gas mass at the start (fresh start or snapshot) [code units] */
-  double FactorG0;              /*!< [M(stars < 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr], set at every star-formation call */
+  double FactorG0;              /*!< [M(stars < 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr] (x Mgas0 / 4 Gyr: the recent star formation rate), set at every star-formation call */
 #endif
 #ifdef SGCHEM
   char SGChemTablesPath[256];   /*!< directory of the installed SGChem tables (scripts/get_stella_tables.sh) */

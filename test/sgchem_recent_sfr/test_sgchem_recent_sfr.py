@@ -1,6 +1,6 @@
 """sgchem_recent_sfr: SGChem background field and cosmic-ray rate scaled with the recent star formation rate
 (ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR with CR_SCALE_WITH_G0, Hu+21):
-F = [M(stars younger than 30 Myr) / 30 Myr] / [M_gas,0 / 4 Gyr], G0 = max(F SGChemG0, 0.324e-2), zeta = F SGChemCosmicRayIonRate.
+F = [M(stars younger than 30 Myr) / 30 Myr] / [M_gas,0 / 4 Gyr]; G0 from Sigma_SFR over the x-y box area (Hu+21 Sec. 2.2), zeta follows it.
 An 8^3 box of 1 Msun cells with SGChem and single stars from the tables; 2 ranks.
   test_recent_sfr_scale: three 1 Msun stars pass 30 Myr during the run, a young 8 Msun star loses wind mass, two stars
     are born at the first step (drawn mass collected from the gas); 0.59 Myr. At every star-formation call F equals a
@@ -27,6 +27,7 @@ from make_treecol_pixels_ics import make_treecol_pixels_ics, lattice, YR_PER_TIM
 from stella_table_bands import Tables  # noqa: E402
 
 L, N_SIDE = 8.0, 8
+SOLAR_MASS = 1.989e33  # g (constants.h)
 BIRTHS = "100:0.5,300:3.0"  # cell ID: drawn mass [Msun]
 OLD_AGES_MYR = (29.85, 29.7, 29.55)  # 1 Msun stars, pass 30 Myr at about 0.15, 0.3, 0.45 Myr
 
@@ -70,8 +71,9 @@ def run(tables, tag, stars, t_max):
 def check_scale(r):
     F, F_scan, G0, zeta = r[:, 1], r[:, 2], r[:, 4], r[:, 5]
     np.testing.assert_allclose(F, F_scan, rtol=1e-12, atol=0)
-    np.testing.assert_allclose(G0, np.maximum(F * 1.7, 0.324e-2), rtol=1e-14, atol=0)
-    np.testing.assert_allclose(zeta, F * 2.0e-16, rtol=1e-14, atol=0)
+    sigma_sfr = F * N_SIDE ** 3 * (1.989e33 / SOLAR_MASS) / 4.0e9 / (L * 1.0e-3) ** 2  # Msun yr^-1 kpc^-2, 1 Msun cells
+    np.testing.assert_allclose(G0, np.maximum(sigma_sfr / 2.4e-3 * 8.94e-14 / 5.257e-14, 0.324e-2), rtol=1e-6, atol=0)
+    np.testing.assert_allclose(zeta, G0 * 5.257e-14 / 8.94e-14 * 2.0e-16, rtol=1e-14, atol=0)
 
 
 def check_expiries(r, ages):

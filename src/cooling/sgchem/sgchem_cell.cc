@@ -149,7 +149,15 @@ double sgchem_radiation_field_for_snapshot(int i, int blocknr)
 #endif
 
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
-double sgchem_recent_sfr_g0(void) {return DMAX(All.FactorG0 * All.SGChemG0, 0.324e-2);} /* G0 = G0_LW = G0_dust */
+/* Hu et al. 2021 Sec. 2.2: u_UV = (Sigma_SFR / Sigma_SFR,0) u_UV,0 with the star formation rate of the last 30 Myr over the x-y
+   area of the (non-comoving) box; G0 = G0_LW = G0_dust [Habing], floored */
+#define HU21_SIGMA_SFR0 2.4e-3 /* Msun yr^-1 kpc^-2, solar neighbourhood (Fuchs et al. 2009) */
+#define HU21_U_UV0 8.94e-14    /* erg cm^-3, Draine field */
+double sgchem_recent_sfr_g0(void)
+{
+    double sigma_sfr = All.FactorG0 * All.Mgas0 * UNIT_MASS_IN_SOLAR / 4.0e9 / ((boxSize_X * UNIT_LENGTH_IN_KPC) * (boxSize_Y * UNIT_LENGTH_IN_KPC));
+    return DMAX(sigma_sfr / HU21_SIGMA_SFR0 * HU21_U_UV0 / HABING_EGY_DENSITY_6_13P6EV_CGS, SGCHEM_G0_FLOOR_HABING);
+}
 #endif
 
 #if defined(COSMIC_RAY_FLUID) || defined(CR_BACKGROUND_IONRATE_ATTENUATED)
@@ -175,7 +183,7 @@ double sgchem_cr_ion_rate(int i, double G0)
 #endif
     double zeta = All.SGChemCosmicRayIonRate;
 #if defined(CR_SCALE_WITH_G0) && defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
-    zeta = DMAX(1e-21, All.FactorG0 * zeta); /* floor as the other paths (stella_dev d47840ddb): 0 before the first stars otherwise */
+    zeta *= G0 * HABING_EGY_DENSITY_6_13P6EV_CGS / HU21_U_UV0; /* follows the field, its floor included */
 #elif defined(CR_SCALE_WITH_G0)
     zeta = DMAX(1e-21, DMIN(2e-16, (G0 / 1.7) * zeta)); /* with the stars' field */
 #endif
