@@ -646,7 +646,11 @@ def test_cosmic_ray_rate(tables, mode):
         return
     assert cells.shape[1] == 64, "dump: ID, species, columns, energy densities, G0 G0_LW G0_dust zeta f_cr, position"
     f = cells[:, 60]
-    np.testing.assert_allclose(zeta, rate * f, rtol=1e-8, atol=0)  # f is stored as float
+    _, zg, _ = gas_with_species(12, 20.0)
+    z = zg[cells[:, 0].astype(int) - 1]  # every metal slot scales with z (Fe = 1.38e-3 z / 0.0142)
+    radio = 1e-21 * z / 0.014 + 1e-19 * (1.38e-3 * z / 0.0142) / 1.3528499188e-03  # unshielded
+    np.testing.assert_allclose(zeta, rate * f + radio, rtol=1e-8, atol=0)  # f is stored as float
+    assert (radio > 1e-3 * rate * f).any()
     gpos = cells[:, -3:]
     sigma = np.array([direct_columns(p, gpos, np.full(len(gpos), m_gas), r_max=SHIELD) for p in gpos]) * UNIT_SURFDEN
     assert (sigma < 2.23e-3).any() and (sigma > 2.23e-3).any()  # both branches

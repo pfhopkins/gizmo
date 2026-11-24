@@ -152,6 +152,21 @@ double sgchem_radiation_field_for_snapshot(int i, int blocknr)
 double sgchem_recent_sfr_g0(void) {return DMAX(All.FactorG0 * All.SGChemG0, 0.324e-2);} /* G0 = G0_LW = G0_dust */
 #endif
 
+#if defined(COSMIC_RAY_FLUID) || defined(CR_BACKGROUND_IONRATE_ATTENUATED)
+/* the part of the ionisation rate per H [s^-1] from radioactive decay, not from cosmic rays: the terms of Get_CosmicRayIonizationRate_cgs */
+static double sgchem_radioactive_ion_rate(int i)
+{
+    double zeta = 0;
+#ifdef METALS
+    zeta += 1.e-21 * P[i].Metallicity[0] / All.SolarAbundances[0];
+#if (NUM_METAL_SPECIES_BASE > 10)
+    zeta += 1.e-19 * P[i].Metallicity[10] / All.SolarAbundances[10];
+#endif
+#endif
+    return zeta;
+}
+#endif
+
 /* cosmic-ray ionisation rate per H [s^-1] of cell i under the field G0 [Habing] */
 double sgchem_cr_ion_rate(int i, double G0)
 {
@@ -165,7 +180,7 @@ double sgchem_cr_ion_rate(int i, double G0)
     zeta = DMAX(1e-21, DMIN(2e-16, (G0 / 1.7) * zeta)); /* with the stars' field */
 #endif
 #ifdef CR_BACKGROUND_IONRATE_ATTENUATED
-    zeta = All.SGChemCosmicRayIonRate * CellP[i].TreeColCRAttenuation; /* replaces the scaling */
+    zeta = All.SGChemCosmicRayIonRate * CellP[i].TreeColCRAttenuation + sgchem_radioactive_ion_rate(i); /* replaces the scaling; the decay terms are not shielded */
 #endif
     return zeta;
 }
@@ -175,13 +190,7 @@ double sgchem_cr_ion_rate(int i, double G0)
    the CR energy of cell i, capped at it */
 static void sgchem_cr_ionisation_from_fluid(int i, const struct ChemInputs *in, double de_heat)
 {
-    double zeta_radio = 0;
-#ifdef METALS
-    zeta_radio += 1.e-21 * P[i].Metallicity[0] / All.SolarAbundances[0];
-#if (NUM_METAL_SPECIES > 10)
-    zeta_radio += 1.e-19 * P[i].Metallicity[10] / All.SolarAbundances[10];
-#endif
-#endif
+    double zeta_radio = sgchem_radioactive_ion_rate(i);
     double f_cr = (in->cosmic_ray_ion_rate > 0) ? DMIN(DMAX(1. - zeta_radio / in->cosmic_ray_ion_rate, 0.), 1.) : 0;
     double de = f_cr * DMAX(de_heat, 0), ecr = 0;
     for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {ecr += CellP[i].CosmicRayEnergy[k];}
