@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <Kokkos_Core.hpp>
 #include <exception>
@@ -467,9 +468,80 @@ static void particle_storage_apply_placement(void *p, size_t nbytes, size_t part
     }
 }
 
+#if defined(GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY) && GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY && defined(KOKKOS_ENABLE_CUDA)
+/*! The bulk particle records (P, CellP) in ordinary page-aligned system memory with a host preferred-location hint, instead of
+ *  CUDA managed memory. On a node whose GPU reaches pageable memory through the host page tables (cudaDevAttrPageableMemoryAccess,
+ *  e.g. Grace-Blackwell) the device reads and writes the records in place over the coherent link, while host loops find them in
+ *  their own memory. Every other shared-space buffer is unchanged. Asked for on a GPU without that access, the storage is refused
+ *  by name rather than served from managed memory. */
+static void *system_particle_buffers[4] = {};
+
+static int node_reaches_pageable_memory(void)
+{
+    static int ok = -1;
+    if(ok < 0)
+    {
+        int attr = 0, dev = 0;
+        ok = (cudaGetDevice(&dev) == cudaSuccess &&
+              cudaDeviceGetAttribute(&attr, cudaDevAttrPageableMemoryAccess, dev) == cudaSuccess && attr) ? 1 : 0;
+    }
+    return ok;
+}
+
+static void *system_particle_alloc(size_t nbytes)
+{
+    if(!node_reaches_pageable_memory())
+    {
+        static int reported = 0;
+        if(!reported && ThisTask == 0)
+        {
+            reported = 1;
+            printf("GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY is set, but this GPU cannot reach pageable system memory "
+                   "(cudaDevAttrPageableMemoryAccess = 0): the particle storage is not allocated.\n");
+            fflush(stdout);
+        }
+        return NULL;
+    }
+    const size_t page = (size_t) sysconf(_SC_PAGESIZE), rounded = ((nbytes + page - 1) / page) * page;
+    void *p = aligned_alloc(page, rounded);
+    if(!p) {return NULL;}
+    if(cuda_memory_advise(p, rounded, cudaMemAdviseSetPreferredLocation, cudaCpuDeviceId) != cudaSuccess) {free(p); return NULL;}
+    for(auto &slot : system_particle_buffers) {if(!slot) {slot = p; return p;}}
+    free(p);   /* more live particle arrays than the table holds: refuse rather than lose track of how to free one */
+    return NULL;
+}
+
+static int system_particle_release(void *ptr)
+{
+    for(auto &slot : system_particle_buffers) {if(slot == ptr) {slot = NULL; free(ptr); return 1;}}
+    return 0;
+}
+#endif
+
 extern "C" void *gpu_particles_uvm_alloc(size_t nbytes, const char *label, size_t particle_arena_bytes)
 {
     if(nbytes == 0) {return NULL;}
+#if defined(GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY) && GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY && defined(KOKKOS_ENABLE_CUDA)
+    if(particle_arena_bytes != 0)   /* the bulk particle records only; sidecars and every other buffer stay in shared space */
+    {
+        void *sp = system_particle_alloc(nbytes);
+        if(sp)
+        {
+            memset(sp, 0, nbytes);   /* first touch on the host, so the pages start in system memory */
+            particle_storage_placement_record(sp, PARTICLE_STORAGE_PLACEMENT_NONE);
+            static int reported = 0;
+            if(!reported && ThisTask == 0)
+            {
+                reported = 1;
+                printf("Particle storage: the particle records are in system memory with a host preferred-location hint "
+                       "(GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY); rank 0's first buffer: %g MByte of %s.\n",
+                       (double) nbytes / (1024.0 * 1024.0), label ? label : "particle records");
+                fflush(stdout);
+            }
+        }
+        return sp;
+    }
+#endif
     /* kokkos_malloc THROWS on host-OOM; catch -> NULL so the caller's NULL-check
        (allocate.cc alloc_fail_local) fires instead of a hard terminate. The label
        names the buffer in the Kokkos allocation stream and any future OOM message. */
@@ -632,6 +704,9 @@ extern "C" void gpu_particles_uvm_free(void *ptr)
        the alloc does: that TU must not include <Kokkos_Core.hpp>. */
     if(ptr) {
         for(auto &r : particle_storage_placements) {if(r.buffer == ptr) {r.buffer = NULL; r.placement = PARTICLE_STORAGE_PLACEMENT_NONE;}}
+#if defined(GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY) && GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY && defined(KOKKOS_ENABLE_CUDA)
+        if(system_particle_release(ptr)) {return;}
+#endif
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ptr);
     }
 }
