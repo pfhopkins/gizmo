@@ -1441,8 +1441,14 @@ int merge_particles_ij(int i, int j, double target_share)
 #endif
 #endif
 #ifdef SGCHEM
-    /* abundances per H nucleus at one H fraction mix by mass, as do dust and gas temperature */
-    for(k=0;k<SGCHEM_NUM_TRACKED_SPECIES;k++) {CellP[j].TracAbund[k] = wt_j*CellP[j].TracAbund[k] + wt_i*CellP[i].TracAbund[k];}
+    { /* abundances per H nucleus mix by hydrogen mass (each cell's X_H, before the metals mix below), dust and gas temperature by mass */
+#if (NUM_LIVE_SPECIES_FOR_COOLTABLES >= 10)
+        const double h_j = wt_j * DMAX(1. - P[j].Metallicity[0] - P[j].Metallicity[1], 1.e-10), h_i = wt_i * DMAX(1. - P[i].Metallicity[0] - P[i].Metallicity[1], 1.e-10);
+#else
+        const double h_j = wt_j, h_i = wt_i;
+#endif
+        for(k=0;k<SGCHEM_NUM_TRACKED_SPECIES;k++) {CellP[j].TracAbund[k] = (h_j*CellP[j].TracAbund[k] + h_i*CellP[i].TracAbund[k]) / (h_j + h_i);}
+    }
     CellP[j].DustTemp = wt_j*CellP[j].DustTemp + wt_i*CellP[i].DustTemp;
     CellP[j].Temp = wt_j*CellP[j].Temp + wt_i*CellP[i].Temp;
 #endif
