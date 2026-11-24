@@ -89,6 +89,7 @@ static void tb_append(double t, double dur, int kind, int slot)
  * still being launched, or still running.  Called with tb_mutex held. */
 static void tb_harvest_locked(void)
 {
+    if(GizmoGpuEvent::error_pending()) {return;}   /* the error is the code's own checks' to report: read nothing, clear nothing */
     while(tb_slot_count > 0)
     {
         TbSlot &s = tb_slot[tb_slot_head];
@@ -98,7 +99,7 @@ static void tb_harvest_locked(void)
         if(status == GIZMO_GPU_EVENT_COMPLETE && !s.refused)
         {
             const double dt = GizmoGpuEvent::elapsed_seconds(s.start, s.stop);
-            if(dt >= 0) {tb_step[s.bucket][TIMING_BREAKDOWN_GPU] += dt;} else {tb_untimed++; GizmoGpuEvent::clear_error();}
+            if(dt >= 0) {tb_step[s.bucket][TIMING_BREAKDOWN_GPU] += dt;} else {tb_untimed++; GizmoGpuEvent::clear_error();}   /* this read's own error */
         } else {tb_untimed++;}   /* refused, or a device fault: it surfaces at the code's own next check; the kernel stays untimed */
         tb_slot_head = (tb_slot_head + 1) % TB_SLOTS; tb_slot_count--;
     }
@@ -120,7 +121,10 @@ static void tb_begin_kernel(const char *, const uint32_t devid, uint64_t *kernel
     int inst = -1;
     for(size_t k = 0; k < tb_instances.size(); k++) {if(tb_instances[k].devid == devid) {inst = (int) k; break;}}
     int slot = -1;
-    if(inst >= 0 && tb_slot_count < TB_SLOTS)
+    /* An error already pending belongs to an earlier call and to that call's own check: this kernel stays untimed and
+     * the error is left alone.  An error raised by the calls below is theirs, so it is cleared: a refused timing
+     * event must not read as a refused launch. */
+    if(inst >= 0 && tb_slot_count < TB_SLOTS && !GizmoGpuEvent::error_pending())
     {
         slot = (tb_slot_head + tb_slot_count) % TB_SLOTS;
         TbSlot &s = tb_slot[slot];
@@ -131,7 +135,7 @@ static void tb_begin_kernel(const char *, const uint32_t devid, uint64_t *kernel
             }
         }
         if(s.made && s.start.record(tb_instances[inst].space) == 0) {s.inst = inst; s.bucket = -1; s.stop_recorded = 0; s.refused = 0; tb_slot_count++;}
-        else {slot = -1; GizmoGpuEvent::clear_error();}   /* untimed, and the refusal must not read as a failed launch */
+        else {slot = -1; GizmoGpuEvent::clear_error();}
     }
     if(slot < 0) {tb_untimed++;}
     tb_pending.push_back({t, 0.0, TB_KIND_KERNEL, slot});
@@ -144,8 +148,10 @@ static void tb_end_kernel(const uint64_t kernel_id)
     if(kernel_id == TB_HOST_PARALLEL) {const double t = my_second(); tb_append(tb_omp_t0, t - tb_omp_t0, TB_KIND_OMP, -1); return;}
     std::lock_guard<std::mutex> guard(tb_mutex);
     TbSlot &s = tb_slot[kernel_id];
-    s.refused = (s.stop.record(tb_instances[s.inst].space) != 0);   /* no end mark: untimed when harvested */
-    if(s.refused) {GizmoGpuEvent::clear_error();}
+    /* This runs inside the launch, before the launch's own refusal check: a pending error is that launch's, so it is left
+     * for the check and the kernel stays untimed; only a refusal of this record is cleared. */
+    if(GizmoGpuEvent::error_pending()) {s.refused = 1;}
+    else {s.refused = (s.stop.record(tb_instances[s.inst].space) != 0); if(s.refused) {GizmoGpuEvent::clear_error();}}
     s.stop_recorded = 1;
 }
 

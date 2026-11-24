@@ -147,13 +147,14 @@ inline constexpr bool gizmo_gpu_default_space_is_host()
  * not carry on); query() reports NOT_READY, COMPLETE, or ERROR -- any backend status other than those two,
  * which is how a fault in the device work behind it surfaces (it never turns into an endless wait).  A
  * not-ready answer is cleared from the runtime's last-error state, so later launch checks do not read it as
- * a failure.  An event is recorded again only after its previous completion was seen.  Created once and
- * kept; destroyed before Kokkos is finalized.  An event made with create_timed() also carries a timestamp: elapsed_seconds(start, stop) is the
- * device time between two such events once both are complete (negative if the runtime refused).  clear_error() drops a
- * refused call's error from the runtime's last-error state, for callers that carry on without that event.
+ * a failure.  Created once and kept; destroyed before Kokkos is finalized.
+ * An event made with create_timed() also carries a timestamp, for the optional cpu.txt timing breakdown only:
+ * elapsed_seconds(start, stop) is the device time between two such events once both are complete (negative if the
+ * runtime refused).  error_pending() says whether the runtime holds an error it has not yet reported; clear_error()
+ * drops one -- callers clear only an error their own call raised, never one a launch check is still to see.
  *
- * This is the one place GIZMO calls the CUDA / HIP runtime for stream completion: Kokkos has no portable
- * query of whether an instance's work has finished, only a blocking fence.  It covers completion only --
+ * This is the one place GIZMO calls the CUDA / HIP runtime directly: Kokkos has no portable query of whether an
+ * instance's work has finished, only a blocking fence.  It covers completion and that optional timing --
  * allocation, copies and kernels still go through Kokkos.  Host backends run every launch to completion
  * before it returns, so there an event is always COMPLETE. */
 [[noreturn]] void gizmo_fatal_hard_exit_reviewed(int code, const char *reason, const char *file, int line, const char *func);
@@ -187,6 +188,7 @@ struct GizmoGpuEvent {
     void destroy() {if(event) {cudaEventDestroy(event); event = nullptr;}}
     int create_timed() {return (cudaEventCreate(&event) == cudaSuccess) ? 0 : 1;}
     static void clear_error() {(void) cudaGetLastError();}
+    static int error_pending() {return cudaPeekAtLastError() != cudaSuccess;}
     static double elapsed_seconds(const GizmoGpuEvent &start, const GizmoGpuEvent &stop) {
         float ms = 0; return (cudaEventElapsedTime(&ms, start.event, stop.event) == cudaSuccess) ? 1.0e-3 * ms : -1.0;
     }
@@ -204,6 +206,7 @@ struct GizmoGpuEvent {
     void destroy() {if(event) {(void) hipEventDestroy(event); event = nullptr;}}
     int create_timed() {return (hipEventCreate(&event) == hipSuccess) ? 0 : 1;}
     static void clear_error() {(void) hipGetLastError();}
+    static int error_pending() {return hipPeekAtLastError() != hipSuccess;}
     static double elapsed_seconds(const GizmoGpuEvent &start, const GizmoGpuEvent &stop) {
         float ms = 0; return (hipEventElapsedTime(&ms, start.event, stop.event) == hipSuccess) ? 1.0e-3 * ms : -1.0;
     }
@@ -214,6 +217,7 @@ struct GizmoGpuEvent {
     void destroy() {}
     int create_timed() {return 0;}
     static void clear_error() {}
+    static int error_pending() {return 0;}
     static double elapsed_seconds(const GizmoGpuEvent &, const GizmoGpuEvent &) {return 0.0;}
 #endif
 };
