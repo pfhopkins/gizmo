@@ -1377,11 +1377,26 @@ int merge_particles_ij(int i, int j, double target_share)
 
     egy_old += mtot*wt_j * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (j) //
     egy_old += mtot*wt_i * 0.5 * P[i].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (i) //
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    /* single stars: the work of the gravity on both cells as they are moved to the merged position goes into the heat, for the true and
+       the predicted state (gravity has no predicted variant). GravAccel may hold other forces of the gravity walk too. */
+    double egy_gravwork = 0;
+    {
+        Vec3<double> d_ij = P[j].Pos - P[i].Pos; nearest_xyz(d_ij, -1);
+        const Vec3<double> dr_j = (P[i].Pos + d_ij - pos_new) * All.cf_atime, dr_i = (P[i].Pos - pos_new) * All.cf_atime;
+        Vec3<double> g_j = P[j].GravAccel, g_i = P[i].GravAccel;
+#ifdef PMGRID
+        g_j += P[j].GravPM; g_i += P[i].GravPM;
+#endif
+        egy_gravwork = -mtot * (wt_j * dot(dr_j, g_j) + wt_i * dot(dr_i, g_i)) * All.cf_a2inv;
+        egy_old += egy_gravwork;
+    }
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[j].GravWorkTerm = {}; /* this accumulates per-pair over a hydro pass, so once a merge changes the cell's mass and identity it describes neither parent. The split path zeroes it on both cells for the same reason; keeping only the survivor's while dropping the other's would be arbitrary */
 #endif
 
-    /* Internal + kinetic only. The work done relocating the pair to the merged position is deliberately
+    /* Internal + kinetic only (but see the single-star term above). The work done relocating the pair to the merged position is deliberately
        NOT included: it would be built from GravAccel, which is not purely gravitational -- depending on
        the build it also carries radiation pressure and other forces -- so treating that dot product as
        gravitational work and thermalizing it is wrong. The relocation is small in any case, and a merged
@@ -1403,6 +1418,9 @@ int merge_particles_ij(int i, int j, double target_share)
     double egy_old_pred = mtot * (wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred);
     egy_old_pred += mtot*wt_j * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
     egy_old_pred += mtot*wt_i * 0.5 * CellP[i].VelPred.norm_sq() * All.cf_a2inv;
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    egy_old_pred += egy_gravwork;
+#endif
 
 
     CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;

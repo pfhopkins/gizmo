@@ -2083,6 +2083,7 @@ Run it where you build (same modules and `SYSTYPE`): MSTAR is built against the 
 **RESOLVED\_ISM\_RECOMPUTE\_HYDRO\_POST\_FB**: With `RESOLVED_ISM_FB_AFTER_CLOSING_KICK`: wind, AGB and radiation-pressure deposits also repeat the hydro pass (not only SN and Ia); with continuous winds that is almost every step. No parameters; not in any Stella configuration. Test: `test/sn_hydro_recompute`.
 
 **Behaviour without a switch.**
+* *Merge heat*: with `GALSF_SINGLE_STARS_FROM_IMF` the gravity work of moving two merging cells to their centre of mass (tree and mesh acceleration) is part of the energy kept in the merge; other builds leave it out.
 * *Adaptive softening at its floor*: with `GALSF_SINGLE_STARS_FROM_IMF` the zeta correction of adaptive gravitational softening is kept at the softening floor (targets and sources); other builds drop it there.
 * *Light centroid of a tree node*: with `GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES` it is weighted with the 6-13.6 eV light plus the Lyman-Werner light (and the ionising light of the radial-shell photoionisation); other radiation uses the sum of all bins.
 * *Comoving density refresh*: in comoving runs, single stars from the tables younger than 35 Myr refresh their neighbour density every step, as they already do in non-comoving runs. Their radiation and wind radii therefore follow the gas. Test: `test/photoion_per_direction` (`test_young_star_density_follows_the_gas_in_comoving_runs`).
