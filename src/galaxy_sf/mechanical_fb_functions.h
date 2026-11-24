@@ -371,7 +371,7 @@ static void mechanical_fb_per_source_setup(
 
         double p_coupled = DMIN(p0_egycon, p_terminal);
 #if defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS) || defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS)
-        if(m.feedback_type_is_SNe == 0) {p_coupled = (double)local.Msne * (double)local.SNe_v_ejecta;} /* the booked momentum whatever the gas does; the cell closes the energy */
+        if(m.feedback_type_is_SNe == 0) {p_coupled = (double)local.Msne * v_ej;} /* the booked momentum (less the CRs' share) whatever the gas does; the cell closes the energy */
 #endif
         double egy_RHS = p_coupled * p_coupled * S2 + p_coupled * S1;
         m.momentum_to_couple_term_units = p_coupled;
