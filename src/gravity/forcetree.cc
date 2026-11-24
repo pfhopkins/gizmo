@@ -3809,7 +3809,7 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
      * Nextnode[] below.  Skip mymalloc accounting; kokkos_malloc has its
      * own. */
     bytes = (size_t) total_node_slots * sizeof(struct NODE);
-    Nodes_base = (struct NODE *) gpu_tree_alloc_bytes(bytes, "tree_nodes");
+    Nodes_base = (struct NODE *) gpu_tree_alloc_host_built_bytes(bytes, "tree_nodes");
     if(!Nodes_base)
     {
         printf("failed to allocate %d tree-nodes (%g MB) in SharedSpace.\n",
@@ -3824,7 +3824,7 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
     }
     gizmo_mem_account_add(GIZMO_MEM_TREE_NODES, (long long) bytes);   /* Nodes_base */
     bytes = (size_t) total_node_slots * sizeof(struct extNODE);
-    Extnodes_base = (struct extNODE *) gpu_tree_alloc_bytes(bytes, "tree_extnodes");
+    Extnodes_base = (struct extNODE *) gpu_tree_alloc_host_built_bytes(bytes, "tree_extnodes");
     if(!Extnodes_base)
     {
         printf("failed to allocate %d tree-extnodes (%g MB) in SharedSpace.\n",
@@ -3881,10 +3881,10 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
     ForeignLeafTag = ForeignLeafType = NULL; ForeignLeafZeta = ForeignLeafSoft = NULL;
     if(foreign_slots > 0)
     {
-        ForeignLeafTag  = (int *)     gpu_tree_alloc_bytes((size_t) foreign_slots * sizeof(int),     "tree_foreign_tag");
-        ForeignLeafType = (int *)     gpu_tree_alloc_bytes((size_t) foreign_slots * sizeof(int),     "tree_foreign_type");
-        ForeignLeafZeta = (MyFloat *) gpu_tree_alloc_bytes((size_t) foreign_slots * sizeof(MyFloat), "tree_foreign_zeta");
-        ForeignLeafSoft = (MyFloat *) gpu_tree_alloc_bytes((size_t) foreign_slots * sizeof(MyFloat), "tree_foreign_soft");
+        ForeignLeafTag  = (int *)     gpu_tree_alloc_host_built_bytes((size_t) foreign_slots * sizeof(int),     "tree_foreign_tag");
+        ForeignLeafType = (int *)     gpu_tree_alloc_host_built_bytes((size_t) foreign_slots * sizeof(int),     "tree_foreign_type");
+        ForeignLeafZeta = (MyFloat *) gpu_tree_alloc_host_built_bytes((size_t) foreign_slots * sizeof(MyFloat), "tree_foreign_zeta");
+        ForeignLeafSoft = (MyFloat *) gpu_tree_alloc_host_built_bytes((size_t) foreign_slots * sizeof(MyFloat), "tree_foreign_soft");
         if(ForeignLeafTag && ForeignLeafType && ForeignLeafZeta && ForeignLeafSoft)
         {
             memset(ForeignLeafTag,  0, (size_t) foreign_slots * sizeof(int));
@@ -4019,18 +4019,18 @@ int force_tree_grow_foreign_storage(long long foreign_needed)
      * installed part is empty today; copying the installed count rather than the storage keeps
      * this correct on its own terms without copying room that holds nothing. */
     const long long keep_slots = local_slots + (long long) Numforeignnodes;
-    new_nodes = (struct NODE *) gpu_tree_alloc_bytes((size_t) new_slots * sizeof(struct NODE), "tree_nodes");
+    new_nodes = (struct NODE *) gpu_tree_alloc_host_built_bytes((size_t) new_slots * sizeof(struct NODE), "tree_nodes");
     if(new_nodes) {memcpy(new_nodes, Nodes_base, (size_t) keep_slots * sizeof(struct NODE));}
-    new_extnodes = (struct extNODE *) gpu_tree_alloc_bytes((size_t) new_slots * sizeof(struct extNODE), "tree_extnodes");
+    new_extnodes = (struct extNODE *) gpu_tree_alloc_host_built_bytes((size_t) new_slots * sizeof(struct extNODE), "tree_extnodes");
     if(new_extnodes) {memcpy(new_extnodes, Extnodes_base, (size_t) keep_slots * sizeof(struct extNODE));}
 
     /* Foreign-leaf identity sidecar: one entry per foreign slot, describing THIS import, so
      * there is nothing to carry over -- allocate fresh and zero, which leaves every slot at the
      * leaf_tag=0 (plain node) default until the install writes it. */
-    new_tag  = (int *)     gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(int),     "tree_foreign_tag");
-    new_type = (int *)     gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(int),     "tree_foreign_type");
-    new_zeta = (MyFloat *) gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(MyFloat), "tree_foreign_zeta");
-    new_soft = (MyFloat *) gpu_tree_alloc_bytes((size_t) n_foreign * sizeof(MyFloat), "tree_foreign_soft");
+    new_tag  = (int *)     gpu_tree_alloc_host_built_bytes((size_t) n_foreign * sizeof(int),     "tree_foreign_tag");
+    new_type = (int *)     gpu_tree_alloc_host_built_bytes((size_t) n_foreign * sizeof(int),     "tree_foreign_type");
+    new_zeta = (MyFloat *) gpu_tree_alloc_host_built_bytes((size_t) n_foreign * sizeof(MyFloat), "tree_foreign_zeta");
+    new_soft = (MyFloat *) gpu_tree_alloc_host_built_bytes((size_t) n_foreign * sizeof(MyFloat), "tree_foreign_soft");
 
     /* The mirror sizes its own copy of the sidecar from AllocatedForeignNodes, so that has to
      * read as the new count while it allocates -- and go back if it cannot. */

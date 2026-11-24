@@ -736,6 +736,12 @@ endif
 ifeq (,$(findstring GPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY,$(CONFIGVARS)))
 OPT     += -DGPU_PARTICLE_STORAGE_IN_SYSTEM_MEMORY=1
 endif
+## the tree arrays the host builds and installs the import into, host-preferred: GPU runs 1.9-6.4% faster here (FIF, fire2ics,
+## FIRE-big; measured). TEMPORARY host placement until the tree build and import install run on the device (priced together with
+## device placement of these arrays); never on Frontier (lost there)
+ifeq (,$(findstring GPU_TREE_HOST_ARRAYS_HOST_PREFERRED,$(CONFIGVARS)))
+OPT     += -DGPU_TREE_HOST_ARRAYS_HOST_PREFERRED=1
+endif
 endif
 
 

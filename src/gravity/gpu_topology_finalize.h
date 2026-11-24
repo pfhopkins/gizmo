@@ -70,6 +70,7 @@ void  gpu_father_free(int *p);
  * NODE / extNODE struct definitions live in forcetree.h (which this TU
  * includes); the helpers take byte counts so callers stay struct-agnostic. */
 void *gpu_tree_alloc_bytes(size_t bytes, const char *label);  /* generic SharedSpace alloc; label names the buffer */
+void *gpu_tree_alloc_host_built_bytes(size_t bytes, const char *label);  /* as above, for Nodes / Extnodes / imported-leaf sidecars (host-preferred under GPU_TREE_HOST_ARRAYS_HOST_PREFERRED) */
 void  gpu_tree_free_bytes(void *p);        /* matching free */
 
 /*! Put a shared-space block into the state its release is cheapest from; call it
