@@ -33,6 +33,7 @@ OUTPUT_COOLRATE
 OUTPUT_INDIVIDUAL_COOLRATES
 OUTPUT_SGCHEM_RADIATION_FIELDS
 OUTPUT_MASS_METAL_ENERGY_LEDGER
+GALSF_SINGLE_STARS_EVENT_LOGS
 # split and merge thresholds are 2.01 x the largest and 0.49 x the smallest gas mass in the IC (init.cc); a zoom IC
 # carries gas of several masses, so set them from the target cell mass instead (code units, 1e10 Msun/h per unit):
 #MERGE_SPLIT_HARDCODE_MAX_MASS=(2.01*1.0e-10)

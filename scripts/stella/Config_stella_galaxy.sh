@@ -25,6 +25,7 @@ OUTPUT_COOLRATE
 OUTPUT_INDIVIDUAL_COOLRATES
 OUTPUT_SGCHEM_RADIATION_FIELDS
 OUTPUT_MASS_METAL_ENERGY_LEDGER
+GALSF_SINGLE_STARS_EVENT_LOGS
 # options, each off by default
 #CR_SCALE_WITH_G0                       # cosmic-ray rate scaled with the stars' field
 #COSMIC_RAY_FLUID                       # CR fluid: also CRFLUID_DIFFUSION_MODEL=7 and the CosmicRay* parameters
