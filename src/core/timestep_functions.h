@@ -311,6 +311,13 @@ int motion_bound_widening_is_valid(double dl)
  * aggregate_radius_bound below instead. */
 static constexpr double KERNEL_RADIUS_DRIFT_MAX_LOG_CHANGE = 0.3;
 
+/* The relative margin a bound on drifted kernel radii (aggregate_radius_bound) is rounded outward by.  Measured with the
+ * code's own drift arithmetic: a radius drifted in 10^4..10^5 steps exceeds the single-factor bound by at most ~8e-14
+ * (growing as the square root of the number of drifts); host and device exp add a few units in the last place per drift.
+ * The margin covers those with a wide factor and costs nothing measurable in a search radius.  It is an engineering
+ * margin for any realistic number of drifts between two tree builds, not a proof for an unlimited number. */
+static constexpr double KERNEL_RADIUS_BOUND_ROUNDING_MARGIN = 1.0e-12;
+
 /* The capped change in log-volume over the drift; the predicted density moves by its inverse. */
 KOKKOS_INLINE_FUNCTION
 double kernel_radius_drift_log_change(double divv_times_dt)
@@ -344,7 +351,11 @@ int radius_bound_input_is_valid(double x)
  * max(bound, max_kernel_radius) -- that ceiling keeps it finite whatever the interval.  Below the per-drift
  * cap the arithmetic is the per-drift rule's.  Returns the grown bound; *invalid is set when an input is not
  * a finite non-negative number, which the caller must report, and the larger of the bound and the ceiling
- * is returned, of whichever of the two are valid. */
+ * is returned, of whichever of the two are valid.
+ * A grown bound is rounded outward by KERNEL_RADIUS_BOUND_ROUNDING_MARGIN: a member's radius is the product of
+ * one rounded factor per drift, and the bound's one factor over the same interval can come out a few units in
+ * the last place below it -- more over many drifts, and more again where the member and the node drift on
+ * different backends (host and device exp differ).  The ceiling is exact (no drift passes it) and is not padded. */
 KOKKOS_INLINE_FUNCTION
 double aggregate_radius_bound(double bound, double divvmax, double dt, double max_kernel_radius, int *invalid)
 {
@@ -358,35 +369,12 @@ double aggregate_radius_bound(double bound, double divvmax, double dt, double ma
     if(bound <= 0.0) {return bound;}
     const double ceiling = (bound > max_kernel_radius) ? bound : max_kernel_radius;
     const double x = divvmax * dt;
-    if(x <= KERNEL_RADIUS_DRIFT_MAX_LOG_CHANGE) {
-        const double grown = bound * kernel_radius_drift_factor(x);
-        return (grown < ceiling) ? grown : ceiling;
-    }
-    if(x >= (log(ceiling) - log(bound)) * ((double)NUMDIMS)) {return ceiling;}   /* differences of logs: the ratio may not fit */
-    return bound * exp(x / ((double)NUMDIMS));
-}
-
-/* The most any ONE member's radius can rise over the same interval, given that it was at most `bound`:
- * min(r(f-1), C - r) over r <= bound, with f the uncapped factor and C the ceiling above, which is at most
- * min(bound*(f-1), C*(1-1/f)).  A box made of each member's position plus its own radius must widen by this,
- * not by how far the largest radius rose: once that one meets the ceiling, a smaller one can still rise
- * further.  Without the ceiling the two agree.  Invalid input as for aggregate_radius_bound. */
-KOKKOS_INLINE_FUNCTION
-double aggregate_radius_rise(double bound, double divvmax, double dt, double max_kernel_radius, int *invalid)
-{
-    if(!radius_bound_input_is_valid(bound) || !radius_bound_input_is_valid(divvmax) || !radius_bound_input_is_valid(dt)
-       || !radius_bound_input_is_valid(max_kernel_radius))
-    {
-        *invalid = 1;
-        const double c = radius_bound_input_is_valid(max_kernel_radius) ? max_kernel_radius : 0.0;
-        return (radius_bound_input_is_valid(bound) && bound > c) ? bound : c;
-    }
-    if(bound <= 0.0) {return 0.0;}   /* a zero radius stays zero */
-    const double ceiling = (bound > max_kernel_radius) ? bound : max_kernel_radius;
-    const double y = divvmax * dt / ((double)NUMDIMS);
-    /* bound*f reaches the ceiling exactly where the second form becomes the smaller, so switch there */
-    if(y >= log(ceiling) - log(bound)) {return ceiling * (-expm1(-y));}     /* C (1 - 1/f) */
-    return bound * expm1(y);                                                 /* bound (f - 1), below C */
+    if(x <= 0.0) {return bound;}   /* no member grew: every factor was exactly one */
+    /* above the per-drift cap a large interval can overflow the product, so the ceiling is tested on logs first */
+    if(x > KERNEL_RADIUS_DRIFT_MAX_LOG_CHANGE && x >= (log(ceiling) - log(bound)) * ((double)NUMDIMS)) {return ceiling;}
+    /* below the cap this is the per-drift factor kernel_radius_drift_factor(x) exactly; above it, uncapped */
+    const double grown = bound * exp(x / ((double)NUMDIMS)) * (1.0 + KERNEL_RADIUS_BOUND_ROUNDING_MARGIN);
+    return (grown < ceiling) ? grown : ceiling;
 }
 
 /* The most one drift can grow a kernel radius by (before the radius floors are applied). */
