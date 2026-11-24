@@ -4,6 +4,8 @@
 #include <string.h>
 #include <math.h>
 #include <algorithm>
+#include <functional>
+#include <queue>
 #include <vector>
 #include <set>
 
@@ -840,6 +842,13 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     geometric particle ownership -- a tree rebuild whose particles have drifted into top-leaves owned
     by other tasks needs their ownership back, but must not refine the fluid a second time in the
     same step. */
+#ifdef GPU_SPEEDUP_DOMAIN_MOVER_LIST
+/* Particles the light repartition flagged to move (ascending index), so that counting and packing them visit only these and not every particle.
+ * Valid from the flag loop until the exchange has run once; every other path (full decomposition, a later round of a budget-limited exchange) scans. */
+static std::vector<int> DomainMoverList;
+static bool DomainMoverListValid = false;
+#endif
+
 void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_key)
 {
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition_light")) {return;}
@@ -1071,6 +1080,34 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     }
 
     /* flag particles that need to move */
+#ifdef GPU_SPEEDUP_DOMAIN_MOVER_LIST
+    {
+        std::vector<std::vector<int>> found(1);
+#ifdef _OPENMP
+#pragma omp parallel if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, NumPart))
+#endif
+        {
+            int me = 0;
+#ifdef _OPENMP
+            me = omp_get_thread_num();
+#pragma omp single
+            found.resize(omp_get_num_threads());
+#endif
+            std::vector<int> mine;
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+            for(int k = 0; k < NumPart; k++)
+            {
+                if(DomainTask[domain_toptree_leaf(Key[k], topNodes)] != ThisTask) {P[k].Type |= 32; mine.push_back(k);}
+            }
+            found[me] = std::move(mine);
+        }
+        DomainMoverList.clear();
+        for(auto &part : found) {DomainMoverList.insert(DomainMoverList.end(), part.begin(), part.end());}
+        DomainMoverListValid = true;
+    }
+#else
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, NumPart))
 #endif
@@ -1078,6 +1115,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     {
         if(DomainTask[domain_toptree_leaf(Key[k], topNodes)] != ThisTask) {P[k].Type |= 32;}
     }
+#endif
 
     /* exchange particles */
     int ret; size_t exchange_limit;
@@ -2026,7 +2064,25 @@ void domain_exchange(void)
   for(i = 0; i < NTask; i++) {count[i] = count_gas[i] = 0;}
 
 
-  for(n = 0; n < NumPart; n++)
+#ifdef GPU_SPEEDUP_DOMAIN_MOVER_LIST
+  /* Visit the flagged positions in ascending order, as the full scan does. A packed slot is refilled from the tail and looked at again (the n-- below);
+   * a gas departure also refills slot N_gas-1, which is queued so that a flagged particle landing there is seen when the scan would reach it. */
+  size_t mover_next = 0;
+  std::priority_queue<int, std::vector<int>, std::greater<int>> refilled;
+  auto next_visit = [&](int m) -> int {
+      if(!DomainMoverListValid) {return m;}
+      if(m < NumPart && (P[m].Type & (32 + 16)) == (32 + 16)) {return m;}
+      while(mover_next < DomainMoverList.size() && DomainMoverList[mover_next] < m) {mover_next++;}
+      while(!refilled.empty() && refilled.top() < m) {refilled.pop();}
+      int at = NumPart;
+      if(mover_next < DomainMoverList.size()) {at = std::min(at, DomainMoverList[mover_next]);}
+      if(!refilled.empty()) {at = std::min(at, refilled.top());}
+      return at;
+  };
+#else
+  auto next_visit = [](int m) -> int {return m;};
+#endif
+  for(n = next_visit(0); n < NumPart; n = next_visit(n + 1))
     {
       if((P[n].Type & (32 + 16)) == (32 + 16)) /* flagged with both 16 and 32 */
 	{
@@ -2088,6 +2144,9 @@ void domain_exchange(void)
 
 	      NumPart--;
 	      N_gas--;
+#ifdef GPU_SPEEDUP_DOMAIN_MOVER_LIST
+	      if(DomainMoverListValid) {refilled.push(N_gas);}
+#endif
 	      n--;
 	    }
 	  else
@@ -2100,6 +2159,9 @@ void domain_exchange(void)
 	}
     }
 
+#ifdef GPU_SPEEDUP_DOMAIN_MOVER_LIST
+  DomainMoverListValid = false; /* positions have changed; any further round scans */
+#endif
 #ifdef CHIMES 
   free(tempAbundanceArray); 
 #endif 
@@ -2797,8 +2859,16 @@ int domain_countToGo(size_t nlimit)
      * drains it. The caller's arena guard normally catches this first. */
     if(package >= nlimit) {endrun(90000017);}
 
+#ifdef GPU_SPEEDUP_DOMAIN_MOVER_LIST
+    const bool use_mover_list = DomainMoverListValid;
+    const int n_visit = use_mover_list ? (int) DomainMoverList.size() : NumPart;
+    for(int q = 0; q < n_visit && package < nlimit; q++)
+    {
+        n = use_mover_list ? DomainMoverList[q] : q;
+#else
     for(n = 0; n < NumPart && package < nlimit; n++)
     {
+#endif
 #ifdef SUBFIND
         if(GrNr >= 0 && P[n].GrNr != GrNr) {continue;}
 #endif
