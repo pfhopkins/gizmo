@@ -280,6 +280,10 @@ struct global_data_all_processes
   float *EwaldXY_Table;  /*!< x/y Ewald correction table in Kokkos shared memory, 4 floats per node (acc_x, acc_y, acc_z, pot); gravity/ewald_xy.cc */
   double EwaldXY_Lx, EwaldXY_Ly, EwaldXY_zmax, EwaldXY_dx, EwaldXY_dy, EwaldXY_dz; /*!< box and table spacing of the x/y Ewald table */
   int EwaldXY_nz;        /*!< table cells over [0, EwaldXY_zmax] */
+#ifdef BOX_SHEARING
+  float *EwaldXY_TableNext; /*!< the same at the next point of the shear-offset grid */
+  double EwaldXY_WeightNext; /*!< linear weight of EwaldXY_TableNext at the current shear offset */
+#endif
   double EwaldXY_SelfPot; /*!< potential of a unit mass's own x/y images at its position (G = 1) */
 #endif
 #ifdef GRAVITY_PERIODIC_XY_IMAGES

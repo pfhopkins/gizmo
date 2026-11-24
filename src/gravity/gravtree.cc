@@ -319,7 +319,7 @@ void gravity_tree(void)
     /* set new softening lengths */
     if(All.ComovingIntegrationOn) {set_softenings();}
 #ifdef GRAVITY_PERIODIC_XY
-    ewald_xy_update(); /* collective, first call only: the x/y Ewald table */
+    ewald_xy_update(); /* collective where a table is filled: on the first call, and with BOX_SHEARING when the shear offset passes a point of its grid */
 #endif
 
     /* Refresh the per-particle ForceSoftening cache for active particles.

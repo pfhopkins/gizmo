@@ -46,7 +46,7 @@ uint64_t particle_event_rng_key(int i);
 double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_t draw_index);
 #ifdef GRAVITY_PERIODIC_XY
 void ewald_xy_update(void);
-void ewald_xy_exact(double dx, double dy, double dz, double Lx, double Ly, double out[4]);
+void ewald_xy_exact(double dx, double dy, double dz, double s, double Lx, double Ly, double out[4]);
 #endif
 #ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
 void hu_tallbox_field(double zc, double *az, double *tzz, double *phi);

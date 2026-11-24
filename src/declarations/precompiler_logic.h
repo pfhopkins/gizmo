@@ -2060,8 +2060,8 @@
 #if !defined(BOX_OUTFLOW_Z) && !defined(BOX_REFLECT_Z)
 #error "GRAVITY_PERIODIC_XY requires a non-periodic z boundary (BOX_OUTFLOW_Z or BOX_REFLECT_Z)"
 #endif
-#if defined(BOX_SHEARING) || defined(PMGRID) || defined(GRAVITY_SPHERICAL_SYMMETRY) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(STARS_HERMITE_DIRECT_GRAVITY)
-#error "GRAVITY_PERIODIC_XY is not compatible with BOX_SHEARING, PMGRID, GRAVITY_SPHERICAL_SYMMETRY, SINGLE_STAR_DIRECT_GRAVITY or STARS_HERMITE_DIRECT_GRAVITY (direct star sums have no x/y Ewald correction)"
+#if (defined(BOX_SHEARING) && (BOX_SHEARING < 3)) || defined(PMGRID) || defined(GRAVITY_SPHERICAL_SYMMETRY) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(STARS_HERMITE_DIRECT_GRAVITY)
+#error "GRAVITY_PERIODIC_XY is not compatible with 2D shearing sheets (BOX_SHEARING 1 or 2), PMGRID, GRAVITY_SPHERICAL_SYMMETRY, SINGLE_STAR_DIRECT_GRAVITY or STARS_HERMITE_DIRECT_GRAVITY (direct star sums have no x/y Ewald correction)"
 #endif
 #ifndef GRAVITY_NOT_PERIODIC
 #define GRAVITY_NOT_PERIODIC
@@ -2069,6 +2069,9 @@
 #define EWXY_NXY 48        /* table cells across each of L_x, L_y */
 #define EWXY_NXH (EWXY_NXY / 2)
 #define EWXY_ZMAX_IN_L 2.0 /* table height in units of max(L_x, L_y) */
+#ifdef BOX_SHEARING
+#define EWXY_NS 64         /* grid cells of the shear offset across L_y */
+#endif
 #endif
 
 /* GRAVITY_PERIODIC_XY_IMAGES: self-gravity periodic in x and y by explicit image sums, open in z (tall boxes). No Ewald and no PM, so

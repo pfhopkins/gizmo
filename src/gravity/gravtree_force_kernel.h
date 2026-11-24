@@ -768,13 +768,22 @@ KOKKOS_INLINE_FUNCTION void ewald_xy_corr(const double dr[3], double out[4])
     u -= i; v -= j; w -= k;
     u = fmin(fmax(u, 0.), 1.); v = fmin(fmax(v, 0.), 1.);
     const double fu[2] = {1 - u, u}, fv[2] = {1 - v, v}, fw[2] = {1 - w, w};
-    const float *tab = All.EwaldXY_Table; const int nz1 = All.EwaldXY_nz + 1;
+    const int nz1 = All.EwaldXY_nz + 1;
+#ifdef BOX_SHEARING /* linear in the shear offset between the two tables that bracket it */
+    const float *tabs[2] = {All.EwaldXY_Table, All.EwaldXY_TableNext}; const double ft[2] = {1 - All.EwaldXY_WeightNext, All.EwaldXY_WeightNext}; const int nt = 2;
+#else
+    const float *tabs[1] = {All.EwaldXY_Table}; const double ft[1] = {1}; const int nt = 1;
+#endif
     for(int d = 0; d < 4; d++) {out[d] = 0;}
-    for(int a = 0; a < 2; a++) for(int b = 0; b < 2; b++) for(int c = 0; c < 2; c++)
+    for(int t = 0; t < nt; t++)
     {
-        const double f = fu[a] * fv[b] * fw[c];
-        const float *e = tab + 4 * ((size_t)((i + a) * (EWXY_NXY + 1) + (j + b)) * nz1 + (k + c));
-        for(int d = 0; d < 4; d++) {out[d] += f * e[d];}
+        if(ft[t] == 0) {continue;}
+        for(int a = 0; a < 2; a++) for(int b = 0; b < 2; b++) for(int c = 0; c < 2; c++)
+        {
+            const double f = ft[t] * fu[a] * fv[b] * fw[c];
+            const float *e = tabs[t] + 4 * ((size_t)((i + a) * (EWXY_NXY + 1) + (j + b)) * nz1 + (k + c));
+            for(int d = 0; d < 4; d++) {out[d] += f * e[d];}
+        }
     }
     out[0] *= sx; out[1] *= sx;
     if(dr[2] < 0) {out[2] = -out[2];} /* z-component odd in dz, the rest even */
