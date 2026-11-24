@@ -367,6 +367,9 @@ void init(void)
              P[i].StellarAge = -2.0 * All.InitStellarAgeinGyr / (UNIT_TIME_IN_GYR) * particle_random_number(i, INITIAL_STELLAR_AGE_RNG_SALT, 0, 0);}
         }
 #endif
+#ifdef GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF
+        P[i].IMF_WeightedMeanStellarFormationTime = P[i].StellarAge; /* not kept in snapshots, but sets the age used for all stellar feedback: start from the formation time of the particle */
+#endif
         
 #ifdef GRAIN_FLUID
         if((RestartFlag == 0) && ((1 << P[i].Type) & (GRAIN_PTYPES)))
@@ -525,14 +528,13 @@ void init(void)
         if(P[i].Type == 5)
         {
             count_holes++;
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+            P[i].Sink_Mdot_ROI = P[i].Sink_ROI = 0; /* not kept in snapshots: set by the first sink calculation */
+#endif
             if(RestartFlag == 0)
             {
                 P[i].Sink_Mass = All.SeedSinkMass;
                 P[i].Sink_Formation_Mass = P[i].Mass;
-#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
-                P[i].Sink_Mdot_ROI = 0;
-                P[i].Sink_ROI = 0;
-#endif
 #ifdef SINGLE_STAR_SINK_DYNAMICS
                 P[i].Sink_Mass = P[i].Mass;
 #endif

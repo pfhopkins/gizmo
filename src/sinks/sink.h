@@ -94,6 +94,9 @@ double sink_eddington_mdot(double sink_mass);
 double sink_lum_bol(double mdot, double mass, long pindex);
 double evaluate_sink_radiative_efficiency(double mdot, double mass, long pindex);
 double evaluate_sink_cosmicray_efficiency(double mdot, double mass, long pindex);
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+double evaluate_sink_jet_efficiency(double mdot, double mass);
+#endif
 
 /* sinks.c */
 void sink_final_operations(void);
