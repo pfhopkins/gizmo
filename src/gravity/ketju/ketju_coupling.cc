@@ -37,6 +37,8 @@
 #include "../../mesh/kernel.h"
 #include "ketju_coupling.h"
 #include "../../galaxy_sf/single_star_record.h"
+#include "../../galaxy_sf/single_star_identity.h"
+#include "../../declarations/gpu_rng.h"
 #define KETJU_TREE_PAIR_KERNEL
 #include "../../gravity/gravtree_force_kernel.h"
 #include "ketju_tree.h"
@@ -244,6 +246,13 @@ static std::unordered_map<MyIDType, double> region_previous_cost;
  *  Lightweight particle data for MPI communication
  * ============================================================ */
 /* IMF siblings share P.ID and differ in ID_child_number: KETJU keys particles by both */
+/* the child part of a particle's key: the child number, which tells siblings apart until the generation counter of their lineage
+   rolls over; from then on the rest of the identity is mixed in (galaxy_sf/single_star_identity.h) */
+static inline MyIDType ketju_child_key(int i)
+{
+    const uint64_t x = single_star_identity_extra(P[i]);
+    return x ? (MyIDType) gizmo_rng_combine(gizmo_rng_combine(x, (uint64_t) P[i].ID_generation), (uint64_t) P[i].ID_child_number) : P[i].ID_child_number;
+}
 struct KetjuUID {MyIDType id, child; bool operator==(const KetjuUID &o) const {return id == o.id && child == o.child;}};
 struct KetjuUIDHash {size_t operator()(const KetjuUID &k) const {return std::hash<MyIDType>()(k.id * 0x9E3779B97F4A7C15ULL ^ k.child);}};
 
@@ -853,7 +862,7 @@ static std::vector<ketju_mpi_particle> gather_chain_centers(void)
     int k = 0;
     for(int i : ActiveParticleList) {
         if(is_chain_center(i) && is_synchronized(i)) {
-            local_centers[k].ID = P[i].ID; local_centers[k].Child = P[i].ID_child_number;
+            local_centers[k].ID = P[i].ID; local_centers[k].Child = ketju_child_key(i);
             local_centers[k].Type = P[i].Type;
             local_centers[k].Task = ThisTask;
             local_centers[k].Index = i;
@@ -1119,7 +1128,7 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
     int k = 0;
     for(int idx : reg.local_member_indices) {
         ketju_mpi_particle &mp = local_parts[k];
-        mp.ID = P[idx].ID; mp.Child = P[idx].ID_child_number;
+        mp.ID = P[idx].ID; mp.Child = ketju_child_key(idx);
         mp.Type = P[idx].Type;
         mp.Task = ThisTask;
         mp.Index = idx;
@@ -2164,7 +2173,7 @@ static void scatter_results(KetjuRegion &reg)
         int idx = sp.Index;
 
         /* sanity check */
-        if(P[idx].ID != sp.ID || P[idx].ID_child_number != sp.Child) {
+        if(P[idx].ID != sp.ID || ketju_child_key(idx) != sp.Child) {
             printf("KETJU ERROR: particle index mismatch! ID %llu vs %llu on task %d\n",
                    (unsigned long long)P[idx].ID, (unsigned long long)sp.ID, ThisTask);
             endrun(667);
@@ -2452,7 +2461,7 @@ static std::unordered_map<int, long long> flyby_steps(const std::vector<std::vec
     ketju_drift_stars_to_current();
     for(int i = 0; i < NumPart; i++) {
         if((P[i].Type != 4 && P[i].Type != 5) || P[i].Mass <= 0) continue;
-        S q; q.id = P[i].ID; q.child = P[i].ID_child_number; auto it = gid.find({P[i].ID, P[i].ID_child_number}); q.group = (it == gid.end()) ? -1 : it->second; q.m = P[i].Mass;
+        S q; q.id = P[i].ID; q.child = ketju_child_key(i); auto it = gid.find({P[i].ID, ketju_child_key(i)}); q.group = (it == gid.end()) ? -1 : it->second; q.m = P[i].Mass;
         double dtd = (P[i].Ti_current < All.Ti_Current) ? get_drift_factor(P[i].Ti_current, All.Ti_Current, i, 0) : 0;
         for(int k = 0; k < 3; k++) {q.x[k] = (P[i].Pos[k] + P[i].Vel[k] * dtd) * a; q.v[k] = P[i].Vel[k] / a;}
         loc.push_back(q);
@@ -2463,7 +2472,7 @@ static std::unordered_map<int, long long> flyby_steps(const std::vector<std::vec
     std::vector<S> all(nt);
     MPI_Allgatherv(loc.data(), nl * sizeof(S), MPI_BYTE, all.data(), bc.data(), bd.data(), MPI_BYTE, MPI_COMM_WORLD);
     const double eta = All.KetjuFlybyStepEta;
-    std::unordered_map<KetjuUID, int, KetjuUIDHash> local_index; for(int i = 0; i < NumPart; i++) if(is_synchronized(i) && (P[i].Type == 4 || P[i].Type == 5)) local_index[{P[i].ID, P[i].ID_child_number}] = i;
+    std::unordered_map<KetjuUID, int, KetjuUIDHash> local_index; for(int i = 0; i < NumPart; i++) if(is_synchronized(i) && (P[i].Type == 4 || P[i].Type == 5)) local_index[{P[i].ID, ketju_child_key(i)}] = i;
     for(int q = bd[ThisTask] / (int)sizeof(S), qe = q + nl; q < qe; q++) {
         auto li = local_index.find({all[q].id, all[q].child}); if(li == local_index.end()) continue;
         const S &A = all[q]; double tmin = MAX_REAL_NUMBER;
@@ -2980,7 +2989,7 @@ void ketju_swap_output_velocities(void)
             {double *tv = ketju_member(i).true_vel; for(int j = 0; j < 3; j++) {double v = P[i].Vel[j]; P[i].Vel[j] = tv[j]; tv[j] = v;}}
             continue;
         }
-        auto it = by_id.find({P[i].ID, P[i].ID_child_number}); if(it == by_id.end()) continue;
+        auto it = by_id.find({P[i].ID, ketju_child_key(i)}); if(it == by_id.end()) continue;
         ketju_output_state &o = here[it->second];
         for(int j = 0; j < 3; j++) {double x = P[i].Pos[j], v = P[i].Vel[j]; P[i].Pos[j] = o.pos[j]; P[i].Vel[j] = o.vel[j]; o.pos[j] = x; o.vel[j] = v;}
     }

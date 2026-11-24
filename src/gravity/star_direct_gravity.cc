@@ -42,6 +42,17 @@
 struct star_direct_data *StarDirect;
 int N_StarDirect;
 
+/* what tells a star from every other one in the table: Type-4 stars born from one cell share P.ID and differ in child number and
+   generation (and in the roll-over count and lineage key), so they take the key of the single-star draws; sinks keep P.ID */
+static uint64_t star_direct_identity(int i)
+{
+#if (STAR_DIRECT_GRAVITY_TYPE == 4)
+    return single_star_draw_rng_key(i);
+#else
+    return (uint64_t) P[i].ID;
+#endif
+}
+
 /*! Gather every star in the simulation onto every task.
  *
  *  Positions are drifted to All.Ti_Current first: the tree walk drifts the particles it touches
@@ -90,7 +101,7 @@ void star_direct_gravity_build_table(void)
 #endif
         sendbuf[k].Mass = P[i].Mass;
         sendbuf[k].Soft = ForceSoftening_KernelRadius(i);
-        sendbuf[k].ID = P[i].ID;
+        sendbuf[k].Identity = star_direct_identity(i);
         k++;
     }
 
@@ -117,7 +128,7 @@ void star_direct_gravity_free_table(void)
  *  from other tasks) and before gravtree.cc multiplies by All.G, so the sums here are in the same
  *  G-free units the tree walk uses.
  *
- *  Pairs are identified by ID, not by index: the table is a global concatenation, so a target's own
+ *  Pairs are identified by identity, not by index: the table is a global concatenation, so a target's own
  *  entry sits at an offset that depends on which task owns it. */
 void star_direct_gravity_compute(void)
 {
@@ -136,7 +147,7 @@ void star_direct_gravity_compute(void)
 #endif
         Vec3<double> pos = P[i].Pos, acc = {};
         double h_i = ForceSoftening_KernelRadius(i);
-        MyIDType id_i = P[i].ID;
+        const uint64_t id_i = star_direct_identity(i);
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_CALC_DISTANCES)
         Vec3<double> vel = P[i].Vel;
 #endif
@@ -156,7 +167,7 @@ void star_direct_gravity_compute(void)
 
         for(int j = 0; j < N_StarDirect; j++)
         {
-            if(StarDirect[j].ID == id_i) {continue;} /* self */
+            if(StarDirect[j].Identity == id_i) {continue;} /* self */
             double mass = StarDirect[j].Mass; if(mass <= 0) {continue;}
             Vec3<double> dr = StarDirect[j].Pos - pos;
             GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);

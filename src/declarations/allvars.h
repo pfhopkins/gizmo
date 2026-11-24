@@ -981,7 +981,7 @@ extern struct star_direct_data
     Vec3<MyFloat> Vel;
     MyFloat Mass;
     MyFloat Soft;
-    MyIDType ID;
+    uint64_t Identity; /* star_direct_identity() */
 }
  *StarDirect;
 extern int N_StarDirect;
