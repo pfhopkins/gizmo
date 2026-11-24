@@ -9,6 +9,7 @@
 #include "../cooling/sgchem/sgchem_consts.h"
 #include "../cooling/sgchem/sgchem_dust_to_gas.h"
 #include "../cooling/sgchem/chem_interface.h" /* band energy densities of the Habing field */
+#include "../mesh/kernel.h" /* kernel_gravity */
 #include "healpix_ring.h"
 
 /* node species masses: dust-weighted gas (dust-to-gas ratio x mass), H2 and CO */
@@ -157,17 +158,19 @@ KOKKOS_INLINE_FUNCTION int treecol_shell_of(double r2)
 #endif
 
 /* one accepted source (leaf or node) for a gas target: column in the pixel of its mass centre dr, inside
-   TreeColShieldingLength (0 = no limit), 1/r^2 gravity-softened; band fluxes L/r_L^2 in the pixel of the light
+   TreeColShieldingLength (0 = no limit), 1/r^2 softened with the gravity kernel of size h (the larger of the pair's softening
+   kernel radii; no adaptive-softening terms or short-range truncation); band fluxes L/r_L^2 in the pixel of the light
    centroid d_lum (a second lookup only for luminous nodes, whose light and mass centres differ), r_L floored at r_floor
    (the target's Plummer-equivalent softening) */
-KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, const Vec3<double> &dr, double r, double fac_accel,
+KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, const Vec3<double> &dr, double r, double h,
                                                       double mass, double gasmass, const double *species, const Vec3<double> &d_lum, const double *lum, double r_floor)
 {
     if(r <= 0 || mass <= 0) {return;}
     const int ip = treecol_hpx_pixel(dr);
     if(All.TreeColShieldingLength <= 0 || r < All.TreeColShieldingLength / All.cf_atime)
     {
-        const double w = (fac_accel * r / mass) / (4.0 * M_PI / TREECOL_PIXELS_N); /* gravity-softened 1/r^2, as upstream's tree column: bounded for close neighbours */
+        const double h_inv = (r < h) ? 1.0 / h : 0; /* softened inside h: bounded for close neighbours */
+        const double w = ((r < h) ? r * kernel_gravity(r * h_inv, h_inv, h_inv * h_inv * h_inv, 1) : 1.0 / (r * r)) / (4.0 * M_PI / TREECOL_PIXELS_N);
         for(int s = 0; s < TREECOL_PIXELS_NCOLUMNS; s++) {a.col[s][ip] += w * species[s];}
 #ifdef CR_BACKGROUND_IONRATE_ATTENUATED
         a.gas[ip] += w * gasmass;
