@@ -1203,7 +1203,7 @@ Note that these are not the only available equations-of-state in GIZMO, but just
 #GENERAL_RELATIVITY=0           # turns on general relativistic hydrodynamics; 0=HLL solver/1=HLLC solver (Mignone & Bodo 2005)
 #GR_METRIC=1                    # metric: 0=Minkowski, 1=Kerr (default), <0=tabulated static spherically symmetric metric
 #GR_METRIC_USE_ISOTROPIC_RADIUS           # GR_METRIC<0: the table is indexed by the isotropic radius instead of the areal radius
-#GR_METRIC_USE_BOYER_LINDQUIST             # GR_METRIC=1: Boyer-Lindquist instead of Kerr-Schild coordinates (singular on the rotation axis)
+#GR_METRIC_USE_BOYER_LINDQUIST             # GR_METRIC=1: Boyer-Lindquist instead of Kerr-Schild coordinates (singular at the horizon)
 #GR_EXCISION_RADIUS=2.1         # cells inside this radius (in units of the horizon radius) are removed (default 2.1)
 #GR_TEST_PARTICLE               # the gas moves as collisionless test particles (tests of the source terms)
 #SLOPE_LIMITER_POSITIVITY_RANGE_FAC=0.5  # GR only: range of the positivity-preserving slope limiter, as a fraction of the maximum neighbour distance
@@ -1224,7 +1224,7 @@ Not supported with GR (the build stops): `MAGNETIC` (GR-MHD is not part of this 
 
 **GR\_METRIC\_USE\_ISOTROPIC\_RADIUS**: With `GR_METRIC<0`: the table is indexed by the isotropic radius (conformally flat spatial metric) instead of the areal radius.
 
-**GR\_METRIC\_USE\_BOYER\_LINDQUIST**: With `GR_METRIC=1`: use Boyer-Lindquist coordinates instead of the default Kerr-Schild coordinates, which are regular at the horizon and recommended. The Boyer-Lindquist metric is written in Cartesian components (Liptai & Price 2019) that are singular on the rotation axis ($x = y = 0$) and lose precision near it: use it only for particle distributions that avoid the axis.
+**GR\_METRIC\_USE\_BOYER\_LINDQUIST**: With `GR_METRIC=1`: use Boyer-Lindquist coordinates instead of the default Kerr-Schild coordinates, which are regular at the horizon and recommended. The Boyer-Lindquist metric is written in Cartesian components as Minkowski plus a deviation that is regular on the rotation axis; it is singular at the horizon, so the metric derivatives lose accuracy close to it (finite differences: relative error about 1e-6 at 1.05 horizon radii).
 
 **GR\_EXCISION\_RADIUS**: With `GR_METRIC=1`: cells inside this radius, in units of the horizon radius $r_{H} = M\,(1 + \sqrt{1 - a^{2}})$, are removed (their mass set to zero), at start-up and whenever they are active. Two cells whose separation passes within the horizon (less a margin of the cells' size) do not interact. Default 2.1; the accretion tests of Lupi (2023) use 1.05.
 
