@@ -32,7 +32,7 @@ extern void grain_drag_evaluate(struct particle_data *, struct gas_cell_data *, 
 /* function to apply the drag on the grains from surrounding gas properties */
 void apply_grain_dragforce(void)
 {
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
     PRINT_STATUS("Beginning particulate/grain/PIC force evaluation.");
 
     /* Gather only true active grains — non-grain actives are never processed by the
@@ -72,7 +72,7 @@ void apply_grain_dragforce(void)
     grain_backrx_calc(); /* assign the back-reaction force among neighbors [runner port] */
 #endif
     PRINT_STATUS(" ..particulate/grain/PIC force evaluation done.");
-    CPU_Step[CPU_DRAGFORCE] += measure_time();
+    cpu_charge(CPU_DRAGFORCE, measure_time());
 }
 
 

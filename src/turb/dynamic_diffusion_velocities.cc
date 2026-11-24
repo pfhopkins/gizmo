@@ -54,7 +54,7 @@ void dynamic_diff_vel_calc_initial_operations_preloop(void)
  * primary routine being called for this calculation
  */
 void dynamic_diff_vel_calc(void) {
-    CPU_Step[CPU_MISC] += measure_time(); double t00_truestart = my_second(); double child0_span = CPU_ChildCharged;
+    cpu_charge(CPU_MISC, measure_time()); double t00_truestart = my_second(); double child0_span = CPU_ChildCharged;
     PRINT_STATUS("Start velocity smoothing computation...");
     dynamic_diff_vel_calc_initial_operations_preloop(); /* any initial operations */
 
@@ -68,7 +68,7 @@ void dynamic_diff_vel_calc(void) {
     PRINT_STATUS(" ..velocity smoothing done.");
     double t1; t1 = my_second(); cpu_chain_sync(t1);
     double timeall_local = cpu_minus_children(timediff(t00_truestart, t1), child0_span);
-    CPU_Step[CPU_IMPROVDIFFCOMPUTE] += timeall_local;
+    cpu_charge(CPU_IMPROVDIFFCOMPUTE, timeall_local);
 }
 
 

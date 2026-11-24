@@ -2332,104 +2332,6 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
 
       /* Now rhogrid holds the potential */
 
-#ifdef EVALPOTENTIAL		/* get the potential if desired */
-
-      /* send the potential components to the right processors */
-
-      for(level = 0; level < (1 << PTask); level++)	/* note: for level=0, target is the same task */
-	{
-	  sendTask = ThisTask;
-	  recvTask = ThisTask ^ level;
-
-	  if(recvTask < NTask)
-	    {
-	      if(level > 0)
-		{
-		  import_data =
-		    (fftw_real *) mymalloc("import_data",
-					   localfield_recv[recvTask] * sizeof(fftw_real));
-		  import_globalindex =
-		    (large_array_offset *) mymalloc("import_globalindex",
-						    localfield_recv[recvTask] * sizeof(large_array_offset));
-
-		  if(localfield_count[recvTask] > 0
-		     || localfield_recv[recvTask] > 0)
-		    {
-		      MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-				   localfield_count[recvTask] * sizeof(large_array_offset),
-				   MPI_BYTE, recvTask, TAG_NONPERIOD_C, import_globalindex,
-				   localfield_recv[recvTask] * sizeof(large_array_offset),
-				   MPI_BYTE, recvTask, TAG_NONPERIOD_C, MPI_COMM_WORLD, &status);
-		    }
-		}
-	      else
-		{
-		  import_data = localfield_data + localfield_offset[ThisTask];
-		  import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
-		}
-
-	      for(i = 0; i < localfield_recv[recvTask]; i++)
-		{
-		  /* determine offset in local FFT slab */
-		  offset =
-		    import_globalindex[i] -
-		    first_slab_of_task[ThisTask] * GRID * ((large_array_offset) GRID2);
-		  import_data[i] = rhogrid[offset];
-		}
-
-	      if(level > 0)
-		{
-		  MPI_Sendrecv(import_data,
-			       localfield_recv[recvTask] * sizeof(fftw_real), MPI_BYTE,
-			       recvTask, TAG_NONPERIOD_A,
-			       localfield_data + localfield_offset[recvTask],
-			       localfield_count[recvTask] * sizeof(fftw_real), MPI_BYTE,
-			       recvTask, TAG_NONPERIOD_A, MPI_COMM_WORLD, &status);
-
-		  myfree(import_globalindex);
-		  myfree(import_data);
-		}
-	    }
-	}
-
-      /* read out the potential values which all have been assembled in localfield_data */
-
-      double pot;
-
-      for(i = 0, j = 0; i < NumPart; i++)
-	{
-#ifdef PM_PLACEHIGHRESREGION
-	  if(grnr == 1)
-	    if(!(pmforce_is_particle_high_res(P[i].Type, P[i].Pos)))
-	      continue;
-#endif
-	  while(j < num_on_grid && (part[j].partindex >> 3) != i)
-	    j++;
-
-	  slab_x = (int) (to_slab_fac * (P[i].Pos[0] - All.Corner[grnr][0]));
-	  dx = to_slab_fac * (P[i].Pos[0] - All.Corner[grnr][0]) - slab_x;
-
-	  slab_y = (int) (to_slab_fac * (P[i].Pos[1] - All.Corner[grnr][1]));
-	  dy = to_slab_fac * (P[i].Pos[1] - All.Corner[grnr][1]) - slab_y;
-
-	  slab_z = (int) (to_slab_fac * (P[i].Pos[2] - All.Corner[grnr][2]));
-	  dz = to_slab_fac * (P[i].Pos[2] - All.Corner[grnr][2]) - slab_z;
-
-	  pot =
-	    +localfield_data[part[j + 0].localindex] * (1.0 - dx) * (1.0 - dy) * (1.0 - dz)
-	    + localfield_data[part[j + 1].localindex] * (1.0 - dx) * (1.0 - dy) * dz
-	    + localfield_data[part[j + 2].localindex] * (1.0 - dx) * dy * (1.0 - dz)
-	    + localfield_data[part[j + 3].localindex] * (1.0 - dx) * dy * dz
-	    + localfield_data[part[j + 4].localindex] * (dx) * (1.0 - dy) * (1.0 - dz)
-	    + localfield_data[part[j + 5].localindex] * (dx) * (1.0 - dy) * dz
-	    + localfield_data[part[j + 6].localindex] * (dx) * dy * (1.0 - dz)
-	    + localfield_data[part[j + 7].localindex] * (dx) * dy * dz;
-
-	  P[i].PM_Potential += pot * fac * (2 * All.TotalMeshSize[grnr] / GRID);	/* compensate the finite differencing factor * */
-	}
-#endif
-
-
       /* get the force components by finite differencing the potential for each dimension, 
          and send back the results to the right CPUs */
 
@@ -2665,12 +2567,10 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
 	      if(dim == 1)
 		{
 		  P[i].tidal_tensorpsPM[0][1] += acc_dim;
-		  P[i].tidal_tensorpsPM[1][0] += acc_dim;
 		}
 	      if(dim == 2)
 		{
 		  P[i].tidal_tensorpsPM[0][2] += acc_dim;
-		  P[i].tidal_tensorpsPM[2][0] += acc_dim;
 		}
 	      if(dim == 3)
 		{
@@ -2679,7 +2579,6 @@ int pmtidaltensor_nonperiodic_diff(int grnr)
 	      if(dim == 4)
 		{
 		  P[i].tidal_tensorpsPM[1][2] += acc_dim;
-		  P[i].tidal_tensorpsPM[2][1] += acc_dim;
 		}
 	      if(dim == 5)
 		{
@@ -3157,12 +3056,10 @@ int pmtidaltensor_nonperiodic_fourier(int grnr, int component)
       if(component == 1)
 	{
 	  P[i].tidal_tensorpsPM[0][1] += tidal;
-	  P[i].tidal_tensorpsPM[1][0] += tidal;
 	}
       if(component == 2)
 	{
 	  P[i].tidal_tensorpsPM[0][2] += tidal;
-	  P[i].tidal_tensorpsPM[2][0] += tidal;
 	}
       if(component == 3)
 	{
@@ -3171,7 +3068,6 @@ int pmtidaltensor_nonperiodic_fourier(int grnr, int component)
       if(component == 4)
 	{
 	  P[i].tidal_tensorpsPM[1][2] += tidal;
-	  P[i].tidal_tensorpsPM[2][1] += tidal;
 	}
       if(component == 5)
 	{

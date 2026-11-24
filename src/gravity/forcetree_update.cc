@@ -996,5 +996,5 @@ void force_update_hmax(void)
   myfree(DomainList);
 
   force_bump_hmax_refresh_generation();   /* ancestor boxes re-drifted + per-type bands re-seeded */
-  CPU_Step[CPU_TREEHMAXUPDATE] += measure_time();
+  cpu_charge(CPU_TREEHMAXUPDATE, measure_time());
 }

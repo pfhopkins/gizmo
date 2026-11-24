@@ -495,7 +495,7 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
         }
         if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {fflush(FdHIIHeating);}
     } // ThisTask == 0
-    CPU_Step[CPU_HIIHEATING] += measure_time();
+    cpu_charge(CPU_HIIHEATING, measure_time());
 } // void HII_heating_singledomain(void)
 
 

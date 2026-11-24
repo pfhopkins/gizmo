@@ -76,6 +76,20 @@ void cpu_charge_child(int bucket, double dt)
 {
   CPU_Step[bucket] += dt;
   CPU_ChildCharged += dt;
+#ifdef OUTPUT_TIMING_BREAKDOWN
+  timing_breakdown_charge(bucket, dt);
+#endif
+}
+
+/* Charge a span that ends now to its CPU_Step bucket: a measure_time() chain interval, or a bracket that is not
+ * itself inside an enclosing timed span (those use cpu_charge_child).  Charge each span when it ends: with
+ * OUTPUT_TIMING_BREAKDOWN the bucket also takes the device and threading events of that span. */
+void cpu_charge(int bucket, double dt)
+{
+  CPU_Step[bucket] += dt;
+#ifdef OUTPUT_TIMING_BREAKDOWN
+  timing_breakdown_charge(bucket, dt);
+#endif
 }
 
 /* Elapsed time of a bracket-timed span, less whatever was charged to child
@@ -84,6 +98,9 @@ void cpu_charge_child(int bucket, double dt)
  * (a child charged time it did not own), so report it rather than hide it. */
 double cpu_minus_children(double elapsed, double child0)
 {
+#ifdef OUTPUT_TIMING_BREAKDOWN
+  timing_breakdown_note_span_start(my_second() - elapsed);   /* the bracket ends now: its start, for the charge that follows */
+#endif
   double dt = elapsed - (CPU_ChildCharged - child0);
   if(dt < -1.0e-6) {cpu_report_negative_residual("timing span", dt);}
   return (dt > 0.0) ? dt : 0.0;
@@ -105,6 +122,9 @@ double measure_time(void)	/* strategy: call this at end of functions to account 
   double t, dt;
 
   t = my_second();
+#ifdef OUTPUT_TIMING_BREAKDOWN
+  timing_breakdown_note_span_start(WallclockTime);   /* the chain interval, for the charge that follows */
+#endif
   dt = t - WallclockTime - (CPU_ChildCharged - CPU_ChildCharged_at_sync);
   WallclockTime = t;
   CPU_ChildCharged_at_sync = CPU_ChildCharged;

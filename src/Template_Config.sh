@@ -522,6 +522,7 @@
 # --------------------------------------- Input/Output options
 ####################################################################################################
 #OUTPUT_ADDITIONAL_RUNINFO      # enables extended simulation output data (can slow down machines significantly in massively-parallel runs)
+#OUTPUT_TIMING_BREAKDOWN        # cpu.txt rows also give, per bucket, the device kernel time of the kernels launched in it, host time waiting on the device (fences, copies), host time in OpenMP parallel regions, single-thread host time, kernel launches and fences; plus a per-step line. Measured without adding any synchronization (device events, Kokkos Tools and OpenMP tools callbacks). It takes over Kokkos's kernel, fence and copy callbacks and the OpenMP tools interface, so do not combine it with an external Kokkos or OpenMP profiling tool (one loaded through the Kokkos tools library or OMP_TOOL_LIBRARIES would lose those events)
 #OUTPUT_IN_DOUBLEPRECISION      # snapshot files will be written in double precision
 #INPUT_IN_DOUBLEPRECISION       # input files assumed to be in double precision (otherwise float is assumed)
 #INPUT_POSITIONS_IN_DOUBLE      # as above, but specific to the ICs file

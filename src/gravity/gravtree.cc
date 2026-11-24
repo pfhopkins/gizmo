@@ -250,7 +250,7 @@ void gravity_tree(void)
     /* initialize variables */
     int i, j, iter; i = 0; j = 0; iter = 0;
     double t0, t1, timeall = 0, timetree1 = 0, timetree2 = 0, timewait2 = 0;
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
 
     /* set new softening lengths */
     if(All.ComovingIntegrationOn) {set_softenings();}
@@ -285,11 +285,11 @@ void gravity_tree(void)
     if(TreeReconstructFlag)
     {
         PRINT_STATUS("Tree construction initiated (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
-        CPU_Step[CPU_MISC] += measure_time();
+        cpu_charge(CPU_MISC, measure_time());
         move_particles(All.Ti_Current);
         rearrange_particle_sequence(1);   /* the tree is rebuilt just below */
         refresh_old_acceleration_for_tree_opening();
-        gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
+        gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); cpu_charge(CPU_DRIFT, measure_time()); /* sync before we do the treebuild */
         int build_status = force_treebuild_gravity();
         if(build_status == FORCE_TREE_NEEDS_DOMAIN_REBUILD)
         {
@@ -334,7 +334,7 @@ void gravity_tree(void)
          * controlled stop during GPU finalize / LET / pseudo handling and still
          * return, and a tree whose build asked to stop must never be recorded as
          * current -- not even for the few statements before the poll exits. */
-        gizmo_exit_bad_stop_if_requested("gravtree:after_treebuild"); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
+        gizmo_exit_bad_stop_if_requested("gravtree:after_treebuild"); cpu_charge(CPU_TREEBUILD, measure_time()); /* and sync after treebuild as well */
         if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
         report_memory_ledger_on_growth("post-treebuild");  /* after force_treebuild (LET exchange ran); rebuild-only all-rank boundary */
         TreeReconstructFlag = 0;
@@ -358,16 +358,16 @@ void gravity_tree(void)
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         if(TreeMomentsStaleFlag_global)
         {
-            CPU_Step[CPU_MISC] += measure_time();
+            cpu_charge(CPU_MISC, measure_time());
             force_refresh_node_moments();
             gizmo_exit_bad_stop_if_requested("gravtree:after_refresh_moments"); /* drain refresh bad-stop before any gravity walk */
-            CPU_Step[CPU_TREEBUILD] += measure_time();
+            cpu_charge(CPU_TREEBUILD, measure_time());
             TreeMomentsStaleFlag = 0;
             TypePresenceMaskTrusted = 1;   /* the refresh recomputed the per-node type bits exactly */
         }
     }
 
-    CPU_Step[CPU_TREEMISC] += measure_time(); t0 = my_second(); double child0_span = CPU_ChildCharged;
+    cpu_charge(CPU_TREEMISC, measure_time()); t0 = my_second(); double child0_span = CPU_ChildCharged;
 #ifndef SELFGRAVITY_OFF
     /* allocate buffers to arrange communication */
     PRINT_STATUS(" ..Begin tree force. (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
@@ -698,12 +698,11 @@ gravity_walk_attempt:
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
     /* the exact star-star sum, which the tree walk above deliberately left out. Here and not later:
        the tree's own contributions are complete (imports included) but not yet multiplied by All.G
-       in the loop below, and the direct sum is in those same G-free units. */
-    CPU_Step[CPU_TREEMISC] += measure_time();
+       in the loop below, and the direct sum is in those same G-free units. It lies inside the walk's bracket
+       (t0..t1 below), which charges it to treewalk with the walk; a charge here would count it twice. */
     star_direct_gravity_build_table();
     star_direct_gravity_compute();
     star_direct_gravity_free_table();
-    CPU_Step[CPU_TREEWALK1] += measure_time();
 #endif
 
 #ifdef _OPENMP
@@ -892,8 +891,8 @@ gravity_walk_attempt:
      * wait is separately measured inside it, so the walk row is the rest of the
      * span; charging the remainder to `misc` instead reported the whole walk as
      * unattributed. */
-    CPU_Step[CPU_TREEWALK1] += timeall - timewait2;
-    CPU_Step[CPU_TREEWAIT2] += timewait2;
+    cpu_charge(CPU_TREEWALK1, timeall - timewait2);
+    cpu_charge(CPU_TREEWAIT2, timewait2);
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
     /* Everything below feeds only rank 0's timings report, so it is reduced to rank 0, only in builds that
      * write the report, and in one reduction per operation and type. */
@@ -1003,7 +1002,7 @@ gravity_walk_attempt:
 #ifdef HERMITE_FOREIGN_SOURCE_TABLE
     hermite_ghost_table_close();
 #endif
-    CPU_Step[CPU_TREEMISC] += measure_time();
+    cpu_charge(CPU_TREEMISC, measure_time());
 }
 
 
