@@ -1568,10 +1568,10 @@ void ledger_add(int row, double x);
 void ledger_output(void);
 #endif
 /* Energy step trace (system/energy_step_trace.cc): rank-local stage brackets, booked sources/sinks, one reduce per window */
-enum {ESTEP_MERGE_SPLIT, ESTEP_FB_MECH, ESTEP_FB_RADP, ESTEP_PHOTOION, ESTEP_COOLING, ESTEP_SF,
+enum {ESTEP_MERGE_SPLIT, ESTEP_FB_MECH, ESTEP_FB_RADP, ESTEP_PHOTOION, ESTEP_COOLING, ESTEP_SF, ESTEP_RT_INJECT,
       ESTEP_INT_GRAV, ESTEP_INT_HYDRO, ESTEP_INT_KICK1, ESTEP_INT_KICK2, ESTEP_INT_DRIFT, ESTEP_INT_NBODY, ESTEP_NSTAGE};
-enum {EBK_FB_SN, EBK_FB_WIND, EBK_FB_REMNANT_KIN, EBK_COOL_SOLVE, EBK_COOL_PI, EBK_COOL_FLOOR, EBK_COOL_CR_LOSS,
-      EBK_SF_TH_LOCKED, EBK_SF_DONOR, EBK_SF_STAR_KIN, EBK_SF_CR, EBK_MERGE_HEAT_NOT_RETURNED, EBK_KETJU_CHAIN_POT, EBK_KETJU_COLLISION, EBK_KETJU_EXPAND, EBK_KICK_FLOOR, EBK_CR_CLIP, EBK_INFO_MHD_NUM, EBK_INFO_CR_SHOCK,
+enum {EBK_FB_SN, EBK_FB_IA, EBK_FB_FAILED, EBK_FB_WIND, EBK_FB_AGB, EBK_FB_REMNANT_KIN, EBK_COOL_SOLVE, EBK_COOL_PI, EBK_COOL_FLOOR, EBK_COOL_CR_LOSS, EBK_COOL_RAD_EXCHANGE,
+      EBK_SF_TH_LOCKED, EBK_SF_MAG_LOCKED, EBK_SF_DONOR, EBK_SF_DONOR_MAG, EBK_SF_STAR_KIN, EBK_SF_CR, EBK_MERGE_HEAT_NOT_RETURNED, EBK_MERGE_MAG_LOST, EBK_SN_CELL_TH, EBK_SN_CELL_MAG, EBK_KETJU_CHAIN_POT, EBK_KETJU_COLLISION, EBK_KETJU_EXPAND, EBK_KICK_FLOOR, EBK_CR_CLIP, EBK_OUTFLOW, EBK_RT_EMIT, EBK_RT_ABS, EBK_RT_TOIR, EBK_INFO_MHD_NUM, EBK_INFO_CR_SHOCK,
       EBK_INFO_COOL_ID_DIFF, EBK_INFO_COOL_ID_GROSS, EBK_INFO_COOL_ID_EVALS, EBK_N};
 #ifdef OUTPUT_ENERGY_STEP_TRACE
 extern double EstepBooked[EBK_N];
@@ -1580,6 +1580,7 @@ void estep_end(int stage);
 void energy_step_trace_report(void);
 void estep_ledger_hook(int row, double x);
 double estep_cell_mag_energy(int i);
+double estep_particle_energy_for_mass(int i, double m);
 #define ESTEP_BEGIN(s) estep_begin(s)
 #define ESTEP_END(s) estep_end(s)
 #define ESTEP_BOOK(ch, x) do {double estep_x_ = (x); _Pragma("omp atomic") EstepBooked[ch] += estep_x_;} while(0)

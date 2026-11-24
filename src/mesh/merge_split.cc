@@ -857,7 +857,15 @@ static int make_sn_ejecta_cell(int i, int n_particles_split)
     CellP[j].Injected_Sink_Energy = 0;
 #endif
     P[j].wakeup = -1; wakeup_sidecar_mark((int)j); NeedToWakeupParticles_local = 1; /* its own timestep, not the template's */
+#ifdef OUTPUT_ENERGY_STEP_TRACE /* the event closes inside this stage: its feedback bookings become the cell's */
+    const double estep_sn0 = EstepBooked[EBK_FB_SN], estep_kin0 = EstepBooked[EBK_FB_REMNANT_KIN];
+#endif
     single_star_ejecta_cell_done(i, in.Msne);
+#ifdef OUTPUT_ENERGY_STEP_TRACE
+    ESTEP_BOOK(EBK_SN_CELL_TH, EstepBooked[EBK_FB_SN] - estep_sn0 + EstepBooked[EBK_FB_REMNANT_KIN] - estep_kin0);
+    EstepBooked[EBK_FB_SN] = estep_sn0; EstepBooked[EBK_FB_REMNANT_KIN] = estep_kin0;
+    ESTEP_BOOK(EBK_SN_CELL_MAG, estep_cell_mag_energy(j)); /* the template's field strength */
+#endif
     return 1;
 }
 #endif
@@ -1511,6 +1519,8 @@ int merge_particles_ij(int i, int j, double target_share)
 #endif
 #ifdef MAGNETIC
     // we evolve the conservative variables VB and Vpsi, these should simply add in particle-merge operations //
+    ESTEP_BOOK(EBK_MERGE_MAG_LOST, 0.5 / All.cf_atime * ((CellP[i].B + CellP[j].B).norm_sq() / (volume_before_merger_i + volume_before_merger_j)
+        - CellP[i].B.norm_sq() / volume_before_merger_i - CellP[j].B.norm_sq() / volume_before_merger_j)); /* summed flux in the summed volume; not returned as heat */
     { Vec3<double> B_before_split = (CellP[i].B + CellP[j].B) * (1.0 / (volume_before_merger_i + volume_before_merger_j)); /* calculate the real value of B pre-split to know what we need to correctly re-initialize to once the volume partition can be recomputed. here since VB is the conserved variable explicitly integrated, that gets added with the pre-summation volumes (so we take a volume-weighted mean here) */
     CellP[j].BField_prerefinement = B_before_split; CellP[i].BField_prerefinement = B_before_split; } /* record the real value of B pre-split to know what we need to correctly re-initialize to once the volume partition can be recomputed */
     CellP[j].B += CellP[i].B; CellP[j].BPred += CellP[i].BPred; CellP[j].DtB += CellP[i].DtB; /* simply add conserved quantities */

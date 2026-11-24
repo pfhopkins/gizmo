@@ -895,7 +895,9 @@ void calculate_non_standard_physics(void)
         flag = Flag_FullStep; /* for continous injection, requires all sources and gas be active synchronously or else 2x-counts */
 #endif
 #if !defined(GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION)
+        ESTEP_BEGIN(ESTEP_RT_INJECT);
         if(flag) {rt_source_injection();} /* source injection into neighbor gas particles (only on full timesteps, if using non-discrete scheme) */
+        ESTEP_END(ESTEP_RT_INJECT);
 #endif
     }
 #endif

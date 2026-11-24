@@ -28,16 +28,12 @@
 enum {EC_KIN, EC_TH, EC_MAG, EC_CR, EC_RAD, EC_N};
 static const char *estep_comp_name[EC_N] = {"kin", "th", "mag", "cr", "rad"};
 
-static const char *estep_stage_name[] = {"merge_split", "fb_mech", "fb_radp", "photoion", "cooling", "sf",
+static const char *estep_stage_name[] = {"merge_split", "fb_mech", "fb_radp", "photoion", "cooling", "sf", "rt_inject",
     "int_grav", "int_hydro", "int_kick1", "int_kick2", "int_drift", "int_nbody"};
 /* 1 = exact (booked terms must close it to round-off), 0 = measured, no energy booking yet (a source in tot_res),
  * 2 = part of the time integration, measured for attribution only (contains nested stages; in no closure) */
 static const int estep_stage_exact[] = {
-#ifdef GALSF_SINGLE_STARS_SN_EJECTA_CELL
-    0, /* the SN ejecta cell spawned in merge/split carries energy not booked there yet */
-#else
-    1,
-#endif
+    1, /* merge_split, with the SN ejecta cell's energy (sn_cell_th) */
     1, 0, 1, /* fb_mech, fb_radp (measured: the radiation's work), photoion (marks cells; the heat is booked in cooling) */
 #if defined(SGCHEM) && !defined(TRANSPORT_SUBCYCLE_COOLING) /* subcycled cooling runs outside the cooling bracket */
     1,
@@ -49,14 +45,19 @@ static const int estep_stage_exact[] = {
 #else
     0,
 #endif
+    0, /* rt_inject: measured, the sources' photons */
     2, 2, 2, 2, 2, 2};
 
-static const char *estep_book_name[] = {"fb_sn", "fb_wind", "fb_remnant_kin", "cool_solve", "cool_pi", "cool_floor", "cool_cr_loss",
-    "sf_th_locked", "sf_donor", "sf_star_kin", "sf_cr", "merge_heat_not_returned", "ketju_chain_pot", "ketju_collision", "ketju_expand", "kick_floor", "cr_clip", "info_mhd_num", "info_cr_shock",
+static const char *estep_book_name[] = {"fb_sn", "fb_ia", "fb_failed", "fb_wind", "fb_agb", "fb_remnant_kin", "cool_solve", "cool_pi", "cool_floor", "cool_cr_loss", "cool_rad_exchange",
+    "sf_th_locked", "sf_mag_locked", "sf_donor", "sf_donor_mag", "sf_star_kin", "sf_cr", "merge_heat_not_returned", "merge_mag_lost", "sn_cell_th", "sn_cell_mag",
+    "ketju_chain_pot", "ketju_collision", "ketju_expand", "kick_floor", "cr_clip", "outflow", "rt_emit", "rt_abs", "rt_toir", "info_mhd_num", "info_cr_shock",
     "info_cool_id_diff", "info_cool_id_gross", "info_cool_id_evals"};
 /* stage each booking belongs to; -1 = time integration (kicks/drift), -2 = information only (in no closure) */
-static const int estep_book_stage[] = {ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_COOLING, ESTEP_COOLING, ESTEP_COOLING,
-    ESTEP_COOLING, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_MERGE_SPLIT, -1, -1, -1, -1, -1, -2, -2, -2, -2, -2};
+static const int estep_book_stage[] = {ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_COOLING, ESTEP_COOLING, ESTEP_COOLING,
+    ESTEP_COOLING, ESTEP_COOLING, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT,
+    -1, -1, -1, -1, -1, -1, -1, -1, -1, -2, -2, -2, -2, -2};
+/* magnetic bookings stay out of the stage closure: E_B = 1/2 |BV|^2 / V with V = m/rho moves whenever a tree walk drifts a cell; they count at full syncs */
+static int estep_book_is_mag(int b) {return b == EBK_SF_MAG_LOCKED || b == EBK_SF_DONOR_MAG || b == EBK_MERGE_MAG_LOST || b == EBK_SN_CELL_MAG;}
 
 static_assert(sizeof(estep_stage_name) / sizeof(estep_stage_name[0]) == ESTEP_NSTAGE, "stage names");
 static_assert(sizeof(estep_stage_exact) / sizeof(estep_stage_exact[0]) == ESTEP_NSTAGE, "stage kinds");
@@ -79,6 +80,26 @@ double estep_cell_mag_energy(int i)
 #else
     (void)i; return 0;
 #endif
+}
+
+/* all energy of mass m of a particle, every component [code energy]; with m = P[i].Mass what it carries */
+double estep_particle_energy_for_mass(int i, double m)
+{
+    if(m <= 0) {return 0;}
+    double e = 0.5 * m * P[i].Vel.norm_sq() * All.cf_a2inv;
+    if(P[i].Type == 0) {
+        e += m * CellP[i].InternalEnergy;
+#ifdef MAGNETIC
+        if(CellP[i].Density > 0) {e += 0.5 * (CellP[i].B * (CellP[i].Density / m) * All.cf_a2inv).norm_sq() * m / (CellP[i].Density * All.cf_a3inv);}
+#endif
+#ifdef COSMIC_RAY_FLUID
+        for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {e += CellP[i].CosmicRayEnergy[k];}
+#endif
+#ifdef RADTRANSFER
+        for(int k = 0; k < N_RT_FREQ_BINS; k++) {e += CellP[i].Rad_E_gamma[k];}
+#endif
+    }
+    return e;
 }
 
 /* ledger rows that are trace bookings: the row's own sign convention turned into the energy the stage adds */
@@ -223,8 +244,8 @@ void energy_step_trace_report(void)
             fprintf(fd, "# E = kin(all types, peculiar) + th + mag + cr + rad(raw Rad_E_gamma); pot = 1/2 sum m Phi / a at full syncs.\n");
             fprintf(fd, "# Comoving: LI = int (2 E_kin + E_pot + sum 3(gamma-1) m u + E_mag + 3(gamma_CR-1) E_cr + E_rad) dln a (Layzer-Irvine), trapezoid over syncs; 0 if not comoving.\n");
             fprintf(fd, "# STAGE: exact stage whose window residual = dE(kin+th+cr+rad) - booked exceeds bar = %.1e x (E_abs + |booked|).\n", ESTEP_BAR_EXACT);
-            fprintf(fd, "#        d_mag is shown but not closed per stage: tree walks drift Density, and E_B = 1/2|BV|^2 m/rho moves with it.\n");
-            fprintf(fd, "# SYNC: full sync. int_res = (E_tot - E_tot0) + LI - sum(stage dE) - integration bookings (ketju_chain_pot, ketju_collision, ketju_expand, kick_floor, cr_clip).\n");
+            fprintf(fd, "#        d_mag and b_*mag* are shown but not closed per stage: tree walks drift Density, and E_B = 1/2|BV|^2 m/rho moves with it.\n");
+            fprintf(fd, "# SYNC: full sync. int_res = (E_tot - E_tot0) + LI - sum(stage dE) - integration bookings (ketju_chain_pot, ketju_collision, ketju_expand, kick_floor, cr_clip, outflow, rt_emit, rt_abs, rt_toir).\n");
             fprintf(fd, "#       b_info_*: information only, in no closure. tot_res = (E_tot - E_tot0) - all bookings - measured stages.\n");
             fprintf(fd, "#       E_scale: |E| + |E_pot| at the first sync, fixed for the run (the checker adds the booked SN energy from the SN on).\n");
             fprintf(fd, "# cooling stage: the solve (ledger), PI raise, input and output floors, CR losses booked from their formulas at the site;\n");
@@ -247,7 +268,7 @@ void energy_step_trace_report(void)
     for(int s = 0; s < ESTEP_NSTAGE; s++) {
         double dE = 0, dE_nomag = 0, book = 0, babs = 0;
         for(int k = 0; k < EC_N; k++) {dE += glob[s * EC_N + k]; if(k != EC_MAG) {dE_nomag += glob[s * EC_N + k];}}
-        for(int b = 0; b < EBK_N; b++) {if(estep_book_stage[b] == s) {book += glob[NS + b]; babs += fabs(glob[NS + b]);}}
+        for(int b = 0; b < EBK_N; b++) {if(estep_book_stage[b] == s && !estep_book_is_mag(b)) {book += glob[NS + b]; babs += fabs(glob[NS + b]);}}
         double res = dE_nomag - book, bar = ESTEP_BAR_EXACT * (Eabs + babs);
         if(estep_stage_exact[s] == 1 && fabs(res) > bar) {
             fprintf(fd, "STAGE step=%lld t=%.16e stage=%s res=%+.16e bar=%.6e booked=%+.16e", (long long)All.NumCurrentTiStep, All.Time, estep_stage_name[s], res, bar, book);

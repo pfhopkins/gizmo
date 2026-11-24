@@ -733,6 +733,7 @@ void star_formation_parent_routine(void)
                     if(number_of_stars_generated == (GALSF_GENERATIONS - 1))
                     {
                         /* here we turn the gas particle itself into a star, so only change attributes, not the number of total particles */
+                        ESTEP_BOOK(EBK_SF_MAG_LOCKED, -estep_cell_mag_energy(i));
                         Stars_converted++;
                         stars_converted++;
                         TimeBinCountGas[P[i].TimeBin]--;

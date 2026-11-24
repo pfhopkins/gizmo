@@ -828,6 +828,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #endif
                         double Rad_E_gamma_before = cell[i].Rad_E_gamma[k]; // save for immediate use below
                         cell[i].Rad_E_gamma[k] += de_rad; /* energy gained by gas is lost here (or vice versa if dust is acting as a net coolant) */
+#ifdef COOLING_SOLVE_IN_HOST_LIBRARY
+                        ESTEP_BOOK(EBK_COOL_RAD_EXCHANGE, de_rad);
+#endif
                         cell[i].Rad_E_gamma_Pred[k] = cell[i].Rad_E_gamma[k]; /* updated drifted */
 #if defined(RT_EVOLVE_INTENSITIES)
                         { /* emission is isotropic: each of the N bins gets de_rad/N of energy. absorption takes the same fraction from every bin, keeping them positive and the angular shape intact */
