@@ -16,6 +16,9 @@ int rumi_register_params(char (*tag)[50], void **addr, int *id, int nt, int maxt
     RUMI_TAG("RumiVelUnitKms", &All.RumiVelUnitKms, type_real);
     RUMI_TAG("RumiNumRanks", &All.RumiNumRanks, type_int);
     RUMI_TAG("RumiPrintInterval", &All.RumiPrintInterval, type_int);
+    RUMI_TAG("RumiNumThreads", &All.RumiNumThreads, type_int);
+    RUMI_TAG("RumiDeviceId", &All.RumiDeviceId, type_int);
+    RUMI_TAG("RumiReplayDump", &All.RumiReplayDump, type_int);
 #undef RUMI_TAG
     return nt;
 }
@@ -32,6 +35,9 @@ int rumi_param_default(const char *tag, void *addr)
     RUMI_DEF_REAL("RumiVelUnitKms", 0, " (the code unit in km/s)");
     RUMI_DEF_INT("RumiNumRanks", 1, "");
     RUMI_DEF_INT("RumiPrintInterval", 64, "");
+    RUMI_DEF_INT("RumiNumThreads", 0, " (Kokkos default)");
+    RUMI_DEF_INT("RumiDeviceId", -1, " (Kokkos default)");
+    RUMI_DEF_INT("RumiReplayDump", 0, "");
 #undef RUMI_DEF_REAL
 #undef RUMI_DEF_INT
     return 0;

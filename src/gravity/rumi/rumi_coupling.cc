@@ -72,6 +72,7 @@ std::unordered_map<StarKey, int, StarKeyHash> slot_of;
 std::vector<double> last_m, last_x, last_v; /* by slot, GIZMO units, the state last handed back (mass: GIZMO's own) */
 std::vector<double> slot_m_r;             /* by slot, the mass RUMI++ holds */
 long long n_steps = 0, n_merge = 0, n_split = 0;
+int replay_written = 0;
 double E0_led = 0; int have_E0 = 0;      /* the energy books' residual at the first printed step */
 double tw_limit = 0, tw_gather = 0, tw_lib = 0, tw_scatter = 0; /* wall s */
 FILE *FdRumi = NULL;
@@ -172,7 +173,7 @@ void rumi_init(void)
     MPI_Comm_split(MPI_COMM_WORLD, rumi_rank ? 0 : MPI_UNDEFINED, ThisTask, &RumiComm);
     int ok = 1;
     if(rumi_rank) {
-        if(rumi_lib::kokkos_initialize(0, -1) != 0) {ok = 0;}
+        if(rumi_lib::kokkos_initialize(All.RumiNumThreads, All.RumiDeviceId) != 0) {ok = 0;}
         else {
             atexit(rumi_atexit); /* endrun(0) calls MPI_Finalize and exit directly */
 #ifdef RUMI_LIB_HAS_MPI
@@ -206,6 +207,7 @@ void rumi_finalize(void)
                n_steps, n_merge, T.n_rebuild, T.n_set_mass, n_split, tw_limit, tw_gather, tw_lib, T.advance, T.rebuild, T.h2d, T.d2h, tw_scatter);
         printf("RUMI ENERGY: kick work net %.6e abs %.6e set changes %.6e (RUMI++ units)\n", L.W_kick, L.W_kick_abs, L.E_set);
     }
+    if(All.RumiReplayDump) {char buf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, sizeof(buf), "%s/rumi_replay_final.txt", All.OutputDir); rumi_lib::dump_ic(buf);}
     if(FdRumi) {fclose(FdRumi); FdRumi = NULL;}
     rumi_lib::kokkos_finalize();
 }
@@ -355,6 +357,14 @@ void rumi_integrate(void)
                 last_m.assign(ntot, 0); last_x.assign(3*ntot, 0); last_v.assign(3*ntot, 0); slot_m_r = m;
                 for(int k = 0; k < ntot; k++) {last_m[k] = all[k].m;}
             }
+        }
+        if(All.RumiReplayDump && !replay_written) { /* the state, G, step and E_ref of the first advance: a standalone replay */
+            char buf[MAX_PATH_BUFFERSIZE_TOUSE];
+            if(ThisTask == 0) {
+                snprintf(buf, sizeof(buf), "%s/rumi_replay.txt", All.OutputDir);
+                FILE *f = fopen(buf, "w"); if(f) {fprintf(f, "G_OVERRIDE = %.17g\nDT_MAX_CODE = %.17g\nE_REF = %.17g\n", plan.G, plan.dt, rumi_lib::e_ref()); fclose(f);}
+            }
+            snprintf(buf, sizeof(buf), "%s/rumi_replay_ic.txt", All.OutputDir); rumi_lib::dump_ic(buf); replay_written = 1;
         }
         const int ns = rumi_lib::n_slots();
         if(plan.split) {
