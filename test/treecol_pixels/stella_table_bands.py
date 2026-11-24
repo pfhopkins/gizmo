@@ -58,11 +58,12 @@ class Tables:
         la = np.log10(max(age_yr - self._i2(self.t_pms, lM, lZ), 100.0))
         return 10.0 ** self._i3(self.t3["log_L_ion_tot"], lM, lZ, la), 10.0 ** self._i3(self.t3["log_Q_ion"], lM, lZ, la)
 
-    def ionising_above_he(self, M, Z, age_yr):
-        """energy [erg/s] and photon rate [1/s] above 24.6 eV: photons = total - below 24.6 eV, kept between L / 54.4 eV and L / 24.6 eV"""
+    def band(self, key, M, Z, age_yr):
+        """10^table of one 3D field on the main sequence; fields not loaded at the start are read here"""
         lM, lZ = np.log10(M), np.log10(max(Z, 1e-10))
         la = np.log10(max(age_yr - self._i2(self.t_pms, lM, lZ), 100.0))
-        L1 = 10.0 ** self._i3(self.t3["log_L_ion_He0"], lM, lZ, la)
-        q = 10.0 ** self._i3(self.t3["log_Q_ion"], lM, lZ, la) - 10.0 ** self._i3(self.t3["log_Q_ion_H0"], lM, lZ, la)
-        ev = 1.60217733e-12
-        return L1, np.clip(q, L1 / (54.4 * ev), L1 / (24.6 * ev))
+        if key not in self.t3:
+            with h5py.File(self.fname, "r") as F:
+                self.t3[key] = F[key][()].astype(np.float32).astype(np.float64)
+        v = 10.0 ** self._i3(self.t3[key], lM, lZ, la)
+        return v if np.isfinite(v) and v > 0 else 0.0

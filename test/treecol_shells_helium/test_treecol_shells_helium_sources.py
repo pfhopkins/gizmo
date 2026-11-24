@@ -18,7 +18,11 @@ from stella_table_bands import Tables  # noqa: E402
 from treecol_reference import direct_shell_sweep  # noqa: E402
 
 EV = 1.60217733e-12
-SIGMA_HI, SIGMA_HEI = (3.658e-18, 8.482e-19), 5.460e-18  # cm^2, the walk's band means (gravtree_treecol_pixels.h)
+EDGES = (13.6, 24.6, 54.4, 70.0, 500.0)  # eV
+SIGMA_HI = (3.658e-18, 8.482e-19, 1.0315e-19, 4.972e-20)  # cm^2, the walk's band means (gravtree_treecol_pixels.h)
+SIGMA_HEI = (0.0, 5.460e-18, 7.330e-19, 3.6306e-19)
+SIGMA_HEII = (0.0, 0.0, 1.3488e-18, 7.002e-19)
+E_HE1, E_HE2 = 58.006, 73.785  # eV, mean photon energies of the two bands above 54.4 eV at 4e4 K
 L_BOX, SHIELD = 20.0, 3.0
 STARS = [(8.0, 0.5), (15.0, 0.6), (30.0, 0.2), (60.0, 0.5), (100.0, 0.2)]  # (M, fraction of the main sequence)
 PIXELS = ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "TEST_DUMP_TREECOL_PIXELS_AND_EXIT", "BOX_PERIODIC", "GRAVITY_NOT_PERIODIC")
@@ -78,67 +82,70 @@ def load(out, what):
     return r[np.argsort(r[:, 0])]
 
 
-def test_two_source_bands(dump):
-    """two bands from the tables split at 24.6 eV: photons and energy add up to the star's, photon rates and energy in band 1 as the tables"""
+def test_four_source_bands(dump):
+    """four bands from the tables: photons and energy add up to the star's, the band energies are the tables'"""
     out, tab, stars, _ = dump
     bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
-    assert len(bins) == 9
+    assert len(bins) == 13
     rows = load(out, "stars")[:, 2:]
-    L0, Q0, L1, Q1 = (rows[:, bins[k]] for k in (5, 6, 7, 8))
-    Q0, Q1 = Q0 / (13.6 * EV), Q1 / (13.6 * EV)
+    L, Q = rows[:, bins[5::2]], rows[:, bins[6::2]] / (13.6 * EV)
     want = np.array([tab.ionising(M, 0.0142, age) for M, age, _ in stars])
-    np.testing.assert_allclose(L0 + L1, want[:, 0], rtol=1e-10)
-    np.testing.assert_allclose(Q0 + Q1, want[:, 1], rtol=1e-10)
-    he = np.array([tab.ionising_above_he(M, 0.0142, age) for M, age, _ in stars])
-    np.testing.assert_allclose(L1, he[:, 0], rtol=1e-10)
-    np.testing.assert_allclose(Q1, he[:, 1], rtol=1e-10)
-    assert np.all(L1 / Q1 / EV > 24.6 * (1 - 1e-9)) and np.all(L1 / Q1 / EV < 54.4 * (1 + 1e-9))
+    np.testing.assert_allclose(L.sum(1), want[:, 0], rtol=1e-10)
+    np.testing.assert_allclose(Q.sum(1), want[:, 1], rtol=1e-10)
+    for b, key in ((1, "log_L_ion_He0"), (2, "log_L_ion_He1"), (3, "log_L_ion_He2")):
+        np.testing.assert_allclose(L[:, b], [tab.band(key, M, 0.0142, age) for M, age, _ in stars], rtol=1e-10)
+    np.testing.assert_allclose(Q[:, 2], L[:, 2] / (E_HE1 * EV), rtol=1e-10)
+    np.testing.assert_allclose(Q[:, 3], L[:, 3] / (E_HE2 * EV), rtol=1e-10)
+    above = np.array([tab.band("log_Q_ion", M, 0.0142, age) - tab.band("log_Q_ion_H0", M, 0.0142, age) for M, age, _ in stars]) - Q[:, 2] - Q[:, 3]
+    np.testing.assert_allclose(Q[:, 1], np.clip(above, L[:, 1] / (54.4 * EV), L[:, 1] / (24.6 * EV)), rtol=1e-10)
     root = np.loadtxt(out / "treecol_dump_root_lum_0.txt")
     np.testing.assert_allclose(root[bins[5:]], rows[:, bins[5:]].sum(0), rtol=1e-12)
 
 
 def test_helium_absorbers(dump):
-    """node species: HI = (1 - x_H+) per H, HeI = ABHE - x_He+ - x_He++ per H, cell by cell and in the root node"""
+    """node species: HI = (1 - x_H+) per H, HeI = ABHE - x_He+ - x_He++ per H, He+ = x_He+ per H, cell by cell and in the root node"""
     out, _, _, ab = dump
     cells = load(out, "cells")
     hi = (1 - ab[:, 1]) * 0.7065
     hei = (0.1 - ab[:, 3] - ab[:, 4]) * 0.7065
     np.testing.assert_allclose(cells[:, 4], hi, rtol=1e-12)
     np.testing.assert_allclose(cells[:, 5], hei, rtol=1e-12, atol=1e-12)
-    np.testing.assert_allclose(np.loadtxt(out / "treecol_dump_root_species_0.txt")[3:5], [hi.sum(), hei.sum()], rtol=1e-12)
+    heii = ab[:, 3] * 0.7065
+    np.testing.assert_allclose(cells[:, 6], heii, rtol=1e-12, atol=1e-12)
+    np.testing.assert_allclose(np.loadtxt(out / "treecol_dump_root_species_0.txt")[3:6], [hi.sum(), hei.sum(), heii.sum()], rtol=1e-12)
 
 
 def test_band_sweeps():
-    """photon flux of each band against a direct sweep: band 0 through HI, band 1 through HI and HeI (light cells, tau ~ 1,
-    tree-error bar as test_ionising_sweep); energy flux = photon flux x the star's band mean energy, one hardness per band"""
+    """photon flux of each band against a direct sweep through HI, HeI and He+ (light cells, tau ~ 1, tree-error bar as
+    test_ionising_sweep); energy flux = photon flux x the stars' band mean energy, one hardness per band"""
     out, tab, stars, ab = run_dump("sweep", gas_mass=4e-4)
     cells, rows = load(out, "cells"), load(out, "stars")
     bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
     gas, spos = cells[:, -3:], rows[:, -3:]
-    m_hi, m_hei = cells[:, 4], cells[:, 5]
-    Q0, Q1 = rows[:, 2:][:, bins[6]], rows[:, 2:][:, bins[8]]
+    m_hi, m_hei, m_heii = cells[:, 4], cells[:, 5], cells[:, 6]
     to_tau = 1.989e33 / 3.085678e18 ** 2 / 1.6726e-24
     pick = np.random.default_rng(3).choice(len(gas), 150, replace=False)
-    ph0 = np.array([direct_shell_sweep(gas[i], gas, m_hi, spos, Q0, SIGMA_HI[0] * to_tau, SHIELD, npix=48, r_floor=0.01).sum() for i in pick])
-    m_b1 = m_hi + SIGMA_HEI / SIGMA_HI[1] * m_hei
-    ph1 = np.array([direct_shell_sweep(gas[i], gas, m_b1, spos, Q1, SIGMA_HI[1] * to_tau, SHIELD, npix=48, r_floor=0.01).sum() for i in pick])
-    want0, want1 = ph0 * 2.9979e10 / (13.6 * EV), ph1 * 2.9979e10 / (13.6 * EV)
-    F = cells[pick, -7:-3]  # photons 0, 1, energy 0, 1
-    assert np.median(abs(F[:, 0] / want0 - 1)) < 0.2, np.median(abs(F[:, 0] / want0 - 1))
-    assert np.median(abs(F[:, 1] / want1 - 1)) < 0.2, np.median(abs(F[:, 1] / want1 - 1))
-    E0, E1 = rows[:, 2:][:, bins[5]], rows[:, 2:][:, bins[7]]
-    q = F[:, 1] > 0
-    assert np.all(F[:, 2] / F[:, 0] / EV > 13.6) and np.all(F[:, 2] / F[:, 0] / EV < 24.6)
-    assert np.all(F[q, 3] / F[q, 1] / EV > 24.6) and np.all(F[q, 3] / F[q, 1] / EV < 54.4)
+    F = cells[pick, -11:-3]  # photons 0..3, energy 0..3
+    for b in range(4):
+        Qb = rows[:, 2:][:, bins[6 + 2 * b]]
+        if Qb.max() <= 0:
+            continue
+        m = m_hi + (SIGMA_HEI[b] * m_hei + SIGMA_HEII[b] * m_heii) / SIGMA_HI[b]
+        want = np.array([direct_shell_sweep(gas[i], gas, m, spos, Qb, SIGMA_HI[b] * to_tau, SHIELD, npix=48, r_floor=0.01).sum() for i in pick]) * 2.9979e10 / (13.6 * EV)
+        assert np.median(abs(F[:, b] / want - 1)) < 0.2, (b, np.median(abs(F[:, b] / want - 1)))
+        q = F[:, b] > 0
+        assert np.all(F[q, 4 + b] / F[q, b] / EV > EDGES[b] * (1 - 1e-6)) and np.all(F[q, 4 + b] / F[q, b] / EV < EDGES[b + 1])
 
 
 def test_cross_sections_as_blackbody_integrals():
-    """the band means of the integrals (photon-weighted, 4e4 K, Osterbrock fits): the constants in the walk"""
+    """the band means of the integrals (photon-weighted, 4e4 K, Osterbrock fits), the band mean energies: the constants in the code"""
     def sig(e, s0, th):
         f = np.sqrt(np.maximum(e / th - 1, 1e-10))
-        return s0 * (th / e) ** 4 * np.exp(4 - 4 * np.arctan(f) / f) / (1 - np.exp(-2 * np.pi / f))
-    for (a, b), want_hi, want_hei in (((13.6, 24.6), SIGMA_HI[0], 0.0), ((24.6, 54.4), SIGMA_HI[1], SIGMA_HEI)):
-        e = np.linspace(a, b, 40000); x = e * EV / (1.380658e-16 * 4e4); w = e ** 2 / (np.exp(x) - 1)
-        np.testing.assert_allclose(np.trapezoid(sig(e, 6.3e-18, 13.6) * w, e) / np.trapezoid(w, e), want_hi, rtol=1e-3)
-        if want_hei:
-            np.testing.assert_allclose(np.trapezoid(sig(e, 7.83e-18, 24.6) * w, e) / np.trapezoid(w, e), want_hei, rtol=1e-3)
+        return np.where(e < th, 0, s0 * (th / e) ** 4 * np.exp(4 - 4 * np.arctan(f) / f) / (1 - np.exp(-2 * np.pi / f)))
+    for b in range(4):
+        e = np.linspace(EDGES[b], EDGES[b + 1], 200000); x = e * EV / (1.380658e-16 * 4e4); w = e ** 2 / np.expm1(x)
+        for s0, th, want in ((6.3e-18, 13.6, SIGMA_HI[b]), (7.83e-18, 24.6, SIGMA_HEI[b]), (1.58e-18, 54.4, SIGMA_HEII[b])):
+            if want:
+                np.testing.assert_allclose(np.trapezoid(sig(e, s0, th) * w, e) / np.trapezoid(w, e), want, rtol=1e-3)
+        if b > 1:
+            np.testing.assert_allclose(np.trapezoid(e * w, e) / np.trapezoid(w, e), (E_HE1, E_HE2)[b - 2], rtol=1e-3)

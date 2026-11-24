@@ -1,12 +1,12 @@
 # treecol_shells_helium
 
-Helium in the TreeRay photoionisation (`GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION` at `CHEMISTRYNETWORK=17`). Design: two bands split at 24.6 eV, absorbers HI and HeI.
+Helium in the TreeRay photoionisation (`GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION` at `CHEMISTRYNETWORK=17`). Four bands with edges 13.6, 24.6, 54.4 and 70 eV, absorbers HI, HeI and He+.
 
 | test | checks |
 |---|---|
-| `test_two_source_bands` | the two source bands add up to the table's photon rate and energy (1e-10), band 1 = table, mean energy inside the band (cool stars at the 24.6 eV edge), root node = sum (1e-12) |
-| `test_helium_absorbers` | node species HI and HeI per cell and root node (1e-12) |
-| `test_band_sweeps` | photon flux per band against a direct sweep (band 0 through HI, band 1 through HI + HeI; median 20 %, tree error at tau ~ 1); band mean energies inside the bands |
+| `test_four_source_bands` | the four source bands add up to the table's photon rate and energy (1e-10), the band energies are the table's, photons above 54.4 eV at the mean energies of a 4e4 K blackbody, root node = sum (1e-12) |
+| `test_helium_absorbers` | node species HI, HeI and He+ per cell and root node (1e-12) |
+| `test_band_sweeps` | photon flux per band against a direct sweep (through HI + HeI + He+; median 20 %, tree error at tau ~ 1); band mean energies inside the bands |
 | `test_cross_sections_as_blackbody_integrals` | the walk's constants = the band means at 4e4 K (1e-3) |
 | `test_helium_ionised` | StarBench m10: x(He+) / ABHE at least 0.9 where x(H+) > 0.9 |
 | `test_helium_ledger` | StarBench m10: helium recombinations at most 1.3 Q1, He++ below 1e-3 ABHE |
