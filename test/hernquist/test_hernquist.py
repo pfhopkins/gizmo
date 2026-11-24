@@ -11,6 +11,9 @@ radii (10th, 50th, 90th percentiles). Each variant isolates one feature:
   - tidal_ags: TIDAL_TIMESTEP_CRITERION + ADAPTIVE_GRAVSOFT_FORALL +
                ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION  (tidal-radius softening)
 
+test_hernquist_pm_fields separately checks the t=0 potential and tidal tensor of a
+non-periodic PMGRID build against direct summation.
+
 Each variant writes its profile + Lagrange radii to an .npz; once any variant
 runs, the overlay plot (final density profile + Lagrange radii) is rebuilt
 from whatever .npz files are present.
@@ -486,3 +489,70 @@ def test_hernquist(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
         f"Half-mass radius drifted: |dr_h/r_h| = {rel:.4f} "
         f"(r_h_0={r_h_0:.4g}, r_h_f={r_h_f:.4g})"
     )
+
+
+# --- non-periodic TreePM: potential and tidal tensor against direct summation ---------------
+# Non-periodic (zero-padded) mesh with the tidal tensor on. Compared where the mesh carries
+# essentially all of the field, so an error in the long-range part cannot hide behind the tree.
+PM_FIELDS_FLAGS = ("PMGRID=64", "OUTPUT_TIDAL_TENSOR")
+PM_FIELDS_TIMEMAX = 0.01  # only the t=0 snapshot is used; also caps the step, which must not exceed TimeMax
+PM_FIELDS_RMIN = 60.0  # > the tree/PM cutoff radius (47 for this IC and mesh)
+PM_FIELDS_TOL = 0.05  # median relative error per field
+
+
+def _direct_sum_fields(pos, mass, targets, chunk=64):
+    """Newtonian potential and tidal tensor T_ij = d(a_i)/d(x_j) at pos[targets] from all
+    other particles, G = 1."""
+    pot = np.empty(len(targets))
+    tidal = np.empty((len(targets), 3, 3))
+    for start in range(0, len(targets), chunk):
+        idx = targets[start:start + chunk]
+        dx = pos[None, :, :] - pos[idx, None, :]
+        r2 = np.sum(dx**2, axis=2)
+        r2[np.arange(len(idx)), idx] = np.inf  # no self-interaction
+        rinv = 1.0 / np.sqrt(r2)
+        pot[start:start + chunk] = -np.sum(mass * rinv, axis=1)
+        m_r5 = mass * rinv**5
+        tidal[start:start + chunk] = 3.0 * np.einsum("tsi,tsj,ts->tij", dx, dx, m_r5)
+        tidal[start:start + chunk] -= np.sum(mass * rinv**3, axis=1)[:, None, None] * np.eye(3)
+    return pot, tidal
+
+
+def _pm_field_errors(snap):
+    """Median relative error of the potential and of the diagonal and off-diagonal parts of the
+    tidal tensor, over particles beyond PM_FIELDS_RMIN."""
+    with h5py.File(snap, "r") as F:
+        pos = F["PartType1/Coordinates"][:].astype(float)
+        mass = F["PartType1/Masses"][:].astype(float)
+        pot = F["PartType1/Potential"][:].astype(float)
+        tidal = F["PartType1/TidalTensor"][:].astype(float).reshape(-1, 3, 3)
+    r = np.sqrt(np.sum(pos**2, axis=1))
+    targets = np.flatnonzero(r > PM_FIELDS_RMIN)
+    pot_ref, tidal_ref = _direct_sum_fields(pos, mass, targets)
+    diff = tidal[targets] - tidal_ref
+    norm = np.sqrt(np.sum(tidal_ref**2, axis=(1, 2)))
+    diag = np.eye(3, dtype=bool)
+    return {
+        "n": len(targets),
+        "potential": np.median(np.abs(pot[targets] / pot_ref - 1)),
+        "tidal_diagonal": np.median(np.sqrt(np.sum(diff[:, diag] ** 2, axis=1)) / norm),
+        "tidal_offdiagonal": np.median(np.sqrt(np.sum(diff[:, ~diag] ** 2, axis=1)) / norm),
+    }
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=8),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_hernquist_pm_fields(num_mpi_ranks, num_omp_threads):
+    _ensure_ic()
+    clean_test_outputs(TEST_NAME, PM_FIELDS_FLAGS)
+    build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, PM_FIELDS_FLAGS,
+                       param_overrides={"TimeMax": PM_FIELDS_TIMEMAX, "MaxSizeTimestep": PM_FIELDS_TIMEMAX})
+    outputdir = variant_output_dir(TEST_NAME, PM_FIELDS_FLAGS)
+    err = _pm_field_errors(outputdir + "/snapshot_000.hdf5")
+    print(f"[pm_fields] {err}")
+    assert err["n"] > 500, f"only {err['n']} particles beyond r = {PM_FIELDS_RMIN}"
+    for field in ("potential", "tidal_diagonal", "tidal_offdiagonal"):
+        assert err[field] < PM_FIELDS_TOL, (
+            f"{field}: median relative error {err[field]:.3g} against direct summation "
+            f"(tolerance {PM_FIELDS_TOL}) for {err['n']} particles beyond r = {PM_FIELDS_RMIN}"
+        )
