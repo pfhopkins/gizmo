@@ -405,6 +405,9 @@ static void mechanical_fb_per_source_setup(
     m.Esne51 = Energy_injected_codeunits / unit_egy_SNe;
     double r2max = 2.0 / unitlength_in_kpc;
     m.r2max_phys = r2max * r2max;
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    m.r2max_phys = MAX_REAL_NUMBER; /* single stars reach every cell of their kernel */
+#endif
 }
 
 

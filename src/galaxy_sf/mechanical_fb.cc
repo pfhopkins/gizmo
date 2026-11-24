@@ -202,9 +202,11 @@ void verify_and_assign_local_mechfb_integrals(void)
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
             double TE_cell_0 = m0*CellP[j].InternalEnergy; /* the heat row is the change of the cell's energy over this step */
 #endif
-            CellP[j].Density *= mf/m0; /* update density [semi-drift] */
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+            /* single stars: the density stays the cell's own until its next density pass, as the reference implementation */
             CellP[j].InternalEnergy *= m0/mf; CellP[j].InternalEnergyPred *= m0/mf; /* cold ejecta dilute u at once, whatever the energy of the event */
+#else
+            CellP[j].Density *= mf/m0; /* update density [semi-drift] */
 #endif
             double dTE=LocalGasMechFBInfoTemp[j].TE_injected;
 #if defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS) || defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS)
@@ -227,6 +229,9 @@ void verify_and_assign_local_mechfb_integrals(void)
                 double dt = get_particle_timestep_in_physical(j, P), implied_heating_cgs=(dU*UNIT_SPECEGY_IN_CGS*PROTONMASS_CGS)/(dt*UNIT_TIME_IN_CGS), typical_cooling_cgs=1.e-23*(CellP[j].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS);
                 int weak_heating = (implied_heating_cgs < 0.3*typical_cooling_cgs) && (dt > MIN_REAL_NUMBER) && ((dU < 4.*CellP[j].InternalEnergy) || ((dU < 1000.*CellP[j].InternalEnergy) && ((dU+CellP[j].InternalEnergy)*U_TO_TEMP_UNITS*2./3.*1.28 < 5.e5)));
                 CellP[j].InternalEnergy += dU; CellP[j].InternalEnergyPred += dU; /* always injected now: a heating rate here would be reset by the hydro pass before any kick applied it */
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+                weak_heating = 1; /* every receiver is woken below, whatever the heat */
+#endif
                 if(!weak_heating) {
                     /* Strong heating: mark this receiver for positive wakeup
                      * from the most-aggressive source TimeBin that contributed.
@@ -250,6 +255,9 @@ void verify_and_assign_local_mechfb_integrals(void)
                     }
                 }
             }
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+            if(!TimeBinActive[P[j].TimeBin]) {P[j].wakeup = -1; wakeup_sidecar_mark(j); NeedToWakeupParticles_local = 1;} /* single stars: every receiver off its sync point starts a new step now, in the highest active bin */
+#endif
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
             ledger_add(LEDGER_E_FB_THERMAL_NOW, mf*CellP[j].InternalEnergy - TE_cell_0); /* what reached u */
 #endif
