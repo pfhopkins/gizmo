@@ -36,6 +36,9 @@ extern ALIGN(32) struct particle_data
     
     ALIGN(32) Vec3<MyDouble> Pos;   /*!< particle position at its current time */
     MyDouble Mass;                  /*!< particle mass */
+#ifdef LEDGER_OUTFLOW_BOUNDARY
+    MyDouble OutflowMass;           /*!< mass this particle had when it left through an outflow face, until the ledger books it; else 0 */
+#endif
 
     Vec3<MyDouble> Vel;             /*!< particle velocity at its current time */
     Vec3<MyDouble> dp;

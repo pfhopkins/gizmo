@@ -130,6 +130,23 @@ void ledger_cr_shock(double dE) {ledger_add(LEDGER_E_CR_SHOCK, dE);}
 void ledger_kick_floor(double dE) {ledger_add(LEDGER_E_KICK_FLOOR, dE);}
 #endif
 
+#ifdef LEDGER_OUTFLOW_BOUNDARY
+/* a gas cell or star that left through an outflow face, once: where the dead particle is removed, or before the ledger is read */
+void ledger_book_outflow(int i)
+{
+    const double m = P[i].OutflowMass; P[i].OutflowMass = 0;
+    if(!(m > 0) || (P[i].Type != 0 && P[i].Type != 4)) {return;}
+    ledger_add(LEDGER_M_OUTFLOW, m); ledger_add(LEDGER_MZ_OUTFLOW, m * P[i].Metallicity[0]);
+#ifdef LEDGER_SLOTS
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {ledger_add_slot(LEDGER_SLOT_OUTFLOW, k, m * P[i].Metallicity[k]);}
+#endif
+}
+static void ledger_book_outflow_pending(void) /* particles not yet removed; imported ghost copies sit above the local ones */
+{
+    for(int i = 0, n_local = ghost_get_num_local(); i < n_local; i++) {if(P[i].Mass <= 0) {ledger_book_outflow(i);}}
+}
+#endif
+
 static void ledger_state_rows(void) /* the state rows: sums over this rank's particles now */
 {
     for(int r = 0; r < LEDGER_NROWS; r++) {if(ledger_row_is_state[r]) {memset(&ledger_total[r], 0, sizeof(ledger_total[r]));}}
@@ -160,6 +177,9 @@ static void ledger_state_rows(void) /* the state rows: sums over this rank's par
 void ledger_output(void) /* at every snapshot: fold the threads, one MPI_Reduce, rank 0 writes a row */
 {
     if(!ledger_thread) {return;}
+#ifdef LEDGER_OUTFLOW_BOUNDARY
+    ledger_book_outflow_pending();
+#endif
     for(int t = 0; t < ledger_nthreads; t++) {for(int r = 0; r < LEDGER_NROWS; r++) {ledger_merge(&ledger_total[r], &ledger_thread[(size_t) t * LEDGER_NROWS + r]);}}
     ledger_state_rows();
     static int64_t glob[LEDGER_NROWS][LEDGER_NLIMB];
@@ -216,9 +236,9 @@ void ledger_step_checkpoint(const char *tag)
     ledger_step_ncalls_all++;
     static long double last[3] = {-1., -1., -1.};
     static long long calls = 0;
-    enum {N_SCALAR = 6}; /* M_gas, M_stars, MZ_gas, MZ_stars, net yield (cumulative rows of this rank), diffusion exchange in flight */
+    enum {N_SCALAR = 8}; /* M_gas, M_stars, MZ_gas, MZ_stars, net yield (cumulative rows of this rank), diffusion exchange in flight, mass and metals gone through an outflow face */
 #ifdef LEDGER_SLOTS
-    enum {EL_GAS, EL_STARS, EL_NET, EL_N}; /* per slot: gas, stars, booked net yield */
+    enum {EL_GAS, EL_STARS, EL_NET, EL_OUT, EL_N}; /* per slot: gas, stars, booked net yield, gone through an outflow face */
     const int n_red = N_SCALAR + EL_N * NUM_METAL_SPECIES;
 #else
     const int n_red = N_SCALAR;
@@ -235,6 +255,13 @@ void ledger_step_checkpoint(const char *tag)
         }
 #endif
     }
+#ifdef LEDGER_OUTFLOW_BOUNDARY
+    if(ledger_thread) {
+        ledger_book_outflow_pending();
+        for(int t = 0; t < ledger_nthreads; t++) {for(int r = LEDGER_M_OUTFLOW; r <= LEDGER_MZ_OUTFLOW; r++) {ledger_merge(&ledger_total[r], &ledger_thread[(size_t) t * LEDGER_NROWS + r]);}}
+        loc[6] = (long double) ledger_value(&ledger_total[LEDGER_M_OUTFLOW]); loc[7] = (long double) ledger_value(&ledger_total[LEDGER_MZ_OUTFLOW]);
+    }
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
     if(ledger_thread) {
         for(int t = 0; t < ledger_nthreads; t++) {for(int r = 0; r < LEDGER_NROWS; r++) {ledger_merge(&ledger_total[r], &ledger_thread[(size_t) t * LEDGER_NROWS + r]);}}
@@ -244,12 +271,13 @@ void ledger_step_checkpoint(const char *tag)
 #ifdef LEDGER_SLOTS
     if(ledger_slot_thread) {
         ledger_slot_fold();
-        for(int k = 0; k < NUM_METAL_SPECIES; k++) {loc[N_SCALAR + EL_NET * NUM_METAL_SPECIES + k] = (long double) ledger_value(&ledger_slot_total[LEDGER_SLOT_TO_GAS][k]) - (long double) ledger_value(&ledger_slot_total[LEDGER_SLOT_FROM_STARS][k]);}
+        for(int k = 0; k < NUM_METAL_SPECIES; k++) {loc[N_SCALAR + EL_NET * NUM_METAL_SPECIES + k] = (long double) ledger_value(&ledger_slot_total[LEDGER_SLOT_TO_GAS][k]) - (long double) ledger_value(&ledger_slot_total[LEDGER_SLOT_FROM_STARS][k]);
+            loc[N_SCALAR + EL_OUT * NUM_METAL_SPECIES + k] = (long double) ledger_value(&ledger_slot_total[LEDGER_SLOT_OUTFLOW][k]);}
     }
 #endif
     MPI_Allreduce(loc.data(), glob.data(), n_red, MPI_LONG_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(ThisTask != 0) {calls++; return;}
-    long double now[3] = {glob[0] + glob[1], glob[2], glob[2] + glob[3] + glob[5] - glob[4]}, d[3] = {0, 0, 0};
+    long double now[3] = {glob[0] + glob[1] + glob[6], glob[2], glob[2] + glob[3] + glob[5] + glob[7] - glob[4]}, d[3] = {0, 0, 0};
     int log_it = (calls == 0);
     for(int k = 0; k < 3; k++) {
         if(last[k] >= 0) {d[k] = now[k] - last[k]; if(last[k] > 0 && fabsl(d[k]) / last[k] > 1.0e-14) {log_it = 1;}}
@@ -273,8 +301,8 @@ void ledger_step_checkpoint(const char *tag)
         std::vector<double> rel(NUM_METAL_SPECIES, 0.0);
         int worst = -1;
         for(int k = 0; k < NUM_METAL_SPECIES; k++) {
-            long double g = el[EL_GAS * NUM_METAL_SPECIES + k], st = el[EL_STARS * NUM_METAL_SPECIES + k], S = fabsl(g) + fabsl(st);
-            L[k] = g + st - el[EL_NET * NUM_METAL_SPECIES + k];
+            long double g = el[EL_GAS * NUM_METAL_SPECIES + k], st = el[EL_STARS * NUM_METAL_SPECIES + k], out = el[EL_OUT * NUM_METAL_SPECIES + k], S = fabsl(g) + fabsl(st) + fabsl(out);
+            L[k] = g + st + out - el[EL_NET * NUM_METAL_SPECIES + k];
             if(!last_L.empty()) {
                 long double dL = L[k] - last_L[k];
                 rel[k] = (S > 0) ? (double) (dL / S) : ((dL != 0) ? HUGE_VAL : 0.);
@@ -287,8 +315,8 @@ void ledger_step_checkpoint(const char *tag)
             FILE *f = fopen(buf, "a");
             if(f) {
                 if(ftell(f) == 0) {
-                    fprintf(f, "# per metal slot L = gas + stars - (deposited into gas by feedback - taken from stars), constant when the books close; a line at the first call and\n");
-                    fprintf(f, "# where some slot's |dL|/S > 1e-14 since the previous checkpoint (S = |gas| + |stars| of the slot). Slot 0: all metals; 1..10 He C N O Ne Mg Si S Ca Fe in the FIRE layout.\n");
+                    fprintf(f, "# per metal slot L = gas + stars + gone through an outflow face - (deposited into gas by feedback - taken from stars), constant when the books close; a line at the first call and\n");
+                    fprintf(f, "# where some slot's |dL|/S > 1e-14 since the previous checkpoint (S = |gas| + |stars| + |outflow| of the slot). Slot 0: all metals; 1..10 He C N O Ne Mg Si S Ca Fe in the FIRE layout.\n");
                     fprintf(f, "# call tag time worst_slot its_dL/S dL/S per slot:"); for(int k = 0; k < NUM_METAL_SPECIES; k++) {fprintf(f, " s%d", k);} fprintf(f, "\n");
                 }
                 fprintf(f, "%lld %s %.10e %d %+.6e", calls, tag, All.Time, worst, (worst >= 0) ? rel[worst] : 0.);

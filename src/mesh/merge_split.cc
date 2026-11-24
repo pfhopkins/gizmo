@@ -1976,6 +1976,9 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
     for(i = 0; i < numpart_local; i++)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
+#ifdef LEDGER_OUTFLOW_BOUNDARY
+            ledger_book_outflow(i);
+#endif
 #ifdef SINGLE_STAR_RECORDS
             if(P[i].StarIdx > 0) {single_star_record_free(P[i].StarIdx); P[i].StarIdx = 0;}
 #endif

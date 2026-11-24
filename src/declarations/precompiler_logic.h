@@ -2351,6 +2351,9 @@
 #define BOX_DEFINED_SPECIAL_XYZ_BOUNDARY_CONDITIONS_ARE_ACTIVE 1 /* flag to let the code know to use everything below */
 #define BOX_VALUE_FOR_NOTHING_SPECIAL_BOUNDARY_ 20 /* define a dummy value we won't have the user set for reference below */
 #endif
+#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(GALSF) && (defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z))
+#define LEDGER_OUTFLOW_BOUNDARY /* mass and metals leaving through an outflow face are booked in the ledger */
+#endif
 
 
 #if (defined(CR_SCALE_WITH_G0) || defined(CR_BACKGROUND_IONRATE_ATTENUATED)) && !defined(SGCHEM)

@@ -241,6 +241,9 @@ void init(void)
     for(i = 0; i < NumPart; i++)	/*  start-up initialization */
     {
         P[i].GravAccel = {};
+#ifdef LEDGER_OUTFLOW_BOUNDARY
+        P[i].OutflowMass = 0;
+#endif
 #ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
         P[i].GravAccel_Retained = {};
 #endif

@@ -1541,7 +1541,13 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #else
 #define LEDGER_ROWS_RADP(X)
 #endif
-#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X) LEDGER_ROWS_PI(X) LEDGER_ROWS_KICK_FLOOR(X) LEDGER_ROWS_RADP(X) LEDGER_ROWS_MHD(X) LEDGER_ROWS_MHD_TERMS(X)
+#ifdef LEDGER_OUTFLOW_BOUNDARY /* gas and stars gone through an outflow face */
+#define LEDGER_ROWS_OUTFLOW(X) X(LEDGER_M_OUTFLOW, "M_outflow_boundary_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_MZ_OUTFLOW, "MZ_outflow_boundary_Msun", UNIT_MASS_IN_SOLAR, 0)
+void ledger_book_outflow(int i);
+#else
+#define LEDGER_ROWS_OUTFLOW(X)
+#endif
+#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_OUTFLOW(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X) LEDGER_ROWS_PI(X) LEDGER_ROWS_KICK_FLOOR(X) LEDGER_ROWS_RADP(X) LEDGER_ROWS_MHD(X) LEDGER_ROWS_MHD_TERMS(X)
 #define LEDGER_ROW_ENUM(id, name, unit, state) id,
 enum ledger_rows {LEDGER_ROWS(LEDGER_ROW_ENUM) LEDGER_NROWS};
 void ledger_init(void);
@@ -1579,7 +1585,7 @@ long long ledger_step_ncalls(void);
 #define LEDGER_STEP(tag) ledger_step_checkpoint(tag)
 #if defined(METALS) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
 #define LEDGER_SLOTS /* element ledger: per metal slot, mass deposited into gas by feedback and taken from stars (mass_balance_elements.txt) */
-enum {LEDGER_SLOT_TO_GAS, LEDGER_SLOT_FROM_STARS, LEDGER_SLOT_ROWS};
+enum {LEDGER_SLOT_TO_GAS, LEDGER_SLOT_FROM_STARS, LEDGER_SLOT_OUTFLOW, LEDGER_SLOT_ROWS};
 void ledger_add_slot(int row, int k, double x);
 #endif
 #ifdef OUTPUT_MASS_BALANCE_BREAKDOWN

@@ -860,7 +860,13 @@ struct particle_motion_in_arrays {
     KOKKOS_INLINE_FUNCTION void velocity_reflected(int j) const {if(pp[i].Type==0) {cell[i].VelPred[j]=pp[i].Vel[j]; cell[i].HydroAccel[j]=0;}}
     KOKKOS_INLINE_FUNCTION void add_reflected_momentum(int j, double mass_for_dp, double vel_before) const {pp[i].dp[j]+=(pp[i].Vel[j]-vel_before)*mass_for_dp;}
     KOKKOS_INLINE_FUNCTION void zero_momentum() const {pp[i].dp[0]=pp[i].dp[1]=pp[i].dp[2]=0;}
-    KOKKOS_INLINE_FUNCTION void outflow_removed_mass() const {if(pp[i].Type==0) {cell[i].Mass=0;}}
+    KOKKOS_INLINE_FUNCTION void remove_mass_through_outflow() const
+    {
+#ifdef LEDGER_OUTFLOW_BOUNDARY
+        if(pp[i].Mass > 0) {pp[i].OutflowMass = pp[i].Mass;} /* the drift may run on the device: the host books it later */
+#endif
+        pp[i].Mass=0; if(pp[i].Type==0) {cell[i].Mass=0;}
+    }
     /* A gas cell's radiation and cosmic-ray fluxes, and its evolved non-ideal MHD field, are mirrored with it: their normal components change sign. */
     KOKKOS_INLINE_FUNCTION void reflect_normal_fluxes(int j) const
     {
@@ -908,7 +914,7 @@ struct particle_motion_prediction {
     KOKKOS_INLINE_FUNCTION void velocity_reflected(int) const {}
     KOKKOS_INLINE_FUNCTION void add_reflected_momentum(int, double, double) const {}
     KOKKOS_INLINE_FUNCTION void zero_momentum() const {}
-    KOKKOS_INLINE_FUNCTION void outflow_removed_mass() const {}
+    KOKKOS_INLINE_FUNCTION void remove_mass_through_outflow() {mass_=0;}
     KOKKOS_INLINE_FUNCTION void reflect_normal_fluxes(int) const {}
 };
 
@@ -1075,7 +1081,7 @@ void apply_special_boundary_conditions_body(Motion &a, double mass_for_dp, int m
         const int outflow_lower = (o == 0 || o == -1), outflow_upper = (o == 0 || o == 1);
         /* The one place a drift changes whether a mass is positive: the fused Mode-D walk retires its mass verdicts
          * for drifted particles under this same flag (gx_touched_set_drift_and_mark). */
-        if((lower_hit && outflow_lower) || (upper_hit && outflow_upper)) {a.mass()=0; a.outflow_removed_mass(); if(mode==1) {a.zero_momentum();}}
+        if((lower_hit && outflow_lower) || (upper_hit && outflow_upper)) {a.remove_mass_through_outflow(); if(mode==1) {a.zero_momentum();}}
     }
 #else
     (void)a; (void)mass_for_dp; (void)mode; (void)ti_target;
