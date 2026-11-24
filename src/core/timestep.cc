@@ -654,6 +654,10 @@ integertime get_timestep(int p,		/*!< particle index */
 #define TIDAL_TIMESTEP_PREFAC (1.0)
 #endif
 static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "TIDAL_TIMESTEP_PREFAC shortens the tidal timestep: it must lie in (0,1]");
+#ifndef TIDAL_TIMESTEP_PREFAC_GAS /* the same factor for gas cells */
+#define TIDAL_TIMESTEP_PREFAC_GAS (TIDAL_TIMESTEP_PREFAC)
+#endif
+static_assert((TIDAL_TIMESTEP_PREFAC_GAS) > 0.0 && (TIDAL_TIMESTEP_PREFAC_GAS) <= 1.0, "TIDAL_TIMESTEP_PREFAC_GAS must lie in (0,1]");
 
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion
     double tidal_mag_dt = P[p].tidal_tensorps.frobenius_norm_sq();
@@ -661,7 +665,7 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
     if(KETJU_DT_MEMBER(p)) {double t2 = ketju_member(p).com_dt_tidal * ketju_member(p).com_dt_tidal; tidal_mag_dt = 1. / (t2 * t2);} /* |T_external|_F^2 */
 #endif
     double dt_dynamical = sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
-    double dt_tidal = (TIDAL_TIMESTEP_PREFAC) * dt_dynamical;
+    double dt_tidal = ((P[p].Type == 0) ? (TIDAL_TIMESTEP_PREFAC_GAS) : (TIDAL_TIMESTEP_PREFAC)) * dt_dynamical;
     if(P[p].Type == 0) { // gas self-gravity timescale as a bare minimum
         double dt_selfgravity = sqrt(All.ErrTolIntAccuracy/(All.G*CellP[p].Density*All.cf_a3inv));
         dt_tidal = DMIN(dt_selfgravity, dt_tidal); dt_dynamical = DMIN(dt_selfgravity, dt_dynamical);
