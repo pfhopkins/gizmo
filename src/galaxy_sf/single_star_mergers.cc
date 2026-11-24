@@ -62,7 +62,7 @@ void star_mergers_apply(std::vector<star_merger_action> &actions, const char *ta
             if(P[v].StarIdx > 0) {buf[n_met + 3] = single_star_birth_mass(single_star_slot(P[v].StarIdx));}
 #endif
 #ifdef SINGLE_STAR_MERGER_PRODUCT
-            if(P[v].StarIdx > 0) {buf[n_met + 2] = evaluate_stellar_age_Gyr(v) * 1.e9;}
+            if(P[v].StarIdx > 0) {buf[n_met + 2] = single_star_age_yr(v);}
 #endif
 #endif
         }
@@ -97,7 +97,7 @@ void star_mergers_apply(std::vector<star_merger_action> &actions, const char *ta
             /* a main-sequence star of the merged mass, birth Z mass-weighted, MS fraction 0.1 sum_i M_i f_i / M (Hurley, Pols & Tout 2002 eq. 80) */
             int s = single_star_slot(P[s_idx].StarIdx);
             double Ms = a.M_old * UNIT_MASS_IN_SOLAR, Mnew = P[s_idx].Mass * UNIT_MASS_IN_SOLAR, Mtot = Ms;
-            double Zsum = Ms * SingleStars.Z_birth[s], fsum = Ms * star_ms_fraction(SingleStars.M_drawn[s], SingleStars.Z_birth[s], evaluate_stellar_age_Gyr(s_idx) * 1.e9);
+            double Zsum = Ms * SingleStars.Z_birth[s], fsum = Ms * star_ms_fraction(SingleStars.M_drawn[s], SingleStars.Z_birth[s], single_star_age_yr(s_idx));
             for(size_t v = 0; v < a.victims.size(); v++) {
                 const std::vector<double> &b = a.victims[v]; double Mv = a.victim_mass[v] * UNIT_MASS_IN_SOLAR;
                 Mtot += Mv; Zsum += Mv * b[n_met + 1];

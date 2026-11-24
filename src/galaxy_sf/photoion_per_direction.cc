@@ -173,7 +173,7 @@ double photoion_max_timestep(int p)
 #endif
         return dt;
     }
-    double age = evaluate_stellar_age_Gyr(p) * 1.e9;
+    double age = single_star_age_yr(p);
     if(age < t_on) {return DMAX(t_on - age, 10.) / UNIT_TIME_IN_YR;}
     return 0;
 }

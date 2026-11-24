@@ -48,7 +48,7 @@ static int single_star_luminosity_age(int i, double *logM, double *logZ, double 
     if(SingleStars.event_bits[s] & (SINGLE_STAR_EVENT_SN_DONE | SINGLE_STAR_EVENT_AGB_DONE)) {return 0;}
 #endif
     *logM = log10(SingleStars.M_drawn[s]); *logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
-    double age = evaluate_stellar_age_Gyr(i) * 1.e9;
+    double age = single_star_age_yr(i);
     if(age > stellar_t_PMS(*logM, *logZ) + stellar_lifetime(*logM, *logZ)) {return 0;}
     *log_age = log10(DMAX(age - stellar_t_PMS(*logM, *logZ), 100.));
     return 1;
@@ -79,7 +79,7 @@ static int single_star_ionizing_age(int i, double *logM, double *logZ, double *l
 #endif
     if(!single_star_luminosity_age(i, logM, logZ, log_age)) {return 0;}
     double t_on = single_star_ionizing_onset_yr(i);
-    return (t_on >= 0 && evaluate_stellar_age_Gyr(i) * 1.e9 >= t_on);
+    return (t_on >= 0 && single_star_age_yr(i) >= t_on);
 }
 
 /* ionising luminosity (> 13.6 eV) [erg/s] */
@@ -130,7 +130,6 @@ static inline void single_star_logMZ(int s, double *logM, double *logZ)
     *logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
 }
 
-static inline double single_star_age_yr(int i) {return evaluate_stellar_age_Gyr(i) * 1.e9;}
 static inline double single_star_death_age_yr(double logM, double logZ) {return stellar_t_PMS(logM, logZ) + stellar_lifetime(logM, logZ);}
 
 /* table age since the zero-age main sequence [yr] at stellar age age_yr; <= 0 means still pre-main-sequence */
@@ -281,7 +280,7 @@ double single_star_eventrates(int i, double dt)
     if(bits & SINGLE_STAR_EVENT_AGB_DONE) { /* white dwarf */
 #ifdef GALSF_SINGLE_STARS_TYPE_IA
         if(SingleStars.M_at_SN_trigger[s] > 0) {P[i].SNe_ThisTimeStep = 1; return 1;} /* pending */
-        double t_Gyr = evaluate_stellar_age_Gyr(i), dt_Gyr = dt * UNIT_TIME_IN_GYR;
+        double t_Gyr = single_star_age_yr(i) * 1.e-9, dt_Gyr = dt * UNIT_TIME_IN_GYR;
         if(t_Gyr < IA_T_MIN_GYR || dt_Gyr <= 0) {return 0;}
         double p = (IA_DTD_NORM / t_Gyr) * SingleStars.M_drawn[s] * dt_Gyr * IA_F_WD / DMAX(stellar_ia_fdead(t_Gyr * 1.e9, logZ), 1.e-6);
 #ifdef TEST_SINGLE_STARS_TYPE_IA_RATE_MULTIPLIER
@@ -299,6 +298,7 @@ double single_star_eventrates(int i, double dt)
         return 1;
     }
     double age = single_star_age_yr(i), age_end = single_star_death_age_yr(logM, logZ);
+    if(age <= 0) {return 0;} /* born this step */
     double t_end = age_end; /* stellar age at the end of its life */
     int dead = (age > age_end);
 #ifdef TEST_SINGLE_STARS_SN_AT_FORCED_TIMES

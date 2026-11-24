@@ -1076,7 +1076,7 @@ static double ketju_star_contact_radius(int i)
     {
         int s = single_star_slot(P[i].StarIdx);
         double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
-        double age_tab = evaluate_stellar_age_Gyr(i) * 1.e9 - stellar_t_PMS(logM, logZ);
+        double age_tab = single_star_age_yr(i) - stellar_t_PMS(logM, logZ);
         if(age_tab >= stellar_lifetime(logM, logZ)) {return 0;}
         R_cm = pow(10.0, stellar_log_R_cm(logM, logZ, log10(DMAX(age_tab, 100.0))));
     }

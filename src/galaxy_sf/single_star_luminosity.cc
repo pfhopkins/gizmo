@@ -37,7 +37,7 @@ int single_star_band_luminosities_cgs(int i, double *L, double *L_bol)
     return 0; /* test only: no radiation */
 #endif
     double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
-    double age_yr = evaluate_stellar_age_Gyr(i) * 1.e9, t_pms = stellar_t_PMS(logM, logZ);
+    double age_yr = single_star_age_yr(i), t_pms = stellar_t_PMS(logM, logZ);
     if(age_yr >= t_pms + stellar_lifetime(logM, logZ) || age_yr - t_pms <= 0) {return 0;}
     double la = log10(DMAX(age_yr - t_pms, 100.));
     double L_uv = single_star_band_lum_cgs(stellar_log_L_FUV_total(logM, logZ, la)); /* 6-13.6 eV */
@@ -71,7 +71,7 @@ static void single_star_ionizing_rates(int i, double *L_b, double *Q_b)
 {
     int s = single_star_slot(P[i].StarIdx);
     double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
-    double la = log10(DMAX(evaluate_stellar_age_Gyr(i) * 1.e9 - stellar_t_PMS(logM, logZ), 100.));
+    double la = log10(DMAX(single_star_age_yr(i) - stellar_t_PMS(logM, logZ), 100.));
 #if defined(TEST_SINGLE_STARS_LUMINOSITY_PINNED) || defined(TEST_SINGLE_STARS_RADIATION_OFF)
     for(int b = 0; b < TREECOL_SHELLS_ION_NBANDS; b++) {L_b[b] = Q_b[b] = 0;} (void) la; return; /* test only */
 #endif
@@ -479,7 +479,7 @@ void single_star_light_switch_check(void)
         if(SingleStars.event_bits[s] & (SINGLE_STAR_EVENT_SN_DONE | SINGLE_STAR_EVENT_AGB_DONE)) {continue;}
 #endif
         double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
-        double age = evaluate_stellar_age_Gyr(i) * 1.e9, t_pms = stellar_t_PMS(logM, logZ), t_on = single_star_ionizing_onset_yr(i);
+        double age = single_star_age_yr(i), t_pms = stellar_t_PMS(logM, logZ), t_on = single_star_ionizing_onset_yr(i);
         double t_switch[3] = {t_pms, t_pms + stellar_lifetime(logM, logZ), t_on};
         for(int k = 0; k < 3; k++) {if(t_switch[k] > 0 && age - dt_yr < t_switch[k] && t_switch[k] <= age) {TreeMomentsStaleFlag = 2; return;}}
     }
