@@ -273,15 +273,16 @@ static int     g_lp_cap = 0;
 static void let_payload_targets(struct LETPerRankPayload *out, const int *tl_lookup)
 {
     const int n = NumPart, ntl = NTopleaves;
-    if(n > g_lp_cap)
+    if(n > g_lp_cap || !g_lp_tl)   /* at least one slot, so a rank with no particles still holds valid arrays */
     {
+        const size_t cap = (n > 0) ? (size_t) n : 1;
         free(g_lp_tl); free(g_lp_oct); free(g_lp_doct); free(g_lp_order); free(g_lp_val);
-        g_lp_tl = (int *) malloc((size_t) n * sizeof(int));  g_lp_oct = (int *) malloc((size_t) n * sizeof(int));
-        g_lp_doct = (int *) malloc((size_t) n * sizeof(int)); g_lp_order = (int *) malloc((size_t) n * sizeof(int));
-        g_lp_val = (double *) malloc((size_t) n * 3 * sizeof(double));
+        g_lp_tl = (int *) malloc(cap * sizeof(int));  g_lp_oct = (int *) malloc(cap * sizeof(int));
+        g_lp_doct = (int *) malloc(cap * sizeof(int)); g_lp_order = (int *) malloc(cap * sizeof(int));
+        g_lp_val = (double *) malloc(cap * 3 * sizeof(double));
         if(!g_lp_tl || !g_lp_oct || !g_lp_doct || !g_lp_order || !g_lp_val)
             {printf("let_compute_local_payload: no memory for the threaded cover scratch (%d particles, rank=%d). Stopping.\n", n, ThisTask); fflush(stdout); endrun(90000093);}
-        g_lp_cap = n;
+        g_lp_cap = (int) cap;
     }
     const int threaded = gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, n);
 #ifdef _OPENMP
