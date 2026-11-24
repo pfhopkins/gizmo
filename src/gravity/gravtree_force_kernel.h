@@ -122,17 +122,23 @@ KOKKOS_INLINE_FUNCTION double grav_weight_function_for_weighted_motion_smoothing
 
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
 /* Adaptive-softening target selection: keep the adaptive kernel radius + zeta correction only
- * when it exceeds the type floor, else fall back to the fixed softening with zeta=0. 'soft'
+ * when it exceeds the type floor, else fall back to the fixed softening with zeta=0 (single stars: with zeta kept). 'soft'
  * enters as the walk's loaded kernel radius and may be reset here. */
 KOKKOS_INLINE_FUNCTION void grav_target_select_soft_and_zeta(int ptype, double ags_zeta, double &soft, double &zeta)
 {
     zeta = 0;
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    const double zeta_at_floor = ags_zeta; /* single stars keep the correction at the floor, on both sides of a pair */
+#else
+    const double zeta_at_floor = 0;
+#endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
-    if(ptype == 0) {if(soft > All.ForceSoftening[ptype]) {zeta = ags_zeta;} else {soft=All.ForceSoftening[ptype]; zeta=0;}}
+    if(ptype == 0) {if(soft > All.ForceSoftening[ptype]) {zeta = ags_zeta;} else {soft=All.ForceSoftening[ptype]; zeta=zeta_at_floor;}}
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    if(soft > All.ForceSoftening[ptype]) {zeta = ags_zeta;} else {soft=All.ForceSoftening[ptype]; zeta=0;}
+    if(soft > All.ForceSoftening[ptype]) {zeta = ags_zeta;} else {soft=All.ForceSoftening[ptype]; zeta=zeta_at_floor;}
 #endif
+    (void) zeta_at_floor;
 }
 #endif
 

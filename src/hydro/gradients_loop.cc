@@ -924,7 +924,11 @@ void hydro_gradient_calc(void)
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
         {
             double ngb_eff = pow(P[i].NumNgb, NUMDIMS);
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+            int softening_is_free = 1; /* single stars keep the correction at the softening floor */
+#else
             int softening_is_free = (P[i].KernelRadius > All.ForceSoftening[0]); /* at the softening floor the radius does not vary with the density */
+#endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) && defined(ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT)
             if(P[i].KernelRadius >= ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT/All.cf_atime) {softening_is_free = 0;} /* nor at the hard upper limit */
 #endif

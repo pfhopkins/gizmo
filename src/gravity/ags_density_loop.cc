@@ -403,12 +403,20 @@ void ags_density(void)
             if((P[i].Mass > 0) && (P[i].AGS_KernelRadius > 0) && (P[i].NumNgb > 0)) {
                 double minsoft = ags_return_minsoft(i);
                 double maxsoft = ags_return_maxsoft(i);
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+                const double minsoft_floor = minsoft;
+#endif
                 minsoft = DMAX(minsoft, AGS_Prev[i] * AGS_DSOFT_TOL);
                 maxsoft = DMIN(maxsoft, AGS_Prev[i] / AGS_DSOFT_TOL);
 #ifdef AGS_ZETA_IN_FORCE
                 P[i].AGS_zeta = 1;   /* the pair sum is taken by AGSForce_calc, which multiplies it into what this pass stores */
 #endif
-                if((P[i].AGS_KernelRadius >= maxsoft) || (P[i].AGS_KernelRadius <= minsoft)) { P[i].AGS_zeta = 0; } /* radius held at a limit: it does not vary with the density, so no correction term */
+#ifdef GALSF_SINGLE_STARS_FROM_IMF /* zeta is kept at the softening floor itself, as the gravity walk uses it there */
+                const int held_at_minsoft = (P[i].AGS_KernelRadius <= minsoft) && (minsoft > minsoft_floor);
+#else
+                const int held_at_minsoft = (P[i].AGS_KernelRadius <= minsoft);
+#endif
+                if((P[i].AGS_KernelRadius >= maxsoft) || held_at_minsoft) { P[i].AGS_zeta = 0; } /* radius held at a limit: it does not vary with the density, so no correction term */
 
                 double z0 = P[i].AGS_zeta * P[i].AGS_KernelRadius /   /* the pair sum carries its symmetrization factor */
                             (NUMDIMS * P[i].Mass * P[i].NumNgb /
