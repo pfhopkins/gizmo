@@ -3834,7 +3834,7 @@ These parameters control the sub-grid models for super-massive black hole partic
 
 **SinkMaxAccretionRadius**: This sets a hard maximum radius (in physical code units) out to which the BH particle will search. This is included to prevent cases where a poorly-resolved, gas-poor galaxy has a BH which then searches out to some very large distance until it finds gas (potentially leading to unphysical accretion or mergers from very large separations).
 
-**SinkRadiativeEfficiency**: Radiative efficiency of the BH (defined in the standard manner, $L =$ SinkRadiativeEfficiency $*\,(dM/dt) * c^{2}$). Used to calculate luminosities for feedback, eddington accretion rates, and correct the actual accreted mass.
+**SinkRadiativeEfficiency**: Radiative efficiency of the BH (defined in the standard manner, $L =$ SinkRadiativeEfficiency $*\,(dM/dt) * c^{2}$). Used to calculate luminosities for feedback, eddington accretion rates, and correct the actual accreted mass. With `SINK_RIAF_SUBEDDINGTON_MODEL` this is instead set by the model (a canonical value of 0.1, modified as a function of the Eddington ratio).
 
 **SinkFeedbackFactor**: Multiplier for the strength of all BH feedback mechanisms (whatever is enabled, the energy/momentum will be scaled by this factor relative to its 'default' which corresponds to values =1). You can set this =0 to turn off BH feedback.
 

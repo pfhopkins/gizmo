@@ -184,10 +184,20 @@ static double sink_fb_angleweight_localcoupling_gpu(
 /* Sink accretion-luminosity helper cores shared by host and device; the host
  * externals in sink_util.cc are one-line wrappers around these. */
 
-/* return the eddington accretion-rate = L_edd/(epsilon_r*c*c) - for a variable radiative efficiency, this scales off of the 'canonical' value given as the constant in the parameterfile, per usual convention in the literature */
+/* 'canonical' radiative efficiency: the parameterfile constant, except for the RIAF model where this is set by the model */
+KOKKOS_INLINE_FUNCTION double sink_canonical_radiative_efficiency_core(void)
+{
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+    return 0.1;
+#else
+    return All.SinkRadiativeEfficiency;
+#endif
+}
+
+/* return the eddington accretion-rate = L_edd/(epsilon_r*c*c) - for a variable radiative efficiency, this scales off of the 'canonical' value, per usual convention in the literature */
 KOKKOS_INLINE_FUNCTION double sink_eddington_mdot_core(double sink_mass)
 {
-    return (4*M_PI * GRAVITY_G_CGS * PROTONMASS_CGS / (All.SinkRadiativeEfficiency * C_LIGHT_CGS * THOMPSON_CX_CGS)) * sink_mass * UNIT_TIME_IN_CGS;
+    return (4*M_PI * GRAVITY_G_CGS * PROTONMASS_CGS / (sink_canonical_radiative_efficiency_core() * C_LIGHT_CGS * THOMPSON_CX_CGS)) * sink_mass * UNIT_TIME_IN_CGS;
 }
 
 /* return the bh radiative efficiency - allows for models with dynamical or accretion-dependent radiative efficiencies */
@@ -195,9 +205,9 @@ KOKKOS_INLINE_FUNCTION double evaluate_sink_radiative_efficiency_core(double mdo
 {
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL /* simple classic model where radiative efficiency declines linearly below critical eddington ratio of order 1% eddington, and super-Eddington accretion is also radiatively inefficient  */
     double lambda_0 = (SINK_RIAF_SUBEDDINGTON_MODEL), lambda_1 = 2., lambda_eff = mdot/sink_eddington_mdot_core(mass), qfac = lambda_eff/lambda_0, qfac_he = lambda_eff/lambda_1;
-    return All.SinkRadiativeEfficiency * (qfac/(1.+qfac)) * (1./(1.+qfac_he));
+    return sink_canonical_radiative_efficiency_core() * (qfac/(1.+qfac)) * (1./(1.+qfac_he));
 #endif
-    return All.SinkRadiativeEfficiency; // default to constant
+    return sink_canonical_radiative_efficiency_core(); // default to constant
 }
 
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL
