@@ -2,7 +2,7 @@
   test_every_setting_is_read: each flag of Config_stella_*.sh and the template appears in src/ outside Template_Config.sh, each
     parameter of stella_*.params is registered in begrun.cc (scripts/stella/check_config_reads.py, exit 0).
   test_checker_reports_unread: a flag and a parameter the code does not know are named and the exit code is 1.
-  test_setups: default, cloud, galaxy and zoom start from STELLA_DEFAULTS; the zoom is comoving with TimeBetSnapshot > 1 and has
+  test_setups: default, cloud, galaxy, zoom and tall box start from STELLA_DEFAULTS; the zoom is comoving with TimeBetSnapshot > 1 and has
     RESOLVED_ISM_FB_AFTER_CLOSING_KICK without RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB (as stella_dev);
     (run.cc stops otherwise); cloud, galaxy and tall box are not.
   test_gas_kernel_radius_uncapped: every tracked params file of a Stella build with adaptive gas softening sets
@@ -54,7 +54,7 @@ def par(name):
 
 
 def test_setups():
-    for c in ("default", "cloud", "galaxy", "zoom"):
+    for c in ("default", "cloud", "galaxy", "zoom", "tallbox"):
         assert re.search(r"^STELLA_DEFAULTS$", (CFG / f"Config_stella_{c}.sh").read_text(), re.M), c
     z = par("stella_zoom.params")
     assert z["ComovingIntegrationOn"] == "1" and float(z["TimeBetSnapshot"]) > 1.0 and float(z["OmegaBaryon"]) > 0

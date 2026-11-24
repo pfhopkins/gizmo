@@ -12,8 +12,8 @@
 
 /* the usual Stella set; each flag still works alone (scripts/stella holds the production configs). the flags the chemistry sources read stay in Config.sh, they see no other header */
 #ifdef STELLA_DEFAULTS
-#if !defined(SGCHEM) || !defined(METALS) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS) || (!defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS))
-#error "STELLA_DEFAULTS: set SGCHEM, CHEMISTRYNETWORK, METALS, GALSF_RESOLVEDISM_TREECOL_PIXELS=12 and GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES in Config.sh"
+#if !defined(SGCHEM) || !defined(METALS) || !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS) || (!defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) && !defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)) /* the chemistry's FUV field: the stars' light in the tree, moment transport, or the uniform field of a patch scaled with its recent star formation */
+#error "STELLA_DEFAULTS: set SGCHEM, CHEMISTRYNETWORK, METALS, GALSF_RESOLVEDISM_TREECOL_PIXELS=12 and the FUV field (GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES, GALSF_SINGLE_STARS_RT_TABLE_BANDS or ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR) in Config.sh"
 #endif
 #ifndef COOLING
 #define COOLING

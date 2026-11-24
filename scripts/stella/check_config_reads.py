@@ -39,7 +39,7 @@ tags, dev = set(), []  # tags registered outside #ifdef DEVELOPER_MODE (a produc
 for line in (src / "core/begrun.cc").read_text().splitlines():
     t = line.strip()
     if t.startswith("#if"):
-        dev.append(bool(re.match(r"#ifdef\s+DEVELOPER_MODE\b|#if\s+defined\(DEVELOPER_MODE\)", t)))
+        dev.append(bool(re.match(r"#ifdef\s+DEVELOPER_MODE\b|#if\s+defined\(DEVELOPER_MODE\)(?!\s*\|\|)", t)))
     elif t.startswith("#else") and dev:
         dev[-1] = False
     elif t.startswith("#endif") and dev:
