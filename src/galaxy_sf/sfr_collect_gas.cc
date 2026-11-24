@@ -57,6 +57,9 @@ struct ssc_star {
 static double ssc_mu(void) /* the mass quantum: a power of two, so that ulp(m) <= mu for every star and donor mass */
 {
     double M_ref = DMAX(SINGLE_STAR_IMF_MASS_MAX / UNIT_MASS_IN_SOLAR, 2. * All.MaxMassForParticleSplit);
+#ifdef GALSF_SINGLE_STARS_POPIII
+    M_ref = DMAX(M_ref, All.PopIII_IMF_Mmax / UNIT_MASS_IN_SOLAR);
+#endif
     return ldexp(1.0, (int)ceil(log2(M_ref)) - 52);
 }
 

@@ -103,8 +103,8 @@ void begrun(void)
 
   read_parameter_file(ParameterFile);	/* ... read in parameters for this run */
 #ifdef GALSF_SINGLE_STARS_POPIII
-  if(All.PopIII_IMF_Type < 0 || All.PopIII_IMF_Type > 1 || All.PopIII_IMF_Mmin < 0.09 || All.PopIII_IMF_Mmax > 350. || All.PopIII_IMF_Mmin >= All.PopIII_IMF_Mmax || All.PopIII_IMF_Mchar <= 0)
-    {if(ThisTask == 0) {printf("PopIII IMF: type %d on [%g, %g] Msun, Mchar %g: type must be 0 or 1 and the range inside 0.09-350 Msun (the sampled IMF range of the tables)\n", All.PopIII_IMF_Type, All.PopIII_IMF_Mmin, All.PopIII_IMF_Mmax, All.PopIII_IMF_Mchar);} endrun(6575);}
+  if(All.PopIII_IMF_Type < 0 || All.PopIII_IMF_Type > 1 || All.PopIII_IMF_Mmin < 0.09 || All.PopIII_IMF_Mmax > 500. || All.PopIII_IMF_Mmin >= All.PopIII_IMF_Mmax || All.PopIII_IMF_Mchar <= 0)
+    {if(ThisTask == 0) {printf("PopIII IMF: type %d on [%g, %g] Msun, Mchar %g: type must be 0 or 1 and the range inside the stellar tables (0.09-500 Msun)\n", All.PopIII_IMF_Type, All.PopIII_IMF_Mmin, All.PopIII_IMF_Mmax, All.PopIII_IMF_Mchar);} endrun(6575);}
 #endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS
   if(All.TreeColShieldingLength <= 0) {if(ThisTask == 0) {printf("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS needs TreeColShieldingLength > 0: the shells span 3 dex below it\n");} endrun(9817302);}
