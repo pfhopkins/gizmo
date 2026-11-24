@@ -102,7 +102,6 @@ double single_star_ionizing_photon_rate(int i)
 
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
 
-#define SINGLE_STAR_NO_DEPOSIT_MAX 1000  /* steps an event may wait for neighbour weight */
 #define SINGLE_STAR_WIND_MIN_MASS 8.0    /* drawn mass [Msun] above which winds are returned during the star's life */
 #define SINGLE_STAR_AGB_SPEED_KMS 30.0   /* planetary-nebula ejection speed */
 #ifdef GALSF_SINGLE_STARS_TYPE_IA
@@ -601,9 +600,7 @@ void single_star_feedback_finalize(const int *list, int n)
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
             if(kind != SSE_WIND) {single_star_log(i, s, &ev, 0, 2);}
 #endif
-            if(++SingleStars.no_deposit_count[s] > SINGLE_STAR_NO_DEPOSIT_MAX) {
-                gizmo_request_controlled_stop(7831, "single-star feedback event found no gas to couple to for too many steps", __FILE__, __LINE__, __FUNCTION__);
-            }
+            if(SingleStars.no_deposit_count[s] < UINT16_MAX) {SingleStars.no_deposit_count[s]++;}
             continue;
         }
         double z = 0; for(int k = ELEM_C; k < STBL_NELEM; k++) {z += ev.y[k];}
