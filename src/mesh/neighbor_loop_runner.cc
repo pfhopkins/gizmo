@@ -1906,7 +1906,7 @@ static void *nlr_shared_alloc_bytes(size_t bytes, const char *label)
 }
 
 /* Per-call staging buffers the device writes first.  A fresh managed (SharedSpace) allocation costs its first device
- * touch -- page faults under XNACK, measured ~1.2 ms per MB on MI300A, while a second touch runs at device-memory speed -- so the
+ * touch -- measured ~1 ms per MB on MI300A (mechanism not measured), while a second touch runs at device-memory speed -- so the
  * largest per-call buffers can instead be kept across calls in fixed slots: a slot grows to the largest size asked of
  * it and is released when the run ends (nlr_staging_release, from gizmo_kokkos_finalize).  Memory: the peak size of
  * each slot, which every call reaches anyway, kept for the run.  A slot serves one buffer of one call at a time; the
