@@ -84,6 +84,30 @@ inline int gizmo_gpu_team_size_max(const F& f)
     return probe.team_size_max(f, Kokkos::ParallelForTag());
 }
 
+/* The same pair for a team kernel whose teams never have more than MaxLanes threads, launched with that
+ * bound declared to the compiler (one team per workgroup).  Without a declared bound the backend compiles
+ * every kernel for its largest workgroup (1024 threads on HIP), which on AMD GPUs caps a thread at 128
+ * vector registers; a kernel needing more then spills to scratch memory.  With the bound the compiler may
+ * give each thread as many registers as MaxLanes-thread workgroups allow, trading occupancy for spills.
+ * The probe uses the same bounded policy as the launch, because the bound is part of what the backend
+ * reports as launchable.  What the kernel computes is unchanged. */
+template<int MaxLanes, typename F>
+inline void gizmo_gpu_bounded_team_kernel_launch(const char *tag, int league, int team_size, F&& f)
+{
+    Kokkos::TeamPolicy<Kokkos::LaunchBounds<MaxLanes, 1> > policy(league, team_size, 1);
+    Kokkos::parallel_for(tag, policy, std::forward<F>(f));
+    Kokkos::fence();
+    gizmo_gpu_check_last_error(tag, league, -1);
+}
+
+template<int MaxLanes, typename F>
+inline int gizmo_gpu_bounded_team_size_max(const F& f)
+{
+    Kokkos::TeamPolicy<Kokkos::LaunchBounds<MaxLanes, 1> > probe(1, 1, 1);
+    const int hw = probe.team_size_max(f, Kokkos::ParallelForTag());
+    return (hw < MaxLanes) ? hw : MaxLanes;
+}
+
 /* The same pair for a kernel whose teams ask for level-0 scratch.  The bound is asked of a probe
  * carrying the same scratch request as the launch, because that request is part of what limits the
  * team: a probe without it reports a team the launch cannot have.  (A policy constructed at an

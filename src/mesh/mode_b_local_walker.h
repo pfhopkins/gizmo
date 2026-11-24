@@ -195,4 +195,15 @@ void mode_b_drift_and_filter_candidates(const double pos[3],
                                         double j_reach_scale,
                                         std::vector<int>& cands);
 
+/* The second half of the above alone: keep, in place and in walk order, exactly the candidates satisfying the
+ * query at their current position and radius.  Every candidate must already be current.  Only reads, so distinct
+ * candidate lists may be filtered concurrently. */
+void mode_b_filter_candidates(const double pos[3],
+                              double h_q,
+                              unsigned int type_mask,
+                              int search_mode,
+                              mode_b_radius_policy_t radius_policy,
+                              double j_reach_scale,
+                              std::vector<int>& cands);
+
 #endif /* MODE_B_LOCAL_WALKER_H */
