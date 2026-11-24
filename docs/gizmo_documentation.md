@@ -2022,9 +2022,9 @@ Run it where you build (same modules and `SYSTYPE`): MSTAR is built against the 
 
 **Photon energy of one ionising bin** (`GALSF_SINGLE_STARS_RT_TABLE_BANDS` with `RT_CHEM_PHOTOION=1`): the bin's photon energy is the sum of L_ion over the sum of Q of the living single stars above 8 Msun, from the tables at their current ages (kept within 13.6-100 eV), and the photoelectron energy is that less 13.6 eV, in place of the values of a 4e4 K blackbody. Emission, photoionisation rates and heating read the same number, so the photon count is kept. Each star's share is renewed on its own steps; the sums are reduced only on calls of the source injection with a source somewhere. Several ionising bins keep their own energies. Test: `test/single_stars_rt_bands`.
 
-#![newlogofromshivan](gizmo_documentation_ims/gizmo_newlogo.jpeg) GIZMO Users Guide
+**Live dust and radiation pressure of single stars**: With `GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL` or `GALSF_ISMDUSTCHEM_HU_MODEL`, the star-side term of `GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS` uses the mass-weighted dust mass fraction of the gas in the star's kernel (from the density loop, in units of the Milky Way value, at most 10), in place of the dust-to-gas ratio of the star's metallicity; the per-cell term uses each cell's own dust, as the tree columns do.
 
-<a name="toc"></a>
+**Hu dust rows of the ledger**: With `GALSF_ISMDUSTCHEM_HU_MODEL` and `OUTPUT_MASS_METAL_ENERGY_LEDGER`, `ledger.txt` has the dust mass at output (`M_dust_carbon_Msun`, `M_dust_silicate_Msun`) and the cumulative masses of thermal and nonthermal sputtering and of growth (each for carbon and silicate), and of the clamp to the element pools (`M_dust_clamped_Msun`).
 
 **Helium bands of the TreeRay photoionisation** (`GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION` at `CHEMISTRYNETWORK=17`): the walk carries four ionising bands with edges 13.6, 24.6, 54.4 and 70 eV, and the absorbers HI, HeI and He+. The band energies of a star come from the tables, its photons above 54.4 eV from the mean energies of a 4e4 K blackbody in the two bands (58.0 and 73.8 eV), its photons in 24.6-54.4 eV from the tables; the cross sections are the photon-weighted means of that blackbody. Tables of hot stars hold about 1e-5 of the ionising energy above 54.4 eV. Test: `test/treecol_shells_helium`.
 
