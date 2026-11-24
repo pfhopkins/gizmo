@@ -961,10 +961,6 @@ void init(void)
     }
 #endif
 
-#if defined(GENERAL_RELATIVITY) && (GR_METRIC>0)
-    for(i = 0; i < N_gas; i++) {if(P[i].Type == 0) {check_boundary(i);}} /* excise the cells inside the horizon (apply_excision does it every step) */
-#endif
-
 #ifdef TEST_FOR_IDUNIQUENESS
     test_id_uniqueness();
 #endif
@@ -986,6 +982,17 @@ void init(void)
             if(j==2) {boxtmp = boxSize_Z;}
             P[i].Pos[j] += 0.5 * boxtmp;
         }
+#endif
+
+#ifdef GENERAL_RELATIVITY
+    for(i = 0; i < N_gas; i++)
+    {
+        if(P[i].Type != 0) {continue;}
+        set_metric_coefficients(P[i].Pos, &(CellP[i].gr)); /* at the final initial positions (the unused dimensions and the half-box shift above) */
+#if (GR_METRIC>0)
+        check_boundary(i); /* excise the cells inside the horizon (apply_excision does it every step) */
+#endif
+    }
 #endif
 
 
