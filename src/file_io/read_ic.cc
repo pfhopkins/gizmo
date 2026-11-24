@@ -705,6 +705,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_SINK_DIST:
             break;
 
+        case IO_KETJU_SPIN:
+#ifdef KETJU_SINKS
+            for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {P[offset + n].KetjuSpin[k] = *fp++;}}
+#endif
+            break;
+
         case IO_SINK_ANGMOM:
 #ifdef SINK_FOLLOW_ACCRETED_ANGMOM
             for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {P[offset + n].Sink_Specific_AngMom[k] = *fp++;}}

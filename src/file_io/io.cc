@@ -1547,6 +1547,18 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_KETJU_SPIN:
+#ifdef KETJU_SINKS
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k = 0; k < 3; k++) {fp[k] = (MyOutputFloat) P[pindex].KetjuSpin[k];}
+                    fp += 3;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_SINK_ANGMOM:
 #ifdef SINK_FOLLOW_ACCRETED_ANGMOM
             for(n = 0; n < pc; pindex++)
@@ -2370,6 +2382,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_GRADRHO:
         case IO_RAD_ACCEL:
         case IO_VORT:
+        case IO_KETJU_SPIN:
         case IO_SINK_ANGMOM:
             if(mode)
                 bytes_per_blockelement = 3 * sizeof(MyInputFloat);
@@ -2870,6 +2883,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_GRADRHO:
         case IO_RAD_ACCEL:
         case IO_VORT:
+        case IO_KETJU_SPIN:
         case IO_SINK_ANGMOM:
             values = 3;
             break;
@@ -3470,6 +3484,7 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_SINKMASS:
         case IO_SINKDUSTMASSACC:
         case IO_SINKMASSALPHA:
+        case IO_KETJU_SPIN:
         case IO_SINK_ANGMOM:
         case IO_UNSPMASS:
         case IO_UNSPJETMASS:
@@ -4036,6 +4051,12 @@ int blockpresent(enum iofields blocknr)
 
         case IO_COOLRATE:
 #ifdef OUTPUT_COOLRATE
+            return 1;
+#endif
+            break;
+
+        case IO_KETJU_SPIN:
+#ifdef KETJU_SINKS
             return 1;
 #endif
             break;
@@ -4678,6 +4699,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_SINKMASSALPHA:
             strncpy(label, "BHMa", 4);
             break;
+        case IO_KETJU_SPIN:
+            strncpy(label, "KSPN", 4);
+            break;
         case IO_SINK_ANGMOM:
             strncpy(label, "BHmJ", 4);
             break;
@@ -5266,6 +5290,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_SINKMASSALPHA:
             strcpy(buf, "Sink_Mass_Reservoir");
+            break;
+        case IO_KETJU_SPIN:
+            strcpy(buf, "KetjuBHSpin");
             break;
         case IO_SINK_ANGMOM:
             strcpy(buf, "Sink_Specific_AngMom");
