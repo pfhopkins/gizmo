@@ -44,6 +44,25 @@
 #include "gradients_loop.h"
 #ifdef TURB_DIFF_DYNAMIC
 #include "../mesh/ghost_symlist_lifecycle.h"  /* gizmo_ghost_safety_factor */
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+#include "../mesh/ghost_writeback.h"
+#include "../mesh/ghost_writeback_ops.h"      /* GHOST_WRITEBACK_BUNDLE_* macros */
+
+/* Mode A: pair counts written to imported ghosts return to their home ranks (snapshot-diff add) */
+GHOST_WRITEBACK_BUNDLE_BEGIN(gradients)
+    GHOST_WRITEBACK_GAS_ADD(TD_NumPairs)
+GHOST_WRITEBACK_BUNDLE_END(gradients)
+
+void GradientsSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/, const NeighborLoopPlan& /*plan*/)
+{
+    ghost_writeback_begin_bundle(gradients_ghost_writeback_bundle_ptr());
+}
+
+void GradientsSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/, const NeighborLoopPlan& /*plan*/)
+{
+    ghost_writeback_end_bundle(gradients_ghost_writeback_bundle_ptr());
+}
+#endif
 #endif
 
 /* MAX/MIN macros mirroring the legacy preset versions from
@@ -223,6 +242,9 @@ void GradientsSpec::apply_active_writeback(const neighbor_loop_args& args,
     {
         int j, k;
         MAX_ADD(passer[i].MaxDistance, out->MaxDistance, 0);
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+        CellP[i].TD_NumPairs += out->TD_NumPairs; /* added, never assigned: neighbours' counts are already in */
+#endif
 #ifdef SOLID_OWN_VELOCITY_GRADIENT
         for(j = 0; j < 3; j++) { for(k = 0; k < 3; k++) { passer[i].SolidVelocityDifferences[j][k] += out->SolidVelocityDifferences[j][k]; passer[i].SolidSeparationMoments[j][k] += out->SolidSeparationMoments[j][k]; } }
         passer[i].GasNeighbours += out->GasNeighbours;

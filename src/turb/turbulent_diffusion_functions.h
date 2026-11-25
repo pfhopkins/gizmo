@@ -10,6 +10,9 @@
  * dt_i/dt_pair of it.
  * With METALS_EXACT_PAIRWISE_EXCHANGE the shorter step owns the pair (equal steps: half
  * each), computes it over its own step and also writes -exchange to CellP[j].Dyield.
+ * One factor on the whole pair then keeps every debit within holding / N of the cell
+ * that gives, N = pair evaluations that can touch that cell in this pass (counted in
+ * the gradient pass), so the summed debits of a pass never exceed what a cell holds.
  *
  * Requires allvars.h, kernel.h, hydro_structs.h, hydro_pair_types.h.
  *
@@ -42,6 +45,7 @@ void turb_diff_metals_compute_pair(
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
     const double dt_j = get_particle_timestep_in_physical(0, const_cast<struct particle_data *>(&Pj));
     if(!PAIR_EXCHANGE_I_OWNS(dt_i, dt_j) && !PAIR_EXCHANGE_SPLIT(dt_i, dt_j)) { return; } /* j owns the pair and does it at its own step */
+    if(Pj.KernelRadius <= 0) { return; } /* the gradient pass does not count such a neighbour */
     const double owner_share = PAIR_EXCHANGE_I_OWNS(dt_i, dt_j) ? 1.0 : 0.5;
     dt_pair = dt_i; /* the owner's step */
 #endif
@@ -61,8 +65,8 @@ void turb_diff_metals_compute_pair(
     double rho_ij = 0.5 * (rho_i + rho_j);
     const double dt_fraction_i = (dt_pair > 0) ? dt_i / dt_pair : 0; /* cell i receives the amount for its own step */
 
-#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(GALSF_SINGLE_STARS_27_ELEMENT_YIELDS)
-    double cmag_slot[NUM_METAL_SPECIES] = {0}; /* total Z takes the sum of the metal slots, applied after the loop */
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    double cmag_slot[NUM_METAL_SPECIES] = {0}; /* this evaluation's exchange into i, closed and bounded after the loop */
 #endif
     for(int k_species=0; k_species<NUM_METAL_SPECIES; k_species++)
     {
@@ -112,28 +116,37 @@ void turb_diff_metals_compute_pair(
                has machinery that makes it exact (the MFV mass flux, where the endpoint with the shorter step owns the pair and
                updates both sides). METALS_EXACT_PAIRWISE_EXCHANGE does the same for metals (GitHub issue #35). */
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
-            /* positivity on the pair: the donor gives at most 1/(2 N_ngb) of its metal mass to one partner per step */
-            double m_donor = (cmag > 0) ? Pj.Mass*Z_j : local.Mass*local.Metallicity[k_species];
-            double m_cap = DMAX(m_donor, 0) / (2.*All.DesNumNgb);
-            if(fabs(cmag) > m_cap) { cmag *= m_cap / fabs(cmag); }
-#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
             cmag_slot[k_species] = owner_share * cmag;
-#else
-            out.Dyield[k_species] += owner_share * cmag;
-            Kokkos::atomic_add(const_cast<MyFloat *>(&CPj.Dyield[k_species]), (MyFloat)(-owner_share * cmag)); /* CellP[j] itself */
-#endif
 #else
             out.Dyield[k_species] += cmag * dt_fraction_i;
 #endif
         }
     }
-#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(GALSF_SINGLE_STARS_27_ELEMENT_YIELDS)
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
     cmag_slot[0] = 0;
     for(int k = 2; k <= NUM_LIVE_SPECIES_FOR_COOLTABLES; k++) {cmag_slot[0] += cmag_slot[k];} /* slot 1 is He */
     for(int k = 0; k < 16; k++) {cmag_slot[0] += cmag_slot[METALS_EXTRA_PASSIVE_SPECIES_OFFSET + k];}
+#endif
+    /* debit bound: a cell gives at most (its holding) / N per evaluation; one factor for all slots keeps the pair antisymmetric and
+       slot 0 the sum of the metal slots. The apply loop's floor at zero then never acts on the diffusive exchange */
+    double td_s = 1;
     for(int k = 0; k < NUM_METAL_SPECIES; k++) {
-        if(cmag_slot[k] != 0) {out.Dyield[k] += cmag_slot[k]; Kokkos::atomic_add(const_cast<MyFloat *>(&CPj.Dyield[k]), (MyFloat)(-cmag_slot[k]));}
+        const double a = cmag_slot[k];
+        if(a == 0) {continue;}
+        const double hold = (a > 0) ? Pj.Mass*Pj.Metallicity[k] : local.Mass*local.Metallicity[k]; /* a > 0: j gives */
+        const double nd = (a > 0) ? (double)CPj.TD_NumPairs : (double)local.TD_NumPairs;
+        const double lim = (1. - 1.e-12) * DMAX(hold, 0) / DMAX(nd, 1.); /* margin for the round-off of the sum */
+        if(fabs(a) * td_s > lim) {td_s = lim / fabs(a);}
     }
+    for(int k = 0; k < NUM_METAL_SPECIES; k++) {
+        const double a = td_s * cmag_slot[k];
+        if(a != 0) {out.Dyield[k] += a; Kokkos::atomic_add(const_cast<MyFloat *>(&CPj.Dyield[k]), (MyFloat)(-a));} /* CellP[j] itself */
+    }
+#ifdef TEST_METALS_PAIRWISE_COUNT_EVALUATIONS
+    out.TD_NumEvals += 1; Kokkos::atomic_add(const_cast<int *>(&CPj.TD_NumEvals), 1);
+    if(td_s < 1) {out.TD_NumScaled += 1;}
+#endif
 #endif
 #endif /* TURB_DIFF_METALS */
 }

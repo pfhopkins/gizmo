@@ -71,6 +71,10 @@ extern void hydro_final_operations_and_cleanup(void);
  * Operations available: see mesh/ghost_writeback_ops.h.
  * ========================================================================== */
 
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(TEST_METALS_PAIRWISE_COUNT_EVALUATIONS)
+long TD_TestScaledPass = 0; /* test: pairs the debit bound scaled in this hydro pass, on this task */
+#endif
+
 GHOST_WRITEBACK_BUNDLE_BEGIN(hydro_force)
     GHOST_WRITEBACK_PARTICLE_MAX(wakeup)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -78,6 +82,9 @@ GHOST_WRITEBACK_BUNDLE_BEGIN(hydro_force)
 #endif
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
     GHOST_WRITEBACK_GAS_ADD_ARRAY(Dyield, NUM_METAL_SPECIES)
+#ifdef TEST_METALS_PAIRWISE_COUNT_EVALUATIONS
+    GHOST_WRITEBACK_GAS_ADD(TD_NumEvals)
+#endif
 #endif
 GHOST_WRITEBACK_BUNDLE_END(hydro_force)
 
@@ -202,6 +209,9 @@ void HydroForceSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
 #endif
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
             for(int k = 0; k < NUM_METAL_SPECIES; k++) {CellP[j].Dyield[k] = 0;}
+#ifdef TEST_METALS_PAIRWISE_COUNT_EVALUATIONS
+            CellP[j].TD_NumEvals = 0;
+#endif
 #endif
             P[j].wakeup = 0;
         }
@@ -343,6 +353,11 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 #endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     for(k = 0; k < NUM_METAL_SPECIES; k++) { CellP[i].Dyield[k] += out->Dyield[k]; }
+#endif
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(TEST_METALS_PAIRWISE_COUNT_EVALUATIONS)
+    CellP[i].TD_NumEvals += out->TD_NumEvals;
+    #pragma omp atomic
+    TD_TestScaledPass += out->TD_NumScaled;
 #endif
 #ifdef CHIMES_TURB_DIFF_IONS
     for(k = 0; k < All.ChimesNumSpecies; k++) {

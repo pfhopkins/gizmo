@@ -236,6 +236,12 @@ extern struct gas_cell_data
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     MyFloat Dyield[NUM_METAL_SPECIES];
 #endif
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    int TD_NumPairs; /*!< pair evaluations that can touch this cell in this hydro pass, counted in the gradient pass: divides the cell's holding in the debit bound */
+#ifdef TEST_METALS_PAIRWISE_COUNT_EVALUATIONS
+    int TD_NumEvals; /*!< test: metal exchange evaluations booked to this cell in this hydro pass */
+#endif
+#endif
     
 #ifdef HYDRO_SPH
     MyDouble DrkernHydroSumFactor;   /* for 'traditional' SPH, we need the SPH hydro-element volume estimator */

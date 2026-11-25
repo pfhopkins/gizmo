@@ -165,6 +165,9 @@ struct GasGraddata_out_
     struct Quantities_for_Gradients Maxima;
     struct Quantities_for_Gradients Minima;
     MyFloat MaxDistance;
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    int TD_NumPairs; /* pairs of this cell visited (the hydro pass visits the same pairs) */
+#endif
 #ifdef SOLID_OWN_VELOCITY_GRADIENT
     MyDouble SolidVelocityDifferences[3][3]; /* a solid's sums over its solid neighbours: the velocity-gradient numerator, */
     MyDouble SolidSeparationMoments[3][3];   /* the separation moment matrix of the same least-squares fit, */
@@ -349,6 +352,9 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #endif
 
     if((r2 >= h2_i) && (r2 >= h_j * h_j)) return;
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    out->TD_NumPairs += 1; Kokkos::atomic_add(&CellP[j].TD_NumPairs, 1); /* both cells of the pair: an upper bound on the metal exchange evaluations touching each */
+#endif
 
     kernel->r = sqrt(r2);
     double u;

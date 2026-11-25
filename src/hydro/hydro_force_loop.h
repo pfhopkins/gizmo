@@ -135,7 +135,7 @@ struct HydroForceSpec
     static constexpr const char *loop_name = "hydro_force";
     static constexpr bool writeback_writes_only_own_particle = true;   /* writes CellP[i] and its own accumulator only */
     /* Eval-thread tier: j-side writes are CellP[j].dMass (Kokkos::atomic_add,
-     * MFV), CellP[j].Dyield (atomic_add, METALS_EXACT_PAIRWISE_EXCHANGE), P[j].wakeup (Kokkos::atomic_max, order-invariant), NeedToWakeup
+     * MFV), CellP[j].Dyield (atomic_add, METALS_EXACT_PAIRWISE_EXCHANGE; its test count TD_NumEvals likewise), P[j].wakeup (Kokkos::atomic_max, order-invariant), NeedToWakeup
      * (Kokkos::atomic_store 1, idempotent) — all via HYDRO_ATOMIC_* in
      * hydro_functions.h. Only dMass is
      * order-sensitive (FP reduction across concurrent actives -> ulp class);
@@ -313,6 +313,9 @@ struct HydroForceSpec
 #endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
         for(int k = 0; k < NUM_METAL_SPECIES; k++) { local.Metallicity[k] = kp[i].Metallicity[k]; }
+#endif
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+        local.TD_NumPairs = kc[i].TD_NumPairs;
 #endif
 #ifdef COSMIC_RAY_FLUID
         for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {
@@ -557,6 +560,9 @@ struct HydroForceSpec
 #endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
         for(int k = 0; k < NUM_METAL_SPECIES; k++) { dst.Dyield[k] += src.Dyield[k]; }
+#endif
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(TEST_METALS_PAIRWISE_COUNT_EVALUATIONS)
+        MERGE_ADD(TD_NumEvals); MERGE_ADD(TD_NumScaled);
 #endif
 #ifdef CHIMES_TURB_DIFF_IONS
         for(int k = 0; k < All.ChimesNumSpecies; k++) { dst.ChimesIonsYield[k] += src.ChimesIonsYield[k]; }

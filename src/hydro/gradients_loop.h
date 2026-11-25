@@ -175,7 +175,11 @@ struct GradientsSpec
 {
     static constexpr const char *loop_name = "gradients";
     static constexpr bool writeback_writes_only_own_particle = true;   /* writes its own P[i]/CellP[i] fields, passer[i] and its own accumulator only */
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* one j-side write: CellP[j].TD_NumPairs (integer Kokkos::atomic_add, order-independent, never read back in this kernel) */
+#else
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only (delegates to gradient_accumulate_neighbor: out-> + local kernel scratch); no j-write, no atomics -> threaded eval bit-identical */
+#endif
 
     /* Symmetric gas-gas topology (matches gizmo_sym_neighbor_list + the
      * legacy gradient_evaluate_gpu CSR consumer). */
@@ -187,10 +191,21 @@ struct GradientsSpec
      * CellP[i].Gradients / GasGradDataPasser[i]). No ghost-writeback. */
     static constexpr WritePattern   write_pattern              = WritePattern::ActiveReduceOnly;
     static constexpr SidxCacheKind  sidx_cache_kind            = SidxCacheKind::GasOnly;
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    /* the pair count of the metal exchange is written to the neighbour (CellP[j].TD_NumPairs): Mode A returns the ghosts' counts
+     * to their home ranks (bundle in gradients_loop.cc); the hydro force loop's ghost refresh then carries the totals back */
+    static constexpr bool           uses_ghost_writeback       = true;
+    static constexpr bool           uses_ghost_write_detector  = true;
+    static void ghost_writeback_begin     (const struct neighbor_loop_args&,
+                                             const struct NeighborLoopPlan&);
+    static void ghost_writeback_end       (const struct neighbor_loop_args&,
+                                             const struct NeighborLoopPlan&);
+#else
     static constexpr bool           uses_ghost_writeback       = false;
     static constexpr bool           uses_ghost_write_detector  = false;
+#endif
 
-#ifndef MHD_CONSTRAINED_GRADIENT
+#if !defined(MHD_CONSTRAINED_GRADIENT) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE) /* with the pair count the kernel writes neighbours, which the audit below does not cover */
     /* run_mode_a may chunk this Spec's per-active staging. Audited safe: the
      * pair kernel reads only primitive GQuant fields; apply_active_writeback
      * writes only OUTPUT gradients (CellP[i].Gradients.*) + the separate
@@ -557,6 +572,9 @@ struct GradientsSpec
 #endif
 
         MERGE_MAX(MaxDistance);
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+        MERGE_ADD(TD_NumPairs);
+#endif
 
 #if defined(KERNEL_CRK_FACES)
         MERGE_ADD(m0);
