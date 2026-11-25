@@ -280,6 +280,7 @@
 #KETJU_REGULARIZATION   # KETJU chain regularisation of star encounters and binaries (gravity/ketju, MSTAR); MSTAR and the ketju-integrator-c headers are a separate install, its prefix in KETJU_PATH (SYSTYPE block, environment or make line)
 #TEST_KETJU_TREE_MOTION_AUDIT   # test only: audits node momentum, motion bounds and imported leaves under KETJU
 #TEST_TREE_NODE_BOX_AUDIT       # test only: counts, after every tree update without a rebuild, the particles outside a node box above them (box at the length the walk uses); prints TREE_NODE_BOX_AUDIT at the end
+#TEST_WAKEUP_DUMP               # test only: one stdout line per split (TEST_SPLIT_DUMP: parent, kernel radius, neighbour distance, daughter offset); with MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS also one per merge pair (TEST_MERGE_PAIR) and per split parent with the task of its nearest neighbour (TEST_SPLIT_NEIGHBOR)
 #TEST_WAKEUP_REQUEST_AUDIT      # test only: before each wake-up scan, counts flagged gas cells off their sync point that the scan would skip (not in the dirty sidecar, or a request new since the last scan while no rank raised the wake-up flag); prints WAKEUP_REQUEST_AUDIT
 #TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS # test only: recomputes the KETJU limiting-particle steps by a full particle scan every step and stops if the cell grid differs (slow) [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #KETJU_MERGE_BH   # with KETJU_REGULARIZATION: BH mergers inside MSTAR
@@ -807,6 +808,7 @@
 #MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION  # never retire a spawned cell into a target if that would thermalize the majority of the energy involved, which is an unresolved shock. auto-set with the STARFORGE protostellar model
 #MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION=(0.5)  # max KE_com/(KE_com+E_light) allowed by the above; lower is stricter (~0.34 is Mach 1 on the lighter cell)
 #MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION  # opt out of MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+#MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS # the merge partner and the nearest neighbour that sets a split's daughter spacing are found over the cells of all tasks, the merge choice is free of index order, and a merge between cells on two tasks runs on the partner's task: a merge/split pass gives the same result on any number of tasks. One matching round per pass (at most one merge per cell), so fewer merges per pass. Not with SINK_WIND_SPAWN, GALSF_MERGER_STARCLUSTER_PARTICLES, SINK_RIAF_SUBEDDINGTON_MODEL, CHIMES, GENERAL_RELATIVITY; off by default
 #PARTICLE_EXCISION                 # enable dynamical excision (remove particles within some radius)
 #MERGE_SPLIT_HARDCODE_MAX_MASS=(1.0e-6)   # manually set maximum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
 #MERGE_SPLIT_HARDCODE_MIN_MASS=(1.0e-7)   # manually set minimum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances

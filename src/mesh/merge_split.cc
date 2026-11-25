@@ -319,6 +319,10 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
 static int make_sn_ejecta_cell(int i, int n_particles_split);
 #endif
 
+#ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
+#include "merge_split_across_ranks.h"
+#endif
+
 void merge_and_split_particles(void)
 {
     if(ghost_require_no_live_pool_for_layout_change("merge_and_split_particles")) {return;}
@@ -473,6 +477,14 @@ void merge_and_split_particles(void)
         int num_src = (int)ms_src_idx.size();
         ms_flagged.reserve((size_t)num_src);
         ms_split_nearest_distance.reserve((size_t)num_src);
+#ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
+        { /* partner and nearest neighbour over all ranks, order-free choice; the merges are done here, the splits below */
+            (void) target_for_merger; (void) j; (void) threshold_val;
+            std::vector<msx::Split> splits_found;
+            n_particles_merged = msx::merge_and_find_splits(ms_src_idx, ms_src_kind, ms_src_radii, merge_split_types_mask, splits_found);
+            for(const msx::Split &sp : splits_found) {if(P[sp.index].Mass > 0) {Ptmp[sp.index].flag = 2; ms_flagged.push_back(sp.index); ms_split_nearest_distance.push_back(sp.r_nearest);}}
+        }
+#else
         gpu_neighbor_list_t gnl = {};
         std::vector<int> gnl_neighbors_host;
         int local_count = ghost_get_num_local();
@@ -706,6 +718,7 @@ void merge_and_split_particles(void)
             gpu_ngb_list_free(&gnl);
             gpu_particles_arena_invalidate();
         }
+#endif /* MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS */
     }
 
     // actual merge-splitting loop loop. No tree-walk is allowed below here
@@ -1136,6 +1149,10 @@ int split_particle_i(int i, int n_particles_split, double r_near)
     /* this is allowed to push particles over the 'edges' of periodic boxes, because we will call the box-wrapping routine immediately below.
      but it is important that the periodicity of the box be accounted for in relative positions and that we correct for this before allowing
      any other operations on the particles */
+#ifdef TEST_WAKEUP_DUMP
+    printf("TEST_SPLIT_DUMP step %lld task %d ID %llu h %.9e r_near %.9e d_r %.9e parent %.12e %.12e %.12e offset %.12e %.12e %.12e\n", (long long) All.NumCurrentTiStep, ThisTask, (unsigned long long) P[i].ID,
+           (double) P[i].KernelRadius, (double) r_near, (double) d_r, (double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2], (double) dx, (double) dy, (double) dz); /* daughters at parent +- offset */
+#endif
     P[i].Pos[0] += dx; P[j].Pos[0] -= dx; P[i].Pos[1] += dy; P[j].Pos[1] -= dy; P[i].Pos[2] += dz; P[j].Pos[2] -= dz;
     gizmo_mark_position_dirty_indices(&i, 1);   /* the parent moved in place; the daughter is not in the tree until its next build */
 #ifdef GENERAL_RELATIVITY

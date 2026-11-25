@@ -1352,6 +1352,9 @@
 #endif
 #define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION_ALL_GAS
 #endif
+#if defined(MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS) && (defined(SINK_WIND_SPAWN) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES) || defined(SINK_RIAF_SUBEDDINGTON_MODEL) || defined(CHIMES) || defined(GENERAL_RELATIVITY))
+#error "MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS does not carry the pair state the spawned-wind, star-cluster, RIAF and GR merge rules need, nor ChimesGasVars"
+#endif
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
 #define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
 #endif
