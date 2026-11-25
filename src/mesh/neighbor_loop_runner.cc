@@ -3758,7 +3758,8 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
  * ========================================================================== */
 template <typename Spec>
 NlrIterDriver<Spec>::NlrIterDriver(neighbor_loop_args_iterative& a,
-                                   const typename Spec::CallScalars& s)
+                                   const typename Spec::CallScalars& s,
+                                   bool iterates_on_device)
     : args(a), cs(s), iter_index(0),
       local_active_total(0), global_active_total(-1),
       local_active_per_sg (a.num_subgroups, 0),
@@ -3797,6 +3798,9 @@ NlrIterDriver<Spec>::NlrIterDriver(neighbor_loop_args_iterative& a,
         bool consistent = (base == args.num_active);
         for (int sg = 0; consistent && sg < args.num_subgroups; sg++) {
             const NlrSubgroup& sgr = args.subgroups[sg];
+#ifdef GPU_SPEEDUP_HOST_THREADED_ITER_STATE
+            if (args.active_list + call_slot_base[sg] == sgr.active_indices) {continue;}   /* the subgroup's list is this part of the call's */
+#endif
             for (int k = 0; k < sgr.num_active_local; k++) {
                 if (args.active_list[call_slot_base[sg] + k] != sgr.active_indices[k]) {consistent = false; break;}
             }
@@ -3838,7 +3842,23 @@ NlrIterDriver<Spec>::NlrIterDriver(neighbor_loop_args_iterative& a,
         }
 
         /* Byte-zero IterScratch ONCE — persists across iters. */
+#ifdef GPU_SPEEDUP_HOST_THREADED_ITER_STATE
+        const bool threaded = gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n);
+        (void) threaded;
+        if (!iterates_on_device) {
+            const int block = 16384, n_blocks = (n + block - 1) / block;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+            for (int b = 0; b < n_blocks; b++) {
+                const size_t first = (size_t) b * block, n_here = ((size_t) n - first < (size_t) block) ? (size_t) n - first : (size_t) block;
+                std::memset((void *) (scratch_uvm[sg] + first), 0, n_here * sizeof(IterScratch));
+            }
+        }
+#else
+        (void) iterates_on_device;
         std::memset(scratch_uvm[sg], 0, n * sizeof(IterScratch));
+#endif
         /* AccumData NOT zeroed here; runner zeros via Spec::zero_accum at start of each iter. */
 
         /* Build a sub-args view for Spec::search_radius. Mirrors the per-
@@ -3848,6 +3868,10 @@ NlrIterDriver<Spec>::NlrIterDriver(neighbor_loop_args_iterative& a,
         sub.active_list = sgr.active_indices;
         sub.num_active  = n;
 
+        /* search_radius reads the particle (and the call's aux) and returns; no slot depends on another. */
+#if defined(GPU_SPEEDUP_HOST_THREADED_ITER_STATE) && defined(_OPENMP)
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
         for (int slot = 0; slot < n; slot++) {
             radii_uvm[sg][slot]      = Spec::search_radius(sub, slot, sgr.active_indices[slot]);
             active_set_uvm[sg][slot] = slot;     /* {0..n-1} initial */
@@ -7148,7 +7172,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     /* Declared before the driver so it closes after the driver has finished
      * (destructors run in reverse): the raise sees the final velocities. */
     NlrMotionTargetScope<Spec> motion_target_scope;
-    NlrIterDriver<Spec> drv(args, cs);
+    const bool iterates_on_device = nlr_mode_d_iterates_on_device_v<Spec> && path == DispatchPath::ModeD_DeviceFused && NTask > 1;
+    NlrIterDriver<Spec> drv(args, cs, iterates_on_device);
 
     /* ===== Path-specific DeviceContext init =====
      * Mode B: bind ctx.P=args.P/CellP directly (no arena).
@@ -7160,7 +7185,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         drv.mode_d_tree = mode_d_lease.tree;
         drv.mode_d_lease = &mode_d_lease;
         drv.acquire_arena_and_init_ctx_mode_d();
-        if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {if(NTask > 1) {nlr_mode_d_iteration_begin<Spec>(drv);}}
+        if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {if(iterates_on_device) {nlr_mode_d_iteration_begin<Spec>(drv);}}
     } else if (path == DispatchPath::ModeA_GPU_NGL) {
         /* Both read P/CellP from the device-resident arena; Mode D differs in
          * how it finds the neighbours, not in where the particles live. */

@@ -1796,13 +1796,16 @@ struct NlrIterDriver {
      *   - Resizes per-subgroup vectors to args.num_subgroups.
      *   - Allocates per-subgroup UVM arrays sized to subgroups[sg].num_active_local.
      *   - Initializes radii from Spec::search_radius for every active in every subgroup.
-     *   - Byte-zeros IterScratch ONCE at construction (persists across iters).
+     *   - Byte-zeros IterScratch ONCE at construction (persists across iters).  A call that iterates on the device
+     *     (iterates_on_device) keeps its scratch there: with GPU_SPEEDUP_HOST_THREADED_ITER_STATE the host's copy is
+     *     not cleared; nlr_mode_d_iteration_end writes the entries the host goes on to read.
      *   - Fills active_set with {0..num_active_local-1} per subgroup; active_set_size = num_active_local.
      *   - AccumData NOT zeroed here — runner zeros via Spec::zero_accum at the start of each iter.
      *   - DOES NOT touch ctx (path-dependent init via initialize_device_context_*).
      * Definition in mesh/neighbor_loop_runner.cc. */
     explicit NlrIterDriver(neighbor_loop_args_iterative& a,
-                           const typename Spec::CallScalars& s);
+                           const typename Spec::CallScalars& s,
+                           bool iterates_on_device);
 
     /* Destructor frees all UVM allocations + cleans DeviceContext IF
      * ctx_initialized. */
