@@ -1032,6 +1032,11 @@ void resolvedism_inject_fb_energy(void)
         MPI_Allreduce(&fe_loc, &fe_glob, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         if(ThisTask == 0 && fe_glob > 0) {printf("IAFE t=%.17e Fe=%.17e Fe_table=%.17e\n", All.Time, fe_glob, stellar_type_ia_yield(ELEM_Fe)); fflush(stdout);}
         FB_TestIaFe = 0;
+        extern double FB_TestIaNegCells, FB_TestIaMinX;
+        double ng_loc[2] = {FB_TestIaNegCells, -FB_TestIaMinX}, ng_glob[2] = {0, 0}; /* count summed; lowest fraction as the maximum of its negative */
+        MPI_Allreduce(&ng_loc[0], &ng_glob[0], 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); MPI_Allreduce(&ng_loc[1], &ng_glob[1], 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        if(ThisTask == 0 && fe_glob > 0) {printf("IANEGX t=%.17e neg_cells=%.0f min_x=%.17e\n", All.Time, ng_glob[0], -ng_glob[1]); fflush(stdout);}
+        FB_TestIaNegCells = 0; FB_TestIaMinX = 0;
     }
 #endif
     ESTEP_BEGIN(ESTEP_FB_POST);

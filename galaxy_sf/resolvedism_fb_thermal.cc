@@ -63,6 +63,7 @@ struct INPUT_STRUCT_NAME
 
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
 double FB_TestIaFe = 0; /* test: Ia-composition iron delivered (code mass) */
+double FB_TestIaNegCells = 0, FB_TestIaMinX = 0; /* test: Ia receivers left with a mass fraction below zero, and the lowest such fraction */
 #endif
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
 long FB_IaClampCells = 0; double FB_IaClampShort = 0; /* Ia conversion share above the cell mass: cells, mass not converted */
@@ -606,6 +607,13 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                     {
                         double dbg_sumX_post = 0;
                         for(int kk = 1; kk < NUM_METAL_SPECIES; kk++) dbg_sumX_post += P[j].Metallicity[kk];
+                        if(local.fb_channel == 3) { /* STL-329: no slot of an Ia receiver below zero */
+                            double xmin_ = 0; for(int kk = 0; kk < NUM_METAL_SPECIES; kk++) {if(P[j].Metallicity[kk] < xmin_) {xmin_ = P[j].Metallicity[kk];}}
+                            if(xmin_ < 0) {
+                                #pragma omp critical (ia_neg_test)
+                                {FB_TestIaNegCells += 1; if(xmin_ < FB_TestIaMinX) {FB_TestIaMinX = xmin_;}}
+                            }
+                        }
                         printf("FBDBG_TH_RECV cell=%llu wk=%.6e Mass_pre=%.6e dM=%.6e SumdMX=%.6e ratio_SumdMX_dM=%.6e SumX_pre=%.9e SumX_post=%.9e\n",
                             (unsigned long long)P[j].ID, wk, Mass_j, dM, dbg_sumdMX,
                             (dM>0?dbg_sumdMX/dM:0.0), dbg_sumX_pre, dbg_sumX_post);

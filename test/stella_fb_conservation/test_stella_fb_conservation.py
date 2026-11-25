@@ -388,6 +388,18 @@ def test_ia_conversion_clamp(clamp_run):
     traces_ok(out)
 
 
+def test_ia_conversion_leaves_no_negative_fraction(clamp_run):
+    """STL-329: after the Ia deposit and the whole-cell conversions no receiver holds a mass fraction below zero (the blend's
+    round-off left He = -5.6e-17 in a cell converted whole); the element sums and the conversion ledger close as before."""
+    text, out = clamp_run
+    rows = kv_lines(text, "IANEGX")
+    assert len(rows) == 1, f"expected one IANEGX line, got {len(rows)}"
+    print(f"Ia receivers with a mass fraction below zero: {rows[0]['neg_cells']:.0f}, lowest fraction {rows[0]['min_x']:.3e}")
+    assert ia_conversion_check(text) > 0, "the clamp did not fire"
+    assert rows[0]["neg_cells"] == 0 and rows[0]["min_x"] >= 0
+    traces_ok(out)
+
+
 def test_diffusion_slots_clamp_box(clamp_run):
     """STL-277: cells converted whole to Ia composition (H ~ 0) next to H-rich gas: no floor fires and every cell's slots close."""
     diffusion_check(clamp_run[0])
