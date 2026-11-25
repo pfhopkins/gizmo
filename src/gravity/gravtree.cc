@@ -738,15 +738,14 @@ gravity_walk_attempt:
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
     /* the exact star-star sum, which the tree walk above deliberately left out. Here and not later:
        the tree's own contributions are complete (imports included) but not yet multiplied by All.G
-       in the loop below, and the direct sum is in those same G-free units. */
-    cpu_charge(CPU_TREEMISC, measure_time());
+       in the loop below, and the direct sum is in those same G-free units. It lies inside the walk's bracket
+       (t0..t1 below), which charges it to treewalk with the walk; a charge here would count it twice. */
 #ifdef STARS_INTEGRATED_BY_RUMI
     if(rumi_direct_gravity_needed()) /* only stars not yet integrated by RUMI++ take the sum */
 #endif
     {star_direct_gravity_build_table();
     star_direct_gravity_compute();
     star_direct_gravity_free_table();}
-    cpu_charge(CPU_TREEWALK1, measure_time());
 #endif
 
 #ifdef _OPENMP

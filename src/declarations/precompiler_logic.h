@@ -121,7 +121,7 @@
 #define PARTICLE_EXCISION             /* the cells inside GR_EXCISION_RADIUS horizon radii are removed */
 #endif
 #ifndef GR_EXCISION_RADIUS
-#define GR_EXCISION_RADIUS (2.1)      /* in units of the horizon radius */
+#define GR_EXCISION_RADIUS (1.05)     /* in units of the horizon radius */
 #endif
 #endif
 #endif
@@ -2586,6 +2586,9 @@
  * produce wrong physics with nothing to see. */
 #if defined(GRAVITY_ANALYTIC)
 #error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition, and an analytic potential is anchored in space: the matter would move relative to it. Use one or the other."
+#endif
+#if defined(GENERAL_RELATIVITY) && (GR_METRIC != 0)
+#error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition, and the prescribed metric is centred on the box: the matter would move relative to the hole or star. Use one or the other."
 #endif
 #if defined(GRAVITY_SPHERICAL_SYMMETRY)
 #error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition, and GRAVITY_SPHERICAL_SYMMETRY measures radius from the box centre. Use one or the other."

@@ -184,31 +184,55 @@ static double sink_fb_angleweight_localcoupling_gpu(
 /* Sink accretion-luminosity helper cores shared by host and device; the host
  * externals in sink_util.cc are one-line wrappers around these. */
 
-/* return the eddington accretion-rate = L_edd/(epsilon_r*c*c) - for a variable radiative efficiency, this scales off of the 'canonical' value given as the constant in the parameterfile, per usual convention in the literature */
+/* 'canonical' radiative efficiency: the parameterfile constant, except for the RIAF model where this is set by the model */
+KOKKOS_INLINE_FUNCTION double sink_canonical_radiative_efficiency_core(void)
+{
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+    return 0.1;
+#else
+    return All.SinkRadiativeEfficiency;
+#endif
+}
+
+/* return the eddington accretion-rate = L_edd/(epsilon_r*c*c) - for a variable radiative efficiency, this scales off of the 'canonical' value, per usual convention in the literature */
 KOKKOS_INLINE_FUNCTION double sink_eddington_mdot_core(double sink_mass)
 {
-    return (4*M_PI * GRAVITY_G_CGS * PROTONMASS_CGS / (All.SinkRadiativeEfficiency * C_LIGHT_CGS * THOMPSON_CX_CGS)) * sink_mass * UNIT_TIME_IN_CGS;
+    return (4*M_PI * GRAVITY_G_CGS * PROTONMASS_CGS / (sink_canonical_radiative_efficiency_core() * C_LIGHT_CGS * THOMPSON_CX_CGS)) * sink_mass * UNIT_TIME_IN_CGS;
 }
 
 /* return the bh radiative efficiency - allows for models with dynamical or accretion-dependent radiative efficiencies */
 KOKKOS_INLINE_FUNCTION double evaluate_sink_radiative_efficiency_core(double mdot, double mass, long pindex)
 {
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL /* simple classic model where radiative efficiency declines linearly below critical eddington ratio of order 1% eddington, and super-Eddington accretion is also radiatively inefficient  */
-    double lambda_0 = 0.01, lambda_1 = 2., lambda_eff = mdot/sink_eddington_mdot_core(mass), qfac = lambda_eff/lambda_0, qfac_he = lambda_eff/lambda_1;
-    return All.SinkRadiativeEfficiency * (qfac/(1.+qfac)) * (1./(1.+qfac_he));
+    double lambda_0 = (SINK_RIAF_SUBEDDINGTON_MODEL), lambda_1 = 2., lambda_eff = mdot/sink_eddington_mdot_core(mass), qfac = lambda_eff/lambda_0, qfac_he = lambda_eff/lambda_1;
+    return sink_canonical_radiative_efficiency_core() * (qfac/(1.+qfac)) * (1./(1.+qfac_he));
 #endif
-    return All.SinkRadiativeEfficiency; // default to constant
+    return sink_canonical_radiative_efficiency_core(); // default to constant
 }
+
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+/* return the raw jet power relative to mdot*c^2 from the physical model: scales as (spin*H/R)^2 with a thicker disk near the horizon in the radiatively-inefficient state. this sets the CR power; the kinetic power
+    given to the spawned jet cells can be set lower where they are launched (see f_jet_kinetic in sink_spawn_particle_wind_shell), without changing this */
+KOKKOS_INLINE_FUNCTION double evaluate_sink_jet_efficiency_core(double mdot, double mass)
+{
+    double a_spin = 0.33, HR = 0.33;
+    if(mdot/sink_eddington_mdot_core(mass) < (SINK_RIAF_SUBEDDINGTON_MODEL)) {HR = 1;}
+    return (a_spin*HR)*(a_spin*HR);
+}
+#endif
 
 /* return the bh cosmic ray acceleration efficiency - allows for models with dynamical or accretion-dependent cosmic ray efficiencies */
 KOKKOS_INLINE_FUNCTION double evaluate_sink_cosmicray_efficiency_core(double mdot, double mass, long pindex)
 {
 #ifdef SINK_COSMIC_RAYS
 #ifdef SINK_RIAF_SUBEDDINGTON_MODEL /* experiment with functions here to explore more/less efficient CR injection at lower/higher eddington ratios, reflecting hard/soft-type transition */
-    /* current version with this flag scales this relative to the jet kinetic power */
-    if(mdot/sink_eddington_mdot_core(mass) < 0.01) {return 0.5;} else {return 0.1;} /* high-Mdot uses standard SNe kinetic power, otherwise give unity power here */
+    /* with this model this is the CR power relative to the raw jet power [evaluate_sink_jet_efficiency_core * mdot*c^2], set here and not by the parameterfile */
+    double f_cr = 0.1; /* high-Mdot: similar to the standard fraction for SNe shocks */
+    if(mdot/sink_eddington_mdot_core(mass) < (SINK_RIAF_SUBEDDINGTON_MODEL)) {f_cr = 0.5;} /* low-Mdot: CR-dominated jet */
+    //f_cr *= 0.1; // uncomment for CR power relative to the (default) reduced kinetic power given to the jet cells, instead of the raw jet power
+    return f_cr;
 #endif
-    return All.Sink_CosmicRay_Injection_Efficiency; // default to constant
+    return All.Sink_CosmicRay_Injection_Efficiency; // default to constant, as a fraction of mdot*c^2
 #endif
     return 0;
 }

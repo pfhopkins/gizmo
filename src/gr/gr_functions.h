@@ -45,7 +45,7 @@ KOKKOS_INLINE_FUNCTION Vec3<double> Vcoord(const Vec3<double> &vphys, const stru
 
 /* ------------------------------------------------------------------ metric */
 /* displacement of pos from the black hole of the single-hole metrics: the hole sits at the origin, or at the box centre if the box is
-   periodic (nearest image). Every distance from the hole (metric, excision, Lorentz-factor limiter, test-particle cut) uses it */
+   periodic (nearest image). Every distance from the hole (metric, excision, Lorentz-factor limiter) uses it */
 KOKKOS_INLINE_FUNCTION Vec3<double> gr_hole_displacement(const Vec3<double> &pos)
 {
     Vec3<double> dp = pos;
@@ -56,6 +56,16 @@ KOKKOS_INLINE_FUNCTION Vec3<double> gr_hole_displacement(const Vec3<double> &pos
     return dp;
 }
 
+#if (GR_METRIC==1)
+/* square of the radial coordinate r of the Kerr metric (the same in Kerr-Schild and Boyer-Lindquist coordinates) at the displacement dp from
+   the hole, with a2 = (spin*M)^2: (x^2+y^2)/(r^2+a^2) + z^2/r^2 = 1. The horizon is r = r_H; r = |dp| only without spin */
+KOKKOS_INLINE_FUNCTION double gr_kerr_radius_sq(const Vec3<double> &dp, double a2)
+{
+    double z2 = dp[2]*dp[2], R2 = dp[0]*dp[0] + dp[1]*dp[1] + z2;
+    return (R2 - a2 + sqrt((R2-a2)*(R2-a2) + 4*a2*z2))/2.;
+}
+#endif
+
 /* 1 inside GR_GAMMA_LIMITER_RADIUS of the hole (where the Lorentz factor is limited); never when the radius is not positive (off) */
 KOKKOS_INLINE_FUNCTION int gr_limiter_flag(const Vec3<double> &pos)
 {
@@ -64,36 +74,43 @@ KOKKOS_INLINE_FUNCTION int gr_limiter_flag(const Vec3<double> &pos)
 }
 
 
-/* covariant 4-metric at pos; the source is at the box centre if the box is periodic */
-KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct gr_sym4 *g)
+/* the covariant 4-metric from its deviation from Minkowski, g = eta + h, in place */
+KOKKOS_INLINE_FUNCTION void gr_add_minkowski(struct gr_sym4 *g)
 {
-    Vec3<double> dp = gr_hole_displacement(pos);
+    g->tt -= 1; g->ij[0][0] += 1; g->ij[1][1] += 1; g->ij[2][2] += 1;
+}
+
+/* deviation of the covariant 4-metric from Minkowski, h = g - eta, at the displacement dp from the source (gr_hole_displacement), computed
+   without forming eta + h: the finite differences of the metric derivatives difference h, so that they keep their relative accuracy where
+   h is small (far from the source) instead of losing it in the O(1) components of g */
+KOKKOS_INLINE_FUNCTION void get_metric_deviation(const Vec3<double> &dp, struct gr_sym4 *h)
+{
 #if (GR_METRIC==0) /* Minkowski */
-    g->tt = -1; g->ti = Vec3<double>{0,0,0}; g->ij.set_isotropic(1.);
+    h->tt = 0; h->ti = Vec3<double>{0,0,0}; h->ij.set_isotropic(0.);
 #elif (GR_METRIC==1) /* Kerr: Boyer-Lindquist (GR_METRIC_USE_BOYER_LINDQUIST) or Kerr-Schild coordinates */
+#ifndef GR_METRIC_USE_KERR_SCHILD
+    /* Boyer-Lindquist, Cartesian components (x = sqrt(r^2+a^2) sin(theta) cos(phi), y = sqrt(r^2+a^2) sin(theta) sin(phi), z = r cos(theta)):
+       subtracting the flat metric in the same oblate spheroidal coordinates, the 1/(x^2+y^2) of d phi cancels the sin^2(theta) of g_t phi and
+       g_phi phi, (x^2+y^2) = (r^2+a^2) sin^2(theta), so h is regular on the rotation axis (singular only at the horizon and on the ring r = 0):
+       h_tt = 2Mr/rho^2, h_ti = -2Mar/(rho^2 (r^2+a^2)) w_i,
+       h_ij = 2Mr/(Delta (r^2+a^2) rho^2) v_i v_j + 2Mr a^2/(rho^2 (r^2+a^2)^2) w_i w_j,
+       with rho^2 = r^2 + a^2 z^2/r^2, Delta = r^2 - 2Mr + a^2, v = (r x, r y, (r^2+a^2) z/r) (rho^2 times the gradient of r) and
+       w = (-y, x, 0) ((x^2+y^2) times the gradient of phi) */
     double M = All.MetricParams[0], a = All.MetricParams[1]*M, a2 = a*a;
-    double x2 = dp[0]*dp[0], y2 = dp[1]*dp[1], z2 = dp[2]*dp[2], R2 = x2 + y2 + z2;
-    double r2 = (R2 - a2 + sqrt((R2-a2)*(R2-a2) + 4*a2*z2))/2.;
-#ifndef GR_METRIC_USE_KERR_SCHILD /* Boyer-Lindquist in Cartesian components (Liptai & Price 2019): singular on the axis x = y = 0, where the
-                                      1/(x^2+y^2) terms cancel only analytically; for particle distributions that avoid the axis */
-    double sinth2 = 1. - z2/r2, rho2 = r2 + a2*z2/r2, delta = r2 - 2*M*sqrt(r2) + a2, Att = 2.0*M*sqrt(r2)/rho2, xy2 = x2 + y2;
-    g->tt = Att - 1.0;
-    double gtp = -Att*a*sinth2, gpp = (r2 + a2 + Att*a2*sinth2)*sinth2;
-    g->ti = Vec3<double>{-dp[1]/xy2*gtp, dp[0]/xy2*gtp, 0.};
-    double fac1 = r2/rho2/delta, fac2 = gpp/(xy2*xy2), fac3 = z2/rho2/(r2*sinth2), fac4 = (1 - z2*(r2+a2)/r2/rho2);
-    g->ij[0][0] = fac1*x2 + fac2*y2 + fac3*x2;
-    g->ij[1][1] = fac1*y2 + fac2*x2 + fac3*y2;
-    g->ij[2][2] = (1-fac4)*(a2+r2)/delta + rho2/(r2*sinth2)*fac4*fac4;
-    g->ij[0][1] = dp[0]*dp[1]*(fac1 - fac2 + fac3);
-    g->ij[0][2] = (a2+r2)*dp[0]*dp[2]/rho2/delta - dp[0]*dp[2]/(r2*sinth2)*fac4;
-    g->ij[1][2] = (a2+r2)*dp[1]*dp[2]/rho2/delta - dp[1]*dp[2]/(r2*sinth2)*fac4;
-#else
+    double z2 = dp[2]*dp[2], r2 = gr_kerr_radius_sq(dp, a2), r = sqrt(r2);
+    double rho2 = r2 + a2*z2/r2, delta = r2 - 2*M*r + a2, ra2 = r2 + a2, Mr2 = 2*M*r;
+    Vec3<double> v = {r*dp[0], r*dp[1], ra2*dp[2]/r}, w = {-dp[1], dp[0], 0.};
+    h->tt = Mr2/rho2;
+    h->ti = (-Mr2*a/(rho2*ra2))*w;
+    h->ij = (Mr2/(delta*ra2*rho2))*outer_product(v) + (Mr2*a2/(rho2*ra2*ra2))*outer_product(w);
+#else /* h_{mu nu} = (2 M r^3/(r^4 + a^2 z^2)) l_mu l_nu */
+    double M = All.MetricParams[0], a = All.MetricParams[1]*M, a2 = a*a;
+    double z2 = dp[2]*dp[2], r2 = gr_kerr_radius_sq(dp, a2);
     double rho2 = r2*r2 + a2*z2, r = sqrt(r2), Mfac = 2*M*r*r*r/rho2, denom = r2 + a2;
     Vec3<double> l = {(r*dp[0] + a*dp[1])/denom, (r*dp[1] - a*dp[0])/denom, dp[2]/r}; /* spatial part of the null vector l_mu = (1, l_i) */
-    g->tt = -1 + Mfac;
-    g->ti = Mfac*l;
-    g->ij = Mfac*outer_product(l);
-    g->ij[0][0] += 1; g->ij[1][1] += 1; g->ij[2][2] += 1;
+    h->tt = Mfac;
+    h->ti = Mfac*l;
+    h->ij = Mfac*outer_product(l);
 #endif
 #elif (GR_METRIC<0) /* tabulated static spherically symmetric metric (All.GR_MetricTable: r, M(r), -g_tt, r_iso; see gr_load_metric_table) */
     const int N = All.GR_MetricTableN;
@@ -105,35 +122,36 @@ KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct
 #ifdef GR_METRIC_USE_ISOTROPIC_RADIUS /* isotropic coordinates: the table is indexed by r_iso, the spatial metric is conformally flat, e^{4 phi} = (r_areal/r_iso)^2 */
     const double *riso = rb + 3*N;
     {double r_floor = (riso[0] > 0) ? riso[0] : riso[1]; if(r <= r_floor) {r = r_floor;}}
-    double e4phi, g00;
+    double e4phi_m1, htt; /* e^{4 phi} - 1 and g_tt + 1 */
     if(r < riso[N-1])
     {
         int il = 0, ih = N-1; while(ih > il+1) {int im = (il+ih)/2; if(riso[im] > r) {ih = im;} else {il = im;}}
         double f = (r - riso[il])/(riso[il+1] - riso[il]), r_areal = rb[il] + f*(rb[il+1] - rb[il]);
-        e4phi = (r_areal/r)*(r_areal/r); g00 = -(gtt[il] + f*(gtt[il+1] - gtt[il]));
+        e4phi_m1 = (r_areal - r)*(r_areal + r)/(r*r); htt = 1 - (gtt[il] + f*(gtt[il+1] - gtt[il]));
     }
-    else {double q = 0.5*mass[N-1]/r, lapse = (1 - q)/(1 + q); e4phi = (1 + q)*(1 + q)*(1 + q)*(1 + q); g00 = -lapse*lapse;} /* exterior Schwarzschild, isotropic */
-    g->tt = g00; g->ti = Vec3<double>{0,0,0}; g->ij.set_isotropic(e4phi);
+    else {double q = 0.5*mass[N-1]/r; e4phi_m1 = q*(4 + q*(6 + q*(4 + q))); htt = 4*q/((1 + q)*(1 + q));} /* exterior Schwarzschild, isotropic */
+    h->tt = htt; h->ti = Vec3<double>{0,0,0}; h->ij.set_isotropic(e4phi_m1);
 #else /* areal (Schwarzschild-like) radius: g_rr = 1/(1 - 2M(r)/r), gamma_ij = delta_ij + (g_rr - 1) x_i x_j/r^2 */
     {double r_floor = (rb[0] > 0) ? rb[0] : rb[1]; if(r <= r_floor) {r = r_floor;}}
-    double Mr, g00;
+    double Mr, htt;
     if(r < rb[N-1])
     {
         int il = 0, ih = N-1; while(ih > il+1) {int im = (il+ih)/2; if(rb[im] > r) {ih = im;} else {il = im;}}
-        double f = (r - rb[il])/(rb[il+1] - rb[il]); Mr = mass[il] + f*(mass[il+1] - mass[il]); g00 = -(gtt[il] + f*(gtt[il+1] - gtt[il]));
+        double f = (r - rb[il])/(rb[il+1] - rb[il]); Mr = mass[il] + f*(mass[il+1] - mass[il]); htt = 1 - (gtt[il] + f*(gtt[il+1] - gtt[il]));
     }
-    else {Mr = mass[N-1]; g00 = -(1 - 2*mass[N-1]/r);} /* exterior Schwarzschild, areal radius */
-    double grr = 1./(1 - 2*Mr/r), omega = 2*Mr/(r*r*r);
-    Vec3<double> dp2 = {dp[0]*dp[0], dp[1]*dp[1], dp[2]*dp[2]};
-    g->tt = g00; g->ti = Vec3<double>{0,0,0};
-    g->ij[0][0] = grr*(1 - omega*(dp2[1] + dp2[2]));
-    g->ij[1][1] = grr*(1 - omega*(dp2[0] + dp2[2]));
-    g->ij[2][2] = grr*(1 - omega*(dp2[0] + dp2[1]));
-    g->ij[0][1] = grr*dp[0]*dp[1]*omega;
-    g->ij[0][2] = grr*dp[0]*dp[2]*omega;
-    g->ij[1][2] = grr*dp[1]*dp[2]*omega;
+    else {Mr = mass[N-1]; htt = 2*mass[N-1]/r;} /* exterior Schwarzschild, areal radius */
+    double grr_m1_o_r2 = 2*Mr/((r - 2*Mr)*r*r); /* (g_rr - 1)/r^2 */
+    h->tt = htt; h->ti = Vec3<double>{0,0,0};
+    for(int i = 0; i < 3; i++) {for(int j = i; j < 3; j++) {h->ij[i][j] = grr_m1_o_r2*dp[i]*dp[j];}}
 #endif
 #endif
+}
+
+/* covariant 4-metric at pos, eta + h (get_metric_deviation) */
+KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct gr_sym4 *g)
+{
+    get_metric_deviation(gr_hole_displacement(pos), g);
+    gr_add_minkowski(g);
 }
 
 #if (GR_METRIC>0)
@@ -196,32 +214,51 @@ KOKKOS_INLINE_FUNCTION double gr_sym4_contract(const struct gr_sym4 &A, const st
     return A.tt*B.tt + 2.*dot(A.ti, B.ti) + A.ij.double_contract(B.ij);
 }
 
-/* spatial derivatives of the 4-metric (dg[dir] = d g_{mu nu}/dx^dir), lapse and shift (dbeta[dir][j] = d beta^j/dx^dir) at pos,
-   by centred finite differences along the Cartesian directions */
-KOKKOS_INLINE_FUNCTION void compute_metric_jacobian(const Vec3<double> &pos, struct gr_sym4 dg[3], Vec3<double> &dalpha, Mat3<double> &dbeta)
+/* mass of the metric (G = c = 1), the length unit of the finite-difference steps: the hole mass (Kerr), the mass of the last row
+   (tabulated), 1 for Minkowski or a massless metric */
+KOKKOS_INLINE_FUNCTION double gr_metric_mass_scale(void)
 {
-    const double fac = 0.5/GR_EPS_TOLERANCE;
-    for(int dir = 0; dir < 3; dir++)
-    {
-        Vec3<double> pH = pos, pL = pos; pH[dir] += GR_EPS_TOLERANCE; pL[dir] -= GR_EPS_TOLERANCE;
-        struct gr_sym4 gH, gL; struct gr_metric mH, mL;
-        get_covariant_metric(pH, &gH); get_covariant_metric(pL, &gL);
-        gr_metric_from_4metric(&gH, &mH); gr_metric_from_4metric(&gL, &mL);
-        dg[dir].tt = fac*(gH.tt - gL.tt);
-        dg[dir].ti = fac*(gH.ti - gL.ti);
-        dg[dir].ij = fac*(gH.ij - gL.ij);
-        dalpha[dir] = fac*(mH.alpha - mL.alpha);
-        dbeta[dir] = fac*(mH.beta - mL.beta);
-    }
+#if (GR_METRIC==1)
+    double M = All.MetricParams[0];
+#elif (GR_METRIC<0)
+    double M = All.GR_MetricTable[2*All.GR_MetricTableN - 1];
+#else
+    double M = 1;
+#endif
+    return (M > 0) ? M : 1;
 }
 
+/* spatial derivatives of the 4-metric (dg[dir] = d g_{mu nu}/dx^dir), lapse and shift (dbeta[dir][j] = d beta^j/dx^dir) at pos, given the
+   metric gr there. dg: centred finite differences of the deviation from Minkowski (get_metric_deviation) along the Cartesian directions
+   (the step is taken in the displacement from the hole, after the periodic wrap: the two points never fall on opposite images),
+   with the step GR_METRIC_DERIVATIVE_STEP times the mass of the metric; differencing h = g - eta instead of g, the rounding error goes as
+   eps (r/M) M/h instead of eps (r/M)^2 M/h. Lapse and shift by the chain rule (differences of alpha ~ 1 would lose the accuracy again):
+   d beta^i = gamma^ij (d g_tj - d gamma_jk beta^k), 2 alpha d alpha = d beta^i g_ti + beta^i d g_ti - d g_tt */
+KOKKOS_INLINE_FUNCTION void compute_metric_jacobian(const Vec3<double> &pos, const struct gr_metric *gr, struct gr_sym4 dg[3], Vec3<double> &dalpha, Mat3<double> &dbeta)
+{
+    const double h = GR_METRIC_DERIVATIVE_STEP*gr_metric_mass_scale();
+    const Vec3<double> dp = gr_hole_displacement(pos);
+    const Vec3<double> g_t = gr->gamma.matvec(gr->beta); /* g_ti = beta_i */
+    for(int dir = 0; dir < 3; dir++)
+    {
+        Vec3<double> pH = dp, pL = dp; pH[dir] += h; pL[dir] -= h;
+        const double fac = 1./(pH[dir] - pL[dir]); /* the step actually represented */
+        struct gr_sym4 hH, hL;
+        get_metric_deviation(pH, &hH); get_metric_deviation(pL, &hL);
+        dg[dir].tt = fac*(hH.tt - hL.tt);
+        dg[dir].ti = fac*(hH.ti - hL.ti);
+        dg[dir].ij = fac*(hH.ij - hL.ij);
+        dbeta[dir] = gr->ugamma.matvec(dg[dir].ti - dg[dir].ij.matvec(gr->beta));
+        dalpha[dir] = (dot(dbeta[dir], g_t) + dot(gr->beta, dg[dir].ti) - dg[dir].tt)/(2.*gr->alpha);
+    }
+}
 
 /* extrinsic curvature K_ij = -alpha Gamma^0_ij and the metric derivatives at pos, given the metric there */
 KOKKOS_INLINE_FUNCTION void get_metric_derivatives(const Vec3<double> &pos, const struct gr_metric *gr, SymmetricTensor2<double> &Kij, struct gr_sym4 dg[3], Vec3<double> &dalpha, Mat3<double> &dbeta)
 {
     double invalpha2 = 1./(gr->alpha*gr->alpha);
     double g00 = -invalpha2; Vec3<double> g0i = invalpha2*gr->beta; /* g^{00}, g^{0i} of the inverse 4-metric */
-    compute_metric_jacobian(pos, dg, dalpha, dbeta);
+    compute_metric_jacobian(pos, gr, dg, dalpha, dbeta);
     for(int i = 0; i < 3; i++) {for(int j = i; j < 3; j++)
     {
         double K = 0.5*g00*(gr_sym4_get(&dg[j], 0, i+1) + gr_sym4_get(&dg[i], 0, j+1)); /* the time derivative of the metric is zero (static metrics) */

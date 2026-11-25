@@ -169,6 +169,13 @@ double evaluate_sink_radiative_efficiency(double mdot, double mass, long pindex)
 
 
 /* return the bh cosmic ray acceleration efficiency - allows for models with dynamical or accretion-dependent cosmic ray efficiencies */
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+double evaluate_sink_jet_efficiency(double mdot, double mass)
+{
+    return evaluate_sink_jet_efficiency_core(mdot, mass);
+}
+#endif
+
 double evaluate_sink_cosmicray_efficiency(double mdot, double mass, long pindex)
 {
     return evaluate_sink_cosmicray_efficiency_core(mdot, mass, pindex);
@@ -189,6 +196,9 @@ void sink_properties_loop(void) /* Note, normalize_temp_info_struct is now done 
         dt = P[n].dt_since_last_gas_search;
 #endif
         P[n].Sink_Mdot=0;  /* always initialize/default to zero accretion rate */
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+        P[n].Sink_Mdot_ROI=0;
+#endif
         set_sink_long_range_rp(i, n);
         set_sink_mdot(i, n, dt);
         set_sink_drag(i, n, dt);

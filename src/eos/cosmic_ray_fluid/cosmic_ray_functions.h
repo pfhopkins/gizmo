@@ -652,7 +652,7 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
 
                                     if(split_two_bin==0 && All.CR_species_ID_in_bin[j]==1 && k==0 && (All.CR_species_ID_in_bin[j_s]<0 || All.CR_species_ID_in_bin[j_s]==7)) { /* now code extending the CR spectrum of secondary production to energies higher than our max limit, assuming continued power-law extrapolation of the CR spectrum */
                                         double Rx0=All.CR_global_rigidity_at_bin_center[j_s], U00=U_donor, xm_0=All.CR_global_min_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s], xp_0=All.CR_global_max_rigidity_in_bin[j_s]/All.CR_global_rigidity_at_bin_center[j_s];
-                                        int spec_0=All.CR_species_ID_in_bin[j_s], slope_0=2.+slope_inj; slope_0=DMAX(-4.,DMIN(slope_0,0.)); if(spec_0==7) {slope_0=DMIN(slope_0,-0.7);}
+                                        int spec_0=All.CR_species_ID_in_bin[j_s]; double slope_0=2.+slope_inj; slope_0=DMAX(-4.,DMIN(slope_0,0.)); if(spec_0==7) {slope_0=DMIN(slope_0,-0.7);}
                                         j_s++;
                                         while(j_s<N_CR_PARTICLE_BINS && All.CR_species_ID_in_bin[j_s]==spec_0) {
                                             double Rx1=All.CR_global_rigidity_at_bin_center[j_s];
@@ -1614,6 +1614,9 @@ KOKKOS_INLINE_FUNCTION double cr_get_source_injection_rate(int i, struct particl
         double mdot_eff = pp[i].Sink_Mdot; // code units
         mdot_eff = DMIN( mdot_eff , pp[i].Sink_Mass / (100./UNIT_TIME_IN_MYR) ); // if time-averaging over ~Gyr, can't have time-averaged injection rate above Mbh/<t> more or less (modulo order-one corrections for all this)
         Edot = evaluate_sink_cosmicray_efficiency_core(pp[i].Sink_Mdot,pp[i].Sink_Mass,i) * mdot_eff * C_LIGHT_CODE*C_LIGHT_CODE; // injection in code units
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+        Edot *= evaluate_sink_jet_efficiency_core(pp[i].Sink_Mdot,pp[i].Sink_Mass); // with this model the CR efficiency is relative to the jet power
+#endif
     }
 #endif
 #endif

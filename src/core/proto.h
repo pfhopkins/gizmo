@@ -1264,6 +1264,8 @@ void mechanical_fb_calculate_eventrates_Winds(int i, double dt);
 void mechanical_fb_calculate_eventrates_Rprocess(int i, double dt);
 void mechanical_fb_calculate_eventrates_Agetracers(int i, double dt);
 void particle2in_addFB_SNe(struct addFB_evaluate_data_in_ *in, int i);
+int SNe_are_type_Ia(double t_gyr);
+double SNe_energy_per_event(int i, int SNeIaFlag);
 void particle2in_addFB_winds(struct addFB_evaluate_data_in_ *in, int i);
 void particle2in_addFB_Rprocess(struct addFB_evaluate_data_in_ *in, int i);
 void particle2in_addFB_ageTracer(struct addFB_evaluate_data_in_ *in, int i);

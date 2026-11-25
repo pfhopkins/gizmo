@@ -71,7 +71,7 @@ static double tb_step[CPU_PARTS][TIMING_BREAKDOWN_FIELDS];
 static double tb_span_start = -1;           /* start of the span the next charge closes; <0: not given */
 static long long tb_untimed = 0, tb_tool_fences = 0;
 static int tb_active = 0, tb_ompt_active = 0;
-static thread_local int tb_is_main = 0, tb_omp_depth = 0, tb_wait_depth = 0;
+static thread_local int tb_is_main = 0, tb_omp_depth = 0, tb_wait_depth = 0, tb_host_copy_depth = 0;
 static thread_local double tb_wait_t0 = 0, tb_omp_t0 = 0;
 
 static bool tb_type_is_host(KT::DeviceType type)
@@ -85,21 +85,30 @@ static void tb_append(double t, double dur, int kind, int slot)
     tb_pending.push_back({t, dur, kind, slot});
 }
 
+/* A timing event the runtime refused, or one that reports an error: the runtime cannot say whether the failure is the event's or
+ * an earlier asynchronous kernel's, so it is never cleared and the run stops through the reviewed device-fatal path, like a
+ * refused launch. */
+#define TB_EVENT_FAILED(what) gizmo_fatal_hard_exit_reviewed(90009005, "REVIEWED_HARD_MID_PROTOCOL: a device timing event " what \
+                                                             " failed (a timing event, or an earlier kernel)", __FILE__, __LINE__, __FUNCTION__)
+
 /* Read the device time of completed kernels, oldest first; stop at the first one not yet charged to a bucket,
  * still being launched, or still running.  Called with tb_mutex held. */
 static void tb_harvest_locked(void)
 {
+    if(GizmoGpuEvent::error_pending()) {return;}   /* the error is the code's own checks' to report: read nothing, clear nothing */
     while(tb_slot_count > 0)
     {
         TbSlot &s = tb_slot[tb_slot_head];
         if(s.bucket < 0 || !s.stop_recorded) {break;}
         const int status = s.stop.query();
         if(status == GIZMO_GPU_EVENT_NOT_READY && !s.refused) {break;}
-        if(status == GIZMO_GPU_EVENT_COMPLETE && !s.refused)
+        if(status == GIZMO_GPU_EVENT_ERROR) {TB_EVENT_FAILED("query");}
+        if(!s.refused)
         {
             const double dt = GizmoGpuEvent::elapsed_seconds(s.start, s.stop);
-            if(dt >= 0) {tb_step[s.bucket][TIMING_BREAKDOWN_GPU] += dt;} else {tb_untimed++; GizmoGpuEvent::clear_error();}
-        } else {tb_untimed++;}   /* refused, or a device fault: it surfaces at the code's own next check; the kernel stays untimed */
+            if(!(dt >= 0)) {TB_EVENT_FAILED("time read");}
+            tb_step[s.bucket][TIMING_BREAKDOWN_GPU] += dt;
+        } else {tb_untimed++;}   /* left untimed because an error was pending at its end; that error is the launch check's */
         tb_slot_head = (tb_slot_head + 1) % TB_SLOTS; tb_slot_count--;
     }
 }
@@ -120,18 +129,19 @@ static void tb_begin_kernel(const char *, const uint32_t devid, uint64_t *kernel
     int inst = -1;
     for(size_t k = 0; k < tb_instances.size(); k++) {if(tb_instances[k].devid == devid) {inst = (int) k; break;}}
     int slot = -1;
-    if(inst >= 0 && tb_slot_count < TB_SLOTS)
+    /* An error already pending belongs to an earlier call and to that call's own check: this kernel stays untimed and the
+     * error is left alone.  A failure of the calls below goes to the device-fatal path (TB_EVENT_FAILED). */
+    if(inst >= 0 && tb_slot_count < TB_SLOTS && !GizmoGpuEvent::error_pending())
     {
         slot = (tb_slot_head + tb_slot_count) % TB_SLOTS;
         TbSlot &s = tb_slot[slot];
         if(!s.made)
         {
-            if(s.start.create_timed() == 0) {
-                if(s.stop.create_timed() == 0) {s.made = 1;} else {s.start.destroy();}
-            }
+            if(s.start.create_timed() != 0 || s.stop.create_timed() != 0) {TB_EVENT_FAILED("create");}
+            s.made = 1;
         }
-        if(s.made && s.start.record(tb_instances[inst].space) == 0) {s.inst = inst; s.bucket = -1; s.stop_recorded = 0; s.refused = 0; tb_slot_count++;}
-        else {slot = -1; GizmoGpuEvent::clear_error();}   /* untimed, and the refusal must not read as a failed launch */
+        if(s.start.record(tb_instances[inst].space) != 0) {TB_EVENT_FAILED("record");}
+        s.inst = inst; s.bucket = -1; s.stop_recorded = 0; s.refused = 0; tb_slot_count++;
     }
     if(slot < 0) {tb_untimed++;}
     tb_pending.push_back({t, 0.0, TB_KIND_KERNEL, slot});
@@ -144,8 +154,10 @@ static void tb_end_kernel(const uint64_t kernel_id)
     if(kernel_id == TB_HOST_PARALLEL) {const double t = my_second(); tb_append(tb_omp_t0, t - tb_omp_t0, TB_KIND_OMP, -1); return;}
     std::lock_guard<std::mutex> guard(tb_mutex);
     TbSlot &s = tb_slot[kernel_id];
-    s.refused = (s.stop.record(tb_instances[s.inst].space) != 0);   /* no end mark: untimed when harvested */
-    if(s.refused) {GizmoGpuEvent::clear_error();}
+    /* This runs inside the launch, before the launch's own refusal check: a pending error is that launch's, so it is left
+     * for the check and the kernel stays untimed; a failure of this record goes to the device-fatal path. */
+    if(GizmoGpuEvent::error_pending()) {s.refused = 1;}
+    else {if(s.stop.record(tb_instances[s.inst].space) != 0) {TB_EVENT_FAILED("record");} s.refused = 0;}
     s.stop_recorded = 1;
 }
 
@@ -178,13 +190,22 @@ static void tb_end_fence(const uint64_t handle)
     tb_append(my_second() - (dur > 0 ? dur : 0), (dur > 0 ? dur : 0), TB_KIND_FENCE, -1);
 }
 
-static void tb_begin_copy(Kokkos::Tools::SpaceHandle, const char *, const void *, Kokkos::Tools::SpaceHandle, const char *, const void *, uint64_t)
+/* A memory space on the host side of the device: host memory and the device runtimes' page-locked host memory. */
+static int tb_space_is_host(const Kokkos::Tools::SpaceHandle &h)
 {
-    if(tb_active) {tb_wait_begin();}
+    return strcmp(h.name, Kokkos::HostSpace::name()) == 0 || strstr(h.name, "HostPinned") != NULL;
+}
+/* A copy with both ends on the host is host work, not a wait on the device: it stays in the row's host time. */
+static void tb_begin_copy(Kokkos::Tools::SpaceHandle dst, const char *, const void *, Kokkos::Tools::SpaceHandle src, const char *, const void *, uint64_t)
+{
+    if(!tb_active) {return;}
+    if(tb_space_is_host(dst) && tb_space_is_host(src)) {tb_host_copy_depth++; return;}
+    tb_wait_begin();
 }
 static void tb_end_copy(void)
 {
     if(!tb_active) {return;}
+    if(tb_host_copy_depth > 0) {tb_host_copy_depth--; return;}
     const double dur = tb_wait_end();
     if(dur >= 0) {tb_append(my_second() - dur, dur, TB_KIND_COPY, -1);}
 }

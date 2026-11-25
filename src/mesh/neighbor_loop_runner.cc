@@ -2258,11 +2258,19 @@ struct NlrModeATeamPairKernel {
     }
 };
 
-/* Launch and size query of the Mode-A team pair kernel.  With GPU_SPEEDUP_TEAM_LAUNCH_BOUNDS the kernel is
- * compiled for workgroups of at most the widest Mode-A team (one team per workgroup) rather than for the
- * backend's largest workgroup, so a pair body with a large accumulator gets the registers it needs instead
- * of spilling.  Every team width chosen below is at most that bound. */
-#ifdef GPU_SPEEDUP_TEAM_LAUNCH_BOUNDS
+/* Launch and size query of the Mode-A team pair kernel.  On HIP the kernel is compiled for workgroups of at
+ * most the widest Mode-A team (one team per workgroup) rather than for the backend's largest workgroup (1024
+ * threads), which caps a thread at 128 vector registers: a pair body with a large accumulator then gets the
+ * registers it needs instead of spilling to scratch (measured on MI250X: gradients and hydro-force spills to
+ * none, the Mode-A pair kernels 17-20 % faster on two FIRE problems).  The team width chosen below came out the
+ * same with and without the bound in every loop checked on MI250X (the backend reported 1024 lanes unbounded and
+ * 64 bounded, both at or above every target, for accumulators from 1 to 760 bytes), so there the compiled code
+ * changed and the order of no sum did.  The price is occupancy: a kernel that did not spill can use more
+ * registers than it needs (the sink swallow kernel goes from 111 to 152 vector registers, occupancy 4 -> 1 on
+ * MI250X; measured on a STARFORGE run with 761 sinks, its device time was unchanged).  CUDA keeps the unbounded
+ * launch: on GB200 the bound removed no spill and gave no measured gain.  GPU_SPEEDUP_TEAM_LAUNCH_BOUNDS asks for the bound on the other
+ * backends as well. */
+#if defined(KOKKOS_ENABLE_HIP) || defined(GPU_SPEEDUP_TEAM_LAUNCH_BOUNDS)
 static constexpr int nlr_mode_a_team_max_lanes = NLR_TEAM_WIDTH_SYMMETRIC;
 static_assert(NLR_TEAM_WIDTH_ONEWAY <= nlr_mode_a_team_max_lanes && NLR_TEAM_WIDTH_FAT_ACCUM <= nlr_mode_a_team_max_lanes &&
               NLR_TEAM_WIDTH_LOWDIM <= nlr_mode_a_team_max_lanes, "a Mode-A team width exceeds the declared launch bound");
