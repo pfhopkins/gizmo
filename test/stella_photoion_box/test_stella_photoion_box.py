@@ -117,8 +117,8 @@ def test_stella_photoion_box():
 
 def test_search_radius_beyond_the_box():
     """STL-TI01 (as GKS-TI21 on the port): the same star with gas only in the lower half of the box, so the upward directions stay open
-    and the search sphere grows to MaxPISearchRadius. Bars (written before the runs, 2026-11-25): with the limit below half the box
-    (0.02 kpc) the ledger ratio, recombinations of the ionised cells / Q, is <= 1.02 at every solve; with limits beyond the 40 pc
+    and the search sphere grows to MaxPISearchRadius. Bars (written before the runs, 2026-11-25): with the limit at half the box side
+    (0.02 kpc, below half the box diagonal of 0.035 kpc) the ledger ratio, recombinations of the ionised cells / Q, is <= 1.02 at every solve; with limits beyond the 40 pc
     periodic box (1 kpc, 50 kpc) the number of solves is the same and the ratio is within 2 % of that run at every solve: a limit
     beyond the box must not change which cells are ionised."""
     if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
@@ -163,3 +163,4 @@ def test_search_radius_beyond_the_box():
     assert np.all(ref <= 1.02), ref
     for limit in (1.0, 50.0):
         assert rows[limit][0].shape == ref.shape and np.all(np.abs(rows[limit][0] / ref - 1) <= 0.02), (limit, rows[limit][0], ref)
+        assert abs(max(rows[limit][1]) / max(rows[0.02][1]) - 1) <= 0.02, (limit, max(rows[limit][1]), max(rows[0.02][1]))  # the ionised cells themselves

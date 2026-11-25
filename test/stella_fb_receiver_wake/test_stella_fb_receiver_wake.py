@@ -49,9 +49,9 @@ REPO = abspath(join(TEST_DIR, "..", ".."))
 EXTRA_FLAGS = ("BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "GALSF_RESOLVEDISM_ISOLATED_FB_TEST", "OUTPUT_ENERGY_STEP_TRACE",
                "RESOLVEDISM_ADIABATIC_NOCOOL", "HYDRO_KICK_TOTAL_ENERGY_EXACT", "TEST_KICK_FLOOR_DUMP=1e-14", "TEST_WAKEUP_DUMP")
 FLAGS = ("RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED", "WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP")
-BUILDS = (("on", FLAGS), ("off", ()), ("nomerge", ("PREVENT_PARTICLE_MERGE_SPLIT",)), ("across", ("MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS",)))
+BUILDS = (("on", FLAGS), ("off", ()), ("own", ("WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP",)), ("nomerge", ("PREVENT_PARTICLE_MERGE_SPLIT",)), ("across", ("MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS",)))
 BOXES = {"dense": (1.0e3, 3.45, 3.0e-4), "thin": (10.0, 16.0, 1.0e-4)}  # n_H [cm^-3], box [pc], gas softening [kpc]
-RUNS = (("on", 2, "dense"), ("off", 2, "dense"), ("on", 2, "thin"), ("off", 2, "thin"), ("off", 1, "thin"), ("off", 4, "thin"),
+RUNS = (("on", 2, "dense"), ("off", 2, "dense"), ("on", 2, "thin"), ("off", 2, "thin"), ("own", 2, "thin"), ("off", 1, "thin"), ("off", 4, "thin"),
         ("nomerge", 1, "thin"), ("nomerge", 2, "thin"), ("nomerge", 4, "thin"), ("across", 1, "thin"), ("across", 2, "thin"), ("across", 4, "thin"))
 BAR = 1e-2
 BAR_RANKS = 1e-10
@@ -134,17 +134,20 @@ def runs():
     return res
 
 
-def _compare_ranks(runs, arm):
+def _compare_ranks(runs, arm, first=0, last=STEPS_AFTER):
+    """differences to the 1-rank run at the steps s0 + first .. s0 + last after the first deposit (step s0)"""
     s0, recv0, woken0, energy0, _ = runs[(arm, 1, "thin")]["wake"]
-    assert s0 is not None and len(recv0) > 0, "no receiver in the 1-rank run"
-    assert sum(len(woken0.get(k, ())) for k in range(s0, s0 + STEPS_AFTER + 1)) > 0, "no cell woken in those steps: nothing to compare"
     bad = []
+    if s0 is None or len(recv0) == 0:
+        return ["no receiver in the 1-rank run"]
+    if first == 0 and sum(len(woken0.get(k, ())) for k in range(s0, s0 + STEPS_AFTER + 1)) == 0:
+        return ["no cell woken in those steps: nothing to compare"]
     for nranks in (2, 4):
         s, recv, woken, energy, _ = runs[(arm, nranks, "thin")]["wake"]
         print(f"{arm}, {nranks} ranks: first deposit step {s} (1 rank: {s0}), receivers {len(recv)} (1 rank: {len(recv0)})")
         if s != s0 or recv != recv0:
             bad.append(f"{nranks} ranks: first deposit step or receivers differ"); continue
-        for k in range(s0, s0 + STEPS_AFTER + 1):
+        for k in range(s0 + first, s0 + last + 1):
             wa, wb = woken0.get(k, set()), woken.get(k, set())
             de = abs(energy[k] - energy0[k]) / abs(energy0[k]) if k in energy and k in energy0 else float("nan")
             print(f"  step {k}: woken {len(wb)} (1 rank: {len(wa)}), only in one run {len(wa ^ wb)}, |dE|/E {de:.3e}")
@@ -180,11 +183,21 @@ def test_builds_run_and_dump(runs):
 
 
 def test_hydro_wake_does_not_replace_the_receiver_wake(runs):
-    """with the flags a receiver woken in the step of its deposit keeps its own request (-1): no hydro request (> 0) in its place"""
-    n_on, n_off = runs[("on", 2, "thin")]["wake"][4], runs[("off", 2, "thin")]["wake"][4]
-    print(f"receivers woken with a hydro request in place of their own: {n_on} with the flags, {n_off} without")
+    """with WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP alone (no raised signal speed, which would itself keep hydro requests away) a
+    receiver woken in the step of its deposit keeps its own request (-1): no hydro request (> 0) in its place, and it is still woken"""
+    n_own, n_on, n_off = (runs[(a, 2, "thin")]["wake"][4] for a in ("own", "on", "off"))
+    print(f"receivers woken with a hydro request in place of their own: {n_off} without the flags, {n_own} with the own-timestep wake alone, {n_on} with both flags")
     assert n_off > 0, "the case does not occur in this box without the flags: nothing tested"
-    assert n_on == 0
+    assert n_own == 0 and n_on == 0
+    s0, recv_off, w_off, _, _ = runs[("off", 2, "thin")]["wake"]; _, recv_own, w_own, _, _ = runs[("own", 2, "thin")]["wake"]
+    assert recv_own == recv_off and {i for i, _, _ in w_own.get(s0, ())} == {i for i, _, _ in w_off.get(s0, ())}, "other cells woken at the first deposit"
+
+
+def test_runs_agree_through_the_deposit_step(runs):
+    """every build: same first deposit step, receivers, woken cells and energy on 1, 2 and 4 ranks at the deposit step"""
+    for arm in ("off", "nomerge", "across"):
+        bad = _compare_ranks(runs, arm, first=0, last=0)
+        assert not bad, arm + ": " + "; ".join(bad)
 
 
 def test_independent_of_ranks_with_merge_split_search_across_ranks(runs):
@@ -205,5 +218,6 @@ def test_wake_independent_of_ranks_without_merge_split(runs):
                    "energy then different by 1.4e-2 (2 ranks) and 3.2e-3 (4 ranks) against the bar of 1e-10; daughters of a split near a rank "
                    "boundary are placed differently (0.018 h in the pair-flux split box)")
 def test_wake_independent_of_ranks(runs):
-    bad = _compare_ranks(runs, "off")
+    """only the steps AFTER the deposit step are expected to differ; the deposit step itself is asserted in test_runs_agree_through_the_deposit_step"""
+    bad = _compare_ranks(runs, "off", first=1)
     assert not bad, "; ".join(bad)
