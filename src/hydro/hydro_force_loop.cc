@@ -242,7 +242,13 @@ void HydroForceSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
 void HydroForceSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
                                           const NeighborLoopPlan& /*plan*/)
 {
+#if defined(WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP) && defined(WAKEUP_TARGET_BIN_PARAMETER)
+    gw_detail::GhostWritebackHydroWakeKeepsPending = 1; /* the requests applied to this task's cells in the call below are hydro wake requests */
+#endif
     ghost_writeback_end_bundle(hydro_force_ghost_writeback_bundle_ptr());
+#if defined(WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP) && defined(WAKEUP_TARGET_BIN_PARAMETER)
+    gw_detail::GhostWritebackHydroWakeKeepsPending = 0;
+#endif
 }
 
 /* ============================================================================

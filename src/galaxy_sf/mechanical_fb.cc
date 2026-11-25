@@ -165,6 +165,9 @@ void verify_and_assign_local_mechfb_integrals(void)
             if(LocalGasMechFBInfoTemp[j].N_injected_sn > 0) {FBHydroRedoReceivers++;} /* SN and Ia only */
 #endif
             const Vec3<MyDouble> vel_before_deposit = P[j].Vel;
+#ifdef TEST_KICK_FLOOR_DUMP
+            const double test_dump_energy_before = P[j].Mass * (CellP[j].InternalEnergy + 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv);
+#endif
             double m0=P[j].Mass, dm=LocalGasMechFBInfoTemp[j].m_injected; P[j].Mass += dm; /* update mass */ if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
             ledger_add(LEDGER_M_FB_TO_GAS, dm); ledger_add(LEDGER_MZ_FB_TO_GAS, LocalGasMechFBInfoTemp[j].Z_injected[0]);
@@ -357,12 +360,23 @@ void verify_and_assign_local_mechfb_integrals(void)
 #endif /* COSMIC_RAY_FLUID */
 #ifndef GALSF_FB_MECHANICAL_BEFORE_HYDRO_FORCES /* with it, this step's fluxes and closing kick act with the pressure the opening kick saw: a pressure raised inside the step lets half a kick of the hot state straddle the deposit and creates energy. The next drift refreshes it, and the hydro pass that follows sets the signal speed */
             refresh_eos_and_project(j, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED); /* the deposit is an accepted change to both state copies */
+#ifndef RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED /* with it, the one rule below holds for every receiver */
             if(TimeBinActive[P[j].TimeBin]) /* its next step is chosen right after this, from a signal speed the hydro pass set before the deposit: raise it to the new state. An inactive cell keeps its own, which its active neighbours' wakeup check compares against */
                 {CellP[j].MaxSignalVel = DMAX(CellP[j].MaxSignalVel, 2.*CellP[j].effective_soundspeed()) + sqrt((P[j].Vel - vel_before_deposit).norm_sq()) / All.cf_atime;}
-#elif defined(SNE_BROADCAST_TIMESTEP) /* an inactive receiver is compared by its neighbours' wakeup check with the signal speed of the state it now has (Durier & Dalla Vecchia 2012); an active one gets its own from the hydro pass that follows */
-            CellP[j].MaxSignalVel = DMAX(CellP[j].MaxSignalVel, 2.*sqrt(CellP[j].soundspeed2_from_u(CellP[j].InternalEnergy)) + sqrt((P[j].Vel - vel_before_deposit).norm_sq()) / All.cf_atime);
-#else
+#endif
+#endif
+#ifdef RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED
+            { /* every receiver, active or not: its signal speed is raised to that of the state the deposit left, so the timestep criterion and its own-timestep wake (WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP) see the heated state */
+                double vsig_new = 2.*sqrt(CellP[j].soundspeed2_from_u(CellP[j].InternalEnergy)) + sqrt((P[j].Vel - vel_before_deposit).norm_sq()) / All.cf_atime;
+                if(vsig_new > CellP[j].MaxSignalVel) {CellP[j].MaxSignalVel = vsig_new;}
+            }
+#elif defined(GALSF_FB_MECHANICAL_BEFORE_HYDRO_FORCES)
             (void) vel_before_deposit;
+#endif
+#ifdef TEST_KICK_FLOOR_DUMP
+            printf("TEST_KICK_FLOOR_DUMP recv step %lld t %.10e ID %llu site 0 bin %d active %d u %.6e vsig %.6e h %.6e m %.6e dE %.6e\n", (long long) All.NumCurrentTiStep, All.Time, (unsigned long long) P[j].ID, (int) P[j].TimeBin,
+                   (int) TimeBinActive[P[j].TimeBin], (double) CellP[j].InternalEnergy, (double) CellP[j].MaxSignalVel, (double) P[j].KernelRadius, (double) P[j].Mass,
+                   mf * (CellP[j].InternalEnergy + 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv) - test_dump_energy_before);
 #endif
             /* apply to every home gas cell with pending deltas (N_injected>0):
                this buffer is the single source of truth for received feedback,

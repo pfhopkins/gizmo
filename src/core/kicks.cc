@@ -522,6 +522,11 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
             if(CellP[i].InternalEnergy != dEnt) {pairflux_note_kick_floor((CellP[i].InternalEnergy - dEnt) * P[i].Mass);} /* diagnostic */
 #endif
+#ifdef TEST_KICK_FLOOR_DUMP
+            {double de_fl = (CellP[i].InternalEnergy - dEnt) * P[i].Mass; if(fabs(de_fl) > TEST_KICK_FLOOR_DUMP) { /* one line per limiter or floor event above the threshold */
+                printf("TEST_KICK_FLOOR_DUMP kick step %lld t %.10e ID %llu mode %d bin %d dt %.6e u_new %.6e dEnt %.6e m %.6e vsig %.6e h %.6e dE %.6e\n", (long long) All.NumCurrentTiStep, All.Time,
+                       (unsigned long long) P[i].ID, mode, (int) P[i].TimeBin, dt_hydrokick, (double) CellP[i].InternalEnergy, (double) dEnt, (double) P[i].Mass, (double) CellP[i].MaxSignalVel, (double) P[i].KernelRadius, de_fl);}}
+#endif
 #if (defined(SGCHEM) || defined(TEST_MHD_ENERGY_LEDGER_OUTPUT)) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
             ledger_add(LEDGER_E_KICK_FLOOR, P[i].Mass * (CellP[i].InternalEnergy - dEnt)); /* what the limiter and the floor add */
 #endif
