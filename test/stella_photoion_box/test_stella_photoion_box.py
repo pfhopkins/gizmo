@@ -113,3 +113,53 @@ def test_stella_photoion_box():
     assert asym.max() <= ASYM_MAX, f"HII region not round in a uniform medium: asymmetry {asym.max():.2f}"
     shutil.rmtree(run, ignore_errors=True)
     assert trace.ok, trace.summary()
+
+
+def test_search_radius_beyond_the_box():
+    """STL-TI01 (as GKS-TI21 on the port): the same star with gas only in the lower half of the box, so the upward directions stay open
+    and the search sphere grows to MaxPISearchRadius. Bars (written before the runs, 2026-11-25): with the limit below half the box
+    (0.02 kpc) the ledger ratio, recombinations of the ionised cells / Q, is <= 1.02 at every solve; with limits beyond the 40 pc
+    periodic box (1 kpc, 50 kpc) the number of solves is the same and the ratio is within 2 % of that run at every solve: a limit
+    beyond the box must not change which cells are ionised."""
+    if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        pytest.skip("builds GIZMO; nothing to validate from external snapshots")
+    cwd = os.getcwd()
+    os.chdir(REPO)
+    try:
+        build_gizmo_for_test(TEST_NAME)
+    finally:
+        os.chdir(cwd)
+    rows = {}
+    for limit in (0.02, 1.0, 50.0):
+        run = tempfile.mkdtemp(prefix=f"{TEST_NAME}_half_")
+        os.makedirs(join(run, "output"))
+        os.symlink(REPO, join(run, "gizmo"))
+        ics = join(run, f"{TEST_NAME}_ics.hdf5")
+        make_ics(ics)
+        with h5py.File(ics, "r+") as f:  # keep the lower half (and the star's cell, ID 1)
+            p = f["PartType0"]; keep = np.logical_or(p["Coordinates"][:, 2] < 0.5 * BOX_PC * 1e-3, p["ParticleIDs"][:] == 1)
+            data = {k: p[k][:][keep] for k in p}
+            for k in list(p):
+                del p[k]
+            for k, a in data.items():
+                p[k] = a
+            n = int(keep.sum())
+            f["Header"].attrs["NumPart_ThisFile"] = np.array([n, 0, 0, 0, 0, 0], dtype=np.int32)
+            f["Header"].attrs["NumPart_Total"] = np.array([n, 0, 0, 0, 0, 0], dtype=np.uint32)
+        lines = [l for l in open(join(TEST_DIR, f"{TEST_NAME}.params")).read().splitlines() if l.split()[:1] != ["MaxPISearchRadius"]]
+        open(join(run, f"{TEST_NAME}.params"), "w").write("\n".join(lines) + f"\nMaxPISearchRadius {limit}\n")
+        with open(join(run, "run.log"), "w") as log:
+            r = subprocess.run(mpi_launch_command(NRANKS) + [join(TEST_DIR, "GIZMO"), f"{TEST_NAME}.params"], stdout=log, stderr=subprocess.STDOUT, cwd=run)
+        os.makedirs(OUT, exist_ok=True)
+        shutil.copy(join(run, "run.log"), join(OUT, f"run_half_{limit}.log"))
+        text = open(join(run, "run.log")).read()
+        assert r.returncode == 0, f"limit {limit}: GIZMO exited {r.returncode}, see {OUT}/run_half_{limit}.log"
+        rows[limit] = (np.array([float(x) for x in re.findall(r"RESOLVEDISM PI LEDGER: .* ratio=([0-9.eE+-]+)", text)]),
+                       [int(x) for x in re.findall(r"RESOLVEDISM PI: (\d+) ionized", text)])
+        print(f"limit {limit} kpc: {len(rows[limit][0])} solves, ledger ratio {rows[limit][0].min():.4f}..{rows[limit][0].max():.4f}, ionised cells up to {max(rows[limit][1])}")
+        shutil.rmtree(run, ignore_errors=True)
+    ref = rows[0.02][0]
+    assert len(ref) >= 10 and max(rows[0.02][1]) > 0, "no ionised region"
+    assert np.all(ref <= 1.02), ref
+    for limit in (1.0, 50.0):
+        assert rows[limit][0].shape == ref.shape and np.all(np.abs(rows[limit][0] / ref - 1) <= 0.02), (limit, rows[limit][0], ref)
