@@ -27,6 +27,9 @@ GALSF_RESOLVEDISM_INSTANT_SN             % SNe before TimeInstantSN (param) expl
 GALSF_RESOLVEDISM_TYPE_IA                % Type Ia SNe from WD DTD (W7 yields)
 #RESOLVED_ISM_VARIABLE_SN_ENERGY        % Stella SN energies by type: PISN 1e52 erg, ECSN 5e50 erg; default: every SN 1e51 erg
 #RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB    % with RESOLVED_ISM_FB_AFTER_CLOSING_KICK: wind, AGB and radiation-pressure deposits also redo the hydro pass (not only SN/Ia); off by default and in no production config: +15 % per step on the L10 zoom, energy gain not measurable (docs/stella_options.md)
+#RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED % a feedback deposit raises the receiver's signal speed to the post-injection value; needs WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP (docs/stella_options.md; off by default)
+#WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP    % a cell woken by a merge, a split or a feedback deposit starts on its own timestep (capped at the highest active bin)
+#MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES % a merge kicks an inactive parent to the current time with its own rates first (MFM/SPH; docs/stella_options.md; off by default)
 #RESOLVED_ISM_FB_AFTER_CLOSING_KICK               % feedback deposited after the closing kick, then the hydro pass is redone on SN/Ia steps (gizmo2017 order; wind heating does not trigger the redo, STL-296); opt-in, in no default config  [excl MFV]
 #GALSF_RESOLVEDISM_SN_SPAWN              % spawn ejecta cells when the FB kernel holds too little gas (prototype)
 #RESOLVEDISM_HOTSYNC_CLAMP               % clamp timebins in hot regions (validated with SN_SPAWN)

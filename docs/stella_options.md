@@ -166,6 +166,29 @@ production config, the zoom included (Uli 2026-11-19); with continuous winds
 the recompute then runs on almost every step. Cost on the zoom smoke test (L10 zoom, 17.7M particles, restart from snapshot 17, 8 ranks, 23 steps): 245 s without, 282 s with the flag (+15 %, a recompute on 23 of 23 steps). Adiabatic 60 Msun wind + AGB box (test/stella_fb_boundary_wind): energy excess +0.0017/+0.0020 % with, +0.0028/+0.0031 % without (100 K / 1e4 K), so no measurable energy gain there.
 Test: test/stella_fb_boundary_wind (flag on and off).
 
+## RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED: feedback receivers on their own timestep (off by default)
+
+A feedback deposit (wind, AGB, SN, Ia ejecta) raises the receiving cell's signal speed to 2 c_s of the post-injection u plus the
+velocity change of the deposit. Together with WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP, which it requires, a woken receiver then starts
+on the timestep of its heated state instead of the highest active bin. Without it, receivers that were inactive at the deposit apply
+the forces of the heated state over a step that is too long at their next closing kick; the u limiter catches them and creates
+energy of about the wind energy at the first wind (STL-183). r26 cloud without MHD, first wind (job 242310): energy added by the
+limiter 1.05 x the booked wind energy without, 2.0e-3 with the flags (exact kick), 3.1e-3 with the pair-flux exchange.
+For configs that deposit feedback before the hydro forces (cloud, default, galaxy, tallbox). Set in no config yet.
+Test: test/stella_fb_receiver_wake. TEST_KICK_FLOOR_DUMP=<energy> (test only) prints one line per kick whose u limiter adds more
+than that energy and one line per feedback receiver.
+
+## MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES: merges into inactive cells (off by default)
+
+When an active cell merges into an inactive one, the inactive parent has been kicked to the midpoint of its step. With this switch
+the merge first kicks that parent from the midpoint to the current time with its own rates and mass (in either half of its step);
+the wake that follows skips its own completion kick (marker MergeOldStepCompleted on the particle; the step bounds are untouched).
+Without it the wake does that kick with the merged rates, so a hot cell merged into a long-step cell drives u to the floor, which
+creates energy: centre-merge Sedov case, |dE|/E 3.5 -> 5.9e-3 (pair-flux exchange off) and 3.9 -> 8.1e-5 (on), job 242294, both
+with WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP; alone it does not help (63, 89). MFM and SPH only (an #error with MFV); needs WAKEUP.
+The kick's energy change is booked in the merge stage of the energy step trace (merge_parent_kick) and handed back to the
+integration residual (merge_parent_kick_to_int). Set in no config yet. Test: test/pairflux_exact_exchange (test_merge_centre).
+
 ## TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS (test only)
 
 Each step, recomputes the KETJU limiting-particle steps by a full particle scan and aborts if the cell grid gives a
