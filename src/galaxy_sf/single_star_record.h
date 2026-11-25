@@ -126,6 +126,9 @@ double single_star_wind_cumulative(double logM, double logZ, double log_age); /*
 struct single_star_xfer {std::vector<std::vector<struct single_star_record> > send, recv;};
 void single_star_xfer_init(struct single_star_xfer &x, int ntask);
 void single_star_xfer_detach(struct single_star_xfer &x, const struct particle_data &p, int target); /* frees the local slot; p keeps StarIdx > 0 as the marker */
+#ifdef FOF_UNIQUE_KEY_CHECK
+void single_star_xfer_report(const struct single_star_xfer &x, const char *caller); /* after the last detach; collective (one reduction per exchange) */
+#endif
 void single_star_xfer_swap(struct single_star_xfer &x, int target, const struct particle_data *recv_first, int count_recv); /* after the particles arrived */
 void single_star_xfer_attach(struct single_star_xfer &x, int target, struct particle_data *recv_first, int count_recv);
 

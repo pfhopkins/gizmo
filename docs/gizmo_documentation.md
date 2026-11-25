@@ -1766,6 +1766,8 @@ These flags enable group finding via an on-the-fly FOF finder which is run at in
 
 **FOF\_GROUP\_MIN\_SIZE**: Minimum size for a saved FOF group (in terms of total particle number). Set as desired. With `SUBFIND`, it must be at least `DesLinkNgb` (see below).
 
+**FOF\_UNIQUE\_KEY\_CHECK**: Check option. At each FOF call the run stops unless the particle key (ID, child number) is unique, as group catalogues and SUBFIND-HBT tracking need, and prints the number of duplicates found. With single-star records (`GALSF_SINGLE_STARS_FROM_IMF`) each particle exchange of SUBFIND also prints how many stars with a record it sent to another task (one reduction per exchange). Test: `test/single_star_record_fof`.
+
 
 <a name="config-fof-subfind"></a>
 ### _Sub-Structure (Subhalo, Satellite, etc) Finding_ 

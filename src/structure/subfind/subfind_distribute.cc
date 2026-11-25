@@ -179,6 +179,9 @@ void subfind_distribute_particles(int mode)
 	  n--;
 	}
     }
+#if defined(SINGLE_STAR_RECORDS) && defined(FOF_UNIQUE_KEY_CHECK)
+  single_star_xfer_report(ssx, "subfind_distribute_particles"); /* the check build reports how many records this exchange moves */
+#endif
 
   for(ngrp = 1; ngrp < (1 << PTask); ngrp++)
     {
@@ -351,6 +354,9 @@ void subfind_exchange(void)
 	    }
 	}
     }
+#if defined(SINGLE_STAR_RECORDS) && defined(FOF_UNIQUE_KEY_CHECK)
+  single_star_xfer_report(ssx, "subfind_exchange"); /* the check build reports how many records this exchange moves */
+#endif
 
   int count_totget;
 

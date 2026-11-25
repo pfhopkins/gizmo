@@ -1,9 +1,11 @@
 """single_star_record_fof test: the single-star records survive FOF + SUBFIND (GALSF_SINGLE_STARS_FROM_IMF with FOF, SUBFIND,
 FOF_UNIQUE_KEY_CHECK). SUBFIND ships particles between ranks with raw struct copies (subfind_distribute_particles, subfind_exchange),
 so a star's record has to travel with it. FOF and SUBFIND run at every snapshot (io.cc), 5 snapshots, 4 ranks, 64 stars of
-0.1-50 Msun in a 5.28 pc box with 8 gas clumps (8 FOF groups, all handled by the serial SUBFIND code on other ranks).
-  1. every snapshot holds all 64 stars with mass, drawn mass and birth metallicity bitwise as in the initial conditions, the
-     run found 8 groups (the redistribution really took place) and no duplicate keys;
+0.1-50 Msun in a 5.28 pc box with 8 gas clumps (8 FOF groups of at least 8 members, all handled by the serial SUBFIND code on
+other ranks; DesLinkNgb 8 = FOF_GROUP_MIN_SIZE, the largest value the smallest group can supply).
+  1. every snapshot holds all 64 stars with mass, drawn mass and birth metallicity bitwise as in the initial conditions; at
+     every FOF call SUBFIND handed groups to the serial code and no key was duplicated; in at least one of these calls the
+     exchange sent stars with a record to another rank (the redistribution really moved records);
   2. a run stopped halfway and continued from its restart files ends with the same records;
   3. RestartFlag 3 (FOF + SUBFIND on a snapshot, STL-143) runs, finds groups and no duplicate keys.
 Before the fix the build stops at the #error in galaxy_sf/single_star_record.cc.
@@ -70,6 +72,8 @@ def check_log(log, n_calls_min):
     assert len(re.findall(r"particle keys \(ID, child number\): 0 duplicates", log)) >= n_calls_min, "FOF_UNIQUE_KEY_CHECK did not report 0 duplicates in every FOF call"
     n_small = [int(x) for x in re.findall(r"the other (\d+) FOF halos are treated in parallel with serial code", log)]
     assert len(n_small) >= n_calls_min and min(n_small) >= 1, "SUBFIND did not hand any group to the serial code on another rank: %s" % n_small
+    n_moved = [int(x) for x in re.findall(r"subfind_exchange: (\d+) stars with a single-star record sent to another task", log)]
+    assert len(n_moved) >= 2 * n_calls_min and max(n_moved) >= 1, "no star with a record changed rank in any SUBFIND exchange: %s" % n_moved
 
 
 def test_records_follow_stars_through_fof(built):

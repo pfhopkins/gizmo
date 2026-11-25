@@ -35,4 +35,4 @@ SofteningDiskMaxPhys               0.02
 SofteningBulgeMaxPhys              0.02
 SofteningStarsMaxPhys              0.02
 SofteningBndryMaxPhys              0.02
-DesLinkNgb                         16
+DesLinkNgb                         8

@@ -112,6 +112,17 @@ void single_star_xfer_detach(struct single_star_xfer &x, const struct particle_d
     x.send[target].push_back(r);
 }
 
+#ifdef FOF_UNIQUE_KEY_CHECK
+/* check builds (FOF_UNIQUE_KEY_CHECK): prints how many stars with a record the calling exchange sends to another task (summed over all tasks, so every task must call it) */
+void single_star_xfer_report(const struct single_star_xfer &x, const char *caller)
+{
+    long long n_local = 0, n_total = 0;
+    for(size_t t = 0; t < x.send.size(); t++) {n_local += (long long) x.send[t].size();}
+    MPI_Allreduce(&n_local, &n_total, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    if(ThisTask == 0) {printf("%s: %lld stars with a single-star record sent to another task\n", caller, n_total);}
+}
+#endif
+
 void single_star_xfer_swap(struct single_star_xfer &x, int target, const struct particle_data *recv_first, int count_recv)
 {
     int n_send = (int) x.send[target].size(), n_recv = 0; /* the receiver counts the stars with records it just received */
