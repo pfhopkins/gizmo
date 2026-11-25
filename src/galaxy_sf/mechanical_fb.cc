@@ -280,7 +280,7 @@ void verify_and_assign_local_mechfb_integrals(void)
 #endif
                 for(k=0;k<3;k++) {
                     double dv = (-dm/mf)*P[j].Vel[k] + f0*(1./mf)*dp[k]*All.cf_atime; /* calculate total momentum change and mass change and therefore final velocity (in code units) */
-                    P[j].Vel[k] += dv; CellP[j].VelPred[k] += dv; P[j].dp[k] += f0*dp[k]; /* update velocities */
+                    P[j].Vel[k] += dv; CellP[j].VelPred[k] += dv; P[j].dp[k] += f0*dp[k]*All.cf_atime; /* update velocities, and the momentum change (code units) that moves the tree nodes */
                 }
             }
 #if defined(COSMIC_RAY_FLUID)
