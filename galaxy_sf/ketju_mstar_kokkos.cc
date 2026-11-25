@@ -27,7 +27,7 @@ namespace {
 
 struct KjMstarSide {           /* kept in ketju_system::internal_state */
     MPI_Comm comm;
-    mstar::System *sys;        /* rank 0 of comm, reused across calls */
+    mstar::System *sys;        /* rank 0 of comm (KETJU_MSTAR_MPI: every task that integrates), reused across calls */
 };
 std::set<KjMstarSide *> &kj_live = *new std::set<KjMstarSide *>;   /* systems to destroy before Kokkos::finalize; never destroyed */
 bool kj_kokkos_owned = false;
@@ -161,7 +161,9 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
     std::vector<double> crad_in;
     if(rank == 0 && R->collision_radius) crad_in.assign(R->collision_radius, R->collision_radius + n0);
 #ifdef KETJU_MSTAR_MPI
-    if(size > 1 && n0 >= KETJU_MSTAR_MPI_MIN_N) {shared = true; kj_bcast_input(R, n0, side->comm, crad_in);}
+    /* host builds only: MSTAR shares on host memory; on a device every task would integrate the whole region */
+    if(size > 1 && n0 >= KETJU_MSTAR_MPI_MIN_N && strcmp(mstar::execution_space_name(), mstar::host_execution_space_name()) == 0)
+        {shared = true; kj_bcast_input(R, n0, side->comm, crad_in);}
 #endif
 #ifdef TEST_KETJU_MSTAR_TIMING
     const double tw0 = MPI_Wtime();
