@@ -148,6 +148,10 @@ void gizmo_hydro_corridor_decide_mode(void)
     g_corridor_mode = GizmoHydroCorridorMode::MODE_A;
     return;
 #endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    g_corridor_mode = GizmoHydroCorridorMode::MODE_A; /* the pair records are written on the evaluator's rank from the corridor list */
+    return;
+#endif
     /* Adaptive dispatch: the runner's Mode-B rule with a symmetric loop's
        defaults standing in where NeighborLoopModeBThreshold{Sum,Max} are unset.
        TRANSPORT_SUBCYCLE has already forced Mode A above. An MG step needs the

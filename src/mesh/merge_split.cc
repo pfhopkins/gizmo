@@ -807,6 +807,9 @@ static int make_sn_ejecta_cell(int i, int n_particles_split)
     Vec3<double> n_dir; n_dir[0] = sth*cos(phi); n_dir[1] = sth*sin(phi); n_dir[2] = cth;
     P[j].Pos = P[i].Pos + n_dir * dr;
     P[j].Vel = P[i].Vel; CellP[j].VelPred = P[i].Vel; CellP[j].HydroAccel = {}; P[j].dp = {};
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    CellP[j].PairFluxSumMom = {}; CellP[j].PairFluxSumEgy = 0; CellP[j].PairFluxMassRef = 0; /* none of the template's pair fluxes */
+#endif
     P[j].Mass = CellP[j].Mass = in.Msne;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[j].MassTrue = in.Msne; CellP[j].dMass = 0; CellP[j].DtMass = 0;
@@ -938,6 +941,14 @@ int split_particle_i(int i, int n_particles_split, double r_near)
 #endif
     P[i].Mass -= P[j].Mass;
     if(P[i].Type==0) {CellP[j].Mass = P[j].Mass; CellP[i].Mass = P[i].Mass;} // CellP[] is sized All.MaxPartGas; only gas splits get CellP writes
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    if(P[i].Type==0) { /* pair-flux sums are absolute: share them with the mass (m/m_ref unchanged on both) */
+        double f = mass_of_new_particle;
+        CellP[j].PairFluxSumMom = CellP[i].PairFluxSumMom * f; CellP[i].PairFluxSumMom -= CellP[j].PairFluxSumMom;
+        CellP[j].PairFluxSumEgy = CellP[i].PairFluxSumEgy * f; CellP[i].PairFluxSumEgy -= CellP[j].PairFluxSumEgy;
+        CellP[j].PairFluxMassRef = CellP[i].PairFluxMassRef * f; CellP[i].PairFluxMassRef -= CellP[j].PairFluxMassRef;
+    }
+#endif
 #ifdef BOX_BND_PARTICLES
     if(P[i].ID==0)  {P[j].ID=1; double m0=P[i].Mass+P[j].Mass; P[i].Mass=P[j].Mass=m0;}
     if(P[i].Type==0) {CellP[i].Mass = P[i].Mass; CellP[j].Mass = P[j].Mass;}
@@ -1275,6 +1286,16 @@ int merge_particles_ij(int i, int j, double target_share)
 #if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
     const double mass_true_i = CellP[i].MassTrue, mass_true_j = CellP[j].MassTrue; /* metal mass is MassTrue*Z */
 #endif
+#ifdef TEST_PAIRFLUX_MERGE_DUMP
+    const double tmd_a = All.cf_atime; const int tmd_bi = P[i].TimeBin, tmd_bj = P[j].TimeBin, tmd_ai = TimeBinActive[P[i].TimeBin], tmd_aj = TimeBinActive[P[j].TimeBin];
+    const double tmd_mi = P[i].Mass, tmd_mj = P[j].Mass, tmd_dui = CellP[i].DtInternalEnergy, tmd_duj = CellP[j].DtInternalEnergy;
+    double tmd_ri = 0, tmd_rj = 0, tmd_Si = 0, tmd_Sj = 0;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    tmd_ri = CellP[i].PairFluxMassRef; tmd_rj = CellP[j].PairFluxMassRef; tmd_Si = CellP[i].PairFluxSumEgy; tmd_Sj = CellP[j].PairFluxSumEgy;
+#endif
+    const double tmd_Eb = P[i].Mass * (CellP[i].InternalEnergy + 0.5 * (P[i].Vel / tmd_a).norm_sq()) + P[j].Mass * (CellP[j].InternalEnergy + 0.5 * (P[j].Vel / tmd_a).norm_sq());
+    const double tmd_ui = CellP[i].InternalEnergy, tmd_uj = CellP[j].InternalEnergy;
+#endif
     double mass_before_merger_i,mass_before_merger_j,volume_before_merger_i,volume_before_merger_j; mass_before_merger_i=P[i].Mass; mass_before_merger_j=P[j].Mass; volume_before_merger_i=P[i].Mass/CellP[i].Density; volume_before_merger_j=P[j].Mass/CellP[j].Density; // save some numbers for potential use below
     if(P[i].TimeBin < P[j].TimeBin)
     {
@@ -1327,8 +1348,13 @@ int merge_particles_ij(int i, int j, double target_share)
     de_j = P[j].Mass * CellP[j].DtInternalEnergy + dm_j*CellP[j].InternalEnergyPred;
     dp_i = CellP[i].HydroAccel * P[i].Mass + CellP[i].VelPred * (dm_i / All.cf_atime);
     dp_j = CellP[j].HydroAccel * P[j].Mass + CellP[j].VelPred * (dm_j / All.cf_atime);
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+    de_i += dot(dp_i, CellP[i].HydroVelRef) - 0.5 * dm_i * CellP[i].VelPred.norm_sq() * All.cf_a2inv; /* the kick's energy rate is m (du/dt + v_ref.a) */
+    de_j += dot(dp_j, CellP[j].HydroVelRef) - 0.5 * dm_j * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+#else
     de_i += dot(dp_i, CellP[i].VelPred) / All.cf_atime - 0.5 * dm_i * CellP[i].VelPred.norm_sq() * All.cf_a2inv;
     de_j += dot(dp_j, CellP[j].VelPred) / All.cf_atime - 0.5 * dm_j * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+#endif
     dp_ij = dp_i + dp_j;
     dm_ij = dm_i+dm_j;
     de_ij = de_i+de_j;
@@ -1558,6 +1584,28 @@ int merge_particles_ij(int i, int j, double target_share)
     CellP[j].HydroAccel = (dp_ij - CellP[j].VelPred * (dm_ij / All.cf_atime)) * (1.0 / mtot);
     de_ij -= mtot * dot(CellP[j].VelPred, CellP[j].HydroAccel) / All.cf_atime + 0.5 * dm_ij * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
     CellP[j].DtInternalEnergy = de_ij / mtot; /* de_ij is the merged cell's total energy rate: the kick wants the rate per unit mass, as HydroAccel above */
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+    CellP[j].HydroVelRef = CellP[j].VelPred / All.cf_atime; /* the velocity the merged du/dt was formed with */
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    { /* merged sums are what the merged rates carry: each cell's sum at its m/m_ref; merged m_ref = m_tot */
+        double fi = (CellP[i].PairFluxMassRef > 0) ? P[i].Mass / CellP[i].PairFluxMassRef : 1, fj = (CellP[j].PairFluxMassRef > 0) ? P[j].Mass / CellP[j].PairFluxMassRef : 1;
+        CellP[j].PairFluxSumMom = CellP[j].PairFluxSumMom * fj + CellP[i].PairFluxSumMom * fi; CellP[j].PairFluxSumEgy = CellP[j].PairFluxSumEgy * fj + CellP[i].PairFluxSumEgy * fi;
+        CellP[j].PairFluxMassRef = mtot;
+    }
+#endif
+#ifdef TEST_PAIRFLUX_MERGE_DUMP
+    {
+        double Ea = mtot * (CellP[j].InternalEnergy + 0.5 * (P[j].Vel / tmd_a).norm_sq()), Sm = 0; /* P[j].Mass is set to mtot later */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        Sm = CellP[j].PairFluxSumEgy;
+#endif
+        printf("TEST_PAIRFLUX_MERGE_DUMP step %lld task %d IDi %llu IDj %llu bin %d %d active %d %d wake_j %d m %.17g %.17g mref %.17g %.17g u %.17g %.17g SumEgy %.17g %.17g merged %.17g DtU %.17g %.17g mergedDtU %.17g dtstep %.6g %.6g E_before %.17g E_after %.17g dE %.3e\n",
+               (long long) All.NumCurrentTiStep, ThisTask, (unsigned long long) P[i].ID, (unsigned long long) P[j].ID, tmd_bi, tmd_bj, tmd_ai, tmd_aj, (int) P[j].wakeup,
+               tmd_mi, tmd_mj, tmd_ri, tmd_rj, tmd_ui, tmd_uj, tmd_Si, tmd_Sj, Sm, tmd_dui, tmd_duj, CellP[j].DtInternalEnergy,
+               (double) P[i].integertime_step() * All.Timebase_interval, (double) P[j].integertime_step() * All.Timebase_interval, tmd_Eb, Ea, Ea - tmd_Eb);
+    }
+#endif
 #endif /* GENERAL_RELATIVITY */
     // to be conservative adopt the maximum signal velocity and kernel length //
 #ifdef GENERAL_RELATIVITY
@@ -1846,6 +1894,9 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
      * between slots. Cached supply pools keyed on membership/order are only
      * invalidated when one of these is true, so a call that finds nothing to do
      * costs them nothing. Captured here because the counters are consumed below. */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    pairflux_note_rearrange(); /* pair-flux records hold particle indices */
+#endif
     int identity_changed = 0;
     if(Gas_split > 0) identity_changed = 1;
 #ifdef GALSF

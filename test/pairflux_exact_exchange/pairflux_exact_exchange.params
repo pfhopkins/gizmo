@@ -1,0 +1,22 @@
+% Sedov blast with a deep timestep hierarchy: exact pair-flux exchange conserves mass, momentum and energy per sync
+InitCondFile                       pairflux_exact_exchange_ics
+OutputDir                          output
+TimeMax                            0.02
+BoxSize                            1
+TimeBetSnapshot                    0.01
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+UnitLength_in_cm                   3.085678e+21
+UnitMass_in_g                      1.989e+43
+UnitVelocity_in_cm_per_s           100000
+MinGasTemp                         0
+ErrTolIntAccuracy                  0.002
+CourantFac                         0.05
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.0015
+TimeBetStatistics                  0.005
+MaxSizeTimestep                    0.01
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+TreeDomainUpdateFrequency          0.5

@@ -570,6 +570,14 @@ void restart(int modus)
 	  }
 #endif
 #endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+	  { /* pair-flux records waiting for the opening kick, and the cells active at their pass */
+	      long long npf = pairflux_restart_count(), npa = pairflux_restart_count_active();
+	      byten(&npf, sizeof(npf), modus); byten(&npa, sizeof(npa), modus);
+	      void *pf = pairflux_restart_buffer(modus ? npf : -1); if(npf > 0) {byten(pf, npf * pairflux_record_size(), modus);}
+	      void *pa = pairflux_restart_buffer_active(modus ? npa : -1); if(npa > 0) {byten(pa, npa * sizeof(int), modus);}
+	  }
+#endif
 	  byten(&SelRnd, sizeof(SelRnd), modus);
 
 #ifdef TURB_DRIVING

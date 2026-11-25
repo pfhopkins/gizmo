@@ -1708,6 +1708,26 @@ void gizmo_register_hdf5_deflate_filter(void);  /* file_io/hdf5_deflate_filter.c
 int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
 void rearrange_particle_sequence(int tree_rebuilt_before_next_walk = 0);
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+long long pairflux_restart_count(void);
+long long pairflux_restart_count_active(void);
+void *pairflux_restart_buffer(long long n_read);
+void *pairflux_restart_buffer_active(long long n_read);
+size_t pairflux_record_size(void);
+void pairflux_note_rearrange(void);
+void pairflux_note_kick_floor(double de);
+void pairflux_mark_closing_kick_expected(void);
+void pairflux_reset_rearranged(void);
+void pairflux_after_closing_kick(void);
+void pairflux_after_opening_kick(void);
+void pairflux_wake_kick_correction(int i, double dt_wake, int to_pred);
+#endif
+#ifdef TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC
+void print_gas_conserved_totals(void);
+#endif
+#ifdef TEST_PAIRFLUX_ADD_MASS_AND_WAKE
+void test_pairflux_add_mass_and_wake(void);
+#endif
 void swap_treewalk_pointers(int i, int j);
 void remove_particle_from_tree(int i);
 void reorder_gas(void);

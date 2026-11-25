@@ -44,6 +44,14 @@ extern struct gas_cell_data
     
     Vec3<MyDouble> VelPred;         /*!< predicted gas cell velocity at the current time */
     Vec3<MyDouble> HydroAccel;      /*!< acceleration due to hydrodynamical force (for drifting) */
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+    Vec3<MyDouble> HydroVelRef;     /*!< physical velocity the hydro pass used to turn the total-energy rate into du/dt */
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+    Vec3<MyDouble> PairFluxSumMom;  /*!< sum of this cell's own pair momentum fluxes in its rates (physical) */
+    MyDouble PairFluxSumEgy;        /*!< sum of this cell's own pair total-energy fluxes in its rates (physical) */
+    MyDouble PairFluxMassRef;       /*!< cell mass at the hydro pass (the rates are per unit of it); 0: none */
+#endif
 
     float HydroWorkEstimate;        /*!< hydro work since the last domain decomposition: the per-step neighbour-count weight summed over active steps (an estimate, not a measurement); predictive like P[].GravWork */
     signed char MinHydroWorkBin;    /*!< smallest timebin it was active on, -1 if none */

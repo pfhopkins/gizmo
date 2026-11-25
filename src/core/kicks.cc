@@ -375,6 +375,10 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #else
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
 #endif
+#ifdef HYDRO_KICK_TOTAL_ENERGY_EXACT
+            {Vec3<double> v_phys = P[i].Vel / All.cf_atime, a_h = CellP[i].HydroAccel; /* u takes the exact complement of the hydro velocity kick, applied before gravity */
+             du_tot += dot(CellP[i].HydroVelRef - v_phys, a_h) * dt_hydrokick - 0.5 * a_h.norm_sq() * dt_hydrokick * dt_hydrokick;}
+#endif
 #ifdef MHD_TRACK_BOOKED_MAGNETIC_ENERGY
             { /* physical E_B = |VB_code|^2 (rho/m)_code / (2a) */
                 double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0;
@@ -508,6 +512,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #endif
             EOS_LIMIT_RECORD_KICK_MIN_ENERGY(CellP[i].CompositionType, CellP[i].InternalEnergy, P[i].Mass);
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            if(CellP[i].InternalEnergy != dEnt) {pairflux_note_kick_floor((CellP[i].InternalEnergy - dEnt) * P[i].Mass);} /* diagnostic */
+#endif
 #if (defined(SGCHEM) || defined(TEST_MHD_ENERGY_LEDGER_OUTPUT)) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
             ledger_add(LEDGER_E_KICK_FLOOR, P[i].Mass * (CellP[i].InternalEnergy - dEnt)); /* what the limiter and the floor add */
 #endif

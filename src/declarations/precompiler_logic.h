@@ -2681,3 +2681,25 @@
 #error "TURB_DIFF_METALS_EXACT_CONSERVATION is replaced by METALS_EXACT_PAIRWISE_EXCHANGE"
 #endif
 #endif
+
+/* exact pair-flux exchange across timebins (stella_dev f495b418b ff.): each cell's own flux and every inactive partner's opposite flux get the pair's time weights */
+#if defined(TEST_PAIRFLUX_ADD_MASS_AND_WAKE) && !defined(TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC)
+#error "TEST_PAIRFLUX_ADD_MASS_AND_WAKE books its additions in the TEST_PRINT_GAS_CONSERVED_TOTALS_EACH_SYNC output"
+#endif
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+#ifndef HYDRO_KICK_TOTAL_ENERGY_EXACT
+#define HYDRO_KICK_TOTAL_ENERGY_EXACT /* u takes the exact kinetic-energy complement of the hydro kick */
+#endif
+#if defined(MAGNETIC)
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE: the B*V and Dedner records of stella_dev are not ported to gku yet (hydro only)"
+#endif
+#if !defined(HYDRO_MESHLESS_FINITE_MASS) || defined(HYDRO_SPH) || defined(CONDUCTION) || defined(VISCOSITY) || defined(COSMIC_RAY_FLUID) || defined(RT_SOLVER_EXPLICIT) || defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(EOS_ELASTIC) || defined(GALSF_SUBGRID_WINDS) || defined(ENERGY_ENTROPY_SWITCH_IS_ACTIVE) || (defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)) || defined(SINK_PARTICLES) || defined(BOX_BND_PARTICLES) || defined(GENERAL_RELATIVITY) || defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) || defined(TWO_TEMPERATURE_PLASMA) || defined(TRANSPORT_SUBCYCLE) || defined(HERMITE_INTEGRATION) || defined(GRAIN_FLUID_PROMOTION)
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE: MFM only; Hermite gravity and grain promotion rearrange particles between the kicks; sinks and boundary particles hold stale record indices; conduction, viscosity, CR fluid, explicit RT, turbulent energy/velocity diffusion, elastic EOS, subgrid winds, the entropy switch, non-split cooling, GR, two-temperature plasma, transport subcycling and per-particle timestep dilation are not exchanged"
+#endif
+#endif
+#if defined(HYDRO_TIMESTEP_FROM_PAIR_FORCE) && !defined(HYDRO_PAIR_FORCE_DT_ETA)
+#define HYDRO_PAIR_FORCE_DT_ETA 0.1 /* allowed kinetic-energy change of one half-kick, in units of u */
+#endif
+#if defined(HYDRO_KICK_TOTAL_ENERGY_EXACT) && (!defined(HYDRO_MESHLESS_FINITE_MASS) || (defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)) || defined(ENERGY_ENTROPY_SWITCH_IS_ACTIVE) || defined(GENERAL_RELATIVITY))
+#error "HYDRO_KICK_TOTAL_ENERGY_EXACT: MFM kick only; not with the entropy switch, non-split cooling or GR"
+#endif
