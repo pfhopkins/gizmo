@@ -17,6 +17,8 @@ COPIES = {
     "stella_merger_remnant": ("Config_stella_default.sh", {"KETJU_REGULARIZATION", "KETJU_MERGE_STARS"}),
     "sgchem_unified_fractions": ("Config_stella_default.sh", {"SGCHEM_ELECTRONS_AND_HYDROGEN_FRACTION_FROM_NETWORK"}),
     "sgchem_cr_floor": ("Config_stella_cloud.sh", set()),
+    "sgchem_cr_zero_before_first_star": ("Config_stella_default.sh", {"BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "CR_SCALE_WITH_G0",
+                                                                      "SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR"}),
     "tallbox_gravity_cr": ("Config_stella_tallbox.sh", {"OUTPUT_ENERGY_STEP_TRACE", "ENERGY_BUDGET_DIAGNOSTIC"}),
 }
 

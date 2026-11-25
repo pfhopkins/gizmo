@@ -70,7 +70,8 @@ radiation, and H2 forms through H- from those (primordial gas). From then on the
 the initial conditions or in the snapshot the run starts from, or when the star-formation routine has formed the first one; this
 holds for the whole box at once. It is one integer kept in the restart files and set from the totals the star-formation routine
 reduces over tasks anyway. Restart files of a build without the flag do not load. No effect with `COSMIC_RAY_FLUID`. On in
-`Config_stella_zoom.sh`.
+`Config_stella_zoom.sh`. Test: test/sgchem_cr_zero_before_first_star (no star, star in the IC, first star formed in the run, restart from
+restart files and from a snapshot, 2 ranks).
 
 ## RESOLVED_ISM_VARIABLE_SN_ENERGY: explosion energies by type (off by default)
 
