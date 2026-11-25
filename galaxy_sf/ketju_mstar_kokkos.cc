@@ -59,8 +59,11 @@ void kj_kokkos_initialize()
     mstar::initialize(argc, argv);
     kj_kokkos_owned = true;
     std::atexit(kj_kokkos_finalize);
-    if(wrank == 0) printf("KETJU: MSTAR on Kokkos %s (host %s), regions below %d bodies on the host engine\n",
-                          mstar::execution_space_name(), mstar::host_execution_space_name(), KETJU_KOKKOS_DEVICE_MIN_N);
+#ifndef KETJU_MSTAR_COMMIT
+#define KETJU_MSTAR_COMMIT "unknown"
+#endif
+    if(wrank == 0) printf("KETJU: MSTAR commit %s on Kokkos %s (host %s), regions below %d bodies on the host engine\n",
+                          KETJU_MSTAR_COMMIT, mstar::execution_space_name(), mstar::host_execution_space_name(), KETJU_KOKKOS_DEVICE_MIN_N);
 #ifdef KETJU_MSTAR_MPI
     if(!mstar::mpi_enabled()) kj_abort("KETJU_MSTAR_MPI needs an MSTAR install built with MSTAR_ENABLE_MPI (KETJU_PATH)", 7813);
     if(wrank == 0) printf("KETJU: regions of %d or more bodies are integrated by all their compute tasks (MSTAR MPI sharing)\n", KETJU_MSTAR_MPI_MIN_N);

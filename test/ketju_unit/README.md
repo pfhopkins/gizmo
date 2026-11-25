@@ -1,16 +1,16 @@
 # KETJU integrator unit tests
 
 Tests of github.com/Ulli1991/ketju-integrator, which GIZMO uses as a separate install (scripts/get_stella_deps.sh), from a
-source checkout given by the environment variable `KETJU_SOURCE_DIR` (branch `main` at the Makefile's `KETJU_REF`, the
+source checkout given by the environment variable `KETJU_SOURCE_DIR` (branch `main`, whose latest commit GIZMO installs; the
 C++/Kokkos MSTAR library). Without it the test is skipped. No GIZMO build or simulation is involved.
 
 KETJU in GIZMO uses the C++/Kokkos MSTAR only. The former C library (`KETJU_LEGACY_C_LIBRARY`, removed) is not built or
-tested here; GIZMO still reads its header `ketju_integrator/ketju_integrator.h` (pin `KETJU_C_REF`) as its data model.
+tested here; GIZMO still reads its header `ketju_integrator/ketju_integrator.h`, which `main` carries, as its data model.
 
 ## What runs
 
 `test_ketju_kokkos_ctests` builds `KETJU_SOURCE_DIR` (Kokkos from `KOKKOS_ROOT` or the Makefile default; build directory
-in a pytest temporary directory) and runs its 5 ctests:
+in a pytest temporary directory) and runs its ctests. All that exist must pass; these five are required:
 - `mstar_unit_tests`: KETJU's unit tests and the GIZMO-addition and softening-kink cases below on `mstar::mstar`;
 - `mstar_compare_c`: against stored results of the former C library (frozen numbers in `tests/reference_data`: Kepler,
   Pythagorean, Plummer cores, PN binary and cusp, BH mergers, contact collisions, tide, softening);

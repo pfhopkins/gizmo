@@ -1086,33 +1086,37 @@ endif
 # Stella stellar + SGCHEM tables are an installed dependency, not built or fetched by make: install them once with
 # scripts/get_stella_tables.sh (or `make stella_tables`) and give their location by StellarTablesFile / SGCHEMTablesDir.
 
-# KETJU regularized integrator for BH and stellar dynamics.  MSTAR (ketju-integrator: the C++/Kokkos library) and the
-# ketju-integrator-c headers (GIZMO's data model; the C library is not used) are a separate install found at KETJU_PATH, not part
-# of this repository and never fetched by make (https://github.com/pfhopkins/gizmo/issues/112).  Default: the install of
-# scripts/get_stella_deps.sh under $(STELLA_DEPS_PREFIX) (~/.stella-deps), keyed by the pins below and the Kokkos install;
-# set KETJU_PATH (environment, Makefile.systype block or make line) to use another.
+# KETJU regularized integrator for BH and stellar dynamics.  MSTAR (ketju-integrator: the C++/Kokkos library, with its C
+# interface header, GIZMO's data model) is a separate install found at KETJU_PATH, not part of this repository and never
+# fetched by make (https://github.com/pfhopkins/gizmo/issues/112).  There is no pinned commit: scripts/get_stella_deps.sh
+# installs the latest commit of branch $(KETJU_BRANCH) under $(STELLA_DEPS_PREFIX) (~/.stella-deps), in a directory named
+# by the branch and the Kokkos install, and records the commit in ketju.stamp there (--update moves it to the newest);
+# make and the run log print that commit.  Set KETJU_PATH (environment, Makefile.systype block or make line) to use another.
 ifeq (KETJU_REGULARIZATION,$(findstring KETJU_REGULARIZATION,$(CONFIGVARS)))
-# pins: MSTAR (branch main) and the C headers (branch ketju-c)
-KETJU_REPO  = https://github.com/Ulli1991/ketju-integrator.git
-KETJU_REF   = 3274ee705a2b4fa6dc4a99501bbcc3f84da825a4
-KETJU_C_REF = e70b815a23ee03a666636d18c51e222cada3309a
+KETJU_REPO   ?= https://github.com/Ulli1991/ketju-integrator.git
+KETJU_BRANCH ?= main
 KOKKOS_ROOT ?= $(error KETJU_REGULARIZATION: set KOKKOS_ROOT to a Kokkos install, e.g. make KOKKOS_ROOT=<prefix>)
 KOKKOS_LIBS ?= -L$(KOKKOS_ROOT)/lib64 -L$(KOKKOS_ROOT)/lib -lkokkoscontainers -lkokkoscore -ldl -fopenmp
 STELLA_DEPS_PREFIX ?= $(HOME)/.stella-deps
 ifeq ($(strip $(KETJU_PATH)),)
-KETJU_PATH := $(STELLA_DEPS_PREFIX)/ketju-$(shell echo $(KETJU_REF) | cut -c1-7)-$(shell echo $(KETJU_C_REF) | cut -c1-7)-kokkos-$(shell printf '%s' '$(KOKKOS_ROOT)' | cksum | cut -d' ' -f1)
+KETJU_PATH := $(STELLA_DEPS_PREFIX)/ketju-$(KETJU_BRANCH)-kokkos-$(shell printf '%s' '$(KOKKOS_ROOT)' | cksum | cut -d' ' -f1)
 endif
 KETJU_OK = $(and $(wildcard $(KETJU_PATH)/include/mstar/mstar.hpp),$(wildcard $(KETJU_PATH)/include/ketju_integrator/ketju_integrator.h),$(wildcard $(KETJU_PATH)/lib/libmstar.a $(KETJU_PATH)/lib64/libmstar.a))
+# the MSTAR commit of the install (ketju.stamp of scripts/get_stella_deps.sh; an install of your own has none)
+KETJU_COMMIT := $(shell sed -n 's/^commit: //p' $(KETJU_PATH)/ketju.stamp 2> /dev/null | head -1)
 OBJS    += galaxy_sf/ketju_coupling.o galaxy_sf/stella_star_mergers.o
 ifeq ($(MAKECMDGOALS),ketju-path)
 # the setup script asks make where KETJU goes and which compiler and Kokkos to build it with
 ketju-path:
-	@echo "KETJU_PATH='$(KETJU_PATH)'"; echo "KETJU_REPO='$(KETJU_REPO)'"; echo "KETJU_REF='$(KETJU_REF)'"; echo "KETJU_C_REF='$(KETJU_C_REF)'"
+	@echo "KETJU_PATH='$(KETJU_PATH)'"; echo "KETJU_REPO='$(KETJU_REPO)'"; echo "KETJU_BRANCH='$(KETJU_BRANCH)'"; echo "KETJU_COMMIT='$(KETJU_COMMIT)'"
 	@echo "KETJU_KOKKOS='$(KOKKOS_ROOT)'"; echo "KETJU_CXX='$(firstword $(CXX))'"; echo "KETJU_OK='$(if $(KETJU_OK),1,0)'"
 else
 $(if $(KETJU_OK),,$(error KETJU: no install (include/mstar/mstar.hpp, include/ketju_integrator/ketju_integrator.h, lib/libmstar.a) at KETJU_PATH=$(KETJU_PATH); run scripts/get_stella_deps.sh))
+ifeq ($(MAKELEVEL),0)
+$(info KETJU: MSTAR commit $(if $(KETJU_COMMIT),$(KETJU_COMMIT),unknown (no ketju.stamp)) from $(KETJU_PATH))
 endif
-KETJU_INCL = -I$(KETJU_PATH)/include
+endif
+KETJU_INCL = -I$(KETJU_PATH)/include -DKETJU_MSTAR_COMMIT='"$(if $(KETJU_COMMIT),$(KETJU_COMMIT),unknown)"'
 # the C++/Kokkos MSTAR library mstar::mstar; the C structs of ketju_integrator.h stay GIZMO's data model
 OBJS    += galaxy_sf/ketju_mstar_kokkos.o
 KETJU_LIBS = -L$(KETJU_PATH)/lib -L$(KETJU_PATH)/lib64 -lmstar $(KOKKOS_LIBS) -lstdc++
