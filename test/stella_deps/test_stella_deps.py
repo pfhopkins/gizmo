@@ -19,7 +19,6 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 SETUP = ROOT / "scripts" / "get_stella_deps.sh"
 REF = re.search(r'#define STELLA_TABLES_REF "([0-9a-f]+)"', (ROOT / "src/galaxy_sf/stella_tables_check.h").read_text()).group(1)
 SUNDIALS = re.search(r"^SUNDIALS_VERSION *= *(\S+)", (ROOT / "src/Makefile").read_text(), re.M).group(1)
-KETJU_REF = re.search(r"^KETJU_REF *= *([0-9a-f]+)", (ROOT / "src/gravity/ketju/Makefile.ketju").read_text(), re.M)
 
 
 def online():
@@ -66,9 +65,8 @@ def ketju_path(*args, **kw):
 
 
 def test_ketju_path_default(tmp_path):
-    assert KETJU_REF, "KETJU_REF pin missing in Makefile.ketju"
     v = ketju_path(STELLA_DEPS_PREFIX=tmp_path)
-    assert v["KETJU_PATH"].startswith(f"{tmp_path}/ketju-{KETJU_REF.group(1)[:7]}-{v['KETJU_C_REF'][:7]}-kokkos-")
+    assert v["KETJU_BRANCH"] == "main" and v["KETJU_PATH"].startswith(f"{tmp_path}/ketju-main-kokkos-")   # no pinned commit
     assert v["KETJU_KOKKOS"] and v["KETJU_OK"] == "0"
     other = ketju_path(f"KOKKOS_PATH={tmp_path}/another_kokkos", STELLA_DEPS_PREFIX=tmp_path)
     assert other["KETJU_PATH"] != v["KETJU_PATH"]   # keyed by the Kokkos install

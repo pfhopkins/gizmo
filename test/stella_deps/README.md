@@ -7,7 +7,7 @@ Checks (`test_stella_deps.py`):
 1. clean HOME: the setup installs the release `tables-<ref>` of the pinned stella-tables commit into
    `~/.stella-deps/tables-<ref>`, hash-checked, and SUNDIALS (`sundials-<version>`, pinned in `src/Makefile`); the stamp
    holds no machine-local path; a rerun downloads and builds nothing (< 30 s);
-2. `make ketju-path` reports the KETJU install `make` will use: `$STELLA_DEPS_PREFIX/ketju-<mstar>-<c headers>-kokkos-<key>`,
+2. `make ketju-path` reports the KETJU install `make` will use: `$STELLA_DEPS_PREFIX/ketju-main-kokkos-<key>` (the latest commit of branch main, no pin),
    different for another Kokkos install; an explicit `KETJU_PATH` wins;
 3. a KETJU build without the install stops in `make` with "run scripts/get_stella_deps.sh --ketju", an SGChem build
    without SUNDIALS with "run scripts/get_stella_deps.sh";

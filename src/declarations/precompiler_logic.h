@@ -2667,6 +2667,9 @@
 #if defined(GALSF_SINGLE_STARS_BH_PROMOTION) && !defined(SINK_PARTICLES)
 #error "GALSF_SINGLE_STARS_BH_PROMOTION needs the sink framework: switch on SINK_PARTICLES (and SINK_GRAVCAPTURE_GAS)"
 #endif
+#if defined(KETJU_MSTAR_MPI) && !defined(KETJU_REGULARIZATION)
+#error "KETJU_MSTAR_MPI requires KETJU_REGULARIZATION"
+#endif
 #ifdef KETJU_LEGACY_C_LIBRARY
 #error "KETJU_LEGACY_C_LIBRARY was removed: KETJU uses the Kokkos MSTAR (mstar::mstar)"
 #endif
