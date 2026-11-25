@@ -144,6 +144,21 @@ struct gx_walk_policy_has_node_hook<Policy, std::void_t<decltype(Policy::has_nod
 template <class Policy>
 constexpr bool gx_walk_policy_has_node_hook_v = gx_walk_policy_has_node_hook<Policy>::value;
 
+/* A policy whose opening reach depends on the node.  A symmetric search accepts a pair on the neighbour's
+ * radius as well as the query's, so a node must open on the larger of the query's reach and the largest
+ * neighbour reach below it -- the host walker's per-type band (mode_b_local_walker.cc, R_open).  A policy
+ * declaring `has_node_reach` supplies that reach:
+ *     double node_reach(int kn, double reach, double qx, double qy, double qz, double cx, double cy, double cz, double len)
+ * (`reach` is the query's, (cx, cy, cz) and `len` the node's centre and side as the walk opens it).  It only
+ * widens what opens; the leaf decision stays the policy's. */
+template <class Policy, class = void>
+struct gx_walk_policy_has_node_reach : std::false_type {};
+template <class Policy>
+struct gx_walk_policy_has_node_reach<Policy, std::void_t<decltype(Policy::has_node_reach)>>
+    : std::integral_constant<bool, Policy::has_node_reach> {};
+template <class Policy>
+constexpr bool gx_walk_policy_has_node_reach_v = gx_walk_policy_has_node_reach<Policy>::value;
+
 /* Walk one query against the local tree.
  *
  * `anomaly` reports the single state the host walk treats as fatal, an index in
@@ -244,11 +259,16 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
                     }
                 }
                 const double hw = 0.5 * len_eff;
+                double reach_open = reach;
+                if constexpr (gx_walk_policy_has_node_reach_v<LeafPolicy>) {
+                    reach_open = leaf_policy.node_reach(kn, reach, qx, qy, qz, (double)tree.node_center[kn][0],
+                                                        (double)tree.node_center[kn][1], (double)tree.node_center[kn][2], len_eff);
+                }
                 int do_open =
                     gx_extended_overlap_wrap_and_test((double)tree.node_center[kn][0] - qx,
                                                       (double)tree.node_center[kn][1] - qy,
                                                       (double)tree.node_center[kn][2] - qz,
-                                                      hw, hw, hw, reach);
+                                                      hw, hw, hw, reach_open);
                 /* TYPE PRUNE.  A node holding none of the types this loop consumes has nothing for
                  * it however close it is, so it is skipped whole rather than descended to have
                  * every leaf rejected one at a time.  The same test the leaf already applies,

@@ -44,6 +44,8 @@ void source_reach_map_gate_fill(long long *vote, double t_discovery, int stopped
  * -1 = do not probe (a map exists, none could be built now, or one already proved not worth it).  Rank-local value, rank-uniform sign. */
 double source_reach_map_cold_budget(void);
 void source_reach_map_gate_apply(const long long *vote_all, int symmetric);
+/* 1 while a built map routes symmetric exports (source_reach_map_verdict can answer), else 0. */
+int  source_reach_map_is_valid(void);
 /* Bring the map to the current time; outside parallel regions, before a walk that uses it. */
 void source_reach_map_prepare(void);
 

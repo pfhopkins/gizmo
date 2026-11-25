@@ -50,7 +50,7 @@
  *   h_q             query search radius
  *   h_j             neighbour supply radius (ignored for ONEWAY)
  *   search_mode     NGB_SEARCH_ONEWAY or NGB_SEARCH_SYMMETRIC */
-GX_EXCHANGE_INLINE
+static GX_EXCHANGE_INLINE   /* each unit keeps its own copy, built with that unit's floating-point flags */
 int gx_pair_accept_wrap_and_test(double dx0, double dy0, double dz0,
                                  double h_q, double h_j, int search_mode)
 {

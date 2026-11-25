@@ -2960,6 +2960,7 @@ void gizmo_kokkos_finalize(void)
 #endif
     gx_touched_set_release();
     gx_mode_d_staging_release();
+    gx_discovery_buffers_release();
     nlr_mode_d_packet_workspace_release();
     nlr_staging_release();
     gx_top_leaf_map_release();

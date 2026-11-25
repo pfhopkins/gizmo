@@ -39,6 +39,11 @@
  * docstring there for the full audit table + per-Spec policy assignments. */
 #include "nlr_radius_policy.h"
 
+/* The radius at which a SYMMETRIC search opens tree node `no`: the largest per-type band over the types in
+ * type_mask (Extnodes[no].hmax_per_type), times the walk's j-side scale.  The host walker opens on it and the
+ * device ghost-discovery walks stage it per node, so both open the same nodes. */
+double mode_b_node_symmetric_radius(int no, unsigned int type_mask, double j_reach_scale);
+
 /* Returns the per-j symmetric radius to use under the given policy.
  * Returns 0 when SYMMETRIC should degenerate to ONEWAY for this j's type. */
 double mode_b_neighbor_symmetric_radius(int j, mode_b_radius_policy_t policy);

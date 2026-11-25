@@ -468,6 +468,8 @@ void source_reach_map_gate_apply(const long long *a, int symmetric)
     }
 }
 
+int source_reach_map_is_valid(void) {return g_valid ? 1 : 0;}
+
 void source_reach_map_prepare(void)
 {
     if(!g_valid || g_now_ti == All.Ti_Current) {return;}
