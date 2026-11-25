@@ -1131,7 +1131,7 @@ void compute_global_quantities_of_system(void);
 void star_formation_parent_routine(void);
 int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned);
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
-double single_stars_collect_gas(long long tot_spawned);
+double single_stars_collect_gas(long long tot_spawned, long long tot_awaiting_gas_collection);
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
 void recent_sfr_young_mass_add(double t_birth, double dm);
 double sgchem_recent_sfr_g0(void);

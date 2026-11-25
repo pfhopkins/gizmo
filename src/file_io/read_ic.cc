@@ -2347,6 +2347,11 @@ int read_header_attributes_in_hdf5(char *fname)
         hdf5_attribute = H5Aopen_name(hdf5_headergrp, "Maximum_Mass_For_Cell_Split"); /* open it */
         H5Aread(hdf5_attribute, H5T_NATIVE_DOUBLE, &All.MaxMassForParticleSplit); H5Aclose(hdf5_attribute);} /* read it and close */
 
+#ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
+    if(RestartFlag >= 2 && H5Aexists(hdf5_headergrp, "StarFormationHasSetIn") > 0) { /* on the tasks that read a file; init() makes it the same on all. Absent in older snapshots */
+        hdf5_attribute = H5Aopen_name(hdf5_headergrp, "StarFormationHasSetIn");
+        H5Aread(hdf5_attribute, H5T_NATIVE_INT, &All.StarFormationHasSetIn); H5Aclose(hdf5_attribute);}
+#endif
     H5Gclose(hdf5_headergrp);
     H5Fclose(hdf5_file);
 #if H5_VERSION_GE(1,8,0) && !defined(H5_USE_16_API)

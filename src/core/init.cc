@@ -614,8 +614,8 @@ void init(void)
     MPI_Allreduce(&count_holes, &All.TotSinks, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 #endif
 #ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
-    {   /* stars or sinks in the initial conditions or the snapshot: star formation has set in before this start */
-        int n_stars = 0; for(i = 0; i < NumPart; i++) {if(P[i].Type == 4 || P[i].Type == 5) {n_stars = 1; break;}}
+    {   /* stars or sinks in the initial conditions or the snapshot, or the snapshot header says so (HDF5; the stars may all be gone again): star formation has set in before this start */
+        int n_stars = (RestartFlag >= 2 && All.StarFormationHasSetIn) ? 1 : 0; for(i = 0; i < NumPart && !n_stars; i++) {if(P[i].Type == 4 || P[i].Type == 5) {n_stars = 1;}}
         MPI_Allreduce(&n_stars, &All.StarFormationHasSetIn, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
 #endif
