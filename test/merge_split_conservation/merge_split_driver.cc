@@ -86,6 +86,9 @@ static void make_gas(int i, double x, double y, double z, double mass, double X_
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
     for(int k = 0; k < NUM_METAL_SPECIES + NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION; k++) {CellP[i].Dyield_pending[k] = 1e-3 * mass * (k % 2 ? -1. : 1.) * (1. + seed + 0.1 * k);}
 #endif
+#if defined(GALSF_RESOLVEDISM_FB)
+    for(int k = 0; k < 4; k++) {CellP[i].MetalMassFrom[k] = 0.05 * (k + 1) * Z_met * (1. + 0.7 * seed);} /* metal mass by channel per unit cell mass, different in every cell */
+#endif
 #if defined(GALSF_RESOLVEDISM_DUST)
     for(int k = 0; k < NUM_RESOLVEDISM_DUST; k++) {CellP[i].Dust[k] = 1e-3 * (k + 1) * (1. + seed);}
 #endif
@@ -122,7 +125,7 @@ static const int NPEND = NUM_METAL_SPECIES + NUM_ADDITIONAL_PASSIVESCALAR_SPECIE
 static const int NPEND = 0;
 #endif
 
-struct Totals {double M = 0, p[3] = {0, 0, 0}, B[3] = {0, 0, 0}, E_sink = 0, H2 = 0, CO = 0; std::vector<double> MZ, pend, dust;};
+struct Totals {double M = 0, p[3] = {0, 0, 0}, B[3] = {0, 0, 0}, E_sink = 0, H2 = 0, CO = 0; std::vector<double> MZ, pend, dust, origin;};
 
 static Totals totals(int n)
 {
@@ -143,6 +146,10 @@ static Totals totals(int n)
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST)
         for(int k = 0; k < NUM_RESOLVEDISM_DUST; k++) {t.dust[k] += P[i].Mass * CellP[i].Dust[k];}
+#endif
+#if defined(GALSF_RESOLVEDISM_FB)
+        if(t.origin.empty()) {t.origin.assign(4, 0.);}
+        for(int k = 0; k < 4; k++) {t.origin[k] += P[i].Mass * CellP[i].MetalMassFrom[k];}
 #endif
 #ifdef MAGNETIC
         for(int k = 0; k < 3; k++) {t.B[k] += CellP[i].B[k];}
@@ -169,6 +176,7 @@ static void check_totals(const char *what, const Totals &a, const Totals &b)
     double pend_scale = 0; for(int k = 0; k < NPEND; k++) {pend_scale += fabs(a.pend[k]);}
     for(int k = 0; k < NPEND; k++) {snprintf(name, sizeof(name), "%s:pending_metal_exchange[%d]", what, k); check_rel(name, b.pend[k], a.pend[k], pend_scale);}
     for(size_t k = 0; k < a.dust.size(); k++) {snprintf(name, sizeof(name), "%s:dust_mass[%zu]", what, k); check_rel(name, b.dust[k], a.dust[k], a.dust[k]);}
+    for(size_t k = 0; k < a.origin.size(); k++) {snprintf(name, sizeof(name), "%s:metal_origin_mass[%zu]", what, k); check_rel(name, b.origin[k], a.origin[k], a.origin[k]);} /* STL-336 */
 #ifdef MAGNETIC
     double bscale = fabs(a.B[0]) + fabs(a.B[1]) + fabs(a.B[2]);
     for(int k = 0; k < 3; k++) {snprintf(name, sizeof(name), "%s:B_conserved[%d]", what, k); check_rel(name, b.B[k], a.B[k], bscale);}
