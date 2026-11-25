@@ -44,8 +44,8 @@ KOKKOS_INLINE_FUNCTION Vec3<double> Vphys(const Vec3<double> &vcoord, const stru
 KOKKOS_INLINE_FUNCTION Vec3<double> Vcoord(const Vec3<double> &vphys, const struct gr_metric *gr) {return gr->alpha*vphys - gr->beta;}
 
 /* ------------------------------------------------------------------ metric */
-/* the point the metric is centred on: the origin, or the box centre if the box is periodic. In 1D and 2D the unused coordinates are those
-   of the line or plane of the cells (zero, or the half box with SHIFT_BY_HALF_BOX, init.cc), so that the hole lies on it */
+/* the point the metric is centred on: the origin, or the box centre if the box is periodic. In 1D and 2D the unused coordinates are zero, as
+   those of the cells always are, so that the hole lies on their line or plane */
 KOKKOS_INLINE_FUNCTION Vec3<double> gr_metric_origin(void)
 {
     Vec3<double> c = {0, 0, 0};
@@ -55,14 +55,6 @@ KOKKOS_INLINE_FUNCTION Vec3<double> gr_metric_origin(void)
     c[1] = boxHalf_Y;
 #endif
 #if (NUMDIMS>2)
-    c[2] = boxHalf_Z;
-#endif
-#endif
-#ifdef SHIFT_BY_HALF_BOX
-#if (NUMDIMS<2)
-    c[1] = boxHalf_Y;
-#endif
-#if (NUMDIMS<3)
     c[2] = boxHalf_Z;
 #endif
 #endif
