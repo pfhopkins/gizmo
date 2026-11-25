@@ -375,6 +375,7 @@ def _make_with_ketju(flags: str, ketju_path: Path, timeout: int) -> subprocess.C
     _make_clean(gizmo_root)
     result = subprocess.run(["make", f"-j{os.cpu_count() or 4}"], cwd=gizmo_root, capture_output=True, text=True,
                             timeout=timeout, env=dict(os.environ, KETJU_PATH=str(ketju_path)))
+    result.built = (gizmo_root / "GIZMO").is_file()  # before the clean-up removes it
     _make_clean(gizmo_root)
     return result
 
@@ -386,12 +387,12 @@ def test_ketju_builds_without_c_library(tmp_path):
     flags = [line.split("%")[0].strip() for line in lines]
     flags = [f for f in flags if f and not f.startswith("#")] + ["KETJU_REGULARIZATION", "KETJU_MERGE_STARS"]
     result = _make_with_ketju(" ".join(flags), ketju_path, 3000)
-    assert result.returncode == 0, "Stella default + KETJU did not build without the C library:\n" + (result.stderr or "")[-3000:]
+    assert result.returncode == 0 and result.built, "Stella default + KETJU did not build without the C library:\n" + (result.stderr or "")[-3000:]
 
 
 def test_ketju_legacy_c_library_is_a_build_error(tmp_path):
     """KETJU_LEGACY_C_LIBRARY with KETJU on stops at the preprocessor with the removal message."""
     ketju_path = _ketju_install_without_c_library(tmp_path)
     result = _make_with_ketju("KETJU_REGULARIZATION KETJU_LEGACY_C_LIBRARY", ketju_path, 600)
-    assert result.returncode != 0, "build unexpectedly succeeded with KETJU_LEGACY_C_LIBRARY"
+    assert result.returncode != 0 and not result.built, "build unexpectedly succeeded with KETJU_LEGACY_C_LIBRARY"
     assert "KETJU_LEGACY_C_LIBRARY was removed" in (result.stderr or ""), "no removal #error:\n" + (result.stderr or "")[-2000:]
