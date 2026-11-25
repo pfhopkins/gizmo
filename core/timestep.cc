@@ -416,6 +416,18 @@ void find_timesteps(void)
 #ifdef WAKEUP
     process_wake_ups();
 #endif
+#ifdef TEST_WAKEUP_DUMP
+    { /* test output: kinetic (all types) + gas thermal energy after this step's kicks and wake kicks */
+        double e_loc = 0, e_glob = 0;
+        for(int ie = 0; ie < NumPart; ie++) {
+            if(P[ie].Mass <= 0) {continue;}
+            e_loc += 0.5 * P[ie].Mass * P[ie].Vel.norm_sq() * All.cf_a2inv;
+            if(P[ie].Type == 0) {e_loc += P[ie].Mass * CellP[ie].InternalEnergy;}
+        }
+        MPI_Allreduce(&e_loc, &e_glob, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0) {printf("TEST_WAKEUP_DUMP energy step %lld t %.17e E %.17e\n", (long long) All.NumCurrentTiStep, All.Time, e_glob);}
+    }
+#endif
 
     CPU_Step[CPU_TIMELINE] += measure_time();
 }
@@ -1668,6 +1680,9 @@ void process_wake_ups(void)
 		P[i].TimeBin = bin;
         if(TimeBinActive[bin]) {NumForceUpdate++;}
 		n++;
+#ifdef TEST_WAKEUP_DUMP
+		printf("TEST_WAKEUP_DUMP woken step %lld ID %llu from %d to %d wakeup %d\n", (long long) All.NumCurrentTiStep, (unsigned long long) P[i].ID, binold, bin, (int) P[i].wakeup);
+#endif
 
 		/* reverse part of the last second-half kick this particle received
 		   (to correct it back to its new active time) */
