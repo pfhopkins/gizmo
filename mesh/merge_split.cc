@@ -1371,6 +1371,9 @@ int merge_particles_ij(int i, int j)
     double X_H_i_premerge = DMAX(particle_hydrogen_massfrac(i), 1e-10), X_H_j_premerge = DMAX(particle_hydrogen_massfrac(j), 1e-10); /* before j's metallicity is overwritten */
 #endif
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving */
+#ifdef GALSF_RESOLVEDISM_FB
+    for(k=0;k<4;k++) {CellP[j].MetalMassFrom[k] = wt_j*CellP[j].MetalMassFrom[k] + wt_i*CellP[i].MetalMassFrom[k];} /* metal mass by channel per unit cell mass: mass-weighted like Z */
+#endif
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
     for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] += CellP[i].Dyield_pending[k];} /* pending exchange adds */
 #endif
