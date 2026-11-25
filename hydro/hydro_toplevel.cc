@@ -792,7 +792,11 @@ static void td_apply_and_clear(void)
                 if(k >= NUM_METAL_SPECIES) {x = CellP[i].Dust[k-NUM_METAL_SPECIES] + CellP[i].Dyield[k] / P[i].Mass;} else
 #endif
                 {x = P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass;}
-                if(x < 0) {fired = 1; floor_mass -= x * P[i].Mass; x = 0;} /* never by the pair bound; counted */
+                if(x < 0) { /* never by the pair bound; counted */
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+                    printf("DIFFFLOORCELL t=%.17e id=%llu k=%d x_new=%.17e dy=%.17e m=%.17e pairs=%d evals=%d\n", All.Time, (unsigned long long)P[i].ID, k, x, CellP[i].Dyield[k], P[i].Mass, CellP[i].TD_NumPairs, CellP[i].TD_NumEvals);
+#endif
+                    fired = 1; floor_mass -= x * P[i].Mass; x = 0;}
 #if defined(GALSF_RESOLVEDISM_DUST)
                 if(k >= NUM_METAL_SPECIES) {CellP[i].Dust[k-NUM_METAL_SPECIES] = x;} else
 #endif
