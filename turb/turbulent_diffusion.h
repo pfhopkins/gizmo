@@ -18,11 +18,23 @@
 /* --------------------------------------------------------------------------------- */
 {
 #ifdef TURB_DIFF_METALS // turbulent diffusion of metals (passive scalar mixing) //
-        
+    double td_share = 1, dt_td = dt_hydrostep; /* share of the pair exchange this evaluation books, and the step it is computed over */
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    /* pair owner (STL-277): with j inactive i owns the pair; both active: the single HYDRO_PAIR_ONCE evaluation owns it, otherwise
+       the shorter step, equal steps half each. The owner computes the exchange over its own step and books it to both cells. */
+    if(P[j].KernelRadius <= 0 || local.KernelRadius <= 0) {td_share = 0;} /* the gradient pass does not count such a cell */
+    else if(TimeBinActive[P[j].TimeBin]) {
+#ifndef HYDRO_PAIR_ONCE
+        if(dt_hydrostep_i > dt_hydrostep_j) {td_share = 0;} else if(dt_hydrostep_i == dt_hydrostep_j) {td_share = 0.5;}
+#endif
+    }
+    dt_td = dt_hydrostep_i;
+#endif
+
 #ifdef RESOLVED_ISM_FB_AFTER_CLOSING_KICK
     if(!HydroPassRepeatsStep) /* exchange applied directly to Metallicity: not again in the feedback recompute */
 #endif
-    if((local.Mass>0)&&(P[j].Mass>0)&&((local.TD_DiffCoeff>MIN_REAL_NUMBER)||(CellP[j].TD_DiffCoeff>MIN_REAL_NUMBER)))
+    if((td_share>0)&&(local.Mass>0)&&(P[j].Mass>0)&&((local.TD_DiffCoeff>MIN_REAL_NUMBER)||(CellP[j].TD_DiffCoeff>MIN_REAL_NUMBER)))
     {
         double wt_i=0.5, wt_j=0.5, cmag, d_scalar;
         double diffusion_wt = wt_i*local.TD_DiffCoeff + wt_j*CellP[j].TD_DiffCoeff; // physical
@@ -32,12 +44,18 @@
         diffusion_wt *= 0.5*(Riemann_vec.L.rho + Riemann_vec.R.rho)*All.cf_a3inv; // physical; reconstructed face densities averaged, same from either side
 #endif
         /* calculate implied mass flux 'across the boundary' to prevent excessively large coefficients */
-        double massflux = fabs( Face_Area_Norm * diffusion_wt / (DMIN(kernel.h_i,kernel.h_j)*All.cf_atime) * dt_hydrostep / (DMIN(local.Mass,P[j].Mass)) );
+        double massflux = fabs( Face_Area_Norm * diffusion_wt / (DMIN(kernel.h_i,kernel.h_j)*All.cf_atime) * dt_td / (DMIN(local.Mass,P[j].Mass)) );
         if(massflux > 0.25) {diffusion_wt *= 0.25/massflux;}
         
         int k_species;
         double rho_i = local.Density*All.cf_a3inv, rho_j = CellP[j].Density*All.cf_a3inv, rho_ij = 0.5*(rho_i+rho_j); // physical
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+        double td_amt[TD_NUM_EXCHANGED]; {int kb; for(kb=0;kb<TD_NUM_EXCHANGED;kb++) {td_amt[kb]=0;}} /* exchange into i, closed and bounded after the loop */
+        const int td_nk = TD_NUM_EXCHANGED; /* SGChem tracer slots are not diffused (never applied with METALS_INDIVIDUAL) */
+#else
+        const int td_nk = NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;
+#endif
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE)
         /* Buffer the 28 Metallicity-slot fluxes: each slot passes through several
          * INDEPENDENT nonlinear limiters below (MINMODs, overshoot-zeroing, zlim,
          * pair cap), so Σ slot-fluxes ≠ 0 and slot0-flux ≠ Σ metal-fluxes at sharp
@@ -46,7 +64,7 @@
          * conservation holds.  We close the system after the loop. */
         double cmag_slotbuf[NUM_METAL_SPECIES]; {int kb; for(kb=0;kb<NUM_METAL_SPECIES;kb++) {cmag_slotbuf[kb]=0;}}
 #endif
-        for(k_species=0;k_species<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k_species++)
+        for(k_species=0;k_species<td_nk;k_species++)
         {
             cmag = 0.0; double grad_dot_x_ij = 0.0; double Z_j = 0;
             if(k_species < NUM_METAL_SPECIES) {Z_j = P[j].Metallicity[k_species];}
@@ -78,14 +96,17 @@
             double f_direct = Face_Area_Norm*d_scalar*rinv/All.cf_atime; // physical
             if((f_direct*cmag < 0) && (fabs(f_direct) > HLL_DIFFUSION_OVERSHOOT_FACTOR*fabs(cmag))) {cmag = 0;}
             
-            cmag *= -diffusion_wt * dt_hydrostep; // physical
+            cmag *= -diffusion_wt * dt_td; // physical
             if(fabs(cmag) > 0)
             {
                 double zlim = 0.25 * DMIN( DMIN(local.Mass,P[j].Mass)*fabs(d_scalar) , DMAX(local.Mass*local.Metallicity[k_species] , P[j].Mass*Z_j) );
                 if(fabs(cmag)>zlim) {cmag*=zlim/fabs(cmag);}
 #ifndef HYDRO_SPH
-                double dmet = (Z_j-local.Metallicity[k_species]) * fabs(mdot_estimated) * dt_hydrostep;
+                double dmet = (Z_j-local.Metallicity[k_species]) * fabs(mdot_estimated) * dt_td;
                 cmag = MINMOD(dmet,cmag); // limiter based on mass exchange from MFV HLLC solver //
+#endif
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+                td_amt[k_species] = cmag; continue; /* booked after the loop */
 #endif
 #ifdef GALSF_RESOLVEDISM
                 /* symmetric per-pair donor cap: the donor loses at most 1% of its element-k mass per pair */
@@ -109,7 +130,58 @@
 #endif
             }
         }
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+        {
+            int kk;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+            /* 28-slot closure: the residual of slots 1..27 shared in proportion to |amount| (a slot without exchange takes none), slot 0 =
+               sum of the metal slots, so every cell keeps sum X = 1 and Z = sum of its metals */
+            double resid = 0, sabs = 0, sum_metal = 0;
+            for(kk = 1; kk < NUM_METAL_SPECIES; kk++) {resid += td_amt[kk]; sabs += fabs(td_amt[kk]);}
+            if(sabs > 0) {for(kk = 1; kk < NUM_METAL_SPECIES; kk++) {td_amt[kk] -= resid * fabs(td_amt[kk]) / sabs;}}
+            for(kk = 3; kk < NUM_METAL_SPECIES; kk++) {sum_metal += td_amt[kk];}
+            td_amt[0] = sum_metal;
+#endif
+            /* debit bound: one factor on the whole pair; a cell gives at most its holding / N per evaluation, N = evaluations that can touch it
+               this pass (counted in the gradient pass), so no slot of any cell is overdrawn when the pass is applied */
+            double td_s = 1;
+            for(kk = 0; kk < TD_NUM_EXCHANGED; kk++) {
+                double a = td_share * td_amt[kk], hold, nd;
+                if(a == 0) {continue;}
+                if(a > 0) { /* j gives */
+#if defined(GALSF_RESOLVEDISM_DUST)
+                    if(kk >= NUM_METAL_SPECIES) {hold = P[j].Mass * CellP[j].Dust[kk-NUM_METAL_SPECIES];} else
+#endif
+                    {hold = P[j].Mass * P[j].Metallicity[kk];}
+                    nd = CellP[j].TD_NumPairs;
+                } else {hold = local.Mass * local.Metallicity[kk]; nd = local.TD_NumPairs;} /* i gives */
+                double lim = (1 - 1e-12) * DMAX(hold, 0) / DMAX(nd, 1); /* margin for the sum's round-off */
+                if(fabs(a) * td_s > lim) {td_s = lim / fabs(a);}
+            }
+            for(kk = 0; kk < TD_NUM_EXCHANGED; kk++) {
+                double a = td_share * td_s * td_amt[kk];
+                if(a == 0) {continue;}
+                out.Dyield[kk] += a;
+                #pragma omp atomic
+                CellP[j].Dyield[kk] -= a;
+            }
+            #pragma omp atomic write
+            CellP[j].TD_Touched = 1;
+#ifdef OUTPUT_TURB_DIFF_METALS_BUDGET
+            #pragma omp atomic
+            TD_EvalsStep += 1;
+            if(td_s < 1) {
+                #pragma omp atomic
+                TD_ScaledStep += 1;}
+#endif
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+            out.TD_NumEvals += 1;
+            #pragma omp atomic
+            CellP[j].TD_NumEvals += 1;
+#endif
+        }
+#endif
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE)
         /* ---- Closure corrections (2026-07-04), RESOLVEDISM 28-slot layout only
          * ([0]=Ztot, [1]=H, [2]=He, [3..27]=metals; ΣMet[1..27]=1 convention):
          *   (I2) slot0 flux := Σ metal-slot fluxes  → Z0 ≡ Σmetals preserved

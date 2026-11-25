@@ -229,6 +229,13 @@ extern struct gas_cell_data
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     MyFloat Dyield[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
 #endif
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    int TD_NumPairs; /*!< exchange evaluations that can touch this cell in this hydro pass, counted in the gradient pass */
+    int TD_Touched; /*!< Dyield or TD_NumPairs written in this hydro pass */
+#ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
+    int TD_NumEvals; /*!< test: exchange evaluations booked to this cell in this hydro pass */
+#endif
+#endif
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
     MyDouble Dyield_pending[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION]; /*!< diffusive exchange received while inactive, applied at the next unpack */
 #endif

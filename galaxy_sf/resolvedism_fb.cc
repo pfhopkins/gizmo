@@ -523,7 +523,7 @@ void resolvedism_determine_SNe(void)
                 continue;
             }
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
-            if(All.TestIaTime > 0 && All.Time >= All.TestIaTime && P[i].ID >= 1 && P[i].ID <= (MyIDType)((All.TestNumStars > 0) ? All.TestNumStars : 1) && P[i].ID_generation == 0) {
+            if(All.TestIaTime > 0 && All.Time >= All.TestIaTime && resolvedism_is_forced_sn_test_star(i)) { /* same test-star key as the forced SNe (374ed5036) */
                 STELLA_FB_EVENT(P[i]) = 4; P[i].M_at_SN_trigger = (MyFloat)(P[i].Mass * UNIT_MASS_IN_SOLAR); n_ia_local++; /* test: forced Ia of a site WD */
                 continue;
             }

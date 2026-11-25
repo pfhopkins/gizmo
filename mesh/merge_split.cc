@@ -636,6 +636,9 @@ void merge_and_split_particles(void)
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
             {int kd_sp; for(kd_sp=0;kd_sp<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;kd_sp++) {CellP[j_sp].Dyield[kd_sp] = 0;}}
 #endif
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+            CellP[j_sp].TD_NumPairs = 0; CellP[j_sp].TD_Touched = 0; /* nothing booked to the new cell */
+#endif
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
             {int kd_sp; for(kd_sp=0;kd_sp<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;kd_sp++) {CellP[j_sp].Dyield_pending[kd_sp] = 0;}}
 #endif

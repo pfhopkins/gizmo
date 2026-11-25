@@ -2064,8 +2064,34 @@
 #define KETJU_SINKS /* Type-5 sinks (STARFORGE stars or BHs) carry KETJU spin and PN class */
 #endif
 
-#if defined(TURB_DIFF_METALS) && (defined(GALSF_RESOLVEDISM) || defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)) && !defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
-#define TURB_DIFF_METALS_EXACT_CONSERVATION /* Stella: element-slot closure and dust diffusion use the pending exchange */
+#if defined(TURB_DIFF_METALS) && (defined(GALSF_RESOLVEDISM) || defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)) && !defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE)
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE_OFF) || defined(HYDRO_MESHLESS_FINITE_VOLUME) || defined(HYDRO_SPH) || defined(GALSF_ISMDUSTCHEM_MODEL) || defined(TRANSPORT_SUBCYCLE) || (defined(SGCHEM) && !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL))
+#define TURB_DIFF_METALS_EXACT_CONSERVATION /* Stella opt-out, and builds the pairwise exchange does not cover (the #errors below): the pending-buffer booking, as before */
+#else
+#define METALS_EXACT_PAIRWISE_EXCHANGE /* Stella: every pair's metal exchange booked to both cells, exact with individual timesteps (STL-277) */
+#endif
+#endif
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
+#error "METALS_EXACT_PAIRWISE_EXCHANGE and TURB_DIFF_METALS_EXACT_CONSERVATION are two bookings of the same exchange: set one"
+#endif
+#if !defined(TURB_DIFF_METALS) || !defined(METALS)
+#error "METALS_EXACT_PAIRWISE_EXCHANGE needs METALS and TURB_DIFF_METALS"
+#endif
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME) || defined(HYDRO_SPH)
+#error "METALS_EXACT_PAIRWISE_EXCHANGE: MFM only (the MFV metal advection and SPH are not covered)"
+#endif
+#if defined(GALSF_ISMDUSTCHEM_MODEL) || defined(TRANSPORT_SUBCYCLE)
+#error "METALS_EXACT_PAIRWISE_EXCHANGE: not with GALSF_ISMDUSTCHEM_MODEL (its slots are not all per unit mass) or TRANSPORT_SUBCYCLE (reruns the pair body)"
+#endif
+#if defined(SGCHEM) && !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+#error "METALS_EXACT_PAIRWISE_EXCHANGE: the SGChem tracer slots are exchanged only with GALSF_RESOLVEDISM_METALS_INDIVIDUAL (where they are not diffused)"
+#endif
+#if defined(GALSF_RESOLVEDISM_DUST)
+#define TD_NUM_EXCHANGED (NUM_METAL_SPECIES+NUM_RESOLVEDISM_DUST) /* metal slots and resolved-ISM dust; SGChem tracer slots are not diffused */
+#else
+#define TD_NUM_EXCHANGED (NUM_METAL_SPECIES)
+#endif
 #endif
 /* gradient and hydro loops reuse the first gradient pass's local pair searches (mesh/ngb.cc); identical results, memory ~ 4 B per
    neighbour of every active cell. Off where something between those loops could change a search: NGB_PAIR_CACHE_OFF opts out */

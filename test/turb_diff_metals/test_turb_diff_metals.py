@@ -261,3 +261,93 @@ def test_turb_diff_metals_dynamic_fac_below_one_refused():
                  param_overrides={"TurbDynamicDiffFac": "0.5", "TurbDynamicDiffSmoothing": "0.8", "TurbDynamicDiffMax": "1"})
     out = open(f"{TEST_DIR}/test_{TEST_NAME}.out", errors="replace").read()
     assert "TurbDynamicDiffFac must be >= 1" in out
+
+
+# ---- METALS_EXACT_PAIRWISE_EXCHANGE (STL-277): every pair's exchange booked to both cells, applied and cleared every hydro pass ----
+PAIRWISE = ("METALS_EXACT_PAIRWISE_EXCHANGE",)
+
+
+def budget_counts(outdir):
+    """(floor cells, pair evaluations, pairs scaled by the debit bound) summed over the run, from the budget lines."""
+    pat = re.compile(r"TURB_DIFF_METALS_BUDGET .* floor_cells= (\d+) evals= (\d+) scaled= (\d+)")
+    with open(f"{outdir}/gizmo.out") as f:
+        rows = [tuple(map(int, m.groups())) for m in map(pat.search, f) if m]
+    assert rows, "no floor_cells/evals/scaled fields in the budget lines: build without METALS_EXACT_PAIRWISE_EXCHANGE?"
+    return tuple(sum(r[k] for r in rows) for k in range(3))
+
+
+def assert_pairwise_exact(budget, outdir, min_timebins=2, bound_must_bind=False):
+    """Metal mass at every step equal to the first step's to RTOL_CONSERVATION, in the final snapshot too, no floor fired, pairs were
+    exchanged (and, where asked, the debit bound scaled some), and the run had the required timebins."""
+    MZ = budget[:, 1]
+    step = np.abs(np.diff(MZ)) / MZ[0]
+    run = abs(MZ[-1] - MZ[0]) / MZ[0]
+    nfl, nev, nsc = budget_counts(outdir)
+    MZ_final, Zmin = metal_mass(snapshots(outdir)[-1])
+    nt = max_timebins(outdir)
+    print(f"{outdir}: {len(MZ)} steps, {nt} timebins, metal per step max {step.max():.3e}, over run {run:.3e}, final snapshot "
+          f"{abs(MZ_final - MZ[0]) / MZ[0]:.3e}, floor cells {nfl}, pair evaluations {nev}, scaled by the bound {nsc}, min Z {Zmin:.3e}")
+    assert nt >= min_timebins, f"fewer than {min_timebins} timebins occupied"
+    assert nev > 0, "no pair exchange evaluated"
+    if bound_must_bind:
+        assert nsc > 0, "the debit bound never scaled a pair: this case does not test it"
+    assert step.max() <= RTOL_CONSERVATION and run <= RTOL_CONSERVATION
+    assert abs(MZ_final - MZ[0]) / MZ[0] <= RTOL_CONSERVATION
+    assert nfl == 0, "a slot floor fired"
+    assert Zmin >= 0
+
+
+@pytest.mark.parametrize("num_mpi_ranks", [1, 4])
+def test_exact_pairwise_conservation(num_mpi_ranks):
+    """0.1 | 60 Zsun step, individual timesteps (4 timebins): metal mass exact at every step, on 1 and 4 ranks."""
+    _, budget, outdir = run_case(f"pw_mpi{num_mpi_ranks}", num_mpi_ranks, extra_config_flags=PAIRWISE, exact=False)
+    assert_pairwise_exact(budget, outdir, min_timebins=4)
+
+
+def test_exact_pairwise_openmp():
+    """Two ranks with two threads each: the j-side writes and the evaluator's own add are shared between threads."""
+    _, budget, outdir = run_case("pw_omp", num_mpi_ranks=2, num_openmp_threads=2, extra_config_flags=PAIRWISE, exact=False)
+    assert_pairwise_exact(budget, outdir)
+
+
+def test_exact_pairwise_deep_hierarchy():
+    """10^6 temperature contrast on 32^3: at least 5 occupied timebins."""
+    _, budget, outdir = run_case("pw_deep", extra_config_flags=PAIRWISE, exact=False, ic_kwargs=dict(T_cold=1e2, T_hot=1e8, n_side=32),
+                                 param_overrides={"TimeMax": 0.02})
+    assert_pairwise_exact(budget, outdir, min_timebins=5)
+
+
+def test_exact_pairwise_merge_split():
+    """Cells merging and splitting every step."""
+    _, budget, outdir = run_case("pw_mergesplit", extra_config_flags=PAIRWISE + ("PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP",), exact=False,
+                                 ic_kwargs=dict(mass_spread=0.6))
+    with h5py.File(snapshots(outdir)[-1], "r") as f:
+        assert f["Header"].attrs["NumPart_Total"][0] != 20**3, "no cell merged or split"
+    assert_pairwise_exact(budget, outdir)
+
+
+def test_exact_pairwise_bound_binds():
+    """Diffusion 1e4 times stronger into gas with exactly zero metals: the debit bound must scale pairs, and metal stays exact
+    with no floor."""
+    _, budget, outdir = run_case("pw_strong", extra_config_flags=PAIRWISE, exact=False, ic_kwargs=dict(Z_cold=0.0),
+                                 param_overrides={"TurbDiffusionCoefficient": 1e4, "TimeMax": 0.005})
+    assert_pairwise_exact(budget, outdir, bound_must_bind=True)
+
+
+def test_exact_pairwise_equal_dt_matches_default():
+    """At equal timesteps the pairwise booking and the default exchange give the same cells to 1e-12 relative to each cell's own
+    metal mass (final snapshot), and the pairwise run conserves."""
+    _, b_pw, out_pw = run_case("pw_equal_dt", extra_config_flags=PAIRWISE + ("FORCE_EQUAL_TIMESTEPS",), exact=False)
+    _, b_df, out_df = run_case("df_equal_dt", extra_config_flags=("FORCE_EQUAL_TIMESTEPS",), exact=False)
+    assert_pairwise_exact(b_pw, out_pw, min_timebins=1)
+    def cells(outdir):
+        with h5py.File(snapshots(outdir)[-1], "r") as f:
+            p = f["PartType0"]; o = np.argsort(p["ParticleIDs"][:])
+            Z = p["Metallicity"][:]; Z = Z[:, 0] if Z.ndim == 2 else Z
+            return (p["Masses"][:] * Z)[o], f["Header"].attrs["Time"]
+    mz_pw, t_pw = cells(out_pw); mz_df, t_df = cells(out_df)
+    assert t_pw == t_df
+    dev = (np.abs(mz_pw - mz_df) / np.maximum(np.abs(mz_df), 1e-300)).max()
+    print(f"equal dt: pairwise vs default, max per-cell |d(m Z)| / (m Z) {dev:.3e}")
+    assert dev <= RTOL_CONSERVATION
+
