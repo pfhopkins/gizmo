@@ -2065,8 +2065,8 @@
 #endif
 
 #if defined(TURB_DIFF_METALS) && (defined(GALSF_RESOLVEDISM) || defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(GALSF_RESOLVEDISM_DUST)) && !defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(METALS_EXACT_PAIRWISE_EXCHANGE)
-#ifdef METALS_EXACT_PAIRWISE_EXCHANGE_OFF
-#define TURB_DIFF_METALS_EXACT_CONSERVATION /* Stella opt-out: the pending-buffer booking, whose slot closure the element slots need */
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE_OFF) || defined(HYDRO_MESHLESS_FINITE_VOLUME) || defined(HYDRO_SPH) || defined(GALSF_ISMDUSTCHEM_MODEL) || defined(TRANSPORT_SUBCYCLE) || (defined(SGCHEM) && !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL))
+#define TURB_DIFF_METALS_EXACT_CONSERVATION /* Stella opt-out, and builds the pairwise exchange does not cover (the #errors below): the pending-buffer booking, as before */
 #else
 #define METALS_EXACT_PAIRWISE_EXCHANGE /* Stella: every pair's metal exchange booked to both cells, exact with individual timesteps (STL-277) */
 #endif

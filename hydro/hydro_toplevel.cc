@@ -770,7 +770,7 @@ static long TD_EvalsStep = 0, TD_ScaledStep = 0; /* pair evaluations and pairs s
 /* --------------------------------------------------------------------------------- */
 /* --------------------------------------------------------------------------------- */
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
-long TD_FloorCellsStep = 0; /* cells where the last apply had to floor a slot at zero (0 by the pair bound) */
+long TD_FloorCellsStep = 0; /* cells of this task where an apply floored a slot at zero since the last budget line (0 by the pair bound) */
 /* every gas cell touched in this hydro pass, active or not, applies its pair exchange and clears it, so nothing stays pending (STL-277) */
 static void td_apply_and_clear(void)
 {
@@ -819,7 +819,8 @@ static void td_apply_and_clear(void)
         CellP[i].TD_NumEvals = 0;
 #endif
     }
-    long nl = nfloor, ng = 0; MPI_Allreduce(&nl, &ng, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD); TD_FloorCellsStep = ng;
+    TD_FloorCellsStep += nfloor; /* no collective here: the apply runs in every hydro pass */
+    if(nfloor > 0) {printf("METALS_EXACT_PAIRWISE_EXCHANGE: task %d floored a metal slot at zero in %ld cells, mass added %g (code), Time %.10g: the pair bound should exclude this\n", ThisTask, nfloor, floor_mass, All.Time); fflush(stdout);}
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
     {double ls[5] = {floor_mass, (double)nfloor, (double)nover, (double)nevals, (double)nnegin}, gs[5], lm[2] = {slot_dev, z0_dev}, gm[2];
      MPI_Allreduce(ls, gs, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); MPI_Allreduce(lm, gm, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
@@ -843,8 +844,8 @@ void turb_diff_metals_budget_log(void)
     }
     MPI_Allreduce(loc, tot, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
-    long ce[2] = {TD_EvalsStep, TD_ScaledStep}, cg[2]; MPI_Allreduce(ce, cg, 2, MPI_LONG, MPI_SUM, MPI_COMM_WORLD); TD_EvalsStep = TD_ScaledStep = 0;
-    if(ThisTask==0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e floor_cells= %ld evals= %ld scaled= %ld\n", All.Time, tot[0], tot[1], TD_FloorCellsStep, cg[0], cg[1]);}
+    long ce[3] = {TD_EvalsStep, TD_ScaledStep, TD_FloorCellsStep}, cg[3]; MPI_Allreduce(ce, cg, 3, MPI_LONG, MPI_SUM, MPI_COMM_WORLD); TD_EvalsStep = TD_ScaledStep = TD_FloorCellsStep = 0;
+    if(ThisTask==0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e floor_cells= %ld evals= %ld scaled= %ld\n", All.Time, tot[0], tot[1], cg[2], cg[0], cg[1]);}
 #else
     if(ThisTask==0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e\n", All.Time, tot[0], tot[1]);}
 #endif

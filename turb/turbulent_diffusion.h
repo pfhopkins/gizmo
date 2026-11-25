@@ -22,7 +22,7 @@
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
     /* pair owner (STL-277): with j inactive i owns the pair; both active: the single HYDRO_PAIR_ONCE evaluation owns it, otherwise
        the shorter step, equal steps half each. The owner computes the exchange over its own step and books it to both cells. */
-    if(P[j].KernelRadius <= 0) {td_share = 0;} /* the gradient pass does not count such a cell */
+    if(P[j].KernelRadius <= 0 || local.KernelRadius <= 0) {td_share = 0;} /* the gradient pass does not count such a cell */
     else if(TimeBinActive[P[j].TimeBin]) {
 #ifndef HYDRO_PAIR_ONCE
         if(dt_hydrostep_i > dt_hydrostep_j) {td_share = 0;} else if(dt_hydrostep_i == dt_hydrostep_j) {td_share = 0.5;}
@@ -107,6 +107,12 @@
 #endif
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
                 td_amt[k_species] = cmag; continue; /* booked after the loop */
+#endif
+#ifdef GALSF_RESOLVEDISM
+                /* symmetric per-pair donor cap: the donor loses at most 1% of its element-k mass per pair */
+                double donor_mass_k = (cmag > 0) ? P[j].Mass * Z_j : local.Mass * local.Metallicity[k_species];
+                double pair_cap = 0.01 * donor_mass_k;
+                if(fabs(cmag) > pair_cap) cmag = (cmag > 0 ? pair_cap : -pair_cap);
 #endif
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
                 /* each side moves half the exchange over its own timestep; j's share waits in its pending buffer */
