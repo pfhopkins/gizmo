@@ -62,10 +62,10 @@ def _compare(da, db, log, label):
 
 
 def _calls(tag):
-    """(n, comm size, sharing tasks) of every logged MSTAR call of the run just made; its log is kept as <tag>.out."""
-    out = f"{TEST_DIR}/test_{TEST_NAME}.out"
-    shutil.copy(out, f"{TEST_DIR}/{TEST_NAME}_{tag}.out")
-    return [tuple(map(int, m)) for m in TIMING_LINE.findall(open(out).read())]
+    """(n, comm size, sharing tasks) of every logged MSTAR call of the run just made; its log is kept as <tag>.err."""
+    err = f"{TEST_DIR}/test_{TEST_NAME}.err"  # the call log goes to stderr
+    shutil.copy(err, f"{TEST_DIR}/{TEST_NAME}_{tag}.err")
+    return [tuple(map(int, m)) for m in TIMING_LINE.findall(open(err).read())]
 
 
 @pytest.mark.skipif(not _mpi_install(), reason="KETJU_PATH is not an MSTAR install built with MSTAR_ENABLE_MPI")

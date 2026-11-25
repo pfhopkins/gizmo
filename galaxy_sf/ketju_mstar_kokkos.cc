@@ -215,8 +215,9 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
 #ifdef KETJU_MSTAR_MPI
             tf = S.perf.t_force; tc = S.perf.t_comm; nt = S.perf.mpi_tasks;
 #endif
-            printf("KETJU MSTAR TIMING: n %d comm %d sharing %d steps %ld + %ld failed wall %.3f s force %.3f s messages %.3f s\n",
-                   n0, size, nt, S.perf.successful_steps, S.perf.failed_steps, MPI_Wtime() - tw0, tf, tc); fflush(stdout);
+            /* stderr: tests parse stdout, and lines of several tasks interleave there */
+            fprintf(stderr, "KETJU MSTAR TIMING: n %d comm %d sharing %d steps %ld + %ld failed wall %.3f s force %.3f s messages %.3f s\n",
+                    n0, size, nt, S.perf.successful_steps, S.perf.failed_steps, MPI_Wtime() - tw0, tf, tc);
         }
 #endif
     }
