@@ -20,7 +20,7 @@ import h5py
 import numpy as np
 import pytest
 
-from gizmo.test import build_and_run_test, get_cooling_tables, default_omp_threads
+from gizmo.test import build_and_run_test, get_cooling_tables, default_omp_threads, variant_suffix
 
 HERE = path.dirname(path.abspath(__file__))
 ROOT = path.dirname(path.dirname(HERE))
@@ -54,7 +54,7 @@ def runs():
         flags = (f"CHEMISTRYNETWORK={net}",)
         build_and_run_test(NAME, 2, default_omp_threads(), extra_config_flags=flags, param_overrides=over)
         d = path.join(HERE, f"output_CHEMISTRYNETWORK_{net}")
-        shutil.copy(path.join(HERE, f"test_{NAME}.out"), d)  # the next build overwrites the log
+        shutil.copy(path.join(HERE, f"test_{NAME}{variant_suffix(flags)}.out"), path.join(d, f"test_{NAME}.out"))  # the harness names the log after the variant
         out[net] = d
     return out
 
