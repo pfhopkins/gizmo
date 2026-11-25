@@ -67,11 +67,14 @@ no cosmic-ray heating, also below the 1e-21 s^-1 limit of `CR_SCALE_WITH_G0` and
 `CR_BACKGROUND_IONRATE_ATTENUATED`. Electrons then come only from the ionisation in the initial conditions, collisions and
 radiation, and H2 forms through H- from those (primordial gas). From then on the rate is that of the build, from the parameter
 `CosmicRayIonRate` (3e-19 in the zoom), as without the flag. Star formation has set in when a star or sink (type 4 or 5) is in
-the initial conditions or in the snapshot the run starts from, or when the star-formation routine has formed the first one; this
-holds for the whole box at once. It is one integer kept in the restart files and set from the totals the star-formation routine
-reduces over tasks anyway. Restart files of a build without the flag do not load. No effect with `COSMIC_RAY_FLUID`. On in
-`Config_stella_zoom.sh`. Test: test/sgchem_cr_zero_before_first_star (no star, star in the IC, first star formed in the run, restart from
-restart files and from a snapshot, 2 ranks).
+the initial conditions or in the snapshot the run starts from, or when the first one has formed in the run; this holds for the
+whole box at once. A Stella star counts once it has survived its IMF draw: a spawned star whose draw fails is removed again and
+does not switch the rate on. The state is one integer, set from totals the star-formation and IMF routines reduce over tasks
+anyway, kept in the restart files and written to the HDF5 snapshot header (`StarFormationHasSetIn`). A snapshot start reads it,
+so the rate stays on when every star has gone again (a fully disrupted first star); a snapshot without the entry (older builds,
+binary formats) falls back to the scan for stars and sinks. Restart files of a build without the flag do not load. No effect with `COSMIC_RAY_FLUID`. On in
+`Config_stella_zoom.sh`. Test: test/sgchem_cr_zero_before_first_star (no star, star in the IC, first star formed in the run, failed first
+draws, restart from restart files and from snapshots with and without stars and header entry, 2 ranks).
 
 ## RESOLVED_ISM_VARIABLE_SN_ENERGY: explosion energies by type (off by default)
 
