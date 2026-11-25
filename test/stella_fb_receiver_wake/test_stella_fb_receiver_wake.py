@@ -7,16 +7,18 @@ With the flags the deposit raises the receiver's signal speed and the wake puts 
 
 Config_stella_default.sh (feedback before the hydro forces) plus the isolated-feedback test hooks, adiabatic, the
 total-energy-exact kick (it books what the limiter adds), TEST_KICK_FLOOR_DUMP and TEST_WAKEUP_DUMP. Uniform n_H = 10, 1 Msun
-cells, 16 pc periodic box at 100 K, steps up to 10 kyr; one 20 Msun star explodes at 20 kyr (forced); stellar radiation off; 60 kyr.
-(A first version with only the wind of a 60 Msun star showed no limiter firing without the flags, job 242377: nothing to test.)
+cells, 16 pc periodic box at 100 K; one 60 Msun star blows its wind from birth; stellar radiation off; 250 kyr. The step cap is
+50 kyr as in the cloud runs, so that the gas sits on longer bins than the star and receivers are inactive at a deposit.
+(Versions with a 10 kyr cap, wind only (job 242377) and with a forced SN (job 242423), had the star and all gas on one bin: every
+receiver active, no cell woken, no limiter firing with or without the flags, so they tested nothing.)
 
 Metric and bars, fixed before the first run of this version (2026-11-25):
-  r = max over the full syncs with feedback of (kick_floor booked so far) / (SN + wind energy booked so far), from energy_step_trace.txt.
+  r = max over the full syncs with feedback of (kick_floor booked so far) / (wind energy booked so far), from energy_step_trace.txt.
   - with the flags: r <= 1e-2 (Uli's bar for the r26 cloud, STL-183);
   - without them: r > 1e-2 (the problem must be present in this box, otherwise the test shows nothing);
   - both runs print receiver lines, the run without the flags also kick lines.
 Rank independence without the flags (stella_dev as it is; Viper's question from GKS-98), 1, 2 and 4 ranks, one thread:
-  the SN's receivers (IDs) and, at the deposit step and the three steps after it, the woken cells (IDs with old and new bin) are
+  the first deposit's receivers (IDs) and, at that step and the three steps after it, the woken cells (IDs with old and new bin) are
   identical, and kinetic + thermal energy after each of those steps agrees with the 1-rank run to 1e-10 relative.
 """
 
@@ -54,9 +56,9 @@ def _ratio(out):
 
 
 def _wake_record(text):
-    """SN deposit step, its receivers, woken cells per step and energy per step"""
+    """first deposit step, its receivers, woken cells per step and energy per step"""
     recv = {}; woken = {}; energy = {}
-    for m in re.finditer(r"^TEST_KICK_FLOOR_DUMP recv step (\d+) t \S+ ID (\d+) site ([12]) ", text, re.M):
+    for m in re.finditer(r"^TEST_KICK_FLOOR_DUMP recv step (\d+) t \S+ ID (\d+) site (\d) ", text, re.M):
         recv.setdefault(int(m.group(1)), set()).add(int(m.group(2)))
     for m in re.finditer(r"^TEST_WAKEUP_DUMP woken step (\d+) ID (\d+) from (\d+) to (\d+) ", text, re.M):
         woken.setdefault(int(m.group(1)), set()).add((int(m.group(2)), int(m.group(3)), int(m.group(4))))
@@ -72,15 +74,15 @@ def _run(binary, fbc, name, nranks):
     os.symlink(REPO, join(d, "gizmo"))
     fbc.make_box(join(d, "box_ics.hdf5"), fbc.ZSUN, T=100.0)
     base = open(join(REPO, "test", "stella_fb_conservation", "stella_fb_conservation.params")).read().splitlines()
-    over = {"TestNumStars": 1, "TestStarMass": 20.0, "TestSNTime0": 2.0e-5, "TimeMax": 6.0e-5, "MaxSizeTimestep": 1.0e-5,
-            "TimeBetStatistics": 1.0e-5, "TimeBetSnapshot": 6.0e-5, "TestFUVZero": 1}
+    over = {"TestNumStars": 1, "TestStarMass": 60.0, "TimeMax": 2.5e-4, "MaxSizeTimestep": 5.0e-5,
+            "TimeBetStatistics": 5.0e-5, "TimeBetSnapshot": 2.5e-4, "TestFUVZero": 1}
     lines = [l for l in base if not (l.split() and l.split()[0] in over)] + [f"{k} {v}" for k, v in over.items()]
     open(join(d, "run.params"), "w").write("\n".join(lines) + "\n")
     with open(join(d, "run.log"), "w") as log:
         r = fbc.run_killable(mpi_launch_command(nranks) + [binary, "run.params"], RUN_TIMEOUT, stdout=log, stderr=subprocess.STDOUT, cwd=d)
     text = open(join(d, "run.log")).read()
     assert r.returncode == 0 and "Simulation ends." in text, f"{name}: " + text[-1500:]
-    assert len(re.findall(r"RESOLVEDISM SN:", text)) >= 1, f"{name}: no SN"
+    assert "RESOLVEDISM WIND:" in text and "RESOLVEDISM SN:" not in text, f"{name}: wind expected, no SN"
     return text, out
 
 
@@ -107,8 +109,8 @@ def runs():
         text, out = _run(binaries[arm], fbc, f"{arm}_r{nranks}", nranks)
         r, n = _ratio(out)
         res[(arm, nranks)] = dict(r=r, n=n, nrecv=text.count("TEST_KICK_FLOOR_DUMP recv"), nkick=text.count("TEST_KICK_FLOOR_DUMP kick"), wake=_wake_record(text))
-        print(f"flags {arm}, {nranks} ranks: max kick_floor / (SN + wind) {r:.3e} over {n} syncs with feedback; dump lines: "
-              f"{res[(arm, nranks)]['nrecv']} receivers, {res[(arm, nranks)]['nkick']} kicks; SN deposit at step {res[(arm, nranks)]['wake'][0]}")
+        print(f"flags {arm}, {nranks} ranks: max kick_floor / wind {r:.3e} over {n} syncs with feedback; dump lines: "
+              f"{res[(arm, nranks)]['nrecv']} receivers, {res[(arm, nranks)]['nkick']} kicks; first deposit at step {res[(arm, nranks)]['wake'][0]}")
     return res
 
 
@@ -129,13 +131,14 @@ def test_receivers_on_their_own_timestep(runs):
 
 def test_wake_independent_of_ranks(runs):
     s0, recv0, woken0, energy0 = runs[("off", 1)]["wake"]
-    assert s0 is not None and len(recv0) > 0, "no SN receiver in the 1-rank run"
+    assert s0 is not None and len(recv0) > 0, "no receiver in the 1-rank run"
+    assert sum(len(woken0.get(k, ())) for k in range(s0, s0 + STEPS_AFTER + 1)) > 0, "no cell woken in those steps: nothing to compare"
     bad = []
     for nranks in (2, 4):
         s, recv, woken, energy = runs[("off", nranks)]["wake"]
-        print(f"{nranks} ranks: SN step {s} (1 rank: {s0}), receivers {len(recv)} (1 rank: {len(recv0)})")
+        print(f"{nranks} ranks: first deposit step {s} (1 rank: {s0}), receivers {len(recv)} (1 rank: {len(recv0)})")
         if s != s0 or recv != recv0:
-            bad.append(f"{nranks} ranks: SN step or receivers differ"); continue
+            bad.append(f"{nranks} ranks: first deposit step or receivers differ"); continue
         for k in range(s0, s0 + STEPS_AFTER + 1):
             wa, wb = woken0.get(k, set()), woken.get(k, set())
             de = abs(energy[k] - energy0[k]) / abs(energy0[k]) if k in energy and k in energy0 else float("nan")
