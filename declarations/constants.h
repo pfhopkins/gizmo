@@ -9,6 +9,9 @@
 #define WAKEUP   2.1            /* allows only 1-separated timestep bins within kernel */
 #endif
 #endif
+#if defined(HYDRO_EXACT_PAIR_FLUX_EXCHANGE) && !defined(WAKEUP)
+#error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE needs WAKEUP: its wake correction runs after the wake kicks" /* here, not in precompiler_logic.h: WAKEUP gets its default above */
+#endif
 
 #define REDUC_FAC_FOR_MEMORY_IN_DOMAIN      0.98 /* used to pad memory in domain decomposition structures, should be slightly less than unity */
 
@@ -85,6 +88,8 @@
 /* Chemistry-network branches first so they take precedence over RT/non-SGCHEM fallbacks. */
 #if defined(SGCHEM) && (CHEMISTRYNETWORK == 1 || defined(SGCHEM_PRIMORDIAL_HELIUM))
 #define  HYDROGEN_MASSFRAC 0.76   /*!< primordial (BBN-like), matches ABHE=0.079 (net 1, SGCHEM_PRIMORDIAL_HELIUM) */
+#elif defined(SGCHEM) && (CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 17) && defined(SGCHEM_ELECTRONS_AND_HYDROGEN_FRACTION_FROM_NETWORK)
+#define  HYDROGEN_MASSFRAC (1.0/(1.0+4.0*0.1)) /*!< 1/(1+4 ABHE), ABHE = 0.1, X + Y = 1 (no metal mass): what the chemistry and mu use */
 #elif defined(SGCHEM) && (CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 17)
 #define  HYDROGEN_MASSFRAC 0.7065 /*!< evolved ISM, matches net 5/17 ABHE=0.1 */
 #elif defined(SGCHEM)

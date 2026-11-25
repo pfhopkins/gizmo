@@ -121,6 +121,7 @@ struct ketju_mpi_particle {
 #endif
 #ifdef KETJU_TYPE4_STARS
     double SoftGrav[2], ZetaGrav[2]; /* tree softening/zeta of the last gravity call ([0] target, [1] secondary) */
+    double MassGrav; /* mass of the last gravity call: feedback mass loss after it must not enter the start subtraction */
     double SoftNow[2], ZetaNow[2];   /* values the next gravity call will use */
 #endif
 #ifdef KJ_STAR_COLLISIONS
@@ -309,7 +310,7 @@ struct ketju_merger_output { /* one row of ketju_output.hdf5 "mergers" */
 static std::vector<ketju_merger_output> KetjuMergerRecords; /* this step's mergers, compute roots; gathered on rank 0 with the ledger */
 static void ketju_hdf5_write_merger(ketju_merger_output *merger);
 /* Coupling energy ledger since the last KETJU STATS line, host units (rank-local sums):
- * [0] internal energy the host's external kicks put into region members (start: compute roots; end: member owners),
+ * [0] internal energy the host's external kicks and tight-binary expansions put into region members (start: compute roots; end: member owners),
  * [1] its absolute value per region and kick, [2] MSTAR's own energy change (integration error, collisions excluded) */
 static double KetjuEnergyLedger[3] = {0, 0, 0};
 static double KetjuEtot = 0, KetjuEtot0 = 0; static int KetjuEtotSet = 0; /* direct-sum total energy (rank 0) */
@@ -1054,6 +1055,7 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 #endif
 #ifdef KETJU_TYPE4_STARS
         for(int k = 0; k < 2; k++) {mp.SoftGrav[k] = P[idx].KetjuTreeSoft[k]; mp.ZetaGrav[k] = P[idx].KetjuTreeZeta[k];}
+        mp.MassGrav = (P[idx].KetjuTreeMass > 0) ? P[idx].KetjuTreeMass : P[idx].Mass;
         tree_pair_softening(idx, mp.SoftNow, mp.ZetaNow);
 #endif
 #ifdef KJ_STAR_COLLISIONS
@@ -1263,9 +1265,11 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 
 /* Subtract softened pairwise gravity between chain members from their velocities.
  * This undoes the tree force contribution so MSTAR can replace it with exact forces. */
-static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int at_start, std::vector<double> *dv_out = NULL)
+/* returns D = sum over member pairs of (unsoftened - tree-softened) pair potential energy, physical, at the kick's positions */
+static double do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int at_start, std::vector<double> *dv_out = NULL)
 {
-    if(!reg.compute_tasks.is_member() || !reg.integrator) return;
+    if(!reg.compute_tasks.is_member() || !reg.integrator) return 0;
+    double D_loc = 0, r_max = 0; /* largest member separation, physical */
 
     int n = reg.integrator->num_particles;
     struct ketju_system_physical_state *ps = reg.integrator->physical_state;
@@ -1305,6 +1309,7 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
             }
             double r = sqrt(r2);
             if(r == 0) continue;
+            if(r > r_max) {r_max = r;}
 
 #ifdef KETJU_TYPE4_STARS
             { /* the tree's own pair kernel and separation (absolute comoving positions, as the tree differences them), with the
@@ -1318,8 +1323,11 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
                 const double *sj = at_start ? pj.SoftGrav : pj.SoftNow, *zj = at_start ? pj.ZetaGrav : pj.ZetaNow;
                 double r2c = drc[0]*drc[0] + drc[1]*drc[1] + drc[2]*drc[2], rc = sqrt(r2c), f_ij, f_ji, d0, d1, d2;
                 if(rc <= 0) continue;
-                tree_pair_gravity_factors(rc, r2c, ps->mass[j], si[0], sj[1], pi.Type, pj.Type, zi[0], zj[1], ps->mass[i], ags_gravity_kernel_shared_BITFLAG(pi.Type), f_ij, d0, d1, d2);
-                tree_pair_gravity_factors(rc, r2c, ps->mass[i], sj[0], si[1], pj.Type, pi.Type, zj[0], zi[1], ps->mass[j], ags_gravity_kernel_shared_BITFLAG(pj.Type), f_ji, d0, d1, d2);
+                const double mi = at_start ? pi.MassGrav : ps->mass[i], mj = at_start ? pj.MassGrav : ps->mass[j]; /* masses of the gravity call being cancelled */
+                tree_pair_gravity_factors(rc, r2c, mj, si[0], sj[1], pi.Type, pj.Type, zi[0], zj[1], mi, ags_gravity_kernel_shared_BITFLAG(pi.Type), f_ij, d0, d1, d2);
+                const double fp_ij = d0;
+                tree_pair_gravity_factors(rc, r2c, mi, sj[0], si[1], pj.Type, pi.Type, zj[0], zi[1], mj, ags_gravity_kernel_shared_BITFLAG(pj.Type), f_ji, d0, d1, d2);
+                D_loc += All.G * (-mi * mj / rc - 0.5 * (mi * fp_ij + mj * d0)) / a_kick; /* as 1/2 sum m Phi / a of the step trace */
                 double fac_c = kick_factor * All.G / (a_kick * a_kick); /* comoving pair force -> physical acceleration */
                 for(int k = 0; k < 3; k++) {
                     dv[3*i + k] += fac_c * f_ij * drc[k];
@@ -1333,6 +1341,11 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
                 dv[3*i + k] += ps->mass[j] * fac * dr[k];
                 dv[3*j + k] -= ps->mass[i] * fac * dr[k];
             }
+            { /* unsoftened minus softened pair potential, physical (r and h physical) */
+                double phi_soft = -1.0 / r;
+                if(h > 0 && r < h) {double h_inv = 1.0 / h; phi_soft = kernel_gravity(r * h_inv, h_inv, h_inv * h_inv * h_inv, -1);}
+                D_loc += All.G * ps->mass[i] * ps->mass[j] * (-1.0 / r - phi_soft);
+            }
             (void)at_start;
 #endif
         }
@@ -1340,6 +1353,20 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
 
     /* collect results across compute tasks and apply */
     MPI_Allreduce(MPI_IN_PLACE, dv.data(), 3 * n, MPI_DOUBLE, MPI_SUM, reg.compute_tasks.comm);
+    MPI_Allreduce(MPI_IN_PLACE, &D_loc, 1, MPI_DOUBLE, MPI_SUM, reg.compute_tasks.comm);
+#ifdef PMGRID
+    if(at_start) { /* members' mutual force must be tree-dominated: mesh share 1 - S(r) <= 1.1e-2 for r <= r_s/2 (the smallest PM split scale) */
+        MPI_Allreduce(MPI_IN_PLACE, &r_max, 1, MPI_DOUBLE, MPI_MAX, reg.compute_tasks.comm);
+        double rs_phys = All.Asmth[0] * All.cf_atime;
+#ifdef PM_PLACEHIGHRESREGION
+        if(All.Asmth[1] > 0) {rs_phys = DMIN(rs_phys, All.Asmth[1] * All.cf_atime);}
+#endif
+        if(r_max > 0.5 * rs_phys) {
+            if(reg.compute_tasks.is_root()) {printf("KETJU: region members %g apart exceed half the PM split scale r_s = %g (physical code length)\n", r_max, rs_phys);}
+            endrun(8862);
+        }
+    }
+#endif
     if(dv_out) *dv_out = dv;
 
     for(int i = 0; i < n; i++) {
@@ -1347,6 +1374,7 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
             ps->vel[i][k] += dv[3*i + k];
         }
     }
+    return D_loc;
 }
 
 /* ============================================================
@@ -1354,11 +1382,19 @@ static void do_negative_halfstep_kick(KetjuRegion &reg, double kick_factor, int 
  *  much shorter than the timestep and is an outlier, double its
  *  semi-major axis to prevent integrator stalling.
  *  Based on the public GADGET4-KETJU algorithm (Mannerkoski+ 2023).
+ *  Returns the energy it injects (unsoftened internal energy of the region, after minus before; 0 if none).
  * ============================================================ */
-static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
+static double kj_region_internal_energy(const struct ketju_system_physical_state *ps, int n)
 {
-    if(!reg.compute_tasks.is_root() || !reg.integrator) return;
-    if(All.KetjuExpandBinariesFactor <= 0) return; /* disabled */
+    double E = 0;
+    for(int i = 0; i < n; i++) {E += 0.5 * ps->mass[i] * (ps->vel[i][0]*ps->vel[i][0] + ps->vel[i][1]*ps->vel[i][1] + ps->vel[i][2]*ps->vel[i][2]);
+        for(int j = i + 1; j < n; j++) {double d2 = 0; for(int k = 0; k < 3; k++) {double d = ps->pos[i][k] - ps->pos[j][k]; d2 += d * d;} E -= All.G * ps->mass[i] * ps->mass[j] / sqrt(d2);}}
+    return E;
+}
+static double expand_tight_binaries(KetjuRegion &reg, double dt_physical)
+{
+    if(!reg.compute_tasks.is_root() || !reg.integrator) return 0;
+    if(All.KetjuExpandBinariesFactor <= 0) return 0; /* disabled */
 
     int n = reg.integrator->num_particles;
     struct ketju_system_physical_state *ps = reg.integrator->physical_state;
@@ -1387,8 +1423,8 @@ static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
         }
     }
 
-    if(best_i < 0) return; /* no bound binaries */
-    if(min_period > All.KetjuExpandBinariesFactor * dt_physical) return; /* not tight enough */
+    if(best_i < 0) return 0; /* no bound binaries */
+    if(min_period > All.KetjuExpandBinariesFactor * dt_physical) return 0; /* not tight enough */
 
     /* count binaries with period < 2*min_period */
     for(int i = 0; i < n; i++) {
@@ -1409,23 +1445,27 @@ static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
     }
 
     /* only expand if it's an outlier (< max(N/100, 5) tight binaries) */
-    if(n_tight > DMAX(n / 100, 5)) return;
+    if(n_tight > DMAX(n / 100, 5)) return 0;
 
-    /* double the semi-major axis: scale relative velocity by 1/sqrt(2)
-     * so a_new = 2*a_old (via virial theorem: E_new = E_old/2) */
-    double scale = 1.0 / sqrt(2.0);
-    double com_vel[3];
+    /* double a at fixed e: r -> 2r, v -> v/sqrt(2) about the pair CoM, so E_pair -> E_pair/2 and L -> sqrt(2) L */
+    double E0 = kj_region_internal_energy(ps, n);
+    double com_pos[3], com_vel[3];
     double mtot = ps->mass[best_i] + ps->mass[best_j];
     for(int k = 0; k < 3; k++) {
+        com_pos[k] = (ps->mass[best_i] * ps->pos[best_i][k] + ps->mass[best_j] * ps->pos[best_j][k]) / mtot;
         com_vel[k] = (ps->mass[best_i] * ps->vel[best_i][k] + ps->mass[best_j] * ps->vel[best_j][k]) / mtot;
     }
     for(int k = 0; k < 3; k++) {
-        ps->vel[best_i][k] = com_vel[k] + scale * (ps->vel[best_i][k] - com_vel[k]);
-        ps->vel[best_j][k] = com_vel[k] + scale * (ps->vel[best_j][k] - com_vel[k]);
+        ps->pos[best_i][k] = com_pos[k] + 2.0 * (ps->pos[best_i][k] - com_pos[k]);
+        ps->pos[best_j][k] = com_pos[k] + 2.0 * (ps->pos[best_j][k] - com_pos[k]);
+        ps->vel[best_i][k] = com_vel[k] + (ps->vel[best_i][k] - com_vel[k]) / sqrt(2.0);
+        ps->vel[best_j][k] = com_vel[k] + (ps->vel[best_j][k] - com_vel[k]) / sqrt(2.0);
     }
+    double dE = kj_region_internal_energy(ps, n) - E0;
 
-    printf("KETJU: expanded tight binary (period=%g -> %g, dt=%g) in region with %d particles\n",
-           min_period, min_period * 2.0 * sqrt(2.0), dt_physical, n);
+    printf("KETJU: expanded tight binary (t=%.10g period=%g -> %g, dt=%g, dE=%.10g) in region with %d particles\n",
+           All.Time, min_period, min_period * 2.0 * sqrt(2.0), dt_physical, dE, n);
+    return dE;
 }
 
 #ifdef KETJU_TYPE4_STARS
@@ -1579,7 +1619,7 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
 
     /* subtract first half of tree force */
     std::vector<double> pair_dv;
-    do_negative_halfstep_kick(reg, first_halfkick, 1, &pair_dv);
+    double D_start = do_negative_halfstep_kick(reg, first_halfkick, 1, &pair_dv);
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) && defined(KETJU_TYPE4_STARS)
     if(All.KetjuSmoothTide && reg.compute_tasks.is_member() && reg.integrator && reg.integrator->num_particles >= 2) {
         /* Smooth tide: T = mass-weighted mean over members of (tree tidal tensor - the other members' pair tides, with the
@@ -1597,7 +1637,7 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
                 NEAREST_XYZ(dr[0], dr[1], dr[2], 1);
 #endif
                 double r2 = dr[0]*dr[0] + dr[1]*dr[1] + dr[2]*dr[2], r = sqrt(r2), fa, fp, ft, ft2; if(r <= 0) continue;
-                tree_pair_gravity_factors(r, r2, it.Mass, me.SoftGrav[0], it.SoftGrav[1], me.Type, it.Type, me.ZetaGrav[0], it.ZetaGrav[1], me.Mass, ags_gravity_kernel_shared_BITFLAG(me.Type), fa, fp, ft, ft2);
+                tree_pair_gravity_factors(r, r2, it.MassGrav, me.SoftGrav[0], it.SoftGrav[1], me.Type, it.Type, me.ZetaGrav[0], it.ZetaGrav[1], me.MassGrav, ags_gravity_kernel_shared_BITFLAG(me.Type), fa, fp, ft, ft2);
                 Ti[0] -= All.G * (ft2 * dr[0]*dr[0] - ft); Ti[1] -= All.G * (ft2 * dr[1]*dr[1] - ft); Ti[2] -= All.G * (ft2 * dr[2]*dr[2] - ft);
                 Ti[3] -= All.G * ft2 * dr[0]*dr[1]; Ti[4] -= All.G * ft2 * dr[1]*dr[2]; Ti[5] -= All.G * ft2 * dr[0]*dr[2];
                 (void)fa; (void)fp;
@@ -1635,11 +1675,13 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         KetjuEnergyLedger[0] += W; KetjuEnergyLedger[1] += fabs(W);
     }
 
-    /* expand tight binaries before integration to prevent stalling.
-     * Runs on compute root only — broadcast updated velocities to all compute tasks. */
-    expand_tight_binaries(reg, dt_physical);
+    /* expand tight binaries before integration to prevent stalling; compute root only, then positions and velocities to all
+     * compute tasks. The energy it injects goes into the coupling ledger, not into MSTAR's error term. */
+    {double dE_exp = expand_tight_binaries(reg, dt_physical); KetjuEnergyLedger[0] += dE_exp; KetjuEnergyLedger[1] += fabs(dE_exp); ESTEP_BOOK(EBK_KETJU_EXPAND, dE_exp);}
     if(reg.compute_tasks.is_member() && reg.integrator && reg.compute_tasks.size > 1) {
         int n = reg.integrator->num_particles;
+        MPI_Bcast(reg.integrator->physical_state->pos, 3 * n, MPI_DOUBLE,
+                  reg.compute_tasks.root, reg.compute_tasks.comm);
         MPI_Bcast(reg.integrator->physical_state->vel, 3 * n, MPI_DOUBLE,
                   reg.compute_tasks.root, reg.compute_tasks.comm);
     }
@@ -1712,7 +1754,8 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
     }
 #endif
     /* subtract second half of tree force */
-    do_negative_halfstep_kick(reg, second_halfkick, 0);
+    double D_end = do_negative_halfstep_kick(reg, second_halfkick, 0);
+    if(reg.compute_tasks.is_root()) {ESTEP_BOOK(EBK_KETJU_CHAIN_POT, -(D_end - D_start));} /* the step trace's softened pair potential vs MSTAR's 1/r */
     if(reg.tide_on) ketju_region_tide_kick(reg, -second_halfkick); /* the host's end kick by the linear tide, pre-subtracted */
 }
 
@@ -1965,6 +2008,7 @@ static void scatter_results(KetjuRegion &reg)
                 if(info->is_collision) {
                     double mu = KJ_MASS_TO_NAT, eu = mu * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT; /* MSTAR natural -> host units */
                     KetjuCollisionEnergy += info->dE_collision / eu;
+                    ESTEP_BOOK(EBK_KETJU_COLLISION, info->dE_collision / eu);
 #ifdef KJ_STAR_COLLISIONS
                     const ketju_extra_data &x1 = reg.extra_data[info->extra_index1], &x2 = reg.extra_data[info->extra_index2];
                     double age1 = evaluate_time_since_t_initial_in_Gyr(x1.BirthTime) * 1e9, age2 = evaluate_time_since_t_initial_in_Gyr(x2.BirthTime) * 1e9;
@@ -2959,6 +3003,7 @@ void ketju_snapshot_tree_softening(void)
         if(P[i].Type != 4 && P[i].Type != 5) continue;
         double s2[2], z2[2]; tree_pair_softening(i, s2, z2);
         for(int k = 0; k < 2; k++) {P[i].KetjuTreeSoft[k] = s2[k]; P[i].KetjuTreeZeta[k] = z2[k];}
+        P[i].KetjuTreeMass = P[i].Mass;
     }
 }
 #endif

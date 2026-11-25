@@ -2929,6 +2929,9 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
         *nH0_guess = DMAX(0, 1.0 - 2.0*abh2 - abe);
         *nHp_guess = abe;
         *ne_guess  = abe;
+#ifdef SGCHEM_ELECTRONS_AND_HYDROGEN_FRACTION_FROM_NETWORK
+        *ne_guess  = cell[target].Ne; /* the network's electrons */
+#endif
         *nHe0_guess = yhelium(target, pp); *nHep_guess = 0; *nHepp_guess = 0;
     }
     if(temp <= 0) { /* fallback if Temp not yet set: u (code units) -> T with mu from tracked abundances */

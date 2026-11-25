@@ -1,4 +1,4 @@
-# Stella cosmological zoom configuration (the z = 6 zoom chains: net 17, periodic box with PM, G0 floor 0, CR_SCALE_WITH_G0)
+# Stella cosmological zoom configuration (the z = 6 zoom chains: net 17, periodic box with PM, G0 floor 0.324e-2 (fixed, G0 param 0), CR_SCALE_WITH_G0)
 # plus Pop III star formation, the Remy-Ruyer+14 dust-to-gas ratio and primordial helium.
 #!/bin/bash
 # Config.sh for resolved-ISM single-star galaxy formation (gizmo-cpp)
@@ -25,7 +25,7 @@ GALSF_RESOLVEDISM_WINDS_THERMAL      % ADOPTED 2026-07-05: inelastic-residual he
 #GALSF_RESOLVEDISM_FB_HEALPIX  % HEALPix FB weighting (candidate default; enable deliberately)
 #RESOLVEDISM_HOTSYNC_CLAMP     % hot-region timebin clamp (validated with spawn; production adoption undecided)
 GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-GALSF_RESOLVEDISM_RADPRESSURE
+#GALSF_RESOLVEDISM_RADPRESSURE   % zoom reference: no radiation pressure (Uli 2026-11-18)
 GALSF_RESOLVEDISM_TYPE_IA
 #GALSF_RESOLVEDISM_DUST          % off: dust-to-gas ratio fixed from metallicity
 #SGCHEM_DGR_INDEPENDENT_OF_METALLICITY  % off: DGR = DGRnormalized x MW at every Z; with DGRnormalized 0.01 (relative to MW) reproduces gizmo2017
@@ -125,4 +125,4 @@ OUTPUT_INDIVIDUAL_COOLRATES
 BOX_PERIODIC
 PMGRID=256
 PM_PLACEHIGHRESREGION=1+2        % gas (type 0) + high-res DM (type 1) on the high-res PM grid
-CR_SCALE_WITH_G0                 % zoom: zeta = clamp(G0/1.7 x CosmicRayIonRate, 1e-21, 2e-16); 1e-21 in pristine gas (Uli 2026-11-10)
+CR_SCALE_WITH_G0                 % zoom: zeta = clamp(G0/1.7 x CosmicRayIonRate, 1e-21, 2e-16); minimum 0.324e-2/1.7 x 3e-17 = 5.7e-20 through the fixed G0 floor (CR rule open, Uli)

@@ -67,6 +67,48 @@ static struct part_slab_data
 
 static int *part_sortindex;
 
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+/* STELLA DIAGNOSTIC ADDITION to upstream PM code (energy step trace / BUDGET only; forces untouched):
+   a lone particle's mesh potential at its own position. With CIC weights w_a (a in {0,1}^3) and the deconvolved
+   Green's function g(d) = sum_{k!=0} smth(k) cos(2 pi k.d / PMGRID) used below, phi_self = G/(pi L) m sum_{a,b} w_a w_b g(a-b);
+   per axis the pair is equal with weight (1-d)^2+d^2 and adjacent with 2d(1-d), and by cubic symmetry g depends only on
+   the number n of adjacent axes, so phi_self = G/(pi L) m sum_n g_n e_n(d). */
+static double pm_self_g[4];
+
+static void pm_exact_self_potential_init(void)
+{
+  int x, y, z; double loc[4] = {0, 0, 0, 0}, asmth2 = (2 * M_PI) * All.Asmth[0] / All.BoxSize; asmth2 *= asmth2;
+  for(x = ThisTask; x < PMGRID; x += NTask)
+    for(y = 0; y < PMGRID; y++)
+      for(z = 0; z < PMGRID; z++)
+        {
+          double kx = (x > PMGRID / 2) ? x - PMGRID : x, ky = (y > PMGRID / 2) ? y - PMGRID : y, kz = (z > PMGRID / 2) ? z - PMGRID : z;
+          double k2 = kx * kx + ky * ky + kz * kz; if(k2 <= 0) {continue;}
+          double smth = -exp(-k2 * asmth2) / k2, fx = 1, fy = 1, fz = 1; /* same kernel and deconvolution as pmforce_periodic */
+          if(kx != 0) {fx = (M_PI * kx) / PMGRID; fx = sin(fx) / fx;}
+          if(ky != 0) {fy = (M_PI * ky) / PMGRID; fy = sin(fy) / fy;}
+          if(kz != 0) {fz = (M_PI * kz) / PMGRID; fz = sin(fz) / fz;}
+          double ff = 1 / (fx * fy * fz); smth *= ff * ff * ff * ff;
+          double t = 2 * M_PI / PMGRID;
+          loc[0] += smth; loc[1] += smth * cos(t * kx); loc[2] += smth * cos(t * (kx + ky)); loc[3] += smth * cos(t * (kx + ky + kz));
+        }
+  MPI_Allreduce(loc, pm_self_g, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+  if(ThisTask == 0) {printf("PM exact self-potential (diagnostics): g_n = %g %g %g %g\n", pm_self_g[0], pm_self_g[1], pm_self_g[2], pm_self_g[3]);}
+}
+
+double pm_exact_self_potential(double mass, double dx, double dy, double dz)
+{
+  double d[3] = {dx, dy, dz}, e[4] = {1, 0, 0, 0}; int i, n; /* e_n: elementary symmetric sums of the per-axis equal/adjacent weights */
+  for(i = 0; i < 3; i++)
+    {
+      double ps = (1 - d[i]) * (1 - d[i]) + d[i] * d[i], pd = 2 * d[i] * (1 - d[i]);
+      for(n = 3; n > 0; n--) {e[n] = e[n] * ps + e[n - 1] * pd;}
+      e[0] *= ps;
+    }
+  return All.G / (M_PI * All.BoxSize) * mass * (pm_self_g[0] * e[0] + pm_self_g[1] * e[1] + pm_self_g[2] * e[2] + pm_self_g[3] * e[3]);
+}
+#endif
+
 
 /*! This routines generates the FFTW-plans to carry out the parallel FFTs
  *  later on. Some auxiliary variables are also initialized.
@@ -128,6 +170,9 @@ void pm_init_periodic(void)
 
   fft_inverse_plan = fftw_mpi_plan_dft_c2r_3d(PMGRID, PMGRID, PMGRID, fft_of_rhogrid, rhogrid, 
 	  MPI_COMM_WORLD, FFTW_ESTIMATE | FFTW_MPI_TRANSPOSED_IN);
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+  pm_exact_self_potential_init(); /* STELLA DIAGNOSTIC ADDITION */
+#endif
 }
 
 
@@ -678,6 +723,9 @@ void pmforce_periodic(int mode, int *typelist)
 
 	      P[i].PM_Potential += pot * fac * (2 * All.BoxSize / PMGRID);
 	      /* compensate the finite differencing factor */ ;
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+	      P[i].PM_SelfPotential = pm_exact_self_potential(P[i].Mass, dx, dy, dz); /* STELLA DIAGNOSTIC ADDITION: own share of PM_Potential */
+#endif
 	    }
 
 #endif
@@ -1263,6 +1311,9 @@ void pmpotential_periodic(void)
 #if defined(EVALPOTENTIAL) || defined(COMPUTE_POTENTIAL_ENERGY) || defined(OUTPUT_POTENTIAL)
       P[i].Potential += pot;
 #endif
+#ifdef PM_EXACT_SELF_POTENTIAL_DIAG
+      P[i].PM_SelfPotential = pm_exact_self_potential(P[i].Mass, dx, dy, dz); /* STELLA DIAGNOSTIC ADDITION: own share of the mesh potential */
+#endif
     }
 
   /* free locallist */
@@ -1803,103 +1854,6 @@ void pmtidaltensor_periodic_diff(void)
       /* Do the inverse FFT to get the potential */
       fftw_execute(fft_inverse_plan);
       /* Now rhogrid holds the potential */
-
-
-#ifdef EVALPOTENTIAL		/* now read out the potential */
-
-      for(level = 0; level < (1 << PTask); level++)	/* note: for level=0, target is the same task */
-	{
-	  sendTask = ThisTask;
-	  recvTask = ThisTask ^ level;
-
-	  if(recvTask < NTask)
-	    {
-	      if(level > 0)
-		{
-		  import_data =
-		    (fftw_real *) mymalloc("import_data",
-					   localfield_recv[recvTask] * sizeof(fftw_real));
-		  import_globalindex =
-		    (large_array_offset *) mymalloc("import_globalindex",
-						    localfield_recv[recvTask] * sizeof(large_array_offset));
-
-		  if(localfield_count[recvTask] > 0
-		     || localfield_recv[recvTask] > 0)
-		    {
-		      MPI_Sendrecv(localfield_globalindex + localfield_offset[recvTask],
-				   localfield_count[recvTask] * sizeof(large_array_offset),
-				   MPI_BYTE, recvTask, TAG_PERIODIC_C, import_globalindex,
-				   localfield_recv[recvTask] * sizeof(large_array_offset),
-				   MPI_BYTE, recvTask, TAG_PERIODIC_C, MPI_COMM_WORLD, &status);
-		    }
-		}
-	      else
-		{
-		  import_data = localfield_data + localfield_offset[ThisTask];
-		  import_globalindex = localfield_globalindex + localfield_offset[ThisTask];
-		}
-
-	      for(i = 0; i < localfield_recv[recvTask]; i++)
-		{
-		  offset =
-		    import_globalindex[i] -
-		    first_slab_of_task[ThisTask] * PMGRID * ((large_array_offset) PMGRID2);
-		  import_data[i] = rhogrid[offset];
-		}
-
-	      if(level > 0)
-		{
-		  MPI_Sendrecv(import_data,
-			       localfield_recv[recvTask] * sizeof(fftw_real), MPI_BYTE,
-			       recvTask, TAG_PERIODIC_A,
-			       localfield_data + localfield_offset[recvTask],
-			       localfield_count[recvTask] * sizeof(fftw_real), MPI_BYTE,
-			       recvTask, TAG_PERIODIC_A, MPI_COMM_WORLD, &status);
-
-		  myfree(import_globalindex);
-		  myfree(import_data);
-		}
-	    }
-	}
-
-      /* read out the potential values, which all have been assembled in localfield_data */
-
-      double pot;
-
-      for(i = 0, j = 0; i < NumPart; i++)
-	{
-	  while(j < num_on_grid && (part[j].partindex >> 3) != i)
-	    j++;
-
-	  /* possible bugfix: Y.Feng:  (otherwise just pp[xx]=Pos[xx]) */ 
-	  /* make sure that particles are properly box-wrapped */ 
-	  for(xx = 0; xx < 3; xx++) 
-	  { 
-	      pp[xx] = P[i].Pos[xx]; 
-	      pp[xx] = WRAP_POSITION_UNIFORM_BOX(pp[xx]); 
-	  } 
-	  slab_x = (int) (to_slab_fac * pp[0]); 
-	  slab_y = (int) (to_slab_fac * pp[1]); 
-	  slab_z = (int) (to_slab_fac * pp[2]); 
-	  dx = to_slab_fac * pp[0] - slab_x; dy = to_slab_fac * pp[1] - slab_y; 
-	  dz = to_slab_fac * pp[2] - slab_z; 
-	
-	  pot = 
-	      +localfield_data[part[j + 0].localindex] * (1.0 - dx) * (1.0 - dy) * (1.0 - dz) 
-	      + localfield_data[part[j + 1].localindex] * (1.0 - dx) * (1.0 - dy) * dz 
-	      + localfield_data[part[j + 2].localindex] * (1.0 - dx) * dy * (1.0 - dz) 
-	      + localfield_data[part[j + 3].localindex] * (1.0 - dx) * dy * dz 
-	      + localfield_data[part[j + 4].localindex] * (dx) * (1.0 - dy) * (1.0 - dz) 
-	      + localfield_data[part[j + 5].localindex] * (dx) * (1.0 - dy) * dz 
-	      + localfield_data[part[j + 6].localindex] * (dx) * dy * (1.0 - dz) 
-	      + localfield_data[part[j + 7].localindex] * (dx) * dy * dz; 
-	  
-	  P[i].PM_Potential += pot * fac * (2 * All.BoxSize / PMGRID);
-	  /* compensate the finite differencing factor */ ; 
-	}
-#endif
-
-
 
 
       /* get the force components by finite differencing the potential for each dimension,

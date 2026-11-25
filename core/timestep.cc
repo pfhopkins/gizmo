@@ -1613,6 +1613,12 @@ void process_wake_ups(void)
 	    } else {
 		/* generic wakeup (sinks, merge, etc.): use highest active bin */
 		bin = max_time_bin_active;
+#ifdef WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP
+		if(P[i].wakeup == -1 || P[i].wakeup == -2) { /* merged or split cell: its new state sets its step, as for -4 */
+		    double aphys_ms; integertime ti_ms = get_timestep(i, &aphys_ms, 0), ti_p2 = TIMEBASE; while(ti_p2 > ti_ms) {ti_p2 >>= 1;}
+		    int bin_own = get_timestep_bin(ti_p2); if(bin_own < bin) {bin = bin_own;}
+		}
+#endif
 	    }
 	    if(bin > max_time_bin_active) {bin = max_time_bin_active;} /* must be active at next kick */
 	    if(bin >= binold) {bin = binold;} /* don't increase timestep */

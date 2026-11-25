@@ -10,7 +10,6 @@
 #include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 #include "tree_pair_kernel.h"
-#include "./periodic_xy_images.h"
 #ifdef RT_TREECOL_HEALPIX
 #include "healpix_utils.h"     /* HEALPix pixel geometry: tree columns and per-pixel fluxes */
 #endif
@@ -138,6 +137,23 @@ static int last;
 #define NTAB 1000
 /*! variables for short-range lookup table */
 static float shortrange_table[NTAB], shortrange_table_potential[NTAB];
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+/* STELLA DIAGNOSTIC ADDITION (energy step trace / BUDGET only): inside the softening the walk applies kernel_force(r,h) x S_i but
+   stores kernel_pot(r,h) x erfc_i, which is not its potential. U(r) = U(h) - m sum_i S_i [kpot(b_i+1) - kpot(b_i)] over the
+   tabindex bins between r and h (S constant per bin, d kpot/dr = kernel_force), with U(h) = -m erfc(h)/h the stored value at h. */
+static double tree_shortrange_pot_from_force(double r, double mass, double h, double asmthfac)
+{
+    double hinv = 1. / h, U = 0, hi = h; int ih = (int) (asmthfac * h), ir = (int) (asmthfac * r);
+    if(ih < NTAB) {U = -mass * shortrange_table_potential[ih] * hinv;}
+    for(int i = ih; i >= ir; i--)
+    {
+        double lo = (i == ir) ? r : i / asmthfac;
+        if(i < NTAB) {U -= mass * shortrange_table[i] * (kernel_gravity(hi * hinv, hinv, 1, -1) - kernel_gravity(lo * hinv, hinv, 1, -1));}
+        hi = lo;
+    }
+    return U;
+}
+#endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
 static float shortrange_table_tidal[NTAB];
 #endif
@@ -162,7 +178,7 @@ static double fac_intp;
 #endif
 
 
-#if (defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)) || defined(GRAVITY_PERIODIC_XY_IMAGES) /* need to do box-wrapping, just refer to our standard box-wrapping macros */
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) /* need to do box-wrapping, just refer to our standard box-wrapping macros */
 #define GRAVITY_NEAREST_XYZ(x,y,z,sign) NEAREST_XYZ(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_X(x,y,z,sign) NGB_PERIODIC_BOX_LONG_X(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign) NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign)
@@ -2001,6 +2017,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef EVALPOTENTIAL
     double fac_pot; MyDouble pot; pot = 0;
 #endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+    MyDouble pot_fc_corr = 0;
+#endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
     tidal_tensorps = {};
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
@@ -2742,6 +2761,17 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef PMGRID
                     fac_pot *= shortrange_table_potential[tabindex];
 #endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+                    { /* plain-kernel pairs only (kernel at max(h, h_p)): adaptive-softening pairs get averaged kernels and zeta terms */
+                        double h_g = DMAX(h, h_p); int ags_pair = 0;
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+                        ags_pair = ((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) || ((ptype_sec >= 0) && ((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)));
+#elif defined(ADAPTIVE_GRAVSOFT_FORGAS)
+                        ags_pair = (ptype == 0) && (ptype_sec == 0);
+#endif
+                        if(r < h_g && !ags_pair) {pot_fc_corr += tree_shortrange_pot_from_force(r, mass, h_g, asmthfac) - fac_pot;}
+                    }
+#endif
                     pot += (fac_pot);
 #if defined(GRAVITY_PERIODIC_XY)
                     {double drc[3] = {dr[0], dr[1], dr[2]}, ac[3], pc; ewald_xy_corr(drc, ac, &pc); pot += mass * pc;}
@@ -2756,23 +2786,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     
                     /* actually add the accelerations, now that we've corrected for the ewald and other terms */
                     acc += fac_accel * dr;
-#ifdef GRAVITY_PERIODIC_XY_IMAGES
-                    gravity_periodic_xy_images(mass, dr, DMAX(h, h_p), [&](const Vec3<double>& d_im, double fac_accel_im, double fac2_tidal_im, double fac_pot_im) {
-                        acc += fac_accel_im * d_im;
-#ifdef EVALPOTENTIAL
-                        pot += fac_pot_im;
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                        for(int k1=0;k1<3;k1++) {for(int k2=k1;k2<3;k2++) {tidal_tensorps[k1][k2] += d_im[k1] * d_im[k2] * fac2_tidal_im - (k1==k2 ? fac_accel_im : 0);}}
-#endif
-#ifdef COMPUTE_JERK_IN_GRAVTREE
-#ifndef ADAPTIVE_TREEFORCE_UPDATE
-                        if(ptype > 0)
-#endif
-                        {jerk += fac_accel_im * dv - dot(dv, d_im) * fac2_tidal_im * d_im;}
-#endif
-                    });
-#endif
                     
                     
 #if defined(SINK_DYNFRICTION_FROMTREE)
@@ -2924,7 +2937,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 if(colmass[TREECOL_GAS] > 0 && r_col > 0 && r_col < All.ShieldingLength / All.cf_atime) /* physical shielding length in comoving coords */
                 {
                     int iheal = treecol_angular_bin(dr_col[0], dr_col[1], dr_col[2]), ks;
-                    double area = (4.0*M_PI / NPIX) * r2_col;
+                    double fac_col = 1./r2_col, h_col = DMAX(h, h_p); /* gravity-softened 1/r^2 inside h, as the upstream column above */
+                    if(r_col < h_col) {double h_col_inv = 1./h_col; fac_col = r_col * kernel_gravity(r_col*h_col_inv, h_col_inv, h_col_inv*h_col_inv*h_col_inv, 1);}
+                    double area = (4.0*M_PI / NPIX) / fac_col;
                     for(ks=0; ks<TREECOL_NSPECIES; ks++) {treecol_angular_bins[ks][iheal] += colmass[ks] / area;}
 #ifdef TREE_RAY
                     /* absorber deposit: same Sigma contribution, binned by COM distance */
@@ -3250,6 +3265,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef EVALPOTENTIAL
         P[target].Potential = pot;
 #endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+        P[target].TreePotForceCorr = pot_fc_corr;
+#endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
         P[target].tidal_tensorps = tidal_tensorps;
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
@@ -3352,6 +3370,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef EVALPOTENTIAL
         GravDataResult[target].Potential = pot;
+#endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+        GravDataResult[target].TreePotForceCorr = pot_fc_corr;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
         GravDataResult[target].tidal_tensorps = tidal_tensorps;
@@ -4000,9 +4021,6 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                     pot += ( fac_pot * mass * kernel_gravity(u, h_inv, 1, -1) );
                 }
             }
-#ifdef GRAVITY_PERIODIC_XY_IMAGES
-            {Vec3<double> d0 = {dx, dy, dz}; gravity_periodic_xy_images(mass, d0, h, [&](const Vec3<double>&, double, double, double fac_pot_im) {pot += fac_pot_im;});}
-#endif
 #if defined(GRAVITY_PERIODIC_XY)
             {double drc[3] = {dx, dy, dz}, ac[3], pc; ewald_xy_corr(drc, ac, &pc); pot += mass * pc;}
 #elif defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)

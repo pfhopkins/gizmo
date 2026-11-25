@@ -36,7 +36,11 @@ static inline double sgchem_electrons(const double *ab, const struct ChemInputs 
     (void)ab; (void)in;
     return chem_cxx_net20_electrons();   /* equilibrium x_e of the cell just finished */
 #elif CHEMISTRYNETWORK == 5
+#ifdef SGCHEM_ELECTRONS_AND_HYDROGEN_FRACTION_FROM_NETWORK
+    return ab[IHP] + (in->abundc - ab[ICO]) + in->abundsi; /* as the net-5 RHS: carbon in CO is neutral */
+#else
     return ab[IHP] + in->abundc + in->abundsi;
+#endif
 #elif CHEMISTRYNETWORK == 17
     return ab[IHP] + ab[IHEP] + 2.0*ab[IHEPP] + in->abundc + in->abundsi;
 #elif CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16

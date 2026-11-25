@@ -17,6 +17,8 @@
 //   PHASE O  one-zone trajectory parity (as test_onezone_ab PHASE O): final T
 //            within 1% between the backends.
 //   PHASE I  sgchem_set_ionized with a per-cell abhe != ABHE.
+//   PHASE C and I fail when an overdraft or a negative species exceeds 1e-14 of the pool; PHASE C also on any failed or
+//   timed-out solver call.
 //
 // Usage: test_conservation [conservation.csv]   (run where gizmo/cooling/sgchem exists)
 
@@ -192,7 +194,8 @@ extern "C" void probe_floor(int fileid, int line, const char* var, double v)
     static const char* tr = std::getenv("CONS_FLOOR_TRACE");
     if (tr && s.n <= std::atol(tr)) std::printf("  FLOORTRACE %d:%d %s v=%.3e rel=%.3e at %s\n", fileid, line, var, v, r, g_where);
 }
-extern "C" void probe_rhs() { g_rhs_calls++; }
+static long g_rhs_budget = 0; /* in a forked call: C++ RHS evaluations allowed (0 = no limit) */
+extern "C" void probe_rhs() { g_rhs_calls++; if (g_rhs_budget > 0 && g_rhs_calls > g_rhs_budget) _exit(99); } /* deterministic limit */
 extern "C" void probe_h3p(double abh3p, double abHI)
 {
     if (3.0 * abh3p > g_h3p_max) g_h3p_max = 3.0 * abh3p;
@@ -552,7 +555,8 @@ static int phase_R(const ChemTables& TT, const char* tag)
 // ===========================================================================
 // PHASE C -- conservation grid
 // Each (state, backend) call runs in a forked child with a wall-clock limit
-// (CONS_TIMEOUT s, default 120); the child returns the state and its probe
+// (C++: CONS_MAX_RHS right-hand-side evaluations, default 2e6, a deterministic limit; wall clock CONS_TIMEOUT s, default 120, for stalls outside the RHS,
+// only as a safety net); the child returns the state and its probe
 // deltas through a pipe.  Solver output of the child goes to /dev/null.
 // ===========================================================================
 struct FloorRec { int key; long n; double maxrel; long bin[4]; char var[16]; };
@@ -590,6 +594,7 @@ static void merge_child(const ChildResult& r)
 static int run_forked(int backend, double dt, double nH, double* en, double* y, double* td, double* wsec)
 {
     static const char* to = std::getenv("CONS_TIMEOUT");
+    static const char* mr = std::getenv("CONS_MAX_RHS");
     const double tmax = to ? std::atof(to) : 120.0;
     int fd[2];
     if (pipe(fd)) { std::perror("pipe"); std::exit(1); }
@@ -598,7 +603,7 @@ static int run_forked(int backend, double dt, double nH, double* en, double* y, 
     if (pid == 0) {
         close(fd[0]);
         int dn = open("/dev/null", O_WRONLY); dup2(dn, 1); dup2(dn, 2);
-        g_floor.clear(); g_clip = ClipStat(); g_rhs_calls = 0;
+        g_floor.clear(); g_clip = ClipStat(); g_rhs_calls = 0; g_rhs_budget = mr ? std::atol(mr) : 2000000;
         g_h3p_max = g_h3p_rel_max = 0.0; g_h3p_cap = g_h3p_capped = 0;
         ChildResult r = ChildResult();
         double w0 = wall();
@@ -639,6 +644,7 @@ static int run_forked(int backend, double dt, double nH, double* en, double* y, 
     if (timed_out) kill(pid, SIGKILL);
     int st; waitpid(pid, &st, 0);
     if (timed_out) { *wsec = tmax; return -9; }
+    if (got < sizeof(r) && WIFEXITED(st) && WEXITSTATUS(st) == 99) { *wsec = wall() - w0; return -9; } /* RHS budget used up */
     if (got < sizeof(r)) { *wsec = wall() - w0; return -8; }     // child died
     merge_child(r);
     *en = r.en; *td = r.td; for (int i = 0; i < TRAC_NUM; i++) y[i] = r.y[i];
@@ -649,7 +655,9 @@ static int run_forked(int backend, double dt, double nH, double* en, double* y, 
 struct Worst { double v = 0.0; char where[160] = ""; };
 static void upd(Worst& w, double v, const char* where) { if (v > w.v) { w.v = v; std::snprintf(w.where, sizeof(w.where), "%s", where); } }
 
-static void phase_C(const char* csvname)
+static const double CONS_BAR = 1e-14;   // overdraft and negative species after a completed call, relative to the pool
+
+static int phase_C(const char* csvname)
 {
     const double nHs[] = {1e-2, 1.0, 1e2, 1e4, 1e6};
     const double Ts[]  = {10.0, 100.0, 1e3, 1e4, 1e5, 1e6, 1e7};
@@ -715,7 +723,7 @@ static void phase_C(const char* csvname)
     if (f) std::fclose(f);
     std::printf("\nPHASE C -- conservation, %ld states x 2 backends (failures: f77 %ld, cxx %ld)\n",
                 ntot, nfail[0], nfail[1]);
-    std::printf("  wall-clock timeouts (excluded from the statistics below): f77 %ld, cxx %ld\n", ntimeout[0], ntimeout[1]);
+    std::printf("  calls over the C++ RHS budget or the wall-clock safety limit (excluded from the statistics below): f77 %ld, cxx %ld\n", ntimeout[0], ntimeout[1]);
     std::printf("  slowest call: f77 %.1f s (%s), cxx %.1f s (%s)\n", wmax[0], wwhere[0], wmax[1], wwhere[1]);
     std::printf("  element | presolve clamp removed (max, #states) | overdraft into solver | "
                 "overdraft after call f77 / cxx (#states > 1e-14) | negative after call f77 / cxx\n");
@@ -729,6 +737,12 @@ static void phase_C(const char* csvname)
         if (w_out[1][e].v > 0) std::printf("        worst cxx at %s\n", w_out[1][e].where);
         if (w_in[e].v > 0)     std::printf("        worst into-solver at %s\n", w_in[e].where);
     }
+    int ok = 1;
+    for (int e = 0; e < NEL; e++) if (el_active(e))
+        for (int b = 0; b < 2; b++) if (w_out[b][e].v > CONS_BAR || w_neg[b][e].v > CONS_BAR) ok = 0;
+    for (int b = 0; b < 2; b++) if (nfail[b] || ntimeout[b]) ok = 0; /* a failed or timed-out call is not a pass */
+    std::printf("  PHASE C %s (overdraft and negatives after each completed call <= %g of the pool; no failed or timed-out call)\n", ok ? "PASS" : "FAIL", CONS_BAR);
+    return ok;
 }
 
 // ===========================================================================
@@ -796,8 +810,9 @@ static int phase_O()
 // ===========================================================================
 // PHASE I -- sgchem_set_ionized pool check with abhe != ABHE
 // ===========================================================================
-static void phase_I()
+static int phase_I()
 {
+    int ok = 1;
     std::printf("\nPHASE I -- sgchem_set_ionized element pools (per-cell abhe 0.07 and 0.12, ABHE = %g)\n", (double)ABHE);
     const double ahes[] = {0.07, 0.12};
     for (double ahe : ahes) {
@@ -811,9 +826,12 @@ static void phase_I()
         for (int e = 0; e < NEL; e++) if (el_active(e)) {
             double s = 0; for (int i = 0; i < TRAC_NUM; i++) s += SP[i].n[e] * y[i];
             std::printf("  abhe=%.3f %-3s tracked/pool = %.6f  overdraft %.3e\n", ahe, ELNAME[e], P[e] > 0 ? s / P[e] : 0.0, v.over[e]);
+            if (v.over[e] > CONS_BAR || v.neg[e] > CONS_BAR) ok = 0;
         }
         CHEM_COMP.abhe = save;
     }
+    std::printf("  PHASE I %s (overdraft and negatives <= %g of the pool)\n", ok ? "PASS" : "FAIL", CONS_BAR);
+    return ok;
 }
 
 static void report_probes()
@@ -1174,9 +1192,9 @@ int main(int argc, char** argv)
     auto want = [&](char p) { return !only || std::strchr(only, p); };
     int ok = 1;
     if (want('R')) { ok &= phase_R(Ft, "R1 (Fortran tables)"); ok &= phase_R(Cx, "R2 (C++-built tables)"); }
-    if (want('C')) phase_C(csv);
+    if (want('C')) ok &= phase_C(csv);
     if (want('O')) { std::printf("\nPHASE O -- one-zone trajectories to 300 Myr\n"); ok &= phase_O(); }
-    if (want('I')) phase_I();
+    if (want('I')) ok &= phase_I();
     if (want('M')) ok &= phase_M(Cx);
     if (want('F')) ok &= phase_F();
     report_probes();

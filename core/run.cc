@@ -41,8 +41,10 @@ void mbary_book_outflow(int i)
 #endif
 }
 
+static long long mbary_ncalls = 0; /* checkpoints so far, same on all tasks (each is collective) */
 void mbary_step_checkpoint(const char *tag)
 {
+    mbary_ncalls++;
     /* the scalar ledgers are summed in long double and reduced as MPI_LONG_DOUBLE: their terms (~1e-8 of metals after a big
      * SN) cancel to a much smaller total, which a double sum resolves only to the spacing of doubles near the terms */
     static long double last_M_tot = -1.0;
@@ -391,6 +393,15 @@ void energy_budget_gravity_report(void)
         if(P[i].Mass <= 0) {continue;}
         loc[0] += 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv;
         loc[1] += 0.5 * P[i].Mass * P[i].Potential; /* 1/2 removes the double counting of each pair */
+#ifdef PMGRID
+        loc[1] -= 0.5 * P[i].Mass * pm_self_potential(i); /* no self-energy */
+#endif
+#ifdef TREE_SHORTRANGE_POT_FROM_FORCE_DIAG
+        loc[1] += 0.5 * P[i].Mass * P[i].TreePotForceCorr; /* tree pair potential consistent with the applied force */
+#endif
+#ifdef GALSF_RESOLVEDISM_TALLBOX
+        loc[1] += P[i].Mass * analytic_external_potential(i); /* external field: full weight */
+#endif
         loc[2] += P[i].Mass;
     }
     MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -622,6 +633,7 @@ void run(void)
 
     while(1)			/* main timestep iteration loop */
     {
+        long long mbary_ncalls_step = mbary_ncalls;
 #ifdef OUTPUT_STAR_ENERGY_DIRECT_SUM
         incode_total_energy();	/* DIAGNOSTIC: KETJU-aware total energy, printed at the first full sync after each TimeBetSnapshot */
 #endif
@@ -662,7 +674,7 @@ void run(void)
         HermiteOnlyFlag = 0;
 #if defined(STARS_HERMITE_DIRECT_GRAVITY) && defined(KETJU_TYPE4_STARS)
         for(int i : ActiveParticleList) /* this pass set the kick a new KETJU member's start subtraction cancels */
-            if((P[i].Type == 4) && eligible_for_hermite(i)) {double s2[2], z2[2]; tree_pair_softening(i, s2, z2); for(int k = 0; k < 2; k++) {P[i].KetjuTreeSoft[k] = s2[k]; P[i].KetjuTreeZeta[k] = z2[k];}}
+            if((P[i].Type == 4) && eligible_for_hermite(i)) {double s2[2], z2[2]; tree_pair_softening(i, s2, z2); for(int k = 0; k < 2; k++) {P[i].KetjuTreeSoft[k] = s2[k]; P[i].KetjuTreeZeta[k] = z2[k];} P[i].KetjuTreeMass = P[i].Mass;}
 #endif
 #endif
         ESTEP_BEGIN(ESTEP_INT_KICK1);
@@ -680,9 +692,11 @@ void run(void)
 
 
 #ifdef KETJU_REGULARIZATION
+        MBARY_STEP("pre_ketju");
         ketju_find_regions();       /* detect chain regions around massive stars/BHs */
         ketju_run_integration();    /* subtract tree force, run MSTAR, apply velocity trick */
         ketju_write_output();       /* write KETJU diagnostics to HDF5 */
+        MBARY_STEP("post_ketju");
 #endif
 
         ESTEP_BEGIN(ESTEP_INT_DRIFT);
@@ -892,6 +906,9 @@ void run(void)
 
         calculate_non_standard_physics();	/* source terms are here treated in a strang-split fashion */
         EB_SYNC_REPORT();
+#if defined(OUTPUT_ENERGY_STEP_TRACE) || defined(ENERGY_BUDGET_DIAGNOSTIC)
+        if(mbary_ncalls == mbary_ncalls_step) {MBARY_STEP("end_of_step");} /* mass trace for runs with no other checkpoint this step; no extra collective otherwise */
+#endif
 
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
