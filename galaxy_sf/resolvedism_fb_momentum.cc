@@ -793,6 +793,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         FB_TestWindMcoupled += dM;
                     }
 #endif
+                    resolvedism_fb_receiver_deposit_done(j, 0, 3);
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                     wakeup_list_note(j);
@@ -835,6 +836,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
 #if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
                     CellP[j].FBinjFlag = 1; /* deposit after the closing kick: the hydro pass is redone, as for SNe */
 #endif
+                    resolvedism_fb_receiver_deposit_done(j, 0, 4);
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                     wakeup_list_note(j);
@@ -928,6 +930,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                                 (unsigned long long)P[j].ID, dv_mag, vmag,
                                 P[j].NumNgb, CellP[j].Density, wk, kernel.r, local.fb_channel);
                     }
+                    resolvedism_fb_receiver_deposit_done(j, sqrt(dv_mag2) / All.cf_atime, 5);
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                     wakeup_list_note(j);

@@ -435,6 +435,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                      * Evidence: stella/tests/validation/sne_set/figures/fig_B_table.png.
                      * Residual is O(dt) impulsive-injection truncation; structural fix if
                      * <1% at m0.01 ever needed: sync-boundary injection (post-KICK2). */
+                    resolvedism_fb_receiver_deposit_done(j, 0, 1);
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                     wakeup_list_note(j);
@@ -650,6 +651,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     out.SumWK += wk; out.Nrecv++;
 #endif
+                    resolvedism_fb_receiver_deposit_done(j, 0, 2);
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                     wakeup_list_note(j);

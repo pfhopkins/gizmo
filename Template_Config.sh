@@ -251,6 +251,8 @@
 #GALSF_RESOLVEDISM              # master switch: auto-enables GALSF, COOLING, METALS; undefs FIRE FB flags
 #GALSF_RESOLVEDISM_FB           # SN energy injection from resolved massive stars
 #RESOLVED_ISM_VARIABLE_SN_ENERGY        # Stella SN energies by type: PISN 1e52 erg, ECSN 5e50 erg; default: every SN 1e51 erg
+#RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED # a feedback deposit (wind, AGB, SN, Ia ejecta) raises the receiving cell's MaxSignalVel to 2 c_s(post-injection u) + |dv|, so its next timestep, and its own-timestep wake (WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP), is chosen from the heated state (STL-183); off by default
+#TEST_KICK_FLOOR_DUMP=1e-9        # test output: one line per kick whose u limiter or floor adds more than this energy [code units], and one per feedback receiver
 #RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB    # with RESOLVED_ISM_FB_AFTER_CLOSING_KICK: wind, AGB and radiation-pressure deposits also redo the hydro pass (not only SN/Ia); off by default and in no production config: +15 % per step on the L10 zoom, energy gain not measurable (docs/stella_options.md)
 #GALSF_RESOLVEDISM_FB_HEALPIX   # solid-angle-uniform (HEALPix) FB weighting alternative to kernel wk; G17-matrix-validated; was undefinable before audit 2026-07-28
 #RESOLVEDISM_HOTSYNC_CLAMP      # hot-region timebin sync clamp (one-sided pair-flux guard, timestep.cc); was undefinable before audit 2026-07-28
