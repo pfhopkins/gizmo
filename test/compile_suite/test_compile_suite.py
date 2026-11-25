@@ -333,6 +333,7 @@ REMOVED_FLAG_CONFIGS = [
     ("SINGLE_STAR_SINK_DYNAMICS SINGLE_STAR_TIMESTEPPING=1", "SINGLE_STAR_TIMESTEPPING > 0"),
     ("SINGLE_STAR_SINK_DYNAMICS SINGLE_STAR_TIMESTEPPING=2", "SINGLE_STAR_TIMESTEPPING > 0"),
     ("SINGLE_STAR_SINK_DYNAMICS SINGLE_STAR_FIND_BINARIES", "SINGLE_STAR_FIND_BINARIES has been removed"),
+    ("KETJU_LEGACY_C_LIBRARY", "KETJU_LEGACY_C_LIBRARY was removed"),
 ]
 
 
@@ -348,3 +349,49 @@ def test_removed_flag_errors(flags, message):
     assert result.returncode != 0, f"build unexpectedly succeeded for: {flags}"
     assert message in (result.stderr or ""), (
         f"build failed without the expected #error for: {flags}\n" + (result.stderr or "")[-2000:])
+
+
+# KETJU: the C MSTAR library is gone. GIZMO needs an install with the Kokkos MSTAR (libmstar.a) and the headers only.
+def _ketju_install_without_c_library(tmp_path: Path) -> Path:
+    """A KETJU_PATH with the headers and libmstar.a of the installed KETJU, and no libketju-integrator.a."""
+    env = {k: v for k, v in os.environ.items() if k != "KETJU_PATH"}
+    out = subprocess.run(["make", "-s", "--no-print-directory", "CONFIGVARS=KETJU_REGULARIZATION", "ketju-path"],
+                         cwd=_gizmo_root(), capture_output=True, text=True, timeout=60, env=env).stdout
+    found = dict(line.split("=", 1) for line in out.splitlines() if line.startswith("KETJU_"))
+    src = Path(found.get("KETJU_PATH", "''").strip("'"))
+    libs = [q for q in (src / "lib" / "libmstar.a", src / "lib64" / "libmstar.a") if q.is_file()]
+    if not (libs and (src / "include" / "mstar" / "mstar.hpp").is_file()):
+        pytest.skip(f"no KETJU install at '{src}' (scripts/get_stella_deps.sh, KOKKOS_ROOT)")
+    dst = tmp_path / "ketju_no_c"
+    (dst / "lib").mkdir(parents=True)
+    os.symlink(src / "include", dst / "include")
+    os.symlink(libs[0], dst / "lib" / "libmstar.a")
+    return dst
+
+
+def _make_with_ketju(flags: str, ketju_path: Path, timeout: int) -> subprocess.CompletedProcess:
+    gizmo_root = _gizmo_root()
+    _write_config(flags, gizmo_root / "Config.sh")
+    _make_clean(gizmo_root)
+    result = subprocess.run(["make", f"-j{os.cpu_count() or 4}"], cwd=gizmo_root, capture_output=True, text=True,
+                            timeout=timeout, env=dict(os.environ, KETJU_PATH=str(ketju_path)))
+    _make_clean(gizmo_root)
+    return result
+
+
+def test_ketju_builds_without_c_library(tmp_path):
+    """Stella default + KETJU builds and links against an install that has no libketju-integrator.a."""
+    ketju_path = _ketju_install_without_c_library(tmp_path)
+    lines = (_gizmo_root() / "Config_stella_default.sh").read_text().splitlines()
+    flags = [line.split("%")[0].strip() for line in lines]
+    flags = [f for f in flags if f and not f.startswith("#")] + ["KETJU_REGULARIZATION", "KETJU_MERGE_STARS"]
+    result = _make_with_ketju(" ".join(flags), ketju_path, 3000)
+    assert result.returncode == 0, "Stella default + KETJU did not build without the C library:\n" + (result.stderr or "")[-3000:]
+
+
+def test_ketju_legacy_c_library_is_a_build_error(tmp_path):
+    """KETJU_LEGACY_C_LIBRARY with KETJU on stops at the preprocessor with the removal message."""
+    ketju_path = _ketju_install_without_c_library(tmp_path)
+    result = _make_with_ketju("KETJU_REGULARIZATION KETJU_LEGACY_C_LIBRARY", ketju_path, 600)
+    assert result.returncode != 0, "build unexpectedly succeeded with KETJU_LEGACY_C_LIBRARY"
+    assert "KETJU_LEGACY_C_LIBRARY was removed" in (result.stderr or ""), "no removal #error:\n" + (result.stderr or "")[-2000:]
