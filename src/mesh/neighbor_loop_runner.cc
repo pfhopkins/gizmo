@@ -2181,6 +2181,29 @@ struct NlrModeATeamPairKernel {
     }
 };
 
+/* Launch and size query of the Mode-A team pair kernel.  On HIP the kernel is compiled for workgroups of at
+ * most the widest Mode-A team (one team per workgroup) rather than for the backend's largest workgroup (1024
+ * threads), which caps a thread at 128 vector registers: a pair body with a large accumulator then gets the
+ * registers it needs instead of spilling to scratch (measured on MI250X: gradients and hydro-force spills to
+ * none, the Mode-A pair kernels 17-20 % faster on two FIRE problems).  The team width chosen below is the same
+ * either way -- the loop's target, at most the bound -- so only the compiled code changes, not the order of any
+ * sum.  The price is occupancy: a kernel that did not spill can use more registers than it needs (the sink
+ * swallow kernel goes from 111 to 152 vector registers, occupancy 4 -> 1 on MI250X; not measured at run time,
+ * since sink loops run as request-driven walks below their threshold).  CUDA keeps the unbounded launch: on
+ * GB200 the bound removed no spill and gave no measured gain. */
+#if defined(KOKKOS_ENABLE_HIP)
+static constexpr int nlr_mode_a_team_max_lanes = NLR_TEAM_WIDTH_SYMMETRIC;
+static_assert(NLR_TEAM_WIDTH_ONEWAY <= nlr_mode_a_team_max_lanes && NLR_TEAM_WIDTH_FAT_ACCUM <= nlr_mode_a_team_max_lanes &&
+              NLR_TEAM_WIDTH_LOWDIM <= nlr_mode_a_team_max_lanes, "a Mode-A team width exceeds the declared launch bound");
+template <typename F> static inline int nlr_mode_a_team_size_max(const F& f) {return gizmo_gpu_bounded_team_size_max<nlr_mode_a_team_max_lanes>(f);}
+template <typename F> static inline void nlr_mode_a_team_launch(const char *tag, int league, int width, F&& f)
+    {gizmo_gpu_bounded_team_kernel_launch<nlr_mode_a_team_max_lanes>(tag, league, width, std::forward<F>(f));}
+#else
+template <typename F> static inline int nlr_mode_a_team_size_max(const F& f) {return gizmo_gpu_team_size_max(f);}
+template <typename F> static inline void nlr_mode_a_team_launch(const char *tag, int league, int width, F&& f)
+    {gizmo_gpu_team_kernel_launch(tag, league, width, std::forward<F>(f));}
+#endif
+
 /* Lanes per row for a TeamRowReduce Spec, or 1 to select the flat kernel.
  *
  * Keyed only on structural properties -- execution space, the Spec's assignment
@@ -2219,7 +2242,7 @@ static int nlr_mode_a_team_width(const Functor& f)
             /* A non-positive answer means the backend reports NO launchable
              * team size for this functor, not "no limit" -- fall back to the
              * flat kernel rather than launching at the full target. */
-            const int hw = gizmo_gpu_team_size_max(f);
+            const int hw = nlr_mode_a_team_size_max(f);
             if(hw <= 0)       { return 1; }
             if(hw < target)   { target = hw; }
             int w = 1;
@@ -2479,7 +2502,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
             if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
                 if(team_width > 1) {
                     TeamKernel fn{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, c0, cs, motion_targets};
-                    gizmo_gpu_team_kernel_launch(Spec::loop_name, n, team_width, fn);
+                    nlr_mode_a_team_launch(Spec::loop_name, n, team_width, fn);
                 } else {
                     gizmo_gpu_kernel_launch(Spec::loop_name, n, flat_kernel);
                 }
@@ -6313,7 +6336,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
                               active_set_arr, csr_lookup, 0, cs_ref, motion_targets};
                 const int team_width = nlr_mode_a_team_width<Spec>(fn);
                 if (team_width > 1) {
-                    gizmo_gpu_team_kernel_launch(Spec::loop_name, n_compacted, team_width, fn);
+                    nlr_mode_a_team_launch(Spec::loop_name, n_compacted, team_width, fn);
                 } else {
                     gizmo_gpu_kernel_launch(Spec::loop_name, n_compacted, flat_kernel);
                 }
