@@ -44,13 +44,39 @@ KOKKOS_INLINE_FUNCTION Vec3<double> Vphys(const Vec3<double> &vcoord, const stru
 KOKKOS_INLINE_FUNCTION Vec3<double> Vcoord(const Vec3<double> &vphys, const struct gr_metric *gr) {return gr->alpha*vphys - gr->beta;}
 
 /* ------------------------------------------------------------------ metric */
-/* displacement of pos from the black hole of the single-hole metrics: the hole sits at the origin, or at the box centre if the box is
-   periodic (nearest image). Every distance from the hole (metric, excision, Lorentz-factor limiter) uses it */
+/* the point the metric is centred on: the origin, or the box centre if the box is periodic. In 1D and 2D the unused coordinates are those
+   of the line or plane of the cells (zero, or the half box with SHIFT_BY_HALF_BOX, init.cc), so that the hole lies on it */
+KOKKOS_INLINE_FUNCTION Vec3<double> gr_metric_origin(void)
+{
+    Vec3<double> c = {0, 0, 0};
+#ifdef BOX_PERIODIC
+    c[0] = boxHalf_X;
+#if (NUMDIMS>1)
+    c[1] = boxHalf_Y;
+#endif
+#if (NUMDIMS>2)
+    c[2] = boxHalf_Z;
+#endif
+#endif
+#ifdef SHIFT_BY_HALF_BOX
+#if (NUMDIMS<2)
+    c[1] = boxHalf_Y;
+#endif
+#if (NUMDIMS<3)
+    c[2] = boxHalf_Z;
+#endif
+#endif
+    return c;
+}
+
+/* displacement of pos from the black hole of the single-hole metrics, at gr_metric_origin (nearest image if the box is periodic). Every
+   distance from the hole (metric, excision, Lorentz-factor limiter) uses it */
 KOKKOS_INLINE_FUNCTION Vec3<double> gr_hole_displacement(const Vec3<double> &pos)
 {
+    const Vec3<double> c = gr_metric_origin();
     Vec3<double> dp = pos;
+    for(int k = 0; k < 3; k++) {dp[k] -= c[k];}
 #ifdef BOX_PERIODIC
-    dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y; dp[2] -= boxHalf_Z;
     NEAREST_XYZ(dp[0],dp[1],dp[2],1);
 #endif
     return dp;
