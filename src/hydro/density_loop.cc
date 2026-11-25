@@ -805,7 +805,12 @@ void density(void)
      *       so the legacy `Left[i] = Right[i] = 0` is already covered. */
     gpu_particles_arena_invalidate();
     {
-        for (int i : active_list_concat) {
+        const long n_prepass = (long) active_list_concat.size();
+#if defined(GPU_SPEEDUP_HOST_THREADED_DENSITY_PREPASS) && defined(_OPENMP)
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n_prepass))   /* each writes its own particle only */
+#endif
+        for (long k = 0; k < n_prepass; k++) {
+            const int i = active_list_concat[(size_t) k];
 #ifdef SINK_PARTICLES
             P[i].SwallowID = 0;
 #ifdef SINGLE_STAR_SINK_DYNAMICS
