@@ -1938,9 +1938,14 @@ void process_wake_ups(void)
 		   never reached. (Finite-volume gas runs its first kick by time bin, so it gets the first
 		   half-kick but not this completion of the old step. A particle in the cases excluded above
 		   keeps the truncated step below and no kick.) */
-		if(new_step_starts_now) {do_the_kick(i, old_midpoint, All.Ti_Current, P[i].Ti_current, 1);}
+#ifdef MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES
+		const int old_step_completed_by_merge = P[i].MergeOldStepCompleted; P[i].MergeOldStepCompleted = 0; /* merge_particles_ij already brought the old step to now */
+#else
+		const int old_step_completed_by_merge = 0;
+#endif
+		if(new_step_starts_now && !old_step_completed_by_merge) {do_the_kick(i, old_midpoint, All.Ti_Current, P[i].Ti_current, 1);}
 #ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
-		if(new_step_starts_now) {pairflux_wake_kick_correction(i, (double)(All.Ti_Current - old_midpoint) * unit_integertime_in_physical(i, P), 1);} /* its partners deliver these fluxes */
+		if(new_step_starts_now && !old_step_completed_by_merge) {pairflux_wake_kick_correction(i, (double)(All.Ti_Current - old_midpoint) * unit_integertime_in_physical(i, P), 1);} /* its partners deliver these fluxes */
 #endif
 #endif
 		if(tend < tstart) {set_predicted_quantities_for_extra_physics(i);}

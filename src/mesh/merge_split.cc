@@ -1326,6 +1326,24 @@ int merge_particles_ij(int i, int j, double target_share)
     {
         P[j].wakeup = -1; wakeup_sidecar_mark(j); NeedToWakeupParticles_local = 1;
     }
+#ifdef MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES
+    if(!TimeBinActive[P[j].TimeBin] && !P[j].MergeOldStepCompleted && P[j].Ti_current == All.Ti_Current && P[j].integertime_step() == GET_INTEGERTIME_FROM_TIMEBIN(P[j].TimeBin))
+    { /* j is kicked to its step's midpoint (ahead of now or behind it): from there to now with its own rates and mass, before they become the merged ones; the wake then skips its completion kick. Step bounds unchanged. */
+        const integertime mid_j = P[j].Ti_begstep + P[j].integertime_step() / 2;
+        const double e_before_kick = P[j].Mass * (CellP[j].InternalEnergy + 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv); (void) e_before_kick;
+        KickTreatsParticleAsActive = 1; do_the_kick(j, mid_j, All.Ti_Current, P[j].Ti_current, 1); KickTreatsParticleAsActive = 0;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+        pairflux_wake_kick_correction(j, (double)(All.Ti_Current - mid_j) * unit_integertime_in_physical(j, P), 1);
+#endif
+        P[j].MergeOldStepCompleted = 1;
+        ESTEP_BOOK(EBK_MERGE_PARENT_KICK, P[j].Mass * (CellP[j].InternalEnergy + 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv) - e_before_kick); /* inside the merge stage */
+        ESTEP_BOOK(EBK_MERGE_PARENT_KICK_TO_INT, -(P[j].Mass * (CellP[j].InternalEnergy + 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv) - e_before_kick)); /* and back into the integration residual, where kicks belong */
+#ifdef TEST_PAIRFLUX_MERGE_DUMP
+        printf("TEST_PAIRFLUX_MERGE_PARENT_KICK step %lld task %d IDj %llu bin %d half %d dt %.6e dE %.6e\n", (long long) All.NumCurrentTiStep, ThisTask, (unsigned long long) P[j].ID, (int) P[j].TimeBin,
+               (mid_j > All.Ti_Current) ? 1 : 2, (double)(All.Ti_Current - mid_j) * unit_integertime_in_physical(j, P), P[j].Mass * (CellP[j].InternalEnergy + 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv) - e_before_kick);
+#endif
+    }
+#endif
 #ifdef GENERAL_RELATIVITY
     /* GR: the rates of the conserved variables add; the merged conserved variables (predicted and kicked states) are the volume-weighted
        sums divided by the volume the survivor will have, V_j + w V_i: the merged cell is not a new cell of volume V_i + V_j, since most of

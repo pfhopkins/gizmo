@@ -294,6 +294,9 @@ void apply_long_range_kick(integertime tstart, integertime tend)
 #endif
 
 
+#ifdef MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES
+int KickTreatsParticleAsActive = 0; /* set by merge_particles_ij around its kick of an inactive parent */
+#endif
 void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode)
 {
     Vec3<double> dp; double dt_entr, dt_gravkick, dt_hydrokick;
@@ -342,7 +345,11 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #endif
     
     /* only enter the 'normal' kick loop below for genuinely active particles */
+#ifdef MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES
+    if(TimeBinActive[P[i].TimeBin] || KickTreatsParticleAsActive) /* the merge kicks an inactive parent to the current time */
+#else
     if(TimeBinActive[P[i].TimeBin])
+#endif
     {
         /* get the timestep (physical units for dt_entr and dt_hydrokick) */
         dt_entr = dt_hydrokick = (tend - tstart) * unit_integertime_in_physical(i, P);

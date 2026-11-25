@@ -416,6 +416,9 @@ extern ALIGN(32) struct particle_data
 #endif
     
     int wakeup;                           /*!< flag to wake up particle (int: a 4-byte field keeps every device atomic on it lock-free) */
+#ifdef MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES
+    signed char MergeOldStepCompleted;    /*!< 1: a merge kicked this inactive cell from its step's midpoint to the current time; the wake skips that kick and clears it */
+#endif
     
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
     MyFloat StarParticleEffectiveSize;   /*!< effective 'size' of a star particle at formation */
