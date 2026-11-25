@@ -200,6 +200,29 @@ void gizmo_mark_position_dirty_indices(const int *indices, int n);   /* position
 void gizmo_mark_type_dirty(int particle);                           /* the particle's type changed */
 void gpu_leaf_mirror_note_slots_moved(void);   /* particles changed slots (decomposition, rearrangement): refill it whole */
 void gpu_leaf_mirror_release(void);            /* the tree is freed: the mirror goes with it */
+void ngl_cluster_list_release(void);           /* the run ends: the gas index's step cluster list */
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+static constexpr int NGL_CL_SIZE = 8;                                  /* members per j-cluster */
+static constexpr int NGL_CL_PER_TILE = TILE_TARGET_SIZE / NGL_CL_SIZE;
+#define NGL_CL_BEG(off, row) ((off)[2 * (size_t)(row)])
+#define NGL_CL_END(off, row) ((off)[2 * (size_t)(row) + 1])
+#define NGL_CL_LISTED(v, row) (NGL_CL_BEG((v).own_off, row) >= 0 && (!(v).ghost_off || NGL_CL_BEG((v).ghost_off, row) >= 0))
+struct NglClEntry {
+    int cluster;               /* tile * NGL_CL_PER_TILE + k: slots tile.first + k * NGL_CL_SIZE on */
+    int pad;
+    unsigned long long bits;   /* the i-tile members (bit = slot - i-tile.first) that may reach it */
+};
+/* What a kernel over the owned part of the list reads. */
+struct NglClOwnedQueryView {
+    int on, source_base, source_count, num_pool, n_tiles;
+    const sfc_tile_t *tiles; const int *pool; const int *slot_of;
+    const unsigned *tile_gen; const int *tile_row; unsigned gen;
+    const double *R; const int64_t *off; const NglClEntry *ent;
+};
+void nlr_cluster_list_release(void);            /* the run ends: the neighbour-loop runner's storage for evaluating from the list */
+int ngl_cl_owned_list(struct particle_data *P_shared, int owned_end, const int *d_query, int n, mode_b_radius_policy_t policy,
+                      const char *caller, struct NglClOwnedQueryView *v);
+#endif
 void nlr_staging_release(void);   /* the run ends: the neighbour-loop runner's kept per-call staging buffers */
 void nlr_mode_d_packet_workspace_release(void); /* the tree is freed (or the run ends): the packet walk's workspace, whose top-level order it
                                                    held, goes too, with the device storage Mode D calls gave back */

@@ -2959,9 +2959,13 @@ void gizmo_kokkos_finalize(void)
     timing_breakdown_release();   /* its callbacks off and its timing events destroyed first */
 #endif
     gx_touched_set_release();
+    ngl_cluster_list_release();
     gx_mode_d_staging_release();
     nlr_mode_d_packet_workspace_release();
     nlr_staging_release();
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+    nlr_cluster_list_release();
+#endif
     gx_top_leaf_map_release();
     gx_motion_target_release();
     gpu_node_dirty_release();

@@ -78,12 +78,14 @@ int sfc_box_may_reach(const double box_lo[3], const double box_hi[3],
  * wide-filter loops) pass All.TurbDynamicDiffFac so the pair reach becomes
  * max(h_i, fac*h_j). Applied at query time; the stored rows and bands stay
  * keyed on raw radii. */
+/* The members tested are the pool slots [first, first + n) of `tile` (its velocity range, residual and
+ * half-width bound them); check_tile_particles_gpu takes the whole tile. */
 KOKKOS_INLINE_FUNCTION
-int check_tile_particles_gpu(const double *rows, const double pos_i[3], double h_i, double h2_i,
-                             double j_radius_scale,
-                             const sfc_tile_t *tile, const int *pool, int search_mode,
-                             const struct sfc_walk_frame &frame,
-                             int *store_neighbors, int count, int max_store,
+int check_slot_range_gpu(const double *rows, const double pos_i[3], double h_i, double h2_i,
+                         double j_radius_scale,
+                         const sfc_tile_t *tile, int first, int n, const int *pool, int search_mode,
+                         const struct sfc_walk_frame &frame,
+                         int *store_neighbors, int count, int max_store,
                              /* Optional per-active counters; pass nullptr for fast-path. Compiler
                               * eliminates the null-checks via constant prop when null literal is passed. */
                              int *cnt_candidates_tested = nullptr,
@@ -97,10 +99,10 @@ int check_tile_particles_gpu(const double *rows, const double pos_i[3], double h
                              unsigned int supply_mask = ((1u << 6) - 1u))
 {
     MyDouble xtmp = 0; /* required by NGB_PERIODIC_BOX_LONG_* macros */
-    for(int s = 0; s < tile->count; s++)
+    for(int s = 0; s < n; s++)
     {
         if(cnt_candidates_tested) (*cnt_candidates_tested)++;
-        const int slot = tile->first + s;
+        const int slot = first + s;
         int j = pool[slot];
         if(j < 0) continue;   /* a member that left the pool in place since the build (gpu_sidx_notify_member_lost) */
         /* Per-type supply filter at leaf. No-op when supply_mask == 0x3f (default).
@@ -161,6 +163,22 @@ int check_tile_particles_gpu(const double *rows, const double pos_i[3], double h
     return count;
 }
 
+KOKKOS_INLINE_FUNCTION
+int check_tile_particles_gpu(const double *rows, const double pos_i[3], double h_i, double h2_i,
+                             double j_radius_scale,
+                             const sfc_tile_t *tile, const int *pool, int search_mode,
+                             const struct sfc_walk_frame &frame,
+                             int *store_neighbors, int count, int max_store,
+                             int *cnt_candidates_tested = nullptr,
+                             int *cnt_candidates_accepted = nullptr,
+                             const struct particle_data *P_gpu = nullptr,
+                             unsigned int supply_mask = ((1u << 6) - 1u))
+{
+    return check_slot_range_gpu(rows, pos_i, h_i, h2_i, j_radius_scale, tile, tile->first, tile->count, pool, search_mode,
+                                frame, store_neighbors, count, max_store, cnt_candidates_tested, cnt_candidates_accepted,
+                                P_gpu, supply_mask);
+}
+
 
 /* Walk the tile BVH for one query and hand every overlapping tile to a visitor.
  *
@@ -190,7 +208,10 @@ void bvh_walk_tiles(const double pos_i[3], double h_i, double j_radius_scale,
                     const tile_bvh_node_t *bvh, int bvh_root,
                     const struct particle_data *P_gpu, unsigned int supply_mask,
                     int *cnt_nodes_visited, int *cnt_tiles_visited,
-                    TileVisitor &visit, const struct sfc_walk_frame &frame)
+                    TileVisitor &visit, const struct sfc_walk_frame &frame,
+                    /* A walk for a group of queries around pos_i: added to the opening radius, it is the largest
+                     * distance of a member from pos_i, so every node a member's own walk opens is opened. */
+                    double reach_offset = 0.0)
 {
     if(bvh_root < 0) {return;}
 
@@ -220,7 +241,7 @@ void bvh_walk_tiles(const double pos_i[3], double h_i, double j_radius_scale,
         /* The drifted band, scaled on the j side in SYMMETRIC mode
          * (no-op when j_radius_scale == 1.0; constant-propagated for default callers). */
         node_hmax_eff *= j_radius_scale;
-        double search_r = (search_mode == NGB_SEARCH_ONEWAY) ? h_i : ((h_i > node_hmax_eff) ? h_i : node_hmax_eff);
+        double search_r = ((search_mode == NGB_SEARCH_ONEWAY) ? h_i : ((h_i > node_hmax_eff) ? h_i : node_hmax_eff)) + reach_offset;
 
         /* Check if node's box, as it can be now, is within search_r of particle i */
         if(!sfc_box_may_reach(node->lo, node->hi, node->u_min, node->u_max, node->rho, frame, pos_i, search_r)) continue;

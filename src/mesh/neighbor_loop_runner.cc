@@ -5550,6 +5550,117 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
 }
 
 
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+/* Device storage of the list evaluation below: grown only, to the largest call's locals and gas pool. */
+struct NlrClListStorage {
+    int *index = nullptr; size_t index_cap = 0;          /* [locals] the particle index of each query */
+    int *replay = nullptr; size_t replay_cap = 0;        /* [locals] nonzero: the list does not cover this query */
+    int *query_of = nullptr; size_t query_cap = 0;       /* [pool slots] the query of a member, read when its stamp is current */
+    unsigned *query_stamp = nullptr; size_t stamp_cap = 0;
+    int *tiles = nullptr; size_t tiles_cap = 0;          /* [tiles] the tiles holding covered queries */
+    unsigned *tile_stamp = nullptr; size_t tstamp_cap = 0;
+    int *counter = nullptr;                              /* shared: tiles claimed, queries left */
+    unsigned stamp = 0;
+};
+static NlrClListStorage g_nlr_cl;
+template <class T>
+static bool nlr_cl_reserve(T **p, size_t *cap, size_t n, const char *label, bool zero)
+{
+    if(*p && *cap >= n) {return true;}
+    if(*p) {Kokkos::fence(); Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(*p); *p = nullptr; *cap = 0;}
+    const size_t want = n + n / 8 + 1;
+    *p = (T *) gizmo_gpu_alloc_device(want * sizeof(T), label);
+    if(!*p) {return false;}
+    *cap = want;
+    if(zero) {T *q = *p; Kokkos::parallel_for("nlr_cl_zero", Kokkos::RangePolicy<>(0, (int) want), KOKKOS_LAMBDA(int k) {q[k] = T(0);}); Kokkos::fence();}
+    return true;
+}
+void nlr_cluster_list_release(void)
+{
+    Kokkos::fence();
+    if(g_nlr_cl.index) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_nlr_cl.index);}
+    if(g_nlr_cl.replay) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_nlr_cl.replay);}
+    if(g_nlr_cl.query_of) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_nlr_cl.query_of);}
+    if(g_nlr_cl.query_stamp) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_nlr_cl.query_stamp);}
+    if(g_nlr_cl.tiles) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_nlr_cl.tiles);}
+    if(g_nlr_cl.tile_stamp) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_nlr_cl.tile_stamp);}
+    if(g_nlr_cl.counter) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_nlr_cl.counter);}
+    g_nlr_cl = NlrClListStorage{};
+}
+
+/* One-way evaluation of a batch's own queries from the owned part of the step's cluster list.  One team of one i-tile's lanes per
+ * tile holding queries, one lane per query: the lanes of a team walk the tile's entries together and visit, with the walk's own leaf
+ * (type, distance, mass, then the pair kernel), the members of the clusters carrying their bit.  Sums are held in registers and stored
+ * once.  Returns the number of queries left to the walk, marked in *replay_out, or -1 when the list does not apply. */
+template <typename Spec, bool UsesMirror>
+static int nlr_mode_d_list_reduce(const typename Spec::DeviceContext &ctx, const typename Spec::CallScalars &cs, unsigned int supply_mask,
+                                  const typename Spec::ActiveData *locals, const int *local_index, int n_local,
+                                  typename Spec::AccumData *accums_out, const GxLeafMirrorView &leaf_mirror, const int **replay_out, const GxDeviceTreeView &check_tree)
+{
+    using ActiveData  = typename Spec::ActiveData;
+    using AccumData   = typename Spec::AccumData;
+    using ScatterData = typename Spec::ScatterData;
+    struct NglClOwnedQueryView v;
+    ngl_cl_owned_list(P, NumPart, local_index, n_local, Spec::radius_policy, Spec::loop_name, &v);
+    if(!v.on) {return -1;}
+    if(!g_nlr_cl.counter) {g_nlr_cl.counter = (int *) gizmo_gpu_alloc_shared(2 * sizeof(int), "nlr_cl_counter"); if(!g_nlr_cl.counter) {return -1;}}
+    const int ntiles = v.n_tiles;
+    if(!nlr_cl_reserve(&g_nlr_cl.replay, &g_nlr_cl.replay_cap, (size_t)n_local, "nlr_cl_replay", false) ||
+       !nlr_cl_reserve(&g_nlr_cl.query_of, &g_nlr_cl.query_cap, (size_t)v.num_pool, "nlr_cl_query_of", false) ||
+       !nlr_cl_reserve(&g_nlr_cl.query_stamp, &g_nlr_cl.stamp_cap, (size_t)v.num_pool, "nlr_cl_query_stamp", true) ||
+       !nlr_cl_reserve(&g_nlr_cl.tiles, &g_nlr_cl.tiles_cap, (size_t)ntiles, "nlr_cl_tiles", false) ||
+       !nlr_cl_reserve(&g_nlr_cl.tile_stamp, &g_nlr_cl.tstamp_cap, (size_t)ntiles, "nlr_cl_tile_stamp", true)) {return -1;}
+    if(++g_nlr_cl.stamp == 0u) {g_nlr_cl.stamp = 1u;}
+    const unsigned st = g_nlr_cl.stamp;
+    int *replay = g_nlr_cl.replay, *query_of = g_nlr_cl.query_of, *tlist = g_nlr_cl.tiles, *counter = g_nlr_cl.counter;
+    unsigned *qst = g_nlr_cl.query_stamp, *tst = g_nlr_cl.tile_stamp;
+    counter[0] = 0; counter[1] = 0;
+    Kokkos::parallel_for("nlr_cl_cover", Kokkos::RangePolicy<>(0, n_local), KOKKOS_LAMBDA(int kk) {
+        const int k = local_index[kk] - v.source_base;
+        const int slot = (k >= 0 && k < v.source_count) ? v.slot_of[k] : -1;
+        const int t = (slot >= 0) ? slot / TILE_TARGET_SIZE : -1;
+        const int row = (t >= 0 && v.tile_gen[t] == v.gen) ? v.tile_row[t] : -1;
+        const int covered = (row >= 0 && (double)locals[kk].h_search <= v.R[slot] && NGL_CL_BEG(v.off, row) >= 0);
+        replay[kk] = covered ? 0 : 1;
+        if(!covered) {Kokkos::atomic_inc(&counter[1]); return;}
+        query_of[slot] = kk; qst[slot] = st;
+        if(Kokkos::atomic_exchange(&tst[t], st) != st) {tlist[Kokkos::atomic_fetch_add(&counter[0], 1)] = t;}
+    });
+    Kokkos::fence();
+    const int n_tiles = counter[0], n_left = counter[1];
+    if(n_tiles > 0) {
+        const GxLeafMirrorView mirror = leaf_mirror;
+        using Team = Kokkos::TeamPolicy<Kokkos::LaunchBounds<TILE_TARGET_SIZE, 1> >;
+        Kokkos::parallel_for(Spec::loop_name, Team(n_tiles, TILE_TARGET_SIZE, 1), KOKKOS_LAMBDA(const typename Team::member_type &team) {
+            const GxLeafMirrorView &mv = mirror;
+            const int t = tlist[team.league_rank()], r = team.team_rank(), row = v.tile_row[t], slot = v.tiles[t].first + r;
+            if(r >= v.tiles[t].count || qst[slot] != st) {return;}
+            const int kk = query_of[slot];
+            const ActiveData a = locals[kk];
+            AccumData acc; Spec::zero_accum(acc);
+            ScatterData sc{};
+            NlrModeDReduceLeaf<Spec, UsesMirror> leaf{&ctx, &a, &acc, &sc, supply_mask, &cs};
+            if constexpr (UsesMirror) {leaf.leaf_mirror = mv;} else {(void) mv;}
+            const unsigned long long bit = 1ull << r;
+            const double qx = (double)a.pos[0], qy = (double)a.pos[1], qz = (double)a.pos[2], reach = (double)a.h_search;
+            for(int64_t e = NGL_CL_BEG(v.off, row); e < NGL_CL_END(v.off, row); e++) {
+                const NglClEntry E = v.ent[e];
+                if(!(E.bits & bit)) {continue;}
+                const sfc_tile_t &J = v.tiles[E.cluster / NGL_CL_PER_TILE];
+                const int kc = E.cluster % NGL_CL_PER_TILE, first = J.first + kc * NGL_CL_SIZE, rest = J.count - kc * NGL_CL_SIZE;
+                const int m = (rest < NGL_CL_SIZE) ? rest : NGL_CL_SIZE;
+                for(int q = 0; q < m; q++) {const int j = v.pool[first + q]; if(j >= 0) {leaf.visit(j, qx, qy, qz, reach);}}
+            }
+            accums_out[kk] = acc;
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error(Spec::loop_name, n_tiles);
+    }
+    *replay_out = replay;
+    return n_left;
+}
+#endif
+
 /* One evaluation launch sequence of an admitted multi-rank Mode D call: this rank's own queries (if any are
  * still unanswered) and a batch of received ones, answered from this rank's tree, on the device, whatever
  * their number -- the queries and the replies live in device memory.  No candidate list is built: the walk
@@ -5573,7 +5684,7 @@ struct NlrModeDBatch {
                          const GxDeviceTreeView& tree, unsigned int neighbor_type_mask,
                          const ActiveData *locals, int n_local, AccumData *local_accums,
                          const Envelope *received, int K, Reply *replies, int *anomaly,
-                         const Kokkos::DefaultExecutionSpace *eval_space = nullptr)
+                         const Kokkos::DefaultExecutionSpace *eval_space = nullptr, const int *local_index = nullptr)
     {
         using ScatterData = typename Spec::ScatterData;
         static_assert(nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly,
@@ -5593,7 +5704,27 @@ struct NlrModeDBatch {
         const int M = n_local + K;
         if(M <= 0) {return;}
         /* All was brought current by the exchange this batch belongs to, once for the whole exchange. */
-
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+        if constexpr (!nlr_spec_writes_neighbour_motion_v<Spec>) {
+            if(local_index && n_local > 0 && neighbor_type_mask == 1u && Spec::radius_policy == MODE_B_RADIUS_DEFAULT) {
+                const GxLeafMirrorView lm = nlr_mode_d_leaf_mirror(true, tree);
+                const bool mirrored = (lm.pos && lm.type);
+                const int *left = nullptr;
+                const int n_left = mirrored ? nlr_mode_d_list_reduce<Spec, true>(ctx, cs, neighbor_type_mask, locals, local_index, n_local, local_accums, lm, &left, tree)
+                                            : nlr_mode_d_list_reduce<Spec, false>(ctx, cs, neighbor_type_mask, locals, local_index, n_local, local_accums, lm, &left, tree);
+                if(n_left >= 0) {
+                    /* every local member is current (a condition of the list), so no recording pass has anything to drift */
+                    if(n_left > 0) {
+                        const struct GxMotionTargetSet motion = gx_motion_target_view();
+                        if(mirrored) {flat<true>(ctx, cs, tree, neighbor_type_mask, locals, n_local, local_accums, nullptr, 0, nullptr, anomaly, left, motion, lm, GxTouchedSet{}, 0, nullptr);}
+                        else {flat<false>(ctx, cs, tree, neighbor_type_mask, locals, n_local, local_accums, nullptr, 0, nullptr, anomaly, left, motion, lm, GxTouchedSet{}, 0, nullptr);}
+                    }
+                    if(K > 0) {evaluate(ctx, cs, tree, neighbor_type_mask, nullptr, 0, nullptr, received, K, replies, anomaly, eval_space);}
+                    return;
+                }
+            }
+        }
+#endif
         const int use_mass_verdict = nlr_mode_d_keeps_mass_verdict<Spec>(true);
         const GxLeafMirrorView record_mirror = nlr_mode_d_leaf_mirror(true, tree);
         nlr_record_and_drift(
@@ -5783,6 +5914,27 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
             snapshot[k] = Spec::load_active(ctx, slot[k], idx[k], rad[k], cs);
         });
     }
+
+    const int *query_index = nullptr;   /* the particle of each query, for an evaluation from the cluster list */
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+    if(N > 0 && type_mask == 1u && nlr_cl_reserve(&g_nlr_cl.index, &g_nlr_cl.index_cap, (size_t)N, "nlr_cl_index", false)) {
+        int *qi = g_nlr_cl.index;
+        if(device_queries) {
+            const int *live = device_queries->live, *index = device_queries->slot_index;
+            Kokkos::parallel_for("nlr_cl_query_index", Kokkos::RangePolicy<>(0, N), KOKKOS_LAMBDA(int k) {qi[k] = index[live[k]];});
+        } else {
+            const int *index = L.active_index;
+            Kokkos::parallel_for("nlr_cl_query_index", Kokkos::RangePolicy<>(0, N), KOKKOS_LAMBDA(int k) {qi[k] = index[k];});
+        }
+        Kokkos::fence();
+        query_index = qi;
+        /* all of the call's queries are listed now, whatever batches they are evaluated in */
+        if constexpr (!nlr_spec_writes_neighbour_motion_v<Spec> && Spec::radius_policy == MODE_B_RADIUS_DEFAULT) {
+            struct NglClOwnedQueryView v;
+            ngl_cl_owned_list(P, NumPart, query_index, N, Spec::radius_policy, Spec::loop_name, &v);
+        }
+    }
+#endif
 
     /* 2. the export count, and the arena for it */
     const ModeDExportTopology topo{L.map, me};
@@ -5984,7 +6136,7 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                     const int K = batch[filling].records, with_locals = (!locals_in_chunks && !locals_done) ? N : 0;
                     NlrModeDBatch<Spec>::evaluate(ctx, cs, tree, type_mask, with_locals ? snapshot : nullptr, with_locals, accums,
                                                   (const Envelope *) L.group_queries[filling], K, (Reply *) L.group_replies[filling],
-                                                  flags + MODE_D_FLAG_WALK, eval_queue);
+                                                  flags + MODE_D_FLAG_WALK, eval_queue, with_locals ? query_index : nullptr);
                     if(with_locals) {running_locals = 1; locals_issued = N;}
                     if(!L.batch_segments[filling].empty()) {
                         running_batch = filling; batch[filling].state = 3;
@@ -5999,7 +6151,7 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                 } else if(idle && locals_in_chunks && locals_issued < N) {
                     const int c0 = locals_issued, m = ((long long) (N - c0) < local_chunk) ? N - c0 : (int) local_chunk;
                     NlrModeDBatch<Spec>::evaluate(ctx, cs, tree, type_mask, snapshot + c0, m, accums + c0, nullptr, 0, nullptr,
-                                                  flags + MODE_D_FLAG_WALK, eval_queue);
+                                                  flags + MODE_D_FLAG_WALK, eval_queue, query_index ? query_index + c0 : nullptr);
                     running_locals = 1; locals_issued = c0 + m;
                     if(gx_mode_d_eval_event(0).record(*eval_queue) != 0) {
                         gizmo_fatal_hard_exit_reviewed(90009003, "REVIEWED_HARD_MID_PROTOCOL: a Mode D evaluation's completion could not be recorded",

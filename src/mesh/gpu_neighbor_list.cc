@@ -258,10 +258,12 @@ void gpu_step_sidx_invalidate(void)
     gpu_spatial_index_free(&g_step_sidx_alltypes);
 }
 
+void ngl_cluster_list_release(void);
 void gpu_step_sidx_invalidate_full(void)
 {
     gpu_spatial_index_free(&g_step_sidx_alltypes);
     gpu_spatial_index_free(&g_step_sidx);
+    /* the cluster list built over the index went with it (ngl_cl_segment_released); its storage is kept, grown only */
 }
 
 
@@ -296,8 +298,14 @@ double sidx_tile_looseness(const sfc_tile_t &tile)
 
 /* Release one segment.  Its own dirty-tracker registration goes with it, so releasing one segment never
  * touches another's. */
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+static void ngl_cl_segment_released(const gpu_index_segment_t *seg);   /* the cluster list built over it goes with it */
+#endif
 static void sidx_segment_free(gpu_index_segment_t *seg)
 {
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+    ngl_cl_segment_released(seg);
+#endif
     /* Ordering, not cleanup. kokkos_free does not synchronize, so releasing a
      * device allocation while a kernel may still be reading it is a
      * use-after-free. The fence lives HERE, with the release, so that no caller
@@ -1591,10 +1599,18 @@ struct SidxRaiseRecord {
  * Returns 0; 1 when a member's motion is not finite, so nothing can bound it (the run is stopped); 2 when
  * the raise could not be staged.  Either way the segment no longer bounds its members and is marked to be
  * rebuilt by the next list build, which releases it. */
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+/* The cluster list's record of the reaches its build saw (defined with the list, below). */
+struct NglClRaiseView {unsigned *rgen; double *r0; unsigned gen; int *stale; double superset;};
+static struct NglClRaiseView ngl_cl_raise_view(const gpu_spatial_index_t *idx, int what);
+#endif
 static int sidx_raise_members(gpu_spatial_index_t *idx, const int *list, int n, int what)
 {
     gpu_index_segment_t *seg = &idx->owned;
     if(n <= 0 || !seg->valid) {return 0;}
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+    const struct NglClRaiseView clr = ngl_cl_raise_view(idx, what);
+#endif
     if((what & SIDX_REFIT_REACH) && (list || n != seg->source_count)) {seg->rebuild_needed = 1; return 2;}   /* a refit takes every member */
     const int source_base = seg->source_base, source_end = seg->source_base + seg->source_count;
     const int type_bitmask = idx->cache_tbm;
@@ -1677,6 +1693,14 @@ static int sidx_raise_members(gpu_spatial_index_t *idx, const int *list, int n, 
             m.rho = r.rho; m.hmax = 0;
             for(int t = 0; t < TILE_NUM_PTYPES; t++) {m.hmax_by_type[t] = 0;}
             if(r.type >= 0) {
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+                /* A reach above the list's superset of what its build saw outgrows the list. */
+                if(clr.rgen) {
+                    if(clr.rgen[slot] != clr.gen) {clr.rgen[slot] = clr.gen; clr.r0[2 * (size_t)slot] = rows[(size_t)slot * SIDX_ROW_WIDTH + 3];
+                                                   clr.r0[2 * (size_t)slot + 1] = rows[(size_t)slot * SIDX_ROW_WIDTH + 4];}
+                    if(r.r > clr.superset * clr.r0[2 * (size_t)slot] || r.r_drifted > clr.superset * clr.r0[2 * (size_t)slot + 1]) {*clr.stale = 1;}
+                }
+#endif
                 /* the row holds the reaches themselves, which may fall; the bands only rise */
                 rows[(size_t)slot * SIDX_ROW_WIDTH + 3] = r.r;
                 rows[(size_t)slot * SIDX_ROW_WIDTH + 4] = r.r_drifted;
@@ -1867,6 +1891,560 @@ int sidx_search_segments(const struct SidxSegmentView &own, const struct SidxSeg
     return n_own + n_ghost;
 }
 
+/* The owned segment of `idx` made ready for a search at t_now (released, rebuilt or raised as needed).  Returns 1 when it
+ * could not be built: the stop has already been requested. */
+static int sidx_owned_segment_ready(gpu_spatial_index_t *idx, struct particle_data *P_shared, int owned_end, int callers_array, int owned_current,
+                                    int type_bitmask, mode_b_radius_policy_t radius_policy, int num_active, int maintained, integertime t_now,
+                                    const struct DriftKickTableView &host_tables, const char *caller_label, struct SidxBuildReport *report)
+{
+    gpu_index_segment_t *own = &idx->owned;
+    /* The all-types index holds sinks, stars and dark matter, whose positions and membership can be
+     * written in place between two of its searches (sink repositioning, accretion, mergers) without
+     * advancing the owned epoch; its owned segment is therefore rebuilt at every import, as the whole
+     * index was before it was split. */
+    const int owned_follows_import = (idx == &g_step_sidx_alltypes);
+    if(own->valid && (own->source_count != owned_end || own->owned_epoch_when_built != g_sidx_owned_epoch ||
+                      own->ti_ref > t_now || own->rebuild_needed ||
+                      (owned_follows_import && (own->ghost_provenance_when_built != ghost_provenance_epoch() ||
+                                                own->member_loss_epoch_when_built != g_sidx_member_loss_epoch)))) {
+        sidx_segment_free(own);
+    }
+    /* A kept segment is rebuilt instead when its boxes can have grown by more than their
+     * own size, or when every member is current and the search is large enough to repay a
+     * fresh segment, which it reads exactly.  A small search reads the kept one in its
+     * drifted frame and the trim makes its list exact, for far less than a build. */
+    if(own->valid && own->ti_ref < t_now) {
+        const double D_kept = get_drift_factor_impl(own->ti_ref, t_now, 1.0, &host_tables);
+        const int fresh_repays = owned_current && (double)num_active >= SIDX_FRESH_SEARCH_FRACTION * (double)owned_end;
+        if(fresh_repays || !(*own->looseness * D_kept <= SIDX_MAX_BOX_GROWTH)) {
+            sidx_segment_free(own);
+        }
+    }
+    /* Bring a kept segment's reaches up to date.  Every particle whose radius changed
+     * since was marked dirty (gizmo_mark_kernel_radius_dirty_*); its row takes its
+     * current reach and the bands above it are raised to cover it.  All-dirty refits
+     * every reach and band in place: the boxes, motion ranges and membership do not
+     * depend on the radii.  A refresh that cannot be staged rebuilds the segment
+     * instead: a fresh segment starts current.  Per-segment state means consuming-and-
+     * clearing this segment's bits leaves the other registered segments' bitsets untouched. */
+    if(own->valid && own->dirty_handle >= 0) {
+        const int handle = own->dirty_handle;
+        if(2 * (long)gpu_dirty_tracker_popcount(handle) >= (long)own->source_count && own->source_count > 0) {
+            /* most members changed: one refit, whose bands may also fall, rather than a raise per member */
+            if(sidx_raise_members(idx, NULL, own->source_count, SIDX_RAISE_REACH | SIDX_REFIT_REACH) == 0) {
+                gpu_dirty_tracker_clear(handle);
+                /* a fallen band shrinks a tile's size floor, so the box growth is judged again */
+                if(own->ti_ref < t_now && !(*own->looseness * get_drift_factor_impl(own->ti_ref, t_now, 1.0, &host_tables) <= SIDX_MAX_BOX_GROWTH)) {
+                    sidx_segment_free(own);
+                }
+            } else {
+                sidx_segment_free(own);
+            }
+        } else if(gpu_dirty_tracker_popcount(handle) > 0) {
+            /* Drain bitset -> host list -> raise. */
+            std::vector<int> dirty_host;
+            dirty_host.reserve(gpu_dirty_tracker_popcount(handle));
+            gpu_dirty_tracker_consume(handle,
+                [](int j, void *ud){ ((std::vector<int> *)ud)->push_back(j); },
+                &dirty_host);
+            if(sidx_raise_members(idx, dirty_host.data(), (int)dirty_host.size(), SIDX_RAISE_REACH)) {
+                sidx_segment_free(own);
+            }
+        }
+    }
+    if(!own->valid) {
+        /* A build that is refused an allocation, or meets a member no search can bound, leaves
+         * the segment invalid and has already asked for the stop, naming the cause.
+         * There is nothing to walk, so hand back the same empty list any other
+         * exhausted allocation here produces. */
+        /* none of a caller's own array is the rank's own particles, so none can outgrow the domain's extent */
+        const struct SidxParticleSource src = {P_shared, callers_array ? NULL : CellP, 0, owned_end, callers_array ? 0 : owned_end,
+                                               type_bitmask, 0, callers_array};
+        /* Only the gas index takes the order as it stands: every in-place write of a gas particle's
+         * position, and every particle that becomes gas, advances the owned epoch, which is not so for the
+         * other types.  (A particle that stops being gas leaves its slot to be retired, not the order.) */
+        const int presorted = (P_shared == P) && (type_bitmask == 1) && sidx_particles_still_ordered(owned_end, t_now);
+        if(sidx_build_segment_now(src, maintained, presorted, radius_policy, caller_label, own, report)) {
+            return 1;
+        }
+        own->owned_epoch_when_built = g_sidx_owned_epoch;
+        own->member_loss_epoch_when_built = g_sidx_member_loss_epoch;
+        own->ghost_provenance_when_built = ghost_provenance_epoch();
+        idx->cache_tbm = type_bitmask;
+        idx->cache_radius_policy = radius_policy;
+    }
+    return 0;
+}
+
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+/* ---- The step's cluster list over the kept gas index ----------------------------------------------
+ * Every neighbour-list build over the gas index in a step searches the same particles at the same time:
+ * density's iterations, the shared symmetric list and its re-imports.  Instead of a tree walk per query
+ * per build, each tile holding queries (an i-tile: TILE_TARGET_SIZE members in space-filling-curve order)
+ * walks the tile BVH once per step for a ball around all its members, and keeps, in traversal order, the
+ * j-clusters (NGL_CL_SIZE consecutive pool slots of a reached tile) that any member can reach, each with a
+ * bit per i-tile member that can reach it.  A member's bit is set when the j-cluster's box, read at the
+ * time of the search, comes within max(R_i, NGL_CL_SUPERSET x the cluster's largest reach) of it, where
+ * R_i = NGL_CL_SUPERSET x its own reach: a superset of every pair the leaf test can accept while the
+ * query's radius is at most R_i and no member's reach has risen above NGL_CL_SUPERSET x its value at the
+ * build.  A query then tests, with the leaf test of the walk (check_slot_range_gpu), only the members of
+ * the j-clusters carrying its bit, in the order the walk would reach them: its row is the walk's row.
+ * A query the list does not cover -- its tile is not listed, its radius has grown past R_i, a reach has
+ * outgrown the list, a scaled symmetric search -- is walked as before.
+ * The owned part lives while the owned segment, the time and the frame are those it was built for; the
+ * part over the imported particles is rebuilt for every import (it is keyed on the ghost segment). */
+static constexpr double NGL_CL_SUPERSET = 1.3;
+static_assert(TILE_TARGET_SIZE == 64, "an i-tile's member bits are one 64-bit word");
+static_assert(TILE_TARGET_SIZE % NGL_CL_SIZE == 0, "a tile is a whole number of clusters");
+
+
+/* One j side of the list: the entries of listed row r are [off[r], off[r+1]). */
+struct NglClPart {
+    int64_t *off = nullptr; size_t off_cap = 0;
+    NglClEntry *ent = nullptr; size_t ent_cap = 0;
+    int64_t n_ent = 0;
+    int n_rows = 0;                          /* rows built so far */
+    int64_t *used = nullptr;                 /* device: the entries reserved by the rows being built */
+    double *boxes = nullptr; size_t boxes_cap = 0;   /* per j-cluster lo[3], hi[3], largest reach (negative: empty) at the start of the list */
+    int valid = 0;
+    const sfc_tile_t *tiles = nullptr;      /* the segment it was built over */
+    const double *rows = nullptr;
+    unsigned long long provenance = 0;      /* ghost part: the import */
+};
+
+static struct {
+    int valid = 0;
+    /* what the owned part was built for */
+    const sfc_tile_t *own_tiles = nullptr; const double *own_rows = nullptr; int own_ntiles = 0, own_source_base = 0, own_source_count = 0;
+    integertime ti_ref = 0, t_now = 0; double D = 0; int exact = 0, reach_current = 0; int policy = 0;
+    /* i side: listed tiles, by generation stamp, and each member slot's covered radius */
+    unsigned *tile_gen = nullptr; int *tile_row = nullptr; size_t tile_cap = 0;
+    unsigned gen = 0;
+    int *listed = nullptr; size_t listed_cap = 0; int n_listed = 0;
+    int *n_listed_dev = nullptr;   /* shared scalar */
+    double *R = nullptr; size_t R_cap = 0;
+    /* reaches at the build of the members raised since, and whether one outgrew the list (shared scalar) */
+    unsigned *rgen = nullptr; double *r0 = nullptr; size_t r_cap = 0;
+    int *stale = nullptr;
+    NglClPart own, ghost;
+} g_cl;
+
+/* What a query kernel reads of the list. */
+struct NglClView {
+    int on;                            /* 0: every query is walked */
+    int walk_ghosts;
+    const unsigned *tile_gen; const int *tile_row; unsigned gen;
+    const double *R;
+    const int *slot_of; int source_base, source_count;
+    const int64_t *own_off; const NglClEntry *own_ent;
+    const int64_t *ghost_off; const NglClEntry *ghost_ent;
+    int symmetric_covered;             /* the call's j-side scale is within the list's */
+};
+
+template <class T>
+static int ngl_cl_reserve(T **p, size_t *cap, size_t n, const char *label)
+{
+    if(n == 0) {n = 1;}
+    if(*p && *cap >= n) {return 0;}
+    if(*p) {Kokkos::fence(); Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(*p); *p = nullptr; *cap = 0;}
+    const size_t want = n + n / 8;   /* grown only, with headroom so a slowly rising need does not reallocate every step */
+    *p = (T *) ngl_alloc_device(want * sizeof(T), label);
+    if(!*p) {return 1;}
+    *cap = want;
+    return 0;
+}
+/* As ngl_cl_reserve, keeping the first `keep` elements. */
+template <class T>
+static int ngl_cl_reserve_keep(T **p, size_t *cap, size_t keep, size_t n, const char *label)
+{
+    if(*p && *cap >= n) {return 0;}
+    const size_t want = n + n / 8 + 1;
+    T *q = (T *) ngl_alloc_device(want * sizeof(T), label);
+    if(!q) {return 1;}
+    if(*p) {
+        if(keep > 0) {
+            Kokkos::View<const T*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged> > src(*p, keep);
+            Kokkos::View<T*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged> > dst(q, keep);
+            Kokkos::deep_copy(dst, src);
+        }
+        Kokkos::fence();
+        Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(*p);
+    }
+    *p = q; *cap = want;
+    return 0;
+}
+static void ngl_cl_part_free(NglClPart *q)
+{
+    if(q->off) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(q->off);}
+    if(q->used) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(q->used);}
+    if(q->boxes) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(q->boxes);}
+    if(q->ent) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(q->ent);}
+    *q = NglClPart{};
+}
+static void ngl_cl_segment_released(const gpu_index_segment_t *seg)
+{
+    if(seg == &g_step_sidx.owned) {g_cl.valid = 0; g_cl.own.valid = 0; g_cl.ghost.valid = 0;}
+    if(seg == &g_step_sidx.ghost) {g_cl.ghost.valid = 0;}
+}
+void ngl_cluster_list_release(void)
+{
+    Kokkos::fence();
+    ngl_cl_part_free(&g_cl.own); ngl_cl_part_free(&g_cl.ghost);
+    void **dev[] = {(void **)&g_cl.tile_gen, (void **)&g_cl.tile_row, (void **)&g_cl.listed, (void **)&g_cl.R, (void **)&g_cl.rgen,
+                    (void **)&g_cl.r0};
+    for(void **q : dev) {if(*q) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(*q); *q = nullptr;}}
+    if(g_cl.n_listed_dev) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_cl.n_listed_dev); g_cl.n_listed_dev = nullptr;}
+    if(g_cl.stale) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_cl.stale); g_cl.stale = nullptr;}
+    g_cl.tile_cap = g_cl.listed_cap = g_cl.R_cap = g_cl.r_cap = 0;
+    g_cl.valid = 0;
+}
+
+static struct NglClRaiseView ngl_cl_raise_view(const gpu_spatial_index_t *idx, int what)
+{
+    struct NglClRaiseView v = {nullptr, nullptr, 0u, nullptr, NGL_CL_SUPERSET};
+    if(idx != &g_step_sidx || !g_cl.valid || !g_cl.stale) {return v;}
+    /* a wider velocity range moves the boxes the list was built from */
+    if(what & SIDX_RAISE_MOTION) {*g_cl.stale = 1; return v;}
+    v.rgen = g_cl.rgen; v.r0 = g_cl.r0; v.gen = g_cl.gen; v.stale = g_cl.stale;
+    return v;
+}
+
+/* A member's reach as the walk reads it in this frame. */
+KOKKOS_INLINE_FUNCTION double ngl_cl_row_reach(const double *rows, int slot, const struct sfc_walk_frame &frame)
+{
+    return frame.reach_current ? rows[(size_t)slot * SIDX_ROW_WIDTH + 3] : rows[(size_t)slot * SIDX_ROW_WIDTH + 4];
+}
+
+/* The walk of one listed i-tile over one segment (owned or imported), by one team of TILE_TARGET_SIZE
+ * threads, thread r for i-tile member r.  Count pass (ent == nullptr): counts[row]; fill pass: the entries.
+ * Every thread walks, from the same team-reduced ball, the same path, so the barriers in the visitor are
+ * reached by all of them. */
+struct NglClBuildTeam {
+    using member_type = Kokkos::TeamPolicy<>::member_type;
+    const int *listed;
+    const sfc_tile_t *itiles; const int *ipool; const double *R;
+    const struct particle_data *P;
+    struct SidxSegmentView j;          /* the segment searched */
+    NglClEntry *ent;
+    static constexpr int TEAM_ENTRIES = 512;   /* most entries of one row: gathered in team scratch, then copied to a reserved range */
+    int64_t *range; int64_t ent_cap; int64_t *used;
+    const double *boxes;   /* per j-cluster lo[3], hi[3], largest reach (negative: empty) */
+
+    KOKKOS_INLINE_FUNCTION void operator()(const member_type &team) const
+    {
+        const int row = team.league_rank(), r = team.team_rank();
+        const sfc_tile_t &T = itiles[listed[row]];
+        const int slot = T.first + r;
+        const int covered = (r < T.count) && ipool[slot] >= 0 && R[slot] > 0;
+        double pos[3] = {0, 0, 0}, Ri = 0;
+        if(covered) {const int i = ipool[slot]; for(int k = 0; k < 3; k++) {pos[k] = (double)P[i].Pos[k];} Ri = R[slot];}
+        double lo[3], hi[3], Rmax = 0;
+        for(int k = 0; k < 3; k++) {
+            double a = covered ? pos[k] : MAX_REAL_NUMBER, b = covered ? pos[k] : -MAX_REAL_NUMBER;
+            Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, team.team_size()), [&](int, double &m) {if(a < m) {m = a;}}, Kokkos::Min<double>(lo[k]));
+            Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, team.team_size()), [&](int, double &m) {if(b > m) {m = b;}}, Kokkos::Max<double>(hi[k]));
+        }
+        Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, team.team_size()), [&](int, double &m) {if(Ri > m) {m = Ri;}}, Kokkos::Max<double>(Rmax));
+        int *n_out = (int *) team.team_scratch(0).get_shmem(sizeof(int) * 2);
+        NglClEntry *gathered = (NglClEntry *) team.team_scratch(0).get_shmem(sizeof(NglClEntry) * TEAM_ENTRIES);
+        unsigned long long *bits = (unsigned long long *) team.team_scratch(0).get_shmem(sizeof(unsigned long long) * NGL_CL_PER_TILE);
+        Kokkos::single(Kokkos::PerTeam(team), [&]() {n_out[0] = 0; for(int k = 0; k < NGL_CL_PER_TILE; k++) {bits[k] = 0;}});
+        team.team_barrier();
+        if(!(Rmax > 0)) {
+            Kokkos::single(Kokkos::PerTeam(team), [&]() {range[2 * (size_t)row] = range[2 * (size_t)row + 1] = 0;});
+            return;
+        }
+        double c[3];
+        for(int k = 0; k < 3; k++) {c[k] = 0.5 * (lo[k] + hi[k]);}
+        double d2 = 0;
+        if(covered) {for(int k = 0; k < 3; k++) {d2 += (pos[k] - c[k]) * (pos[k] - c[k]);}}
+        double dmax2 = 0;
+        Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, team.team_size()), [&](int, double &m) {if(d2 > m) {m = d2;}}, Kokkos::Max<double>(dmax2));
+        /* rounded up, absolutely too, so that the rounding of the walk's own allowances at c instead of at a member's
+         * position cannot lose a node: the offset bounds every member's distance */
+        double cmag = 0; for(int k = 0; k < 3; k++) {if(fabs(c[k]) > cmag) {cmag = fabs(c[k]);}}
+        const double offset = sqrt(dmax2) * (1.0 + 1.0e-12) + 1.0e-12 * cmag + 1.0e-300;
+        const struct SidxSegmentView &jv = j;
+        auto visit = [&](int tj) {
+            const sfc_tile_t &J = jv.tiles[tj];
+            for(int k = 0; k < NGL_CL_PER_TILE; k++) {
+                const int first = J.first + k * NGL_CL_SIZE;
+                const int n = J.count - k * NGL_CL_SIZE;
+                if(n <= 0) {break;}
+                const int m = (n < NGL_CL_SIZE) ? n : NGL_CL_SIZE;
+                const double *bx = &boxes[(size_t)(tj * NGL_CL_PER_TILE + k) * 7];
+                const double *blo = bx, *bhi = bx + 3; const double hmax = bx[6]; const int any = (hmax >= 0); (void)first; (void)m;
+                if(!any || !covered) {continue;}
+                const double reach = ((Ri > NGL_CL_SUPERSET * hmax) ? Ri : NGL_CL_SUPERSET * hmax) * (1.0 + 1.0e-12);   /* a superset: rounded up */
+                if(sfc_box_may_reach(blo, bhi, J.u_min, J.u_max, J.rho, jv.frame, pos, reach)) {
+                    Kokkos::atomic_fetch_or(&bits[k], 1ull << r);
+                }
+            }
+            team.team_barrier();
+            Kokkos::single(Kokkos::PerTeam(team), [&]() {
+                for(int k = 0; k < NGL_CL_PER_TILE; k++) {
+                    if(!bits[k]) {continue;}
+                    if(n_out[0] < TEAM_ENTRIES) {NglClEntry e; e.cluster = tj * NGL_CL_PER_TILE + k; e.pad = 0; e.bits = bits[k]; gathered[n_out[0]] = e;}
+                    n_out[0]++;
+                    bits[k] = 0;
+                }
+            });
+            team.team_barrier();
+        };
+        bvh_walk_tiles(c, Rmax, NGL_CL_SUPERSET, NGB_SEARCH_SYMMETRIC, jv.bvh, jv.root, (const struct particle_data *) nullptr,
+                       (1u << 6) - 1u, (int *) nullptr, (int *) nullptr, visit, jv.frame, offset);
+        int64_t start = 0;
+        Kokkos::single(Kokkos::PerTeam(team), [&](int64_t &st) {
+            st = -1;                                   /* more entries than the scratch holds: this tile is not listed */
+            if(n_out[0] <= TEAM_ENTRIES) {st = Kokkos::atomic_fetch_add(used, (int64_t)n_out[0]);}
+            range[2 * (size_t)row] = st; range[2 * (size_t)row + 1] = st + n_out[0];
+        }, start);
+        if(start >= 0 && start + n_out[0] <= ent_cap) {
+            NglClEntry *dst = const_cast<NglClEntry *>(ent);
+            Kokkos::parallel_for(Kokkos::TeamThreadRange(team, n_out[0]), [&](int e) {dst[start + e] = gathered[e];});
+        }
+    }
+};
+
+/* Add the rows [part->n_rows, g_cl.n_listed) to one part (owned or ghost) of the list; fresh != 0 starts the part over, from row 0.
+ * Returns 0, or 1 when storage was refused.  One walk per row: the entries go to a range reserved from one counter, and a counter
+ * past the buffer means the buffer is grown (keeping the earlier rows) and the new rows are walked again. */
+static int ngl_cl_add_rows(NglClPart *part, int fresh, const struct SidxSegmentView &iv, const struct SidxSegmentView &jv,
+                           const struct particle_data *P_shared)
+{
+    if(fresh) {part->n_rows = 0; part->n_ent = 0; part->valid = 0;}
+    const int r0 = part->n_rows, n = g_cl.n_listed - r0;
+    if(ngl_cl_reserve(&part->off, &part->off_cap, 2 * (size_t)g_cl.own_ntiles, "ngl_cl_ranges")) {return 1;}
+    if(!part->used) {part->used = (int64_t *) ngl_alloc_device(sizeof(int64_t), "ngl_cl_used"); if(!part->used) {return 1;}}
+    if(fresh) {
+        /* the box and largest reach of every j-cluster of the segment, as they stand at the start of the list */
+        const int ncl = (jv.root >= 0) ? jv.ntiles * NGL_CL_PER_TILE : 0;
+        if(ngl_cl_reserve(&part->boxes, &part->boxes_cap, (size_t)ncl * 7, "ngl_cl_boxes")) {return 1;}
+        double *bx = part->boxes; const struct SidxSegmentView v = jv;
+        Kokkos::parallel_for("ngl_cl_boxes", ncl, KOKKOS_LAMBDA(int cl) {
+            const sfc_tile_t &J = v.tiles[cl / NGL_CL_PER_TILE]; const int k = cl % NGL_CL_PER_TILE, first = J.first + k * NGL_CL_SIZE;
+            const int rest = J.count - k * NGL_CL_SIZE, m = (rest < NGL_CL_SIZE) ? rest : NGL_CL_SIZE;
+            double lo[3] = {MAX_REAL_NUMBER, MAX_REAL_NUMBER, MAX_REAL_NUMBER}, hi[3] = {-MAX_REAL_NUMBER, -MAX_REAL_NUMBER, -MAX_REAL_NUMBER}, h = -1;
+            for(int q = 0; q < m; q++) {
+                if(v.pool[first + q] < 0) {continue;}
+                const double *jr = &v.rows[(size_t)(first + q) * SIDX_ROW_WIDTH];
+                for(int a = 0; a < 3; a++) {if(jr[a] - J.hw < lo[a]) {lo[a] = jr[a] - J.hw;} if(jr[a] + J.hw > hi[a]) {hi[a] = jr[a] + J.hw;}}
+                const double r = ngl_cl_row_reach(v.rows, first + q, v.frame); if(r > h) {h = r;}
+            }
+            double *o = &bx[(size_t)cl * 7]; for(int a = 0; a < 3; a++) {o[a] = lo[a]; o[3 + a] = hi[a];} o[6] = h;
+        });
+    }
+    if(n > 0) {
+        NglClBuildTeam fn{g_cl.listed + r0, iv.tiles, iv.pool, g_cl.R, P_shared, jv, nullptr};
+        fn.boxes = part->boxes; fn.range = part->off + 2 * (size_t)r0; fn.used = part->used;
+        const size_t scratch = sizeof(int) * 2 + sizeof(unsigned long long) * NGL_CL_PER_TILE + sizeof(NglClEntry) * NglClBuildTeam::TEAM_ENTRIES + 128;
+        if(part->ent_cap < (size_t)part->n_ent + (size_t)n * 96 + 1024) {
+            if(ngl_cl_reserve_keep(&part->ent, &part->ent_cap, (size_t)part->n_ent, (size_t)part->n_ent + (size_t)n * 96 + 1024, "ngl_cl_entries")) {return 1;}
+        }
+        int64_t total = 0;
+        for(int tries = 0; ; tries++) {
+            int64_t *used = part->used; const int64_t start = part->n_ent;
+            Kokkos::parallel_for("ngl_cl_used_start", 1, KOKKOS_LAMBDA(int) {*used = start;});
+            fn.ent = part->ent; fn.ent_cap = (int64_t) part->ent_cap;
+            gizmo_gpu_team_kernel_launch("ngl_cl_rows", n, TILE_TARGET_SIZE, scratch, fn);
+            Kokkos::View<const int64_t, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged> > dv(part->used);
+            Kokkos::deep_copy(total, dv);
+            if(total <= (int64_t) part->ent_cap) {break;}
+            if(tries == 2 || ngl_cl_reserve_keep(&part->ent, &part->ent_cap, (size_t)part->n_ent, (size_t)total, "ngl_cl_entries")) {return 1;}
+        }
+        part->n_ent = total;
+    }
+    part->n_rows = g_cl.n_listed;
+    part->tiles = jv.tiles; part->rows = jv.rows;
+    part->valid = 1;
+    return 0;
+}
+
+/* Bring the step's list up to date for this build, and describe it to the query kernel.  The list is
+ * used only for the kept gas index searched from particles of the rank's own storage. */
+static struct NglClView ngl_cl_prepare(const gpu_spatial_index_t *idx, const gpu_index_segment_t *own, const gpu_index_segment_t *ghost,
+                                       const struct SidxSegmentView &own_view, const struct SidxSegmentView &ghost_view,
+                                       const struct sfc_walk_frame &own_frame, int walk_ghosts, integertime t_now,
+                                       int usable, mode_b_radius_policy_t policy, const int *d_active, int num_active,
+                                       const struct particle_data *P_shared, int search_mode, double j_scale)
+{
+    struct NglClView v; memset(&v, 0, sizeof(v));
+    if(!usable || idx != &g_step_sidx || !own->valid || own->d_slot_of == nullptr || own_view.root < 0 || num_active <= 0) {return v;}
+    if(!g_cl.stale) {g_cl.stale = (int *) gizmo_gpu_alloc_shared(sizeof(int), "ngl_cl_stale"); if(!g_cl.stale) {return v;} *g_cl.stale = 0;}
+    if(!g_cl.n_listed_dev) {g_cl.n_listed_dev = (int *) gizmo_gpu_alloc_shared(sizeof(int), "ngl_cl_n_listed"); if(!g_cl.n_listed_dev) {return v;}}
+    const int same = g_cl.valid && !*g_cl.stale && g_cl.own.valid && g_cl.own_tiles == own->d_tiles && g_cl.own_rows == own->d_compact_xyzh &&
+                     g_cl.own_ntiles == own->ntiles && g_cl.own_source_base == own->source_base && g_cl.own_source_count == own->source_count &&
+                     g_cl.ti_ref == own->ti_ref && g_cl.t_now == t_now && g_cl.D == own_frame.D && g_cl.exact == own_frame.exact &&
+                     g_cl.reach_current == own_frame.reach_current && g_cl.policy == (int)policy;
+    if(!same) {
+        /* The owned part, for the tiles of this build's queries. */
+        g_cl.valid = 0; g_cl.own.valid = 0; g_cl.ghost.valid = 0;
+        const int ntiles = own->ntiles, num_pool = own->num_pool;
+        const size_t want_listed = (size_t)ntiles;   /* 4 bytes per tile: a list that grows within the step never moves */
+        int fail = 0;
+        if(g_cl.tile_cap < (size_t)ntiles || !g_cl.tile_gen) {
+            /* new stamp arrays start from generation 0, which no build uses */
+            if(g_cl.tile_gen) {Kokkos::fence(); Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_cl.tile_gen); g_cl.tile_gen = nullptr;}
+            if(g_cl.tile_row) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_cl.tile_row); g_cl.tile_row = nullptr;}
+            g_cl.tile_cap = (size_t)ntiles + (size_t)ntiles / 8 + 1;
+            g_cl.tile_gen = (unsigned *) ngl_alloc_device(g_cl.tile_cap * sizeof(unsigned), "ngl_cl_tile_gen");
+            g_cl.tile_row = (int *) ngl_alloc_device(g_cl.tile_cap * sizeof(int), "ngl_cl_tile_row");
+            if(!g_cl.tile_gen || !g_cl.tile_row) {fail = 1;}
+            else {unsigned *tg = g_cl.tile_gen; Kokkos::parallel_for("ngl_cl_tile_gen0", (int)g_cl.tile_cap, KOKKOS_LAMBDA(int t) {tg[t] = 0u;}); Kokkos::fence();}
+        }
+        if(!fail && (g_cl.r_cap < (size_t)num_pool || !g_cl.rgen)) {
+            if(g_cl.rgen) {Kokkos::fence(); Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_cl.rgen); g_cl.rgen = nullptr;}
+            if(g_cl.r0) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_cl.r0); g_cl.r0 = nullptr;}
+            g_cl.r_cap = (size_t)num_pool + (size_t)num_pool / 8 + 1;
+            g_cl.rgen = (unsigned *) ngl_alloc_device(g_cl.r_cap * sizeof(unsigned), "ngl_cl_reach_gen");
+            g_cl.r0 = (double *) ngl_alloc_device(2 * g_cl.r_cap * sizeof(double), "ngl_cl_reach_at_build");
+            if(!g_cl.rgen || !g_cl.r0) {fail = 1;}
+            else {unsigned *rg = g_cl.rgen; Kokkos::parallel_for("ngl_cl_reach_gen0", (int)g_cl.r_cap, KOKKOS_LAMBDA(int t) {rg[t] = 0u;}); Kokkos::fence();}
+        }
+        if(fail || ngl_cl_reserve(&g_cl.listed, &g_cl.listed_cap, want_listed, "ngl_cl_listed") ||
+           ngl_cl_reserve(&g_cl.R, &g_cl.R_cap, (size_t)num_pool, "ngl_cl_covered_radius")) {
+            ngl_cluster_list_release();
+            return v;
+        }
+        if(++g_cl.gen == 0u) {g_cl.gen = 1u;}   /* (a wrapped stamp could only alias a list four billion builds old) */
+        g_cl.own_tiles = own->d_tiles; g_cl.own_rows = own->d_compact_xyzh; g_cl.own_ntiles = own->ntiles;
+        g_cl.own_source_base = own->source_base; g_cl.own_source_count = own->source_count;
+        g_cl.ti_ref = own->ti_ref; g_cl.t_now = t_now; g_cl.D = own_frame.D; g_cl.exact = own_frame.exact;
+        g_cl.reach_current = own_frame.reach_current; g_cl.policy = (int)policy;
+        g_cl.n_listed = 0;
+        *g_cl.stale = 0;
+    }
+    /* The tiles holding this call's queries that are not listed yet: a call in the same step with other queries (a chunk, another
+     * loop) adds its tiles to the list, at the cost of those tiles. */
+    {
+        const int r_begin = g_cl.n_listed;
+        {
+            const unsigned gen = g_cl.gen; unsigned *tile_gen = g_cl.tile_gen; int *tile_row = g_cl.tile_row, *listed = g_cl.listed;
+            int *n_listed = g_cl.n_listed_dev; *n_listed = r_begin;
+            const int *slot_of = own->d_slot_of; const int base = own->source_base, count = own->source_count;
+            const int cap = own->ntiles;
+            Kokkos::parallel_for("ngl_cl_list_tiles", num_active, KOKKOS_LAMBDA(int aa) {
+                const int k = d_active[aa] - base;
+                if(k < 0 || k >= count) {return;}
+                const int slot = slot_of[k];
+                if(slot < 0) {return;}
+                const int t = slot / TILE_TARGET_SIZE;
+                if(Kokkos::atomic_exchange(&tile_gen[t], gen) == gen) {return;}
+                const int row = Kokkos::atomic_fetch_add(n_listed, 1);
+                if(row < cap) {listed[row] = t; tile_row[t] = row;} else {tile_row[t] = -1;}
+            });
+            Kokkos::fence();
+            g_cl.n_listed = (*n_listed < cap) ? *n_listed : cap;
+        }
+        /* Each member's covered radius: a member that is not at the time of the search is never a query this step. */
+        {
+            const int *listed = g_cl.listed; const sfc_tile_t *tiles = own->d_tiles; const int *pool = own->d_pool;
+            const double *rows = own->d_compact_xyzh; double *R = g_cl.R; const struct sfc_walk_frame fr = own_frame;
+            const struct particle_data *Pp = P_shared;
+            Kokkos::parallel_for("ngl_cl_covered_radius", (g_cl.n_listed - r_begin) * TILE_TARGET_SIZE, KOKKOS_LAMBDA(int q) {
+                const sfc_tile_t &T = tiles[listed[r_begin + q / TILE_TARGET_SIZE]];
+                const int r = q % TILE_TARGET_SIZE;
+                if(r >= T.count) {return;}
+                const int slot = T.first + r, i = pool[slot];
+                R[slot] = (i >= 0 && Pp[i].Ti_current == t_now) ? NGL_CL_SUPERSET * ngl_cl_row_reach(rows, slot, fr) * (1.0 + 1.0e-12) : -1.0;
+            });
+            Kokkos::fence();
+        }
+        if((g_cl.n_listed > r_begin || !same) && ngl_cl_add_rows(&g_cl.own, !same, own_view, own_view, P_shared)) {ngl_cluster_list_release(); return v;}
+        g_cl.valid = 1;
+    }
+    if(walk_ghosts) {
+        const int ghost_same = g_cl.ghost.valid && g_cl.ghost.tiles == ghost->d_tiles && g_cl.ghost.rows == ghost->d_compact_xyzh &&
+                               g_cl.ghost.provenance == ghost->ghost_provenance_when_built;
+        if((!ghost_same || g_cl.ghost.n_rows < g_cl.n_listed) && ngl_cl_add_rows(&g_cl.ghost, !ghost_same, own_view, ghost_view, P_shared)) {
+            ngl_cluster_list_release();
+            return v;
+        }
+        g_cl.ghost.provenance = ghost->ghost_provenance_when_built;
+    }
+    v.on = 1;
+    v.walk_ghosts = walk_ghosts;
+    v.tile_gen = g_cl.tile_gen; v.tile_row = g_cl.tile_row; v.gen = g_cl.gen;
+    v.R = g_cl.R; v.slot_of = own->d_slot_of; v.source_base = own->source_base; v.source_count = own->source_count;
+    v.own_off = g_cl.own.off; v.own_ent = g_cl.own.ent;
+    v.ghost_off = walk_ghosts ? g_cl.ghost.off : nullptr; v.ghost_ent = walk_ghosts ? g_cl.ghost.ent : nullptr;
+    v.symmetric_covered = (search_mode == NGB_SEARCH_ONEWAY) || (j_scale <= 1.0);
+    return v;
+}
+
+/* One query: from the list when it covers the query, else the walk.  Same rows, same order, same return
+ * as sidx_search_segments.  *from_list says which answered. */
+KOKKOS_INLINE_FUNCTION
+int ngl_cl_search(const struct NglClView &v, int particle, const struct SidxSegmentView &own, const struct SidxSegmentView &ghost,
+                  const double pos[3], double h, double j_radius_scale, int search_mode, int *store, int capacity, int *from_list)
+{
+    *from_list = 0;
+    if(v.on && v.symmetric_covered) {
+        const int k = particle - v.source_base;
+        const int slot = (k >= 0 && k < v.source_count) ? v.slot_of[k] : -1;
+        const int t = (slot >= 0) ? slot / TILE_TARGET_SIZE : -1;
+        const int row = (t >= 0 && v.tile_gen[t] == v.gen) ? v.tile_row[t] : -1;
+        if(row >= 0 && h <= v.R[slot] && NGL_CL_LISTED(v, row)) {
+            *from_list = 1;
+            const unsigned long long bit = 1ull << (slot - own.tiles[t].first);
+            int count = 0;
+            for(int64_t e = NGL_CL_BEG(v.own_off, row); e < NGL_CL_END(v.own_off, row); e++) {
+                const NglClEntry E = v.own_ent[e];
+                if(!(E.bits & bit)) {continue;}
+                const sfc_tile_t *J = &own.tiles[E.cluster / NGL_CL_PER_TILE];
+                const int kk = E.cluster % NGL_CL_PER_TILE, n = J->count - kk * NGL_CL_SIZE;
+                count = check_slot_range_gpu(own.rows, pos, h, h * h, j_radius_scale, J, J->first + kk * NGL_CL_SIZE,
+                                             (n < NGL_CL_SIZE) ? n : NGL_CL_SIZE, own.pool, search_mode, own.frame, store, count, capacity);
+            }
+            if(ghost.root >= 0 && v.ghost_off) {
+                for(int64_t e = NGL_CL_BEG(v.ghost_off, row); e < NGL_CL_END(v.ghost_off, row); e++) {
+                    const NglClEntry E = v.ghost_ent[e];
+                    if(!(E.bits & bit)) {continue;}
+                    const sfc_tile_t *J = &ghost.tiles[E.cluster / NGL_CL_PER_TILE];
+                    const int kk = E.cluster % NGL_CL_PER_TILE, n = J->count - kk * NGL_CL_SIZE;
+                    count = check_slot_range_gpu(ghost.rows, pos, h, h * h, j_radius_scale, J, J->first + kk * NGL_CL_SIZE,
+                                                 (n < NGL_CL_SIZE) ? n : NGL_CL_SIZE, ghost.pool, search_mode, ghost.frame, store, count, capacity);
+                }
+            }
+            return count;
+        }
+    }
+    return sidx_search_segments(own, ghost, pos, h, j_radius_scale, search_mode, store, capacity);
+}
+/* The owned part of the step's list for the queries d_query[0..n) (particle indices, device readable) of a one-way search over
+ * gas: the index and the list are made ready as a list build would make them.  Returns 0 with v->on == 0 when the list does not
+ * apply (not every member current, storage refused, an index that could not be built asks for its own stop).  Collective-free. */
+int ngl_cl_owned_list(struct particle_data *P_shared, int owned_end, const int *d_query, int n, mode_b_radius_policy_t policy,
+                      const char *caller, struct NglClOwnedQueryView *v)
+{
+    memset(v, 0, sizeof(*v));
+    if(n <= 0 || P_shared != P || gizmo_gpu_default_space_is_host()) {return 0;}
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+    const integertime t_now = gizmo_host_ti_current();
+    if(gizmo_full_drift_ti() != t_now) {return 0;}                 /* a member behind would need the walk's recording pass */
+    gpu_spatial_index_t *idx = &g_step_sidx;
+    if((idx->owned.valid || idx->ghost.valid) && (idx->cache_tbm != 1 || idx->cache_radius_policy != policy)) {return 0;}
+    struct SidxBuildReport report;
+    const struct DriftKickTableView tables = drift_kick_table_view_host();
+    if(sidx_owned_segment_ready(idx, P_shared, owned_end, 0, 1, 1, policy, n, 1, t_now, tables, caller, &report)) {return 0;}
+    gpu_index_segment_t *own = &idx->owned;
+    struct sfc_walk_frame fr;
+    fr.D = (own->ti_ref < t_now) ? get_drift_factor_impl(own->ti_ref, t_now, 1.0, &tables) : 0.0;
+    fr.exact = (own->ti_ref == t_now) && own->rows_are_positions; fr.reach_current = 1;
+    const struct SidxSegmentView ov = sidx_segment_view(*own, fr, 1);
+    gpu_index_segment_t none{};
+    const struct SidxSegmentView gv = sidx_segment_view(none, fr, 0);
+    const struct NglClView cv = ngl_cl_prepare(idx, own, &none, ov, gv, fr, 0, t_now, 1, policy, d_query, n, P_shared, NGB_SEARCH_ONEWAY, 1.0);
+    if(!cv.on) {return 0;}
+    v->on = 1; v->tiles = ov.tiles; v->pool = ov.pool; v->slot_of = cv.slot_of; v->source_base = cv.source_base; v->source_count = cv.source_count;
+    v->tile_gen = cv.tile_gen; v->tile_row = cv.tile_row; v->gen = cv.gen; v->R = cv.R; v->off = cv.own_off; v->ent = cv.own_ent;
+    v->num_pool = own->num_pool; v->n_tiles = own->ntiles;
+    return 0;
+}
+#else
+void ngl_cluster_list_release(void) {}
+#endif
+
 void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
                         int search_mode, int type_bitmask,
@@ -2014,81 +2592,10 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * time of the search (sfc_tiles.h), so reuse across a drift is the common path, and an
      * import or its cleanup does not touch it. */
     gpu_index_segment_t *own = &idx->owned;
-    /* The all-types index holds sinks, stars and dark matter, whose positions and membership can be
-     * written in place between two of its searches (sink repositioning, accretion, mergers) without
-     * advancing the owned epoch; its owned segment is therefore rebuilt at every import, as the whole
-     * index was before it was split. */
-    const int owned_follows_import = (idx == &g_step_sidx_alltypes);
-    if(own->valid && (own->source_count != owned_end || own->owned_epoch_when_built != g_sidx_owned_epoch ||
-                      own->ti_ref > t_now || own->rebuild_needed ||
-                      (owned_follows_import && (own->ghost_provenance_when_built != ghost_provenance_epoch() ||
-                                                own->member_loss_epoch_when_built != g_sidx_member_loss_epoch)))) {
-        sidx_segment_free(own);
-    }
-    /* A kept segment is rebuilt instead when its boxes can have grown by more than their
-     * own size, or when every member is current and the search is large enough to repay a
-     * fresh segment, which it reads exactly.  A small search reads the kept one in its
-     * drifted frame and the trim makes its list exact, for far less than a build. */
-    if(own->valid && own->ti_ref < t_now) {
-        const double D_kept = get_drift_factor_impl(own->ti_ref, t_now, 1.0, &host_tables);
-        const int fresh_repays = owned_current && (double)num_active >= SIDX_FRESH_SEARCH_FRACTION * (double)owned_end;
-        if(fresh_repays || !(*own->looseness * D_kept <= SIDX_MAX_BOX_GROWTH)) {
-            sidx_segment_free(own);
-        }
-    }
-    /* Bring a kept segment's reaches up to date.  Every particle whose radius changed
-     * since was marked dirty (gizmo_mark_kernel_radius_dirty_*); its row takes its
-     * current reach and the bands above it are raised to cover it.  All-dirty refits
-     * every reach and band in place: the boxes, motion ranges and membership do not
-     * depend on the radii.  A refresh that cannot be staged rebuilds the segment
-     * instead: a fresh segment starts current.  Per-segment state means consuming-and-
-     * clearing this segment's bits leaves the other registered segments' bitsets untouched. */
-    if(own->valid && own->dirty_handle >= 0) {
-        const int handle = own->dirty_handle;
-        if(2 * (long)gpu_dirty_tracker_popcount(handle) >= (long)own->source_count && own->source_count > 0) {
-            /* most members changed: one refit, whose bands may also fall, rather than a raise per member */
-            if(sidx_raise_members(idx, NULL, own->source_count, SIDX_RAISE_REACH | SIDX_REFIT_REACH) == 0) {
-                gpu_dirty_tracker_clear(handle);
-                /* a fallen band shrinks a tile's size floor, so the box growth is judged again */
-                if(own->ti_ref < t_now && !(*own->looseness * get_drift_factor_impl(own->ti_ref, t_now, 1.0, &host_tables) <= SIDX_MAX_BOX_GROWTH)) {
-                    sidx_segment_free(own);
-                }
-            } else {
-                sidx_segment_free(own);
-            }
-        } else if(gpu_dirty_tracker_popcount(handle) > 0) {
-            /* Drain bitset -> host list -> raise. */
-            std::vector<int> dirty_host;
-            dirty_host.reserve(gpu_dirty_tracker_popcount(handle));
-            gpu_dirty_tracker_consume(handle,
-                [](int j, void *ud){ ((std::vector<int> *)ud)->push_back(j); },
-                &dirty_host);
-            if(sidx_raise_members(idx, dirty_host.data(), (int)dirty_host.size(), SIDX_RAISE_REACH)) {
-                sidx_segment_free(own);
-            }
-        }
-    }
-    if(!own->valid) {
-        /* A build that is refused an allocation, or meets a member no search can bound, leaves
-         * the segment invalid and has already asked for the stop, naming the cause.
-         * There is nothing to walk, so hand back the same empty list any other
-         * exhausted allocation here produces. */
-        /* none of a caller's own array is the rank's own particles, so none can outgrow the domain's extent */
-        const struct SidxParticleSource src = {P_shared, callers_array ? NULL : CellP, 0, owned_end, callers_array ? 0 : owned_end,
-                                               type_bitmask, 0, callers_array};
-        /* Only the gas index takes the order as it stands: every in-place write of a gas particle's
-         * position, and every particle that becomes gas, advances the owned epoch, which is not so for the
-         * other types.  (A particle that stops being gas leaves its slot to be retired, not the order.) */
-        const int presorted = (P_shared == P) && (type_bitmask == 1) && sidx_particles_still_ordered(owned_end, t_now);
-        if(sidx_build_segment_now(src, maintained, presorted, radius_policy, caller_label, own, &report)) {
-            ngl_leave_csr_empty(gnl, num_active);
-            return;
-        }
-        own->owned_epoch_when_built = g_sidx_owned_epoch;
-        own->member_loss_epoch_when_built = g_sidx_member_loss_epoch;
-        own->ghost_provenance_when_built = ghost_provenance_epoch();
-        idx->cache_tbm = type_bitmask;
-        idx->cache_radius_policy = radius_policy;
+    if(sidx_owned_segment_ready(idx, P_shared, owned_end, callers_array, owned_current, type_bitmask, radius_policy, num_active,
+                                maintained, t_now, host_tables, caller_label, &report)) {
+        ngl_leave_csr_empty(gnl, num_active);
+        return;
     }
 
     /* The ghost segment: the imported particles, exact.  An imported particle is current
@@ -2224,6 +2731,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
 
     /* Drain any prior async GPU work before the passes below. */
     Kokkos::fence();
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+    const struct NglClView cl_view = ngl_cl_prepare(idx, own, ghost, own_view, ghost_view, own_frame, walk_ghosts, t_now,
+                                                    !callers_array && !source_positions_host && type_bitmask == 1 && !gizmo_gpu_default_space_is_host(),
+                                                    radius_policy, gnl->d_active, num_active, P_shared, search_mode, j_kernel_radius_scale);
+    const int *cl_query = gnl->d_active;
+#endif
     /* Fused single pass: BVH walk + write neighbors into per-particle scratchpad */
     {
         int *scratch = d_scratch;
@@ -2238,8 +2751,14 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         Kokkos::parallel_for("ngb_fused", num_active, KOKKOS_LAMBDA(int aa) {
             double h_i = radii[aa] * sr_fac;
             double pos_i[3] = {src_pos[aa*3+0], src_pos[aa*3+1], src_pos[aa*3+2]};
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+            int from_list;
+            int cnt = ngl_cl_search(cl_view, cl_query[aa], own_walk, ghost_walk, pos_i, h_i, j_rad_scale, smode,
+                                    &scratch[(size_t)aa * NGL_SCRATCH_STRIDE], NGL_SCRATCH_STRIDE, &from_list);
+#else
             int cnt = sidx_search_segments(own_walk, ghost_walk, pos_i, h_i, j_rad_scale, smode,
                                            &scratch[(size_t)aa * NGL_SCRATCH_STRIDE], NGL_SCRATCH_STRIDE);
+#endif
             counts[aa] = cnt;
         });
         Kokkos::fence();
@@ -2318,7 +2837,12 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                 /* Overflow path: re-walk BVH writing directly into neighbors[] */
                 double h_i = radii[aa] * sr_fac;
                 double pos_i[3] = {src_pos[aa*3+0], src_pos[aa*3+1], src_pos[aa*3+2]};
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+                int from_list;
+                ngl_cl_search(cl_view, cl_query[aa], own_walk, ghost_walk, pos_i, h_i, j_rad_scale, smode, &neighbors[dst], n, &from_list);
+#else
                 sidx_search_segments(own_walk, ghost_walk, pos_i, h_i, j_rad_scale, smode, &neighbors[dst], n);
+#endif
             }
         });
         Kokkos::fence();
