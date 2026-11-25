@@ -291,7 +291,9 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
         if(!v.ok || v.iindex < 0 || v.iindex >= NumPart) {continue;}
         int i = v.iindex;
         Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
+#if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
         P[i].Time_Of_Last_MergeSplit = All.Time;
+#endif
         P[i].Mass = 0; if(P[i].Type == 0) {CellP[i].Mass = P[i].Mass;}
         P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
     }

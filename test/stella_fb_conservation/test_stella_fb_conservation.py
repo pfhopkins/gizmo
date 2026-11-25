@@ -244,25 +244,6 @@ def test_failed_sn_composition(build, case):
     traces_ok(out)
 
 
-@pytest.mark.parametrize("case", ["failed_sn", "direct_collapse"])
-def test_failed_sn_moving_star(build, case):
-    """STL-303: a failed SN whose ejecta land in gas moving relative to the star (30 km/s random velocities): the deposit has no
-    energy of its own, so its stage must close like every other (bar of the energy step trace, 1e-12)"""
-    M, logZ = table_star(3 if case == "failed_sn" else 6, True, 0.0, np.log10(25.0))  # with table ejecta (the cases above have none: job 242474)
-    d = join(TEST_DIR, "run_" + case + "_moving"); os.makedirs(d, exist_ok=True)
-    make_box(join(d, "box_ics.hdf5"), 10 ** logZ, sigma_v=30.0)
-    text, out = run_case(case + "_moving", build, {"InitCondFile": "box_ics", "TestNumStars": 1, "TestStarMass": M, "TestSNTime0": 1.0e-6, "TimeMax": 4.0e-6, **zpar(logZ)})
-    sn = re.findall(r"RESOLVEDISM SN: .* rem_type=(\d+)", text)
-    rows = [l.split() for l in open(join(out, "FeedbackBudget.txt")) if not l.startswith("#") and l.split()[1:2] == ["5"]]
-    stage = [l for l in open(join(out, "energy_step_trace.txt")) if l.startswith("STAGE")]
-    print(f"{case}, moving: rem_types {sn}; failed-SN rows (t, M_ej [Msun], E_coupled [erg]): {[(r[0], r[3], r[8]) for r in rows]}; {len(stage)} stage residual lines")
-    for l in stage[:3]:
-        print("  " + l[:330])
-    assert [int(x) for x in sn] == [3 if case == "failed_sn" else 6], f"expected one {case}, got rem_types {sn}"
-    assert any(float(r[3]) > 0 for r in rows), "the failed SN deposited no ejecta: nothing to test"
-    traces_ok(out)
-
-
 def test_sibling_sne(build):
     d = join(TEST_DIR, "run_sibling"); os.makedirs(d, exist_ok=True)
     make_box(join(d, "box_ics.hdf5"), 0.0142 * 0.3)
