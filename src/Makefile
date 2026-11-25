@@ -1184,6 +1184,7 @@ RHD_OBJS =  radiation/rt_utilities.o \
 ## radiation/rt_chem.o is in GPU_OBJS (compiled by nvcc_wrapper for Kokkos offload)
 
 FOF_OBJS =	structure/fof.o \
+			structure/hbt/hbt_key_mpi.o \
 			structure/group_search.o \
 			structure/subfind/subfind.o \
 			structure/subfind/subfind_vars.o \
@@ -1231,6 +1232,8 @@ INCL    += 	declarations/allvars.h \
 			eos/eos.h \
 			sinks/sink.h \
 			structure/fof.h \
+			structure/hbt/hbt_key.h \
+			structure/hbt/hbt_key_mpi.h \
 			structure/subfind/subfind.h \
 			cooling/cooling.h \
 			Makefile

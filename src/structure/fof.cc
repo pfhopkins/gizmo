@@ -28,6 +28,10 @@
 
 #ifdef FOF
 #include "fof.h"
+#ifdef FOF_UNIQUE_KEY_CHECK
+#include <vector>
+#include "hbt/hbt_key_mpi.h"
+#endif
 #ifdef SUBFIND
 #include "subfind/subfind.h"
 #endif
@@ -87,6 +91,27 @@ static char *NonlocalFlag;
 
 static float *fof_nearest_distance;
 static float *fof_nearest_rkern;
+
+#ifdef FOF_SECONDARY_LINK_TARGET_TYPES
+#if ((FOF_SECONDARY_LINK_TARGET_TYPES) & (FOF_SECONDARY_LINK_TYPES))
+#error "FOF_SECONDARY_LINK_TARGET_TYPES must not contain a secondary link type (a secondary would find itself)"
+#endif
+#define FOF_NEAREST_SEARCH_TYPES (MyFOF_PRIMARY_LINK_TYPES | (FOF_SECONDARY_LINK_TARGET_TYPES))
+#else
+#define FOF_NEAREST_SEARCH_TYPES (MyFOF_PRIMARY_LINK_TYPES)
+#endif
+
+#ifdef FOF_UNIQUE_KEY_CHECK
+/* abort if the particle key (ID, child number) is not unique: catalogues and HBT tracking need it */
+static void fof_check_unique_particle_keys(void)
+{
+  std::vector<hbt_key_t> keys(NumPart > 0 ? NumPart : 1);
+  for(int i = 0; i < NumPart; i++) {keys[i] = hbt_key_make((uint64_t)P[i].ID, (uint64_t)P[i].ID_child_number);}
+  long long ndup = hbt_count_duplicate_keys(keys.data(), NumPart, MPI_COMM_WORLD);
+  if(ThisTask == 0) {printf("FOF: particle keys (ID, child number): %lld duplicates among %lld particles\n", ndup, (long long)All.TotNumPart);}
+  if(ndup != 0) {if(ThisTask == 0) {printf("FOF: particle keys are not unique (or the count overflowed: %lld)\n", ndup);} endrun(1186);}
+}
+#endif
 
 
 struct fof_label_t
@@ -317,7 +342,7 @@ static void fof_find_nearest_dmparticle_modern(void)
   }
 
   group_search_import_pool_t import_pool;
-  group_search_import_particles(MyFOF_SECONDARY_LINK_TYPES, MyFOF_PRIMARY_LINK_TYPES, 4.0 * LinkL,
+  group_search_import_particles(MyFOF_SECONDARY_LINK_TYPES, FOF_NEAREST_SEARCH_TYPES, 4.0 * LinkL,
                                 MinID, MinIDOwner, import_pool);
 
   std::vector<double> nearest_dist2(secondary_indices.size(), MAX_REAL_NUMBER);
@@ -346,7 +371,7 @@ static void fof_find_nearest_dmparticle_modern(void)
         {
           neighbor_list_t nl = {NULL, NULL, 0, 0};
           group_search_build_cross_type_nl(import_pool.particles, active_sources.data(), active_sources.size(),
-                                           active_radii.data(), MyFOF_PRIMARY_LINK_TYPES, &nl);
+                                           active_radii.data(), FOF_NEAREST_SEARCH_TYPES, &nl);
 
           for(size_t aa = 0; aa < active_sources.size(); aa++)
             {
@@ -369,6 +394,9 @@ static void fof_find_nearest_dmparticle_modern(void)
                 {
                   nearest_dist2[sec_pos] = best_r2;
                   done[sec_pos] = 1;
+#ifdef FOF_SECONDARY_LINK_TARGET_TYPES
+                  if(!((1 << import_pool.particles[best_j].Type) & MyFOF_PRIMARY_LINK_TYPES)) {continue;}   /* nearest target is not a primary type: the secondary stays ungrouped */
+#endif
                   if(best_j < NumPart)
                     {
                       MinID[i] = MinID[best_j];
@@ -517,6 +545,10 @@ void fof_fof(int num)
       MinIDOwner[i] = group_search_owner_key(ThisTask, i);
     }
 
+
+#ifdef FOF_UNIQUE_KEY_CHECK
+  fof_check_unique_particle_keys();
+#endif
 
   t0 = my_second();
 

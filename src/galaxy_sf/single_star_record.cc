@@ -8,9 +8,6 @@
 
 /* compact per-star record of IMF-sampled single stars; see single_star_record.h */
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
-#if defined(SUBFIND) || defined(FOF)
-#error "GALSF_SINGLE_STARS_FROM_IMF: the single-star records do not yet follow particles through the FoF/SUBFIND redistribution"
-#endif
 /* until the single-star source model drives them, the stellar-population feedback and radiation would treat a sampled star as a population */
 #if (defined(GALSF_FB_MECHANICAL) && !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)) || defined(GALSF_FB_THERMAL) || defined(GALSF_FB_FIRE_STELLAREVOLUTION)
 #error "GALSF_SINGLE_STARS_FROM_IMF: single stars drive only the mechanical feedback loop, and only with GALSF_SINGLE_STARS_EVOLUTION_TABLES; other feedback would give sampled stars stellar-population rates"
@@ -103,6 +100,34 @@ void single_star_record_get(int star_idx, struct single_star_record *r)
 #define SSR_GET(type, name, comment) r->name = SingleStars.name[s];
     SINGLE_STAR_RECORD_FIELDS(SSR_GET)
 #undef SSR_GET
+}
+
+
+void single_star_xfer_init(struct single_star_xfer &x, int ntask) {x.send.assign(ntask, std::vector<struct single_star_record>()); x.recv.assign(ntask, std::vector<struct single_star_record>());}
+
+void single_star_xfer_detach(struct single_star_xfer &x, const struct particle_data &p, int target)
+{
+    if(p.StarIdx <= 0) {return;}
+    struct single_star_record r; single_star_record_get(p.StarIdx, &r); single_star_record_free(p.StarIdx);
+    x.send[target].push_back(r);
+}
+
+void single_star_xfer_swap(struct single_star_xfer &x, int target, const struct particle_data *recv_first, int count_recv)
+{
+    int n_send = (int) x.send[target].size(), n_recv = 0; /* the receiver counts the stars with records it just received */
+    for(int q = 0; q < count_recv; q++) {if(recv_first[q].StarIdx > 0) {n_recv++;}}
+    x.recv[target].resize(n_recv);
+    if(n_send == 0 && n_recv == 0) {return;}
+    MPI_Sizelimited_Sendrecv(x.send[target].data(), n_send * sizeof(struct single_star_record), MPI_BYTE, target, TAG_SINGLESTAR_DATA,
+                             x.recv[target].data(), n_recv * sizeof(struct single_star_record), MPI_BYTE, target, TAG_SINGLESTAR_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+}
+
+void single_star_xfer_attach(struct single_star_xfer &x, int target, struct particle_data *recv_first, int count_recv)
+{
+    size_t k = 0;
+    for(int i = 0; i < count_recv; i++)
+        {if(recv_first[i].StarIdx > 0) {recv_first[i].StarIdx = (k < x.recv[target].size()) ? single_star_record_new(&x.recv[target][k]) : 0; k++;}}
+    if(k != x.recv[target].size()) {endrun(7822);} /* records and stars out of step */
 }
 
 #endif
