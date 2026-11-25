@@ -19,6 +19,9 @@
 #ifndef KETJU_KOKKOS_DEVICE_MIN_N
 #define KETJU_KOKKOS_DEVICE_MIN_N 32 /* GPU builds: smaller regions run on the host execution space (launch latency) */
 #endif
+#ifndef KETJU_MSTAR_MPI_MIN_N
+#define KETJU_MSTAR_MPI_MIN_N 128 /* KETJU_MSTAR_MPI: regions from this size are integrated by all their compute tasks together */
+#endif
 
 namespace {
 
@@ -58,6 +61,10 @@ void kj_kokkos_initialize()
     std::atexit(kj_kokkos_finalize);
     if(wrank == 0) printf("KETJU: MSTAR on Kokkos %s (host %s), regions below %d bodies on the host engine\n",
                           mstar::execution_space_name(), mstar::host_execution_space_name(), KETJU_KOKKOS_DEVICE_MIN_N);
+#ifdef KETJU_MSTAR_MPI
+    if(!mstar::mpi_enabled()) kj_abort("KETJU_MSTAR_MPI needs an MSTAR install built with MSTAR_ENABLE_MPI (KETJU_PATH)", 7813);
+    if(wrank == 0) printf("KETJU: regions of %d or more bodies are integrated by all their compute tasks (MSTAR MPI sharing)\n", KETJU_MSTAR_MPI_MIN_N);
+#endif
 }
 
 KjMstarSide *kj_side(struct ketju_system *R) {return reinterpret_cast<KjMstarSide *>(R->internal_state);}
@@ -84,6 +91,30 @@ void kj_bcast_state(struct ketju_system *R, int n0, MPI_Comm comm)
     if(R->particle_extra_data) MPI_Bcast(R->particle_extra_data, (int)(R->particle_extra_data_elem_size * n0), MPI_BYTE, 0, comm);
     if(R->collision_radius) MPI_Bcast(R->collision_radius, n0, MPI_DOUBLE, 0, comm);
 }
+
+#ifdef KETJU_MSTAR_MPI
+/* the input of a call from rank 0 of comm to the others: every task integrates the same system */
+void kj_bcast_input(struct ketju_system *R, int n0, MPI_Comm comm, std::vector<double> &crad)
+{
+    int rank, has_crad = R->collision_radius ? 1 : 0;
+    MPI_Comm_rank(comm, &rank);
+    struct ketju_system_physical_state *ps = R->physical_state;
+    MPI_Bcast(&has_crad, 1, MPI_INT, 0, comm);
+    MPI_Bcast(&ps->time, 1, MPI_DOUBLE, 0, comm);
+    MPI_Bcast(ps->mass, n0, MPI_DOUBLE, 0, comm);
+    MPI_Bcast(ps->pos, 3 * n0, MPI_DOUBLE, 0, comm);
+    MPI_Bcast(ps->vel, 3 * n0, MPI_DOUBLE, 0, comm);
+    MPI_Bcast(ps->spin, 3 * n0, MPI_DOUBLE, 0, comm);
+    MPI_Bcast(R->options, sizeof(struct ketju_integration_options), MPI_BYTE, 0, comm);
+    MPI_Bcast(R->constants, sizeof(struct ketju_natural_constants), MPI_BYTE, 0, comm);
+    crad.clear();
+    if(has_crad) {
+        crad.resize(n0);
+        if(rank == 0) crad.assign(R->collision_radius, R->collision_radius + n0);
+        MPI_Bcast(crad.data(), n0, MPI_DOUBLE, 0, comm);
+    }
+}
+#endif
 
 } // namespace
 
@@ -126,7 +157,17 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
     int rank = 0, size = 1;
     if(side->comm != MPI_COMM_NULL) {MPI_Comm_rank(side->comm, &rank); MPI_Comm_size(side->comm, &size);}
     const int n0 = R->num_particles, npn0 = R->num_pn_particles;
-    if(rank == 0) {
+    bool shared = false; /* all tasks of comm integrate together (MSTAR MPI sharing); else rank 0 alone */
+    std::vector<double> crad_in;
+    if(rank == 0 && R->collision_radius) crad_in.assign(R->collision_radius, R->collision_radius + n0);
+#ifdef KETJU_MSTAR_MPI
+    if(size > 1 && n0 >= KETJU_MSTAR_MPI_MIN_N) {shared = true; kj_bcast_input(R, n0, side->comm, crad_in);}
+#endif
+#ifdef TEST_KETJU_MSTAR_TIMING
+    const double tw0 = MPI_Wtime();
+#endif
+    double t_start = 0;
+    if(rank == 0 || shared) {
         if(R->options->mst_algorithm != KETJU_MST_PRIM) kj_abort("only mst_algorithm = KETJU_MST_PRIM is ported", 7811);
         if(!side->sys) side->sys = new mstar::System(npn0, n0 - npn0); else side->sys->reset(npn0, n0 - npn0);
         mstar::System &S = *side->sys;
@@ -153,17 +194,34 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
         for(int k = 0; k < 6; k++) q.external_tidal_tensor[k] = o->external_tidal_tensor[k];
         q.host_engine = (n0 < KETJU_KOKKOS_DEVICE_MIN_N);
         struct ketju_system_physical_state *ps = R->physical_state;
-        const double t_start = ps->time;
+        t_start = ps->time;
         S.time = t_start;
         for(int i = 0; i < n0; i++) {
             S.mass[i] = ps->mass[i];
             for(int k = 0; k < 3; k++) {S.pos[3*i+k] = ps->pos[i][k]; S.vel[3*i+k] = ps->vel[i][k];}
         }
         for(int i = 0; i < npn0; i++) for(int k = 0; k < 3; k++) S.spin[3*i+k] = ps->spin[i][k];
-        if(R->collision_radius) S.collision_radius.assign(R->collision_radius, R->collision_radius + n0);
+        if(!crad_in.empty()) S.collision_radius = crad_in;
+#ifdef KETJU_MSTAR_MPI
+        if(shared) {S.set_mpi_fcomm((int)MPI_Comm_c2f(side->comm)); q.mpi_min_n = KETJU_MSTAR_MPI_MIN_N;} else {S.clear_mpi_comm();}
+#endif
         bool ok = false;
         try {ok = S.run(time_interval);} catch(const std::exception &e) {kj_abort(e.what(), 7812);}
         if(!ok) kj_abort("Exceeded options->max_step_count steps!", 7812);
+#ifdef TEST_KETJU_MSTAR_TIMING
+        if(rank == 0 && n0 >= (TEST_KETJU_MSTAR_TIMING + 0)) { /* one line per call of a region with at least that many bodies */
+            double tf = -1, tc = -1; int nt = 1;
+#ifdef KETJU_MSTAR_MPI
+            tf = S.perf.t_force; tc = S.perf.t_comm; nt = S.perf.mpi_tasks;
+#endif
+            printf("KETJU MSTAR TIMING: n %d comm %d sharing %d steps %ld + %ld failed wall %.3f s force %.3f s messages %.3f s\n",
+                   n0, size, nt, S.perf.successful_steps, S.perf.failed_steps, MPI_Wtime() - tw0, tf, tc); fflush(stdout);
+        }
+#endif
+    }
+    if(rank == 0) {
+        mstar::System &S = *side->sys;
+        struct ketju_system_physical_state *ps = R->physical_state;
         /* state back; the tail slots of merged-away particles keep stale values as in the C library */
         const int n = S.num_particles, npn = S.num_pn_particles;
         R->num_particles = n; R->num_pn_particles = npn; ps->time = S.time;

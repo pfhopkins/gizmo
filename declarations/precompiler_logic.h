@@ -2048,6 +2048,9 @@
 #if defined(KETJU_MERGE_BH) && !defined(KETJU_REGULARIZATION)
 #error "KETJU_MERGE_BH requires KETJU_REGULARIZATION"
 #endif
+#if defined(KETJU_MSTAR_MPI) && !defined(KETJU_REGULARIZATION)
+#error "KETJU_MSTAR_MPI requires KETJU_REGULARIZATION"
+#endif
 #ifdef KETJU_LEGACY_C_LIBRARY
 #error "KETJU_LEGACY_C_LIBRARY was removed: KETJU uses the Kokkos MSTAR (mstar::mstar)"
 #endif
