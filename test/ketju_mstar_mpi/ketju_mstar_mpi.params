@@ -1,0 +1,59 @@
+% ketju_mstar_mpi: Plummer cluster of 256 equal-mass circular binaries (Type 5 stars, plummer_binaries setup).
+% Units: pc - km/s - Msun. M_star = 1 Msun, a_cluster = 1 pc, 1000 AU binaries, TimeMax = 0.648 (0.2 crossing times).
+% KetjuRegionRadius 0.1 pc merges neighbouring binaries into regions of 4+ members, and KetjuMinParticlesPerTask 2 lets
+% the cost allocator give such regions several compute tasks, so the multi-task paths of the coupling run on 4 ranks.
+%
+InitCondFile                       ketju_mstar_mpi_ics
+OutputDir                          output
+TimeMax                            0.648
+BoxSize                            300
+TimeBetSnapshot                    0.324
+TimeOfFirstSnapshot                0
+TimeBegin                          0
+TimeBetStatistics                  0.4
+MaxSizeTimestep                    0.05
+MinSizeTimestep                    1e-12
+ErrTolIntAccuracy                  0.005
+ErrTolTheta                        0.5
+ErrTolForceAcc                     0.0025
+CourantFac                         0.4
+MaxRMSDisplacementFac              0.125
+TreeDomainUpdateFrequency          10
+DesNumNgb                          32
+MaxNumNgbDeviation                 1
+MaxMemSize                         2000
+PartAllocFactor                    2.5
+BufferSize                         100
+ResubmitOn                         0
+ResubmitCommand                    none
+UnitLength_in_cm                   3.085678e+18
+UnitMass_in_g                      1.989e+33
+UnitVelocity_in_cm_per_s           100000
+Softening_Type0                    3.117e-5
+Softening_Type1                    3.117e-5
+Softening_Type2                    3.117e-5
+Softening_Type3                    3.117e-5
+Softening_Type4                    3.117e-5
+Softening_Type5                    3.117e-5
+Softening_Type0_MaxPhysLimit       3.117e-5
+Softening_Type1_MaxPhysLimit       3.117e-5
+Softening_Type2_MaxPhysLimit       3.117e-5
+Softening_Type3_MaxPhysLimit       3.117e-5
+Softening_Type4_MaxPhysLimit       3.117e-5
+Softening_Type5_MaxPhysLimit       3.117e-5
+AGS_DesNumNgb                      32
+AGS_MaxNumNgbDeviation             1
+CritPhysDensity                    1e13
+CpuTimeBetRestartFile              30
+% Cap sink accretion-search at the softening kernel radius (18 AU = 8.726e-5 pc).
+% With no gas in this test the default 5 pc search radius wastes huge amounts of
+% tree-walking; shrinking it to the softening scale eliminates that overhead.
+SinkMaxAccretionRadius             8.726e-5
+% KETJU: every 1-Msun star is a chain centre; centres within 2 x KetjuRegionRadius (0.2 pc) share a region.
+KetjuMinStarMass                   0.5
+KetjuMinBHMass                     0
+% Unsoftened chains (=0) blew up within 4 time units: transient close encounters between stars of
+% different binaries accelerated single stars to ~400 km/s. Keep =1, the host's star-star softening.
+KetjuUseStarStarSoftening          1
+KetjuRegionRadius                  0.1
+KetjuMinParticlesPerTask           2
