@@ -337,7 +337,7 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
     int n_round_glob = 0; MPI_Allreduce(&n_merged, &n_round_glob, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(n_round_glob == 0) {break;} /* nothing merged anywhere in this round: the remaining proposals cannot be served in this pass */
     } /* rounds */
-#ifdef TEST_WAKEUP_DUMP
+#if defined(TEST_WAKEUP_DUMP) || defined(MERGE_SPLIT_REPORT_PASS_COST)
     { /* test output: size and cost of the pass */
         long long loc = n_merged_pass, glob = 0; MPI_Allreduce(&loc, &glob, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         if(ThisTask == 0 && n_queries_pass > 0) {printf("TEST_MERGE_SPLIT_PASS step %lld rounds %d queries %lld merges %lld seconds %.6f\n", (long long) All.NumCurrentTiStep, rounds_done, n_queries_pass, glob, MPI_Wtime() - t_pass);}
