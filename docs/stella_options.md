@@ -220,8 +220,11 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
   applies its exchange and clears it, so nothing stays pending. Each pair's 27 element-slot amounts are closed (residual shared in
   proportion to |amount|, slot 0 = sum of metals) and then scaled by one factor so that no cell gives more than its holding / N per
   evaluation, N counted in the gradient pass: a slot can never go below zero. Metal and element masses are exact with individual
-  timesteps. The 1 % per-pair cap is gone. MFM only (#error with MFV, SPH, GALSF_ISMDUSTCHEM_MODEL, TRANSPORT_SUBCYCLE); the SGChem
-  tracer slots are not diffused (as before: they were never applied). Restart layout changes (two ints per cell).
+  timesteps. The 1 % per-pair cap is not applied on this path (the other paths keep it). The apply floors only a debit below zero
+  and each task reports it if it ever happens; a slot another module left below zero takes its credit unfloored. MFM only: Stella
+  builds with MFV, SPH, GALSF_ISMDUSTCHEM_MODEL, TRANSPORT_SUBCYCLE or SGCHEM without the element slots keep the pending path, as does
+  METALS_EXACT_PAIRWISE_EXCHANGE_OFF (#error only when the flag is set by hand there); the SGChem tracer slots are not diffused (as
+  before: they were never applied). Restart layout changes (two ints per cell).
 - **Mass trace.** mass_balance_steps.txt counts mass leaving through an outflow boundary in M_bary (also in non-Stella
   builds), and mass_balance_elements.txt closes every element; MbaryOutflow is not restarted (the trace re-baselines after a
   restart).
