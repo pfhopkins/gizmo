@@ -1196,6 +1196,25 @@ struct ModeDDeviceQueries {
     int           result_offset;    /* where that subgroup's results go in the call's result rows */
     const int    *slot_index;       /* [call slots] each slot's particle */
     const double *slot_radius;      /* [call slots] each slot's search radius */
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+    /* for an iteration continued inside the cluster-list kernel (nlr_mode_d_list_reduce); slot_state == nullptr: none */
+    double       *slot_radius_next = nullptr;   /* [call slots] the radius a slot's decision asks for */
+    void         *slot_scratch = nullptr;       /* [call slots] the Spec's iteration scratch */
+    int          *slot_state = nullptr;         /* [call slots] NLR_CL_SLOT_INTS ints each: see NlrClInKernel */
+    int           subgroup = 0, iteration = 0;  /* the driver's subgroup and iteration number of this round */
+#endif
+};
+/* What the cluster-list kernel needs to carry a query's iteration on inside its lane: the queries' call slots and what each
+ * exported this round, the per-slot state of the iteration, and the particle arrays and numbers the Spec's device decision
+ * takes.  slot_state holds NLR_CL_SLOT_INTS ints per call slot: [0] how this round's decision was made in the kernel
+ * (0: not there, 1: converged, 2: iterates on in the next round), [1] the decisions the slot has had beyond one per round,
+ * [2] a stop code its decision raised. */
+static constexpr int NLR_CL_SLOT_INTS = 3;
+struct NlrClInKernel {
+    const int *live = nullptr; const int *exported = nullptr; const int *slot_index = nullptr;
+    double *slot_radius = nullptr; void *slot_scratch = nullptr; int *slot_state = nullptr;
+    struct particle_data *P = nullptr; struct gas_cell_data *CellP = nullptr;
+    int subgroup = 0, iteration = 0, this_task = 0;
 };
 template <typename Spec>
 static bool mode_d_exchange(ModeDCallLease &lease, const neighbor_loop_args& args, const double *radii,
@@ -3107,6 +3126,7 @@ struct ModeDCallLease {
     int       *iter_keep            = nullptr;
     int       *iter_count           = nullptr;   /* [1 + subgroups]: the iteration's stop code, then each subgroup's next length */
     int        iter_on = 0, iter_which = 0;      /* host: whether the device holds the state, which list is current */
+    int       *iter_slot_state      = nullptr;   /* the cluster-list kernel's decisions per slot (NlrClInKernel), owned by its storage; null: none */
     std::vector<int> iter_counts_host;           /* host: iter_count read back (reserved at admission) */
 
     ModeDSegmentStream stream;   /* the exchange, reused for every round of the call */
@@ -3180,7 +3200,7 @@ struct ModeDCallLease {
         if(any) {Kokkos::fence("mode_d_call_lease_release");}
         for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {mode_d_pool_keep(k, *rows[k].slot, row_bytes[k]); *rows[k].slot = nullptr; row_bytes[k] = 0;}
         batch_capacity[0] = batch_capacity[1] = 0;
-        iter_on = 0; iter_which = 0;
+        iter_on = 0; iter_which = 0; iter_slot_state = nullptr;
         std::vector<int>().swap(iter_counts_host);
         flags = nullptr;
         release_arena();
@@ -5560,6 +5580,7 @@ struct NlrClListStorage {
     int *tiles = nullptr; size_t tiles_cap = 0;          /* [tiles] the tiles holding covered queries */
     unsigned *tile_stamp = nullptr; size_t tstamp_cap = 0;
     int *counter = nullptr;                              /* shared: tiles claimed, queries left */
+    int *slot_state = nullptr; size_t slot_state_cap = 0; /* [call slots x NLR_CL_SLOT_INTS] an iterating call's in-kernel decisions */
     unsigned stamp = 0;
 };
 static NlrClListStorage g_nlr_cl;
@@ -5584,6 +5605,7 @@ void nlr_cluster_list_release(void)
     if(g_nlr_cl.query_stamp) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_nlr_cl.query_stamp);}
     if(g_nlr_cl.tiles) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_nlr_cl.tiles);}
     if(g_nlr_cl.tile_stamp) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_nlr_cl.tile_stamp);}
+    if(g_nlr_cl.slot_state) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(g_nlr_cl.slot_state);}
     if(g_nlr_cl.counter) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_nlr_cl.counter);}
     g_nlr_cl = NlrClListStorage{};
 }
@@ -5591,11 +5613,23 @@ void nlr_cluster_list_release(void)
 /* One-way evaluation of a batch's own queries from the owned part of the step's cluster list.  One team of one i-tile's lanes per
  * tile holding queries, one lane per query: the lanes of a team walk the tile's entries together and visit, with the walk's own leaf
  * (type, distance, mass, then the pair kernel), the members of the clusters carrying their bit.  Sums are held in registers and stored
- * once.  Returns the number of queries left to the walk, marked in *replay_out, or -1 when the list does not apply. */
+ * once.  Returns the number of queries left to the walk, marked in *replay_out, or -1 when the list does not apply.
+ *
+ * An iterating call (it != nullptr, a Spec with a device decision) solves the search radius in the lane: a query that sent
+ * nothing to another rank this round takes the Spec's decision (after_iter_device) on its sums at once, and when that asks for
+ * another radius it sums again over the same entries and decides again, for as long as the new radius stays within the radius
+ * its tile's list covers, still sends nothing (the top tree is walked with the export's own policy) and the Spec's iteration
+ * bound is not reached.  The list is wider than any one radius (NGL_CL_SUPERSET), so several radii are served by one list
+ * with no further search, exchange or launch.  A query that leaves the lane undecided, or decided to iterate on outside what
+ * the list or this rank covers, is taken by the next round as before.  Each decision is the same call with the same
+ * arguments and iteration number as a round's would be, on sums of the same neighbours in another order.
+ * (One over-wide list with the kernel length solved inside the kernel that reads it is the scheme of the Plume code by
+ * Doug Rennehan, used here with his permission.) */
 template <typename Spec, bool UsesMirror>
 static int nlr_mode_d_list_reduce(const typename Spec::DeviceContext &ctx, const typename Spec::CallScalars &cs, unsigned int supply_mask,
                                   const typename Spec::ActiveData *locals, const int *local_index, int n_local,
-                                  typename Spec::AccumData *accums_out, const GxLeafMirrorView &leaf_mirror, const int **replay_out, const GxDeviceTreeView &check_tree)
+                                  typename Spec::AccumData *accums_out, const GxLeafMirrorView &leaf_mirror, const int **replay_out,
+                                  const GxDeviceTreeView &tree, const ModeDExportTopology &topo, int *anomaly, const NlrClInKernel *it)
 {
     using ActiveData  = typename Spec::ActiveData;
     using AccumData   = typename Spec::AccumData;
@@ -5630,31 +5664,69 @@ static int nlr_mode_d_list_reduce(const typename Spec::DeviceContext &ctx, const
     const int n_tiles = counter[0], n_left = counter[1];
     if(n_tiles > 0) {
         const GxLeafMirrorView mirror = leaf_mirror;
-        using Team = Kokkos::TeamPolicy<Kokkos::LaunchBounds<TILE_TARGET_SIZE, 1> >;
-        Kokkos::parallel_for(Spec::loop_name, Team(n_tiles, TILE_TARGET_SIZE, 1), KOKKOS_LAMBDA(const typename Team::member_type &team) {
+        const NlrClInKernel ik = (it && nlr_spec_has_after_iter_device<Spec>::value) ? *it : NlrClInKernel{};
+        ModeDExportStep<MODE_D_EXPORT_COUNT> sends;   /* counts the top leaves of other ranks a ball reaches; nothing is stored */
+        sends.topo = topo;
+        gizmo_gpu_bounded_team_kernel_launch<TILE_TARGET_SIZE>(Spec::loop_name, n_tiles, TILE_TARGET_SIZE, KOKKOS_LAMBDA(const Kokkos::TeamPolicy<Kokkos::LaunchBounds<TILE_TARGET_SIZE, 1> >::member_type &team) {
             const GxLeafMirrorView &mv = mirror;
             const int t = tlist[team.league_rank()], r = team.team_rank(), row = v.tile_row[t], slot = v.tiles[t].first + r;
             if(r >= v.tiles[t].count || qst[slot] != st) {return;}
             const int kk = query_of[slot];
-            const ActiveData a = locals[kk];
+            ActiveData a = locals[kk];
             AccumData acc; Spec::zero_accum(acc);
             ScatterData sc{};
             NlrModeDReduceLeaf<Spec, UsesMirror> leaf{&ctx, &a, &acc, &sc, supply_mask, &cs};
             if constexpr (UsesMirror) {leaf.leaf_mirror = mv;} else {(void) mv;}
             const unsigned long long bit = 1ull << r;
-            const double qx = (double)a.pos[0], qy = (double)a.pos[1], qz = (double)a.pos[2], reach = (double)a.h_search;
-            for(int64_t e = NGL_CL_BEG(v.off, row); e < NGL_CL_END(v.off, row); e++) {
-                const NglClEntry E = v.ent[e];
-                if(!(E.bits & bit)) {continue;}
-                const sfc_tile_t &J = v.tiles[E.cluster / NGL_CL_PER_TILE];
-                const int kc = E.cluster % NGL_CL_PER_TILE, first = J.first + kc * NGL_CL_SIZE, rest = J.count - kc * NGL_CL_SIZE;
-                const int m = (rest < NGL_CL_SIZE) ? rest : NGL_CL_SIZE;
-                for(int q = 0; q < m; q++) {const int j = v.pool[first + q]; if(j >= 0) {leaf.visit(j, qx, qy, qz, reach);}}
+            const double qx = (double)a.pos[0], qy = (double)a.pos[1], qz = (double)a.pos[2];
+            const bool decides = ik.slot_state && ik.exported[kk] == 0;
+            for(int decisions = 0; ; ) {
+                const double reach = (double)a.h_search;
+                for(int64_t e = NGL_CL_BEG(v.off, row); e < NGL_CL_END(v.off, row); e++) {
+                    const NglClEntry E = v.ent[e];
+                    if(!(E.bits & bit)) {continue;}
+                    const sfc_tile_t &J = v.tiles[E.cluster / NGL_CL_PER_TILE];
+                    const int kc = E.cluster % NGL_CL_PER_TILE, first = J.first + kc * NGL_CL_SIZE, rest = J.count - kc * NGL_CL_SIZE;
+                    const int m = (rest < NGL_CL_SIZE) ? rest : NGL_CL_SIZE;
+                    for(int q = 0; q < m; q++) {const int j = v.pool[first + q]; if(j >= 0) {leaf.visit(j, qx, qy, qz, reach);}}
+                }
+                (void) decisions;
+                if(!decides) {break;}
+                if constexpr (nlr_spec_has_after_iter_device<Spec>::value) {
+                    const int cslot = ik.live[kk], i = ik.slot_index[cslot];
+                    int *state = &ik.slot_state[(size_t)cslot * NLR_CL_SLOT_INTS];
+                    const int number = ik.iteration + state[1] + decisions;   /* this decision's place in the slot's iteration */
+                    int code = 0;
+                    const NlrDeviceIterContext<Spec> c{ik.P, ik.CellP, ik.subgroup, cslot, i, number, reach, cs,
+                                                       ((typename Spec::IterScratch *) ik.slot_scratch)[cslot], ctx, ik.this_task, code};
+                    const IterResult res = Spec::after_iter_device(c, acc);
+                    decisions++;
+                    int outcome = 1;
+                    if(res.status == IterStatus::AdjustRadius) {
+                        const double next = res.new_h_search;
+                        ik.slot_radius[cslot] = next;
+                        outcome = 2;
+                        if(code == 0 && next > 0 && next <= v.R[slot] && number + 1 < Spec::max_iters) {
+                            ModeDExportFlatPolicy<MODE_D_EXPORT_COUNT> reached{&sends, {}};
+                            sends.begin(kk, next, reached.s);
+                            gx_device_tree_walk_from_root(qx, qy, qz, next, tree, reached, anomaly, 0u);
+                            if(reached.s.nodes == 0) {
+                                a = Spec::load_active(ctx, cslot, i, next, cs);
+                                Spec::zero_accum(acc);
+                                continue;
+                            }
+                        }
+                    } else if(res.status == IterStatus::NeedsMore) {
+                        outcome = 2;
+                    } else if(res.status != IterStatus::Converged) {
+                        code = 81206;   /* an unknown status is a Spec defect */
+                    }
+                    state[0] = outcome; state[1] += decisions - 1; state[2] = code;
+                }
+                break;
             }
             accums_out[kk] = acc;
         });
-        Kokkos::fence();
-        gizmo_gpu_check_last_error(Spec::loop_name, n_tiles);
     }
     *replay_out = replay;
     return n_left;
@@ -5684,7 +5756,8 @@ struct NlrModeDBatch {
                          const GxDeviceTreeView& tree, unsigned int neighbor_type_mask,
                          const ActiveData *locals, int n_local, AccumData *local_accums,
                          const Envelope *received, int K, Reply *replies, int *anomaly,
-                         const Kokkos::DefaultExecutionSpace *eval_space = nullptr, const int *local_index = nullptr)
+                         const Kokkos::DefaultExecutionSpace *eval_space = nullptr, const int *local_index = nullptr,
+                         const ModeDExportTopology *topo = nullptr, const NlrClInKernel *in_kernel = nullptr)
     {
         using ScatterData = typename Spec::ScatterData;
         static_assert(nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly,
@@ -5706,12 +5779,12 @@ struct NlrModeDBatch {
         /* All was brought current by the exchange this batch belongs to, once for the whole exchange. */
 #ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
         if constexpr (!nlr_spec_writes_neighbour_motion_v<Spec>) {
-            if(local_index && n_local > 0 && neighbor_type_mask == 1u && Spec::radius_policy == MODE_B_RADIUS_DEFAULT) {
+            if(local_index && topo && n_local > 0 && neighbor_type_mask == 1u && Spec::radius_policy == MODE_B_RADIUS_DEFAULT) {
                 const GxLeafMirrorView lm = nlr_mode_d_leaf_mirror(true, tree);
                 const bool mirrored = (lm.pos && lm.type);
                 const int *left = nullptr;
-                const int n_left = mirrored ? nlr_mode_d_list_reduce<Spec, true>(ctx, cs, neighbor_type_mask, locals, local_index, n_local, local_accums, lm, &left, tree)
-                                            : nlr_mode_d_list_reduce<Spec, false>(ctx, cs, neighbor_type_mask, locals, local_index, n_local, local_accums, lm, &left, tree);
+                const int n_left = mirrored ? nlr_mode_d_list_reduce<Spec, true>(ctx, cs, neighbor_type_mask, locals, local_index, n_local, local_accums, lm, &left, tree, *topo, anomaly, in_kernel)
+                                            : nlr_mode_d_list_reduce<Spec, false>(ctx, cs, neighbor_type_mask, locals, local_index, n_local, local_accums, lm, &left, tree, *topo, anomaly, in_kernel);
                 if(n_left >= 0) {
                     /* every local member is current (a condition of the list), so no recording pass has anything to drift */
                     if(n_left > 0) {
@@ -5938,6 +6011,15 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
 
     /* 2. the export count, and the arena for it */
     const ModeDExportTopology topo{L.map, me};
+    NlrClInKernel in_kernel;   /* an iterating call's state for the cluster-list kernel; unset: every decision is the round's */
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+    if(query_index && device_queries && device_queries->slot_state) {
+        in_kernel.live = device_queries->live; in_kernel.exported = L.active_nodes; in_kernel.slot_index = device_queries->slot_index;
+        in_kernel.slot_radius = device_queries->slot_radius_next; in_kernel.slot_scratch = device_queries->slot_scratch;
+        in_kernel.slot_state = device_queries->slot_state; in_kernel.P = args.P; in_kernel.CellP = args.CellP;
+        in_kernel.subgroup = device_queries->subgroup; in_kernel.iteration = device_queries->iteration; in_kernel.this_task = me;
+    }
+#endif
     long long totals[2] = {0, 0};   /* envelope bound, records */
     if(N > 0) {
         ModeDExportStep<MODE_D_EXPORT_COUNT> count;
@@ -6136,7 +6218,7 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                     const int K = batch[filling].records, with_locals = (!locals_in_chunks && !locals_done) ? N : 0;
                     NlrModeDBatch<Spec>::evaluate(ctx, cs, tree, type_mask, with_locals ? snapshot : nullptr, with_locals, accums,
                                                   (const Envelope *) L.group_queries[filling], K, (Reply *) L.group_replies[filling],
-                                                  flags + MODE_D_FLAG_WALK, eval_queue, with_locals ? query_index : nullptr);
+                                                  flags + MODE_D_FLAG_WALK, eval_queue, with_locals ? query_index : nullptr, &topo, &in_kernel);
                     if(with_locals) {running_locals = 1; locals_issued = N;}
                     if(!L.batch_segments[filling].empty()) {
                         running_batch = filling; batch[filling].state = 3;
@@ -6150,8 +6232,10 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                     }
                 } else if(idle && locals_in_chunks && locals_issued < N) {
                     const int c0 = locals_issued, m = ((long long) (N - c0) < local_chunk) ? N - c0 : (int) local_chunk;
+                    NlrClInKernel chunk_in_kernel = in_kernel;
+                    if(chunk_in_kernel.slot_state) {chunk_in_kernel.live += c0; chunk_in_kernel.exported += c0;}
                     NlrModeDBatch<Spec>::evaluate(ctx, cs, tree, type_mask, snapshot + c0, m, accums + c0, nullptr, 0, nullptr,
-                                                  flags + MODE_D_FLAG_WALK, eval_queue, query_index ? query_index + c0 : nullptr);
+                                                  flags + MODE_D_FLAG_WALK, eval_queue, query_index ? query_index + c0 : nullptr, &topo, &chunk_in_kernel);
                     running_locals = 1; locals_issued = c0 + m;
                     if(gx_mode_d_eval_event(0).record(*eval_queue) != 0) {
                         gizmo_fatal_hard_exit_reviewed(90009003, "REVIEWED_HARD_MID_PROTOCOL: a Mode D evaluation's completion could not be recorded",
@@ -6886,6 +6970,14 @@ static void nlr_mode_d_iteration_begin(NlrIterDriver<Spec>& drv)
         if((size_t) b < scratch_bytes) {scratch[b] = 0;}
         if(b < n) {live[b] = (int) b;}
     });
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+    /* no slot has decided anything in a kernel yet; storage refused: every decision stays the round's */
+    if(nlr_cl_reserve(&g_nlr_cl.slot_state, &g_nlr_cl.slot_state_cap, (size_t) n * NLR_CL_SLOT_INTS, "nlr_cl_slot_state", false)) {
+        int *state = g_nlr_cl.slot_state;
+        Kokkos::parallel_for("nlr_cl_slot_state_clear", Kokkos::RangePolicy<>(0, n * NLR_CL_SLOT_INTS), KOKKOS_LAMBDA(int k) {state[k] = 0;});
+        L.iter_slot_state = state;
+    } else {L.iter_slot_state = nullptr;}
+#endif
 }
 
 /* The end of a call's device iteration: at its last iteration, or where its remainder goes on to Mode B.  Every slot's
@@ -6989,7 +7081,11 @@ static void nlr_iter_dispatch_subgroup_mode_d_on_device(NlrIterDriver<Spec>& drv
 {
     ModeDCallLease &L = *drv.mode_d_lease;
     const int base = drv.call_slot_base[sg], m = drv.active_set_size[sg];
-    const ModeDDeviceQueries dq{L.iter_live[L.iter_which] + base, m, base, L.iter_slot_index, L.iter_slot_radius};
+    ModeDDeviceQueries dq{L.iter_live[L.iter_which] + base, m, base, L.iter_slot_index, L.iter_slot_radius};
+#ifdef GPU_SPEEDUP_NEIGHBOUR_CLUSTER_LIST
+    dq.slot_radius_next = L.iter_slot_radius; dq.slot_scratch = L.iter_slot_scratch; dq.slot_state = L.iter_slot_state;
+    dq.subgroup = sg; dq.iteration = drv.iter_index;
+#endif
     neighbor_loop_args sub = drv.args;
     sub.active_list = nullptr; sub.active_call_slot = nullptr; sub.num_active = m;
     mode_d_exchange<Spec>(L, sub, nullptr, drv.cs, drv.ctx, (unsigned int) drv.args.subgroups[sg].j_type_bitmask, nullptr, &dq);
@@ -7021,6 +7117,7 @@ static int nlr_mode_d_after_iter_on_device(NlrIterDriver<Spec>& drv)
         const typename Spec::CallScalars cs = drv.cs;
         const typename Spec::DeviceContext dctx = drv.ctx;
         const int iter = drv.iter_index, this_task = ThisTask;
+        int *decided = L.iter_slot_state;   /* slots whose decision the cluster-list kernel made this round, and their iteration numbers */
         Kokkos::parallel_for("nlr_mode_d_iter_counts_clear", Kokkos::RangePolicy<>(0, n_counts), KOKKOS_LAMBDA(int c) {count[c] = 0;});
         for(int sg = 0; sg < n_sg; sg++) {
             const int n = drv.active_set_size[sg], base = drv.call_slot_base[sg];
@@ -7032,13 +7129,28 @@ static int nlr_mode_d_after_iter_on_device(NlrIterDriver<Spec>& drv)
                 const int slot = cur[k];
                 const AccumData acc = accums[k];
                 slot_accum[slot] = acc;
-                int code = 0;
-                const NlrDeviceIterContext<Spec> c{Pp, Cp, sg, slot, index[slot], iter, radius[slot], cs, scratch[slot], dctx, this_task, code};
+                int code = 0, number = iter;
+                if(decided) {
+                    int *state = &decided[(size_t) slot * NLR_CL_SLOT_INTS];
+                    number += state[1];
+                    if(state[0]) {
+                        /* decided in the kernel that summed it: its radius and scratch are set; a slot that iterates on has
+                           had number + 1 decisions and is stopped at the Spec's bound like any other */
+                        keep[k] = (state[0] == 2) ? 1 : 0;
+                        code = state[2];
+                        if(keep[k] && code == 0 && number + 1 >= Spec::max_iters && iter + 1 < Spec::max_iters) {code = 81207;}
+                        if(code) {Kokkos::atomic_max(&count[0], code);}
+                        state[0] = 0; state[2] = 0;
+                        return;
+                    }
+                }
+                const NlrDeviceIterContext<Spec> c{Pp, Cp, sg, slot, index[slot], number, radius[slot], cs, scratch[slot], dctx, this_task, code};
                 const IterResult res = Spec::after_iter_device(c, acc);
                 if(res.status == IterStatus::AdjustRadius) {radius[slot] = res.new_h_search;}
                 else if(res.status != IterStatus::Converged && res.status != IterStatus::NeedsMore) {code = 81206;}   /* an unknown status is a Spec defect */
-                if(code) {Kokkos::atomic_max(&count[0], code);}
                 keep[k] = (res.status == IterStatus::NeedsMore || res.status == IterStatus::AdjustRadius) ? 1 : 0;
+                if(keep[k] && code == 0 && number + 1 >= Spec::max_iters && iter + 1 < Spec::max_iters) {code = 81207;}   /* only a slot ahead of the rounds */
+                if(code) {Kokkos::atomic_max(&count[0], code);}
             });
             Kokkos::parallel_scan("nlr_mode_d_compact", Kokkos::RangePolicy<>(0, n), KOKKOS_LAMBDA(int k, int &before, const bool last) {
                 if(last) {
