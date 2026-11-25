@@ -204,6 +204,7 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
         if(!crad_in.empty()) S.collision_radius = crad_in;
 #ifdef KETJU_MSTAR_MPI
         if(shared) {S.set_mpi_fcomm((int)MPI_Comm_c2f(side->comm)); q.mpi_min_n = KETJU_MSTAR_MPI_MIN_N;} else {S.clear_mpi_comm();}
+        q.tree_sweep = shared; /* vertex coordinates by a parents-first sweep: bitwise the path sums, O(N) on one thread */
 #endif
         bool ok = false;
         try {ok = S.run(time_interval);} catch(const std::exception &e) {kj_abort(e.what(), 7812);}
