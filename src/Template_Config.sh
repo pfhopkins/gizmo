@@ -245,7 +245,7 @@
 #FOF_SECONDARY_LINK_TARGET_TYPES=4  # bitflag: extra types searched as nearest target of a secondary; a secondary whose nearest target is not a primary type stays ungrouped (zooms: gas next to low-res DM)
 #FOF_UNIQUE_KEY_CHECK               # at each FoF call abort unless the particle key (ID, child number) is unique (needed by catalogues and SUBFIND-HBT tracking)
 #FOF_DENSITY_SPLIT_TYPES=1+2+16+32  # bitflag: sum of 2^type for which the densities should be calculated seperately (i.e. if 1+2+16+32, fof densities are separately calculated for types 0,1,4,5, and shared for types 2,3)
-#FOF_GROUP_MIN_SIZE=32              # minimum number of identified members required to qualify as a 'group': default is 32
+#FOF_GROUP_MIN_SIZE=32              # minimum number of identified members required to qualify as a 'group': default is 32; with SUBFIND it must be at least the parameter DesLinkNgb (the run stops at start-up otherwise)
 ## ----------------------------------------------------------------------------------------------------
 # -------------------------------------  Subhalo on-the-fly finder options (uses "subfind" source code).
 ## ----------------------------------------------------------------------------------------------------

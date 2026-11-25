@@ -3966,6 +3966,12 @@ void read_parameter_file(char *fname)
     {
         if(ThisTask==0) {printf("ErrTolIntAccuracy must be >0 and <0.05 to ensure stability \n");} endrun(1);
     }
+#ifdef SUBFIND
+    if(All.DesLinkNgb > FOF_GROUP_MIN_SIZE) /* SUBFIND looks for DesLinkNgb neighbours among the members of each group: a group with fewer members can never supply them, and the search would not end */
+    {
+        if(ThisTask==0) {printf("DesLinkNgb = %d must not exceed FOF_GROUP_MIN_SIZE = %d: SUBFIND searches DesLinkNgb neighbours inside every group, so a smaller group cannot be processed. Lower DesLinkNgb in the parameterfile or raise FOF_GROUP_MIN_SIZE in Config.sh \n", All.DesLinkNgb, (int)(FOF_GROUP_MIN_SIZE));} endrun(1);
+    }
+#endif
 #ifdef GRAVITY_PERIODIC_XY_IMAGES
     if(All.GravityPeriodicXYImages < 0) {if(ThisTask==0) {printf("GravityPeriodicXYImages must be >=0 \n");} endrun(1);}
 #endif
