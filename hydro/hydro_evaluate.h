@@ -564,8 +564,16 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #else
                     if(kernel.vsig > WAKEUP*CellP[j].MaxSignalVel) {
 #endif
+#ifdef WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP
+                        short int wakeup_pending_j; /* a merge, split or feedback request (-1, -2) stays: its own-timestep wake is capped at the highest active bin, which is all this request gives under WakeupTargetBin 2 */
+                        #pragma omp atomic read
+                        wakeup_pending_j = P[j].wakeup;
+                        if(wakeup_pending_j != -1 && wakeup_pending_j != -2)
+#endif
+                        {
                         #pragma omp atomic write
                         P[j].wakeup = (short int)(local.TimeBin + 1);
+                        }
                         #pragma omp atomic write
                         NeedToWakeupParticles_local = 1;
                         wakeup_list_note(j);

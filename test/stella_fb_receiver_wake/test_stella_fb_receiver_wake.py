@@ -49,6 +49,7 @@ BAR = 1e-2
 BAR_RANKS = 1e-10
 STEPS_AFTER = 3
 RUN_TIMEOUT = 5400  # s
+BOX = tuple(float(x) for x in os.environ.get("GIZMO_TEST_RECEIVER_WAKE_BOX", "1e4,1.6,1e-3").split(","))  # n_H [cm^-3], box [pc], gas softening [kpc]
 
 
 def _ratio(out):
@@ -67,22 +68,26 @@ def _wake_record(text):
     recv = {}; woken = {}; energy = {}
     for m in re.finditer(r"^TEST_KICK_FLOOR_DUMP recv step (\d+) t \S+ ID (\d+) site (\d) ", text, re.M):
         recv.setdefault(int(m.group(1)), set()).add(int(m.group(2)))
-    for m in re.finditer(r"^TEST_WAKEUP_DUMP woken step (\d+) ID (\d+) from (\d+) to (\d+) ", text, re.M):
+    flag = {}; recv_all = recv
+    for m in re.finditer(r"^TEST_WAKEUP_DUMP woken step (\d+) ID (\d+) from (\d+) to (\d+) wakeup (-?\d+)", text, re.M):
         woken.setdefault(int(m.group(1)), set()).add((int(m.group(2)), int(m.group(3)), int(m.group(4))))
+        flag.setdefault(int(m.group(1)), {})[int(m.group(2))] = int(m.group(5))
     for m in re.finditer(r"^TEST_WAKEUP_DUMP energy step (\d+) t \S+ E (\S+)$", text, re.M):
         energy[int(m.group(1))] = float(m.group(2))
     s0 = min(recv) if recv else None
-    return s0, (recv[s0] if recv else set()), woken, energy
+    replaced = sum(1 for k in recv_all for i in recv_all[k] if flag.get(k, {}).get(i, -1) > 0)  # receivers woken with a hydro request instead of their own
+    return s0, (recv[s0] if recv else set()), woken, energy, replaced
 
 
 def _run(binary, fbc, name, nranks):
     d = join(TEST_DIR, "run_" + name); out = join(d, "output")
     shutil.rmtree(d, ignore_errors=True); os.makedirs(out)
     os.symlink(REPO, join(d, "gizmo"))
-    fbc.make_box(join(d, "box_ics.hdf5"), fbc.ZSUN, T=100.0)
+    n_H, box_pc, soft = BOX
+    fbc.make_box(join(d, "box_ics.hdf5"), fbc.ZSUN, n_H=n_H, box_pc=box_pc, T=100.0)
     base = open(join(REPO, "test", "stella_fb_conservation", "stella_fb_conservation.params")).read().splitlines()
     over = {"TestNumStars": 1, "TestStarMass": 60.0, "TimeMax": 2.5e-4, "MaxSizeTimestep": 5.0e-5,
-            "TimeBetStatistics": 5.0e-5, "TimeBetSnapshot": 2.5e-4, "TestFUVZero": 1}
+            "TimeBetStatistics": 5.0e-5, "TimeBetSnapshot": 2.5e-4, "TestFUVZero": 1, "BoxSize": box_pc * 1e-3, "SofteningGas": soft}
     lines = [l for l in base if not (l.split() and l.split()[0] in over)] + [f"{k} {v}" for k, v in over.items()]
     open(join(d, "run.params"), "w").write("\n".join(lines) + "\n")
     with open(join(d, "run.log"), "w") as log:
@@ -123,12 +128,12 @@ def runs():
 
 
 def _compare_ranks(runs, arm):
-    s0, recv0, woken0, energy0 = runs[(arm, 1)]["wake"]
+    s0, recv0, woken0, energy0, _ = runs[(arm, 1)]["wake"]
     assert s0 is not None and len(recv0) > 0, "no receiver in the 1-rank run"
     assert sum(len(woken0.get(k, ())) for k in range(s0, s0 + STEPS_AFTER + 1)) > 0, "no cell woken in those steps: nothing to compare"
     bad = []
     for nranks in (2, 4):
-        s, recv, woken, energy = runs[(arm, nranks)]["wake"]
+        s, recv, woken, energy, _ = runs[(arm, nranks)]["wake"]
         print(f"{arm}, {nranks} ranks: first deposit step {s} (1 rank: {s0}), receivers {len(recv)} (1 rank: {len(recv0)})")
         if s != s0 or recv != recv0:
             bad.append(f"{nranks} ranks: first deposit step or receivers differ"); continue
@@ -147,13 +152,19 @@ def test_builds_run_and_dump(runs):
     for key in (("on", 2), ("off", 2)):
         assert runs[key]["n"] > 0, f"{key}: no full sync with feedback"
         assert runs[key]["nrecv"] > 0, f"{key}: no receiver line"
-        s0, recv, woken, _ = runs[key]["wake"]
+        s0, recv, woken, _, _ = runs[key]["wake"]
         assert len(recv) > 0 and len(woken.get(s0, ())) > 0, f"{key}: no receiver woken at the first deposit"
-    s0, _, w_on, _ = runs[("on", 2)]["wake"]; _, _, w_off, _ = runs[("off", 2)]["wake"]
+    s0, _, w_on, _, _ = runs[("on", 2)]["wake"]; _, _, w_off, _, _ = runs[("off", 2)]["wake"]
     to_on = {i: b for i, _, b in w_on[s0]}; to_off = {i: b for i, _, b in w_off[s0]}
     assert set(to_on) == set(to_off), "the first deposit wakes different cells with and without the flags"
     assert all(to_on[i] <= to_off[i] for i in to_on), "with the flags a receiver was put on a longer bin than without"
     print(f"first deposit: {len(to_on)} receivers woken; bins with the flags {sorted(set(to_on.values()))}, without {sorted(set(to_off.values()))}")
+
+
+def test_hydro_wake_does_not_replace_the_receiver_wake(runs):
+    """with the flags a receiver woken in the step of its deposit keeps its own request (-1): no hydro request (> 0) in its place"""
+    print(f"receivers woken with a hydro request in place of their own: {runs[('on', 2)]['wake'][4]} with the flags, {runs[('off', 2)]['wake'][4]} without")
+    assert runs[("on", 2)]["wake"][4] == 0
 
 
 def test_receivers_on_their_own_timestep(runs):
