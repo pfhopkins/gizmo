@@ -339,6 +339,8 @@ void verify_and_assign_local_mechfb_integrals(void)
             refresh_eos_and_project(j, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED); /* the deposit is an accepted change to both state copies */
             if(TimeBinActive[P[j].TimeBin]) /* its next step is chosen right after this, from a signal speed the hydro pass set before the deposit: raise it to the new state. An inactive cell keeps its own, which its active neighbours' wakeup check compares against */
                 {CellP[j].MaxSignalVel = DMAX(CellP[j].MaxSignalVel, 2.*CellP[j].effective_soundspeed()) + sqrt((P[j].Vel - vel_before_deposit).norm_sq()) / All.cf_atime;}
+#elif defined(SNE_BROADCAST_TIMESTEP) /* an inactive receiver is compared by its neighbours' wakeup check with the signal speed of the state it now has (Durier & Dalla Vecchia 2012); an active one gets its own from the hydro pass that follows */
+            CellP[j].MaxSignalVel = DMAX(CellP[j].MaxSignalVel, 2.*sqrt(CellP[j].soundspeed2_from_u(CellP[j].InternalEnergy)) + sqrt((P[j].Vel - vel_before_deposit).norm_sq()) / All.cf_atime);
 #else
             (void) vel_before_deposit;
 #endif
