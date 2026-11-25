@@ -205,6 +205,12 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
 #ifdef KETJU_MSTAR_MPI
         if(shared) {S.set_mpi_fcomm((int)MPI_Comm_c2f(side->comm)); q.mpi_min_n = KETJU_MSTAR_MPI_MIN_N;} else {S.clear_mpi_comm();}
         q.tree_sweep = shared; /* vertex coordinates by a parents-first sweep: bitwise the path sums, O(N) on one thread */
+#ifdef TEST_KETJU_MSTAR_ERROR_NORM
+        q.gbs_error_norm = TEST_KETJU_MSTAR_ERROR_NORM; /* test: GBS error of a variable against the norm of its 3-vector (1) */
+#endif
+#ifdef TEST_KETJU_MSTAR_GROWTH_LIMIT
+        q.gbs_growth_limit = TEST_KETJU_MSTAR_GROWTH_LIMIT; /* test: ODEX limit on the step growth after an accepted step (1) */
+#endif
 #endif
         bool ok = false;
         try {ok = S.run(time_interval);} catch(const std::exception &e) {kj_abort(e.what(), 7812);}
@@ -216,8 +222,8 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
             tf = S.perf.t_force; tc = S.perf.t_comm; nt = S.perf.mpi_tasks;
 #endif
             /* stderr: tests parse stdout, and lines of several tasks interleave there */
-            fprintf(stderr, "KETJU MSTAR TIMING: n %d comm %d sharing %d steps %ld + %ld failed wall %.3f s force %.3f s messages %.3f s\n",
-                    n0, size, nt, S.perf.successful_steps, S.perf.failed_steps, MPI_Wtime() - tw0, tf, tc);
+            fprintf(stderr, "KETJU MSTAR TIMING: n %d comm %d sharing %d steps %ld + %ld failed wall %.3f s force %.3f s messages %.3f s dE/E %.3e\n",
+                    n0, size, nt, S.perf.successful_steps, S.perf.failed_steps, MPI_Wtime() - tw0, tf, tc, S.perf.relative_energy_error);
         }
 #endif
     }

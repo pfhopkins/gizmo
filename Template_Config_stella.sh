@@ -118,6 +118,8 @@ KETJU_MERGE_STARS                        % stellar collisions (Type 4+4)  [req K
 #KETJU_MSTAR_MPI                         % regions of KETJU_MSTAR_MPI_MIN_N or more bodies are integrated by all their compute tasks together; results bitwise as without; needs an MSTAR install built with MSTAR_ENABLE_MPI at KETJU_PATH  [req KETJU_REGULARIZATION]
 #KETJU_MSTAR_MPI_MIN_N=128               % smallest region shared over its compute tasks  [req KETJU_MSTAR_MPI]
 #TEST_KETJU_MSTAR_TIMING=64              % test: one log line (bodies, tasks, steps, wall time) per MSTAR call of a region with at least this many bodies  [req KETJU_REGULARIZATION]
+#TEST_KETJU_MSTAR_ERROR_NORM=1            % test: MSTAR GBS error of a variable against the norm of its 3-vector, not its own magnitude (changes the accuracy criterion)  [req KETJU_MSTAR_MPI]
+#TEST_KETJU_MSTAR_GROWTH_LIMIT=1          % test: MSTAR step growth after an accepted step limited as in ODEX  [req KETJU_MSTAR_MPI]
 #STARS_INTEGRATED_BY_RUMI                % EXPERIMENTAL: all Type-4 stars integrated by the RUMI++ library (BRIDGE: gas kicks at star steps, star-star pairs out of the tree; make RUMI_LIB_DIR=<prefix>)  [excl KETJU_REGULARIZATION]
 #STARS_HERMITE_DIRECT_GRAVITY            % EXPERIMENTAL prototype (A-lite): Type-4 stars on 4th-order Hermite with direct star-star gravity, Aarseth steps (STARS_HERMITE_AARSETH_ETA=0.02)  [excl sinks, KETJU-free Hermite, adaptive Type-4 softening]
 #STARS_APPROACH_TIMESTEP_OFF  % opt out of the default-on STARS_APPROACH_TIMESTEP (set by GALSF_RESOLVEDISM_SAMPLE_IMF)
