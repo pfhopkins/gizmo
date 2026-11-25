@@ -115,3 +115,4 @@ ShieldingLength                 0.05              % max distance for self-shield
 %KetjuUseStarStarSoftening      0                 % keep softening between stars inside chain (0=unsoftened)
 %KetjuPNTerms                   all               % PN term flags: "all", "none", "no_spin"
 %KetjuTimestepLimitingFactor    100               % radius factor for timestep limiting
+MaxMemSize                 4000

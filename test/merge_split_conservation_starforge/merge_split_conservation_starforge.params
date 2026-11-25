@@ -250,3 +250,4 @@ DivBcleaningHyperbolicSigma  1.0 % (~1)
 
 %---- STARFORGE feedback spawn-cell mass
 Sink_outflow_particlemass   0.001   % absolute spawned-cell mass [Msun] = native gas particle mass (M=2e3,N=2e6 IC)
+MaxMemSize                 4000
