@@ -561,6 +561,28 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         #pragma omp atomic
                         CumulElemToGas[m] += dMX; /* element ledger: what the deposit books */
                     }
+                    /* a slot the blend's round-off left below zero (whole-cell Ia conversion) is set to zero and the amount booked;
+                     * a metal slot's amount also goes to slot 0, H follows from the closure below (STL-329) */
+                    for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
+                        int m = MET_OF(k);
+                        double x_neg;
+                        if(k == ELEM_H) {continue;}
+                        #pragma omp atomic read
+                        x_neg = P[j].Metallicity[m];
+                        if(x_neg >= 0) {continue;}
+                        #pragma omp atomic
+                        P[j].Metallicity[m] -= x_neg;
+                        #pragma omp atomic
+                        CumulElemToGas[m] -= x_neg * (Mass_j + dM);
+                        if(k != ELEM_He) {
+                            #pragma omp atomic
+                            P[j].Metallicity[0] -= x_neg;
+                            #pragma omp atomic
+                            CumulElemToGas[0] -= x_neg * (Mass_j + dM);
+                            #pragma omp critical (metal_ledger_sum)
+                            CumulMetalYieldToGas -= x_neg * (Mass_j + dM);
+                        }
+                    }
                     /* Force ΣMet = 1 by construction: recompute H from conservation
                      * X_H = 1 − Z − Y.  Absorbs float32 roundoff that accumulates
                      * across the 27-element mass-fraction blend above. */
