@@ -20,6 +20,10 @@
 
 // NaN states seen by validate_input on this thread; the driver reports them once per solve
 extern thread_local long chem_nan_states;
+// evaluations validate_input rejected for an excess abundance (> 1 + EPS_MAX, H2 > 0.5 + EPS_MAX) on this thread,
+// in total and per species
+extern thread_local long chem_excess_states;
+extern thread_local long chem_excess_species[CHEM_NSPEC_MAX];
 
 // returns 0 ok, 1 flagged (reject evaluation)
 inline int chem_validate_input(double* y, int nspec, int itmp0 /*0-based energy slot*/,
@@ -36,13 +40,13 @@ inline int chem_validate_input(double* y, int nspec, int itmp0 /*0-based energy 
             if (y[i] > 1.0) {
                 int flag = (y[i] > 1.0 + CHEM_EPS_MAX);
                 y[i] = 1.0;
-                if (flag) return 1;
+                if (flag) { chem_excess_states++; chem_excess_species[i]++; return 1; }
             }
         } else if (i == ih2_0) {
             if (y[i] > 0.5) {
                 int flag = (y[i] > 0.5 + CHEM_EPS_MAX);
                 y[i] = 0.5;
-                if (flag) return 1;
+                if (flag) { chem_excess_states++; chem_excess_species[i]++; return 1; }
             }
         }
     }

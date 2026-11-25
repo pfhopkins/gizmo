@@ -24,7 +24,9 @@
 //    1e-10 relative completion tolerance + ipar-clear == ignore RHS retval).
 //  Failure codes: dt < 1e-8 s -> return 100 ("ABORT(100)");
 //    substep budget 9e6 -> return 1 ("ABORT(0)"); negative dt -> return 2.
-//    The one-zone harness maps nonzero to the sgchem_fatal exit path.
+//    100 and 1 retry once (CVODE, budget CHEM_NSTEP_RETRY) from the last accepted state with rtol/atol and
+//    substep safety x0.1; if the retry fails too, hot gas (bypass T > TNOCHEM) finishes via the TNOCHEM
+//    path, otherwise the code is returned (abort) after the full cell dump (D-59).
 
 #include "chem_types.h"
 #include "chem_net20.h"
@@ -39,6 +41,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <string>
 
 // reported net cooling of the last RHS evaluation [erg cm^-3 s^-1]: what sgchem_cell.cc sums, less the heating it does not report
 static inline double cxx_reported_net_cool(const ChemCell& c)
@@ -61,8 +64,15 @@ static inline void cxx_identity_account(ChemCell& c, double ydot_e)
 }
 
 #define DTCOOL_SCALE_FACTOR 0.3
+#ifndef CHEM_RTOL
 #define CHEM_RTOL 1e-4
+#endif
+#ifndef CHEM_NSTEP
 #define CHEM_NSTEP 9000000
+#endif
+#ifndef CHEM_NSTEP_RETRY
+#define CHEM_NSTEP_RETRY 1000000   /* substep budget of the D-59 retry */
+#endif
 #ifndef SGCHEM_TNOCHEM
 #define SGCHEM_TNOCHEM 5e5
 #endif
@@ -74,30 +84,138 @@ static inline void cxx_identity_account(ChemCell& c, double ydot_e)
 thread_local long cxx_stat_calls = 0, cxx_stat_substeps = 0, cxx_stat_retries = 0;
 thread_local long cxx_stat_rhs_evals = 0, cxx_stat_cvode_steps = 0;
 thread_local long chem_nan_states = 0;
+thread_local long chem_excess_states = 0;
+thread_local long chem_excess_species[CHEM_NSPEC_MAX];
+thread_local long cxx_stat_failure_retries = 0;    // solver failures (1, 100) retried with tighter tolerances (D-59)
+thread_local long cxx_stat_tnochem_finishes = 0;   // failed retries above TNOCHEM finished via the TNOCHEM path (D-59)
+thread_local long cxx_stat_floor_hits = 0;         // CVODE substeps rejected at the step-size floor
+thread_local long chem_clip_excess_fail[CHEM_NSPEC_MAX];   // substeps check_abundances rejected for a large excess, per species
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+thread_local int chem_test_force_failure[2] = {0, 0}; // per attempt: 1 = substep budget of one, 100 = every substep rejected
+thread_local double chem_test_retry_start_y[CHEM_NSPEC_MAX];   // state and time the retry started from
+thread_local double chem_test_retry_start_t = -1.0;
+thread_local double chem_test_retry_start_tdust = -1.0;          // dust temperature the retry started from
+thread_local std::string chem_test_last_dump;                   // last full cell dump
+thread_local long chem_test_flag_rhs[5] = {0, 0, 0, 0, 0};   // flag: substep-start evaluation number [0], final [1], at recover [2] (also
+                                                              // moves tdust), first subcycle [3], the first [4] substep-start evaluations
+#endif
 
 // CVODE step floor: 10 x the double resolution of the time coordinate at the substep end. Below it
 // t + h no longer advances t; CVODE's own first-step lower bound is 100 x that. A failure at the floor
 // is logged with the cell context and rejected like any failed substep (halve and retry, fatal 100 below 1e-8 s).
 static const double CHEM_HMIN_EPS = 10.0 * DBL_EPSILON;
 
-// full context of the cell handed to the solver, for the fatal paths
-static void chem_print_cell_context(const char* why, double time, double yn, double dl, double divv,
-                                    const double* y, int nspec, const ChemCell& c)
+// every ChemCell input the solve reads (tdust: its call-entry value is dumped separately)
+#ifdef SGCHEM_HMINUS_PHOTODETACHMENT_FROM_STELLAR_BANDS
+#define CHEM_CELL_HMINUS(X) X(hm_detach_stellar) X(G0_hm_isrf)
+#else
+#define CHEM_CELL_HMINUS(X)
+#endif
+#define CHEM_CELL_SCALARS(X) \
+    X(net) X(trac_num) X(nspec) X(abhe) X(yn) X(dl) X(divv) X(column_est) \
+    X(abundc) X(abundo) X(abundsi) X(abundN) X(abundD) X(abundM) X(G0) X(G0_LW) X(G0_dust) CHEM_CELL_HMINUS(X) \
+    X(dust_to_gas_ratio) X(cosmic_ray_ion_rate) X(cr_energy_density) X(redshift) X(AV_ext) \
+    X(deff) X(phi_pah) X(h2_form_ex) X(h2_form_kin) X(f_rsc) X(AV_conversion_factor) \
+    X(iphoto) X(isrf_option) X(no_dchem) X(iflag_mn) X(iflag_ad) X(iflag_atom) X(iflag_3bh2a) X(iflag_3bh2b) \
+    X(iflag_h3pra) X(iflag_h2opc) X(irad_heat) X(G_dust) X(chi_isrf) X(fshield_CO) X(npix) X(NH_cell) \
+    X(diffuse_dust_heat) X(rt_phot_HI) X(rt_phot_HeI) X(rt_phot_HeII) X(rt_heat_HI) X(rt_heat_HeI) X(rt_heat_HeII) \
+    X(rt_phot_H2) X(rt_heat_H2) X(dvdr) X(Zg) X(n20_kgr_const) X(n20_tbb) X(n20_sig_lw) X(n20_chi_pe) X(n20_chi_lw) \
+    X(n20_chi_fuv) X(n20_xi) X(n20_gd_uv) X(n20_gd_ext) X(n20_xe)
+#define CHEM_CELL_ARRAYS(X) \
+    X(Zmass, 12) X(phrates, CHEM_NPHTAB) X(col_h2, CHEM_NPIX) X(col_tot, CHEM_NPIX) X(col_co, CHEM_NPIX) \
+    X(fac_uv, CHEM_NPIX) X(pix_att, CHEM_NPIX) X(col_c, CHEM_NPIX) X(n20_wlw, CHEM_NPIX)
+
+static void dump_add(std::string& s, const char* key, const double* v, int n)
 {
-    std::fprintf(stderr, "cxx_evolve: %s (ID %ld): dt=%g yn=%g dl=%g divv=%g net=%d\n",
-                 why, c.id_current, time, yn, dl, divv, c.net);
-    std::fprintf(stderr, "  state (species..., energy):");
-    for (int i = 0; i < nspec; i++) std::fprintf(stderr, " %.9e", y[i]);
-    double temp = -1, gamma = 0, ntot = (1.0 + c.abhe - y[CIH2]) * yn;
-    int finite = (yn > 0 && std::isfinite(yn) && std::isfinite(y[nspec - 1]) && std::isfinite(y[CIH2]));
-    if (finite) cxx_lookup_temp_gamma(y[CIH2], c.abhe, y[nspec - 1] / (ntot * CHEM_KBOLTZ), &temp, &gamma, *c.tab);
-    std::fprintf(stderr, "\n  T=%g (from energy, H2 and abhe; -1 = not computable) tdust=%g\n", temp, c.tdust);
-    std::fprintf(stderr, "  pools abhe=%g abundc=%g abundo=%g abundsi=%g abundD=%g dgr=%g\n",
-                 c.abhe, c.abundc, c.abundo, c.abundsi, c.abundD, c.dust_to_gas_ratio);
-    std::fprintf(stderr, "  rates G0=%g G0_LW=%g G0_dust=%g crir=%g rt_phot=%g %g %g rt_heat=%g %g %g ph1=%g ph38=%g ph42=%g\n",
-                 c.G0, c.G0_LW, c.G0_dust, c.cosmic_ray_ion_rate, c.rt_phot_HI, c.rt_phot_HeI, c.rt_phot_HeII,
-                 c.rt_heat_HI, c.rt_heat_HeI, c.rt_heat_HeII, c.phrates[0], c.phrates[37], c.phrates[41]);
+    char b[40];
+    s += ' '; s += key; s += '=';
+    for (int i = 0; i < n; i++) {
+        std::snprintf(b, sizeof(b), (i ? ",%.17g" : "%.17g"), v[i]);
+        s += b;
+    }
+}
+
+// The full cell state at %.17g, written with one fprintf (threads do not interleave); chem_cell_parse reads it back.
+static void chem_dump_cell(const char* why, const ChemCell& c, const ChemCellEntry& e)
+{
+    char head[256];
+    std::snprintf(head, sizeof(head), "cxx_evolve: %s (ID %ld, net %d); full cell state:\n", why, c.id_current, c.net);
+    std::string s = head;
+    std::snprintf(head, sizeof(head), "  cell %ld entry:", c.id_current);
+    s += head;
+    const double sc[] = {e.time, e.t_start, e.t_end, e.tdust_entry, (double)e.attempt, (double)e.code, e.tdust_now, e.n20_xe_entry};
+    const char* sk[] = {"dt", "t_start", "t_end", "tdust_entry", "attempt", "code", "tdust_now", "n20_xe_entry"};
+    for (int i = 0; i < 8; i++) dump_add(s, sk[i], &sc[i], 1);
+    dump_add(s, "y_entry", e.y_entry, c.nspec);
+    dump_add(s, "y_now", e.y_now, c.nspec);
+    std::snprintf(head, sizeof(head), "\n  cell %ld inputs:", c.id_current);
+    s += head;
+#define DUMP_S(f) { const double v = (double)c.f; dump_add(s, #f, &v, 1); }
+#define DUMP_A(f, n) { double v[n]; for (int i = 0; i < (n); i++) v[i] = (double)c.f[i]; dump_add(s, #f, v, n); }
+    CHEM_CELL_SCALARS(DUMP_S)
+    std::snprintf(head, sizeof(head), " id_current=%ld", c.id_current);
+    s += head;
+    std::snprintf(head, sizeof(head), "\n  cell %ld arrays:", c.id_current);
+    s += head;
+    CHEM_CELL_ARRAYS(DUMP_A)
+#undef DUMP_S
+#undef DUMP_A
+    std::snprintf(head, sizeof(head), "\n  cell %ld end\n", c.id_current);
+    s += head;
+    std::fprintf(stderr, "%s", s.c_str());
     std::fflush(stderr);
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+    chem_test_last_dump = s;
+#endif
+}
+
+// values of key in text ("key=v1,v2,..."): returns how many were read (0 if the key is absent)
+static int parse_key(const char* text, const char* key, double* v, int nmax)
+{
+    const size_t kl = std::strlen(key);
+    for (const char* p = std::strstr(text, key); p; p = std::strstr(p + 1, key)) {
+        if ((p != text && p[-1] != ' ') || p[kl] != '=') continue;
+        const char* q = p + kl + 1;
+        int n = 0;
+        while (n < nmax) {
+            char* end;
+            v[n] = std::strtod(q, &end);
+            if (end == q) break;
+            n++;
+            if (*end != ',') break;
+            q = end + 1;
+        }
+        return n;
+    }
+    return 0;
+}
+
+// Rebuild a cell and its call from a chem_dump_cell text; c.tab is left to the caller. Returns 0 ok, else the
+// number of fields missing or short.
+int chem_cell_parse(const char* text, ChemCell& c, ChemCellEntry& e)
+{
+    int bad = 0;
+    double v[CHEM_NPHTAB + CHEM_NPIX + CHEM_NSPEC_MAX];   // longer than any dumped array
+#define PARSE_S(f) { if (parse_key(text, #f, v, 1) == 1) c.f = (decltype(c.f))v[0]; else bad++; }
+#define PARSE_A(f, n) { if (parse_key(text, #f, v, n) == (n)) { for (int i = 0; i < (n); i++) c.f[i] = v[i]; } else bad++; }
+    CHEM_CELL_SCALARS(PARSE_S)
+    CHEM_CELL_ARRAYS(PARSE_A)
+#undef PARSE_S
+#undef PARSE_A
+    const char* sk[] = {"dt", "t_start", "t_end", "tdust_entry", "attempt", "code", "tdust_now", "n20_xe_entry"};
+    double sc[8];
+    for (int i = 0; i < 8; i++) { if (parse_key(text, sk[i], v, 1) == 1) sc[i] = v[0]; else { sc[i] = 0; bad++; } }
+    e.time = sc[0]; e.t_start = sc[1]; e.t_end = sc[2]; e.tdust_entry = sc[3];
+    e.attempt = (int)sc[4]; e.code = (int)sc[5]; e.tdust_now = sc[6]; e.n20_xe_entry = sc[7];
+    c.n20_xe = e.n20_xe_entry;
+    {
+        const char* p = std::strstr(text, " id_current=");
+        if (p) c.id_current = std::strtol(p + 12, nullptr, 10); else bad++;
+    }
+    if (parse_key(text, "y_entry", e.y_entry, c.nspec) != c.nspec) bad++;
+    if (parse_key(text, "y_now", e.y_now, c.nspec) != c.nspec) bad++;
+    c.tdust = e.tdust_entry;
+    return bad;
 }
 
 // TEST_SGCHEM_LEGACY_LAST_RHS_LAMBDA: keep the Fortran "last RHS evaluation wins" semantics (comparisons with the reference only)
@@ -262,7 +380,7 @@ static int chem_check_abundances(double* y, ChemCell& c, const double* atol)
         if (j != itmp && y[j] > max_abundance[j]) {
             double diff = y[j] - max_abundance[j];
             if (diff < CHEM_RTOL * y[j]) y[j] = max_abundance[j];
-            else return 1;                                  // large excess
+            else { chem_clip_excess_fail[j]++; return 1; }  // large excess
         }
     }
     // the caps bound each species singly, not their sum: project over-subscribed
@@ -327,7 +445,7 @@ struct CvWork {
 // object cannot be entered concurrently.  Cost: one workspace per (thread,net).
 static thread_local CvWork g_work[5];   // [0] nspec 4 (net 5), [1] nspec 8 (net 17), [2] nspec 10 (nets 15/16), [3] nspec 20 (net 3), [4] nspec 3 (net 20)
 
-static CvWork* cv_get(int nspec, const double* atol, double t0, const double* y)
+static CvWork* cv_get(int nspec, const double* atol, double t0, const double* y, double tol_scale)
 {
     CvWork* w = &g_work[(nspec == 4) ? 0 : (nspec == 10) ? 2 : (nspec == 20) ? 3 : (nspec == 3) ? 4 : 1];
     if (w->mem == nullptr) {
@@ -337,7 +455,7 @@ static CvWork* cv_get(int nspec, const double* atol, double t0, const double* y)
         w->atolv = N_VNew_Serial(nspec, w->ctx);
         for (int i = 0; i < nspec; i++) {
             NV_Ith_S(w->yv, i) = y[i];
-            NV_Ith_S(w->atolv, i) = atol[i];
+            NV_Ith_S(w->atolv, i) = tol_scale * atol[i];
         }
         w->mem = CVodeCreate(CV_BDF, w->ctx);
         if (!w->mem) return nullptr;
@@ -349,19 +467,48 @@ static CvWork* cv_get(int nspec, const double* atol, double t0, const double* y)
     } else {
         for (int i = 0; i < nspec; i++) {
             NV_Ith_S(w->yv, i) = y[i];
-            NV_Ith_S(w->atolv, i) = atol[i];
+            NV_Ith_S(w->atolv, i) = tol_scale * atol[i];
         }
         if (CVodeReInit(w->mem, t0, w->yv) < 0) return nullptr;
     }
-    CVodeSVtolerances(w->mem, CHEM_RTOL, w->atolv);
+    CVodeSVtolerances(w->mem, tol_scale * CHEM_RTOL, w->atolv);
     CVodeSetMaxNumSteps(w->mem, 200000);             // iwork(6) = 200000
     return w;
 }
 
+// Explicit energy-only subcycle at frozen composition (TNOCHEM bypass, .F:296-320): 10% of e/|edot| per
+// step, RHS retval ignored (a flagged evaluation leaves ydot zero, as the Fortran ipar-clear path).
+// Returns 1 at t_end, 0 when stop() asks to hand off, 2 when the budget is spent, -1 on an RHS ABORT.
+template <class Stop>
+static int energy_only_subcycle(double& t_start, double t_end, double* y, double* ydot, int itmp,
+                                ChemCell& c, Stop stop)
+{
+    for (long n = 1; n <= 100000; n++) {
+        int rerr = rhs_dispatch(t_start, y, ydot, c);
+        if (c.fatal_code) return -1;
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+        if (chem_test_flag_rhs[3] && n == 1) { rerr = 1; c.cr_ion_heat = 1e30; for (int i = 0; i <= itmp; i++) ydot[i] = 0.0; }
+#endif
+        if (rerr == CHEM_RHS_OK) cxx_identity_account(c, ydot[itmp]);
+        if (rerr && ydot[itmp] == 0.0) c.cr_ion_heat = 0.0;   // flagged evaluation: nothing applied, nothing booked
+        double dt_byp;
+        if (std::fabs(ydot[itmp]) > 0.0)
+            dt_byp = std::fmin(t_end - t_start, 1e-1 * std::fabs(y[itmp] / ydot[itmp]));
+        else
+            dt_byp = t_end - t_start;
+        c.cr_ion_heat_int += c.cr_ion_heat * dt_byp; // explicit step: exactly the applied heating
+        y[itmp] += dt_byp * ydot[itmp];
+        t_start += dt_byp;
+        if (t_start >= t_end - 1e-10 * t_end) return 1;  // WEDGEFIX 3
+        if (stop()) return 0;
+    }
+    return 2;
+}
+
 // Driver for one cell call, as evolve_abundances.
 // non_eq_abundances has c.trac_num entries; energy in/out [erg cm^-3].
-// Returns 0 ok; 100 = dt collapse (ABORT(100)); 1 = nstep exceeded (ABORT(0));
-// 2 = negative/zero dt (ABORT(1)/(2)); 3 = CVODE setup failure.
+// Returns 0 ok; 100 = dt collapse (ABORT(100)) and 1 = nstep exceeded (ABORT(0)) after a failed retry below
+// TNOCHEM (R7, D-59); 2 = negative/zero dt (ABORT(1)/(2)); 3 = CVODE setup failure.
 // 101 = non-finite input state.
 // Net 3: an RHS ABORT (comp_equilib 9751/9752, index 1) returns that code.
 int cxx_evolve_abundances(double time, double dl, double yn, double divv,
@@ -390,12 +537,25 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
     y[itmp] = *energy;
     for (int i = 0; i < nspec; i++) { y_old[i] = y[i]; ydot[i] = 0.0; }
 
+    int attempt = 0;             // 1 = retry after a solver failure (tolerances and substep safety x0.1)
+    int dumped = 0;              // full cell state already printed for this call
+    ChemCellEntry ent;           // call-entry state for chem_dump_cell
+    ent.time = time; ent.t_start = 0.0; ent.t_end = time; ent.tdust_entry = c.tdust; ent.tdust_now = c.tdust;
+    ent.attempt = 0; ent.code = 0; ent.n20_xe_entry = c.n20_xe;
+    for (int i = 0; i < nspec; i++) { ent.y_entry[i] = y[i]; ent.y_now[i] = y[i]; }
+    auto dump = [&](const char* why, int code, double ts, const double* ynow) {
+        ent.code = code; ent.t_start = ts; ent.attempt = attempt; ent.tdust_now = c.tdust;
+        for (int i = 0; i < nspec; i++) ent.y_now[i] = ynow[i];
+        chem_dump_cell(why, c, ent);
+        dumped = 1;
+    };
+
     // a non-finite state or density handed in by the caller is a bug upstream: fail now, with context
     {
         int bad = !std::isfinite(yn) || !std::isfinite(time);
         for (int i = 0; i < nspec; i++) bad |= !std::isfinite(y[i]);
         if (bad) {
-            chem_print_cell_context("FATAL non-finite input state (code 101)", time, yn, dl, divv, y, nspec, c);
+            dump("FATAL non-finite input state (code 101)", 101, 0.0, y);
             return 101;
         }
     }
@@ -462,114 +622,129 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
 
     double t_start = 0.0, t_end = time;
 
-    // ---- TNOCHEM hot bypass (.F:200-260) ----
-    {
-        auto bypass_temp = [&]() {
+    auto bypass_temp = [&]() {
 #if CHEMISTRYNETWORK == 20
-            if (c.net == 20) {
-                N20State s20;
-                return n20_solve_state(y[ih2], y[ihp], y[itmp], c, s20) ? 0.0 : s20.T;
-            }
-#endif
-            double yntot_byp = (1.0 + c.abhe + y[ihp] - y[ih2]) * yn;
-            double ekn_byp = y[itmp] / (CHEM_KBOLTZ * yntot_byp);
-            double temp_byp, gam_byp;
-            cxx_lookup_temp_gamma(y[ih2], c.abhe, ekn_byp, &temp_byp, &gam_byp, *c.tab);
-            return temp_byp;
-        };
-        double temp_byp = bypass_temp();
-        if (temp_byp > SGCHEM_TNOCHEM) {
-            y[ih2] = 0.0;
-            if (c.net != 20) y[ico] = 0.0;
-            if (c.net == 17) y[CIHD] = 0.0;
-            // HOTIONFIX hot-CIE ion set (.F:223-228)
-            y[ihp] = 1.0;
-            if (c.net == 17) {
-                y[CIHEP] = 0.0;
-                y[CIHEPP] = c.abhe;
-                y[CIDP] = c.abundD;
-            }
-            if (chem_net_nl99(c.net)) {   // highest tracked stages (.F:232-240)
-                y[C15_ICHX]  = 0.0;
-                y[C15_IOHX]  = 0.0;
-                y[C15_IHCOP] = 0.0;
-                y[C15_IC]    = c.abundc;
-                y[C15_IHEP]  = c.abhe;
-                y[C15_IMP]   = c.abundM;
-            }
-            if (c.net == 3) {   // .F:280-297
-                y[C3_IHD]   = 0.0;
-                y[C3_IC2]   = 0.0;
-                y[C3_IOH]   = 0.0;
-                y[C3_IH2O]  = 0.0;
-                y[C3_IO2]   = 0.0;
-                y[C3_IHCOP] = 0.0;
-                y[C3_ICH]   = 0.0;
-                y[C3_ICH2]  = 0.0;
-                y[C3_ICH3P] = 0.0;
-                y[C3_IC]    = c.abundc;
-                y[C3_IO]    = c.abundo;
-                y[C3_ISI]   = 0.0;
-                y[C3_ISIPP] = c.abundsi;
-                y[C3_IHEP]  = 0.0;
-                y[C3_IHEPP] = c.abhe;
-                y[C3_IDP]   = c.abundD;
-            }
-            int done = 0;
-            for (long nbyp = 1; nbyp <= 100000; nbyp++) {
-                // ipar-clear semantics: RHS retval ignored; a flagged eval
-                // left ydot all-zero, exactly like the Fortran zero-ydot path
-                // (net 15 builds the full ydot, as rate_eq_nl99 does).
-                if (rhs_dispatch(t_start, y, ydot, c) == CHEM_RHS_OK) cxx_identity_account(c, ydot[itmp]);
-                if (c.fatal_code) return c.fatal_code;      // Fortran ABORT inside rate_eq
-                double dt_byp;
-                if (std::fabs(ydot[itmp]) > 0.0)
-                    dt_byp = std::fmin(t_end - t_start,
-                                       1e-1 * std::fabs(y[itmp] / ydot[itmp]));
-                else
-                    dt_byp = t_end - t_start;
-                c.cr_ion_heat_int += c.cr_ion_heat * dt_byp; // explicit step: exactly the applied heating
-                y[itmp] += dt_byp * ydot[itmp];
-                t_start += dt_byp;
-                if (t_start >= t_end - 1e-10 * t_end) { done = 1; break; }  // relative completion tolerance
-                temp_byp = bypass_temp();
-                if (temp_byp <= SGCHEM_TNOCHEM) break;    // hand off to stiff path
-            }
-            // budget exhausted while hot: accept state (.F:257-259)
-            if (done || t_start >= t_end - 1e-10 * t_end) {
-                for (int i = 0; i < c.trac_num; i++) non_eq_abundances[i] = y[i];
-                *energy = y[itmp];
-                return 0;
-            }
-            // else: fall through to the stiff path for the remaining interval
+        if (c.net == 20) {
+            N20State s20;
+            return n20_solve_state(y[ih2], y[ihp], y[itmp], c, s20) ? 0.0 : s20.T;
         }
+#endif
+        double yntot_byp = (1.0 + c.abhe + y[ihp] - y[ih2]) * yn;
+        double ekn_byp = y[itmp] / (CHEM_KBOLTZ * yntot_byp);
+        double temp_byp, gam_byp;
+        cxx_lookup_temp_gamma(y[ih2], c.abhe, ekn_byp, &temp_byp, &gam_byp, *c.tab);
+        return temp_byp;
+    };
+    auto set_hot_cie = [&]() {   // molecules zero, HOTIONFIX hot-CIE ion set (.F:216-297)
+        y[ih2] = 0.0;
+        if (c.net != 20) y[ico] = 0.0;
+        if (c.net == 17) y[CIHD] = 0.0;
+        y[ihp] = 1.0;
+        if (c.net == 17) {
+            y[CIHEP] = 0.0;
+            y[CIHEPP] = c.abhe;
+            y[CIDP] = c.abundD;
+        }
+        if (chem_net_nl99(c.net)) {   // highest tracked stages (.F:232-240)
+            y[C15_ICHX]  = 0.0;
+            y[C15_IOHX]  = 0.0;
+            y[C15_IHCOP] = 0.0;
+            y[C15_IC]    = c.abundc;
+            y[C15_IHEP]  = c.abhe;
+            y[C15_IMP]   = c.abundM;
+        }
+        if (c.net == 3) {   // .F:280-297
+            y[C3_IHD]   = 0.0;
+            y[C3_IC2]   = 0.0;
+            y[C3_IOH]   = 0.0;
+            y[C3_IH2O]  = 0.0;
+            y[C3_IO2]   = 0.0;
+            y[C3_IHCOP] = 0.0;
+            y[C3_ICH]   = 0.0;
+            y[C3_ICH2]  = 0.0;
+            y[C3_ICH3P] = 0.0;
+            y[C3_IC]    = c.abundc;
+            y[C3_IO]    = c.abundo;
+            y[C3_ISI]   = 0.0;
+            y[C3_ISIPP] = c.abundsi;
+            y[C3_IHEP]  = 0.0;
+            y[C3_IHEPP] = c.abhe;
+            y[C3_IDP]   = c.abundD;
+        }
+    };
+
+    double tol_scale = 1.0;
+    CvWork* w = nullptr;
+    int retcode = 1;             // if the loop exhausts: "nstep exceeded"
+    double crh_prev = 0.0, crh_dt = 0.0; // CR ionisation heating at the last accepted state, pending accepted interval
+    int crh_valid = 0;           // crh_prev holds an unflagged evaluation (else the pending interval is booked as a rectangle)
+
+attempt_start:
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+    if (attempt == 1) { for (int i = 0; i < nspec; i++) chem_test_retry_start_y[i] = y[i]; chem_test_retry_start_t = t_start; chem_test_retry_start_tdust = c.tdust; }
+#endif
+    // ---- TNOCHEM hot bypass (.F:200-260); the retry is always a CVODE retry (D-59) ----
+    if (attempt == 0 && bypass_temp() > SGCHEM_TNOCHEM) {
+        set_hot_cie();
+        // net 15 builds the full ydot, as rate_eq_nl99 does
+        int done = (energy_only_subcycle(t_start, t_end, y, ydot, itmp, c,
+                        [&]() { return bypass_temp() <= SGCHEM_TNOCHEM; }) == 1);   // hand off to stiff path
+        if (c.fatal_code) {                             // Fortran ABORT inside rate_eq
+            dump("RHS abort in the TNOCHEM bypass", c.fatal_code, t_start, y);
+            return c.fatal_code;
+        }
+        // budget exhausted while hot: accept state (.F:257-259)
+        if (done || t_start >= t_end - 1e-10 * t_end) {
+            for (int i = 0; i < c.trac_num; i++) non_eq_abundances[i] = y[i];
+            *energy = y[itmp];
+            return 0;
+        }
+        // else: fall through to the stiff path for the remaining interval
     }
 
+    {
     // ---- CVODE setup (cached workspace; ReInit == istate=1) ----
-    CvWork* w = cv_get(nspec, atol, t_start, y);
-    if (!w) return 3;
+    w = cv_get(nspec, atol, t_start, y, tol_scale);
+    if (!w) { dump("CVODE setup failure (code 3)", 3, t_start, y); return 3; }
     CVodeSetUserData(w->mem, &c);
 
     int new_step = 1;
     int need_reinit = 0;         // istate=1 equivalent pending
-    double crh_prev = 0.0, crh_dt = 0.0; // CR ionisation heating at the last accepted state, pending accepted interval
     double dt = 0.0, dt_est = 0.0;
-    int retcode = 1;             // if the loop exhausts: "nstep exceeded"
     double tdust_old = c.tdust;
+    retcode = 1;
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+    const int force = chem_test_force_failure[attempt];
+    const long nstep_max = (force == 1) ? 1 : (attempt ? CHEM_NSTEP_RETRY : CHEM_NSTEP);
+#else
+    const int force = 0;
+    const long nstep_max = attempt ? CHEM_NSTEP_RETRY : CHEM_NSTEP;
+#endif
 
-    for (long I = 1; I <= CHEM_NSTEP; I++) {
+    long nsub_start = 0;         // substep-start evaluations of this attempt (test hook)
+    (void)nsub_start;
+    for (long I = 1; I <= nstep_max; I++) {
         if (new_step == 1) {
+            nsub_start++;
             for (int j = 0; j < nspec; j++) y_old[j] = y[j];
             tdust_old = c.tdust;
 
             int rerr = rhs_dispatch(t_start, y, ydot, c);
             if (rerr == CHEM_RHS_OK) cxx_identity_account(c, ydot[itmp]);
             if (c.fatal_code) { retcode = c.fatal_code; goto out; }
-            c.cr_ion_heat_int += 0.5 * (crh_prev + c.cr_ion_heat) * crh_dt; crh_prev = c.cr_ion_heat; crh_dt = 0.0; // trapezoid over the accepted substep
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+            if (chem_test_flag_rhs[0] == nsub_start || nsub_start <= chem_test_flag_rhs[4]) { rerr = 1; c.cr_ion_heat = 1e30; }   // test: flagged, stale CR heating
+#endif
+            if (rerr) c.cr_ion_heat = crh_prev;          // flagged evaluation: no fresh CR heating
+            if (crh_valid || !rerr) {                   // no valid value yet and flagged: the interval stays pending
+                c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : c.cr_ion_heat) + c.cr_ion_heat) * crh_dt; // trapezoid over the accepted substep
+                crh_dt = 0.0;
+            }
+            crh_valid |= !rerr; crh_prev = c.cr_ion_heat;
             dt_est = 1e18;
             for (int j = 0; j < nspec; j++) {
                 if (used[j] && ydot[j] != 0.0 && safety[j] != 0.0 && y[j] > ctrl_floor[j]) {
-                    double e = std::fabs(safety[j] * y[j] / ydot[j]);
+                    double e = std::fabs(tol_scale * safety[j] * y[j] / ydot[j]);
                     if (e < dt_est) dt_est = e;
                 }
             }
@@ -580,7 +755,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                 // afterwards; here we take the failure path directly.
                 c.tdust = tdust_old;
                 dt = dt / 2.0;
-                if (dt < 1e-8) { retcode = 100; goto out; }
+                if (dt < 1e-8) { retcode = 100; goto recover; }
                 cxx_stat_retries++;
                 new_step = 0; need_reinit = 1;
                 continue;
@@ -603,7 +778,9 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
             const double hmin = CHEM_HMIN_EPS * (t_start + dt);
             CVodeSetMinStep(w->mem, hmin);
             const long nan_before = chem_nan_states;
+            if (c.net == 17) CVodeSetStopTime(w->mem, t_start + dt);   // net 17: no step past the substep end (D-60)
             int flag = CVode(w->mem, t_start + dt, w->yv, &tret, CV_NORMAL);
+            if (force == 100) flag = CV_ERR_FAILURE;          // test: every substep rejected
             cxx_stat_substeps++;
             if (c.fatal_code) { retcode = c.fatal_code; goto out; }
             if (chem_nan_states > nan_before && nan_states0 == nan_before) {
@@ -613,10 +790,13 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
             if (flag < 0) {
                 double hcur = 0.0;
                 CVodeGetCurrentStep(w->mem, &hcur);
-                if (std::fabs(hcur) <= hmin * (1.0 + 1e-6) && floor_hits++ == 0) {
+                const int at_floor = (std::fabs(hcur) <= hmin * (1.0 + 1e-6));
+                cxx_stat_floor_hits += at_floor;
+                if (at_floor && floor_hits++ == 0) {
                     std::fprintf(stderr, "cxx_evolve: CVODE step reached the floor h=%g (time resolution at t=%g, substep dt=%g, flag %d) of %g; substep rejected\n",
                                  hcur, t_start + dt, dt, flag, t_end);
-                    chem_print_cell_context("CVODE step-size floor", time, yn, dl, divv, y_old, nspec, c);
+                    dump("CVODE step-size floor (state at the substep start)", flag, t_start, y_old);
+                    dumped = 0;                           // informational; a later failure still prints
                 }
             }
 
@@ -635,14 +815,14 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                         "cxx_evolve: excessively small timestep! dt=%g dt_est=%g "
                         "t=[%g,%g] ID=%ld yn=%g\n",
                         dt, dt_est, t_start, t_end, c.id_current, yn);
-                    retcode = 100; goto out;
+                    retcode = 100; goto recover;
                 }
                 cxx_stat_retries++;
                 new_step = 0;
                 need_reinit = 1;                          // istate = 1
             } else {
                 t_start = t_start + dt;
-                crh_dt = dt;
+                crh_dt += dt;                             // pending interval (several substeps if evaluations were flagged)
                 new_step = 1;                             // istate stays 2:
                 // NB check_abundances clips modified OUR y (final answer /
                 // future y_old) but were NOT pushed into CVODE -- continuation
@@ -655,6 +835,57 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
     }
     std::fprintf(stderr, "cxx_evolve: nstep exceeded (ID %ld)\n", c.id_current);
     retcode = 1;
+    }
+
+recover:
+    // solver failure (1, 100), y = state at the last accepted time t_start (D-59)
+    {
+        const double tdust_acc = c.tdust;                     // the evaluation must not move the accepted dust temperature
+        int rerr = rhs_dispatch(t_start, y, ydot, c);         // CR heating at the accepted state closes the pending trapezoid
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+        if (chem_test_flag_rhs[2]) { rerr = 1; c.cr_ion_heat = 1e30; c.tdust = 1e3; }   // test: flagged, stale CR heating, moved tdust
+#endif
+        c.tdust = tdust_acc;
+        if (c.fatal_code) { retcode = c.fatal_code; goto out; }
+        if (rerr) c.cr_ion_heat = crh_prev;
+        if (crh_valid || !rerr) {
+            c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : c.cr_ion_heat) + c.cr_ion_heat) * crh_dt;
+            crh_dt = 0.0;
+        }
+        crh_valid |= !rerr; crh_prev = c.cr_ion_heat;
+        long ns = 0;
+        if (w && w->mem && CVodeGetNumSteps(w->mem, &ns) == CV_SUCCESS) cxx_stat_cvode_steps += ns;
+        if (attempt == 0) {
+            cxx_stat_failure_retries++;
+            std::fprintf(stderr, "cxx_evolve: solver failure code %d at t=%.17g of %.17g s (ID %ld); retry from the last "
+                         "accepted state with rtol/atol and substep safety x0.1 (retry %ld on this thread)\n",
+                         retcode, t_start, t_end, c.id_current, cxx_stat_failure_retries);
+            attempt = 1; tol_scale = 0.1; w = nullptr;
+            goto attempt_start;
+        }
+        const double Tb = bypass_temp();
+        if (Tb > SGCHEM_TNOCHEM) {
+            cxx_stat_tnochem_finishes++;
+            char why[256];
+            std::snprintf(why, sizeof(why), "retry failed with code %d in hot gas (bypass T %g > %g); rest of the step via "
+                          "the TNOCHEM path (energy only, hot-CIE ions; %ld on this thread)",
+                          retcode, Tb, (double)SGCHEM_TNOCHEM, cxx_stat_tnochem_finishes);
+            dump(why, retcode, t_start, y);
+            set_hot_cie();
+            const int s = energy_only_subcycle(t_start, t_end, y, ydot, itmp, c, []() { return false; });
+            if (c.fatal_code) { retcode = c.fatal_code; dumped = 0; goto out; }
+            if (s == 2)
+                std::fprintf(stderr, "cxx_evolve: energy-only budget spent at t=%g of %g s (ID %ld); state accepted\n",
+                             t_start, t_end, c.id_current);
+            retcode = 0;
+            w = nullptr;
+            goto out;
+        }
+        char why[256];
+        std::snprintf(why, sizeof(why), "retry failed with code %d, bypass T %g <= %g: abort", retcode, Tb, (double)SGCHEM_TNOCHEM);
+        dump(why, retcode, t_start, y);
+        w = nullptr;
+    }
 
 out:
     if (retcode == 0 || retcode == 1) {
@@ -672,11 +903,18 @@ out:
         // Fortran semantics.
         if (!chem_legacy_lambda()) {
             double ydot_final[CHEM_NSPEC_MAX];
-            if (rhs_dispatch(t_start, y, ydot_final, c) == CHEM_RHS_OK) cxx_identity_account(c, ydot_final[itmp]);
+            int rerr_final = rhs_dispatch(t_start, y, ydot_final, c);
+#ifdef TEST_SGCHEM_FORCED_SOLVER_FAILURE
+            if (chem_test_flag_rhs[1]) { rerr_final = 1; c.cr_ion_heat = 1e30; }   // test: flagged, stale CR heating
+#endif
+            if (rerr_final) c.cr_ion_heat = crh_prev;    // flagged: no fresh CR heating
+            else cxx_identity_account(c, ydot_final[itmp]);
         }
-        c.cr_ion_heat_int += 0.5 * (crh_prev + (chem_legacy_lambda() ? crh_prev : c.cr_ion_heat)) * crh_dt; // last accepted substep
+        const double crh_end = chem_legacy_lambda() ? crh_prev : c.cr_ion_heat;
+        c.cr_ion_heat_int += 0.5 * ((crh_valid ? crh_prev : crh_end) + crh_end) * crh_dt; // last accepted substep
     }
 out_nocopy:
+    if (retcode != 0 && !dumped) dump("solver failure returned to the caller", retcode, t_start, y);
     if (floor_hits > 0)
         std::fprintf(stderr, "cxx_evolve: CVODE step floor reached in %ld substeps (ID %ld); solve rc=%d\n",
                      floor_hits, c.id_current, retcode);
