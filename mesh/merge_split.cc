@@ -315,6 +315,10 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
 }
 
 
+#ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
+#include "merge_split_across_ranks.h"
+#endif
+
 /*! This is the parent routine to actually determine if mergers/splits need to be performed, and if so, to do them
   modified by Takashi Okamoto (t.t.okamoto@gmail.com) on 20/6/2019
  */
@@ -340,6 +344,14 @@ void merge_and_split_particles(void)
       Ptmp[i].r_nearest = 0;
     }
 
+#ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
+    { /* partner and nearest neighbour over all ranks, order-free choice; the merges are done here, the splits below */
+        (void) target_for_merger; (void) dummy; (void) numngb_inbox; (void) startnode; (void) j; (void) n; (void) threshold_val;
+        std::vector<double> r_nearest_split;
+        n_particles_merged = msx::merge_and_find_splits(r_nearest_split);
+        for(i = 0; i < NumPart; i++) {if(r_nearest_split[i] > 0 && P[i].Mass > 0) {Ptmp[i].flag = 2; Ptmp[i].r_nearest = r_nearest_split[i];}}
+    }
+#else
     /* merged positions claimed so far in this pass (primary-box image): two merges of equal masses on a regular lattice can share a
        centre of mass and would leave two cells at one point; the later one, in loop order, waits for the next pass. Only this rank's
        merges are seen. A merge that would land exactly on a cell already there waits too. (gpu_kokkos_unified 95a7aaa7c) */
@@ -550,6 +562,7 @@ void merge_and_split_particles(void)
             }
         }
     }
+#endif /* MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS */
 
     // actual merge-splitting loop loop. No tree-walk is allowed below here
     int failed_splits = 0; /* record failed splits to output warning message */
@@ -991,6 +1004,10 @@ int split_particle_i(int i, int n_particles_split, double r_near)
     /* this is allowed to push particles over the 'edges' of periodic boxes, because we will call the box-wrapping routine immediately below.
      but it is important that the periodicity of the box be accounted for in relative positions and that we correct for this before allowing
      any other operations on the particles */
+#ifdef TEST_WAKEUP_DUMP
+    printf("TEST_SPLIT_DUMP step %lld task %d ID %llu h %.9e r_near %.9e d_r %.9e parent %.12e %.12e %.12e offset %.12e %.12e %.12e\n", (long long) All.NumCurrentTiStep, ThisTask, (unsigned long long) P[i].ID,
+           (double) P[i].KernelRadius, (double) r_near, (double) d_r, (double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2], dx, dy, dz); /* daughters at parent +- offset */
+#endif
     P[i].Pos[0] += dx; P[j].Pos[0] -= dx; P[i].Pos[1] += dy; P[j].Pos[1] -= dy; P[i].Pos[2] += dz; P[j].Pos[2] -= dz;
 
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)

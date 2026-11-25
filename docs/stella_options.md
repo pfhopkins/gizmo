@@ -189,6 +189,21 @@ with WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP; alone it does not help (63, 89). MFM 
 The kick's energy change is booked in the merge stage of the energy step trace (merge_parent_kick) and handed back to the
 integration residual (merge_parent_kick_to_int). Set in no config yet. Test: test/pairflux_exact_exchange (test_merge_centre).
 
+## MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS: merge and split independent of the rank count (off by default)
+
+Without the switch the search for a merge partner, and for the nearest neighbour that sets how far apart a split's daughters are
+placed, sees the cells of the calling rank only, and the merge choice is made in local index order; the result of a merge/split
+pass then depends on the number of ranks (STL-324: 77 / 75 / 71 merges on 1 / 2 / 4 ranks in a wind box, energy different by
+1e-2 three steps later). With the switch every active cell that needs a merge or a split is a query answered by all ranks. The
+partner is the candidate of lowest mass, then lowest IDs. A proposal i -> j is accepted if i's key (mass, IDs) is the smallest
+among all proposals that touch i or j, so a cell takes part in at most one merge per pass and nothing depends on an order; the
+others wait for the next pass. Landing points of the accepted merges are compared over all ranks. A merge with a partner on
+another rank is carried out on the partner's rank by the unchanged merge routine, from a byte copy of the absorbed cell; its
+owner removes it on the partner's acknowledgement. Merges of a pass are done before its splits. The choice differs from the
+one without the switch, also on a single rank. Not available with the spawned-wind, star-cluster and RIAF merge clauses or
+CHIMES. Cost per pass: one gather of the queries, one neighbour search per query and rank, three small message rounds.
+Code: mesh/merge_split_across_ranks.h. Test: test/merge_split_rank_independence.
+
 ## TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS (test only)
 
 Each step, recomputes the KETJU limiting-particle steps by a full particle scan and aborts if the cell grid gives a

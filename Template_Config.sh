@@ -654,6 +654,7 @@
 # --------------------
 # ----- Particle Merging/Splitting/Deletion/Boundaries
 #MAINTAIN_TREE_IN_REARRANGE        # don't rebuild the domains/tree every time a particle is spawned - salvage the existing one by redirecting pointers as needed. cite Grudic+ arXiv:2010.11254 Forced on for any SINK_PARTICLES run (nuclear zoom excepted): swallows and spawns rearrange the particle list mid-step and the walks that follow do not rebuild first
+#MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS # the merge partner and the nearest neighbour that sets a split's daughter spacing are found over the cells of all ranks, and the merge choice does not depend on index order (best partner by mass and IDs; a proposal is accepted if it is the best one touching either cell; at most one merge per cell and pass), so a merge/split pass gives the same result for any number of ranks. A merge with a partner on another rank is done on the partner's rank from a copy of the absorbed cell. Not the same choice as without the flag, also on one rank. Not with the spawned-wind, star-cluster or RIAF merge clauses, nor CHIMES (an #error). Off by default (STL-324; mesh/merge_split_across_ranks.h; test/merge_split_rank_independence)
 #PREVENT_PARTICLE_MERGE_SPLIT      # don't allow gas particle splitting/merging operations
 #PREVENT_PARTICLE_MERGE            # don't allow gas MERGING but still allow splitting (cf. PREVENT_PARTICLE_MERGE_SPLIT, which disables both). Gives a diffusion-free, finest-resolution reference for spawned outflows; cf. SINK_SPAWN_NO_MERGE, which protects only spawned cells.
 
