@@ -224,6 +224,9 @@ double PsiDampEnergyCumul = 0; /* cumulative E_psi removed by parabolic damping,
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
 double MHDEnergyLedger[MHD_ENERGY_LEDGER_N]; /* cumulative code energy: clip, Powell, Dedner face, Dedner PhiCorr, closure, B^2 dV/2, B.d(VB) */
 #endif
+#ifdef MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES
+int KickTreatsParticleAsActive = 0; /* set by merge_particles_ij around its kick of an inactive parent */
+#endif
 void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode)
 {
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
@@ -286,7 +289,11 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #endif
     
     /* only enter the 'normal' kick loop below for genuinely active particles */
+#ifdef MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES
+    if(TimeBinActive[P[i].TimeBin] || KickTreatsParticleAsActive) /* the merge kicks an inactive parent back to the current time */
+#else
     if(TimeBinActive[P[i].TimeBin])
+#endif
     {
         /* get the timestep (physical units for dt_entr and dt_hydrokick) */
         dt_entr = dt_hydrokick = (tend - tstart) * unit_integertime_in_physical(i);

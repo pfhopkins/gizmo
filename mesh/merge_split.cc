@@ -1138,6 +1138,20 @@ int merge_particles_ij(int i, int j)
         P[j].wakeup = -1; NeedToWakeupParticles_local = 1; wakeup_list_note(j);
 #endif
     }
+#if defined(MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES) && defined(WAKEUP) && !defined(HYDRO_MESHLESS_FINITE_VOLUME)
+    if(!TimeBinActive[P[j].TimeBin] && P[j].Ti_current == All.Ti_Current && P[j].integertime_step() == GET_INTEGERTIME_FROM_TIMEBIN(P[j].TimeBin))
+    { /* j is kicked to its step's midpoint: back to now with its own rates and mass, before they become the merged ones (the wake's completion kick then has zero length) */
+        const integertime mid_j = P[j].Ti_begstep + P[j].integertime_step() / 2;
+        if(mid_j > All.Ti_Current)
+        {
+            KickTreatsParticleAsActive = 1; do_the_kick(j, mid_j, All.Ti_Current, P[j].Ti_current, 1); KickTreatsParticleAsActive = 0;
+#ifdef HYDRO_EXACT_PAIR_FLUX_EXCHANGE
+            pairflux_wake_kick_correction(j, (double)(All.Ti_Current - mid_j) * unit_integertime_in_physical(j), 1);
+#endif
+            P[j].Ti_begstep = All.Ti_Current - P[j].integertime_step() / 2; /* the kicked state is at the midpoint, which is now */
+        }
+    }
+#endif
 #ifdef TEST_PAIRFLUX_MERGE_DUMP
     const double tmd_a = All.cf_atime; const int tmd_bi = P[i].TimeBin, tmd_bj = P[j].TimeBin, tmd_ai = TimeBinActive[P[i].TimeBin], tmd_aj = TimeBinActive[P[j].TimeBin];
     const double tmd_mi = P[i].Mass, tmd_mj = P[j].Mass, tmd_dui = CellP[i].DtInternalEnergy, tmd_duj = CellP[j].DtInternalEnergy;

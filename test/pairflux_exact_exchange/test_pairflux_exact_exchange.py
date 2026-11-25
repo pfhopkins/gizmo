@@ -9,6 +9,8 @@ Gas mass, momentum, thermal + kinetic (+ magnetic) energy and sum B*V from the c
   mass (inactive cells gain mass, then woken), merge (no hook: a shell of light cells far from the blast is below the IC-header merge threshold and merges into
   heavier neighbours at domain steps; a neighbour in a larger bin is woken),
   split (no hook: a shell of heavy cells far from the blast is above the IC-header split threshold; the split wakes the daughters).
+  merge_centre (no hook: every cell is below the IC-header merge threshold, so the hot centre cells merge into inactive long-step cells;
+  built with MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES and the own-timestep merge wake).
 - MHD (Dedner cleaning; Powell terms off to isolate the exchange): mass, momentum and sum B*V, with the Dedner correction
   limiter and the face-area closure never firing; energy is reported (the kick's magnetic part is second order).
   The same with the IMF-like hook (mass, B, BPred, DtB scaled together on active and inactive woken cells).
@@ -33,6 +35,7 @@ NRANKS = 4
 MERGESPLIT = "TreeDomainUpdateFrequency 0\n"  # merge/split run at domain steps: at every sync, not only full ones (thresholds 0.49/2.01 x cell mass)
 MERGE = MERGESPLIT + "InitCondFile pairflux_exact_exchange_merge_ics\n"  # a light shell far from the blast, below the IC-header merge threshold
 SPLIT = MERGESPLIT + "InitCondFile pairflux_exact_exchange_split_ics\n"  # a heavy shell far from the blast, above the IC-header split threshold
+MERGE_CENTRE = MERGESPLIT + "InitCondFile pairflux_exact_exchange_merge_centre_ics\n"  # every cell below the threshold: hot centre cells merge into inactive long-step cells (STL-292)
 MHD = "BiniX 3e-7\nBiniY 1e-7\nBiniZ 0\nDivBcleaningParabolicSigma 0.2\nDivBcleaningHyperbolicSigma 1.0\n"
 
 
@@ -97,6 +100,7 @@ def test_pairflux_exact_exchange():
     _build(hook(1), "mass")
     _build(("MERGE_SPLIT_CONSERVE_ENERGY",), "merge")
     _build(("MERGE_SPLIT_CONSERVE_ENERGY",), "split")
+    _build(("MERGE_SPLIT_CONSERVE_ENERGY", "WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP", "WAKEUP_TRUNCATE_STEP_ON_DEMOTION", "MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES"), "merge_centre")
     _build(mhd + ("TEST_MHD_NO_POWELL_SOURCE_TERMS",), "mhd")
     _build(mhd + ("TEST_MHD_NO_POWELL_SOURCE_TERMS",) + hook(4), "mhd_imf")
     _build(mhd, "mhd_powell")
@@ -122,6 +126,7 @@ def test_pairflux_exact_exchange():
         t, log = _arm("mass"); assert "mode 1 changed" in log; _check(t, t)
         t, log = _arm("merge", MERGE); assert re.search(r"[1-9][0-9]* particles merged", log), "no merge happened"; _check(t, t)
         t, log = _arm("split", SPLIT); assert re.search(r"[1-9][0-9]* particles split", log), "no split happened"; _check(t, t)
+        t, log = _arm("merge_centre", MERGE_CENTRE); assert re.search(r"[1-9][0-9]* particles merged", log), "no merge happened"; _check(t, t)
         t, _ = _arm("mhd", MHD); _check(t, t, energy=False, bv=True)
         t, log = _arm("mhd_imf", MHD); assert "mode 4 changed" in log; _check(t, t, energy=False, bv=True)
         t, _ = _arm("mhd_powell", MHD); _check(t, t, energy=False, momentum=False)

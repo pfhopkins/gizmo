@@ -387,6 +387,9 @@ integertime find_next_lineofsighttime(integertime time0);
 integertime find_next_gridoutputtime(integertime ti_curr);
 void add_along_lines_of_sight(void);
 void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode);
+#ifdef MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES
+extern int KickTreatsParticleAsActive;
+#endif
 void x86_fix(void) ;
 
 void *mymalloc_fullinfo(const char *varname, size_t n, const char *func, const char *file, int linenr);
