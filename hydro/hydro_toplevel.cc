@@ -788,9 +788,9 @@ long TD_FloorCellsStep = 0; /* cells of this task where an apply floored a slot 
 /* every gas cell touched in this hydro pass, active or not, applies its pair exchange and clears it, so nothing stays pending (STL-277) */
 static void td_apply_and_clear(void)
 {
-    long nfloor = 0, nover = 0, nevals = 0, nnegin = 0; double floor_mass = 0, slot_dev = 0, z0_dev = 0;
+    long nfloor = 0, nover = 0, nevals = 0, nnegin = 0, nlabfloor = 0; double floor_mass = 0, slot_dev = 0, z0_dev = 0;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) reduction(+:nfloor,nover,nevals,nnegin,floor_mass) reduction(max:slot_dev,z0_dev)
+#pragma omp parallel for schedule(static) reduction(+:nfloor,nover,nevals,nnegin,nlabfloor,floor_mass) reduction(max:slot_dev,z0_dev)
 #endif
     for(int i = 0; i < N_gas; i++) /* gas cells come first in P */
     {
@@ -818,10 +818,14 @@ static void td_apply_and_clear(void)
                 {P[i].Metallicity[k] = x;}
             }
 #ifdef GALSF_RESOLVEDISM_FB
-            for(int k = 0; k < 4; k++) { /* the labels' share of the total-Z exchange, same floor rule */
+            for(int k = 0; k < 4; k++) { /* the labels' share of the total-Z exchange; a debit below zero (excluded by the pair bound) is floored, counted apart from the metal slots and booked */
                 if(CellP[i].DMetalFrom[k] == 0) {continue;}
                 double x = CellP[i].MetalMassFrom[k] + CellP[i].DMetalFrom[k] / P[i].Mass;
-                if(x < 0 && CellP[i].DMetalFrom[k] < 0) {fired = 1; floor_mass -= x * P[i].Mass; x = 0;}
+                if(x < 0 && CellP[i].DMetalFrom[k] < 0) {
+                    nlabfloor++;
+                    #pragma omp atomic
+                    CumulOriginToGas[k] -= x * P[i].Mass;
+                    x = 0;}
                 CellP[i].MetalMassFrom[k] = x;
             }
 #endif
@@ -845,6 +849,7 @@ static void td_apply_and_clear(void)
 #endif
     }
     TD_FloorCellsStep += nfloor; /* no collective here: the apply runs in every hydro pass */
+    if(nlabfloor > 0) {printf("METALS_EXACT_PAIRWISE_EXCHANGE: task %d floored %ld metal-origin labels at zero, Time %.10g: the pair bound should exclude this\n", ThisTask, nlabfloor, All.Time); fflush(stdout);}
     if(nfloor > 0) {printf("METALS_EXACT_PAIRWISE_EXCHANGE: task %d floored a metal slot at zero in %ld cells, mass added %g (code), Time %.10g: the pair bound should exclude this\n", ThisTask, nfloor, floor_mass, All.Time); fflush(stdout);}
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
     {double ls[5] = {floor_mass, (double)nfloor, (double)nover, (double)nevals, (double)nnegin}, gs[5], lm[2] = {slot_dev, z0_dev}, gm[2];

@@ -172,7 +172,7 @@ void mbary_step_checkpoint(const char *tag)
     long double M_L = M_Z + ml[0] + ml[1] + red[8] - ml[2];
 #if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
     if(ThisTask == 0) { /* metal-origin ledger per channel: L = gas - booked in + taken out, constant to round-off (STL-336) */
-        static long double last_OL[4]; static int have_OL = 0;
+        static long double last_OL[4]; static int have_OL = 0; static double last_above = 0, last_neg = 0;
         static const char *ch_name[4] = {"SN", "AGB", "Wind", "Ia"};
         double rel[4] = {0, 0, 0, 0}, worst_rel = 0; int worst = -1;
         long double OL[4];
@@ -184,14 +184,18 @@ void mbary_step_checkpoint(const char *tag)
             last_OL[c] = OL[c];
         }
         double n_above = (double)red[NRED0 + 12], n_neg = (double)red[NRED0 + 13];
-        if(!have_OL || fabs(worst_rel) > 1.0e-14 || n_above > 0 || n_neg > 0) {
+        if(!have_OL || fabs(worst_rel) > 1.0e-14 || n_above != last_above || n_neg != last_neg) { /* the counts are logged when they change, not at every checkpoint */
+            last_above = n_above; last_neg = n_neg;
             char path[DEFAULT_PATH_BUFFERSIZE_TOUSE];
             snprintf(path, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/mass_balance_origin.txt", All.OutputDir);
             FILE *f = fopen(path, "a");
             if(f) {
                 if(ftell(f) == 0) {
                     fprintf(f, "### Metal-origin ledger per channel: L = labelled metal mass in the gas - booked into the gas + taken out of it (stars, outflow), constant to round-off.\n");
-                    fprintf(f, "### Logs the first call and every checkpoint where some |dL|/S > 1e-14 (S = gas + taken out) or a cell holds more labelled metal than metal or a label below zero.\n");
+                    fprintf(f, "### Logs the first call and every checkpoint where some |dL|/S > 1e-14 (S = gas + taken out) or the number of cells with more labelled metal than metal, or with a label below zero, changes.\n");
+                    fprintf(f, "### Labels are metal mass by channel per unit cell mass. Booked: feedback deposits, the Ia conversion, the stars' accretion draw, the SN ejecta cell, outflow. Not booked: whole-cell star\n");
+                    fprintf(f, "### formation without the sampled IMF, sink accretion, the MFV mass flux; the labels diffuse only with METALS_EXACT_PAIRWISE_EXCHANGE. After a start from a single-precision snapshot cells\n");
+                    fprintf(f, "### that are almost fully labelled can count as above Z (labels and Z are rounded separately).\n");
                     fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) worst channel  (5) its dL/S  (6-9) dL/S SN AGB Wind Ia  (10-13) gas mass by channel  (14) cells with sum of labels > Z + 1e-12  (15) cells with a label < 0  (16) labelled mass above Z\n");
                 }
                 fprintf(f, "%8lld  %-22s  %.10e  %-4s  %+.6e", call_count, tag, All.Time, ch_name[worst], worst_rel);

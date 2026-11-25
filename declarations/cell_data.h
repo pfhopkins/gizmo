@@ -397,7 +397,7 @@ extern struct gas_cell_data
     MyFloat CR_ionization_rate;
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
-    MyFloat MetalMassFrom[4];             /*!< metal mass fraction by channel: [0]=SN, [1]=AGB, [2]=Wind, [3]=Ia */
+    MyFloat MetalMassFrom[4];             /*!< metal mass ejected by channel ([0]=SN, [1]=AGB, [2]=Wind, [3]=Ia) per unit cell mass, like Z: all metals of the ejecta, the star's birth metals included; sum <= Metallicity[0] */
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
     short int IMFSpawnBlock;              /*!< flag: 1 = recently spawned a star, skip SF until density is recomputed */
