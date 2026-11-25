@@ -7,6 +7,7 @@
 #include "../core/proto.h"
 #include "../core/wakeup_sidecar.h"
 #include "../mesh/gpu_neighbor_list.h"   /* gizmo_motion_bound_raise */
+#include "../system/gpu_particles_arena.h"
 #include <vector>
 #include "../mesh/kernel.h"
 #include "mechanical_fb_types.h"  /* provides struct MechFBGasDelta */
@@ -334,9 +335,13 @@ void verify_and_assign_local_mechfb_integrals(void)
                 }
             }
 #endif /* COSMIC_RAY_FLUID */
+#ifndef GALSF_FB_MECHANICAL_BEFORE_HYDRO_FORCES /* with it, this step's fluxes and closing kick act with the pressure the opening kick saw: a pressure raised inside the step lets half a kick of the hot state straddle the deposit and creates energy. The next drift refreshes it, and the hydro pass that follows sets the signal speed */
             refresh_eos_and_project(j, STATE_COPY_COMMITTED | STATE_COPY_PREDICTED); /* the deposit is an accepted change to both state copies */
             if(TimeBinActive[P[j].TimeBin]) /* its next step is chosen right after this, from a signal speed the hydro pass set before the deposit: raise it to the new state. An inactive cell keeps its own, which its active neighbours' wakeup check compares against */
                 {CellP[j].MaxSignalVel = DMAX(CellP[j].MaxSignalVel, 2.*CellP[j].effective_soundspeed()) + sqrt((P[j].Vel - vel_before_deposit).norm_sq()) / All.cf_atime;}
+#else
+            (void) vel_before_deposit;
+#endif
             /* apply to every home gas cell with pending deltas (N_injected>0):
                this buffer is the single source of truth for received feedback,
                populated by all paths (single/multi-rank, both dispatch modes)
@@ -484,6 +489,9 @@ void mechanical_fb_calc_toplevel(void)
 
 
     verify_and_assign_local_mechfb_integrals();
+#ifdef GALSF_FB_MECHANICAL_BEFORE_HYDRO_FORCES
+    gpu_particles_arena_invalidate(); /* the gradients and forces that follow read the deposited state */
+#endif
 #if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(METALS)
     single_star_check_gas_after_feedback();
 #endif

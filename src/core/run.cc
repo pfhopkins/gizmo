@@ -676,7 +676,9 @@ void run(void)
         {
             LEDGER_STEP_BREAKDOWN("pre_feedback");
             ESTEP_BEGIN(ESTEP_FB_MECH);
+#ifndef GALSF_FB_MECHANICAL_BEFORE_HYDRO_FORCES /* with it, deposited in the force call (compute_stellar_feedback) */
             LEDGER_FB(mechanical_fb_calc_toplevel());
+#endif
 #ifdef SNE_BROADCAST_TIMESTEP
             sne_causal_wake(); /* gas the SNe of this step can reach before its step ends is woken */
 #endif

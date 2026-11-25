@@ -326,7 +326,12 @@ void compute_stellar_feedback(void)
     if(All.Dt_Since_LastFBCalc_Gyr < All.Dt_Min_Between_FBCalc_Gyr) {return;}
 #endif
 
-    /* mechanical feedback is coupled after the closing half-kick instead (run.cc), under the same cadence decision made here */
+#ifdef GALSF_FB_MECHANICAL_BEFORE_HYDRO_FORCES
+    ESTEP_BEGIN(ESTEP_FB_MECH);
+    mechanical_fb_calc_toplevel(); /* between the density pass and the gradients: this step's forces and closing kick see the deposit */
+    ESTEP_END(ESTEP_FB_MECH);
+    gizmo_exit_bad_stop_if_requested("accel:after_mechanical_fb"); cpu_charge(CPU_SNIIHEATING, measure_time());
+#endif /* otherwise mechanical feedback is coupled after the closing half-kick (run.cc), under the same cadence decision made here */
 
 #ifdef GALSF_FB_THERMAL
     thermal_fb_calc(); /* thermal feedback */

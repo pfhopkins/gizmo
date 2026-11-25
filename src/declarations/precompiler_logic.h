@@ -1276,6 +1276,9 @@
 #if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
 #error "RESOLVED_ISM_FB_AFTER_CLOSING_KICK repeats the hydro pass on feedback steps: MFV mass fluxes are applied in that pass and would be applied twice"
 #endif
+#if defined(GALSF_FB_MECHANICAL_BEFORE_HYDRO_FORCES) && (!defined(GALSF_FB_MECHANICAL) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK))
+#error "GALSF_FB_MECHANICAL_BEFORE_HYDRO_FORCES is an option of the single-star table feedback (GALSF_FB_MECHANICAL, GALSF_SINGLE_STARS_FROM_IMF, GALSF_SINGLE_STARS_EVOLUTION_TABLES), opposite to RESOLVED_ISM_FB_AFTER_CLOSING_KICK"
+#endif
 #if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && (!defined(GALSF_FB_MECHANICAL) || defined(GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW))
 #error "RESOLVED_ISM_FB_AFTER_CLOSING_KICK needs GALSF_FB_MECHANICAL, without GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW (its cadence is decided before the mechanical deposit)"
 #endif
