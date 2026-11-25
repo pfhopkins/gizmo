@@ -146,11 +146,12 @@ static inline void stella_fire_receiver_check(int j, double M_old, double dM, do
 #endif
 #endif
 
+#if defined(RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED) || defined(TEST_KICK_FLOOR_DUMP)
 /* a deposit into cell j: with RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED its signal speed is raised to the post-injection value, so the
    timestep criterion and an own-timestep wake see the heated state (dv_phys: the deposit's velocity change, physical) */
 static inline void resolvedism_fb_receiver_deposit_done(int j, double dv_phys, int site)
 {
-    (void) j; (void) dv_phys; (void) site;
+    (void) dv_phys; (void) site;
 #ifdef RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED
     {double u_j;
     #pragma omp atomic read
@@ -164,6 +165,7 @@ static inline void resolvedism_fb_receiver_deposit_done(int j, double dv_phys, i
            (unsigned long long) P[j].ID, site, (int) P[j].TimeBin, (int) TimeBinActive[P[j].TimeBin], (double) CellP[j].InternalEnergy, (double) CellP[j].MaxSignalVel, (double) P[j].KernelRadius, (double) P[j].Mass);
 #endif
 }
+#endif
 
 /* =========================================================================== */
 /*  Function prototypes for the two tree walk routines                         */
