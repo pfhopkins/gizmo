@@ -910,6 +910,23 @@ void calculate_non_standard_physics(void)
     gizmo_exit_bad_stop_if_requested("run:after_rt_nonflux"); cpu_charge(CPU_RTNONFLUXOPS, measure_time());
 #endif // RADTRANSFER block
 
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    /* per-direction Stromgren photoionisation around single stars: after the closing kick, this step's feedback deposits and the sink
+       pass, right before the cooling that reads its marks, so the fronts are solved in the gas the cooling then acts on */
+    int photoionization_this_step = (All.TotN_gas > 0);
+#ifdef GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW
+    photoionization_this_step = photoionization_this_step && (All.Dt_Since_LastFBCalc_Gyr >= All.Dt_Min_Between_FBCalc_Gyr); /* the cadence decision compute_stellar_feedback made this step */
+#endif
+    if(photoionization_this_step)
+    {
+        cpu_charge(CPU_MISC, measure_time());
+        ESTEP_BEGIN(ESTEP_PHOTOION);
+        photoionization_per_direction();
+        ESTEP_END(ESTEP_PHOTOION);
+        gizmo_exit_bad_stop_if_requested("run:after_photoionization"); cpu_charge(CPU_HIIHEATING, measure_time());
+    }
+#endif
+
 #ifdef TRANSPORT_SUBCYCLE
     /* Build the topology the subcycle consumes (active list + gas ghost pool +
        shared symmetric CSR) — AFTER sink accretion / wind spawning / rearrange

@@ -80,7 +80,7 @@ int FBHydroRedoReceivers = 0; /* this rank's receivers this step of deposits tha
 int HydroPassRepeatsStep = 0; /* 1 during the repeat: the metal exchange is applied in the pass itself, so once per step */
 
 /* stella_dev RESOLVED_ISM_FB_AFTER_CLOSING_KICK (gizmo2017 run.c order): after the closing kick and the mechanical deposit, the rest
-   of the stellar feedback (radiation pressure, photoionisation, thermal), then the full synchronous hydro pass again if any rank's
+   of the stellar feedback (radiation pressure, thermal), then the full synchronous hydro pass again if any rank's
    deposit asked for it: SN/Ia receivers, and with RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB also wind, AGB and radiation-pressure ones.
    The next opening kick then uses forces from the post-deposit state. */
 void resolved_ism_fb_after_closing_kick(void)
@@ -333,12 +333,7 @@ void compute_stellar_feedback(void)
     gizmo_exit_bad_stop_if_requested("accel:after_thermal_fb"); cpu_charge(CPU_SNIIHEATING, measure_time()); /* collect timings and reset clock for next timing */
 #endif
 
-#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
-    ESTEP_BEGIN(ESTEP_PHOTOION);
-    photoionization_per_direction(); /* per-direction Stromgren photoionisation around single stars */
-    ESTEP_END(ESTEP_PHOTOION);
-    gizmo_exit_bad_stop_if_requested("accel:after_photoionization"); cpu_charge(CPU_HIIHEATING, measure_time());
-#endif
+    /* the per-direction photoionisation of single stars is solved right before cooling (run.cc), under the same cadence decision made here */
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
     HII_heating_singledomain(); /* local photo-ionization heating */
     gizmo_exit_bad_stop_if_requested("accel:after_hii_heating"); cpu_charge(CPU_HIIHEATING, measure_time()); /* collect timings and reset clock for next timing */
