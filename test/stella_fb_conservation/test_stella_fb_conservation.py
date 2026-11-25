@@ -400,6 +400,36 @@ def test_ia_conversion_leaves_no_negative_fraction(clamp_run):
     traces_ok(out)
 
 
+def origin_check(out, channels):
+    """STL-336 metal-origin ledger (mass_balance_origin.txt): per channel the labelled metal mass in the gas, less what was booked
+    into it, plus what left it, changes by at most BAR of its scale per checkpoint; no cell holds more labelled metal than metal
+    or a label below zero. channels: those that must hold mass at the end (final snapshot, MetalOrigin)."""
+    path = join(out, "mass_balance_origin.txt")
+    assert os.path.isfile(path), "no mass_balance_origin.txt"
+    rows = [l.split() for l in open(path) if l.strip() and not l.startswith("#")]
+    assert rows
+    worst = max(max(abs(float(x)) for x in r[5:9]) for r in rows)
+    n_above = max(float(r[13]) for r in rows); n_neg = max(float(r[14]) for r in rows)
+    snaps = sorted(f for f in os.listdir(out) if f.startswith("snapshot_") and f.endswith(".hdf5"))
+    with h5py.File(join(out, snaps[-1]), "r") as f:
+        p = f["PartType0"]
+        assert "MetalOrigin" in p, "the snapshot carries no MetalOrigin block"
+        mo = (p["Masses"][:][:, None] * p["MetalOrigin"][:]).sum(axis=0)
+    print(f"metal origin: {len(rows)} logged checkpoints, worst |dL|/S {worst:.3e}, cells with labels above Z {n_above:.0f}, with a label below zero "
+          f"{n_neg:.0f}; final gas mass by channel SN {mo[0]:.3e} AGB {mo[1]:.3e} wind {mo[2]:.3e} Ia {mo[3]:.3e}")
+    for c in channels:
+        assert mo[c] > 0, f"channel {c} holds no labelled metal: the run does not test it"
+    assert worst <= BAR
+    assert n_above == 0, "cells hold more labelled metal than metal"
+    assert n_neg == 0, "cells hold a label below zero"
+
+
+def test_metal_origin_clamp_box(clamp_run):
+    """STL-336: AGB and Ia labels through deposit, whole-cell Ia conversion and metal diffusion at individual timesteps."""
+    text, out = clamp_run
+    origin_check(out, channels=(1, 3))
+
+
 def test_diffusion_slots_clamp_box(clamp_run):
     """STL-277: cells converted whole to Ia composition (H ~ 0) next to H-rich gas: no floor fires and every cell's slots close."""
     diffusion_check(clamp_run[0])
@@ -534,3 +564,11 @@ def test_default_build_integration_residual(build_default_hydro):
     e, out, _ = sn_energy_run(build_default_hydro, "sn_energy_default_hydro")
     rep = keep_and_check_traces(out, out)
     assert rep.ok, rep.summary()
+
+
+def test_metal_origin_clamp_box_equal_timesteps():
+    """STL-336: the same at equal timesteps (build and run shared with test_clamp_box_equal_timesteps)."""
+    out = join(TEST_DIR, "run_ia_clamp_equal_dt", "output")
+    if not os.path.isdir(out):
+        pytest.skip("run_ia_clamp_equal_dt not present (test_clamp_box_equal_timesteps runs it)")
+    origin_check(out, channels=(1, 3))

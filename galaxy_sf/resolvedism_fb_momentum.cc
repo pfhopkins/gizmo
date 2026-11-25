@@ -671,6 +671,8 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                             double dF = (dMZ_c - F_old * dM) / Mnew_j;
                             #pragma omp atomic
                             CellP[j].MetalMassFrom[c] += dF;
+                            #pragma omp atomic
+                            CumulOriginToGas[c] += dMZ_c; /* origin ledger */
                         }
                     }
 #endif

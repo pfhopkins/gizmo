@@ -39,6 +39,14 @@ void mbary_book_outflow(int i)
         }
     }
 #endif
+#if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
+    if(P[i].Type == 0) {
+        for(int c = 0; c < 4; c++) {
+            #pragma omp atomic
+            CumulOriginFromGas[c] += P[i].Mass * CellP[i].MetalMassFrom[c];
+        }
+    }
+#endif
 }
 
 static long long mbary_ncalls = 0; /* checkpoints so far, same on all tasks (each is collective) */
@@ -95,9 +103,14 @@ void mbary_step_checkpoint(const char *tag)
 #endif
 #if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
     enum {EL_GAS, EL_STAR, EL_FLIGHT, EL_OUT, EL_NET, EL_N}; /* per slot: gas, stars + remnants, in-flight diffusion, outflow, booked net yield */
-    const int NRED = 9 + EL_N * NUM_METAL_SPECIES;
+    const int NRED0 = 9 + EL_N * NUM_METAL_SPECIES;
 #else
-    const int NRED = 9;
+    const int NRED0 = 9;
+#endif
+#if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
+    const int NRED = NRED0 + 15; /* metal-origin ledger: per channel gas, booked in, taken out; cells with labels above Z, with a label below zero, the excess mass */
+#else
+    const int NRED = NRED0;
 #endif
     static int ld_checked = 0;
     if(!ld_checked) {
@@ -139,6 +152,16 @@ void mbary_step_checkpoint(const char *tag)
         for(int q = 0; q < EL_N * NUM_METAL_SPECIES; q++) {red_loc[9 + q] = el_d[q];}
     }
 #endif
+#if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
+    for(i = 0; i < N_gas; i++) {
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        double fsum = 0; int neg = 0;
+        for(int c = 0; c < 4; c++) {red_loc[NRED0 + c] += (long double)P[i].Mass * CellP[i].MetalMassFrom[c]; fsum += CellP[i].MetalMassFrom[c]; if(CellP[i].MetalMassFrom[c] < 0) {neg = 1;}}
+        if(fsum > P[i].Metallicity[0] + 1.0e-12) {red_loc[NRED0 + 12] += 1; red_loc[NRED0 + 14] += (long double)P[i].Mass * (fsum - P[i].Metallicity[0]);} /* more labelled metal than metal */
+        red_loc[NRED0 + 13] += neg;
+    }
+    for(int c = 0; c < 4; c++) {red_loc[NRED0 + 4 + c] = CumulOriginToGas[c]; red_loc[NRED0 + 8 + c] = CumulOriginFromGas[c];}
+#endif
     MPI_Reduce(red_loc.data(), red.data(), NRED, MPI_LONG_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); /* only rank 0 reads the sums */
     long double ml[3] = {red[0], red[1], red[2]};
     long double M_gas = red[3], M_star = red[4], M_Z = red[5];
@@ -147,6 +170,40 @@ void mbary_step_checkpoint(const char *tag)
 #endif
     long double M_tot = M_gas + M_star + red[7]; /* baryons in the box plus those gone through an outflow boundary */
     long double M_L = M_Z + ml[0] + ml[1] + red[8] - ml[2];
+#if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
+    if(ThisTask == 0) { /* metal-origin ledger per channel: L = gas - booked in + taken out, constant to round-off (STL-336) */
+        static long double last_OL[4]; static int have_OL = 0;
+        static const char *ch_name[4] = {"SN", "AGB", "Wind", "Ia"};
+        double rel[4] = {0, 0, 0, 0}, worst_rel = 0; int worst = -1;
+        long double OL[4];
+        for(int c = 0; c < 4; c++) {
+            OL[c] = red[NRED0 + c] - red[NRED0 + 4 + c] + red[NRED0 + 8 + c];
+            long double S = fabsl(red[NRED0 + c]) + fabsl(red[NRED0 + 8 + c]), d = have_OL ? OL[c] - last_OL[c] : 0.0L;
+            rel[c] = (S > 0) ? (double)(d / S) : ((d != 0) ? HUGE_VAL : 0);
+            if(worst < 0 || fabs(rel[c]) > fabs(worst_rel)) {worst_rel = rel[c]; worst = c;}
+            last_OL[c] = OL[c];
+        }
+        double n_above = (double)red[NRED0 + 12], n_neg = (double)red[NRED0 + 13];
+        if(!have_OL || fabs(worst_rel) > 1.0e-14 || n_above > 0 || n_neg > 0) {
+            char path[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+            snprintf(path, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/mass_balance_origin.txt", All.OutputDir);
+            FILE *f = fopen(path, "a");
+            if(f) {
+                if(ftell(f) == 0) {
+                    fprintf(f, "### Metal-origin ledger per channel: L = labelled metal mass in the gas - booked into the gas + taken out of it (stars, outflow), constant to round-off.\n");
+                    fprintf(f, "### Logs the first call and every checkpoint where some |dL|/S > 1e-14 (S = gas + taken out) or a cell holds more labelled metal than metal or a label below zero.\n");
+                    fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) worst channel  (5) its dL/S  (6-9) dL/S SN AGB Wind Ia  (10-13) gas mass by channel  (14) cells with sum of labels > Z + 1e-12  (15) cells with a label < 0  (16) labelled mass above Z\n");
+                }
+                fprintf(f, "%8lld  %-22s  %.10e  %-4s  %+.6e", call_count, tag, All.Time, ch_name[worst], worst_rel);
+                for(int c = 0; c < 4; c++) {fprintf(f, "  %+.3e", rel[c]);}
+                for(int c = 0; c < 4; c++) {fprintf(f, "  %.10e", (double)red[NRED0 + c]);}
+                fprintf(f, "  %.0f  %.0f  %.6e\n", n_above, n_neg, (double)red[NRED0 + 14]);
+                fclose(f);
+            }
+        }
+        have_OL = 1;
+    }
+#endif
 #if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
     if(ThisTask == 0) {
         static std::vector<double> last_EL;
