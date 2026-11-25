@@ -638,6 +638,9 @@ void merge_and_split_particles(void)
 #endif
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
             CellP[j_sp].TD_NumPairs = 0; CellP[j_sp].TD_Touched = 0; /* nothing booked to the new cell */
+#ifdef GALSF_RESOLVEDISM_FB
+            for(int c_ = 0; c_ < 4; c_++) {CellP[j_sp].DMetalFrom[c_] = 0;}
+#endif
 #endif
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
             {int kd_sp; for(kd_sp=0;kd_sp<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;kd_sp++) {CellP[j_sp].Dyield_pending[kd_sp] = 0;}}
@@ -671,6 +674,8 @@ void merge_and_split_particles(void)
             P[i_sp].Mass -= P[j_sp].Mass;
 #if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
             CumulMetalYieldToGas += P[j_sp].Mass * P[j_sp].Metallicity[0]; CumulMetalEjectedFromStars += P[j_sp].Mass * P[i_sp].Metallicity[0]; /* metal ledger, as the kernel deposit */
+            for(int c_ = 0; c_ < 4; c_++) {CellP[j_sp].MetalMassFrom[c_] = 0;} /* the ejecta cell's metals are SN metals, not the template cell's labels (STL-336) */
+            CellP[j_sp].MetalMassFrom[0] = P[j_sp].Metallicity[0]; CumulOriginToGas[0] += P[j_sp].Mass * P[j_sp].Metallicity[0];
 #endif
 #if defined(GALSF_RESOLVEDISM_FB) && defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
             for(int m_ = 0; m_ < NUM_METAL_SPECIES; m_++) {CumulElemToGas[m_] += P[j_sp].Mass * P[j_sp].Metallicity[m_]; CumulElemFromStars[m_] += P[j_sp].Mass * P[i_sp].Metallicity[m_];}

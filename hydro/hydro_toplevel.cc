@@ -233,6 +233,9 @@ struct INPUT_STRUCT_NAME
 #endif
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
     int TD_NumPairs;
+#ifdef GALSF_RESOLVEDISM_FB
+    MyFloat MetalMassFrom[4];
+#endif
 #endif
     
 #ifdef CHIMES_TURB_DIFF_IONS
@@ -358,6 +361,9 @@ struct OUTPUT_STRUCT_NAME
 #endif
 #if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(TEST_PRINT_DIFFUSION_H_CLOSURE)
     int TD_NumEvals;
+#endif
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(GALSF_RESOLVEDISM_FB)
+    MyFloat DMetalFrom[4];
 #endif
 
 #ifdef CHIMES_TURB_DIFF_IONS
@@ -527,6 +533,9 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     for(k=0;k<NUM_METAL_SPECIES;k++) {in->Metallicity[k] = P[i].Metallicity[k];}
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
     in->TD_NumPairs = CellP[i].TD_NumPairs;
+#ifdef GALSF_RESOLVEDISM_FB
+    for(k=0;k<4;k++) {in->MetalMassFrom[k] = CellP[i].MetalMassFrom[k];}
+#endif
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0);}
@@ -682,6 +691,11 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
         for(k=0;k<TD_NUM_EXCHANGED;k++) {if(out->Dyield[k] != 0) {any_ = 1;
             #pragma omp atomic
             CellP[i].Dyield[k] += out->Dyield[k];}}
+#ifdef GALSF_RESOLVEDISM_FB
+        for(k=0;k<4;k++) {if(out->DMetalFrom[k] != 0) {any_ = 1;
+            #pragma omp atomic
+            CellP[i].DMetalFrom[k] += out->DMetalFrom[k];}}
+#endif
         if(any_) {
             #pragma omp atomic write
             CellP[i].TD_Touched = 1;}
@@ -803,6 +817,14 @@ static void td_apply_and_clear(void)
 #endif
                 {P[i].Metallicity[k] = x;}
             }
+#ifdef GALSF_RESOLVEDISM_FB
+            for(int k = 0; k < 4; k++) { /* the labels' share of the total-Z exchange, same floor rule */
+                if(CellP[i].DMetalFrom[k] == 0) {continue;}
+                double x = CellP[i].MetalMassFrom[k] + CellP[i].DMetalFrom[k] / P[i].Mass;
+                if(x < 0 && CellP[i].DMetalFrom[k] < 0) {fired = 1; floor_mass -= x * P[i].Mass; x = 0;}
+                CellP[i].MetalMassFrom[k] = x;
+            }
+#endif
             nfloor += fired; nnegin += negin;
 #if defined(TEST_PRINT_DIFFUSION_H_CLOSURE) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
             {double s_ = 0, z_ = 0; for(int k = 1; k < NUM_METAL_SPECIES; k++) {s_ += P[i].Metallicity[k]; if(k >= 3) {z_ += P[i].Metallicity[k];}}
@@ -814,6 +836,9 @@ static void td_apply_and_clear(void)
 #endif
         }
         for(int k = 0; k < NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION; k++) {CellP[i].Dyield[k] = 0;}
+#ifdef GALSF_RESOLVEDISM_FB
+        for(int k = 0; k < 4; k++) {CellP[i].DMetalFrom[k] = 0;}
+#endif
         CellP[i].TD_NumPairs = 0; CellP[i].TD_Touched = 0;
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
         CellP[i].TD_NumEvals = 0;

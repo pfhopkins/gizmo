@@ -232,6 +232,9 @@ extern struct gas_cell_data
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
     int TD_NumPairs; /*!< exchange evaluations that can touch this cell in this hydro pass, counted in the gradient pass */
     int TD_Touched; /*!< Dyield or TD_NumPairs written in this hydro pass */
+#ifdef GALSF_RESOLVEDISM_FB
+    MyFloat DMetalFrom[4]; /*!< pair exchange of the metal-origin labels booked in this hydro pass (they move with the total-Z exchange) */
+#endif
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
     int TD_NumEvals; /*!< test: exchange evaluations booked to this cell in this hydro pass */
 #endif
