@@ -44,13 +44,39 @@ KOKKOS_INLINE_FUNCTION Vec3<double> Vphys(const Vec3<double> &vcoord, const stru
 KOKKOS_INLINE_FUNCTION Vec3<double> Vcoord(const Vec3<double> &vphys, const struct gr_metric *gr) {return gr->alpha*vphys - gr->beta;}
 
 /* ------------------------------------------------------------------ metric */
-/* displacement of pos from the black hole of the single-hole metrics: the hole sits at the origin, or at the box centre if the box is
-   periodic (nearest image). Every distance from the hole (metric, excision, Lorentz-factor limiter) uses it */
+/* the point the metric is centred on: the origin, or the box centre if the box is periodic. In 1D and 2D the unused coordinates are those
+   of the line or plane of the cells (zero, or the half box with SHIFT_BY_HALF_BOX, init.cc), so that the hole lies on it */
+KOKKOS_INLINE_FUNCTION Vec3<double> gr_metric_origin(void)
+{
+    Vec3<double> c = {0, 0, 0};
+#ifdef BOX_PERIODIC
+    c[0] = boxHalf_X;
+#if (NUMDIMS>1)
+    c[1] = boxHalf_Y;
+#endif
+#if (NUMDIMS>2)
+    c[2] = boxHalf_Z;
+#endif
+#endif
+#ifdef SHIFT_BY_HALF_BOX
+#if (NUMDIMS<2)
+    c[1] = boxHalf_Y;
+#endif
+#if (NUMDIMS<3)
+    c[2] = boxHalf_Z;
+#endif
+#endif
+    return c;
+}
+
+/* displacement of pos from the black hole of the single-hole metrics, at gr_metric_origin (nearest image if the box is periodic). Every
+   distance from the hole (metric, excision, Lorentz-factor limiter) uses it */
 KOKKOS_INLINE_FUNCTION Vec3<double> gr_hole_displacement(const Vec3<double> &pos)
 {
+    const Vec3<double> c = gr_metric_origin();
     Vec3<double> dp = pos;
+    for(int k = 0; k < 3; k++) {dp[k] -= c[k];}
 #ifdef BOX_PERIODIC
-    dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y; dp[2] -= boxHalf_Z;
     NEAREST_XYZ(dp[0],dp[1],dp[2],1);
 #endif
     return dp;
@@ -157,26 +183,31 @@ KOKKOS_INLINE_FUNCTION void get_covariant_metric(const Vec3<double> &pos, struct
 #if (GR_METRIC>0)
 /* 1 if the excision region of a black hole lies between the cells at pos_i and pos_j (dp = pos_i - pos_j, periodic-wrapped), so that
    they do not interact. Symmetric under i <-> j (as the test of the C/C++ GR code, mesh/ngb.cc check_BH_intersection): the pair is excluded
-   if the point of the segment closest to the hole lies inside the segment and is nearer to the hole than r_H - R_c (the bare horizon,
-   not the excision radius), with R_c = 0.5 (h_i + h_j)/DesNumNgb^(1/NUMDIMS) a size common to both cells. The margin is subtracted, so
+   if the segment between them enters the region where the Kerr radius r (gr_kerr_radius_sq) is below r_H - R_c (the bare horizon, not the
+   excision radius), with R_c = 0.5 (h_i + h_j)/DesNumNgb^(1/NUMDIMS) a size common to both cells. That region is the oblate spheroid
+   x_perp^2/(R^2 + a^2) + x_par^2/R^2 < 1 (R = r_H - R_c, x_par along the spin): scaling x_perp by 1/sqrt(R^2 + a^2) and x_par by 1/R maps it
+   to the unit sphere and the segment to a segment, which crosses it if its point closest to the centre lies inside the segment and inside
+   the sphere (the cells themselves are outside the excised region). Without spin the region is the sphere |x| < R. The margin is subtracted, so
    that cells at the edge of the excision region keep interacting with their neighbours along the edge (with GR_EXCISION_RADIUS r_H + R_c,
    as in the C/C++ GR code, the cells just outside the excision radius lost their tangential neighbours: Bondi with excision at 1.05 r_H had
    rho0 25% below Michel at r = 2.5) */
-KOKKOS_INLINE_FUNCTION int gr_segment_crosses_excised_hole(const Vec3<double> &dp, double normdp2, const Vec3<double> &dpBH, double M, const Vec3<double> &spin, double R_common)
+KOKKOS_INLINE_FUNCTION int gr_segment_crosses_excised_hole(const Vec3<double> &dp, const Vec3<double> &dpBH, double M, const Vec3<double> &spin, double R_common)
 {
-    double proj = dot(dpBH, dp), t = proj/normdp2;
-    if(t <= 0 || t >= 1) {return 0;} /* the closest point is one of the two cells, which are outside the excised region */
-    double perpBH2 = dpBH.norm_sq() - proj*proj/normdp2, R_block = GR_HORIZON_RADIUS(M, spin) - R_common;
+    double R_block = GR_HORIZON_RADIUS(M, spin) - R_common;
     if(R_block <= 0) {return 0;}
-    return (perpBH2 < R_block*R_block) ? 1 : 0;
+    double chi2 = spin.norm_sq(), f_perp = 1./sqrt(R_block*R_block + chi2*M*M), f_par = 1./R_block; /* chi = a/M */
+    Vec3<double> e = {0, 0, 1}; if(chi2 > 0) {e = spin/sqrt(chi2);} /* the spin axis */
+    Vec3<double> q = f_perp*dpBH + ((f_par - f_perp)*dot(dpBH, e))*e, d = f_perp*dp + ((f_par - f_perp)*dot(dp, e))*e; /* scaled */
+    double d2 = d.norm_sq(), proj = dot(q, d), t = proj/d2;
+    if(t <= 0 || t >= 1) {return 0;} /* the closest point is one of the two cells, which are outside the excised region */
+    return (q.norm_sq() - proj*proj/d2 < 1) ? 1 : 0;
 }
 KOKKOS_INLINE_FUNCTION int gr_pair_crosses_excised_hole(const Vec3<double> &pos_i, double h_i, const Vec3<double> &dp, double h_j)
 {
-    double normdp2 = dp.norm_sq();
-    if(normdp2 <= 0) {return 0;}
+    if(dp.norm_sq() <= 0) {return 0;}
     double R_common = 0.5*(h_i + h_j)/pow((double)All.DesNumNgb, 1./NUMDIMS);
     Vec3<double> dpBH = gr_hole_displacement(pos_i), spin = {0, 0, All.MetricParams[1]};
-    return gr_segment_crosses_excised_hole(dp, normdp2, dpBH, All.MetricParams[0], spin, R_common);
+    return gr_segment_crosses_excised_hole(dp, dpBH, All.MetricParams[0], spin, R_common);
 }
 #endif
 
