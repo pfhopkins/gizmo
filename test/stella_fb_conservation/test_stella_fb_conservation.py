@@ -371,8 +371,10 @@ def diffusion_check(text):
     assert sum(r["evals"] for r in rows) > 0, "no pair exchange evaluated"
     nf = sum(r["floor_cells"] for r in rows); fm = sum(r["floor_abs"] for r in rows)
     sd = max(r["max_slot_sum_dev"] for r in rows); zd = max(r["max_z0_dev"] for r in rows)
+    nneg = sum(r.get("neg_in_cells", 0) for r in rows)  # slots another module left below zero (round-off); their credit is booked unfloored
     print(f"diffusion: {len(rows)} unpacks, floor fired in {nf:.0f} cell-steps (|mass| {fm:.3e} code), worst per-cell |sum X - 1| {sd:.3e}, "
-          f"|X0 - sum metals| {zd:.3e}, cells with more exchange evaluations than counted pairs {nover:.0f}")
+          f"|X0 - sum metals| {zd:.3e}, cells with more exchange evaluations than counted pairs {nover:.0f}, "
+          f"cell-steps with a slot below zero before the exchange {nneg:.0f}")
     assert nover == 0, "a cell had more exchange evaluations than its counted pairs: the debit bound is not strict"
     assert nf == 0, "a slot floor fired in the diffusion unpack"
     assert sd <= BAR and zd <= BAR

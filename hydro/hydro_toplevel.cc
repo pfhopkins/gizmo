@@ -774,16 +774,16 @@ long TD_FloorCellsStep = 0; /* cells where the last apply had to floor a slot at
 /* every gas cell touched in this hydro pass, active or not, applies its pair exchange and clears it, so nothing stays pending (STL-277) */
 static void td_apply_and_clear(void)
 {
-    long nfloor = 0, nover = 0, nevals = 0; double floor_mass = 0, slot_dev = 0, z0_dev = 0;
+    long nfloor = 0, nover = 0, nevals = 0, nnegin = 0; double floor_mass = 0, slot_dev = 0, z0_dev = 0;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) reduction(+:nfloor,nover,nevals,floor_mass) reduction(max:slot_dev,z0_dev)
+#pragma omp parallel for schedule(static) reduction(+:nfloor,nover,nevals,nnegin,floor_mass) reduction(max:slot_dev,z0_dev)
 #endif
     for(int i = 0; i < N_gas; i++) /* gas cells come first in P */
     {
         if(P[i].Type != 0 || !CellP[i].TD_Touched) {continue;}
         if(P[i].Mass > 0)
         {
-            int fired = 0;
+            int fired = 0, negin = 0;
             for(int k = 0; k < TD_NUM_EXCHANGED; k++)
             {
                 if(CellP[i].Dyield[k] == 0) {continue;}
@@ -792,7 +792,8 @@ static void td_apply_and_clear(void)
                 if(k >= NUM_METAL_SPECIES) {x = CellP[i].Dust[k-NUM_METAL_SPECIES] + CellP[i].Dyield[k] / P[i].Mass;} else
 #endif
                 {x = P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass;}
-                if(x < 0) { /* never by the pair bound; counted */
+                if(x < 0 && CellP[i].Dyield[k] > 0) {negin = 1;} /* slot below zero before the exchange (another module's round-off): credit booked, not floored */
+                else if(x < 0) { /* a debit below zero: never by the pair bound; counted */
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
                     printf("DIFFFLOORCELL t=%.17e id=%llu k=%d x_new=%.17e dy=%.17e m=%.17e pairs=%d evals=%d\n", All.Time, (unsigned long long)P[i].ID, k, x, CellP[i].Dyield[k], P[i].Mass, CellP[i].TD_NumPairs, CellP[i].TD_NumEvals);
 #endif
@@ -802,7 +803,7 @@ static void td_apply_and_clear(void)
 #endif
                 {P[i].Metallicity[k] = x;}
             }
-            nfloor += fired;
+            nfloor += fired; nnegin += negin;
 #if defined(TEST_PRINT_DIFFUSION_H_CLOSURE) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
             {double s_ = 0, z_ = 0; for(int k = 1; k < NUM_METAL_SPECIES; k++) {s_ += P[i].Metallicity[k]; if(k >= 3) {z_ += P[i].Metallicity[k];}}
              slot_dev = DMAX(slot_dev, fabs(s_ - 1)); z0_dev = DMAX(z0_dev, fabs(z_ - P[i].Metallicity[0]));}
@@ -820,10 +821,10 @@ static void td_apply_and_clear(void)
     }
     long nl = nfloor, ng = 0; MPI_Allreduce(&nl, &ng, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD); TD_FloorCellsStep = ng;
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
-    {double ls[4] = {floor_mass, (double)nfloor, (double)nover, (double)nevals}, gs[4], lm[2] = {slot_dev, z0_dev}, gm[2];
-     MPI_Allreduce(ls, gs, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); MPI_Allreduce(lm, gm, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
-     if(ThisTask == 0) {printf("DIFFSLOT t=%.17e floor_abs=%.17e floor_cells=%.0f max_slot_sum_dev=%.17e max_z0_dev=%.17e pairs_over_count=%.0f evals=%.0f\n",
-                               All.Time, gs[0], gs[1], gm[0], gm[1], gs[2], gs[3]); fflush(stdout);}}
+    {double ls[5] = {floor_mass, (double)nfloor, (double)nover, (double)nevals, (double)nnegin}, gs[5], lm[2] = {slot_dev, z0_dev}, gm[2];
+     MPI_Allreduce(ls, gs, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); MPI_Allreduce(lm, gm, 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+     if(ThisTask == 0) {printf("DIFFSLOT t=%.17e floor_abs=%.17e floor_cells=%.0f max_slot_sum_dev=%.17e max_z0_dev=%.17e pairs_over_count=%.0f evals=%.0f neg_in_cells=%.0f\n",
+                               All.Time, gs[0], gs[1], gm[0], gm[1], gs[2], gs[3], gs[4]); fflush(stdout);}}
 #endif
 }
 #endif
