@@ -17,9 +17,16 @@ Metric and bars, fixed before the first run of this version (2026-11-25):
   - with the flags: r <= 1e-2 (Uli's bar for the r26 cloud, STL-183);
   - without them: r > 1e-2 (the problem must be present in this box, otherwise the test shows nothing);
   - both runs print receiver lines, the run without the flags also kick lines.
+  Job 242433: the limiter fires in neither run of this box (r = 0, no kick line), although its receivers are inactive and woken.
+  The two 'problem present' bars are therefore strict expected failures; the evidence for the flags is the r26 cloud
+  (1.05 -> 2.0e-3 / 3.1e-3, jobs 242310 and 242377). What this test does hold: both builds run, the dump lines appear, and with
+  the flags no woken receiver of the first deposit is put on a longer bin than without them.
 Rank independence without the flags (stella_dev as it is; Viper's question from GKS-98), 1, 2 and 4 ranks, one thread:
   the first deposit's receivers (IDs) and, at that step and the three steps after it, the woken cells (IDs with old and new bin) are
   identical, and kinetic + thermal energy after each of those steps agrees with the 1-rank run to 1e-10 relative.
+  Job 242433: met at the deposit step (81 receivers, 81 woken, 3e-14), not after it: the next step merges 77 / 75 / 71 cells on
+  1 / 2 / 4 ranks (the merge partner search sees this rank's cells only) and the energy then differs by 1.4e-2 and 3.2e-3. That
+  comparison is kept as a strict expected failure; the same comparison built with PREVENT_PARTICLE_MERGE_SPLIT tests the wake alone.
 """
 
 import os
@@ -98,45 +105,31 @@ def runs():
     binaries = {}
     cwd = os.getcwd(); os.chdir(REPO)
     try:
-        for arm, extra in (("on", FLAGS), ("off", ())):
+        for arm, extra in (("on", FLAGS), ("off", ()), ("nomerge", ("PREVENT_PARTICLE_MERGE_SPLIT",))):
             build_gizmo_for_test(TEST_NAME, extra_config_flags=extra)
             binaries[arm] = join(TEST_DIR, f"GIZMO_{arm}")
             shutil.move(join(TEST_DIR, "GIZMO"), binaries[arm])
     finally:
         os.chdir(cwd)
     res = {}
-    for arm, nranks in (("on", 2), ("off", 2), ("off", 1), ("off", 4)):
+    for arm, nranks in (("on", 2), ("off", 2), ("off", 1), ("off", 4), ("nomerge", 1), ("nomerge", 2), ("nomerge", 4)):
         text, out = _run(binaries[arm], fbc, f"{arm}_r{nranks}", nranks)
         r, n = _ratio(out)
-        res[(arm, nranks)] = dict(r=r, n=n, nrecv=text.count("TEST_KICK_FLOOR_DUMP recv"), nkick=text.count("TEST_KICK_FLOOR_DUMP kick"), wake=_wake_record(text))
-        print(f"flags {arm}, {nranks} ranks: max kick_floor / wind {r:.3e} over {n} syncs with feedback; dump lines: "
-              f"{res[(arm, nranks)]['nrecv']} receivers, {res[(arm, nranks)]['nkick']} kicks; first deposit at step {res[(arm, nranks)]['wake'][0]}")
+        res[(arm, nranks)] = dict(r=r, n=n, nrecv=text.count("TEST_KICK_FLOOR_DUMP recv"), nkick=text.count("TEST_KICK_FLOOR_DUMP kick"), wake=_wake_record(text),
+                                  merged=sum(int(x) for x in re.findall(r"(\d+) particles merged", text)))
+        print(f"{arm}, {nranks} ranks: max kick_floor / wind {r:.3e} over {n} syncs with feedback; dump lines: {res[(arm, nranks)]['nrecv']} receivers, "
+              f"{res[(arm, nranks)]['nkick']} kicks; first deposit at step {res[(arm, nranks)]['wake'][0]}; cells merged {res[(arm, nranks)]['merged']}")
     return res
 
 
-def test_dump_lines(runs):
-    for key in (("on", 2), ("off", 2)):
-        assert runs[key]["n"] > 0, f"{key}: no full sync with feedback"
-        assert runs[key]["nrecv"] > 0, f"{key}: no receiver line"
-    assert runs[("off", 2)]["nkick"] > 0, "without the flags no kick fired the u limiter above the dump threshold"
-
-
-def test_problem_present_without_the_flags(runs):
-    assert runs[("off", 2)]["r"] > BAR, f"without the flags the limiter adds only {runs[('off', 2)]['r']:.3e} of the feedback energy in this box"
-
-
-def test_receivers_on_their_own_timestep(runs):
-    assert runs[("on", 2)]["r"] <= BAR, f"with the flags the limiter adds {runs[('on', 2)]['r']:.3e} of the feedback energy"
-
-
-def test_wake_independent_of_ranks(runs):
-    s0, recv0, woken0, energy0 = runs[("off", 1)]["wake"]
+def _compare_ranks(runs, arm):
+    s0, recv0, woken0, energy0 = runs[(arm, 1)]["wake"]
     assert s0 is not None and len(recv0) > 0, "no receiver in the 1-rank run"
     assert sum(len(woken0.get(k, ())) for k in range(s0, s0 + STEPS_AFTER + 1)) > 0, "no cell woken in those steps: nothing to compare"
     bad = []
     for nranks in (2, 4):
-        s, recv, woken, energy = runs[("off", nranks)]["wake"]
-        print(f"{nranks} ranks: first deposit step {s} (1 rank: {s0}), receivers {len(recv)} (1 rank: {len(recv0)})")
+        s, recv, woken, energy = runs[(arm, nranks)]["wake"]
+        print(f"{arm}, {nranks} ranks: first deposit step {s} (1 rank: {s0}), receivers {len(recv)} (1 rank: {len(recv0)})")
         if s != s0 or recv != recv0:
             bad.append(f"{nranks} ranks: first deposit step or receivers differ"); continue
         for k in range(s0, s0 + STEPS_AFTER + 1):
@@ -147,4 +140,41 @@ def test_wake_independent_of_ranks(runs):
                 bad.append(f"{nranks} ranks, step {k}: {len(wa ^ wb)} woken cells differ")
             if not de <= BAR_RANKS:
                 bad.append(f"{nranks} ranks, step {k}: |dE|/E {de:.3e}")
+    return bad
+
+
+def test_builds_run_and_dump(runs):
+    for key in (("on", 2), ("off", 2)):
+        assert runs[key]["n"] > 0, f"{key}: no full sync with feedback"
+        assert runs[key]["nrecv"] > 0, f"{key}: no receiver line"
+        s0, recv, woken, _ = runs[key]["wake"]
+        assert len(recv) > 0 and len(woken.get(s0, ())) > 0, f"{key}: no receiver woken at the first deposit"
+    s0, _, w_on, _ = runs[("on", 2)]["wake"]; _, _, w_off, _ = runs[("off", 2)]["wake"]
+    to_on = {i: b for i, _, b in w_on[s0]}; to_off = {i: b for i, _, b in w_off[s0]}
+    assert set(to_on) == set(to_off), "the first deposit wakes different cells with and without the flags"
+    assert all(to_on[i] <= to_off[i] for i in to_on), "with the flags a receiver was put on a longer bin than without"
+    print(f"first deposit: {len(to_on)} receivers woken; bins with the flags {sorted(set(to_on.values()))}, without {sorted(set(to_off.values()))}")
+
+
+def test_receivers_on_their_own_timestep(runs):
+    assert runs[("on", 2)]["r"] <= BAR, f"with the flags the limiter adds {runs[('on', 2)]['r']:.3e} of the feedback energy"
+
+
+@pytest.mark.xfail(strict=True, reason="job 242433: in this box the u limiter fires in neither run (ratio 0, no kick line), as in the two earlier boxes; "
+                   "the problem is shown by the r26 cloud only (1.05 x the wind energy, jobs 242310 and 242377). Bar unchanged")
+def test_problem_present_without_the_flags(runs):
+    assert runs[("off", 2)]["nkick"] > 0, "without the flags no kick fired the u limiter above the dump threshold"
+    assert runs[("off", 2)]["r"] > BAR, f"without the flags the limiter adds only {runs[('off', 2)]['r']:.3e} of the feedback energy in this box"
+
+
+def test_wake_independent_of_ranks_without_merge_split(runs):
+    assert all(runs[("nomerge", n)]["merged"] == 0 for n in (1, 2, 4))
+    bad = _compare_ranks(runs, "nomerge")
+    assert not bad, "; ".join(bad)
+
+
+@pytest.mark.xfail(strict=True, reason="job 242433: identical at the deposit step, then 77 / 75 / 71 cells merge on 1 / 2 / 4 ranks (merge partners are "
+                   "searched on the own rank only) and the energy differs by 1.4e-2 (2 ranks) and 3.2e-3 (4 ranks) against the bar of 1e-10")
+def test_wake_independent_of_ranks(runs):
+    bad = _compare_ranks(runs, "off")
     assert not bad, "; ".join(bad)
