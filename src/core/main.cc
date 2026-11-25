@@ -87,8 +87,14 @@ int main(int argc, char **argv)
   gizmo_install_fatal_signal_handlers();
   gizmo_install_mpi_error_handler();
   gizmo_node_comm_init();  /* persistent node-local communicator, used for node-scoped memory reporting */
+#ifdef OUTPUT_TIMING_BREAKDOWN
+  timing_breakdown_register_settings();  /* before Kokkos init, which asks a tool once whether it needs fences */
+#endif
   gizmo_kokkos_initialize(argc, argv);  /* must come after MPI_Init; sets up CUDA device and thread pool */
   gizmo_kokkos_mem_register();  /* observe Kokkos allocations from here on (after Kokkos init, before GIZMO allocations) */
+#ifdef OUTPUT_TIMING_BREAKDOWN
+  timing_breakdown_register();  /* time kernels, fences and OpenMP regions for cpu.txt from here on */
+#endif
   /* Check if CUDA/Kokkos init changed CPU floating-point mode (FTZ/DAZ).
      On ARM (aarch64), check FPCR bits 24 (FZ) and 19 (FZ16).
      On x86, check MXCSR bits 15 (FZ) and 6 (DAZ). */

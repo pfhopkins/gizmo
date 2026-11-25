@@ -551,7 +551,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     /* Close the measure_time chain BEFORE this bracket's own t0. The
      * cpu_chain_sync at the end of the bracket advances the clock to its
      * t1, so without this the interval preceding t0 is charged to nobody. */
-    CPU_Step[CPU_DOMAIN] += measure_time();
+    cpu_charge(CPU_DOMAIN, measure_time());
     const double child0_drift = CPU_ChildCharged;
     double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
@@ -576,7 +576,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
      * named for.  What follows -- freeing the tree, resizing particle storage,
      * wrapping the box -- is decomposition work, so the row closes here rather
      * than swallowing it. */
-    CPU_Step[CPU_DRIFT] += cpu_minus_children(timediff(t_drift_start, my_second()), child0_drift);
+    cpu_charge(CPU_DRIFT, cpu_minus_children(timediff(t_drift_start, my_second()), child0_drift));
     cpu_chain_sync(my_second());
     const double t_dom_rest = my_second();
     const double child0_dom_rest = CPU_ChildCharged;
@@ -636,7 +636,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     t_barrier = timediff(t_tmp, my_second());
     const double t_drift_end = my_second();
     double t_drift_total = cpu_minus_children(timediff(t_dom_rest, t_drift_end), child0_dom_rest);
-    CPU_Step[CPU_DOMAIN] += t_drift_total;
+    cpu_charge(CPU_DOMAIN, t_drift_total);
     cpu_chain_sync(t_drift_end);
     if(ThisTask == 0) {
         printf("  domain_Decomp drift breakdown: mergesplit=%.4f rearrange=%.4f drift_loop=%.4f treefree=%.4f boxwrap=%.4f barrier=%.4f total=%.4f\n",
@@ -774,7 +774,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     t1 = my_second();
 
     PRINT_STATUS(" ..domain decomposition done. (took %g sec)", timediff(t0, t1));
-    CPU_Step[CPU_DOMAIN] += measure_time();
+    cpu_charge(CPU_DOMAIN, measure_time());
 
     /* Per-rank particle-type validation. A bad type must not continue into
      * peano_hilbert_order / topnode compaction / tree alloc below, so soft
@@ -805,7 +805,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
         else
           {DomainCallsSincePeanoOrder++;}
     }
-    CPU_Step[CPU_PEANO] += measure_time();
+    cpu_charge(CPU_PEANO, measure_time());
 
   LightRepartitionCount = 0; /* reset counter: top tree is fresh */
 
@@ -866,7 +866,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     /* Close the measure_time chain BEFORE this bracket's own t0. The
      * cpu_chain_sync at the end of the bracket advances the clock to its
      * t1, so without this the interval preceding t0 is charged to nobody. */
-    CPU_Step[CPU_DOMAIN] += measure_time();
+    cpu_charge(CPU_DOMAIN, measure_time());
     const double child0_light = CPU_ChildCharged;
     double t_light_start = my_second(), t_light_mergesplit=0, t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
     if((All.Ti_Current > All.TimeBegin) && (do_particle_mergesplit_key == 1))
@@ -898,7 +898,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     t_light_barrier = timediff(t_tmp2, my_second());
     const double t_light_end = my_second();
     double t_light_total = cpu_minus_children(timediff(t_light_start, t_light_end), child0_light);
-    CPU_Step[CPU_DRIFT] += t_light_total;
+    cpu_charge(CPU_DRIFT, t_light_total);
     cpu_chain_sync(t_light_end);
     PRINT_STATUS("  domain_light drift breakdown: mergesplit=%.4f rearrange=%.4f drift_loop=%.4f boxwrap=%.4f barrier=%.4f total=%.4f",
                  t_light_mergesplit, t_light_rearrange, t_light_drift, t_light_boxwrap, t_light_barrier, t_light_total);
@@ -1155,7 +1155,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
 
     t1 = my_second();
     PRINT_STATUS(" ..lightweight domain repartition done. (took %g sec%s)", timediff(t0, t1), kept_owners ? "; segments kept with their owners" : "");
-    CPU_Step[CPU_DOMAIN] += measure_time();
+    cpu_charge(CPU_DOMAIN, measure_time());
 
     /* update persistent keys for moved particles */
 #ifdef _OPENMP

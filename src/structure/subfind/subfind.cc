@@ -129,7 +129,7 @@ void subfind(int num)
 	      if(ThisTask == 0)
 		printf("Tree construction for species %d (%lld).\n", j, countall[j]);
 
-	      CPU_Step[CPU_FOF] += measure_time();
+	      cpu_charge(CPU_FOF, measure_time());
 
 	      force_treebuild(count[j], d);
 
@@ -145,7 +145,7 @@ void subfind(int num)
 	      if(ThisTask == 0)
 		printf("Tree construction.\n");
 
-	      CPU_Step[CPU_FOF] += measure_time();
+	      cpu_charge(CPU_FOF, measure_time());
 
 	      subfind_build_whole_tree("split-type densities");
 
@@ -190,7 +190,7 @@ void subfind(int num)
 	  if(ThisTask == 0)
 	    printf("Tree construction for species %d (%lld).\n", j, countall[j]);
 
-	  CPU_Step[CPU_FOF] += measure_time();
+	  cpu_charge(CPU_FOF, measure_time());
 
 	  force_treebuild(count[j], d);
 
@@ -246,7 +246,7 @@ void subfind(int num)
   if(ThisTask == 0)
     printf("Tree construction.\n");
 
-  CPU_Step[CPU_FOF] += measure_time();
+  cpu_charge(CPU_FOF, measure_time());
 
   subfind_build_whole_tree("dark matter densities");
 
@@ -428,7 +428,7 @@ void subfind(int num)
   /* GrNr is -1 here, so this is whole-system work and keeps the outer sizing. */
   domain_free_trick(All.DomainSegmentsPerRank);
 
-  CPU_Step[CPU_FOF] += measure_time();
+  cpu_charge(CPU_FOF, measure_time());
 
 
 #ifdef FOF_DENSITY_SPLIT_TYPES
@@ -494,7 +494,7 @@ void subfind(int num)
 
   myfree(SubGroup);
 
-  CPU_Step[CPU_FOF] += measure_time();
+  cpu_charge(CPU_FOF, measure_time());
 }
 
 

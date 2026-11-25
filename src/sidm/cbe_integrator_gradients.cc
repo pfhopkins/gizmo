@@ -430,7 +430,7 @@ const nlr_external_csr *cbe_corridor_list(int subgroup)
  * ========================================================================== */
 void CBEGrad_gradient_calc(void)
 {
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
     const double t00 = my_second();  const double child0_span = CPU_ChildCharged;
     PRINT_STATUS(" ..calculating CBE basis-moment gradients\n");
 
@@ -445,7 +445,7 @@ void CBEGrad_gradient_calc(void)
 #endif
     if(part.masks.empty()) {
         { const double t_end = my_second();
-          CPU_Step[CPU_AGSDENSMISC] += cpu_minus_children(timediff(t00, t_end), child0_span);
+          cpu_charge(CPU_AGSDENSMISC, cpu_minus_children(timediff(t00, t_end), child0_span));
           cpu_chain_sync(t_end); }
         return;   /* no AGSForce-active particles anywhere */
     }
@@ -502,7 +502,7 @@ void CBEGrad_gradient_calc(void)
     }
 
     { const double t_end = my_second();
-          CPU_Step[CPU_AGSDENSMISC] += cpu_minus_children(timediff(t00, t_end), child0_span);
+          cpu_charge(CPU_AGSDENSMISC, cpu_minus_children(timediff(t00, t_end), child0_span));
           cpu_chain_sync(t_end); }
 }
 

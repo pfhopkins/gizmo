@@ -189,7 +189,7 @@ void rt_source_injection(void)
     rt_source_injection_apply_grain_rdi_boundary_fixup();
 #endif
 
-    CPU_Step[CPU_RTNONFLUXOPS] += measure_time(); /* collect timings and reset clock for next timing */
+    cpu_charge(CPU_RTNONFLUXOPS, measure_time()); /* collect timings and reset clock for next timing */
 }
 
 

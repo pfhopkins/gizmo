@@ -38,7 +38,7 @@ static double dt_displacement = 0;
  */
 void find_timesteps(void)
 {
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
 
     int i, bin, binold, prev, next;
     integertime ti_step, ti_step_old, ti_min, ti_stepmax, ti_max;
@@ -360,7 +360,7 @@ void find_timesteps(void)
      * cumulative counts so any per-particle collective would deadlock. */
     gizmo_collect_controlled_stop();
 
-    CPU_Step[CPU_FIND_TIMESTEPS] += measure_time();
+    cpu_charge(CPU_FIND_TIMESTEPS, measure_time());
 }
 
 

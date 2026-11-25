@@ -171,11 +171,14 @@ inline constexpr bool gizmo_gpu_default_space_is_host()
  * not carry on); query() reports NOT_READY, COMPLETE, or ERROR -- any backend status other than those two,
  * which is how a fault in the device work behind it surfaces (it never turns into an endless wait).  A
  * not-ready answer is cleared from the runtime's last-error state, so later launch checks do not read it as
- * a failure.  An event is recorded again only after its previous completion was seen.  Created once and
- * kept; destroyed before Kokkos is finalized.
+ * a failure.  Created once and kept; destroyed before Kokkos is finalized.
+ * An event made with create_timed() also carries a timestamp, for the optional cpu.txt timing breakdown only:
+ * elapsed_seconds(start, stop) is the device time between two such events once both are complete (negative if the
+ * runtime refused).  error_pending() says whether the runtime holds an error it has not yet reported, without clearing it:
+ * the timing code never clears an error, it stops the run on any failure of its own calls.
  *
- * This is the one place GIZMO calls the CUDA / HIP runtime for stream completion: Kokkos has no portable
- * query of whether an instance's work has finished, only a blocking fence.  It covers completion only --
+ * This is the one place GIZMO calls the CUDA / HIP runtime directly: Kokkos has no portable query of whether an
+ * instance's work has finished, only a blocking fence.  It covers completion and that optional timing --
  * allocation, copies and kernels still go through Kokkos.  Host backends run every launch to completion
  * before it returns, so there an event is always COMPLETE. */
 [[noreturn]] void gizmo_fatal_hard_exit_reviewed(int code, const char *reason, const char *file, int line, const char *func);
@@ -207,6 +210,11 @@ struct GizmoGpuEvent {
         return (last == cudaSuccess || last == cudaErrorNotReady) ? GIZMO_GPU_EVENT_NOT_READY : GIZMO_GPU_EVENT_ERROR;
     }
     void destroy() {if(event) {cudaEventDestroy(event); event = nullptr;}}
+    int create_timed() {return (cudaEventCreate(&event) == cudaSuccess) ? 0 : 1;}
+    static int error_pending() {return cudaPeekAtLastError() != cudaSuccess;}
+    static double elapsed_seconds(const GizmoGpuEvent &start, const GizmoGpuEvent &stop) {
+        float ms = 0; return (cudaEventElapsedTime(&ms, start.event, stop.event) == cudaSuccess) ? 1.0e-3 * ms : -1.0;
+    }
 #elif defined(KOKKOS_ENABLE_HIP)
     hipEvent_t event = nullptr;
     int create() {return (hipEventCreateWithFlags(&event, hipEventDisableTiming) == hipSuccess) ? 0 : 1;}
@@ -219,13 +227,26 @@ struct GizmoGpuEvent {
         return (last == hipSuccess || last == hipErrorNotReady) ? GIZMO_GPU_EVENT_NOT_READY : GIZMO_GPU_EVENT_ERROR;
     }
     void destroy() {if(event) {(void) hipEventDestroy(event); event = nullptr;}}
+    int create_timed() {return (hipEventCreate(&event) == hipSuccess) ? 0 : 1;}
+    static int error_pending() {return hipPeekAtLastError() != hipSuccess;}
+    static double elapsed_seconds(const GizmoGpuEvent &start, const GizmoGpuEvent &stop) {
+        float ms = 0; return (hipEventElapsedTime(&ms, start.event, stop.event) == hipSuccess) ? 1.0e-3 * ms : -1.0;
+    }
 #else
     int create() {return 0;}
     int record(const Kokkos::DefaultExecutionSpace &) {return 0;}
     int query() const {return GIZMO_GPU_EVENT_COMPLETE;}
     void destroy() {}
+    int create_timed() {return 0;}
+    static int error_pending() {return 0;}
+    static double elapsed_seconds(const GizmoGpuEvent &, const GizmoGpuEvent &) {return 0.0;}
 #endif
 };
+
+/* OUTPUT_TIMING_BREAKDOWN (system/timing_breakdown.cc) times each device kernel with a pair of timed events in the
+ * queue of the instance that ran it.  The default instance is known to it; any other instance a module creates is
+ * registered here when it is made, or its kernels are counted but not timed. */
+void timing_breakdown_register_instance(const Kokkos::DefaultExecutionSpace &space);   /* a no-op without the flag */
 
 
 #endif /* GIZMO_GPU_DISPATCH_TEMPLATES_H */

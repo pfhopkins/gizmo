@@ -132,7 +132,7 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
 
 void run(void)
 {
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
 
     if(RestartFlag != 1)		/* need to compute forces at initial synchronization time, unless we restarted from restart files */
     {
@@ -220,7 +220,7 @@ void run(void)
     while(1)			/* main timestep iteration loop */
     {
         compute_statistics();	/* regular statistics outputs (like total energy) */
-        CPU_Step[CPU_LOGMSG] += measure_time();
+        cpu_charge(CPU_LOGMSG, measure_time());
 
         write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
 
@@ -307,13 +307,13 @@ void run(void)
            next step reaches this rank's own tree and tile indexes at once, but the other ranks' copies only
            here: a loop later in that same step decides its exports against the older bound. */
         gravity_flush_pending_motion_bounds();
-        CPU_Step[CPU_KICKS] += measure_time();
+        cpu_charge(CPU_KICKS, measure_time());
 
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
                                              * If needed, this function will also write an output file
                                              * at the desired time.
                                              */
-        CPU_Step[CPU_DRIFT] += measure_time();
+        cpu_charge(CPU_DRIFT, measure_time());
         {   /* new sync point: the gas SIDX is kept across the drift (every walk
              * reads it at the time of the search); the all-types SIDX is
              * released. domain_decomp boundary below triggers the full rebuild
@@ -332,10 +332,10 @@ void run(void)
                              cpu_minus_children(timediff(t_sidx_start, my_second()), child0_sidx));
         }
         output_log_messages();	/* write some info to log-files */
-        CPU_Step[CPU_LOGMSG] += measure_time();
+        cpu_charge(CPU_LOGMSG, measure_time());
 
         set_non_standard_physics_for_current_time();	/* update auxiliary physics for current time */
-        CPU_Step[CPU_SNAPSHOT] += measure_time();   /* dominated by external table reads */
+        cpu_charge(CPU_SNAPSHOT, measure_time());   /* dominated by external table reads */
 
         int reconstructed_tree = 0;
 #if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(GRAVITY_ACCURATE_FEWBODY_INTEGRATION) || defined(HERMITE_INTEGRATION)
@@ -471,11 +471,11 @@ void run(void)
         /* flag particles which will be feedback centers, so kernel lengths can be computed for them */
 #ifdef GALSF_FB_MECHANICAL
         determine_where_SNe_occur(); // for mechanical FB models
-        CPU_Step[CPU_SNIIHEATING] += measure_time();
+        cpu_charge(CPU_SNIIHEATING, measure_time());
 #endif
 #ifdef GALSF_FB_THERMAL
         determine_where_addthermalFB_events_occur(); // (same, but for simple thermal feedback models)
-        CPU_Step[CPU_SNIIHEATING] += measure_time();
+        cpu_charge(CPU_SNIIHEATING, measure_time());
 #endif
 
 #if !(defined(GENERAL_RELATIVITY) && defined(GR_TEST_PARTICLE)) /* GR geodesic test particles: no hydro */
@@ -483,11 +483,11 @@ void run(void)
 #endif
 #ifdef DM_HEATING
         apply_dm_heating();  /* add continuous DM annihilation+decay heating into DtInternalEnergy (after hydro zeros it, before transport/cooling consumes it) */
-        CPU_Step[CPU_COOLINGSFR] += measure_time();
+        cpu_charge(CPU_COOLINGSFR, measure_time());
 #endif
 
         do_second_halfstep_kick();	/* this does the half-step kick at the end of the timestep */
-        CPU_Step[CPU_KICKS] += measure_time();
+        cpu_charge(CPU_KICKS, measure_time());
 
 #if defined(GALSF) && defined(GALSF_FB_MECHANICAL)
         /* mechanical feedback after the closing kick: a step ending here closes with the forces of the gas it was taken in, not with a
@@ -500,7 +500,7 @@ void run(void)
         if(mechanical_fb_this_step)
         {
             mechanical_fb_calc_toplevel();
-            gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); CPU_Step[CPU_SNIIHEATING] += measure_time();
+            gizmo_exit_bad_stop_if_requested("run:after_mechanical_fb"); cpu_charge(CPU_SNIIHEATING, measure_time());
         }
 #endif
 
@@ -508,12 +508,12 @@ void run(void)
 
 #ifdef HERMITE_INTEGRATION // we do a prediction step using the saved "old" pos, accel and jerk from the beginning of the timestep. Then we recompute accel and jerk and do the correction
         do_hermite_prediction();
-        CPU_Step[CPU_KICKS] += measure_time();
+        cpu_charge(CPU_KICKS, measure_time());
         HermiteOnlyFlag = 2;
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
         do_hermite_correction();
-        CPU_Step[CPU_KICKS] += measure_time();
+        cpu_charge(CPU_KICKS, measure_time());
 #endif
         /* Check whether we need to interrupt the run */
         int stopflag = 0;
@@ -630,7 +630,7 @@ void calculate_non_standard_physics(void)
 
 
 #ifdef SINK_PARTICLES /***** sink accretion and feedback *****/
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
 #ifdef GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW
     if(All.Dt_Since_LastFBCalc_Gyr >= All.Dt_Min_Between_FBCalc_Gyr)
 #endif
@@ -652,7 +652,7 @@ void calculate_non_standard_physics(void)
         }}
 #endif
 #endif
-        gizmo_exit_bad_stop_if_requested("run:after_sinks"); CPU_Step[CPU_SINKS] += measure_time();
+        gizmo_exit_bad_stop_if_requested("run:after_sinks"); cpu_charge(CPU_SINKS, measure_time());
     }
 #endif
 
@@ -691,7 +691,7 @@ void calculate_non_standard_physics(void)
        sub-step; hoisted because rt_source_injection's neighbor loop runs its
        own ghost import + cleanup, which must not touch the topology the
        subcycle loop consumes). Non-subcycle builds: unchanged. */
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
 #if defined(RT_SOURCE_INJECTION)
     {
         int flag; flag=1;
@@ -711,7 +711,7 @@ void calculate_non_standard_physics(void)
 #endif
 #endif
 #endif
-    gizmo_exit_bad_stop_if_requested("run:after_rt_nonflux"); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_rt_nonflux"); cpu_charge(CPU_RTNONFLUXOPS, measure_time());
 #endif // RADTRANSFER block
 
 #ifdef TRANSPORT_SUBCYCLE
@@ -748,7 +748,7 @@ void calculate_non_standard_physics(void)
         }
 #endif
     }
-    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); cpu_charge(CPU_COOLINGSFR, measure_time());
 #endif
 
 #ifdef TRANSPORT_SUBCYCLE
@@ -771,24 +771,24 @@ void calculate_non_standard_physics(void)
 
 #ifdef NUCLEAR_NETWORK
     nuclear_parent_routine(); // nuclear burning (operator-split, before cooling; fixup is done inside on compact arrays) //
-    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); cpu_charge(CPU_COOLINGSFR, measure_time());
 #endif
 
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
-    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); cpu_charge(CPU_COOLINGSFR, measure_time()); // finish time calc for SFR+cooling
 #endif
 #ifdef COOL_DISK_BETA
     disk_betacool_parent_routine(); // simple beta-cooling for disk problems (mutually exclusive with COOLING) //
-    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); cpu_charge(CPU_COOLINGSFR, measure_time());
 #endif
 #ifdef CBE_INTEGRATOR_COLLISIONS
     cbe_collision_parent_routine(); // operator-split intra-cell CBE collision operators (relax basis DF toward local Maxwellian, etc.) //
-    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); cpu_charge(CPU_COOLINGSFR, measure_time());
 #endif
 #ifdef COOL_PLANET_HEATING
     planet_heating_parent_routine(); // radiogenic decay + accretional background heating for solid bodies //
-    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); cpu_charge(CPU_COOLINGSFR, measure_time());
 #endif
 
 
@@ -797,7 +797,7 @@ void calculate_non_standard_physics(void)
 #endif
 #ifdef GALSF /* star/sink particle formation */
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
-    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); cpu_charge(CPU_COOLINGSFR, measure_time()); // finish time calc for SFR+cooling
 #endif
 
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
@@ -899,7 +899,7 @@ void find_next_sync_point_and_drift(void)
         set_cosmo_factors_for_current_time();
 
         move_particles(All.Ti_nextoutput);
-        gizmo_exit_bad_stop_if_requested("run:after_drift"); CPU_Step[CPU_DRIFT] += measure_time();
+        gizmo_exit_bad_stop_if_requested("run:after_drift"); cpu_charge(CPU_DRIFT, measure_time());
 
         /* Potential is computed by the unified gravity tree walk
          * (gravtree.cc with EVALPOTENTIAL).  COMPUTE_POTENTIAL_ENERGY and
@@ -1273,10 +1273,24 @@ static int g_cpu_log_force_print = 0;
 extern "C" void gizmo_cpu_log_request_force_print(void) { g_cpu_log_force_print = 1; }
 extern "C" int  gizmo_cpu_log_consume_force_print(void) { int v = g_cpu_log_force_print; g_cpu_log_force_print = 0; return v; }
 
+#ifdef OUTPUT_TIMING_BREAKDOWN
+/* Rank 0: per-task means of the breakdown of each bucket since this run started (gpu, wait, omp, launches,
+ * fences, and the bucket's wall time as the last field).  Not in the restart files, unlike All.CPU_Sum. */
+static double tb_sum[CPU_PARTS][TIMING_BREAKDOWN_FIELDS + 1];
+#endif
+
 void write_cpu_log(void)
 {
   double max_CPU_Step[CPU_PARTS], avg_CPU_Step[CPU_PARTS], t0, t1, tsum; int i; t0=0; t1=0; tsum=0;
-  CPU_Step[CPU_MISC] += measure_time();
+  cpu_charge(CPU_MISC, measure_time());
+#ifdef OUTPUT_TIMING_BREAKDOWN
+  static double tb_step_avg[CPU_PARTS][TIMING_BREAKDOWN_FIELDS];
+  {
+    double tb_step_local[CPU_PARTS][TIMING_BREAKDOWN_FIELDS];
+    timing_breakdown_end_step(&tb_step_local[0][0]);
+    MPI_Reduce(tb_step_local, tb_step_avg, CPU_PARTS * TIMING_BREAKDOWN_FIELDS, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  }
+#endif
 
   for(i = 1, CPU_Step[0] = 0; i < CPU_PARTS; i++) {CPU_Step[0] += CPU_Step[i];}
 
@@ -1300,7 +1314,7 @@ void write_cpu_log(void)
           {
             printf("WARNING: timing ledger lost %.2f s (%.0f%% of the step) on task %d: "
                    "wall time was charged to no bucket. A routine in the step loop is "
-                   "missing its CPU_Step[...] += measure_time(), or a timing bracket "
+                   "missing its cpu_charge(..., measure_time()), or a timing bracket "
                    "advanced the chain past an uncharged interval.\n",
                    loss_max.v, 100.0 * loss_max.v / elapsed, loss_max.r);
             fflush(stdout);
@@ -1350,6 +1364,13 @@ void write_cpu_log(void)
     if(ThisTask == 0)
     {
         for(i = 0; i < CPU_PARTS; i++) {All.CPU_Sum[i] += avg_CPU_Step[i];}
+#ifdef OUTPUT_TIMING_BREAKDOWN
+        for(i = 0; i < CPU_PARTS; i++)
+        {
+            for(int f = 0; f < TIMING_BREAKDOWN_FIELDS; f++) {tb_step_avg[i][f] /= NTask; tb_sum[i][f] += tb_step_avg[i][f];}
+            tb_sum[i][TIMING_BREAKDOWN_FIELDS] += avg_CPU_Step[i];
+        }
+#endif
     }
 
 #ifndef OUTPUT_ADDITIONAL_RUNINFO
@@ -1365,168 +1386,114 @@ void write_cpu_log(void)
     {
       fprintf(FdCPU, "Step %lld, Time: %.16g, CPUs: %d\n",(long long) All.NumCurrentTiStep, All.Time, NTask);
       fprintf(FdCPU, "Nactive=%lld, Imbal(Max/Mean)=%g \n", (long long) GlobNumForceUpdate, (max_CPU_Step[0]/(MIN_REAL_NUMBER + avg_CPU_Step[0])-1.)*NTask+1.);
-      fprintf(FdCPU,
-	      "total         %10.2f  %5.1f%%\n"
-	      "tree+gravity  %10.2f  %5.1f%%\n"
-	      "   treebuild  %10.2f  %5.1f%%\n"
-	      "   treewalk   %10.2f  %5.1f%%\n"
-	      "   treeimbal  %10.2f  %5.1f%%\n"
-	      "   treemisc   %10.2f  %5.1f%%\n"
+      /* One line per row: its label and the buckets it sums, in this order (so a row prints the same sum it
+       * always has).  The total is CPU_ALL, the sum of every bucket. */
+      static const struct {const char *label; int bucket[6];} rows[] = {
+          {"total",         {CPU_ALL, -1}},
+          {"tree+gravity",  {CPU_TREEWALK1, CPU_TREEWAIT2, CPU_TREEBUILD, CPU_TREEMISC, -1}},
+          {"   treebuild",  {CPU_TREEBUILD, -1}},
+          {"   treewalk",   {CPU_TREEWALK1, -1}},
+          {"   treeimbal",  {CPU_TREEWAIT2, -1}},
+          {"   treemisc",   {CPU_TREEMISC, -1}},
 #ifdef PMGRID
-          "pm-gravity    %10.2f  %5.1f%%\n"
+          {"pm-gravity",    {CPU_MESH, -1}},
 #endif
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-	      "ags-nongas    %10.2f  %5.1f%%\n"
-	      "   agsdensity %10.2f  %5.1f%%\n"
-	      "   agscomm    %10.2f  %5.1f%%\n"
-	      "   agsimbal   %10.2f  %5.1f%%\n"
-          "   agsmisc    %10.2f  %5.1f%%\n"
+          {"ags-nongas",    {CPU_AGSDENSCOMPUTE, CPU_AGSDENSWAIT, CPU_AGSDENSCOMM, CPU_AGSDENSMISC, -1}},
+          {"   agsdensity", {CPU_AGSDENSCOMPUTE, -1}},
+          {"   agscomm",    {CPU_AGSDENSCOMM, -1}},
+          {"   agsimbal",   {CPU_AGSDENSWAIT, -1}},
+          {"   agsmisc",    {CPU_AGSDENSMISC, -1}},
 #endif
 #ifdef TURB_DIFF_DYNAMIC
-          "dyndiff       %10.2f  %5.1f%%\n"
-          "   compute    %10.2f  %5.1f%%\n"
-          "   misc       %10.2f  %5.1f%%\n"
-          "velsmooth     %10.2f  %5.1f%%\n"
-          "   compute    %10.2f  %5.1f%%\n"
+          {"dyndiff",       {CPU_DYNDIFFCOMPUTE, CPU_DYNDIFFWAIT, CPU_DYNDIFFCOMM, CPU_DYNDIFFMISC, -1}},
+          {"   compute",    {CPU_DYNDIFFCOMPUTE, -1}},
+          {"   misc",       {CPU_DYNDIFFMISC, -1}},
+          {"velsmooth",     {CPU_IMPROVDIFFCOMPUTE, CPU_IMPROVDIFFWAIT, CPU_IMPROVDIFFCOMM, CPU_IMPROVDIFFMISC, -1}},
+          {"   compute",    {CPU_IMPROVDIFFCOMPUTE, -1}},
 #endif
-	      "hydro/fluids  %10.2f  %5.1f%%\n"
-	      "   density    %10.2f  %5.1f%%\n"
-	      "   gradients  %10.2f  %5.1f%%\n"
-	      "   hydro_frc  %10.2f  %5.1f%%\n"
-	      "   hmaxupdate %10.2f  %5.1f%%\n"
-          "   misc_hydro %10.2f  %5.1f%%\n"
+          {"hydro/fluids",  {CPU_DENSCOMPUTE, CPU_DENSWAIT, CPU_DENSMISC, CPU_HYDCOMPUTE, CPU_TREEHMAXUPDATE, -1}},
+          {"   density",    {CPU_DENSCOMPUTE, -1}},
+          {"   gradients",  {CPU_DENSWAIT, -1}},
+          {"   hydro_frc",  {CPU_HYDCOMPUTE, -1}},
+          {"   hmaxupdate", {CPU_TREEHMAXUPDATE, -1}},
+          {"   misc_hydro", {CPU_DENSMISC, -1}},
 #ifdef MHD_MODIFIED_GRADIENT
-          "mhd_mg_solve  %10.2f  %5.1f%%\n"
+          {"mhd_mg_solve",  {CPU_MHD_MG, -1}},
 #endif
-          "ghost import  %10.2f  %5.1f%%\n"
-          "   gi_loops   %10.2f  %5.1f%%\n"
-          "   gi_corridor%10.2f  %5.1f%%\n"
-          "ngb build     %10.2f  %5.1f%%\n"
-          "pair kernel   %10.2f  %5.1f%%\n"
-	      "domain        %10.2f  %5.1f%%\n"
-          "peano         %10.2f  %5.1f%%\n"
+          {"ghost import",  {CPU_GHOSTIMPORT, CPU_GHOSTIMPORT_SYMM, -1}},
+          {"   gi_loops",   {CPU_GHOSTIMPORT, -1}},
+          {"   gi_corridor",{CPU_GHOSTIMPORT_SYMM, -1}},
+          {"ngb build",     {CPU_NGB_BUILD, -1}},
+          {"pair kernel",   {CPU_PAIR_KERNEL, -1}},
+          {"domain",        {CPU_DOMAIN, -1}},
+          {"peano",         {CPU_PEANO, -1}},
 #ifdef FOF
-          "fof/subfind   %10.2f  %5.1f%%\n"
+          {"fof/subfind",   {CPU_FOF, -1}},
 #endif
-          "drift/splitmg %10.2f  %5.1f%%\n"
-          "kicks         %10.2f  %5.1f%%\n"
-          "log/stats     %10.2f  %5.1f%%\n"
-	      "find_timestep %10.2f  %5.1f%%\n"
-	      "io/snapshots  %10.2f  %5.1f%%\n"
+          {"drift/splitmg", {CPU_DRIFT, -1}},
+          {"kicks",         {CPU_KICKS, -1}},
+          {"log/stats",     {CPU_LOGMSG, -1}},
+          {"find_timestep", {CPU_FIND_TIMESTEPS, -1}},
+          {"io/snapshots",  {CPU_SNAPSHOT, -1}},
 #ifdef COOLING
-	      "cooling+chem  %10.2f  %5.1f%%\n"
+          {"cooling+chem",  {CPU_COOLINGSFR, -1}},
 #endif
 #ifdef CHIMES
-	      " coolchmimbal %10.2f  %5.1f%%\n"
+          {" coolchmimbal", {CPU_COOLSFRIMBAL, -1}},
 #endif
 #ifdef SINK_PARTICLES
-	      "sinks         %10.2f  %5.1f%%\n"
-	      "   sink_env   %10.2f  %5.1f%%\n"
-	      "   sink_swk   %10.2f  %5.1f%%\n"
+          {"sinks",         {CPU_SINKS, CPU_SINK_ENV, CPU_SINK_FEEDSWK, -1}},
+          {"   sink_env",   {CPU_SINK_ENV, -1}},
+          {"   sink_swk",   {CPU_SINK_FEEDSWK, -1}},
 #endif
 #ifdef GRAIN_FLUID
-          "grains        %10.2f  %5.1f%%\n"
+          {"grains",        {CPU_DRAGFORCE, -1}},
 #endif
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
-          "mechanical    %10.2f  %5.1f%%\n"
+          {"mechanical",    {CPU_SNIIHEATING, -1}},
 #endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
-          "hII_fb_loop   %10.2f  %5.1f%%\n"
+          {"hII_fb_loop",   {CPU_HIIHEATING, -1}},
 #endif
 #if defined(GALSF_FB_FIRE_RT_LOCALRP)
-          "localwindkik  %10.2f  %5.1f%%\n"
+          {"localwindkik",  {CPU_LOCALWIND, -1}},
 #endif
 #if defined(RADTRANSFER)
-          "rt_nonfluxops %10.2f  %5.1f%%\n"
+          {"rt_nonfluxops", {CPU_RTNONFLUXOPS, -1}},
 #endif
-          "sidx refresh  %10.2f  %5.1f%%\n"
-          "tree update   %10.2f  %5.1f%%\n"
-          "misc          %10.2f  %5.1f%%\n",
-
-    All.CPU_Sum[CPU_ALL], 100.0,
-    All.CPU_Sum[CPU_TREEWALK1] + All.CPU_Sum[CPU_TREEWAIT2] + All.CPU_Sum[CPU_TREEBUILD] + All.CPU_Sum[CPU_TREEMISC],
-    (All.CPU_Sum[CPU_TREEWALK1] + All.CPU_Sum[CPU_TREEWAIT2] + All.CPU_Sum[CPU_TREEBUILD]
-              + All.CPU_Sum[CPU_TREEMISC]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_TREEBUILD], (All.CPU_Sum[CPU_TREEBUILD]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_TREEWALK1], (All.CPU_Sum[CPU_TREEWALK1]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_TREEWAIT2], (All.CPU_Sum[CPU_TREEWAIT2]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_TREEMISC], (All.CPU_Sum[CPU_TREEMISC]) / All.CPU_Sum[CPU_ALL] * 100,
-#ifdef PMGRID
-    All.CPU_Sum[CPU_MESH], (All.CPU_Sum[CPU_MESH]) / All.CPU_Sum[CPU_ALL] * 100,
+          {"sidx refresh",  {CPU_SIDX_REFRESH, -1}},
+          {"tree update",   {CPU_FORCE_UPDATE_TREE, -1}},
+          {"misc",          {CPU_MISC, -1}},
+      };
+#ifdef OUTPUT_TIMING_BREAKDOWN
+      {
+        double step_total[TIMING_BREAKDOWN_FIELDS] = {0};
+        for(i = 1; i < CPU_PARTS; i++) {for(int f = 0; f < TIMING_BREAKDOWN_FIELDS; f++) {step_total[f] += tb_step_avg[i][f];}}
+        fprintf(FdCPU, "this step, mean per task: wall %.3f s, gpu_kern %.3f s, gpu_wait %.3f s, host_omp %.3f s, launches %.0f, fences %.0f\n",
+                avg_CPU_Step[0], step_total[TIMING_BREAKDOWN_GPU], step_total[TIMING_BREAKDOWN_WAIT], step_total[TIMING_BREAKDOWN_OMP],
+                step_total[TIMING_BREAKDOWN_LAUNCHES], step_total[TIMING_BREAKDOWN_FENCES]);
+        fprintf(FdCPU, "%-14s%10s  %6s %9s %9s %9s %9s %10s %9s   (since this run started)\n",
+                "", "wall", "", "gpu_kern", "gpu_wait", "host_omp", "host_1thr", "launches", "fences");
+      }
 #endif
-#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-    All.CPU_Sum[CPU_AGSDENSCOMPUTE] + All.CPU_Sum[CPU_AGSDENSWAIT] + All.CPU_Sum[CPU_AGSDENSCOMM] + All.CPU_Sum[CPU_AGSDENSMISC],
-              (All.CPU_Sum[CPU_AGSDENSCOMPUTE] + All.CPU_Sum[CPU_AGSDENSWAIT] + All.CPU_Sum[CPU_AGSDENSCOMM] + All.CPU_Sum[CPU_AGSDENSMISC]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_AGSDENSCOMPUTE], (All.CPU_Sum[CPU_AGSDENSCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_AGSDENSCOMM], (All.CPU_Sum[CPU_AGSDENSCOMM]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_AGSDENSWAIT], (All.CPU_Sum[CPU_AGSDENSWAIT]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_AGSDENSMISC], (All.CPU_Sum[CPU_AGSDENSMISC]) / All.CPU_Sum[CPU_ALL] * 100,
+      for(size_t r = 0; r < sizeof(rows) / sizeof(rows[0]); r++)
+      {
+          double wall = 0;
+          for(int k = 0; rows[r].bucket[k] >= 0; k++) {wall += All.CPU_Sum[rows[r].bucket[k]];}
+          fprintf(FdCPU, "%-14s%10.2f  %5.1f%%", rows[r].label, wall, (rows[r].bucket[0] == CPU_ALL) ? 100.0 : wall / All.CPU_Sum[CPU_ALL] * 100);
+#ifdef OUTPUT_TIMING_BREAKDOWN
+          double sum[TIMING_BREAKDOWN_FIELDS + 1] = {0};
+          for(int k = 0; rows[r].bucket[k] >= 0; k++)
+          {
+              const int b0 = rows[r].bucket[k], b1 = (b0 == CPU_ALL) ? CPU_PARTS : b0 + 1;   /* CPU_ALL: every bucket */
+              for(int b = (b0 == CPU_ALL) ? 1 : b0; b < b1; b++) {for(int f = 0; f <= TIMING_BREAKDOWN_FIELDS; f++) {sum[f] += tb_sum[b][f];}}
+          }
+          fprintf(FdCPU, " %9.2f %9.2f %9.2f %9.2f %10.0f %9.0f", sum[TIMING_BREAKDOWN_GPU], sum[TIMING_BREAKDOWN_WAIT], sum[TIMING_BREAKDOWN_OMP],
+                  sum[TIMING_BREAKDOWN_FIELDS] - sum[TIMING_BREAKDOWN_WAIT] - sum[TIMING_BREAKDOWN_OMP], sum[TIMING_BREAKDOWN_LAUNCHES], sum[TIMING_BREAKDOWN_FENCES]);
 #endif
-#ifdef TURB_DIFF_DYNAMIC
-    (All.CPU_Sum[CPU_DYNDIFFCOMPUTE] + All.CPU_Sum[CPU_DYNDIFFWAIT] + All.CPU_Sum[CPU_DYNDIFFCOMM] + All.CPU_Sum[CPU_DYNDIFFMISC]), (All.CPU_Sum[CPU_DYNDIFFCOMPUTE] + All.CPU_Sum[CPU_DYNDIFFWAIT] + All.CPU_Sum[CPU_DYNDIFFCOMM] + All.CPU_Sum[CPU_DYNDIFFMISC]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_DYNDIFFCOMPUTE], (All.CPU_Sum[CPU_DYNDIFFCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_DYNDIFFMISC], (All.CPU_Sum[CPU_DYNDIFFMISC]) / All.CPU_Sum[CPU_ALL] * 100,
-    (All.CPU_Sum[CPU_IMPROVDIFFCOMPUTE] + All.CPU_Sum[CPU_IMPROVDIFFWAIT] + All.CPU_Sum[CPU_IMPROVDIFFCOMM] + All.CPU_Sum[CPU_IMPROVDIFFMISC]), (All.CPU_Sum[CPU_IMPROVDIFFCOMPUTE] + All.CPU_Sum[CPU_IMPROVDIFFWAIT] + All.CPU_Sum[CPU_IMPROVDIFFCOMM] + All.CPU_Sum[CPU_IMPROVDIFFMISC]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_IMPROVDIFFCOMPUTE], (All.CPU_Sum[CPU_IMPROVDIFFCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-    All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_DENSWAIT] + All.CPU_Sum[CPU_DENSMISC]
-              + All.CPU_Sum[CPU_HYDCOMPUTE] + All.CPU_Sum[CPU_TREEHMAXUPDATE],
-    (All.CPU_Sum[CPU_DENSCOMPUTE] + All.CPU_Sum[CPU_DENSWAIT] + All.CPU_Sum[CPU_DENSMISC]
-              + All.CPU_Sum[CPU_HYDCOMPUTE] + All.CPU_Sum[CPU_TREEHMAXUPDATE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_DENSCOMPUTE], (All.CPU_Sum[CPU_DENSCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_DENSWAIT], (All.CPU_Sum[CPU_DENSWAIT]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_HYDCOMPUTE], (All.CPU_Sum[CPU_HYDCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_TREEHMAXUPDATE], (All.CPU_Sum[CPU_TREEHMAXUPDATE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_DENSMISC], (All.CPU_Sum[CPU_DENSMISC]) / All.CPU_Sum[CPU_ALL] * 100,
-#ifdef MHD_MODIFIED_GRADIENT
-    All.CPU_Sum[CPU_MHD_MG], (All.CPU_Sum[CPU_MHD_MG]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-    All.CPU_Sum[CPU_GHOSTIMPORT] + All.CPU_Sum[CPU_GHOSTIMPORT_SYMM],
-              (All.CPU_Sum[CPU_GHOSTIMPORT] + All.CPU_Sum[CPU_GHOSTIMPORT_SYMM]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_GHOSTIMPORT], (All.CPU_Sum[CPU_GHOSTIMPORT]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_GHOSTIMPORT_SYMM], (All.CPU_Sum[CPU_GHOSTIMPORT_SYMM]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_NGB_BUILD], (All.CPU_Sum[CPU_NGB_BUILD]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_PAIR_KERNEL], (All.CPU_Sum[CPU_PAIR_KERNEL]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_DOMAIN], (All.CPU_Sum[CPU_DOMAIN]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_PEANO], (All.CPU_Sum[CPU_PEANO]) / All.CPU_Sum[CPU_ALL] * 100,
-#ifdef FOF
-    All.CPU_Sum[CPU_FOF], (All.CPU_Sum[CPU_FOF]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-    All.CPU_Sum[CPU_DRIFT], (All.CPU_Sum[CPU_DRIFT]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_KICKS], (All.CPU_Sum[CPU_KICKS]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_LOGMSG], (All.CPU_Sum[CPU_LOGMSG]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_FIND_TIMESTEPS], (All.CPU_Sum[CPU_FIND_TIMESTEPS]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_SNAPSHOT], (All.CPU_Sum[CPU_SNAPSHOT]) / All.CPU_Sum[CPU_ALL] * 100,
-#ifdef COOLING
-    All.CPU_Sum[CPU_COOLINGSFR], (All.CPU_Sum[CPU_COOLINGSFR]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-#ifdef CHIMES
-    All.CPU_Sum[CPU_COOLSFRIMBAL], (All.CPU_Sum[CPU_COOLSFRIMBAL]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-#ifdef SINK_PARTICLES
-    All.CPU_Sum[CPU_SINKS] + All.CPU_Sum[CPU_SINK_ENV] + All.CPU_Sum[CPU_SINK_FEEDSWK],
-              (All.CPU_Sum[CPU_SINKS] + All.CPU_Sum[CPU_SINK_ENV] + All.CPU_Sum[CPU_SINK_FEEDSWK]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_SINK_ENV], (All.CPU_Sum[CPU_SINK_ENV]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_SINK_FEEDSWK], (All.CPU_Sum[CPU_SINK_FEEDSWK]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-#ifdef GRAIN_FLUID
-    All.CPU_Sum[CPU_DRAGFORCE], (All.CPU_Sum[CPU_DRAGFORCE]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-#if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
-    All.CPU_Sum[CPU_SNIIHEATING], (All.CPU_Sum[CPU_SNIIHEATING]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-#if defined(GALSF_FB_FIRE_RT_HIIHEATING)
-    All.CPU_Sum[CPU_HIIHEATING], (All.CPU_Sum[CPU_HIIHEATING]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-#if defined(GALSF_FB_FIRE_RT_LOCALRP)
-    All.CPU_Sum[CPU_LOCALWIND], (All.CPU_Sum[CPU_LOCALWIND]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-#if defined(RADTRANSFER)
-    All.CPU_Sum[CPU_RTNONFLUXOPS], (All.CPU_Sum[CPU_RTNONFLUXOPS]) / All.CPU_Sum[CPU_ALL] * 100,
-#endif
-    All.CPU_Sum[CPU_SIDX_REFRESH], (All.CPU_Sum[CPU_SIDX_REFRESH]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_FORCE_UPDATE_TREE], (All.CPU_Sum[CPU_FORCE_UPDATE_TREE]) / All.CPU_Sum[CPU_ALL] * 100,
-    All.CPU_Sum[CPU_MISC], (All.CPU_Sum[CPU_MISC]) / All.CPU_Sum[CPU_ALL] * 100);
+          fprintf(FdCPU, "\n");
+      }
 
     fprintf(FdCPU, "\n");
     fflush(FdCPU);

@@ -209,6 +209,10 @@ static int repair_coincident_pair(int iu, int iv, int blk_lo, int blk_hi)
     double wu = (mtot > 0) ? (mv / mtot) : 0.5, wv = (mtot > 0) ? (mu / mtot) : 0.5;
     double old0 = P[iu].Pos[0], old1 = P[iu].Pos[1], old2 = P[iu].Pos[2];
     for(int k = 0; k < 3; k++) {P[iu].Pos[k] += delta * wu * n[k]; P[iv].Pos[k] -= delta * wv * n[k];}
+#ifdef GENERAL_RELATIVITY
+    if(P[iu].Type == 0) {set_metric_coefficients(P[iu].Pos, &(CellP[iu].gr));} /* the metric at the new positions */
+    if(P[iv].Type == 0) {set_metric_coefficients(P[iv].Pos, &(CellP[iv].gr));}
+#endif
 
     printf("Repaired coincident pair: IDs %llu and %llu at (%.17g, %.17g, %.17g) separated by %.6g "
            "(%s scale %.6g) -> (%.17g, %.17g, %.17g) and (%.17g, %.17g, %.17g)\n",

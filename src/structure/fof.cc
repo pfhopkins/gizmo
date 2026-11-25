@@ -437,7 +437,7 @@ void fof_fof(int num)
       printf("\nBegin to compute FoF group catalogues...  (presently allocated=%g MB)\n", AllocatedBytes / (1024.0 * 1024.0));
     }
 
-  CPU_Step[CPU_MISC] += measure_time();
+  cpu_charge(CPU_MISC, measure_time());
 
 
   for(i = 0, ndm = 0, mass = 0; i < NumPart; i++)
@@ -500,7 +500,7 @@ void fof_fof(int num)
 
   MinIDOwner = (MyIDType *) mymalloc("MinIDOwner", NumPart * sizeof(MyIDType));
 
-  CPU_Step[CPU_FOF] += measure_time();
+  cpu_charge(CPU_FOF, measure_time());
 
   if(ThisTask == 0)
     printf("Modern FOF neighbor-list construction.\n");
@@ -679,7 +679,7 @@ void fof_fof(int num)
 #endif
 #endif
 
-  CPU_Step[CPU_FOF] += measure_time();
+  cpu_charge(CPU_FOF, measure_time());
 
   if(num >= 0)
     {
@@ -697,7 +697,7 @@ void fof_fof(int num)
 
   PRINT_STATUS("Finished computing FoF groups.  (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
 
-  CPU_Step[CPU_FOF] += measure_time();
+  cpu_charge(CPU_FOF, measure_time());
 
 }
 

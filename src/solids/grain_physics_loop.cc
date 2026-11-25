@@ -125,7 +125,7 @@ void grain_backrx_calc(void)
     if(!nlr_build_active_list(GrainBackrxSpec::is_active,
                                &active_list, &num_active,
                                "grain_backrx_active_list")) {
-        CPU_Step[CPU_DRAGFORCE] += measure_time();
+        cpu_charge(CPU_DRAGFORCE, measure_time());
         return;
     }
 
@@ -135,7 +135,7 @@ void grain_backrx_calc(void)
     run_neighbor_loop<GrainBackrxSpec>(args);
 
     nlr_free_active_list(active_list);
-    CPU_Step[CPU_DRAGFORCE] += measure_time();
+    cpu_charge(CPU_DRAGFORCE, measure_time());
 }
 
 #endif /* GRAIN_BACKREACTION */
@@ -275,7 +275,7 @@ void grain_rt_opacity_calc(void)
         }
     }
 
-    CPU_Step[CPU_DRAGFORCE] += measure_time();
+    cpu_charge(CPU_DRAGFORCE, measure_time());
 }
 
 #endif /* RT_OPACITY_FROM_EXPLICIT_GRAINS */

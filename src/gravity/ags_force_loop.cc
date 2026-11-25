@@ -416,7 +416,7 @@ static void ags_force_run_partition(AgsForcePartition &part, int via_corridor)
 
 void AGSForce_calc(void)
 {
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
     double t00_truestart = my_second(); double child0_span = CPU_ChildCharged;
     PRINT_STATUS(" ..entering AGS-Force calculation [as hydro loop for non-gas elements]\n");
 
@@ -477,7 +477,7 @@ void AGSForce_calc(void)
         cbe_corridor_end();
 #endif
         double t1 = my_second(); cpu_chain_sync(t1);
-        CPU_Step[CPU_AGSDENSMISC] += cpu_minus_children(timediff(t00_truestart, t1), child0_span);
+        cpu_charge(CPU_AGSDENSMISC, cpu_minus_children(timediff(t00_truestart, t1), child0_span));
         return;
     }
 
@@ -515,6 +515,7 @@ void AGSForce_calc(void)
     }
 #endif
     timecomp += cpu_minus_children(timediff(t0, my_second()), child0_timecomp);
+    cpu_charge(CPU_AGSDENSCOMPUTE, timecomp);   /* when the span ends, so it takes that span's device events */
 
     /* CBE post-tree-walk per-active finalization (legacy gravity/ags_rkern.cc:343-345).
        Active set is exactly ActiveParticleList — no extra gating; matches legacy. */
@@ -524,10 +525,9 @@ void AGSForce_calc(void)
 
     double t1 = my_second(); cpu_chain_sync(t1);
     double timeall = cpu_minus_children(timediff(t00_truestart, t1), child0_span);
-    CPU_Step[CPU_AGSDENSCOMPUTE] += timecomp;
-    CPU_Step[CPU_AGSDENSWAIT]    += timewait;
-    CPU_Step[CPU_AGSDENSCOMM]    += timecomm;
-    CPU_Step[CPU_AGSDENSMISC]    += timeall - (timecomp + timewait + timecomm);
+    cpu_charge(CPU_AGSDENSMISC, timeall - (timecomp + timewait + timecomm));   /* first: the span from t00_truestart is its own */
+    cpu_charge(CPU_AGSDENSWAIT, timewait);
+    cpu_charge(CPU_AGSDENSCOMM, timecomm);
 }
 
 

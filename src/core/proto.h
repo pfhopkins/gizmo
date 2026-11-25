@@ -1119,6 +1119,8 @@ void mechanical_fb_calculate_eventrates_Winds(int i, double dt);
 void mechanical_fb_calculate_eventrates_Rprocess(int i, double dt);
 void mechanical_fb_calculate_eventrates_Agetracers(int i, double dt);
 void particle2in_addFB_SNe(struct addFB_evaluate_data_in_ *in, int i);
+int SNe_are_type_Ia(double t_gyr);
+double SNe_energy_per_event(int i, int SNeIaFlag);
 void particle2in_addFB_winds(struct addFB_evaluate_data_in_ *in, int i);
 void particle2in_addFB_Rprocess(struct addFB_evaluate_data_in_ *in, int i);
 void particle2in_addFB_ageTracer(struct addFB_evaluate_data_in_ *in, int i);
@@ -1493,9 +1495,21 @@ void init_drift_table(void);
 double get_drift_factor(integertime time0, integertime time1, int i, int mode);
 double get_drift_factor_undilated(integertime time0, integertime time1);
 double measure_time(void);
+void cpu_charge(int bucket, double dt);
 void cpu_charge_child(int bucket, double dt);
 double cpu_minus_children(double elapsed, double child0);
 void cpu_chain_sync(double t);
+#ifdef OUTPUT_TIMING_BREAKDOWN
+/* What each cpu.txt bucket's wall time was spent on (system/timing_breakdown.cc): device kernel time of the kernels
+ * launched in it, host time waiting on the device, host time in OpenMP parallel regions, kernel launches, fences. */
+enum {TIMING_BREAKDOWN_GPU, TIMING_BREAKDOWN_WAIT, TIMING_BREAKDOWN_OMP, TIMING_BREAKDOWN_LAUNCHES, TIMING_BREAKDOWN_FENCES, TIMING_BREAKDOWN_FIELDS};
+void timing_breakdown_register_settings(void);
+void timing_breakdown_register(void);
+void timing_breakdown_release(void);
+void timing_breakdown_note_span_start(double t);
+void timing_breakdown_charge(int bucket, double dt);
+void timing_breakdown_end_step(double *step);
+#endif
 double report_time(void);
 
 /* on some DEC Alphas, the correct prototype for pow() is missing,

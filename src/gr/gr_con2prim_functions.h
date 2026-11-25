@@ -7,7 +7,7 @@
  * It never prints: the callers report a failure.
  *
  * gr_drift_reinvert() is the inversion at fixed specific internal energy (the energy slaved to the momentum), used by the energy-holding
- * drift (GR_DRIFT_HOLD_INTERNAL_ENERGY, the default) for the drifted and predicted states and for the drift part of the energy source.
+ * drift (GR_DRIFT_HOLD_INTERNAL_ENERGY, the default) for the drifted and predicted states.
  *
  * Port of gr/utoprim.cc of the C/C++ GIZMO branches (after the HARM utoprim_2d of Noble et al.), without the host diagnostics. */
 #ifndef GR_CON2PRIM_FUNCTIONS_H

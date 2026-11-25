@@ -52,7 +52,7 @@ static struct temporary_data_dyndiff *DynamicDiffDataPasser;
  */
 void dynamic_diff_calc(void) {
     PRINT_STATUS("Start dynamic diffusion calculations...");
-    CPU_Step[CPU_MISC] += measure_time();
+    cpu_charge(CPU_MISC, measure_time());
     int i, j, k, v, u, ngrp, ndone, ndone_flag, dynamic_iteration;
     double shear_factor, dynamic_denominator, trace = 0, trace_dynamic_fac = 0, hhat2 = 0, leonardTensor[3][3], prefactor = 0;
 #ifdef OUTPUT_TURB_DIFF_DYNAMIC_ERROR
@@ -67,7 +67,7 @@ void dynamic_diff_calc(void) {
 
     /* allocate buffers to arrange communication */
     DynamicDiffDataPasser = (struct temporary_data_dyndiff *) mymalloc("DynamicDiffDataPasser", N_gas * sizeof(struct temporary_data_dyndiff));
-    CPU_Step[CPU_DYNDIFFMISC] += measure_time();
+    cpu_charge(CPU_DYNDIFFMISC, measure_time());
     t0 = my_second(); double child0_span = CPU_ChildCharged;
     PRINT_STATUS(" ..begin initializing smoothed quantities.");
 
@@ -329,7 +329,7 @@ void dynamic_diff_calc(void) {
     /* collect some timing information */
     t1 = my_second(); cpu_chain_sync(t1);
     timeall = cpu_minus_children(timediff(t0, t1), child0_span);
-    CPU_Step[CPU_DYNDIFFCOMPUTE] += timeall;
+    cpu_charge(CPU_DYNDIFFCOMPUTE, timeall);
     PRINT_STATUS(" ..dynamic diffusion calculations done.");
 }
 
