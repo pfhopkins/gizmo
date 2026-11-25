@@ -12,5 +12,6 @@ so its metallicities are kept.
 | test | checks |
 |---|---|
 | `mfm_closes_at_every_snapshot[1,2,4]` | MFM (diffusion only): each species' metal mass, exact sum over the double-precision snapshot, equal to the IC's to 1e-12 at every snapshot; >= 5 occupied timebins; no metallicity below 0 |
+| `mfm_debit_bound_binds[1,4]` | MFM, diffusion coefficient 1e4: the debit bound scales pairs, no cell is floored at zero, no cell has more exchange evaluations than counted pairs, metal mass closes to 1e-12 (`TEST_METALS_PAIRWISE_COUNT_EVALUATIONS`; the MFM cases above check the counts too) |
 | `mfv_closes_at_the_synchronised_end[second order, LOWORDER]` | MFV (diffusion and metal advection), 4 ranks: the same at the end-of-run snapshot, written after the last synchronised kick (mid-run snapshots carry the drifted mass, not the conserved one) |
 | `default_exchange_drifts` | without the flag, same IC, MFM: the metal mass drifts by more than 1e-9, so the check separates the two paths |
