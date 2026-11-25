@@ -714,6 +714,12 @@ void init(void)
 #endif
 
 
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+        CellP[i].TD_NumPairs = 0;
+#ifdef TEST_METALS_PAIRWISE_COUNT_EVALUATIONS
+        CellP[i].TD_NumEvals = 0;
+#endif
+#endif
 #ifdef TURB_DIFFUSION
         CellP[i].TD_DiffCoeff = 0;
 

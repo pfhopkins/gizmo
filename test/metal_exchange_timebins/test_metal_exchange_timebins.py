@@ -24,12 +24,13 @@ from make_ics import make_ics
 TEST_NAME = "metal_exchange_timebins"
 TEST_DIR = f"test/{TEST_NAME}"
 EXACT = "METALS_EXACT_PAIRWISE_EXCHANGE"
+COUNT = "TEST_METALS_PAIRWISE_COUNT_EVALUATIONS"  # TD_PAIRCOUNT line per hydro pass
 MFM = "HYDRO_MESHLESS_FINITE_MASS"
 MFV = "HYDRO_MESHLESS_FINITE_VOLUME"  # Config.sh names no solver: each case does
 _built = None
 
 
-def run_case(tag, ranks, flags, final_only=False):
+def run_case(tag, ranks, flags, final_only=False, params=None):
     """Builds (if the flags changed), writes the IC, runs from it as a snapshot; returns the snapshot files."""
     global _built
     if _built != flags or not os.path.isfile(f"{TEST_DIR}/GIZMO"):
@@ -42,6 +43,9 @@ def run_case(tag, ranks, flags, final_only=False):
     lines = open(f"{TEST_DIR}/{TEST_NAME}.params").read().splitlines()
     if final_only:
         lines = [("TimeBetSnapshot 1.0" if l.startswith("TimeBetSnapshot") else l) for l in lines]
+    for key, val in (params or {}).items():
+        assert any(l.split()[:1] == [key] for l in lines), key
+        lines = [(f"{key} {val}" if l.split()[:1] == [key] else l) for l in lines]
     open(f"{d}/run.params", "w").write("\n".join(lines) + "\n")
     with open(f"{d}/gizmo.out", "w") as f:
         rc = subprocess.run(mpi_launch_command(ranks) + [os.path.abspath(f"{TEST_DIR}/GIZMO"), "run.params", "2"], cwd=d,
@@ -72,6 +76,20 @@ def timebins(logfile):
     return best
 
 
+def pair_counts(logfile):
+    """Sums of the TD_PAIRCOUNT fields over the run: exchange evaluations, cells with more evaluations booked than pairs counted
+    in the gradient pass (the debit bound divides by that count), cells floored at zero, pairs the bound scaled."""
+    tot = {"evals": 0.0, "cells_over_count": 0.0, "floor_cells": 0.0, "scaled": 0.0}
+    n = 0
+    for line in open(logfile):
+        if line.startswith("TD_PAIRCOUNT"):
+            w = line.split(); n += 1
+            for key in tot:
+                tot[key] += float(w[w.index(key + "=") + 1])
+    assert n > 0, "no TD_PAIRCOUNT lines"
+    return tot
+
+
 def worst_drift(snaps):
     MZ0 = metal_masses(snaps[0])[0]
     drift = max(np.abs(metal_masses(s)[0] - MZ0).max() / MZ0.min() for s in snaps[1:])
@@ -81,10 +99,32 @@ def worst_drift(snaps):
 
 @pytest.mark.parametrize("ranks", [1, 2, 4])
 def test_mfm_closes_at_every_snapshot(ranks):
-    snaps = run_case(f"mfm_{ranks}", ranks, (MFM, EXACT))
+    snaps = run_case(f"mfm_{ranks}", ranks, (MFM, EXACT, COUNT))
     drift, zmin = worst_drift(snaps)
+    log = os.path.dirname(snaps[1]) + "/../gizmo.out"
+    c = pair_counts(log)
+    print(f"mfm {ranks} ranks: drift {drift:.3e}, min Z {zmin:.3e}, {c}")
     assert len(snaps) >= 5
-    assert timebins(os.path.dirname(snaps[1]) + "/../gizmo.out") >= 5
+    assert timebins(log) >= 5
+    assert drift < 1e-12, f"metal mass drift {drift:.3e}"
+    assert zmin >= 0
+    assert c["evals"] > 0
+    assert c["cells_over_count"] == 0, "a cell had more exchange evaluations than counted pairs: the debit bound is not strict"
+    assert c["floor_cells"] == 0, "the floor at zero fired"
+
+
+@pytest.mark.parametrize("ranks", [1, 4])
+def test_mfm_debit_bound_binds(ranks):
+    """Diffusion 1e4 times stronger (two species step into exactly zero): the debit bound must scale pairs, the floor must not
+    fire, and the metal mass still closes."""
+    snaps = run_case(f"mfm_strong_{ranks}", ranks, (MFM, EXACT, COUNT), final_only=True,
+                     params={"TurbDiffusionCoefficient": "1.0e4", "TimeMax": "0.003125"})
+    drift, zmin = worst_drift([snaps[0], snaps[-1]])
+    c = pair_counts(os.path.dirname(snaps[1]) + "/../gizmo.out")
+    print(f"mfm strong {ranks} ranks: drift {drift:.3e}, min Z {zmin:.3e}, {c}")
+    assert c["scaled"] > 0, "the debit bound never bound: the case does not test it"
+    assert c["cells_over_count"] == 0
+    assert c["floor_cells"] == 0, "the floor at zero fired"
     assert drift < 1e-12, f"metal mass drift {drift:.3e}"
     assert zmin >= 0
 
@@ -92,8 +132,12 @@ def test_mfm_closes_at_every_snapshot(ranks):
 @pytest.mark.parametrize("loworder", [False, True])
 def test_mfv_closes_at_the_synchronised_end(loworder):
     flags = (MFV, EXACT) + (("TURB_DIFF_METALS_LOWORDER",) if loworder else ())
+    flags = flags + (COUNT,)
     snaps = run_case(f"mfv_lo{int(loworder)}", 4, flags, final_only=True)
     drift, zmin = worst_drift([snaps[0], snaps[-1]])
+    c = pair_counts(os.path.dirname(snaps[1]) + "/../gizmo.out")  # the bound covers the diffusive debits, not the advected metal: floor only reported
+    print(f"mfv loworder {loworder}: drift {drift:.3e}, min Z {zmin:.3e}, {c}")
+    assert c["cells_over_count"] == 0
     assert drift < 1e-12, f"metal mass drift {drift:.3e}"
     assert zmin >= 0
 

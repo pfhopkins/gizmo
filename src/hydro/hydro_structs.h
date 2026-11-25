@@ -142,6 +142,9 @@ struct hydro_data_in
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     MyFloat Metallicity[NUM_METAL_SPECIES];
 #endif
+#ifdef METALS_EXACT_PAIRWISE_EXCHANGE
+    int TD_NumPairs;
+#endif
 
 #ifdef CHIMES_TURB_DIFF_IONS
     MyDouble ChimesNIons[CHIMES_TOTSIZE];
@@ -271,6 +274,9 @@ struct hydro_data_out
 
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     MyFloat Dyield[NUM_METAL_SPECIES];
+#endif
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(TEST_METALS_PAIRWISE_COUNT_EVALUATIONS)
+    int TD_NumEvals, TD_NumScaled; /* test: exchange evaluations of this row, and those the debit bound scaled */
 #endif
 
 #ifdef CHIMES_TURB_DIFF_IONS

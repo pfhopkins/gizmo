@@ -106,3 +106,9 @@ CPU only: no GPU timing or atomic contention measured. Refused with the ISM dust
 
 ## Depends on / followed by
 None. One PR, +76 -9 source lines. The Stella metals PR that needs exact metal conservation waits for this option (Stella switch pending, see the first line).
+
+## 2026-11-25: strict debit bound (STL-277)
+- The per-pair cap 1/(2 DesNumNgb) and the 0.01 Z floor of the pairwise path are replaced. `hydro/gradient_functions.h` counts in the gradient pass, for both cells of every pair it visits, the pairs that can touch a cell (`CellP.TD_NumPairs`; ghost counts return through a `GradientsSpec` write-back bundle, `hydro/gradients_loop.cc`; the hydro force loop's ghost refresh carries the totals to the ghosts). `turb/turbulent_diffusion_functions.h` buffers the pair's amounts, sets slot 0 (27-element layout), then scales the whole pair by one factor so that each debit is at most holding / TD_NumPairs of the giving cell. `hydro/hydro_toplevel.cc` applies, floors at zero only a debit that would go below zero (reported per task when it happens) and clears the counts.
+- With the count the gradient pair kernel writes a neighbour field, so under the flag `GradientsSpec` declares `EpsilonAtomic`, a write-back bundle and no chunked Mode-A staging. Validated on CPU (OpenMP Kokkos) only; the device path of the count (integer atomic on `CellP[j]` from the gradient kernel) has not been run on a GPU.
+- The bound covers the diffusive exchange. The metal advected with the MFV mass flux is booked to the same `Dyield` and is not included, so in MFV the floor is reported, not excluded.
+- `TEST_METALS_PAIRWISE_COUNT_EVALUATIONS`: per hydro pass, exchange evaluations booked per cell against `TD_NumPairs` (`cells_over_count` must be 0), floored cells, pairs scaled by the bound; used by `test/metal_exchange_timebins`.

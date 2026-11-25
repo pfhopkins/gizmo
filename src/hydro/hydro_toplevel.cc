@@ -494,12 +494,18 @@ void hydro_final_operations_and_cleanup(void)
     } // for (loop over active particles) //
 
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE /* owners wrote to inactive neighbours too: apply every cell's exchange, then clear it */
+    long td_nfloor = 0, td_nover = 0, td_nevals = 0; double td_floor_mass = 0;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static) reduction(+:td_nfloor,td_nover,td_nevals,td_floor_mass)
 #endif
     for(int i = 0; i < N_gas; i++)
     {
-        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+#ifdef TEST_METALS_PAIRWISE_COUNT_EVALUATIONS
+        if(P[i].Type == 0 && P[i].Mass > 0) {td_nevals += CellP[i].TD_NumEvals; if(CellP[i].TD_NumEvals > CellP[i].TD_NumPairs) {td_nover++;}}
+        CellP[i].TD_NumEvals = 0;
+#endif
+        CellP[i].TD_NumPairs = 0; /* counted anew by the next gradient pass */
+        if(P[i].Type != 0 || P[i].Mass <= 0) {for(int k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] = 0;} continue;}
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         double m_metal_ref = CellP[i].MassTrue; /* metal mass is MassTrue*Z, kept by the kick under mass change */
 #else
@@ -509,12 +515,30 @@ void hydro_final_operations_and_cleanup(void)
         if(HydroPassRepeatsStep) {for(int k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] = 0;}} /* applied once per step, by the first pass */
 #endif
 #ifdef OUTPUT_MASS_BALANCE_BREAKDOWN
-        {double mz_new = P[i].Metallicity[0] + CellP[i].Dyield[0] / m_metal_ref, mz_floor = 0.01*P[i].Metallicity[0], floor_add = (mz_new < mz_floor) ? (mz_floor - mz_new) * m_metal_ref : 0;
+        {double mz_new = P[i].Metallicity[0] + CellP[i].Dyield[0] / m_metal_ref, floor_add = (mz_new < 0 && CellP[i].Dyield[0] < 0) ? -mz_new * m_metal_ref : 0;
         #pragma omp critical(mass_balance_diff)
         {diff_mz_pair += CellP[i].Dyield[0]; diff_mz_clamp += floor_add; diff_mz_gross += fabs(CellP[i].Dyield[0]);}}
 #endif
-        for(int k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / m_metal_ref , 0.01*P[i].Metallicity[k]); CellP[i].Dyield[k] = 0;}
+        int td_fired = 0;
+        for(int k=0;k<NUM_METAL_SPECIES;k++) {
+            if(CellP[i].Dyield[k] == 0) {continue;}
+            double x = P[i].Metallicity[k] + CellP[i].Dyield[k] / m_metal_ref;
+            if(x < 0 && CellP[i].Dyield[k] < 0) {td_fired = 1; td_floor_mass -= x * m_metal_ref; x = 0;} /* floor at zero for a debit only: never with the pair bound (MFM), counted */
+            P[i].Metallicity[k] = x; CellP[i].Dyield[k] = 0;
+        }
+        td_nfloor += td_fired;
     }
+    if(td_nfloor > 0) {printf("METALS_EXACT_PAIRWISE_EXCHANGE: task %d floored %ld cells at zero, metal mass added %g (code), Time %.10g\n", ThisTask, td_nfloor, td_floor_mass, All.Time);}
+#ifdef TEST_METALS_PAIRWISE_COUNT_EVALUATIONS
+    {
+        extern long TD_TestScaledPass;
+        double td_loc[5] = {(double)td_nfloor, td_floor_mass, (double)td_nover, (double)td_nevals, (double)TD_TestScaledPass}, td_glob[5]; TD_TestScaledPass = 0;
+        MPI_Allreduce(td_loc, td_glob, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); /* evals: each evaluation is counted at both of its cells */
+        if(ThisTask == 0) {printf("TD_PAIRCOUNT time= %.10e evals= %.0f cells_over_count= %.0f floor_cells= %.0f floor_mass= %.6e scaled= %.0f\n", All.Time, td_glob[3], td_glob[2], td_glob[0], td_glob[1], td_glob[4]);}
+    }
+#else
+    (void)td_nover; (void)td_nevals;
+#endif
 #endif
 #if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(OUTPUT_MASS_BALANCE_BREAKDOWN)
     ledger_diffusion_breakdown(diff_mz_pair, diff_mz_clamp, diff_mz_gross);
