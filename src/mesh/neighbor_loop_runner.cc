@@ -2185,12 +2185,13 @@ struct NlrModeATeamPairKernel {
  * most the widest Mode-A team (one team per workgroup) rather than for the backend's largest workgroup (1024
  * threads), which caps a thread at 128 vector registers: a pair body with a large accumulator then gets the
  * registers it needs instead of spilling to scratch (measured on MI250X: gradients and hydro-force spills to
- * none, the Mode-A pair kernels 17-20 % faster on two FIRE problems).  The team width chosen below is the same
- * either way -- the loop's target, at most the bound -- so only the compiled code changes, not the order of any
- * sum.  The price is occupancy: a kernel that did not spill can use more registers than it needs (the sink
- * swallow kernel goes from 111 to 152 vector registers, occupancy 4 -> 1 on MI250X; not measured at run time,
- * since sink loops run as request-driven walks below their threshold).  CUDA keeps the unbounded launch: on
- * GB200 the bound removed no spill and gave no measured gain. */
+ * none, the Mode-A pair kernels 17-20 % faster on two FIRE problems).  The team width chosen below came out the
+ * same with and without the bound in every loop checked on MI250X (the backend reported 1024 lanes unbounded and
+ * 64 bounded, both at or above every target, for accumulators from 1 to 760 bytes), so there the compiled code
+ * changed and the order of no sum did.  The price is occupancy: a kernel that did not spill can use more
+ * registers than it needs (the sink swallow kernel goes from 111 to 152 vector registers, occupancy 4 -> 1 on
+ * MI250X; measured on a STARFORGE run with 761 sinks, its device time was unchanged).  CUDA keeps the unbounded
+ * launch: on GB200 the bound removed no spill and gave no measured gain. */
 #if defined(KOKKOS_ENABLE_HIP)
 static constexpr int nlr_mode_a_team_max_lanes = NLR_TEAM_WIDTH_SYMMETRIC;
 static_assert(NLR_TEAM_WIDTH_ONEWAY <= nlr_mode_a_team_max_lanes && NLR_TEAM_WIDTH_FAT_ACCUM <= nlr_mode_a_team_max_lanes &&
