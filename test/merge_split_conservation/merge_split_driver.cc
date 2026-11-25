@@ -389,6 +389,11 @@ static void test_sn_spawn()
     double dust = 0; for(int k = 0; k < NUM_RESOLVEDISM_DUST; k++) {dust += CellP[j].Dust[k];}
     check("sn_spawn:no_template_dust", dust == 0, dust, 0);
 #endif
+#if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
+    double lab_other = fabs(CellP[j].MetalMassFrom[1]) + fabs(CellP[j].MetalMassFrom[2]) + fabs(CellP[j].MetalMassFrom[3]); /* STL-336: the template (cell 0) carries labels of all four channels */
+    check("sn_spawn:no_template_origin_labels", lab_other == 0, lab_other, 0);
+    check_rel("sn_spawn:origin_label_is_sn", CellP[j].MetalMassFrom[0], P[j].Metallicity[0], P[j].Metallicity[0]);
+#endif
 #ifdef WAKEUP
     check("sn_spawn:woken", P[j].wakeup != 0, P[j].wakeup, -2);
 #endif

@@ -400,7 +400,7 @@ def test_ia_conversion_leaves_no_negative_fraction(clamp_run):
     traces_ok(out)
 
 
-def origin_check(out, channels):
+def origin_check(out, channels, text=None):
     """STL-336 metal-origin ledger (mass_balance_origin.txt): per channel the labelled metal mass in the gas, less what was booked
     into it, plus what left it, changes by at most BAR of its scale per checkpoint; no cell holds more labelled metal than metal
     or a label below zero. channels: those that must hold mass at the end (final snapshot, MetalOrigin)."""
@@ -419,6 +419,13 @@ def origin_check(out, channels):
           f"{n_neg:.0f}; final gas mass by channel SN {mo[0]:.3e} AGB {mo[1]:.3e} wind {mo[2]:.3e} Ia {mo[3]:.3e}")
     for c in channels:
         assert mo[c] > 0, f"channel {c} holds no labelled metal: the run does not test it"
+    if text is not None:  # the labels must move with the diffusing metals: Ia labels in cells no thermal deposit ever reached
+        recv = set(int(x) for x in re.findall(r"FBDBG_TH_RECV cell=(\d+)", text))
+        with h5py.File(join(out, snaps[-1]), "r") as f:
+            ids = f["PartType0/ParticleIDs"][:]; ia = f["PartType0/MetalOrigin"][:][:, 3]
+        moved = sum(1 for i, x in zip(ids, ia) if x > 0 and int(i) not in recv)
+        print(f"metal origin: {len(recv)} cells received a thermal deposit, {int((ia > 0).sum())} cells hold Ia labels, {moved} of them never received a deposit")
+        assert recv and moved > 0, "no Ia label outside the deposit's receivers: the labels did not diffuse"
     assert worst <= BAR
     assert n_above == 0, "cells hold more labelled metal than metal"
     assert n_neg == 0, "cells hold a label below zero"
@@ -427,7 +434,7 @@ def origin_check(out, channels):
 def test_metal_origin_clamp_box(clamp_run):
     """STL-336: AGB and Ia labels through deposit, whole-cell Ia conversion and metal diffusion at individual timesteps."""
     text, out = clamp_run
-    origin_check(out, channels=(1, 3))
+    origin_check(out, channels=(1, 3), text=text)
 
 
 def test_diffusion_slots_clamp_box(clamp_run):
@@ -456,6 +463,7 @@ def test_clamp_box_equal_timesteps(build_equal_timesteps):
     text, out = clamp_box_run(build_equal_timesteps, "ia_clamp_equal_dt")
     assert ia_conversion_check(text) > 0, "the clamp did not fire"
     diffusion_check(text)
+    origin_check(out, channels=(1, 3), text=text)  # STL-336
     traces_ok(out)
 
 
@@ -564,11 +572,3 @@ def test_default_build_integration_residual(build_default_hydro):
     e, out, _ = sn_energy_run(build_default_hydro, "sn_energy_default_hydro")
     rep = keep_and_check_traces(out, out)
     assert rep.ok, rep.summary()
-
-
-def test_metal_origin_clamp_box_equal_timesteps():
-    """STL-336: the same at equal timesteps (build and run shared with test_clamp_box_equal_timesteps)."""
-    out = join(TEST_DIR, "run_ia_clamp_equal_dt", "output")
-    if not os.path.isdir(out):
-        pytest.skip("run_ia_clamp_equal_dt not present (test_clamp_box_equal_timesteps runs it)")
-    origin_check(out, channels=(1, 3))
