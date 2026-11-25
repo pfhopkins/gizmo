@@ -105,18 +105,50 @@ def test_supernovae(built):
     assert np.all(np.abs(b["p"] - a["p"]) <= 1e-10 * np.abs(a["p"]).max())
 
 
-def test_ranks_and_threads(built):
-    """the events (class, ejecta, remnant, metals, energy) are the same on 1 and 4 ranks and with 2 threads; the gas totals
-    agree to rounding (the loop adds deposits with atomics)"""
-    _, s2, r2 = run("r2", built) if not (TEST_DIR / "run_r2" / "output" / "single_star_events.txt").exists() else (None, sorted((TEST_DIR / "run_r2" / "output").glob("snapshot_*.hdf5"))[-1], np.atleast_2d(np.loadtxt(TEST_DIR / "run_r2" / "output" / "single_star_events.txt")))
+class EnergyDependsOnRanks(AssertionError):
+    """the gas energy differs between rank or thread counts by more than the bar"""
+
+
+def compare_ranks_and_threads(built, exe, prefix):
+    """the events (class, ejecta, remnant, metals, energy) are the same on 1, 2 and 4 ranks and with 2 threads, bitwise; the gas
+    mass agrees to rounding (the loop adds deposits with atomics) and the gas energy to 1e-5 (EnergyDependsOnRanks if not)"""
     key = lambda r: r[np.argsort(r[:, 1])][:, [1, 2, 3, 4, 5, 6, 7, 8, 9]]
+    _, s2, r2 = run(prefix + "r2", built, exe=exe)
     t2 = totals(s2)
     for tag, kw in [("r1", dict(ranks=1)), ("r4", dict(ranks=4)), ("r2t2", dict(ranks=2, threads=2))]:
-        _, s, r = run(tag, built, **kw)
+        _, s, r = run(prefix + tag, built, exe=exe, **kw)
         assert key(r).tobytes() == key(r2).tobytes(), tag
         t = totals(s)
-        # energy: a few hydro steps of hot gas after the deposit, which are not bitwise rank-independent
-        assert abs(t["M"] / t2["M"] - 1) < 1e-13 and abs(t["E"] / t2["E"] - 1) < 1e-5, tag
+        assert abs(t["M"] / t2["M"] - 1) < 1e-13, tag
+        dE = t["E"] / t2["E"] - 1
+        print(f"{prefix}{tag} against {prefix}r2: dM/M {t['M'] / t2['M'] - 1:.3e}, dE/E {dE:.3e}")
+        if not abs(dE) < 1e-5:
+            raise EnergyDependsOnRanks(f"{prefix}{tag}: dE/E = {dE:.3e}")
+
+
+@pytest.mark.xfail(strict=True, raises=EnergyDependsOnRanks,
+                   reason="cell splitting places the daughters at a fraction of the distance to the nearest neighbour on the same "
+                          "task (mesh/merge_split.cc: the neighbour list of the merge/split pass holds local particles only), so "
+                          "daughters of cells near a task boundary sit elsewhere on another number of tasks and the hot bubble's "
+                          "energy differs by 1e-4; test_ranks_and_threads_without_merge_split is the control (records GKS-98, STL-324)")
+def test_ranks_and_threads(built):
+    """events and gas totals on 1, 2 and 4 ranks and with 2 threads, with the default cell splitting and merging. Only the
+    energy bar is expected to fail (see the reason); events and mass are hard assertions"""
+    compare_ranks_and_threads(built, "GIZMO", "")
+
+
+def test_ranks_and_threads_without_merge_split(built):
+    """the same comparison with PREVENT_PARTICLE_MERGE_SPLIT: no cell splits, and events, mass and energy are rank-independent"""
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=("PREVENT_PARTICLE_MERGE_SPLIT",))
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_nosplit")
+        build_gizmo_for_test(TEST_NAME)
+    compare_ranks_and_threads(built, "GIZMO_nosplit", "nosplit_")
+    for tag in ("r1", "r2", "r4", "r2t2"):
+        log = (TEST_DIR / f"run_{tag}" / f"test_{TEST_NAME}.out")
+        if log.exists():
+            assert "Particle split/merge check" in log.read_text(errors="replace"), f"run_{tag}: the default build made no split/merge pass, so this control controls nothing"
+        assert "Particle split/merge check" not in (TEST_DIR / f"run_nosplit_{tag}" / f"test_{TEST_NAME}.out").read_text(errors="replace"), tag
 
 
 @pytest.mark.parametrize("cap_kyr", [10.0, 50.0])

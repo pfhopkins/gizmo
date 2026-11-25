@@ -21,7 +21,12 @@ Checks:
 4. the total energy rises by the explosion energies to 1e-3 (measured -1.9e-5: kinetic energy of the ejecta, 2.3e-4 of
    the total, is partly lost when they mix with gas at rest); with the mechanical coupling it rose by 1.10 times them;
 5. total momentum is conserved (the ejecta carry the stars' velocity; nothing radial is added);
-6. the events are identical on 1, 2 and 4 ranks and with 2 threads; gas totals agree to rounding;
+6. the events are identical on 1, 2 and 4 ranks and with 2 threads, and the gas mass agrees to rounding. The gas energy agrees
+   to 1e-5 only without cell splitting (`test_ranks_and_threads_without_merge_split`, built with `PREVENT_PARTICLE_MERGE_SPLIT`:
+   2e-16 between 1 and 2 ranks at every output). With the default splitting `test_ranks_and_threads` is an expected failure
+   on the energy bar alone (1e-4): a split places the daughters at a fraction of the distance to the nearest neighbour on the
+   same task, so daughters of cells near a task boundary sit elsewhere on another number of tasks (equal split counts, kernel
+   lengths of the daughters up to 8 % apart at the first split);
 7. FIRE metal layout (a second build with `COOLING` and `COOL_METAL_LINES_BY_SPECIES`): every metal slot of the gas gains
    exactly the table SN element ejecta scaled to the ejecta mass (1e-9); slot 0 all table metals C..Zn.
 8. the death step (`test_death_step_first_step_past_lifetime`), caps 10 and 50 kyr: stars 37 kyr from death, a long largest step. A single star's step is `MaxStellarTimestep` (default 50 kyr; 1e4 yr in the production params) and no less: every step before the first death stays in that bin, and each star dies at its first step past its table death time, at most one cap late. With the former rule of 1/50 of the time to death: 377 steps before the first death, down to 0.47 kyr.
