@@ -44,6 +44,7 @@
 #include "gradients_loop.h"
 #ifdef TURB_DIFF_DYNAMIC
 #include "../mesh/ghost_symlist_lifecycle.h"  /* gizmo_ghost_safety_factor */
+#endif
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_writeback_ops.h"      /* GHOST_WRITEBACK_BUNDLE_* macros */
@@ -62,7 +63,6 @@ void GradientsSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/, cons
 {
     ghost_writeback_end_bundle(gradients_ghost_writeback_bundle_ptr());
 }
-#endif
 #endif
 
 /* MAX/MIN macros mirroring the legacy preset versions from
