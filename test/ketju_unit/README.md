@@ -1,34 +1,31 @@
 # KETJU integrator unit tests
 
-Tests of the two source checkouts of the ketju-integrator repository, separate from this repository: `KETJU_SOURCE_DIR` (branch `main`,
-the C++/Kokkos MSTAR library) and `KETJU_C_SOURCE_DIR` (branch `ketju-c`, the C library; its header is also GIZMO's data model).
-Without both variables the tests are skipped. GIZMO itself builds against the install at `KETJU_PATH`. No GIZMO build or simulation is involved.
+Tests of the ketju-integrator repository, separate from this repository, from a source checkout given by the environment
+variable `KETJU_SOURCE_DIR` (branch `main`, the C++/Kokkos MSTAR library). Without it the test is skipped. GIZMO itself builds
+against the install at `KETJU_PATH`. No GIZMO build or simulation is involved.
 
-## Default: the C++/Kokkos library (GIZMO's default MSTAR)
+KETJU in GIZMO uses the C++/Kokkos MSTAR only. The former C library (`KETJU_LEGACY_C_LIBRARY`, removed) is not built or
+tested here; GIZMO still reads its header `ketju_integrator/ketju_integrator.h` (pin `KETJU_C_REF`) as its data model.
+
+## What runs
 
 `test_ketju_kokkos_ctests` builds `KETJU_SOURCE_DIR` (Kokkos from `KOKKOS_ROOT` or the systype Kokkos (HOME_GIZMO); build directory
 in a pytest temporary directory) and runs its 5 ctests: `mstar_unit_tests` (KETJU's unit tests and the GIZMO-addition
-and softening-kink cases below on `mstar::mstar`), `mstar_compare_c` (against stored C-library results: Kepler,
+and softening-kink cases below on `mstar::mstar`), `mstar_compare_c` (against stored results of the former C library: Kepler,
 Pythagorean, Plummer cores, PN binary and cusp, BH mergers, contact collisions, tide, softening), `mstar_extra_force`,
 `mstar_embedded_tide`, `mstar_driver`. See `ketju-integrator/README.md`.
 
-## Legacy: the C library on MPI (`KETJU_LEGACY_C_LIBRARY`)
+## Cases of `mstar_unit_tests`
 
-`test_ketju_unit` runs only with `GIZMO_EXTRA_CONFIG_FLAGS=KETJU_LEGACY_C_LIBRARY`: the googletest suite of
-`KETJU_C_SOURCE_DIR`, each case on 1, 2 and 4 MPI tasks.
-
-## What is tested
-
-37 cases, each on 1, 2 and 4 MPI tasks. The original 26:
 - `Integration_*`: binary integration (Newtonian, PN, spin, three-body PN terms, unit systems)
   against stored results of the old integrator.
 - `Integration_with_mergers`, `Instant_mergers`: BH mergers (head-on, from an orbit, multiple
   mergers with per-particle extra data).
-- `MST/ConstructionTest`: Prim and divide-and-conquer MST construction, 2 to 1000 random particles.
+- `MST`: tree construction on random particles, host and device tree.
 
-`Gizmo_*` (`unit-tests/gizmo_additions.cpp`): GIZMO's additions, each with an analytic or conserved-quantity check and,
+`Gizmo_*`: GIZMO's additions, each with an analytic or conserved-quantity check and,
 where feasible, a check that fails without the feature or fix:
-- `Gizmo_collision_radius.null_after_create`: `ketju_create_system` sets `collision_radius` on a garbage-filled struct.
+- `Gizmo_collision_radius.null_after_create`: creating a system sets `collision_radius` on a garbage-filled struct.
 - `Gizmo_star_collisions.head_on_contact`: radial infall, contact time vs the Kepler solution, product at the CoM with
   summed mass and momentum, E_end = E0 + dE_collision; no merger without radii.
 - `Gizmo_star_collisions.graze_and_miss`: flyby with two-body pericentre 0.8 (R1 + R2) collides, 1.25 misses; a bound
@@ -43,7 +40,7 @@ where feasible, a check that fails without the feature or fix:
   potential conserved, no step-count blow-up; no CoM motion with the tide off.
 - `Gizmo_collision_energy.tide_and_softening`: collision energy with the tide and softening.
 
-`Softening_kink.*` (`unit-tests/softening_kink.cpp`): GBS steps landed on the softening kernel's break points (two-body
+`Softening_kink.*`: GBS steps landed on the softening kernel's break points (two-body
 orbit, collision with tide and softening converge; off without softening).
 
 Negative checks run by hand (reverting each fix): init, pericentre guard, dE_others and the tide's work each make
@@ -51,10 +48,6 @@ their test fail.
 
 ## Running
 
-    pytest test/ketju_unit/test_ketju_unit.py                                              # Kokkos ctests
-    GIZMO_EXTRA_CONFIG_FLAGS=KETJU_LEGACY_C_LIBRARY pytest test/ketju_unit/test_ketju_unit.py  # + C googletests on MPI
+    KETJU_SOURCE_DIR=<checkout> pytest test/ketju_unit/test_ketju_unit.py
 
-The legacy test copies `KETJU_C_SOURCE_DIR` to a pytest temporary directory (its CMake writes `bin/` and
-`lib/` into the source tree), builds with `-DUNIT_TESTS=ON -DBUILD_GMOCK=OFF` and the googletest
-sources in the checkout (`thirdparty/googletest/` of `KETJU_C_SOURCE_DIR`), and runs with
-`mpiexec --oversubscribe`. Build ~1 min with 4 make jobs; the runs take seconds.
+Build ~1 min with 4 make jobs; the runs take seconds.

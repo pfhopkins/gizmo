@@ -172,7 +172,7 @@ static FILE *FdSingleStarBirths = NULL;
    Returns the mass this rank's new stars collected (code units). Collectives, only in steps that spawned a star: per
    pass one integer reduction plus the exchanges of four runner calls; one runner call to apply; a gather of the birth-log
    rows; and, only if a draw failed, a gather of the failed stars' identities. */
-double single_stars_collect_gas(long long tot_spawned)
+double single_stars_collect_gas(long long tot_spawned, long long tot_awaiting_gas_collection)
 {
     if(tot_spawned <= 0) {ssc_births.clear(); return 0;}
     const double mu = ssc_mu();
@@ -264,6 +264,9 @@ double single_stars_collect_gas(long long tot_spawned)
         }
         gpu_particles_arena_invalidate();
     }
+#ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
+    if(tot_awaiting_gas_collection > (long long) failed_all.size()) {All.StarFormationHasSetIn = 1;} /* a star was kept (a failed draw is removed again): totals over all tasks, so on every task alike */
+#endif
 
 #ifdef GALSF_SINGLE_STARS_EVENT_LOGS
     { /* IMFinfo.txt: one row per (star, donor cell) with the mass taken over all passes (failed draws left out), written by rank 0 sorted by star and donor */

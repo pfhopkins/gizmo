@@ -6103,6 +6103,10 @@ void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_f
 
     hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Flag_IC_Info", H5T_NATIVE_INT, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_INT, &header.flag_ic_info); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+#ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
+    hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "StarFormationHasSetIn", H5T_NATIVE_INT, hdf5_dataspace, H5P_DEFAULT); /* the stars may all be gone again */
+    H5Awrite(hdf5_attribute, H5T_NATIVE_INT, &All.StarFormationHasSetIn); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+#endif
 
     {int ivar=KERNEL_FUNCTION; hdf5_dataspace=H5Screate(H5S_SCALAR); hdf5_attribute=H5Acreate(handle,"Kernel_Function_ID",H5T_NATIVE_INT,hdf5_dataspace,H5P_DEFAULT);
         H5Awrite(hdf5_attribute,H5T_NATIVE_INT,&ivar); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}

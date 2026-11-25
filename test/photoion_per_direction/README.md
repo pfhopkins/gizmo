@@ -18,6 +18,11 @@ Checks:
   With the stamp (cells inside the fronts ionised until the next multiple of the cap step, `PhotoionizedUntil`): the recombination rate of
   the ionised cells is Q to 2% (measured 0.9994-0.99999; log column 7), their volume radius lies within one cell of the
   Stromgren radius, and static gas keeps the same cells at every solve. Without the stamp column 7 is 0.
+- `test_search_radius_beyond_the_box`: the same star with the gas above it removed, so the upward pixels never spend their
+  budget and the search sphere grows to `PhotoionMaxSearchRadius`. With 0.02 kpc (below half the 45 pc box) log column 7 is at
+  most 1.02; with 1 kpc and 50 kpc (beyond the periodic box) it equals that run's to 2 % at every solve. Found in
+  energy_step_trace_sn (10 pc box, 50 kpc): the bins of R/64 were far wider than the box, so the interpolated front lay beyond
+  every cell and all cells were claimed (column 7 up to 5.3; GKS-TI21).
 - `test_ranks_and_order`: 1, 2 and 4 ranks and a permuted particle order give the same fronts, search passes and
   ionised cells (the histogram sums are integers).
 - `test_overlapping_sources_share`: two identical stars 0.5 Stromgren radii apart. Every source first claims its own

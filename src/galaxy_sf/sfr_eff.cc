@@ -550,6 +550,7 @@ void star_formation_parent_routine(void)
     if(ghost_require_no_live_pool_for_layout_change("star_formation_parent_routine")) {return;}
     int i, bin, flag, stars_spawned, stars_converted, number_of_stars_generated;
     long long tot_spawned, tot_converted;   /* summed over ranks */
+    long long stars_awaiting_gas_collection = 0, tot_awaiting_gas_collection = 0; /* spawned single stars that single_stars_collect_gas() keeps or removes again (this task, all tasks) */
     unsigned int bits; double dtime, mass_of_star, p, prob, rate_in_msunperyear, sfrrate, totsfrrate, sum_sm, total_sm, sm=0, rate, sum_mass_stars, total_sum_mass_stars;
     int num_sink_formed=0, tot_sink_formed=0;   /* zero in builds that cannot form sinks; counted with the stars below */
     for(bin = 0; bin < TIMEBINS; bin++) {if(TimeBinActive[bin]) {TimeBinSfr[bin] = 0;}}
@@ -655,7 +656,7 @@ void star_formation_parent_routine(void)
                     for(double M_star : sf_event_mass) /* zero-mass single stars that collect their drawn mass after this loop; their mass enters the SF statistics there */
                     {
                         int i_star = spawn_star_from_gas(i, 0, stars_spawned);
-                        if(i_star >= 0) {single_star_attach_to_new_star(i_star, i, M_star); stars_spawned++;}
+                        if(i_star >= 0) {single_star_attach_to_new_star(i_star, i, M_star); stars_spawned++; stars_awaiting_gas_collection++;}
                     }
                     if(!sf_event_mass.empty()) {continue;}
                 }
@@ -921,7 +922,7 @@ void star_formation_parent_routine(void)
     
     
 #ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
-    stars_spawned += single_star_test_births(stars_spawned);
+    {int n_test_births = single_star_test_births(stars_spawned); stars_spawned += n_test_births; stars_awaiting_gas_collection += n_test_births;}
 #endif
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
     long long young_changed;
@@ -929,17 +930,17 @@ void star_formation_parent_routine(void)
     {   /* every count this pass changed, in one reduction */
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
         recent_sfr_expire();
-        long long local[4] = {stars_spawned, stars_converted, num_sink_formed, recent_sfr_changed}, total[4]; /* + young-star sums changed */
-        MPI_Allreduce(local, total, 4, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        young_changed = total[3];
+        long long local[5] = {stars_spawned, stars_converted, num_sink_formed, stars_awaiting_gas_collection, recent_sfr_changed}, total[5]; /* + young-star sums changed */
+        MPI_Allreduce(local, total, 5, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        young_changed = total[4];
 #else
-        long long local[3] = {stars_spawned, stars_converted, num_sink_formed}, total[3];
-        MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        long long local[4] = {stars_spawned, stars_converted, num_sink_formed, stars_awaiting_gas_collection}, total[4];
+        MPI_Allreduce(local, total, 4, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
 #endif
-        tot_spawned = total[0]; tot_converted = total[1]; tot_sink_formed = (int) total[2];
+        tot_spawned = total[0]; tot_converted = total[1]; tot_sink_formed = (int) total[2]; tot_awaiting_gas_collection = total[3];
     }
 #ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
-    if(tot_spawned > 0 || tot_converted > 0 || tot_sink_formed > 0) {All.StarFormationHasSetIn = 1;} /* from the totals, so on every task alike */
+    if(tot_spawned > tot_awaiting_gas_collection || tot_converted > 0 || tot_sink_formed > 0) {All.StarFormationHasSetIn = 1;} /* stars spawned with their mass, gas converted, sinks formed: from the totals, so on every task alike. A single star that still collects its drawn mass counts in single_stars_collect_gas(), if it is kept */
 #endif
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
     if( (ThisTask==0) && (tot_sink_formed > 0) )
@@ -960,7 +961,7 @@ void star_formation_parent_routine(void)
     } //(tot_spawned > 0 || tot_converted > 0)
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
     LEDGER_STEP_BREAKDOWN("pre_collect_gas");
-    sum_mass_stars += single_stars_collect_gas(tot_spawned); /* new single stars take their drawn mass from the gas around them */
+    sum_mass_stars += single_stars_collect_gas(tot_spawned, tot_awaiting_gas_collection); /* new single stars take their drawn mass from the gas around them */
     LEDGER_STEP_BREAKDOWN("post_collect_gas");
 #endif
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR

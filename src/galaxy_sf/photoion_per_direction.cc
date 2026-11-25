@@ -425,7 +425,10 @@ void photoionization_per_direction(void)
     const int b_pi = photoion_timebin();
     const integertime dti = (integertime)1 << b_pi;
     const double t_start = MPI_Wtime();
-    const double max_r = All.PhotoionMaxSearchRadius / (UNIT_LENGTH_IN_KPC * All.cf_atime);
+    double max_r = All.PhotoionMaxSearchRadius / (UNIT_LENGTH_IN_KPC * All.cf_atime);
+#ifdef BOX_PERIODIC /* cells are seen at their nearest image, none beyond half the box diagonal: a larger sphere only widens the bins of R/PI_NBIN */
+    {double r_box = 0.5 * sqrt(boxSize_X * boxSize_X + boxSize_Y * boxSize_Y + boxSize_Z * boxSize_Z); if(!(max_r > 0) || max_r > r_box) {max_r = r_box;}}
+#endif
     std::vector<pi_src> S;
     for(int i : ActiveParticleList) {
         if(P[i].StarIdx <= 0) {continue;}

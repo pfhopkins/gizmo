@@ -13,6 +13,7 @@
 #include "mechanical_fb_types.h"  /* provides struct MechFBGasDelta */
 #include "galsf_gpu_decls.h"      /* mechfb_{alloc,free,run_iterative,fill_call_scalars} prototypes */
 #include "single_star_checks.h"
+#include "stellar_solar_abundances.h" /* STELLAR_EXTRA_NELEM */
 
 /* Routines for mechanical feedback/enrichment models: stellar winds, supernovae, etc
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -184,6 +185,25 @@ void verify_and_assign_local_mechfb_integrals(void)
             for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = (m0/mf)*P[j].Metallicity[k] + (1./mf)*LocalGasMechFBInfoTemp[j].Z_injected[k];} /* update metallicity */
 #if defined(TEST_SINGLE_STARS_PRINT_INVARIANT_CHECKS) && defined(METALS)
             single_star_check_receiver(j, m0, mf, Z_before, LocalGasMechFBInfoTemp[j].Z_injected);
+#endif
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(METALS)
+            /* a slot the blend's round-off left below zero (a Type Ia converting the cell whole) is set to zero and the amount booked
+               as deposited; a metal element's amount also goes to total Z (slot 0). Helium and the tracer slots: the slot only */
+            for(k=1;k<NUM_METAL_SPECIES;k++)
+            {
+                double x_neg=P[j].Metallicity[k]; if(x_neg >= 0) {continue;}
+                int is_metal_element = (k >= 2 && k <= NUM_LIVE_SPECIES_FOR_COOLTABLES);
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
+                if(k >= METALS_EXTRA_PASSIVE_SPECIES_OFFSET && k < METALS_EXTRA_PASSIVE_SPECIES_OFFSET+STELLAR_EXTRA_NELEM) {is_metal_element = 1;} /* the table elements outside the cooling slots */
+#endif
+                P[j].Metallicity[k] = 0; if(is_metal_element) {P[j].Metallicity[0] -= x_neg;}
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+                if(is_metal_element) {ledger_add(LEDGER_MZ_FB_TO_GAS, -x_neg*mf);}
+#ifdef LEDGER_SLOTS
+                ledger_add_slot(LEDGER_SLOT_TO_GAS, k, -x_neg*mf); if(is_metal_element) {ledger_add_slot(LEDGER_SLOT_TO_GAS, 0, -x_neg*mf);}
+#endif
+#endif
+            }
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 #ifdef SINGLE_STARS_IA_COMPANION_SHARE
