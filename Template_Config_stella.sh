@@ -114,7 +114,6 @@ TIDAL_TIMESTEP_CRITERION                 % tidal-tensor timestep criterion
 KETJU_REGULARIZATION                     % MSTAR chain regularisation for stellar encounters  [excl FORCE_EQUAL_TIMESTEPS]
 KETJU_MERGE_STARS                        % stellar collisions (Type 4+4)  [req KETJU_REGULARIZATION]
 #KETJU_MERGE_BH                          % BH mergers  [req KETJU_REGULARIZATION]
-#KETJU_LEGACY_C_LIBRARY                  % legacy: MSTAR from the C library (reference); default: C++/Kokkos library mstar::mstar (KOKKOS_ROOT)  [req KETJU_REGULARIZATION]
 #STARS_INTEGRATED_BY_RUMI                % EXPERIMENTAL: all Type-4 stars integrated by the RUMI++ library (BRIDGE: gas kicks at star steps, star-star pairs out of the tree; make RUMI_LIB_DIR=<prefix>)  [excl KETJU_REGULARIZATION]
 #STARS_HERMITE_DIRECT_GRAVITY            % EXPERIMENTAL prototype (A-lite): Type-4 stars on 4th-order Hermite with direct star-star gravity, Aarseth steps (STARS_HERMITE_AARSETH_ETA=0.02)  [excl sinks, KETJU-free Hermite, adaptive Type-4 softening]
 #STARS_APPROACH_TIMESTEP_OFF  % opt out of the default-on STARS_APPROACH_TIMESTEP (set by GALSF_RESOLVEDISM_SAMPLE_IMF)

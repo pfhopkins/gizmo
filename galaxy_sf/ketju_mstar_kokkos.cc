@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 Ulrich Steinwandel
  * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
-/* KETJU default: the KETJU C interface used by ketju_coupling.cc, mapped onto the C++/Kokkos MSTAR library mstar::mstar
+/* KETJU: the KETJU C interface used by ketju_coupling.cc, mapped onto the C++/Kokkos MSTAR library mstar::mstar
  * (ketju-integrator, a separate install at KETJU_PATH, Steinwandel 2026; physics and options of the C library, Rantala+ 2020, Mannerkoski+ 2023). */
 #include <mpi.h>
 #include <cstdio>
@@ -13,7 +13,7 @@
 #include "../declarations/allvars.h"
 #include "ketju_mstar_kokkos.h"
 
-#if defined(KETJU_REGULARIZATION) && !defined(KETJU_LEGACY_C_LIBRARY)
+#ifdef KETJU_REGULARIZATION
 #include <mstar/mstar.hpp>
 
 #ifndef KETJU_KOKKOS_DEVICE_MIN_N

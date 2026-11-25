@@ -2048,8 +2048,8 @@
 #if defined(KETJU_MERGE_BH) && !defined(KETJU_REGULARIZATION)
 #error "KETJU_MERGE_BH requires KETJU_REGULARIZATION"
 #endif
-#if defined(KETJU_LEGACY_C_LIBRARY) && !defined(KETJU_REGULARIZATION)
-#error "KETJU_LEGACY_C_LIBRARY requires KETJU_REGULARIZATION"
+#ifdef KETJU_LEGACY_C_LIBRARY
+#error "KETJU_LEGACY_C_LIBRARY was removed: KETJU uses the Kokkos MSTAR (mstar::mstar)"
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
 #error "GALSF_RESOLVEDISM_SAMPLE_IMF: stars merge only on contact; GALSF_MERGER_STARCLUSTER_PARTICLES merges by distance"
