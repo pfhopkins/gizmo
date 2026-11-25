@@ -516,6 +516,7 @@ void star_formation_parent_routine(void)
 #endif
     for(bin = 0; bin < TIMEBINS; bin++) {if(TimeBinActive[bin]) {TimeBinSfr[bin] = 0;}}
     stars_spawned = stars_converted = 0; sum_sm = sum_mass_stars = 0;
+    int stars_awaiting_imf_draw = 0; (void)stars_awaiting_imf_draw; /* spawned, kept or removed again by assign_stellar_masses() */
 #ifdef GHOSDT_G0_CR
     std::vector<int> ghosdt_converted; /* gas-block slots converted this call */
 #endif
@@ -844,7 +845,7 @@ void star_formation_parent_routine(void)
                             P[ns].MstarSampleIMF[3] = SF_LOG_TEMP(i); /* formation temperature [K] for SFinfo log */
                             CellP[i].IMFSpawnBlock = 1; /* block SF on this cell until density is recomputed */
                             if(All.SFCooldownFreeFallFraction > 0) {CellP[i].SFCooldown = All.SFCooldownFreeFallFraction * sqrt(3.*M_PI / (32.*All.G * CellP[i].Density * All.cf_a3inv));} /* physical t_ff */
-                            stars_spawned++;
+                            stars_spawned++; stars_awaiting_imf_draw++;
                         }
 #endif
 #if !defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL)
@@ -1121,20 +1122,20 @@ void star_formation_parent_routine(void)
 #endif
     int ghosdt_changed_tot = 0; (void)ghosdt_changed_tot;
     { /* the per-step counts in one collective: integer sums, so the totals are unchanged */
-        int sf_counts[4] = {stars_spawned, stars_converted, 0, 0}, sf_counts_tot[4] = {0, 0, 0, 0}; /* last: GHOSDT sums changed */
+        int sf_counts[5] = {stars_spawned, stars_converted, 0, 0, stars_awaiting_imf_draw}, sf_counts_tot[5] = {0, 0, 0, 0, 0}; /* [3]: GHOSDT sums changed */
 #ifdef GHOSDT_G0_CR
         sf_counts[3] = ghosdt_changed;
 #endif
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
         sf_counts[2] = num_sink_formed;
 #endif
-        MPI_Allreduce(sf_counts, sf_counts_tot, 4, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(sf_counts, sf_counts_tot, 5, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         tot_spawned = sf_counts_tot[0]; tot_converted = sf_counts_tot[1]; ghosdt_changed_tot = sf_counts_tot[3];
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
         tot_sink_formed = sf_counts_tot[2];
 #endif
 #ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
-        if(sf_counts_tot[0] > 0 || sf_counts_tot[1] > 0 || sf_counts_tot[2] > 0) {All.StarFormationHasSetIn = 1;} /* stars spawned, gas converted, sinks formed: from the totals, so on every task alike */
+        if(sf_counts_tot[0] > sf_counts_tot[4] || sf_counts_tot[1] > 0 || sf_counts_tot[2] > 0) {All.StarFormationHasSetIn = 1;} /* stars spawned with no IMF draw to come, gas converted, sinks formed: from the totals, so on every task alike; a star with a draw counts in assign_stellar_masses(), if it survives */
 #endif
     }
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)

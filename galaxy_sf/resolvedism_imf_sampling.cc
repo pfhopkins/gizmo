@@ -1158,6 +1158,9 @@ void assign_stellar_masses(void)
     {
         int nimf_total = 0;
         MPI_Allreduce(&nimf, &nimf_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+#ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
+        if(nimf_total > 0) {All.StarFormationHasSetIn = 1;} /* stars kept after their draw (a failed draw is gone again): from the total, so on every task alike */
+#endif
 #ifdef TEST_IMF_FAILED_DRAW_RESTORE_CHECK
         imf_check_compare();
 #endif
