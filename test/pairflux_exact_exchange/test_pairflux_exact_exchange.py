@@ -11,8 +11,8 @@ Gas mass, momentum, thermal + kinetic (+ magnetic) energy and sum B*V from the c
   split (no hook: a shell of heavy cells far from the blast is above the IC-header split threshold; the split wakes the daughters).
 - test_merge_centre / test_merge_centre_energy_exact: every cell is below the IC-header merge threshold, so the hot centre cells merge into
   inactive long-step cells; built with MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES and the own-timestep merge wake. Mass and momentum
-  at TOL, merges in both halves of the parent's step, |dE|/E <= 1e-4; the bar of at most 5 limiter firings and the TOL energy bar are strict
-  expected failures (measured 6 firings and 9.5e-5).
+  at TOL, merges in both halves of the parent's step, |dE|/E <= 1e-4; the TOL energy bar is a strict expected failure (measured 9.5e-5).
+  A bar of at most 5 limiter firings came from one measurement of earlier code and was dropped by Uli (2026-11-25): the energy bound stands alone.
 - MHD (Dedner cleaning; Powell terms off to isolate the exchange): mass, momentum and sum B*V, with the Dedner correction
   limiter and the face-area closure never firing; energy is reported (the kick's magnetic part is second order).
   The same with the IMF-like hook (mass, B, BPred, DtB scaled together on active and inactive woken cells).
@@ -152,7 +152,7 @@ def merge_centre():
 
 def test_merge_centre(merge_centre):
     """bars that hold (fixed 2026-11-25 before the run of this version): merges into inactive parents in both halves of the parent's step,
-    mass and momentum at TOL, |dE|/E <= 1e-4 (3.87 without the flag); the firing count has its own test below"""
+    mass and momentum at TOL, |dE|/E <= 1e-4 (3.87 without the flag)"""
     t, log, halves = merge_centre
     assert re.search(r"[1-9][0-9]* particles merged", log), "no merge happened"
     print(f"parent kicks: {halves.count(1)} with the midpoint ahead, {halves.count(2)} with the midpoint behind")
@@ -161,13 +161,7 @@ def test_merge_centre(merge_centre):
     dM = np.abs(t["M"] - t["M"][0]).max() / t["M"][0]; dP = np.abs(t["P"] - t["P"][0]).max() / t["pscale"]; dE = np.abs(t["E"] - t["E"][0]).max() / t["E"][0]
     print(f"max|dM|/M {dM:.2e}  max|dP|/sum m|v| {dP:.2e}  max|dE|/E {dE:.2e}  floor firings {int(t['nfloor'])}")
     assert t["nstar"] == 0 and dM <= TOL and dP <= TOL
-    assert dE <= 1e-4
-
-
-@pytest.mark.xfail(strict=True, reason="bar fixed 2026-11-25 from job 242310 (5 firings) before the merge covered the second half of the parent's step; "
-                   "job 242377 with that version: 6 firings, |dE|/E 9.54e-5. Not met; kept unchanged, not relaxed")
-def test_merge_centre_limiter_firings(merge_centre):
-    assert merge_centre[0]["nfloor"] <= 5, "more firings of the u limiter than measured"
+    assert dE <= 1e-4  # the only bound on the limiter: a bar of at most 5 firings (one measurement of earlier code, job 242310; 6 in job 242377) was dropped by Uli on 2026-11-25
 
 
 @pytest.mark.xfail(strict=True, reason="STL-292 remainder: the 50 % u limiter fires on closing impulses of merged cells (5 firings, |dE|/E 8.1e-5 in job 242310); "
