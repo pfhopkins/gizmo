@@ -11,9 +11,10 @@ Bars, fixed before the first run (2026-11-25):
   1e-12 of the parent's kernel length;
 - centre-merge box, first step with merges: the same pairs (absorbed cell -> survivor, by ID, child number and generation);
 - both: gas mass equal to 1e-12 and thermal + kinetic energy equal to 1e-10 (relative) at the first sync row after that pass;
-- at least one split parent, and one merge pair, has its nearest neighbour / partner on another rank in the 4-rank run (otherwise
-  the comparison does not test the search across ranks): shown by the same runs built WITHOUT the flag differing from 1 rank
-  (control arm, expected to differ; if it does not, this test tests nothing and fails).
+- in the 4-rank run at least one split parent has its nearest neighbour on another rank and at least one merge is between cells
+  on different ranks (counted from the dump; otherwise the search and the merge across ranks are not tested);
+- control arm: the same runs built WITHOUT the flag differ from 1 rank (if they do not, the boxes test nothing).
+Not covered: star particles (the boxes are gas only), so the copy slot is only used with no particle behind the gas block.
 """
 
 import os
@@ -51,10 +52,14 @@ def _run(binary, box, nranks, tag):
     splits = {}; merges = {}
     for m in re.finditer(r"^TEST_SPLIT_DUMP step (\d+) task \d+ ID (\d+) h (\S+) r_near (\S+) d_r (\S+) parent (\S+) (\S+) (\S+) offset (\S+) (\S+) (\S+)$", text, re.M):
         splits.setdefault(int(m.group(1)), {})[int(m.group(2))] = (float(m.group(3)), float(m.group(4)), np.array([float(m.group(k)) for k in (9, 10, 11)]))
-    for m in re.finditer(r"^TEST_MERGE_PAIR step (\d+) absorbed (\d+) (\d+) (-?\d+) into (\d+) (\d+) (-?\d+)$", text, re.M):
+    crossing = {"merge": {}, "split": {}}  # per step: merges whose two cells, splits whose nearest neighbour, are on different ranks
+    for m in re.finditer(r"^TEST_MERGE_PAIR step (\d+) absorbed (\d+) (\d+) (-?\d+) into (\d+) (\d+) (-?\d+) ranks (\d+) (\d+)$", text, re.M):
         merges.setdefault(int(m.group(1)), set()).add(tuple(int(m.group(k)) for k in range(2, 8)))
+        crossing["merge"][int(m.group(1))] = crossing["merge"].get(int(m.group(1)), 0) + (m.group(8) != m.group(9))
+    for m in re.finditer(r"^TEST_SPLIT_NEIGHBOR step (\d+) ID \d+ task (\d+) neighbour_task (\d+)$", text, re.M):
+        crossing["split"][int(m.group(1))] = crossing["split"].get(int(m.group(1)), 0) + (m.group(2) != m.group(3))
     tot = np.loadtxt(join(d, "output", "conserved_totals.txt"))
-    return dict(splits=splits, merges=merges, steps=tot[:, 0], M=tot[:, 2], E=tot[:, 6] + tot[:, 7], nmerged=sum(int(x) for x in re.findall(r"(\d+) particles merged", text)),
+    return dict(splits=splits, merges=merges, crossing=crossing, steps=tot[:, 0], M=tot[:, 2], E=tot[:, 6] + tot[:, 7], nmerged=sum(int(x) for x in re.findall(r"(\d+) particles merged", text)),
                 nsplit=sum(int(x) for x in re.findall(r"(\d+) particles split", text)))
 
 
@@ -104,6 +109,9 @@ def test_split_daughters_independent_of_ranks(runs):
         print(f"{n} ranks: step {s}, {len(ref['splits'][s])} parents, largest daughter-offset difference / h {d}, |dM|/M {dM:.2e}, |dE|/E {dE:.2e}")
         assert d is not None, f"{n} ranks: other parents split"
         assert d <= TOL_POS and dM <= TOL_M and dE <= TOL_E
+    nx = runs[("on", "split", 4)]["crossing"]["split"].get(s, 0)
+    print(f"4 ranks, step {s}: {nx} split parents have their nearest neighbour on another rank")
+    assert nx > 0, "no split parent with its nearest neighbour on another rank: the search across ranks is not tested"
 
 
 def test_merge_pairs_independent_of_ranks(runs):
@@ -116,6 +124,9 @@ def test_merge_pairs_independent_of_ranks(runs):
         print(f"{n} ranks: step {s}, pairs {len(pairs)} (1 rank: {len(ref['merges'][s])}), in one run only {len(pairs ^ ref['merges'][s])}, |dM|/M {dM:.2e}, |dE|/E {dE:.2e}")
         assert pairs == ref["merges"][s]
         assert dM <= TOL_M and dE <= TOL_E
+    nx = runs[("on", "merge", 4)]["crossing"]["merge"].get(s, 0)
+    print(f"4 ranks, step {s}: {nx} merges between cells on different ranks")
+    assert nx > 0, "no merge between cells on different ranks: the merge across ranks is not tested"
 
 
 def test_control_without_the_flag_depends_on_ranks(runs):
@@ -123,7 +134,8 @@ def test_control_without_the_flag_depends_on_ranks(runs):
     ref = runs[("off", "split", 1)]; d4, s = _split_difference(ref, runs[("off", "split", 4)])
     print(f"without the flag, split box, 4 ranks vs 1: largest daughter-offset difference / h {d4}")
     assert d4 is None or d4 > TOL_POS, "split box: the nearest neighbour never lies on another rank"
-    refm = runs[("off", "merge", 1)]; k = _row_after(refm, 1); r4 = runs[("off", "merge", 4)]
+    refm = runs[("off", "merge", 1)]; r4 = runs[("off", "merge", 4)]
+    k = _row_after(refm, min(runs[("on", "merge", 1)]["merges"]))  # the first sync row after the first merge pass
     n1, n4 = refm["nmerged"], r4["nmerged"]; dE = abs(r4["E"][k] - refm["E"][k]) / refm["E"][k]
     print(f"without the flag, centre-merge box: merges {n1} on 1 rank, {n4} on 4; |dE|/E at the first row {dE:.2e}")
     assert n1 != n4 or dE > TOL_E, "centre-merge box: the result does not depend on the rank count even without the flag"

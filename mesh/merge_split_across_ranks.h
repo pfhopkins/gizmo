@@ -105,7 +105,8 @@ static Answer answer_query(const Query &q, int qindex, const std::vector<char> &
         if(q.kind == 2)
         {
             nearest_xyz(dp);
-            double r2 = dp.norm_sq(); if(r2 < a.r2min) {a.r2min = r2; a.found = 1;}
+            double r2 = dp.norm_sq(); if(r2 >= h2) {continue;} /* inside the kernel only: what else a search returns depends on the tree, and so on the rank count */
+            if(r2 < a.r2min) {a.r2min = r2; a.found = 1;}
             continue;
         }
         nearest_xyz(dp, -1);
@@ -164,10 +165,17 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
     for(const Answer &a : ain)
     {
         int l = a.q - qfirst[ThisTask]; if(l < 0 || l >= (int) ql.size()) {endrun(97565);}
-        if(ql[l].kind == 2) {if(a.r2min < best[l].r2min) {best[l].r2min = a.r2min; best[l].found = 1;}}
+        if(ql[l].kind == 2) {if(a.r2min < best[l].r2min) {best[l].r2min = a.r2min; best[l].found = 1; best[l].jtask = a.jtask;}}
         else if(!best[l].found || key_less(a.jkey, best[l].jkey)) {best[l] = a;}
     }
-    for(size_t l = 0; l < ql.size(); l++) {if(ql[l].kind == 2 && best[l].found && best[l].r2min < MAX_REAL_NUMBER && best[l].r2min > 0) {r_nearest_split[ql[l].index] = sqrt(best[l].r2min);}}
+    for(size_t l = 0; l < ql.size(); l++)
+    {
+        if(!(ql[l].kind == 2 && best[l].found && best[l].r2min < MAX_REAL_NUMBER && best[l].r2min > 0)) {continue;}
+        r_nearest_split[ql[l].index] = sqrt(best[l].r2min);
+#ifdef TEST_WAKEUP_DUMP
+        printf("TEST_SPLIT_NEIGHBOR step %lld ID %llu task %d neighbour_task %d\n", (long long) All.NumCurrentTiStep, ql[l].key.id, ThisTask, best[l].jtask);
+#endif
+    }
 
     /* 3. proposals and the order-free matching */
     std::vector<Key> W(NumPart); std::vector<char> hasW(NumPart, 0);
@@ -203,7 +211,11 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
     { /* records waiting for a kick name cells by rank and index: none may be pending when a cell changes rank */
         long long loc[2] = {n_remote, pairflux_restart_count()}, glob[2];
         MPI_Allreduce(loc, glob, 2, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if(glob[0] > 0 && glob[1] > 0) {if(ThisTask == 0) {printf("MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS: %lld merges across ranks with %lld pair-flux records pending\n", glob[0], glob[1]);} endrun(97567);}
+        if(glob[0] > 0 && glob[1] > 0)
+        { /* the merges across ranks of this pass wait (those on one rank go ahead, as without the flag); the result of this pass then depends on the rank count */
+            if(ThisTask == 0) {printf("MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS: %lld merges across ranks postponed, %lld pair-flux records pending\n", glob[0], glob[1]); fflush(stdout);}
+            for(int t = 0; t < NTask; t++) {if(t != ThisTask) {xout[t].clear();}}
+        }
     }
 #endif
     std::vector<char> xin = exchange(xout);
@@ -216,24 +228,32 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
         XferHead hd = head(x); if(hd.itask == ThisTask) {return hd.iindex;}
         const char *src = xin.data() + (size_t) x * rec + sizeof(XferHead); int slot;
         if(hd.type == 0) {
-            slot = N_gas; if(N_gas >= All.MaxPartGas || NumPart >= All.MaxPart) {printf("MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS: no free slot for a merge across ranks (task %d)\n", ThisTask); endrun(97568);}
-            saved_valid = (N_gas < NumPart); if(saved_valid) {memcpy(&saved, &P[slot], sizeof(PartT));}
+            slot = N_gas; saved_valid = (N_gas < NumPart); if(saved_valid) {memcpy(&saved, &P[slot], sizeof(PartT));}
             memcpy(&P[slot], src, sizeof(PartT)); memcpy(&CellP[slot], src + sizeof(PartT), sizeof(CellT));
         } else {
-            slot = NumPart; if(NumPart >= All.MaxPart) {endrun(97569);}
-            saved_valid = 0; memcpy(&P[slot], src, sizeof(PartT));
+            slot = NumPart; saved_valid = 0; memcpy(&P[slot], src, sizeof(PartT));
         }
         return slot;
     };
-    auto unplace = [&](int x) {XferHead hd = head(x); if(hd.itask != ThisTask && hd.type == 0 && saved_valid) {memcpy(&P[N_gas], &saved, sizeof(PartT));} saved_valid = 0;};
+    auto unplace = [&](int x) {
+        XferHead hd = head(x); if(hd.itask == ThisTask) {return;}
+        if(hd.type == 0 && saved_valid) {memcpy(&P[N_gas], &saved, sizeof(PartT));} /* the particle that lives there */
+        else {P[(hd.type == 0) ? N_gas : NumPart].Mass = 0;} /* beyond the live particles: leave nothing that looks like one */
+        saved_valid = 0;
+    };
+    /* room for the copy: CellP[N_gas] for gas, and P[N_gas] exists or P[NumPart] is free; without room the merge waits (this rank only: rank-dependent, reported) */
+    auto has_room = [&](int x) {XferHead hd = head(x); if(hd.itask == ThisTask) {return true;}
+        if(hd.type == 0) {return (N_gas < All.MaxPartGas) && ((N_gas < NumPart) || (NumPart < All.MaxPart));} return NumPart < All.MaxPart;};
 
     /* 5. landing points: duplicates and points on existing cells, decided alike on every rank */
     std::vector<Landing> ll(nx);
     for(int x = 0; x < nx; x++)
     {
-        XferHead hd = head(x); int slot = place(x);
-        Vec3<double> pm = merged_position(slot, hd.jindex);
+        XferHead hd = head(x);
         Landing &L = ll[x]; memset(&L, 0, sizeof(Landing)); L.key = hd.key; L.h = P[hd.jindex].KernelRadius; L.type = hd.type; L.itask = hd.itask; L.iindex = hd.iindex; L.jtask = ThisTask; L.jindex = hd.jindex;
+        if(!has_room(x)) {L.type = -1; printf("MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS: no free slot on task %d, a merge across ranks waits\n", ThisTask); continue;} /* claims no landing point */
+        int slot = place(x);
+        Vec3<double> pm = merged_position(slot, hd.jindex);
         for(int k = 0; k < 3; k++) {L.pos[k] = pm[k];}
         unplace(x);
     }
@@ -245,7 +265,8 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
         std::set<std::array<double,3>> claimed;
         for(int o = 0; o < nl; o++)
         {
-            const Landing &L = lall[order[o]]; std::array<double,3> key = {L.pos[0], L.pos[1], L.pos[2]};
+            const Landing &L = lall[order[o]]; if(L.type < 0) {refused[order[o]] = 1; continue;}
+            std::array<double,3> key = {L.pos[0], L.pos[1], L.pos[2]};
 #ifdef BOX_PERIODIC
             const double box3[3] = {boxSize_X, boxSize_Y, boxSize_Z};
             for(int d = 0; d < 3; d++) {key[d] -= floor(key[d] / box3[d]) * box3[d];} /* primary-box image */
@@ -255,7 +276,7 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
     }
     for(int g = 0; g < nl; g++)
     { /* a cell of this rank exactly at the landing point (other than the pair itself) */
-        const Landing &L = lall[g]; int dummy = 0, startnode = All.MaxPart;
+        const Landing &L = lall[g]; int dummy = 0, startnode = All.MaxPart; if(L.type < 0) {continue;}
         MyDouble centre[3] = {(MyDouble) L.pos[0], (MyDouble) L.pos[1], (MyDouble) L.pos[2]};
         int numngb = ngb_treefind_variable_targeted(centre, (MyFloat)(1.e-6 * L.h), -1, &startnode, 0, &dummy, &dummy, 1 << L.type);
         for(int n = 0; n < numngb; n++)
@@ -277,7 +298,7 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
         {
             int slot = place(x);
 #ifdef TEST_WAKEUP_DUMP
-            {Key kj = key_of(hd.jindex); printf("TEST_MERGE_PAIR step %lld absorbed %llu %llu %lld into %llu %llu %lld\n", (long long) All.NumCurrentTiStep, hd.key.id, hd.key.child, hd.key.gen, kj.id, kj.child, kj.gen);}
+            {Key kj = key_of(hd.jindex); printf("TEST_MERGE_PAIR step %lld absorbed %llu %llu %lld into %llu %llu %lld ranks %d %d\n", (long long) All.NumCurrentTiStep, hd.key.id, hd.key.child, hd.key.gen, kj.id, kj.child, kj.gen, hd.itask, ThisTask);}
 #endif
             did = (merge_particles_ij(slot, hd.jindex) == 1) ? 1 : 0;
             unplace(x);
@@ -288,9 +309,13 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
     std::vector<Verdict> din = exchange(dout);
     for(const Verdict &v : din)
     { /* what merge_particles_ij does to the absorbed cell; rearrange_particle_sequence removes it */
-        if(!v.ok || v.iindex < 0 || v.iindex >= NumPart) {continue;}
+        if(v.iindex < 0 || v.iindex >= NumPart) {printf("MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS: acknowledgement for index %d outside [0,%d) on task %d\n", v.iindex, NumPart, ThisTask); endrun(97570);}
+        if(!v.ok) {continue;}
         int i = v.iindex;
         Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+        if(P[i].Type == 0) {CellP[i].MassTrue = 0; CellP[i].DtMass = 0; CellP[i].dMass = 0;}
+#endif
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
         P[i].Time_Of_Last_MergeSplit = All.Time;
 #endif

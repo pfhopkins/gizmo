@@ -195,13 +195,17 @@ Without the switch the search for a merge partner, and for the nearest neighbour
 placed, sees the cells of the calling rank only, and the merge choice is made in local index order; the result of a merge/split
 pass then depends on the number of ranks (STL-324: 77 / 75 / 71 merges on 1 / 2 / 4 ranks in a wind box, energy different by
 1e-2 three steps later). With the switch every active cell that needs a merge or a split is a query answered by all ranks. The
-partner is the candidate of lowest mass, then lowest IDs. A proposal i -> j is accepted if i's key (mass, IDs) is the smallest
+partner is the candidate of lowest mass, then lowest IDs (position as the last tie-break). A proposal i -> j is accepted if i's key
+(mass, IDs, position) is the smallest
 among all proposals that touch i or j, so a cell takes part in at most one merge per pass and nothing depends on an order; the
 others wait for the next pass. Landing points of the accepted merges are compared over all ranks. A merge with a partner on
 another rank is carried out on the partner's rank by the unchanged merge routine, from a byte copy of the absorbed cell; its
 owner removes it on the partner's acknowledgement. Merges of a pass are done before its splits. The choice differs from the
 one without the switch, also on a single rank. Not available with the spawned-wind, star-cluster and RIAF merge clauses or
-CHIMES. Cost per pass: one gather of the queries, one neighbour search per query and rank, three small message rounds.
+CHIMES. A merge across ranks waits for the next pass (reported in the log) if pair-flux records are pending or the partner's
+rank has no free slot for the copy; a split's neighbour distance is taken inside the kernel radius only. Cost per pass: one gather
+of the queries, one neighbour search per query and rank, small message rounds for answers, proposals and verdicts, and one message
+with the full particle and cell record per merge across ranks.
 Code: mesh/merge_split_across_ranks.h. Test: test/merge_split_rank_independence.
 
 ## TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS (test only)
