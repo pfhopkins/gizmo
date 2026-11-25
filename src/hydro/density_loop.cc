@@ -846,7 +846,25 @@ void density(void)
 
     /* (3) Allocate converged output vectors to num_active. */
     DensitySpec::Aux aux;
+#ifdef GPU_SPEEDUP_HOST_THREADED_DENSITY_RESULTS
+    {
+        /* Cleared in fixed blocks on all threads, which is also where the memory is first touched. */
+        static_assert(std::is_trivially_default_constructible<DensitySpec::AccumData>::value, "cleared as bytes");
+        const long n_results = (long) active_list_concat.size(), results_block = 16384;
+        const long n_blocks = (n_results + results_block - 1) / results_block;
+        aux.per_active_final_accum.reset(new DensitySpec::AccumData[(size_t) n_results]);
+        DensitySpec::AccumData *results = aux.per_active_final_accum.get();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, n_results))
+#endif
+        for (long b = 0; b < n_blocks; b++) {
+            const long first = b * results_block, n_here = (n_results - first < results_block) ? n_results - first : results_block;
+            memset((void *) (results + first), 0, (size_t) n_here * sizeof(DensitySpec::AccumData));
+        }
+    }
+#else
     aux.per_active_final_accum.resize(active_list_concat.size());
+#endif
     aux.per_active_final_h    .resize(active_list_concat.size());
 
     /* (4) Single gas-only subgroup (design §1b). */

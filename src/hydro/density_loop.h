@@ -39,6 +39,7 @@
 
 /* Kokkos_Core must precede allvars.h (its macros may conflict with stdlib names). */
 #include <Kokkos_Core.hpp>
+#include <memory>
 
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
@@ -347,7 +348,11 @@ struct DensitySpec {
     struct Aux {
         /* Converged AccumData per active, copied at the post-iter-loop
          * apply_active_writeback (FINAL-only). */
+#ifdef GPU_SPEEDUP_HOST_THREADED_DENSITY_RESULTS
+        std::unique_ptr<AccumData[]> per_active_final_accum;   /* a std::vector would clear it on one thread */
+#else
         std::vector<AccumData> per_active_final_accum;
+#endif
         /* Converged radius per active, copied in after_iter at the
          * Converged return paths. Needed by density_finalize_post_runner
          * to write P[i].KernelRadius; the runner does not surface
