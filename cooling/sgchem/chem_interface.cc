@@ -968,6 +968,15 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->abhd         = abhd;
     in->abco         = abco;
     in->abe          = abe;
+#if defined(SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR) && !defined(COSMIC_RAY_FLUID)
+    if(!All.StarFormationHasSetIn) /* no cosmic rays before the first star: exactly zero, not the lower limit of the scaled rate */
+    {
+        in->cosmic_ray_ion_rate = 0;
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
+        CellP[target].CR_ionization_rate = 0;
+#endif
+    }
+#endif
 }
 
 

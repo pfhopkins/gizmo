@@ -1133,6 +1133,9 @@ void star_formation_parent_routine(void)
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
         tot_sink_formed = sf_counts_tot[2];
 #endif
+#ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
+        if(sf_counts_tot[0] > 0 || sf_counts_tot[1] > 0 || sf_counts_tot[2] > 0) {All.StarFormationHasSetIn = 1;} /* stars spawned, gas converted, sinks formed: from the totals, so on every task alike */
+#endif
     }
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
     if( (ThisTask==0) && (tot_sink_formed > 0) )

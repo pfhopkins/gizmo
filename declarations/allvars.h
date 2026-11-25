@@ -538,6 +538,9 @@ extern struct global_data_all_processes
   char SGCHEMTablesDir[256];    /*!< directory of the installed chemistry tables (C++ backend) */
   double G0;                    /*!< UV radiation field strength in Habing units */
   double CosmicRayIonRate;      /*!< cosmic ray ionization rate [s^-1] */
+#ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
+  int StarFormationHasSetIn;    /*!< 1 once a star or sink exists or has formed in this run (the same on every task), else 0 */
+#endif
   double DGRnormalized;         /*!< dust-to-gas ratio normalized to solar */
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST) && defined(EXPERIMENTAL_DUST_HU_MODEL)
