@@ -408,19 +408,22 @@ void mechanical_fb_calc_toplevel(void)
          * every rank skips the mech_fb path entirely (no allocation, no kernel). */
         int any_local = (num_active > 0) ? 1 : 0, any_active = 0;
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
-        { /* whether any rank may write an event row rides this reduction; slot 2: a supernova this step (gates the causal wake) */
-#ifdef SNE_BROADCAST_TIMESTEP
-            const int n_in = 3;
-#else
-            const int n_in = 2;
-#endif
-            int loc_in[3] = {any_local, single_star_feedback_log_rows_local(), 0}, glob_in[3] = {0, 0, 0};
+        int rounds_possible = 0; /* a death this step with another death or a wind anywhere: events may share receivers */
+        { /* whether any rank may write an event row rides this reduction; slot 2: a supernova this step (gates the causal wake);
+             slots 3-6: the highest and lowest rank with a death (AGB, supernova, Type Ia), the most deaths on one rank (up to 2), any wind */
+            const int n_in = 7;
+            int loc_in[7] = {any_local, single_star_feedback_log_rows_local(), 0, 0, 0, 0, 0}, glob_in[7] = {0, 0, 0, 0, 0, 0, 0};
+            {int n_death = 0, n_wind = 0;
+             for(int ii : ActiveParticleList) {if(!addFB_evaluate_active_check(ii, -2)) {continue;} int cls = single_star_event_class(ii); if(cls == 2) {n_wind++;} else if(cls > 0) {n_death++;}}
+             if(n_death > 0) {loc_in[3] = ThisTask + 1; loc_in[4] = NTask - ThisTask; loc_in[5] = IMIN(n_death, 2);}
+             loc_in[6] = (n_wind > 0) ? 1 : 0;}
 #ifdef SNE_BROADCAST_TIMESTEP
             loc_in[2] = single_star_sn_wake_pending_local();
             for(int ii : ActiveParticleList) {if(P[ii].Type > 1 && P[ii].StarIdx > 0 && P[ii].SNe_ThisTimeStep > 0) {loc_in[2] = 1; break;}}
 #endif
             MPI_Allreduce(loc_in, glob_in, n_in, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
             any_active = glob_in[0]; single_star_feedback_set_log_rows(glob_in[1]);
+            rounds_possible = (glob_in[3] > 0) && (glob_in[5] >= 2 || glob_in[3] + glob_in[4] != NTask + 1 || glob_in[6] > 0);
 #ifdef SNE_BROADCAST_TIMESTEP
             single_star_sn_this_step(glob_in[2]);
 #endif
@@ -452,19 +455,31 @@ void mechanical_fb_calc_toplevel(void)
         {int aa = 0; for(int ii : ActiveParticleList) {
             if(addFB_evaluate_active_check(ii, -2)) nl_active[aa++] = ii;
         }}
-#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
-        single_star_feedback_prepare(nl_active, num_active);
-#endif
 #ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
         int n_wind = 0;
         for(int a = 0; a < num_active; a++) {if(P[nl_active[a]].MassReturn_ThisTimeStep > 0) {n_wind++;}}
         MPI_Allreduce(&n_wind, &n_wind_all, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         if(n_wind_all > 0) {mechfb_test_state_dump(0);}
 #endif
-        int *nl_loop = nl_active, n_loop = num_active;
+        int *nl_round = nl_active, n_round = num_active, n_rounds = 1; /* the sources of one round; all of them unless single-star events share receivers */
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+        std::vector<int> round_of, round_list;
+        if(rounds_possible) {round_of.resize(num_active > 0 ? num_active : 1); round_list.reserve(num_active > 0 ? num_active : 1); n_rounds = single_star_feedback_rounds(nl_active, num_active, round_of.data());}
+#endif
 #ifdef TEST_SINGLE_STARS_FEEDBACK_KERNEL_AT_MOST
         for(int a = 0; a < num_active; a++) {if(P[nl_active[a]].StarIdx > 0) {P[nl_active[a]].KernelRadius = DMIN(P[nl_active[a]].KernelRadius, All.TestFBKernelAtMost);}} /* test only: a star in a bubble */
 #endif
+        for(int round = 0; round < n_rounds; round++)
+        {
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+        if(n_rounds > 1) { /* events sharing receivers: each round weighs and deposits on the gas the earlier rounds left */
+            if(round > 0) {verify_and_assign_local_mechfb_integrals(); gpu_particles_arena_invalidate();}
+            round_list.clear(); for(int a = 0; a < num_active; a++) {if(round_of[a] == round) {round_list.push_back(nl_active[a]);}}
+            nl_round = round_list.data(); n_round = (int)round_list.size();
+        }
+        single_star_feedback_prepare(nl_round, n_round);
+#endif
+        int *nl_loop = nl_round, n_loop = n_round;
 #ifdef TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME
         if(All.Time < All.TestFBNoGasUntilTime) {n_loop = 0;} /* test only: events find no gas, stay pending */
 #endif
@@ -483,8 +498,9 @@ void mechanical_fb_calc_toplevel(void)
         }
 #endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
-        single_star_feedback_finalize(nl_active, num_active); /* remnant = table, or the event stays pending */
+        single_star_feedback_finalize(nl_round, n_round); /* remnant = table, or the event stays pending */
 #endif
+        }
         myfree(nl_active);
     }
 

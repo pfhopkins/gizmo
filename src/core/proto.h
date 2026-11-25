@@ -1211,7 +1211,7 @@ double single_star_ia_convert_mass(int i, int fb_loop_iteration);
 void single_star_ia_conversion_book(const double *dmz, int n_clamped);
 void single_star_ia_conversion_output(void);
 #endif
-void single_star_feedback_prepare(const int *list, int n);
+void single_star_feedback_prepare(const int *list, int n); int single_star_event_class(int i); int single_star_feedback_rounds(const int *list, int n, int *round_of);
 void single_star_feedback_finalize(const int *list, int n);
 int single_star_feedback_log_rows_local(void);
 void single_star_feedback_set_log_rows(int any);

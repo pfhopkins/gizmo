@@ -5,6 +5,7 @@
 #include <string.h>
 #include <math.h>
 #include <vector>
+#include <algorithm>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../declarations/gpu_rng.h"
@@ -552,6 +553,82 @@ static void single_star_log(int i, int s, const struct single_star_event *ev, do
     single_star_event_log_push(&r);
 }
 #endif
+
+/* class of the star's event this step, in the order the classes are applied where events share receivers:
+   1 AGB death, 2 wind, 3 supernova or Type Ia; 0 = no single-star event */
+int single_star_event_class(int i)
+{
+    if(P[i].Type <= 1 || P[i].StarIdx <= 0) {return 0;}
+    int kind = single_star_kind_this_step(i);
+    return (kind == SSE_AGB) ? 1 : (kind == SSE_WIND) ? 2 : (kind == SSE_SN || kind == SSE_IA) ? 3 : 0;
+}
+
+/* one event of the step, as every rank sees it when rounds are needed */
+struct ssfb_round_event {unsigned long long key[3]; double pos[3], h, t_since; int cls, task, slot, round;};
+
+/* THE order of events that share receivers: the class (AGB deaths, winds, supernovae and Type Ia), then the earlier
+   death first (the time since the star passed the end of its table life; 0 for winds and Type Ia, which have no
+   time inside the step), then the star's identity (ID, child number, generation) */
+static bool ssfb_event_before(const ssfb_round_event &a, const ssfb_round_event &b)
+{
+    if(a.cls != b.cls) {return a.cls < b.cls;}
+    if(a.t_since != b.t_since) {return a.t_since > b.t_since;}
+    for(int k = 0; k < 3; k++) {if(a.key[k] != b.key[k]) {return a.key[k] < b.key[k];}}
+    return false;
+}
+
+/* whether two events can deposit into the same cell: their kernels intersect, each taken at the size the
+   no-gas retries can grow it to (1.4^3) */
+static int ssfb_events_share_receivers(const ssfb_round_event &a, const ssfb_round_event &b)
+{
+#if defined(GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS) || defined(GALSF_FB_MECHANICAL_HEALPIX_WEIGHTS) /* receivers lie in the source's own kernel */
+    double dx = a.pos[0] - b.pos[0], dy = a.pos[1] - b.pos[1], dz = a.pos[2] - b.pos[2], reach = 1.4 * 1.4 * 1.4 * (a.h + b.h);
+    NEAREST_XYZ(dx,dy,dz,1);
+    return (dx*dx + dy*dy + dz*dz < reach * reach);
+#else
+    (void) a; (void) b; return 1; /* face-area weights also reach cells whose own kernel holds the source */
+#endif
+}
+
+/* The rounds of this step's events (all ranks; called only on a step with a death and another event): events that
+   share receivers are applied one after the other in the order of ssfb_event_before, each on the gas the earlier ones
+   left; winds do not wait for winds; events with disjoint receivers share a round. round_of[a] is the round of
+   list[a]; returns the number of rounds. Memory: the step's events, on every rank, for the duration of the call. */
+int single_star_feedback_rounds(const int *list, int n, int *round_of)
+{
+    std::vector<ssfb_round_event> mine;
+    for(int a = 0; a < n; a++) {
+        int i = list[a], cls = single_star_event_class(i); round_of[a] = 0;
+        if(cls == 0) {continue;}
+        ssfb_round_event e; memset(&e, 0, sizeof(e));
+        e.key[0] = (unsigned long long)P[i].ID; e.key[1] = (unsigned long long)P[i].ID_child_number; e.key[2] = (unsigned long long)P[i].ID_generation;
+        for(int k = 0; k < 3; k++) {e.pos[k] = P[i].Pos[k];}
+        e.h = P[i].KernelRadius; e.cls = cls; e.task = ThisTask; e.slot = a;
+        if(single_star_kind_this_step(i) != SSE_IA && cls != 2) {
+            double logM, logZ; single_star_logMZ(single_star_slot(P[i].StarIdx), &logM, &logZ);
+            e.t_since = DMAX(single_star_age_yr(i) - single_star_death_age_yr(logM, logZ), 0);
+        }
+        mine.push_back(e);
+    }
+    std::vector<int> counts(NTask), offsets(NTask);
+    int n_mine = (int)(mine.size() * sizeof(ssfb_round_event)), n_all = 0;
+    MPI_Allgather(&n_mine, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    for(int t = 0; t < NTask; t++) {offsets[t] = n_all; n_all += counts[t];}
+    std::vector<ssfb_round_event> all(n_all / sizeof(ssfb_round_event) + 1);
+    MPI_Allgatherv(mine.data(), n_mine, MPI_BYTE, all.data(), counts.data(), offsets.data(), MPI_BYTE, MPI_COMM_WORLD);
+    all.resize(n_all / sizeof(ssfb_round_event));
+    std::sort(all.begin(), all.end(), ssfb_event_before);
+    std::vector<int> deaths; int n_rounds = 1; /* deaths so far in the order; a wind is compared with these only */
+    for(size_t e = 0; e < all.size(); e++) {
+        int r = 0;
+        if(all[e].cls == 2) {for(int d : deaths) {if(ssfb_events_share_receivers(all[e], all[d])) {r = IMAX(r, all[d].round + 1);}}}
+        else {for(size_t f = 0; f < e; f++) {if(ssfb_events_share_receivers(all[e], all[f])) {r = IMAX(r, all[f].round + 1);}}
+              deaths.push_back((int)e);}
+        all[e].round = r; n_rounds = IMAX(n_rounds, r + 1);
+        if(all[e].task == ThisTask) {round_of[all[e].slot] = r;}
+    }
+    return n_rounds;
+}
 
 /* before the feedback loop: the masses of the sources */
 void single_star_feedback_prepare(const int *list, int n)
