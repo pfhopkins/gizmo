@@ -197,8 +197,9 @@ pass then depends on the number of ranks (STL-324: 77 / 75 / 71 merges on 1 / 2 
 1e-2 three steps later). With the switch every active cell that needs a merge or a split is a query answered by all ranks. The
 partner is the candidate of lowest mass, then lowest IDs (position as the last tie-break). A proposal i -> j is accepted if i's key
 (mass, IDs, position) is the smallest
-among all proposals that touch i or j, so a cell takes part in at most one merge per pass and nothing depends on an order; the
-others wait for the next pass. Landing points of the accepted merges are compared over all ranks. A merge with a partner on
+among all proposals that touch i or j, so nothing depends on an order. The matching is repeated within the pass (up to
+MERGE_SPLIT_MATCHING_ROUNDS, default 16) for the cells that lost their target, with the cells already merged in this pass left out;
+a cell takes part in at most one merge per pass. Landing points of the accepted merges are compared over all ranks. A merge with a partner on
 another rank is carried out on the partner's rank by the unchanged merge routine, from a byte copy of the absorbed cell; its
 owner removes it on the partner's acknowledgement. Merges of a pass are done before its splits. The choice differs from the
 one without the switch, also on a single rank. Not available with the spawned-wind, star-cluster and RIAF merge clauses or

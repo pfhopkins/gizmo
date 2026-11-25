@@ -13,7 +13,9 @@ Bars, fixed before the first run (2026-11-25):
 - both: gas mass equal to 1e-12 and thermal + kinetic energy equal to 1e-10 (relative) at the first sync row after that pass;
 - in the 4-rank run at least one split parent has its nearest neighbour on another rank and at least one merge is between cells
   on different ranks (counted from the dump; otherwise the search and the merge across ranks are not tested);
-- control arm: the same runs built WITHOUT the flag differ from 1 rank (if they do not, the boxes test nothing).
+- control arm: the same runs built WITHOUT the flag differ from 1 rank (if they do not, the boxes test nothing);
+- the first merge pass of the centre-merge box merges within 20 % of the number the rank-local choice merges (several matching rounds
+  per pass; bar fixed 2026-11-25 before the first run with rounds).
 Not covered: star particles (the boxes are gas only), so the copy slot is only used with no particle behind the gas block.
 """
 
@@ -59,7 +61,9 @@ def _run(binary, box, nranks, tag):
     for m in re.finditer(r"^TEST_SPLIT_NEIGHBOR step (\d+) ID \d+ task (\d+) neighbour_task (\d+)$", text, re.M):
         crossing["split"][int(m.group(1))] = crossing["split"].get(int(m.group(1)), 0) + (m.group(2) != m.group(3))
     tot = np.loadtxt(join(d, "output", "conserved_totals.txt"))
-    return dict(splits=splits, merges=merges, crossing=crossing, steps=tot[:, 0], M=tot[:, 2], E=tot[:, 6] + tot[:, 7], nmerged=sum(int(x) for x in re.findall(r"(\d+) particles merged", text)),
+    passes = [int(x) for x in re.findall(r"(\d+) particles merged", text) if int(x) > 0]  # merges per pass, passes with merges only
+    cost = [(int(a), int(b), int(c), float(d)) for a, b, c, d in re.findall(r"^TEST_MERGE_SPLIT_PASS step \d+ rounds (\d+) queries (\d+) merges (\d+) seconds (\S+)$", text, re.M)]
+    return dict(splits=splits, merges=merges, crossing=crossing, passes=passes, cost=cost, steps=tot[:, 0], M=tot[:, 2], E=tot[:, 6] + tot[:, 7], nmerged=sum(int(x) for x in re.findall(r"(\d+) particles merged", text)),
                 nsplit=sum(int(x) for x in re.findall(r"(\d+) particles split", text)))
 
 
@@ -127,6 +131,17 @@ def test_merge_pairs_independent_of_ranks(runs):
     nx = runs[("on", "merge", 4)]["crossing"]["merge"].get(s, 0)
     print(f"4 ranks, step {s}: {nx} merges between cells on different ranks")
     assert nx > 0, "no merge between cells on different ranks: the merge across ranks is not tested"
+
+
+def test_merges_per_pass_close_to_the_rank_local_choice(runs):
+    """the matching is repeated within a pass until nothing more merges: the first pass merges within 20 % of what the rank-local greedy
+    choice merges (1 rank, same initial state); the rounds and the time of the passes are printed"""
+    n_on, n_off = runs[("on", "merge", 1)]["passes"][0], runs[("off", "merge", 1)]["passes"][0]
+    c = runs[("on", "merge", 4)]["cost"]
+    print(f"first pass, 1 rank: {n_on} merges with the flag, {n_off} without; 4 ranks with the flag: {len(c)} passes, rounds per pass up to {max(x[0] for x in c)}, "
+          f"queries per pass up to {max(x[1] for x in c)}, seconds per pass mean {sum(x[3] for x in c) / len(c):.2e} max {max(x[3] for x in c):.2e}")
+    assert all(runs[("on", "merge", n)]["passes"][0] == n_on for n in (2, 4)), "the first pass merges a different number on 2 or 4 ranks"
+    assert abs(n_on / n_off - 1) <= 0.2
 
 
 def test_control_without_the_flag_depends_on_ranks(runs):

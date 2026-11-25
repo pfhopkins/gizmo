@@ -127,7 +127,8 @@ def runs():
         text, out = _run(binaries[arm], fbc, f"{arm}_r{nranks}_{box}", nranks, box)
         r, n = _ratio(out)
         res[(arm, nranks, box)] = dict(r=r, n=n, nrecv=text.count("TEST_KICK_FLOOR_DUMP recv"), nkick=text.count("TEST_KICK_FLOOR_DUMP kick"), wake=_wake_record(text),
-                                       merged=sum(int(x) for x in re.findall(r"(\d+) particles merged", text)))
+                                       merged=sum(int(x) for x in re.findall(r"(\d+) particles merged", text)),
+                                       passes=[int(x) for x in re.findall(r"(\d+) particles merged", text) if int(x) > 0])
         e = res[(arm, nranks, box)]
         print(f"{arm}, {nranks} ranks, {box} box: max kick_floor / wind {r:.3e} over {n} syncs with feedback; dump lines: {e['nrecv']} receivers, "
               f"{e['nkick']} kicks; first deposit at step {e['wake'][0]}; cells merged {e['merged']}")
@@ -205,6 +206,9 @@ def test_independent_of_ranks_with_merge_split_search_across_ranks(runs):
     assert all(runs[("across", n, "thin")]["merged"] > 0 for n in (1, 2, 4)), "no merge in this box"
     bad = _compare_ranks(runs, "across")
     assert not bad, "; ".join(bad)
+    n_on, n_off = runs[("across", 1, "thin")]["passes"][0], runs[("off", 1, "thin")]["passes"][0]
+    print(f"first merge pass, 1 rank: {n_on} merges with the search across ranks, {n_off} with the rank-local choice")
+    assert abs(n_on / n_off - 1) <= 0.2, "merges per pass not within 20 % of the rank-local choice"
 
 
 def test_wake_independent_of_ranks_without_merge_split(runs):
