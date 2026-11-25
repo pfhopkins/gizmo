@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 #include "tree_pair_kernel.h"
 
@@ -35,6 +36,17 @@
 
 struct star_direct_data *StarDirect;
 int N_StarDirect;
+
+/* what tells a star from every other one in the table: Type-4 stars born from one cell share P.ID and differ in child number and
+   generation, so they take the identity key of the random numbers (as RUMI++'s star key); sinks keep P.ID */
+static unsigned long long star_direct_identity(int i)
+{
+#if (STAR_DIRECT_GRAVITY_TYPE == 4)
+    return (unsigned long long) gizmo_rng_particle_identity_key(P[i]);
+#else
+    return (unsigned long long) P[i].ID;
+#endif
+}
 
 /*! Gather every star in the simulation onto every task.
  *
@@ -92,7 +104,7 @@ void star_direct_gravity_build_table(void)
 #endif
         sendbuf[k].Mass = P[i].Mass;
         sendbuf[k].Soft = ForceSoftening_KernelRadius(i);
-        sendbuf[k].ID = P[i].ID;
+        sendbuf[k].Identity = star_direct_identity(i);
 #ifdef KETJU_REGULARIZATION
         sendbuf[k].KetjuChainID = P[i].KetjuChainID;
 #endif
@@ -130,7 +142,7 @@ void star_direct_gravity_free_table(void)
  *  from other tasks) and before gravtree.cc multiplies by All.G, so the sums here are in the same
  *  G-free units the tree walk uses.
  *
- *  Pairs are identified by ID, not by index: the table is a global concatenation, so a target's own
+ *  Pairs are identified by identity, not by index: the table is a global concatenation, so a target's own
  *  entry sits at an offset that depends on which task owns it. */
 void star_direct_gravity_compute(void)
 {
@@ -159,7 +171,7 @@ void star_direct_gravity_compute(void)
 #endif
         int ags_bitflag_i = ags_gravity_kernel_shared_BITFLAG(P[i].Type);
 #endif
-        MyIDType id_i = P[i].ID;
+        const unsigned long long id_i = star_direct_identity(i);
 #ifdef KETJU_REGULARIZATION
         MyIDType chain_i = P[i].KetjuChainID;
 #endif
@@ -182,7 +194,7 @@ void star_direct_gravity_compute(void)
 
         for(int j = 0; j < N_StarDirect; j++)
         {
-            if(StarDirect[j].ID == id_i) {continue;} /* self */
+            if(StarDirect[j].Identity == id_i) {continue;} /* self */
             double mass = StarDirect[j].Mass; if(mass <= 0) {continue;}
             Vec3<double> dr = StarDirect[j].Pos - pos;
             GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);

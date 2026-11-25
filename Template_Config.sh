@@ -271,6 +271,7 @@
 #BS19_XH2                       # Bialy & Sternberg 2019 H2 prescription
 #CR_HEATING_DM72                # Dalgarno & McCray 1972 cosmic ray heating
 #CR_SCALE_WITH_G0               # cosmic ray ionization rate scales with G0
+#SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR # SGChem cosmic-ray ionisation rate exactly 0 (no ionisation, no heating; also below the 1e-21 limit of CR_SCALE_WITH_G0 and without the radioactive terms of CR_BACKGROUND_IONRATE_ATTENUATED) until star formation has set in, then the rate of the build from CosmicRayIonRate as without this flag. Set in: a star or sink (type 4 or 5) is in the initial conditions or the snapshot the run starts from, or the star-formation routine has formed the first one; one integer in All, kept in the restart files, set from the totals the star-formation routine reduces anyway. No effect with COSMIC_RAY_FLUID (rate from the fluid). Enabled in Config_stella_zoom.sh
 #SGCHEM_UVB_TREECOL_SHIELDING   # cosmological runs: TREECOOL UV background attenuated per HEALPix pixel by the TreeCol H column x local H0/He0/He+ fractions (10 FG20 bands, Verner+96); requires RT_USE_TREECOL_FOR_NH (HEALPix) [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #SGCHEM_FORTRAN                % legacy Fortran backend of SGCHEM (default: C++/CVODE)
 #SGCHEM_OMP_CROSSCHECK      # test only: each step cools a copy serially and requires the threaded pass to match it byte for byte

@@ -60,6 +60,19 @@ Not with TREE_RAY or RADTRANSFER. No parameters.
 On in: Config_stella_zoom.sh (with RT_NUV and RT_OPTICAL_NIR). Tests: test/unit/test_hminus_bands.cc (blackbody field
 against the spectral integral, upstream bin edges), test/unit/test_band_flags_without_radpressure.cc.
 
+## SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR: no cosmic rays before the first star
+
+The SGChem cosmic-ray ionisation rate is exactly 0 until star formation has set in: no cosmic-ray ionisation of H, D, He and H2 and
+no cosmic-ray heating, also below the 1e-21 s^-1 limit of `CR_SCALE_WITH_G0` and without the radioactive terms of
+`CR_BACKGROUND_IONRATE_ATTENUATED`. Electrons then come only from the ionisation in the initial conditions, collisions and
+radiation, and H2 forms through H- from those (primordial gas). From then on the rate is that of the build, from the parameter
+`CosmicRayIonRate` (3e-19 in the zoom), as without the flag. Star formation has set in when a star or sink (type 4 or 5) is in
+the initial conditions or in the snapshot the run starts from, or when the star-formation routine has formed the first one; this
+holds for the whole box at once. It is one integer kept in the restart files and set from the totals the star-formation routine
+reduces over tasks anyway. Restart files of a build without the flag do not load. No effect with `COSMIC_RAY_FLUID`. On in
+`Config_stella_zoom.sh`. Test: test/sgchem_cr_zero_before_first_star (no star, star in the IC, first star formed in the run, restart from
+restart files and from a snapshot, 2 ranks).
+
 ## RESOLVED_ISM_VARIABLE_SN_ENERGY: explosion energies by type (off by default)
 
 By default every exploding death (CCSN, ECSN, PPISN, PISN) injects 1e51 erg (Uli 2026-11-19); failed SNe and direct

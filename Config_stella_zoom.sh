@@ -125,4 +125,5 @@ OUTPUT_INDIVIDUAL_COOLRATES
 BOX_PERIODIC
 PMGRID=256
 PM_PLACEHIGHRESREGION=1+2        % gas (type 0) + high-res DM (type 1) on the high-res PM grid
-CR_SCALE_WITH_G0                 % zoom: zeta = clamp(G0/1.7 x CosmicRayIonRate, 1e-21, 2e-16); minimum 0.324e-2/1.7 x 3e-17 = 5.7e-20 through the fixed G0 floor (CR rule open, Uli)
+CR_SCALE_WITH_G0                 % zoom: zeta = clamp(G0/1.7 x CosmicRayIonRate, 1e-21, 2e-16); CosmicRayIonRate 3e-19 in the zoom parameter file (then the clamp's 1e-21 wherever G0 < 5.7e-3)
+SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR  % zoom: zeta = 0 until the first star of the run has formed (or stars are in the IC or snapshot), then the line above
