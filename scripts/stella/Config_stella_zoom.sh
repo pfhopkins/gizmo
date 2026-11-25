@@ -19,6 +19,7 @@ GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
 GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS
 GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
 CR_SCALE_WITH_G0                    # zoom: SGChem cosmic-ray rate clamp(G0/1.7 x SGChemCosmicRayIonRate, 1e-21, 2e-16), as stella_dev
+SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR  # zoom: that rate is 0 until the first star of the run has formed (or stars are in the IC or snapshot)
 ADAPTIVE_GRAVSOFT_FORALL=1
 EVALPOTENTIAL
 BOX_PERIODIC

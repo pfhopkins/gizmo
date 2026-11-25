@@ -181,6 +181,9 @@ double sgchem_cr_ion_rate(int i, double G0)
 #ifdef COSMIC_RAY_FLUID
     return Get_CosmicRayIonizationRate_cgs(i, P, CellP); /* the rate from the CR fluid (Cummings+16), radioactive terms included */
 #endif
+#ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
+    if(!All.StarFormationHasSetIn) {return 0;} /* no cosmic rays before the first star: exactly zero, not the lower limit of the scaled rate */
+#endif
     double zeta = All.SGChemCosmicRayIonRate;
 #if defined(CR_SCALE_WITH_G0) && defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
     zeta *= G0 * HABING_EGY_DENSITY_6_13P6EV_CGS / HU21_U_UV0; /* follows the field, its floor included */

@@ -937,6 +937,9 @@ void star_formation_parent_routine(void)
 #endif
         tot_spawned = total[0]; tot_converted = total[1]; tot_sink_formed = (int) total[2];
     }
+#ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
+    if(tot_spawned > 0 || tot_converted > 0 || tot_sink_formed > 0) {All.StarFormationHasSetIn = 1;} /* from the totals, so on every task alike */
+#endif
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
     if( (ThisTask==0) && (tot_sink_formed > 0) )
     {

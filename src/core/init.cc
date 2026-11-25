@@ -613,6 +613,12 @@ void init(void)
 #ifdef SINK_PARTICLES
     MPI_Allreduce(&count_holes, &All.TotSinks, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 #endif
+#ifdef SGCHEM_COSMIC_RAYS_ZERO_BEFORE_FIRST_STAR
+    {   /* stars or sinks in the initial conditions or the snapshot: star formation has set in before this start */
+        int n_stars = 0; for(i = 0; i < NumPart; i++) {if(P[i].Type == 4 || P[i].Type == 5) {n_stars = 1; break;}}
+        MPI_Allreduce(&n_stars, &All.StarFormationHasSetIn, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    }
+#endif
 
     for(i = 0; i < TIMEBINS; i++) {TimeBinActive[i] = 1;}
 
