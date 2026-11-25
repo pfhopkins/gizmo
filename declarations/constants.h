@@ -12,6 +12,12 @@
 #if defined(HYDRO_EXACT_PAIR_FLUX_EXCHANGE) && !defined(WAKEUP)
 #error "HYDRO_EXACT_PAIR_FLUX_EXCHANGE needs WAKEUP: its wake correction runs after the wake kicks" /* here, not in precompiler_logic.h: WAKEUP gets its default above */
 #endif
+#if defined(MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES) && (!defined(WAKEUP) || defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#error "MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES needs WAKEUP and is written for the MFM/SPH wake only (the MFV wake reverses from the step end)"
+#endif
+#if defined(RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED) && !defined(WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP)
+#error "RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED needs WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP: alone it only raises MaxSignalVel, which makes the cell harder for its neighbours to wake"
+#endif
 
 #define REDUC_FAC_FOR_MEMORY_IN_DOMAIN      0.98 /* used to pad memory in domain decomposition structures, should be slightly less than unity */
 

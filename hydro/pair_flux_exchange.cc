@@ -232,6 +232,10 @@ static void pairflux_apply_impulse(int i, Vec3<double> dmom, double dE, Vec3<dou
     if(de_floor != 0)
     {
         PairFluxNFloor++; PairFluxEFloor += de_floor; PairFluxNFloorPath[PairFluxPath]++; PairFluxEFloorPath[PairFluxPath] += de_floor;
+#ifdef TEST_PAIRFLUX_MERGE_DUMP
+        printf("TEST_PAIRFLUX_FLOOR_DUMP step %lld t %.10e task %d ID %llu path %d mode %d bin %d active %d m %.17g mref %.17g u_old %.17g du %.17g dE %.17g dKE %.17g de_floor %.6e\n", (long long) All.NumCurrentTiStep, All.Time, ThisTask,
+               (unsigned long long) P[i].ID, PairFluxPath, mode, (int) P[i].TimeBin, (int) TimeBinActive[P[i].TimeBin], m, (double) CellP[i].PairFluxMassRef, u_target - du, du, dE, dKE, de_floor);
+#endif
 #if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
         CumulKickFloorEnergy += de_floor; /* booked with the kick floor */
 #endif

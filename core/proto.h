@@ -387,6 +387,9 @@ integertime find_next_lineofsighttime(integertime time0);
 integertime find_next_gridoutputtime(integertime ti_curr);
 void add_along_lines_of_sight(void);
 void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode);
+#ifdef MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES
+extern int KickTreatsParticleAsActive;
+#endif
 void x86_fix(void) ;
 
 void *mymalloc_fullinfo(const char *varname, size_t n, const char *func, const char *file, int linenr);
@@ -1008,7 +1011,8 @@ enum {EBK_FB_WIND, EBK_FB_AGB, EBK_FB_SN, EBK_FB_IA, EBK_FB_FAILED, EBK_COOL_RAD
       EBK_SF_MAG_LOCKED, EBK_IMF_TH_LOCKED, EBK_IMF_MAG_LOCKED, EBK_IMF_KIN, EBK_MERGE_GRAVWORK,
       EBK_MERGE_HEAT_NOT_RETURNED, EBK_SN_CELL_TH, EBK_SN_CELL_MAG, EBK_MERGE_MAG_LOST, EBK_KICK_FLOOR, EBK_OUTFLOW, EBK_INFO_MHD_NUM, EBK_INFO_SN_RELKIN_HEAT,
       EBK_COOL_CR_LOSS, EBK_CR_CLIP, EBK_INFO_CR_SHOCK,
-      EBK_RT_EMIT, EBK_RT_ABS, EBK_RT_TOIR, EBK_COOL_RAD_EXCHANGE, EBK_KETJU_CHAIN_POT, EBK_KETJU_COLLISION, EBK_KETJU_EXPAND, EBK_N};
+      EBK_RT_EMIT, EBK_RT_ABS, EBK_RT_TOIR, EBK_COOL_RAD_EXCHANGE, EBK_KETJU_CHAIN_POT, EBK_KETJU_COLLISION, EBK_KETJU_EXPAND,
+      EBK_MERGE_PARENT_KICK, EBK_MERGE_PARENT_KICK_TO_INT, EBK_N};
 #ifdef OUTPUT_ENERGY_STEP_TRACE
 extern double EstepBooked[EBK_N];
 void estep_begin(int stage);

@@ -547,6 +547,19 @@ void resolvedism_photoionize(void)
     memset(pi_refine, 0, NumPart * sizeof(char));
 
     double max_r = All.MaxPISearchRadius / (UNIT_LENGTH_IN_KPC * All.cf_atime); /* physical kpc -> comoving code (cap semantics unchanged) */
+#ifdef BOX_PERIODIC /* no cell is farther than this: half the box along a periodic axis (nearest image), the whole box along a reflecting or outflow axis; a larger sphere only widens the radial bins */
+    {double lx = 0.5 * boxSize_X, ly = 0.5 * boxSize_Y, lz = 0.5 * boxSize_Z;
+#if defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_X)
+     lx = boxSize_X;
+#endif
+#if defined(BOX_REFLECT_Y) || defined(BOX_OUTFLOW_Y)
+     ly = boxSize_Y;
+#endif
+#if defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_Z)
+     lz = boxSize_Z;
+#endif
+     double r_box = sqrt(lx * lx + ly * ly + lz * lz); if(!(max_r > 0) || max_r > r_box) {max_r = r_box;}}
+#endif
 
     /* Identify ALL ionizing stars (BUGFIX 2026-07-31: was active-only — see the
      * Lyman precompute loop above; the global reset requires every source to
