@@ -14,7 +14,11 @@ The star-formation routine runs after the chemistry of its step. So
   * a snapshot without a star was written before the first star formed: every cell must hold 0;
   * from the snapshot after the first one with a star, every cell's last call was made with stars present: every cell > 0.
 
-One build, five runs:
+The state (one integer, on every task alike) is set by stars that exist after their IMF draw, kept in the restart files
+and written to the snapshot header (StarFormationHasSetIn), which a snapshot start reads; a snapshot without the header
+entry falls back to a scan for stars and sinks.
+
+One build, eight runs:
   no_star       threshold 1e30, no star ever: 0 in every cell of every snapshot.
   ic_star       threshold 1e30, one old star in the IC: > 0 in every cell from T = 2 DT (after the first calls).
   birth         stars form during the run: 0 before, > 0 after, in the file of each rank.
@@ -22,9 +26,17 @@ One build, five runs:
   restart_snap  birth continued from its last snapshot (flag 2), SfEffPerFreeFall 1e-30.
                 Both: no star forms after the restart and every cell is > 0 from 2 DT after it (a restart that lost the
                 switch would give 0 there).
+  snap_stars_gone      as restart_snap, every star removed from the snapshot (as after a fully disrupted first star),
+                       header entry kept: no star in the run, yet > 0 in every cell.
+  snap_old             as restart_snap, header entry removed (a snapshot of an older build), stars kept: > 0 (scan).
+  snap_old_stars_gone  header entry and stars removed: nothing says star formation has set in, 0 in every cell.
+A second build with TEST_IMF_FAIL_EVERY_DRAW_BEFORE_TIME=1.5e-5, one run:
+  failed_draws  as birth, but every IMF draw before 1.5e-5 fails: the spawned star is removed again and its mass goes
+                back to the donors. The rate stays 0 until a star survives its draw.
 """
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -49,6 +61,9 @@ NO_SF = {"CritPhysDensity": "1.0e30"}  # fresh starts: no cell reaches the thres
 # restarts: star-formation time 1e30 free-fall times. Not the threshold: a restart from restart files takes a changed
 # CritPhysDensity into the star-formation time only, the threshold stays that of the restart files.
 NO_SF_RESTART = {"SfEffPerFreeFall": "1.0e-30"}
+STATE = "StarFormationHasSetIn"  # header entry of the state
+T_DRAWS_FAIL = 1.5e-5            # the second build fails every IMF draw before this time
+SNAP_CASES = {"snap_stars_gone": (True, False), "snap_old": (False, True), "snap_old_stars_gone": (True, True)}  # (stars removed, header entry removed)
 
 sys.path.insert(0, TEST_DIR)
 from make_sgchem_cr_zero_before_first_star_ics import make_sgchem_cr_zero_before_first_star_ics  # noqa: E402
@@ -69,6 +84,44 @@ def _params(rundir, name, overrides):
     made = write_params_with_overrides(join(rundir, f"{name}.params"), dict(overrides, OutputDir=f"output_{name}"))
     os.replace(made, join(rundir, f"{name}.params"))
     return f"{name}.params"
+
+
+def _edit_snapshot(snapdir, drop_stars, drop_state):
+    """Remove the stars and sinks and/or the header entry of the state from every file of a snapshot."""
+    for fn in glob.glob(join(snapdir, "snapshot_*.hdf5")):
+        with h5py.File(fn, "r+") as f:
+            h = f["Header"].attrs
+            if drop_stars:
+                for t in (4, 5):
+                    if f"PartType{t}" in f:
+                        del f[f"PartType{t}"]
+                for k in ("NumPart_ThisFile", "NumPart_Total"):
+                    n = h[k].copy()
+                    n[4] = n[5] = 0
+                    h.modify(k, n)
+            if drop_state and STATE in h:
+                del h[STATE]
+
+
+def _header_state(snapdir):
+    """The header entry of the state in every file of a snapshot (None where a file has none)."""
+    out = []
+    for fn in sorted(glob.glob(join(snapdir, "snapshot_*.hdf5"))):
+        with h5py.File(fn, "r") as f:
+            out.append(int(f["Header"].attrs[STATE]) if STATE in f["Header"].attrs else None)
+    return out
+
+
+def _failed_draw_times(log):
+    """Time of the step of every failed IMF draw in a run log."""
+    time, out = None, []
+    for line in open(log):
+        m = re.match(r"Sync-Point \d+, Time: ([0-9.eE+-]+)", line)
+        if m:
+            time = float(m.group(1))
+        elif "RESOLVEDISM IMF FAILED DRAW" in line:
+            out.append(time)
+    return out
 
 
 def _snapshots(outdir):
@@ -106,7 +159,7 @@ def _all_on(rates):
 
 @pytest.fixture(scope="module")
 def runs():
-    """Build once, run the five cases; returns {case: snapshots} (outputs kept in the test directory)."""
+    """Build and run the cases; returns {case: snapshots} (outputs kept in the test directory)."""
     if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         pytest.skip("builds GIZMO")
     cwd = os.getcwd()
@@ -130,8 +183,20 @@ def runs():
         os.makedirs(join(rundir, "output_restart_snap"))
         shutil.copytree(join(rundir, "output_birth", f"snapdir_{last:03d}"), join(rundir, "output_restart_snap", f"snapdir_{last:03d}"))
         _gizmo(rundir, _params(rundir, "restart_snap", dict(NO_SF_RESTART, TimeMax=T_RESTARTED)), "2", str(last))
+        for case, (drop_stars, drop_state) in SNAP_CASES.items():
+            os.makedirs(join(rundir, f"output_{case}"))
+            shutil.copytree(join(rundir, "output_birth", f"snapdir_{last:03d}"), join(rundir, f"output_{case}", f"snapdir_{last:03d}"))
+            _edit_snapshot(join(rundir, f"output_{case}", f"snapdir_{last:03d}"), drop_stars, drop_state)
+            _gizmo(rundir, _params(rundir, case, dict(NO_SF_RESTART, TimeMax=T_RESTARTED)), "2", str(last))
         make_sgchem_cr_zero_before_first_star_ics(ic, with_star=True)
         _gizmo(rundir, _params(rundir, "ic_star", dict(NO_SF, TimeMax=6 * DT)))
+        os.chdir(REPO)
+        try:
+            build_gizmo_for_test(TEST_NAME, extra_config_flags=(f"TEST_IMF_FAIL_EVERY_DRAW_BEFORE_TIME={T_DRAWS_FAIL:g}",))
+        finally:
+            os.chdir(cwd)
+        make_sgchem_cr_zero_before_first_star_ics(ic)
+        _gizmo(rundir, _params(rundir, "failed_draws", {}))
     finally:
         for d in glob.glob(join(rundir, "output_*")):
             keep = join(TEST_DIR, basename(d))
@@ -140,7 +205,7 @@ def runs():
         for log in glob.glob(join(rundir, "*.log")):
             shutil.copy(log, TEST_DIR)
         shutil.rmtree(rundir, ignore_errors=True)
-    out = {case: _snapshots(join(TEST_DIR, f"output_{case}")) for case in ("no_star", "ic_star", "birth", "restart_files", "restart_snap")}
+    out = {case: _snapshots(join(TEST_DIR, f"output_{case}")) for case in ("no_star", "ic_star", "birth", "restart_files", "restart_snap", "failed_draws", *SNAP_CASES)}
     for case, snaps in out.items():
         _describe(case, snaps)
     return out
@@ -194,3 +259,50 @@ def test_rate_stays_on_after_restart(runs, case):
     assert all(n == n_star for _, _, n in late), f"stars after the restart {[n for _, _, n in late]}, at the restart {n_star}: star formation was not off"
     bad = [time for time, rates, _ in late if not _all_on(rates)]
     assert not bad, f"cosmic-ray rate not on after the restart at T = {bad}"
+
+
+def test_failed_draw_does_not_switch_rate_on(runs):
+    """Every IMF draw before T_DRAWS_FAIL fails and its star is removed again: the rate stays 0 until a star survives."""
+    snaps = runs["failed_draws"]
+    failed = _failed_draw_times(join(TEST_DIR, "failed_draws.log"))
+    assert failed, "no IMF draw failed"
+    assert max(failed) < T_DRAWS_FAIL, "a draw failed that the test did not fail"
+    first = next((k for k, (_, _, n_star) in enumerate(snaps) if n_star > 0), None)
+    assert first is not None, "no star survived"
+    before, after = snaps[:first], snaps[first + 1:]
+    # star-free snapshots more than DT after the first failed draw: had that draw switched the rate on, every cell would show it
+    probe = [time for time, _, _ in before if time > failed[0] + DT]
+    print(f"{len(failed)} failed draws from T = {failed[0]:.4e} to {max(failed):.4e}; first snapshot with a star: T = {snaps[first][0]:.4e}; "
+          f"{len(probe)} star-free snapshots later than DT after the first failed draw, {len(after)} snapshots after")
+    assert len(probe) >= 2, "no star-free snapshot late enough after the first failed draw"
+    assert len(after) >= 2, "the first star survived too late to see the rate after it"
+    bad = [time for time, rates, _ in before if not _all_zero(rates)]
+    assert not bad, f"cosmic-ray rate on after a failed draw, with no star, at T = {bad}"
+    bad = [time for time, rates, _ in after if not _all_on(rates)]
+    assert not bad, f"cosmic-ray rate not on after the first surviving star at T = {bad}"
+
+
+def test_snapshot_header_holds_the_state(runs):
+    """The snapshots of birth carry the state in the header of every file: 0 before the first star, 1 at the end."""
+    dirs = sorted(glob.glob(join(TEST_DIR, "output_birth", "snapdir_*")))
+    assert _header_state(dirs[0]) == [0] * NRANKS, f"header entry {STATE} of the first snapshot: {_header_state(dirs[0])}"
+    assert _header_state(dirs[-1]) == [1] * NRANKS, f"header entry {STATE} of the last snapshot: {_header_state(dirs[-1])}"
+
+
+@pytest.mark.parametrize("case", list(SNAP_CASES))
+def test_snapshot_start_takes_state_from_header(runs, case):
+    """Snapshot starts from the last snapshot of birth with its stars and/or its header entry removed, star formation off."""
+    stars_gone, old = SNAP_CASES[case]
+    birth, snaps = runs["birth"], runs[case]
+    t_restart = birth[-1][0]
+    assert abs(snaps[-1][0] / T_RESTARTED - 1) < 1e-9, "the continuation did not reach its TimeMax"
+    late = [(time, rates, n) for time, rates, n in snaps if time >= (t_restart + 2 * DT) * (1 - 1e-9)]
+    assert len(late) >= 2
+    n_expected = 0 if stars_gone else birth[-1][2]
+    assert all(n == n_expected for _, _, n in late), f"stars {[n for _, _, n in late]}, expected {n_expected}"
+    if stars_gone and old:  # no header entry and no star: the scan finds nothing
+        bad = [time for time, rates, _ in late if not _all_zero(rates)]
+        assert not bad, f"cosmic-ray rate not 0 with neither the header entry nor a star at T = {bad}"
+    else:
+        bad = [time for time, rates, _ in late if not _all_on(rates)]
+        assert not bad, f"cosmic-ray rate not on after the snapshot start at T = {bad}"

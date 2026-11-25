@@ -1055,7 +1055,11 @@ void assign_stellar_masses(void)
         }
 #endif
 
-        if(M_drawn / UNIT_MASS_IN_SOLAR - mass_acc > 0.01 * M_drawn / UNIT_MASS_IN_SOLAR) { /* >1% short after the passes: failed draw, undone on the donors below */
+        int draw_failed = (M_drawn / UNIT_MASS_IN_SOLAR - mass_acc > 0.01 * M_drawn / UNIT_MASS_IN_SOLAR); /* >1% short after the passes */
+#ifdef TEST_IMF_FAIL_EVERY_DRAW_BEFORE_TIME
+        if(All.Time < (TEST_IMF_FAIL_EVERY_DRAW_BEFORE_TIME)) {draw_failed = 1;} /* test: the draw fails whatever it collected */
+#endif
+        if(draw_failed) { /* failed draw, undone on the donors below */
             printf("RESOLVEDISM IMF FAILED DRAW: ID=%llu M_drawn=%.4f collected=%.4e Msun\n", (unsigned long long)P[i].ID, M_drawn, mass_acc * UNIT_MASS_IN_SOLAR);
             failed_mine.push_back(imf_star_key_of(i)); failed_index.push_back(i);
             int iparent = (int)P[i].MstarSampleIMF[1];
