@@ -1,4 +1,4 @@
-% stochastic IMF: the lattice of single_stars_sf_criterion (16^3 cells of 1 Msun, every cell above CritPhysDensity), efficiency 1e3 so
+% stochastic IMF: the lattice of single_stars_sf_criterion (16^3 cells of 1 Msun, every cell above CritPhysDensity), efficiency 1e6 so
 % the cells form in the first steps; MassPerStarIMF 4: one carrier in four holds a drawn star
 InitCondFile                       single_stars_stochastic_imf_ics
 OutputDir                          output
@@ -22,7 +22,7 @@ ResubmitCommand                    none
 ErrTolTheta                        0.7
 DomainBuild_ActiveFraction         0.5
 CritPhysDensity                    10
-SfEffPerFreeFall                   1e3
+SfEffPerFreeFall                   1e6
 InitMetallicity                    1.0
 StellarTablesFile                  SET_BY_TEST
 MaxStellarTimestep                 100.0

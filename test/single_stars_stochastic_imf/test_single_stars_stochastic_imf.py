@@ -1,5 +1,5 @@
 """single_stars_stochastic_imf test (GALSF_SINGLE_STARS_STOCHASTIC_IMF, experimental): the 16^3 lattice of single_stars_sf_criterion
-(1 Msun cells, all above CritPhysDensity), standard star formation at efficiency 1e3 converts the cells; each new star particle of mass
+(1 Msun cells, all above CritPhysDensity), standard star formation at efficiency 1e6 converts the cells; each new star particle of mass
 m carries one drawn star with probability m / MassPerStarIMF = 1/4, mass from dN/dM ~ M^-2.3 in [8, 120] Msun. No star dies in the
 1e-5 code-time run. Bars (written before the run):
   - at least 90 % of the cells become stars;
