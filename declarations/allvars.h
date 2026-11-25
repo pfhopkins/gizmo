@@ -1860,7 +1860,7 @@ extern struct star_direct_data
     Vec3<MyFloat> Vel;
     MyFloat Mass;
     MyFloat Soft;
-    MyIDType ID;
+    unsigned long long Identity; /* star_direct_identity() */
 #ifdef KETJU_REGULARIZATION
     MyIDType KetjuChainID; /* same-chain pairs within the region radius do not set dt_2body, as in the tree walk */
 #endif
