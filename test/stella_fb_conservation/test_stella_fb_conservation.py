@@ -248,7 +248,7 @@ def test_failed_sn_composition(build, case):
 def test_failed_sn_moving_star(build, case):
     """STL-303: a failed SN whose ejecta land in gas moving relative to the star (30 km/s random velocities): the deposit has no
     energy of its own, so its stage must close like every other (bar of the energy step trace, 1e-12)"""
-    M, logZ = FSN0 if case == "failed_sn" else table_star(6, False, -2.0, np.log10(60.0))
+    M, logZ = table_star(3 if case == "failed_sn" else 6, True, 0.0, np.log10(25.0))  # with table ejecta (the cases above have none: job 242474)
     d = join(TEST_DIR, "run_" + case + "_moving"); os.makedirs(d, exist_ok=True)
     make_box(join(d, "box_ics.hdf5"), 10 ** logZ, sigma_v=30.0)
     text, out = run_case(case + "_moving", build, {"InitCondFile": "box_ics", "TestNumStars": 1, "TestStarMass": M, "TestSNTime0": 1.0e-6, "TimeMax": 4.0e-6, **zpar(logZ)})

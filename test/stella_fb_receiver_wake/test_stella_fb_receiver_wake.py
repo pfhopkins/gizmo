@@ -49,7 +49,7 @@ BAR = 1e-2
 BAR_RANKS = 1e-10
 STEPS_AFTER = 3
 RUN_TIMEOUT = 5400  # s
-BOX = tuple(float(x) for x in os.environ.get("GIZMO_TEST_RECEIVER_WAKE_BOX", "1e4,1.6,1e-3").split(","))  # n_H [cm^-3], box [pc], gas softening [kpc]
+BOX = tuple(float(x) for x in os.environ.get("GIZMO_TEST_RECEIVER_WAKE_BOX", "10,16.0,1e-4").split(","))  # n_H [cm^-3], box [pc], gas softening [kpc]
 
 
 def _ratio(out):
@@ -110,14 +110,14 @@ def runs():
     binaries = {}
     cwd = os.getcwd(); os.chdir(REPO)
     try:
-        for arm, extra in (("on", FLAGS), ("off", ()), ("nomerge", ("PREVENT_PARTICLE_MERGE_SPLIT",))):
+        for arm, extra in (("on", FLAGS), ("off", ()), ("nomerge", ("PREVENT_PARTICLE_MERGE_SPLIT",)), ("across", ("MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS",))):
             build_gizmo_for_test(TEST_NAME, extra_config_flags=extra)
             binaries[arm] = join(TEST_DIR, f"GIZMO_{arm}")
             shutil.move(join(TEST_DIR, "GIZMO"), binaries[arm])
     finally:
         os.chdir(cwd)
     res = {}
-    for arm, nranks in (("on", 2), ("off", 2), ("off", 1), ("off", 4), ("nomerge", 1), ("nomerge", 2), ("nomerge", 4)):
+    for arm, nranks in (("on", 2), ("off", 2), ("off", 1), ("off", 4), ("nomerge", 1), ("nomerge", 2), ("nomerge", 4), ("across", 1), ("across", 2), ("across", 4)):
         text, out = _run(binaries[arm], fbc, f"{arm}_r{nranks}", nranks)
         r, n = _ratio(out)
         res[(arm, nranks)] = dict(r=r, n=n, nrecv=text.count("TEST_KICK_FLOOR_DUMP recv"), nkick=text.count("TEST_KICK_FLOOR_DUMP kick"), wake=_wake_record(text),
@@ -176,6 +176,13 @@ def test_receivers_on_their_own_timestep(runs):
 def test_problem_present_without_the_flags(runs):
     assert runs[("off", 2)]["nkick"] > 0, "without the flags no kick fired the u limiter above the dump threshold"
     assert runs[("off", 2)]["r"] > BAR, f"without the flags the limiter adds only {runs[('off', 2)]['r']:.3e} of the feedback energy in this box"
+
+
+def test_independent_of_ranks_with_merge_split_search_across_ranks(runs):
+    """MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS: with merges and splits happening, the same bars as without merge/split"""
+    assert all(runs[("across", n)]["merged"] > 0 for n in (1, 2, 4)), "no merge in this box"
+    bad = _compare_ranks(runs, "across")
+    assert not bad, "; ".join(bad)
 
 
 def test_wake_independent_of_ranks_without_merge_split(runs):
