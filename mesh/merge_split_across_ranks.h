@@ -29,7 +29,7 @@ typedef std::remove_reference<decltype(CellP[0])>::type CellT;
 
 struct Key {double mass; unsigned long long id, child; long long gen; double pos[3];};
 struct Query {Key key; double pos[3], h, mass, vel[3], e_light; int type, kind, task, index;}; /* kind 1 merge, 2 split */
-struct Answer {int q, found; double r2min; Key jkey; int jtask, jindex;};
+struct Answer {int q, found; double r2min; Key jkey; unsigned long long jmix; int jtask, jindex;};
 struct Proposal {Key key; int itask, iindex, jindex;};
 struct Verdict {int iindex, ok;};
 struct XferHead {Key key; int itask, iindex, jindex, type;};
@@ -51,6 +51,21 @@ static inline Key key_of(int i)
     k.mass = P[i].Mass; k.id = (unsigned long long) P[i].ID; k.child = (unsigned long long) P[i].ID_child_number; k.gen = (long long) P[i].ID_generation;
     for(int d = 0; d < 3; d++) {k.pos[d] = P[i].Pos[d];}
     return k;
+}
+/* order of the merge candidates of one cell: mass first; among equal masses a fixed scramble of the two cells' IDs, so that cells with
+   the same neighbours do not all propose to the same one; the same for any rank count and order */
+static inline unsigned long long pair_mix(const Key &i, const Key &j)
+{
+    unsigned long long z = (i.id * 0x9E3779B97F4A7C15ULL) ^ (i.child * 0xC2B2AE3D27D4EB4FULL) ^ ((unsigned long long) i.gen * 0x165667B19E3779F9ULL);
+    z ^= (j.id + 0x9E3779B97F4A7C15ULL) * 0xBF58476D1CE4E5B9ULL; z ^= (j.child + 1ULL) * 0x94D049BB133111EBULL; z ^= ((unsigned long long) j.gen + 2ULL) * 0xD6E8FEB86659FD93ULL;
+    z ^= z >> 30; z *= 0xBF58476D1CE4E5B9ULL; z ^= z >> 27; z *= 0x94D049BB133111EBULL; z ^= z >> 31;
+    return z;
+}
+static inline bool candidate_less(const Key &a, unsigned long long amix, const Key &b, unsigned long long bmix)
+{
+    if(a.mass != b.mass) {return a.mass < b.mass;}
+    if(amix != bmix) {return amix < bmix;}
+    return key_less(a, b);
 }
 
 /* send out[t] to rank t; returns what arrived, by source rank (this rank's own entries at its place) */
@@ -129,7 +144,8 @@ static Answer answer_query(const Query &q, int qindex, const std::vector<char> &
         if(P[j].Type==0 && sf_channel_for_cell(j)!=SF_CHANNEL_SSP && (q.mass+P[j].Mass)*UNIT_MASS_IN_SOLAR > (GALSF_RESOLVEDISM_HYBRID_M_SSP)) {continue;} /* a merge never lifts Stella-band gas above M_SSP */
 #endif
         Key kj = key_of(j);
-        if(!a.found || key_less(kj, a.jkey)) {a.found = 1; a.jkey = kj; a.jindex = j;}
+        unsigned long long mj = pair_mix(q.key, kj);
+        if(!a.found || candidate_less(kj, mj, a.jkey, a.jmix)) {a.found = 1; a.jkey = kj; a.jmix = mj; a.jindex = j;}
     }
     return a;
 }
@@ -178,7 +194,7 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
     {
         int l = a.q - qfirst[ThisTask]; if(l < 0 || l >= (int) ql.size()) {endrun(97565);}
         if(ql[l].kind == 2) {if(a.r2min < best[l].r2min) {best[l].r2min = a.r2min; best[l].found = 1; best[l].jtask = a.jtask;}}
-        else if(!best[l].found || key_less(a.jkey, best[l].jkey)) {best[l] = a;}
+        else if(!best[l].found || candidate_less(a.jkey, a.jmix, best[l].jkey, best[l].jmix)) {best[l] = a;}
     }
     for(size_t l = 0; l < ql.size(); l++)
     {
