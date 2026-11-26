@@ -65,7 +65,7 @@ void kj_kokkos_initialize()
     if(wrank == 0) printf("KETJU: MSTAR commit %s on Kokkos %s (host %s), regions below %d bodies on the host engine\n",
                           KETJU_MSTAR_COMMIT, mstar::execution_space_name(), mstar::host_execution_space_name(), KETJU_KOKKOS_DEVICE_MIN_N);
 #ifdef KETJU_MSTAR_MPI
-    if(!mstar::mpi_enabled()) kj_abort("KETJU_MSTAR_MPI needs an MSTAR install built with MSTAR_ENABLE_MPI (KETJU_PATH)", 7813);
+    if(!mstar::mpi_enabled()) kj_abort("the MSTAR install at KETJU_PATH has no MPI sharing: rerun scripts/get_stella_deps.sh --update, or build with KETJU_MSTAR_SINGLE_TASK", 7813);
     if(wrank == 0) printf("KETJU: regions of %d or more bodies are integrated by all their compute tasks (MSTAR MPI sharing)\n", KETJU_MSTAR_MPI_MIN_N);
 #endif
 }
