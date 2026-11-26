@@ -6,9 +6,6 @@
  * Pure functions, shared by sfr_eff.cc and test/unit/test_popIII_sf.cc.
  * Pop III stars use the lowest stellar-table row (Z = 1e-4 absolute) until stella-tables has a Z = 0 row. */
 #include <math.h>
-#ifndef GIZMO_GPU_FUNCTION
-#define GIZMO_GPU_FUNCTION /* device-callable in GIZMO's GPU builds (declarations/macros.h); plain in standalone tools */
-#endif
 
 struct popIII_sf_params {
     double Zcrit_abs;       /* gas below this total Z (absolute) is pristine */
@@ -17,10 +14,10 @@ struct popIII_sf_params {
     double Mreservoir_msun; /* Jeans mass must be below the mass the accretion walk may gather [Msun] */
 };
 
-GIZMO_GPU_FUNCTION static inline int popIII_gas_is_pristine(double Z_abs, double Zcrit_abs) {return Z_abs < Zcrit_abs;}
+static inline int popIII_gas_is_pristine(double Z_abs, double Zcrit_abs) {return Z_abs < Zcrit_abs;}
 
 /* pristine cell may form a Pop III star: not ionised, dense, converging, molecular enough, Jeans-unstable at the reservoir scale */
-GIZMO_GPU_FUNCTION static inline int popIII_sf_allowed(double nH, double divv_phys, double xH2, double MJ_msun, int ionized, const struct popIII_sf_params *p)
+static inline int popIII_sf_allowed(double nH, double divv_phys, double xH2, double MJ_msun, int ionized, const struct popIII_sf_params *p)
 {
     if(ionized) {return 0;}
     return (nH > p->nH_min) && (divv_phys < 0) && (xH2 > p->xH2_min) && (MJ_msun < p->Mreservoir_msun);

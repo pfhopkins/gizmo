@@ -251,7 +251,9 @@ void timing_breakdown_register_instance(const Kokkos::DefaultExecutionSpace &spa
 
 
 /* One kernel for a per-element stage, run on the device or on the host execution space: on_device from gizmo_stage_on_device()
- * (core/proto.h).  The host space is Serial in the GPU builds, so a host run visits the elements in the order of a plain loop.
+ * (core/proto.h).  The host space is Kokkos::DefaultHostExecutionSpace: Serial when the Kokkos build enables no host-parallel
+ * backend (as the HIP install used on Viper: Serial + HIP), and then a host run visits the elements in the order of a plain loop;
+ * with an OpenMP or Threads host backend (e.g. CPU-only builds) the order is not fixed and floating-point sums differ at round-off.
  * Kernels read no global: everything is captured by value, and a kernel that reads All goes after GIZMO_GPU_ENSURE_ALL_FRESH()
  * in its translation unit. */
 template<typename F>

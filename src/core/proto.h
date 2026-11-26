@@ -48,9 +48,6 @@ double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_
 void ewald_xy_update(void);
 void ewald_xy_exact(double dx, double dy, double dz, double s, double Lx, double Ly, double out[4]);
 #endif
-#if defined(HOT_GAS_TIMESTEP_SYNC) || defined(RESOLVEDISM_HOTSYNC_CLAMP)
-std::vector<int> hot_gas_cells(double u_hot); /* this rank's live gas cells with InternalEnergyPred > u_hot, index order (core/gpu_drift.cc) */
-#endif
 #ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
 double analytic_external_potential(int i); /* Hu+21 tall-box potential of particle i, Phi(midplane) = 0 */
 #endif
@@ -1577,9 +1574,6 @@ enum ledger_rows {LEDGER_ROWS(LEDGER_ROW_ENUM) LEDGER_NROWS};
 void ledger_init(void);
 void ledger_add(int row, double x);
 void ledger_output(void);
-#ifdef COSMIC_RAY_FLUID
-double ledger_local_cr_energy(void); /* this rank's CR energy in gas, exact sum (a Kokkos kernel); no communication */
-#endif
 #endif
 /* Energy step trace (system/energy_step_trace.cc): rank-local stage brackets, booked sources/sinks, one reduce per window */
 enum {ESTEP_MERGE_SPLIT, ESTEP_FB_MECH, ESTEP_FB_RADP, ESTEP_PHOTOION, ESTEP_COOLING, ESTEP_SF, ESTEP_RT_INJECT,

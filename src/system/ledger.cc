@@ -170,13 +170,13 @@ static void ledger_book_outflow_pending(void) /* particles not yet removed; impo
 /* the state rows of this rank's particles i, summed exactly (ledger_add_exact_atomic) into rows[] -- one Kokkos kernel per pass, on
    the device or on the host execution space (gizmo_stage_on_device); integer sums, so both give the bits of the former plain loops.
    A pass adds at most LEDGER_STATE_ADDS terms to a row per particle, each below 2^32 in every limb: passes of 2^30 / LEDGER_STATE_ADDS
-   particles keep every limb below 2^63 until the normalization that follows each pass. only_cr: the CR row alone (ledger_local_cr_energy) */
+   particles keep every limb below 2^63 until the normalization that follows each pass */
 #ifdef COSMIC_RAY_FLUID
 #define LEDGER_STATE_ADDS (N_CR_PARTICLE_BINS > 1 ? N_CR_PARTICLE_BINS : 1)
 #else
 #define LEDGER_STATE_ADDS 1
 #endif
-static void ledger_state_sums(struct ledger_sum *rows, int only_cr)
+static void ledger_state_sums(struct ledger_sum *rows)
 {
     const int n = NumPart, ng = N_gas, on_device = gizmo_stage_on_device(n);
     struct ledger_sum *acc = on_device ? (struct ledger_sum *) gizmo_gpu_alloc_shared((size_t) LEDGER_NROWS * sizeof(struct ledger_sum), "ledger_state_rows") : NULL;
@@ -194,7 +194,6 @@ static void ledger_state_sums(struct ledger_sum *rows, int only_cr)
 #ifdef COSMIC_RAY_FLUID
             if(i < ng && kp[i].Type == 0) {for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {ledger_add_exact_atomic(&acc[LEDGER_E_CR], kc[i].CosmicRayEnergy[k]);}}
 #endif
-            if(only_cr) {return;}
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
             if(i < ng && kp[i].Type == 0 && kp[i].Mass > 0 && kc[i].Density > 0) {
                 ledger_add_exact_atomic(&acc[LEDGER_E_TH], kp[i].Mass * kc[i].InternalEnergy);
@@ -221,30 +220,16 @@ static void ledger_state_sums(struct ledger_sum *rows, int only_cr)
         for(int r = 0; r < LEDGER_NROWS; r++) {ledger_normalize(&acc[r]);}
     }
     loop_route_count("ledger_state_rows", dev ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
-#ifdef COSMIC_RAY_FLUID
-    const int row_cr = LEDGER_E_CR;
-#else
-    const int row_cr = -1;
-#endif
-    for(int r = 0; r < LEDGER_NROWS; r++) {if(ledger_row_is_state[r] && (!only_cr || r == row_cr)) {ledger_merge(&rows[r], &acc[r]);}}
+    for(int r = 0; r < LEDGER_NROWS; r++) {if(ledger_row_is_state[r]) {ledger_merge(&rows[r], &acc[r]);}}
     if(dev) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc);} else {free(acc);}
 }
 
 static void ledger_state_rows(void) /* the state rows: sums over this rank's particles now */
 {
     for(int r = 0; r < LEDGER_NROWS; r++) {if(ledger_row_is_state[r]) {memset(&ledger_total[r], 0, sizeof(ledger_total[r]));}}
-    ledger_state_sums(ledger_total, 0);
+    ledger_state_sums(ledger_total);
 }
 
-#ifdef COSMIC_RAY_FLUID
-/* this rank's CR energy in gas [code energy], the exact sum of the state row LEDGER_E_CR rounded once */
-double ledger_local_cr_energy(void)
-{
-    static struct ledger_sum rows[LEDGER_NROWS]; memset(rows, 0, sizeof(rows));
-    ledger_state_sums(rows, 1);
-    return ledger_value(&rows[LEDGER_E_CR]);
-}
-#endif
 
 void ledger_output(void) /* at every snapshot: fold the threads, one MPI_Reduce, rank 0 writes a row */
 {

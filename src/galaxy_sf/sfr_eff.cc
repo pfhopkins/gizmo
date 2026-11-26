@@ -3,16 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <Kokkos_Core.hpp>
 #include "../declarations/gpu_rng.h"
 #include "../system/eigen_symmetric.h"
-#include "../declarations/gpu_all_mirror.h"  /* before allvars.h: the SF criterion kernel reads All */
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
-#include "../declarations/gpu_dispatch_templates.h"
-#include "../system/loop_routes.h"
-#include "../core/timestep_functions.h"
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
 #include <map>
 #endif
@@ -41,8 +36,7 @@ static constexpr uint64_t SINK_SEED_MASS_RNG_SALT = gizmo_loop_rng_salt("sink_se
 #include "../cooling/sgchem/sgchem_consts.h" /* IH2 */
 static constexpr uint64_t SINGLE_STAR_POPIII_IMF_RNG_SALT = gizmo_loop_rng_salt("single_star_popIII_imf");
 /* gas below the critical metallicity takes the Pop III channel */
-KOKKOS_INLINE_FUNCTION bool single_star_popIII_cell_of(const struct particle_data *pp, int i) {return popIII_gas_is_pristine(pp[i].Metallicity[0], All.PopIII_Zcrit_solar * All.SolarAbundances[0]);}
-static inline bool single_star_popIII_cell(int i) {return single_star_popIII_cell_of(P, i);}
+static inline bool single_star_popIII_cell(int i) {return popIII_gas_is_pristine(P[i].Metallicity[0], All.PopIII_Zcrit_solar * All.SolarAbundances[0]);}
 /* mass-weighted Pop III draw [Msun] on the keyed stream of the event */
 static double single_star_popIII_draw(uint64_t key, uint64_t event)
 {
@@ -218,90 +212,49 @@ double return_probability_of_this_forming_sink_from_seed_model(int i)
 
 
 
-/* the density law every SF model starts from, with the eligibility checks before any model's criterion: 0 when the cell is not
-   eligible, else m / t_SFR with t_SFR = MaxSfrTimescale sqrt(rho_th / rho) (returned in *tsfr). Device-callable: in a GPU pass All
-   is the device mirror (gpu_all_mirror.h), refreshed by the caller of the kernel */
-KOKKOS_INLINE_FUNCTION double sfr_density_law_rate(struct particle_data *pp, struct gas_cell_data *cell, int i, double *tsfr_out)
-{
-    double rateOfSF, tsfr; int flag=1; /* flag to proceed to SFR calc */
-    if(pp[i].Mass <= 0 || cell[i].Density <= 0) {flag=0;} /* zero-mass elements [for deletion] not eligible for SF */
-#ifdef GALSF_SUBGRID_WINDS
-    if(cell[i].DelayTime > 0) {flag=0;} /* 'decoupled' wind elements not eligible for SF */
-#endif
-#ifdef SINK_WIND_SPAWN
-    if(pp[i].ID == All.SpawnedWindCellID) {flag=0;} /* spawned hyper-resolution elements not eligible for SF */
-#endif
-    if(All.ComovingIntegrationOn && cell[i].Density < All.OverDensThresh) {flag=0;} /* below overdensity threshold required for SF */
-    if(cell[i].Density*All.cf_a3inv < All.PhysDensThresh) {flag=0;} /* below physical density threshold */
-#if defined(GALSF_SFR_VIRIAL_CRITERION_TIMEAVERAGED) && (GALSF_SFR_VIRIAL_SCALING <= 0)
-    if(flag==0) {cell[i].AlphaVirial_SF_TimeSmoothed=0;} /* for time-smoothed virial param, reset to nil if fall below threshold */
-#endif
-    tsfr = sqrt(All.PhysDensThresh / (cell[i].Density * All.cf_a3inv)) * All.MaxSfrTimescale; /* set default SFR timescale to scale appropriately with the gas dynamical time */
-    rateOfSF = pp[i].Mass / tsfr; /* 'normal' sfr from density law above */
-    *tsfr_out = tsfr;
-    if(tsfr<=0 || rateOfSF<=0 || flag==0) {return 0;} /* nonsense here, return 0 */
-    return rateOfSF;
-}
-
-#ifdef GALSF_SINGLE_STARS_SF_CRITERION
-/* single stars (the reference implementation's criterion): no SF in ionised cells, Jeans mass below FacSfThreshMJ x N_ngb x m;
-   rateOfSF from sfr_density_law_rate. Device-callable as sfr_density_law_rate */
-KOKKOS_INLINE_FUNCTION double single_star_sf_criterion_rate(struct particle_data *pp, struct gas_cell_data *cell, int i, double rateOfSF)
-{
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
-    if(cell[i].DelayTimeHII > 0) {return 0;}
-#endif
-#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
-    if(All.Ti_Current < cell[i].PhotoionizedUntil) {return 0;}
-#endif
-    double rho_phys = cell[i].Density * All.cf_a3inv, cs = cell[i].effective_soundspeed(); /* physical, from the gas pressure (no magnetic term), as the reference implementation */
-    double MJ = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)); /* pi^(5/2)/6 c_s^3 / (G^(3/2) rho^(1/2)) */
-#ifdef GALSF_SINGLE_STARS_POPIII
-    if(single_star_popIII_cell_of(pp, i)) { /* pristine gas: the Pop III criterion in place of the Jeans test */
-        struct popIII_sf_params p = {All.PopIII_Zcrit_solar * All.SolarAbundances[0], All.PopIII_nH_thresh, All.PopIII_xH2_min, All.PopIII_Mreservoir};
-        double nH = rho_phys * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
-        double divv = pp[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3 * All.cf_hubble_a : 0);
-        return popIII_sf_allowed(nH, divv, cell[i].TracAbund[IH2], MJ * UNIT_MASS_IN_SOLAR, 0, &p) ? rateOfSF : 0;
-    }
-#endif
-    if(MJ >= All.FacSfThreshMJ * All.DesNumNgb * pp[i].Mass) {return 0;}
-#ifdef GALSF_SINGLE_STARS_SF_CONVERGING_FLOW_ONLY
-    if(pp[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3 * All.cf_hubble_a : 0) >= 0) {return 0;} /* physical flow (Hubble flow included) diverging or static: no SF */
-#endif
-    return rateOfSF;
-}
-#endif
-
-/* whether active gas cell i may enter the star-formation step (0) or not (1), updating its wind and cool-down delays by the step
-   dtime; device-callable as sfr_density_law_rate */
-KOKKOS_INLINE_FUNCTION int sf_cell_flag_and_delays(struct particle_data *pp, struct gas_cell_data *cell, int i, double dtime)
-{
-    int flag = 1; /* will be reset below if flag==0, but default to flag = 1 (non-eligible) */
-    /* check whether an initial (not fully-complete!) conditions for star formation are fulfilled for a given particle */
-    if(cell[i].Density * All.cf_a3inv >= All.PhysDensThresh) {flag = 0;} // if sufficiently dense, go forward into SF routine //
-    if(All.ComovingIntegrationOn) {if(cell[i].Density < All.OverDensThresh) {flag = 1;}} // (additional density check for cosmological runs) //
-#ifdef GALSF_SUBGRID_WINDS
-    if(cell[i].DelayTime > 0) {flag=1; cell[i].DelayTime -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
-    if((cell[i].DelayTime < 0) || (cell[i].Density*All.cf_a3inv < All.WindFreeTravelDensFac*All.PhysDensThresh)) {cell[i].DelayTime=0;}
-#endif
-#ifdef GALSF_FB_TURNOFF_COOLING
-    if(cell[i].DelayTimeCoolingSNe > 0) {flag=1; cell[i].DelayTimeCoolingSNe -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
-#endif
-#ifdef GALSF_SINGLE_STARS_SF_CRITERION
-    if(cell[i].SingleStarSpawnBlock) {flag=1;} /* a star formed here: wait for the density to be recomputed */
-    if(cell[i].SingleStarSFCooldown > 0) {flag=1; cell[i].SingleStarSFCooldown -= dtime; if(cell[i].SingleStarSFCooldown < 0) {cell[i].SingleStarSFCooldown = 0;}} /* free-fall cool-down after a birth */
-#endif
-    (void) pp; (void) dtime; return flag;
-}
-
 /* Routine to actually determine the SFR assigned to an individual gas particle at each time. i is the index. mode is normal [0] or for snapshot output [1], where the latter is included to make sure certain flags dont give misleading outputs */
 double get_starformation_rate(int i, int mode)
 {
-    double tsfr, y; y=0; int j, k;
-    double rateOfSF = sfr_density_law_rate(P, CellP, i, &tsfr);
-    if(rateOfSF <= 0) {return 0;}
-#ifdef GALSF_SINGLE_STARS_SF_CRITERION
-    return single_star_sf_criterion_rate(P, CellP, i, rateOfSF);
+    double rateOfSF,tsfr,y; y=0; int flag=1, j, k; /* flag to proceed to SFR calc */
+    if(P[i].Mass <= 0 || CellP[i].Density <= 0) {flag=0;} /* zero-mass elements [for deletion] not eligible for SF */
+#ifdef GALSF_SUBGRID_WINDS
+    if(CellP[i].DelayTime > 0) {flag=0;} /* 'decoupled' wind elements not eligible for SF */
+#endif
+#ifdef SINK_WIND_SPAWN
+    if(P[i].ID == All.SpawnedWindCellID) {flag=0;} /* spawned hyper-resolution elements not eligible for SF */
+#endif
+    if(All.ComovingIntegrationOn && CellP[i].Density < All.OverDensThresh) {flag=0;} /* below overdensity threshold required for SF */
+    if(CellP[i].Density*All.cf_a3inv < All.PhysDensThresh) {flag=0;} /* below physical density threshold */
+#if defined(GALSF_SFR_VIRIAL_CRITERION_TIMEAVERAGED) && (GALSF_SFR_VIRIAL_SCALING <= 0)
+    if(flag==0) {CellP[i].AlphaVirial_SF_TimeSmoothed=0;} /* for time-smoothed virial param, reset to nil if fall below threshold */
+#endif
+    tsfr = sqrt(All.PhysDensThresh / (CellP[i].Density * All.cf_a3inv)) * All.MaxSfrTimescale; /* set default SFR timescale to scale appropriately with the gas dynamical time */
+    rateOfSF = P[i].Mass / tsfr; /* 'normal' sfr from density law above */
+    if(tsfr<=0 || rateOfSF<=0 || flag==0) {return 0;} /* nonsense here, return 0 */
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION /* single stars (the reference implementation's criterion): no SF in ionised cells, Jeans mass below FacSfThreshMJ x N_ngb x m */
+    {
+#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+        if(CellP[i].DelayTimeHII > 0) {return 0;}
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        if(All.Ti_Current < CellP[i].PhotoionizedUntil) {return 0;}
+#endif
+        double rho_phys = CellP[i].Density * All.cf_a3inv, cs = CellP[i].effective_soundspeed(); /* physical, from the gas pressure (no magnetic term), as the reference implementation */
+        double MJ = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)); /* pi^(5/2)/6 c_s^3 / (G^(3/2) rho^(1/2)) */
+#ifdef GALSF_SINGLE_STARS_POPIII
+        if(single_star_popIII_cell(i)) { /* pristine gas: the Pop III criterion in place of the Jeans test */
+            struct popIII_sf_params p = {All.PopIII_Zcrit_solar * All.SolarAbundances[0], All.PopIII_nH_thresh, All.PopIII_xH2_min, All.PopIII_Mreservoir};
+            double nH = rho_phys * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+            double divv = P[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3 * All.cf_hubble_a : 0);
+            return popIII_sf_allowed(nH, divv, CellP[i].TracAbund[IH2], MJ * UNIT_MASS_IN_SOLAR, 0, &p) ? rateOfSF : 0;
+        }
+#endif
+        if(MJ >= All.FacSfThreshMJ * All.DesNumNgb * P[i].Mass) {return 0;}
+#ifdef GALSF_SINGLE_STARS_SF_CONVERGING_FLOW_ONLY
+        if(P[i].Particle_DivVel * All.cf_a2inv + (All.ComovingIntegrationOn ? 3 * All.cf_hubble_a : 0) >= 0) {return 0;} /* physical flow (Hubble flow included) diverging or static: no SF */
+#endif
+        return rateOfSF;
+    }
 #endif
     
 #if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION)
@@ -559,15 +512,7 @@ static void recent_sfr_expire(void) /* the oldest entries first; a scan of all p
     {
         double m_old = 0, m_new = 0; for(auto &e : recent_sfr_young_mass) {m_old += e.second;}
         recent_sfr_young_mass.clear(); recent_sfr_built = 1; const int changed = recent_sfr_changed;
-        /* the stars born before now, found by a Kokkos scan on the device or the host execution space and added in index order
-           (as a plain loop: entries of equal birth time sum in the same order); this call's births come after */
-        const int n = NumPart; int on_device = gizmo_stage_on_device(n);
-        int *born = gizmo_stage_index_alloc(&on_device, n, "recent_sfr_scan");
-        const struct particle_data *kp = P; const MyFloat t_now = (MyFloat) All.Time;
-        const int n_born = gizmo_stage_select("recent_sfr_scan", on_device, n, KOKKOS_LAMBDA(int i) {return kp[i].Type == 4 && kp[i].StellarAge < t_now;}, born);
-        loop_route_count("recent_sfr_scan", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
-        for(int a = 0; a < n_born; a++) {recent_sfr_young_mass_add(P[born[a]].StellarAge, P[born[a]].Mass);}
-        gizmo_stage_index_free(on_device, born);
+        for(int i = 0; i < NumPart; i++) {if(P[i].Type == 4 && P[i].StellarAge < (MyFloat) All.Time) {recent_sfr_young_mass_add(P[i].StellarAge, P[i].Mass);}} /* this call's births come after */
         for(auto &e : recent_sfr_young_mass) {m_new += e.second;}
         recent_sfr_changed = changed || (fabs(m_new - m_old) > 1.e-12 * DMAX(m_new, m_old));
     }
@@ -615,60 +560,33 @@ void star_formation_parent_routine(void)
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
     std::vector<double> sf_event_mass; /* stellar masses [Msun] formed by one SF event */
 #endif
-#ifdef GALSF_SINGLE_STARS_SF_CRITERION
-    /* Single-star criterion: one Kokkos kernel over the active list, on the device or on the host execution space
-       (gizmo_stage_on_device), zeroes each live gas cell's Sfr, updates its delays and flag (sf_cell_flag_and_delays) and evaluates
-       the rate of the cells that pass (sfr_density_law_rate, single_star_sf_criterion_rate). A scan then lists the cells the host
-       must visit (those that passed; with sub-grid winds every live gas cell), in the order of the active list, and the host loop
-       below does the draws, spawns and sums for them alone. Buffers: n_active x (16 + 4) bytes for this call. */
-    struct SfCellPass {double rate; int i, flag;};
-    const int n_act = (int) ActiveParticleList.size(); int sf_dev = gizmo_stage_on_device(n_act), sf_shared = sf_dev;
-    struct SfCellPass *sf = sf_shared ? (struct SfCellPass *) gizmo_gpu_alloc_shared((size_t) DMAX(n_act, 1) * sizeof(struct SfCellPass), "sf_cell_pass") : NULL;
-    if(!sf) {sf_shared = sf_dev = 0; sf = (struct SfCellPass *) malloc((size_t) DMAX(n_act, 1) * sizeof(struct SfCellPass));}
-    for(int a = 0; a < n_act; a++) {sf[a].i = ActiveParticleList[a];}
-    int *sf_visit = gizmo_stage_index_alloc(&sf_dev, n_act, "sf_visit"); /* may clear sf_dev: the host space then runs both kernels on sf, which the host reads in place */
-    if(sf_dev) {GIZMO_GPU_ENSURE_ALL_FRESH();} /* the criterion and the step length read All */
-    {
-        struct particle_data *kp = P; struct gas_cell_data *kc = CellP;
-        gizmo_stage_for("sf_criterion", sf_dev, n_act, KOKKOS_LAMBDA(int a) {
-            const int j = sf[a].i; sf[a].flag = -1; sf[a].rate = 0;
-            if(!((kp[j].Type == 0)&&(kp[j].Mass>0))) {return;}
-            kc[j].Sfr = 0;
-            const double dt = get_particle_timestep_in_physical(j, kp);
-            const int f = sf_cell_flag_and_delays(kp, kc, j, dt); sf[a].flag = f;
-            if((f == 0)&&(dt>0)) {double tsfr, r = sfr_density_law_rate(kp, kc, j, &tsfr); sf[a].rate = (r > 0) ? single_star_sf_criterion_rate(kp, kc, j, r) : 0;}
-        });
-        loop_route_count("sf_criterion", sf_dev ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n_act);
-    }
-#ifdef GALSF_SUBGRID_WINDS
-    const int n_visit = gizmo_stage_select("sf_visit", sf_dev, n_act, KOKKOS_LAMBDA(int a) {return sf[a].flag >= 0;}, sf_visit);
-#else
-    const int n_visit = gizmo_stage_select("sf_visit", sf_dev, n_act, KOKKOS_LAMBDA(int a) {return sf[a].flag == 0;}, sf_visit);
-#endif
-    for(int v = 0; v < n_visit; v++)
-    {
-        const int i = sf[sf_visit[v]].i; const double sf_rate_i = sf[sf_visit[v]].rate;
-        {
-            flag = sf[sf_visit[v]].flag;
-            dtime = get_particle_timestep_in_physical(i, P); /*  the actual time-step */
-#else
     for (int i : ActiveParticleList)
     {
         if((P[i].Type == 0)&&(P[i].Mass>0))
         {
-            CellP[i].Sfr = 0;
+            CellP[i].Sfr = 0; flag = 1; /* will be reset below if flag==0, but default to flag = 1 (non-eligible) */
             dtime = get_particle_timestep_in_physical(i, P); /*  the actual time-step */
-            flag = sf_cell_flag_and_delays(P, CellP, i, dtime);
+            
+            /* check whether an initial (not fully-complete!) conditions for star formation are fulfilled for a given particle */
+            if(CellP[i].Density * All.cf_a3inv >= All.PhysDensThresh) {flag = 0;} // if sufficiently dense, go forward into SF routine //
+            if(All.ComovingIntegrationOn) {if(CellP[i].Density < All.OverDensThresh) {flag = 1;}} // (additional density check for cosmological runs) //
+            
+#ifdef GALSF_SUBGRID_WINDS
+            if(CellP[i].DelayTime > 0) {flag=1; CellP[i].DelayTime -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
+            if((CellP[i].DelayTime < 0) || (CellP[i].Density*All.cf_a3inv < All.WindFreeTravelDensFac*All.PhysDensThresh)) {CellP[i].DelayTime=0;}
+#endif
+#ifdef GALSF_FB_TURNOFF_COOLING
+            if(CellP[i].DelayTimeCoolingSNe > 0) {flag=1; CellP[i].DelayTimeCoolingSNe -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
+#endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+            if(CellP[i].SingleStarSpawnBlock) {flag=1;} /* a star formed here: wait for the density to be recomputed */
+            if(CellP[i].SingleStarSFCooldown > 0) {flag=1; CellP[i].SingleStarSFCooldown -= dtime; if(CellP[i].SingleStarSFCooldown < 0) {CellP[i].SingleStarSFCooldown = 0;}} /* free-fall cool-down after a birth */
 #endif
             
             if((flag == 0)&&(dtime>0))        /* active star formation (upon start-up, we need to protect against dt==0) */
             {
                 /* Alright, now we consider the actual gas-to-star particle conversion and associated steps */
-#ifdef GALSF_SINGLE_STARS_SF_CRITERION
-                sm = sf_rate_i * dtime; /* expected stellar mass formed this timestep, from the criterion kernel above */
-#else
                 sm = get_starformation_rate(i, 0) * dtime; // expected stellar mass formed this timestep (this also updates entropies for the effective equation-of-state model) //
-#endif
                 p = sm / P[i].Mass;
                 double pfac = 1.-exp(-p);
                 if(p<0.1) {pfac=p*(1.-0.5*p*(1.-p/3.));} // avoids this accidentally setting to 0 if p is small, from floating-point errors
@@ -999,10 +917,6 @@ void star_formation_parent_routine(void)
             
         } /* End of If Type = 0 */
     } /* end of main loop over active particles, huzzah! */
-#ifdef GALSF_SINGLE_STARS_SF_CRITERION
-    gizmo_stage_index_free(sf_dev, sf_visit);
-    if(sf_shared) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sf);} else {free(sf);}
-#endif
     
     
     
