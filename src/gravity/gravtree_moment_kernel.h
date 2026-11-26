@@ -268,7 +268,7 @@ KOKKOS_INLINE_FUNCTION static double moment_light_centre_weight(const LumT *lum)
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
     l += (double) lum[RT_FREQ_BIN_ION_ENERGY];
 #ifdef TREECOL_SHELLS_ION_HELIUM
-    l += (double) lum[RT_FREQ_BIN_ION_HE_ENERGY];
+    l += (double) lum[RT_FREQ_BIN_ION_HE_ENERGY] + (double) lum[RT_FREQ_BIN_ION_HE1_ENERGY] + (double) lum[RT_FREQ_BIN_ION_HE2_ENERGY]; /* all four bands: the star's whole ionising energy, as stella_dev's Ion_luminosity */
 #endif
 #endif
 #else

@@ -160,7 +160,7 @@ static void single_star_ion_light(int i, double *L, double *Q)
     int s = single_star_slot(P[i].StarIdx);
     if(SingleStars.M_drawn[s] <= 8. || !single_star_band_luminosities_cgs(i, b, &L_bol)) {return;}
     double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
-    double l = single_star_band_lum_cgs(stellar_log_L_ion_tot(logM, logZ, log10(DMAX(evaluate_stellar_age_Gyr(i) * 1.e9 - stellar_t_PMS(logM, logZ), 100.))));
+    double l = single_star_band_lum_cgs(stellar_log_L_ion_tot(logM, logZ, log10(DMAX(single_star_age_yr(i) - stellar_t_PMS(logM, logZ), 100.))));
     if(l > 0 && b[SINGLE_STAR_BAND_Q] > 0) {*L = l; *Q = b[SINGLE_STAR_BAND_Q];}
 }
 
