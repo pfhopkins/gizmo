@@ -3597,9 +3597,12 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
                 plan.path = (NTask > 1) ? NeighborLoopPlan::Path::ModeB_Remote : NeighborLoopPlan::Path::ModeB_Local;}
         }
     }
-    loop_route_count(Spec::loop_name, (plan.path == NeighborLoopPlan::Path::ModeA_GpuNgl) ? LOOP_ROUTE_DEVICE_MODE_A :
-                     (plan.path == NeighborLoopPlan::Path::ModeD_DeviceFused) ? LOOP_ROUTE_DEVICE_MODE_D : LOOP_ROUTE_HOST_MODE_B,
-                     args.num_active); /* OUTPUT_LOOP_ROUTES */
+    /* OUTPUT_LOOP_ROUTES: Mode A evaluates on the device always; Mode D is counted here only across ranks (the exchange runs
+       on the device), on one rank where the batch runs (nlr_mode_d_evaluate_single_rank) */
+    if(plan.path != NeighborLoopPlan::Path::ModeD_DeviceFused || NTask > 1)
+        loop_route_count(Spec::loop_name, (plan.path == NeighborLoopPlan::Path::ModeA_GpuNgl) ? LOOP_ROUTE_DEVICE_MODE_A :
+                         (plan.path == NeighborLoopPlan::Path::ModeD_DeviceFused) ? LOOP_ROUTE_DEVICE_MODE_D : LOOP_ROUTE_HOST_MODE_B,
+                         args.num_active);
 
 
     /* ---- Stage radii once ---- */
@@ -6684,6 +6687,8 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
     }
     *anomaly_d = 0;
 
+    /* OUTPUT_LOOP_ROUTES: the space this batch walks in (nlr_walk_for_sources decides it by n) */
+    loop_route_count(Spec::loop_name, nlr_walk_runs_on_device(n) ? LOOP_ROUTE_DEVICE_MODE_D : LOOP_ROUTE_HOST_MODE_D, n);
     nlr_mode_d_local_reduce<Spec>(ctx, cs, idx_d, slot_d, rad_d, n, supply_mask, tree, acc_d, anomaly_d);
 
     const int anomaly_seen = *anomaly_d;
@@ -7133,9 +7138,10 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     if (global_active_sum == 0) {
         return;
     }
-    loop_route_count(Spec::loop_name, (path == DispatchPath::ModeA_GPU_NGL) ? LOOP_ROUTE_DEVICE_MODE_A :
-                     (path == DispatchPath::ModeD_DeviceFused) ? LOOP_ROUTE_DEVICE_MODE_D : LOOP_ROUTE_HOST_MODE_B,
-                     args.num_active); /* OUTPUT_LOOP_ROUTES: the route the call starts on */
+    if(path != DispatchPath::ModeD_DeviceFused || NTask > 1) /* OUTPUT_LOOP_ROUTES: the route the call starts on; one-rank Mode D per batch */
+        loop_route_count(Spec::loop_name, (path == DispatchPath::ModeA_GPU_NGL) ? LOOP_ROUTE_DEVICE_MODE_A :
+                         (path == DispatchPath::ModeD_DeviceFused) ? LOOP_ROUTE_DEVICE_MODE_D : LOOP_ROUTE_HOST_MODE_B,
+                         args.num_active);
 
 
     /* ===== CallScalars captured ONCE for whole call ===== */
