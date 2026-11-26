@@ -807,6 +807,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_LAST_WIND_LOG_AGE:
+#ifdef GALSF_RESOLVEDISM_SNAPSHOT_KEEPS_LAST_WIND_AGE
+            for(n = 0; n < pc; n++) {P[offset + n].last_wind_log_age = *fp++;}
+#endif
+            break;
+
         case IO_NH:        /* neutral hydrogen fraction */
 #if defined(RT_CHEM_PHOTOION)
             for(n = 0; n < pc; n++) {CellP[offset + n].HI = *fp++;}

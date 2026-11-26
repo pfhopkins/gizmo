@@ -1334,6 +1334,17 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_LAST_WIND_LOG_AGE:
+#ifdef GALSF_RESOLVEDISM_SNAPSHOT_KEEPS_LAST_WIND_AGE
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].last_wind_log_age;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_POT:		/* gravitational potential */
 #if defined(OUTPUT_POTENTIAL)
             for(n = 0; n < pc; pindex++)
@@ -2639,6 +2650,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_WIND_MOMENTUM_ACCUM:
         case IO_M_CURRENT_OLD:
         case IO_M_DRAWN_IA:
+        case IO_LAST_WIND_LOG_AGE:
             if(mode)
                 bytes_per_blockelement = sizeof(MyInputFloat);
             else
@@ -3077,6 +3089,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_WIND_MOMENTUM_ACCUM:
         case IO_M_CURRENT_OLD:
         case IO_M_DRAWN_IA:
+        case IO_LAST_WIND_LOG_AGE:
             values = 1;
             break;
 
@@ -3470,6 +3483,7 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_WIND_MOMENTUM_ACCUM:
         case IO_M_CURRENT_OLD:
         case IO_M_DRAWN_IA:
+        case IO_LAST_WIND_LOG_AGE:
             for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
             return nstars;
             break;
@@ -3905,6 +3919,12 @@ int blockpresent(enum iofields blocknr)
 
         case IO_M_DRAWN_IA:
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
+            return 1;
+#endif
+            break;
+
+        case IO_LAST_WIND_LOG_AGE:
+#if defined(GALSF_RESOLVEDISM_SNAPSHOT_KEEPS_LAST_WIND_AGE)
             return 1;
 #endif
             break;
@@ -4616,6 +4636,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_M_DRAWN_IA:
             strncpy(label, "MDIA", 4);
             break;
+        case IO_LAST_WIND_LOG_AGE:
+            strncpy(label, "LWLA", 4);
+            break;
         case IO_POT:
             strncpy(label, "POT ", 4);
             break;
@@ -5154,6 +5177,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_M_DRAWN_IA:
             strcpy(buf, "MDrawnIa");
+            break;
+        case IO_LAST_WIND_LOG_AGE:
+            strcpy(buf, "LastWindLogAge");
             break;
         case IO_POT:
             strcpy(buf, "Potential");

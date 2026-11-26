@@ -1208,6 +1208,9 @@ void resolvedism_inject_fb_energy(void)
                 double logM_log  = log10(DMAX(Mstar_log, 0.08));
                 double logZ_log  = log10(DMAX(P[i].BirthMetallicity, 1e-10));
                 double table_age_now = get_star_table_age(age_yr_now, logM_log, logZ_log);
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                printf("WINDAGES ID=%llu t=%.17g log_age_prev=%.17g log_age_now=%.17g dM=%.17g\n", (unsigned long long)P[i].ID, All.Time, (double)P[i].last_wind_log_age, log10(DMAX(table_age_now, 100.0)), dM_wind); fflush(stdout);
+#endif
                 P[i].last_wind_log_age = log10(DMAX(table_age_now, 100.0));
             }
             STELLA_FB_EVENT(P[i]) = -1;
