@@ -1,6 +1,6 @@
 /* KETJU: ketju_create_system / ketju_run_integrator / ketju_free_system on the C++/Kokkos MSTAR library
  * (mstar::System, ketju-integrator, a separate install at KETJU_PATH). The C structs of ketju_integrator.h (the C interface header, installed with MSTAR; the C library is not used) stay GIZMO's data model; the state is
- * integrated on rank 0 of the region's communicator and broadcast (KETJU_MSTAR_MPI: regions of KETJU_MSTAR_MPI_MIN_N or more
+ * integrated on rank 0 of the region's communicator and broadcast with KETJU_MSTAR_SINGLE_TASK; by default regions of KETJU_MSTAR_MPI_MIN_N or more
  * bodies by all tasks of the communicator together, result bitwise that of one task), with the C library's semantics (merger records,
  * extra-data and collision_radius reordering, accumulating step counters, abort on max_step_count). */
 #ifndef KETJU_MSTAR_KOKKOS_H
