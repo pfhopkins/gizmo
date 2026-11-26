@@ -13,7 +13,7 @@
 #include "loop_routes.h"
 
 #ifdef OUTPUT_LOOP_ROUTES
-static const char *loop_route_names[LOOP_ROUTE_N] = {"device_mode_A", "device_mode_D", "host_mode_B", "device_kernel", "host_kernel", "host_plain"};
+static const char *loop_route_names[LOOP_ROUTE_N] = {"device_mode_A", "device_mode_D", "host_mode_B", "host_mode_D", "device_kernel", "host_kernel", "host_plain"};
 struct loop_route_row {long long calls[LOOP_ROUTE_N], elements[LOOP_ROUTE_N];};
 static std::map<std::string, loop_route_row> loop_routes_local;
 
@@ -57,8 +57,8 @@ void loop_routes_write(void)
         }
     }
     char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(fn, sizeof(fn), "%sloop_routes.txt", All.OutputDir);
-    FILE *fd = fopen(fn, "w"); if(!fd) {return;}
-    fprintf(fd, "# step %lld time %.10g ranks %d: calls and rank-local elements summed over ranks since the start\n# loop", (long long) All.NumCurrentTiStep, All.Time, NTask);
+    FILE *fd = fopen(fn, "w"); if(!fd) {printf("OUTPUT_LOOP_ROUTES: cannot open %s, routes not written\n", fn); return;}
+    fprintf(fd, "# step %lld time %.10g ranks %d: calls and rank-local elements summed over ranks since the start; Mode D on one rank counts per evaluation batch, and a Mode D call that falls back to the host walker counts once more under host_mode_B\n# loop", (long long) All.NumCurrentTiStep, All.Time, NTask);
     for(int k = 0; k < LOOP_ROUTE_N; k++) {fprintf(fd, " %s_calls %s_elements", loop_route_names[k], loop_route_names[k]);}
     fprintf(fd, "\n");
     for(const auto &kv : sum)
