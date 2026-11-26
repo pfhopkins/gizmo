@@ -26,7 +26,8 @@ def _run(cmd, cwd, timeout, env=None):
     return res
 
 
-KOKKOS_CTESTS = {"mstar_unit_tests", "mstar_compare_c", "mstar_extra_force", "mstar_embedded_tide", "mstar_driver"}
+# the ctests GIZMO relies on; main may have more (all that exist must pass)
+REQUIRED_CTESTS = {"mstar_unit_tests", "mstar_compare_c", "mstar_extra_force", "mstar_embedded_tide", "mstar_driver"}
 
 
 def _kokkos_root():
@@ -49,4 +50,6 @@ def test_ketju_kokkos_ctests(tmp_path):
     res = subprocess.run(["ctest", "--output-on-failure"], cwd=build, capture_output=True, text=True, timeout=1200)
     assert res.returncode == 0, f"ctest failed:\n{res.stdout[-6000:]}\n{res.stderr[-2000:]}"
     ran = set(re.findall(r"Test +#\d+: (\S+) \.+ +Passed", res.stdout))
-    assert ran == KOKKOS_CTESTS, f"missing: {sorted(KOKKOS_CTESTS - ran)}; unexpected: {sorted(ran - KOKKOS_CTESTS)}"
+    assert REQUIRED_CTESTS <= ran, f"required ctests that did not run and pass: {sorted(REQUIRED_CTESTS - ran)}"
+    assert re.search(r"100% tests passed, 0 tests failed out of (\d+)", res.stdout), f"not all ctests passed:\n{res.stdout[-3000:]}"
+    assert (KETJU_SRC / "include" / "ketju_integrator" / "ketju_integrator.h").is_file(), "main has no C interface header (GIZMO's data model)"

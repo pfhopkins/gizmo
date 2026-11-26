@@ -1,0 +1,15 @@
+% Read by merge_split_driver (units, box, parameters); no initial conditions are read and nothing is evolved
+InitCondFile               turb_diff_metals_ics
+OutputDir                  output
+TimeMax                    0.05               % 50 Myr
+BoxSize                    0.5                % kpc
+TimeBetSnapshot            0.005
+TimeBetStatistics          0.05
+MaxSizeTimestep            0.005
+DesNumNgb                  32
+UnitLength_in_cm           3.085678e21        % 1 kpc
+UnitMass_in_g              1.989e43           % 1e10 Msun
+UnitVelocity_in_cm_per_s   1.0e5              % 1 km/s
+TurbDiffusionCoefficient   1.0
+MaxMemSize                 4000
+PartAllocFactor            3.0
