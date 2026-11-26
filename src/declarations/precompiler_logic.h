@@ -1392,6 +1392,9 @@
 #if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
 #error "GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH is a rule for the pixel columns of the gravity walk: set GALSF_RESOLVEDISM_TREECOL_PIXELS"
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH /* node size, in TreeColShieldingLength, above which a straddling node is opened; bare flag: 0 */
+#define TREECOL_OPEN_ACROSS_MIN_SIZE (GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH + 0.0)
+#endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS /* per-direction columns and band fluxes in the gravity walk (gravity/gravtree_treecol_pixels.h) */
 #if GALSF_RESOLVEDISM_TREECOL_PIXELS == 12
 #define TREECOL_PIXELS_NSIDE 1

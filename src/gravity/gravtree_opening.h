@@ -80,8 +80,8 @@ gravtree_open_t gravtree_open_decision_from_distances(
     if(t_h < msoft && r2_com < msoft * msoft) { return GRAV_OPEN_NODE; }
 #endif
 
-#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH /* gas target: a node partly inside TreeColShieldingLength is opened */
-    if(t_type == 0 && All.TreeColShieldingLength > 0)
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH /* gas target: a node partly inside TreeColShieldingLength and larger than TREECOL_OPEN_ACROSS_MIN_SIZE of it is opened */
+    if(t_type == 0 && All.TreeColShieldingLength > 0 && len > TREECOL_OPEN_ACROSS_MIN_SIZE * All.TreeColShieldingLength / All.cf_atime)
     {
         const double sl = All.TreeColShieldingLength / All.cf_atime, half = 0.8660254 * len, r_in = sl - half, r_out = sl + half;
         const double ax = gravity_box_long_abs_x(cen_dx, cen_dy, cen_dz, -1), ay = gravity_box_long_abs_y(cen_dx, cen_dy, cen_dz, -1), az = gravity_box_long_abs_z(cen_dx, cen_dy, cen_dz, -1);
@@ -198,7 +198,7 @@ gravtree_open_t gravtree_open_decision_cell(
         t_soft_max, t_soft_min, t_aold_min, cover_has_sink ? 5 : 0,
         len, mass, msoft, rcut, rcut2, n_sink, is_first_step);
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH /* some target of the cover may see the node across the length: nearest at r_min, farthest within r_min + the cover's diagonal */
-    if(d == GRAV_ACCEPT_MULTIPOLE && All.TreeColShieldingLength > 0)
+    if(d == GRAV_ACCEPT_MULTIPOLE && All.TreeColShieldingLength > 0 && len > TREECOL_OPEN_ACROSS_MIN_SIZE * All.TreeColShieldingLength / All.cf_atime)
     {
         const double sl = All.TreeColShieldingLength / All.cf_atime, half = 0.8660254 * len, r_out = sl + half, r2_min = cax*cax + cay*cay + caz*caz;
         const double wx = cover_max[0] - cover_min[0], wy = cover_max[1] - cover_min[1], wz = cover_max[2] - cover_min[2];
