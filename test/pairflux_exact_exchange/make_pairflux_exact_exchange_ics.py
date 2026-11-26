@@ -15,7 +15,8 @@ m_merge = m.copy(); u_merge = u.copy(); m_merge[far] *= 0.45; u_merge[far] /= 0.
 m_split = m.copy(); u_split = u.copy(); m_split[far] *= 2.2; u_split[far] /= 2.2  # heavier at equal pressure: above the split threshold
 M0 = L**3 / n**3
 for name, mm, uu, merge_min, split_max in (("pairflux_exact_exchange_ics", m, u, 0., 0.), ("pairflux_exact_exchange_merge_ics", m_merge, u_merge, 0.49 * M0, 0.),
-                                          ("pairflux_exact_exchange_split_ics", m_split, u_split, 0., 2.01 * M0)):
+                                          ("pairflux_exact_exchange_split_ics", m_split, u_split, 0., 2.01 * M0),
+                                          ("pairflux_exact_exchange_merge_centre_ics", m, u, 1.01 * M0, 0.)):  # every active cell merges: the blast centre into long-step cells
   m, u = mm, uu
   with h5py.File(name + ".hdf5", "w") as f:  # merge/split ICs: only the shell cells are past the threshold
     h = f.create_group("Header"); N = n**3

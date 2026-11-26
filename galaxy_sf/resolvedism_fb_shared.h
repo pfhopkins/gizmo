@@ -146,6 +146,27 @@ static inline void stella_fire_receiver_check(int j, double M_old, double dM, do
 #endif
 #endif
 
+#if defined(RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED) || defined(TEST_KICK_FLOOR_DUMP)
+/* a deposit into cell j: with RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED its signal speed is raised to the post-injection value, so the
+   timestep criterion and an own-timestep wake see the heated state (dv_phys: the deposit's velocity change, physical) */
+static inline void resolvedism_fb_receiver_deposit_done(int j, double dv_phys, int site)
+{
+    (void) dv_phys; (void) site;
+#ifdef RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED
+    {double u_j;
+    #pragma omp atomic read
+    u_j = CellP[j].InternalEnergy;
+    double vsig_new = 2. * sqrt(CellP[j].soundspeed2_from_u(u_j)) + dv_phys;
+    #pragma omp critical(resolvedism_fb_receiver_vsig)
+    {if(vsig_new > CellP[j].MaxSignalVel) {CellP[j].MaxSignalVel = vsig_new;}}}
+#endif
+#ifdef TEST_KICK_FLOOR_DUMP
+    printf("TEST_KICK_FLOOR_DUMP recv step %lld t %.10e ID %llu site %d bin %d active %d u %.6e vsig %.6e h %.6e m %.6e\n", (long long) All.NumCurrentTiStep, All.Time,
+           (unsigned long long) P[j].ID, site, (int) P[j].TimeBin, (int) TimeBinActive[P[j].TimeBin], (double) CellP[j].InternalEnergy, (double) CellP[j].MaxSignalVel, (double) P[j].KernelRadius, (double) P[j].Mass);
+#endif
+}
+#endif
+
 /* =========================================================================== */
 /*  Function prototypes for the two tree walk routines                         */
 /* =========================================================================== */
