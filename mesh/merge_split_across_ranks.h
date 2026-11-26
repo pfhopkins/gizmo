@@ -138,18 +138,18 @@ static Answer answer_query(const Query &q, int qindex, const std::vector<char> &
 static int merge_and_find_splits(std::vector<double> &r_nearest_split)
 {
     r_nearest_split.assign(NumPart, 0.0);
-    std::vector<char> is_split_query(NumPart, 0), used(NumPart, 0); /* used: survivor of a merge of this pass (takes no further part in it) */
+    std::vector<char> is_split_query(NumPart, 0), used(NumPart, 0); /* used: survivor of a merge of this pass: no target any more; if still too light it proposes again (as a target of the rank-local loop can) */
     std::set<std::array<double,3>> claimed; /* landing points of this pass's merges, the same set on every rank */
     int n_merged_pass = 0; long long n_queries_pass = 0; int rounds_done = 0; const double t_pass = MPI_Wtime();
-    /* several rounds of the same matching: cells that lost their target in one round propose again in the next, to a cell not yet in a merge of
-       this pass. Ends when a round merges nothing anywhere, or at the cap. Splits are decided in the first round. */
+    /* several rounds of the same matching: cells that lost their target in one round, and survivors that are still too light, propose again
+       in the next, to a cell not yet in a merge of this pass. Ends when a round merges nothing anywhere, or at the cap. Splits are decided in the first round. */
     for(int round = 0; round < MERGE_SPLIT_MATCHING_ROUNDS; round++)
     {
     /* 1. queries */
     std::vector<Query> ql;
     for(int i = 0; i < NumPart; i++)
     {
-        if(P[i].Mass <= 0 || used[i]) {continue;}
+        if(P[i].Mass <= 0) {continue;}
 #if defined(GALSF)
         if(!(((P[i].Type==0)||(P[i].Type==4))&&(TimeBinActive[P[i].TimeBin]))) {continue;}
 #else
