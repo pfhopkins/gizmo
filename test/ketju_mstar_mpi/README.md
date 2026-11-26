@@ -19,3 +19,16 @@ The counts are written to `ketju_mstar_mpi_compare.txt`. Needs the KETJU install
 with MSTAR's MPI sharing).
 
     pytest test/ketju_mstar_mpi/test_ketju_mstar_mpi.py
+
+## Speed (measured 2026-11-25/26; records STL-318, STL-333 in the issue list)
+
+- ketju2 zoom restart, 224 ranks, one library commit (MSTAR main 684438c): the region of 764-776 stars takes 611-627 s
+  per MSTAR call with `KETJU_MSTAR_SINGLE_TASK` and 18.1-18.8 s shared by its 76-77 tasks (33.7x).
+- MSTAR scan on one node (2 x 56 cores), time per GBS step against one task, hard binary, 2 / 4 / 8 / 16 / 32 / 64 / 112
+  tasks: N = 128: 1.8 / 1.8 / 2.8 / 4.2 / 5.9 / 7.2 / 5.5x; N = 770: 2.0 / 2.1 / 4.1 / 7.6 / 14.1 / 26.5 / 31.3x;
+  N = 1500: 2.0 / 4.0 / 6.0 / 7.9 / 15.3 / 30.9 / 42.2x. Below the threshold (N = 8-64) the default is the single-task
+  path: 0.99-1.01 of its time (one point 1.045, re-measured 1.000). Sharing forced at N = 64 would still be faster than
+  one task; at N = 16 and 8 it is slower, hence a threshold.
+- Small regions inside GIZMO on 4 ranks, KETJU part, default / single task: this test's 256 binaries 10.58 / 10.79 s;
+  plummer_binaries KETJU variant 55.66 / 55.86 s. Neither setup runs on 112 ranks (too few particles per rank).
+- One Kokkos thread per MPI task is the setting to use when the ranks fill the cores.
