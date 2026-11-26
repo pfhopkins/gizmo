@@ -1,12 +1,17 @@
-"""treecol_tallbox: the per-direction columns and stellar band fluxes of the gravity walk in a tall box (x/y periodic
-by image sums, open in z: BOX_PERIODIC, BOX_LONG_Z=3, BOX_OUTFLOW_Z, GRAVITY_PERIODIC_XY_IMAGES). Same set-up and
-checks as treecol_pixels test_pixel_columns_and_fluxes (12 pixel columns of dust-weighted gas, H2 and CO; 6-13.6 eV
+"""treecol_tallbox: the per-direction columns and stellar band fluxes of the gravity walk in a tall box (x/y periodic by the
+2D Ewald table, open in z: BOX_PERIODIC, BOX_LONG_Z=3, BOX_OUTFLOW_Z, GRAVITY_PERIODIC_XY, as the Stella tall box). Same set-up
+and checks as treecol_pixels test_pixel_columns_and_fluxes (12 pixel columns of dust-weighted gas, H2 and CO; 6-13.6 eV
 energy density per pixel; band totals), but the direct sums use the nearest image in x and y and none in z. A gas
 lattice fills the lower third of the box (20 pc wide); a star sits 58 pc above it near the top face, where a z wrap
-would put it 2 pc from the gas at the bottom face. Limits as treecol_pixels (columns 1e-2 / 5e-2, fluxes 2e-3 / 3e-2), plus the wrap gate: the median column error of cells within 8 pc
-of an x/y face must be at most 1.5 times that of the others (without the wrap those cells are off by 0.2, ten times
-the others). The column limit is NOT met: measured 1.9e-2 / 5.9e-2 (cells far from the faces: 2.3e-2, so it is the tree
-error of this geometry and not the wrap). 1 and 2 ranks.
+would put it 2 pc from the gas at the bottom face. 1 and 2 ranks. The columns are those of the walk with the relative opening
+criterion (ErrTolForceAcc; the opening angle plays no part). DEVELOPER_MODE lets the test set it; the parameter file holds the
+values a build without it forces.
+  test_columns_and_fluxes_wrap_in_xy_only: ErrTolForceAcc 2.5e-4, where the tree error is gone (measured before the limits
+    were set: columns 4.4e-5 / 1.6e-4, the same at 2.5e-5 and 2.5e-6): columns median 1e-3, p99 5e-3; fluxes 2e-3 / 3e-2; and the
+    wrap gate: the median column error of cells within 8 pc of an x/y face at most 1.5 times that of the others (without the
+    wrap those cells are off by 0.2).
+  test_columns_at_production_opening: ErrTolForceAcc 0.0025, limits as treecol_pixels (columns 1e-2 / 5e-2, fluxes 2e-3 / 3e-2).
+    The column limit is NOT met: 1.9e-2 / 5.7e-2, every cell low (mean -1.9e-2), cells far from the faces 2.1e-2.
 """
 import os
 import shutil
@@ -52,7 +57,7 @@ def wrap_xy(pos, target):
     return target + d
 
 
-def run(exe, ranks, tables):
+def run(exe, ranks, tables, acc=None):
     rng = np.random.default_rng(7)
     gas = lattice(N, L) + rng.uniform(-0.2, 0.2, (N ** 3, 3)) * (L / N)
     z = 0.0142 * 10.0 ** rng.uniform(-1, np.log10(3), N ** 3)
@@ -65,7 +70,7 @@ def run(exe, ranks, tables):
         stars.append((M, tab._i2(tab.t_pms, lM, lZ) + f * tab._i2(tab.life, lM, lZ), rng.uniform(0.15, 0.85, 3) * L))
     lM, lZ = np.log10(40.0), np.log10(0.0142)
     stars.append((40.0, tab._i2(tab.t_pms, lM, lZ) + 0.1 * tab._i2(tab.life, lM, lZ), np.array([0.5 * L, 0.5 * L, LZ - 2.0])))
-    d = TEST_DIR / f"run_np{ranks}"
+    d = TEST_DIR / (f"run_np{ranks}" + ("" if acc is None else "_tight"))
     if d.exists():
         shutil.rmtree(d)
     (d / "output").mkdir(parents=True)
@@ -77,7 +82,8 @@ def run(exe, ranks, tables):
     params = params.replace("StellarTablesFile           SET_BY_TEST", f"StellarTablesFile           {tables['StellarTablesFile']}")
     tdir = os.environ.get("SGCHEM_TABLES_DIR", os.path.dirname(tables["StellarTablesFile"]))
     params = params.replace("SGChemTablesPath            SET_BY_TEST", f"SGChemTablesPath            {tdir}")
-    params = "\n".join(l for l in params.splitlines() if not l.startswith("BoxSize")) + f"\nBoxSize                     {L}\n"
+    params = "\n".join(l for l in params.splitlines() if not l.startswith("BoxSize") and not (acc is not None and l.startswith("ErrTolForceAcc")))
+    params += f"\nBoxSize                     {L}\n" + ("" if acc is None else f"ErrTolForceAcc              {acc}\n")
     (d / f"{TEST_NAME}.params").write_text(params)
     with open(d / f"test_{TEST_NAME}.out", "w") as out:
         subprocess.run(mpi_launch_command(ranks, 1) + [str(exe), f"{TEST_NAME}.params", "2", "0"], cwd=d, stdout=out,
@@ -97,9 +103,8 @@ def rel(a, b):
     return np.abs(a - b) / np.maximum(np.abs(b), 1e-300)
 
 
-@pytest.mark.parametrize("ranks", [1, 2])
-def test_columns_and_fluxes_wrap_in_xy_only(tables, exe, ranks):
-    cells, spos, bands = run(exe, ranks, tables)
+def check(tables, exe, ranks, acc, col_bar):
+    cells, spos, bands = run(exe, ranks, tables, acc)
     gpos, msp = cells[:, -3:], cells[:, 1:4]
     col, uv, tot = cells[:, 4:40].reshape(-1, 3, 12), cells[:, 40:52], cells[:, 52:56]
     L_uv = bands[:, 0] + bands[:, 2]
@@ -116,10 +121,20 @@ def test_columns_and_fluxes_wrap_in_xy_only(tables, exe, ranks):
         for k, b in enumerate((1, 3, 4, 2)):
             stats.setdefault(f"tot{k}", []).append(rel(tot[i, k], direct_energy_density(gpos[i], s, bands[:, b]).sum()))
     summary = {k: (np.median(v), np.percentile(v, 99)) for k, v in stats.items()}
-    print(ranks, {k: f"{a:.1e}/{b:.1e}" for k, (a, b) in summary.items()})
+    print(ranks, acc, {k: f"{a:.1e}/{b:.1e}" for k, (a, b) in summary.items()})
     for k, (med, p99) in summary.items():
-        bar = (1e-2, 5e-2) if k.startswith("col") else (2e-3, 3e-2) if k != "uv_pix" else (1e-2, 1e-1)
+        bar = col_bar if k.startswith("col") else (2e-3, 3e-2) if k != "uv_pix" else (1e-2, 1e-1)
         assert med <= bar[0] and p99 <= bar[1], (k, med, p99)
     edge_err = np.array(edge_err)
     print("column error, cells near an x/y face / others:", np.median(edge_err[edge]), np.median(edge_err[~edge]))
     assert np.median(edge_err[edge]) <= 1.5 * np.median(edge_err[~edge])
+
+
+@pytest.mark.parametrize("ranks", [1, 2])
+def test_columns_and_fluxes_wrap_in_xy_only(tables, exe, ranks):
+    check(tables, exe, ranks, 2.5e-4, (1e-3, 5e-3))
+
+
+@pytest.mark.parametrize("ranks", [1, 2])
+def test_columns_at_production_opening(tables, exe, ranks):
+    check(tables, exe, ranks, None, (1e-2, 5e-2))
