@@ -26,10 +26,12 @@
 #include <type_traits>
 #include "gpu_error_check.h"
 
-template<typename F>
+/* Space: the execution space, the device by default; a stage that runs the same kernel on the host below its offload
+ * count passes Kokkos::DefaultHostExecutionSpace (OpenMP or Serial, whichever the Kokkos build has as host backend). */
+template<typename Space = Kokkos::DefaultExecutionSpace, typename F>
 inline void gizmo_gpu_kernel_launch(const char *tag, int N, F&& f, int batch_start = -1)
 {
-    Kokkos::parallel_for(tag, N, std::forward<F>(f));
+    Kokkos::parallel_for(tag, Kokkos::RangePolicy<Space>(0, N), std::forward<F>(f));
     Kokkos::fence();
     gizmo_gpu_check_last_error(tag, N, batch_start);
 }
@@ -45,6 +47,27 @@ inline int gizmo_gpu_kernel_launch_count(const char *tag, int N, F&& f, int batc
     Kokkos::fence();
     gizmo_gpu_check_last_error(tag, N, batch_start);
     return total;
+}
+
+/* The same for a kernel with one or more sums: the functor takes (i, T1 &partial1, T2 &partial2, ...), one partial per
+ * result, and the totals land in the results.  On a parallel space (device, host OpenMP) the sums are split across
+ * threads: equal to a plain serial loop's to round-off, not bitwise. */
+template<typename Space = Kokkos::DefaultExecutionSpace, typename F, typename... R>
+inline void gizmo_gpu_kernel_launch_reduce(const char *tag, int N, F&& f, R&... results)
+{
+    Kokkos::parallel_reduce(tag, Kokkos::RangePolicy<Space>(0, N), std::forward<F>(f), results...);
+    Kokkos::fence();
+    gizmo_gpu_check_last_error(tag, N, -1);
+}
+
+/* True when a kernel of the default execution space may read and write the particle arrays where they live: the
+ * allocation model of allocate.cc (P and CellP in GIZMO_KOKKOS_SHARED_SPACE) and a device that is not the host -- the
+ * test the in-place drift makes (core/gpu_drift.cc).  A stage launches on the device when this holds and its offload
+ * count admits the work, else the same kernel on the host execution space. */
+inline constexpr bool gizmo_gpu_particles_in_place()
+{
+    return Kokkos::SpaceAccessibility<Kokkos::DefaultExecutionSpace, Kokkos::SharedSpace>::accessible &&
+           !std::is_same<Kokkos::DefaultExecutionSpace::memory_space, Kokkos::HostSpace>::value;
 }
 
 

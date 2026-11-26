@@ -731,6 +731,7 @@ extern "C" void *gizmo_gpu_alloc_host(size_t nbytes, const char *label);     /* 
 extern "C" void *gizmo_gpu_alloc_pinned_host(size_t nbytes, const char *label);   /* page-locked host memory: device copies and MPI run at full speed from it */
 extern "C" void  gizmo_gpu_free_pinned_host(void *ptr);                            /* releases gizmo_gpu_alloc_pinned_host memory */
 extern "C" void  gizmo_gpu_free_device(void *ptr);                                              /* releases gizmo_gpu_alloc_device memory */
+extern "C" int   gizmo_gpu_stage_on_device(long long n);                                    /* 1: a per-particle stage of n items runs on the device (in place), 0: on the host execution space */
 extern "C" void  gizmo_gpu_copy_to_device(void *dst_device, const void *src_host, size_t nbytes); /* blocking bulk copies between */
 extern "C" void  gizmo_gpu_copy_to_host(void *dst_host, const void *src_device, size_t nbytes);   /* host and device-only memory (waits for all device work first) */
 /* 1 when the particle storage is CUDA managed memory, which MPI must not receive into directly: such receives go

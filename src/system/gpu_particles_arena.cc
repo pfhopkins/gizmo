@@ -27,6 +27,7 @@
 #include "../core/proto.h"
 #include "../core/timestep_functions.h"
 #include "gpu_particles_arena.h"
+#include "../declarations/gpu_dispatch_templates.h"   /* gizmo_gpu_particles_in_place */
 #include "../mesh/gpu_neighbor_list.h"
 
 
@@ -586,6 +587,14 @@ extern "C" void *gizmo_gpu_alloc_device(size_t nbytes, const char *label)
 extern "C" void gizmo_gpu_free_device(void *ptr)
 {
     if(ptr) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(ptr);}
+}
+
+/* Where a per-particle stage that reads and writes the particles in place runs (gizmo_gpu_kernel_launch<Space>): the
+   device when the particle storage is device-visible there (gizmo_gpu_particles_in_place) and the per-particle-loop offload
+   count admits n, else the host execution space. */
+extern "C" int gizmo_gpu_stage_on_device(long long n)
+{
+    return (gizmo_gpu_particles_in_place() && gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, n)) ? 1 : 0;
 }
 
 extern "C" void gizmo_gpu_copy_to_device(void *dst_device, const void *src_host, size_t nbytes)
