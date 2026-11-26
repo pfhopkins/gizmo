@@ -344,6 +344,7 @@
 #TEST_SINGLE_STARS_PRINT_IA_DUST_REMOVAL # TESTING ONLY: with the Type Ia M_Ch matter and live dust, each converted cell prints f = c/m0 and its dust before and after the removal
 #GALSF_SINGLE_STARS_INSTANT_SN_BEFORE_TIME # single stars of drawn mass 8 Msun and up explode at their first feedback step while the code time is below the parameter TimeInstantSN (0: no effect), whatever their age
 #TEST_SINGLE_STARS_BORN_WITH_GIVEN_AGE # TESTING ONLY: a single star is born with the age TestStarInitAgeYr [yr] (formation time back-dated), so its evolution starts there
+#TEST_IMF_FAIL_EVERY_DRAW_BEFORE_TIME=1.5e-5 # TESTING ONLY, with GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS: every draw of the gas collection before this time (code units) fails and its grants go back to the donors, whatever it collected (test/sgchem_cr_zero_before_first_star)
 #TEST_SINGLE_STARS_SN_AT_FORCED_TIMES # TESTING ONLY: star ID k of the first TestNumStars (first generation) explodes at TestSNTime0 + (k-1) TestSNSpacing [code time], whatever its table lifetime
 #TEST_SINGLE_STARS_NO_GAS_IN_REACH_UNTIL_TIME # TESTING ONLY: before the code time TestFBNoGasUntilTime single-star feedback couples to no gas; events stay pending and are retried
 #TEST_SINGLE_STARS_FEEDBACK_KERNEL_AT_MOST # test only: single-star feedback kernels start at most TestFBKernelAtMost [code length] (a star in an evacuated bubble)

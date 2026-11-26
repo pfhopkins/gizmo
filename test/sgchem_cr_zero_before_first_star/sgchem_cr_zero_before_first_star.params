@@ -1,0 +1,52 @@
+% sgchem_cr_zero_before_first_star: dense clump (n_H = 1e6 cm^-3) in a 16 pc box, units kpc, 1e10 Msun, km/s; see the test
+InitCondFile                sgchem_cr_zero_before_first_star_ics
+OutputDir                   output
+ICFormat                    3
+SnapFormat                  3
+NumFilesPerSnapshot         2                 % one file per rank (2 ranks): the test reads every rank's cells
+TimeBegin                   0
+TimeMax                     3.0e-5            % 29 kyr, 0.7 free-fall times of the clump
+BoxSize                     0.016
+TimeOfFirstSnapshot         0
+TimeBetSnapshot             1.25e-6           % = MaxSizeTimestep: between two snapshots every cell goes through the chemistry
+TimeBetStatistics           1.25e-6
+MaxSizeTimestep             1.25e-6
+MinSizeTimestep             1e-12
+DesNumNgb                   32
+MaxNumNgbDeviation          0.1
+UnitLength_in_cm            3.085678e21
+UnitMass_in_g               1.989e43
+UnitVelocity_in_cm_per_s    1.0e5
+UnitMagneticField_in_gauss  1.0
+InitGasTemp                 0
+InitMetallicity             1.0
+InitStellarAge              10.0              % the star of the ic_star case: 10 Gyr old
+MinGasTemp                  10
+CritPhysDensity             1.5e6             % above the initial clump density: the first star forms during the collapse
+SfEffPerFreeFall            0.5
+FacSfThreshMJ               1.0
+StellarTablesFile           SET_BY_TEST
+SGChemTablesPath            SET_BY_TEST
+SGChemCosmicRayIonRate      3.0e-19           % as the zoom [s^-1]
+SGChemDustToGasRatio        1.0
+SGChemDeuteriumAbundance    2.6e-5
+SGChemG0                    1.7
+SGChemG0_LW                 0
+TreeColShieldingLength      0.050
+PhotoionMaxSearchRadius     0.05
+SofteningGas                1.0e-4
+MinGasKernelRadiusFractional 0
+SofteningHalo               0.050
+SofteningDisk               0.020
+SofteningBulge              0.020
+SofteningStars              1.0e-4
+SofteningBndry              0.005
+BiniX                       0
+BiniY                       0
+BiniZ                       2.0e-6
+AGS_DesNumNgb               32
+MaxKernelRadius             2000
+IMFSampleMinMass            0.08
+IMFSampleStellarMassCut     0.5
+SFCooldownFreeFallFraction  0.1
+MaxStellarTimestep          10000.0

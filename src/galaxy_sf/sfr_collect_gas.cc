@@ -246,6 +246,9 @@ double single_stars_collect_gas(long long tot_spawned, long long tot_awaiting_ga
         MPI_Allreduce(&n_open, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
 
+#ifdef TEST_IMF_FAIL_EVERY_DRAW_BEFORE_TIME /* test only: every draw before this time fails whatever it collected (every task alike: the time and the count over all tasks) */
+    if(All.Time < (TEST_IMF_FAIL_EVERY_DRAW_BEFORE_TIME)) {for(ssc_star& t : S) {t.active = 1;} any_active = (tot_awaiting_gas_collection > 0) ? 1 : 0;}
+#endif
     /* failed draws: hand their grants back, exactly, on the donors' ranks */
     struct ssc_key {int task, index;}; /* (ID, child, generation) repeats after 31 spawns of one cell; (rank, index) does not */
     std::vector<ssc_key> failed_mine, failed_all;
