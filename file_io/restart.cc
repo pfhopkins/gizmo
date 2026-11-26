@@ -24,11 +24,11 @@
 #define RESTARTFILE_LAYOUT_VERSION_STELLA_DIET /* Stella layout below, tagged with the float-storage bit */
 #endif
 #if defined(GALSF_RESOLVEDISM_FB) && defined(SGCHEM) && defined(COSMIC_RAY_FLUID) && defined(CRFLUID_INJECTION_AT_SHOCKS)
-#define RESTARTFILE_LAYOUT_VERSION_STELLA 12u /* + metal ledger and CR clip totals; no gsl stream */
+#define RESTARTFILE_LAYOUT_VERSION_STELLA 15u /* + metal ledger, metal-origin ledger and CR clip totals; no gsl stream */
 #elif defined(GALSF_RESOLVEDISM_FB) && defined(SGCHEM) && defined(COSMIC_RAY_FLUID)
-#define RESTARTFILE_LAYOUT_VERSION_STELLA 11u /* + metal ledger and CR clip totals; no gsl stream */
+#define RESTARTFILE_LAYOUT_VERSION_STELLA 14u /* + metal ledger, metal-origin ledger and CR clip totals; no gsl stream */
 #elif defined(GALSF_RESOLVEDISM_FB)
-#define RESTARTFILE_LAYOUT_VERSION_STELLA 10u /* + metal ledger totals; no gsl stream */
+#define RESTARTFILE_LAYOUT_VERSION_STELLA 13u /* + metal ledger and metal-origin ledger totals; no gsl stream */
 #else
 #define RESTARTFILE_LAYOUT_VERSION_STELLA 2u
 #endif

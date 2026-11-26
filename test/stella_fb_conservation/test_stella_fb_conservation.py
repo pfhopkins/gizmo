@@ -451,13 +451,19 @@ def labels_by_cell(snapshot):
         return m[:, None] * p["MetalOrigin"][:][o], m * p["Metallicity"][:][o][:, 0]
 
 
+def cell_keys(snapshot):
+    with h5py.File(snapshot, "r") as f:
+        p = f["PartType0"]; return sorted(zip(p["ParticleIDs"][:].tolist(), p["ParticleChildIDsNumber"][:].tolist()))
+
+
 def test_metal_origin_restart_files(build, clamp_run):
     """STL-336, restart layout: the clamp box stopped after the Ia (restart files written at a step with t >= 4.2e-6, labels and
     ledger sums non-zero) and continued from the restart files to the same TimeMax. Bars, fixed before the run: in the continued
     run the ledger L of every channel (0 for a run begun without labels) is within BAR of its scale at the first checkpoint and
     changes by at most BAR per checkpoint; no cell above Z, no label below zero; against the uninterrupted run the final labelled
     mass per channel agrees to 1e-6 and per cell to 1e-5 of the largest cell value (single-precision snapshots; a restart rebuilds
-    the domain and tree, so not bitwise), and it is printed whether the label block is bitwise equal."""
+    the domain and tree, so not bitwise), and it is printed whether the label block is bitwise equal. Not covered: the restore of
+    the taken-out sums (no labelled gas leaves this box before the stop step)."""
     text0, out0 = clamp_run
     sync = re.findall(r"Sync-Point (\d+), Time: ([0-9.e+-]+)", text0)
     stop = min(int(n) for n, t in sync if float(t) >= 4.2e-6)
@@ -485,8 +491,9 @@ def test_metal_origin_restart_files(build, clamp_run):
     n_above = max(float(r_[13]) for r_ in rows); n_neg = max(float(r_[14]) for r_ in rows)
     A, zA = labels_by_cell(join(out0, sorted(f for f in os.listdir(out0) if f.startswith("snapshot_"))[-1]))
     B, zB = labels_by_cell(join(out, sorted(f for f in os.listdir(out) if f.startswith("snapshot_"))[-1]))
-    assert A.shape == B.shape
-    tot = max(abs(A[:, c].sum() - B[:, c].sum()) / A[:, c].sum() for c in (1, 3))
+    assert cell_keys(join(out0, sorted(f for f in os.listdir(out0) if f.startswith("snapshot_"))[-1])) == \
+        cell_keys(join(out, sorted(f for f in os.listdir(out) if f.startswith("snapshot_"))[-1])), "the two runs end with different cells"
+    tot =max(abs(A[:, c].sum() - B[:, c].sum()) / A[:, c].sum() for c in (1, 3))
     cell = max(np.abs(A[:, c] - B[:, c]).max() / A[:, c].max() for c in (1, 3))
     print(f"origin ledger over a restart at step {stop}: |L|/gas at the first checkpoint {rel_L:.3e}, worst |dL|/S after it {worst:.3e}, cells above Z "
           f"{n_above:.0f}, labels below zero {n_neg:.0f}; against the uninterrupted run: labelled mass per channel {tot:.3e}, per cell {cell:.3e} of the "
@@ -515,7 +522,9 @@ def test_metal_origin_start_from_snapshot(build, clamp_run):
     n_above = max(float(r_[13]) for r_ in rows); n_neg = max(float(r_[14]) for r_ in rows)
     B, _ = labels_by_cell(join(out, sorted(f for f in os.listdir(out) if f.startswith("snapshot_"))[-1]))
     evals = sum(r_["evals"] for r_ in kv_lines(text, "DIFFSLOT"))
-    moved = np.abs(A[:, 3] - B[:, 3]).max() / A[:, 3].max() if A.shape == B.shape else float("nan")  # nan: cells merged or split
+    assert cell_keys(snap) == cell_keys(join(out, sorted(f for f in os.listdir(out) if f.startswith("snapshot_"))[-1])), \
+        "cells merged or split in the continued run: the per-cell comparison of the labels needs the same cells"
+    moved = np.abs(A[:, 3] - B[:, 3]).max() / A[:, 3].max()
     kept = abs(A[:, 3].sum() - B[:, 3].sum()) / A[:, 3].sum()
     print(f"origin labels from a snapshot: labelled mass read back to {read:.3e}, worst |dL|/S {worst:.3e} over {len(rows)} logged checkpoints, "
           f"labels below zero {n_neg:.0f}, cells above Z {n_above:.0f} (single precision), {evals:.0f} pair exchange evaluations, largest change of "

@@ -287,7 +287,8 @@ eps_star = 1 pc x (m_gas/Msun)^(1/3) x (n_SF / 1e3 cm^-3)^(-1/3), with n_SF = th
   per unit cell mass, like Z; the sum is at most Z. Cell merges mix the labels by mass, the pairwise metal exchange moves them with the
   total-Z exchange in the giving cell's proportions, an SN ejecta cell starts with SN labels, stars carry none (the accretion draw takes
   them out of the gas). mass_balance_origin.txt is their ledger per channel. Restart files written before this change cannot be continued
-  by a binary with it (four more values per gas cell and the ledger sums are in the restart files): continue such runs from a snapshot.
+  by a binary with it (four more values per gas cell and the ledger sums are in the restart files; the Stella restart layout version is
+  now 13/14/15, so such a file stops the run at the start with a layout message): continue such runs from a snapshot.
 - **Mass trace.** mass_balance_steps.txt counts mass leaving through an outflow boundary in M_bary (also in non-Stella
   builds), and mass_balance_elements.txt closes every element; MbaryOutflow is not restarted (the trace re-baselines after a
   restart).
