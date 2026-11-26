@@ -175,6 +175,9 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     double m_k_table[STBL_NELEM]; /* element ejecta of this star at death (stellar_death_ejecta; lifetime winds included without WINDS) */
     double rem_mass = stellar_death_ejecta(logM, logZ, M_pre_solar, m_k_table);
     double Mej_actual = 0; for(k = 0; k < STBL_NELEM; k++) {Mej_actual += m_k_table[k];} /* = M_pre - rem */
+#ifdef GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION
+    resolvedism_ejecta_birth_composition(i, logZ, m_k_table); /* sum kept; the clip is booked once per event in resolvedism_fb.cc */
+#endif
 
     double metal_mass_solar = 0;
 #ifdef STELLA_FIRE_YIELD_SLOTS

@@ -285,13 +285,22 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
             for(int k = 0; k < STBL_NELEM; k++) {delta_solar[k] = stellar_surface_abundance(logM, logZ, log_age_now, k); delta_sum += delta_solar[k];}
         }
         double scale = (delta_sum > 0 && dM_wind_solar > 0) ? dM_wind_solar / delta_sum : 0;
+#ifdef GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION
+        double m_wind[STBL_NELEM];
+        for(int k = 0; k < STBL_NELEM; k++) {m_wind[k] = delta_solar[k] * scale;}
+        resolvedism_ejecta_birth_composition(i, logZ, m_wind); /* sum kept; the clip is booked once per event in resolvedism_fb.cc */
+#endif
 
         double metal_mass_solar = 0, sum_m_k = 0;
 #ifdef STELLA_FIRE_YIELD_SLOTS
         double y_fire[STBL_NELEM];
 #endif
         for(int k = 0; k < STBL_NELEM; k++) {
+#ifdef GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION
+            double m_k = m_wind[k];
+#else
             double m_k = delta_solar[k] * scale;
+#endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
             in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR;
 #endif
@@ -377,6 +386,9 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     double m_k_ej[STBL_NELEM]; /* AGB element ejecta of this star (stellar_death_ejecta) */
     double rem_mass = stellar_death_ejecta(logM, logZ, M_particle_solar, m_k_ej);
     double Mej_solar = 0; for(k = 0; k < STBL_NELEM; k++) {Mej_solar += m_k_ej[k];} /* = M_particle - rem */
+#ifdef GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION
+    resolvedism_ejecta_birth_composition(i, logZ, m_k_ej); /* sum kept; the clip is booked once per event in resolvedism_fb.cc */
+#endif
     in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;
 
     /* AGB momentum: planetary nebula ejection at 30 km/s */

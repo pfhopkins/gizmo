@@ -80,6 +80,32 @@ static inline double get_star_table_age(double star_age_yr, double logM, double 
 #endif
 }
 
+#ifdef GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION
+#if !defined(GALSF_RESOLVEDISM_STELLAR_TABLES) || !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+#error "GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION needs GALSF_RESOLVEDISM_STELLAR_TABLES and GALSF_RESOLVEDISM_METALS_INDIVIDUAL"
+#endif
+#ifdef GALSF_RESOLVEDISM_SN_SPAWN
+#error "GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION does not reach the SN_SPAWN payload (SpawnEjZ): not combinable yet"
+#endif
+extern double CumulEjectaBirthClip; /* ejecta mass clipped from slots below zero by the birth-composition swap [Msun] */
+/* net-yield form (STL-403): the table's unprocessed share carries the star's birth composition instead of the table's X_init,
+ * m_k += M_ej (X_star,k - X_init,k(Z)); slots below zero are set to zero and the sum restored by one common factor.
+ * Returns the clipped mass (same units as m_k). */
+static inline double resolvedism_ejecta_birth_composition(int i, double logZ, double *m_k)
+{
+    double Mej = 0, sum = 0, clip = 0; int k;
+    for(k = 0; k < STBL_NELEM; k++) {Mej += m_k[k];}
+    if(!(Mej > 0)) {return 0;}
+    for(k = 0; k < STBL_NELEM; k++) {
+        m_k[k] += Mej * (P[i].Metallicity[MET_OF(k)] - stellar_X_init(logZ, k));
+        if(m_k[k] < 0) {clip -= m_k[k]; m_k[k] = 0;}
+        sum += m_k[k];
+    }
+    if(sum > 0) {double f = Mej / sum; for(k = 0; k < STBL_NELEM; k++) {m_k[k] *= f;}}
+    return clip;
+}
+#endif
+
 /* =========================================================================== */
 /*  Coupled mode: Stella yields collapsed onto the FIRE metal slots            */
 /* =========================================================================== */

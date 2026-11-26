@@ -107,6 +107,28 @@ long double CumulMetalYieldToGas = 0, CumulMetalEjectedFromStars = 0; /* metal l
 #if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
 double CumulElemToGas[NUM_METAL_SPECIES], CumulElemFromStars[NUM_METAL_SPECIES]; /* element ledger on this rank, per Metallicity slot [code mass] */
 #endif
+#ifdef GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION
+double CumulEjectaBirthClip = 0; /* ejecta mass clipped by the birth-composition swap on this rank [Msun] */
+static void resolvedism_book_birth_clip(int i, int channel, double clip)
+{
+    if(!(clip > 0)) {return;}
+    CumulEjectaBirthClip += clip;
+    printf("RESOLVEDISM EJECTA BIRTH CLIP: Task=%d ID=%llu channel=%d clipped=%.10e Msun cumul=%.10e Msun\n", ThisTask, (unsigned long long)P[i].ID, channel, clip, CumulEjectaBirthClip);
+}
+#ifdef GALSF_RESOLVEDISM_WINDS
+/* the wind deposit's element masses as the momentum walk computes them (table interval since last_wind_log_age, rescaled to dM),
+ * then the birth-composition swap; returns its clip [Msun] */
+static double resolvedism_wind_birth_clip(int i, double logM, double logZ, double dM)
+{
+    double log_now = log10(DMAX(get_star_table_age(resolvedism_star_age_yr(i), logM, logZ), 100.0)), d[STBL_NELEM], s = 0;
+    for(int k = 0; k < STBL_NELEM; k++) {d[k] = stellar_elem_ej_wind_cumulative(logM, logZ, log_now, k) - stellar_elem_ej_wind_cumulative(logM, logZ, P[i].last_wind_log_age, k); s += d[k];}
+    if(s <= 0 && dM > 0) {s = 0; for(int k = 0; k < STBL_NELEM; k++) {d[k] = stellar_surface_abundance(logM, logZ, log_now, k); s += d[k];}}
+    double f = (s > 0 && dM > 0) ? dM / s : 0;
+    for(int k = 0; k < STBL_NELEM; k++) {d[k] *= f;}
+    return resolvedism_ejecta_birth_composition(i, logZ, d);
+}
+#endif
+#endif
 int CumulSNe = 0, CumulAGB = 0, CumulIa = 0; /* cumulative event counts */
 double CumulStarMassFormed = 0;  /* cumulative stellar mass formed [Msun] — set in IMF sampling */
 double RadPressure_dp_thisStep = 0; /* total radpressure momentum this step [g*cm/s] */
@@ -355,6 +377,9 @@ void resolvedism_determine_SNe(void)
          * read of P[i].Mass would give Mej~0.  This snapshot preserves the
          * correct value for the FeedbackBudget log. */
         P[i].M_at_SN_trigger = (MyFloat)(P[i].Mass * UNIT_MASS_IN_SOLAR);
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+        printf("STARDEATH ID=%llu M_birth=%.17g M_pre=%.17g t=%.17g\n", (unsigned long long)P[i].ID, resolvedism_birth_mass_solar(i), P[i].Mass * UNIT_MASS_IN_SOLAR, All.Time); fflush(stdout);
+#endif
         /* NOTE: do NOT zero MstarSampleIMF here — particle2in needs it */
         STELLA_CHECK("sn_log_buffer", n_logged < DMAX(n_death_count,1), "ID=%llu n_logged=%d allocated=%d", (unsigned long long)P[i].ID, n_logged, (int)DMAX(n_death_count,1));
         STELLA_CHECK_RAN("sn_log_buffer", 1);
@@ -1151,6 +1176,9 @@ void resolvedism_inject_fb_energy(void)
             if(dM_wind > 0 && P[i].WindMomentumAccum > 1000. * dM_wind) {dp_injected[2] -= dp_wind * (1. - sqrt(1. - All.CosmicRay_SNeFraction));} /* fast wind: f_CR of the KE went to CRs */
 #endif
             Z_injected[2] += P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR; /* wind metals the walk delivered */
+#ifdef GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION
+            {double Ms_, lM_, lZ_; if(dM_wind > 0 && get_star_info(i, &Ms_, &lM_, &lZ_)) {resolvedism_book_birth_clip(i, 2, resolvedism_wind_birth_clip(i, lM_, lZ_, dM_wind));}}
+#endif
 
             /* Log wind event */
             if(n_wind_logged < n_wind_alloc) {
@@ -1240,6 +1268,9 @@ void resolvedism_inject_fb_energy(void)
             int rem_type = stellar_remnant_type(logM, logZ);
             double m_led[STBL_NELEM]; /* the deposit's element ejecta (stellar_death_ejecta of the pre-walk mass) */
             double rem_mass = stellar_death_ejecta(logM, logZ, M_star_old, m_led);
+#ifdef GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION
+            resolvedism_book_birth_clip(i, channel, resolvedism_ejecta_birth_composition(i, logZ, m_led)); /* as the deposit */
+#endif
             double Mej_solar = 0, Z_ej = 0;
             for(int kk = 0; kk < STBL_NELEM; kk++) {Mej_solar += m_led[kk];}
             for(int kk = ELEM_C; kk < STBL_NELEM; kk++) {Z_ej += m_led[kk];}
