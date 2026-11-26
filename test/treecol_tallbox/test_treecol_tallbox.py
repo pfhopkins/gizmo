@@ -11,8 +11,8 @@ values a build without it forces.
     wrap gate: the median column error of cells within 8 pc of an x/y face at most 1.5 times that of the others (without the
     wrap those cells are off by 0.2).
   test_columns_at_production_opening: ErrTolForceAcc 0.0025, limits as treecol_pixels (columns 1e-2 / 5e-2, fluxes 2e-3 / 3e-2).
-    Met with GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH (in Config.sh): the walk opens a node that lies
-    partly inside TreeColShieldingLength. Without the flag a node counts whole or not at all by its mass centre and the columns
+    Met with GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH=0.25 (in Config.sh): the walk opens a node that
+    lies partly inside TreeColShieldingLength and is larger than 0.25 of it. Without the flag a node counts whole or not at all by its mass centre and the columns
     are 1.9e-2 / 5.7e-2 off, every cell low (mean -1.9e-2).
 """
 import os

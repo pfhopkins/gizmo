@@ -5,8 +5,8 @@ periodic in x and y by the 2D Ewald table and open in z (`GRAVITY_PERIODIC_XY`, 
 `BOX_OUTFLOW_Z`), as the Stella tall box. The columns and fluxes use the same nearest-image wrap as the gravity walk, so they
 wrap in x and y and not in z; no code beyond `GRAVITY_PERIODIC_XY` is needed, this test shows it. The columns come from the
 walk with the relative opening criterion (`ErrTolForceAcc`); `DEVELOPER_MODE` lets the test set it, and the parameter file
-holds the values a build without it forces. Built with `GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH`: the walk opens
-every node that lies partly inside and partly outside `TreeColShieldingLength` of a gas target.
+holds the values a build without it forces. Built with `GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH=0.25`: the walk
+opens a node that lies partly inside and partly outside `TreeColShieldingLength` of a gas target and is larger than 0.25 of it.
 
 Set-up: gas lattice (20 pc wide, 12^3 cells) in the lower third of a 20 x 20 x 60 pc box, six young stars inside it and one
 2 pc below the top face (it would sit 2 pc from the gas through a z wrap). Every cell's 12 pixel columns, 6-13.6 eV energy
