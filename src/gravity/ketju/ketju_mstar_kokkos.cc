@@ -19,14 +19,14 @@
 #define KETJU_KOKKOS_DEVICE_MIN_N 32 /* GPU builds: smaller regions run on the host execution space (launch latency) */
 #endif
 #ifndef KETJU_MSTAR_MPI_MIN_N
-#define KETJU_MSTAR_MPI_MIN_N 128 /* KETJU_MSTAR_MPI: regions from this size are integrated by all their compute tasks together */
+#define KETJU_MSTAR_MPI_MIN_N 128 /* regions from this size are integrated by all their compute tasks together */
 #endif
 
 namespace {
 
 struct KjMstarSide {           /* kept in ketju_system::internal_state */
     MPI_Comm comm;
-    mstar::System *sys;        /* rank 0 of comm (KETJU_MSTAR_MPI: every task that integrates), reused across calls */
+    mstar::System *sys;        /* rank 0 of comm (shared regions: every task that integrates), reused across calls */
 };
 std::set<KjMstarSide *> &kj_live = *new std::set<KjMstarSide *>;   /* systems to destroy before Kokkos::finalize; never destroyed */
 bool kj_kokkos_owned = false;
@@ -65,10 +65,10 @@ void kj_kokkos_initialize()
     if(wrank == 0) printf("KETJU: MSTAR commit %s on Kokkos %s (host %s), regions below %d bodies on the host engine\n",
                           KETJU_MSTAR_COMMIT, mstar::execution_space_name(), mstar::host_execution_space_name(), KETJU_KOKKOS_DEVICE_MIN_N);
 #ifdef KETJU_MSTAR_MPI
-    if(!mstar::mpi_enabled()) kj_fail("KETJU_MSTAR_MPI needs an MSTAR install built with MSTAR_ENABLE_MPI (KETJU_PATH)", 7813);
+    if(!mstar::mpi_enabled()) kj_fail("the MSTAR install at KETJU_PATH has no MPI sharing: rerun scripts/get_stella_deps.sh --update, or build with KETJU_MSTAR_SINGLE_TASK", 7813);
     const bool on_host = (strcmp(mstar::execution_space_name(), mstar::host_execution_space_name()) == 0);
     if(wrank == 0 && on_host) printf("KETJU: regions of %d or more bodies are integrated by all their compute tasks (MSTAR MPI sharing)\n", KETJU_MSTAR_MPI_MIN_N);
-    if(wrank == 0 && !on_host) printf("KETJU: KETJU_MSTAR_MPI shares regions in CPU (host) builds only: each region stays on one task\n");
+    if(wrank == 0 && !on_host) printf("KETJU: MSTAR MPI sharing works in CPU (host) builds only: each region stays on one task\n");
 #endif
 }
 
