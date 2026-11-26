@@ -570,7 +570,15 @@ void hydro_accumulate_neighbor(
 #endif
         if(vsig_timestep > WAKEUP * CellP[j].MaxSignalVel || pf_wake) {
             int wakeup_val = wakeup_flag_from_timebin(local.TimeBin);
-            HYDRO_ATOMIC_MAX(&P[j].wakeup, wakeup_val);
+#if defined(WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP) && defined(WAKEUP_TARGET_BIN_PARAMETER)
+            /* a pending merge, split or feedback request (-1, -2) stays when woken cells go to the highest active bin (WakeupTargetBin 2):
+               its own-timestep wake is capped there, so it is never the weaker one. With the waker's bin as target (0, 1) this request
+               replaces it as before. Those requests are written outside this loop, so the value read here does not change while it
+               runs; for an imported copy of j the same test is made where the request reaches its owner (ghost write-back). */
+            const int wakeup_pending_j = Kokkos::atomic_load(&P[j].wakeup);
+            if(All.WakeupTargetBin != 2 || (wakeup_pending_j != -1 && wakeup_pending_j != -2))
+#endif
+            {HYDRO_ATOMIC_MAX(&P[j].wakeup, wakeup_val);}
             if(NeedToWakeup_flag) HYDRO_ATOMIC_STORE(NeedToWakeup_flag, 1);
             if(WakeupDirty_arr) { WakeupDirty_arr[j] = 1; }   /* dirty-sidecar mark (byte store; race-benign) */
         }

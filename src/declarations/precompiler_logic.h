@@ -1352,6 +1352,18 @@
 #endif
 #define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION_ALL_GAS
 #endif
+#if defined(RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED) && !defined(WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP)
+#error "RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED needs WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP: alone it only raises MaxSignalVel, which makes the cell harder for its neighbours to wake"
+#endif
+#if defined(RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED) && !(defined(GALSF_FB_MECHANICAL) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES))
+#error "RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED acts on the deposits of the single-star table feedback (GALSF_FB_MECHANICAL, GALSF_SINGLE_STARS_FROM_IMF, GALSF_SINGLE_STARS_EVOLUTION_TABLES)"
+#endif
+#if defined(MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
+#error "MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES is written for the MFM/SPH wake only (the MFV wake gives a woken cell no completion kick of its old step)"
+#endif
+#if defined(MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS) && (defined(SINK_WIND_SPAWN) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES) || defined(SINK_RIAF_SUBEDDINGTON_MODEL) || defined(CHIMES) || defined(GENERAL_RELATIVITY))
+#error "MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS does not carry the pair state the spawned-wind, star-cluster, RIAF and GR merge rules need, nor ChimesGasVars"
+#endif
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
 #define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
 #endif

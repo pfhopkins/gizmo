@@ -9,6 +9,10 @@ variables after every sync (conserved_totals.txt). Bars (stella_dev's, fixed bef
   mass (inactive cells gain mass, then woken), merge (no hook: a shell of light cells far from the blast is below the IC-header
   merge threshold and merges into heavier neighbours at domain steps), split (no hook: a shell of heavy cells far from the blast is
   above the IC-header split threshold); as stella_dev 2d3174035, 2a0da74a7.
+- test_merge_centre / test_merge_centre_energy_exact (stella_dev 82e44ee48, 6bb9d0cb7): every cell is below the IC-header merge threshold, so the hot
+  centre cells merge into inactive long-step cells; built with MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES and the own-timestep
+  merge wake. Mass and momentum at TOL, merges in both halves of the parent's step, |dE|/E <= 1e-4 and at most 5 limiter firings (stella_dev's
+  bars and numbers); the TOL energy bar is a strict expected failure there.
 The MHD arms of stella_dev are not here: the B*V and Dedner records are not ported to gku (the flag is a build error with MAGNETIC)."""
 
 import filecmp
@@ -19,6 +23,7 @@ import subprocess
 import sys
 
 import numpy as np
+import pytest
 
 from gizmo.test import build_gizmo_for_test, mpi_launch_command
 
@@ -30,6 +35,7 @@ NRANKS = 4
 MERGESPLIT = "TreeDomainUpdateFrequency 0\n"  # merge/split run at domain steps: at every sync, not only full ones (thresholds 0.49/2.01 x cell mass)
 MERGE = MERGESPLIT + "InitCondFile pairflux_exact_exchange_merge_ics\n"  # a light shell far from the blast, below the IC-header merge threshold
 SPLIT = MERGESPLIT + "InitCondFile pairflux_exact_exchange_split_ics\n"  # a heavy shell far from the blast, above the IC-header split threshold
+MERGE_CENTRE = MERGESPLIT + "InitCondFile pairflux_exact_exchange_merge_centre_ics\n"  # every cell below the threshold: hot centre cells merge into inactive long-step cells
 
 
 def _totals(path):
@@ -146,3 +152,39 @@ def test_pairflux_exact_exchange():
     finally:
         os.chdir(cwd)
     assert not failures, f"failed arms: {failures}"
+
+
+@pytest.fixture(scope="module")
+def merge_centre():
+    """the centre-merge run: totals, log and the merge's parent-kick lines (half 1: the parent's midpoint was ahead of the merge, 2: behind)"""
+    subprocess.run([sys.executable, f"make_{TEST_NAME}_ics.py"], cwd=TEST_DIR, check=True)
+    _build(("MERGE_SPLIT_CONSERVE_ENERGY", "WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP", "MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES", "TEST_PAIRFLUX_MERGE_DUMP"), "merge_centre")
+    cwd = os.getcwd(); os.chdir(TEST_DIR)
+    try:
+        t, log = _arm("merge_centre", MERGE_CENTRE)  # asserts the run returns 0
+    finally:
+        os.chdir(cwd)
+    halves = [int(h) for h in re.findall(r"TEST_PAIRFLUX_MERGE_PARENT_KICK .* half (\d) ", log)]
+    return t, log, halves
+
+
+def test_merge_centre(merge_centre):
+    """stella_dev's bars: merges into inactive parents in both halves of the parent's step, mass and momentum at TOL, at most 5 firings
+    of the u limiter, |dE|/E <= 1e-4 (3.87 on stella_dev without the flag)"""
+    t, log, halves = merge_centre
+    assert re.search(r"[1-9][0-9]* particles merged", log), "no merge happened"
+    print(f"parent kicks: {halves.count(1)} with the midpoint ahead, {halves.count(2)} with the midpoint behind")
+    assert halves.count(1) > 0, "no merge into an inactive parent in the first half of its step"
+    assert halves.count(2) > 0, "no merge into an inactive parent in the second half of its step"
+    dM = np.abs(t["M"] - t["M"][0]).max() / t["M"][0]; dP = np.abs(t["P"] - t["P"][0]).max() / t["pscale"]; dE = np.abs(t["E"] - t["E"][0]).max() / t["E"][0]
+    print(f"max|dM|/M {dM:.2e}  max|dP|/sum m|v| {dP:.2e}  max|dE|/E {dE:.2e}  floor firings {int(t['nfloor'])}")
+    assert t["nstar"] == 0 and dM <= TOL and dP <= TOL
+    assert t["nfloor"] <= 5, "more firings of the u limiter than measured on stella_dev"
+    assert dE <= 1e-4
+
+
+@pytest.mark.xfail(strict=True, reason="stella_dev STL-292 remainder: the 50 % u limiter fires on closing impulses of merged cells (5 firings, |dE|/E 8.1e-5 "
+                   "there); only this energy bar is expected to fail")
+def test_merge_centre_energy_exact(merge_centre):
+    t = merge_centre[0]
+    assert t["nfloor"] == 0 and np.abs(t["E"] - t["E"][0]).max() / t["E"][0] <= TOL

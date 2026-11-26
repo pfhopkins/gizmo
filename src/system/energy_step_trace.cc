@@ -50,12 +50,20 @@ static const int estep_stage_exact[] = {
 
 static const char *estep_book_name[] = {"fb_sn", "fb_ia", "fb_failed", "fb_wind", "fb_agb", "fb_remnant_kin", "cool_solve", "cool_pi", "cool_floor", "cool_cr_loss", "cool_rad_exchange",
     "sf_th_locked", "sf_mag_locked", "sf_donor", "sf_donor_mag", "sf_star_kin", "sf_cr", "merge_heat_not_returned", "merge_mag_lost", "sn_cell_th", "sn_cell_mag",
-    "ketju_chain_pot", "ketju_collision", "ketju_expand", "kick_floor", "cr_clip", "outflow", "rt_emit", "rt_abs", "rt_toir", "info_mhd_num", "info_cr_shock",
+    "ketju_chain_pot", "ketju_collision", "ketju_expand", "kick_floor", "cr_clip", "outflow", "rt_emit", "rt_abs", "rt_toir",
+#ifdef MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES
+    "merge_parent_kick", "merge_parent_kick_to_int",
+#endif
+    "info_mhd_num", "info_cr_shock",
     "info_cool_id_diff", "info_cool_id_gross", "info_cool_id_evals"};
 /* stage each booking belongs to; -1 = time integration (kicks/drift), -2 = information only (in no closure) */
 static const int estep_book_stage[] = {ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_FB_MECH, ESTEP_COOLING, ESTEP_COOLING, ESTEP_COOLING,
     ESTEP_COOLING, ESTEP_COOLING, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_SF, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT, ESTEP_MERGE_SPLIT,
-    -1, -1, -1, -1, -1, -1, -1, -1, -1, -2, -2, -2, -2, -2};
+    -1, -1, -1, -1, -1, -1, -1, -1, -1,
+#ifdef MERGE_INACTIVE_PARENT_COMPLETES_STEP_WITH_OWN_RATES
+    ESTEP_MERGE_SPLIT, -1,
+#endif
+    -2, -2, -2, -2, -2};
 /* magnetic bookings stay out of the stage closure: E_B = 1/2 |BV|^2 / V with V = m/rho moves whenever a tree walk drifts a cell; they count at full syncs */
 static int estep_book_is_mag(int b) {return b == EBK_SF_MAG_LOCKED || b == EBK_SF_DONOR_MAG || b == EBK_MERGE_MAG_LOST || b == EBK_SN_CELL_MAG;}
 
