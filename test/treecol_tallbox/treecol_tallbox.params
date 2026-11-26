@@ -27,5 +27,14 @@ SofteningDisk               0.01
 SofteningBulge              0.01
 SofteningStars              0.01
 SofteningBndry              0.01
-GravityPeriodicXYImages     2
 TreeColShieldingLength      8
+% DEVELOPER_MODE (the test sets ErrTolForceAcc): the values a build without it forces
+ErrTolTheta                 0.7
+ErrTolForceAcc              0.0025
+ErrTolIntAccuracy           0.02
+CourantFac                  0.4
+MaxRMSDisplacementFac       0.25
+MaxNumNgbDeviation          1
+ResubmitOn                  0
+ResubmitCommand             none
+TimeBetStatistics           1e-3

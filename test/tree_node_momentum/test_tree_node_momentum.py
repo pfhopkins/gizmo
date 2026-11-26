@@ -6,7 +6,7 @@ import sys
 
 import pytest
 
-from gizmo.test import build_and_run_test
+from gizmo.test import build_and_run_test, variant_suffix
 
 TEST_NAME = "tree_node_momentum"
 TEST_DIR = f"test/{TEST_NAME}"
@@ -16,7 +16,7 @@ VEL_ERR_MAX = 1e-10
 def _audit(flags, ranks):
     subprocess.run([sys.executable, f"make_{TEST_NAME}_ics.py"], cwd=TEST_DIR, check=True)
     build_and_run_test(TEST_NAME, ranks, 1, extra_config_flags=flags)
-    lines = [l for l in open(f"{TEST_DIR}/test_{TEST_NAME}.out") if l.startswith("TREE_NODE_MOMENTUM_AUDIT")]
+    lines = [l for l in open(f"{TEST_DIR}/test_{TEST_NAME}{variant_suffix(flags)}.out") if l.startswith("TREE_NODE_MOMENTUM_AUDIT")]
     assert lines, "no audit line"
     print(lines[-1])
     return {k: float(v) for k, v in re.findall(r"(\w+) (\S+)", lines[-1].split(None, 1)[1])}

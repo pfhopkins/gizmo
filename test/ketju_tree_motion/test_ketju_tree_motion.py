@@ -16,15 +16,15 @@ import h5py
 import numpy as np
 import pytest
 
-from gizmo.test import build_and_run_test, clean_test_outputs, variant_output_dir
+from gizmo.test import build_and_run_test, clean_test_outputs, variant_output_dir, variant_suffix
 
 TEST_NAME = "ketju_tree_motion"
 TEST_DIR = f"test/{TEST_NAME}"
 LEAF_MEAN_MAX = 3e-6
 
 
-def _audit():
-    lines = [l for l in open(f"{TEST_DIR}/test_{TEST_NAME}.out") if l.startswith("KETJU_TREE_AUDIT")]
+def _audit(flags=()):
+    lines = [l for l in open(f"{TEST_DIR}/test_{TEST_NAME}{variant_suffix(flags)}.out") if l.startswith("KETJU_TREE_AUDIT")]
     assert lines, "no KETJU_TREE_AUDIT line"
     print(lines[-1])
     return {k: float(v) for k, v in re.findall(r"(\w+) (\S+)", lines[-1].split(None, 1)[1])}
@@ -34,7 +34,7 @@ def _run(ranks, ic="ketju_tree_motion_ics", flags=(), params=None):
     subprocess.run([sys.executable, "make_ketju_tree_motion_ics.py"], cwd=TEST_DIR, check=True)
     clean_test_outputs(TEST_NAME)
     build_and_run_test(TEST_NAME, ranks, 1, extra_config_flags=flags, param_overrides=dict({"InitCondFile": ic}, **(params or {})))
-    return _audit()
+    return _audit(flags)
 
 
 def test_nodes_follow_chains():
@@ -63,7 +63,7 @@ def test_regions_across_ranks():
     clean_test_outputs(TEST_NAME)
     fl = ("TEST_KETJU_REGION_LOG",)
     build_and_run_test(TEST_NAME, 4, 1, extra_config_flags=fl, param_overrides={"Softening_Type4": 1e-3, "Softening_Type4_MaxPhysLimit": 1e-3})
-    assert "KETJU_REGION_ACROSS_RANKS" in open(f"{TEST_DIR}/test_{TEST_NAME}.out").read()
+    assert "KETJU_REGION_ACROSS_RANKS" in open(f"{TEST_DIR}/test_{TEST_NAME}{variant_suffix(fl)}.out").read()
     with h5py.File(sorted(glob.glob(variant_output_dir(TEST_NAME, fl) + "/snapshot_*.hdf5"))[-1], "r") as f:
         g = f["PartType4"]; o = np.argsort(g["ParticleIDs"][:]); m, x, v = g["Masses"][:][o], g["Coordinates"][:][o], g["Velocities"][:][o]
     dr, dv = x[::2] - x[1::2], v[::2] - v[1::2]; mu = 43007.1 * (m[::2] + m[1::2])
@@ -75,6 +75,7 @@ def test_walk_opens_for_members():
     """a member takes its partners as leaves: nodes around it that the opening test would accept are opened"""
     subprocess.run([sys.executable, "make_ketju_tree_motion_ics.py"], cwd=TEST_DIR, check=True)
     clean_test_outputs(TEST_NAME)
-    build_and_run_test(TEST_NAME, 1, 1, extra_config_flags=("TEST_KETJU_WALK_OPENINGS",))
-    d = re.search(r"KETJU_WALK_OPENINGS (\d+)", open(f"{TEST_DIR}/test_{TEST_NAME}.out").read())
+    fl = ("TEST_KETJU_WALK_OPENINGS",)
+    build_and_run_test(TEST_NAME, 1, 1, extra_config_flags=fl)
+    d = re.search(r"KETJU_WALK_OPENINGS (\d+)", open(f"{TEST_DIR}/test_{TEST_NAME}{variant_suffix(fl)}.out").read())
     assert d and int(d[1]) > 0

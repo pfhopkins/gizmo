@@ -5,7 +5,14 @@ exactly a_z = -sign(h) 2 pi G Sigma at every height h (the 16 x 16 lattice's dis
 h >= 0.2). Probes at h = 0.2, 0.5, 1 (inside the table, |dz| <= 2 L) and 2.5, 3.5 (analytic far field), above and below.
 Limits fixed before the first run (stella_dev tallbox_gravity_cr bar, Uli): |a_z / (-sign(h) 2 pi G Sigma) - 1| < 1e-3 at every
 probe on 1 and 2 ranks with the tight walk; the sheet's own acceleration below 5e-3 of 2 pi G Sigma; mass to 1e-12 and net
-momentum as test_tallbox_gravity."""
+momentum as test_tallbox_gravity.
+
+The slab of test_tallbox_gravity (three layers plus one 0.03 from each z face, random masses), which also has forces in x and y.
+Reference: numpy sum over 16 rings of images plus the uniform sheet outside them (slab_reference.py), the sum periodic in x/y.
+Its own error, measured before the limits were set: 8 rings against 32: median 1.7e-5, max 6.9e-4; 16 against 32: 2.7e-6, 1.3e-4.
+Limits (set before the first run of this test): the two references, 8 and 16 rings, agree to 1e-3 (max); tight walk against the
+reference: median 1e-4, p99 5e-4, max 1e-3 (the image-sum test has 1e-3, 5e-3, 2e-2); production walk against the tight one:
+median 4e-3, p99 1.5e-2, and net force 2e-3 of sum m|a|, as test_tallbox_gravity."""
 import sys
 from os import chdir, path
 
@@ -17,12 +24,17 @@ from gizmo.test import build_gizmo_for_test, parse_params, run_test
 
 sys.path.insert(0, path.dirname(path.abspath(__file__)))
 import make_ics  # noqa: E402
+from slab_reference import direct_sum_with_images, relerr  # noqa: E402
 
 TEST_NAME = "tallbox_gravity"
 TIGHT = {"ErrTolTheta": 0.15, "ErrTolForceAcc": 1e-6}
 G, SIGMA = 1.0, 1.0
 HEIGHTS = (0.2, 0.5, 1.0, 2.5, 3.5)
-LIMITS = {"sheet_probe": 1e-3, "sheet_self": 5e-3, "momentum": 1e-2, "mass": 1e-12}
+LIMITS = {"sheet_probe": 1e-3, "sheet_self": 5e-3, "momentum": 1e-2, "mass": 1e-12,
+          "slab_reference": 1e-3, "slab_median": 1e-4, "slab_p99": 5e-4, "slab_max": 1e-3,  # tight walk vs the periodic sum
+          "slab_prod_median": 4e-3, "slab_prod_p99": 1.5e-2, "slab_net_force": 2e-3}
+N_REF = (8, 16)
+_reference = {}
 
 
 @pytest.fixture(scope="module")
@@ -35,6 +47,7 @@ def built():
         make_ics.make_sheet_ics("tallbox_sheet_ics.hdf5")
     finally:
         make_ics.SHEET_PROBE_HEIGHTS = keep
+    make_ics.make_slab_ics("tallbox_slab_ics.hdf5")
     yield
     chdir("../../")
 
@@ -67,3 +80,33 @@ def test_ewald_sheet_field_at_any_height(built, ranks):
     p = (l["Masses"][:, None] * l["Velocities"]).sum(0)
     scale = (l["Masses"] * np.linalg.norm(l["Velocities"], axis=1)).sum()
     assert np.linalg.norm(p) / scale < LIMITS["momentum"]
+
+
+def _slab(ranks, tight):
+    params = "tallbox_slab_ewald"
+    outdir = parse_params(f"{params}.params")["OutputDir"] + f"_r{ranks}" + ("_tight" if tight else "")
+    run_test(TEST_NAME, ranks, 1, params_name=params, param_overrides=dict(OutputDir=outdir, **(TIGHT if tight else {})))
+    snaps = sorted(__import__("glob").glob(f"{outdir}/snapshot_*.hdf5"))
+    return _read(snaps[0]), _read(snaps[-1])
+
+
+@pytest.mark.parametrize("ranks", (1, 2))
+def test_ewald_slab_against_periodic_sum(built, ranks):
+    tight, last = _slab(ranks, tight=True)
+    prod, _ = _slab(ranks, tight=False)
+    if not _reference:  # the same particles on every rank count
+        for n in N_REF:
+            _reference[n] = G * direct_sum_with_images(tight["Coordinates"], tight["Masses"], n, sheet_tail=True)
+    ref = _reference[N_REF[1]]
+    conv = relerr(_reference[N_REF[0]], ref).max()
+    e, ep = relerr(tight["Acceleration"], ref), relerr(prod["Acceleration"], tight["Acceleration"])
+    net = np.linalg.norm((tight["Masses"][:, None] * tight["Acceleration"]).sum(0)) / np.sum(tight["Masses"] * np.linalg.norm(tight["Acceleration"], axis=1))
+    print(f"[ranks={ranks}] reference {N_REF[0]} vs {N_REF[1]} rings: max={conv:.2e}; tight vs periodic sum: median={np.median(e):.2e} "
+          f"p99={np.percentile(e, 99):.2e} max={e.max():.2e}; production vs tight: median={np.median(ep):.2e} p99={np.percentile(ep, 99):.2e}; net force {net:.2e}")
+    assert conv < LIMITS["slab_reference"]
+    assert np.median(e) < LIMITS["slab_median"] and np.percentile(e, 99) < LIMITS["slab_p99"] and e.max() < LIMITS["slab_max"]
+    assert np.median(ep) < LIMITS["slab_prod_median"] and np.percentile(ep, 99) < LIMITS["slab_prod_p99"]
+    assert net < LIMITS["slab_net_force"]
+    assert abs(last["Masses"].sum() / tight["Masses"].sum() - 1) < LIMITS["mass"]
+    p = (last["Masses"][:, None] * last["Velocities"]).sum(0)
+    assert np.linalg.norm(p) / (last["Masses"] * np.linalg.norm(last["Velocities"], axis=1)).sum() < LIMITS["momentum"]
