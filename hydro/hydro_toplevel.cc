@@ -233,6 +233,9 @@ struct INPUT_STRUCT_NAME
 #endif
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
     int TD_NumPairs;
+#ifdef GALSF_RESOLVEDISM_FB
+    MyFloat MetalMassFrom[4];
+#endif
 #endif
     
 #ifdef CHIMES_TURB_DIFF_IONS
@@ -358,6 +361,9 @@ struct OUTPUT_STRUCT_NAME
 #endif
 #if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(TEST_PRINT_DIFFUSION_H_CLOSURE)
     int TD_NumEvals;
+#endif
+#if defined(METALS_EXACT_PAIRWISE_EXCHANGE) && defined(GALSF_RESOLVEDISM_FB)
+    MyFloat DMetalFrom[4];
 #endif
 
 #ifdef CHIMES_TURB_DIFF_IONS
@@ -527,6 +533,9 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     for(k=0;k<NUM_METAL_SPECIES;k++) {in->Metallicity[k] = P[i].Metallicity[k];}
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
     in->TD_NumPairs = CellP[i].TD_NumPairs;
+#ifdef GALSF_RESOLVEDISM_FB
+    for(k=0;k<4;k++) {in->MetalMassFrom[k] = CellP[i].MetalMassFrom[k];}
+#endif
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0);}
@@ -682,6 +691,11 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
         for(k=0;k<TD_NUM_EXCHANGED;k++) {if(out->Dyield[k] != 0) {any_ = 1;
             #pragma omp atomic
             CellP[i].Dyield[k] += out->Dyield[k];}}
+#ifdef GALSF_RESOLVEDISM_FB
+        for(k=0;k<4;k++) {if(out->DMetalFrom[k] != 0) {any_ = 1;
+            #pragma omp atomic
+            CellP[i].DMetalFrom[k] += out->DMetalFrom[k];}}
+#endif
         if(any_) {
             #pragma omp atomic write
             CellP[i].TD_Touched = 1;}
@@ -774,9 +788,9 @@ long TD_FloorCellsStep = 0; /* cells of this task where an apply floored a slot 
 /* every gas cell touched in this hydro pass, active or not, applies its pair exchange and clears it, so nothing stays pending (STL-277) */
 static void td_apply_and_clear(void)
 {
-    long nfloor = 0, nover = 0, nevals = 0, nnegin = 0; double floor_mass = 0, slot_dev = 0, z0_dev = 0;
+    long nfloor = 0, nover = 0, nevals = 0, nnegin = 0, nlabfloor = 0; double floor_mass = 0, slot_dev = 0, z0_dev = 0;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) reduction(+:nfloor,nover,nevals,nnegin,floor_mass) reduction(max:slot_dev,z0_dev)
+#pragma omp parallel for schedule(static) reduction(+:nfloor,nover,nevals,nnegin,nlabfloor,floor_mass) reduction(max:slot_dev,z0_dev)
 #endif
     for(int i = 0; i < N_gas; i++) /* gas cells come first in P */
     {
@@ -803,6 +817,18 @@ static void td_apply_and_clear(void)
 #endif
                 {P[i].Metallicity[k] = x;}
             }
+#ifdef GALSF_RESOLVEDISM_FB
+            for(int k = 0; k < 4; k++) { /* the labels' share of the total-Z exchange; a debit below zero (excluded by the pair bound) is floored, counted apart from the metal slots and booked */
+                if(CellP[i].DMetalFrom[k] == 0) {continue;}
+                double x = CellP[i].MetalMassFrom[k] + CellP[i].DMetalFrom[k] / P[i].Mass;
+                if(x < 0 && CellP[i].DMetalFrom[k] < 0) {
+                    nlabfloor++;
+                    #pragma omp atomic
+                    CumulOriginToGas[k] -= x * P[i].Mass;
+                    x = 0;}
+                CellP[i].MetalMassFrom[k] = x;
+            }
+#endif
             nfloor += fired; nnegin += negin;
 #if defined(TEST_PRINT_DIFFUSION_H_CLOSURE) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
             {double s_ = 0, z_ = 0; for(int k = 1; k < NUM_METAL_SPECIES; k++) {s_ += P[i].Metallicity[k]; if(k >= 3) {z_ += P[i].Metallicity[k];}}
@@ -814,12 +840,20 @@ static void td_apply_and_clear(void)
 #endif
         }
         for(int k = 0; k < NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION; k++) {CellP[i].Dyield[k] = 0;}
+#ifdef GALSF_RESOLVEDISM_FB
+        for(int k = 0; k < 4; k++) {CellP[i].DMetalFrom[k] = 0;}
+#endif
         CellP[i].TD_NumPairs = 0; CellP[i].TD_Touched = 0;
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
         CellP[i].TD_NumEvals = 0;
 #endif
     }
     TD_FloorCellsStep += nfloor; /* no collective here: the apply runs in every hydro pass */
+#ifdef GALSF_RESOLVEDISM_FB
+    if(nlabfloor > 0) {printf("METALS_EXACT_PAIRWISE_EXCHANGE: task %d floored %ld metal-origin labels at zero, Time %.10g: the pair bound should exclude this\n", ThisTask, nlabfloor, All.Time); fflush(stdout);}
+#else
+    (void)nlabfloor;
+#endif
     if(nfloor > 0) {printf("METALS_EXACT_PAIRWISE_EXCHANGE: task %d floored a metal slot at zero in %ld cells, mass added %g (code), Time %.10g: the pair bound should exclude this\n", ThisTask, nfloor, floor_mass, All.Time); fflush(stdout);}
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
     {double ls[5] = {floor_mass, (double)nfloor, (double)nover, (double)nevals, (double)nnegin}, gs[5], lm[2] = {slot_dev, z0_dev}, gm[2];

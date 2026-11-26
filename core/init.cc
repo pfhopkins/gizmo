@@ -1003,9 +1003,15 @@ void init(void)
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
         for(j=0;j<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;j++) {CellP[i].Dyield_pending[j] = 0;}
 #endif
+#ifdef GALSF_RESOLVEDISM_FB
+        if(RestartFlag == 0) {for(j=0;j<4;j++) {CellP[i].MetalMassFrom[j] = 0;}} /* ICs carry no labels: the MetalOrigin block is read only from snapshots */
+#endif
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
         for(j=0;j<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;j++) {CellP[i].Dyield[j] = 0;}
         CellP[i].TD_NumPairs = 0; CellP[i].TD_Touched = 0;
+#ifdef GALSF_RESOLVEDISM_FB
+        for(j=0;j<4;j++) {CellP[i].DMetalFrom[j] = 0;}
+#endif
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
         CellP[i].TD_NumEvals = 0;
 #endif

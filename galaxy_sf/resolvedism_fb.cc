@@ -107,6 +107,7 @@ long double CumulMetalYieldToGas = 0, CumulMetalEjectedFromStars = 0; /* metal l
 #if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
 double CumulElemToGas[NUM_METAL_SPECIES], CumulElemFromStars[NUM_METAL_SPECIES]; /* element ledger on this rank, per Metallicity slot [code mass] */
 #endif
+long double CumulOriginToGas[4], CumulOriginFromGas[4]; /* metal-origin ledger on this rank, per channel: labelled metal mass booked into the gas, and taken out of it (stars, outflow) [code mass] */
 int CumulSNe = 0, CumulAGB = 0, CumulIa = 0; /* cumulative event counts */
 double CumulStarMassFormed = 0;  /* cumulative stellar mass formed [Msun] — set in IMF sampling */
 double RadPressure_dp_thisStep = 0; /* total radpressure momentum this step [g*cm/s] */

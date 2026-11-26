@@ -232,6 +232,9 @@ extern struct gas_cell_data
 #ifdef METALS_EXACT_PAIRWISE_EXCHANGE
     int TD_NumPairs; /*!< exchange evaluations that can touch this cell in this hydro pass, counted in the gradient pass */
     int TD_Touched; /*!< Dyield or TD_NumPairs written in this hydro pass */
+#ifdef GALSF_RESOLVEDISM_FB
+    MyFloat DMetalFrom[4]; /*!< pair exchange of the metal-origin labels booked in this hydro pass (they move with the total-Z exchange) */
+#endif
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
     int TD_NumEvals; /*!< test: exchange evaluations booked to this cell in this hydro pass */
 #endif
@@ -394,7 +397,7 @@ extern struct gas_cell_data
     MyFloat CR_ionization_rate;
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
-    MyFloat MetalMassFrom[4];             /*!< metal mass fraction by channel: [0]=SN, [1]=AGB, [2]=Wind, [3]=Ia */
+    MyFloat MetalMassFrom[4];             /*!< metal mass ejected by channel ([0]=SN, [1]=AGB, [2]=Wind, [3]=Ia) per unit cell mass, like Z: all metals of the ejecta, the star's birth metals included; sum <= Metallicity[0] */
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
     short int IMFSpawnBlock;              /*!< flag: 1 = recently spawned a star, skip SF until density is recomputed */
