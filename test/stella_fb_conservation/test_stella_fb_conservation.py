@@ -51,7 +51,7 @@ from gizmo.conservation_trace import keep_and_check_traces
 TEST_NAME = "stella_fb_conservation"
 TEST_DIR = dirname(abspath(__file__))
 REPO = abspath(join(TEST_DIR, "..", ".."))
-EXTRA_FLAGS = ("BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "GALSF_RESOLVEDISM_ISOLATED_FB_TEST", "OUTPUT_ENERGY_STEP_TRACE",
+EXTRA_FLAGS = ("TEST_RESTART_AT_STEP", "BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "GALSF_RESOLVEDISM_ISOLATED_FB_TEST", "OUTPUT_ENERGY_STEP_TRACE",
                "TEST_PRINT_DIFFUSION_H_CLOSURE")
 # cross-timebin pair fluxes exchanged exactly, so the traces test the feedback itself (Uli 2026-11-21, B1 option a)
 PAIR_FLUX_FLAGS = ("HYDRO_EXACT_PAIR_FLUX_EXCHANGE", "HYDRO_TIMESTEP_FROM_PAIR_FORCE")
@@ -419,6 +419,8 @@ def origin_check(out, channels, text=None):
           f"{n_neg:.0f}; final gas mass by channel SN {mo[0]:.3e} AGB {mo[1]:.3e} wind {mo[2]:.3e} Ia {mo[3]:.3e}")
     for c in channels:
         assert mo[c] > 0, f"channel {c} holds no labelled metal: the run does not test it"
+    if text is not None:
+        assert "metal-origin labels at zero" not in text, "the diffusion apply floored a label (the pair bound should exclude it)"
     if text is not None:  # the labels must move with the diffusing metals: Ia labels in cells no thermal deposit ever reached
         recv = set(int(x) for x in re.findall(r"FBDBG_TH_RECV cell=(\d+)", text))
         with h5py.File(join(out, snaps[-1]), "r") as f:
@@ -512,11 +514,17 @@ def test_metal_origin_start_from_snapshot(build, clamp_run):
     worst = max(max(abs(float(x)) for x in r_[5:9]) for r_ in rows)
     n_above = max(float(r_[13]) for r_ in rows); n_neg = max(float(r_[14]) for r_ in rows)
     B, _ = labels_by_cell(join(out, sorted(f for f in os.listdir(out) if f.startswith("snapshot_"))[-1]))
-    moved = max(np.abs(np.sort(A[:, 3]) - np.sort(B[:, 3])).max() / A[:, 3].max(), 0)
+    evals = sum(r_["evals"] for r_ in kv_lines(text, "DIFFSLOT"))
+    moved = np.abs(A[:, 3] - B[:, 3]).max() / A[:, 3].max() if A.shape == B.shape else float("nan")  # nan: cells merged or split
+    kept = abs(A[:, 3].sum() - B[:, 3].sum()) / A[:, 3].sum()
     print(f"origin labels from a snapshot: labelled mass read back to {read:.3e}, worst |dL|/S {worst:.3e} over {len(rows)} logged checkpoints, "
-          f"labels below zero {n_neg:.0f}, cells above Z {n_above:.0f} (single precision), largest change of the sorted Ia labels {moved:.3e}")
+          f"labels below zero {n_neg:.0f}, cells above Z {n_above:.0f} (single precision), {evals:.0f} pair exchange evaluations, largest change of "
+          f"a cell's Ia label {moved:.3e} of the largest, Ia labelled mass start to end {kept:.3e}")
+    assert "metal-origin labels at zero" not in text
     assert read <= 1e-6 and worst <= BAR and n_neg == 0
-    assert moved > 0, "the labels did not change: no diffusion in the continued run"
+    assert evals > 0, "no pair exchange in the continued run"
+    assert not (moved == 0), "the labels did not change although the metals diffused"
+    assert kept <= 1e-6
 
 
 def test_diffusion_slots_clamp_box(clamp_run):

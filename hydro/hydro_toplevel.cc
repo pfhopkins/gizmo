@@ -849,7 +849,11 @@ static void td_apply_and_clear(void)
 #endif
     }
     TD_FloorCellsStep += nfloor; /* no collective here: the apply runs in every hydro pass */
+#ifdef GALSF_RESOLVEDISM_FB
     if(nlabfloor > 0) {printf("METALS_EXACT_PAIRWISE_EXCHANGE: task %d floored %ld metal-origin labels at zero, Time %.10g: the pair bound should exclude this\n", ThisTask, nlabfloor, All.Time); fflush(stdout);}
+#else
+    (void)nlabfloor;
+#endif
     if(nfloor > 0) {printf("METALS_EXACT_PAIRWISE_EXCHANGE: task %d floored a metal slot at zero in %ld cells, mass added %g (code), Time %.10g: the pair bound should exclude this\n", ThisTask, nfloor, floor_mass, All.Time); fflush(stdout);}
 #ifdef TEST_PRINT_DIFFUSION_H_CLOSURE
     {double ls[5] = {floor_mass, (double)nfloor, (double)nover, (double)nevals, (double)nnegin}, gs[5], lm[2] = {slot_dev, z0_dev}, gm[2];
