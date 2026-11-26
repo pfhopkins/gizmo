@@ -233,7 +233,7 @@ void ketju_test_mstar_pair(void)
  * fall back to non-PN/star (relativistic terms only matter when KetjuPNTerms != "none"). */
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
 #define KETJU_PN_CLASS(i) ((P[(i)].ProtoStellarStage == 7) ? 0 : 1)
-#elif defined(KETJU_TYPE4_STARS) && defined(SINK_PARTICLES)
+#elif defined(SINK_PARTICLES) && !defined(SINGLE_STAR_SINK_DYNAMICS) && !defined(GALSF_SINGLE_STARS_BH_PROMOTION) /* sinks beside Type-4 stars, with a stored subtype */
 #define KETJU_PN_CLASS(i) (P[(i)].SinkSubType) /* sinks: 0 = BH, 1 = promoted stellar remnant */
 #else
 #define KETJU_PN_CLASS(i) (1)
