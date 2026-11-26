@@ -56,7 +56,7 @@ run_cloud ketju "KetjuRegionRadius 1e-5"   # 0.01 pc, as test/ketju_cloud_restar
 
 step "rerun of the setup"
 t0=$(date +%s); bash "$G/scripts/get_stella_deps.sh" > "$S/setup3.log" || fail "rerun"
-[ "$(grep -c "already installed" "$S/setup3.log")" = 3 ] && ! grep -qE "downloading|building" "$S/setup3.log" || fail "rerun did work, see $S/setup3.log"
+[ "$(grep -c "already installed" "$S/setup3.log")" = 3 ] && grep -q "KETJU .*MSTAR [0-9a-f]\{7\} (built " "$S/setup3.log" && ! grep -qE "downloading|building" "$S/setup3.log" || fail "rerun did work, see $S/setup3.log"
 step "rerun took $(( $(date +%s) - t0 )) s"
 
 step "run without the cache stops at start-up"

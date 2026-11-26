@@ -518,7 +518,7 @@ void GravAccel_KeplerianOrbit()
 #if defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE)
         dp = -P[i].Min_xyz_to_Sink;
 #elif defined(BOX_PERIODIC)
-        dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y; dp[2] -= boxHalf_Z;
+        dp[0] -= boxHalf_X; if(NUMDIMS > 1) {dp[1] -= boxHalf_Y;} if(NUMDIMS > 2) {dp[2] -= boxHalf_Z;} /* the unused coordinates are zero */
 #endif
         double r2 = dp.norm_sq(), r = sqrt(r2);
         P[i].GravAccel -= dp * (1.0 / (r2*r));
@@ -573,7 +573,7 @@ void GravAccel_StaticNFW()
 #ifdef GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE
         dp = -P[i].Min_xyz_to_Sink;
 #elif defined(BOX_PERIODIC)
-        dp[0] -= boxHalf_X; dp[1] -= boxHalf_Y; dp[2] -= boxHalf_Z;
+        dp[0] -= boxHalf_X; if(NUMDIMS > 1) {dp[1] -= boxHalf_Y;} if(NUMDIMS > 2) {dp[2] -= boxHalf_Z;} /* the unused coordinates are zero */
 #endif
         double r2=dp.norm_sq(), r=sqrt(r2), x=r/Rs, cfac=log(1+NFW_C)-NFW_C/(1+NFW_C);
         if(r>0) {

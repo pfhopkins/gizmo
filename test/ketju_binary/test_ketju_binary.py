@@ -9,7 +9,7 @@ import h5py
 import numpy as np
 import pytest
 
-from gizmo.test import build_and_run_test, variant_output_dir
+from gizmo.test import build_and_run_test, variant_output_dir, variant_suffix
 
 TEST_NAME = "ketju_binary"
 TEST_DIR = f"test/{TEST_NAME}"
@@ -19,7 +19,7 @@ G, AU = 43007.1, 4.848137e-9
 def _run(ranks=1, flags=(), params=None):
     subprocess.run([sys.executable, f"make_{TEST_NAME}_ics.py"], cwd=TEST_DIR, check=True)
     build_and_run_test(TEST_NAME, ranks, 1, extra_config_flags=flags, param_overrides=params)
-    return open(f"{TEST_DIR}/test_{TEST_NAME}.out").read()
+    return open(f"{TEST_DIR}/test_{TEST_NAME}{variant_suffix(flags)}.out").read()
 
 
 def _elements(flags=()):

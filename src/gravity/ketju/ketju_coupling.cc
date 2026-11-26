@@ -233,7 +233,7 @@ void ketju_test_mstar_pair(void)
  * fall back to non-PN/star (relativistic terms only matter when KetjuPNTerms != "none"). */
 #ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
 #define KETJU_PN_CLASS(i) ((P[(i)].ProtoStellarStage == 7) ? 0 : 1)
-#elif defined(KETJU_TYPE4_STARS) && defined(SINK_PARTICLES)
+#elif defined(SINK_PARTICLES) && !defined(SINGLE_STAR_SINK_DYNAMICS) && !defined(GALSF_SINGLE_STARS_BH_PROMOTION) /* sinks beside Type-4 stars, with a stored subtype */
 #define KETJU_PN_CLASS(i) (P[(i)].SinkSubType) /* sinks: 0 = BH, 1 = promoted stellar remnant */
 #else
 #define KETJU_PN_CLASS(i) (1)
@@ -689,8 +689,8 @@ static void update_region_costs(void)
 static int is_chain_center(int i)
 {
     if(STELLA_OWNS_STAR(P[i]) && All.KetjuMinStarMass > 0 && P[i].Mass >= All.KetjuMinStarMass) return 1; /* stars */
-#ifndef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
-    if(P[i].Type == 5) {return (All.KetjuMinBHMass > 0 && P[i].Mass >= All.KetjuMinBHMass) ? 1 : 0;} /* sinks are BHs or remnants */
+#if !defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && !defined(SINGLE_STAR_SINK_DYNAMICS)
+    if(P[i].Type == 5) {return (All.KetjuMinBHMass > 0 && P[i].Mass >= All.KetjuMinBHMass) ? 1 : 0;} /* sinks are BHs or remnants; with STARFORGE sink dynamics they are the stars (below) */
 #endif
     /* STARFORGE: all sinks are Type 5; ProtoStellarStage selects role.
      * Stages 0-6 (proto / MS / pre-collapse) use KetjuMinStarMass.

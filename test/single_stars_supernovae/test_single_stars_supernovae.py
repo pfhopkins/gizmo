@@ -137,6 +137,18 @@ def test_ranks_and_threads(built):
     compare_ranks_and_threads(built, "GIZMO", "")
 
 
+def test_ranks_and_threads_with_merge_split_search_across_ranks(built):
+    """the same comparison, same 1e-5 energy bar, with MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS: cells split and merge, the
+    daughters are placed from the nearest neighbour on any task"""
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=("MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS",))
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_across")
+        build_gizmo_for_test(TEST_NAME)
+    compare_ranks_and_threads(built, "GIZMO_across", "across_")
+    for tag in ("r1", "r2", "r4", "r2t2"):
+        assert "Particle split/merge check" in (TEST_DIR / f"run_across_{tag}" / f"test_{TEST_NAME}.out").read_text(errors="replace"), f"run_across_{tag}: no split or merge happened, so the flag was not exercised"
+
+
 def test_ranks_and_threads_without_merge_split(built):
     """the same comparison with PREVENT_PARTICLE_MERGE_SPLIT: no cell splits, and events, mass and energy are rank-independent"""
     if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):

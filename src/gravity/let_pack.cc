@@ -560,7 +560,8 @@ extern "C" int let_exchange_payloads(const struct LETPerRankPayload *local,
  * refines which cover boxes feed it. Scratch is grown once and reused across
  * receivers/exchanges (no allocation in the pack recursion); the tree for the
  * receiver currently being packed is held in the pack context, set by
- * let_pack_for_rank before its pack loop.
+ * let_pack_for_rank before its pack loop (or, for a destination packed in runs,
+ * lent to each worker by let_pack_destinations_in_runs).
  * ========================================================================== */
 /* Cover-tree node carries BOTH geometry (box) AND the conservative per-cover scalar bounds,
  * combined up the tree from the per-topleaf table (min OldAcc / max soft-by-type / min soft /
@@ -2055,7 +2056,7 @@ static long long let_wire_encode_destination(struct LETPackContext *pk, const st
     return (long long) units;
 }
 
-#ifndef SUBFIND   /* see the top-leaf branch in let_pack_for_rank */
+#ifndef SUBFIND   /* see the top-leaf branch in let_pack_topleaves */
 /* The essentiality pack_recurse decides for a node, decided for a top leaf before any of it ships. */
 static int let_topleaf_essential(struct LETPackContext *pk, int no)
 {
@@ -2070,36 +2071,23 @@ static int let_topleaf_essential(struct LETPackContext *pk, int no)
 }
 #endif
 
-extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
-                                  const struct LETPerRankPayload *all_ranks,
-                                  const int *own_topleaves, int n_own_topleaves,
-                                  struct LETNodeWire **out_buf,
-                                  int *out_capacity,
-                                  struct LETSubtreeHeader **out_hdr_buf,
-                                  int *out_hdr_capacity,
-                                  int *out_hdr_count)
+/* Pack own top leaves own_topleaves[k0, k1) against the cover already in pk, into out_buf / out_hdr_buf from index 0:
+ * every link a record carries is a wire index in [0, count) or LET_WIRE_EXIT, and each subtree header gives the offset of its
+ * top leaf's records, so the packs of consecutive ranges concatenate into the pack of their union by adding each range's start
+ * to its links and offsets.  Returns the record count; 0 with *out_hdr_count = 0 when a buffer could not grow or the local
+ * tree is malformed (pk->pack_oom is raised either way). */
+static int let_pack_topleaves(struct LETPackContext *pk, const int *own_topleaves, int k0, int k1,
+                              struct LETNodeWire **out_buf, int *out_capacity,
+                              struct LETSubtreeHeader **out_hdr_buf, int *out_hdr_capacity, int *out_hdr_count)
 {
     int count = 0;
     int hdr_count = 0;
-    /* No-real-receiver guard: ship nothing to a receiver with no local cover at all (no owned
-     * topleaves -> degenerate origin bbox).  Inactive particles still count; only a rank with
-     * zero local cover is skipped.  Without this the all-local cover would over-open the whole
-     * tree for an empty rank (its min_OldAcc==0 makes the relative criterion open everything). */
-    if(!all_ranks[R].has_cover)
-    {
-        *out_hdr_count = 0;
-        return 0;
-    }
-    /* Build R's cluster cover tree (file-scope pk->cover*, consumed by
-     * let_node_essential_for_rank during this receiver's pack). R's clusters span all of
-     * R's particles. */
-    let_build_cover_tree(pk, R);
     /* Pack each of OUR topleaves' subtrees independently, entering pack_recurse from the
      * topleaf with sib_terminator = topleaf.sibling (topleaves already in R's domain are R's
      * own data and are skipped -- shipping them would be a self-reference).  R sees each
      * shipped subtree as the foreign content for that topleaf: the unpack step rewrites
      * Nodes[topleaf_in_R].u.d.nextnode = subtree_root. */
-    for(int k = 0; k < n_own_topleaves; k++)
+    for(int k = k0; k < k1; k++)
     {
         const int i = own_topleaves[k];
         int topleaf_no = DomainNodeIndex[i];
@@ -2230,6 +2218,188 @@ pack_oom_bail:
      * pseudodata exchange completes. */
     *out_hdr_count = 0;
     return 0;
+}
+
+/* One destination's cover, built once and read by every worker that packs a run of top leaves for it. */
+static struct LETPackContext *g_pack_dest = NULL;
+static int g_pack_dest_n = 0;
+
+/* A run of own top leaves packed for one destination, kept until the destination's runs are joined. */
+struct LETPackRun {
+    int r, k0, k1, n, cap, hcnt, hcap, failed;
+    struct LETNodeWire *buf;
+    struct LETSubtreeHeader *hdr;
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
+    std::vector<std::pair<int,int>> light; /* stars inside this run's shipped aggregates: (key, wire index within the run) */
+#endif
+};
+
+/* Pack every destination as runs of own top leaves on all workers (the caller's alternative to one destination per worker).
+ * Covers are built per destination (in parallel), the runs packed in parallel against them, then each destination's runs are
+ * joined in top-leaf order -- each run's links and header offsets moved up by the records before it -- and encoded.  A run that
+ * could not grow its buffers makes its destination ship nothing, as a failed whole-destination pack does. */
+static void let_pack_destinations_in_runs(int n_workers, const struct LETPerRankPayload *all_payloads, const int *own_topleaves, int n_own,
+                                          unsigned char **send_per_rank, int *send_count, int *send_units,
+                                          struct LETSubtreeHeader **send_hdr_per_rank, int *send_hdr_count)
+{
+    const int n_dest = NTask - 1;
+    if(g_pack_dest_n < n_dest)
+    {
+        struct LETPackContext *nd = (struct LETPackContext *) realloc(g_pack_dest, (size_t) n_dest * sizeof(struct LETPackContext));
+        if(!nd) {printf("LET pack: destination cover table realloc failed (%d destinations)\n", n_dest); g_let_pack_oom = 1; return;}
+        memset(nd + g_pack_dest_n, 0, (size_t)(n_dest - g_pack_dest_n) * sizeof(struct LETPackContext));
+        g_pack_dest = nd; g_pack_dest_n = n_dest;
+    }
+    /* runs per destination: about four per worker over all destinations, never more than the top leaves; split by particle
+     * count so the runs carry similar work */
+    int per_dest = (4 * n_workers + n_dest - 1) / n_dest;
+    if(per_dest > n_own) {per_dest = n_own;}
+    if(per_dest < 1) {per_dest = 1;}
+    std::vector<long long> weight_prefix((size_t) n_own + 1, 0);
+    for(int k = 0; k < n_own; k++)
+    {
+        const long np = Nodes[DomainNodeIndex[own_topleaves[k]]].N_part;
+        weight_prefix[k + 1] = weight_prefix[k] + ((np > 0) ? np : 1);
+    }
+    std::vector<int> bounds((size_t) per_dest + 1, 0);
+    bounds[per_dest] = n_own;
+    for(int c = 1, k = 0; c < per_dest; c++)
+    {
+        const long long target = weight_prefix[n_own] * c / per_dest;
+        while(k < n_own && weight_prefix[k + 1] <= target) {k++;}
+        bounds[c] = (k > bounds[c - 1]) ? k : bounds[c - 1] + 1;
+        if(bounds[c] > n_own - (per_dest - c)) {bounds[c] = n_own - (per_dest - c);}
+    }
+    std::vector<int> dests;
+    for(int r = 0; r < NTask; r++) {if(r != ThisTask && all_payloads[r].has_cover) {dests.push_back(r);}}
+    std::vector<struct LETPackRun> runs;
+    for(size_t d = 0; d < dests.size(); d++)
+        for(int c = 0; c < per_dest; c++)
+            {if(bounds[c + 1] > bounds[c]) {struct LETPackRun x = {}; x.r = dests[d]; x.k0 = bounds[c]; x.k1 = bounds[c + 1]; runs.push_back(x);}}
+    /* destination r -> its cover context */
+    std::vector<int> dest_slot(NTask, -1);
+    for(size_t d = 0; d < dests.size(); d++) {dest_slot[dests[d]] = (int) d;}
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) num_threads(n_workers)
+#endif
+    for(int d = 0; d < (int) dests.size(); d++) {let_build_cover_tree(&g_pack_dest[d], dests[d]);}
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) num_threads(n_workers)
+#endif
+    for(int u = 0; u < (int) runs.size(); u++)
+    {
+#ifdef _OPENMP
+        struct LETPackContext *pk = &g_pack_ctx[omp_get_thread_num()];
+#else
+        struct LETPackContext *pk = &g_pack_ctx[0];
+#endif
+        struct LETPackRun &x = runs[u];
+        const struct LETPackContext *dc = &g_pack_dest[dest_slot[x.r]];
+        /* the worker reads the destination's cover for this run; its own cover buffers are put back afterwards */
+        struct LETCoverNode *own_cover = pk->cover; struct LETCoverLeaf *own_leaves = pk->cover_leaves;
+        const int own_cover_n = pk->cover_n, own_cover_cap = pk->cover_cap, own_leaf_cap = pk->cover_leaf_cap;
+        pk->cover = dc->cover; pk->cover_n = dc->cover_n; pk->cover_leaves = dc->cover_leaves;
+        pk->cover_cap = dc->cover_cap; pk->cover_leaf_cap = dc->cover_leaf_cap;
+#if defined(KETJU_REGULARIZATION)
+        pk->ketju_dest = x.r; /* the destination goes with its cover */
+#endif
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
+        pk->light_map = &x.light;
+#endif
+        x.n = let_pack_topleaves(pk, own_topleaves, x.k0, x.k1, &x.buf, &x.cap, &x.hdr, &x.hcap, &x.hcnt);
+        x.failed = pk->pack_oom ? 1 : 0;
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
+        pk->light_map = NULL;
+#endif
+        pk->cover = own_cover; pk->cover_n = own_cover_n; pk->cover_leaves = own_leaves;
+        pk->cover_cap = own_cover_cap; pk->cover_leaf_cap = own_leaf_cap;
+    }
+
+    /* join each destination's runs in top-leaf order (runs are listed destination by destination, in order), then encode */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic) num_threads(n_workers)
+#endif
+    for(int d = 0; d < (int) dests.size(); d++)
+    {
+#ifdef _OPENMP
+        struct LETPackContext *pk = &g_pack_ctx[omp_get_thread_num()];
+#else
+        struct LETPackContext *pk = &g_pack_ctx[0];
+#endif
+        const int r = dests[d];
+        int total = 0, htotal = 0, failed = 0;
+        for(const struct LETPackRun &x : runs) {if(x.r == r) {total += x.n; htotal += x.hcnt; failed |= x.failed;}}
+        int hcap = 0;
+        if(!failed && total > 0) {grow_wire_buf(pk, &pk->scratch, total, &pk->scratch_cap); grow_hdr_buf(pk, &send_hdr_per_rank[r], htotal, &hcap);}
+        failed |= pk->pack_oom;
+        int base = 0, hbase = 0;
+        for(const struct LETPackRun &x : runs)
+        {
+            if(x.r != r || failed) {continue;}
+            for(int w = 0; w < x.n; w++)
+            {
+                struct LETNodeWire rec = x.buf[w];
+                if(rec.node.u.d.nextnode >= 0) {rec.node.u.d.nextnode += base;}
+                if(rec.node.u.d.sibling  >= 0) {rec.node.u.d.sibling  += base;}
+                pk->scratch[base + w] = rec;
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
+                /* the destination's light wire map, as the pack of one destination per worker fills it: nodes and single star leaves */
+                if(rec.remote_id >= 0) {g_light_wire_map[r].push_back({rec.remote_id, base + w});}
+                else if(rec.leaf_tag != LET_LEAF_TAG_TRUNCATED_AGGREGATE && P[-1 - rec.remote_id].Type == 4) {g_light_wire_map[r].push_back({rec.remote_id, base + w});}
+#endif
+            }
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
+            for(const std::pair<int,int> &e : x.light) {g_light_wire_map[r].push_back({e.first, e.second + base});} /* stars inside aggregates */
+#endif
+            for(int h = 0; h < x.hcnt; h++) {struct LETSubtreeHeader hd = x.hdr[h]; hd.wire_offset += base; send_hdr_per_rank[r][hbase + h] = hd;}
+            base += x.n; hbase += x.hcnt;
+        }
+        const long long units = (failed || total == 0) ? (failed ? -1 : 0) : let_wire_encode_destination(pk, pk->scratch, total, &send_per_rank[r]);
+        if(units < 0) {if(send_per_rank[r]) {free(send_per_rank[r]); send_per_rank[r] = NULL;} total = 0; htotal = 0;}
+#ifdef GALSF_SINGLE_STARS_LIGHT_UPDATES_NODE_COPIES
+        if(units < 0) {g_light_wire_map[r].clear();} else {std::sort(g_light_wire_map[r].begin(), g_light_wire_map[r].end());}
+#endif
+        send_count[r] = total;
+        send_units[r] = (units > 0) ? (int) units : 0;
+        send_hdr_count[r] = htotal;
+        /* this destination's runs are no longer needed: free them now, so the joined copy and the runs of every destination
+         * are not all held at once.  Their growth went on the ledgers of the workers that packed them; the release goes on
+         * this worker's, and the ledgers are summed after the pack. */
+        for(struct LETPackRun &x : runs)
+        {
+            if(x.r != r) {continue;}
+            pk->wire_released_bytes += (long long) x.cap * (long long) sizeof(struct LETNodeWire)
+                                     + (long long) x.hcap * (long long) sizeof(struct LETSubtreeHeader);
+            free(x.buf); free(x.hdr); x.buf = NULL; x.hdr = NULL;
+        }
+    }
+}
+
+extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
+                                  const struct LETPerRankPayload *all_ranks,
+                                  const int *own_topleaves, int n_own_topleaves,
+                                  struct LETNodeWire **out_buf,
+                                  int *out_capacity,
+                                  struct LETSubtreeHeader **out_hdr_buf,
+                                  int *out_hdr_capacity,
+                                  int *out_hdr_count)
+{
+    /* No-real-receiver guard: ship nothing to a receiver with no local cover at all (no owned
+     * topleaves -> degenerate origin bbox).  Inactive particles still count; only a rank with
+     * zero local cover is skipped.  Without this the all-local cover would over-open the whole
+     * tree for an empty rank (its min_OldAcc==0 makes the relative criterion open everything). */
+    if(!all_ranks[R].has_cover)
+    {
+        *out_hdr_count = 0;
+        return 0;
+    }
+    /* Build R's cluster cover tree (file-scope pk->cover*, consumed by
+     * let_node_essential_for_rank during this receiver's pack). R's clusters span all of
+     * R's particles. */
+    let_build_cover_tree(pk, R);
+    return let_pack_topleaves(pk, own_topleaves, 0, n_own_topleaves, out_buf, out_capacity, out_hdr_buf, out_hdr_capacity, out_hdr_count);
 }
 
 /* ----------------------------------------------------------------------
@@ -3147,20 +3317,33 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
         if(subtree_root == Nodes[topleaf_no].u.d.sibling) continue;      /* topleaf has no descendants */
         own_topleaves.push_back(i);
     }
-    /* Two ranks means at most one destination to pack, so ask for a single worker rather than
-     * one per thread: a run that will never split the loop should not size a pool for it. */
-    const int n_workers = let_pack_contexts_prepare((NTask > 2) ? let_pack_workers() : 1);
+    /* Workers for the pack: one destination per worker, or with fewer destinations than workers (two ranks included) each
+     * destination split into runs over all of them. */
+    const int n_workers = let_pack_contexts_prepare(let_pack_workers());
     /* Destinations are packed independently: each builds its own cover, walks the local topleaves
      * against it, and fills the buffer belonging to that destination alone.  Nothing is shared but
      * the tree being read, so the only thing a worker needs of its own is the scratch it packs
      * into.  Dynamic, because how much a destination opens varies several-fold between the nearest
-     * and the farthest and a fixed split would leave workers idle.  The per-destination reports are
-     * combined after the loop, not from inside it. */
+     * and the farthest and a fixed split would leave workers idle.  With fewer destinations than workers
+     * each destination is split into runs of top leaves instead (let_pack_destinations_in_runs).  The
+     * per-destination reports are combined after the loop, not from inside it. */
     if(n_workers <= 0)
     {
         /* No scratch to pack into.  The send counts are already zero, so this rank ships nothing
          * and reports the failure the same way a refused wire buffer does. */
         g_let_pack_oom = 1;
+    }
+    else
+    {
+    /* Fewer destinations than workers (fat ranks: a few ranks per node, each with many threads): one destination per worker
+     * would leave most of them idle while the slowest destination is packed alone.  Each destination is then packed as runs of
+     * own top leaves on all workers, against that destination's cover built once, and the runs are joined in top-leaf order --
+     * the same records, links and headers as one pack of all the top leaves. */
+    const int n_dest = NTask - 1, n_own = (int) own_topleaves.size();
+    if(n_workers > 1 && n_dest >= 1 && n_dest < n_workers && n_own >= 2)
+    {
+        let_pack_destinations_in_runs(n_workers, all_payloads, own_topleaves.data(), n_own,
+                                      send_per_rank, send_count, send_units, send_hdr_per_rank, send_hdr_count);
     }
     else
     {
@@ -3206,6 +3389,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
         send_count[r] = n;
         send_units[r] = (units > 0) ? (int) units : 0;
         send_hdr_count[r] = hcnt;
+    }
     }
     }
     /* The full records and the encoder's buffers are needed only while packing. */

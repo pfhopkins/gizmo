@@ -60,6 +60,11 @@ namespace gw_detail {
  * arrives via ghost writeback, with zero cost / no instantiation for every other
  * MAX field (the `if constexpr` false branch is discarded). */
 constexpr bool gw_is_wakeup_member(decltype(particle_data::wakeup) particle_data::* m) { return m == &particle_data::wakeup; }
+#if defined(WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP) && defined(WAKEUP_TARGET_BIN_PARAMETER)
+/* set by the hydro force loop around its write-back: a hydro wake request that arrives for a cell holding a merge, split or
+   feedback request (-1, -2) is dropped when woken cells go to the highest active bin, as the pair body does for a local neighbour */
+inline int GhostWritebackHydroWakeKeepsPending = 0;
+#endif
 template <typename MP> constexpr bool gw_is_wakeup_member(MP) { return false; }
 
 /* ParticleMinOp<FieldT, MemPtr> — generic min-reduce reverse-comm for any
@@ -200,7 +205,13 @@ struct ParticleMaxOp {
     static void apply_fn(void *vctx, const void *in_delta) {
         (void)vctx;
         const Delta *d = static_cast<const Delta*>(in_delta);
-        if (d->value > P[d->home_index].*MemPtr) {
+        bool keep_home_value = false;
+#if defined(WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP) && defined(WAKEUP_TARGET_BIN_PARAMETER)
+        if constexpr (gw_is_wakeup_member(MemPtr)) {
+            keep_home_value = GhostWritebackHydroWakeKeepsPending && All.WakeupTargetBin == 2 && (P[d->home_index].wakeup == -1 || P[d->home_index].wakeup == -2);
+        }
+#endif
+        if (!keep_home_value && d->value > P[d->home_index].*MemPtr) {
             P[d->home_index].*MemPtr = d->value;
         }
         if constexpr (gw_is_wakeup_member(MemPtr)) {

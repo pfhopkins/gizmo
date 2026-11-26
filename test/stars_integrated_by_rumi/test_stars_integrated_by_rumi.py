@@ -12,7 +12,7 @@ import h5py
 import numpy as np
 import pytest
 
-from gizmo.test import build_and_run_test, build_gizmo_for_test, mpi_launch_command, variant_output_dir
+from gizmo.test import build_and_run_test, build_gizmo_for_test, mpi_launch_command, variant_output_dir, variant_suffix
 
 TEST_NAME = "stars_integrated_by_rumi"
 TEST_DIR = f"test/{TEST_NAME}"
@@ -34,7 +34,7 @@ def _run(ics, tmax, flags=(), params=None):
     snaps = sorted(glob.glob(variant_output_dir(TEST_NAME, flags) + "/snapshot_*.hdf5"))
     with h5py.File(f"{TEST_DIR}/{ics}.hdf5", "r") as f:  # the ICs: the first snapshot already carries the opening half kick
         g = f["PartType4"]; ic = (g["Coordinates"][:], g["Velocities"][:], g["Masses"][:])
-    return ic, ref.read(snaps[-1]), open(f"{TEST_DIR}/test_{TEST_NAME}.out").read()
+    return ic, ref.read(snaps[-1]), open(f"{TEST_DIR}/test_{TEST_NAME}{variant_suffix(flags)}.out").read()
 
 
 def _errors(ics, tmax, flags=(), params=None):

@@ -1,0 +1,84 @@
+"""Merge/split conservation and memory safety (mesh/merge_split.cc).
+
+Links merge_split_driver.cc against the build (in place of core/main.cc) and runs split_particle_i, merge_particles_ij and
+rearrange_particle_sequence on hand-built cells: every extensive quantity conserved to 1e-13 (mass, momentum, metals, B,
+dust, H2 and CO mass, sink energy, thermal plus kinetic energy of a merge), no CellP write past MaxPartGas; a merged cell
+keeps both parents' total momentum and energy rates, per unit mass. One task, no simulation; CPU builds.
+Known defect (STL-336): a merge keeps the survivor's four origin-tracer fractions (GALSF_SINGLE_STARS_METAL_ORIGIN_TRACERS)
+instead of their mass-weighted mean, so the merged-away cell's tracer mass is lost. The tests of the builds with the tracers
+name those four checks as expected failures, strictly: once the merge is fixed they pass and the test fails until the
+expectation is removed.
+merge_split_conservation_starforge, _nometals_sinkfb, _stella and _stella_default run the same checks under their configurations.
+"""
+
+import os
+import shlex
+import subprocess
+from os.path import abspath, dirname, join
+
+import pytest
+
+from gizmo.test import build_gizmo_for_test, get_cooling_tables
+
+DRIVER_SRC = join(dirname(abspath(__file__)), "merge_split_driver.cc")
+REPO = abspath(join(dirname(abspath(__file__)), "..", ".."))
+SRC = join(REPO, "src")
+
+
+def _link_driver(test_dir):
+    """Link the driver against the objects of the build that just finished."""
+    build_dir = join(test_dir, "output")
+    os.makedirs(build_dir, exist_ok=True)
+    dry = subprocess.run(["make", "-n", "-B", "GIZMO"], capture_output=True, text=True, cwd=SRC).stdout.splitlines()
+    compile_main = [l for l in dry if " -c core/main.cc" in l]
+    link = [l for l in dry if "-o GIZMO" in l]
+    assert compile_main and link, "could not read the compile/link commands from make -n"
+    obj, exe = join(build_dir, "merge_split_driver.o"), join(build_dir, "merge_split_driver")
+    cc = shlex.split(compile_main[-1])
+    cc[cc.index("core/main.cc")] = DRIVER_SRC
+    cc[cc.index("core/main.o")] = obj
+    cc.insert(1, "-I" + SRC)
+    ln = shlex.split(link[-1])
+    ln[ln.index("core/main.o")] = obj
+    ln[ln.index("GIZMO")] = exe
+    for cmd in (cc, ln):
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=SRC)
+        assert r.returncode == 0, "driver build failed:\n%s\n%s" % (" ".join(cmd), r.stderr[-4000:])
+
+
+def run_merge_split_checks(test_name, cooling_tables=False, expected_failures=()):
+    """Build test_name, run the driver, fail on any failed check. cooling_tables: non-SGCHEM cooling needs its tables.
+    expected_failures: names of checks that must fail (a known defect); one of them passing fails the test too."""
+    if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        pytest.skip("builds GIZMO; nothing to validate from external snapshots")
+    test_dir = join(REPO, "test", test_name)
+    cwd = os.getcwd()
+    os.chdir(REPO)
+    try:
+        build_gizmo_for_test(test_name)
+        _link_driver(test_dir)  # the objects of the build stay in src/
+    finally:
+        os.chdir(cwd)
+    if cooling_tables:
+        get_cooling_tables(test_dir)
+    r = subprocess.run([join(test_dir, "output", "merge_split_driver"), f"{test_name}.params"],
+                       capture_output=True, text=True, cwd=test_dir, env={**os.environ, "OMP_NUM_THREADS": "1", "OMP_PROC_BIND": "false"})
+    lines = r.stdout.splitlines()
+    with open(join(test_dir, "output", "checks.txt"), "w") as f:
+        f.write(r.stdout)
+    done = [l for l in lines if l.startswith("DONE")]
+    assert done, "driver did not finish (exit %d):\n%s\n%s" % (r.returncode, r.stdout[-3000:], r.stderr[-3000:])
+    results = [(l.split()[1], l) for l in lines if l[:4] in ("PASS", "FAIL")]  # (check name, line); names can repeat
+    names = [n for n, _ in results]
+    missing = [n for n in expected_failures if n not in names]
+    assert not missing, "expected-failure checks the driver did not run: %s" % missing
+    failed = [l for n, l in results if l.startswith("FAIL") and n not in expected_failures]
+    assert not failed, "%d of %d merge/split checks failed:\n%s" % (len(failed), len(results), "\n".join(failed))
+    fixed = [l for n, l in results if n in expected_failures and l.startswith("PASS")]
+    assert not fixed, "checks expected to fail now pass (defect fixed? remove the expectation):\n%s" % "\n".join(fixed)
+    n_fail = sum(l.startswith("FAIL") for _, l in results)
+    print("merge/split checks: %d passed, %d failed as expected, of %d" % (len(results) - n_fail, n_fail, len(results)))
+
+
+def test_merge_split_conservation():
+    run_merge_split_checks("merge_split_conservation")
