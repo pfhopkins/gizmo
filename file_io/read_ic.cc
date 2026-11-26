@@ -1466,6 +1466,17 @@ void read_file(char *fname, int readTask, int lastTask)
                                             else {IC_Metallicity_Columns[type] = (int) filedims[1];}
                                         }
 #endif
+#if defined(SGCHEM) && defined(SGCHEM_KEEP_IC_ABUNDANCES)
+                                        if(blocknr == IO_SGCHEM_TRACABUND && RestartFlag == 0) /* STL-417: the kept abundances must come from the IC, one column per tracked species */
+                                        {
+                                            if(hdf5_dataset < 0) {printf("SGCHEM_KEEP_IC_ABUNDANCES: the IC has no %s dataset for type %d: the chemistry would start from zero abundances\n", buf, type); endrun(8472);}
+                                            hsize_t fdims[2] = {0, 0}; hid_t fspace = H5Dget_space(hdf5_dataset); int frank = H5Sget_simple_extent_ndims(fspace);
+                                            if(frank >= 1 && frank <= 2) {H5Sget_simple_extent_dims(fspace, fdims, NULL);}
+                                            H5Sclose(fspace);
+                                            if(frank != ((TRAC_NUM == 1) ? 1 : 2) || (frank == 2 && fdims[1] != (hsize_t) TRAC_NUM) || fdims[0] != (hsize_t) npart_in_file[type])
+                                                {printf("SGCHEM_KEEP_IC_ABUNDANCES: IC dataset %s has rank %d, shape (%llu,%llu); expected (%lld,%d)\n", buf, frank, (unsigned long long) fdims[0], (unsigned long long) fdims[1], (long long) npart_in_file[type], TRAC_NUM); endrun(8473);}
+                                        }
+#endif
 
                                       if(hdf5_dataset >= 0)
                                       {

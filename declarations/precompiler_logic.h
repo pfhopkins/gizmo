@@ -290,6 +290,16 @@
 #endif // COSMIC_RAY_FLUID
 #endif // FIRE_CRS
 
+/* ---- Stellar-mass BH promotion: auto-enable sink framework before any check reads SINK_PARTICLES (STL-423) ---- */
+#if defined(GALSF_RESOLVEDISM_BH_PROMOTION)
+#ifndef SINK_PARTICLES
+#define SINK_PARTICLES
+#endif
+#ifndef SINK_GRAVCAPTURE_GAS
+#define SINK_GRAVCAPTURE_GAS
+#endif
+#endif
+
 #if defined(FIRE_BHS)
 #define SINK_PARTICLES                 /* top-level flag */
 #define SINK_SEED_FROM_LOCALGAS       /* seed BHs locally in SF-ing gas */
@@ -1573,15 +1583,7 @@
 
 
 
-/* ---- Stellar-mass BH promotion: auto-enable sink framework ---- */
-#if defined(GALSF_RESOLVEDISM_BH_PROMOTION)
-#ifndef SINK_PARTICLES
-#define SINK_PARTICLES
-#endif
-#ifndef SINK_GRAVCAPTURE_GAS
-#define SINK_GRAVCAPTURE_GAS
-#endif
-#endif
+/* ---- Stellar-mass BH promotion: sink framework enabled near the top of this file, before the checks that read SINK_PARTICLES (STL-423) ---- */
 
 
 /* ??? this should be done with an inline function inside the particle data, not a compiler directive */
@@ -2053,6 +2055,12 @@
 #endif
 #if defined(KETJU_MERGE_BH) && !defined(KETJU_REGULARIZATION)
 #error "KETJU_MERGE_BH requires KETJU_REGULARIZATION"
+#endif
+#if defined(KETJU_REGULARIZATION) && (defined(KETJU_PN_REMNANT_TAG) || defined(GALSF_RESOLVEDISM_BH_PROMOTION)) && !defined(KETJU_MERGE_STARS) && !defined(KETJU_MERGE_BH)
+#error "KETJU_PN_REMNANT_TAG or GALSF_RESOLVEDISM_BH_PROMOTION with KETJU_REGULARIZATION: MSTAR mergers zero the merged body, which only handle_mergers (KETJU_MERGE_STARS or KETJU_MERGE_BH) passes on (STL-427)"
+#endif
+#if defined(KETJU_REGULARIZATION) && defined(GALSF_RESOLVEDISM_BH_PROMOTION) && !defined(KETJU_MERGE_BH)
+#error "GALSF_RESOLVEDISM_BH_PROMOTION with KETJU_REGULARIZATION needs KETJU_MERGE_BH: a merger with a Type 5 body is otherwise refused after its mass was zeroed (STL-427)"
 #endif
 #if defined(KETJU_MSTAR_SINGLE_TASK) && !defined(KETJU_REGULARIZATION)
 #error "KETJU_MSTAR_SINGLE_TASK requires KETJU_REGULARIZATION"

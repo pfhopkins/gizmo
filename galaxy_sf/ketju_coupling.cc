@@ -1826,7 +1826,11 @@ static void handle_mergers(KetjuRegion &reg,
 #ifdef KETJU_MERGE_STARS
             if(type_merged == 4 && type_survivor == 4) merge_allowed = 1;
 #endif
-            if(!merge_allowed) continue;
+            if(!merge_allowed) { /* STL-427: MSTAR has already zeroed this body; skipping it would lose its mass */
+                printf("KETJU handle_mergers: body ID=%llu (type %d) merged into ID=%llu (type %d), but this merger type is not enabled (KETJU_MERGE_STARS / KETJU_MERGE_BH)\n",
+                       (unsigned long long) reg.extra_data[i].ID, type_merged, (unsigned long long) reg.extra_data[survivor].ID, type_survivor);
+                endrun(8475);
+            }
 
             double M_merged = original_mass[i];
             double M_survivor_old = original_mass[survivor];

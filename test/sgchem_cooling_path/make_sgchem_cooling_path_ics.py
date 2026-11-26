@@ -25,6 +25,7 @@ def main(path):
         g["ParticleIDs"] = np.arange(1, n + 1, dtype=np.uint32)
         g["Masses"] = np.full(n, 9.376713e-11, dtype=np.float32)
         g["InternalEnergy"] = np.full(n, 0.20298721, dtype=np.float32)
+        g["SGChemTracAbund"] = np.zeros((n, 3), dtype=np.float32)  # explicit zeros: what SGCHEM_KEEP_IC_ABUNDANCES read when the block was absent (STL-417 guard)
         g["MagneticField"] = np.tile(np.array([1e-8, 0, 0], dtype=np.float32), (n, 1))
         g["ElementAbundance"] = np.tile(np.array(ABUNDANCE, dtype=np.float32), (n, 1))
 

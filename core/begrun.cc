@@ -3515,6 +3515,40 @@ void read_parameter_file(char *fname)
 #if defined(GHOSDT_G0_CR) && defined(SGCHEM)
     if(All.ComovingIntegrationOn) {if(ThisTask == 0) {printf("GHOSDT_G0_CR with SGCHEM (Hu+21 field per box area) is for non-comoving boxes only\n");} endrun(8861);}
 #endif
+#ifdef GALSF_RESOLVEDISM_TALLBOX
+    /* STL-432: the Hu+21 disk and NFW potential (analytic_gravity.h) is written with literal kpc, 1e10 Msun, km/s constants, non-comoving */
+    if(All.ComovingIntegrationOn || fabs(All.UnitLength_in_cm / 3.085678e21 - 1) > 1e-6 || fabs(All.UnitMass_in_g / 1.989e43 - 1) > 1e-6
+       || fabs(All.UnitVelocity_in_cm_per_s / 1.0e5 - 1) > 1e-6 || All.HubbleParam != 1)
+    {
+        if(ThisTask == 0) {printf("GALSF_RESOLVEDISM_TALLBOX: the analytic potential needs non-comoving units of kpc, 1e10 Msun, km/s and HubbleParam 1 (have ComovingIntegrationOn %d, %g cm, %g g, %g cm/s, h %g)\n",
+                                  All.ComovingIntegrationOn, All.UnitLength_in_cm, All.UnitMass_in_g, All.UnitVelocity_in_cm_per_s, All.HubbleParam);}
+        endrun(8862);
+    }
+#endif
+#if defined(RT_TREECOL_SHIELDINGLENGTH) && !defined(SELFGRAVITY_OFF) && ((defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)) || defined(TREE_RADIATION_WRAPS_WITHOUT_GRAVITY))
+    { /* STL-446: the column walk takes the nearest periodic image, so a shielding length past half the shortest periodic side folds the columns */
+        double L_x = All.BoxSize, L_y = All.BoxSize, L_z = All.BoxSize;
+#ifdef BOX_LONG_X
+        L_x *= BOX_LONG_X;
+#endif
+#ifdef BOX_LONG_Y
+        L_y *= BOX_LONG_Y;
+#endif
+#ifdef BOX_LONG_Z
+        L_z *= BOX_LONG_Z;
+#endif
+        double L_min = DMIN(L_x, L_y);
+#if !defined(GRAVITY_PERIODIC_XY) && !defined(BOX_OUTFLOW_Z) && !defined(BOX_REFLECT_Z)
+        L_min = DMIN(L_min, L_z);
+#endif
+        double a_begin = All.ComovingIntegrationOn ? All.TimeBegin : 1.0; /* ShieldingLength is physical, the walk compares it to comoving distances times a */
+        if(All.ShieldingLength / a_begin >= 0.5 * L_min)
+        {
+            if(ThisTask == 0) {printf("ShieldingLength %g (physical, %g comoving at the start) reaches half the shortest periodic box side %g: the column walk's nearest image would fold the columns\n", All.ShieldingLength, All.ShieldingLength / a_begin, L_min);}
+            endrun(8863);
+        }
+    }
+#endif
 
 
 #ifdef GR_TABULATED_COSMOLOGY_W

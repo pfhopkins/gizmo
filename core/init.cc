@@ -439,6 +439,10 @@ void init(void)
             for(int k = 0; k < 3; k++) {P[i].KetjuTargetPos[k] = P[i].Pos[k];}
 #endif
 #ifdef KETJU_PN_REMNANT_TAG
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            if(RestartFlag == 2 && P[i].Type == 4 && P[i].sampled == 1 && P[i].MstarSampleIMF[0] <= 0) /* STL-431b: a dead star's remnant tag is written to snapshots but not read back */
+                {printf("KETJU_PN_REMNANT_TAG: snapshot restart with the Stella remnant ID=%llu, whose remnant type a snapshot does not restore: restart from restart files\n", (unsigned long long) P[i].ID); endrun(8474);}
+#endif
             P[i].RemnantType = -1;  /* still alive; FB stamps the remnant type at SN time */
 #endif
 #endif
