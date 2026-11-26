@@ -1888,7 +1888,10 @@ static void run_mode_d(const neighbor_loop_args& args, const double *radii, Mode
      * less: the host walker takes the call.  Only the single-rank shape can get
      * here -- with peers the transport above has already been entered -- so
      * the change of backend is invisible to every other rank. */
-    if(!evaluated) {run_mode_b_local<Spec>(args, radii);}
+    if(!evaluated) {
+        loop_route_count(Spec::loop_name, LOOP_ROUTE_HOST_MODE_B, args.num_active); /* OUTPUT_LOOP_ROUTES: the host walker took it */
+        run_mode_b_local<Spec>(args, radii);
+    }
 }
 
 /* ============================================================================
@@ -6643,6 +6646,7 @@ static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
          * different answer.  If this branch is ever given a path that has peers,
          * the decision has to move to the collective site where readiness is
          * already decided. */
+        loop_route_count(Spec::loop_name, LOOP_ROUTE_HOST_MODE_B, n_compacted); /* OUTPUT_LOOP_ROUTES: the host walker took this batch */
         nlr_iter_dispatch_subgroup_mode_b_local<Spec>(drv, sg);
         return;
     }
