@@ -106,6 +106,24 @@ static inline double resolvedism_ejecta_birth_composition(int i, double logZ, do
 }
 #endif
 
+#ifdef COSMIC_RAY_FLUID
+#ifdef GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE
+#if (N_CR_PARTICLE_BINS > 1)
+#error "GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE divides out the injection's reduced-speed factor of a single CR bin"
+#endif
+#endif
+/* CR energy dEcr into cell j at a Stella deposit; with GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE the cell receives all of it (STL-356):
+ * inject_cosmic_rays scales an injection by the reduced-speed factor, which is divided out here (transport and losses keep it) */
+static inline void resolvedism_inject_cr(double dEcr, double v_inj, int j, double *dir)
+{
+#ifdef GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE
+    double r = evaluate_cr_transport_reductionfactor(j, 0, 0, CellP);
+    if(r > 0 && r < 1) {dEcr /= r;}
+#endif
+    inject_cosmic_rays(dEcr, v_inj, 0, j, dir, CellP, -1);
+}
+#endif
+
 /* =========================================================================== */
 /*  Coupled mode: Stella yields collapsed onto the FIRE metal slots            */
 /* =========================================================================== */

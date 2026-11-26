@@ -99,6 +99,9 @@ double CumulFeedbackEnergy = 0;  /* cumulative feedback energy injected, all cha
 double CumulFeedbackCoupled = 0; /* cumulative measured coupled energy, channels 0-5 [erg] */
 #ifdef COSMIC_RAY_FLUID
 double CumulCRInjectedErg = 0;   /* CR energy measured at the feedback deposit [erg] */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+static double FBTestCRAsked = 0; /* test: CR energy the events of this call ask for [erg] */
+#endif
 #endif
 double CumulSFEnergyRemoved = 0; /* gas thermal+kinetic energy removed by star formation [erg] */
 double CumulFeedbackMass = 0;    /* cumulative mass returned to gas by feedback [Msun] */
@@ -956,6 +959,9 @@ void resolvedism_inject_fb_energy(void)
     double E_mech0 = resolvedism_mech_energy_local(), E_mech1 = E_mech0, E_mech2, E_mech3;
 #ifdef COSMIC_RAY_FLUID
     double E_cr0 = resolvedism_cr_energy_local(), E_cr3 = E_cr0; /* CR injection by winds and SNe */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    FBTestCRAsked = 0;
+#endif
 #endif
 
     /* ---- Pass 0: wind + AGB (momentum + mass + metals).  Fires first so final
@@ -1175,6 +1181,9 @@ void resolvedism_inject_fb_energy(void)
             if(dM_wind > 0) {E_injected[2] += 0.5 * dp_wind * dp_wind / (dM_wind * SOLAR_MASS_CGS);}
 #ifdef COSMIC_RAY_FLUID
             if(dM_wind > 0 && P[i].WindMomentumAccum > 1000. * dM_wind) {dp_injected[2] -= dp_wind * (1. - sqrt(1. - All.CosmicRay_SNeFraction));} /* fast wind: f_CR of the KE went to CRs */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+            if(dM_wind > 0 && P[i].WindMomentumAccum > 1000. * dM_wind) {FBTestCRAsked += All.CosmicRay_SNeFraction * 0.5 * dp_wind * dp_wind / (dM_wind * SOLAR_MASS_CGS);}
+#endif
 #endif
             Z_injected[2] += P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR; /* wind metals the walk delivered */
 #ifdef GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION
@@ -1294,6 +1303,9 @@ void resolvedism_inject_fb_energy(void)
             Z_injected[channel] += P[i].FB_DepositedZ * UNIT_MASS_IN_SOLAR; /* metals the walk delivered */
             if(channel == 0) { /* SN: resolvedism_sn_energy_erg (1e51; PISN 1e52 and ECSN 5e50 with RESOLVED_ISM_VARIABLE_SN_ENERGY), 0 for FSN/DBH */
                 E_injected[channel] += Esne_erg;
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
+                FBTestCRAsked += All.CosmicRay_SNeFraction * Esne_erg;
+#endif
             }
             if(channel == 1 && Mej_solar > 0) { /* AGB: delivered momentum and its kinetic energy 1/2 p^2 / M_ej (kick + inelastic heat), as winds */
                 double p_agb = P[i].FB_DepositedP * UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s; /* g cm/s */
@@ -1560,7 +1572,12 @@ void resolvedism_inject_fb_energy(void)
     MPI_Reduce(Z_injected, glob_Z, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(E_coupled, glob_Ec, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 #ifdef COSMIC_RAY_FLUID
-    {double dcr = E_cr3 - E_cr0, dcr_glob = 0; MPI_Reduce(&dcr, &dcr_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); if(ThisTask == 0) {CumulCRInjectedErg += dcr_glob;}}
+    {double dcr = E_cr3 - E_cr0, dcr_glob = 0; MPI_Reduce(&dcr, &dcr_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); if(ThisTask == 0) {CumulCRInjectedErg += dcr_glob;}
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+     double ask_glob = 0; MPI_Reduce(&FBTestCRAsked, &ask_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+     if(ThisTask == 0 && (ask_glob > 0 || dcr_glob != 0)) {printf("CRSTEP t=%.17e asked=%.17e got=%.17e\n", All.Time, ask_glob, dcr_glob); fflush(stdout);} /* test: CR share asked by this call's events vs arrived */
+#endif
+    }
 #endif
 
     if(ThisTask == 0) {
