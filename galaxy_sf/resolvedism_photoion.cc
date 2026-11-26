@@ -150,6 +150,25 @@ static double pi_alpha_b_cell(double T)
 }
 #endif
 
+#ifdef GALSF_RESOLVEDISM_PHOTOION_BILL_HE_ELECTRONS
+#if !defined(SGCHEM) || (CHEMISTRYNETWORK != 17)
+#error "GALSF_RESOLVEDISM_PHOTOION_BILL_HE_ELECTRONS is for CHEMISTRYNETWORK=17, where a flagged cell's helium is made He+"
+#endif
+#ifndef GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE /* included above otherwise */
+#include "../cooling/sgchem/sgchem_consts.h"
+#endif
+#endif
+/* recombinations per second billed for an ionised cell of density rho and mass M [cgs]: alpha_B n_e n_H V, n_H = X rho / m_p,
+ * n_e = n_H (with ..._BILL_HE_ELECTRONS: + the He+ electrons network 17 sets, n_e = n_H (1 + ABHE), STL-409) */
+double resolvedism_photoion_recomb_bill(double alpha_B, double rho_cgs, double M_cgs)
+{
+    double bill = alpha_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
+#ifdef GALSF_RESOLVEDISM_PHOTOION_BILL_HE_ELECTRONS
+    bill *= 1.0 + ABHE;
+#endif
+    return bill;
+}
+
 /* Stromgren radius: Rs = (3 S_ly / (4 pi alpha_B n_H^2))^(1/3) */
 static double compute_stromgren_radius_cgs(double S_ly, double nH_cgs)
 {
@@ -422,11 +441,9 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
                     double rho_cgs = CellP[j].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
                     double M_cgs   = P[j].Mass * UNIT_MASS_IN_CGS;
 #ifdef GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE
-                    double recomb  = pi_alpha_b_cell(CellP[j].Temp) * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
-                                     * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
+                    double recomb  = resolvedism_photoion_recomb_bill(pi_alpha_b_cell(CellP[j].Temp), rho_cgs, M_cgs);
 #else
-                    double recomb  = PI_ALPHA_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
-                                     * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
+                    double recomb  = resolvedism_photoion_recomb_bill(PI_ALPHA_B, rho_cgs, M_cgs);
 #endif
                     BinCost[ipix * PI_NBIN + b] += recomb;
                     if(BinRmin[ipix * PI_NBIN + b] <= 0 || r < BinRmin[ipix * PI_NBIN + b]) {BinRmin[ipix * PI_NBIN + b] = r;} /* v6: innermost cell of each bin */
@@ -857,7 +874,7 @@ void resolvedism_photoionize(void)
 #else
             double alpha = PI_ALPHA_B;
 #endif
-            led[1] += alpha * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
+            led[1] += resolvedism_photoion_recomb_bill(alpha, rho_cgs, M_cgs);
         }
         MPI_Allreduce(led, led_g, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         if(ThisTask == 0 && led_g[0] > 0) {printf("RESOLVEDISM PI LEDGER: t=%g Q=%g recomb=%g ratio=%.4f\n", All.Time, led_g[0], led_g[1], led_g[1] / led_g[0]);}

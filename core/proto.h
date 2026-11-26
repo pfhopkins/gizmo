@@ -1047,6 +1047,7 @@ void resolvedism_radpressure_treerad(void); /* LEBRON-style per-cell direct radp
 #endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION
 void resolvedism_photoionize(void);
+double resolvedism_photoion_recomb_bill(double alpha_B, double rho_cgs, double M_cgs); /* recombinations per second billed for a cell [cgs] */
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
 void assign_stellar_masses(void);
