@@ -106,6 +106,7 @@ void energy_ledger_report(void)
 #include "../cooling/disk_betacool.h"
 #include "../cooling/planet_heating.h"
 #include "../solids/grain_promotion.h"
+#include "../system/loop_routes.h"
 
 
 /*! \file run.c
@@ -1577,6 +1578,7 @@ void write_cpu_log(void)
 
   MPI_Reduce(CPU_Step, max_CPU_Step, CPU_PARTS, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
   MPI_Reduce(CPU_Step, avg_CPU_Step, CPU_PARTS, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  loop_routes_write(); /* OUTPUT_LOOP_ROUTES: loop_routes.txt; nothing without the flag */
 
   if(ThisTask == 0)
     {

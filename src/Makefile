@@ -1318,6 +1318,9 @@ endif
 ifneq (,$(filter OUTPUT_ENERGY_STEP_TRACE OUTPUT_ENERGY_STEP_TRACE=%,$(CONFIGVARS)))
 OBJS    += system/energy_step_trace.o
 endif
+ifneq (,$(filter OUTPUT_LOOP_ROUTES,$(CONFIGVARS)))
+OBJS    += system/loop_routes.o
+endif
 
 comma := ,
 # Grackle (>= 3), built with Grackle's CMake build, which installs a grackle.pc file: pkg-config then gives the compile and link

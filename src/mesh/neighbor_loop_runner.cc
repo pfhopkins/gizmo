@@ -48,6 +48,7 @@
 #include "kernel.h"  /* MUST precede sink_env1_loop.h (kernel_main, NEAREST_XYZ) */
 #include "ghost_writeback.h"             /* ghost_get_num_local */
 #include "ghost_symlist_lifecycle.h"     /* gizmo_request_filtered_ghost_import_fresh, ghost_exchange_cleanup */
+#include "../system/loop_routes.h"           /* OUTPUT_LOOP_ROUTES */
 #include "mode_b_local_walker.h"         /* mode_b_local_neighbor_walk, brute */
 #ifdef _OPENMP
 #include <omp.h>
@@ -3596,6 +3597,9 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
                 plan.path = (NTask > 1) ? NeighborLoopPlan::Path::ModeB_Remote : NeighborLoopPlan::Path::ModeB_Local;}
         }
     }
+    loop_route_count(Spec::loop_name, (plan.path == NeighborLoopPlan::Path::ModeA_GpuNgl) ? LOOP_ROUTE_DEVICE_MODE_A :
+                     (plan.path == NeighborLoopPlan::Path::ModeD_DeviceFused) ? LOOP_ROUTE_DEVICE_MODE_D : LOOP_ROUTE_HOST_MODE_B,
+                     args.num_active); /* OUTPUT_LOOP_ROUTES */
 
 
     /* ---- Stage radii once ---- */
@@ -7129,6 +7133,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     if (global_active_sum == 0) {
         return;
     }
+    loop_route_count(Spec::loop_name, (path == DispatchPath::ModeA_GPU_NGL) ? LOOP_ROUTE_DEVICE_MODE_A :
+                     (path == DispatchPath::ModeD_DeviceFused) ? LOOP_ROUTE_DEVICE_MODE_D : LOOP_ROUTE_HOST_MODE_B,
+                     args.num_active); /* OUTPUT_LOOP_ROUTES: the route the call starts on */
 
 
     /* ===== CallScalars captured ONCE for whole call ===== */
@@ -7570,6 +7577,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             mode_d_lease.release();
             drv.mode_d_lease = nullptr;
             path = DispatchPath::ModeB_HostWalker;
+            loop_route_count(Spec::loop_name, LOOP_ROUTE_HOST_MODE_B, 0); /* OUTPUT_LOOP_ROUTES: finished on the host walker */
             s_drift0 = g_global_drift_counter;
             s_ghost0 = g_ghost_import_counter;
             s_arena0 = g_gpu_arena_acquire_counter;
