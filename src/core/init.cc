@@ -1034,7 +1034,7 @@ void init(void)
 
 #ifdef SHIFT_BY_HALF_BOX
     for(i = 0; i < NumPart; i++)
-        for(j = 0; j < 3; j++)
+        for(j = 0; j < NUMDIMS; j++) /* the unused dimensions stay zero, as every drift sets them */
         {
             double boxtmp = 0;
             if(j==0) {boxtmp = boxSize_X;}

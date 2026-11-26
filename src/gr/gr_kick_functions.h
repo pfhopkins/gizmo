@@ -122,7 +122,8 @@ KOKKOS_INLINE_FUNCTION void gr_drift_impl(int i, double dt_drift, struct particl
         break; /* MFV: the cell is a mesh point moving with ParticleVel (any mesh motion), decoupled from the fluid velocity: a single
                   re-inversion at the position it reached, no implicit position correction */
 #endif
-        pp[i].Pos += (0.5*dt_drift)*(v_new - v_old); v_old = v_new; /* position with the corrected velocity */
+        for(int k = 0; k < NUMDIMS; k++) {pp[i].Pos[k] += (0.5*dt_drift)*(v_new[k] - v_old[k]);} /* position with the corrected velocity (the unused dimensions stay zero) */
+        v_old = v_new;
         x_err = pp[i].Pos - x_err;
         error = fmax(fmax(fabs(x_err[0]), fabs(x_err[1])), fabs(x_err[2]));
         iter++;
