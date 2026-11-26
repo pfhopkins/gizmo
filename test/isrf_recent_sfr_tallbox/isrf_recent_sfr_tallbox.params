@@ -35,4 +35,3 @@ TimeBetStatistics                  0.01
 MaxMemSize                         3000
 ResubmitOn                         0
 ResubmitCommand                    none
-GravityPeriodicXYImages               2

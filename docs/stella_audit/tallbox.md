@@ -15,6 +15,8 @@ All PRs are under 300 source lines. All numbers below were measured on older bas
 ---
 ## tb/01: Periodic x/y images, long box
 
+**Removed.** `GRAVITY_PERIODIC_XY_IMAGES` and `GravityPeriodicXYImages` are gone; tall boxes use the 2D Ewald table `GRAVITY_PERIODIC_XY`. The sum over 8 rings was off the periodic field by 1.7e-2 (median) and up to 0.87 of the median force on the test slab, and its production walk did not converge with the opening tolerance. What follows is the record of the removed change.
+
 **What and why.** Self-gravity that is periodic in x and y and open in z, for tall boxes such as a kpc-wide patch of a disc with 20 kpc of height. Today a long periodic box aborts at start-up (`BOX_LONG_*` with periodic gravity), and `GRAVITY_NOT_PERIODIC` drops the periodicity altogether, so a patch of a disc feels no pull from its own copies. The new flag `GRAVITY_PERIODIC_XY_IMAGES` makes the tree wrap separations in x and y only and add the (2N+1)^2-1 images of every accepted source around its nearest image. It sits in the shared pair evaluation, so the host and device walks both get it, and the radiation walks that already use the gravity box-wrap (columns, fluxes) follow it.
 
 **Evidence before.** `test/tallbox_gravity` on the base: the run stops in `read_parameter_file()` (begrun.cc:3631, "The gravitational solver does not allow stretched-periodic boxes"). With `GRAVITY_NOT_PERIODIC`, the best the base can do, the slab acceleration differs from the direct sum over images by a median of 105 % and the probes 0.2/0.5/1.0 above the sheet feel a_z = 4.16/2.10/0.81 instead of 6.15/5.95/5.62.

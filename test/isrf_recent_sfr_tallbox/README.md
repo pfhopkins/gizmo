@@ -1,7 +1,7 @@
 # isrf_recent_sfr_tallbox
 
 `ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR` for the `RT_ISRF_BACKGROUND` field without SGChem, in the tall-box configuration (`BOX_PERIODIC`, `BOX_LONG_Z=4`, `BOX_OUTFLOW_Z`,
-`GRAVITY_PERIODIC_XY_IMAGES`; self-gravity off to keep the run short). The IC is lifted into the middle of the box.
+`GRAVITY_PERIODIC_XY`; self-gravity off to keep the run short). The IC is lifted into the middle of the box.
 
 | test | checks |
 |---|---|
