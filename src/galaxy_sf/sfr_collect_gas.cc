@@ -36,6 +36,8 @@
 #include "single_star_checks.h"
 #include "single_star_birth_offsets.h"
 #include "../declarations/gpu_rng.h"
+#include "../declarations/gpu_stage_launch.h"
+#include "../system/loop_routes.h"
 
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 
@@ -98,9 +100,6 @@ static std::vector<int> ssc_record_donors(const std::vector<SscGrantRecord> &rec
 /* ---- Spec hooks ---- */
 
 static int ssc_is_pending_star(int i) {return (P[i].Type == 4 && P[i].Mass == 0);}
-#if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(COSMIC_RAY_FLUID)
-static double ssc_local_cr_energy(void) {double e = 0; for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0) {for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {e += CellP[i].CosmicRayEnergy[k];}}} return e;}
-#endif
 bool SscSpecBase::is_active(int i) {return ssc_is_pending_star(i);}
 
 double SscSpecBase::search_radius(const neighbor_loop_args& args, int active_slot, int)
@@ -314,7 +313,7 @@ double single_stars_collect_gas(long long tot_spawned, long long tot_awaiting_ga
         }
         SscSpecBase::Aux aux = {nullptr, nullptr, counters, nullptr, counters + 1, 0};
 #if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(COSMIC_RAY_FLUID)
-        double e_cr_0 = ssc_local_cr_energy();
+        double e_cr_0 = ledger_local_cr_energy();
 #endif
 #ifdef OUTPUT_ENERGY_STEP_TRACE
         for(int j : ssc_record_donors(records)) { /* each donor loses grant x mu with its own u and v (the apply below keeps them) */
@@ -328,7 +327,7 @@ double single_stars_collect_gas(long long tot_spawned, long long tot_awaiting_ga
         SINGLE_STAR_CHECK_RAN("donor_mass_floor", (long)records.size());
 #endif
 #if defined(OUTPUT_MASS_METAL_ENERGY_LEDGER) && defined(COSMIC_RAY_FLUID)
-        ledger_add(LEDGER_E_CR_COLLECTED, e_cr_0 - ssc_local_cr_energy());
+        ledger_add(LEDGER_E_CR_COLLECTED, e_cr_0 - ledger_local_cr_energy());
 #endif
     }
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(counters);
@@ -491,14 +490,22 @@ int single_star_test_births(int stars_spawned)
         s += used;
         int count = 1, used_c = 0; /* "ID:M*count": count stars of drawn mass M at that cell (the parameter holds 255 characters) */
         if(*s == '*' && sscanf(s + 1, "%d%n", &count, &used_c) == 1) {s += 1 + used_c;}
+        /* the cell with that ID, found by a Kokkos scan on the device or on the host execution space (index order, as a plain loop) */
+        const int n_gas = N_gas; int on_device = gizmo_stage_on_device(n_gas);
+        int *cells = gizmo_stage_index_alloc(&on_device, n_gas, "test_births_cells");
+        const struct particle_data *kp = P; const MyIDType want = (MyIDType) id;
+        const int n_cells = gizmo_stage_select("test_births_cells", on_device, n_gas, KOKKOS_LAMBDA(int i) {return kp[i].Type == 0 && kp[i].ID == want && kp[i].ID_child_number == 0;}, cells);
+        loop_route_count("test_births_cells", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n_gas);
         for(int c = 0; c < count; c++) {
-            for(int i = 0; i < N_gas; i++) {
+            for(int a = 0; a < n_cells; a++) {
+                const int i = cells[a];
                 if(P[i].Type == 0 && P[i].ID == (MyIDType)id && P[i].ID_child_number == 0) {
                     int i_star = spawn_star_from_gas(i, 0, stars_spawned + n);
                     if(i_star >= 0) {single_star_attach_to_new_star(i_star, i, m); n++;}
                 }
             }
         }
+        gizmo_stage_index_free(on_device, cells);
         if(*s == ',') {s++;}
     }
     return n;

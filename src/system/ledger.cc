@@ -11,8 +11,11 @@
 #ifdef _OPENMP
 #include <omp.h>
 #endif
+#include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_stage_launch.h"
+#include "loop_routes.h"
 #include "../mesh/ghost_writeback.h"
 
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
@@ -39,15 +42,32 @@ static void ledger_normalize(struct ledger_sum *s)  /* carries: limbs 0..N-2 in 
     s->n_add = 0;
 }
 
+/* x as three signed 32-bit pieces d[0..2] added to limbs k, k+1, k+2 (pieces past the top limb dropped by the callers); 0 when
+   nothing is added. |x| = M 2^(e-53) exactly, shifted by sh < 32 into a value below 2^85: its low 64 bits and the bits above */
+KOKKOS_INLINE_FUNCTION int ledger_exact_pieces(double x, int *k, int64_t d[3])
+{
+    if(x == 0 || !isfinite(x)) {return 0;}
+    int e; double m = frexp(fabs(x), &e);
+    uint64_t M = (uint64_t) ldexp(m, 53);
+    int pos = e - 53 - LEDGER_EXP0, sh = pos % 32; int64_t sg = (x < 0) ? -1 : 1;
+    uint64_t lo = M << sh, hi = sh ? (M >> (64 - sh)) : 0;
+    d[0] = sg * (int64_t) (lo & 0xffffffffu); d[1] = sg * (int64_t) (lo >> 32); d[2] = sg * (int64_t) hi;
+    *k = pos / 32; return 1;
+}
 static void ledger_add_exact(struct ledger_sum *s, double x)
 {
-    if(x == 0 || !isfinite(x)) {return;}
-    int e; double m = frexp(fabs(x), &e);
-    int64_t M = (int64_t) ldexp(m, 53); /* |x| = M 2^(e-53), exactly */
-    int pos = e - 53 - LEDGER_EXP0, k = pos / 32, sh = pos % 32, sg = (x < 0) ? -1 : 1;
-    unsigned __int128 v = (unsigned __int128) M << sh;
-    for(int j = 0; j < 3 && k + j < LEDGER_NLIMB; j++) {s->limb[k+j] += sg * (int64_t) ((v >> (32*j)) & 0xffffffffu);}
+    int k; int64_t d[3];
+    if(!ledger_exact_pieces(x, &k, d)) {return;}
+    for(int j = 0; j < 3 && k + j < LEDGER_NLIMB; j++) {s->limb[k+j] += d[j];}
     if(++s->n_add >= ((int64_t) 1 << 30)) {ledger_normalize(s);} /* each limb gains < 2^32 per addition */
+}
+/* the same from a Kokkos kernel: atomic integer additions, so the sum does not depend on their order; no addition count, the
+   caller bounds the additions per pass (ledger_exact_sums_kernel) and normalizes after it */
+KOKKOS_INLINE_FUNCTION void ledger_add_exact_atomic(struct ledger_sum *s, double x)
+{
+    int k; int64_t d[3];
+    if(!ledger_exact_pieces(x, &k, d)) {return;}
+    for(int j = 0; j < 3 && k + j < LEDGER_NLIMB; j++) {if(d[j]) {Kokkos::atomic_add(&s->limb[k+j], d[j]);}}
 }
 
 static void ledger_merge(struct ledger_sum *into, struct ledger_sum *from)
@@ -147,39 +167,84 @@ static void ledger_book_outflow_pending(void) /* particles not yet removed; impo
 }
 #endif
 
+/* the state rows of this rank's particles i, summed exactly (ledger_add_exact_atomic) into rows[] -- one Kokkos kernel per pass, on
+   the device or on the host execution space (gizmo_stage_on_device); integer sums, so both give the bits of the former plain loops.
+   A pass adds at most LEDGER_STATE_ADDS terms to a row per particle, each below 2^32 in every limb: passes of 2^30 / LEDGER_STATE_ADDS
+   particles keep every limb below 2^63 until the normalization that follows each pass. only_cr: the CR row alone (ledger_local_cr_energy) */
+#ifdef COSMIC_RAY_FLUID
+#define LEDGER_STATE_ADDS (N_CR_PARTICLE_BINS > 1 ? N_CR_PARTICLE_BINS : 1)
+#else
+#define LEDGER_STATE_ADDS 1
+#endif
+static void ledger_state_sums(struct ledger_sum *rows, int only_cr)
+{
+    const int n = NumPart, ng = N_gas, on_device = gizmo_stage_on_device(n);
+    struct ledger_sum *acc = on_device ? (struct ledger_sum *) gizmo_gpu_alloc_shared((size_t) LEDGER_NROWS * sizeof(struct ledger_sum), "ledger_state_rows") : NULL;
+    const int dev = on_device && acc;  /* no shared memory: the host space takes it */
+    if(!dev) {acc = (struct ledger_sum *) calloc(LEDGER_NROWS, sizeof(struct ledger_sum));}
+    else {memset(acc, 0, (size_t) LEDGER_NROWS * sizeof(struct ledger_sum));}
+    const struct particle_data *kp = P; const struct gas_cell_data *kc = CellP;
+    const double a2inv = All.cf_a2inv, atime = All.cf_atime; (void) a2inv; (void) atime; (void) kc; (void) ng;
+    const int pass = (1 << 30) / LEDGER_STATE_ADDS;
+    for(int first = 0; first < n; first += pass)
+    {
+        const int m = (n - first < pass) ? n - first : pass;
+        gizmo_stage_for("ledger_state_rows", dev, m, KOKKOS_LAMBDA(int a) {
+            const int i = first + a;
+#ifdef COSMIC_RAY_FLUID
+            if(i < ng && kp[i].Type == 0) {for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {ledger_add_exact_atomic(&acc[LEDGER_E_CR], kc[i].CosmicRayEnergy[k]);}}
+#endif
+            if(only_cr) {return;}
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            if(i < ng && kp[i].Type == 0 && kp[i].Mass > 0 && kc[i].Density > 0) {
+                ledger_add_exact_atomic(&acc[LEDGER_E_TH], kp[i].Mass * kc[i].InternalEnergy);
+                ledger_add_exact_atomic(&acc[LEDGER_E_KIN], 0.5 * kp[i].Mass * kp[i].Vel.norm_sq() * a2inv);
+                double eb = 0.5 * kc[i].B.norm_sq() * kc[i].Density / (kp[i].Mass * atime); /* kicked B, as u and v */
+                ledger_add_exact_atomic(&acc[LEDGER_E_B], eb);
+                if(kc[i].LedgerEB >= 0) {ledger_add_exact_atomic(&acc[LEDGER_E_B_VOLUME_CHANGE_PENDING], eb - kc[i].LedgerEB);} /* drifted volume since the last B kick */
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+                ledger_add_exact_atomic(&acc[LEDGER_E_PSI], 0.5 * kc[i].PsiZ * kc[i].PsiZ / atime);
+#endif
+            }
+#endif
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL /* carbonaceous dust: element 2; silicate: all other dust (O, Mg, Si, Fe) */
+            if(i < ng && kp[i].Type == 0 && kp[i].Mass > 0) {
+                ledger_add_exact_atomic(&acc[LEDGER_M_DUST_C], kp[i].Mass * kc[i].ISMDustChem_Dust_Metal[2]);
+                ledger_add_exact_atomic(&acc[LEDGER_M_DUST_SIL], kp[i].Mass * (kc[i].ISMDustChem_Dust_Metal[0] - kc[i].ISMDustChem_Dust_Metal[2]));
+            }
+#endif
+#ifdef GALSF
+            if(kp[i].Type == 0) {ledger_add_exact_atomic(&acc[LEDGER_M_GAS], kp[i].Mass); ledger_add_exact_atomic(&acc[LEDGER_MZ_GAS], kp[i].Mass * kp[i].Metallicity[0]);}
+            if(kp[i].Type == 4) {ledger_add_exact_atomic(&acc[LEDGER_M_STARS], kp[i].Mass); ledger_add_exact_atomic(&acc[LEDGER_MZ_STARS], kp[i].Mass * kp[i].Metallicity[0]);}
+#endif
+        });
+        for(int r = 0; r < LEDGER_NROWS; r++) {ledger_normalize(&acc[r]);}
+    }
+    loop_route_count("ledger_state_rows", dev ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
+#ifdef COSMIC_RAY_FLUID
+    const int row_cr = LEDGER_E_CR;
+#else
+    const int row_cr = -1;
+#endif
+    for(int r = 0; r < LEDGER_NROWS; r++) {if(ledger_row_is_state[r] && (!only_cr || r == row_cr)) {ledger_merge(&rows[r], &acc[r]);}}
+    if(dev) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc);} else {free(acc);}
+}
+
 static void ledger_state_rows(void) /* the state rows: sums over this rank's particles now */
 {
     for(int r = 0; r < LEDGER_NROWS; r++) {if(ledger_row_is_state[r]) {memset(&ledger_total[r], 0, sizeof(ledger_total[r]));}}
-#ifdef COSMIC_RAY_FLUID
-    for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0) {for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {ledger_add_exact(&ledger_total[LEDGER_E_CR], CellP[i].CosmicRayEnergy[k]);}}}
-#endif
-#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
-    for(int i = 0; i < N_gas; i++) {
-        if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].Density <= 0) {continue;}
-        ledger_add_exact(&ledger_total[LEDGER_E_TH], P[i].Mass * CellP[i].InternalEnergy);
-        ledger_add_exact(&ledger_total[LEDGER_E_KIN], 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv);
-        double eb = 0.5 * CellP[i].B.norm_sq() * CellP[i].Density / (P[i].Mass * All.cf_atime); /* kicked B, as u and v */
-        ledger_add_exact(&ledger_total[LEDGER_E_B], eb);
-        if(CellP[i].LedgerEB >= 0) {ledger_add_exact(&ledger_total[LEDGER_E_B_VOLUME_CHANGE_PENDING], eb - CellP[i].LedgerEB);} /* drifted volume since the last B kick */
-#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
-        ledger_add_exact(&ledger_total[LEDGER_E_PSI], 0.5 * CellP[i].PsiZ * CellP[i].PsiZ / All.cf_atime);
-#endif
-    }
-#endif
-#ifdef GALSF_ISMDUSTCHEM_HU_MODEL /* carbonaceous dust: element 2; silicate: all other dust (O, Mg, Si, Fe) */
-    for(int i = 0; i < N_gas; i++) {
-        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
-        ledger_add_exact(&ledger_total[LEDGER_M_DUST_C], P[i].Mass * CellP[i].ISMDustChem_Dust_Metal[2]);
-        ledger_add_exact(&ledger_total[LEDGER_M_DUST_SIL], P[i].Mass * (CellP[i].ISMDustChem_Dust_Metal[0] - CellP[i].ISMDustChem_Dust_Metal[2]));
-    }
-#endif
-#ifdef GALSF
-    for(int i = 0; i < NumPart; i++) {
-        if(P[i].Type == 0) {ledger_add_exact(&ledger_total[LEDGER_M_GAS], P[i].Mass); ledger_add_exact(&ledger_total[LEDGER_MZ_GAS], P[i].Mass * P[i].Metallicity[0]);}
-        if(P[i].Type == 4) {ledger_add_exact(&ledger_total[LEDGER_M_STARS], P[i].Mass); ledger_add_exact(&ledger_total[LEDGER_MZ_STARS], P[i].Mass * P[i].Metallicity[0]);}
-    }
-#endif
+    ledger_state_sums(ledger_total, 0);
 }
+
+#ifdef COSMIC_RAY_FLUID
+/* this rank's CR energy in gas [code energy], the exact sum of the state row LEDGER_E_CR rounded once */
+double ledger_local_cr_energy(void)
+{
+    static struct ledger_sum rows[LEDGER_NROWS]; memset(rows, 0, sizeof(rows));
+    ledger_state_sums(rows, 1);
+    return ledger_value(&rows[LEDGER_E_CR]);
+}
+#endif
 
 void ledger_output(void) /* at every snapshot: fold the threads, one MPI_Reduce, rank 0 writes a row */
 {

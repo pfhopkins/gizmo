@@ -47,6 +47,8 @@
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../system/gpu_particles_arena.h"
 #include "drift_particle_functions.h"
+#include "../declarations/gpu_stage_launch.h"
+#include "../system/loop_routes.h"
 
 /* Device-visible copy of the drift and gravkick tables for this translation unit.
    Per-TU because a device symbol cannot be shared across TUs without relocatable
@@ -265,3 +267,21 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
     particle_staging_release(&batch);
     return drift_batch_status_();
 }
+
+
+#if defined(HOT_GAS_TIMESTEP_SYNC) || defined(RESOLVEDISM_HOTSYNC_CLAMP)
+/* this rank's live gas cells with InternalEnergyPred above u_hot, in index order: a Kokkos scan over all gas on the device or on the
+   host execution space (gizmo_stage_on_device), for the hot-gas step limits in core/timestep.cc, whose work then runs over this
+   list only, in the order of a plain loop */
+std::vector<int> hot_gas_cells(double u_hot)
+{
+    const int n = N_gas; int on_device = gizmo_stage_on_device(n);
+    int *sel = gizmo_stage_index_alloc(&on_device, n, "hot_gas_cells");
+    const struct particle_data *kp = P; const struct gas_cell_data *kc = CellP;
+    const int n_hot = gizmo_stage_select("hot_gas_cells", on_device, n, KOKKOS_LAMBDA(int i) {return kp[i].Type == 0 && kp[i].Mass > 0 && kc[i].InternalEnergyPred > u_hot;}, sel);
+    loop_route_count("hot_gas_cells", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
+    std::vector<int> hot(sel, sel + n_hot);
+    gizmo_stage_index_free(on_device, sel);
+    return hot;
+}
+#endif

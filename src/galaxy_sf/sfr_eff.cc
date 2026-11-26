@@ -3,11 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <Kokkos_Core.hpp>
 #include "../declarations/gpu_rng.h"
 #include "../system/eigen_symmetric.h"
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_stage_launch.h"
+#include "../system/loop_routes.h"
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
 #include <map>
 #endif
@@ -512,7 +515,15 @@ static void recent_sfr_expire(void) /* the oldest entries first; a scan of all p
     {
         double m_old = 0, m_new = 0; for(auto &e : recent_sfr_young_mass) {m_old += e.second;}
         recent_sfr_young_mass.clear(); recent_sfr_built = 1; const int changed = recent_sfr_changed;
-        for(int i = 0; i < NumPart; i++) {if(P[i].Type == 4 && P[i].StellarAge < (MyFloat) All.Time) {recent_sfr_young_mass_add(P[i].StellarAge, P[i].Mass);}} /* this call's births come after */
+        /* the stars born before now, found by a Kokkos scan on the device or the host execution space and added in index order
+           (as a plain loop: entries of equal birth time sum in the same order); this call's births come after */
+        const int n = NumPart; int on_device = gizmo_stage_on_device(n);
+        int *born = gizmo_stage_index_alloc(&on_device, n, "recent_sfr_scan");
+        const struct particle_data *kp = P; const MyFloat t_now = (MyFloat) All.Time;
+        const int n_born = gizmo_stage_select("recent_sfr_scan", on_device, n, KOKKOS_LAMBDA(int i) {return kp[i].Type == 4 && kp[i].StellarAge < t_now;}, born);
+        loop_route_count("recent_sfr_scan", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
+        for(int a = 0; a < n_born; a++) {recent_sfr_young_mass_add(P[born[a]].StellarAge, P[born[a]].Mass);}
+        gizmo_stage_index_free(on_device, born);
         for(auto &e : recent_sfr_young_mass) {m_new += e.second;}
         recent_sfr_changed = changed || (fabs(m_new - m_old) > 1.e-12 * DMAX(m_new, m_old));
     }

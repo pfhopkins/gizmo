@@ -4,8 +4,11 @@
 #include <stdio.h>
 #include <vector>
 #include <algorithm>
+#include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_stage_launch.h"
+#include "../system/loop_routes.h"
 #include "single_star_record.h"
 
 /* Per-event logs of single stars (GALSF_SINGLE_STARS_EVENT_LOGS): SNinfo.txt, AGBinfo.txt and
@@ -71,12 +74,19 @@ void single_star_sfr_windows_write(void)
 {
     static const double window_myr[6] = {50., 40., 30., 20., 5., 1.};
     double loc[7] = {0, 0, 0, 0, 0, 0, 0}, glob[7];
-    for(int i = 0; i < NumPart; i++) {
-        if(P[i].Type != 4 || P[i].StarIdx <= 0 || P[i].Mass <= 0) {continue;}
+    /* the stars, found by a Kokkos scan on the device or on the host execution space and summed in index order (as a plain loop) */
+    const int n = NumPart; int on_device = gizmo_stage_on_device(n);
+    int *stars = gizmo_stage_index_alloc(&on_device, n, "sfr_windows_stars");
+    const struct particle_data *kp = P;
+    const int n_stars = gizmo_stage_select("sfr_windows_stars", on_device, n, KOKKOS_LAMBDA(int i) {return kp[i].Type == 4 && kp[i].StarIdx > 0 && kp[i].Mass > 0;}, stars);
+    loop_route_count("sfr_windows_stars", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
+    for(int a = 0; a < n_stars; a++) {
+        const int i = stars[a];
         double M = SingleStars.M_drawn[single_star_slot(P[i].StarIdx)], age_myr = evaluate_stellar_age_Gyr(i) * 1.e3;
         loc[6] += 1;
         for(int w = 0; w < 6; w++) {if(age_myr <= window_myr[w]) {loc[w] += M;}}
     }
+    gizmo_stage_index_free(on_device, stars);
     MPI_Reduce(loc, glob, 7, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
     static FILE *fd = NULL;

@@ -14,10 +14,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <Kokkos_Core.hpp>
+#include "../declarations/gpu_all_mirror.h"  /* before allvars.h */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_stage_launch.h"
+#include "loop_routes.h"
 #if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
 #include "../gravity/pm_highres_region.h"
+#endif
+#ifdef COSMIC_RAY_FLUID
+#include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h" /* GAMMA_COSMICRAY with a CR spectrum */
 #endif
 
 #ifdef OUTPUT_ENERGY_STEP_TRACE
@@ -79,16 +86,17 @@ static int estep_open[ESTEP_NSTAGE];
 static double estep_wall; /* seconds this rank spent in the trace */
 
 /* magnetic energy of a gas cell from the conserved B*V: 1/2 |B|^2 V, V = m/rho (as energy_statistics) */
-double estep_cell_mag_energy(int i)
+KOKKOS_INLINE_FUNCTION double estep_cell_mag_energy_of(const struct particle_data *pp, const struct gas_cell_data *cell, int i, double a2inv, double a3inv)
 {
 #ifdef MAGNETIC
-    if(P[i].Type != 0 || P[i].Mass <= 0 || CellP[i].Density <= 0) {return 0;}
-    Vec3<double> b = CellP[i].B * (CellP[i].Density / P[i].Mass) * All.cf_a2inv;
-    return 0.5 * b.norm_sq() * P[i].Mass / (CellP[i].Density * All.cf_a3inv);
+    if(pp[i].Type != 0 || pp[i].Mass <= 0 || cell[i].Density <= 0) {return 0;}
+    Vec3<double> b = cell[i].B * (cell[i].Density / pp[i].Mass) * a2inv;
+    return 0.5 * b.norm_sq() * pp[i].Mass / (cell[i].Density * a3inv);
 #else
-    (void)i; return 0;
+    (void)pp; (void)cell; (void)i; (void)a2inv; (void)a3inv; return 0;
 #endif
 }
+double estep_cell_mag_energy(int i) {return estep_cell_mag_energy_of(P, CellP, i, All.cf_a2inv, All.cf_a3inv);}
 
 /* all energy of mass m of a particle, every component [code energy]; with m = P[i].Mass what it carries */
 double estep_particle_energy_for_mass(int i, double m)
@@ -141,47 +149,79 @@ void estep_ledger_hook(int row, double x)
 
 #ifdef PMGRID
 /* a particle's own long-range mesh potential in P.Potential (with G): -G m / (sqrt(pi) r_s), the r -> 0 limit of the Gaussian split's
-   -G m erf(r / 2 r_s) / r; energy sums remove it from 1/2 sum m Phi (stella_dev 5e3384335) */
-static double estep_pm_self_potential(int i)
+   -G m erf(r / 2 r_s) / r; energy sums remove it from 1/2 sum m Phi (stella_dev 5e3384335). rs0, rs1: All.Asmth[0], [1] */
+KOKKOS_INLINE_FUNCTION double estep_pm_self_potential(const struct particle_data *pp, int i, double G, double rs0, double rs1)
 {
-    double rs = All.Asmth[0];
+    double rs = rs0;
 #ifdef PM_PLACEHIGHRESREGION
-    Vec3<double> pos = P[i].Pos; if(pmforce_is_particle_high_res(P[i].Type, pos)) {rs = All.Asmth[1];}
+    Vec3<double> pos = pp[i].Pos; if(pmforce_is_particle_high_res(pp[i].Type, pos)) {rs = rs1;}
 #endif
-    return -All.G * P[i].Mass / (sqrt(M_PI) * rs);
+    (void) rs1; return -G * pp[i].Mass / (sqrt(M_PI) * rs);
 }
 #endif
 
-/* Neumaier-compensated local sums of the components (and of 1/2 m Phi when pot != NULL) */
+/* Neumaier-compensated sums of the components and of 1/2 m Phi (slot EC_N), and their join for a Kokkos reduction */
+struct EstepSums {double s[EC_N + 1], c[EC_N + 1];};
+KOKKOS_INLINE_FUNCTION void estep_neumaier_add(EstepSums &v, int k, double x) {double t = v.s[k] + x; v.c[k] += (fabs(v.s[k]) >= fabs(x)) ? (v.s[k] - t) + x : (x - t) + v.s[k]; v.s[k] = t;}
+struct EstepNeumaierJoin {
+    using reducer = EstepNeumaierJoin;
+    using value_type = EstepSums;
+    using result_view_type = Kokkos::View<value_type, Kokkos::AnonymousSpace, Kokkos::MemoryUnmanaged>;
+    static_assert(sizeof(value_type) % sizeof(int) == 0, "EstepSums must be a whole number of int-sized pieces");
+    value_type &value;
+    KOKKOS_INLINE_FUNCTION EstepNeumaierJoin(value_type &v) : value(v) {}
+    KOKKOS_INLINE_FUNCTION void join(value_type &dst, const value_type &src) const {for(int k = 0; k <= EC_N; k++) {estep_neumaier_add(dst, k, src.s[k]); dst.c[k] += src.c[k];}}
+    KOKKOS_INLINE_FUNCTION void init(value_type &v) const {for(int k = 0; k <= EC_N; k++) {v.s[k] = v.c[k] = 0;}}
+    KOKKOS_INLINE_FUNCTION value_type &reference() const {return value;}
+    KOKKOS_INLINE_FUNCTION result_view_type view() const {return result_view_type(&value);}
+    KOKKOS_INLINE_FUNCTION bool references_scalar() const {return true;}
+};
+
+/* local sums of the components (and of 1/2 m Phi when pot != NULL): one Kokkos kernel over the rank's particles, on the device
+   or on the host execution space (gizmo_stage_on_device); the host space runs the particles in order with one accumulator,
+   as a plain loop, and the device joins partial sums with the same compensation */
 static void estep_local_sums(double e[EC_N], double *pot)
 {
-    double s[EC_N + 1], c[EC_N + 1];
-    for(int k = 0; k <= EC_N; k++) {s[k] = c[k] = 0;}
-    auto add = [&](int k, double x) {double t = s[k] + x; c[k] += (fabs(s[k]) >= fabs(x)) ? (s[k] - t) + x : (x - t) + s[k]; s[k] = t;};
-    for(int i = 0; i < NumPart; i++) {
-        if(P[i].Mass <= 0) {continue;}
-        add(EC_KIN, 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv);
-#ifdef EVALPOTENTIAL
-        if(pot) {add(EC_N, 0.5 * P[i].Mass * P[i].Potential);}
+    const int n = NumPart, on_device = gizmo_stage_on_device(n), with_pot = (pot != NULL);
+    if(on_device) {GIZMO_GPU_ENSURE_ALL_FRESH();} /* the high-resolution region test can read All */
+    const struct particle_data *kp = P; const struct gas_cell_data *kc = CellP;
+    const double a2inv = All.cf_a2inv, a3inv = All.cf_a3inv;
 #ifdef PMGRID
-        if(pot) {add(EC_N, -0.5 * P[i].Mass * estep_pm_self_potential(i));} /* no self-energy */
+    const double G = All.G, rs0 = All.Asmth[0], rs1 = All.Asmth[1];
+#endif
+#ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
+    const struct hu_tallbox_units hu = hu_tallbox_units_now();
+    const double z_mid = boxHalf_Z;
+#endif
+    EstepSums v;
+    auto body = KOKKOS_LAMBDA(int i, EstepSums &acc) {
+        if(kp[i].Mass <= 0) {return;}
+        estep_neumaier_add(acc, EC_KIN, 0.5 * kp[i].Mass * kp[i].Vel.norm_sq() * a2inv);
+#ifdef EVALPOTENTIAL
+        if(with_pot) {estep_neumaier_add(acc, EC_N, 0.5 * kp[i].Mass * kp[i].Potential);}
+#ifdef PMGRID
+        if(with_pot) {estep_neumaier_add(acc, EC_N, -0.5 * kp[i].Mass * estep_pm_self_potential(kp, i, G, rs0, rs1));} /* no self-energy */
 #endif
 #endif
 #ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
-        if(pot) {add(EC_N, P[i].Mass * analytic_external_potential(i));} /* external field: full weight */
+        if(with_pot) {estep_neumaier_add(acc, EC_N, kp[i].Mass * hu_tallbox_potential(kp[i].Pos[2] - z_mid, hu));} /* external field: full weight */
 #endif
-        if(P[i].Type != 0) {continue;}
-        add(EC_TH, P[i].Mass * CellP[i].InternalEnergy);
-        add(EC_MAG, estep_cell_mag_energy(i));
+        if(kp[i].Type != 0) {return;}
+        estep_neumaier_add(acc, EC_TH, kp[i].Mass * kc[i].InternalEnergy);
+        estep_neumaier_add(acc, EC_MAG, estep_cell_mag_energy_of(kp, kc, i, a2inv, a3inv));
 #ifdef COSMIC_RAY_FLUID
-        for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {add(EC_CR, CellP[i].CosmicRayEnergy[k]);}
+        for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {estep_neumaier_add(acc, EC_CR, kc[i].CosmicRayEnergy[k]);}
 #endif
 #ifdef RADTRANSFER
-        for(int k = 0; k < N_RT_FREQ_BINS; k++) {add(EC_RAD, CellP[i].Rad_E_gamma[k]);}
+        for(int k = 0; k < N_RT_FREQ_BINS; k++) {estep_neumaier_add(acc, EC_RAD, kc[i].Rad_E_gamma[k]);}
 #endif
-    }
-    for(int k = 0; k < EC_N; k++) {e[k] = s[k] + c[k];}
-    if(pot) {*pot = s[EC_N] + c[EC_N];}
+        (void) with_pot;
+    };
+    EstepNeumaierJoin(v).init(v); /* nothing to sum on an empty rank */
+    gizmo_stage_reduce("estep_local_sums", on_device, n, body, EstepNeumaierJoin(v));
+    loop_route_count("estep_local_sums", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
+    for(int k = 0; k < EC_N; k++) {e[k] = v.s[k] + v.c[k];}
+    if(pot) {*pot = v.s[EC_N] + v.c[EC_N];}
 }
 
 void estep_begin(int stage)
@@ -222,13 +262,17 @@ void energy_step_trace_report(void)
     loc[NV - 2] = eabs; loc[NV - 1] = pot;
     loc[NV + 1] = 0; /* Layzer-Irvine weights: sum 3(gamma-1) m u + 3(gamma_CR-1) E_CR, the expansion loss rate over H */
     if(All.ComovingIntegrationOn && is_sync) {
-        for(int i = 0; i < NumPart; i++) {
-            if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
-            loc[NV + 1] += 3. * (CellP[i].gamma_eos_value() - 1.) * P[i].Mass * CellP[i].InternalEnergy;
+        const int n = NumPart, on_device = gizmo_stage_on_device(n);
+        if(on_device) {GIZMO_GPU_ENSURE_ALL_FRESH();} /* the CR adiabatic index of a spectrum can read All */
+        const struct particle_data *kp = P; const struct gas_cell_data *kc = CellP;
+        loc[NV + 1] = gizmo_stage_sum<double>("estep_layzer_irvine", on_device, n, KOKKOS_LAMBDA(int i, double &w) {
+            if(kp[i].Type != 0 || kp[i].Mass <= 0) {return;}
+            w += 3. * (kc[i].gamma_eos_value() - 1.) * kp[i].Mass * kc[i].InternalEnergy;
 #ifdef COSMIC_RAY_FLUID
-            for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {loc[NV + 1] += 3. * (GAMMA_COSMICRAY(k) - 1.) * CellP[i].CosmicRayEnergy[k];}
+            for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {w += 3. * (GAMMA_COSMICRAY(k) - 1.) * kc[i].CosmicRayEnergy[k];}
 #endif
-        }
+        });
+        loop_route_count("estep_layzer_irvine", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
     }
     loc[NV] = estep_wall + (MPI_Wtime() - t0); /* rank sum of trace time up to this reduce */
     MPI_Reduce(loc, glob, NV + 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
