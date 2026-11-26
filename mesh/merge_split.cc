@@ -841,6 +841,9 @@ int split_particle_i(int i, int n_particles_split, double r_near)
             CellP[j].BField_prerefinement = B_before_split; CellP[i].BField_prerefinement = B_before_split; /* record the real value of B pre-split */
             CellP[j].B = CellP[i].B * mass_of_new_particle; CellP[i].B -= CellP[j].B; /* take a reasonable -guess- for the new updated conserved B */
             CellP[j].BPred = CellP[i].BPred * mass_of_new_particle; CellP[i].BPred -= CellP[j].BPred; CellP[j].DtB = CellP[i].DtB * mass_of_new_particle; CellP[i].DtB -= CellP[j].DtB; /* partition these terms as well, doesn't have much effect if zero them, since before re-calc anyways */
+#if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
+            CellP[j].DtEnergyMHDNum = CellP[i].DtEnergyMHDNum * mass_of_new_particle; CellP[i].DtEnergyMHDNum -= CellP[j].DtEnergyMHDNum; /* ledger rate partitioned with the mass (STL-428) */
+#endif
             //CellP[j].BPred = CellP[j].B; CellP[i].BPred = CellP[i].B; CellP[j].DtB = CellP[i].DtB = {}; /* set BPred equal to the conserved B, and zero the time derivatives and cleaning terms */
         }
         CellP[j].divB = mass_of_new_particle * CellP[i].divB; CellP[i].divB -= CellP[j].divB; //CellP[i].divB = CellP[j].divB = 0; /* this will be self-consistently recomputed on the next timestep */
@@ -1172,6 +1175,9 @@ int merge_particles_ij(int i, int j)
                (mid_j > All.Ti_Current) ? 1 : 2, (double)(All.Ti_Current - mid_j) * unit_integertime_in_physical(j), P[j].Mass * (CellP[j].InternalEnergy + 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv) - e_before_kick);
 #endif
     }
+#endif
+#if defined(MAGNETIC) && defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
+    CellP[j].DtEnergyMHDNum += CellP[i].DtEnergyMHDNum; /* ledger (STL-428): the merged cell's kicks book both parents' hydro/MHD energy rates */
 #endif
 #ifdef TEST_PAIRFLUX_MERGE_DUMP
     const double tmd_a = All.cf_atime; const int tmd_bi = P[i].TimeBin, tmd_bj = P[j].TimeBin, tmd_ai = TimeBinActive[P[i].TimeBin], tmd_aj = TimeBinActive[P[j].TimeBin];

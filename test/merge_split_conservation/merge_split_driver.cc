@@ -285,6 +285,32 @@ static void test_merge_rates()
     check_rel("merge_rates:energy_rate_conserved_per_unit_mass", e_rate1, e_rate, fabs(e_rate));
 }
 
+#if defined(MAGNETIC) && defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
+static void test_merge_mhd_ledger_rate()
+{
+    /* STL-428: the energy-trace ledger rate d(E_th+E_kin+E_B)/dt is a total per cell; a merged cell carries both parents' (bar 1e-12,
+       equal rates: half missing without the merge line), a split partitions the parent's with the mass */
+    setup(64, 64);
+    make_gas(0, 0.5, 0.5, 0.5, 0.4, 0.72, 0.27, 0.01, 0.);
+    make_gas(1, 0.55, 0.5, 0.5, 1.0, 0.72, 0.27, 0.01, 0.3);
+    CellP[0].DtEnergyMHDNum = 7.5; CellP[1].DtEnergyMHDNum = 7.5;
+    NumPart = N_gas = 2;
+    int ok = merge_particles_ij(0, 1);
+    check("merge_mhd_ledger:succeeded", ok == 1, ok, 1);
+    check("merge_mhd_ledger:rate_is_the_sum", fabs(CellP[1].DtEnergyMHDNum - 15.0) <= 1e-12 * 15.0, CellP[1].DtEnergyMHDNum, 15.0);
+    setup(64, 64);
+    make_gas(0, 0.5, 0.5, 0.5, 2.0, 0.70, 0.28, 0.02, 0.0);
+    make_gas(1, 0.6, 0.5, 0.5, 1.0, 0.72, 0.27, 0.01, 0.3);
+    make_gas(2, 0.5, 0.7, 0.5, 1.0, 0.72, 0.27, 0.01, 0.6);
+    CellP[0].DtEnergyMHDNum = 4.0;
+    NumPart = N_gas = 3;
+    ok = split_particle_i(0, 0, 0.1);
+    check("split_mhd_ledger:succeeded", ok == 1, ok, 1);
+    check("split_mhd_ledger:rate_partitioned", fabs(CellP[0].DtEnergyMHDNum + CellP[3].DtEnergyMHDNum - 4.0) <= 1e-12 * 4.0, CellP[0].DtEnergyMHDNum + CellP[3].DtEnergyMHDNum, 4.0);
+    check("split_mhd_ledger:rate_follows_mass", fabs(CellP[3].DtEnergyMHDNum / P[3].Mass - 2.0) <= 1e-12 * 2.0, CellP[3].DtEnergyMHDNum / P[3].Mass, 2.0); /* parent 4.0 over mass 2.0 */
+}
+#endif
+
 static void test_hydrogen_massfrac()
 {
 #ifdef HAVE_PARTICLE_HYDROGEN_MASSFRAC
@@ -446,6 +472,9 @@ int main(int argc, char **argv)
     test_merge();
     test_merge_energy();
     test_merge_rates();
+#if defined(MAGNETIC) && defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
+    test_merge_mhd_ledger_rate();
+#endif
     test_hydrogen_massfrac();
     test_nongas_never_touches_CellP();
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
