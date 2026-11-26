@@ -351,6 +351,9 @@ void merge_and_split_particles(void)
             /* we have a gas [or eligible star] particle, ask if it needs to be merged */
             if(does_particle_need_to_be_merged(i))
             {
+#ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
+                continue; /* the partner is found over all ranks after this loop */
+#endif
                 /* if merging: do a neighbor loop ON THE SAME DOMAIN to determine the target */
                 startnode=All.MaxPart;
                 numngb_inbox = ngb_treefind_variable_targeted(P[i].Pos,P[i].KernelRadius,-1,&startnode,0,&dummy,&dummy,Pi_BITFLAG); // search for particles of matching type
@@ -532,6 +535,8 @@ void merge_and_split_particles(void)
     { /* on every rank, also with nothing to split: the search is collective */
         std::vector<double> r_all_ranks = msx::split_neighbour_distances(cells_to_split);
         for(size_t l = 0; l < cells_to_split.size(); l++) {if(r_all_ranks[l] > 0) {Ptmp[cells_to_split[l]].r_nearest = r_all_ranks[l];} else {Ptmp[cells_to_split[l]].flag = 0;}}
+        std::vector<char> no_target(NumPart, 0); for(i = 0; i < NumPart; i++) {if(Ptmp[i].flag == 2) {no_target[i] = 2;}} /* a cell that is split takes no merge */
+        n_particles_merged = msx::merge_across_ranks(no_target); /* partner over all ranks, order-free choice; done here, before the splits below */
     }
 #endif
 
