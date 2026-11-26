@@ -637,6 +637,7 @@
 # --------------------
 # ----- Particle Merging/Splitting/Deletion/Boundaries
 #MAINTAIN_TREE_IN_REARRANGE        # don't rebuild the domains/tree every time a particle is spawned - salvage the existing one by redirecting pointers as needed. cite Grudic+ arXiv:2010.11254
+#MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS # the nearest neighbour that sets how far apart a split's daughters are placed is found over the cells of all MPI ranks (one gather of the cells to split and one neighbour list with them as sources per rank, on steps with splits only; host loops, the list build is the existing one), and where the direction to split along is not unique (largest two eigenvalues of the neighbour-distribution matrix equal to 1e-6, as on a lattice) it is drawn from the cell's own random numbers instead of being left to round-off; so the daughters' positions do not depend on the number of ranks; without it only the calling rank's cells are seen. Off by default (test/merge_split_rank_independence)
 #PREVENT_PARTICLE_MERGE_SPLIT      # don't allow gas particle splitting/merging operations
 #PREVENT_PARTICLE_MERGE            # don't allow gas merging but still allow splitting: diffusion-free, finest-resolution reference for spawned outflows (cf. SINK_SPAWN_NO_MERGE, which protects only spawned cells)
 #SINK_SPAWN_NO_MERGE            # never merge spawned jet/wind cells, in either direction (compare merged vs unmerged outflows). Diagnostic: removes retirement, so cell counts grow without bound
