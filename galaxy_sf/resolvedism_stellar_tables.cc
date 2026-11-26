@@ -155,6 +155,44 @@ static inline double interp3d(const float *arr, double logM, double logZ, double
     return vsum / wsum;
 }
 
+#ifdef GALSF_RESOLVEDISM_TABLES_PHASE_MATCHED_LOOKUP
+/* STL-391/392/411: each grid star of the (M, Z) cell is read at the same fraction of its own lifetime as the star,
+ * age_c = age t_life,c / t_life(M, Z) with t_life the interpolated lifetime that sets the star's death */
+static inline double stbl_corner_log_age(double log_age, double log_lt_star, int iz, int im)
+{
+    double lt_c = StellarTbl.lifetime_yr[IDX2(iz, im)];
+    if(!(lt_c > 0) || !isfinite(log_lt_star)) return log_age;
+    return log_age + (log10(lt_c) - log_lt_star);
+}
+static inline double stbl_log_lifetime(double logM, double logZ)
+{
+    double lt = stellar_lifetime(logM, logZ);
+    return (lt > 0) ? log10(lt) : NAN;
+}
+/* trilinear as interp3d, each (Z, M) corner at its own phase-matched age; nodes with v <= dead_at are dead (log tables:
+ * -90, the -99 sentinel; v_wind: 0, the value after a track's death) and dropped with their weight; all dead: dead_value */
+static inline double interp3d_phase(const float *arr, double logM, double logZ, double log_age, double dead_at, double dead_value)
+{
+    int iz, im; double fz, fm;
+    stbl_idx_Z(logZ, &iz, &fz);
+    stbl_idx_M(logM, &im, &fm);
+    double log_lt = stbl_log_lifetime(logM, logZ), vsum = 0, wsum = 0;
+    for(int c = 0; c < 4; c++) {
+        int jz = iz + (c >> 1), jm = im + (c & 1), ia; double fa;
+        double wzm = ((c >> 1) ? fz : 1 - fz) * ((c & 1) ? fm : 1 - fm);
+        stbl_idx_age(stbl_corner_log_age(log_age, log_lt, jz, jm), &ia, &fa);
+        double v0 = arr[IDX3(jz, jm, ia)], v1 = arr[IDX3(jz, jm, ia+1)];
+        if(v0 > dead_at) {vsum += wzm * (1-fa) * v0; wsum += wzm * (1-fa);}
+        if(v1 > dead_at) {vsum += wzm * fa * v1; wsum += wzm * fa;}
+    }
+    if(wsum <= 0) return dead_value;
+    return vsum / wsum;
+}
+#define STBL_INTERP3D_LOG(arr, logM, logZ, log_age) interp3d_phase(arr, logM, logZ, log_age, -90.0, -99.0)
+#else
+#define STBL_INTERP3D_LOG(arr, logM, logZ, log_age) interp3d(arr, logM, logZ, log_age)
+#endif
+
 /* ========================================================================
  *  HDF5 helper: read a dataset into a pre-allocated buffer
  * ======================================================================== */
@@ -1057,12 +1095,20 @@ double stellar_M_current(double logM, double logZ, double log_age)
     double Mstar = pow(10.0, logM);
     int iz_c[4] = {iz, iz, iz+1, iz+1};
     int im_c[4] = {im, im+1, im, im+1};
+#ifdef GALSF_RESOLVEDISM_TABLES_PHASE_MATCHED_LOOKUP
+    const double log_lt_star = stbl_log_lifetime(logM, logZ);
+#endif
     double M_grid[4] = {StellarTbl.M[im], StellarTbl.M[im+1], StellarTbl.M[im], StellarTbl.M[im+1]};
     double corners[4];
 
     for(int c = 0; c < 4; c++) {
         double lt = StellarTbl.lifetime_yr[IDX2(iz_c[c], im_c[c])];
+#ifdef GALSF_RESOLVEDISM_TABLES_PHASE_MATCHED_LOOKUP
+        double la_c = stbl_corner_log_age(log_age, log_lt_star, iz_c[c], im_c[c]); /* same fraction of each grid star's life */
+        double log_age_c = (lt > 0 && pow(10.0, la_c) > lt) ? log10(lt) : la_c;
+#else
         double log_age_c = (lt > 0 && pow(10.0, log_age) > lt) ? log10(lt) : log_age;
+#endif
         int ia_c; double fa_c;
         stbl_idx_age(log_age_c, &ia_c, &fa_c);
         double Mg = (M_grid[c] > 0) ? M_grid[c] : 1e-30;
@@ -1080,82 +1126,86 @@ double stellar_M_current(double logM, double logZ, double log_age)
 
 double stellar_v_wind(double logM, double logZ, double log_age)
 {
+#ifdef GALSF_RESOLVEDISM_TABLES_PHASE_MATCHED_LOOKUP
+    return interp3d_phase(StellarTbl.v_wind, logM, logZ, log_age, 0.0, 0.0); /* v_wind is 0 after a track's death: those nodes are dead (STL-411) */
+#else
     return interp3d(StellarTbl.v_wind, logM, logZ, log_age);
+#endif
 }
 
 double stellar_log_Q_ion(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_Q_ion, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_Q_ion, logM, logZ, log_age);
 }
 
 double stellar_log_L_FUV(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_FUV, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_FUV, logM, logZ, log_age);
 }
 
 double stellar_log_L_LW(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_LW, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_LW, logM, logZ, log_age);
 }
 
 double stellar_log_L_FUV_total(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_FUV_total, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_FUV_total, logM, logZ, log_age);
 }
 
 double stellar_log_L_bol(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_bol, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_bol, logM, logZ, log_age);
 }
 
 double stellar_log_R_cm(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.logR_cm, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.logR_cm, logM, logZ, log_age);
 }
 
 double stellar_log_L_ion_tot(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_ion_tot, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_ion_tot, logM, logZ, log_age);
 }
 
 double stellar_log_L_ion_H0(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_ion_H0, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_ion_H0, logM, logZ, log_age);
 }
 
 double stellar_log_L_ion_He0(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_ion_He0, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_ion_He0, logM, logZ, log_age);
 }
 
 double stellar_log_L_ion_He1(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_ion_He1, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_ion_He1, logM, logZ, log_age);
 }
 
 double stellar_log_L_ion_He2(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_ion_He2, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_ion_He2, logM, logZ, log_age);
 }
 
 double stellar_log_L_NUV(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_NUV, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_NUV, logM, logZ, log_age);
 }
 
 double stellar_log_L_NUV_lo(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_NUV_lo, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_NUV_lo, logM, logZ, log_age);
 }
 
 double stellar_log_L_FUV_M1(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_FUV_M1, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_FUV_M1, logM, logZ, log_age);
 }
 
 double stellar_log_L_OPT_NIR(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_OPT_NIR, logM, logZ, log_age);
+    return STBL_INTERP3D_LOG(StellarTbl.log_L_OPT_NIR, logM, logZ, log_age);
 }
 
 /* --- Surface abundances --- */
@@ -1174,9 +1224,17 @@ double stellar_surface_abundance(double logM, double logZ, double log_age, int e
     double corners[4]; /* [00, 01, 10, 11] = [(iz,im), (iz,im+1), (iz+1,im), (iz+1,im+1)] */
     int iz_c[4] = {iz, iz, iz+1, iz+1};
     int im_c[4] = {im, im+1, im, im+1};
+#ifdef GALSF_RESOLVEDISM_TABLES_PHASE_MATCHED_LOOKUP
+    const double log_lt_star = stbl_log_lifetime(logM, logZ);
+#endif
     for(int c = 0; c < 4; c++) {
         double lt = StellarTbl.lifetime_yr[IDX2(iz_c[c], im_c[c])];
+#ifdef GALSF_RESOLVEDISM_TABLES_PHASE_MATCHED_LOOKUP
+        double la_c = stbl_corner_log_age(log_age, log_lt_star, iz_c[c], im_c[c]); /* same fraction of each grid star's life */
+        double log_age_c = (lt > 0 && pow(10.0, la_c) > lt) ? log10(lt) : la_c;
+#else
         double log_age_c = (lt > 0 && pow(10.0, log_age) > lt) ? log10(lt) : log_age;
+#endif
         int ia_c; double fa_c;
         stbl_idx_age(log_age_c, &ia_c, &fa_c);
         double v0 = StellarTbl.surface_abundances[IDX4(iz_c[c], im_c[c], ia_c,   elem)];
@@ -1292,9 +1350,17 @@ double stellar_elem_ej_wind_cumulative(double logM, double logZ, double log_age,
     double corners[4];
     int iz_c[4] = {iz, iz, iz+1, iz+1};
     int im_c[4] = {im, im+1, im, im+1};
+#ifdef GALSF_RESOLVEDISM_TABLES_PHASE_MATCHED_LOOKUP
+    const double log_lt_star = stbl_log_lifetime(logM, logZ);
+#endif
     for(int c = 0; c < 4; c++) {
         double lt = StellarTbl.lifetime_yr[IDX2(iz_c[c], im_c[c])];
+#ifdef GALSF_RESOLVEDISM_TABLES_PHASE_MATCHED_LOOKUP
+        double la_c = stbl_corner_log_age(log_age, log_lt_star, iz_c[c], im_c[c]); /* same fraction of each grid star's life */
+        double log_age_c = (lt > 0 && pow(10.0, la_c) > lt) ? log10(lt) : la_c;
+#else
         double log_age_c = (lt > 0 && pow(10.0, log_age) > lt) ? log10(lt) : log_age;
+#endif
         int ia_c; double fa_c;
         stbl_idx_age(log_age_c, &ia_c, &fa_c);
         double v0 = StellarTbl.elem_ej_wind_cumulative[IDX4(iz_c[c], im_c[c], ia_c,   elem)];
