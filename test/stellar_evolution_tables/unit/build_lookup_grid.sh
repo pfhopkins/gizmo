@@ -8,5 +8,5 @@ mkdir -p $T/galaxy_sf $T/declarations $T/core
 cp $CC_SRC $T/galaxy_sf/tables.cc; cp $H_SRC $T/galaxy_sf/$(basename $H_SRC)
 cp $HERE/allvars_stub.h $T/declarations/allvars.h; : > $T/core/proto.h
 mpicxx -std=c++17 -O2 -DH5_USE_16_API ${HDF5_HOME:+-I$HDF5_HOME/include} -I$T -I$HERE "$@" \
-    -DTABLES_HEADER="\"galaxy_sf/$(basename $H_SRC)\"" $HERE/lookup_grid.cc $T/galaxy_sf/tables.cc -o $OUT ${HDF5_HOME:+-L$HDF5_HOME/lib} -lhdf5 -lm
+    -DTABLES_HEADER="\"galaxy_sf/$(basename $H_SRC)\"" $HERE/lookup_grid.cc $T/galaxy_sf/tables.cc -o $OUT ${HDF5_HOME:+-L$HDF5_HOME/lib -Wl,-rpath,$HDF5_HOME/lib} -lhdf5 -lm
 rm -rf $T
