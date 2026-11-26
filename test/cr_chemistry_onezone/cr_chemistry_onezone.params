@@ -80,7 +80,7 @@ IMFSampleStellarMassCut         0.5               % skip UV/LW computation for M
 
 %---- Stellar tables (GALSF_RESOLVEDISM_STELLAR_TABLES)
 StellarTablesFile               gizmo/galaxy_sf/stellar_tables/stellar_tables_unified.hdf5
-MaxStellarTimestep              10000.0           % 50 kyr max stellar evolution timestep [yr]
+MaxStellarTimestep              10000.0           % 10 kyr max stellar evolution timestep [yr]
 
 %---- Initial metallicity (METALS + INIT_STELLAR_METALS_AGES_DEFINED)
 InitMetallicity                 1.0             % solar (0.1 for the low-Z variant)

@@ -17,7 +17,7 @@
 
 /* Resolved-ISM momentum feedback injection: winds, AGB, and radiation pressure.
  * Injects momentum kicks + ejecta mass + metal yields + dust (AGB only).
- * Uses ngb_treefind_pairs_threads (mutual visibility for momentum conservation).
+ * Uses ngb_treefind_pairs_threads, but deposits only into cells with r < h_star (a gather in the star's kernel; STL-406).
  *
  * Called from resolvedism_inject_fb_energy() BEFORE the thermal pass.
  * Pass 0: wind + AGB ejecta (mass + metals + momentum)
@@ -259,8 +259,8 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     if(STELLA_FB_EVENT(P[i]) == 3) {
         /* Mass-conservation principle: gas-injected = star-removed = P[i].WindMassAccum,
          * which was set in the accumulator (fb.cc) to (cum_table - cum_injected_so_far).
-         * Star Mass is reduced by exactly WindMassAccum in the cleanup loop, so we
-         * use the same value here. Per-element composition comes from table delta,
+         * The star loses what the walk deposits (M_coupled in out2particle), which sums
+         * to WindMassAccum with the weighting pass's sum wk = 1. Per-element composition comes from table delta,
          * rescaled so Σ ElemYields == WindMassAccum exactly. */
         double dM_wind_solar = P[i].WindMassAccum;
         double dp_cgs = P[i].WindMomentumAccum * SOLAR_MASS_CGS * 1.0e5;
