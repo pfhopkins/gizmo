@@ -306,6 +306,10 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
 }
 
 
+#ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
+#include "merge_split_across_ranks.h"
+#endif
+
 /*! This is the parent routine to actually determine if mergers/splits need to be performed, and if so, to do them
   modified by Takashi Okamoto (t.t.okamoto@gmail.com) on 20/6/2019
  */
@@ -330,6 +334,9 @@ void merge_and_split_particles(void)
       Ptmp[i].target_index = -1;
       Ptmp[i].r_nearest = 0;
     }
+#ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
+    std::vector<int> cells_to_split;
+#endif
 
     for (i = 0; i < NumPart; i++)
     {
@@ -499,6 +506,9 @@ void merge_and_split_particles(void)
                    seen), including ones that are themselves about to split or merge. It is recorded now, before any
                    cell is moved by the merges and splits applied below. With no neighbour at all, or one at exactly
                    the same position, the cell is not split on this step. */
+#ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
+                Ptmp[i].flag = 2; cells_to_split.push_back(i); continue; /* the distance is found over all ranks after this loop */
+#endif
                 startnode=All.MaxPart;
                 numngb_inbox = ngb_treefind_variable_targeted(P[i].Pos,P[i].KernelRadius,-1,&startnode,0,&dummy,&dummy,Pi_BITFLAG); // search for particles of matching type
                 threshold_val = MAX_REAL_NUMBER;
@@ -518,6 +528,12 @@ void merge_and_split_particles(void)
             }
         }
     }
+#ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
+    { /* on every rank, also with nothing to split: the search is collective */
+        std::vector<double> r_all_ranks = msx::split_neighbour_distances(cells_to_split);
+        for(size_t l = 0; l < cells_to_split.size(); l++) {if(r_all_ranks[l] > 0) {Ptmp[cells_to_split[l]].r_nearest = r_all_ranks[l];} else {Ptmp[cells_to_split[l]].flag = 0;}}
+    }
+#endif
 
     // actual merge-splitting loop loop. No tree-walk is allowed below here
     int failed_splits = 0; /* record failed splits to output warning message */
@@ -788,6 +804,30 @@ int split_particle_i(int i, int n_particles_split, double r_near)
         int min_eigvec_index = 0; double max_eigval = -MAX_REAL_NUMBER; //
         for(k=0;k<NUMDIMS;k++) {if(gsl_vector_get(eigvals,k) > max_eigval) {max_eigval = gsl_vector_get(eigvals,k); min_eigvec_index=k;}}
         for(k=0;k<NUMDIMS;k++) {dp[k] = gsl_matrix_get(eigvecs, k, min_eigvec_index);}
+#ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
+        { /* the axis must not hang on round-off (on a lattice the eigenvalues coincide, and which one is largest follows the neighbour order): if the largest eigenvalue is not separated from the next, the axis comes from the cell's own random stream, kept perpendicular to the direction of the smallest eigenvalue if that one is separated; otherwise the eigenvector's sign is fixed by its first component above 0.45 of its length (not the largest one: two of equal size, as along a lattice diagonal, would leave it to round-off) */
+            double lam[3] = {0, 0, 0}; int imin = 0; for(k=0;k<NUMDIMS;k++) {lam[k] = gsl_vector_get(eigvals,k); if(lam[k] < lam[imin]) {imin = k;}}
+            double lmax = lam[min_eigvec_index], lmin = lam[imin], lmid = (NUMDIMS == 3) ? (lam[0] + lam[1] + lam[2] - lmax - lmin) : lmin;
+            const double tol = 1.e-6 * fabs(lmax);
+            if(lmax - lmid <= tol)
+            {
+                static constexpr uint64_t SPLIT_AXIS_DEGENERATE_RNG_SALT = gizmo_loop_rng_salt("split_axis_degenerate");
+                double u1 = particle_random_number(i, SPLIT_AXIS_DEGENERATE_RNG_SALT, (uint64_t)All.Ti_Current, 0), u2 = particle_random_number(i, SPLIT_AXIS_DEGENERATE_RNG_SALT, (uint64_t)All.Ti_Current, 1);
+                double ct = (NUMDIMS == 3) ? 2.*u1 - 1. : 0., st = sqrt(1. - ct*ct), ph = 2.*M_PI*u2;
+                dp[0] = st*cos(ph); dp[1] = st*sin(ph); dp[2] = ct;
+                if(NUMDIMS == 3) {if(lmid - lmin > tol) {
+                    double e_min[3], dot_min = 0, n2 = 0; for(k=0;k<3;k++) {e_min[k] = gsl_matrix_get(eigvecs, k, imin); dot_min += dp[k]*e_min[k]; n2 += e_min[k]*e_min[k];}
+                    if(n2 > 0) {double q[3], q2 = 0; for(k=0;k<3;k++) {q[k] = dp[k] - dot_min*e_min[k]/n2; q2 += q[k]*q[k];} if(q2 > 1.e-4) {for(k=0;k<3;k++) {dp[k] = q[k];}}}
+                }}
+            }
+            else
+            {
+                double n2 = 0; for(k=0;k<NUMDIMS;k++) {n2 += dp[k]*dp[k];}
+                int kfix = 0; for(k=NUMDIMS-1;k>=0;k--) {if(fabs(dp[k]) > 0.45*sqrt(n2)) {kfix = k;}}
+                if(dp[kfix] < 0) {for(k=0;k<NUMDIMS;k++) {dp[k] = -dp[k];}}
+            }
+        }
+#endif
         gsl_eigen_symmv_free(v); gsl_vector_free(eigvals); gsl_matrix_free(eigvecs);
         for(k=0;k<NUMDIMS;k++) {norm += dp[k] * dp[k];}
         if(norm > 0)
