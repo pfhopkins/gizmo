@@ -13,8 +13,9 @@ def lattice(n, L, offset=0.0):
     return np.stack(np.meshgrid(g, g, g, indexing="ij"), -1).reshape(-1, 3)
 
 
-def make_treecol_pixels_ics(fname, L, gas_pos, stars, gas_mass=1.0, z=0.0142, T=100.0, hsml=1.0, z_gas=None, tracabund=None, e_cr=None):
-    """stars: list of (M_drawn [Msun], age [yr], position)"""
+def make_treecol_pixels_ics(fname, L, gas_pos, stars, gas_mass=1.0, z=0.0142, T=100.0, hsml=1.0, z_gas=None, tracabund=None, e_cr=None, birth_mass=None):
+    """stars: list of (M_drawn [Msun], age [yr], position); birth_mass [Msun], one per star: the mass plus the winds counted as returned
+    (without it the star's mass is its birth mass and the table winds of its life so far are owed)"""
     N, ns = len(gas_pos), len(stars)
     u = 1.5 * 1.380649e-16 * T / (1.27 * 1.6726e-24) / 1e10
     zg = np.full(N, z) if z_gas is None else np.asarray(z_gas)
@@ -44,3 +45,5 @@ def make_treecol_pixels_ics(fname, L, gas_pos, stars, gas_mass=1.0, z=0.0142, T=
         s["StellarFormationTime"] = -np.array([a for _, a, _ in stars]) / YR_PER_TIME_UNIT
         Zs = np.tile(SOLAR * z / SOLAR[0], (ns, 1)); Zs[:, 1] = SOLAR[1]
         s["Metallicity"] = Zs; s["SingleStarDrawnMass"] = s["Masses"][()]; s["SingleStarBirthMetallicity"] = np.full(ns, z)
+        if birth_mass is not None:
+            s["SingleStarBirthMass"] = np.asarray(birth_mass, dtype=np.float64)

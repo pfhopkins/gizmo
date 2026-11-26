@@ -7,7 +7,7 @@ import numpy as np
 import h5py
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "mechfb_healpix_weights"))
-from make_mechfb_healpix_weights_ics import cells, PC_KMS_IN_YR  # noqa: E402
+from make_mechfb_healpix_weights_ics import cells, PC_KMS_IN_YR, Tables  # noqa: E402
 
 KIND = {"sn": 20.0, "wind": 35.0, "moving": 35.0, "overlap": 35.0, "ray": 35.0, "agb": 3.0, "rp": 7.0}
 
@@ -57,4 +57,5 @@ def make_ics(fname, tables_file, event, L=20.0, seed=3, z=0.014, T=100.0):
         s["Coordinates"] = spos; s["Velocities"] = np.repeat(star_v, Ns, axis=0); s["ParticleIDs"] = np.arange(N + 1, N + 1 + Ns, dtype=np.uint32)
         s["Masses"] = np.full(Ns, M); s["StellarFormationTime"] = np.full(Ns, -age / PC_KMS_IN_YR); s["Metallicity"] = np.full((Ns, 1), z)
         s["SingleStarDrawnMass"] = np.full(Ns, M); s["SingleStarBirthMetallicity"] = np.full(Ns, z); s["SingleStarLastWindLogAge"] = np.full(Ns, last)
+        s["SingleStarBirthMass"] = np.full(Ns, M + (Tables(tables_file).wind_cumulative(M, z, last) if last > 0 else 0.0))  # the winds up to the last delivery age are returned
     return L

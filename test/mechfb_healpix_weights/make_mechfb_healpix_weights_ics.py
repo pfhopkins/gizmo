@@ -2,8 +2,13 @@
 100 cm^-3 at the star. Units pc, Msun, km/s. A snapshot (start flag 2). Event 'sn': 20 Msun star past its table lifetime; 'wind': 35 Msun
 star at 1 Myr with the winds since 0.7 Myr still to return; 'slow': a 20 Msun star late in its life, wind about 100 km/s (table log age
 6.9468); '_moving' after either: the star moves at 300 km/s along x through the gas at rest."""
+import os
+import sys
 import numpy as np
 import h5py
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "treecol_pixels"))
+from stella_table_bands import Tables  # noqa: E402
 
 PC_KMS_IN_YR = 3.085678e13 / 3.155e7
 
@@ -60,4 +65,5 @@ def make_ics(fname, tables_file, event, L=20.0, seed=3, z=0.014, T=100.0):
         s["Coordinates"] = np.array([[0.5 * L] * 3]); s["Velocities"] = np.array([[300.0 if event.endswith("_moving") else 0.0, 0.0, 0.0]]); s["ParticleIDs"] = np.array([N + 1], dtype=np.uint32)
         s["Masses"] = np.array([M]); s["StellarFormationTime"] = np.array([-age / PC_KMS_IN_YR]); s["Metallicity"] = np.full((1, 1), z)
         s["SingleStarDrawnMass"] = np.array([M]); s["SingleStarBirthMetallicity"] = np.full(1, z); s["SingleStarLastWindLogAge"] = np.array([last])
+        s["SingleStarBirthMass"] = np.array([M + Tables(tables_file).wind_cumulative(M, z, last)])  # the winds up to the last delivery age are returned
     return L

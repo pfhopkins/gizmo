@@ -145,11 +145,11 @@ def test_winds_agb_ia(built):
         Zt, Mt = F["Z"][()], F["M_init"][()]
         tpms = F["t_PMS"][()].reshape(len(Zt), len(Mt))[int(np.argmin(np.abs(Zt - 0.014))), int(np.argmin(np.abs(Mt - 35.0)))]
     assert abs(10 ** w["wa"] - (age_yr - tpms)) <= 3e-4 * PC_KMS_IN_YR
-    # the AGB death: one event, after the winds of its whole life left as one delivery; ejecta = mass at death - remnant
+    # the AGB death: one event; the table has no winds below 8 Msun, so nothing leaves before it; ejecta = mass at death - remnant
     r_agb = rows[rows[:, 2] == 2]
     assert len(r_agb) == 1 and int(r_agb[0, 1]) == agb and int(r_agb[0, 3]) == 0
     owed = Tables(built["StellarTablesFile"]).wind_cumulative(3.0, 0.014, 11.0)
-    assert owed > 0.1 and abs(r_agb[0, 5] - (3.0 - owed)) < 1e-9, (r_agb[0, 5], owed)
+    assert owed == 0 and r_agb[0, 5] == 3.0, (r_agb[0, 5], owed)
     assert abs(r_agb[0, 6] - (r_agb[0, 5] - r_agb[0, 7])) < 1e-12
     # Type Ia (hazard multiplied so that every eligible white dwarf explodes at once): the white dwarf of the initial
     # conditions at the first step, the new one from the AGB death at a later step; the whole mass at 1e51 erg, no remnant

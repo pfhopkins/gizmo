@@ -6,8 +6,8 @@ mechanical feedback loop.
 - Winds (drawn mass >= 8 Msun, after the pre-main sequence): every star step returns the table's cumulative wind mass less
   what the star has returned (its birth mass less its mass), at the table wind speed, with the composition of the table since
   the last delivery.
-- AGB death (white-dwarf remnant): the winds of the star's whole life leave first as one wind delivery; on the next step ejecta =
-  the table's fraction of the mass left, at 30 km/s, AGB element ejecta.
+- AGB death (white-dwarf remnant): winds the table still owes would leave first as one wind delivery (the table has none below
+  8 Msun, so the 3 Msun star dies at its whole mass); ejecta = the table's fraction of the mass at death, at 30 km/s, AGB element ejecta.
 - Type Ia (`GALSF_SINGLE_STARS_TYPE_IA`): per-step hazard of a white dwarf (t^-1 delay-time distribution normalised to the
   dead-progenitor fraction, keyed random number); the whole mass at 1e51 erg with the table Type Ia composition. With the
   opt-in `GALSF_SINGLE_STARS_TYPE_IA_CHANDRASEKHAR_MATTER` the table's M_Ch of Ia matter per event: M_Ch - M_WD of the gas in

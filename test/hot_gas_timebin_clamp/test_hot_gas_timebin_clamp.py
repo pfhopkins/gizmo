@@ -43,7 +43,7 @@ def run():
     tab = Tables(tables["StellarTablesFile"])
     lM, lZ = np.log10(M), np.log10(Z)
     age = tab._i2(tab.t_pms, lM, lZ) + tab._i2(tab.life, lM, lZ) - T_DEATH
-    make_treecol_pixels_ics(str(d / "snapshot_000.hdf5"), L, lattice(N_SIDE, L), [(M, age, np.full(3, 0.5 * L + 0.17))], hsml=2.5)
+    make_treecol_pixels_ics(str(d / "snapshot_000.hdf5"), L, lattice(N_SIDE, L), [(M, age, np.full(3, 0.5 * L + 0.17))], hsml=2.5, birth_mass=[M + tab.wind_cumulative(M, Z, np.log10(tab._i2(tab.life, lM, lZ)))])  # the winds of its life are returned: the death is the first event
     (d / "run.params").write_text((TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SET_BY_TEST", tables["StellarTablesFile"]))
     with open(d / "run.out", "w") as out:
         subprocess.run(mpi_launch_command(2, 1) + [str(TEST_DIR / "GIZMO"), str(d / "run.params"), "2", "0"], cwd=TEST_DIR, stdout=out, stderr=subprocess.STDOUT, check=True)

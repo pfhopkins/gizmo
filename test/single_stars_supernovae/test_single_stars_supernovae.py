@@ -180,7 +180,7 @@ def test_death_with_winds_owed(built):
     T = Tables(built["StellarTablesFile"])
     for r in rows:
         life = np.interp(np.log10(r[4]), T.lM, T.life.reshape(len(T.lZ), len(T.lM))[int(np.argmin(np.abs(T.lZ - np.log10(0.014))))])
-        owed = T.wind_cumulative(r[4], 0.014, 11.0) - T.wind_cumulative(r[4], 0.014, np.log10(0.95 * life))
+        owed = T.wind_cumulative(r[4], 0.014, np.log10(life)) - T.wind_cumulative(r[4], 0.014, np.log10(0.95 * life))  # the table at the star's own end of life
         assert owed > 0 and abs((r[4] - r[5]) / owed - 1) < 1e-9, (r[4], r[5], owed)  # what left before the death
     assert abs(b["M"] - a["M"] - (rows[:, 6].sum() + (rows[:, 4] - rows[:, 5]).sum())) <= 1e-12 * b["M"]
     failed = rows[rows[:, 4] == 40.0][0]
