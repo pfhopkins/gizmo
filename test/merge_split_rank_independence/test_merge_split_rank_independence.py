@@ -77,17 +77,17 @@ def _run(binary, box, nranks, tag):
     text = open(join(d, "run.log")).read()
     assert r.returncode == 0, f"{tag} {box} {nranks} ranks: " + text[-800:]
     splits = {}; merges = {}
-    for m in re.finditer(r"^TEST_SPLIT_DUMP step (\d+) task \d+ ID (\d+) h (\S+) r_near (\S+) d_r (\S+) parent (\S+) (\S+) (\S+) offset (\S+) (\S+) (\S+)$", text, re.M):
+    for m in re.finditer(r"TEST_SPLIT_DUMP step (\d+) task \d+ ID (\d+) h (\S+) r_near (\S+) d_r (\S+) parent (\S+) (\S+) (\S+) offset (\S+) (\S+) (\S+)$", text, re.M):
         splits.setdefault(int(m.group(1)), {})[int(m.group(2))] = (float(m.group(3)), float(m.group(4)), np.array([float(m.group(k)) for k in (9, 10, 11)]))
     crossing = {"merge": {}, "split": {}}  # per step: merges whose two cells, splits whose nearest neighbour, are on different ranks
-    for m in re.finditer(r"^TEST_MERGE_PAIR step (\d+) absorbed (\d+) (\d+) (-?\d+) into (\d+) (\d+) (-?\d+) ranks (\d+) (\d+)$", text, re.M):
+    for m in re.finditer(r"TEST_MERGE_PAIR step (\d+) absorbed (\d+) (\d+) (-?\d+) into (\d+) (\d+) (-?\d+) ranks (\d+) (\d+)$", text, re.M):
         merges.setdefault(int(m.group(1)), set()).add(tuple(int(m.group(k)) for k in range(2, 8)))
         crossing["merge"][int(m.group(1))] = crossing["merge"].get(int(m.group(1)), 0) + (m.group(8) != m.group(9))
-    for m in re.finditer(r"^TEST_SPLIT_NEIGHBOR step (\d+) ID \d+ task (\d+) neighbour_task (\d+)$", text, re.M):
+    for m in re.finditer(r"TEST_SPLIT_NEIGHBOR step (\d+) ID \d+ task (\d+) neighbour_task (\d+)$", text, re.M):
         crossing["split"][int(m.group(1))] = crossing["split"].get(int(m.group(1)), 0) + (m.group(2) != m.group(3))
     tot = np.loadtxt(join(d, "output", "conserved_totals.txt"))
     passes = [int(x) for x in re.findall(r"(\d+) particles merged", text) if int(x) > 0]  # merges per pass, passes with merges only
-    cost = [(int(a), int(b), int(c), float(d)) for a, b, c, d in re.findall(r"^TEST_MERGE_SPLIT_PASS step \d+ rounds (\d+) queries (\d+) merges (\d+) seconds (\S+)$", text, re.M)]
+    cost = [(int(a), int(b), int(c), float(d)) for a, b, c, d in re.findall(r"TEST_MERGE_SPLIT_PASS step \d+ rounds (\d+) queries (\d+) merges (\d+) seconds (\S+)$", text, re.M)]
     return dict(splits=splits, merges=merges, crossing=crossing, passes=passes, cost=cost, steps=tot[:, 0], M=tot[:, 2], E=tot[:, 6] + tot[:, 7], nmerged=sum(int(x) for x in re.findall(r"(\d+) particles merged", text)),
                 nsplit=sum(int(x) for x in re.findall(r"(\d+) particles split", text)))
 
