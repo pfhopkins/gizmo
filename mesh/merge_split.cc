@@ -963,7 +963,7 @@ int split_particle_i(int i, int n_particles_split, double r_near)
         for(k=0;k<NUMDIMS;k++) {if(gsl_vector_get(eigvals,k) > max_eigval) {max_eigval = gsl_vector_get(eigvals,k); min_eigvec_index=k;}}
         for(k=0;k<NUMDIMS;k++) {dp[k] = gsl_matrix_get(eigvecs, k, min_eigvec_index);}
 #ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
-        { /* the axis must not hang on round-off (on a lattice the eigenvalues coincide, and which one is largest follows the neighbour order): if the largest eigenvalue is not separated from the next, the axis comes from the cell's own random stream, kept perpendicular to the direction of the smallest eigenvalue if that one is separated; otherwise the eigenvector's sign is fixed by its largest component */
+        { /* the axis must not hang on round-off (on a lattice the eigenvalues coincide, and which one is largest follows the neighbour order): if the largest eigenvalue is not separated from the next, the axis comes from the cell's own random stream, kept perpendicular to the direction of the smallest eigenvalue if that one is separated; otherwise the eigenvector's sign is fixed by its first component above 0.45 of its length (not the largest one: two of equal size, as along a lattice diagonal, would leave it to round-off) */
             double lam[3] = {0, 0, 0}; int imin = 0; for(k=0;k<NUMDIMS;k++) {lam[k] = gsl_vector_get(eigvals,k); if(lam[k] < lam[imin]) {imin = k;}}
             double lmax = lam[min_eigvec_index], lmin = lam[imin], lmid = (NUMDIMS == 3) ? (lam[0] + lam[1] + lam[2] - lmax - lmin) : lmin;
             const double tol = 1.e-6 * fabs(lmax);
@@ -980,8 +980,9 @@ int split_particle_i(int i, int n_particles_split, double r_near)
             }
             else
             {
-                int kbig = 0; for(k=1;k<NUMDIMS;k++) {if(fabs(dp[k]) > fabs(dp[kbig])) {kbig = k;}}
-                if(dp[kbig] < 0) {for(k=0;k<NUMDIMS;k++) {dp[k] = -dp[k];}}
+                double n2 = 0; for(k=0;k<NUMDIMS;k++) {n2 += dp[k]*dp[k];}
+                int kfix = 0; for(k=NUMDIMS-1;k>=0;k--) {if(fabs(dp[k]) > 0.45*sqrt(n2)) {kfix = k;}}
+                if(dp[kfix] < 0) {for(k=0;k<NUMDIMS;k++) {dp[k] = -dp[k];}}
             }
         }
 #endif
