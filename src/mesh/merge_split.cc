@@ -347,6 +347,7 @@ void merge_and_split_particles(void)
     std::vector<double> ms_split_nearest_distance; /* per ms_flagged entry: distance to the nearest neighbour when a split was flagged */
 #ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
     std::vector<int> cells_to_split, cells_to_split_entry; /* cells flagged for a split and their entries in ms_flagged */
+    std::vector<int> merge_candidates; /* cells that need a merge: the partner is found over all ranks after the candidate block */
 #endif
 
     /* Modern path: prebuilt CSR neighbor list. Merges and splits rearrange local particles, so no ghost
@@ -508,6 +509,9 @@ void merge_and_split_particles(void)
             int64_t nl_start = gnl.offsets[aa], nl_end = gnl.offsets[aa+1];
 
             if (ms_src_kind[aa] == 1) {
+#ifdef MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS
+                merge_candidates.push_back(i); continue;
+#endif
                 target_for_merger = -1;
                 threshold_val = MAX_REAL_NUMBER;
                 /* The list holds candidates, not only neighbours: the merge target and the ambient
@@ -702,6 +706,8 @@ void merge_and_split_particles(void)
     { /* on every rank, also with nothing to split: the search is collective */
         std::vector<double> r_all_ranks = msx::split_neighbour_distances(cells_to_split);
         for(size_t l = 0; l < cells_to_split.size(); l++) {if(r_all_ranks[l] > 0) {ms_split_nearest_distance[cells_to_split_entry[l]] = r_all_ranks[l];} else {Ptmp[cells_to_split[l]].flag = 0;}}
+        std::vector<char> no_target(NumPart, 0); for(i = 0; i < NumPart; i++) {if(Ptmp[i].flag == 2) {no_target[i] = 2;}} /* a cell that is split takes no merge */
+        n_particles_merged = msx::merge_across_ranks(merge_candidates, no_target); /* partner over all ranks, order-free choice; done here, before the splits below */
     }
 #endif
 
