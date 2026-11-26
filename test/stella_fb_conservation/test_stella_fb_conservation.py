@@ -437,6 +437,88 @@ def test_metal_origin_clamp_box(clamp_run):
     origin_check(out, channels=(1, 3), text=text)
 
 
+def origin_rows(out):
+    return [l.split() for l in open(join(out, "mass_balance_origin.txt")) if l.strip() and not l.startswith("#")]
+
+
+def labels_by_cell(snapshot):
+    """Cells of a snapshot sorted by (ID, child number): labelled metal mass per cell and channel, total metal mass per cell."""
+    with h5py.File(snapshot, "r") as f:
+        p = f["PartType0"]; o = np.lexsort((p["ParticleChildIDsNumber"][:], p["ParticleIDs"][:]))
+        m = p["Masses"][:][o].astype(np.float64)
+        return m[:, None] * p["MetalOrigin"][:][o], m * p["Metallicity"][:][o][:, 0]
+
+
+def test_metal_origin_restart_files(build, clamp_run):
+    """STL-336, restart layout: the clamp box stopped after the Ia (restart files written at a step with t >= 4.2e-6, labels and
+    ledger sums non-zero) and continued from the restart files to the same TimeMax. Bars, fixed before the run: in the continued
+    run the ledger L of every channel (0 for a run begun without labels) is within BAR of its scale at the first checkpoint and
+    changes by at most BAR per checkpoint; no cell above Z, no label below zero; against the uninterrupted run the final labelled
+    mass per channel agrees to 1e-6 and per cell to 1e-5 of the largest cell value (single-precision snapshots; a restart rebuilds
+    the domain and tree, so not bitwise), and it is printed whether the label block is bitwise equal."""
+    text0, out0 = clamp_run
+    sync = re.findall(r"Sync-Point (\d+), Time: ([0-9.e+-]+)", text0)
+    stop = min(int(n) for n, t in sync if float(t) >= 4.2e-6)
+    d = join(TEST_DIR, "run_ia_clamp_restart"); out = join(d, "output")
+    shutil.rmtree(d, ignore_errors=True); os.makedirs(out)
+    os.symlink(REPO, join(d, "gizmo"))
+    shutil.copy(join(TEST_DIR, "run_ia_clamp", "box_ics.hdf5"), d); shutil.copy(join(TEST_DIR, "run_ia_clamp", "run.params"), d)
+    with open(join(d, "first.log"), "w") as log:
+        r = run_killable(mpi_launch_command(2) + [build, "run.params", "0"], RUN_TIMEOUT, stdout=log, stderr=subprocess.STDOUT, cwd=d,
+                         env=dict(os.environ, GIZMO_TEST_RESTART_AT_STEP=str(stop)))
+    first = open(join(d, "first.log")).read()
+    assert r.returncode == 0 and "Simulation ends." not in first, "the first part did not stop at the restart step"
+    assert os.path.isdir(join(out, "restartfiles"))
+    n_first = len(origin_rows(out))
+    with open(join(d, "run.log"), "w") as log:
+        r = run_killable(mpi_launch_command(2) + [build, "run.params", "1"], RUN_TIMEOUT, stdout=log, stderr=subprocess.STDOUT, cwd=d)
+    text = open(join(d, "run.log")).read()
+    assert r.returncode == 0 and "Simulation ends." in text, "the continued run did not reach TimeMax: " + text[-1500:]
+    rows = origin_rows(out)[n_first:]
+    assert rows, "the continued run logged no origin checkpoint"
+    gas = np.array([float(x) for x in rows[0][9:13]]); L = np.array([float(x) for x in rows[0][16:20]])
+    assert gas[1] > 0 and gas[3] > 0, "the restart files carried no AGB / Ia labels: stop step too early"
+    rel_L = max(abs(L[c]) / gas[c] for c in (1, 3))
+    worst = max(max(abs(float(x)) for x in r_[5:9]) for r_ in rows)
+    n_above = max(float(r_[13]) for r_ in rows); n_neg = max(float(r_[14]) for r_ in rows)
+    A, zA = labels_by_cell(join(out0, sorted(f for f in os.listdir(out0) if f.startswith("snapshot_"))[-1]))
+    B, zB = labels_by_cell(join(out, sorted(f for f in os.listdir(out) if f.startswith("snapshot_"))[-1]))
+    assert A.shape == B.shape
+    tot = max(abs(A[:, c].sum() - B[:, c].sum()) / A[:, c].sum() for c in (1, 3))
+    cell = max(np.abs(A[:, c] - B[:, c]).max() / A[:, c].max() for c in (1, 3))
+    print(f"origin ledger over a restart at step {stop}: |L|/gas at the first checkpoint {rel_L:.3e}, worst |dL|/S after it {worst:.3e}, cells above Z "
+          f"{n_above:.0f}, labels below zero {n_neg:.0f}; against the uninterrupted run: labelled mass per channel {tot:.3e}, per cell {cell:.3e} of the "
+          f"largest, label block bitwise equal: {bool(np.array_equal(A, B))}, metal mass per cell bitwise equal: {bool(np.array_equal(zA, zB))}")
+    assert rel_L <= BAR and worst <= BAR and n_above == 0 and n_neg == 0
+    assert tot <= 1e-6 and cell <= 1e-5
+
+
+def test_metal_origin_start_from_snapshot(build, clamp_run):
+    """STL-336: the clamp box's final snapshot as the start of a run without stars (diffusion only). Bars, fixed before the run: the
+    labelled gas mass per channel at the first checkpoint equals the snapshot's to 1e-6 (single precision), the ledger changes by at
+    most BAR per checkpoint while the labels diffuse, no label below zero. Cells above Z are printed, not asserted: labels and Z
+    are rounded separately in a single-precision snapshot."""
+    text0, out0 = clamp_run
+    d = join(TEST_DIR, "run_origin_snap"); out = join(d, "output")
+    shutil.rmtree(d, ignore_errors=True); os.makedirs(out)
+    snap = join(out0, sorted(f for f in os.listdir(out0) if f.startswith("snapshot_"))[-1])
+    shutil.copy(snap, join(d, "origin_snap_000.hdf5"))
+    A, _ = labels_by_cell(snap)
+    text, out = run_case("origin_snap", build, {"InitCondFile": "origin_snap_000", "TestNumStars": 0, "TestStarMass": 0, "TestStarMass2": 0, "TestStarMass3": 0,
+                                                "TestIaTime": 0, "TimeMax": 5.5e-6, **zpar(np.log10(ZSUN))}, restart_flag=2)
+    rows = origin_rows(out)
+    gas = np.array([float(x) for x in rows[0][9:13]])
+    read = max(abs(gas[c] - A[:, c].sum()) / A[:, c].sum() for c in (1, 3))
+    worst = max(max(abs(float(x)) for x in r_[5:9]) for r_ in rows)
+    n_above = max(float(r_[13]) for r_ in rows); n_neg = max(float(r_[14]) for r_ in rows)
+    B, _ = labels_by_cell(join(out, sorted(f for f in os.listdir(out) if f.startswith("snapshot_"))[-1]))
+    moved = max(np.abs(np.sort(A[:, 3]) - np.sort(B[:, 3])).max() / A[:, 3].max(), 0)
+    print(f"origin labels from a snapshot: labelled mass read back to {read:.3e}, worst |dL|/S {worst:.3e} over {len(rows)} logged checkpoints, "
+          f"labels below zero {n_neg:.0f}, cells above Z {n_above:.0f} (single precision), largest change of the sorted Ia labels {moved:.3e}")
+    assert read <= 1e-6 and worst <= BAR and n_neg == 0
+    assert moved > 0, "the labels did not change: no diffusion in the continued run"
+
+
 def test_diffusion_slots_clamp_box(clamp_run):
     """STL-277: cells converted whole to Ia composition (H ~ 0) next to H-rich gas: no floor fires and every cell's slots close."""
     diffusion_check(clamp_run[0])
