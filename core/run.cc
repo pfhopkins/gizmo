@@ -195,13 +195,15 @@ void mbary_step_checkpoint(const char *tag)
                     fprintf(f, "### Logs the first call and every checkpoint where some |dL|/S > 1e-14 (S = gas + taken out) or the number of cells with more labelled metal than metal, or with a label below zero, changes.\n");
                     fprintf(f, "### Labels are metal mass by channel per unit cell mass. Booked: feedback deposits, the Ia conversion, the stars' accretion draw, the SN ejecta cell, outflow. Not booked: whole-cell star\n");
                     fprintf(f, "### formation without the sampled IMF, sink accretion, the MFV mass flux; the labels diffuse only with METALS_EXACT_PAIRWISE_EXCHANGE. After a start from a single-precision snapshot cells\n");
-                    fprintf(f, "### that are almost fully labelled can count as above Z (labels and Z are rounded separately).\n");
-                    fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) worst channel  (5) its dL/S  (6-9) dL/S SN AGB Wind Ia  (10-13) gas mass by channel  (14) cells with sum of labels > Z + 1e-12  (15) cells with a label < 0  (16) labelled mass above Z\n");
+                    fprintf(f, "### that are almost fully labelled can count as above Z (labels and Z are rounded separately). The first checkpoint after a restart is logged: its L (17-20) shows the ledger came through.\n");
+                    fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) worst channel  (5) its dL/S  (6-9) dL/S SN AGB Wind Ia  (10-13) gas mass by channel  (14) cells with sum of labels > Z + 1e-12  (15) cells with a label < 0  (16) labelled mass above Z  (17-20) L by channel (0 through a run that began without labels, restarts included)\n");
                 }
                 fprintf(f, "%8lld  %-22s  %.10e  %-4s  %+.6e", call_count, tag, All.Time, ch_name[worst], worst_rel);
                 for(int c = 0; c < 4; c++) {fprintf(f, "  %+.3e", rel[c]);}
                 for(int c = 0; c < 4; c++) {fprintf(f, "  %.10e", (double)red[NRED0 + c]);}
-                fprintf(f, "  %.0f  %.0f  %.6e\n", n_above, n_neg, (double)red[NRED0 + 14]);
+                fprintf(f, "  %.0f  %.0f  %.6e", n_above, n_neg, (double)red[NRED0 + 14]);
+                for(int c = 0; c < 4; c++) {fprintf(f, "  %+.6e", (double)OL[c]);}
+                fprintf(f, "\n");
                 fclose(f);
             }
         }
