@@ -138,10 +138,10 @@ static Answer answer_query(const Query &q, int qindex, const std::vector<char> &
 static int merge_and_find_splits(std::vector<double> &r_nearest_split)
 {
     r_nearest_split.assign(NumPart, 0.0);
-    std::vector<char> is_split_query(NumPart, 0), used(NumPart, 0); /* used: survivor of a merge of this pass: no target any more; if still too light it proposes again (as a target of the rank-local loop can) */
+    std::vector<char> is_split_query(NumPart, 0), used(NumPart, 0), needs_merge(NumPart, 0); /* used: survivor of a merge of this pass: no target any more; if it needed a merge at the start of the pass it proposes again (as a target of the rank-local loop merges on) */
     std::set<std::array<double,3>> claimed; /* landing points of this pass's merges, the same set on every rank */
     int n_merged_pass = 0; long long n_queries_pass = 0; int rounds_done = 0; const double t_pass = MPI_Wtime();
-    /* several rounds of the same matching: cells that lost their target in one round, and survivors that are still too light, propose again
+    /* several rounds of the same matching: cells that lost their target in one round, and survivors that needed a merge at the start of the pass, propose again
        in the next, to a cell not yet in a merge of this pass. Ends when a round merges nothing anywhere, or at the cap. Splits are decided in the first round. */
     for(int round = 0; round < MERGE_SPLIT_MATCHING_ROUNDS; round++)
     {
@@ -156,7 +156,7 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
         if(!((P[i].Type==0)&&(TimeBinActive[P[i].TimeBin]))) {continue;}
 #endif
         int kind = 0;
-        if(does_particle_need_to_be_merged(i)) {kind = 1;}
+        if((round == 0) ? does_particle_need_to_be_merged(i) : (int) needs_merge[i]) {kind = 1; needs_merge[i] = 1;} /* decided once, on the state at the start of the pass, as the rank-local loop does */
         else if(round == 0 && does_particle_need_to_be_split(i)) {if((P[i].Type == 0) && !((CellP[i].Density > 0) && isfinite(CellP[i].Density))) {continue;} kind = 2; is_split_query[i] = 1;}
         if(!kind) {continue;}
         Query q; memset(&q, 0, sizeof(Query)); q.key = key_of(i); q.h = P[i].KernelRadius; q.mass = P[i].Mass; q.type = P[i].Type; q.kind = kind; q.task = ThisTask; q.index = i;
