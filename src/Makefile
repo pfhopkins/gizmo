@@ -1220,7 +1220,7 @@ OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) $(GR_OBJS) \
 
 ## include files needed at compile time for the above objects
 INCL    += gr/gr.h gr/gr_functions.h gr/gr_con2prim_functions.h gr/gr_riemann_functions.h gr/gr_kick_functions.h gr/gr_source_functions.h
-INCL    += 	declarations/allvars.h \
+INCL    += 	declarations/allvars.h gravity/analytic_gravity_functions.h \
 			core/proto.h \
 			gravity/forcetree.h \
 			gravity/gravtree_treecol_pixels.h cooling/sgchem/sgchem_dust_to_gas.h \
@@ -1446,6 +1446,8 @@ galaxy_sf/thermal_fb.o: galaxy_sf/thermal_fb.cc $(INCL) $(CONFIG) compile_time_i
 galaxy_sf/thermal_fb_loop.o: galaxy_sf/thermal_fb_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 galaxy_sf/single_star_event_logs.o: galaxy_sf/single_star_event_logs.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+gravity/rumi/rumi_coupling.o: gravity/rumi/rumi_coupling.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 gravity/treecol_shells.o: gravity/treecol_shells.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@

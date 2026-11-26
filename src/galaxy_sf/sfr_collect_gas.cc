@@ -36,7 +36,7 @@
 #include "single_star_checks.h"
 #include "single_star_birth_offsets.h"
 #include "../declarations/gpu_rng.h"
-#include "../declarations/gpu_stage_launch.h"
+#include "../declarations/gpu_dispatch_templates.h"
 #include "../system/loop_routes.h"
 
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS

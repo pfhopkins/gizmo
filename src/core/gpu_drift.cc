@@ -47,7 +47,7 @@
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../system/gpu_particles_arena.h"
 #include "drift_particle_functions.h"
-#include "../declarations/gpu_stage_launch.h"
+#include "../declarations/gpu_dispatch_templates.h"
 #include "../system/loop_routes.h"
 
 /* Device-visible copy of the drift and gravkick tables for this translation unit.

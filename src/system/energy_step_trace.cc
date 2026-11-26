@@ -18,8 +18,9 @@
 #include "../declarations/gpu_all_mirror.h"  /* before allvars.h */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../declarations/gpu_stage_launch.h"
+#include "../declarations/gpu_dispatch_templates.h"
 #include "loop_routes.h"
+#include "../gravity/analytic_gravity_functions.h" /* Hu+21 potential */
 #if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
 #include "../gravity/pm_highres_region.h"
 #endif

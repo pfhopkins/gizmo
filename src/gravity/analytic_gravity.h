@@ -13,6 +13,7 @@
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
+#include "analytic_gravity_functions.h" /* the device-callable fields */
 void add_analytic_gravitational_forces(void);
 void GravAccel_set_zeros_if_needed(void);
 void GravAccel_StaticPlummerSphere(void);

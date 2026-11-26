@@ -14,7 +14,7 @@
 #include <Kokkos_Core.hpp>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#include "../declarations/gpu_stage_launch.h"
+#include "../declarations/gpu_dispatch_templates.h"
 #include "loop_routes.h"
 #include "../mesh/ghost_writeback.h"
 

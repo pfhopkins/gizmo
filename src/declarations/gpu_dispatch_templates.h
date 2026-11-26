@@ -249,4 +249,48 @@ struct GizmoGpuEvent {
 void timing_breakdown_register_instance(const Kokkos::DefaultExecutionSpace &space);   /* a no-op without the flag */
 
 
+
+/* One kernel for a per-element stage, run on the device or on the host execution space: on_device from gizmo_stage_on_device()
+ * (core/proto.h).  The host space is Serial in the GPU builds, so a host run visits the elements in the order of a plain loop.
+ * Kernels read no global: everything is captured by value, and a kernel that reads All goes after GIZMO_GPU_ENSURE_ALL_FRESH()
+ * in its translation unit. */
+template<typename F>
+inline void gizmo_stage_for(const char *tag, int on_device, int N, const F &f)
+{
+    if(N <= 0) {return;}
+    if(on_device) {Kokkos::parallel_for(tag, Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, N), f); Kokkos::fence(); gizmo_gpu_check_last_error(tag, N, -1);}
+    else {Kokkos::parallel_for(tag, Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>(0, N), f); Kokkos::DefaultHostExecutionSpace().fence();}
+}
+/* the same with a sum: the functor takes (i, T &partial) */
+template<typename T, typename F>
+inline T gizmo_stage_sum(const char *tag, int on_device, int N, const F &f)
+{
+    T total = 0;
+    if(N <= 0) {return total;}
+    if(on_device) {Kokkos::parallel_reduce(tag, Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, N), f, total); Kokkos::fence(); gizmo_gpu_check_last_error(tag, N, -1);}
+    else {Kokkos::parallel_reduce(tag, Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>(0, N), f, total);}
+    return total;
+}
+/* the same with a Kokkos reducer object (e.g. a compensated sum): the functor takes (i, value_type &partial) */
+template<typename R, typename F>
+inline void gizmo_stage_reduce(const char *tag, int on_device, int N, const F &f, const R &reducer)
+{
+    if(N <= 0) {return;}
+    if(on_device) {Kokkos::parallel_reduce(tag, Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, N), f, reducer); Kokkos::fence(); gizmo_gpu_check_last_error(tag, N, -1);}
+    else {Kokkos::parallel_reduce(tag, Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>(0, N), f, reducer);}
+}
+/* the indices i < N with pred(i), in increasing order, into out (room for N; device-visible when on_device): a Kokkos scan, so a
+ * host loop over out[] afterwards visits them in the order of a plain loop over i.  Returns their number. */
+template<typename F>
+inline int gizmo_stage_select(const char *tag, int on_device, int N, const F &pred, int *out)
+{
+    int total = 0;
+    if(N <= 0) {return total;}
+    const F p = pred;
+    auto scan = KOKKOS_LAMBDA(int i, int &offset, const bool final) {if(p(i)) {if(final) {out[offset] = i;} offset++;}};
+    if(on_device) {Kokkos::parallel_scan(tag, Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, N), scan, total); Kokkos::fence(); gizmo_gpu_check_last_error(tag, N, -1);}
+    else {Kokkos::parallel_scan(tag, Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>(0, N), scan, total);}
+    return total;
+}
+
 #endif /* GIZMO_GPU_DISPATCH_TEMPLATES_H */
