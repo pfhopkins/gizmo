@@ -18,6 +18,10 @@
 #error "MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS does not carry the pair state the spawned-wind, star-cluster and RIAF merge clauses need, nor ChimesGasVars"
 #endif
 
+#ifndef MERGE_SPLIT_MATCHING_ROUNDS
+#define MERGE_SPLIT_MATCHING_ROUNDS 16 /* cap on the matching rounds of one pass */
+#endif
+
 namespace msx {
 
 typedef std::remove_reference<decltype(P[0])>::type PartT;
@@ -90,7 +94,7 @@ template<class T> static std::vector<T> gather_all(const std::vector<T> &loc, st
 }
 
 /* this rank's answer to one query: nearest cell (split) or best merge candidate among this rank's cells */
-static Answer answer_query(const Query &q, int qindex, const std::vector<char> &is_split_query)
+static Answer answer_query(const Query &q, int qindex, const std::vector<char> &is_split_query, const std::vector<char> &used)
 {
     Answer a; memset(&a, 0, sizeof(Answer)); a.q = qindex; a.r2min = MAX_REAL_NUMBER; a.jtask = ThisTask; a.jindex = -1;
     int dummy = 0, startnode = All.MaxPart;
@@ -112,7 +116,7 @@ static Answer answer_query(const Query &q, int qindex, const std::vector<char> &
         nearest_xyz(dp, -1);
         if(dp.norm_sq() >= h2) {continue;} /* the search returns whole nodes: test the kernel here, as the rank-local loop does */
         if(!((P[j].Mass >= q.mass) && (q.mass + P[j].Mass < All.MaxMassForParticleSplit))) {continue;}
-        if(is_split_query[j]) {continue;} /* a cell that is split in this pass is no target */
+        if(is_split_query[j] || used[j]) {continue;} /* a cell that is split in this pass, or already took part in one of its merges, is no target */
 #ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
         if((q.type == 0) && (P[j].Type == 0))
         { /* merge_kinetic_dissipation_fraction with the proposer's values: it is the lighter cell (mass_j >= mass_i) */
@@ -134,8 +138,15 @@ static Answer answer_query(const Query &q, int qindex, const std::vector<char> &
 static int merge_and_find_splits(std::vector<double> &r_nearest_split)
 {
     r_nearest_split.assign(NumPart, 0.0);
+    std::vector<char> is_split_query(NumPart, 0), used(NumPart, 0), needs_merge(NumPart, 0); /* used: survivor of a merge of this pass: no target any more; if it needed a merge at the start of the pass it proposes again (as a target of the rank-local loop merges on) */
+    std::set<std::array<double,3>> claimed; /* landing points of this pass's merges, the same set on every rank */
+    int n_merged_pass = 0; long long n_queries_pass = 0; int rounds_done = 0; const double t_pass = MPI_Wtime();
+    /* several rounds of the same matching: cells that lost their target in one round, and survivors that needed a merge at the start of the pass, propose again
+       in the next, to a cell not yet in a merge of this pass. Ends when a round merges nothing anywhere, or at the cap. Splits are decided in the first round. */
+    for(int round = 0; round < MERGE_SPLIT_MATCHING_ROUNDS; round++)
+    {
     /* 1. queries */
-    std::vector<Query> ql; std::vector<char> is_split_query(NumPart, 0);
+    std::vector<Query> ql;
     for(int i = 0; i < NumPart; i++)
     {
         if(P[i].Mass <= 0) {continue;}
@@ -145,8 +156,8 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
         if(!((P[i].Type==0)&&(TimeBinActive[P[i].TimeBin]))) {continue;}
 #endif
         int kind = 0;
-        if(does_particle_need_to_be_merged(i)) {kind = 1;}
-        else if(does_particle_need_to_be_split(i)) {if((P[i].Type == 0) && !((CellP[i].Density > 0) && isfinite(CellP[i].Density))) {continue;} kind = 2; is_split_query[i] = 1;}
+        if((round == 0) ? does_particle_need_to_be_merged(i) : (int) needs_merge[i]) {kind = 1; needs_merge[i] = 1;} /* decided once, on the state at the start of the pass, as the rank-local loop does */
+        else if(round == 0 && does_particle_need_to_be_split(i)) {if((P[i].Type == 0) && !((CellP[i].Density > 0) && isfinite(CellP[i].Density))) {continue;} kind = 2; is_split_query[i] = 1;}
         if(!kind) {continue;}
         Query q; memset(&q, 0, sizeof(Query)); q.key = key_of(i); q.h = P[i].KernelRadius; q.mass = P[i].Mass; q.type = P[i].Type; q.kind = kind; q.task = ThisTask; q.index = i;
         for(int k = 0; k < 3; k++) {q.pos[k] = P[i].Pos[k]; q.vel[k] = P[i].Vel[k];}
@@ -154,12 +165,13 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
         ql.push_back(q);
     }
     std::vector<int> qfirst; std::vector<Query> qall = gather_all(ql, qfirst);
-    if(qall.empty()) {return 0;}
+    if(qall.empty()) {break;} /* the same on every rank */
     if(!force_tree_is_allocated()) {printf("MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS: no tree for the neighbour search (task %d)\n", ThisTask); endrun(97564);}
+    n_queries_pass += (long long) qall.size(); rounds_done++;
 
     /* 2. every rank answers every query; answers go to the query's owner */
     std::vector<std::vector<Answer>> aout(NTask);
-    for(int g = 0; g < (int) qall.size(); g++) {Answer a = answer_query(qall[g], g, is_split_query); if(a.found) {aout[qall[g].task].push_back(a);}}
+    for(int g = 0; g < (int) qall.size(); g++) {Answer a = answer_query(qall[g], g, is_split_query, used); if(a.found) {aout[qall[g].task].push_back(a);}}
     std::vector<Answer> ain = exchange(aout);
     std::vector<Answer> best(ql.size()); for(size_t l = 0; l < ql.size(); l++) {memset(&best[l], 0, sizeof(Answer)); best[l].r2min = MAX_REAL_NUMBER;}
     for(const Answer &a : ain)
@@ -262,7 +274,6 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
     std::sort(order.begin(), order.end(), [&](int a, int b) {return key_less(lall[a].key, lall[b].key);});
     std::vector<int> refused(nl, 0), refused_glob(nl, 0);
     {
-        std::set<std::array<double,3>> claimed;
         for(int o = 0; o < nl; o++)
         {
             const Landing &L = lall[order[o]]; if(L.type < 0) {refused[order[o]] = 1; continue;}
@@ -302,7 +313,7 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
 #endif
             did = (merge_particles_ij(slot, hd.jindex) == 1) ? 1 : 0;
             unplace(x);
-            if(did) {force_cover_position(hd.jindex); n_merged++;} /* the centre of mass may lie outside j's node boxes */
+            if(did) {force_cover_position(hd.jindex); n_merged++; used[hd.jindex] = 1;} /* the centre of mass may lie outside j's node boxes */
         }
         if(hd.itask != ThisTask) {Verdict v; v.iindex = hd.iindex; v.ok = did; dout[hd.itask].push_back(v);}
     }
@@ -322,7 +333,19 @@ static int merge_and_find_splits(std::vector<double> &r_nearest_split)
         P[i].Mass = 0; if(P[i].Type == 0) {CellP[i].Mass = P[i].Mass;}
         P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
     }
-    return n_merged;
+    n_merged_pass += n_merged;
+    int n_round_glob = 0; MPI_Allreduce(&n_merged, &n_round_glob, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(n_round_glob == 0) {break;} /* nothing merged anywhere in this round: the remaining proposals cannot be served in this pass */
+    } /* rounds */
+#if defined(TEST_WAKEUP_DUMP) || defined(MERGE_SPLIT_REPORT_PASS_COST)
+    { /* test output: size and cost of the pass */
+        long long loc = n_merged_pass, glob = 0; MPI_Allreduce(&loc, &glob, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && n_queries_pass > 0) {printf("TEST_MERGE_SPLIT_PASS step %lld rounds %d queries %lld merges %lld seconds %.6f\n", (long long) All.NumCurrentTiStep, rounds_done, n_queries_pass, glob, MPI_Wtime() - t_pass);}
+    }
+#else
+    (void) n_queries_pass; (void) rounds_done; (void) t_pass;
+#endif
+    return n_merged_pass;
 }
 
 } /* namespace msx */
