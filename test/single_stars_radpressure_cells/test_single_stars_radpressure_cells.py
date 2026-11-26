@@ -2,8 +2,8 @@
 cells, chemistry on, gravity on (the fluxes come from the gravity walk), 2 kyr.
   test_thin: n_H = 1, box optically thin: momentum per step = sum over cells of sum_b sigma_b L_b DGR N_H(cell) / (4 pi r^2 c),
     r floored at the softening (3 %), plus the IR term at the star.
-  test_thin_live_dust: GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL, gas without dust: the cells read the live dust, so no direct term
-    (below 1e-3 of the term from Z); the IR boost at the star stays from Z.
+  test_thin_live_dust: GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL, gas without dust: the cells and the star read the live dust, so neither the
+    direct term nor the IR boost at the star pushes (below 1e-3 of the IR boost from Z, itself far below the direct term from Z).
   test_thick: n_H = 1e4, photon cap active: momentum per step = L_emit / c + IR term (3 %). Disjoint bands and
     GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE (: LW and 6-8 eV counted twice in deposit and cap).
   test_snapshot_fields: OUTPUT_SGCHEM_RADIATION_FIELDS: G0_FUV = L(6-13.6 eV) / (4 pi c r^2) / Habing (3 %, median over cells beyond 3 softenings),
@@ -128,8 +128,8 @@ def test_thin_live_dust(tables):
     d, rows, tab, age, rho, L, star, dx = run(build("dust5", ("GALSF_ISMDUSTCHEM_MODEL=(1)", "GALSF_ISMDUSTCHEM_FIVE_ELEMENT_MODEL")), "thin_dust5", tables, 1.0)
     got, ir = np.median(per_time(rows)), ir_term(bands(tab, age), rho, False)
     z = np.median(per_time(run(build("disjoint"), "thin", tables, 1.0)[1]))
-    print(f"thin: dust from Z {z:.4g}, live dust zero {got:.4g} (IR term estimate {ir:.4g})")
-    assert got < 0.15 * z and 0.5 * ir < got < 2 * ir
+    print(f"thin: dust from Z {z:.4g}, live dust zero {got:.4g} (IR term from Z would be {ir:.4g})")
+    assert 0 < ir < z and got < 1e-3 * ir
 
 
 @pytest.mark.parametrize("tag,flags,twice", [("disjoint", (), False), ("twice", ("GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE",), True)])
