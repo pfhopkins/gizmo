@@ -722,10 +722,14 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         Z_now = P[j].Metallicity[0];
                         #pragma omp atomic read
                         Y_now = P[j].Metallicity[MET_OF(ELEM_He)];
-                        double X_H_new = 1.0 - Z_now - Y_now;
+                        double X_H_new = 1.0 - Z_now - Y_now, X_H_blend, M_book = Mass_j + dM;
+                        #pragma omp atomic read
+                        X_H_blend = P[j].Metallicity[MET_OF(ELEM_H)];
                         if(X_H_new >= 0) {
                             #pragma omp atomic write
                             P[j].Metallicity[MET_OF(ELEM_H)] = (MyFloat)X_H_new;
+                            #pragma omp atomic
+                            CumulElemToGas[MET_OF(ELEM_H)] += (X_H_new - X_H_blend) * M_book; /* the closure's change of H, booked (STL-393) */
                         } else {
                             /* metal-dominated pathological case (massive ejecta >> cell
                              * mass): the old X_H=0 clamp left ΣX = He+Σmetals > 1 (the
@@ -745,13 +749,24 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                                 double inv = 1.0 / snorm;
                                 for(mm = 1; mm < NUM_METAL_SPECIES; mm++) {
                                     if(mm == mH) continue;
+                                    double xb;
+                                    #pragma omp atomic read
+                                    xb = P[j].Metallicity[mm];
                                     #pragma omp atomic
                                     P[j].Metallicity[mm] *= inv;
+                                    #pragma omp atomic
+                                    CumulElemToGas[mm] += xb * (inv - 1) * M_book; /* the renormalisation, booked (STL-393) */
                                 }
                                 #pragma omp atomic
                                 P[j].Metallicity[0] *= inv;
+                                #pragma omp atomic
+                                CumulElemToGas[0] += Z_now * (inv - 1) * M_book;
+                                #pragma omp critical (metal_ledger_sum)
+                                CumulMetalYieldToGas += Z_now * (inv - 1) * M_book;
                                 #pragma omp atomic write
                                 P[j].Metallicity[mH] = 0;
+                                #pragma omp atomic
+                                CumulElemToGas[mH] -= X_H_blend * M_book;
                             }
                         }
                     }

@@ -40,6 +40,11 @@ void mbary_book_outflow(int i)
     }
 #endif
 }
+/* a particle's remaining mass removed by the code (the deposit residue of a fully disrupted star, STL-407): booked with the outflow, as gone */
+void mbary_book_removed(int i)
+{
+    mbary_book_outflow(i);
+}
 
 static long long mbary_ncalls = 0; /* checkpoints so far, same on all tasks (each is collective) */
 void mbary_step_checkpoint(const char *tag)
@@ -220,7 +225,7 @@ void mbary_step_checkpoint(const char *tag)
             if(f) {
                 if(ftell(f) == 0) {
                     fprintf(f, "### Per-checkpoint M_bary + M_Z delta trace for leak localization.\n");
-                    fprintf(f, "###  Logs only when |delta|/value > 1e-14 for M_bary, M_Z, M_dust or M_Z_ledger (or first call). M_bary and M_Z_ledger include what left through an outflow boundary.\n");
+                    fprintf(f, "###  Logs only when |delta|/value > 1e-14 for M_bary, M_Z, M_dust or M_Z_ledger (or first call). M_bary and M_Z_ledger include what left through an outflow boundary or was removed (disrupted-star residue).\n");
                     fprintf(f, "###  M_Z = gas only.  M_Z_ledger = M_Z + M_Z_star + M_Z_inflight - M_Z_netyield: total metals, conserved to roundoff.\n");
 #ifdef GALSF_RESOLVEDISM_DUST
                     fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) M_bary[code]  (5) deltaM_bary[code]  (6) M_Z[code]  (7) deltaM_Z[code]  (8) M_dust[code]  (9) deltaM_dust[code]");

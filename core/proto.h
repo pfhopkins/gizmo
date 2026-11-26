@@ -1001,6 +1001,7 @@ int get_index(double search);
  * to mass_balance_steps.txt; bracket suspect operations with MBARY_STEP("tag"). */
 void mbary_step_checkpoint(const char *tag);
 void mbary_book_outflow(int i); /* mass and composition of particle i leaving through an outflow boundary */
+void mbary_book_removed(int i); /* mass and composition of particle i removed by the code (disrupted-star residue), booked as gone */
 #define MBARY_STEP(tag) mbary_step_checkpoint(tag)
 
 /* Energy step trace (core/energy_step_trace.cc): rank-local stage brackets, booked sources/sinks, one reduce per window */

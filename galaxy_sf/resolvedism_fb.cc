@@ -766,6 +766,7 @@ static void resolvedism_zero_disrupted_star(int i, double M_pre_solar, const cha
 {
     double resid = P[i].Mass * UNIT_MASS_IN_SOLAR;
     if(fabs(resid) > 1.0e-10 * M_pre_solar) {printf("RESOLVEDISM FB WARNING: %s ID=%llu kept %g of %g Msun after full disruption\n", what, (unsigned long long)P[i].ID, resid, M_pre_solar); fflush(stdout);}
+    mbary_book_removed(i); /* the residue leaves the box: booked in the mass and element traces (STL-407) */
     P[i].Mass = 0; TreeMomentsStaleFlag = 1;
 }
 
