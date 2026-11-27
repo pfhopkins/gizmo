@@ -39,6 +39,9 @@ def birth_run(case, arm):
         X = f["PartType0/Metallicity"][:]
         dX = X[:, SLOT_FE].copy(); X[:, SLOT_FE] += dX; X[:, SLOT_O] -= dX
         f["PartType0/Metallicity"][...] = X
+        E = f["PartType0/ElementAbundance"][:]  # read after Metallicity and written over it: edited the same way
+        E[:, SLOT_FE - 1] += dX; E[:, SLOT_O - 1] -= dX
+        f["PartType0/ElementAbundance"][...] = E
         X0_Fe = float(X[0, SLOT_FE]); Z0 = float(X[0, 0])
         fe_start = float((f["PartType0/Masses"][:] * X[:, SLOT_FE]).sum())
     T = Tables()

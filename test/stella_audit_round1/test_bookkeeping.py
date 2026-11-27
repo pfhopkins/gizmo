@@ -29,6 +29,7 @@ def test_h_closure_booked():
         X = f["PartType0/Metallicity"][:]
         X[:, 0] += 1.0e-6
         f["PartType0/Metallicity"][...] = X
+        del f["PartType0/ElementAbundance"]  # read after Metallicity, it would rebuild slot 0 from the element slots and erase the offset
     out = run(name, exe, {"InitCondFile": "hclose_000", "TestStarMass": 20.0, "TestNumStars": 1, "TestSNTime0": 1.0e-6, "TimeMax": 2.0e-6,
                           "TimeBetSnapshot": 2.0e-6}, nranks=2, restart_flag=2)[2]
     rep = keep_and_check_traces(out, out)

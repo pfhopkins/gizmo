@@ -34,7 +34,7 @@ def check(arm):
     with h5py.File(snap, "r") as f:
         t_snap = float(f["Header"].attrs["Time"])
         stored = float(f["PartType4/LastWindLogAge"][0]) if "PartType4/LastWindLogAge" in f else None
-    winds_a = [w for w in kv(text_a, "WINDAGES") if float(w["t"]) <= t_snap]
+    winds_a = [w for w in kv(text_a, "WINDAGES") if float(w["t"]) < t_snap]  # the snapshot at t_snap is written before that step's wind
     assert winds_a, "run A had no wind before the snapshot"
     ref = float(winds_a[-1]["log_age_now"])
     shutil.copy(snap, join(db, "lwa_000.hdf5"))

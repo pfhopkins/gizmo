@@ -1,9 +1,12 @@
 """Guards of audit round 1: STL-417, 423, 427, 432, 446 (431b: build only, see the README).
 
 Compile-time (a translation unit that includes allvars.h, compiled with the build's own flags on a scratch copy of the tree):
-- STL-423: GALSF_RESOLVEDISM_BH_PROMOTION defines SINK_PARTICLES before the checks that read it: with the promotion the tree
-  rule must define MAINTAIN_TREE_IN_REARRANGE (the unit compiles), and STARS_HERMITE_DIRECT_GRAVITY must hit its
-  "not combinable with sinks" #error. Before: the unit's own #error fires, Hermite compiles.
+- STL-423: GALSF_RESOLVEDISM_BH_PROMOTION defines SINK_PARTICLES and SINK_GRAVCAPTURE_GAS at top level, before the checks that
+  read them: the unit sees both defined (it compiles), and STARS_HERMITE_DIRECT_GRAVITY must hit its "not combinable with
+  sinks" #error. Before: the unit compiles (the old block defined them at the end), Hermite compiles.
+  (The first version required MAINTAIN_TREE_IN_REARRANGE; that rule sits inside SINGLE_STAR_SINK_DYNAMICS and never applies
+  to a Stella build, so the case was wrong. It is replaced by the sinks-defined case, which catches the block landing inside
+  a conditional region, as it did in the first fix, inside FIRE_PHYSICS_DEFAULTS.)
 - STL-427: KETJU_REGULARIZATION + KETJU_PN_REMNANT_TAG without a merge flag, and BH promotion without KETJU_MERGE_BH, stop
   at the preprocessor with an STL-427 message. Before: no such message.
 Runtime (one start each, stopped at the first sync point):
@@ -26,15 +29,15 @@ import pytest
 from audit_round1_common import REPO, TEST_DIR, binary, config_text, make_box, run
 
 TU = """#include "declarations/allvars.h"
-#ifdef GUARD_EXPECT_TREE_RULE
-#ifndef MAINTAIN_TREE_IN_REARRANGE
-#error "GUARD-UNIT: SINK_PARTICLES from GALSF_RESOLVEDISM_BH_PROMOTION did not reach the tree rule"
+#ifdef GUARD_EXPECT_SINKS
+#if !defined(SINK_PARTICLES) || !defined(SINK_GRAVCAPTURE_GAS)
+#error "GUARD-UNIT: GALSF_RESOLVEDISM_BH_PROMOTION did not define SINK_PARTICLES and SINK_GRAVCAPTURE_GAS"
 #endif
 #endif
 int main() {return 0;}
 """
 COMPILE_CASES = {  # name: (added flags, unit define, message that must appear (None: must compile))
-    "stl423_tree_rule": (("GALSF_RESOLVEDISM_BH_PROMOTION",), "GUARD_EXPECT_TREE_RULE", None),
+    "stl423_sinks_defined": (("GALSF_RESOLVEDISM_BH_PROMOTION",), "GUARD_EXPECT_SINKS", None),
     "stl423_hermite": (("GALSF_RESOLVEDISM_BH_PROMOTION", "STARS_HERMITE_DIRECT_GRAVITY"), None, "not combinable with sinks"),
     "stl427_pn_tag": (("KETJU_REGULARIZATION", "KETJU_PN_REMNANT_TAG"), None, "STL-427"),
     "stl427_bh_promotion": (("KETJU_REGULARIZATION", "KETJU_MERGE_STARS", "GALSF_RESOLVEDISM_BH_PROMOTION"), None, "needs KETJU_MERGE_BH"),
@@ -78,7 +81,7 @@ def guard_run(kind, base, params_base, params, ic_kw, name, expect):
     """One start; expect: an endrun message (the run must stop with it) or None (the run must reach TimeMax)."""
     exe = binary(kind, base=base)
     d = join(TEST_DIR, "run_" + name); os.makedirs(d, exist_ok=True)
-    make_box(join(d, "guard_ics.hdf5"), **ic_kw)
+    make_box(join(d, "guard_ics.hdf5"), double=False, **ic_kw)  # cloud and tall-box builds read single-precision ICs
     rc, text, out = run(name, exe, {"InitCondFile": "guard_ics", **params}, nranks=2, base=params_base, expect_ok=False)
     stopped = rc != 0 and "Simulation ends." not in text
     print(f"{name}: exit {rc}, reached TimeMax {'Simulation ends.' in text}; guard message {expect!r} present: {expect in text if expect else '-'}")

@@ -34,7 +34,7 @@ def check(arm):
     exe = binary("cr_" + arm, base="Config_stella_cloud.sh", drop=CR_DROP, add=CR_ADD + (("GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE",) if arm == "on" else ()))
     name = "cr_" + arm
     d = join(TEST_DIR, "run_" + name); os.makedirs(d, exist_ok=True)
-    make_box(join(d, "box_ics.hdf5"), n_H=100.0, box_pc=20.0, T=10.0, tracabund=(0.4999, 1e-4, 1.4446454e-4))
+    make_box(join(d, "box_ics.hdf5"), n_H=100.0, box_pc=20.0, T=10.0, tracabund=(0.4999, 1e-4, 1.4446454e-4), double=False)  # the cloud build reads single precision
     text, out = run(name, exe, PARAMS, nranks=16, base=join(REPO, "stella_cloud.params"))[1:]
     sn = [l for l in text.splitlines() if l.startswith("RESOLVEDISM SN:")]
     det = kv(text, "FBTL_DET")
