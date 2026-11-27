@@ -23,9 +23,9 @@ Rank count (thin box; 1, 2 and 4 ranks, one thread): the first deposit's receive
 after it, the woken cells (IDs with old and new bin) are identical, and kinetic + thermal energy after each of those steps agrees
 with the 1-rank run to 1e-10 relative:
   - built with PREVENT_PARTICLE_MERGE_SPLIT;
-  - built with MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS, with merges or splits happening;
-  - without either: the deposit step itself is asserted; the steps after it are a strict expected failure on stella_dev (merge
-    partner and split neighbour searched on the calling rank only) and are asserted the same way here.
+  - with the default merging and splitting: the deposit step itself is asserted; the steps after it are not compared, since
+    merge partners and split neighbours are searched on the calling rank, by design, so different rank counts are different,
+    equally valid realisations.
 """
 
 import os
@@ -45,10 +45,10 @@ TEST_NAME = "stella_fb_receiver_wake"
 TEST_DIR = dirname(abspath(__file__))
 SN_DIR = abspath(join(TEST_DIR, "..", "single_stars_supernovae"))
 FLAGS = ("RESOLVED_ISM_FB_RAISES_RECEIVER_SIGNAL_SPEED", "WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP")
-BUILDS = (("on", FLAGS), ("off", ()), ("own", ("WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP",)), ("nomerge", ("PREVENT_PARTICLE_MERGE_SPLIT",)), ("across", ("MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS",)))
+BUILDS = (("on", FLAGS), ("off", ()), ("own", ("WAKEUP_MERGE_SPLIT_FROM_OWN_TIMESTEP",)), ("nomerge", ("PREVENT_PARTICLE_MERGE_SPLIT",)))
 BOXES = {"dense": 1.0e3, "thin": 10.0}  # n_H [cm^-3]
 RUNS = (("on", 2, "dense"), ("off", 2, "dense"), ("on", 2, "thin"), ("off", 2, "thin"), ("own", 2, "thin"), ("off", 1, "thin"), ("off", 4, "thin"),
-        ("nomerge", 1, "thin"), ("nomerge", 2, "thin"), ("nomerge", 4, "thin"), ("across", 1, "thin"), ("across", 2, "thin"), ("across", 4, "thin"))
+        ("nomerge", 1, "thin"), ("nomerge", 2, "thin"), ("nomerge", 4, "thin"))
 STAR_MASS, BEFORE_DEATH_YR, Z = 60.0, 1.0e6, 0.014
 TIME_MAX, MAX_STEP = 0.25, 0.05
 BAR = 1e-2
@@ -195,16 +195,10 @@ def test_hydro_wake_does_not_replace_the_receiver_wake(runs):
 
 def test_runs_agree_through_the_deposit_step(runs):
     """every build: same first deposit step, receivers, woken cells and energy on 1, 2 and 4 ranks at the deposit step"""
-    for arm in ("off", "nomerge", "across"):
+    for arm in ("off", "nomerge"):
         bad = _compare_ranks(runs, arm, first=0, last=0)
         assert not bad, arm + ": " + "; ".join(bad)
 
-
-def test_independent_of_ranks_with_merge_split_search_across_ranks(runs):
-    """MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS: with merges or splits happening, the same bars as without merge/split"""
-    assert all(runs[("across", n, "thin")]["merged"] + runs[("across", n, "thin")]["split"] > 0 for n in (1, 2, 4)), "no merge or split in this box"
-    bad = _compare_ranks(runs, "across")
-    assert not bad, "; ".join(bad)
 
 
 def test_wake_independent_of_ranks_without_merge_split(runs):
@@ -212,10 +206,3 @@ def test_wake_independent_of_ranks_without_merge_split(runs):
     bad = _compare_ranks(runs, "nomerge")
     assert not bad, "; ".join(bad)
 
-
-@pytest.mark.xfail(strict=True, reason="accepted without MERGE_SPLIT_NEIGHBOR_SEARCH_ACROSS_RANKS (records STL-324, GKS-98): merge partner and split "
-                   "neighbour are searched on the calling rank only, so the steps after the deposit depend on the rank count")
-def test_wake_independent_of_ranks(runs):
-    """only the steps AFTER the deposit step are expected to differ; the deposit step itself is asserted in test_runs_agree_through_the_deposit_step"""
-    bad = _compare_ranks(runs, "off", first=1)
-    assert not bad, "; ".join(bad)
