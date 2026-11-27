@@ -519,6 +519,18 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                             double dF = (dMZ_c - F_old * (dM + c_ia)) / Mnew_j;
                             #pragma omp atomic
                             CellP[j].MetalMassFrom[c] += dF;
+                            #pragma omp atomic
+                            CumulOriginToGas[c] += dMZ_c - F_old * c_ia; /* origin ledger: the deposit, less the labelled metals of the gas converted to Ia composition */
+                        }
+                        for(int c = 0; c < 4; c++) { /* a label the conversion's round-off left below zero: to zero, booked (as the element slots, STL-329) */
+                            double F_neg;
+                            #pragma omp atomic read
+                            F_neg = CellP[j].MetalMassFrom[c];
+                            if(F_neg >= 0) {continue;}
+                            #pragma omp atomic
+                            CellP[j].MetalMassFrom[c] -= F_neg;
+                            #pragma omp atomic
+                            CumulOriginToGas[c] -= F_neg * Mnew_j;
                         }
                     }
 #endif

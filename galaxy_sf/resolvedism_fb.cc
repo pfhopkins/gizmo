@@ -110,6 +110,7 @@ long double CumulMetalYieldToGas = 0, CumulMetalEjectedFromStars = 0; /* metal l
 #if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
 double CumulElemToGas[NUM_METAL_SPECIES], CumulElemFromStars[NUM_METAL_SPECIES]; /* element ledger on this rank, per Metallicity slot [code mass] */
 #endif
+long double CumulOriginToGas[4], CumulOriginFromGas[4]; /* metal-origin ledger on this rank, per channel: labelled metal mass booked into the gas, and taken out of it (stars, outflow) [code mass] */
 #ifdef GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION
 double CumulEjectaBirthClip = 0; /* ejecta mass clipped by the birth-composition swap on this rank [Msun] */
 static void resolvedism_book_birth_clip(int i, int channel, double clip)

@@ -646,6 +646,11 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
 #endif
 #endif
                             IMF_Grants.push_back(g);
+#ifdef GALSF_RESOLVEDISM_FB
+                            for(int c_ = 0; c_ < 4; c_++) {
+                                #pragma omp atomic
+                                CumulOriginFromGas[c_] += dM * CellP[j].MetalMassFrom[c_];} /* origin ledger: labelled metals leave the gas with the mass (stars carry no labels) */
+#endif
                             P[j].Mass -= dM;
                             CellP[j].Mass -= dM;
                             CellP[j].IMFSpawnBlock = 1; /* donors cool down like the spawning cell (sfr_eff.cc) */
@@ -729,6 +734,9 @@ static void imf_undo_failed_draws(std::vector<imf_star_key> &failed_mine)
         ESTEP_BOOK(EBK_IMF_MAG_LOCKED, -estep_cell_mag_energy(j)); /* undo returns what the grant took (booked at removal) */
         ESTEP_BOOK(EBK_IMF_TH_LOCKED, g.dM * CellP[j].InternalEnergy); ESTEP_BOOK(EBK_IMF_KIN, 0.5 * g.dM * P[j].Vel.norm_sq() * All.cf_a2inv);
         P[j].Mass += g.dM; CellP[j].Mass += g.dM;
+#ifdef GALSF_RESOLVEDISM_FB
+        for(int c_ = 0; c_ < 4; c_++) {CumulOriginFromGas[c_] -= g.dM * CellP[j].MetalMassFrom[c_];} /* origin ledger: the returned mass takes the cell's labels */
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         CellP[j].MassTrue += g.dM;
 #endif

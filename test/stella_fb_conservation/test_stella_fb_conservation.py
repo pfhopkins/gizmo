@@ -51,7 +51,7 @@ from gizmo.conservation_trace import keep_and_check_traces
 TEST_NAME = "stella_fb_conservation"
 TEST_DIR = dirname(abspath(__file__))
 REPO = abspath(join(TEST_DIR, "..", ".."))
-EXTRA_FLAGS = ("BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "GALSF_RESOLVEDISM_ISOLATED_FB_TEST", "OUTPUT_ENERGY_STEP_TRACE",
+EXTRA_FLAGS = ("TEST_RESTART_AT_STEP", "BOX_PERIODIC", "GRAVITY_NOT_PERIODIC", "GALSF_RESOLVEDISM_ISOLATED_FB_TEST", "OUTPUT_ENERGY_STEP_TRACE",
                "TEST_PRINT_DIFFUSION_H_CLOSURE")
 # cross-timebin pair fluxes exchanged exactly, so the traces test the feedback itself (Uli 2026-11-21, B1 option a)
 PAIR_FLUX_FLAGS = ("HYDRO_EXACT_PAIR_FLUX_EXCHANGE", "HYDRO_TIMESTEP_FROM_PAIR_FORCE")
@@ -400,6 +400,142 @@ def test_ia_conversion_leaves_no_negative_fraction(clamp_run):
     traces_ok(out)
 
 
+def origin_check(out, channels, text=None):
+    """STL-336 metal-origin ledger (mass_balance_origin.txt): per channel the labelled metal mass in the gas, less what was booked
+    into it, plus what left it, changes by at most BAR of its scale per checkpoint; no cell holds more labelled metal than metal
+    or a label below zero. channels: those that must hold mass at the end (final snapshot, MetalOrigin)."""
+    path = join(out, "mass_balance_origin.txt")
+    assert os.path.isfile(path), "no mass_balance_origin.txt"
+    rows = [l.split() for l in open(path) if l.strip() and not l.startswith("#")]
+    assert rows
+    worst = max(max(abs(float(x)) for x in r[5:9]) for r in rows)
+    n_above = max(float(r[13]) for r in rows); n_neg = max(float(r[14]) for r in rows)
+    snaps = sorted(f for f in os.listdir(out) if f.startswith("snapshot_") and f.endswith(".hdf5"))
+    with h5py.File(join(out, snaps[-1]), "r") as f:
+        p = f["PartType0"]
+        assert "MetalOrigin" in p, "the snapshot carries no MetalOrigin block"
+        mo = (p["Masses"][:][:, None] * p["MetalOrigin"][:]).sum(axis=0)
+    print(f"metal origin: {len(rows)} logged checkpoints, worst |dL|/S {worst:.3e}, cells with labels above Z {n_above:.0f}, with a label below zero "
+          f"{n_neg:.0f}; final gas mass by channel SN {mo[0]:.3e} AGB {mo[1]:.3e} wind {mo[2]:.3e} Ia {mo[3]:.3e}")
+    for c in channels:
+        assert mo[c] > 0, f"channel {c} holds no labelled metal: the run does not test it"
+    if text is not None:
+        assert "metal-origin labels at zero" not in text, "the diffusion apply floored a label (the pair bound should exclude it)"
+    if text is not None:  # the labels must move with the diffusing metals: Ia labels in cells no thermal deposit ever reached
+        recv = set(int(x) for x in re.findall(r"FBDBG_TH_RECV cell=(\d+)", text))
+        with h5py.File(join(out, snaps[-1]), "r") as f:
+            ids = f["PartType0/ParticleIDs"][:]; ia = f["PartType0/MetalOrigin"][:][:, 3]
+        moved = sum(1 for i, x in zip(ids, ia) if x > 0 and int(i) not in recv)
+        print(f"metal origin: {len(recv)} cells received a thermal deposit, {int((ia > 0).sum())} cells hold Ia labels, {moved} of them never received a deposit")
+        assert recv and moved > 0, "no Ia label outside the deposit's receivers: the labels did not diffuse"
+    assert worst <= BAR
+    assert n_above == 0, "cells hold more labelled metal than metal"
+    assert n_neg == 0, "cells hold a label below zero"
+
+
+def test_metal_origin_clamp_box(clamp_run):
+    """STL-336: AGB and Ia labels through deposit, whole-cell Ia conversion and metal diffusion at individual timesteps."""
+    text, out = clamp_run
+    origin_check(out, channels=(1, 3), text=text)
+
+
+def origin_rows(out):
+    return [l.split() for l in open(join(out, "mass_balance_origin.txt")) if l.strip() and not l.startswith("#")]
+
+
+def labels_by_cell(snapshot):
+    """Cells of a snapshot sorted by (ID, child number): labelled metal mass per cell and channel, total metal mass per cell."""
+    with h5py.File(snapshot, "r") as f:
+        p = f["PartType0"]; o = np.lexsort((p["ParticleChildIDsNumber"][:], p["ParticleIDs"][:]))
+        m = p["Masses"][:][o].astype(np.float64)
+        return m[:, None] * p["MetalOrigin"][:][o], m * p["Metallicity"][:][o][:, 0]
+
+
+def cell_keys(snapshot):
+    with h5py.File(snapshot, "r") as f:
+        p = f["PartType0"]; return sorted(zip(p["ParticleIDs"][:].tolist(), p["ParticleChildIDsNumber"][:].tolist()))
+
+
+def test_metal_origin_restart_files(build, clamp_run):
+    """STL-336, restart layout: the clamp box stopped after the Ia (restart files written at a step with t >= 4.2e-6, labels and
+    ledger sums non-zero) and continued from the restart files to the same TimeMax. Bars, fixed before the run: in the continued
+    run the ledger L of every channel (0 for a run begun without labels) is within BAR of its scale at the first checkpoint and
+    changes by at most BAR per checkpoint; no cell above Z, no label below zero; against the uninterrupted run the final labelled
+    mass per channel agrees to 1e-6 and per cell to 1e-5 of the largest cell value (single-precision snapshots; a restart rebuilds
+    the domain and tree, so not bitwise), and it is printed whether the label block is bitwise equal. Not covered: the restore of
+    the taken-out sums (no labelled gas leaves this box before the stop step)."""
+    text0, out0 = clamp_run
+    sync = re.findall(r"Sync-Point (\d+), Time: ([0-9.e+-]+)", text0)
+    stop = min(int(n) for n, t in sync if float(t) >= 4.2e-6)
+    d = join(TEST_DIR, "run_ia_clamp_restart"); out = join(d, "output")
+    shutil.rmtree(d, ignore_errors=True); os.makedirs(out)
+    os.symlink(REPO, join(d, "gizmo"))
+    shutil.copy(join(TEST_DIR, "run_ia_clamp", "box_ics.hdf5"), d); shutil.copy(join(TEST_DIR, "run_ia_clamp", "run.params"), d)
+    with open(join(d, "first.log"), "w") as log:
+        r = run_killable(mpi_launch_command(2) + [build, "run.params", "0"], RUN_TIMEOUT, stdout=log, stderr=subprocess.STDOUT, cwd=d,
+                         env=dict(os.environ, GIZMO_TEST_RESTART_AT_STEP=str(stop)))
+    first = open(join(d, "first.log")).read()
+    assert r.returncode == 0 and "Simulation ends." not in first, "the first part did not stop at the restart step"
+    assert os.path.isdir(join(out, "restartfiles"))
+    n_first = len(origin_rows(out))
+    with open(join(d, "run.log"), "w") as log:
+        r = run_killable(mpi_launch_command(2) + [build, "run.params", "1"], RUN_TIMEOUT, stdout=log, stderr=subprocess.STDOUT, cwd=d)
+    text = open(join(d, "run.log")).read()
+    assert r.returncode == 0 and "Simulation ends." in text, "the continued run did not reach TimeMax: " + text[-1500:]
+    rows = origin_rows(out)[n_first:]
+    assert rows, "the continued run logged no origin checkpoint"
+    gas = np.array([float(x) for x in rows[0][9:13]]); L = np.array([float(x) for x in rows[0][16:20]])
+    assert gas[1] > 0 and gas[3] > 0, "the restart files carried no AGB / Ia labels: stop step too early"
+    rel_L = max(abs(L[c]) / gas[c] for c in (1, 3))
+    worst = max(max(abs(float(x)) for x in r_[5:9]) for r_ in rows)
+    n_above = max(float(r_[13]) for r_ in rows); n_neg = max(float(r_[14]) for r_ in rows)
+    A, zA = labels_by_cell(join(out0, sorted(f for f in os.listdir(out0) if f.startswith("snapshot_"))[-1]))
+    B, zB = labels_by_cell(join(out, sorted(f for f in os.listdir(out) if f.startswith("snapshot_"))[-1]))
+    assert cell_keys(join(out0, sorted(f for f in os.listdir(out0) if f.startswith("snapshot_"))[-1])) == \
+        cell_keys(join(out, sorted(f for f in os.listdir(out) if f.startswith("snapshot_"))[-1])), "the two runs end with different cells"
+    tot =max(abs(A[:, c].sum() - B[:, c].sum()) / A[:, c].sum() for c in (1, 3))
+    cell = max(np.abs(A[:, c] - B[:, c]).max() / A[:, c].max() for c in (1, 3))
+    print(f"origin ledger over a restart at step {stop}: |L|/gas at the first checkpoint {rel_L:.3e}, worst |dL|/S after it {worst:.3e}, cells above Z "
+          f"{n_above:.0f}, labels below zero {n_neg:.0f}; against the uninterrupted run: labelled mass per channel {tot:.3e}, per cell {cell:.3e} of the "
+          f"largest, label block bitwise equal: {bool(np.array_equal(A, B))}, metal mass per cell bitwise equal: {bool(np.array_equal(zA, zB))}")
+    assert rel_L <= BAR and worst <= BAR and n_above == 0 and n_neg == 0
+    assert tot <= 1e-6 and cell <= 1e-5
+
+
+def test_metal_origin_start_from_snapshot(build, clamp_run):
+    """STL-336: the clamp box's final snapshot as the start of a run without stars (diffusion only). Bars, fixed before the run: the
+    labelled gas mass per channel at the first checkpoint equals the snapshot's to 1e-6 (single precision), the ledger changes by at
+    most BAR per checkpoint while the labels diffuse, no label below zero. Cells above Z are printed, not asserted: labels and Z
+    are rounded separately in a single-precision snapshot."""
+    text0, out0 = clamp_run
+    d = join(TEST_DIR, "run_origin_snap"); out = join(d, "output")
+    shutil.rmtree(d, ignore_errors=True); os.makedirs(out)
+    snap = join(out0, sorted(f for f in os.listdir(out0) if f.startswith("snapshot_"))[-1])
+    shutil.copy(snap, join(d, "origin_snap_000.hdf5"))
+    A, _ = labels_by_cell(snap)
+    text, out = run_case("origin_snap", build, {"InitCondFile": "origin_snap_000", "TestNumStars": 0, "TestStarMass": 0, "TestStarMass2": 0, "TestStarMass3": 0,
+                                                "TestIaTime": 0, "TimeMax": 5.5e-6, **zpar(np.log10(ZSUN))}, restart_flag=2)
+    rows = origin_rows(out)
+    gas = np.array([float(x) for x in rows[0][9:13]])
+    read = max(abs(gas[c] - A[:, c].sum()) / A[:, c].sum() for c in (1, 3))
+    worst = max(max(abs(float(x)) for x in r_[5:9]) for r_ in rows)
+    n_above = max(float(r_[13]) for r_ in rows); n_neg = max(float(r_[14]) for r_ in rows)
+    B, _ = labels_by_cell(join(out, sorted(f for f in os.listdir(out) if f.startswith("snapshot_"))[-1]))
+    evals = sum(r_["evals"] for r_ in kv_lines(text, "DIFFSLOT"))
+    assert cell_keys(snap) == cell_keys(join(out, sorted(f for f in os.listdir(out) if f.startswith("snapshot_"))[-1])), \
+        "cells merged or split in the continued run: the per-cell comparison of the labels needs the same cells"
+    moved = np.abs(A[:, 3] - B[:, 3]).max() / A[:, 3].max()
+    kept = abs(A[:, 3].sum() - B[:, 3].sum()) / A[:, 3].sum()
+    print(f"origin labels from a snapshot: labelled mass read back to {read:.3e}, worst |dL|/S {worst:.3e} over {len(rows)} logged checkpoints, "
+          f"labels below zero {n_neg:.0f}, cells above Z {n_above:.0f} (single precision), {evals:.0f} pair exchange evaluations, largest change of "
+          f"a cell's Ia label {moved:.3e} of the largest, Ia labelled mass start to end {kept:.3e}")
+    assert "metal-origin labels at zero" not in text
+    assert read <= 1e-6 and worst <= BAR and n_neg == 0
+    assert evals > 0, "no pair exchange in the continued run"
+    assert not (moved == 0), "the labels did not change although the metals diffused"
+    assert kept <= 1e-6
+
+
 def test_diffusion_slots_clamp_box(clamp_run):
     """STL-277: cells converted whole to Ia composition (H ~ 0) next to H-rich gas: no floor fires and every cell's slots close."""
     diffusion_check(clamp_run[0])
@@ -426,6 +562,7 @@ def test_clamp_box_equal_timesteps(build_equal_timesteps):
     text, out = clamp_box_run(build_equal_timesteps, "ia_clamp_equal_dt")
     assert ia_conversion_check(text) > 0, "the clamp did not fire"
     diffusion_check(text)
+    origin_check(out, channels=(1, 3), text=text)  # STL-336
     traces_ok(out)
 
 

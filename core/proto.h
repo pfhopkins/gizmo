@@ -988,6 +988,7 @@ extern long double CumulMetalYieldToGas, CumulMetalEjectedFromStars; /* metal le
 #if defined(METALS) && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
 extern double CumulElemToGas[NUM_METAL_SPECIES], CumulElemFromStars[NUM_METAL_SPECIES]; /* element ledger on this rank, per Metallicity slot: deposited, removed from stars [code mass] */
 #endif
+extern long double CumulOriginToGas[4], CumulOriginFromGas[4]; /* metal-origin ledger on this rank, per channel [code mass]; long double as the metal ledger: many small terms */
 extern int CumulSNe, CumulAGB, CumulIa; /* cumulative event counts */
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)

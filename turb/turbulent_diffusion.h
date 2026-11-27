@@ -165,6 +165,22 @@
                 #pragma omp atomic
                 CellP[j].Dyield[kk] -= a;
             }
+#ifdef GALSF_RESOLVEDISM_FB
+            { /* metal-origin labels move with the total-Z exchange, in the giving cell's proportions F_c / Z: each label's debit is then
+                 within the same bound as slot 0, and a cell never holds more labelled metal than metal (STL-336) */
+                double a0 = td_share * td_s * td_amt[0];
+                double z_d = (a0 > 0) ? P[j].Metallicity[0] : local.Metallicity[0];
+                if(a0 != 0 && z_d > 0) {
+                    for(kk = 0; kk < 4; kk++) {
+                        double t_c = a0 * ((a0 > 0) ? CellP[j].MetalMassFrom[kk] : local.MetalMassFrom[kk]) / z_d;
+                        if(t_c == 0) {continue;}
+                        out.DMetalFrom[kk] += t_c;
+                        #pragma omp atomic
+                        CellP[j].DMetalFrom[kk] -= t_c;
+                    }
+                }
+            }
+#endif
             #pragma omp atomic write
             CellP[j].TD_Touched = 1;
 #ifdef OUTPUT_TURB_DIFF_METALS_BUDGET
