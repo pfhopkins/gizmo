@@ -12,7 +12,7 @@ solver change is behind a flag, default off; each test runs with the flag off (s
 | test_merge_mhd_ledger.py (case in ../merge_split_conservation/merge_split_driver.cc) | STL-428 | none (energy-trace ledger) |
 | test_snapshot_last_wind_age.py | STL-36, 431a | GALSF_RESOLVEDISM_SNAPSHOT_KEEPS_LAST_WIND_AGE |
 | test_guards.py | STL-417, 423, 427, 432, 446 | none (guards) |
-| test_bookkeeping.py | STL-393 | none (element ledger booking) |
+| test_bookkeeping.py | STL-393 | none (element ledger booking; regression check only, see its docstring) |
 | test_cr_full_share.py | STL-356 | GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE |
 
 STL-431b (KETJU_PN_REMNANT_TAG: a snapshot restart with a Stella remnant stops, since snapshots do not restore its tag) is
