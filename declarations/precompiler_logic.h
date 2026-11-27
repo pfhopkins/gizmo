@@ -189,6 +189,16 @@
 #error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL sets the SF criteria itself (FIRE-3 would silently override GALSF_SFR_CRITERION): remove it from Config.sh"
 #endif
 
+/* ---- Stellar-mass BH promotion: auto-enable sink framework at top level, before any check reads SINK_PARTICLES (STL-423) ---- */
+#if defined(GALSF_RESOLVEDISM_BH_PROMOTION)
+#ifndef SINK_PARTICLES
+#define SINK_PARTICLES
+#endif
+#ifndef SINK_GRAVCAPTURE_GAS
+#define SINK_GRAVCAPTURE_GAS
+#endif
+#endif
+
 /* set 'default' options for FIRE module packages as a whole */
 #ifdef FIRE_PHYSICS_DEFAULTS
 
@@ -289,16 +299,6 @@
 #endif // closes which diffusion model[s] to enable
 #endif // COSMIC_RAY_FLUID
 #endif // FIRE_CRS
-
-/* ---- Stellar-mass BH promotion: auto-enable sink framework before any check reads SINK_PARTICLES (STL-423) ---- */
-#if defined(GALSF_RESOLVEDISM_BH_PROMOTION)
-#ifndef SINK_PARTICLES
-#define SINK_PARTICLES
-#endif
-#ifndef SINK_GRAVCAPTURE_GAS
-#define SINK_GRAVCAPTURE_GAS
-#endif
-#endif
 
 #if defined(FIRE_BHS)
 #define SINK_PARTICLES                 /* top-level flag */
