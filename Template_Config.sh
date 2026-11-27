@@ -264,6 +264,11 @@
 #GALSF_RESOLVEDISM_G0_VARIABLE  # per-star UV luminosity tracked in tree walk for spatially-varying G0
 #GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF # instant SF above nHcutoffSF density (prob=1) [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #GALSF_RESOLVEDISM_INSTANT_SN  # all SNe fire instantly before TimeInstantSN
+#GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION # SN, AGB and wind ejecta carry the star's birth composition (net-yield form, STL-403); off by default [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#GALSF_RESOLVEDISM_TABLES_PHASE_MATCHED_LOOKUP # table age lookups read each grid star at the same fraction of its own lifetime (STL-391, 392, 411); off by default [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#GALSF_RESOLVEDISM_PHOTOION_BILL_HE_ELECTRONS # network 17 only: the photoionisation recombination bill counts the He+ electrons (STL-409); off by default [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#GALSF_RESOLVEDISM_SNAPSHOT_KEEPS_LAST_WIND_AGE # last_wind_log_age written to and read from snapshots (LastWindLogAge, STL-36); off by default [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE # with COSMIC_RAY_FLUID: the CR share of Stella SNe and fast winds reaches the CR fluid in full (STL-356); off by default [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 ## note: convergent flow (bit 2) and Jeans mass (bit 64) criteria use GALSF_SFR_CRITERION bitflag
 ## with GALSF_RESOLVEDISM-specific implementations (Particle_DivVel, FacSfThreshMJ param)
 #GALSF_RESOLVEDISM_OUTPUT_SFINFO # log SF/SN events to stdout

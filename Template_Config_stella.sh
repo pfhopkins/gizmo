@@ -129,6 +129,11 @@ KETJU_MERGE_STARS                        % stellar collisions (Type 4+4)  [req K
 #STARS_APPROACH_TIMESTEP                 % Type-4 stars also limited by STARFORGE's two-body step: approach and free-fall time to the nearest star from the gravity walk (no extra walk)  [excl sinks, STARS_HERMITE_DIRECT_GRAVITY, STARS_INTEGRATED_BY_RUMI] [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 #KETJU_PN_REMNANT_TAG                    % tag remnant type at SN; PN on Type-4 NS/BH remnants
 #GALSF_RESOLVEDISM_BH_PROMOTION          % promote massive remnants to sinks  [req STELLAR_TABLES] [auto SINK_PARTICLES]
+#GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION % SN, AGB and wind ejecta carry the star's birth composition (net-yield form, STL-403); off by default [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#GALSF_RESOLVEDISM_TABLES_PHASE_MATCHED_LOOKUP % table age lookups read each grid star at the same fraction of its own lifetime (STL-391, 392, 411); off by default [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#GALSF_RESOLVEDISM_PHOTOION_BILL_HE_ELECTRONS % network 17 only: the photoionisation recombination bill counts the He+ electrons (STL-409); off by default [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#GALSF_RESOLVEDISM_SNAPSHOT_KEEPS_LAST_WIND_AGE % last_wind_log_age written to and read from snapshots (LastWindLogAge, STL-36); off by default [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
+#GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE   % with COSMIC_RAY_FLUID: the CR share of Stella SNe and fast winds reaches the CR fluid in full (STL-356); off by default [in development (developer: Ulrich Steinwandel, GitHub Ulli1991); please contact the developer before using it]
 
 ########## MHD ##########
 MAGNETIC                                 % ideal MHD

@@ -106,6 +106,9 @@ static inline double resolvedism_ejecta_birth_composition(int i, double logZ, do
 }
 #endif
 
+#if defined(GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE) && !defined(COSMIC_RAY_FLUID)
+#error "GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE needs COSMIC_RAY_FLUID"
+#endif
 #ifdef COSMIC_RAY_FLUID
 #ifdef GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE
 #if (N_CR_PARTICLE_BINS > 1)

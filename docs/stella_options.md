@@ -209,6 +209,21 @@ of the queries, one neighbour search per query and rank, small message rounds fo
 with the full particle and cell record per merge across ranks.
 Code: mesh/merge_split_across_ranks.h. Test: test/merge_split_rank_independence.
 
+## Module audit round 1 (2026-11-26): switches, off by default
+
+- GALSF_RESOLVEDISM_EJECTA_CARRY_BIRTH_COMPOSITION (STL-403): SN, AGB and wind ejecta carry the star's birth composition in the
+  net-yield form m_k += M_ej (X_star,k - X_init,k(Z)); total ejecta unchanged; a slot that would go below zero is set to zero,
+  the sum restored by one factor and the clip logged once per event. Not combinable with GALSF_RESOLVEDISM_SN_SPAWN yet.
+- GALSF_RESOLVEDISM_TABLES_PHASE_MATCHED_LOOKUP (STL-391, 392, 411): every age lookup reads each grid star of the (M, Z) cell at
+  the same fraction of its own lifetime; photon tables stay log-averaged; v_wind nodes of 0 after a track's death are dead.
+- GALSF_RESOLVEDISM_PHOTOION_BILL_HE_ELECTRONS (STL-409): network 17 only; the photoionisation recombination bill uses
+  n_e = n_H (1 + ABHE), as the network sets He+ in a flagged cell.
+- GALSF_RESOLVEDISM_SNAPSHOT_KEEPS_LAST_WIND_AGE (STL-36, 431a): LastWindLogAge written to and read from snapshots; without it a
+  snapshot restart starts a star's first wind interval at its birth.
+- GALSF_RESOLVEDISM_CR_INJECT_FULL_SHARE (STL-356): with COSMIC_RAY_FLUID (one CR bin), the CR share of Stella SNe and fast winds
+  reaches the CR fluid in full (the injection's reduced-speed factor divided out); transport and losses keep it.
+Tests: test/stella_audit_round1.
+
 ## TEST_KETJU_LIMITER_SCAN_CROSSCHECK_ABORTS (test only)
 
 Each step, recomputes the KETJU limiting-particle steps by a full particle scan and aborts if the cell grid gives a
