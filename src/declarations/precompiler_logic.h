@@ -1389,6 +1389,12 @@
 #if defined(GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE) && !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
 #error "GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE is an option of GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS"
 #endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH is a rule for the pixel columns of the gravity walk: set GALSF_RESOLVEDISM_TREECOL_PIXELS"
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH /* node size, in TreeColShieldingLength, above which a straddling node is opened; bare flag: 0 */
+#define TREECOL_OPEN_ACROSS_MIN_SIZE (GALSF_RESOLVEDISM_TREECOL_PIXELS_OPEN_NODES_ACROSS_SHIELDING_LENGTH + 0.0)
+#endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS /* per-direction columns and band fluxes in the gravity walk (gravity/gravtree_treecol_pixels.h) */
 #if GALSF_RESOLVEDISM_TREECOL_PIXELS == 12
 #define TREECOL_PIXELS_NSIDE 1
@@ -2064,11 +2070,8 @@
 #endif
 
 /* GRAVITY_PERIODIC_XY: self-gravity periodic in x and y by a 2D Ewald correction table (gravity/ewald_xy.cc), open in z (tall boxes):
- * the exact sheet field at any height. No 3D Ewald and no PM; the tree wraps x and y only, as with GRAVITY_PERIODIC_XY_IMAGES. */
+ * the exact sheet field at any height. No 3D Ewald and no PM; the tree wraps x and y only. */
 #ifdef GRAVITY_PERIODIC_XY
-#if defined(GRAVITY_PERIODIC_XY_IMAGES)
-#error "GRAVITY_PERIODIC_XY (Ewald) and GRAVITY_PERIODIC_XY_IMAGES (image sums) are alternatives"
-#endif
 #if !defined(BOX_PERIODIC) || defined(BOX_OUTFLOW_X) || defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_REFLECT_Y)
 #error "GRAVITY_PERIODIC_XY requires BOX_PERIODIC with periodic x and y boundaries"
 #endif
@@ -2089,21 +2092,8 @@
 #endif
 #endif
 
-/* GRAVITY_PERIODIC_XY_IMAGES: self-gravity periodic in x and y by explicit image sums, open in z (tall boxes). No Ewald and no PM, so
- * the cubic-box solvers are switched off; the tree wraps separations in x and y only (z is non-periodic) and adds the images itself. */
 #ifdef GRAVITY_PERIODIC_XY_IMAGES
-#if !defined(BOX_PERIODIC) || defined(BOX_OUTFLOW_X) || defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_REFLECT_Y)
-#error "GRAVITY_PERIODIC_XY_IMAGES requires BOX_PERIODIC with periodic x and y boundaries"
-#endif
-#if !defined(BOX_OUTFLOW_Z) && !defined(BOX_REFLECT_Z)
-#error "GRAVITY_PERIODIC_XY_IMAGES requires a non-periodic z boundary (BOX_OUTFLOW_Z or BOX_REFLECT_Z)"
-#endif
-#if defined(BOX_SHEARING) || defined(PMGRID) || defined(GRAVITY_SPHERICAL_SYMMETRY) || defined(SINGLE_STAR_DIRECT_GRAVITY)
-#error "GRAVITY_PERIODIC_XY_IMAGES is not compatible with BOX_SHEARING, PMGRID, GRAVITY_SPHERICAL_SYMMETRY or SINGLE_STAR_DIRECT_GRAVITY"
-#endif
-#ifndef GRAVITY_NOT_PERIODIC
-#define GRAVITY_NOT_PERIODIC
-#endif
+#error "GRAVITY_PERIODIC_XY_IMAGES (x/y image sums, parameter GravityPeriodicXYImages) was removed: use GRAVITY_PERIODIC_XY (2D Ewald table, no parameter)"
 #endif
 
 
