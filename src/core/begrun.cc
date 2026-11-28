@@ -2419,12 +2419,6 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.G;
       id[nt++] = REAL;
 
-#ifdef GRAVITY_PERIODIC_XY_IMAGES
-      strcpy(tag[nt], "GravityPeriodicXYImages");
-      addr[nt] = &All.GravityPeriodicXYImages;
-      id[nt++] = INT;
-
-#endif
       strcpy(tag[nt], "InitGasTemp");
       strcpy(alternate_tag[nt], "Initial_Gas_Temperature");
       addr[nt] = &All.InitGasTemp;
@@ -3977,9 +3971,6 @@ void read_parameter_file(char *fname)
     {
         if(ThisTask==0) {printf("DesLinkNgb = %d must not exceed FOF_GROUP_MIN_SIZE = %d: SUBFIND searches DesLinkNgb neighbours inside every group, so a smaller group cannot be processed. Lower DesLinkNgb in the parameterfile or raise FOF_GROUP_MIN_SIZE in Config.sh \n", All.DesLinkNgb, (int)(FOF_GROUP_MIN_SIZE));} endrun(1);
     }
-#endif
-#ifdef GRAVITY_PERIODIC_XY_IMAGES
-    if(All.GravityPeriodicXYImages < 0) {if(ThisTask==0) {printf("GravityPeriodicXYImages must be >=0 \n");} endrun(1);}
 #endif
     if((All.ErrTolTheta<=0.1)||(All.ErrTolTheta>=0.9))
     {

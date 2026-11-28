@@ -1,5 +1,5 @@
 """ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR for the RT_ISRF_BACKGROUND field (no SGCHEM) in the tall-box configuration
-(periodic x/y by image sums, open z), with a pure-gas lattice IC.
+(periodic x/y, open z), with a pure-gas lattice IC.
 
 A 50 pc box of cold gas (n_H ~ 100 cm^-3) forms stars without feedback while 20 pre-existing stars (ages 0-40 Myr from
 InitStellarAge) age through the 30 Myr window. At every star-formation call the printed FactorG0 must equal, to 1e-12,
