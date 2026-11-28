@@ -122,7 +122,6 @@ static std::vector<char> MG_RowInSolvedPiece;     /* 1 = the row's piece is abov
    assembly through the residual check; every solver derives its equations from it. */
 static long long *MGd_off = NULL, *MGd_col = NULL;
 static double *MGd_q = NULL;
-static long long MG_GraphEdges = 0;
 /* Each row's cross-task faces, on the host, in the physical graph's order: what the
    labelling, the symmetry check across tasks and the exchanges need. */
 static std::vector<long long> MG_RemoteOff, MG_RemoteCol;
@@ -174,8 +173,10 @@ static inline int mg_row_owner(long long global_row)
 {
     return (int)(std::upper_bound(MG_TaskRowOffsets.begin(), MG_TaskRowOffsets.end(), global_row) - MG_TaskRowOffsets.begin()) - 1;
 }
-/* the anchor unknown of a piece is fixed at zero, so its column drops out of the other rows */
+#if defined(MHD_MODIFIED_GRADIENT_CG_ONLY) || defined(MHD_MODIFIED_GRADIENT_USE_PARDISO)
+/* the anchor unknown of a piece is fixed at zero, so its column drops out of the other rows (HYPRE gets the same from mg_build_insertion) */
 static inline bool mg_column_kept(int i, long long global_col) {return global_col != MG_Rows[i].anchor;}
+#endif
 
 /* Device allocations report exhaustion by returning NULL; the flag is checked collectively. The
    bytes asked for in the current phase are kept for the warning when one fails. */
@@ -468,7 +469,6 @@ static int mg_build_graph(const struct mg_csr *csr, std::vector<unsigned char> &
         if(final) {graph_off[i] = partial;}
         partial += c;
     }, n_edges);
-    MG_GraphEdges = n_edges;
     MGd_col = mg_device_alloc<long long>((size_t)n_edges, "mg_graph_columns");
     MGd_q = mg_device_alloc<double>((size_t)n_edges, "mg_graph_coefficients");
     failed = MG_DeviceAllocFailed;
@@ -546,7 +546,6 @@ static int mg_build_graph(const struct mg_csr *csr, std::vector<unsigned char> &
 static void mg_free_graph(void)
 {
     mg_device_free(MGd_off); mg_device_free(MGd_col); mg_device_free(MGd_q);
-    MG_GraphEdges = 0;
     MG_RemoteOff.clear(); MG_RemoteCol.clear(); MG_RemoteQ.clear();
     MG_RemoteOff.shrink_to_fit(); MG_RemoteCol.shrink_to_fit(); MG_RemoteQ.shrink_to_fit();
 #if defined(MHD_MODIFIED_GRADIENT_CG_ONLY) || defined(MHD_MODIFIED_GRADIENT_USE_PARDISO)
