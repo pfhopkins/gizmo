@@ -1452,6 +1452,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 #include "../sinks/sink_functions.h"
 #include "../core/predict_functions.h"
 #endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
+#include "../galaxy_sf/single_star_luminosity_functions.h"   /* single_star_rt_band_luminosities_core (device pass below) */
+#endif
 
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING) || (defined(RT_CHEM_PHOTOION) && defined(GALSF))
 KOKKOS_INLINE_FUNCTION double particle_ionizing_luminosity_in_cgs_core(long i, struct particle_data *pp)
@@ -1507,11 +1510,14 @@ KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum
     if(!((1 << pp[i].Type) & (RT_SOURCES))) {return 0;}; // boolean test of whether i is a source or not - end if not a valid source particle
     if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion (P[].Mass is the SSOT for particle mass; CellP[].Mass is gas-only and is uninitialized for non-gas types, which would silently filter Type 4/5 sources)
     int active_check = 0; // default to inactive //
-#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
-    if(pp[i].Type == 4) {return single_star_rt_band_luminosities(i, mode, lum, pp);} /* single stars: table bands only */
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS)
+    /* single stars: table bands only (STELLAR_BAND_FLUXES) or in the transported bins (RT_TABLE_BANDS). One lookup: on the device
+       with the device tables and records (All is the unit's mirror there), on the host through single_star_rt_band_luminosities */
+#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+    if(pp[i].Type == 4) {return single_star_rt_band_luminosities_core(All.StellarTablesDev, All.SingleStarRecDev, i, mode, lum, pp);}
+#else
+    if(pp[i].Type == 4) {return single_star_rt_band_luminosities(i, mode, lum, pp);}
 #endif
-#ifdef GALSF_SINGLE_STARS_RT_TABLE_BANDS
-    if(pp[i].Type == 4) {return single_star_rt_band_luminosities(i, mode, lum, pp);} /* single stars: table bands in the transported bins */
 #endif
 
 #if defined(GALSF)

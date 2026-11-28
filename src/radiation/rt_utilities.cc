@@ -19,6 +19,7 @@
 #include "../galaxy_sf/stellar_evolution_functions.h"
 #include "../sinks/sink_functions.h"
 #include "../core/predict_functions.h"
+#include "../galaxy_sf/single_star_luminosity_functions.h"
 /* rt_functions.h pulls this in for the neutrino routines. It MUST be locked here,
  * with inline semantics, so the non-inline pass below does not re-emit the nuclear
  * inline bodies as strong host symbols owned by this TU. */

@@ -11,6 +11,7 @@
 #include "../declarations/gpu_rng.h"
 #include "single_star_record.h"
 #include "stellar_evolution_tables.h"
+#include "single_star_luminosity_functions.h"
 #include "stellar_solar_abundances.h"
 #include "single_star_checks.h"
 #ifdef GALSF_ISMDUSTCHEM_MODEL
@@ -58,19 +59,7 @@ static int single_star_luminosity_age(int i, double *logM, double *logZ, double 
 /* age [yr] from which single star i ionises: stars of at least 8 Msun, from the end of the pre-main sequence and of
    min(Kelvin-Helmholtz time 1.5e7 yr (M/Msun)^-2.1, free-fall time at the birth density), at most 1 Myr, as the reference
    implementation (no second delay when the birth density is unknown); -1 if it never does */
-double single_star_ionizing_onset_yr(int i)
-{
-    if(P[i].StarIdx <= 0) {return -1;}
-    int s = single_star_slot(P[i].StarIdx);
-    double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
-    if(logM < log10(8.0)) {return -1;}
-    double t_on = stellar_t_PMS(logM, logZ) * (1. + 1.e-12);
-    if(SingleStars.rho_birth[s] > 0) {
-        double t_ff = sqrt(3. * M_PI / (32. * GRAVITY_G_CGS * SingleStars.rho_birth[s] * UNIT_DENSITY_IN_CGS)) / SECONDS_PER_YEAR;
-        t_on = DMAX(t_on, DMIN(DMIN(1.5e7 * pow(10., -2.1 * logM), t_ff), 1.e6));
-    }
-    return t_on;
-}
+double single_star_ionizing_onset_yr(int i) {return single_star_ionizing_onset_yr_core(stellar_tables_host_view(), SINGLE_STAR_RECORD_HOST_VIEW(), P, i);} /* single_star_luminosity_functions.h */
 
 /* as single_star_luminosity_age, for the ionising band (from single_star_ionizing_onset_yr) */
 static int single_star_ionizing_age(int i, double *logM, double *logZ, double *log_age)
