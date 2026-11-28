@@ -96,7 +96,7 @@
 #define MG_KEEP_AMG_HIERARCHY   /* host HYPRE: the AMG hierarchy is kept between solves while the cells stay in their slots */
 #endif
 #define MG_AMG_MAX_REUSES 10          /* solves on one kept hierarchy before it is rebuilt */
-#define MG_AMG_REUSED_TOL_FACTOR 0.2  /* a solve on a kept hierarchy runs to this fraction of MG_CG_TOL (HYPRE's residual is not the true one) */
+#define MG_HOST_HYPRE_TOL_FACTOR 0.2  /* a host HYPRE solve runs to this fraction of MG_CG_TOL: HYPRE's residual is not the true one, and with aggressive coarsening a solve stops close to its tolerance */
 #define MG_AMG_REUSED_MAX_ITER_FACTOR 2 /* ... and stops at this many times the iterations of the solve that built it: a setup costs about two solves */
 
 /* ==================================================================================== */
@@ -1115,6 +1115,7 @@ static int mg_solve_backend(double *x)
 #else
         HYPRE_BoomerAMGSetCoarsenType(precond, 6);  /* Falgout coarsening */
         HYPRE_BoomerAMGSetRelaxType(precond, 6);    /* symmetric Gauss-Seidel (CPU) */
+        HYPRE_BoomerAMGSetAggNumLevels(precond, 1); /* one level of aggressive coarsening: a sparser hierarchy, cheaper to set up and hold, at some more iterations */
 #endif
         HYPRE_BoomerAMGSetNumSweeps(precond, 1);
         HYPRE_BoomerAMGSetMaxLevels(precond, 25);
@@ -1124,8 +1125,11 @@ static int mg_solve_backend(double *x)
     HYPRE_Solver solver;
     HYPRE_ParCSRPCGCreate(MPI_COMM_WORLD, &solver);
     int max_iter = MG_CG_MAX_ITER; double tol = MG_CG_TOL;
+#ifndef MG_HYPRE_ON_DEVICE
+    tol *= MG_HOST_HYPRE_TOL_FACTOR;
+#endif
 #ifdef MG_KEEP_AMG_HIERARCHY
-    if(reuse) {tol *= MG_AMG_REUSED_TOL_FACTOR; max_iter = DMIN(max_iter, MG_AMG_REUSED_MAX_ITER_FACTOR * MG_KeptAMG_BuildIterations + 1);}
+    if(reuse) {max_iter = DMIN(max_iter, MG_AMG_REUSED_MAX_ITER_FACTOR * MG_KeptAMG_BuildIterations + 1);}
 #endif
     HYPRE_PCGSetMaxIter(solver, (HYPRE_Int) max_iter);
     HYPRE_PCGSetTol(solver, (HYPRE_Real) tol);
