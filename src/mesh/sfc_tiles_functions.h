@@ -1,6 +1,6 @@
 /* sfc_tiles_functions.h — GPU-callable SFC-tile neighbor search functions.
  *
- * Contains: sfc_box_may_reach(), check_tile_particles_gpu(),
+ * Contains: sfc_box_may_reach(), tile_member_accepted(), check_tile_particles_gpu(),
  *   bvh_walk_tiles(), search_neighbors_sfc_gpu().
  *
  * These are the per-particle search functions over the tiles and BVH that
