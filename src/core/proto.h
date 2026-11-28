@@ -49,7 +49,6 @@ void ewald_xy_update(void);
 void ewald_xy_exact(double dx, double dy, double dz, double s, double Lx, double Ly, double out[4]);
 #endif
 #ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
-void hu_tallbox_field(double zc, double *az, double *tzz, double *phi);
 double analytic_external_potential(int i); /* Hu+21 tall-box potential of particle i, Phi(midplane) = 0 */
 #endif
 uint64_t single_star_draw_rng_key(int i);
@@ -568,6 +567,9 @@ enum GizmoOffloadSite
 };
 int gizmo_gpu_offload_min_count(enum GizmoOffloadSite site);
 int gizmo_gpu_offload_takes(enum GizmoOffloadSite site, long long count);   /* 1 if `count` work items go to the device: at least the site's count, and never an empty batch */
+int gizmo_stage_on_device(long long n);   /* 1 if a per-element stage kernel over n items runs on the device (shared particle storage, a device that is not the host, the per-particle-loop count admits n), else the host execution space takes it */
+int *gizmo_stage_index_alloc(int *on_device, long long n, const char *label);   /* n ints for a stage's index list: shared memory when *on_device (cleared if that fails), else host memory */
+void gizmo_stage_index_free(int on_device, int *p);
 void gizmo_gpu_offload_report(void);   /* rank 0 prints every resolved count and where it came from, the host-thread counts below included */
 /* A host loop runs on all OpenMP threads only from a per-MPI-task count of items, below which starting the threads costs more than
  * the loop.  One anchor, HostThreadMinCount, sets the count of each kind of loop below (core/begrun.cc), scaled by how much work an item is. */

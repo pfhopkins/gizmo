@@ -534,6 +534,25 @@ extern "C" void *gizmo_gpu_alloc_shared(size_t nbytes, const char *label)
     catch(const std::exception &) { return NULL; }
 }
 
+/* where a per-element stage kernel (gizmo_stage_for and siblings in gpu_dispatch_templates.h) runs: on the device when the particle
+ * storage is device-visible in place (shared space, as the drift requires), the device is not the host, and the per-particle-loop
+ * offload count admits n; otherwise on the host execution space */
+int gizmo_stage_on_device(long long n)
+{
+    if(!Kokkos::SpaceAccessibility<Kokkos::DefaultExecutionSpace, GIZMO_KOKKOS_SHARED_SPACE>::accessible) {return 0;}
+    if(std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value) {return 0;}
+    return gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, n);
+}
+int *gizmo_stage_index_alloc(int *on_device, long long n, const char *label)
+{
+    const size_t bytes = (size_t) (n > 0 ? n : 1) * sizeof(int);
+    int *p = *on_device ? (int *) gizmo_gpu_alloc_shared(bytes, label) : NULL;
+    if(!p) {*on_device = 0; p = (int *) malloc(bytes);}
+    return p;
+}
+void gizmo_stage_index_free(int on_device, int *p) {if(!p) {return;} if(on_device) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);} else {free(p);}}
+
+
 /*! Place a shared-space buffer that one side reads far more than the other.
  *
  *  The particle records get their placement inside their own allocator, keyed on how big the
