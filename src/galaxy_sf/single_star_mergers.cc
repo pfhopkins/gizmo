@@ -107,7 +107,7 @@ void star_mergers_apply(std::vector<star_merger_action> &actions, const char *ta
             double t0 = stellar_t_MS_start(logM, logZ), t1 = stellar_t_MS_end(logM, logZ), tab = t0 + 0.1 * (fsum / Mtot) * DMAX(t1 - t0, 0.0);
             SingleStars.Z_birth[s] = Zb; SingleStars.M_drawn[s] = Mnew;
             P[s_idx].StellarAge = star_formation_time_for_age(stellar_t_PMS(logM, logZ) + tab);
-#if defined(GALSF_FB_MECHANICAL) && !defined(GALSF_SINGLE_STARS_WINDS_OFF)
+#if defined(GALSF_FB_MECHANICAL) && defined(GALSF_SINGLE_STARS_WINDS)
             SingleStars.last_wind_log_age[s] = log10(DMAX(tab, 100.0)); /* the wind table restarts at the product's age */
             SingleStars.M_birth[s] = Mnew + single_star_wind_cumulative(logM, logZ, SingleStars.last_wind_log_age[s]); /* no wind owed now */
 #elif defined(GALSF_FB_MECHANICAL)

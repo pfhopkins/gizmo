@@ -1,6 +1,7 @@
 # Stella tall box: the usual set with the uniform FUV field and CR rate scaled with the recent SFR (no band fluxes), radiation
 # pressure at the star, x/y-periodic gravity by 2D Ewald plus the Hu+21 potential
 STELLA_DEFAULTS
+GALSF_SINGLE_STARS_WINDS                # stellar winds during the stars' lives (not part of STELLA_DEFAULTS)
 SGCHEM
 CHEMISTRYNETWORK=5
 METALS

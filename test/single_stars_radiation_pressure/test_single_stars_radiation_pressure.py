@@ -156,7 +156,7 @@ def test_outward(tables):
 
 
 def test_anisotropic_budget(tables):
-    rows, _, _, _ = run(build("mass_kernel", ("GALSF_FB_MECHANICAL", "GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS")), "anisotropic", tables, light_side=True)
+    rows, _, _, _ = run(build("mass_kernel", ("GALSF_FB_MECHANICAL", "GALSF_FB_MECHANICAL_MASS_KERNEL_WEIGHTS", "GALSF_SINGLE_STARS_WINDS")), "anisotropic", tables, light_side=True)
     fired = rows[:, 5] > 0
     ratio = rows[fired, 6] / rows[fired, 5]
     print(f"{fired.sum()} steps: coupled / offered min {ratio.min():.6f}, max {ratio.max():.6f}")

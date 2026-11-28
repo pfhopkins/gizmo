@@ -2,6 +2,7 @@
 # no box flags: open boundaries, tree gravity, the halo inside the box. Cosmic-ray rate fixed from the parameter file
 # (SGChemCosmicRayIonRate); for the CR fluid or the rate scaled with the stars' field see the options at the end.
 STELLA_DEFAULTS
+GALSF_SINGLE_STARS_WINDS                # stellar winds during the stars' lives (not part of STELLA_DEFAULTS)
 SGCHEM
 CHEMISTRYNETWORK=5
 METALS

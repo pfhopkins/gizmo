@@ -1,5 +1,6 @@
 # Stella default model
 STELLA_DEFAULTS
+GALSF_SINGLE_STARS_WINDS                # stellar winds during the stars' lives (not part of STELLA_DEFAULTS)
 SGCHEM
 CHEMISTRYNETWORK=5
 METALS

@@ -3,6 +3,7 @@
 # directory has none) reaches the chemistry only where SGChem reads the UV background; the tree is built on the
 # periodic box with the PM grid and a nested PM grid around the zoom region.
 STELLA_DEFAULTS
+GALSF_SINGLE_STARS_WINDS                # stellar winds during the stars' lives (not part of STELLA_DEFAULTS)
 SGCHEM
 CHEMISTRYNETWORK=17                 # zoom: primordial H/He + D/HD + CO
 SGCHEM_PRIMORDIAL_HELIUM            # zoom: He/H = 0.079 (Y = 0.24), X_H = 0.76

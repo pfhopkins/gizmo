@@ -30,8 +30,8 @@
  *   - supernova classes (table remnant type): CCSN, ECSN, PPISN and PISN 1e51 erg; failed SN and direct BH no energy;
  *     ejecta and remnant are the table's fractions of the stored mass (stellar_death_ejecta);
  *   - white-dwarf remnants (AGB death): the same at 30 km/s, with the AGB element ejecta;
- *   - with GALSF_SINGLE_STARS_WINDS_OFF no winds are returned during the life and none are owed at the death: the star keeps its
- *     mass to the death, whose ejecta (supernova or AGB) add the table's cumulative wind of the whole life to the death ejecta;
+ *   - winds only with GALSF_SINGLE_STARS_WINDS; without it no winds are returned during the life and none are owed at the death:
+ *     the star keeps its mass to the death, whose ejecta (supernova or AGB) add the table's cumulative wind of the whole life;
  *   - with GALSF_SINGLE_STARS_TYPE_IA a white dwarf explodes with the per-step hazard
  *     (t^-1 delay-time distribution normalised to the dead-progenitor fraction, keyed random number): the whole mass at
  *     1e51 erg with the table's Type Ia yields, no remnant;
@@ -310,10 +310,10 @@ double single_star_eventrates(int i, double dt)
 #ifdef GALSF_SINGLE_STARS_INSTANT_SN_BEFORE_TIME
     if(All.Time < All.TimeInstantSN && SingleStars.M_drawn[s] >= 8.0) {dead = 1; t_end = 0;} /* stars of 8 Msun and up explode at once, with no winds owed */
 #endif
-#ifdef GALSF_SINGLE_STARS_WINDS_OFF
-    const int winds = 0; /* the star keeps its mass until it dies, and its death ejecta carry the lifetime winds (stellar_death_ejecta) */
-#else
+#ifdef GALSF_SINGLE_STARS_WINDS
     const int winds = 1;
+#else
+    const int winds = 0; /* the star keeps its mass until it dies, and its death ejecta carry the lifetime winds (stellar_death_ejecta) */
 #endif
     if(!dead) {
         double t = single_star_table_age(DMIN(age, age_end), logM, logZ), la = single_star_log_table_age(t), dM_min = 1.e-10;

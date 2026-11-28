@@ -183,7 +183,7 @@ def test_seed_on_a_fresh_start(exe):
     assert np.allclose(s["D"][:, 13], 1.0)  # sources as fractions: all supernovae
 
 
-STARS = ("GALSF_FB_MECHANICAL", "GALSF_SINGLE_STARS_FROM_IMF", "GALSF_SINGLE_STARS_EVOLUTION_TABLES")
+STARS = ("GALSF_FB_MECHANICAL", "GALSF_SINGLE_STARS_FROM_IMF", "GALSF_SINGLE_STARS_EVOLUTION_TABLES", "GALSF_SINGLE_STARS_WINDS")
 
 
 def star_run(tag, dust, tmax=5e-4):
