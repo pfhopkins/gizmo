@@ -219,13 +219,17 @@ def calibrate_planet(placed, prof, zones, P_surface, rho_kernel, h, calibrate_ma
 
 
 def _align_grouped_zones(zones, prof, placed, M_total, T_surface, P_surface, n_particles, mass_ratio, seed, n_steps, adiabat_route,
-                         tol, max_passes, allow_unaligned=False):
+                         tol, max_passes, allow_unaligned=False, zone_update=None):
     """zones placed together (a placement group) get whole shells, so their profile masses and the shells' disagree: move each boundary
     INSIDE a placement domain to the realised masses (the domain's total and every boundary between domains stay as requested), drop
     zones that received no shell, solve the profile again and place again, until no grouped zone is empty and every one's realised mass is
     within tol of its profile mass (a new profile gives new shells, so one pass is not enough). A pass that finds empty zones always drops
     them and places again, also beyond max_passes (each such pass removes at least one zone). Not within tol after max_passes: refused,
-    unless allow_unaligned (diagnostics only: a warning). A placement domain that receives no particles is refused. Prints the residual."""
+    unless allow_unaligned (diagnostics only: a warning). A placement domain that receives no particles is refused. Prints the residual.
+    zone_update(zones), if given, runs after every boundary update and drop (zones outer -> inner, with their new inner_mass_frac), before the
+    profile is solved again: for zone properties that depend on the zone masses (e.g. a temperature excess sampled per zone), which must follow
+    the boundaries or the loop solves for a profile its own masses do not imply. It acts by changing the (copied) zones; its return value is
+    ignored. build_planet also calls it once on its input zones before its first solve, so a caller passes it and does nothing else."""
     import copy
     from .hse_solver import solve_hse
     from .shell_placement import seagen_shells
@@ -256,6 +260,7 @@ def _align_grouped_zones(zones, prof, placed, M_total, T_surface, P_surface, n_p
             m = M_real[members] / M_real[members].sum() * (top - bottom)  # its zones' realised masses, scaled to the domain's requested total
             for k, z in enumerate(members[:-1]): zones[z].inner_mass_frac = float(bottom + m[k + 1:].sum())
         zones = [z for z, e in zip(zones, empty) if not e]
+        if zone_update is not None: zone_update(zones)
         prof = solve_hse(M_total=M_total, T_surface=T_surface, P_surface=P_surface, zones=zones, n_steps=n_steps, adiabat_route=adiabat_route)
         print(f"  HSE profile with shell-aligned zone masses (pass {npass}, {np.sum(empty)} zones without a shell dropped): R = {prof['R']:.4e} cm, "
               f"P_c = {prof['P'][-1]:.3e}, T_c = {prof['T'][-1]:.3e}")
@@ -265,7 +270,7 @@ def _align_grouped_zones(zones, prof, placed, M_total, T_surface, P_surface, n_p
 
 def build_planet(zones, M_total, T_surface, P_surface, n_particles, out, kernel=3, des_num_ngb=32, mass_ratio="spacing",
                  calibrate_masses=False, box_size=None, seed=17, n_steps=4000, adiabat_route="first_law", id_offset=0,
-                 align_tol=1e-2, max_align_passes=5, allow_unaligned=False):
+                 align_tol=1e-2, max_align_passes=5, allow_unaligned=False, zone_update=None):
     """Layered body in hydrostatic equilibrium, in one call: HSE profile -> SEAGen shells with the particle mass
     matched to the spacing across each material interface -> GIZMO's kernel density at the placed positions (the run's
     KERNEL_FUNCTION `kernel` and DesNumNgb) -> u per particle so that EOS(rho, u) = P_HSE, stopping if a particle below the
@@ -278,16 +283,18 @@ def build_planet(zones, M_total, T_surface, P_surface, n_particles, out, kernel=
     shell-aligned masses and the body placed again, until every such zone's realised mass is within align_tol of its profile mass (at most
     max_align_passes, else the build is refused unless allow_unaligned; zones left without a shell are always dropped), so each bin's
     equation of state applies where its shells sit to that tolerance. Boundaries between placement domains keep the requested masses.
+    zone_update: see _align_grouped_zones; called on the input zones before the first solve and after each alignment boundary update.
     Returns (placed, prof)."""
     from .hse_solver import solve_hse
     from .shell_placement import seagen_shells
     from .sph_density import estimate_sph_density
+    if zone_update is not None: zone_update(zones)        # every profile solve is governed by the hook, the first included
     prof = solve_hse(M_total=M_total, T_surface=T_surface, P_surface=P_surface, zones=zones, n_steps=n_steps, adiabat_route=adiabat_route)
     print(f"  HSE profile: R = {prof['R']:.4e} cm, P_c = {prof['P'][-1]:.3e}, T_c = {prof['T'][-1]:.3e}")
     placed = seagen_shells(prof, zones, n_particles, mass_ratio=mass_ratio, seed=seed)
     if any(getattr(z, "placement_group", None) is not None for z in zones):
         zones, prof, placed = _align_grouped_zones(zones, prof, placed, M_total, T_surface, P_surface, n_particles, mass_ratio, seed,
-                                                   n_steps, adiabat_route, align_tol, max_align_passes, allow_unaligned)
+                                                   n_steps, adiabat_route, align_tol, max_align_passes, allow_unaligned, zone_update)
     rho, h = estimate_sph_density(placed["coords"], placed["masses"], des_num_ngb=des_num_ngb, kernel=kernel)
     prof = calibrate_planet(placed, prof, zones, P_surface, rho, h, calibrate_masses=calibrate_masses)
     prof["zone_composition_type"] = np.array([z.material.composition_type for z in zones])   # prof["zone_id"] k = the material of zones[k] (zones without a shell dropped)
