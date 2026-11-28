@@ -311,11 +311,13 @@ double single_star_eventrates(int i, double dt)
     if(All.Time < All.TimeInstantSN && SingleStars.M_drawn[s] >= 8.0) {dead = 1; t_end = 0;} /* stars of 8 Msun and up explode at once, with no winds owed */
 #endif
 #ifdef GALSF_SINGLE_STARS_WINDS_OFF
-    if(!dead) {return 0;} /* no winds: the star keeps its mass until it dies, and its death ejecta carry the lifetime winds (stellar_death_ejecta) */
+    const int winds = 0; /* the star keeps its mass until it dies, and its death ejecta carry the lifetime winds (stellar_death_ejecta) */
 #else
+    const int winds = 1;
+#endif
     if(!dead) {
         double t = single_star_table_age(DMIN(age, age_end), logM, logZ), la = single_star_log_table_age(t), dM_min = 1.e-10;
-        if(SingleStars.M_drawn[s] < SINGLE_STAR_WIND_MIN_MASS || t <= 0) {return 0;}
+        if(!winds || SingleStars.M_drawn[s] < SINGLE_STAR_WIND_MIN_MASS || t <= 0) {return 0;}
 #ifdef GALSF_SINGLE_STARS_WINDS_IN_CHUNKS
         dM_min = DMIN(0.01 + 0.19 * (SingleStars.M_drawn[s] - SINGLE_STAR_WIND_MIN_MASS) / 342., 0.2) * SingleStars.M_drawn[s]; /* hold it until the mass owed is 1% (8 Msun) to 20% of the drawn mass */
 #endif
@@ -323,12 +325,11 @@ double single_star_eventrates(int i, double dt)
         if(dM > dM_min) {single_star_deliver_wind(i, s, logM, logZ, la, dM);}
         return 0;
     }
-    { /* the winds still owed at the end of life leave first, as a wind delivery of any mass of star; the death follows on the next step,
+    if(winds) { /* the winds still owed at the end of life leave first, as a wind delivery of any mass of star; the death follows on the next step,
          and at once if two deliveries in a row found no gas */
         double t = single_star_table_age(t_end, logM, logZ), la = single_star_log_table_age(t), dM = (t > 0) ? single_star_wind_owed(i, s, logM, logZ, la) : 0;
         if(dM > 1.e-6 && SingleStars.no_deposit_count[s] < 2) {single_star_deliver_wind(i, s, logM, logZ, la, dM); return 0;}
     }
-#endif
     SingleStars.M_at_SN_trigger[s] = SINGLE_STAR_TRIGGER_MASS(i, s, logM, logZ, 0); /* death: store the mass for every pack of the event (the particle's, or with the stochastic IMF the drawn star's) */
     if(is_wd) {P[i].MassReturn_ThisTimeStep = 1;} else {P[i].SNe_ThisTimeStep = 1;}
     return 1;
