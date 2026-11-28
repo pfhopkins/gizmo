@@ -58,6 +58,68 @@ int sfc_box_may_reach(const double box_lo[3], const double box_hi[3],
                                              hw[0], hw[1], hw[2], R);
 }
 
+/* Member s of a tile against one query: the member's particle index if the pair test accepts it, else -1
+ * (a member that left the pool, a type outside supply_mask, or out of reach).  The one member test of the
+ * tile index: check_tile_particles_gpu loops it on one lane, the neighbour-list build's several-lane form
+ * divides a tile's members among a row of lanes. */
+KOKKOS_INLINE_FUNCTION
+int tile_member_accepted(const double *rows, const double pos_i[3], double h_i, double h2_i, double j_radius_scale,
+                         const sfc_tile_t *tile, const int *pool, int s, int search_mode,
+                         const struct sfc_walk_frame &frame, const struct particle_data *P_gpu, unsigned int supply_mask)
+{
+    MyDouble xtmp = 0; /* required by NGB_PERIODIC_BOX_LONG_* macros */
+    const int slot = tile->first + s;
+    const int j = pool[slot];
+    if(j < 0) return -1;   /* a member that left the pool in place since the build (gpu_sidx_notify_member_lost) */
+    /* Per-type supply filter at leaf. No-op when supply_mask == 0x3f (default).
+     * Constant-propagated away when caller passes default args. */
+    if(P_gpu) {
+        int pt = (int)P_gpu[j].Type;
+        if(pt < 0 || pt >= 6) return -1;
+        if((supply_mask & (1u << (unsigned)pt)) == 0u) return -1;
+    }
+    const double *row = &rows[(size_t)slot * SIDX_ROW_WIDTH];
+    int accept;
+    if(frame.exact) {
+        double dx_raw = pos_i[0] - row[0];
+        double dy_raw = pos_i[1] - row[1];
+        double dz_raw = pos_i[2] - row[2];
+        double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
+        double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
+        double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
+
+        double pair_search_r2;
+        if(search_mode == NGB_SEARCH_ONEWAY) {
+            pair_search_r2 = h2_i;
+        } else {
+            double h_j = row[3] * j_radius_scale;
+            double h_max = (h_i > h_j) ? h_i : h_j;
+            pair_search_r2 = h_max * h_max;
+        }
+
+        if(adx > h_i && (search_mode == NGB_SEARCH_ONEWAY || adx * adx > pair_search_r2)) return -1;
+        double r2 = adx * adx + ady * ady + adz * adz;
+        accept = (r2 < pair_search_r2);
+    } else {
+        double reach = h_i;
+        if(search_mode != NGB_SEARCH_ONEWAY) {
+            const double h_j = (frame.reach_current ? row[3] : row[4]) * j_radius_scale;
+            if(h_j > reach) {reach = h_j;}
+        }
+        double c[3], w[3], scale = reach;
+        for(int k = 0; k < 3; k++) {
+            c[k] = row[k] + 0.5 * (tile->u_min[k] + tile->u_max[k]) * frame.D;
+            w[k] = (0.5 * (tile->u_max[k] - tile->u_min[k]) + tile->rho) * frame.D + tile->hw;
+            if(w[k] > scale) {scale = w[k];}
+        }
+        const double slack = motion_envelope_test_slack(c, pos_i, scale);
+        accept = gx_boxpair_overlap_wrap_and_test(c[0] - pos_i[0], c[1] - pos_i[1], c[2] - pos_i[2],
+                                                  w[0] + slack, w[1] + slack, w[2] + slack,
+                                                  reach, reach * reach);
+    }
+    return accept ? j : -1;
+}
+
 /* Process a single tile's particles against an arbitrary source position pos_i.
  * Returns neighbor count. Uses the canonical neighbor periodic macros so
  * shearing/long/reflected/outflow boundary behavior matches the CPU SFC
@@ -96,60 +158,13 @@ int check_tile_particles_gpu(const double *rows, const double pos_i[3], double h
                              const struct particle_data *P_gpu = nullptr,
                              unsigned int supply_mask = ((1u << 6) - 1u))
 {
-    MyDouble xtmp = 0; /* required by NGB_PERIODIC_BOX_LONG_* macros */
     for(int s = 0; s < tile->count; s++)
     {
         if(cnt_candidates_tested) (*cnt_candidates_tested)++;
-        const int slot = tile->first + s;
-        int j = pool[slot];
-        if(j < 0) continue;   /* a member that left the pool in place since the build (gpu_sidx_notify_member_lost) */
-        /* Per-type supply filter at leaf. No-op when supply_mask == 0x3f (default).
-         * Constant-propagated away when caller passes default args. */
-        if(P_gpu) {
-            int pt = (int)P_gpu[j].Type;
-            if(pt < 0 || pt >= 6) continue;
-            if((supply_mask & (1u << (unsigned)pt)) == 0u) continue;
-        }
-        const double *row = &rows[(size_t)slot * SIDX_ROW_WIDTH];
-        int accept;
-        if(frame.exact) {
-            double dx_raw = pos_i[0] - row[0];
-            double dy_raw = pos_i[1] - row[1];
-            double dz_raw = pos_i[2] - row[2];
-            double adx = NGB_PERIODIC_BOX_LONG_X(dx_raw, dy_raw, dz_raw, 1);
-            double ady = NGB_PERIODIC_BOX_LONG_Y(dx_raw, dy_raw, dz_raw, 1);
-            double adz = NGB_PERIODIC_BOX_LONG_Z(dx_raw, dy_raw, dz_raw, 1);
-
-            double pair_search_r2;
-            if(search_mode == NGB_SEARCH_ONEWAY) {
-                pair_search_r2 = h2_i;
-            } else {
-                double h_j = row[3] * j_radius_scale;
-                double h_max = (h_i > h_j) ? h_i : h_j;
-                pair_search_r2 = h_max * h_max;
-            }
-
-            if(adx > h_i && (search_mode == NGB_SEARCH_ONEWAY || adx * adx > pair_search_r2)) continue;
-            double r2 = adx * adx + ady * ady + adz * adz;
-            accept = (r2 < pair_search_r2);
-        } else {
-            double reach = h_i;
-            if(search_mode != NGB_SEARCH_ONEWAY) {
-                const double h_j = (frame.reach_current ? row[3] : row[4]) * j_radius_scale;
-                if(h_j > reach) {reach = h_j;}
-            }
-            double c[3], w[3], scale = reach;
-            for(int k = 0; k < 3; k++) {
-                c[k] = row[k] + 0.5 * (tile->u_min[k] + tile->u_max[k]) * frame.D;
-                w[k] = (0.5 * (tile->u_max[k] - tile->u_min[k]) + tile->rho) * frame.D + tile->hw;
-                if(w[k] > scale) {scale = w[k];}
-            }
-            const double slack = motion_envelope_test_slack(c, pos_i, scale);
-            accept = gx_boxpair_overlap_wrap_and_test(c[0] - pos_i[0], c[1] - pos_i[1], c[2] - pos_i[2],
-                                                      w[0] + slack, w[1] + slack, w[2] + slack,
-                                                      reach, reach * reach);
-        }
-        if(accept) {
+        const int j = tile_member_accepted(rows, pos_i, h_i, h2_i, j_radius_scale, tile, pool, s, search_mode, frame,
+                                           P_gpu, supply_mask);
+        if(j >= 0)
+        {
             /* Bounded write: count past max_store still increments (so caller can
              * detect overflow), but the write is suppressed. Used by the fused
              * single-pass build with a per-particle scratchpad of stride max_store. */

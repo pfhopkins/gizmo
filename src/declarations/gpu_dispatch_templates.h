@@ -134,6 +134,20 @@ inline int gizmo_gpu_team_size_max(const F& f, size_t scratch_bytes)
     catch(const std::runtime_error &) {return 0;}
 }
 
+/* The same bound for a kernel of rows of vector lanes (vector_length lanes per row) whose rows each ask for
+ * per_row_bytes of level-0 scratch. */
+template<typename F>
+inline int gizmo_gpu_team_size_max_rows(const F& f, int vector_length, size_t per_row_bytes)
+{
+    try
+    {
+        Kokkos::TeamPolicy<> probe(1, 1, vector_length);
+        probe.set_scratch_size(0, Kokkos::PerThread(per_row_bytes));
+        return probe.team_size_max(f, Kokkos::ParallelForTag());
+    }
+    catch(const std::runtime_error &) {return 0;}
+}
+
 /* How many work items the default execution space can have in flight at once:
  * the hardware's lane count, as Kokkos reports it for the backend in use.
  *
