@@ -30,6 +30,8 @@
  *   - supernova classes (table remnant type): CCSN, ECSN, PPISN and PISN 1e51 erg; failed SN and direct BH no energy;
  *     ejecta and remnant are the table's fractions of the stored mass (stellar_death_ejecta);
  *   - white-dwarf remnants (AGB death): the same at 30 km/s, with the AGB element ejecta;
+ *   - with GALSF_SINGLE_STARS_WINDS_OFF no winds are returned during the life and none are owed at the death: the star keeps its
+ *     mass to the death, whose ejecta (supernova or AGB) add the table's cumulative wind of the whole life to the death ejecta;
  *   - with GALSF_SINGLE_STARS_TYPE_IA a white dwarf explodes with the per-step hazard
  *     (t^-1 delay-time distribution normalised to the dead-progenitor fraction, keyed random number): the whole mass at
  *     1e51 erg with the table's Type Ia yields, no remnant;
@@ -308,6 +310,9 @@ double single_star_eventrates(int i, double dt)
 #ifdef GALSF_SINGLE_STARS_INSTANT_SN_BEFORE_TIME
     if(All.Time < All.TimeInstantSN && SingleStars.M_drawn[s] >= 8.0) {dead = 1; t_end = 0;} /* stars of 8 Msun and up explode at once, with no winds owed */
 #endif
+#ifdef GALSF_SINGLE_STARS_WINDS_OFF
+    if(!dead) {return 0;} /* no winds: the star keeps its mass until it dies, and its death ejecta carry the lifetime winds (stellar_death_ejecta) */
+#else
     if(!dead) {
         double t = single_star_table_age(DMIN(age, age_end), logM, logZ), la = single_star_log_table_age(t), dM_min = 1.e-10;
         if(SingleStars.M_drawn[s] < SINGLE_STAR_WIND_MIN_MASS || t <= 0) {return 0;}
@@ -323,6 +328,7 @@ double single_star_eventrates(int i, double dt)
         double t = single_star_table_age(t_end, logM, logZ), la = single_star_log_table_age(t), dM = (t > 0) ? single_star_wind_owed(i, s, logM, logZ, la) : 0;
         if(dM > 1.e-6 && SingleStars.no_deposit_count[s] < 2) {single_star_deliver_wind(i, s, logM, logZ, la, dM); return 0;}
     }
+#endif
     SingleStars.M_at_SN_trigger[s] = SINGLE_STAR_TRIGGER_MASS(i, s, logM, logZ, 0); /* death: store the mass for every pack of the event (the particle's, or with the stochastic IMF the drawn star's) */
     if(is_wd) {P[i].MassReturn_ThisTimeStep = 1;} else {P[i].SNe_ThisTimeStep = 1;}
     return 1;

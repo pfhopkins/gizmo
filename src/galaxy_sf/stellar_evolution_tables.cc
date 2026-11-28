@@ -465,13 +465,20 @@ double stellar_elem_ej_AGB(double logM, double logZ, int elem)
 }
 
 /* Death ejecta of element k at one grid star as a fraction of its mass at death: ej_k / (rem + sum ej), from the AGB table for white
- * dwarfs and the SN table for the rest; complete disruption (PISN) has rem = 0 */
+ * dwarfs and the SN table for the rest; complete disruption (PISN) has rem = 0. With GALSF_SINGLE_STARS_WINDS_OFF the star returned no
+ * winds during its life, so its mass at death includes them: ej_k adds the table's cumulative wind of element k up to the lifetime */
 static void stbl_death_fractions(int inode, double *e)
 {
     const int rt = StellarTbl.remnant_type[inode];
     const double *ej = ((rt == REM_WD) ? StellarTbl.elem_ej_AGB_mass : StellarTbl.elem_ej_SN_mass) + (size_t)inode * STBL_NELEM;
     double sum = 0;
-    for(int k = 0; k < STBL_NELEM; k++) {e[k] = DMAX(ej[k], 0); sum += e[k];}
+    for(int k = 0; k < STBL_NELEM; k++) {e[k] = DMAX(ej[k], 0);}
+#ifdef GALSF_SINGLE_STARS_WINDS_OFF
+    const int iz = inode / STBL_NM, im = inode % STBL_NM;
+    const double log_end = log10(DMAX(StellarTbl.lifetime_yr[inode], 100.));
+    for(int k = 0; k < STBL_NELEM; k++) {e[k] += stellar_elem_ej_wind_cumulative(StellarTbl.log_M[im], StellarTbl.log_Z[iz], log_end, k);}
+#endif
+    for(int k = 0; k < STBL_NELEM; k++) {sum += e[k];}
     const double D = sum + ((rt == REM_PISN) ? 0 : DMAX(StellarTbl.remnant_mass[inode], 0));
     for(int k = 0; k < STBL_NELEM; k++) {e[k] = (D > 0) ? e[k] / D : 0;}
 }
