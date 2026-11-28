@@ -588,9 +588,9 @@ static double radfb_rp_gas_kinetic_energy(void) /* this rank's gas kinetic energ
    with its last flux, current mass and dust (as stella_dev). L_emit is the root node, so no star loop. The sum is reduced
    with the source count in radiation_pressure_winds_consolidated: no collective here.
    Both loops are one Kokkos kernel each, on the device or on the host execution space (gizmo_gpu_stage_on_device). The kicks are
-   per cell, the same expression in the same order as the former plain loops; the two sums (absorbed luminosity, total
-   momentum) are reductions split across threads on the device and on an OpenMP host space, so they equal the former
-   serial sums to round-off, not bitwise (bitwise only where the host space is Serial). The per-cell term is evaluated in
+   independent per cell; the two sums (absorbed luminosity, total momentum) are reductions split across threads on the device
+   and on an OpenMP host space, so their summation order, and hence their last bits, depend on the execution space (index
+   order only where the host space is Serial). The per-cell term is evaluated in
    the kick kernel from the same expression the sum used: nothing changes the gas between the two calls (the source pack
    and one Allreduce lie between them). */
 KOKKOS_INLINE_FUNCTION double radp_cell_dgr(const struct particle_data *pp, const struct gas_cell_data *cell, int i) /* the cell's dust-to-gas ratio for the direct term; hot gas none */
@@ -601,7 +601,7 @@ KOKKOS_INLINE_FUNCTION double radp_cell_dgr(const struct particle_data *pp, cons
     return (cell[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_dust_to_gas_ratio(pp[i].Metallicity[0]), 0.);
 #endif
 }
-/* the cell's absorbing column factor (code lum per unit flux): to_L DGR N_H(cell), in the former expression order */
+/* the cell's absorbing column factor (code lum per unit flux): to_L DGR N_H(cell) */
 KOKKOS_INLINE_FUNCTION double radp_cell_lum_factor(const struct particle_data *pp, const struct gas_cell_data *cell, int i, double to_L, double unit_mass_in_cgs)
 {
     return to_L * radp_cell_dgr(pp, cell, i) * pp[i].Mass * unit_mass_in_cgs * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
