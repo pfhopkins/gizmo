@@ -1854,9 +1854,10 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
      * point independently, so a collective here would be both wrong and a
      * deadlock risk. The consumer decides what to rebuild; nothing is freed from
      * here. */
-    if(identity_changed) {ghost_exchange_supply_identity_changed("rearrange_particle_sequence"); gpu_sidx_notify_owned_changed(); gpu_leaf_mirror_note_slots_moved();}
+    if(identity_changed) {ghost_exchange_supply_identity_changed("rearrange_particle_sequence"); gpu_sidx_notify_owned_changed(); gpu_leaf_mirror_note_slots_moved(); mg_note_gas_slots_changed();}
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    mg_free_kept_amg_hierarchy(1); /* every task is here: before the domain or tree that follows a rearrange is built */
     if(flag_sum) {reconstruct_timebins();
 #ifdef HERMITE_FOREIGN_SOURCE_TABLE
         if(repair_walk_links) {hermite_local_sources_rebuild();}   /* the indices moved under a standing tree; otherwise a build follows and lists them */

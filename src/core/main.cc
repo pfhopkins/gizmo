@@ -259,6 +259,7 @@ int main(int argc, char **argv)
    * exit statuses). Node still releases cleanly: MPI_Finalize, not MPI_Abort. */
   int badstop_exit = (gizmo_controlled_stop_code() != 0) ? 1 : 0;
 
+  mg_free_kept_amg_hierarchy(0);  /* the MG solver's kept AMG hierarchy, if any */
   gizmo_kokkos_finalize();  /* must come before MPI_Finalize */
   MPI_Finalize();		/* clean up & finalize MPI */
 

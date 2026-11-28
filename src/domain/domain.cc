@@ -803,6 +803,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
           {DomainCallsSincePeanoOrder++;}
     }
     cpu_charge(CPU_PEANO, measure_time());
+    mg_free_kept_amg_hierarchy(1); /* every task is here: a reorder frees it before the tree is built */
 
   LightRepartitionCount = 0; /* reset counter: top tree is fresh */
 
@@ -2009,6 +2010,8 @@ void domain_exchange(void)
       count_get_gas += toGetGas[i];
 
     }
+  if(count_togo + count_get > 0) {mg_note_gas_slots_changed();}
+  mg_free_kept_amg_hierarchy(1); /* every task is here: free it before the exchange buffers are allocated */
 
   partBuf = (struct particle_data *) mymalloc("partBuf", count_togo * sizeof(struct particle_data));
   gasBuf = (struct gas_cell_data *) mymalloc("gasBuf", count_togo_gas * sizeof(struct gas_cell_data));

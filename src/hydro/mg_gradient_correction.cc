@@ -92,6 +92,12 @@
 #define MG_RHS_IMBALANCE_STRUCTURAL 1.0e-6    /* |sum b| / sum s on a piece beyond this is not roundoff: the graph or the face fluxes are not antisymmetric */
 #define MG_SYMMETRY_TOL 1.0e-12               /* both rows of a face compute its coefficient from the same expression */
 #define MG_REPLICATED_PIECE_GRAPH_MAX_BYTES (64LL << 20) /* above this the cross-rank piece graph is resolved by label propagation instead of being gathered everywhere */
+#if !defined(MHD_MODIFIED_GRADIENT_CG_ONLY) && !defined(MHD_MODIFIED_GRADIENT_USE_PARDISO) && !defined(MG_HYPRE_ON_DEVICE)
+#define MG_KEEP_AMG_HIERARCHY   /* host HYPRE: the AMG hierarchy is kept between solves while the cells stay in their slots */
+#endif
+#define MG_AMG_MAX_REUSES 10          /* solves on one kept hierarchy before it is rebuilt */
+#define MG_AMG_REUSED_TOL_FACTOR 0.2  /* a solve on a kept hierarchy runs to this fraction of MG_CG_TOL (HYPRE's residual is not the true one) */
+#define MG_AMG_REUSED_MAX_ITER_FACTOR 2 /* ... and stops at this many times the iterations of the solve that built it: a setup costs about two solves */
 
 /* ==================================================================================== */
 /* Storage                                                                                */
@@ -121,6 +127,42 @@ static long long MG_GraphEdges = 0;
    labelling, the symmetry check across tasks and the exchanges need. */
 static std::vector<long long> MG_RemoteOff, MG_RemoteCol;
 static std::vector<double> MG_RemoteQ;
+/* BoomerAMG builds its hierarchy (coarse grids, interpolation, coarse matrices) from the matrix, but its finest level always
+   uses the matrix it is handed, so a hierarchy built for an earlier matrix of the same rows is still a valid preconditioner:
+   the solve still converges against the current matrix, it may only need more iterations. It needs the same row partition
+   (gas count per task) to be usable at all, and the same cell in each row to be a good one. On the host the hierarchy of a fresh
+   solve that met the tolerance is kept and later solves skip the setup while: no task has noted a gas cell changing slots (mg_note_gas_slots_changed),
+   the gas count and the solved rows are the same on every task, and fewer than MG_AMG_MAX_REUSES solves used it. A device
+   HYPRE's l1-Jacobi smoother stores matrix data at setup, so it builds every solve. */
+static int MG_LastSolveReusedAMG = 0;   /* the last backend solve ran on a kept hierarchy (same on every task) */
+#ifdef MG_KEEP_AMG_HIERARCHY
+static HYPRE_Solver MG_KeptAMG = NULL;
+static int MG_KeptAMG_NGas = -1, MG_KeptAMG_Reuses = 0, MG_KeptAMG_BuildIterations = 0, MG_KeptAMG_Stale = 0;
+static std::vector<char> MG_KeptAMG_Solved;   /* MG_RowSolved of that solve */
+static void mg_release_kept_amg_hierarchy(void)   /* collective: every task calls it together */
+{
+    if(MG_KeptAMG) {HYPRE_BoomerAMGDestroy(MG_KeptAMG); MG_KeptAMG = NULL;}
+    MG_KeptAMG_Solved.clear(); MG_KeptAMG_Solved.shrink_to_fit(); MG_KeptAMG_Stale = 0;
+}
+#endif
+void mg_note_gas_slots_changed(void)
+{
+#ifdef MG_KEEP_AMG_HIERARCHY
+    if(MG_KeptAMG) {MG_KeptAMG_Stale = 1;}   /* freed at the next collective point: freeing may involve a communicator */
+#endif
+}
+void mg_free_kept_amg_hierarchy(int only_if_stale)
+{
+#ifdef MG_KEEP_AMG_HIERARCHY
+    if(!MG_KeptAMG) {return;}   /* the same on every task: it is kept and freed only together */
+    int stale = MG_KeptAMG_Stale, any_stale = 1;
+    if(only_if_stale) {MPI_Allreduce(&stale, &any_stale, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);}
+    if(any_stale) {mg_release_kept_amg_hierarchy();}
+#else
+    (void) only_if_stale;
+#endif
+}
+
 #if defined(MHD_MODIFIED_GRADIENT_CG_ONLY) || defined(MHD_MODIFIED_GRADIENT_USE_PARDISO)
 /* host copy of the physical graph for the solvers that run on the host */
 static std::vector<long long> MG_HostOff, MG_HostCol;
@@ -1054,25 +1096,41 @@ static int mg_solve_backend(double *x)
     HYPRE_ParVector par_b, par_x;
     HYPRE_IJVectorGetObject(b_vec, (void **)&par_b); HYPRE_IJVectorGetObject(x_vec, (void **)&par_x);
 
-    HYPRE_Solver solver, precond;
+    int reuse = 0;   /* the kept hierarchy serves this solve: decided together, since its setup is collective */
+#ifdef MG_KEEP_AMG_HIERARCHY
+    int reusable_here = (MG_KeptAMG != NULL) && !MG_KeptAMG_Stale && (MG_KeptAMG_NGas == N_gas) && (MG_KeptAMG_Reuses < MG_AMG_MAX_REUSES) && (MG_KeptAMG_Solved == MG_RowSolved);
+    MPI_Allreduce(&reusable_here, &reuse, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(!reuse) {mg_release_kept_amg_hierarchy();}
+    HYPRE_Solver precond = reuse ? MG_KeptAMG : NULL;
+#else
+    HYPRE_Solver precond = NULL;
+#endif
+    if(reuse) {HYPRE_BoomerAMGSetSetupType(precond, 0);}   /* setup returns at once; the solve takes the current matrix on the finest level */
+    else {
+        HYPRE_BoomerAMGCreate(&precond);
+        HYPRE_BoomerAMGSetPrintLevel(precond, 0);
+#ifdef MG_HYPRE_ON_DEVICE
+        HYPRE_BoomerAMGSetCoarsenType(precond, 8);  /* PMIS coarsening (Falgout is not available in a device setup) */
+        HYPRE_BoomerAMGSetRelaxType(precond, 18);   /* l1-scaled Jacobi (GPU-parallel) */
+#else
+        HYPRE_BoomerAMGSetCoarsenType(precond, 6);  /* Falgout coarsening */
+        HYPRE_BoomerAMGSetRelaxType(precond, 6);    /* symmetric Gauss-Seidel (CPU) */
+#endif
+        HYPRE_BoomerAMGSetNumSweeps(precond, 1);
+        HYPRE_BoomerAMGSetMaxLevels(precond, 25);
+        HYPRE_BoomerAMGSetMaxIter(precond, 1);      /* 1 V-cycle per PCG iteration */
+        HYPRE_BoomerAMGSetTol(precond, 0.0);
+    }
+    HYPRE_Solver solver;
     HYPRE_ParCSRPCGCreate(MPI_COMM_WORLD, &solver);
-    HYPRE_PCGSetMaxIter(solver, (HYPRE_Int) MG_CG_MAX_ITER);
-    HYPRE_PCGSetTol(solver, (HYPRE_Real) MG_CG_TOL);
+    int max_iter = MG_CG_MAX_ITER; double tol = MG_CG_TOL;
+#ifdef MG_KEEP_AMG_HIERARCHY
+    if(reuse) {tol *= MG_AMG_REUSED_TOL_FACTOR; max_iter = DMIN(max_iter, MG_AMG_REUSED_MAX_ITER_FACTOR * MG_KeptAMG_BuildIterations + 1);}
+#endif
+    HYPRE_PCGSetMaxIter(solver, (HYPRE_Int) max_iter);
+    HYPRE_PCGSetTol(solver, (HYPRE_Real) tol);
     HYPRE_PCGSetTwoNorm(solver, 1);
     HYPRE_PCGSetPrintLevel(solver, 0);
-    HYPRE_BoomerAMGCreate(&precond);
-    HYPRE_BoomerAMGSetPrintLevel(precond, 0);
-#ifdef MG_HYPRE_ON_DEVICE
-    HYPRE_BoomerAMGSetCoarsenType(precond, 8);  /* PMIS coarsening (Falgout is not available in a device setup) */
-    HYPRE_BoomerAMGSetRelaxType(precond, 18);   /* l1-scaled Jacobi (GPU-parallel) */
-#else
-    HYPRE_BoomerAMGSetCoarsenType(precond, 6);  /* Falgout coarsening */
-    HYPRE_BoomerAMGSetRelaxType(precond, 6);    /* symmetric Gauss-Seidel (CPU) */
-#endif
-    HYPRE_BoomerAMGSetNumSweeps(precond, 1);
-    HYPRE_BoomerAMGSetMaxLevels(precond, 25);
-    HYPRE_BoomerAMGSetMaxIter(precond, 1);      /* 1 V-cycle per PCG iteration */
-    HYPRE_BoomerAMGSetTol(precond, 0.0);
     HYPRE_PCGSetPrecond(solver, (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSolve, (HYPRE_PtrToSolverFcn) HYPRE_BoomerAMGSetup, precond);
     HYPRE_ParCSRPCGSetup(solver, parcsr_A, par_b, par_x);
     HYPRE_ParCSRPCGSolve(solver, parcsr_A, par_b, par_x);
@@ -1082,7 +1140,15 @@ static int mg_solve_backend(double *x)
     HYPRE_ClearAllErrors();   /* the outcome is judged by the true residual, not HYPRE's flags */
 
     HYPRE_ParCSRPCGDestroy(solver);
+#ifdef MG_KEEP_AMG_HIERARCHY
+    if(reuse) {   /* a kept hierarchy that needs half again the iterations it was built with is rebuilt at the next solve */
+        MG_KeptAMG_Reuses++;
+        if(num_iterations > 1.5 * MG_KeptAMG_BuildIterations) {MG_KeptAMG_Reuses = MG_AMG_MAX_REUSES;}
+    } else {MG_KeptAMG = precond; MG_KeptAMG_NGas = N_gas; MG_KeptAMG_Reuses = 0; MG_KeptAMG_BuildIterations = (int) num_iterations; MG_KeptAMG_Solved = MG_RowSolved;}
+#else
     HYPRE_BoomerAMGDestroy(precond);
+#endif
+    MG_LastSolveReusedAMG = reuse;
     HYPRE_IJMatrixDestroy(A);
     HYPRE_IJVectorDestroy(b_vec);
     HYPRE_IJVectorDestroy(x_vec);
@@ -1313,31 +1379,51 @@ void mg_gradient_correction_calc(void)
     const char *outcome = "converged";
     double rel_resid = 0;
     struct mg_solve_metrics metrics = {0, 0, 0, 0, 0, 0, 0, 0};
-    if(!stop_code) {
-        iterations = mg_solve_backend(x.data());
-        if(iterations < 0) {stop_code = 8806;}   /* the backend could not allocate its system (same on every task) */
-    }
-    if(!stop_code) {
-        int nonfinite_loc = 0, nonfinite = 0;
-        for(int i = 0; i < N_gas; i++) {if(!isfinite(x[i])) {nonfinite_loc = 1;}}
-        MPI_Allreduce(&nonfinite_loc, &nonfinite, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(nonfinite) {
-            if(ThisTask == 0) {PRINT_WARNING("MG solve returned a non-finite solution");}
-            stop_code = 8803;
+    int redone_on_fresh_hierarchy = 0;
+    MG_LastSolveReusedAMG = 0;
+    for(int attempt = 0; attempt < 2; attempt++) {
+        int redo = 0;
+        if(!stop_code) {
+            iterations = mg_solve_backend(x.data());
+            if(iterations < 0) {stop_code = 8806;}   /* the backend could not allocate its system (same on every task) */
         }
-    }
-    if(!stop_code && !mg_residual_terms(x.data(), resid.data(), e_bound.data(), corr_flux.data(), envelope.data())) {
-        if(ThisTask == 0) {PRINT_WARNING("MG: device memory for the residual check could not be allocated on some task (task 0 asked for %g MB)", MG_DeviceBytesRequested / (1024. * 1024.));}
-        stop_code = 8806;
+        if(!stop_code) {
+            int nonfinite_loc = 0, nonfinite = 0;
+            for(int i = 0; i < N_gas; i++) {if(!isfinite(x[i])) {nonfinite_loc = 1;}}
+            MPI_Allreduce(&nonfinite_loc, &nonfinite, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            if(nonfinite && MG_LastSolveReusedAMG && attempt == 0) {redo = 1;}   /* redone on a fresh hierarchy below */
+            else if(nonfinite) {
+                if(ThisTask == 0) {PRINT_WARNING("MG solve returned a non-finite solution");}
+                stop_code = 8803;
+            }
+        }
+        if(!redo && !stop_code && !mg_residual_terms(x.data(), resid.data(), e_bound.data(), corr_flux.data(), envelope.data())) {
+            if(ThisTask == 0) {PRINT_WARNING("MG: device memory for the residual check could not be allocated on some task (task 0 asked for %g MB)", MG_DeviceBytesRequested / (1024. * 1024.));}
+            stop_code = 8806;
+        }
+        if(!redo && !stop_code) {
+            /* The anchored solution (c = 0 at each piece's anchor row) is the gauge kept: c spans as many decades
+               as the coefficients, so subtracting a piece mean would round away c on the large-coefficient rows
+               (measured on FIF: every such row collapsed to the same value). c enters the physics only through
+               differences across faces, so a per-piece constant changes nothing. */
+            for(int i = 0; i < N_gas; i++) {resid[i] = MG_Rows[i].rhs - resid[i];}
+            metrics = mg_judge_solution(resid.data(), e_bound.data(), corr_flux.data());
+            rel_resid = metrics.G;
+        }
+#ifdef MG_KEEP_AMG_HIERARCHY
+        /* metrics.G is the same on every task, so these decisions are too: a fresh hierarchy is kept only if its solve met the
+           tolerance, and a solve on a kept one that missed it (or came back non-finite) is redone once on a fresh one before
+           anything is applied */
+        int judged = !redo && !stop_code && (metrics.n_unexplained == 0);
+        if(judged && !MG_LastSolveReusedAMG && !(metrics.G <= MG_CG_TOL)) {mg_release_kept_amg_hierarchy();}
+        if(judged && MG_LastSolveReusedAMG && attempt == 0 && !(metrics.G <= MG_CG_TOL)) {redo = 1;}
+        if(!redo) {break;}
+        mg_release_kept_amg_hierarchy(); redone_on_fresh_hierarchy = 1;
+#else
+        break;
+#endif
     }
     if(!stop_code) {
-        /* The anchored solution (c = 0 at each piece's anchor row) is the gauge kept: c spans as many decades
-           as the coefficients, so subtracting a piece mean would round away c on the large-coefficient rows
-           (measured on FIF: every such row collapsed to the same value). c enters the physics only through
-           differences across faces, so a per-piece constant changes nothing. */
-        for(int i = 0; i < N_gas; i++) {resid[i] = MG_Rows[i].rhs - resid[i];}
-        metrics = mg_judge_solution(resid.data(), e_bound.data(), corr_flux.data());
-        rel_resid = metrics.G;
         if(metrics.n_unexplained > 0) {
             if(ThisTask == 0) {PRINT_WARNING("MG solve left a residual on %lld rows that carry neither field nor correction flux", metrics.n_unexplained);}
             endrun(8803);
@@ -1369,9 +1455,9 @@ void mg_gradient_correction_calc(void)
         outcome = "stopped";
     }
     if(ThisTask == 0) {
-        PRINT_STATUS(" ..MG solve: %lld connected pieces (%lld below the noise floor), %lld cross-task piece links (%s), %d iterations, |r|/|b| = %g, %s",
+        PRINT_STATUS(" ..MG solve: %lld connected pieces (%lld below the noise floor), %lld cross-task piece links (%s), %d iterations%s, |r|/|b| = %g, %s",
                      pieces.pieces, n_floor_pieces, pieces.cross_task_links, pieces.replicated ? "gathered" : "labels propagated",
-                     iterations, rel_resid, outcome);
+                     iterations, MG_LastSolveReusedAMG ? " (kept AMG hierarchy)" : (redone_on_fresh_hierarchy ? " (redone on a fresh AMG hierarchy)" : ""), rel_resid, outcome);
         if(!All.Flag_SkipMGSolve && !stop_code && (metrics.n_unexplained == 0)) {
             PRINT_STATUS(" ..MG residuals (uncorrected -> applied): sqrt(sum r^2/sum s^2) %g -> %g, max |r|/d %g -> %g; correction flux / field flux %g",
                          metrics.P0, metrics.P, metrics.M0, metrics.M, metrics.C);

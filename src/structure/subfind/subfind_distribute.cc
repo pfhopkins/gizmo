@@ -100,6 +100,7 @@ void subfind_distribute_groups(void)
 void subfind_distribute_particles(int mode)
 {
   if(ghost_require_no_live_pool_for_layout_change("subfind_distribute_particles")) {return;}
+  mg_note_gas_slots_changed(); mg_free_kept_amg_hierarchy(1); /* particles move between tasks (every task is here): free it before the exchange buffers */
   long nexport = 0, nimport = 0;
   int i, n, ngrp, target = 0;
   struct particle_data *partBuf;
@@ -195,6 +196,7 @@ void subfind_distribute_particles(int mode)
 void subfind_exchange(void)
 {
   if(ghost_require_no_live_pool_for_layout_change("subfind_exchange")) {return;}
+  mg_note_gas_slots_changed(); mg_free_kept_amg_hierarchy(1); /* particles move between tasks (every task is here): free it before the exchange buffers */
   int count_togo = 0, count_togo_gas = 0, count_get = 0, count_get_gas = 0;
   int *count, *count_gas, *offset, *offset_gas;
   int *count_recv, *count_recv_gas, *offset_recv, *offset_recv_gas;

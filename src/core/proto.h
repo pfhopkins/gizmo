@@ -1634,6 +1634,11 @@ void hydro_gradient_calc(void);
 void construct_gradient(Vec3<MyDouble>& grad, int i);
 #ifdef MHD_MODIFIED_GRADIENT
 void mg_gradient_correction_calc(void);
+void mg_note_gas_slots_changed(void);       /* local gas cells changed slots (moved between tasks, reordered, created, removed) */
+void mg_free_kept_amg_hierarchy(int only_if_stale); /* collective: frees the MG solver's kept AMG hierarchy (if any task noted a change) */
+#else
+static inline void mg_note_gas_slots_changed(void) {}
+static inline void mg_free_kept_amg_hierarchy(int only_if_stale) {(void) only_if_stale;}
 #endif
 inline void construct_gradient(double *grad, int i) { Vec3<MyDouble> v{grad[0],grad[1],grad[2]}; construct_gradient(v,i); grad[0]=v[0]; grad[1]=v[1]; grad[2]=v[2]; }
 void local_slopelimiter(double *grad, double valmax, double valmin, double alim, double h, double shoot_tol, int pos_preserve, double d_max, double val_cen);

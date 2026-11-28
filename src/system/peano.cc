@@ -285,6 +285,7 @@ static long coincident_pass(int do_repair, long nseen, long *nfailed)
 int peano_hilbert_order(void)
 {
   if(ghost_require_no_live_pool_for_layout_change("peano_hilbert_order")) {return 0;}
+  mg_note_gas_slots_changed(); /* the gas cells are reordered */
   int i; PRINT_STATUS("Begin Peano-Hilbert order...");
   static int first_ordering = 1;   /* the cross-block pass is input validation: first ordering only */
   long ndup_local = 0;
