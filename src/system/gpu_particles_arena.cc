@@ -589,6 +589,11 @@ extern "C" void gizmo_gpu_free_device(void *ptr)
     if(ptr) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(ptr);}
 }
 
+extern "C" void gizmo_gpu_free_shared(void *ptr)
+{
+    if(ptr) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ptr);}
+}
+
 /* Where a per-particle stage that reads and writes the particles in place runs (gizmo_gpu_kernel_launch<Space>): the
    device when the particle storage is device-visible there (gizmo_gpu_particles_in_place) and the per-particle-loop offload
    count admits n, else the host execution space. */

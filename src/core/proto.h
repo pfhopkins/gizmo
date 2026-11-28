@@ -731,6 +731,7 @@ extern "C" void *gizmo_gpu_alloc_host(size_t nbytes, const char *label);     /* 
 extern "C" void *gizmo_gpu_alloc_pinned_host(size_t nbytes, const char *label);   /* page-locked host memory: device copies and MPI run at full speed from it */
 extern "C" void  gizmo_gpu_free_pinned_host(void *ptr);                            /* releases gizmo_gpu_alloc_pinned_host memory */
 extern "C" void  gizmo_gpu_free_device(void *ptr);                                              /* releases gizmo_gpu_alloc_device memory */
+extern "C" void  gizmo_gpu_free_shared(void *ptr);                                              /* releases gizmo_gpu_alloc_shared memory */
 extern "C" int   gizmo_gpu_stage_on_device(long long n);                                    /* 1: a per-particle stage of n items runs on the device (in place), 0: on the host execution space */
 extern "C" void  gizmo_gpu_copy_to_device(void *dst_device, const void *src_host, size_t nbytes); /* blocking bulk copies between */
 extern "C" void  gizmo_gpu_copy_to_host(void *dst_host, const void *src_device, size_t nbytes);   /* host and device-only memory (waits for all device work first) */
@@ -1134,6 +1135,7 @@ void check_omega(void);
 void compute_global_quantities_of_system(void);
 void star_formation_parent_routine(void);
 int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned);
+void single_star_record_publish(void); /* the star records' addresses into All.SingleStarRecDev (device kernels) */
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 double single_stars_collect_gas(long long tot_spawned, long long tot_awaiting_gas_collection);
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR

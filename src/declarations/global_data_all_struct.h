@@ -39,8 +39,13 @@
  * it allows the introduction of new global variables in a simple way. The only thing to do is to introduce
  * them into this structure.
  */
+#include "../galaxy_sf/stellar_evolution_tables.h" /* struct StellarTablesView */
 struct global_data_all_processes
 {
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+  struct StellarTablesView StellarTablesDev; /*!< the stellar-evolution tables where kernels of the default execution space read them (galaxy_sf/stellar_evolution_tables.cc); kept across a restart (core/begrun.cc) */
+  struct SingleStarRecordView SingleStarRecDev; /*!< the star-record columns device kernels read (galaxy_sf/single_star_record.cc), set at every growth of the records and after a restart */
+#endif
 #ifdef KETJU_REGULARIZATION
 #include "../gravity/ketju/ketju_global_fields.h"
 #endif

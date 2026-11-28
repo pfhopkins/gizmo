@@ -34,11 +34,14 @@ static size_t ssr_slot_bytes(void)
     return b;
 }
 
+/* the slots live in Kokkos shared space, where device kernels read them as they read the particles (the Stella stages) */
 static void *ssr_grow(void *p, size_t elem, int n_old, int n_new)
 {
-    void *q = realloc(p, (size_t)n_new * elem);
-    if(!q) {endrun(7821);}
+    void *q = gizmo_gpu_alloc_shared((size_t)n_new * elem, "single_star_records");
+    if(!q) {printf("SINGLE_STAR_RECORDS: rank %d cannot grow the star records to %d slots\n", ThisTask, n_new); fflush(stdout); endrun(7821);}
+    if(p && n_old > 0) {memcpy(q, p, (size_t)n_old * elem);}
     memset((char *)q + (size_t)n_old * elem, 0, (size_t)(n_new - n_old) * elem);
+    gizmo_gpu_free_shared(p);
     return q;
 }
 
@@ -53,15 +56,23 @@ void single_star_record_resize(int capacity)
     single_star_free_slots = (int *) ssr_grow(single_star_free_slots, sizeof(int), n_old, capacity);
     for(int s = capacity - 1; s >= n_old; s--) {if(!SingleStars.used[s]) {single_star_free_slots[single_star_n_free++] = s;}}
     SingleStars.capacity = capacity;
+    single_star_record_publish();
     gizmo_mem_account_add(GIZMO_MEM_SINGLE_STARS, (long long)(capacity - n_old) * (long long)ssr_slot_bytes());
+}
+
+void single_star_record_publish(void)
+{
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+    All.SingleStarRecDev.M_drawn = SingleStars.M_drawn; All.SingleStarRecDev.Z_birth = SingleStars.Z_birth; All.SingleStarRecDev.rho_birth = SingleStars.rho_birth;
+#endif
 }
 
 void single_star_record_reset(int capacity)
 {
-#define SSR_FREE(type, name, comment) free(SingleStars.name);
+#define SSR_FREE(type, name, comment) gizmo_gpu_free_shared(SingleStars.name);
     SINGLE_STAR_RECORD_FIELDS(SSR_FREE)
 #undef SSR_FREE
-    free(SingleStars.used); free(single_star_free_slots);
+    gizmo_gpu_free_shared(SingleStars.used); gizmo_gpu_free_shared(single_star_free_slots);
     gizmo_mem_account_add(GIZMO_MEM_SINGLE_STARS, -(long long)SingleStars.capacity * (long long)ssr_slot_bytes());
     memset(&SingleStars, 0, sizeof(SingleStars)); single_star_free_slots = NULL; single_star_n_free = 0;
     single_star_record_resize(capacity);
