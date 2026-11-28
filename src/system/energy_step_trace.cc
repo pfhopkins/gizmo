@@ -179,8 +179,9 @@ struct EstepNeumaierJoin {
 };
 
 /* local sums of the components (and of 1/2 m Phi when pot != NULL): one Kokkos kernel over the rank's particles, on the device
-   or on the host execution space (gizmo_stage_on_device); the host space runs the particles in order with one accumulator,
-   as a plain loop, and the device joins partial sums with the same compensation */
+   or on the host execution space (gizmo_stage_on_device). A Serial host space runs the particles in order with one accumulator,
+   as a plain loop; an OpenMP or Threads host space and the device join partial sums with the same compensation, so the sums
+   differ from a plain loop at round-off (see gizmo_stage_reduce in gpu_dispatch_templates.h) */
 static void estep_local_sums(double e[EC_N], double *pot)
 {
     const int n = NumPart, on_device = gizmo_stage_on_device(n), with_pot = (pot != NULL);

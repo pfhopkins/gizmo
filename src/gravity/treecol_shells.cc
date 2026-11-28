@@ -22,7 +22,8 @@ void treecol_shells_photon_cap(void)
     if(!(L_emit > 0)) {return;} /* no light: nothing absorbed; the root is the same on every rank */
     const double to_NH = UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
     /* both loops are one Kokkos kernel each over the active list, on the device or on the host execution space (gizmo_stage_on_device;
-       the host space runs the list in order, so its sum is that of a plain loop) */
+       a Serial host space runs the list in order, so its sum is that of a plain loop; an OpenMP or Threads host space and the device
+       sum per thread and join, which differs at round-off: see gizmo_stage_sum in gpu_dispatch_templates.h) */
     const int n = (int) ActiveParticleList.size(); int on_device = gizmo_stage_on_device(n);
     int *act = gizmo_stage_index_alloc(&on_device, n, "treecol_shells_active"); /* the active list where the kernel can read it */
     if(n > 0) {memcpy(act, ActiveParticleList.data(), (size_t) n * sizeof(int));}

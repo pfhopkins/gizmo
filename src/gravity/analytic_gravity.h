@@ -290,7 +290,7 @@ void GravAccel_TestStaticPlummer()
 #endif
 
 #ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
-/* external potential of particle i (Phi(midplane) = 0), for E_pot at full weight; the field is hu_tallbox_field (core/proto.h) */
+/* external potential of particle i (Phi(midplane) = 0), for E_pot at full weight; the field is hu_tallbox_field (gravity/analytic_gravity_functions.h) */
 double analytic_external_potential(int i) {return hu_tallbox_potential(P[i].Pos[2] - boxHalf_Z, hu_tallbox_units_now());}
 void GravAccel_HuTallbox()
 {
