@@ -12,11 +12,19 @@
 #include "../declarations/gpu_all_mirror.h"  /* before allvars.h: a Kokkos TU (the light stages are kernels) */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-/* the kernels here evaluate the device source cores (the star's age, rt_get_source_luminosity): opened before their headers */
+/* the light kernels below evaluate the source cores (the star's age, rt_get_source_luminosity). Where those are device-callable
+   (GRAVTREE_SOURCE_LAZY_SUPPORTED) their bodies are opened here and the kernels run on the device or the host execution space.
+   With GR_TABULATED_COSMOLOGY* the age interpolates host-only tables: the cores stay host functions and the kernels run on the
+   host execution space, as host lambdas. */
 #ifdef GRAVTREE_SOURCE_LAZY_SUPPORTED
 #define GRAVTREE_SOURCE_DEVICE_TU
-#elif defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
-#error "single-star luminosity kernels need the device source cores (GRAVTREE_SOURCE_LAZY_SUPPORTED; not with GR_TABULATED_COSMOLOGY*)"
+#define SSL_LAMBDA KOKKOS_LAMBDA
+#define SSL_LIGHT_ON_DEVICE(n) gizmo_gpu_stage_on_device(n)
+typedef Kokkos::DefaultExecutionSpace SslLightSpace;
+#else
+#define SSL_LAMBDA [=]
+#define SSL_LIGHT_ON_DEVICE(n) 0
+typedef Kokkos::DefaultHostExecutionSpace SslLightSpace;
 #endif
 #include "single_star_record.h"
 #include "stellar_evolution_tables.h"
@@ -164,7 +172,7 @@ double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR
 template<class Space> static void single_star_tree_lum_fill(int n)
 {
     struct particle_data *kp = P; struct gas_cell_data *kc = CellP; struct single_star_tree_lum *tl = SingleStars.tree_lum;
-    gizmo_gpu_kernel_launch<Space>("single_star_tree_lum", n, KOKKOS_LAMBDA(int i) {
+    gizmo_gpu_kernel_launch<Space>("single_star_tree_lum", n, SSL_LAMBDA(int i) {
         if(kp[i].Type != 4 || kp[i].StarIdx <= 0) {return;}
         double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, kp, kc);
         for(int b = 0; b < N_RT_FREQ_BINS; b++) {tl[kp[i].StarIdx - 1].L[b] = (float) lum[b];}
@@ -172,9 +180,9 @@ template<class Space> static void single_star_tree_lum_fill(int n)
 }
 static void single_star_tree_lum_fill_all(void)
 {
-    const int n = NumPart, on_device = gizmo_gpu_stage_on_device(n);
+    const int n = NumPart, on_device = SSL_LIGHT_ON_DEVICE(n);
     if(n <= 0) {return;}
-    if(on_device) {GIZMO_GPU_ENSURE_ALL_FRESH(); single_star_tree_lum_fill<Kokkos::DefaultExecutionSpace>(n);}
+    if(on_device) {GIZMO_GPU_ENSURE_ALL_FRESH(); single_star_tree_lum_fill<SslLightSpace>(n);}
     else {single_star_tree_lum_fill<Kokkos::DefaultHostExecutionSpace>(n);}
     loop_route_count("single_star_tree_lum", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
 }
@@ -209,7 +217,7 @@ template<class Space> static int single_star_light_scan_on(int n, double tol)
     struct particle_data *kp = P; struct gas_cell_data *kc = CellP; const struct single_star_tree_lum *tl = SingleStars.tree_lum;
     int *mark = (int *) gizmo_gpu_alloc_shared((size_t) (n + 1) * sizeof(int), "single_star_light_scan");
     if(!mark) {printf("single_star_light_exchange_scan: rank %d has no shared memory for %d particles\n", ThisTask, n); fflush(stdout); endrun(7823);}
-    gizmo_gpu_kernel_launch<Space>("single_star_light_scan", n, KOKKOS_LAMBDA(int i) {
+    gizmo_gpu_kernel_launch<Space>("single_star_light_scan", n, SSL_LAMBDA(int i) {
         mark[i] = 0;
         if(kp[i].Type != 4 || kp[i].StarIdx <= 0) {return;}
         const int s = kp[i].StarIdx - 1;
@@ -220,7 +228,7 @@ template<class Space> static int single_star_light_scan_on(int n, double tol)
         }
     });
     int n_pending = 0;
-    Kokkos::parallel_scan("single_star_light_place", Kokkos::RangePolicy<Space>(0, n), KOKKOS_LAMBDA(int i, int &off, const bool final) {
+    Kokkos::parallel_scan("single_star_light_place", Kokkos::RangePolicy<Space>(0, n), SSL_LAMBDA(int i, int &off, const bool final) {
         const int m = mark[i];
         if(final && m) {mark[i] = off + 1;} /* 1 + the place in the list; 0 = not pending */
         off += m;
@@ -229,8 +237,8 @@ template<class Space> static int single_star_light_scan_on(int n, double tol)
     int *list = (int *) gizmo_gpu_alloc_shared((size_t) (n_pending + 1) * sizeof(int), "single_star_light_scan");
     float *lum_out = (float *) gizmo_gpu_alloc_shared((size_t) (n_pending + 1) * N_RT_FREQ_BINS * sizeof(float), "single_star_light_scan");
     if(!list || !lum_out) {printf("single_star_light_exchange_scan: rank %d has no shared memory for %d pending stars\n", ThisTask, n_pending); fflush(stdout); endrun(7823);}
-    gizmo_gpu_kernel_launch<Space>("single_star_light_list", n, KOKKOS_LAMBDA(int i) {if(mark[i] > 0) {list[mark[i] - 1] = i;}});
-    gizmo_gpu_kernel_launch<Space>("single_star_light_pending", n_pending, KOKKOS_LAMBDA(int k) {
+    gizmo_gpu_kernel_launch<Space>("single_star_light_list", n, SSL_LAMBDA(int i) {if(mark[i] > 0) {list[mark[i] - 1] = i;}});
+    gizmo_gpu_kernel_launch<Space>("single_star_light_pending", n_pending, SSL_LAMBDA(int k) {
         double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(list[k], 1, lum, kp, kc);
         for(int b = 0; b < N_RT_FREQ_BINS; b++) {lum_out[(size_t) k * N_RT_FREQ_BINS + b] = (float) lum[b];}
     });
@@ -247,9 +255,9 @@ int single_star_light_exchange_scan(double tol)
     light_pending.clear(); light_pending_lum.clear();
     if(!force_tree_is_allocated()) {return 0;}
     const double t0 = MPI_Wtime();
-    const int n = (NumPart < All.TreeParticleSlots) ? NumPart : All.TreeParticleSlots, on_device = gizmo_gpu_stage_on_device(n);
+    const int n = (NumPart < All.TreeParticleSlots) ? NumPart : All.TreeParticleSlots, on_device = SSL_LIGHT_ON_DEVICE(n);
     if(n > 0) {
-        if(on_device) {GIZMO_GPU_ENSURE_ALL_FRESH(); single_star_light_scan_on<Kokkos::DefaultExecutionSpace>(n, tol);}
+        if(on_device) {GIZMO_GPU_ENSURE_ALL_FRESH(); single_star_light_scan_on<SslLightSpace>(n, tol);}
         else {single_star_light_scan_on<Kokkos::DefaultHostExecutionSpace>(n, tol);}
         loop_route_count("single_star_light_scan", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
     }
@@ -369,7 +377,7 @@ void single_star_light_switch_check(void)
     if(t0 < 0 || All.Time <= t0) {return;}
     if(!force_tree_is_allocated() || TreeReconstructFlag) {return;} /* a build is due: it sees every star as it is now */
     const double dt_yr = evaluate_time_since_t_initial_in_Gyr(t0) * 1.e9, mcut = All.IMFSampleStellarMassCut;
-    const int n = NumPart, on_device = gizmo_gpu_stage_on_device(n);
+    const int n = NumPart, on_device = SSL_LIGHT_ON_DEVICE(n);
     if(n <= 0) {return;}
     if(on_device) {GIZMO_GPU_ENSURE_ALL_FRESH();} /* the light and the age read All */
     const StellarTablesView T = on_device ? All.StellarTablesDev : stellar_tables_host_view();
@@ -379,7 +387,7 @@ void single_star_light_switch_check(void)
     const uint8_t *ev = SingleStars.event_bits;
 #endif
     /* a star that switched a band on or off, drifted beyond the tolerance, or passed an on/off age since the last call */
-    auto stale = KOKKOS_LAMBDA(int i, int &n_stale) {
+    auto stale = SSL_LAMBDA(int i, int &n_stale) {
         if(kp[i].Type != 4 || kp[i].StarIdx <= 0 || kp[i].Mass <= 0) {return;}
         const int s = kp[i].StarIdx - 1;
         double lum[N_RT_FREQ_BINS] = {0}; rt_get_source_luminosity(i, 1, lum, kp, kc);
@@ -398,7 +406,7 @@ void single_star_light_switch_check(void)
         for(int k = 0; k < 3; k++) {if(t_switch[k] > 0 && age - dt_yr < t_switch[k] && t_switch[k] <= age) {n_stale++; return;}}
     };
     int n_stale = 0;
-    if(on_device) {gizmo_gpu_kernel_launch_reduce("single_star_light_switch", n, stale, n_stale);}
+    if(on_device) {gizmo_gpu_kernel_launch_reduce<SslLightSpace>("single_star_light_switch", n, stale, n_stale);}
     else {gizmo_gpu_kernel_launch_reduce<Kokkos::DefaultHostExecutionSpace>("single_star_light_switch", n, stale, n_stale);}
     loop_route_count("single_star_light_switch", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
     if(n_stale > 0) {TreeMomentsStaleFlag = 2;}

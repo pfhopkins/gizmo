@@ -19,8 +19,10 @@
 KOKKOS_INLINE_FUNCTION double single_star_band_lum_cgs(double log_l) {double l = pow(10., log_l); return (isfinite(l) && l > 0) ? l : 0;}
 
 /* true time since birth [yr] (single_star_age_yr): the cosmology core on the device (a device unit opens it with
-   GRAVTREE_SOURCE_DEVICE_TU, gravity/cosmology_functions.h), the host function, which calls the same core, on the host */
-#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+   GRAVTREE_SOURCE_DEVICE_TU, gravity/cosmology_functions.h), the host function, which calls the same core, on the host.
+   Without GRAVTREE_SOURCE_LAZY_SUPPORTED (GR_TABULATED_COSMOLOGY*) the age reads host-only tables and no device code calls
+   these lookups: the host function then serves both passes */
+#if (defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)) && defined(GRAVTREE_SOURCE_DEVICE_TU) && defined(GRAVTREE_SOURCE_LAZY_SUPPORTED)
 #define SINGLE_STAR_TIME_SINCE_GYR(t) evaluate_time_since_t_initial_in_Gyr_core(t)
 #else
 #define SINGLE_STAR_TIME_SINCE_GYR(t) evaluate_time_since_t_initial_in_Gyr(t)
