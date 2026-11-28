@@ -49,7 +49,6 @@ void ewald_xy_update(void);
 void ewald_xy_exact(double dx, double dy, double dz, double s, double Lx, double Ly, double out[4]);
 #endif
 #ifdef GRAVITY_ANALYTIC_TALLBOX_HU21
-void hu_tallbox_field(double zc, double *az, double *tzz, double *phi);
 double analytic_external_potential(int i); /* Hu+21 tall-box potential of particle i, Phi(midplane) = 0 */
 #endif
 uint64_t single_star_draw_rng_key(int i);
@@ -568,6 +567,9 @@ enum GizmoOffloadSite
 };
 int gizmo_gpu_offload_min_count(enum GizmoOffloadSite site);
 int gizmo_gpu_offload_takes(enum GizmoOffloadSite site, long long count);   /* 1 if `count` work items go to the device: at least the site's count, and never an empty batch */
+int gizmo_stage_on_device(long long n);   /* 1 if a per-element stage kernel over n items runs on the device (shared particle storage, a device that is not the host, the per-particle-loop count admits n), else the host execution space takes it */
+int *gizmo_stage_index_alloc(int *on_device, long long n, const char *label);   /* n ints for a stage's index list: shared memory when *on_device (cleared if that fails), else host memory */
+void gizmo_stage_index_free(int on_device, int *p);
 void gizmo_gpu_offload_report(void);   /* rank 0 prints every resolved count and where it came from, the host-thread counts below included */
 /* A host loop runs on all OpenMP threads only from a per-MPI-task count of items, below which starting the threads costs more than
  * the loop.  One anchor, HostThreadMinCount, sets the count of each kind of loop below (core/begrun.cc), scaled by how much work an item is. */
@@ -731,6 +733,8 @@ extern "C" void *gizmo_gpu_alloc_host(size_t nbytes, const char *label);     /* 
 extern "C" void *gizmo_gpu_alloc_pinned_host(size_t nbytes, const char *label);   /* page-locked host memory: device copies and MPI run at full speed from it */
 extern "C" void  gizmo_gpu_free_pinned_host(void *ptr);                            /* releases gizmo_gpu_alloc_pinned_host memory */
 extern "C" void  gizmo_gpu_free_device(void *ptr);                                              /* releases gizmo_gpu_alloc_device memory */
+extern "C" void  gizmo_gpu_free_shared(void *ptr);                                              /* releases gizmo_gpu_alloc_shared memory */
+extern "C" int   gizmo_gpu_stage_on_device(long long n);                                    /* 1: a per-particle stage of n items runs on the device (in place), 0: on the host execution space */
 extern "C" void  gizmo_gpu_copy_to_device(void *dst_device, const void *src_host, size_t nbytes); /* blocking bulk copies between */
 extern "C" void  gizmo_gpu_copy_to_host(void *dst_host, const void *src_device, size_t nbytes);   /* host and device-only memory (waits for all device work first) */
 /* 1 when the particle storage is CUDA managed memory, which MPI must not receive into directly: such receives go
@@ -1133,6 +1137,7 @@ void check_omega(void);
 void compute_global_quantities_of_system(void);
 void star_formation_parent_routine(void);
 int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned);
+void single_star_record_publish(void); /* the star records' addresses into All.SingleStarRecDev (device kernels) */
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 double single_stars_collect_gas(long long tot_spawned, long long tot_awaiting_gas_collection);
 #ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR

@@ -21,6 +21,8 @@
 #include "../system/gpu_particles_arena.h"
 #include "single_star_record.h"
 #include "photoion_per_direction.h"
+#include "../declarations/gpu_dispatch_templates.h"
+#include "../system/loop_routes.h"   /* OUTPUT_LOOP_ROUTES */
 
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
 #if !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
@@ -99,9 +101,17 @@ static void pi_pool_reset(int n_g, int cap)
         pi_pool_rmin = (double *) gizmo_gpu_alloc_shared(nb * sizeof(double), "photoion_pool_rmin");
         if(!pi_pool_slot || !pi_pool_g || !pi_pool_ctl || !pi_pool_cost || !pi_pool_rmin) {gizmo_request_controlled_stop(7903, "per-direction photoionisation: could not allocate the histogram pool", __FILE__, __LINE__, __FUNCTION__); return;}
         Kokkos::fence();
-        for(int g = 0; g < pi_pool_ng; g++) {pi_pool_slot[g] = -1;}
-        for(int c = 0; c < pi_pool_cap; c++) {pi_pool_g[c] = -1;} /* a slot lost to a claim race stays -1 */
-        for(size_t k = 0; k < nb; k++) {pi_pool_cost[k] = 0; pi_pool_rmin[k] = PI_RMIN_EMPTY;}
+        /* one kernel sets the empty pool (shared space: on the device where it reads shared memory in place) */
+        int *slot = pi_pool_slot, *gs = pi_pool_g; long long *cost = pi_pool_cost; double *rmin = pi_pool_rmin;
+        const int ng = pi_pool_ng, cap_s = pi_pool_cap; const long long n = DMAX((long long) nb, (long long) DMAX(ng, cap_s));
+        auto init = KOKKOS_LAMBDA(long long q) {
+            if(q < ng) {slot[q] = -1;}
+            if(q < cap_s) {gs[q] = -1;} /* a slot lost to a claim race stays -1 */
+            if(q < (long long) nb) {cost[q] = 0; rmin[q] = PI_RMIN_EMPTY;}
+        };
+        const int on_device = gizmo_gpu_stage_on_device(n);
+        if(on_device) {gizmo_gpu_kernel_launch("photoion_pool_init", (int) n, init);} else {gizmo_gpu_kernel_launch<Kokkos::DefaultHostExecutionSpace>("photoion_pool_init", (int) n, init);}
+        loop_route_count("photoion_pool_init", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
         pi_pool_ctl[0] = pi_pool_ctl[1] = 0;
     }
 }
@@ -113,10 +123,18 @@ static void pi_pool_clear(void)
     {int bad = 0; for(int s = 0; s < n; s++) {int g = pi_pool_g[s]; if(g != -1 && (g < 0 || g >= pi_pool_ng || pi_pool_slot[g] != s)) {bad++;}} /* each used slot: -1 or its owner's */
      printf("PI_POOL_CHECK: used=%d bad=%d\n", n, bad); fflush(stdout);}
 #endif
-    for(int s = 0; s < n; s++) {
-        if(pi_pool_g[s] >= 0) {pi_pool_slot[pi_pool_g[s]] = -1;}
-        pi_pool_g[s] = -1;
-        for(int k = 0; k < PI_NPIX * PI_NBIN; k++) {pi_pool_cost[(size_t)s * PI_NPIX * PI_NBIN + k] = 0; pi_pool_rmin[(size_t)s * PI_NPIX * PI_NBIN + k] = PI_RMIN_EMPTY;}
+    /* one kernel over the used slots' bins: each slot's owner index and bins are its own */
+    int *slot = pi_pool_slot, *gs = pi_pool_g; long long *cost = pi_pool_cost; double *rmin = pi_pool_rmin;
+    const long long nq = (long long) n * PI_NPIX * PI_NBIN;
+    auto clear = KOKKOS_LAMBDA(long long q) {
+        const int sl = (int)(q / (PI_NPIX * PI_NBIN));
+        if(q % (PI_NPIX * PI_NBIN) == 0) {if(gs[sl] >= 0) {slot[gs[sl]] = -1;} gs[sl] = -1;}
+        cost[q] = 0; rmin[q] = PI_RMIN_EMPTY;
+    };
+    if(nq > 0) {
+        const int on_device = gizmo_gpu_stage_on_device(nq);
+        if(on_device) {gizmo_gpu_kernel_launch("photoion_pool_clear", (int) nq, clear);} else {gizmo_gpu_kernel_launch<Kokkos::DefaultHostExecutionSpace>("photoion_pool_clear", (int) nq, clear);}
+        loop_route_count("photoion_pool_clear", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, nq);
     }
     pi_pool_ctl[0] = pi_pool_ctl[1] = 0;
 }
@@ -246,7 +264,7 @@ struct pi_src {int i, g, prev, f0, nf; double Q, R; int refine, open; double fro
 /* per pixel, where the summed bills cross the budget (fractional front, for diagnostics and refinement) and the marking
    front, rounded up through the innermost cell of the crossing bin. Returns 1 if the source searches
    again (sphere grown, or refined if allow_shrink), 0 if its fronts are final. */
-static int pi_analyse(pi_src& s, const PiHistOut& h, int allow_iter, int allow_shrink, double max_r)
+KOKKOS_INLINE_FUNCTION int pi_analyse(pi_src& s, const PiHistOut& h, int allow_iter, int allow_shrink, double max_r)
 {
     const long long S = (long long) PI_BIN_UNIT;
     double R = s.R, dr = R / PI_NBIN, front_max = 0, cum_min = MAX_REAL_NUMBER;
@@ -282,6 +300,36 @@ static int pi_analyse(pi_src& s, const PiHistOut& h, int allow_iter, int allow_s
     return 0;
 }
 
+/* pi_analyse of the sources which[a] with histograms H[a], one kernel (each source writes only itself); mode 0: the passes (the
+   source stays open while it searches again), mode 1: the sharing rounds (the marks move only outward, anything moved counts).
+   Returns the number of open sources (mode 0) or whether any moved (mode 1). The sources and histograms are copied to shared
+   memory and back. */
+static int pi_analyse_all(std::vector<pi_src>& S, const std::vector<int>& which, const std::vector<PiHistOut>& H, int mode, int allow_iter, double max_r)
+{
+    const int n = (int) which.size();
+    if(n <= 0) {return 0;}
+    pi_src *ks = (pi_src *) gizmo_gpu_alloc_shared((size_t) n * sizeof(pi_src), "photoion_analyse");
+    PiHistOut *kh = (PiHistOut *) gizmo_gpu_alloc_shared((size_t) n * sizeof(PiHistOut), "photoion_analyse");
+    if(!ks || !kh) {printf("per-direction photoionisation: rank %d has no shared memory for %d analyses\n", ThisTask, n); fflush(stdout); endrun(7907);}
+    for(int a = 0; a < n; a++) {ks[a] = S[which[a]];}
+    std::memcpy((void *) kh, (const void *) H.data(), (size_t) n * sizeof(PiHistOut));
+    auto analyse = KOKKOS_LAMBDA(int a, int &sum) {
+        pi_src &x = ks[a];
+        if(mode == 0) {x.open = pi_analyse(x, kh[a], allow_iter, 1, max_r); sum += x.open; return;}
+        int moved = pi_analyse(x, kh[a], 1, 0, max_r); /* the sphere grew */
+        for(int k = 0; k < PI_NPIX; k++) {if(x.mark[k] > x.held[k]) {moved = 1;} else {x.mark[k] = x.held[k];}}
+        sum += moved;
+    };
+    int total = 0;
+    const int on_device = gizmo_gpu_stage_on_device(n);
+    if(on_device) {GIZMO_GPU_ENSURE_ALL_FRESH(); gizmo_gpu_kernel_launch_reduce("photoion_analyse", n, analyse, total);}
+    else {gizmo_gpu_kernel_launch_reduce<Kokkos::DefaultHostExecutionSpace>("photoion_analyse", n, analyse, total);}
+    loop_route_count("photoion_analyse", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
+    for(int a = 0; a < n; a++) {S[which[a]] = ks[a];}
+    gizmo_gpu_free_shared(ks); gizmo_gpu_free_shared(kh);
+    return (mode == 0) ? total : (total > 0);
+}
+
 static PiSourceIn pi_source_in(const pi_src& s)
 {
     PiSourceIn x; std::memset(&x, 0, sizeof(x));
@@ -307,13 +355,32 @@ static void pi_histograms(std::vector<pi_src>& S, const std::vector<int>& which,
         full = need_all[0];
         if(full) {pi_pool_clear(); pi_pool_reset((int) off[NTask], 2 * need_all[1]);} /* grow and repeat the pass */
     }
+    /* the non-empty bins of the used slots, in slot and bin order: a kernel marks them, a prefix sum places them; the records
+       then go to their sources' ranks in that order */
     std::vector<std::vector<pi_bin>> out(NTask);
-    for(int s = 0; s < DMIN(pi_pool_ctl[0], pi_pool_cap); s++) {
-        int g = pi_pool_g[s]; if(g < 0) {continue;}
-        int dest = (int)(std::upper_bound(off.begin(), off.end(), (long long) g) - off.begin()) - 1;
-        for(int k = 0; k < PI_NPIX * PI_NBIN; k++) {
-            size_t q = (size_t)s * PI_NPIX * PI_NBIN + k;
-            if(pi_pool_cost[q] > 0 || pi_pool_rmin[q] < PI_RMIN_EMPTY) {out[dest].push_back({g, k, pi_pool_cost[q], pi_pool_rmin[q]});}
+    {
+        const int *gs = pi_pool_g; const long long *cost = pi_pool_cost; const double *rmin = pi_pool_rmin;
+        const long long nq = (long long) DMIN(pi_pool_ctl[0], pi_pool_cap) * PI_NPIX * PI_NBIN;
+        if(nq > 0) {
+            pi_bin *bins = (pi_bin *) gizmo_gpu_alloc_shared((size_t) nq * sizeof(pi_bin), "photoion_pool_bins");
+            if(!bins) {printf("per-direction photoionisation: rank %d has no shared memory for %lld bins\n", ThisTask, nq); fflush(stdout); endrun(7905);}
+            auto place = KOKKOS_LAMBDA(long long q, long long &at, const bool final) {
+                const int sl = (int)(q / (PI_NPIX * PI_NBIN)), k = (int)(q % (PI_NPIX * PI_NBIN)), g = gs[sl];
+                if(g < 0 || !(cost[q] > 0 || rmin[q] < PI_RMIN_EMPTY)) {return;}
+                if(final) {bins[at].g = g; bins[at].k = k; bins[at].cost = cost[q]; bins[at].rmin = rmin[q];}
+                at++;
+            };
+            long long n_bins = 0;
+            const int on_device = gizmo_gpu_stage_on_device(nq);
+            if(on_device) {Kokkos::parallel_scan("photoion_pool_pack", Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace, Kokkos::IndexType<long long>>(0, nq), place, n_bins);}
+            else {Kokkos::parallel_scan("photoion_pool_pack", Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace, Kokkos::IndexType<long long>>(0, nq), place, n_bins);}
+            Kokkos::fence(); gizmo_gpu_check_last_error("photoion_pool_pack", (int) nq, -1);
+            loop_route_count("photoion_pool_pack", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, nq);
+            for(long long m = 0; m < n_bins; m++) { /* the packed bins only */
+                const int dest = (int)(std::upper_bound(off.begin(), off.end(), (long long) bins[m].g) - off.begin()) - 1;
+                out[dest].push_back(bins[m]);
+            }
+            gizmo_gpu_free_shared(bins);
         }
     }
     pi_pool_clear();
@@ -370,24 +437,47 @@ static int pi_find_partners(std::vector<pi_src>& S, const std::vector<long long>
     }
     std::vector<int> nb, db; pi_counts_in_bytes(cnt, off, sizeof(pi_sphere), nb, db);
     pi_calls++; MPI_Allgatherv(mine.data(), (int)(mine.size() * sizeof(pi_sphere)), MPI_BYTE, all.data(), nb.data(), db.data(), MPI_BYTE, MPI_COMM_WORLD);
-    std::vector<char> solving(pi_tab_n, 0);
-    for(const pi_sphere& s : all) {int r = pi_tab_row(s.id); if(r >= 0) {solving[r] = 1;}}
-    std::vector<int> fl, f0(n_tot + 1, 0);
-    for(int g = 0; g < n_tot; g++) {
-        f0[g] = (int) fl.size();
-        for(int t = 0; t < pi_tab_n; t++) {
-            if(solving[t] || pi_row_end(pi_tab[t], dti) <= All.Ti_Current) {continue;}
-            Vec3<double> d; for(int k = 0; k < 3; k++) {d[k] = all[g].Pos[k] - pi_tab[t].Pos[k];}
-            nearest_xyz(d);
-            double reach = all[g].R + pi_tab[t].R;
-            if(d.norm_sq() < reach * reach) {fl.push_back(t);}
-        }
+    /* the live rows not solving now, then per source the rows whose fronts can reach it, in row order: a kernel counts, a prefix
+       sum gives the offsets, a kernel writes the lists (every rank the same: the same rows and spheres) */
+    const int nt = pi_tab_n;
+    char *cand = (char *) gizmo_gpu_alloc_shared((size_t) DMAX(nt, 1), "photoion_partners");
+    pi_sphere *sph = (pi_sphere *) gizmo_gpu_alloc_shared((size_t) DMAX(n_tot, 1) * sizeof(pi_sphere), "photoion_partners");
+    int *f0 = (int *) gizmo_gpu_alloc_shared((size_t)(n_tot + 1) * sizeof(int), "photoion_partners");
+    if(!cand || !sph || !f0) {printf("per-direction photoionisation: rank %d has no shared memory for the partner search\n", ThisTask); fflush(stdout); endrun(7906);}
+    for(int t = 0; t < nt; t++) {cand[t] = (pi_row_end(pi_tab[t], dti) > All.Ti_Current);}
+    for(const pi_sphere& x : all) {int r = pi_tab_row(x.id); if(r >= 0) {cand[r] = 0;}} /* solving now */
+    if(n_tot > 0) {std::memcpy((void *) sph, (void *) all.data(), (size_t) n_tot * sizeof(pi_sphere));}
+    const PiFrontRecord *tab = pi_tab;
+    auto reaches = KOKKOS_LAMBDA(int g, int t) -> int {
+        if(!cand[t]) {return 0;}
+        Vec3<double> d; for(int k = 0; k < 3; k++) {d[k] = sph[g].Pos[k] - tab[t].Pos[k];}
+        nearest_xyz(d);
+        const double reach = sph[g].R + tab[t].R;
+        return (d.norm_sq() < reach * reach) ? 1 : 0;
+    };
+    const long long work = (long long) n_tot * DMAX(nt, 1);
+    const int on_device = gizmo_gpu_stage_on_device(work);
+    if(on_device) {GIZMO_GPU_ENSURE_ALL_FRESH();} /* nearest_xyz reads the box from All */
+    auto count = KOKKOS_LAMBDA(int g) {int c = 0; for(int t = 0; t < nt; t++) {c += reaches(g, t);} f0[g] = c;};
+    auto offsets = KOKKOS_LAMBDA(int g, int &at, const bool final) {const int c = (g < n_tot) ? f0[g] : 0; if(final) {f0[g] = at;} at += c;};
+    int n_links = 0;
+    if(on_device) {
+        gizmo_gpu_kernel_launch("photoion_partner_count", n_tot, count);
+        Kokkos::parallel_scan("photoion_partner_offsets", Kokkos::RangePolicy<Kokkos::DefaultExecutionSpace>(0, n_tot + 1), offsets, n_links);
+    } else {
+        gizmo_gpu_kernel_launch<Kokkos::DefaultHostExecutionSpace>("photoion_partner_count", n_tot, count);
+        Kokkos::parallel_scan("photoion_partner_offsets", Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>(0, n_tot + 1), offsets, n_links);
     }
-    f0[n_tot] = (int) fl.size();
-    if(!pi_grow(pi_flist, pi_flist_cap, DMAX(f0[n_tot], 1), 0, "photoion_partners")) {return 0;}
-    if(!fl.empty()) {std::memcpy(pi_flist, fl.data(), fl.size() * sizeof(int));}
-    for(pi_src& s : S) {s.f0 = f0[s.g]; s.nf = f0[s.g + 1] - f0[s.g];}
-    return f0[n_tot];
+    Kokkos::fence();
+    if(!pi_grow(pi_flist, pi_flist_cap, DMAX(n_links, 1), 0, "photoion_partners")) {gizmo_gpu_free_shared(cand); gizmo_gpu_free_shared(sph); gizmo_gpu_free_shared(f0); return 0;}
+    int *fl = pi_flist;
+    auto fill = KOKKOS_LAMBDA(int g) {int at = f0[g]; for(int t = 0; t < nt; t++) {if(reaches(g, t)) {fl[at++] = t;}}};
+    if(on_device) {gizmo_gpu_kernel_launch("photoion_partner_fill", n_tot, fill);}
+    else {gizmo_gpu_kernel_launch<Kokkos::DefaultHostExecutionSpace>("photoion_partner_fill", n_tot, fill);}
+    loop_route_count("photoion_partners", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, work);
+    for(pi_src& x : S) {x.f0 = f0[x.g]; x.nf = f0[x.g + 1] - f0[x.g];}
+    gizmo_gpu_free_shared(cand); gizmo_gpu_free_shared(sph); gizmo_gpu_free_shared(f0);
+    return n_links;
 }
 
 /* the solved fronts go into every rank's table; rows that reached their end go */
@@ -463,12 +553,7 @@ void photoionization_per_direction(void)
         std::vector<int> which; std::vector<PiHistOut> H;
         for(size_t a = 0; a < S.size(); a++) {if(S[a].open) {which.push_back((int)a);}}
         pi_histograms(S, which, 0, off, H);
-        int n_open = 0;
-        for(size_t a = 0; a < which.size(); a++) {
-            pi_src& s = S[which[a]];
-            s.open = pi_analyse(s, H[a], passes < PI_MAX_PASSES - 1, 1, max_r);
-            n_open += s.open;
-        }
+        int n_open = pi_analyse_all(S, which, H, 0, passes < PI_MAX_PASSES - 1, max_r);
         pi_calls++; MPI_Allreduce(&n_open, &any_open, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
 
@@ -481,12 +566,7 @@ void photoionization_per_direction(void)
         std::vector<int> which; std::vector<PiHistOut> H;
         for(size_t a = 0; a < S.size(); a++) {which.push_back((int)a);}
         pi_histograms(S, which, 1, off, H);
-        int moved_local = 0;
-        for(size_t a = 0; a < S.size(); a++) {
-            pi_src& s = S[a];
-            moved_local |= pi_analyse(s, H[a], 1, 0, max_r); /* the sphere grew */
-            for(int k = 0; k < PI_NPIX; k++) {if(s.mark[k] > s.held[k]) {moved_local = 1;} else {s.mark[k] = s.held[k];}}
-        }
+        int moved_local = pi_analyse_all(S, which, H, 1, 1, max_r);
         pi_claim_all(S);
         pi_calls++; MPI_Allreduce(&moved_local, &moved, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }

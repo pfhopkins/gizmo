@@ -358,6 +358,12 @@ void begrun(void)
       All.GR_MetricTable = all.GR_MetricTable; All.GR_MetricTableN = all.GR_MetricTableN; All.GR_MetricTableLog = all.GR_MetricTableLog;
       strcpy(All.GR_MetricTableFile, all.GR_MetricTableFile);
 #endif
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+      All.StellarTablesDev = all.StellarTablesDev; /* the restart file holds the previous run's addresses: keep the tables loaded above */
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+      single_star_record_publish(); /* and the star records read above */
+#endif
+#endif
       /* P[].wakeup is serialized; the flag that gates process_wake_ups on it is not. Force one pass so the
          requests that came back are serviced, instead of resuming with the gate shut over them. */
       NeedToWakeupParticles_local = 1;

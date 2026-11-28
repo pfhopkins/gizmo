@@ -2575,8 +2575,7 @@
  * This is a COMPILE-TIME capability predicate; the eager-vs-lazy choice at
  * runtime is made by a separate structural (num_active) threshold. */
 #if !defined(GR_TABULATED_COSMOLOGY) && !defined(GR_TABULATED_COSMOLOGY_W) \
- && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H) \
- && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(GALSF_SINGLE_STARS_RT_TABLE_BANDS) /* single-star bands: host-only table lookups */
+ && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H)
 #define GRAVTREE_SOURCE_LAZY_SUPPORTED
 #endif
 

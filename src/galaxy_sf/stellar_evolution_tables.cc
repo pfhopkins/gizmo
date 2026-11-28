@@ -7,10 +7,12 @@
 #include <math.h>
 #include <string>
 #include <vector>
+#include <mpi.h>
+#include <Kokkos_Core.hpp>
+#include "../declarations/gpu_all_mirror.h"  /* before allvars.h (a Kokkos TU: the device copy below) */
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "stellar_evolution_tables.h"
-#include <mpi.h>
 
 /* Single-star stellar-evolution tables (stella-tables, github.com/Ulli1991/stella-tables): lifetimes, tracks, band
    luminosities, winds, yields, remnants. Installed outside the repository by scripts/get_stella_deps.sh; the
@@ -44,137 +46,30 @@ void stellar_evolution_tables_init(void)
 /* Interpolation and accessors */
 struct StellarEvolutionTables StellarTbl;
 
-/* ========================================================================
- *  Index computation: binary search for non-uniform grids (M, Z),
- *  direct O(1) formula for the uniform age grid.
- * ======================================================================== */
-
-/* Binary search: find i0 such that grid[i0] <= val < grid[i0+1], with
- * fractional position f in [0,1].  Clamps to grid boundaries. */
-static inline void stbl_idx_bsearch(const double *grid, int N, double val, int *i0, double *f)
+/* the lookups are KOKKOS_INLINE_FUNCTIONs in stellar_evolution_tables.h, on a StellarTablesView; the host accessors below
+   call them with this view of StellarTbl */
+#ifdef GALSF_SINGLE_STARS_TYPE_IA
+static double IaFdead[STBL_NZ * IA_FDEAD_NT]; /* f_dead(t, Z), [iz * IA_FDEAD_NT + it] */
+#endif
+struct StellarTablesView stellar_tables_host_view(void)
 {
-    if(val <= grid[0])   { *i0 = 0;     *f = 0.0; return; }
-    if(val >= grid[N-1]) { *i0 = N - 2; *f = 1.0; return; }
-    int lo = 0, hi = N - 1;
-    while(hi - lo > 1) { int mid = (lo + hi) / 2; if(grid[mid] <= val) lo = mid; else hi = mid; }
-    *i0 = lo;
-    *f  = (val - grid[lo]) / (grid[hi] - grid[lo]);
+    struct StellarTablesView v; memset(&v, 0, sizeof(v));
+    const struct StellarEvolutionTables &T = StellarTbl;
+    v.log_Z = T.log_Z; v.log_M = T.log_M; v.log_age = T.log_age; v.lifetime_yr = T.lifetime_yr; v.remnant_mass = T.remnant_mass; v.t_PMS = T.t_PMS;
+    v.elem_ej_SN_mass = T.elem_ej_SN_mass; v.elem_ej_AGB_mass = T.elem_ej_AGB_mass; v.type_ia_yields = T.type_ia_yields; v.remnant_type = T.remnant_type;
+#ifdef GALSF_SINGLE_STARS_TYPE_IA
+    v.ia_fdead = IaFdead;
+#endif
+    v.v_wind = T.v_wind; v.log_L_LW = T.log_L_LW; v.log_L_FUV_total = T.log_L_FUV_total; v.log_L_FUV_M1 = T.log_L_FUV_M1; v.log_L_NUV = T.log_L_NUV;
+    v.log_L_OPT_NIR = T.log_L_OPT_NIR; v.log_L_bol = T.log_L_bol; v.log_Q_ion = T.log_Q_ion; v.log_L_ion_tot = T.log_L_ion_tot; v.log_L_ion_H0 = T.log_L_ion_H0;
+    v.log_L_ion_He0 = T.log_L_ion_He0; v.log_L_ion_He1 = T.log_L_ion_He1; v.log_L_ion_He2 = T.log_L_ion_He2;
+#ifdef TREECOL_SHELLS_ION_HELIUM
+    v.log_Q_ion_H0 = T.log_Q_ion_H0;
+#endif
+    v.surface_abundances = T.surface_abundances; v.elem_ej_wind_cumulative = T.elem_ej_wind_cumulative;
+    return v;
 }
-
-static inline void stbl_idx_Z(double logZ, int *i0, double *f)
-{
-    stbl_idx_bsearch(StellarTbl.log_Z, STBL_NZ, logZ, i0, f);
-}
-
-static inline void stbl_idx_M(double logM, int *i0, double *f)
-{
-    stbl_idx_bsearch(StellarTbl.log_M, STBL_NM, logM, i0, f);
-}
-
-static inline void stbl_idx_age(double log_age, int *i0, double *f)
-{
-    /* Age grid is non-uniform (adaptive) — use binary search */
-    stbl_idx_bsearch(StellarTbl.log_age, STBL_NAGE, log_age, i0, f);
-}
-
-/* flat index helpers */
-#define IDX2(iz,im)       ((iz) * STBL_NM + (im))
-#define IDX3(iz,im,ia)    (((iz) * STBL_NM + (im)) * STBL_NAGE + (ia))
-#define IDX4(iz,im,ia,ie) ((((iz) * STBL_NM + (im)) * STBL_NAGE + (ia)) * STBL_NELEM + (ie))
-
-/* ========================================================================
- *  Bilinear interpolation on 2D [NZ x NM] arrays (stored flat)
- * ======================================================================== */
-static inline double interp2d(const double *arr, double logM, double logZ)
-{
-    int iz, im; double fz, fm;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-    double v00 = arr[IDX2(iz,   im  )];
-    double v01 = arr[IDX2(iz,   im+1)];
-    double v10 = arr[IDX2(iz+1, im  )];
-    double v11 = arr[IDX2(iz+1, im+1)];
-    return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
-}
-
-/* Boundary-aware bilinear: if the four corners of the (logM, logZ) cell share
- * the same remnant_type, do standard bilinear. Otherwise the cell straddles a
- * rem_type discontinuity (e.g. WD↔ECSN around 7-8 Msun), and the underlying
- * physics is discontinuous — fall back to the nearest corner (same selection
- * stellar_remnant_type uses). This guarantees that any quantity whose meaning
- * is rem_type-conditional (M_preSN, rem_mass, per-element ejecta) stays
- * self-consistent with the chosen rem_type, preserving the closure invariant
- * M_preSN − rem − Σ ej = 0 at every interpolation point. */
-static inline double interp2d_rt_aware(const double *arr, double logM, double logZ)
-{
-    int iz, im; double fz, fm;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-    int rt00 = StellarTbl.remnant_type[IDX2(iz,   im  )];
-    int rt01 = StellarTbl.remnant_type[IDX2(iz,   im+1)];
-    int rt10 = StellarTbl.remnant_type[IDX2(iz+1, im  )];
-    int rt11 = StellarTbl.remnant_type[IDX2(iz+1, im+1)];
-    if(rt00 == rt01 && rt00 == rt10 && rt00 == rt11) {
-        double v00 = arr[IDX2(iz,   im  )];
-        double v01 = arr[IDX2(iz,   im+1)];
-        double v10 = arr[IDX2(iz+1, im  )];
-        double v11 = arr[IDX2(iz+1, im+1)];
-        return (1-fz)*(1-fm)*v00 + (1-fz)*fm*v01 + fz*(1-fm)*v10 + fz*fm*v11;
-    }
-    int iz_near = (fz > 0.5) ? iz + 1 : iz;
-    int im_near = (fm > 0.5) ? im + 1 : im;
-    return arr[IDX2(iz_near, im_near)];
-}
-
-/* Boundary-aware variant for per-element ejecta arrays (extra elem stride). */
-static inline double interp2d_elem_rt_aware(const double *arr, double logM, double logZ, int elem)
-{
-    int iz, im; double fz, fm;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-    int rt00 = StellarTbl.remnant_type[IDX2(iz,   im  )];
-    int rt01 = StellarTbl.remnant_type[IDX2(iz,   im+1)];
-    int rt10 = StellarTbl.remnant_type[IDX2(iz+1, im  )];
-    int rt11 = StellarTbl.remnant_type[IDX2(iz+1, im+1)];
-    int b00 = (IDX2(iz,   im  )) * STBL_NELEM + elem;
-    int b01 = (IDX2(iz,   im+1)) * STBL_NELEM + elem;
-    int b10 = (IDX2(iz+1, im  )) * STBL_NELEM + elem;
-    int b11 = (IDX2(iz+1, im+1)) * STBL_NELEM + elem;
-    if(rt00 == rt01 && rt00 == rt10 && rt00 == rt11) {
-        return (1-fz)*(1-fm)*arr[b00] + (1-fz)*fm*arr[b01]
-             + fz*(1-fm)*arr[b10]     + fz*fm*arr[b11];
-    }
-    int iz_near = (fz > 0.5) ? iz + 1 : iz;
-    int im_near = (fm > 0.5) ? im + 1 : im;
-    return arr[(IDX2(iz_near, im_near)) * STBL_NELEM + elem];
-}
-
-/* ========================================================================
- *  Trilinear interpolation on 3D [NZ x NM x NAGE] float arrays
- * ======================================================================== */
-static inline double interp3d(const float *arr, double logM, double logZ, double log_age)
-{
-    int iz, im, ia; double fz, fm, fa;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-    stbl_idx_age(log_age, &ia, &fa);
-
-    /* corners flagged dead (-99 in the log tables) are left out and the rest renormalised; all dead gives -99 */
-    const double v[8] = {
-        arr[IDX3(iz,   im,   ia  )], arr[IDX3(iz,   im,   ia+1)],
-        arr[IDX3(iz,   im+1, ia  )], arr[IDX3(iz,   im+1, ia+1)],
-        arr[IDX3(iz+1, im,   ia  )], arr[IDX3(iz+1, im,   ia+1)],
-        arr[IDX3(iz+1, im+1, ia  )], arr[IDX3(iz+1, im+1, ia+1)] };
-    const double w[8] = {
-        (1-fz)*(1-fm)*(1-fa), (1-fz)*(1-fm)*fa,
-        (1-fz)*fm*(1-fa),     (1-fz)*fm*fa,
-        fz*(1-fm)*(1-fa),     fz*(1-fm)*fa,
-        fz*fm*(1-fa),         fz*fm*fa };
-    double vsum = 0, wsum = 0; int k;
-    for(k = 0; k < 8; k++) { if(v[k] > -90.0) { vsum += w[k]*v[k]; wsum += w[k]; } }
-    if(wsum <= 0) return -99.0;   /* every corner dead -> dead star */
-    return vsum / wsum;
-}
+static struct StellarTablesView stbl_host; /* set once the tables are loaded */
 
 /* ========================================================================
  *  Loading: world rank 0 reads; 1D/2D tables are broadcast to every rank, the 3D/4D tables to one rank per node,
@@ -202,8 +97,49 @@ static_assert(offsetof(struct StellarEvolutionTables, logR_cm) > offsetof(struct
 static_assert(offsetof(struct StellarEvolutionTables, elem_ej_AGB_mass) == offsetof(struct StellarEvolutionTables, elem_ej_SN_mass) + sizeof(StellarTbl.elem_ej_SN_mass), "table struct layout");
 static_assert(offsetof(struct StellarEvolutionTables, type_ia_yields) == offsetof(struct StellarEvolutionTables, elem_ej_AGB_mass) + sizeof(StellarTbl.elem_ej_AGB_mass), "table struct layout");
 
+/* The device view (All.StellarTablesDev): where the default execution space reads host memory (host backends; APUs whose
+   Kokkos build says so) it is the host view itself, the node-shared segment included; otherwise each table is copied once into
+   device memory (about 340 MB per rank with the full grid), kept until stellar_evolution_tables_free, which runs before Kokkos
+   is finalised. The tables do not change after the load, so the copy never goes stale. */
+static std::vector<void *> stbl_device_copies;
+static long long stbl_device_bytes = 0;
+template<typename T> static const T *stbl_to_device(const T *src, size_t n, const char *label)
+{
+    if(!src || n == 0) {return NULL;}
+    const size_t bytes = n * sizeof(T);
+    void *d = gizmo_gpu_alloc_device(bytes, label);
+    if(!d) {printf("Stellar evolution tables: rank %d has no device memory for %s (%zu bytes)\n", ThisTask, label, bytes); fflush(stdout); endrun(7803);}
+    gizmo_gpu_copy_to_device(d, src, bytes);
+    stbl_device_copies.push_back(d); stbl_device_bytes += (long long) bytes;
+    return (const T *) d;
+}
+static void stellar_tables_device_build(void)
+{
+    const struct StellarTablesView h = stbl_host;
+    if(Kokkos::SpaceAccessibility<Kokkos::DefaultExecutionSpace, Kokkos::HostSpace>::accessible) {All.StellarTablesDev = h; return;}
+    const size_t n2d = (size_t)STBL_NZ * STBL_NM, n3d = n2d * STBL_NAGE, n4d = n3d * STBL_NELEM;
+    struct StellarTablesView d; memset(&d, 0, sizeof(d));
+    d.log_Z = stbl_to_device(h.log_Z, STBL_NZ, "stbl_log_Z"); d.log_M = stbl_to_device(h.log_M, STBL_NM, "stbl_log_M"); d.log_age = stbl_to_device(h.log_age, STBL_NAGE, "stbl_log_age");
+    d.lifetime_yr = stbl_to_device(h.lifetime_yr, n2d, "stbl_lifetime"); d.remnant_mass = stbl_to_device(h.remnant_mass, n2d, "stbl_remnant_mass");
+    d.t_PMS = stbl_to_device(h.t_PMS, n2d, "stbl_t_PMS"); d.remnant_type = stbl_to_device(h.remnant_type, n2d, "stbl_remnant_type");
+    d.elem_ej_SN_mass = stbl_to_device(h.elem_ej_SN_mass, n2d * STBL_NELEM, "stbl_ej_SN"); d.elem_ej_AGB_mass = stbl_to_device(h.elem_ej_AGB_mass, n2d * STBL_NELEM, "stbl_ej_AGB");
+    d.type_ia_yields = stbl_to_device(h.type_ia_yields, STBL_NELEM, "stbl_ia_yields");
+    d.ia_fdead = stbl_to_device(h.ia_fdead, (size_t) STBL_NZ * IA_FDEAD_NT, "stbl_ia_fdead");
+    const float *const *src3[] = {&h.v_wind, &h.log_L_LW, &h.log_L_FUV_total, &h.log_L_FUV_M1, &h.log_L_NUV, &h.log_L_OPT_NIR, &h.log_L_bol, &h.log_Q_ion, &h.log_L_ion_tot, &h.log_L_ion_H0, &h.log_L_ion_He0, &h.log_L_ion_He1, &h.log_L_ion_He2, &h.log_Q_ion_H0};
+    const float **dst3[] = {&d.v_wind, &d.log_L_LW, &d.log_L_FUV_total, &d.log_L_FUV_M1, &d.log_L_NUV, &d.log_L_OPT_NIR, &d.log_L_bol, &d.log_Q_ion, &d.log_L_ion_tot, &d.log_L_ion_H0, &d.log_L_ion_He0, &d.log_L_ion_He1, &d.log_L_ion_He2, &d.log_Q_ion_H0};
+    for(size_t k = 0; k < sizeof(src3) / sizeof(src3[0]); k++) {*dst3[k] = stbl_to_device(*src3[k], n3d, "stbl_3d");}
+    d.surface_abundances = stbl_to_device(h.surface_abundances, n4d, "stbl_surface_abundances");
+    d.elem_ej_wind_cumulative = stbl_to_device(h.elem_ej_wind_cumulative, n4d, "stbl_wind_cumulative");
+    Kokkos::fence();
+    All.StellarTablesDev = d;
+    if(ThisTask == 0) {printf("Stellar evolution tables: device copy %.0f MB per rank\n", stbl_device_bytes / 1e6);}
+}
+
 void stellar_evolution_tables_free(void)
 {
+    for(void *d : stbl_device_copies) {gizmo_gpu_free_device(d);} /* before Kokkos is finalised */
+    stbl_device_copies.clear(); stbl_device_bytes = 0;
+    memset(&All.StellarTablesDev, 0, sizeof(All.StellarTablesDev));
     if(stbl_win != MPI_WIN_NULL) {MPI_Win_free(&stbl_win);}
 }
 
@@ -295,121 +231,112 @@ void stellar_evolution_tables_load(void)
     }
     MPI_Win_fence(0, stbl_win); MPI_Barrier(GizmoNodeComm); MPI_Win_fence(0, stbl_win);
     StellarTbl.loaded = 1;
+    stbl_host = stellar_tables_host_view();
 #ifdef GALSF_SINGLE_STARS_TYPE_IA
     stellar_ia_fdead_init();
 #endif
+    stellar_tables_device_build();
     if(ThisTask == 0) {printf("Stellar evolution tables: %d Z x %d M x %d ages, %.0f MB per node\n", STBL_NZ, STBL_NM, STBL_NAGE, nfloat * sizeof(float) / 1e6);}
 }
 
 double stellar_lifetime(double logM, double logZ)
 {
-    return interp2d(StellarTbl.lifetime_yr, logM, logZ);
+    return stbl_interp2d(stbl_host, StellarTbl.lifetime_yr, logM, logZ);
 }
 
 double stellar_remnant_mass(double logM, double logZ)
 {
-    return interp2d_rt_aware(StellarTbl.remnant_mass, logM, logZ);
+    return stbl_interp2d_rt_aware(stbl_host, StellarTbl.remnant_mass, logM, logZ, -1);
 }
 
-int stellar_remnant_type(double logM, double logZ)
-{
-    /* Nearest-neighbor for discrete values */
-    int iz, im; double fz, fm;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-    int iz_near = (fz > 0.5) ? iz + 1 : iz;
-    int im_near = (fm > 0.5) ? im + 1 : im;
-    if(iz_near >= STBL_NZ) iz_near = STBL_NZ - 1;
-    if(im_near >= STBL_NM) im_near = STBL_NM - 1;
-    return StellarTbl.remnant_type[IDX2(iz_near, im_near)];
-}
+int stellar_remnant_type(double logM, double logZ) {return stbl_remnant_type(stbl_host, logM, logZ);} /* nearest corner: discrete values */
 
 /* --- PMS duration / feedback delay (2D bilinear) --- */
 
 double stellar_t_PMS(double logM, double logZ)
 {
-    return interp2d(StellarTbl.t_PMS, logM, logZ);
+    return stbl_interp2d(stbl_host, StellarTbl.t_PMS, logM, logZ);
 }
 
 #if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
-double stellar_t_MS_start(double logM, double logZ) {return interp2d(StellarTbl.t_MS_start, logM, logZ);}
-double stellar_t_MS_end(double logM, double logZ) {return interp2d(StellarTbl.t_MS_end, logM, logZ);}
+double stellar_t_MS_start(double logM, double logZ) {return stbl_interp2d(stbl_host, StellarTbl.t_MS_start, logM, logZ);}
+double stellar_t_MS_end(double logM, double logZ) {return stbl_interp2d(stbl_host, StellarTbl.t_MS_end, logM, logZ);}
 #endif
 
 /* --- 3D trilinear (logM, logZ, log_age) --- */
 
 double stellar_v_wind(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.v_wind, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.v_wind, logM, logZ, log_age);
 }
 
 double stellar_log_L_LW(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_LW, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_L_LW, logM, logZ, log_age);
 }
 
 double stellar_log_L_FUV_total(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_FUV_total, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_L_FUV_total, logM, logZ, log_age);
 }
 
 double stellar_log_L_FUV_M1(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_FUV_M1, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_L_FUV_M1, logM, logZ, log_age);
 }
 
 double stellar_log_L_NUV(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_NUV, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_L_NUV, logM, logZ, log_age);
 }
 
 double stellar_log_L_OPT_NIR(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_OPT_NIR, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_L_OPT_NIR, logM, logZ, log_age);
 }
 
 #if defined(KETJU_MERGE_STARS) || defined(STARS_INTEGRATED_BY_RUMI)
-double stellar_log_R_cm(double logM, double logZ, double log_age) {return interp3d(StellarTbl.logR_cm, logM, logZ, log_age);}
+double stellar_log_R_cm(double logM, double logZ, double log_age) {return stbl_interp3d(stbl_host, StellarTbl.logR_cm, logM, logZ, log_age);}
 #endif
 double stellar_log_L_bol(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_bol, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_L_bol, logM, logZ, log_age);
 }
 
 double stellar_log_Q_ion(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_Q_ion, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_Q_ion, logM, logZ, log_age);
 }
 
 double stellar_log_L_ion_tot(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_ion_tot, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_L_ion_tot, logM, logZ, log_age);
 }
 
 double stellar_log_L_ion_H0(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_ion_H0, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_L_ion_H0, logM, logZ, log_age);
 }
 
 double stellar_log_L_ion_He0(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_ion_He0, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_L_ion_He0, logM, logZ, log_age);
 }
 
 double stellar_log_L_ion_He1(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_ion_He1, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_L_ion_He1, logM, logZ, log_age);
 }
 
 double stellar_log_L_ion_He2(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_L_ion_He2, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_L_ion_He2, logM, logZ, log_age);
 }
 
 #ifdef TREECOL_SHELLS_ION_HELIUM
 double stellar_log_Q_ion_H0(double logM, double logZ, double log_age)
 {
-    return interp3d(StellarTbl.log_Q_ion_H0, logM, logZ, log_age);
+    return stbl_interp3d(stbl_host, StellarTbl.log_Q_ion_H0, logM, logZ, log_age);
 }
 #endif
 
@@ -417,31 +344,7 @@ double stellar_log_Q_ion_H0(double logM, double logZ, double log_age)
 
 double stellar_surface_abundance(double logM, double logZ, double log_age, int elem)
 {
-    if(!StellarTbl.surface_abundances || elem < 0 || elem >= STBL_NELEM) return 0;
-
-    int iz, im; double fz, fm;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-
-    /* Per-corner age clamping: each (iz,im) corner has a different lifetime.
-     * If the queried age exceeds a corner's lifetime, clamp to the last alive age
-     * to avoid mixing live surface abundances with post-death zeros. */
-    double corners[4]; /* [00, 01, 10, 11] = [(iz,im), (iz,im+1), (iz+1,im), (iz+1,im+1)] */
-    int iz_c[4] = {iz, iz, iz+1, iz+1};
-    int im_c[4] = {im, im+1, im, im+1};
-    for(int c = 0; c < 4; c++) {
-        double lt = StellarTbl.lifetime_yr[IDX2(iz_c[c], im_c[c])];
-        double log_age_c = (lt > 0 && pow(10.0, log_age) > lt) ? log10(lt) : log_age;
-        int ia_c; double fa_c;
-        stbl_idx_age(log_age_c, &ia_c, &fa_c);
-        double v0 = StellarTbl.surface_abundances[IDX4(iz_c[c], im_c[c], ia_c,   elem)];
-        double v1 = StellarTbl.surface_abundances[IDX4(iz_c[c], im_c[c], ia_c+1, elem)];
-        corners[c] = v0*(1-fa_c) + v1*fa_c;
-    }
-
-    double c0 = corners[0]*(1-fm) + corners[1]*fm;
-    double c1 = corners[2]*(1-fm) + corners[3]*fm;
-    return c0*(1-fz) + c1*fz;
+    return stbl_interp4d_clamped(stbl_host, StellarTbl.surface_abundances, logM, logZ, log_age, elem);
 }
 
 double stellar_type_ia_yield(int elem)
@@ -455,88 +358,27 @@ double stellar_type_ia_yield(int elem)
 double stellar_elem_ej_SN(double logM, double logZ, int elem)
 {
     if(elem < 0 || elem >= STBL_NELEM) return 0;
-    return interp2d_elem_rt_aware(StellarTbl.elem_ej_SN_mass, logM, logZ, elem);
+    return stbl_interp2d_rt_aware(stbl_host, StellarTbl.elem_ej_SN_mass, logM, logZ, elem);
 }
 
 double stellar_elem_ej_AGB(double logM, double logZ, int elem)
 {
     if(elem < 0 || elem >= STBL_NELEM) return 0;
-    return interp2d_elem_rt_aware(StellarTbl.elem_ej_AGB_mass, logM, logZ, elem);
+    return stbl_interp2d_rt_aware(stbl_host, StellarTbl.elem_ej_AGB_mass, logM, logZ, elem);
 }
 
-/* Death ejecta of element k at one grid star as a fraction of its mass at death: ej_k / (rem + sum ej), from the AGB table for white
- * dwarfs and the SN table for the rest; complete disruption (PISN) has rem = 0. Without GALSF_SINGLE_STARS_WINDS the star returned no winds
- * during its life, so its mass at death includes them: ej_k adds the table's cumulative wind of element k up to the lifetime */
-static void stbl_death_fractions(int inode, double *e)
-{
-    const int rt = StellarTbl.remnant_type[inode];
-    const double *ej = ((rt == REM_WD) ? StellarTbl.elem_ej_AGB_mass : StellarTbl.elem_ej_SN_mass) + (size_t)inode * STBL_NELEM;
-    double sum = 0;
-    for(int k = 0; k < STBL_NELEM; k++) {e[k] = DMAX(ej[k], 0);}
-#ifndef GALSF_SINGLE_STARS_WINDS
-    const int iz = inode / STBL_NM, im = inode % STBL_NM;
-    const double log_end = log10(DMAX(StellarTbl.lifetime_yr[inode], 100.));
-    for(int k = 0; k < STBL_NELEM; k++) {e[k] += stellar_elem_ej_wind_cumulative(StellarTbl.log_M[im], StellarTbl.log_Z[iz], log_end, k);}
-#endif
-    for(int k = 0; k < STBL_NELEM; k++) {sum += e[k];}
-    const double D = sum + ((rt == REM_PISN) ? 0 : DMAX(StellarTbl.remnant_mass[inode], 0));
-    for(int k = 0; k < STBL_NELEM; k++) {e[k] = (D > 0) ? e[k] / D : 0;}
-}
-
-/* Element ejecta m_k [Msun] of a star holding M_death [Msun] at death; returns the remnant mass, M_death - sum m_k. The fractions of
- * the four corners are interpolated, not the ejecta and the remnant mass one by one, so that ejecta and remnant add up to the
- * star's mass at any (M, Z) and remnant types are not mixed (the nearest corner where the types differ, as interp2d_rt_aware). */
-double stellar_death_ejecta(double logM, double logZ, double M_death, double *m_k)
-{
-    int iz, im; double fz, fm, sum = 0, Mej = 0;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-    const int c[4] = {IDX2(iz, im), IDX2(iz, im+1), IDX2(iz+1, im), IDX2(iz+1, im+1)}, *rtc = StellarTbl.remnant_type;
-    if(rtc[c[0]] == rtc[c[1]] && rtc[c[0]] == rtc[c[2]] && rtc[c[0]] == rtc[c[3]]) {
-        double e[4][STBL_NELEM];
-        for(int n = 0; n < 4; n++) {stbl_death_fractions(c[n], e[n]);}
-        for(int k = 0; k < STBL_NELEM; k++) {m_k[k] = (1-fz)*(1-fm)*e[0][k] + (1-fz)*fm*e[1][k] + fz*(1-fm)*e[2][k] + fz*fm*e[3][k];}
-    } else {stbl_death_fractions(c[2 * (fz > 0.5) + (fm > 0.5)], m_k);}
-    for(int k = 0; k < STBL_NELEM; k++) {m_k[k] = DMAX(m_k[k], 0); sum += m_k[k];}
-    const int rt = stellar_remnant_type(logM, logZ);
-    const double norm = (rt == REM_PISN || sum > 1) ? ((sum > 0) ? 1 / sum : 0) : 1; /* PISN: complete disruption */
-    for(int k = 0; k < STBL_NELEM; k++) {m_k[k] *= norm * DMAX(M_death, 0); Mej += m_k[k];}
-    return (rt == REM_PISN) ? 0 : DMAX(M_death, 0) - Mej;
-}
+double stellar_death_ejecta(double logM, double logZ, double M_death, double *m_k) {return stbl_death_ejecta(stbl_host, logM, logZ, M_death, m_k);}
 
 /* Cumulative wind ejecta of element `elem` [Msun] from birth up to log_age.
  * Per-corner age clamp at lifetime: cum stays at end-of-life value past death. */
 double stellar_elem_ej_wind_cumulative(double logM, double logZ, double log_age, int elem)
 {
-    if(!StellarTbl.elem_ej_wind_cumulative || elem < 0 || elem >= STBL_NELEM) return 0;
-    int iz, im; double fz, fm;
-    stbl_idx_Z(logZ, &iz, &fz);
-    stbl_idx_M(logM, &im, &fm);
-    double corners[4];
-    int iz_c[4] = {iz, iz, iz+1, iz+1};
-    int im_c[4] = {im, im+1, im, im+1};
-    for(int c = 0; c < 4; c++) {
-        double lt = StellarTbl.lifetime_yr[IDX2(iz_c[c], im_c[c])];
-        double log_age_c = (lt > 0 && pow(10.0, log_age) > lt) ? log10(lt) : log_age;
-        int ia_c; double fa_c;
-        stbl_idx_age(log_age_c, &ia_c, &fa_c);
-        double v0 = StellarTbl.elem_ej_wind_cumulative[IDX4(iz_c[c], im_c[c], ia_c,   elem)];
-        double v1 = StellarTbl.elem_ej_wind_cumulative[IDX4(iz_c[c], im_c[c], ia_c+1, elem)];
-        corners[c] = v0*(1-fa_c) + v1*fa_c;
-    }
-    double c0 = corners[0]*(1-fm) + corners[1]*fm;
-    double c1 = corners[2]*(1-fm) + corners[3]*fm;
-    return c0*(1-fz) + c1*fz;
+    return stbl_interp4d_clamped(stbl_host, StellarTbl.elem_ej_wind_cumulative, logM, logZ, log_age, elem);
 }
-
-
 
 #ifdef GALSF_SINGLE_STARS_TYPE_IA
 /* f_dead(t, Z): fraction of the formed mass (Kroupa, IMF lower end .. 350 Msun) in white-dwarf progenitors that have died
    by age t; normalises the per-white-dwarf Type Ia hazard (as the reference implementation) */
-#define IA_FDEAD_NT 96
-static double IaFdead[STBL_NZ][IA_FDEAD_NT];
-static const double IaFdead_logt_min = 6.5, IaFdead_logt_max = 10.3; /* log10 yr */
 
 void stellar_ia_fdead_init(void)
 {
@@ -557,24 +399,14 @@ void stellar_ia_fdead_init(void)
             tdie[im] = (stellar_remnant_type(lM, logZ) == REM_WD) ? stellar_t_PMS(lM, logZ) + stellar_lifetime(lM, logZ) : -1;
         }
         for(int it = 0; it < IA_FDEAD_NT; it++) {
-            double t = pow(10., IaFdead_logt_min + it * (IaFdead_logt_max - IaFdead_logt_min) / (IA_FDEAD_NT - 1)), wd = 0;
+            double t = pow(10., IA_FDEAD_LOGT_MIN + it * (IA_FDEAD_LOGT_MAX - IA_FDEAD_LOGT_MIN) / (IA_FDEAD_NT - 1)), wd = 0;
             for(int im = 0; im < NM; im++) {if(tdie[im] > 0 && tdie[im] <= t) {wd += w[im];}}
-            IaFdead[iz][it] = wd / wtot;
+            IaFdead[iz * IA_FDEAD_NT + it] = wd / wtot;
         }
     }
 }
 
-double stellar_ia_fdead(double t_yr, double logZ)
-{
-    if(t_yr <= 0) {return 0;}
-    int iz; double fz; stbl_idx_Z(logZ, &iz, &fz);
-    double x = (log10(t_yr) - IaFdead_logt_min) / (IaFdead_logt_max - IaFdead_logt_min) * (IA_FDEAD_NT - 1);
-    x = DMAX(0, DMIN(x, IA_FDEAD_NT - 1));
-    int it = (int)x; if(it > IA_FDEAD_NT - 2) {it = IA_FDEAD_NT - 2;}
-    double ft = x - it;
-    int iz1 = (iz < STBL_NZ - 1) ? iz + 1 : iz;
-    return (1 - fz) * ((1 - ft) * IaFdead[iz][it] + ft * IaFdead[iz][it + 1]) + fz * ((1 - ft) * IaFdead[iz1][it] + ft * IaFdead[iz1][it + 1]);
-}
+double stellar_ia_fdead(double t_yr, double logZ) {return stbl_ia_fdead(stbl_host, t_yr, logZ);}
 #endif
 
 #endif /* GALSF_SINGLE_STARS_EVOLUTION_TABLES */

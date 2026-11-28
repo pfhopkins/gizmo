@@ -45,6 +45,11 @@
 #include "../mesh/ghost_writeback_ops.h"
 #include "../mesh/ghost_symlist_lifecycle.h"   /* gizmo_ghost_safety_factor */
 #include "radfb_rp_loop.h"
+#include "../declarations/gpu_dispatch_templates.h"   /* gizmo_gpu_kernel_launch_reduce */
+#include "../system/loop_routes.h"               /* OUTPUT_LOOP_ROUTES */
+#ifdef SGCHEM
+#include "../cooling/sgchem/sgchem_dust_to_gas.h"   /* device-callable dust-to-gas ratio (read only) */
+#endif
 
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
 
@@ -576,6 +581,108 @@ static double radfb_rp_gas_kinetic_energy(void) /* this rank's gas kinetic energ
 #else
 #define RADFB_RP_BOOK_KICK_WORK(ke0)
 #endif
+
+#ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
+/* direct radiation pressure in the absorbing cell: L_abs = sum_b sigma_b F_b DGR N_H(cell) / 4 pi, pushed away from the pixel
+   centres, all deposits scaled by L_emit / sum(L_abs) when above 1 (photon cap). The sum runs over every gas cell
+   with its last flux, current mass and dust (as stella_dev). L_emit is the root node, so no star loop. The sum is reduced
+   with the source count in radiation_pressure_winds_consolidated: no collective here.
+   Both loops are one Kokkos kernel each, on the device or on the host execution space (gizmo_gpu_stage_on_device). The kicks are
+   independent per cell; the two sums (absorbed luminosity, total momentum) are reductions split across threads on the device
+   and on an OpenMP host space, so their summation order, and hence their last bits, depend on the execution space (index
+   order only where the host space is Serial). The per-cell term is evaluated in
+   the kick kernel from the same expression the sum used: nothing changes the gas between the two calls (the source pack
+   and one Allreduce lie between them). */
+KOKKOS_INLINE_FUNCTION double radp_cell_dgr(const struct particle_data *pp, const struct gas_cell_data *cell, int i) /* the cell's dust-to-gas ratio for the direct term; hot gas none */
+{
+#ifdef SINGLE_STAR_RADPRESSURE_LIVE_DUST
+    return (cell[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_cell_dust_to_gas_ratio(pp, cell, i), 0.); /* the cell's live dust */
+#else
+    return (cell[i].Temp > 1.0e5) ? 0 : DMAX(sgchem_dust_to_gas_ratio(pp[i].Metallicity[0]), 0.);
+#endif
+}
+/* the cell's absorbing column factor (code lum per unit flux): to_L DGR N_H(cell) */
+KOKKOS_INLINE_FUNCTION double radp_cell_lum_factor(const struct particle_data *pp, const struct gas_cell_data *cell, int i, double to_L, double unit_mass_in_cgs)
+{
+    return to_L * radp_cell_dgr(pp, cell, i) * pp[i].Mass * unit_mass_in_cgs * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+}
+static inline double radp_to_L(void) {return 1.0e-21 * All.cf_a2inv / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS * 4.0 * M_PI);} /* sum x DGR N_H -> code lum */
+
+double single_star_radpressure_absorbed_local(void)
+{
+    const double to_L = radp_to_L(), um = UNIT_MASS_IN_CGS;
+    const int n = N_gas, on_device = gizmo_gpu_stage_on_device(n); /* the gas: the first N_gas slots */
+    if(on_device) {GIZMO_GPU_ENSURE_ALL_FRESH();} /* the dust-to-gas ratio reads All */
+    const struct particle_data *kp = P; const struct gas_cell_data *kc = CellP;
+    double abs_sum_local = 0;
+    auto cell_sum = KOKKOS_LAMBDA(int i, double &sum) {
+        if(kp[i].Type == 0 && kp[i].Mass > 0) {sum += radp_cell_lum_factor(kp, kc, i, to_L, um) * kc[i].TreeColRadpFlux[3];}
+    };
+    if(n > 0) {
+        if(on_device) {gizmo_gpu_kernel_launch_reduce("radp_cap_sum", n, cell_sum, abs_sum_local);}
+        else {gizmo_gpu_kernel_launch_reduce<Kokkos::DefaultHostExecutionSpace>("radp_cap_sum", n, cell_sum, abs_sum_local);}
+    }
+    loop_route_count("radp_cap_sum", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
+#ifdef TEST_SINGLE_STARS_RADPRESSURE_PRINT_CAP_SUM
+    { /* reference: every gas cell now, current mass and dust, last flux (stella_dev resolvedism_fb_momentum.cc photon cap), a plain host loop */
+        double rc = 0; const int all_active = (All.HighestActiveTimeBin == All.HighestOccupiedTimeBin);
+        for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {rc += radp_cell_lum_factor(P, CellP, i, to_L, um) * CellP[i].TreeColRadpFlux[3];}}
+        printf("RADP_CAP_SUM: rank=%d t=%.10g all_active=%d n_active=%d used=%.17g recount=%.17g device=%d\n", ThisTask, All.Time, all_active, (int) ActiveParticleList.size(), abs_sum_local, rc, on_device);
+    }
+#endif
+    return abs_sum_local;
+}
+
+void single_star_radpressure_per_cell(double abs_sum, double *dp_total_code)
+{
+    *dp_total_code = 0;
+    const MyFloat *root = Nodes[All.TreeNodeIndexBase].stellar_lum;
+    double L_emit = root[RT_FREQ_BIN_PHOTOELECTRIC] + root[RT_FREQ_BIN_GENERIC_USER_FREQ] + root[RT_FREQ_BIN_NUV] + root[RT_FREQ_BIN_OPTICAL_NIR];
+#ifdef GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE
+    L_emit += root[RT_FREQ_BIN_LYMAN_WERNER] + root[RT_FREQ_BIN_GENERIC_USER_FREQ];
+#endif
+    const double fcons = (abs_sum > L_emit && abs_sum > 0) ? L_emit / abs_sum : 1.0;
+    const double to_p = fcons * UNIT_LUM_IN_CGS * UNIT_TIME_IN_CGS / (C_LIGHT_CGS * UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s); /* code lum x code time -> code momentum */
+    const double to_L = radp_to_L(), um = UNIT_MASS_IN_CGS, atime = All.cf_atime;
+    const int n = (int) ActiveParticleList.size();
+    if(n <= 0) {return;}
+    int on_device = gizmo_gpu_stage_on_device(n);
+    int *act = on_device ? (int *) gizmo_gpu_alloc_shared((size_t) n * sizeof(int), "radp_per_cell_active") : NULL;
+    if(on_device && !act) {on_device = 0;} /* no shared memory for the list: the host space takes it */
+    if(on_device) {memcpy(act, ActiveParticleList.data(), (size_t) n * sizeof(int)); GIZMO_GPU_ENSURE_ALL_FRESH();} /* the step length and the dust read All */
+    const int *ka = on_device ? act : ActiveParticleList.data();
+    struct particle_data *kp = P; struct gas_cell_data *kc = CellP;
+    double dp_sum = 0; int n_pushed = 0;
+    auto kick = KOKKOS_LAMBDA(int a, double &dp_part, int &pushed_part) {
+        const int i = ka[a];
+        if(kp[i].Type != 0 || kp[i].Mass <= 0) {return;}
+        const double lum_abs = radp_cell_lum_factor(kp, kc, i, to_L, um);
+        const double dt = get_particle_timestep_in_physical(i, kp);
+        if(!(lum_abs > 0) || !(dt > 0)) {return;}
+        const double dp = -lum_abs * to_p * dt;
+        double dpmag2 = 0;
+        for(int k = 0; k < 3; k++)
+        {
+            const double dp_k = dp * kc[i].TreeColRadpFlux[k], dv = dp_k * atime / kp[i].Mass;
+            kp[i].Vel[k] += dv; kc[i].VelPred[k] += dv; kp[i].dp[k] += dv * kp[i].Mass;
+            dpmag2 += dp_k * dp_k;
+        }
+        dp_part += sqrt(dpmag2);
+        if(dpmag2 > 0) {pushed_part++;}
+    };
+    if(on_device) {
+        gizmo_gpu_kernel_launch_reduce("radp_per_cell", n, kick, dp_sum, n_pushed);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(act);
+    } else {
+        gizmo_gpu_kernel_launch_reduce<Kokkos::DefaultHostExecutionSpace>("radp_per_cell", n, kick, dp_sum, n_pushed);
+    }
+    loop_route_count("radp_per_cell", on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
+    *dp_total_code = dp_sum;
+#if defined(RESOLVED_ISM_FB_AFTER_CLOSING_KICK) && defined(RESOLVED_ISM_RECOMPUTE_HYDRO_POST_FB)
+    FBHydroRedoReceivers += n_pushed; /* a cell the tree term pushed repeats the hydro pass */
+#endif
+}
+#endif /* GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL */
 
 void radiation_pressure_winds_consolidated(void)
 {

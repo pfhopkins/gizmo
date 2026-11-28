@@ -11,8 +11,11 @@
 #include <vector>
 #include <unordered_map>
 #include <functional>
+#include <Kokkos_Core.hpp>
 #include "../../declarations/allvars.h"
 #include "../../core/proto.h"
+#include "../../declarations/gpu_dispatch_templates.h"
+#include "../../system/loop_routes.h"
 #include "../../mesh/gpu_neighbor_list.h"   /* gizmo_motion_bound_raise */
 #include "../forcetree.h"                   /* gravity_note_set_positions */
 #include "../../galaxy_sf/single_star_record.h"
@@ -77,7 +80,22 @@ double E0_led = 0; int have_E0 = 0;      /* the energy books' residual at the fi
 double tw_limit = 0, tw_gather = 0, tw_lib = 0, tw_scatter = 0; /* wall s */
 FILE *FdRumi = NULL;
 
-inline int is_rumi_star(int i) {return (P[i].Type == 4) && (P[i].Mass > 0);}
+KOKKOS_INLINE_FUNCTION int rumi_star_of(const struct particle_data *pp, int i) {return (pp[i].Type == 4) && (pp[i].Mass > 0);}
+inline int is_rumi_star(int i) {return rumi_star_of(P, i);}
+/* this rank's particles with pred(kp, i), in index order: a Kokkos scan over all particles on the device or on the host execution
+   space (gizmo_stage_on_device); the bookkeeping then loops over the list, in the order of a plain loop over the particles */
+template<typename F> static std::vector<int> rumi_select(const char *tag, const F &pred)
+{
+    const int n = NumPart; int on_device = gizmo_stage_on_device(n);
+    int *sel = gizmo_stage_index_alloc(&on_device, n, tag);
+    const struct particle_data *kp = P;
+    const int n_sel = gizmo_stage_select(tag, on_device, n, KOKKOS_LAMBDA(int i) {return pred(kp, i);}, sel);
+    loop_route_count(tag, on_device ? LOOP_ROUTE_DEVICE_KERNEL : LOOP_ROUTE_HOST_KERNEL, n);
+    std::vector<int> list(sel, sel + n_sel);
+    gizmo_stage_index_free(on_device, sel);
+    return list;
+}
+static std::vector<int> rumi_stars(void) {return rumi_select("rumi_stars", KOKKOS_LAMBDA(const struct particle_data *pp, int i) {return rumi_star_of(pp, i);});}
 
 double rumi_G(void) {return All.G * UL * UV * UV / UM;} /* G in pc^3 Msun^-1 (km/s)^2 */
 
@@ -118,8 +136,8 @@ void rumi_atexit(void) {rumi_lib::kokkos_finalize();}
 void member_status(int &exist, int &sync, long long &ti_end)
 {
     int loc[2] = {0, 0}; long long te = LLONG_MAX;
-    for(int i = 0; i < NumPart; i++) {
-        if(!is_rumi_star(i) || !P[i].RumiMember) continue;
+    for(int i : rumi_stars()) {
+        if(!P[i].RumiMember) continue;
         loc[0] = 1;
         if(TimeBinActive[P[i].TimeBin]) {loc[1] = 1;}
         else {long long e = (long long)P[i].Ti_begstep + (long long)P[i].dt_step; if(e < te) {te = e;}}
@@ -224,8 +242,8 @@ void rumi_limit_timesteps(void)
     member_status(exist, sync, ti_grp);
     const int group_step = (!exist || sync);
     int bmin = TIMEBINS; long long ti_ns = LLONG_MAX;
-    for(int i = 0; i < NumPart; i++) {
-        if(!is_rumi_star(i)) continue;
+    const std::vector<int> stars = rumi_stars(); /* moving bins below changes neither type nor mass */
+    for(int i : stars) {
         if(TimeBinActive[P[i].TimeBin]) {if(P[i].TimeBin > 0 && P[i].TimeBin < bmin) {bmin = P[i].TimeBin;}}
         else if(!P[i].RumiMember) {long long te = (long long)P[i].Ti_begstep + (long long)P[i].dt_step; if(te < ti_ns) {ti_ns = te;}}
     }
@@ -247,12 +265,12 @@ void rumi_limit_timesteps(void)
         while(bin > 0 && !TimeBinActive[bin]) {bin--;}
         if(bin > 0) {
             integertime ti_bin = GET_INTEGERTIME_FROM_TIMEBIN(bin);
-            for(int i = 0; i < NumPart; i++) {if(is_rumi_star(i) && TimeBinActive[P[i].TimeBin]) {move_to_bin(i, bin); P[i].dt_step = ti_bin;}}
+            for(int i : stars) {if(TimeBinActive[P[i].TimeBin]) {move_to_bin(i, bin); P[i].dt_step = ti_bin;}}
         }
     } else if(ti_grp < LLONG_MAX && ti_grp > (long long)All.Ti_Current) { /* joiners: end no later than the members' sync */
         int bg = get_timestep_bin((integertime)(ti_grp - (long long)All.Ti_Current));
-        for(int i = 0; i < NumPart; i++) {
-            if(!is_rumi_star(i) || P[i].RumiMember || !TimeBinActive[P[i].TimeBin]) continue;
+        for(int i : stars) {
+            if(P[i].RumiMember || !TimeBinActive[P[i].TimeBin]) continue;
             int b = P[i].TimeBin; if(b > bg) {b = bg;} while(b > 0 && !TimeBinActive[b]) {b--;}
             if(b > 0 && b != P[i].TimeBin) {move_to_bin(i, b); P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(b);}
         }
@@ -271,8 +289,8 @@ void rumi_integrate(void)
     member_status(exist, sync, ti_grp);
     if(exist && !sync) {return;} /* members mid-step: joiners stay on their KDK steps */
     std::vector<RumiStar> mine;
-    for(int i = 0; i < NumPart; i++) {
-        if(!is_rumi_star(i) || !TimeBinActive[P[i].TimeBin]) continue;
+    for(int i : rumi_stars()) {
+        if(!TimeBinActive[P[i].TimeBin]) continue;
         if(!P[i].RumiMember) { /* joining now: its opening half kick carried the direct star-star force, which RUMI++ integrates from here */
             integertime ts = P[i].integertime_step();
             double dtk = get_gravkick_factor(P[i].Ti_begstep, P[i].Ti_begstep + ts / 2, i, 0);
@@ -493,8 +511,8 @@ void rumi_finish_drift(void)
    of a step split at the output; the second call swaps back (exactly) */
 void rumi_swap_output_state(void)
 {
-    for(int i = 0; i < NumPart; i++) {
-        if(P[i].Type != 4 || !P[i].RumiIntegrated || P[i].StarIdx <= 0) continue;
+    const std::vector<int> integrated = rumi_select("rumi_swap_output", KOKKOS_LAMBDA(const struct particle_data *pp, int i) {return pp[i].Type == 4 && pp[i].RumiIntegrated && pp[i].StarIdx > 0;});
+    for(int i : integrated) {
         struct rumi_member_state &rm = rumi_member(i);
         double *x = NULL, *v = NULL;
         if(rm.ti_end == All.Ti_nextoutput) {x = rm.target_pos; v = rm.true_vel;}

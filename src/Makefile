@@ -1099,7 +1099,6 @@ GRAVITY_OBJS  = gravity/forcetree.o \
                 gravity/longrange.o \
                 gravity/ags_rkern.o \
                 gravity/star_direct_gravity.o \
-                gravity/treecol_shells.o \
                 gravity/let_pack.o
 
 HYDRO_OBJS = 	hydro/hydro_toplevel.o \
@@ -1116,7 +1115,7 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## Must NOT also appear in OBJS/EOSCOOL_OBJS or the pattern rule will create duplicate symbols.
 ## eos/eos.o is here because it contains yhelium/Get_Gas_Mean_Molecular_Weight_mu/
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
-GPU_OBJS = core/gpu_drift.o cooling/cooling.o eos/eos.o hydro/density_gpu.o hydro/density_loop.o hydro/cellcorrections_loop.o hydro/gradients_loop.o hydro/hydro_force_loop.o hydro/mg_gradient_correction.o mesh/gpu_neighbor_list.o mesh/neighbor_loop_runner.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_loop.o solids/grain_drag.o galaxy_sf/dm_dispersion.o galaxy_sf/dm_dispersion_loop.o gravity/ags_density_loop.o gravity/ags_force_loop.o sidm/dm_fuzzy_loop.o sidm/cbe_integrator_gpu.o sidm/cbe_integrator_gradients.o radiation/rt_source_injection_loop.o galaxy_sf/thermal_fb.o galaxy_sf/thermal_fb_loop.o galaxy_sf/sfr_collect_gas.o galaxy_sf/photoion_per_direction.o galaxy_sf/single_star_sn_wake.o sinks/sink_feed.o sinks/sink_feed_loop.o sinks/sink_environment.o sinks/sink_env1_loop.o sinks/sink_env2_loop.o galaxy_sf/mechfb_loop.o solids/grain_physics_loop.o sinks/sink_swallow_and_kick.o sinks/sink_swk_loop.o galaxy_sf/radfb_rp_loop.o system/gpu_particles_arena.o system/kokkos_mem_telemetry.o gravity/gpu_gravity_tree.o gravity/gpu_gravtree.o gravity/gpu_moment_refresh.o gravity/gpu_nextnode_thread.o gravity/gpu_morton.o gravity/gpu_peano_walk.o gravity/gpu_topology_build.o gravity/gpu_topology_finalize.o gravity/gpu_pseudo_update.o gravity/gpu_force_drift.o gravity/gpu_force_update.o
+GPU_OBJS = core/gpu_drift.o cooling/cooling.o eos/eos.o hydro/density_gpu.o hydro/density_loop.o hydro/cellcorrections_loop.o hydro/gradients_loop.o hydro/hydro_force_loop.o hydro/mg_gradient_correction.o mesh/gpu_neighbor_list.o mesh/neighbor_loop_runner.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_loop.o solids/grain_drag.o galaxy_sf/dm_dispersion.o galaxy_sf/dm_dispersion_loop.o gravity/ags_density_loop.o gravity/ags_force_loop.o sidm/dm_fuzzy_loop.o sidm/cbe_integrator_gpu.o sidm/cbe_integrator_gradients.o radiation/rt_source_injection_loop.o galaxy_sf/thermal_fb.o galaxy_sf/thermal_fb_loop.o galaxy_sf/sfr_collect_gas.o gravity/treecol_shells.o galaxy_sf/photoion_per_direction.o galaxy_sf/single_star_sn_wake.o sinks/sink_feed.o sinks/sink_feed_loop.o sinks/sink_environment.o sinks/sink_env1_loop.o sinks/sink_env2_loop.o galaxy_sf/mechfb_loop.o solids/grain_physics_loop.o sinks/sink_swallow_and_kick.o sinks/sink_swk_loop.o galaxy_sf/radfb_rp_loop.o galaxy_sf/stellar_evolution_tables.o galaxy_sf/single_star_luminosity.o system/gpu_particles_arena.o system/kokkos_mem_telemetry.o gravity/gpu_gravity_tree.o gravity/gpu_gravtree.o gravity/gpu_moment_refresh.o gravity/gpu_nextnode_thread.o gravity/gpu_morton.o gravity/gpu_peano_walk.o gravity/gpu_topology_build.o gravity/gpu_topology_finalize.o gravity/gpu_pseudo_update.o gravity/gpu_force_drift.o gravity/gpu_force_update.o
 ## Nuclear network files are added to GPU_OBJS below (conditional on NUCLEAR_NETWORK)
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
@@ -1130,17 +1129,15 @@ EOSCOOL_OBJS =  \
 
 STARFORM_OBJS = galaxy_sf/sfr_eff.o \
                 galaxy_sf/stellar_evolution.o \
-                galaxy_sf/stellar_evolution_tables.o \
                 galaxy_sf/stellar_tables_check.o \
                 galaxy_sf/single_star_feedback.o \
                 galaxy_sf/single_star_record.o \
-                galaxy_sf/single_star_luminosity.o \
                 gravity/treecol_pixels_test_dump.o \
                 galaxy_sf/mechanical_fb.o \
                 galaxy_sf/radfb_local.o \
                 galaxy_sf/dm_heating.o
 ifeq (GALSF_SINGLE_STARS_EVENT_LOGS,$(findstring GALSF_SINGLE_STARS_EVENT_LOGS,$(CONFIGVARS)))
-STARFORM_OBJS += galaxy_sf/single_star_event_logs.o
+GPU_OBJS += galaxy_sf/single_star_event_logs.o
 endif
 # galaxy_sf/thermal_fb.o is in GPU_OBJS (3e.2): the runner-template caller
 # transitively includes thermal_fb_loop.h → Kokkos_Core.hpp, so the TU must
@@ -1222,7 +1219,7 @@ OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) $(GR_OBJS) \
 
 ## include files needed at compile time for the above objects
 INCL    += gr/gr.h gr/gr_functions.h gr/gr_con2prim_functions.h gr/gr_riemann_functions.h gr/gr_kick_functions.h gr/gr_source_functions.h
-INCL    += 	declarations/allvars.h \
+INCL    += 	declarations/allvars.h gravity/analytic_gravity_functions.h \
 			core/proto.h \
 			gravity/forcetree.h \
 			gravity/gravtree_treecol_pixels.h cooling/sgchem/sgchem_dust_to_gas.h \
@@ -1313,10 +1310,13 @@ INCL    += $(wildcard cooling/sgchem/*.h cooling/sgchem/cxx/*.h)
 endif
 
 ifneq (,$(filter OUTPUT_MASS_METAL_ENERGY_LEDGER,$(CONFIGVARS)))
-OBJS    += system/ledger.o
+GPU_OBJS += system/ledger.o
 endif
 ifneq (,$(filter OUTPUT_ENERGY_STEP_TRACE OUTPUT_ENERGY_STEP_TRACE=%,$(CONFIGVARS)))
-OBJS    += system/energy_step_trace.o
+GPU_OBJS += system/energy_step_trace.o
+endif
+ifneq (,$(filter OUTPUT_LOOP_ROUTES,$(CONFIGVARS)))
+OBJS    += system/loop_routes.o
 endif
 
 comma := ,
@@ -1444,6 +1444,12 @@ galaxy_sf/thermal_fb.o: galaxy_sf/thermal_fb.cc $(INCL) $(CONFIG) compile_time_i
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 galaxy_sf/thermal_fb_loop.o: galaxy_sf/thermal_fb_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+galaxy_sf/single_star_event_logs.o: galaxy_sf/single_star_event_logs.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+gravity/rumi/rumi_coupling.o: gravity/rumi/rumi_coupling.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+gravity/treecol_shells.o: gravity/treecol_shells.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 galaxy_sf/sfr_collect_gas.o: galaxy_sf/sfr_collect_gas.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 galaxy_sf/photoion_per_direction.o: galaxy_sf/photoion_per_direction.cc $(INCL) $(CONFIG) compile_time_info.cc
@@ -1485,11 +1491,19 @@ sinks/sink_swallow_and_kick.o: sinks/sink_swallow_and_kick.cc $(INCL) $(CONFIG) 
 ## (legacy radiation_pressure_winds_gpu replaced by runner-template port).
 galaxy_sf/radfb_rp_loop.o: galaxy_sf/radfb_rp_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+galaxy_sf/stellar_evolution_tables.o: galaxy_sf/stellar_evolution_tables.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+galaxy_sf/single_star_luminosity.o: galaxy_sf/single_star_luminosity.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 system/gpu_particles_arena.o: system/gpu_particles_arena.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 system/kokkos_mem_telemetry.o: system/kokkos_mem_telemetry.cc $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 system/timing_breakdown.o: system/timing_breakdown.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+system/ledger.o: system/ledger.cc $(INCL) $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+system/energy_step_trace.o: system/energy_step_trace.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 gravity/gpu_gravity_tree.o: gravity/gpu_gravity_tree.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
