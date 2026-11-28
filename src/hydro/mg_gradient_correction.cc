@@ -92,8 +92,8 @@
 #define MG_RHS_IMBALANCE_STRUCTURAL 1.0e-6    /* |sum b| / sum s on a piece beyond this is not roundoff: the graph or the face fluxes are not antisymmetric */
 #define MG_SYMMETRY_TOL 1.0e-12               /* both rows of a face compute its coefficient from the same expression */
 #define MG_REPLICATED_PIECE_GRAPH_MAX_BYTES (64LL << 20) /* above this the cross-rank piece graph is resolved by label propagation instead of being gathered everywhere */
-#if !defined(MHD_MODIFIED_GRADIENT_CG_ONLY) && !defined(MHD_MODIFIED_GRADIENT_USE_PARDISO) && !defined(MG_HYPRE_ON_DEVICE)
-#define MG_KEEP_AMG_HIERARCHY   /* host HYPRE: the AMG hierarchy is kept between solves while the cells stay in their slots */
+#if !defined(MHD_MODIFIED_GRADIENT_CG_ONLY) && !defined(MHD_MODIFIED_GRADIENT_USE_PARDISO) && !defined(MG_HYPRE_ON_DEVICE) && defined(HYPRE_RELEASE_NUMBER) && (HYPRE_RELEASE_NUMBER >= 30000)
+#define MG_KEEP_AMG_HIERARCHY   /* host HYPRE 3.0 or later (HYPRE_BoomerAMGSetSetupType): the AMG hierarchy is kept between solves while the cells stay in their slots */
 #endif
 #define MG_AMG_MAX_REUSES 10          /* solves on one kept hierarchy before it is rebuilt */
 #define MG_HOST_HYPRE_TOL_FACTOR 0.2  /* a host HYPRE solve runs to this fraction of MG_CG_TOL: HYPRE's residual is not the true one, and with aggressive coarsening a solve stops close to its tolerance */
@@ -1105,8 +1105,11 @@ static int mg_solve_backend(double *x)
 #else
     HYPRE_Solver precond = NULL;
 #endif
+#ifdef MG_KEEP_AMG_HIERARCHY
     if(reuse) {HYPRE_BoomerAMGSetSetupType(precond, 0);}   /* setup returns at once; the solve takes the current matrix on the finest level */
-    else {
+    else
+#endif
+    {
         HYPRE_BoomerAMGCreate(&precond);
         HYPRE_BoomerAMGSetPrintLevel(precond, 0);
 #ifdef MG_HYPRE_ON_DEVICE
